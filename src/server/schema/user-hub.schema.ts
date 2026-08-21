@@ -8,6 +8,7 @@ export const hubLimits = {
   nameLength: 60,
   aliasLength: 60,
   descriptionLength: 300,
+  filterListLength: 20,
   // Caps the RESOLVED ids, which is a different quantity from the source count:
   // one Model source expands to every version of that model, and each version id
   // is then repeated across three filter arms.
@@ -63,10 +64,14 @@ export const userHubSourceSchema = z.object({
  * search index can serve (see `requiresImageDbPath`), and the feed input refuses
  * the rest. Anything not listed here is a session-only choice, not a hub setting.
  */
+const capList = <T>(value: T[]) => value.slice(0, hubLimits.filterListLength);
+
 export const hubFeedFiltersSchema = z.object({
-  baseModels: z.array(z.string()).max(20).optional(),
-  tools: z.array(z.number().int().positive()).max(20).optional(),
-  techniques: z.array(z.number().int().positive()).max(20).optional(),
+  // Truncated, not rejected, like `alias` and `description`: these are parsed in a
+  // change handler, and a throw there loses the whole save with nothing shown.
+  baseModels: z.array(z.string()).transform(capList).optional(),
+  tools: z.array(z.number().int().positive()).transform(capList).optional(),
+  techniques: z.array(z.number().int().positive()).transform(capList).optional(),
   withMeta: z.boolean().optional(),
   fromPlatform: z.boolean().optional(),
   remixesOnly: z.boolean().optional(),

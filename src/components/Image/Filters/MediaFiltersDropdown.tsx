@@ -202,8 +202,10 @@ export function MediaFiltersDropdown({
       ? 1
       : 0) +
     (!hideBaseModels && shows('baseModels') ? mergedFilters.baseModels?.length ?? 0 : 0) +
-    (shows('remixesOnly') && !!mergedFilters.remixesOnly ? 1 : 0) +
-    (shows('nonRemixesOnly') && !!mergedFilters.nonRemixesOnly ? 1 : 0) +
+    ((shows('remixesOnly') && !!mergedFilters.remixesOnly) ||
+    (shows('nonRemixesOnly') && !!mergedFilters.nonRemixesOnly)
+      ? 1
+      : 0) +
     (showChallengeToggle && shows('hideChallenges') && mergedFilters.hideChallenges ? 1 : 0) +
     (shows('poiOnly') && mergedFilters.poiOnly ? 1 : 0) +
     (shows('minorOnly') && mergedFilters.minorOnly ? 1 : 0) +

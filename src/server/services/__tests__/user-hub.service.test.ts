@@ -26,8 +26,10 @@ import {
   upsertUserHubSchema,
 } from '~/server/schema/user-hub.schema';
 import {
+  Availability,
   CollectionReadConfiguration,
   MetricTimeframe,
+  ModelStatus,
   UserHubSourceType,
 } from '~/shared/utils/prisma/enums';
 import { ImageSort } from '~/server/common/enums';
@@ -210,7 +212,7 @@ describe('upsertUserHub', () => {
     // The half the title used to claim and never exercised: the same call shape
     // against an existing hub must not carry those values, or toggling a source
     // resets the user's sort.
-    dbMock.dbRead.userHub.findFirst.mockResolvedValue({ id: 9 });
+    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({ id: 9, metadata: {} });
 
     await upsertUserHub({ id: 9, name: 'defaults', sources: [], userId: 5 });
 
@@ -223,7 +225,7 @@ describe('upsertUserHub', () => {
     // A rename and a sort change both used to resend their own cached copy of the
     // whole list, so either could revert a source edit made in between. With the
     // list omitted the update must not touch UserHubSource at all.
-    dbMock.dbRead.userHub.findFirst.mockResolvedValue({ id: 9 });
+    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({ id: 9, metadata: {} });
 
     await upsertUserHub({ id: 9, name: 'renamed', userId: 5 });
 
@@ -236,7 +238,7 @@ describe('upsertUserHub', () => {
   it('still replaces the sources when the input carries them', async () => {
     // Negative control for the test above: without it, an update branch that
     // dropped source writes entirely would pass.
-    dbMock.dbRead.userHub.findFirst.mockResolvedValue({ id: 9 });
+    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({ id: 9, metadata: {} });
 
     await upsertUserHub({
       id: 9,
@@ -335,7 +337,7 @@ describe('upsertUserHub collection sources', () => {
 // reach `image.getInfinite` if the whole blob were handed back.
 describe('description and filters on metadata', () => {
   it('merges the description into the existing metadata rather than replacing it', async () => {
-    dbMock.dbRead.userHub.findFirst.mockResolvedValue({
+    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({
       id: 9,
       metadata: { description: 'old', somethingElse: 'keep me' },
     });
@@ -347,7 +349,7 @@ describe('description and filters on metadata', () => {
   });
 
   it('leaves the description alone when the input omits it', async () => {
-    dbMock.dbRead.userHub.findFirst.mockResolvedValue({
+    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({
       id: 9,
       metadata: { description: 'still here' },
     });
@@ -409,6 +411,7 @@ describe('resolving a pasted link', () => {
 
     const source = await resolveHubSourceFromUrl({
       url: 'https://civitai.com/models/123?modelVersionId=456',
+      userId: 5,
     });
 
     expect(source).toEqual({
@@ -423,15 +426,70 @@ describe('resolving a pasted link', () => {
   it('still resolves a bare model link to the model', async () => {
     dbMock.dbRead.model.findFirst.mockResolvedValue({ id: 123, name: 'Nova' });
 
-    const source = await resolveHubSourceFromUrl({ url: 'https://civitai.com/models/123' });
+    const source = await resolveHubSourceFromUrl({
+      url: 'https://civitai.com/models/123',
+      userId: 5,
+    });
 
     expect(source).toEqual({ type: UserHubSourceType.Model, targetId: 123, alias: 'Nova' });
   });
 
   it('returns null for a link on another host', async () => {
-    const source = await resolveHubSourceFromUrl({ url: 'https://example.com/models/123' });
+    const source = await resolveHubSourceFromUrl({
+      url: 'https://example.com/models/123',
+      userId: 5,
+    });
 
     expect(source).toBeNull();
     expect(dbMock.dbRead.model.findFirst).not.toHaveBeenCalled();
+  });
+});
+
+// The resolve arm is an id-to-name lookup over a dense id space. Every arm that
+// answers without a visibility filter is a sweepable oracle for names the entity
+// pages themselves 404 on, so each one is pinned here rather than trusted.
+describe('what a pasted link is allowed to name', () => {
+  it('asks only for models the viewer owns or that are published and not private', async () => {
+    dbMock.dbRead.model.findFirst.mockResolvedValue(null);
+
+    const source = await resolveHubSourceFromUrl({
+      url: 'https://civitai.com/models/123',
+      userId: 5,
+    });
+
+    expect(source).toBeNull();
+    const where = dbMock.dbRead.model.findFirst.mock.calls[0][0].where;
+    expect(where.OR).toEqual([
+      { userId: 5 },
+      { status: ModelStatus.Published, availability: { not: Availability.Private } },
+    ]);
+  });
+
+  it('drops the visibility filter for a moderator', async () => {
+    dbMock.dbRead.model.findFirst.mockResolvedValue({ id: 123, name: 'Nova' });
+
+    await resolveHubSourceFromUrl({
+      url: 'https://civitai.com/models/123',
+      userId: 5,
+      isModerator: true,
+    });
+
+    const where = dbMock.dbRead.model.findFirst.mock.calls[0][0].where;
+    expect(where.OR).toBeUndefined();
+    expect(where.deletedAt).toBeNull();
+  });
+
+  it('refuses a collection link outright while collection sources are off', async () => {
+    // The write path rejects every collection while the flag is false, so naming
+    // one here would preview a source that then fails to save.
+    expect(HUB_COLLECTION_SOURCES_ENABLED).toBe(false);
+
+    const source = await resolveHubSourceFromUrl({
+      url: 'https://civitai.com/collections/9',
+      userId: 5,
+    });
+
+    expect(source).toBeNull();
+    expect(dbMock.dbRead.collection.findMany).not.toHaveBeenCalled();
   });
 });

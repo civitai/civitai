@@ -40,7 +40,13 @@ export const userHubRouter = router({
   resolveSource: userHubProcedure
     .meta({ requiredScope: TokenScope.UserRead })
     .input(resolveHubSourceSchema)
-    .query(({ input }) => resolveHubSourceFromUrl(input)),
+    .query(({ input, ctx }) =>
+      resolveHubSourceFromUrl({
+        ...input,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      })
+    ),
   setOrder: userHubProcedure
     .meta({ requiredScope: TokenScope.UserWrite })
     .input(setUserHubOrderSchema)

@@ -14,12 +14,14 @@ import {
 } from '~/server/schema/user-hub.schema';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import {
+  Availability,
   CollectionContributorPermission,
   CollectionMode,
   CollectionReadConfiguration,
   CollectionType,
   MetricTimeframe,
   ModelEngagementType,
+  ModelStatus,
   UserEngagementType,
   UserHubSourceType,
 } from '~/shared/utils/prisma/enums';
@@ -125,7 +127,10 @@ export async function upsertUserHub({ userId, ...input }: UpsertUserHubInput & {
     return toHubDetail(hub);
   }
 
-  const existing = await dbRead.userHub.findFirst({
+  // Read through the WRITER, not the replica: this is a read-modify-write of one
+  // json column, and a replica lagging behind the previous save merges a stale
+  // description back over a newer one.
+  const existing = await dbWrite.userHub.findFirst({
     where: { id, userId },
     select: { id: true, metadata: true },
   });
@@ -328,10 +333,30 @@ async function assertHubSourcesUsable({
   }
 }
 
+// What the viewer is allowed to see the name of. This is an id-to-name lookup over
+// a dense id space, so an unfiltered arm is a sweepable oracle for the names of
+// drafts, unpublished models and private collections — the entity pages themselves
+// 404 for exactly that reason. A source they cannot see is a not-found, never a
+// name plus a refusal.
+const visibleModel = (userId: number, isModerator?: boolean) =>
+  isModerator
+    ? { deletedAt: null }
+    : {
+        deletedAt: null,
+        OR: [
+          { userId },
+          { status: ModelStatus.Published, availability: { not: Availability.Private } },
+        ],
+      };
+
 // Resolves a pasted link to the source it names. Server-side so the parser gets
 // the real domain list and the lookup is one round trip instead of four client
 // queries against four different routers.
-export async function resolveHubSourceFromUrl({ url }: ResolveHubSourceInput) {
+export async function resolveHubSourceFromUrl({
+  url,
+  userId,
+  isModerator,
+}: ResolveHubSourceInput & { userId: number; isModerator?: boolean }) {
   const ref = parseCivitaiUrlSafe(url, { hosts: getAllServerHosts() });
   if (!ref) return null;
 
@@ -349,10 +374,14 @@ export async function resolveHubSourceFromUrl({ url }: ResolveHubSourceInput) {
     // gallery, which is what they mean to follow — the whole model is a broader
     // ask than the link they copied.
     if (ref.modelVersionId)
-      return resolveHubSourceFromUrl({ url: `/model-versions/${ref.modelVersionId}` });
+      return resolveHubSourceFromUrl({
+        url: `/model-versions/${ref.modelVersionId}`,
+        userId,
+        isModerator,
+      });
 
     const model = await dbRead.model.findFirst({
-      where: { id: ref.modelId, deletedAt: null },
+      where: { id: ref.modelId, ...visibleModel(userId, isModerator) },
       select: { id: true, name: true },
     });
     if (!model) return null;
@@ -361,10 +390,21 @@ export async function resolveHubSourceFromUrl({ url }: ResolveHubSourceInput) {
 
   if (ref.type === 'modelVersion') {
     const version = await dbRead.modelVersion.findFirst({
-      where: { id: ref.modelVersionId },
-      select: { id: true, name: true, model: { select: { name: true, deletedAt: true } } },
+      where: {
+        id: ref.modelVersionId,
+        model: visibleModel(userId, isModerator),
+        ...(isModerator
+          ? {}
+          : {
+              OR: [
+                { model: { userId } },
+                { status: ModelStatus.Published, availability: { not: Availability.Private } },
+              ],
+            }),
+      },
+      select: { id: true, name: true, model: { select: { name: true } } },
     });
-    if (!version || version.model.deletedAt) return null;
+    if (!version) return null;
     return {
       type: UserHubSourceType.ModelVersion,
       targetId: version.id,
@@ -372,11 +412,21 @@ export async function resolveHubSourceFromUrl({ url }: ResolveHubSourceInput) {
     };
   }
 
-  const collection = await dbRead.collection.findFirst({
-    where: { id: ref.collectionId },
+  // Same gate the write path enforces, and in the same order: refusing after
+  // showing the name is not a refusal. `getUserCollectionPermissionsByIds` is what
+  // the rest of the app reads a collection by id through.
+  if (!HUB_COLLECTION_SOURCES_ENABLED) return null;
+
+  const [collection] = await dbRead.collection.findMany({
+    where: { id: ref.collectionId, read: { not: CollectionReadConfiguration.Private } },
     select: { id: true, name: true },
+    take: 1,
   });
   if (!collection) return null;
+
+  const [permission] = await getUserCollectionPermissionsByIds({ ids: [collection.id], userId });
+  if (!permission?.read) return null;
+
   return { type: UserHubSourceType.Collection, targetId: collection.id, alias: collection.name };
 }
 
