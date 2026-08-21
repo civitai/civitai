@@ -259,9 +259,7 @@ describe('createModelFileScanRequest', () => {
       await createModelFileScanRequest(baseInput);
 
       const submitCall = mockSubmitWorkflow.mock.calls[0][0];
-      expect(submitCall.body.callbacks[0].url).toContain(
-        '/api/webhooks/model-file-scan-result'
-      );
+      expect(submitCall.body.callbacks[0].url).toContain('/api/webhooks/model-file-scan-result');
       expect(submitCall.body.callbacks[0].url).toContain('token=wh-token');
       expect(submitCall.body.callbacks[0].type).toEqual([
         'workflow:succeeded',
@@ -326,7 +324,9 @@ describe('createModelFileScanRequest', () => {
       expect(err).toBeInstanceOf(ModelFileScanSubmissionError);
       expect(err.code).toBe('transient');
       expect(err.status).toBe(400);
-      expect(err.message).toMatch(/Failed to submit model file scan workflow for file 1.*status 400/);
+      expect(err.message).toMatch(
+        /Failed to submit model file scan workflow for file 1.*status 400/
+      );
     });
 
     it('logs to Axiom with file context + submissionErrorCode=transient before throwing', async () => {
@@ -484,6 +484,74 @@ describe('createModelFileScanRequest', () => {
       const err = await promise;
 
       expect(err.code).toBe('transient');
+    });
+
+    // These fields exist ONLY to make a tombstone auditable after the fact, so
+    // nothing else in the codebase reads them — which means without an assertion
+    // here, swapping resolverStatus and deliveryWorkerStatus, or dropping either,
+    // passes a fully green suite while making every future audit read the wrong
+    // authority's answer. Assert the exact values, not merely that they exist.
+    it('logs WHICH authority reported what, so the verdict is auditable', async () => {
+      const dwError = new DeliveryWorkerError(404, 'Not Found');
+      dwError.resolverError = new StorageResolverError(503, 'Service Unavailable');
+      mockResolveDownloadUrl.mockRejectedValueOnce(dwError).mockRejectedValueOnce(dwError);
+
+      const promise = createModelFileScanRequest(baseInput).catch((e) => e);
+      await vi.advanceTimersByTimeAsync(60_000);
+      const err = await promise;
+
+      // The resolver was down, so the delivery worker's 404 is not proof.
+      expect(err.code).toBe('transient');
+      expect(mockLogToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({
+          submissionErrorCode: 'transient',
+          deliveryWorkerStatus: 404,
+          resolverStatus: 503,
+          resolverError: 'StorageResolverError: Storage resolver error: Service Unavailable',
+        })
+      );
+    });
+
+    it('logs the resolver failure even when it has no status (transport reject)', async () => {
+      // The outage shape this change exists for: a resolver pod that refuses the
+      // connection rejects at the transport layer, so there IS no status. Without
+      // resolverError the log would carry the delivery worker's text twice and no
+      // resolver signal at all.
+      const dwError = new DeliveryWorkerError(404, 'Not Found');
+      dwError.resolverError = new TypeError('fetch failed');
+      mockResolveDownloadUrl.mockRejectedValueOnce(dwError).mockRejectedValueOnce(dwError);
+
+      const promise = createModelFileScanRequest(baseInput).catch((e) => e);
+      await vi.advanceTimersByTimeAsync(60_000);
+      const err = await promise;
+
+      expect(err.code).toBe('transient');
+      expect(mockLogToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({
+          deliveryWorkerStatus: 404,
+          resolverStatus: undefined,
+          resolverError: 'TypeError: fetch failed',
+        })
+      );
+    });
+
+    it('omits the resolver fields when the resolver was never consulted', async () => {
+      mockResolveDownloadUrl
+        .mockRejectedValueOnce(new DeliveryWorkerError(404, 'Not Found'))
+        .mockRejectedValueOnce(new DeliveryWorkerError(404, 'Not Found'));
+
+      const promise = createModelFileScanRequest(baseInput).catch((e) => e);
+      await vi.advanceTimersByTimeAsync(60_000);
+      const err = await promise;
+
+      expect(err.code).toBe('not-found');
+      expect(mockLogToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({
+          deliveryWorkerStatus: 404,
+          resolverStatus: undefined,
+          resolverError: undefined,
+        })
+      );
     });
 
     it('skips pre-flight entirely when preflight=false (inline upload path)', async () => {

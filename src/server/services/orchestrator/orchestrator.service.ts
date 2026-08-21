@@ -701,15 +701,24 @@ export async function createModelFileScanRequest({
         // the first failure may have been the transient one that the retry
         // exists to absorb.
         const code = isDefiniteNotFound(retryError) ? 'not-found' : 'transient';
-        // The verdict turns on WHICH component reported what, and the two message
-        // fields below both carry the delivery worker's text — so without this the
+        // The verdict turns on WHICH component reported what, and both message
+        // fields below carry the DELIVERY WORKER's text — so without these the
         // decision input is invisible in production and no one can confirm after
         // the fact whether a given tombstone was justified.
+        const resolverFailure =
+          retryError instanceof DeliveryWorkerError ? retryError.resolverError : undefined;
+        // Status only exists when the resolver answered with one. A pod outage
+        // rejects at the transport layer instead, which is the very case this
+        // change is about — so log the error itself too, or that case arrives
+        // with no resolver signal at all.
         const resolverStatus =
-          retryError instanceof DeliveryWorkerError &&
-          retryError.resolverError instanceof StorageResolverError
-            ? retryError.resolverError.statusCode
-            : undefined;
+          resolverFailure instanceof StorageResolverError ? resolverFailure.statusCode : undefined;
+        const resolverError =
+          resolverFailure === undefined
+            ? undefined
+            : resolverFailure instanceof Error
+            ? `${resolverFailure.name}: ${resolverFailure.message}`
+            : String(resolverFailure);
         logToAxiom({
           type: 'error',
           name: 'model-file-scan',
@@ -717,8 +726,10 @@ export async function createModelFileScanRequest({
           fileId,
           modelVersionId,
           submissionErrorCode: code,
-          deliveryWorkerStatus: retryError instanceof DeliveryWorkerError ? retryError.statusCode : undefined,
+          deliveryWorkerStatus:
+            retryError instanceof DeliveryWorkerError ? retryError.statusCode : undefined,
           resolverStatus,
+          resolverError,
           firstError: firstError instanceof Error ? firstError.message : String(firstError),
           retryError: retryError instanceof Error ? retryError.message : String(retryError),
         });

@@ -161,7 +161,10 @@ describe('resolveDownloadUrl — falls back to delivery worker when resolver dis
   it('does not throw URI malformed for a malformed filename on the resolver-disabled path', async () => {
     fetchMock.mockResolvedValue({
       ok: true,
-      json: async () => ({ url: 'https://cdn.example.com/ok', urlExpiryDate: new Date().toISOString() }),
+      json: async () => ({
+        url: 'https://cdn.example.com/ok',
+        urlExpiryDate: new Date().toISOString(),
+      }),
     } as unknown as Response);
 
     const result = await resolveDownloadUrl(

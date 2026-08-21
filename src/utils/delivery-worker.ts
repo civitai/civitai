@@ -192,9 +192,10 @@ export function isDefiniteNotFound(err: unknown): boolean {
         ABSENCE_STATUSES.has(err.resolverError.statusCode)
       );
     }
-    // Reached only when the resolver is disabled: if it had succeeded,
-    // `resolveDownloadUrl` would have returned rather than reaching the fallback.
-    // The delivery worker was the only authority and it said not-there.
+    // Reached when the resolver was not CONSULTED at all — the disabled path, or
+    // a direct `getDownloadUrl` caller. (It cannot mean "the resolver succeeded":
+    // `resolveDownloadUrl` returns on success rather than reaching the fallback.)
+    // The delivery worker was then the only authority, and it said not-there.
     return true;
   }
 
