@@ -83,10 +83,11 @@ describe('createCachedArray.update — the write-through path', () => {
     // `cachedAt` carried over, not reset: the entry stays as fresh as it was and no
     // fresher, so its revalidation clock is unchanged.
     expect(value).toEqual({ id: 1, members: [7, 9], cachedAt });
-    // KEEPTTL, never a recomputed EX. Redis holds the real remainder; deriving one
-    // from `cachedAt` assumes a full expiry was set at that instant, which
-    // `invalidate` deliberately breaks by writing a BACKDATED `cachedAt`.
-    expect(options).toEqual({ KEEPTTL: true });
+    // The REMAINDER of the original expiry, and `XX`. Not `KEEPTTL`: on a key that
+    // vanished between the GET and the SET, KEEPTTL CREATES it with no expiry at all,
+    // and a cache whose readers ignore `cachedAt` then serves it forever with no
+    // self-heal. `XX` makes the same case a no-op instead.
+    expect(options).toEqual({ EX: TTL - 10, XX: true });
   });
 
   it('locks the ENTRY, briefly', async () => {
@@ -114,6 +115,25 @@ describe('createCachedArray.update — the write-through path', () => {
 
     // Writing here would MATERIALISE an entry from a delta alone — a follow set
     // containing exactly the one id the caller happened to touch.
+    expect(setMock).not.toHaveBeenCalled();
+  });
+
+  it('reports false, and creates nothing, when the entry vanished mid-update', async () => {
+    // Expired or evicted in the few ms since the GET. `XX` makes Redis refuse, the
+    // reply is null, and the caller must re-derive — the alternative is a whole
+    // collection materialised from one delta, or with KEEPTTL a key that never expires.
+    mGetMock.mockResolvedValue([{ id: 1, members: [7], cachedAt: new Date() }]);
+    setMock.mockResolvedValue(null);
+
+    await expect(makeCache().update(1, addMember)).resolves.toBe(false);
+  });
+
+  it('reports false when the entry is already past its expiry', async () => {
+    mGetMock.mockResolvedValue([
+      { id: 1, members: [7], cachedAt: new Date(Date.now() - TTL * 2000) },
+    ]);
+
+    await expect(makeCache().update(1, addMember)).resolves.toBe(false);
     expect(setMock).not.toHaveBeenCalled();
   });
 

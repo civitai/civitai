@@ -5272,7 +5272,11 @@ export const comicsRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const engagement = await dbRead.comicProjectEngagement.findUnique({
+      // dbWrite, not dbRead: the write below is scoped by the type this read saw, so a
+      // replica lagging behind a just-committed change makes the scoped update miss and
+      // report not-engaged for a pair that carries exactly what was asked for. Every
+      // sibling toggle in this family reads the primary for the same reason.
+      const engagement = await dbWrite.comicProjectEngagement.findUnique({
         where: { userId_projectId: { userId: ctx.user.id, projectId: input.projectId } },
       });
 

@@ -59,7 +59,7 @@ type PackedClient = {
     set<T>(
       key: RedisKeyTemplateCache,
       value: T,
-      options?: { EX?: number; NX?: boolean; KEEPTTL?: boolean }
+      options?: { EX?: number; NX?: boolean; XX?: boolean }
     ): Promise<unknown>;
   };
   del(key: RedisKeyTemplateCache | RedisKeyTemplateCache[]): Promise<unknown>;
@@ -561,9 +561,18 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
      * missing entry would otherwise be repopulated by the next reader from the
      * REPLICA, which is the one thing a just-written value cannot tolerate.
      *
-     * `cachedAt` is carried over rather than reset, and the entry keeps its own
-     * expiry via `KEEPTTL`: an entry maintained by deltas must still age out on its
-     * own schedule, or a drifted one never self-heals.
+     * `cachedAt` is carried over rather than reset, and the write re-derives the
+     * REMAINDER of the original expiry: an entry maintained by deltas must still age
+     * out on its own schedule, or a drifted one never self-heals.
+     *
+     * 🔴 NOT `KEEPTTL`, which is the obvious way to write that and is wrong here.
+     * `SET key value KEEPTTL` on a key that has GONE — expired or evicted in the few
+     * ms since the GET — creates it with NO TTL at all: KEEPTTL preserves an existing
+     * expiry, it does not invent one. For a cache whose readers do not consult
+     * `cachedAt`, that entry is then served forever with no self-heal, which is the
+     * exact property this comment claims to protect. `XX` closes the same hole from
+     * the other side and is kept as well: Redis refuses to create the key, the reply
+     * is null, and this reports false so the caller re-derives.
      *
      * ⚠️ ONE caller today — `userFollowsCache`, which is non-SWR. Two things a second
      * caller has to weigh. A plain cache-MISS refill takes no lock, so this serialises
@@ -593,14 +602,27 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
         const marker = current as AnyRecord | null;
         if (!current || marker?.notFound || marker?.debounce || !marker?.cachedAt) return false;
 
+        // The remainder of the original expiry. ⚠️ This assumes the entry was written
+        // with a full expiry AT `cachedAt`, which `invalidate` deliberately breaks by
+        // backdating it — so on a cache that reaches `invalidate` (SWR only; no caller
+        // does today) this shortens a live entry rather than lengthening it. That is
+        // the safe direction to be wrong in, which KEEPTTL is not.
+        const EX =
+          resolveCacheExpiry(ttl, staleWhileRevalidate, staleWhileRevalidateTtl) -
+          Math.floor((Date.now() - new Date(marker.cachedAt).getTime()) / 1000);
+        if (EX <= 0) return false;
+
         const next = updater(current);
         if (dontCacheFn?.(next)) return false;
-        // KEEPTTL rather than a recomputed EX. Deriving the remainder from `cachedAt`
-        // assumes the entry was written with a full expiry at that instant, and
-        // `invalidate` deliberately breaks that: it writes a BACKDATED `cachedAt` with
-        // a full EX, so the arithmetic would shrink a live entry to about
-        // `debounceTime`. Redis already holds the real remainder.
-        await redis.packed.set(entryKey, { ...next, cachedAt: marker.cachedAt }, { KEEPTTL: true });
+        // XX: correct an entry, never create one. If it vanished between the GET and
+        // here, the reply is null and the caller must re-derive rather than have a
+        // whole collection materialised from one delta.
+        const written = await redis.packed.set(
+          entryKey,
+          { ...next, cachedAt: marker.cachedAt },
+          { EX, XX: true }
+        );
+        if (written === null) return false;
         // After the write, not before: a concurrent fetch between the two would
         // otherwise refill L1 with the pre-update value and pin it for localTtl.
         dropLocal([id]);

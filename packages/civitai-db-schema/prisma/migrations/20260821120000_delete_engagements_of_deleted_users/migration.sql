@@ -15,8 +15,20 @@
 --
 -- APPLY BY HAND, off-peak. This repo does not run `prisma migrate deploy`.
 --
--- 🔴 THE DRAIN LOOP IS DRIVEN BY THE CLIENT, NOT BY A `DO` BLOCK. Step 3 below is
--- ONE batch and is meant to be re-run until it reports 0 rows.
+-- 🔴 HOW TO RUN IT — THIS FILE IS NOT `psql -f`-able AS ONE PASS.
+--
+-- Step 3 is ONE batch and must be re-run (~304 times) until it reports `drained = 0`.
+-- Steps 4 and 5 must not run until then. Feeding the whole file to `psql -f` deletes
+-- 10,000 rows, prints a non-zero `after_count`, drops the work list and vacuums a
+-- table it barely touched. Nothing is destroyed; you just have not finished.
+--
+-- Either drive it from a client that loops step 3, or by hand in ONE psql session:
+--
+--   \i steps 1-2, then repeat step 3 until it prints 0, then steps 4-5.
+--
+-- Steps 2-5 must share a SESSION — the work list is a temp table.
+--
+-- 🔴 THE DRAIN LOOP IS DRIVEN BY THE CLIENT, NOT BY A `DO` BLOCK.
 --
 -- That is not a style choice. The first version wrapped the loop in `DO $$ ... $$`
 -- with a per-batch COMMIT, and against prod it died at 920,001 of 3,038,591 rows
@@ -74,8 +86,9 @@ ANALYZE doomed_engagement;
 -- ── Step 3: ONE batch. Re-run until `drained` is 0. ~304 times.
 --
 -- `done` is flipped rather than the row deleted, so the work table keeps no dead
--- tuples to re-scan and the partial index on `(done, …)` makes each batch an index
--- range read. Counting the WORK LIST rather than the UserEngagement delete is
+-- tuples to re-scan, and the index on `(done, "userId", "targetUserId")` makes each
+-- batch an index range read. Counting the WORK LIST rather than the UserEngagement
+-- delete is
 -- deliberate: a row can already be gone (a re-run, or `deleteUser` reaching it
 -- first), and exiting on that count would stop with the list still full.
 WITH batch AS (
