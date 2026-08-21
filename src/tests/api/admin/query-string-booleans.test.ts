@@ -136,3 +136,58 @@ describe('confirm guards decline a query-string `false`', () => {
     ).toBe(true);
   });
 });
+
+/**
+ * The guard should be satisfiable ONLY by an affirmative value, whatever shape the request
+ * arrives in. Coercion is not the only way a guard gets satisfied by accident — a repeated
+ * query param arrives as an array, and `{...req.query, ...req.body}` means the body can
+ * supply the field instead of the query string. Both are pinned here rather than reasoned
+ * about, because both are ways `false` could still become "yes" after this fix.
+ */
+describe.each([
+  { label: 'testing/gift-membership', schema: giftMembershipSchema as AnySchema },
+  { label: 'testing/referrals', schema: referralsSchema as AnySchema },
+])('$label — the reset guard is satisfied only by an affirmative value', ({ schema }) => {
+  const base = { action: 'reset', userId: '1' };
+
+  const declines: Array<[string, unknown]> = [
+    ['the string false', 'false'],
+    ['0', '0'],
+    ['no', 'no'],
+    ['off', 'off'],
+    ['an empty value', ''],
+    ['a repeated param, one of them true', ['false', 'true']],
+    ['a real boolean false', false],
+    ['the number 0', 0],
+    ['a junk value', 'banana'],
+    ['an object', {}],
+  ];
+
+  it.each(declines)('declines %s', (_label, confirm) => {
+    expect(schema.safeParse({ ...base, confirm }).success).toBe(false);
+  });
+
+  it.each([['true'], ['yes'], ['1']])('accepts the affirmative %s', (confirm) => {
+    expect(schema.safeParse({ ...base, confirm }).success).toBe(true);
+  });
+});
+
+/**
+ * referrals parses `{...req.query, ...req.body}`, so the BODY wins the spread. That is the
+ * one place a field fixed on the query-string side can still arrive from somewhere else —
+ * pinned so the precedence is a decision on record rather than a property of a spread
+ * someone reorders later.
+ */
+describe('testing/referrals — body wins over query for the guard', () => {
+  const base = { action: 'reset', userId: '1' };
+
+  it('a body `false` overrides a query `true` — the reset is declined', () => {
+    const merged = { ...base, confirm: 'true', ...{ confirm: false } };
+    expect(referralsSchema.safeParse(merged).success).toBe(false);
+  });
+
+  it('a body `true` overrides a query `false` — the reset runs', () => {
+    const merged = { ...base, confirm: 'false', ...{ confirm: true } };
+    expect(referralsSchema.safeParse(merged).success).toBe(true);
+  });
+});
