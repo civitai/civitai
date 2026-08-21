@@ -83,7 +83,7 @@ export function cacheIt<TInput extends object>({
       }
     }
     for (const [varyKey, varyValue] of Object.entries(varyBy?.(ctx) ?? {})) {
-      if (varyKey in cacheKeyObj)
+      if (_input && Object.prototype.hasOwnProperty.call(_input, varyKey))
         throw new Error(`cacheIt: varyBy key "${varyKey}" collides with an input key on ${path}`);
       cacheKeyObj[varyKey] = varyValue;
     }
