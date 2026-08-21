@@ -422,6 +422,10 @@ describe('the queue hands its child the capture file, not a pipe', () => {
     const capturePath = readdirSync(tmpdir())
       .filter((f) => f.startsWith(`civitai-test-run-${process.pid}-`))
       .map((f) => resolve(tmpdir(), f));
+    // The positive control for the scope above. An empty list makes every deletion assertion
+    // below a no-op loop that passes trivially — so if the filename format ever changes, this
+    // fails loudly instead of the suite quietly protecting nothing. Measured at exactly 1.
+    expect(capturePath).toHaveLength(1);
     writeSync(stdio[1], 'boom one\nboom two\n');
 
     expect(() => handle.dispose()).toThrow(/log consumer blew up/);
@@ -459,6 +463,8 @@ describe('the queue hands its child the capture file, not a pipe', () => {
     const mine = readdirSync(tmpdir())
       .filter((f) => f.startsWith(`civitai-test-run-${process.pid}-`))
       .map((f) => resolve(tmpdir(), f));
+    // Same positive control as above: an empty list would make the loop below vacuous.
+    expect(mine).toHaveLength(1);
     writeSync(stdio[1], 'boom one\nboom two\n');
 
     // The real exit path, not dispose().
