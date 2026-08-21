@@ -51,6 +51,14 @@
   </dl>
 {/if}
 
+{#if data.truncated}
+  <!-- Never truncate silently: the list page shows this run's true total, so a quiet cap makes the
+       two screens disagree about the same run and hides exactly the rows the sort pushed down. -->
+  <p class="text-dark-2 mb-2">
+    Showing the first {num(rows.length)} of {num(data.run.findingCount)} findings.
+  </p>
+{/if}
+
 {#if rows.length === 0}
   <!-- A run with no findings is a real, healthy result and must not read as a broken page. -->
   <p class="text-dark-2">This run reported no findings.</p>
@@ -59,8 +67,11 @@
     <TableHeader>
       <TableRow>
         <TableHead>User</TableHead>
-        <TableHead>Confidence</TableHead>
-        <TableHead>Acted</TableHead>
+        <!-- Both columns are the PRODUCER's self-report, never cross-checked against the action log.
+             Headed as reported so the board cannot be read as independent confirmation that
+             something was done — it is an input to a human decision, not evidence. -->
+        <TableHead>Confidence (reported)</TableHead>
+        <TableHead>Acted (reported)</TableHead>
         <TableHead>Reason</TableHead>
       </TableRow>
     </TableHeader>

@@ -16,7 +16,9 @@ type Call = [string, unknown[]];
 /** Records every builder call so an assertion can read the query that was actually built. */
 function insertChain(calls: Call[], resolveWith: unknown) {
   const builder: Record<string, unknown> = {};
-  for (const method of ['values', 'returning', 'onConflict']) {
+  // `onConflict` takes a callback and must return the builder — the upsert chain runs through it, so
+  // omitting it here would make every `recordAbuseRun` test throw rather than assert.
+  for (const method of ['values', 'returning', 'onConflict', 'where']) {
     builder[method] = (...args: unknown[]) => {
       calls.push([method, args]);
       return builder;
@@ -55,6 +57,10 @@ beforeEach(() => {
     insertInto: (table: string) => {
       calls.push(['insertInto', [table]]);
       return insertChain(calls, { id: 4242 });
+    },
+    deleteFrom: (table: string) => {
+      calls.push(['deleteFrom', [table]]);
+      return insertChain(calls, undefined);
     },
   };
   transactionExecute.mockImplementation(async (cb: (t: unknown) => unknown) => cb(trx));
@@ -123,6 +129,84 @@ describe('abuseReportInput — the wire contract', () => {
   it('is registered under a stable action name', () => {
     expect(MOD_ACTION.abuseReport).toBe('abuse-report');
   });
+
+  // 🔴 The contract must not admit a row the table's CHECK forbids. A CHECK violation aborts the
+  // transaction, which loses the ENTIRE run — the exact failure the single transaction was chosen to
+  // prevent. Rejecting at the edge is the only place it costs one report instead of all of them.
+  it('rejects an actioned finding that names no action', () => {
+    const parsed = abuseReportInput.safeParse({
+      ...baseRun,
+      findings: [{ userId: 5, confidence: 0.9, reason: 'r', actioned: true }],
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it('rejects a non-actioned finding that names an action', () => {
+    const parsed = abuseReportInput.safeParse({
+      ...baseRun,
+      findings: [{ userId: 5, confidence: 0.1, reason: 'r', actioned: false, action: 'exclude' }],
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  // `user_id` is a Postgres `integer`. An out-of-range value does not miss, it ERRORS the insert —
+  // and inside the transaction that loses the run. `$lib/server/query.ts` already bounds ids by
+  // MAX_INT4 for exactly this reason.
+  it('rejects a userId beyond int4', () => {
+    const parsed = abuseReportInput.safeParse({
+      ...baseRun,
+      findings: [{ userId: 2_147_483_648, confidence: 0.5, reason: 'r', actioned: false }],
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  // A producer emitting `+00:00` (Python's `datetime.isoformat()`) is ISO-8601 and must not be
+  // refused — the comment promises ISO-8601, and a 400 here loses the whole run.
+  it.each([
+    ['Z', '2026-08-21T11:00:00.000Z'],
+    ['+00:00 offset', '2026-08-21T11:00:00+00:00'],
+    ['+02:00 offset', '2026-08-21T13:00:00+02:00'],
+  ])('accepts an ISO-8601 timestamp with %s', (_label, startedAt) => {
+    const parsed = abuseReportInput.safeParse({
+      ...baseRun,
+      startedAt,
+      finishedAt: '2026-08-21T23:00:00Z',
+      findings: [],
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it('rejects a run that finished before it started', () => {
+    // Otherwise a transposed pair renders as a negative duration on a board whose whole claim is
+    // "when did this happen".
+    const parsed = abuseReportInput.safeParse({
+      startedAt: '2026-08-21T11:04:00.000Z',
+      finishedAt: '2026-08-21T11:00:00.000Z',
+      detector: 'reaction-abuse',
+      findings: [],
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  // Most JSON serialisers emit `null` for an empty map / absent string. Refusing the run over it
+  // would lose a report for a formatting choice.
+  it.each([
+    ['counters', { counters: null }],
+    ['summary', { summary: null }],
+  ])('treats a null %s as absent rather than refusing the run', (_label, extra) => {
+    const parsed = abuseReportInput.safeParse({ ...baseRun, ...extra, findings: [] });
+    expect(parsed.success).toBe(true);
+  });
+
+  it.each([
+    ['reason', { userId: 5, confidence: 0.5, reason: '', actioned: false }],
+    ['action', { userId: 5, confidence: 0.5, reason: 'r', actioned: true, action: '' }],
+  ])('rejects an empty %s', (_label, finding) => {
+    // An empty action renders as a blank "Acted" cell — the "reads as missing data" failure the
+    // detail page is written to avoid.
+    const parsed = abuseReportInput.safeParse({ ...baseRun, findings: [finding] });
+    expect(parsed.success).toBe(false);
+  });
 });
 
 describe('recordAbuseRun', () => {
@@ -182,7 +266,35 @@ describe('recordAbuseRun', () => {
 
   it('skips the findings insert entirely when there are none', async () => {
     await recordAbuseRun({ ...baseRun, findings: [] });
+    // The delete still runs: a replay that legitimately reports zero findings must CLEAR the
+    // previous attempt's rows, not leave them attached to a run that no longer claims them.
     expect(tables()).toEqual(['abuse_detection_run']);
+    expect(calls.some(([m, a]) => m === 'deleteFrom' && a[0] === 'abuse_detection_finding')).toBe(
+      true
+    );
+  });
+
+  // The producers retry. A POST that commits but whose response is lost is sent again, so the write
+  // has to be replayable without duplicating either the run or its findings.
+  it('clears prior findings BEFORE re-inserting, so a replay does not double them', async () => {
+    await recordAbuseRun({
+      ...baseRun,
+      findings: [{ userId: 7, confidence: 0.9, reason: 'r', actioned: true, action: 'exclude' }],
+    });
+
+    const order = calls
+      .filter(([m]) => m === 'deleteFrom' || m === 'insertInto')
+      .map(([m, a]) => `${m}:${a[0]}`);
+    expect(order).toEqual([
+      'insertInto:abuse_detection_run',
+      'deleteFrom:abuse_detection_finding',
+      'insertInto:abuse_detection_finding',
+    ]);
+  });
+
+  it('upserts the run rather than inserting a second copy', async () => {
+    await recordAbuseRun({ ...baseRun, findings: [] });
+    expect(calls.some(([m]) => m === 'onConflict')).toBe(true);
   });
 
   it('defaults absent counters to an empty object rather than null', async () => {

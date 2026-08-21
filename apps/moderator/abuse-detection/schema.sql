@@ -28,9 +28,17 @@ CREATE TABLE IF NOT EXISTS abuse_detection_run (
   received_at timestamptz NOT NULL DEFAULT now()
 );
 
--- The board's only query shape: newest runs for one detector, or newest across all of them.
-CREATE INDEX IF NOT EXISTS abuse_detection_run_detector_started_idx
-  ON abuse_detection_run (detector, started_at DESC);
+-- 🔴 IDEMPOTENCY KEY, not just an index. The producers retry: a POST that commits but whose response
+-- is lost to a timeout is sent again, and without this the board grows a duplicate run each time —
+-- two rows claiming to be the same run, which is worse than none because a reader cannot tell which
+-- is current. The service upserts on this pair. It doubles as the (detector, started_at) index the
+-- board's per-detector listing needs, so there is no separate one.
+--
+-- ⚠️ On an existing deployment, de-duplicate before adding it:
+--   DELETE FROM abuse_detection_run a USING abuse_detection_run b
+--    WHERE a.detector = b.detector AND a.started_at = b.started_at AND a.id > b.id;
+CREATE UNIQUE INDEX IF NOT EXISTS abuse_detection_run_detector_started_key
+  ON abuse_detection_run (detector, started_at);
 CREATE INDEX IF NOT EXISTS abuse_detection_run_started_idx
   ON abuse_detection_run (started_at DESC);
 

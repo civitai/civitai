@@ -14,14 +14,26 @@ export const load: PageServerLoad = async ({ url }) => {
 
   // 🔴 Degrades rather than throws. `abuse-detection/schema.sql` is applied BY HAND, so between this
   // deploying and someone running it the tables do not exist — and a 500 there tells the operator
-  // nothing about which of "no data yet", "DB unreachable" and "schema not applied" they are looking
-  // at. `available: false` renders the instruction instead. Do NOT replace this with a bare await:
-  // a page whose whole content is one table has no other half to protect.
+  // nothing about which of "no data yet", "schema not applied" and "DB unreachable" they are looking
+  // at. Do NOT replace this with a bare await: a page whose whole content is one table has no other
+  // half to protect.
+  //
+  // The three states are DISCRIMINATED rather than merged, because a page that hands the reader a
+  // list of things it might be is not actually reporting a state. Postgres gives a deterministic
+  // code for the one that matters (`42P01` undefined_table), and an unset connection string is
+  // knowable before any query runs.
   try {
     const [runs, detectors] = await Promise.all([getAbuseRuns({ detector }), getAbuseDetectors()]);
-    return { runs, detectors, detector, available: true as const };
+    return { runs, detectors, detector, status: 'ok' as const };
   } catch (e) {
     console.error('[abuse-detection] load failed', e);
-    return { runs: [], detectors: [], detector, available: false as const };
+    const code = (e as { code?: unknown }).code;
+    const status =
+      code === '42P01'
+        ? ('no-schema' as const)
+        : e instanceof Error && e.message.includes('MODERATOR_DATABASE_URL')
+        ? ('not-configured' as const)
+        : ('unreachable' as const);
+    return { runs: [], detectors: [], detector, status };
   }
 };

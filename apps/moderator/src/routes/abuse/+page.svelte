@@ -15,7 +15,9 @@
   let { data }: { data: PageData } = $props();
 
   const ALL = '__all__';
-  const active = $derived(data.detector ?? ALL);
+  // `||`, not `??`: `/abuse?detector=` parses to an empty string, which is not nullish, so `??`
+  // left no tab selected while the table showed everything.
+  const active = $derived(data.detector || ALL);
 
   function select(value: string) {
     goto(value === ALL ? '/abuse' : `/abuse?detector=${encodeURIComponent(value)}`);
@@ -32,12 +34,19 @@
   <h1>Abuse Detection</h1>
 </header>
 
-{#if !data.available}
+{#if data.status === 'no-schema'}
   <p class="text-dark-2 mb-4">
-    Could not read the abuse-detection tables. They are applied by hand — if this is a new
-    environment, run <code>apps/moderator/abuse-detection/schema.sql</code> against
-    <code>MODERATOR_DATABASE_URL</code>. Otherwise the database is unreachable; the server log has the
-    error.
+    The abuse-detection tables do not exist yet. They are applied by hand — run
+    <code>apps/moderator/abuse-detection/schema.sql</code> against
+    <code>MODERATOR_DATABASE_URL</code>.
+  </p>
+{:else if data.status === 'not-configured'}
+  <p class="text-dark-2 mb-4">
+    <code>MODERATOR_DATABASE_URL</code> is not configured for this environment.
+  </p>
+{:else if data.status === 'unreachable'}
+  <p class="text-dark-2 mb-4">
+    Could not reach the abuse-detection database. The server log has the error.
   </p>
 {:else}
   {#if data.detectors.length > 1}

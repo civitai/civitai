@@ -60,16 +60,20 @@ function isLocalHost(url: string): boolean {
 // merely imports this module whenever MODERATOR_DATABASE_URL is unset.
 let client: Kysely<AbuseDetectionDB> | undefined;
 
-/** No replica — one instance, and the write path must read its own writes. */
+/**
+ * One instance, and the write path must read its own writes — so `singleClient`, not the read/write
+ * pair. Passing the same URL as a "replica" (which is what `xguard-lab.ts` does) builds a SECOND
+ * pool that is then discarded, doubling this app's connections to that database for nothing.
+ */
 export function getAbuseDetectionDb(): Kysely<AbuseDetectionDB> {
   if (!client) {
     const url = dbUrl();
-    const { dbWrite } = createKyselyClients<AbuseDetectionDB>({
+    const { db } = createKyselyClients<AbuseDetectionDB>({
       connectionString: url,
-      replicaConnectionString: url,
+      singleClient: true,
       sslNoVerify: !isLocalHost(url),
     });
-    client = dbWrite;
+    client = db;
   }
   return client;
 }
