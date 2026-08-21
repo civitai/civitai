@@ -28,12 +28,14 @@
  *   inspect-owner - {ownerId, hours?=168}
  *                   READ-ONLY. Per-reactor breakdown of who reacted to one owner
  *                   (count, distinct IPs, share from farm IPs) — for drill-in.
- *   exclude       - {userIds: number[], reason}
+ *   exclude       - {userIds: number[], reason, actorUserId?}
  *                   Add users to metricExcludedUsers (active=1). Idempotent.
  *                   Also writes a `ModActivity` row per user so the action is visible to a
- *                   moderator — see `recordAutomatedAction`. Response carries `auditRecorded`.
- *   unexclude     - {userIds: number[]}
+ *                   moderator — see `recordModAction`. Response carries `auditRecorded`.
+ *   unexclude     - {userIds: number[], actorUserId?}
  *                   Reverse an exclusion (insert active=0; latest row wins). Audited the same way.
+ *                   Pass `actorUserId` when a HUMAN runs this — it is the reversal of a false
+ *                   positive, and without it the row is attributed to the system sentinel.
  *   list          - {limit?=500}
  *                   Currently-excluded users (active=1), newest first.
  *
@@ -48,35 +50,74 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { clickhouse } from '~/server/clickhouse/client';
+import { logToAxiom } from '~/server/logging/client';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 /**
- * The moderator-visible audit trail for an action this endpoint just committed.
+ * `ModActivity.userId` when the caller asserts no acting moderator — the same sentinel
+ * `autoMuteScam` uses (`~/server/jobs/entity-moderation.ts`). The moderator app's board filters
+ * `userId > 0`, so a sentinel row can never be mistaken for a person working a queue.
+ */
+const SYSTEM_ACTOR_ID = -1;
+
+/**
+ * How long the audit write may take before it is abandoned as failed.
  *
- * `-1` is the automated-writer sentinel the main app already uses for `autoMuteScam`
- * (`~/server/jobs/entity-moderation.ts`); the moderator app's board filters `userId > 0` so these
- * rows can never be mistaken for a person working a queue.
+ * 🔴 Bounding a REJECTION is not bounding a HANG, and the hang is the case that reaches the outcome
+ * the design below is built to avoid. The scheduled caller wraps this endpoint in a 30s timeout with
+ * retries; a wedged `dbWrite` with no bound here would burn that budget, turn a SUCCESSFUL exclusion
+ * into a client-side timeout, and have each retry re-insert into ClickHouse and write another audit
+ * row. Well under the caller's own timeout so this fails first, visibly, and the response still lands.
+ */
+const AUDIT_WRITE_TIMEOUT_MS = 5_000;
+
+/**
+ * The moderator-visible record of an action this endpoint just committed.
+ *
+ * The activity says WHAT happened; `actorUserId` says WHO. They are deliberately not welded
+ * together: `exclude` has only ever had an automated caller, but `unexclude` is a human reversing a
+ * false positive, and naming the activity `auto…` would have recorded that human action as a cron's.
  *
  * 🔴 The ClickHouse write is what actually excludes; this is only its record. So a failure here is
  * REPORTED, never thrown: throwing would 500 a request whose exclusion had already applied, telling
- * the poller nothing happened when it did — and its retry would then double-write the audit row,
- * since ModActivity's (activity, entityType, entityId) unique index is being dropped and
- * `ON CONFLICT DO NOTHING` names no target. Swallowing it silently is the opposite failure and is
- * the very gap this trail exists to close, so the outcome rides back in the response body as
- * `auditRecorded` and the caller can say so in its digest.
- *
- * `entityId` takes the whole batch: `trackModActivity` UNNESTs an array into one row per user.
+ * the caller nothing happened when it did, and inviting a retry that re-inserts. Swallowing it
+ * silently is the opposite failure and is the very gap this trail exists to close — so it goes to
+ * Axiom (matching the sibling automated path) AND rides back as `auditRecorded`.
  */
-async function recordAutomatedAction(
-  activity: 'autoExcludeReactionAbuse' | 'autoUnexcludeReactionAbuse',
-  userIds: number[]
+async function recordModAction(
+  activity: 'reactionAbuseExclude' | 'reactionAbuseUnexclude',
+  userIds: number[],
+  actorUserId: number | undefined
 ): Promise<boolean> {
   try {
-    await trackModActivity(-1, { entityType: 'user', entityId: userIds, activity });
+    await Promise.race([
+      // One row per user: `trackModActivity` UNNESTs the array. Production sends a single id per
+      // request (the poller loops, ~25-35/day), so this is one round-trip in practice — the array
+      // path exists because the schema permits a batch, not because anything sends one today.
+      trackModActivity(actorUserId ?? SYSTEM_ACTOR_ID, {
+        entityType: 'user',
+        entityId: userIds,
+        activity,
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(
+          () => reject(new Error(`audit write exceeded ${AUDIT_WRITE_TIMEOUT_MS}ms`)),
+          AUDIT_WRITE_TIMEOUT_MS
+        ).unref?.()
+      ),
+    ]);
     return true;
   } catch (e) {
-    console.error('reaction-abuse audit write failed:', (e as Error).message);
+    logToAxiom(
+      {
+        type: 'error',
+        name: 'reaction-abuse audit write failed',
+        message: (e as Error).message,
+        details: { activity, userIds, actorUserId: actorUserId ?? SYSTEM_ACTOR_ID },
+      },
+      'moderation'
+    );
     return false;
   }
 }
@@ -99,6 +140,11 @@ const schema = z
     ownerId: z.coerce.number().int().positive().optional(),
     userIds: z.array(z.coerce.number().int().positive()).max(5000).optional(),
     reason: z.string().max(500).optional(),
+    // The acting moderator, for the audit row on a write. ASSERTED by the caller and not verified —
+    // the token is the only gate here and there is no user behind it, the same trust model the
+    // cross-app mod-action registry uses. Omitted by the scheduled poller, which is genuinely not a
+    // person; supply it when a human runs `unexclude` so the reversal names them.
+    actorUserId: z.coerce.number().int().positive().optional(),
   })
   .superRefine((data, ctx) => {
     if (data.action === 'inspect-owner' && !data.ownerId)
@@ -230,9 +276,10 @@ export default WebhookEndpoint(async function handler(req: NextApiRequest, res: 
           active: 1,
         }));
         await clickhouse.insert({ table: 'metricExcludedUsers', values, format: 'JSONEachRow' });
-        const auditRecorded = await recordAutomatedAction(
-          'autoExcludeReactionAbuse',
-          input.userIds!
+        const auditRecorded = await recordModAction(
+          'reactionAbuseExclude',
+          input.userIds!,
+          input.actorUserId
         );
         return res
           .status(200)
@@ -246,9 +293,10 @@ export default WebhookEndpoint(async function handler(req: NextApiRequest, res: 
           active: 0,
         }));
         await clickhouse.insert({ table: 'metricExcludedUsers', values, format: 'JSONEachRow' });
-        const auditRecorded = await recordAutomatedAction(
-          'autoUnexcludeReactionAbuse',
-          input.userIds!
+        const auditRecorded = await recordModAction(
+          'reactionAbuseUnexclude',
+          input.userIds!,
+          input.actorUserId
         );
         return res
           .status(200)

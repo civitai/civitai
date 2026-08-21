@@ -13,13 +13,15 @@ import '~/__tests__/mocks/db.mock';
 // `Tests no tests` (a collection error), not as a red assertion.
 const TOKEN = 'test-webhook-token';
 
-const { insert, chQuery, trackModActivity } = vi.hoisted(() => ({
+const { insert, chQuery, trackModActivity, logToAxiom } = vi.hoisted(() => ({
   insert: vi.fn(async () => undefined),
   chQuery: vi.fn(async () => [] as unknown[]),
   trackModActivity: vi.fn(async () => undefined),
+  logToAxiom: vi.fn(),
 }));
 
 vi.mock('~/server/prom/http-errors', () => ({ instrumentApiResponse: vi.fn() }));
+vi.mock('~/server/logging/client', () => ({ logToAxiom }));
 vi.mock('~/server/clickhouse/client', () => ({
   clickhouse: { insert, $query: chQuery },
 }));
@@ -68,11 +70,13 @@ beforeEach(() => {
   insert.mockClear();
   chQuery.mockClear();
   trackModActivity.mockClear();
+  logToAxiom.mockClear();
+  insert.mockImplementation(async () => undefined);
   trackModActivity.mockImplementation(async () => undefined);
 });
 
-describe('POST /api/admin/reaction-abuse — automated-action audit trail', () => {
-  it('records an autoExcludeReactionAbuse row for every excluded user', async () => {
+describe('POST /api/admin/reaction-abuse — mod-action audit trail', () => {
+  it('records a reactionAbuseExclude row for every excluded user', async () => {
     const { req, res } = createMocks({
       action: 'exclude',
       userIds: [111, 222, 333],
@@ -89,7 +93,7 @@ describe('POST /api/admin/reaction-abuse — automated-action audit trail', () =
     expect(trackModActivity).toHaveBeenCalledWith(-1, {
       entityType: 'user',
       entityId: [111, 222, 333],
-      activity: 'autoExcludeReactionAbuse',
+      activity: 'reactionAbuseExclude',
     });
     expect(res._body()).toMatchObject({ excluded: 3, auditRecorded: true });
   });
@@ -103,36 +107,68 @@ describe('POST /api/admin/reaction-abuse — automated-action audit trail', () =
     expect(trackModActivity).toHaveBeenCalledWith(-1, {
       entityType: 'user',
       entityId: [444],
-      activity: 'autoUnexcludeReactionAbuse',
+      activity: 'reactionAbuseUnexclude',
     });
     expect(res._body()).toMatchObject({ unexcluded: 1, auditRecorded: true });
   });
 
-  it('writes the audit row only AFTER the exclusion has actually been committed', async () => {
-    const order: string[] = [];
-    insert.mockImplementation(async () => {
-      order.push('clickhouse');
-    });
-    trackModActivity.mockImplementation(async () => {
-      order.push('audit');
-    });
+  // `unexclude` has no automated caller — it is a human reversing a false positive. Attributing that
+  // to the system sentinel is the defect this pair exists to prevent.
+  it.each([
+    ['unexclude', {}],
+    ['exclude', { reason: 'r' }],
+  ] as const)(
+    'attributes %s to the moderator when the caller asserts one',
+    async (action, extra) => {
+      const { req, res } = createMocks({ action, userIds: [888], actorUserId: 4242, ...extra });
 
-    const { req, res } = createMocks({ action: 'exclude', userIds: [555], reason: 'r' });
-    await handler(req, res);
+      await handler(req, res);
 
-    // An audit row for an exclusion that never landed is a false record of a moderation action.
-    expect(order).toEqual(['clickhouse', 'audit']);
-  });
+      expect(res._status()).toBe(200);
+      expect(trackModActivity).toHaveBeenCalledWith(
+        4242,
+        expect.objectContaining({ entityId: [888] })
+      );
+    }
+  );
 
-  it('does NOT write an audit row when the exclusion itself fails', async () => {
-    insert.mockRejectedValueOnce(new Error('clickhouse down'));
+  it.each([
+    ['exclude', { reason: 'r' }],
+    ['unexclude', {}],
+  ] as const)(
+    'writes the %s audit row only AFTER the ClickHouse write has actually landed',
+    async (action, extra) => {
+      const order: string[] = [];
+      insert.mockImplementation(async () => {
+        order.push('clickhouse');
+      });
+      trackModActivity.mockImplementation(async () => {
+        order.push('audit');
+      });
 
-    const { req, res } = createMocks({ action: 'exclude', userIds: [666], reason: 'r' });
-    await handler(req, res);
+      const { req, res } = createMocks({ action, userIds: [555], ...extra });
+      await handler(req, res);
 
-    expect(res._status()).toBe(500);
-    expect(trackModActivity).not.toHaveBeenCalled();
-  });
+      // An audit row for a write that never landed is a false record of a moderation action.
+      expect(order).toEqual(['clickhouse', 'audit']);
+    }
+  );
+
+  it.each([
+    ['exclude', { reason: 'r' }],
+    ['unexclude', {}],
+  ] as const)(
+    'does NOT write an audit row when the %s write itself fails',
+    async (action, extra) => {
+      insert.mockRejectedValueOnce(new Error('clickhouse down'));
+
+      const { req, res } = createMocks({ action, userIds: [666], ...extra });
+      await handler(req, res);
+
+      expect(res._status()).toBe(500);
+      expect(trackModActivity).not.toHaveBeenCalled();
+    }
+  );
 
   it('reports a failed audit write instead of masking it, and still returns the applied exclusion', async () => {
     trackModActivity.mockRejectedValueOnce(new Error('pg down'));
@@ -140,15 +176,48 @@ describe('POST /api/admin/reaction-abuse — automated-action audit trail', () =
     const { req, res } = createMocks({ action: 'exclude', userIds: [777], reason: 'r' });
     await handler(req, res);
 
-    // 200, because the exclusion DID apply — a 500 here would tell the poller nothing happened and
-    // invite a retry that double-writes the audit row. `auditRecorded: false` is how the caller
-    // learns the trail has a hole, which is the failure mode this whole trail exists to remove.
+    // 200, because the exclusion DID apply — a 500 here would tell the caller nothing happened and
+    // invite a retry that re-inserts. `auditRecorded: false` is how it learns the trail has a hole,
+    // which is the failure mode this whole trail exists to remove.
     expect(res._status()).toBe(200);
     expect(res._body()).toMatchObject({ excluded: 1, auditRecorded: false });
   });
 
-  it('leaves the read-only actions unaudited', async () => {
-    const { req, res } = createMocks({ action: 'list' });
+  // The response field is inert until a caller branches on it, so the log is the signal that works
+  // today. Pinned because deleting it left every other test in this file green.
+  it('reports a failed audit write to Axiom, not just in the response body', async () => {
+    trackModActivity.mockRejectedValueOnce(new Error('pg down'));
+
+    const { req, res } = createMocks({ action: 'exclude', userIds: [777], reason: 'r' });
+    await handler(req, res);
+
+    expect(logToAxiom).toHaveBeenCalledTimes(1);
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'error',
+        name: 'reaction-abuse audit write failed',
+        message: 'pg down',
+      }),
+      'moderation'
+    );
+  });
+
+  it('does not log to Axiom when the audit write succeeds', async () => {
+    const { req, res } = createMocks({ action: 'exclude', userIds: [999], reason: 'r' });
+    await handler(req, res);
+
+    expect(res._status()).toBe(200);
+    expect(logToAxiom).not.toHaveBeenCalled();
+  });
+
+  // Named for all three read-only actions and now exercising all three — the previous version said
+  // "actions" and checked only `list`.
+  it.each([
+    ['list', {}],
+    ['candidates', {}],
+    ['inspect-owner', { ownerId: 12 }],
+  ] as const)('leaves the read-only action %s unaudited', async (action, extra) => {
+    const { req, res } = createMocks({ action, ...extra });
 
     await handler(req, res);
 
