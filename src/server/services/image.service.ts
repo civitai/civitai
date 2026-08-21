@@ -1543,7 +1543,9 @@ export const getAllImages = async (
   // so a hubId arriving means the dispatcher routed wrongly. Returning results
   // would hand the caller the global feed labelled as their hub.
   if (input.hubId)
-    throw new Error('getAllImages cannot serve a hub; hub queries must use the index path');
+    throw throwBadRequestError(
+      'getAllImages cannot serve a hub; hub queries must use the index path'
+    );
 
   const blockedEnforcement = await enforceBlockedBrowsingTags(input, {
     id: input.user?.id,
@@ -3976,7 +3978,7 @@ export async function getImagesFromFeedSearch(
   // describes. Adding the key to that schema without a clause here would serve an
   // unfiltered feed from one of three branches, so fail loudly instead.
   if (input.hubId)
-    throw new Error(
+    throw throwBadRequestError(
       'getImagesFromFeedSearch cannot serve a hub; hub queries must use the index path'
     );
 

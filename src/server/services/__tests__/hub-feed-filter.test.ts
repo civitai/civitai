@@ -1,3 +1,4 @@
+import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // The highest-consequence property in the hubs diff: a hub query must never reach
@@ -217,14 +218,27 @@ describe('the post-filter builder has the same guard', () => {
 });
 
 describe('builders that cannot serve a hub refuse it', () => {
+  // A bare `Error` here reaches the client as raw 500 text through throwDbError,
+  // so the code matters as much as the message.
+  const expectBadRequest = async (promise: Promise<unknown>) => {
+    const error = await promise.then(
+      () => undefined,
+      (e) => e
+    );
+
+    expect(error, 'the builder resolved instead of refusing the hub').toBeInstanceOf(TRPCError);
+    expect((error as TRPCError).code).toBe('BAD_REQUEST');
+    expect((error as TRPCError).message).toMatch(/cannot serve a hub/i);
+  };
+
   it('getAllImages throws rather than returning an unfiltered page', async () => {
     // The backstop for the controller routing change: this path has no way to
     // express a hub, so arriving here means the dispatcher sent it wrongly.
-    await expect(getAllImages(input(1))).rejects.toThrow(/cannot serve a hub/i);
+    await expectBadRequest(getAllImages(input(1)));
   });
 
   it('getImagesFromFeedSearch throws rather than returning an unfiltered page', async () => {
-    await expect(getImagesFromFeedSearch(input(1))).rejects.toThrow(/cannot serve a hub/i);
+    await expectBadRequest(getImagesFromFeedSearch(input(1)));
   });
 });
 
