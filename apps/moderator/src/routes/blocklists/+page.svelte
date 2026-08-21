@@ -70,13 +70,21 @@
     () => {
       removing = item;
       return async ({ update }) => {
-        await update();
-        removing = null;
-        // Cleared here rather than in the confirm button's own click handler. Svelte flushes effects
-        // synchronously after a DOM event handler, so clearing it there unmounts the submitter through
-        // its `{#if}` before the browser runs the form's activation behaviour — the submit never fires
-        // and "Remove" behaves exactly like "Cancel", silently. Same trap as `ConfirmSubmit.svelte`.
-        confirming = null;
+        // `finally`, not a bare sequence. Every chip's control is disabled while `removing` is set,
+        // so a submit that throws — a rejected fetch, a cross-origin refusal — would otherwise leave
+        // it set forever and kill EVERY remove control on the page until a reload, with the click
+        // doing nothing and no error to read.
+        try {
+          await update();
+        } finally {
+          removing = null;
+          // Cleared here rather than in the confirm button's own click handler. Svelte flushes
+          // effects synchronously after a DOM event handler, so clearing it there unmounts the
+          // submitter through its `{#if}` before the browser runs the form's activation behaviour —
+          // the submit never fires and "Remove" behaves exactly like "Cancel", silently. Same trap
+          // as `ConfirmSubmit.svelte`.
+          confirming = null;
+        }
       };
     };
 </script>
