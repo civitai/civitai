@@ -22,7 +22,7 @@ import { useState } from 'react';
 import { showErrorNotification } from '~/utils/notifications';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { StripeConnectStatus, TipaltiStatus } from '~/server/common/enums';
+import { isBlockedTipaltiStatus, StripeConnectStatus, TipaltiStatus } from '~/server/common/enums';
 import { useUserPaymentConfiguration } from '~/components/UserPaymentConfiguration/util';
 import dynamic from 'next/dynamic';
 import { useMutateUserSettings } from '~/components/UserSettings/hooks';
@@ -341,9 +341,7 @@ const TipaltiConfigurationCard = () => {
 
       <Divider my="xs" />
 
-      {![TipaltiStatus.Blocked, TipaltiStatus.BlockedByProvider].some(
-        (s) => s === userPaymentConfiguration?.tipaltiAccountStatus
-      ) && (
+      {!isBlockedTipaltiStatus(userPaymentConfiguration?.tipaltiAccountStatus) && (
         <Button
           component="a"
           href="/tipalti/setup"
