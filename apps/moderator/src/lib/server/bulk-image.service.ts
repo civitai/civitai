@@ -141,15 +141,19 @@ export async function getImagesForPost(
  * largest table here — and `batchFrom` runs the predicate twice, for the rows and for the count.
  * Each arm of the union drives its own index instead.
  */
+// 🔴 The outer parens are load-bearing. Kysely parenthesises a real subquery builder on the right of
+// `in`, but splices a RAW fragment in verbatim — `where "i"."id" in SELECT ...`, which Postgres
+// rejects with 42601 at the first SELECT. Both the rows and the count query carry it, so the source
+// 500s outright rather than degrading.
 const imagesOfVersions = (versionIds: RawBuilder<unknown>) =>
-  sql<number>`
+  sql<number>`(
     SELECT im."id" FROM "Image" im
     JOIN "Post" p ON p."id" = im."postId"
     WHERE p."modelVersionId" IN (${versionIds})
     UNION
     SELECT irr."imageId" FROM "ImageResourceNew" irr
     WHERE irr."modelVersionId" IN (${versionIds})
-  `;
+  )`;
 
 /** Every image across every VERSION of a model — Retool's three chained queries as one join. */
 export async function getImagesForModel(
