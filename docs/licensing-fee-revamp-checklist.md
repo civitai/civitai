@@ -1,11 +1,10 @@
 # Licensing fee + paid access revamp
 
-> **Status: implemented, uncommitted.** Every item below is done in the working tree of
-> `feat/licensing-fee-revamp`. The migration in
+> **Status: implemented and committed** on `feat/licensing-fee-revamp` (unpushed), merged up to main. The migration in
 > `packages/civitai-db-schema/prisma/migrations/20260821120000_pricing_slot/` still has to be applied
 > by hand, per environment — nothing auto-runs it — and it must be applied **before** the code deploys,
 > or every first-time pricing write throws on a missing relation. Read the header comment in that file
-> for the lock-timeout caveat.
+> for the lock-timeout caveat. **The full pre-ship list is in [Before shipping](#before-shipping).**
 
 Work checklist for moving monetization onto the model proposed in
 [article 33749](https://civitai.com/articles/33749) (JustMaier, 2026-08-10). Decided 2026-08-20.
@@ -199,6 +198,71 @@ begins 2026-07-30, so the fee half covers ~22 days rather than 30. Gates come fr
 - [x] Update [creator-tools-backlog](creator-tools-backlog.md) if it carries cap items.
 
 ---
+
+## Before shipping
+
+Nothing here blocks the code — every decision is answered and the branch builds. These are the things
+that have to happen, or be decided, before it reaches creators.
+
+### Must happen
+
+- [ ] **Apply the migration, per environment, BEFORE the deploy.** `20260821120000_pricing_slot`.
+      Until the table exists every first-time pricing write throws on a missing relation and the Creator
+      Studio models page 500s outright, because its loader counts slots. Under a short `lock_timeout` —
+      the owner FK takes `SHARE ROW EXCLUSIVE` on `User`. See the migration header.
+- [ ] **Decide whether the revamp ships behind a flag.** The scheduled-sales feature that merged
+      alongside it gates its *reads* on `scheduled-model-sales` for exactly this reason, and says so:
+      "The flag has to gate the reads, not just the UI." This change has the same manually-applied
+      migration and no flag, so the migration is the only thing standing between a deploy and a 500.
+- [ ] **Push, open the PR** (one PR for the whole revamp), and move the ClickUp task off "to do".
+- [ ] **Update Justin's article** to the monthly allowance — tracked in
+      [creator-studio/paid-access-followups](creator-studio/paid-access-followups.md), which warns that
+      the old and new numbers look identical and mean different things.
+
+### Should be decided
+
+- [ ] **The eligibility floor has no UI.** `MONETIZATION_MIN_CREATOR_SCORE` appears in no client
+      component in either app. 845 creators will fill in the fee form and learn at save time, with no
+      path from the refusal to their score. The floor is meant as a junk filter, not a punishment.
+- [ ] **The upsell lands on the wrong tier.** Measured over 30 days: 11 of 26 bronze creators exceed the
+      allowance against 5 of 789 free. The free allowance was set tight *because* it is the upsell, but
+      the data says it delivers bronze→silver, not free→bronze.
+- [ ] **Existing over-tier fees start billing at full value on deploy.** The one user-visible price
+      *increase* in the revamp, and still unmeasured — neither blast-radius table counts how many live
+      versions get more expensive for buyers, or by how much.
+- [ ] **Two behaviours recorded rather than decided**: cross-month re-pricing is free (see the
+      consequences section above), and a sub-10k creator who clears a price cannot re-apply it.
+- [ ] **`thirtyDayEarlyAccess` is deferred, not resolved** ("don't worry about it, I thought this was
+      already wired up"). The contradiction is still in the code: a granted user below 10k.
+
+### Follow-ups to file — user-reported, so Synced Team rather than the agent list
+
+- [ ] **Tip split** (RisingV, article 33749 comments): 4 ⚡ tipped on a generation using a fee-charging
+      checkpoint plus their own fee-free LoRA; the LoRA received 2 ⚡. Either tips split across
+      fee-charging resources anyway, or half went nowhere.
+- [ ] **Fee denominator** (NanashiAnon, same thread): whether a "per 10 generations" fee bills
+      fractionally per generation. Unverifiable from this repo — the billing lives in the orchestrator.
+
+### Known and accepted, no action planned
+
+- The allowance is a count-then-insert with no advisory lock. A rate limit, not a balance;
+  `free-placement.service.ts` documents the advisory-lock pattern if it ever needs to become one.
+- `creator-shop.service.ts:getEarlyAccessModelPrices` reports a closed early-access window as still
+  priced — it skips `isPaidAccessActive`. Pre-existing, unrelated to this change.
+- 4 type errors and 1 failing suite (`user-payment-configuration`, `civitai-telemetry`) arrived with
+  the merge from main. Verified pre-existing there; this branch contributes none.
+
+### Opened by the merge with scheduled sales
+
+- [ ] **Two 10k creator-score floors and two per-tier allowance tables now live in `@civitai/buzz`**,
+      written a week apart by different work: `MONETIZATION_MIN_CREATOR_SCORE` (10000) beside
+      `MIN_CREATOR_SCORE_FOR_SALE` (10_000), and `MONTHLY_PRICING_ALLOWANCE_BY_TIER`
+      (3/10/25/∞ prices) beside `SALE_DAYS_BY_TIER` (3/7/14/30 days). They mean different things and
+      happen to share a threshold, which is the shape that drifts silently. Worth collapsing the score
+      floor to one constant before both grow more consumers.
+- [ ] **A sale now discounts the STORED price**, since the ceiling it used to compose over is gone.
+      Sale limits are validated against a floor computed from stored prices too. Worth a second look
+      from whoever owns sales, because the numbers a creator sees when authoring one have moved.
 
 ## Consequences neither blast-radius table measures
 
