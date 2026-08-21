@@ -24,7 +24,7 @@ import {
   IconEyeOff,
 } from '@tabler/icons-react';
 import Link from 'next/link';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { ListingProblemsIndicator } from '~/components/Apps/ListingProblemsIndicator';
 import {
@@ -326,17 +326,31 @@ export function rowActionsTestId(appListingId: string): string {
 }
 
 /**
- * EVERY author-facing control on a row, in ONE container — the takedown controls plus the
- * History disclosure.
+ * The row's ACTIONS CELL — the owner takedown controls plus the History disclosure.
+ *
+ * 🔴 SCOPE, STATED EXACTLY, BECAUSE THE OVERCLAIM IS THE DANGEROUS PART. This is **not**
+ * every interactive control on the row, and the ledger does not see the ones outside it:
+ * `ListingName`'s edit link and the Withdraw buttons inside the expanded `HistoryPanel` both
+ * live elsewhere in the row and are invisible to it. An earlier draft of this comment said
+ * "every author-facing control on a row", which is false — and false in the worst direction,
+ * because it is exactly the sentence a future consolidation would cite as proof of coverage
+ * it does not have. That is how the bug this PR fixes happened in the first place.
  *
  * 🔴 THE CONTAINER IS PART OF THE GUARD, not layout tidiness. `myAppsAuthorActions.ts`
- * declares the exact set of controls each row state offers, and the ledger test enumerates
- * `button`/`a` inside THIS element to compare against it. That comparison fails when the set
- * shrinks — which is the regression this whole file is answering: PR #4154 dropped Unpublish
- * and Republish from this page and three audits passed, because an absent control has
- * nothing to assert on. It also fails when the set grows, and refuses any control here that
- * omits `data-author-action`, so the enumeration cannot be walked by forgetting the
- * attribute.
+ * declares the exact set of controls each row state offers *in this cell*, and the ledger
+ * test enumerates `button`/`a[href]` inside THIS element to compare against it. That
+ * comparison fails when the set shrinks — which is the regression this whole file is
+ * answering: PR #4154 dropped Unpublish and Republish from this page and three audits
+ * passed, because an absent control has nothing to assert on. It also fails when the set
+ * grows, and refuses any control here that omits `data-author-action`, so the enumeration
+ * cannot be walked by forgetting the attribute.
+ *
+ * Kept scoped to the cell rather than widened to the whole row deliberately: the Withdraw
+ * buttons only exist once a row is expanded AND its history has loaded, so a row-wide ledger
+ * would have to model per-expansion, per-fetch action sets — turning a deterministic
+ * structural guard into one whose expected value depends on a query resolving. Widening it
+ * is a real improvement and worth doing; it is not a one-line change, and a ledger that goes
+ * intermittently red is worth less than none.
  *
  * 🔴 WHICH CONTROLS APPEAR IS DECIDED BY `myAppsAuthorActions`, NOT BY LOCAL BRANCHING. A
  * second copy of the predicate would let the DOM and the ledger drift while both stayed
@@ -416,8 +430,22 @@ function RowActions({
 function ModRemovedNotice({ row }: { row: MyAppRow }) {
   if (!showModRemovedNotice(row)) return null;
   return (
+    /*
+     * 🔴 IT STATES THE CONSEQUENCE, NOT A CAUSE, AND THE DIFFERENCE IS TRUTH. An earlier
+     * wording read "Removed by a moderator — contact them to restore it", which asserts WHO
+     * removed the app. That is not what this state means: the server's guard refuses an owner
+     * republish whenever the newest moderation event is anything other than `owner-unpublish`,
+     * and `resolveReport`/`dismissReport` write event rows too. So an owner who unpublishes
+     * their own app and then has a pre-existing report closed by a moderator lands here — the
+     * refusal is real and the mirror is faithful, but nobody removed their app. The sentence
+     * now says only the part that is true in every case that reaches it.
+     *
+     * (The `removed by a moderator` BADGE has the same problem and is deliberately untouched:
+     * it comes from the shared `ownerStateChip`, which the off-site and on-site submissions
+     * lists also render. Rewording it is a cross-surface copy change, not this PR's.)
+     */
     <Text size="xs" c="red" data-testid={`apps-mine-mod-removed-${row.appListingId}`}>
-      Removed by a moderator — contact them to restore it.
+      Only a moderator can restore this listing.
     </Text>
   );
 }
@@ -742,6 +770,21 @@ export type MyAppsBodyViewProps = {
   onRepublish?: (row: MyAppRow) => void;
   /** Is a republish in flight? Disables the button rather than allowing a double-fire. */
   republishing?: boolean;
+  /**
+   * Bumped by the container after a SUCCESSFUL unpublish, to open the Inactive collapse.
+   *
+   * 🔴 THE ROW LEAVES THE VIEWPORT AT THE MOMENT THE AUTHOR ACTS, and without this nothing
+   * says where it went. `partitionMyAppRows` files every `removed` listing under Inactive,
+   * which is collapsed by default, so a successful unpublish moves the app — and its
+   * Republish button — out of sight in the same instant the success toast appears. Opening
+   * the section is the cheap half of the fix; the underlying disagreement about what
+   * `removed` MEANS is recorded as open in the PR body and is deliberately not resolved here.
+   *
+   * A counter rather than a boolean because the trigger is an EVENT, not a state: two
+   * unpublishes in a row must each re-open a section the author may have closed in between,
+   * and a boolean that is already `true` fires no effect the second time.
+   */
+  revealInactive?: number;
   /** Submissions whose listing was deleted — see `listMyOrphanedSubmissions`. */
   orphanedSubmissions?: OrphanedSubmissionRow[];
   /** Message from a FAILED orphan read. Never conflate with an empty one. */
@@ -767,6 +810,7 @@ export function MyAppsBodyView({
   onUnpublish,
   onRepublish,
   republishing = false,
+  revealInactive = 0,
   orphanedSubmissions = [],
   orphanedError = null,
   orphanedLoading = false,
@@ -774,6 +818,12 @@ export function MyAppsBodyView({
 }: MyAppsBodyViewProps) {
   const [inactiveOpen, setInactiveOpen] = useState(false);
   const [inactivePage, setInactivePage] = useState(1);
+
+  // 🔴 GUARDED ON `> 0` so the initial render does not open the section — the prop defaults
+  // to 0 and only a real unpublish bumps it. See `revealInactive` on the props type.
+  useEffect(() => {
+    if (revealInactive > 0) setInactiveOpen(true);
+  }, [revealInactive]);
 
   const { active, inactive } = useMemo(
     () => partitionMyAppRows(sortByRecentlyUpdated(rows)),
@@ -1197,6 +1247,17 @@ export function MyAppsBody() {
     void utils.appListings.listMine.invalidate();
   }, [utils]);
 
+  /**
+   * Bumped only on a SUCCESSFUL unpublish — see `revealInactive` on the props type. It is
+   * wired to the modal's `onDone`, which `OwnerUnpublishModal` calls in its mutation's
+   * `onSuccess`, so a cancelled or refused unpublish does not move the page around.
+   */
+  const [revealInactive, setRevealInactive] = useState(0);
+  const onUnpublished = useCallback(() => {
+    refetchRows();
+    setRevealInactive((n) => n + 1);
+  }, [refetchRows]);
+
   const republish = trpc.appListings.republishOwnListing.useMutation({
     onSuccess: () => {
       showSuccessNotification({ message: 'App republished — it is live again.' });
@@ -1257,6 +1318,7 @@ export function MyAppsBody() {
         onUnpublish={onUnpublish}
         onRepublish={onRepublish}
         republishing={republish.isPending}
+        revealInactive={revealInactive}
       />
       {/*
         🔴 CONFIRM-GATED, REUSING THE EXISTING MODAL RATHER THAN A FRESH `confirm()`.
@@ -1267,7 +1329,7 @@ export function MyAppsBody() {
       <OwnerUnpublishModal
         target={unpublishTarget}
         onClose={() => setUnpublishTarget(null)}
-        onDone={refetchRows}
+        onDone={onUnpublished}
         testIdPrefix="apps-mine"
         variant={unpublishTarget?.variant ?? 'store'}
       />

@@ -39,7 +39,11 @@ function row(over: Partial<AuthorActionRow> = {}): AuthorActionRow {
 /** The four states, each reached by the field combination that is the ONLY route to it. */
 const LIVE = row({ status: 'approved', lastModerationAction: null });
 const OWNER_HIDDEN = row({ status: 'removed', lastModerationAction: OWNER_UNPUBLISH_ACTION });
-const MOD_REMOVED = row({ status: 'removed', lastModerationAction: 'delist' });
+// `other` is what the SERVER now sends for every non-owner action — the projection
+// normalises `delist`/`purge`/`claim`/… to one value so a seated editor never receives the
+// moderator's verb (`app-access.my-app-listings-moderation.test.ts`). The routing must key on
+// "not owner-unpublish", so a raw verb is also exercised below to prove it still does.
+const MOD_REMOVED = row({ status: 'removed', lastModerationAction: 'other' });
 const INACTIVE = row({ status: 'draft', lastModerationAction: null });
 
 describe('the ledger table itself', () => {
@@ -110,6 +114,18 @@ describe('rowOwnerState — the routing the ledger is keyed on', () => {
     expect(rowOwnerState(row({ status: 'removed', lastModerationAction: undefined }))).toBe(
       'mod-removed'
     );
+  });
+
+  it('routes on "not owner-unpublish", so a RAW verb lands in the same state as `other`', () => {
+    // 🔴 The client must not depend on the server's normalisation having happened. A cached
+    // payload from before that projection shipped, or any future caller that hands over a raw
+    // action, still has to reach `mod-removed` — the predicate is an equality test against ONE
+    // value, and everything else is the safe side of it. Four pairwise-distinct real verbs.
+    for (const verb of ['delist', 'purge', 'claim', 'report-dismiss']) {
+      expect(rowOwnerState(row({ status: 'removed', lastModerationAction: verb }))).toBe(
+        'mod-removed'
+      );
+    }
   });
 
   it('does not read the moderation action on a non-removed listing', () => {

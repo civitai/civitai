@@ -866,8 +866,12 @@ export type MyAppListing = {
    * Populated ONLY for a `removed` listing (the sole state that reads it); `null`
    * everywhere else — including on a removed listing with no recorded event, which
    * {@link ownerListingState} treats as a mod removal, the SAFE direction.
+   *
+   * 🔴 NORMALISED, NOT RAW — see {@link normalizeLastModerationAction} and the note at its
+   * call site. This read is reachable by a seated EDITOR, so it carries the one bit the UI
+   * branches on and never the moderator's actual verb.
    */
-  lastModerationAction: string | null;
+  lastModerationAction: NormalizedModerationAction | null;
 };
 
 /**
@@ -913,6 +917,24 @@ export type AppListingAuthoringContext = Omit<
    */
   connectClientId: string | null;
 };
+
+/**
+ * The one moderation-event action `/apps/mine` is allowed to name, and the bucket for
+ * everything else.
+ *
+ * 🔴 THE VALUE SPACE IS THE POINT. `owner-unpublish` is the only action the client may act
+ * on (it is what `republishOwnListing`'s last-event guard permits), so every other verb
+ * collapses to `other` before it leaves the server. Widening this back to the raw string
+ * re-opens the editor-disclosure hole described at the call site — do not "simplify" it away.
+ */
+export const OWNER_UNPUBLISH_EVENT = 'owner-unpublish';
+export type NormalizedModerationAction = typeof OWNER_UNPUBLISH_EVENT | 'other';
+
+/** `null` in ⇒ `null` out (no event); the owner's own unpublish keeps its name; all else → `other`. */
+function normalizeLastModerationAction(action: string | null): NormalizedModerationAction | null {
+  if (action == null) return null;
+  return action === OWNER_UNPUBLISH_EVENT ? OWNER_UNPUBLISH_EVENT : 'other';
+}
 
 /** Hydrate {@link resolveAccessibleListingIds} into rows, newest listing first. */
 async function hydrateMyAppListings(
@@ -1043,8 +1065,20 @@ async function hydrateMyAppListings(
         }).problems,
         // 🔴 Only a `removed` row can carry one — see the field's doc. A non-removed row
         // returning an action would let a stale event re-open Republish on a live listing.
-        lastModerationAction:
-          r.status === 'removed' ? lastActionByListingId.get(r.id) ?? null : null,
+        //
+        // 🔴 NORMALISED TO THE DISTINCTION, NOT THE VERB, AND THAT IS A DISCLOSURE BOUNDARY.
+        // `listMine` is reachable by an accepted EDITOR, and the only other route to a
+        // listing's moderation actions (`listMyListingModerationEvents`) is owner-scoped —
+        // so shipping the raw action would hand a seated collaborator facts they have no
+        // route to today, and specific ones: `claim` says a moderator seized the app from
+        // an impersonating owner, `purge`/`report-resolve`/`report-dismiss` each narrate a
+        // different enforcement history. The consumer needs exactly one bit — may the owner
+        // press Republish — so that is all this carries. Same bar {@link MyAppListing}
+        // already sets for `iconUrl` ("discloses nothing to a seated editor that the store
+        // does not"); the raw verb neither met it nor argued for an exception.
+        lastModerationAction: normalizeLastModerationAction(
+          r.status === 'removed' ? lastActionByListingId.get(r.id) ?? null : null
+        ),
       };
     }
   );

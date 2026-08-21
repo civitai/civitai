@@ -120,6 +120,49 @@ function eventsFake(byListingId: Record<string, string>) {
   };
 }
 
+/** One row of a listing's moderation history, for {@link historyFake}. */
+type Event = { action: string; createdAt: Date; id: string };
+
+/**
+ * A moderation-event fake that holds a real multi-event HISTORY per listing and **honours
+ * `orderBy` + `distinct`** the way Postgres would.
+ *
+ * 🔴 IT EXISTS BECAUSE `eventsFake` CANNOT SEE THE SORT. That one synthesises a single event
+ * per id, so `orderBy: [{createdAt}]` is unobservable through it and a `desc` → `asc` mutant
+ * SURVIVES a fully green run — reachable, not unreachable: the args object really is passed
+ * and really is read by the `distinct`/`in` assertions, it just carries a key no assertion
+ * and no fixture can feel. Ordering only becomes a behavioural fact once a listing has more
+ * than one event, so that is what this builds.
+ */
+function historyFake(byListingId: Record<string, Event[]>) {
+  return async (...a: unknown[]): Promise<unknown[]> => {
+    const args = (a[0] ?? {}) as {
+      where?: { appListingId?: { in: string[] } };
+      orderBy?: Array<Record<string, 'asc' | 'desc'>>;
+      distinct?: string[];
+    };
+    const ids = args.where?.appListingId?.in ?? Object.keys(byListingId);
+    let rows: Array<Event & { appListingId: string }> = ids.flatMap((id) =>
+      (byListingId[id] ?? []).map((e) => ({ ...e, appListingId: id }))
+    );
+    // Apply the query's OWN sort, key by key, rather than a hardcoded newest-first.
+    for (const clause of [...(args.orderBy ?? [])].reverse()) {
+      const [key, dir] = Object.entries(clause)[0] as ['createdAt' | 'id', 'asc' | 'desc'];
+      rows = [...rows].sort((x, y) => {
+        const a1 = key === 'createdAt' ? x.createdAt.getTime() : x.id;
+        const b1 = key === 'createdAt' ? y.createdAt.getTime() : y.id;
+        const cmp = a1 < b1 ? -1 : a1 > b1 ? 1 : 0;
+        return dir === 'desc' ? -cmp : cmp;
+      });
+    }
+    if (args.distinct?.includes('appListingId')) {
+      const seen = new Set<string>();
+      rows = rows.filter((r) => !seen.has(r.appListingId) && seen.add(r.appListingId));
+    }
+    return rows.map((r) => ({ appListingId: r.appListingId, action: r.action }));
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockDb.appListing.findMany.mockImplementation(async () => []);
@@ -145,11 +188,76 @@ describe('listMyAppListings — lastModerationAction', () => {
     const byId = Object.fromEntries(rows.map((r) => [r.appListingId, r.lastModerationAction]));
     // Literal expected values, and pairwise distinct — a mutant that returns one constant for
     // every row fails on at least two of these three.
+    // 🔴 The moderator's verb is NORMALISED to `other` before it leaves the server — this
+    // read is reachable by a seated editor, who has no other route to a listing's moderation
+    // history, and the UI needs only "may the owner Republish". `delist` going in and `other`
+    // coming out IS the disclosure boundary; asserting the raw verb here would pin the hole.
     expect(byId).toEqual({
       apl_mine: 'owner-unpublish',
-      apl_theirs: 'delist',
+      apl_theirs: 'other',
       apl_live: null,
     });
+  });
+
+  it('collapses EVERY non-owner action to the same `other`, whatever the verb', async () => {
+    // 🔴 Pairwise-distinct real moderator verbs, each narrating a different enforcement
+    // history — `claim` in particular says a moderator seized the app from an impersonating
+    // owner. A projection that leaked any one of them fails here; one that leaked only the
+    // verb it was written against would still be caught, because these are four different
+    // strings and the expected value is one constant.
+    const verbs = ['delist', 'purge', 'claim', 'report-dismiss'];
+    const table = verbs.map((_, i) => stored({ id: `apl_v${i}` }));
+    mockDb.appListing.findMany.mockImplementation(findManyFake(table));
+    mockDb.appListingModerationEvent.findMany.mockImplementation(
+      eventsFake(Object.fromEntries(verbs.map((v, i) => [`apl_v${i}`, v])))
+    );
+
+    const rows = await listMyAppListings({ userId: OWNER });
+    expect(rows.map((r) => r.lastModerationAction)).toEqual(verbs.map(() => 'other'));
+    // Positive control for that constant: the owner's own action is NOT collapsed, so this
+    // assertion cannot be satisfied by a projection that hardcodes `other` for everything.
+    mockDb.appListingModerationEvent.findMany.mockImplementation(
+      eventsFake({ apl_v0: 'owner-unpublish' })
+    );
+    const again = await listMyAppListings({ userId: OWNER });
+    expect(again.find((r) => r.appListingId === 'apl_v0')?.lastModerationAction).toBe(
+      'owner-unpublish'
+    );
+  });
+
+  it('🔴 takes the NEWEST event, not an arbitrary one — a relisted-then-self-unpublished app', async () => {
+    /**
+     * The history that makes `orderBy` load-bearing, and the direction that matters: an app
+     * a moderator once delisted, then relisted, and whose owner has since unpublished it
+     * themselves. The newest event is `owner-unpublish`, so the owner MAY restore it — and
+     * the server's own guard agrees. Reading the oldest instead reports the `delist`, the row
+     * hides Republish behind "a moderator removed this", and an entitled author is stranded
+     * on a listing the server would have let them bring back.
+     *
+     * `historyFake` honours the query's own `orderBy`, so this dies on a `desc` → `asc`
+     * mutation rather than surviving it — which is exactly what the single-event fake could
+     * not see.
+     */
+    mockDb.appListing.findMany.mockImplementation(findManyFake([stored({ id: 'apl_arc' })]));
+    mockDb.appListingModerationEvent.findMany.mockImplementation(
+      historyFake({
+        apl_arc: [
+          { action: 'delist', createdAt: new Date('2026-03-01T00:00:00Z'), id: 'ev_a' },
+          { action: 'relist', createdAt: new Date('2026-04-01T00:00:00Z'), id: 'ev_b' },
+          { action: 'owner-unpublish', createdAt: new Date('2026-05-01T00:00:00Z'), id: 'ev_c' },
+        ],
+      })
+    );
+
+    const rows = await listMyAppListings({ userId: OWNER });
+    expect(rows[0].lastModerationAction).toBe('owner-unpublish');
+
+    // Structural half, next to the `distinct` assertion below: the exact sort the newest-first
+    // keyset needs. `createdAt` first, `id` as the tiebreak for two events in the same instant.
+    const args = mockDb.appListingModerationEvent.findMany.mock.calls[0]?.[0] as {
+      orderBy: Array<Record<string, string>>;
+    };
+    expect(args.orderBy).toEqual([{ createdAt: 'desc' }, { id: 'desc' }]);
   });
 
   it('reads events ONLY for the removed subset', async () => {

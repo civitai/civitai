@@ -67,11 +67,23 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ appBlocks: true, appBlocksAuthor: true }),
 }));
 
-/** One mutation stub that RECORDS which procedure it belongs to — see `the wiring` below. */
+/**
+ * One mutation stub that RECORDS which procedure it belongs to — see `the wiring` below.
+ *
+ * 🔴 IT INVOKES THE CALLER'S `onSuccess`, and that is load-bearing rather than realism for its
+ * own sake. `OwnerUnpublishModal` closes itself and calls `onDone` from inside `onSuccess`, so
+ * a stub that only recorded the call would leave every post-success behaviour (the Inactive
+ * section opening, the row list invalidating, the modal closing) permanently unexercised — and
+ * a test asserting them would pass or fail on nothing at all.
+ */
+type MutationOpts = { onSuccess?: (data: unknown) => unknown; onError?: (e: unknown) => unknown };
 function mutationStub(name: string, isPending = false) {
   return {
-    useMutation: () => ({
-      mutate: (input: unknown) => mocks.calls.push([name, input]),
+    useMutation: (opts?: MutationOpts) => ({
+      mutate: (input: unknown) => {
+        mocks.calls.push([name, input]);
+        void opts?.onSuccess?.(undefined);
+      },
       isPending,
     }),
   };
@@ -125,9 +137,11 @@ const { MyAppsBody, rowActionsTestId } = await import('./MyAppsBody');
 /**
  * Fixtures are pairwise distinct on every dimension an assertion names — id, slug, name,
  * status, kind and last moderation action — and none of them can produce an expected value by
- * coincidence. In particular no two rows share a `lastModerationAction`, and `'delist'` is a
- * real moderator action rather than a placeholder, so a mutant that compares against the wrong
- * literal cannot survive on a fixture that could only ever have yielded it.
+ * coincidence. In particular no two rows share a `lastModerationAction`. The mod-removed
+ * fixture uses `'other'` because that is what the SERVER now sends — the projection normalises
+ * every non-owner verb to one value so a seated editor never receives the moderator's actual
+ * action. That a RAW verb (`delist`/`purge`/`claim`/…) still routes to the same state is pinned
+ * in the blocking `unit` tier, not here.
  */
 function row(over: Partial<MyAppRow> & { appListingId: string }): MyAppRow {
   const kind = over.kind ?? 'onsite';
@@ -158,7 +172,7 @@ const OWNER_HIDDEN = row({
 const MOD_REMOVED = row({
   appListingId: 'apl_modgone_r3',
   status: 'removed',
-  lastModerationAction: 'delist',
+  lastModerationAction: 'other',
 });
 const INACTIVE_DRAFT = row({ appListingId: 'apl_draft_k4', status: 'draft' });
 const SEAT_LIVE = row({ appListingId: 'apl_seat_m5', status: 'approved', role: 'editor' });
@@ -382,6 +396,36 @@ describe('the wiring — each control fires the right procedure with the right i
    * wording is present AND that the other kind's wording is not, so neither passes by a
    * variant that renders both strings.
    */
+  test('🔴 a successful unpublish OPENS the Inactive section the row is about to move into', async () => {
+    /**
+     * The row leaves the viewport at the exact moment the author acts: `partitionMyAppRows`
+     * files every `removed` listing under Inactive, which is collapsed by default, so without
+     * this the app AND its Republish button vanish while a success toast says it worked.
+     *
+     * Driven through the real confirm flow rather than by poking the prop, because the whole
+     * claim is "on SUCCESS" — `OwnerUnpublishModal` calls `onDone` from its mutation's
+     * `onSuccess`, and this test is what pins that wiring rather than the effect in isolation.
+     */
+    // A second, already-removed row so the Inactive section exists and has something in it.
+    mocks.rows = [LIVE_ONSITE, MOD_REMOVED];
+    renderWithProviders(<MyAppsBody />);
+
+    // Closed to begin with — the control reports its own state, so this is the negative arm.
+    const panelToggle = page.getByTestId('apps-mine-inactive-toggle');
+    await expect.element(panelToggle).toBeInTheDocument();
+    expect(panelToggle.element().getAttribute('aria-expanded')).toBe('false');
+
+    await userEvent.click(page.getByTestId(`apps-mine-unpublish-${LIVE_ONSITE.appListingId}`));
+    await userEvent.click(page.getByTestId('apps-mine-unpublish-confirm'));
+
+    // …and open afterwards. `aria-expanded` is read from the same boolean the panel renders
+    // from, so it cannot report a state the DOM does not have.
+    await expect.element(panelToggle).toHaveAttribute('aria-expanded', 'true');
+    expect(mocks.calls).toEqual([
+      ['unpublishOwnListing', { appListingId: 'apl_live_on', reason: undefined }],
+    ]);
+  });
+
   test('an ON-SITE unpublish warns that the app goes OFFLINE', async () => {
     mocks.rows = [LIVE_ONSITE];
     renderWithProviders(<MyAppsBody />);

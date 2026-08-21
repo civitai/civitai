@@ -116,10 +116,16 @@ export function rowOwnerState(row: AuthorActionRow): OwnerListingState {
 /**
  * The exact set of author controls this row must render.
  *
- * 🔴 THE COMPONENT CALLS THIS RATHER THAN RE-BRANCHING. If the component decided for itself
- * which buttons to draw, the ledger above would be a comment: the test would compare the
- * DOM against a table nothing forces the DOM to follow. Routing both through one function
- * is what makes a red test mean "the page changed", not "the table is stale".
+ * 🔴 THE COMPONENT DOES **NOT** CALL THIS — it calls {@link showUnpublish} /
+ * {@link showRepublish} per control, because it renders them as separate JSX branches rather
+ * than mapping over a list. So this function and the DOM are two independent derivations, and
+ * the property the ledger depends on — that they agree — is NOT structural here. It is
+ * enforced by a dedicated seam test — "agrees with the per-control predicates the component
+ * calls", in `src/components/Apps/__tests__/myAppsAuthorActions.test.ts` — which drives all
+ * four states × both roles and asserts each predicate matches this list's membership. Without that test the ledger would be comparing the DOM against a table nothing
+ * forces the DOM to follow — i.e. pinning itself. Named explicitly because an earlier version
+ * of this comment claimed the stronger, structural version, and a reader who believed it
+ * would have deleted the seam test as redundant.
  */
 export function authorRowActions(row: AuthorActionRow): AuthorRowAction[] {
   if (row.role !== 'owner') return [...EDITOR_ACTIONS];
