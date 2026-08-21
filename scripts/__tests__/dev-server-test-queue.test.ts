@@ -332,6 +332,12 @@ describe('dev-server test queue', () => {
     // wrong terminal status — a shutdown reported as a timeout, or the reverse — which is the
     // shape of assertion that lets a real mix-up through.
     expect(queue.get(run.id).status).toBe(expected);
+    // And it must SAY so. Swallowing this silently hides a clipped log behind `logsDropped: 0`,
+    // which is the one outcome the queue's log contract rules out — and nothing asserted the line
+    // existed, so both call sites could revert to a silent catch with the suite still green.
+    expect(queue.logs(run.id).map((l: { message: string }) => l.message)).toContainEqual(
+      expect.stringContaining('capture release failed: capture release blew up')
+    );
   });
 
   // A runner that predates `dispose` must not crash the sweep — the queue calls it optionally.

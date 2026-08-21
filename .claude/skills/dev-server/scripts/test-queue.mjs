@@ -459,6 +459,9 @@ export class TestQueue {
       const run = this.runs.get(id);
       run.cancelReason = 'daemon-shutdown';
       run.killRequestedAt = this.now();
+      // Not guarded, unlike the dispose below, and the asymmetry is deliberate: `defaultStartRun`
+      // puts its whole kill body inside its own try/catch, and the daemon always uses that runner
+      // (it is the only `new TestQueue` and passes no `startRun`). Nothing here can throw.
       run.handle?.kill(true);
 
       // Dispose, then settle HERE — the two go together, and the first version shipped only the

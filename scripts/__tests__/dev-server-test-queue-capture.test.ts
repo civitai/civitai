@@ -414,8 +414,13 @@ describe('the queue hands its child the capture file, not a pipe', () => {
       onExit: () => {},
     });
     const stdio = (spawnMock.mock.calls[0][2] as { stdio: number[] }).stdio;
+    // Scoped to THIS process. The prefix alone matches every capture in /tmp, including one the
+    // operator's own daemon creates whenever it runs a queued test — so the unscoped form asserts
+    // that a file it does not own has been deleted, and goes red with no defect present. Measured:
+    // a single foreign file made the unmutated test fail, and made three mutants report a false
+    // KILLED. The filename carries the owning pid precisely so this can be scoped.
     const capturePath = readdirSync(tmpdir())
-      .filter((f) => f.startsWith('civitai-test-run-'))
+      .filter((f) => f.startsWith(`civitai-test-run-${process.pid}-`))
       .map((f) => resolve(tmpdir(), f));
     writeSync(stdio[1], 'boom one\nboom two\n');
 
@@ -425,6 +430,43 @@ describe('the queue hands its child the capture file, not a pipe', () => {
     // Released despite the throw: the descriptor is closed and the file is gone.
     expect(() => writeSync(stdio[1], 'x')).toThrow();
     for (const p of capturePath) expect(existsSync(p)).toBe(false);
+  });
+
+  /**
+   * The same release guarantee on the path every healthy run takes.
+   *
+   * `finish()` and `dispose()` have the identical drain-then-close shape, and the first version of
+   * the throwing-consumer test drove only `dispose()`. Reverting `finish()`'s try/finally survived
+   * the entire suite — the headline change of its own round, untested, on the common path.
+   */
+  it('releases the descriptors on a normal exit even when the log consumer throws', () => {
+    const child = Object.assign(new EventEmitter(), { pid: 4242, kill: vi.fn() });
+    spawnMock.mockReturnValue(child);
+
+    let seen = 0;
+    defaultStartRun({
+      worktree: repoRoot,
+      args: [],
+      onLog: (_level: string, message: string) => {
+        if (message.startsWith('boom')) {
+          seen += 1;
+          throw new Error('log consumer blew up');
+        }
+      },
+      onExit: () => {},
+    });
+    const stdio = (spawnMock.mock.calls[0][2] as { stdio: number[] }).stdio;
+    const mine = readdirSync(tmpdir())
+      .filter((f) => f.startsWith(`civitai-test-run-${process.pid}-`))
+      .map((f) => resolve(tmpdir(), f));
+    writeSync(stdio[1], 'boom one\nboom two\n');
+
+    // The real exit path, not dispose().
+    expect(() => child.emit('exit', 0)).toThrow(/log consumer blew up/);
+
+    expect(seen).toBeGreaterThan(0);
+    expect(() => writeSync(stdio[1], 'x')).toThrow();
+    for (const f of mine) expect(existsSync(f)).toBe(false);
   });
 
   /**
