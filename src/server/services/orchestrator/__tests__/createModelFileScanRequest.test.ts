@@ -554,6 +554,36 @@ describe('createModelFileScanRequest', () => {
       );
     });
 
+    // The verdict is deliberately taken from the RETRY, and so are the audit
+    // fields. Every other fixture here rejects with the same object twice, which
+    // cannot tell the two apart — so re-sourcing the log from `firstError` passes
+    // a fully green suite while making the log describe the wrong attempt. Give
+    // the two attempts pairwise-distinct values so that mutant is observable.
+    it('sources the audit fields from the RETRY, not the first attempt', async () => {
+      const firstFailure = new DeliveryWorkerError(410, 'Gone');
+      firstFailure.resolverError = new StorageResolverError(503, 'Service Unavailable');
+      const retryFailure = new DeliveryWorkerError(404, 'Not Found');
+      retryFailure.resolverError = new TypeError('fetch failed');
+
+      mockResolveDownloadUrl
+        .mockRejectedValueOnce(firstFailure)
+        .mockRejectedValueOnce(retryFailure);
+
+      const promise = createModelFileScanRequest(baseInput).catch((e) => e);
+      await vi.advanceTimersByTimeAsync(60_000);
+      await promise;
+
+      expect(mockLogToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({
+          // 404 from the retry, NOT 410 from the first attempt.
+          deliveryWorkerStatus: 404,
+          // The retry's resolver failure had no status; the first attempt's did.
+          resolverStatus: undefined,
+          resolverError: 'TypeError: fetch failed',
+        })
+      );
+    });
+
     it('skips pre-flight entirely when preflight=false (inline upload path)', async () => {
       mockResolveDownloadUrl.mockRejectedValue(new Error('would fail if called'));
       mockSubmitWorkflow.mockResolvedValue({

@@ -140,6 +140,13 @@ describe('resolveDownloadUrl — the resolver verdict survives the delivery-work
       .mockResolvedValue(deliveryFail(404));
 
     const err = await resolveDownloadUrl(1, 's3://b/k.safetensors').catch((e) => e);
+    // Pin the arrangement, not just the verdict. With the resolver disabled this
+    // rejection would be consumed by the delivery worker's own fetch and a bare
+    // Error returns false anyway — so without these two assertions the test stays
+    // green in a config where it is exercising nothing it claims to.
+    expect(fetchMock.mock.calls[0][0]).toContain('resolver.example.com');
+    expect((err as DeliveryWorkerError).resolverError).toBeInstanceOf(Error);
+    expect((err as DeliveryWorkerError).resolverError).not.toBeInstanceOf(StorageResolverError);
     expect(isDefiniteNotFound(err)).toBe(false);
   });
 
