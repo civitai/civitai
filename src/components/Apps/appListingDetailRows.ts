@@ -35,6 +35,7 @@
  * thresholds. See that module's header.
  */
 
+import { STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
 import { getRatingLabel } from '~/utils/rating-label';
 import { marketplaceCategoryLabel } from '~/server/services/blocks/marketplace-categories.constants';
 import { offsiteContentRatingLabel } from '~/shared/constants/browsingLevel.constants';
@@ -64,7 +65,7 @@ export type ListingDetailRow = {
  * filter uses.
  */
 function kindLabel(detail: Pick<ListingDetail, 'kindData'>): string {
-  return detail.kindData.kind === 'onsite' ? 'On-site app' : 'Standalone';
+  return detail.kindData.kind === 'onsite' ? 'On-site app' : STANDALONE_KIND_LABEL;
 }
 
 /**

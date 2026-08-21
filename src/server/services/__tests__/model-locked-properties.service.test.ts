@@ -149,8 +149,6 @@ const baseInput = {
   description: 'A description',
   type: ModelType.Checkpoint,
   uploadType: ModelUploadType.Created,
-  // Draft keeps applyModelFlagSideEffects out of the ingest path so the only
-  // dbWrite.model.update call in a test is the upsert itself.
   status: ModelStatus.Draft,
 } satisfies Partial<ModelUpsertInput>;
 

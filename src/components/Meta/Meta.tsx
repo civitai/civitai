@@ -51,6 +51,7 @@ type MetaBaseProps<TImage> = {
   imageUrl?: string;
   ogEndpoint?: string;
   keywords?: string | string[];
+  ogType?: 'website' | 'article' | 'profile' | 'video.other';
 };
 
 export type MetaProps<TImage> = MetaBaseProps<TImage> &
@@ -70,6 +71,7 @@ export function Meta<TImage extends { nsfwLevel: number; url: string; type?: Med
   imageUrl,
   ogEndpoint,
   keywords,
+  ogType = 'website',
 }: MetaProps<TImage>) {
   const _images = images ? ([] as TImage[]).concat(images) : undefined;
   const _image = _images?.find((image) => getIsSafeBrowsingLevel(image.nsfwLevel));
@@ -106,7 +108,7 @@ export function Meta<TImage extends { nsfwLevel: number; url: string; type?: Med
         </>
       )}
       {stringifiedKeywords && <meta name="keywords" content={stringifiedKeywords} />}
-      <meta property="og:type" content="website" />
+      <meta property="og:type" content={ogType} />
       <meta property="twitter:card" content="summary_large_image" />
       {_ogImageUrl && (
         <>

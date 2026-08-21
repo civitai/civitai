@@ -8,10 +8,8 @@ import { APPS_PAGE_WIDTHS } from '~/components/Apps/appsPageWidths';
 import { AppsSubmitEditView } from '~/components/Apps/AppsSubmitEditView';
 import { CliSubmitCta } from '~/components/Apps/CliSubmitCta';
 import { ExternalSubmitForm } from '~/components/Apps/ExternalSubmitForm';
-import {
-  SubmitModeSelector,
-  type SubmitMode,
-} from '~/components/Apps/SubmitModeSelector';
+import { STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
+import { SubmitModeSelector, type SubmitMode } from '~/components/Apps/SubmitModeSelector';
 import { Meta } from '~/components/Meta/Meta';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isAppDeveloper } from '~/shared/utils/app-blocks-access';
@@ -78,13 +76,12 @@ export default function SubmitAppPage() {
         subtitle={
           mode === null ? (
             <>
-              Choose how you want to list your app. Author an on-platform{' '}
-              <strong>App</strong> with the <Code>civitai</Code> CLI, or list an{' '}
-              <strong>external app</strong> by connecting your OAuth app. A moderator reviews
-              every submission before it appears.
+              Choose how you want to list your app. Author an on-platform <strong>App</strong> with
+              the <Code>civitai</Code> CLI, or list a <strong>{STANDALONE_KIND_LABEL} app</strong>{' '}
+              by connecting your OAuth app. A moderator reviews every submission before it appears.
             </>
           ) : (
-            <>Submitting {mode === 'external' ? 'an external app' : 'an App'}.</>
+            <>Submitting {mode === 'external' ? `a ${STANDALONE_KIND_LABEL} app` : 'an App'}.</>
           )
         }
       >

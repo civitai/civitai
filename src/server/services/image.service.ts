@@ -179,6 +179,7 @@ import {
   throwAuthorizationError,
   throwBadRequestError,
   throwDbError,
+  throwInternalServerError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { fetchTimeoutSignal } from '~/server/utils/fetch-timeout';
@@ -1543,7 +1544,9 @@ export const getAllImages = async (
   // so a hubId arriving means the dispatcher routed wrongly. Returning results
   // would hand the caller the global feed labelled as their hub.
   if (input.hubId)
-    throw new Error('getAllImages cannot serve a hub; hub queries must use the index path');
+    throw throwInternalServerError(
+      new Error('getAllImages cannot serve a hub; hub queries must use the index path')
+    );
 
   const blockedEnforcement = await enforceBlockedBrowsingTags(input, {
     id: input.user?.id,
@@ -3976,8 +3979,8 @@ export async function getImagesFromFeedSearch(
   // describes. Adding the key to that schema without a clause here would serve an
   // unfiltered feed from one of three branches, so fail loudly instead.
   if (input.hubId)
-    throw new Error(
-      'getImagesFromFeedSearch cannot serve a hub; hub queries must use the index path'
+    throw throwInternalServerError(
+      new Error('getImagesFromFeedSearch cannot serve a hub; hub queries must use the index path')
     );
 
   try {
@@ -6894,7 +6897,6 @@ type GetImageConnectionRaw = {
   width: number;
   height: number;
   hash: string;
-  meta: ImageMetaProps; // TODO - remove
   hideMeta: boolean;
   createdAt: Date;
   mimeType: string;
@@ -6907,7 +6909,7 @@ type GetImageConnectionRaw = {
   metadata: ImageMetadata | VideoMetadata;
   entityId: number;
   hasMeta: boolean;
-  hasPositivePrompt?: boolean;
+  hasPositivePrompt: boolean;
   poi?: boolean;
   minor?: boolean;
 };
@@ -6978,7 +6980,6 @@ export const getImagesByEntity = async ({
       i.width,
       i.height,
       i.hash,
-      i.meta,
       i."hideMeta",
       i."createdAt",
       i."mimeType",
