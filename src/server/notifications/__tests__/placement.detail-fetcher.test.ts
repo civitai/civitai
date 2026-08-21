@@ -81,4 +81,33 @@ describe('the avatar on a placement notification', () => {
     expect(placementDetailFetcher.types.sort()).toEqual(Object.keys(placementNotifications).sort());
     expect(placementDetailFetcher.types.length).toBeGreaterThan(1);
   });
+
+  /**
+   * The coalesce above picks the placer whenever both ids are present, which is
+   * only the right person because no processor writes both. That is a property
+   * of the QUERIES, not of this fetcher, and the coverage test cannot see it: a
+   * new type auto-enrols and a changed details shape renders the reader their
+   * own avatar with every other assertion green.
+   *
+   * Fails closed — a type whose query emits neither id fails here rather than
+   * passing for want of a match.
+   */
+  it('has exactly one party to name in every processor', async () => {
+    const emitted = await Promise.all(
+      Object.entries(placementNotifications).map(async ([type, processor]) => {
+        const query = await processor.prepareQuery?.({
+          lastSent: '2026-01-01',
+          category: 'Creator',
+        } as never);
+
+        return {
+          type,
+          ids: (["'placerId'", "'ownerId'"] as const).filter((id) => String(query).includes(id)),
+        };
+      })
+    );
+
+    expect(emitted.length).toBe(Object.keys(placementNotifications).length);
+    for (const { type, ids } of emitted) expect([type, ids]).toEqual([type, [expect.any(String)]]);
+  });
 });
