@@ -191,11 +191,16 @@ describe('getStickerBook — what leaves the server', () => {
     await getStickerBook({ username: 'creator', viewerId: STRANGER, ...levels });
 
     const wheres = placementGroupBy.mock.calls.map((call) => call[0].where);
-    // The placed side filters on the image owner, the received side on the
-    // placer: each excludes the end that is NOT this creator, which is the only
-    // end their book can put in front of the viewer.
-    expect(wheres).toContainEqual(expect.objectContaining({ ownerId: { notIn: [STRANGER] } }));
-    expect(wheres).toContainEqual(expect.objectContaining({ placerId: { notIn: [STRANGER] } }));
+    // Asserted as a PAIR on each side, not as two independent facts. Naming the
+    // wrong end does not merely filter the wrong column — it takes the place of
+    // the id that scopes the query to this creator, and a test that only checked
+    // for the presence of a `notIn` passed straight through that.
+    expect(wheres).toContainEqual(
+      expect.objectContaining({ placerId: CREATOR, ownerId: { notIn: [STRANGER] } })
+    );
+    expect(wheres).toContainEqual(
+      expect.objectContaining({ ownerId: CREATOR, placerId: { notIn: [STRANGER] } })
+    );
   });
 
   it('drops an image this domain may not serve rather than sending it withheld', async () => {

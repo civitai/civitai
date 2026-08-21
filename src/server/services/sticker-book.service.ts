@@ -153,14 +153,14 @@ async function getPlacementSection({
   domainLevels: number;
   viewerLevels: number;
 }) {
-  const counterpartField = side === 'placer' ? 'ownerId' : 'placerId';
-  const where = {
-    surface: SURFACE,
-    targetType: TARGET_TYPE,
-    status: 'approved',
-    ...(side === 'placer' ? { placerId: userId } : { ownerId: userId }),
-    ...(blockedIds.length ? { [counterpartField]: { notIn: blockedIds } } : {}),
-  };
+  const blocked = blockedIds.length ? { notIn: blockedIds } : undefined;
+  // Written out per side rather than with a computed key. A computed key that
+  // named the wrong end would OVERWRITE the id that scopes the query to this
+  // creator — silently, still returning rows, just somebody else's.
+  const where =
+    side === 'placer'
+      ? { surface: SURFACE, targetType: TARGET_TYPE, status: 'approved', placerId: userId, ownerId: blocked }
+      : { surface: SURFACE, targetType: TARGET_TYPE, status: 'approved', ownerId: userId, placerId: blocked };
 
   const groups = await dbRead.placement.groupBy({
     by: ['targetId'],
