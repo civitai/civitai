@@ -8,10 +8,12 @@ export function HubSourcePanel({
   hubId,
   sources,
   maxSources,
+  hideAdd,
 }: {
   hubId: number;
   sources: HubSourceValue[];
   maxSources: number;
+  hideAdd?: boolean;
 }) {
   const utils = trpc.useUtils();
   const [pending, setPending] = useState<HubSourceValue[] | null>(null);
@@ -40,6 +42,7 @@ export function HubSourcePanel({
     <HubSourceEditor
       value={current}
       maxSources={maxSources}
+      hideAdd={hideAdd}
       disabled={upsert.isPending}
       emptyMessage="Nothing here yet. Add a creator, a model or a public collection."
       onChange={(next) => {

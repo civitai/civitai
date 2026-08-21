@@ -1,4 +1,4 @@
-import { ActionIcon, Group, Paper, Stack, Switch, Text, ThemeIcon, Tooltip } from '@mantine/core';
+import { ActionIcon, Group, Paper, Stack, Switch, Text, Tooltip } from '@mantine/core';
 import { IconBox, IconFolder, IconStack2, IconTrash, IconUserCircle } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { UserHubSourceType } from '~/shared/utils/prisma/enums';
@@ -26,58 +26,58 @@ const sourceMeta: Record<
   [UserHubSourceType.Collection]: { label: 'Collection', color: 'orange', Icon: IconFolder },
 };
 
-export function HubSourceCardB({ source, disabled, onToggle, onRemove }: HubSourceCardProps) {
+export function HubSourceCard({ source, disabled, onToggle, onRemove }: HubSourceCardProps) {
   const { label, color, Icon } = sourceMeta[source.type];
   const name = source.alias ?? `#${source.targetId}`;
-  const accent = source.enabled
-    ? `var(--mantine-color-${color}-filled)`
-    : 'var(--mantine-color-dimmed)';
+  const on = source.enabled;
 
   return (
     <Paper
       withBorder
       radius="md"
-      className={clsx(
-        'flex items-stretch gap-2 overflow-hidden pr-2 transition-colors',
-        'hover:bg-gray-0 dark:hover:bg-dark-6',
-        !source.enabled && 'opacity-75'
-      )}
+      className={clsx('flex items-stretch overflow-hidden pr-2 transition-colors')}
+      style={{
+        borderColor: on
+          ? `var(--mantine-color-${color}-filled)`
+          : 'light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4))',
+      }}
     >
-      <div aria-hidden className="w-1 shrink-0" style={{ backgroundColor: accent }} />
+      <div
+        aria-hidden
+        className="flex w-11 shrink-0 items-center justify-center self-stretch"
+        style={{
+          backgroundColor: on
+            ? `var(--mantine-color-${color}-light)`
+            : 'light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-6))',
+          color: on ? `var(--mantine-color-${color}-light-color)` : 'var(--mantine-color-dimmed)',
+        }}
+      >
+        <Icon size={22} />
+      </div>
 
-      <Group gap="xs" wrap="nowrap" className="min-w-0 flex-1 py-2">
-        <ThemeIcon
-          size="md"
-          radius="sm"
-          variant="light"
-          color={source.enabled ? color : 'gray'}
-          className="shrink-0"
-        >
-          <Icon size={16} />
-        </ThemeIcon>
-
+      <Group gap="xs" wrap="nowrap" className="min-w-0 flex-1 py-2 pl-2">
         <Stack gap={0} className="min-w-0 flex-1">
           <Text
             size="10px"
             fw={700}
             tt="uppercase"
             lh={1.3}
-            c={source.enabled ? color : 'dimmed'}
+            c={on ? color : 'dimmed'}
             className="tracking-wide"
           >
             {label}
           </Text>
-          <Text size="sm" fw={500} lh={1.3} lineClamp={1} c={source.enabled ? undefined : 'dimmed'}>
+          <Text size="sm" fw={500} lh={1.3} lineClamp={1} c={on ? undefined : 'dimmed'}>
             {name}
           </Text>
         </Stack>
       </Group>
 
       <Group gap={4} wrap="nowrap" className="shrink-0 self-center">
-        <Tooltip label={source.enabled ? 'Showing in this hub' : 'Hidden from this hub'}>
+        <Tooltip label={on ? 'Showing in this hub' : 'Hidden from this hub'}>
           <Switch
             size="xs"
-            checked={source.enabled}
+            checked={on}
             disabled={disabled}
             aria-label={`Toggle ${name}`}
             onChange={(event) => onToggle(event.currentTarget.checked)}

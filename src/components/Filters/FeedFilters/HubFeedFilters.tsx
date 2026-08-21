@@ -112,6 +112,9 @@ export function HubFeedFilters({ ...groupProps }: GroupProps) {
           <ScrollArea.Autosize mah={400}>
             <HubSourcePanel
               hubId={hub.id}
+              // Opening the picker in here pushes the popover past its own height
+              // and it starts scrolling inside a scroll. Adding lives in the rail.
+              hideAdd
               maxSources={hubLimits.sourcesPerHub}
               sources={hub.sources.map(({ id: _id, ...source }) => source)}
             />
