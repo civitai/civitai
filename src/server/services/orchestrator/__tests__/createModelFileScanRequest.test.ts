@@ -559,10 +559,15 @@ describe('createModelFileScanRequest', () => {
     // cannot tell the two apart — so re-sourcing the log from `firstError` passes
     // a fully green suite while making the log describe the wrong attempt. Give
     // the two attempts pairwise-distinct values so that mutant is observable.
+    // 🔴 The retry carries 410, NOT 404, on purpose. 404 is the only value
+    // `deliveryWorkerStatus` takes anywhere else in this suite, so asserting 404
+    // here could not distinguish "reads the retry" from "hardcoded to 404" — a
+    // fixture that can only ever produce the constant it names cannot detect a
+    // mutant that returns that constant. 410 is a value no other fixture emits.
     it('sources the audit fields from the RETRY, not the first attempt', async () => {
-      const firstFailure = new DeliveryWorkerError(410, 'Gone');
+      const firstFailure = new DeliveryWorkerError(404, 'Not Found');
       firstFailure.resolverError = new StorageResolverError(503, 'Service Unavailable');
-      const retryFailure = new DeliveryWorkerError(404, 'Not Found');
+      const retryFailure = new DeliveryWorkerError(410, 'Gone');
       retryFailure.resolverError = new TypeError('fetch failed');
 
       mockResolveDownloadUrl
@@ -575,11 +580,16 @@ describe('createModelFileScanRequest', () => {
 
       expect(mockLogToAxiom).toHaveBeenCalledWith(
         expect.objectContaining({
-          // 404 from the retry, NOT 410 from the first attempt.
-          deliveryWorkerStatus: 404,
+          // 410 from the retry, NOT 404 from the first attempt.
+          deliveryWorkerStatus: 410,
           // The retry's resolver failure had no status; the first attempt's did.
           resolverStatus: undefined,
           resolverError: 'TypeError: fetch failed',
+          // These two are what an on-call reader uses to reconstruct which
+          // attempt said what, and nothing else in the suite asserts them —
+          // swapping or dropping them survives a green run without this.
+          firstError: 'Delivery worker error: Not Found',
+          retryError: 'Delivery worker error: Gone',
         })
       );
     });
