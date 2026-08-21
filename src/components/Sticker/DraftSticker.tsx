@@ -11,6 +11,7 @@ import {
 } from '@mantine/core';
 import {
   IconAlertTriangleFilled,
+  IconCopy,
   IconDropletHalf2,
   IconFlipVertical,
   IconMessage,
@@ -132,6 +133,7 @@ export function DraftSticker({
   ownerShare,
   ownerUsername,
   onGesture,
+  onDuplicate,
 }: {
   draft: StickerDraft;
   art: ResolvedSticker;
@@ -148,6 +150,13 @@ export function DraftSticker({
   ownerShare: number | undefined;
   ownerUsername: string | null | undefined;
   onGesture: StartGesture;
+  /**
+   * Makes a second draft of this sticker. Supplied by the host rather than
+   * called on the store from here, because whether the copy needs to be bought
+   * depends on the viewer's remaining uses — which the layer can see and this
+   * component cannot.
+   */
+  onDuplicate?: (id: string) => void;
 }) {
   const markPurchased = useStickerPlacementDraftStore((state) => state.markPurchased);
   const { purchaseShopItem, purchasingShopItem } = useMutateCosmeticShop();
@@ -525,6 +534,34 @@ export function DraftSticker({
     },
   });
 
+  /**
+   * A second copy of this sticker, already arranged.
+   *
+   * Placing several of one sticker meant a trip back through the tray for each,
+   * which is what this removes. It creates a DRAFT and nothing else — the copy
+   * is bought and placed by the same button and the same mutation as the first,
+   * so there is no second route into the charge path and nothing here can place
+   * a sticker without being charged for it.
+   *
+   * Absent rather than disabled where the host does not supply a handler: a
+   * control that cannot act is a question the placer has to answer by pressing
+   * it.
+   */
+  const duplicateControl = onDuplicate && (
+    <Tooltip label="Duplicate" withinPortal>
+      <ActionIcon
+        size="sm"
+        radius="xl"
+        variant="subtle"
+        color="gray"
+        aria-label="Place another copy of this sticker"
+        onClick={() => onDuplicate(draft.id)}
+      >
+        <IconCopy size={14} />
+      </ActionIcon>
+    </Tooltip>
+  );
+
   const flipControl = (
     <Tooltip label={draft.flip ? 'Unflip' : 'Flip'} withinPortal>
       <ActionIcon
@@ -691,6 +728,7 @@ export function DraftSticker({
             className="absolute -top-9 left-0 flex cursor-auto items-center gap-0.5 rounded-full bg-dark-7 px-1 py-0.5"
             onPointerDown={pressPanel}
           >
+            {duplicateControl}
             {flipControl}
             {opacityControl}
           </div>
@@ -752,6 +790,7 @@ export function DraftSticker({
             className="flex items-center gap-0.5 rounded-full bg-dark-7 px-1 py-0.5"
             onPointerDown={pressPanel}
           >
+            {duplicateControl}
             {flipControl}
             {opacityControl}
             {removeControl}

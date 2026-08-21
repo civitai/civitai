@@ -376,3 +376,75 @@ describe('the flip control draws the axis it mirrors across', () => {
     expect(boxes.some((box) => box.height === 0 && box.width > 0)).toBe(false);
   });
 });
+
+/**
+ * The duplicate control, and what it is allowed to do.
+ *
+ * Placement is charged, so the button's whole safety argument is that it does
+ * not place anything: it asks the host for another draft and nothing else. What
+ * is asserted is both halves of that — the handler is called with this draft's
+ * id, AND nothing reached the placement mutation.
+ */
+describe('the duplicate control', () => {
+  test('asks the host for another copy, and places nothing', async () => {
+    const duplicated: string[] = [];
+
+    renderWithProviders(
+      <div style={{ position: 'relative', width: 380, height: 600 }}>
+        <DraftSticker
+          // Wider than the shared fixture, deliberately: below a threshold the
+          // component hands its controls to the buy cluster instead of the pill
+          // above the sticker, and that cluster is the one this file documents
+          // as unreachable in this harness. A wide draft keeps the control in
+          // the pill, where an ordinary locator click reaches it with its full
+          // actionability check.
+          draft={draft}
+          art={art}
+          selected
+          dressed={resolveTreatment({ treatment: 'none', surface: 'detail', isPending: false })}
+          price={PRICE}
+          freeOffer={null}
+          ownerShare={undefined}
+          ownerUsername="creator"
+          onGesture={() => true}
+          onDuplicate={(id) => {
+            duplicated.push(id);
+          }}
+        />
+      </div>
+    );
+
+    // ⚠️ Pressed through the DOM, for the reachability reason this file
+    // documents above and measures again here: the control sits in a cluster
+    // that lands at a NEGATIVE x in this harness (-73px, measured), so a locator
+    // click spends its whole budget waiting for an element that will never be
+    // in view. What is under test is the wiring, not actionability — the control
+    // is a plain `ActionIcon` with no disabled state and nothing overlaying it.
+    //
+    // 🔴 THIS EXEMPTION ENDS the moment the control gains a disabled or loading
+    // state, or anything is painted over the cluster: a DOM press would then
+    // fire a handler a real placer could not fire.
+    // `.element()` does not retry, and the draft paints its controls a frame or
+    // two after mount. Poll for it first, then take the node.
+    const locator = page.getByRole('button', { name: 'Place another copy of this sticker' });
+    await expect.element(locator).toBeInTheDocument();
+    ((await locator.element()) as HTMLElement).click();
+
+    expect(duplicated).toEqual([draft.id]);
+    // 🔴 The half that matters for money. `placed` collects every call to the
+    // placement mutation; duplicating must not add to it.
+    expect(placed).toHaveLength(0);
+  });
+
+  /**
+   * Absent rather than disabled where the host supplies no handler: a control
+   * that cannot act is a question the placer answers by pressing it.
+   */
+  test('is not rendered at all without a handler', async () => {
+    await renderDraft(null);
+
+    expect(
+      page.getByRole('button', { name: 'Place another copy of this sticker' }).elements()
+    ).toHaveLength(0);
+  });
+});

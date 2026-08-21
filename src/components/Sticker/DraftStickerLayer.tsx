@@ -8,6 +8,9 @@ import {
   useImagePlacementSpace,
 } from '~/components/Sticker/placement.util';
 import { useOwnedSticker, useStickerCosmetics } from '~/components/Sticker/sticker.util';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { STICKER_OFFER_LIMIT } from '~/server/schema/cosmetic.schema';
+import { trpc } from '~/utils/trpc';
 import { resolveTreatment } from '~/components/Sticker/treatments/sticker-treatments';
 import { useStickerTreatment } from '~/components/Sticker/treatments/useStickerTreatment';
 import { STICKER_PLACEMENT_MIN_SCALE, stickerMaxScale } from '~/shared/utils/sticker-placement';
@@ -63,6 +66,76 @@ export function DraftStickerLayer() {
   // per sticker would be N observers refetching through an arrangement.
   const { standing } = useFreePlacementStanding(targetImageId ?? undefined);
   const freeOffer = freeOfferFor(space, standing);
+
+  /**
+   * What the placer has left of each sticker, and what a spent one costs to top
+   * up — the same two queries the tray runs, so this shares their cache rather
+   * than making its own requests.
+   *
+   * 🔴 THIS IS WHAT MAKES A DUPLICATE HONEST. A copy spends a use of its own, so
+   * duplicating the last one has to arrive carrying the same purchase gate a
+   * fresh pickup of a spent sticker would. Cloning the original's gate instead
+   * would be wrong in both directions: a copy of an already-bought draft would
+   * show a Place button the server refuses at `assertHasUse`, and a copy made
+   * after the purchase landed would ask to buy the sticker twice.
+   */
+  const currentUser = useCurrentUser();
+  const { data: balances } = trpc.cosmetic.getStickerBalances.useQuery(undefined, {
+    enabled: !!currentUser && targetImageId != null,
+  });
+  const draftedIds = useMemo(() => [...new Set(drafts.map((draft) => draft.cosmeticId))], [drafts]);
+  const { data: offers } = trpc.cosmetic.getStickerOffers.useQuery(
+    { ids: draftedIds.slice(0, STICKER_OFFER_LIMIT) },
+    { enabled: !!currentUser && !!draftedIds.length, staleTime: 60_000 }
+  );
+
+  const duplicateDraft = useStickerPlacementDraftStore((state) => state.duplicateDraft);
+
+  const onDuplicate = useCallback(
+    (id: string) => {
+      const source = useStickerPlacementDraftStore
+        .getState()
+        .drafts.find((draft) => draft.id === id);
+      if (!source) return;
+
+      const balance = balances?.find((entry) => entry.cosmeticId === source.cosmeticId)?.remaining;
+      // `null` is unlimited. Every draft of this sticker already on the image is
+      // subtracted, including the one being copied: each of them will spend a use
+      // when it is bought, so the copy is only free of a gate while there is a
+      // use left AFTER all of them.
+      const drafted = useStickerPlacementDraftStore
+        .getState()
+        .drafts.filter((draft) => draft.cosmeticId === source.cosmeticId).length;
+      const spent = balance != null && balance - drafted <= 0;
+
+      if (!spent) return duplicateDraft(id);
+
+      // Out of uses, so the copy needs the same top-up offer a fresh pickup of a
+      // spent sticker gets. An offer that is not on sale leaves the copy gated
+      // with no way to buy — which is the truth, and the draft says so, rather
+      // than a Place button that fails at the mutation.
+      const offer = offers?.find((entry) => entry.cosmeticId === source.cosmeticId);
+      const listing = offer?.listing;
+
+      duplicateDraft(id, {
+        refill: true,
+        perUse: offer?.pricePerUse ?? undefined,
+        ...(listing
+          ? {
+              pack: {
+                shopItemId: listing.shopItemId,
+                unitAmount: listing.unitAmount,
+                acceptsBlue: listing.acceptsBlue,
+                uses: listing.uses,
+                viaShopUserId: listing.viaShopUserId ?? undefined,
+              },
+            }
+          : {}),
+        creatorUsername: offer ? offer.creatorUsername : undefined,
+      });
+    },
+    [balances, offers, duplicateDraft]
+  );
 
   const gesture = useRef<Gesture | null>(null);
   // Held in a ref because the pointer listener is bound once; re-binding it when
@@ -243,6 +316,7 @@ export function DraftStickerLayer() {
             ownerShare={space?.ownerShare}
             ownerUsername={space?.ownerUsername}
             onGesture={onGesture}
+            onDuplicate={onDuplicate}
           />
         );
       })}

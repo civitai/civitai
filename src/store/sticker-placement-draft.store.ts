@@ -158,6 +158,21 @@ interface StickerPlacementDraftStore {
   markPurchased: (cosmeticId: number, draftId?: string) => void;
   setInteraction: (interaction: StickerInteraction | null, pointerId?: number) => void;
   /**
+   * A second copy of a draft, ready to be placed on its own.
+   *
+   * Deliberately NOT a second route into the charge path: it makes another
+   * unplaced draft and nothing else, so the copy is bought and committed by the
+   * same button, the same mutation and the same guards as the first one. There
+   * is no way for a copy to be placed without being charged, because copying
+   * places nothing.
+   *
+   * `purchase` is passed in rather than cloned. The gate on the original says
+   * "this sticker has not been bought yet", which is a fact about the viewer's
+   * inventory at the moment the copy is made — not a property of the draft — and
+   * the caller is what can see the balance.
+   */
+  duplicateDraft: (id: string, purchase?: DraftPurchase) => void;
+  /**
    * Moves one draft by id rather than "the current one". A gesture outlives the
    * selection — a press selects and then drags — so resolving the target at
    * every pointer move would let a selection change mid-drag redirect it.
@@ -166,6 +181,16 @@ interface StickerPlacementDraftStore {
 }
 
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
+
+/**
+ * How far a duplicate lands from the sticker it was copied from, as a fraction
+ * of the image.
+ *
+ * Big enough to see at the smallest sticker size, small enough that the copy
+ * reads as belonging to the original rather than as a new pickup dropped
+ * somewhere else.
+ */
+const DUPLICATE_OFFSET = 0.04;
 
 let draftSequence = 0;
 
@@ -308,6 +333,34 @@ export const useStickerPlacementDraftStore = create<StickerPlacementDraftStore>(
       // Appended and selected: the one just dragged out is the one being placed,
       // and the drag that created it is already in flight against it.
       return { drafts: [...state.drafts, draft], selectedDraftId: draft.id };
+    }),
+
+  duplicateDraft: (id, purchase) =>
+    set((state) => {
+      const source = state.drafts.find((draft) => draft.id === id);
+      if (!source) return state;
+
+      const copy: StickerDraft = {
+        ...source,
+        ...(purchase ? { purchase } : {}),
+        id: nextDraftId(),
+        // Offset so the copy is visibly its own sticker rather than an exact
+        // overlap the placer has to discover by dragging the top one off. Down
+        // and right by the same nudge in both axes, clamped so a duplicate of a
+        // sticker already at the edge lands ON the image rather than outside it.
+        x: clamp(source.x + DUPLICATE_OFFSET, 0, 1),
+        y: clamp(source.y + DUPLICATE_OFFSET, 0, 1),
+      };
+
+      // `purchase` is not carried over implicitly: an undefined argument means
+      // the caller looked and found nothing to buy, which is different from not
+      // having looked. Spreading `source` first and then overwriting keeps the
+      // gate only when one was handed in.
+      if (!purchase) delete copy.purchase;
+
+      // Appended and selected, the same as a fresh pickup: the copy is the one
+      // being positioned now, and the handles belong to it.
+      return { drafts: [...state.drafts, copy], selectedDraftId: copy.id };
     }),
 
   move: (id, next) =>
