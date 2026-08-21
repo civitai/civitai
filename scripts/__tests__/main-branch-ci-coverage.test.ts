@@ -91,9 +91,7 @@ function reachableOnPush(job: Job): boolean {
 
 /** Every `run:` script in a job, concatenated. */
 function runScripts(job: Job): string {
-  return (job.steps ?? [])
-    .map((s) => (typeof s.run === 'string' ? s.run : ''))
-    .join('\n');
+  return (job.steps ?? []).map((s) => (typeof s.run === 'string' ? s.run : '')).join('\n');
 }
 
 /** A job's steps, serialised — everything EXCEPT the job-level `if`. See the seam test. */
