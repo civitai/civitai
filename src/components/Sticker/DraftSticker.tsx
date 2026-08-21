@@ -71,21 +71,6 @@ const NOTE_WIDTH = 220;
 const BUY_BUTTON_GAP = 8;
 
 /**
- * A purchase's idempotency key, which the server refuses a repeat of.
- *
- * Feature-detected for the same reason the draft ids are: `crypto.randomUUID`
- * is undefined outside a secure context, and throwing here would take down the
- * purchase button on any http origin that is not localhost. The fallback is
- * still unique per page — and a key that repeats across sessions would only ever
- * refuse a charge, never duplicate one.
- */
-let purchaseKeySequence = 0;
-const nextPurchaseKey = () =>
-  typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-    ? crypto.randomUUID()
-    : `00000000-0000-4000-8000-${String(++purchaseKeySequence).padStart(12, '0')}`;
-
-/**
  * The nearest ancestor that clips — the carousel's viewport on the image detail
  * page, whose bottom edge is the bottom of the media box.
  *
@@ -161,10 +146,14 @@ export function DraftSticker({
   const markPurchased = useStickerPlacementDraftStore((state) => state.markPurchased);
   const { purchaseShopItem, purchasingShopItem } = useMutateCosmeticShop();
   const queryUtils = trpc.useUtils();
-  // One buying intent, minted with the draft and reused by every press on it.
-  // The server refuses a repeat of the same key, so a double-click or a retry
-  // after a timeout cannot be charged twice.
-  const purchaseKey = useRef(nextPurchaseKey());
+  // 🔴 ONE KEY PER STICKER PER SESSION, HELD IN THE STORE — not one per draft.
+  // A pack grants the sticker itself and `markPurchased` then frees every draft
+  // of it, so two copies showing two buy buttons are ONE buying intent. Minted
+  // per draft, pressing both within a second was two keys and two charges for
+  // something you only get once; duplicating put those two buttons a click
+  // apart. The per-use path below is unaffected: each use genuinely is another
+  // purchase.
+  const packPurchaseKey = useStickerPlacementDraftStore((state) => state.packPurchaseKey);
   const buyUses = useBuyStickerUses();
 
   const buySticker = async () => {
@@ -176,10 +165,9 @@ export function DraftSticker({
         shopItemId: pack.shopItemId,
         viaShopUserId: pack.viaShopUserId,
         payWith: pack.acceptsBlue ? 'blue-first' : undefined,
-        // One key per draft, minted once: a double-click, a retry, or a second
-        // tab replaying this purchase is one intent and must be charged once.
-        // Stickers can be bought repeatedly now, so nothing else refuses it.
-        idempotencyKey: purchaseKey.current,
+        // One key per sticker per session: a double-click, a retry, a second tab
+        // — or the second copy's own buy button — are one intent, charged once.
+        idempotencyKey: packPurchaseKey(draft.cosmeticId),
         // The number this button is showing. A listing re-priced while the panel
         // sat open must refuse rather than charge something else.
         expectedUnitAmount: pack.unitAmount,
@@ -554,7 +542,7 @@ export function DraftSticker({
         radius="xl"
         variant="subtle"
         color="gray"
-        aria-label="Place another copy of this sticker"
+        aria-label="Duplicate this sticker"
         onClick={() => onDuplicate(draft.id)}
       >
         <IconCopy size={14} />

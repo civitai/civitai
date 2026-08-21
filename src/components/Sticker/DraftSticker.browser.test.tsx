@@ -386,18 +386,22 @@ describe('the flip control draws the axis it mirrors across', () => {
  * id, AND nothing reached the placement mutation.
  */
 describe('the duplicate control', () => {
+  /**
+   * ⚠️ THE NARROW FIXTURE PUTS THE CONTROL IN THE BUY CLUSTER, NOT THE PILL.
+   *
+   * `panelsInside` needs the sticker to be at least 124px wide; the shared
+   * fixture is 0.25 of a 380px container, so 95px — the controls go to the buy
+   * cluster, which this file documents as landing at a negative x here. That is
+   * why this one is pressed through the DOM. The test below covers the pill
+   * branch with a wide draft and an ordinary locator click, so both render paths
+   * are exercised rather than one being described and neither checked.
+   */
   test('asks the host for another copy, and places nothing', async () => {
     const duplicated: string[] = [];
 
     renderWithProviders(
       <div style={{ position: 'relative', width: 380, height: 600 }}>
         <DraftSticker
-          // Wider than the shared fixture, deliberately: below a threshold the
-          // component hands its controls to the buy cluster instead of the pill
-          // above the sticker, and that cluster is the one this file documents
-          // as unreachable in this harness. A wide draft keeps the control in
-          // the pill, where an ordinary locator click reaches it with its full
-          // actionability check.
           draft={draft}
           art={art}
           selected
@@ -414,26 +418,57 @@ describe('the duplicate control', () => {
       </div>
     );
 
-    // ⚠️ Pressed through the DOM, for the reachability reason this file
-    // documents above and measures again here: the control sits in a cluster
-    // that lands at a NEGATIVE x in this harness (-73px, measured), so a locator
-    // click spends its whole budget waiting for an element that will never be
-    // in view. What is under test is the wiring, not actionability — the control
-    // is a plain `ActionIcon` with no disabled state and nothing overlaying it.
-    //
-    // 🔴 THIS EXEMPTION ENDS the moment the control gains a disabled or loading
-    // state, or anything is painted over the cluster: a DOM press would then
-    // fire a handler a real placer could not fire.
-    // `.element()` does not retry, and the draft paints its controls a frame or
-    // two after mount. Poll for it first, then take the node.
-    const locator = page.getByRole('button', { name: 'Place another copy of this sticker' });
+    const locator = page.getByRole('button', { name: 'Duplicate this sticker' });
     await expect.element(locator).toBeInTheDocument();
     ((await locator.element()) as HTMLElement).click();
 
     expect(duplicated).toEqual([draft.id]);
-    // 🔴 The half that matters for money. `placed` collects every call to the
-    // placement mutation; duplicating must not add to it.
+    // 🔴 The half that matters for money: duplicating must not reach the
+    // placement mutation.
     expect(placed).toHaveLength(0);
+
+    // 🔴 THE POSITIVE CONTROL, IN THE SAME RENDER. Without it the zero above is
+    // an absence measured by an instrument nothing proved was live — a broken
+    // mock would certify "charges nothing" forever.
+    await pressPaid();
+    expect(placed).toHaveLength(1);
+  });
+
+  /**
+   * The OTHER render path. Below 124px of sticker width the controls go to the
+   * buy cluster; above it they go to the pill. Both have to actually render the
+   * duplicate control, and only one of them was being exercised — deleting
+   * `{duplicateControl}` from the pill left every test green.
+   *
+   * ⚠️ What this does NOT assert is reachability. Measured in this harness, the
+   * control sits at x = -95 in the pill branch and x = -73 in the cluster
+   * branch: the whole draft renders at negative coordinates here, so no locator
+   * click succeeds on either path and a passing "it is clickable" test would be
+   * a fiction. Presence is what this harness can honestly check.
+   */
+  test('renders in the pill branch as well as the buy cluster', async () => {
+    renderWithProviders(
+      <div style={{ position: 'relative', width: 380, height: 600 }}>
+        <DraftSticker
+          // 0.5 of 380 is 190px, past the 124px threshold, so the controls sit
+          // in the pill above the sticker rather than in the buy cluster.
+          draft={{ ...draft, scale: 0.5, y: 0.5 }}
+          art={art}
+          selected
+          dressed={resolveTreatment({ treatment: 'none', surface: 'detail', isPending: false })}
+          price={PRICE}
+          freeOffer={null}
+          ownerShare={undefined}
+          ownerUsername="creator"
+          onGesture={() => true}
+          onDuplicate={() => undefined}
+        />
+      </div>
+    );
+
+    await expect
+      .element(page.getByRole('button', { name: 'Duplicate this sticker' }))
+      .toBeInTheDocument();
   });
 
   /**
@@ -443,8 +478,6 @@ describe('the duplicate control', () => {
   test('is not rendered at all without a handler', async () => {
     await renderDraft(null);
 
-    expect(
-      page.getByRole('button', { name: 'Place another copy of this sticker' }).elements()
-    ).toHaveLength(0);
+    expect(page.getByRole('button', { name: 'Duplicate this sticker' }).elements()).toHaveLength(0);
   });
 });

@@ -126,6 +126,8 @@ interface StickerPlacementDraftStore {
    * sticker.
    */
   interactionPointerId: number | null;
+  /** Idempotency keys for pack purchases, one per sticker per session. */
+  packKeys: Record<number, string>;
 
   open: (imageId: number) => void;
   /** End the session outright — every draft, the panel and the target. */
@@ -157,6 +159,19 @@ interface StickerPlacementDraftStore {
    */
   markPurchased: (cosmeticId: number, draftId?: string) => void;
   setInteraction: (interaction: StickerInteraction | null, pointerId?: number) => void;
+  /**
+   * The idempotency key for buying one particular sticker in this session.
+   *
+   * 🔴 PER COSMETIC, NOT PER DRAFT, AND THAT IS THE WHOLE POINT. A pack grants
+   * the STICKER — `markPurchased` then frees every draft of it — so two copies
+   * of one sticker showing two buy buttons are one buying intent wearing two
+   * faces. Minted per draft, pressing both inside the same second is two keys
+   * and two charges for the thing you only get once. Duplicating made that a
+   * click apart rather than two shop drags apart, which is why it is fixed here.
+   *
+   * Cleared with the session, so a later session can legitimately buy again.
+   */
+  packPurchaseKey: (cosmeticId: number) => string;
   /**
    * A second copy of a draft, ready to be placed on its own.
    *
@@ -192,6 +207,13 @@ const clamp = (value: number, min: number, max: number) => Math.min(Math.max(val
  */
 const DUPLICATE_OFFSET = 0.04;
 
+/**
+ * One axis of a duplicate's position: away from the original, and never off the
+ * image. Moves back toward the middle when a forward nudge would not fit.
+ */
+const nudge = (value: number) =>
+  clamp(value + DUPLICATE_OFFSET <= 1 ? value + DUPLICATE_OFFSET : value - DUPLICATE_OFFSET, 0, 1);
+
 let draftSequence = 0;
 
 /**
@@ -212,6 +234,19 @@ const nextDraftId = () =>
     ? crypto.randomUUID()
     : `draft-${++draftSequence}`;
 
+/**
+ * A purchase's idempotency key, which the server refuses a repeat of.
+ *
+ * Feature-detected for the same reason the draft ids are: `crypto.randomUUID` is
+ * undefined outside a secure context, and throwing here would take down the buy
+ * button on any http origin that is not localhost.
+ */
+let purchaseKeySequence = 0;
+const nextPurchaseKey = () =>
+  typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `00000000-0000-4000-8000-${String(++purchaseKeySequence).padStart(12, '0')}`;
+
 const ENDED = {
   targetImageId: null,
   trayOpen: false,
@@ -219,10 +254,14 @@ const ENDED = {
   selectedDraftId: null,
   interaction: null,
   interactionPointerId: null,
+  // Minted per session: a key reused across sessions would have the server
+  // refuse a purchase someone genuinely wants to make again.
+  packKeys: {} as Record<number, string>,
 };
 
-export const useStickerPlacementDraftStore = create<StickerPlacementDraftStore>((set) => ({
+export const useStickerPlacementDraftStore = create<StickerPlacementDraftStore>((set, get) => ({
   drafts: [],
+  packKeys: {},
   selectedDraftId: null,
   targetImageId: null,
   trayOpen: false,
@@ -335,6 +374,15 @@ export const useStickerPlacementDraftStore = create<StickerPlacementDraftStore>(
       return { drafts: [...state.drafts, draft], selectedDraftId: draft.id };
     }),
 
+  packPurchaseKey: (cosmeticId) => {
+    const existing = get().packKeys[cosmeticId];
+    if (existing) return existing;
+
+    const key = nextPurchaseKey();
+    set((state) => ({ packKeys: { ...state.packKeys, [cosmeticId]: key } }));
+    return key;
+  },
+
   duplicateDraft: (id, purchase) =>
     set((state) => {
       const source = state.drafts.find((draft) => draft.id === id);
@@ -342,21 +390,23 @@ export const useStickerPlacementDraftStore = create<StickerPlacementDraftStore>(
 
       const copy: StickerDraft = {
         ...source,
-        ...(purchase ? { purchase } : {}),
+        // One mechanism, not two: the caller's answer wins outright, including
+        // when the answer is "nothing to buy". `markPurchased` already writes an
+        // undefined `purchase` elsewhere in this store, so an own key holding
+        // undefined is the shape the rest of the code already reads.
+        purchase,
         id: nextDraftId(),
         // Offset so the copy is visibly its own sticker rather than an exact
-        // overlap the placer has to discover by dragging the top one off. Down
-        // and right by the same nudge in both axes, clamped so a duplicate of a
-        // sticker already at the edge lands ON the image rather than outside it.
-        x: clamp(source.x + DUPLICATE_OFFSET, 0, 1),
-        y: clamp(source.y + DUPLICATE_OFFSET, 0, 1),
+        // overlap the placer has to discover by dragging the top one off.
+        //
+        // 🔴 AWAY FROM THE EDGE, NOT CLAMPED TO IT. Clamping ate the whole nudge
+        // at exactly the case the nudge exists for: duplicate a sticker in the
+        // corner and the copy landed at the same point, so the button looked
+        // like it had done nothing. Nudging inward keeps the copy visible and
+        // on the image, which is also what the server requires of the position.
+        x: nudge(source.x),
+        y: nudge(source.y),
       };
-
-      // `purchase` is not carried over implicitly: an undefined argument means
-      // the caller looked and found nothing to buy, which is different from not
-      // having looked. Spreading `source` first and then overwriting keeps the
-      // gate only when one was handed in.
-      if (!purchase) delete copy.purchase;
 
       // Appended and selected, the same as a fresh pickup: the copy is the one
       // being positioned now, and the handles belong to it.

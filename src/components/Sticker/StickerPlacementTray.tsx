@@ -1,7 +1,7 @@
 import { Button, CloseButton, Group, ScrollArea, Text, ThemeIcon } from '@mantine/core';
 import { IconAlertTriangle, IconInfoCircle, IconPlus, IconSticker } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import { freeOfferFor, preCommitFreeReason, trayNotes } from '~/components/Sticker/free-offer';
 import { StickerShopPanel } from '~/components/Sticker/StickerShopPanel';
@@ -12,10 +12,9 @@ import {
   useImagePlacementSpace,
 } from '~/components/Sticker/placement.util';
 import { stickerMaxScale } from '~/shared/utils/sticker-placement';
-import { useOwnedSticker } from '~/components/Sticker/sticker.util';
+import { useOwnedSticker, useStickerRefill } from '~/components/Sticker/sticker.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.store';
-import { STICKER_OFFER_LIMIT } from '~/server/schema/cosmetic.schema';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -79,52 +78,14 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
   const maxScale = stickerMaxScale(space?.settings as Record<string, unknown> | undefined);
   const { grab, dragging } = useStickerDragOut(maxScale);
 
-  // Asked for every owned sticker rather than only the spent ones, because the
-  // list of spent ones changes as drafts are laid down — keying the query on it
-  // would refetch mid-arrangement, and the answer is the same either way.
-  // Capped at what the schema accepts. Past it the whole query fails zod, and
-  // the failure is invisible — `offers` stays undefined and the pack option
-  // silently never appears for anyone with a large collection. Newest-obtained
-  // first, which is the order the row is already in.
-  const ownedIds = useMemo(
-    () => sticker.slice(0, STICKER_OFFER_LIMIT).map((option) => option.id),
-    [sticker]
-  );
-  const { data: offers } = trpc.cosmetic.getStickerOffers.useQuery(
-    { ids: ownedIds },
-    { enabled: !!currentUser && !!ownedIds.length, staleTime: 60_000 }
-  );
   /**
-   * What a spent sticker's draft may be refilled with. The listing is offered
-   * only while it is genuinely on sale — a delisted or sold-out one would show a
-   * price the purchase then refuses.
-   *
-   * `pricePerUse` falls back to the owned payload's copy so the single-use price
-   * is there on the first frame, before the offers query lands.
+   * What a spent sticker's draft may be refilled with, shared with the draft
+   * layer so both ask the same question of the same cache key. It was two copies
+   * of this rule keyed on two different id lists — the layer's refetched
+   * mid-arrangement, which is exactly what the comment that used to live here
+   * warned against.
    */
-  const refillOffer = (cosmeticId: number, ownedPricePerUse?: number) => {
-    const offer = offers?.find((entry) => entry.cosmeticId === cosmeticId);
-    const listing = offer?.listing;
-
-    return {
-      refill: true,
-      perUse: offer?.pricePerUse ?? ownedPricePerUse,
-      ...(listing
-        ? {
-            pack: {
-              shopItemId: listing.shopItemId,
-              unitAmount: listing.unitAmount,
-              acceptsBlue: listing.acceptsBlue,
-              uses: listing.uses,
-              viaShopUserId: listing.viaShopUserId ?? undefined,
-            },
-          }
-        : {}),
-      // `undefined` until the offers land, which shows no attribution rather
-      // than crediting the wrong party while it is unknown.
-      creatorUsername: offer ? offer.creatorUsername : undefined,
-    };
-  };
+  const refillFor = useStickerRefill();
 
   if (!showing) return null;
 
@@ -265,7 +226,7 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
                     // buying one from the shop, and the same gesture.
                     onPointerDown={grab(
                       option.id,
-                      exhausted ? refillOffer(option.id, option.pricePerUse) : undefined
+                      exhausted ? refillFor(option.id, option.pricePerUse) : undefined
                     )}
                     className={clsx(
                       'flex shrink-0 cursor-grab flex-col items-center gap-1 rounded border p-2',

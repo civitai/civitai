@@ -7,6 +7,9 @@ import {
 } from '~/shared/utils/sticker-token';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { STICKER_OFFER_LIMIT } from '~/server/schema/cosmetic.schema';
+import type { DraftPurchase } from '~/store/sticker-placement-draft.store';
 
 /**
  * What buying a sticker gets you, as shop copy: the balance included and what a
@@ -163,4 +166,144 @@ export function useStickerCosmetics(ids: number[]) {
   }, [queries.map((q) => q.dataUpdatedAt).join(',')]);
 
   return { sticker, isLoading: queries.some((q) => q.isLoading) };
+}
+
+/**
+ * What a sticker's top-up costs, for whoever needs to offer one.
+ *
+ * 🔴 SHARED BECAUSE THE KEY HAS TO BE. Two surfaces ask this — the tray, when a
+ * spent sticker is dragged out, and the draft layer, when a spent sticker is
+ * duplicated — and the second one keyed its query on the DRAFTED ids while the
+ * tray keys on the OWNED ids. Different arrays are different cache entries, so
+ * what looked like a shared read was a second request that refetched every time
+ * a draft was laid down. The tray's own comment warns against exactly that
+ * derivation; the fix is for both callers to ask the same question.
+ *
+ * The owned payload's `pricePerUse` is the fallback rather than an afterthought:
+ * `purchase` is snapshotted onto a draft when it is created and never
+ * recomputed, so a copy made before this query resolves would be stuck
+ * permanently on "this sticker sells no extra uses" — a false statement, frozen.
+ */
+export function useStickerRefill() {
+  const currentUser = useCurrentUser();
+  const { sticker } = useOwnedSticker();
+
+  // The same ids the tray asks for, in the same order: every owned sticker,
+  // newest first, capped where the schema caps. Past the cap the whole query
+  // fails zod validation and `offers` stays undefined — silently, for anyone
+  // with a large collection.
+  const ownedIds = useMemo(
+    () => sticker.slice(0, STICKER_OFFER_LIMIT).map((option) => option.id),
+    [sticker]
+  );
+
+  const { data: offers } = trpc.cosmetic.getStickerOffers.useQuery(
+    { ids: ownedIds },
+    { enabled: !!currentUser && !!ownedIds.length, staleTime: 60_000 }
+  );
+
+  return useMemo(() => {
+    const byCosmetic = new Map(offers?.map((offer) => [offer.cosmeticId, offer]));
+
+    return (cosmeticId: number, ownedPricePerUse?: number): DraftPurchase => {
+      const offer = byCosmetic.get(cosmeticId);
+      const listing = offer?.listing;
+
+      return {
+        refill: true,
+        perUse: offer?.pricePerUse ?? ownedPricePerUse,
+        ...(listing
+          ? {
+              pack: {
+                shopItemId: listing.shopItemId,
+                unitAmount: listing.unitAmount,
+                acceptsBlue: listing.acceptsBlue,
+                uses: listing.uses,
+                viaShopUserId: listing.viaShopUserId ?? undefined,
+              },
+            }
+          : {}),
+        // `undefined` until the offers land, which shows no attribution rather
+        // than crediting the wrong party while it is unknown.
+        creatorUsername: offer ? offer.creatorUsername : undefined,
+      };
+    };
+  }, [offers]);
+}
+
+/**
+ * Uses left of one sticker once every draft of it on the image is paid for.
+ *
+ * Three states, and collapsing any two of them is a bug someone has already
+ * shipped: `null` is unlimited, `undefined` is NOT LOADED YET, and a number is a
+ * count. Reading "not loaded" as "has uses" hands out an ungated draft that the
+ * server refuses at `assertHasUse`; reading it as "spent" offers to sell a
+ * top-up to someone who has plenty.
+ *
+ * Every draft counts, including the one being copied — each will spend a use
+ * when it is bought.
+ */
+export function remainingStickerUses({
+  balances,
+  drafts,
+  cosmeticId,
+}: {
+  balances: { cosmeticId: number; remaining: number | null }[] | undefined;
+  drafts: { cosmeticId: number }[];
+  cosmeticId: number;
+}): number | null | undefined {
+  if (!balances) return undefined;
+
+  const holding = balances.find((entry) => entry.cosmeticId === cosmeticId);
+  // No row at all is not "no uses" — it is a sticker the viewer does not own,
+  // which is a different question answered by the draft's own purchase gate.
+  if (!holding) return undefined;
+  if (holding.remaining == null) return null;
+
+  const drafted = drafts.filter((draft) => draft.cosmeticId === cosmeticId).length;
+  return Math.max(holding.remaining - drafted, 0);
+}
+
+/**
+ * Whether a duplicated draft has to be bought before it can be placed.
+ *
+ * 🔴 THE MONEY DECISION, LIFTED OUT OF THE COMPONENT SO IT CAN BE TESTED. Every
+ * branch below is a case that was live and unasserted while this was an inline
+ * closure in the layer, and two of them were wrong.
+ *
+ * The gate is not copied from the source draft, because it says "this sticker is
+ * not bought yet" — a fact about the viewer's inventory at the moment the copy
+ * is made, not a property of the draft. But it is not discarded either:
+ *
+ * - **Not owned at all** (no balance row) — a sticker dragged from the shop and
+ *   still unbought. The copy needs the SAME gate, because one purchase grants
+ *   the sticker and `markPurchased` then clears every draft of it. Dropping the
+ *   gate here was the bug: it produced a Place button the server refuses at
+ *   `assertHasUse`, from the one direction the original code did not consider.
+ * - **Not loaded yet** — indistinguishable from the above at this layer, and the
+ *   honest answer is the same: carry the source's gate rather than invent one.
+ *   Guessing "has uses" hands out a draft that cannot be placed; guessing
+ *   "spent" offers to sell a top-up to someone with plenty.
+ * - **Unlimited, or uses left after every draft** — no gate.
+ * - **Spent** — the top-up offer a fresh pickup of a spent sticker would get.
+ */
+export function duplicateGateFor({
+  source,
+  drafts,
+  balances,
+  refillFor,
+  ownedPricePerUse,
+}: {
+  source: { cosmeticId: number; purchase?: DraftPurchase };
+  drafts: { cosmeticId: number }[];
+  balances: { cosmeticId: number; remaining: number | null }[] | undefined;
+  refillFor: (cosmeticId: number, ownedPricePerUse?: number) => DraftPurchase;
+  ownedPricePerUse?: number;
+}): DraftPurchase | undefined {
+  const remaining = remainingStickerUses({ balances, drafts, cosmeticId: source.cosmeticId });
+
+  if (remaining === undefined) return source.purchase;
+  if (remaining === null || remaining > 0) return undefined;
+
+  return refillFor(source.cosmeticId, ownedPricePerUse);
 }

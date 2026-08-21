@@ -70,15 +70,27 @@ describe('duplicating a draft', () => {
   });
 
   /**
-   * A duplicate of a sticker already at the far edge would otherwise be offset
-   * off the image, where it cannot be seen or dragged back — and where the
-   * server refuses the placement for a position outside the bounds.
+   * 🔴 THE CASE THE OFFSET EXISTS FOR, AND THE ONE AN EARLIER VERSION OF THIS
+   * TEST ASSERTED BACKWARDS.
+   *
+   * Clamping the nudge produced a copy at exactly the original's position — the
+   * invisible overlap the offset is there to prevent — and this test asserted
+   * that overlap as correct, so the defect was pinned rather than caught. The
+   * copy has to be somewhere else, and still on the image: a position outside
+   * the bounds is one the server refuses.
    */
-  it('stays on the image when the original is at the edge', () => {
+  it('lands somewhere else, and still on the image, at the far edge', () => {
     store().move(drafts()[0].id, { x: 1, y: 1 });
     store().duplicateDraft(drafts()[0].id);
 
-    expect(drafts()[1]).toMatchObject({ x: 1, y: 1 });
+    const [original, copy] = drafts();
+
+    expect(copy.x).not.toBe(original.x);
+    expect(copy.y).not.toBe(original.y);
+    expect(copy.x).toBeGreaterThanOrEqual(0);
+    expect(copy.x).toBeLessThanOrEqual(1);
+    expect(copy.y).toBeGreaterThanOrEqual(0);
+    expect(copy.y).toBeLessThanOrEqual(1);
   });
 
   it('selects the copy, because that is the one being positioned now', () => {
@@ -88,9 +100,13 @@ describe('duplicating a draft', () => {
   });
 
   it('does nothing at all for an id that is not there', () => {
+    const before = store().selectedDraftId;
     store().duplicateDraft('not-a-draft');
 
     expect(drafts()).toHaveLength(1);
+    // Also asserted: a miss does not move the selection. Without this an
+    // implementation that cleared it on the way out would pass.
+    expect(store().selectedDraftId).toBe(before);
   });
 
   describe('the purchase gate is the caller’s decision, not the original’s', () => {
@@ -129,15 +145,5 @@ describe('duplicating a draft', () => {
 
       expect(drafts()[1].purchase).toMatchObject({ refill: true });
     });
-  });
-
-  it('places nothing and charges nothing — it only adds a draft', () => {
-    const before = drafts().length;
-    store().duplicateDraft(drafts()[0].id);
-
-    // The only observable effect is one more unplaced draft. Nothing here can
-    // reach the mutation: the store holds no network client at all.
-    expect(drafts()).toHaveLength(before + 1);
-    expect(drafts().every((draft) => draft.imageId === 1)).toBe(true);
   });
 });
