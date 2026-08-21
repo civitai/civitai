@@ -13,7 +13,7 @@
 "src/**/__tests__/**"
 ```
 
-`include` still lists `src`, so the *app* tree is checked normally — but no file under a
+`include` still lists `src`, so the _app_ tree is checked normally — but no file under a
 `__tests__/` directory ever enters the program. `pnpm typecheck` therefore does not report
 type errors in those files leniently; it cannot see them at all. A deliberate type error
 planted in such a file is reported as **0 errors, exit 0** (demonstrated in §6).
@@ -22,12 +22,12 @@ This is not a hypothetical. It has produced two distinct failures on one pull re
 nineteen real type errors accumulated unnoticed in a single new test file, and a first
 attempt to measure the problem produced a false all-clear.
 
-Two things it does *not* cover, worth stating so the scope is honest:
+Two things it does _not_ cover, worth stating so the scope is honest:
 
 - **`tests/` and `test/` (top-level) are already checked.** They are in `include` and are not
   excluded. This is only about `src/**/__tests__/`.
 - **242 test files under `src/` are already checked**, because they are `*.test.ts` files that
-  do not live in a `__tests__/` directory. The exclusion is keyed on the *directory*, not on
+  do not live in a `__tests__/` directory. The exclusion is keyed on the _directory_, not on
   the filename.
 - **`packages/*/src/**/__tests__/` is already checked too** — 68 such files are in the program
   today, because the exclude pattern is anchored at the repo-root `src/`, not applied
@@ -41,7 +41,7 @@ on which directory you happened to put it in.
 
 ## 2. Why the exclusion exists
 
-It is not a performance decision. What it *is* has been corrected once already — see the
+It is not a performance decision. What it _is_ has been corrected once already — see the
 correction note below, which changes the reading materially.
 
 The `exclude` entry has been touched exactly **once** in the repository's history:
@@ -55,6 +55,7 @@ That commit's diff on `tsconfig.json` is the single added line. The same commit 
 file, in a commit whose subject is about neither.
 
 > ### 🔴 Correction (2026-08-13): this file previously claimed that `exif-parser.test.ts` was
+>
 > "the first file the repository ever put in a `src/**/__tests__/` directory", and that
 > "nobody decided that test files should not be typechecked". **Both are false.** Verified:
 >
@@ -73,9 +74,9 @@ file, in a commit whose subject is about neither.
 >
 > **Nine such files already existed** when the exclude line was added, the earliest on
 > **2026-01-23** — over a month earlier, across six separate commits by different authors.
-> The convention was established and in use; the exclusion came *afterwards*.
+> The convention was established and in use; the exclusion came _afterwards_.
 >
-> An earlier revision of this document said *eight*, and quoted the grep
+> An earlier revision of this document said _eight_, and quoted the grep
 > `^src/.*/__tests__/`. That pattern requires at least one path segment between `src/` and
 > `__tests__/`, so it cannot match `src/__tests__/setup.ts` — a file added by the very same
 > commit as two of the others. The corrected pattern is `^src/(.*/)?__tests__/`, which is
@@ -108,11 +109,11 @@ Measured on this machine, `pnpm typecheck` (which sets `--max-old-space-size=819
 `scripts/typecheck.mjs`; a bare `tsc --noEmit` at the default heap aborts and prints **zero**
 diagnostics, which reads as clean):
 
-| program | cold (no `.tsbuildinfo`) | warm |
-|---|---|---|
-| `tsconfig.json` (today) | 112 s | 34 s |
-| `tsconfig.tests.json` (tests included) | 176 s | 39 s |
-| **cost of including tests** | **+64 s (+57%)** | **+5 s (+15%)** |
+| program                                | cold (no `.tsbuildinfo`) | warm            |
+| -------------------------------------- | ------------------------ | --------------- |
+| `tsconfig.json` (today)                | 112 s                    | 34 s            |
+| `tsconfig.tests.json` (tests included) | 176 s                    | 39 s            |
+| **cost of including tests**            | **+64 s (+57%)**         | **+5 s (+15%)** |
 
 **Read these as an order of magnitude, not a constant.** All four were run back-to-back on one
 developer machine (8 cores) that had other work on it; an earlier, differently-scheduled pair
@@ -159,21 +160,21 @@ tool whose failure mode is "the file you care about reports clean" is worse than
 
 ### By error code
 
-| code | count | what it is |
-|---|---|---|
-| TS2345 | 147 | argument not assignable — mostly hand-built fixtures/mocks narrower than the real parameter |
-| TS2493 | 126 | tuple `[]` has no element at index 0 — reading `mock.calls[0]` off a mock typed with no args |
-| TS2322 | 126 | type not assignable — literal fixtures missing fields of the type they are cast to |
-| TS2352 | 102 | unsafe `as` conversion, usually from `undefined` |
-| TS2339 | 58 | property does not exist — e.g. `.mock` on a union of `Mock \| (() => void)` |
-| TS2556 | 50 | spread argument is not a tuple |
-| TS2737 | 41 | **BigInt literals require target ≥ ES2020** — see the caveat below |
-| TS18048 | 34 | possibly `undefined` |
-| others | 117 | 20 further codes, none above 27 |
+| code    | count | what it is                                                                                   |
+| ------- | ----- | -------------------------------------------------------------------------------------------- |
+| TS2345  | 147   | argument not assignable — mostly hand-built fixtures/mocks narrower than the real parameter  |
+| TS2493  | 126   | tuple `[]` has no element at index 0 — reading `mock.calls[0]` off a mock typed with no args |
+| TS2322  | 126   | type not assignable — literal fixtures missing fields of the type they are cast to           |
+| TS2352  | 102   | unsafe `as` conversion, usually from `undefined`                                             |
+| TS2339  | 58    | property does not exist — e.g. `.mock` on a union of `Mock \| (() => void)`                  |
+| TS2556  | 50    | spread argument is not a tuple                                                               |
+| TS2737  | 41    | **BigInt literals require target ≥ ES2020** — see the caveat below                           |
+| TS18048 | 34    | possibly `undefined`                                                                         |
+| others  | 117   | 20 further codes, none above 27                                                              |
 
 **Caveat on TS2737 (41 errors, 5.1%, across 15 files).** These are an artifact of the app
 config's `"target": "ES2018"`, inherited by the measurement config. The test files run under
-Vitest on Node 22, where `1n` is fine. They are *real* errors under the target the repository
+Vitest on Node 22, where `1n` is fine. They are _real_ errors under the target the repository
 declares, and the fix is a one-character change (`BigInt(1)`), but they are not test-logic
 defects. Overriding `target` in `tsconfig.tests.json` would remove them — and would also
 destroy the one-line-delta property that makes the measurement trustworthy, since changing
@@ -190,31 +191,31 @@ src/server/db/__tests__/kysely-prisma-parity.test.ts(5,29):
 
 `kysely` is not a dependency of this repository (only `prisma-kysely` is) and is not installed.
 That import cannot resolve at runtime either, so this suite contributes zero tests — the exact
-failure class already documented in the repo's own notes about suites that fail to *collect*
+failure class already documented in the repo's own notes about suites that fail to _collect_
 and therefore report "no tests" rather than a failure. The typecheck would have named it on the
 day it landed.
 
 ### By area
 
-| area | errors | dirty files |
-|---|---|---|
-| `src/server/services/` | 329 | 66 |
-| `src/server/routers/` | 231 | 19 |
-| `src/server/__tests__/` | 56 | 8 |
-| `src/env/__tests__/` | 39 | 1 |
-| `src/server/jobs/` | 30 | 7 |
-| `src/server/rewards/` | 20 | 2 |
-| remainder (10 areas) | 96 | 38 |
+| area                    | errors | dirty files |
+| ----------------------- | ------ | ----------- |
+| `src/server/services/`  | 329    | 66          |
+| `src/server/routers/`   | 231    | 19          |
+| `src/server/__tests__/` | 56     | 8           |
+| `src/env/__tests__/`    | 39     | 1           |
+| `src/server/jobs/`      | 30     | 7           |
+| `src/server/rewards/`   | 20     | 2           |
+| remainder (10 areas)    | 96     | 38          |
 
 ### Concentration — this is what decides whether a ratchet is viable
 
-| | errors | share of 801 |
-|---|---|---|
-| top 1 file | 77 | 9.6% |
-| top 5 files | 266 | 33.2% |
-| top 10 files | 388 | 48.4% |
-| top 20 files | 493 | 61.5% |
-| top 50 files | 658 | 82.1% |
+|              | errors | share of 801 |
+| ------------ | ------ | ------------ |
+| top 1 file   | 77     | 9.6%         |
+| top 5 files  | 266    | 33.2%        |
+| top 10 files | 388    | 48.4%        |
+| top 20 files | 493    | 61.5%        |
+| top 50 files | 658    | 82.1%        |
 
 Heavily concentrated. The long tail is thin: 52 files have exactly one error, 89 have three or
 fewer. **Fifty files carry four fifths of the debt**, and they are identifiable by name.
@@ -223,14 +224,14 @@ fewer. **Fifty files carry four fifths of the debt**, and they are identifiable 
 
 Grouping the 141 dirty files by the date they were **first added**:
 
-| month first added | dirty files | errors they contain |
-|---|---|---|
-| 2026-02 | 1 | 2 |
-| 2026-03 | 1 | 1 |
-| 2026-05 | 1 | 4 |
-| **2026-06** | **39** | **316** |
-| **2026-07** | **59** | **248** |
-| **2026-08** (12 days) | **40** | **230** |
+| month first added     | dirty files | errors they contain |
+| --------------------- | ----------- | ------------------- |
+| 2026-02               | 1           | 2                   |
+| 2026-03               | 1           | 1                   |
+| 2026-05               | 1           | 4                   |
+| **2026-06**           | **39**      | **316**             |
+| **2026-07**           | **59**      | **248**             |
+| **2026-08** (12 days) | **40**      | **230**             |
 
 **138 of 141 dirty files, and 794 of 801 errors, are less than three months old.** For context,
 the whole convention is new — 857 of the ~905 test files ever added under `src/**/__tests__/`
@@ -250,46 +251,46 @@ the "legacy" it would grandfather is three months old and 82%-concentrated in fi
 
 ### A. A separate, non-blocking `pnpm typecheck:tests`
 
-*What it is:* add the script, tell people to run it, report it in CI as a warning.
+_What it is:_ add the script, tell people to run it, report it in CI as a warning.
 
-*Against:* this is, functionally, the status quo plus a script. The 801 errors accrued under a
+_Against:_ this is, functionally, the status quo plus a script. The 801 errors accrued under a
 regime where anyone could have run `tsc -p` with a modified exclude at any time. A report that
 nobody must act on does not change an inflow of 19 errors/day. It costs the same compute as a
 blocking gate and buys none of the enforcement.
 
-*Verdict:* worth having as a local-development affordance, but it is not a fix. This proposal
+_Verdict:_ worth having as a local-development affordance, but it is not a fix. This proposal
 deliberately does **not** add it: `pnpm typecheck -p tsconfig.tests.json` already works today
 (the wrapper forwards its arguments to `tsc`), so the convenience alias can be one line of
 `package.json` whenever someone wants it, and this pull request stays purely additive.
 
 ### B. Delete the exclusion and require green
 
-*Against:* permanently red for as long as 801 errors take to fix. **A permanently-red gate is
+_Against:_ permanently red for as long as 801 errors take to fix. **A permanently-red gate is
 worse than no gate: it trains everyone to click through, and it takes the credibility of the
 other checks with it.**
 
-*Verdict:* no. Not as a first move.
+_Verdict:_ no. Not as a first move.
 
 ### C. Gate only the test files changed in the pull request
 
-*Against:* two problems. First, it saves nothing: `tsc` is a whole-program checker, so the
-entire program is built regardless and restricting the *report* to changed files does not
-reduce the cost. Second, it is blind in the direction that matters most — a change to *app*
-code that breaks an *unchanged* test file passes, which is precisely the coupling a typecheck
+_Against:_ two problems. First, it saves nothing: `tsc` is a whole-program checker, so the
+entire program is built regardless and restricting the _report_ to changed files does not
+reduce the cost. Second, it is blind in the direction that matters most — a change to _app_
+code that breaks an _unchanged_ test file passes, which is precisely the coupling a typecheck
 exists to catch.
 
-*Verdict:* no.
+_Verdict:_ no.
 
 ### D. Fix the debt outright
 
-*For:* 141 files, and fifty of them carry 82%. This is a real option, not a fantasy — it is
+_For:_ 141 files, and fifty of them carry 82%. This is a real option, not a fantasy — it is
 days of work, not months, and the concentration means it can be attacked in ranked order with
 visible progress.
 
-*Against:* on its own it does not hold. The measured inflow (~230 errors in the last twelve
+_Against:_ on its own it does not hold. The measured inflow (~230 errors in the last twelve
 days) would restore the debt in roughly five weeks. Fixing without gating buys five weeks.
 
-*Verdict:* do it — **second**, behind a gate, and use §3's ranked file list to sequence it.
+_Verdict:_ do it — **second**, behind a gate, and use §3's ranked file list to sequence it.
 
 ### E. ✅ Recommended: a per-file ratchet, then burn the top 50 down
 
@@ -309,7 +310,7 @@ This is the shape this repository already runs for schema drift
 detector reports what exists, the gate answers the narrower question of whether this change
 made it worse. Reusing that shape means no new concept for reviewers to learn.
 
-**Why a *per-file* count rather than a single total.** A repo-wide total lets a pull request
+**Why a _per-file_ count rather than a single total.** A repo-wide total lets a pull request
 that fixes ten errors in an old file introduce ten new ones in a new file and pass. Per-file
 counts make the two independent, which is the whole point given §3's finding that the inflow —
 not the stock — is the problem.
@@ -385,13 +386,13 @@ because the class is more instructive than the fix: **every one of them treated 
 diagnostics" as evidence of cleanliness.** All four were demonstrated live against this
 repository, not against a stub:
 
-| condition | old gate | new gate |
-|---|---|---|
-| `TYPECHECK_HEAP_MB=abc` (wrapper exits 2, prints no crash marker) | `PASS`, exit 0 | exit 3, names the exit status |
-| wrapper exits 127 (binary missing) | `PASS`, exit 0 | exit 3 |
-| wrapper exits 134 (V8 heap abort) | `PASS`, exit 0 | exit 3 |
-| tsc `pretty` output — 801 real diagnostics | `0 error(s) across 0 file(s) … PASS`, exit 0 | `801 error(s) across 141 file(s)` |
-| `--write-baseline` while the check cannot run | writes `0 error(s) across 0 file(s)`, exit 0 | exit 3, file untouched |
+| condition                                                         | old gate                                     | new gate                          |
+| ----------------------------------------------------------------- | -------------------------------------------- | --------------------------------- |
+| `TYPECHECK_HEAP_MB=abc` (wrapper exits 2, prints no crash marker) | `PASS`, exit 0                               | exit 3, names the exit status     |
+| wrapper exits 127 (binary missing)                                | `PASS`, exit 0                               | exit 3                            |
+| wrapper exits 134 (V8 heap abort)                                 | `PASS`, exit 0                               | exit 3                            |
+| tsc `pretty` output — 801 real diagnostics                        | `0 error(s) across 0 file(s) … PASS`, exit 0 | `801 error(s) across 141 file(s)` |
+| `--write-baseline` while the check cannot run                     | writes `0 error(s) across 0 file(s)`, exit 0 | exit 3, file untouched            |
 
 The old "CRASH IS NOT CLEAN" control was **spelled, not structural**: it matched the literal
 string `TYPECHECK CRASHED`, which `scripts/typecheck.mjs` emits from exactly one of its four
@@ -401,24 +402,24 @@ and a spawn error — print no such marker and sailed straight through.
 Five controls now stand between a run and a verdict, and none depends on a downstream tool
 remembering to print a particular string:
 
-1. **Exit-status truth table.** The outcome is decided by *(exit status, signal, parsed
-   diagnostic count)*. A non-zero exit with zero parsed diagnostics is a **failure to run**,
+1. **Exit-status truth table.** The outcome is decided by _(exit status, signal, parsed
+   diagnostic count)_. A non-zero exit with zero parsed diagnostics is a **failure to run**,
    never a clean tree — one rule covering exits 2, 127, 134 and any future sibling.
 2. **Parse control.** `pretty` is a legal `compilerOptions` key, inherited through `extends`,
    and tsc also enables it under a TTY. It reshapes every diagnostic from
    `path(l,c): error TS…` to `path:l:c - error TS…`. It is now forced off on the command line
    (`--pretty false` beats the config), **both** formats are parsed anyway, ANSI is stripped
    first, and the parse must **account for every line** carrying the `error TS` marker — not
-   merely parse *something*. That last clause is the fix for a cliff at exactly zero: the
+   merely parse _something_. That last clause is the fix for a cliff at exactly zero: the
    control originally fired only when the parser understood **nothing**, so a run that
    understood 5 of 801 marker lines was accepted and then reported "136 file(s) now clean".
    Measured on this repository, `unparsed === 0` across 801 diagnostics and 650 continuation
-   lines; the divergent shapes that do exist in tsc are the *fileless* diagnostics (TS18003
+   lines; the divergent shapes that do exist in tsc are the _fileless_ diagnostics (TS18003
    "No inputs were found in config file", TS6053 "File not found"), which are precisely the
    outputs meaning the program was not built as intended.
 3. **Plausibility.** A parsed total of `0` against a baseline of `N > 0` is refused, and so is a
    **collapse** — a total under 25% of the baseline. The zero was only the extreme of that
-   spectrum, and the ratchet scores the whole spectrum as *progress*: every file the instrument
+   spectrum, and the ratchet scores the whole spectrum as _progress_: every file the instrument
    fails to see is a file that looks `fixed`. "Everything got fixed" and "the instrument is
    broken" produce the same number, and only one of them is common. On a verdict run a collapse
    **shouts but does not block** (it cannot hide a regression, so blocking would obstruct a
@@ -432,7 +433,7 @@ remembering to print a particular string:
    `max(fixed 400, 90% of the count stored in the baseline)` — 938 → 844 here. Both halves of
    that `max` are load-bearing, and each fixes a different defect: a bare 400 let 57% of the
    test tree vanish with the control still green (vanished files score as `fixed`, i.e. PASS),
-   while a bare *derived* floor was only ever as good as a number in a JSON file —
+   while a bare _derived_ floor was only ever as good as a number in a JSON file —
    `testFilesInProgram: 1` produced a floor of **zero**, a control no program can fail, while
    still logging "derived from the baseline". A corrupt, negative, non-integer or absurd
    recorded count is **refused**, not silently downgraded to the fallback: an absent value and
@@ -459,7 +460,7 @@ Three properties now hold, and the first is the one that matters:
 
 - **Scope.** It is honoured on `--write-baseline` **only**, so it cannot make a verdict run
   green. This does not weaken its legitimate use: on the day the test tree is genuinely clean
-  the required action *is* to regenerate the baseline, after which the baseline total is 0 and
+  the required action _is_ to regenerate the baseline, after which the baseline total is 0 and
   the control never fires again. A verdict run that trips the control is correctly telling you
   to do that regeneration.
 - **It is refused, not ignored, on a verdict run.** Silently ignoring a control-disabling
@@ -467,7 +468,7 @@ Three properties now hold, and the first is the one that matters:
   believes it is on, and the log says nothing.
 - **It requires a written reason**, not a truthy token. `=1` is refused; the value must be a
   human-readable justification, and it is echoed into the output, so the log of a disarmed run
-  carries *why* it was disarmed. A control that can be switched off by typing `1` is one nobody
+  carries _why_ it was disarmed. A control that can be switched off by typing `1` is one nobody
   has to justify switching off.
 
 A disarmed regeneration prints a banner, and its success line says
@@ -495,7 +496,7 @@ environment could not run the check.
 ### Known behaviour: a pure `git mv` blocks
 
 A renamed test file is a new path with no baseline entry (→ **BLOCK**) plus an old path that
-disappeared (→ scored `fixed`). The gate cannot see file *content*, so it will not
+disappeared (→ scored `fixed`). The gate cannot see file _content_, so it will not
 auto-forgive "this looks like a rename" — that is a hole a genuine regression fits through.
 What it does instead is **name the probable former path** in the block output, so the author is
 told the remedy (`--write-baseline` in the same PR) rather than hunting a regression that is not
@@ -625,7 +626,7 @@ diagnostic formats; and every cell of the exit-status truth table.
 function, and a call site in the gate that decides whether to act on it — and until the final
 hardening round only the first was covered. Mutating `if (!drift.ok)` to `if (false)` in the
 gate left the suite **78/78 green**: `diffExcludes` was thoroughly tested and the control was
-genuinely live in production, but nothing asserted the gate *read* it. That is the same class
+genuinely live in production, but nothing asserted the gate _read_ it. That is the same class
 this document exists to close, found inside this document's own suite. The gate's call sites are
 now driven end-to-end through a `TYPECHECK_TESTS_CONFIG_DIR` seam, and each case asserts the
 **specific message** of the control under test rather than the exit code — several of these
@@ -640,55 +641,55 @@ summarised after it.
 Each mutation was applied to the real source and confirmed to turn the suite **red for that
 guard's own cases**, with the tree checksum-verified back to pristine afterwards:
 
-| mutant | guard broken | cases failed |
-|---|---|---|
-| M1 | non-zero exit + 0 diagnostics must not read as clean | 9 |
-| M2 | a measured zero against a non-empty baseline is refused | 3 |
-| M3 | pretty-format diagnostics are still counted | 3 |
-| M4 | the file-count floor tracks the baseline, not a magic 400 | 4 |
-| M5 | `packages/*/src/**/__tests__` is not this gate's business | 4 |
-| M6 | a rename is reported as a rename | 2 |
-| M7 | the two tsconfig exclude lists differ by exactly one entry | 3 |
-| M8 | a baseline measured against another config is rejected | 2 |
-| M9 | a run killed by a signal is refused | 1 |
-| M10 | a coloured pretty run is still counted | 1 |
-| M11 | `--write-baseline` refuses an implausible measurement | 1 |
-| M12 | the gate acts on the run classification | 4 |
-| M13 | `--write-baseline` borrows the floor from the baseline it replaces | 1 |
+| mutant | guard broken                                                       | cases failed |
+| ------ | ------------------------------------------------------------------ | ------------ |
+| M1     | non-zero exit + 0 diagnostics must not read as clean               | 9            |
+| M2     | a measured zero against a non-empty baseline is refused            | 3            |
+| M3     | pretty-format diagnostics are still counted                        | 3            |
+| M4     | the file-count floor tracks the baseline, not a magic 400          | 4            |
+| M5     | `packages/*/src/**/__tests__` is not this gate's business          | 4            |
+| M6     | a rename is reported as a rename                                   | 2            |
+| M7     | the two tsconfig exclude lists differ by exactly one entry         | 3            |
+| M8     | a baseline measured against another config is rejected             | 2            |
+| M9     | a run killed by a signal is refused                                | 1            |
+| M10    | a coloured pretty run is still counted                             | 1            |
+| M11    | `--write-baseline` refuses an implausible measurement              | 1            |
+| M12    | the gate acts on the run classification                            | 4            |
+| M13    | `--write-baseline` borrows the floor from the baseline it replaces | 1            |
 
 A guard that no mutation can turn red is not a guard, and a green suite says nothing on its own
 about which of its assertions are load-bearing.
 
 **The second battery (19 mutants, after the hardening round).** It covers the guards added in
-that round *and* the gate's call sites, and it carries its own controls:
+that round _and_ the gate's call sites, and it carries its own controls:
 
-| mutant | guard broken | cases failed |
-|---|---|---|
-| `F1-unparsed-guard` | a partial parse is refused, not only a total one | 6 |
-| `F1-collapse-guard` | a collapse against the baseline is refused | 5 |
-| `F2-math-max` | the derived floor may raise the fixed one, never lower it | 4 |
-| `F2-derived-strict` | "derived" is only claimed when the baseline actually raised the floor | 1 |
-| `F2-noninteger-refusal` | a non-integer recorded count is refused | 4 |
-| `F2-nonpositive-refusal` | a zero/negative recorded count is refused | 2 |
-| `F2-absurd-ceiling` | an absurd count is refused rather than made permanently red | 2 |
-| `F3-verdict-scope` | the escape hatch is honoured on `--write-baseline` only | 3 |
-| `F3-bare-token` | the hatch requires a reason, not `=1` | 10 |
-| `BL-total-crosscheck` | `totalErrors` must agree with the sum of the entries | 1 |
-| `F5-drift-callsite` | **the gate acts on the drift control** | 2 |
-| `F5-listed-callsite` | the gate acts on the positive control arm's own verdict | 1 |
-| `F5-floorresult-callsite` | the gate acts on an unusable floor | 4 |
-| `F5-allowance-callsite` | the gate acts on a refused escape hatch | 1 |
-| `F5-provenance-echo` | provenance is echoed | 1 |
-| `F5-collapse-shout` | a collapse is shouted on the verdict path | 1 |
-| `CONTROL-breaking-compare` (must die) | the ratchet blocks at all | 8 |
-| `CONTROL-equivalent-rename` (must **survive**) | — | 0 ✅ |
-| `CONTROL-equivalent-comment` (must **survive**) | — | 0 ✅ |
+| mutant                                          | guard broken                                                          | cases failed |
+| ----------------------------------------------- | --------------------------------------------------------------------- | ------------ |
+| `F1-unparsed-guard`                             | a partial parse is refused, not only a total one                      | 6            |
+| `F1-collapse-guard`                             | a collapse against the baseline is refused                            | 5            |
+| `F2-math-max`                                   | the derived floor may raise the fixed one, never lower it             | 4            |
+| `F2-derived-strict`                             | "derived" is only claimed when the baseline actually raised the floor | 1            |
+| `F2-noninteger-refusal`                         | a non-integer recorded count is refused                               | 4            |
+| `F2-nonpositive-refusal`                        | a zero/negative recorded count is refused                             | 2            |
+| `F2-absurd-ceiling`                             | an absurd count is refused rather than made permanently red           | 2            |
+| `F3-verdict-scope`                              | the escape hatch is honoured on `--write-baseline` only               | 3            |
+| `F3-bare-token`                                 | the hatch requires a reason, not `=1`                                 | 10           |
+| `BL-total-crosscheck`                           | `totalErrors` must agree with the sum of the entries                  | 1            |
+| `F5-drift-callsite`                             | **the gate acts on the drift control**                                | 2            |
+| `F5-listed-callsite`                            | the gate acts on the positive control arm's own verdict               | 1            |
+| `F5-floorresult-callsite`                       | the gate acts on an unusable floor                                    | 4            |
+| `F5-allowance-callsite`                         | the gate acts on a refused escape hatch                               | 1            |
+| `F5-provenance-echo`                            | provenance is echoed                                                  | 1            |
+| `F5-collapse-shout`                             | a collapse is shouted on the verdict path                             | 1            |
+| `CONTROL-breaking-compare` (must die)           | the ratchet blocks at all                                             | 8            |
+| `CONTROL-equivalent-rename` (must **survive**)  | —                                                                     | 0 ✅         |
+| `CONTROL-equivalent-comment` (must **survive**) | —                                                                     | 0 ✅         |
 
 Two findings came out of running it, and both are worth recording because each is an instance of
 something this document argues elsewhere:
 
 - **`F5-floorresult-callsite` initially SURVIVED.** The case meant to cover it used
-  `testFilesInProgram: 1`, which after the `Math.max` fix is a *valid* input (floor 400) — so it
+  `testFilesInProgram: 1`, which after the `Math.max` fix is a _valid_ input (floor 400) — so it
   exercised the floor comparison, not the "is this floor usable at all" refusal. With that call
   site neutered, `floor` is `null`, `testFilesInProgram < null` is false, and the gate sails past
   **both** checks into a verdict. A dedicated case with a genuinely corrupt count now kills it.
@@ -696,7 +697,7 @@ something this document argues elsewhere:
   spot looks like from the inside.
 - **`CONTROL-equivalent-rename` was initially reported KILLED**, which by the rule stated for
   this kind of battery means the harness is broken. It was not: the "equivalent" mutation renamed
-  only the *declaration* of a local, leaving the interpolation `${pct}` dangling — a
+  only the _declaration_ of a local, leaving the interpolation `${pct}` dangling — a
   `ReferenceError`, i.e. a genuinely breaking mutation mislabelled as equivalent. The harness was
   right and the control was wrong. It is recorded here rather than quietly corrected, because
   "the equivalent control died" is exactly the signal one is tempted to explain away.

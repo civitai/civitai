@@ -6,6 +6,7 @@ Repo: `civitai/civitai` @ `origin/main` (f5fe73fd5f)
 Branch: `zach/readtime-metric-privacy-cpu-fix`
 
 ## Measured evidence (ground truth)
+
 - `civitai-dp-prod-api-primary`: per-request server CPU ~+35% and event-loop **longtask**
   time ~+71% higher with the Flipt flag `model-metric-privacy-readtime` **ON** vs **OFF**,
   via a clean load-normalized bracketed A/B (ON→OFF→ON).
@@ -15,6 +16,7 @@ Branch: `zach/readtime-metric-privacy-cpu-fix`
 - Longtask ⇒ the cost is **frequent synchronous event-loop blocking on a hot read path**.
 
 ## Root cause (1 paragraph)
+
 The dominant flag-gated cost is **not** the membership lookup #3322 cached — it is an
 **unconditional, uncached `dbRead.user.findMany({ select: { settings } })` that fetches and
 synchronously deserializes every owner's FULL `settings` JSON blob, once per request, over
@@ -31,6 +33,7 @@ longtask. Critically, the codebase already has a batched, Redis-backed, bust-wir
 a raw per-request DB read. This is a net-new query #3266 added and #3322 never removed.
 
 ## Why #3322 missed it (the key deliverable)
+
 `#3322` optimized `getValidCreatorMembershipMap` (Redis-cached the `id→isValidMember` boolean,
 skipping the `customerSubscription.findMany` + per-subscription
 `subscriptionProductMetadataSchema.parse` on hits). But on the **feed** path the membership
@@ -48,6 +51,7 @@ know if a default hides. #3322 fixed the branch that the hot path skips and left
 hot path always runs.
 
 ### Ruled out (with code)
+
 - **Membership Zod parse per entity** (hint a): only runs on cache MISS inside
   `queryValidCreatorMembership` (`creator-membership.service.ts:71`), and only for hide-owners;
   not on the common hot path. Not the delta.
@@ -62,17 +66,19 @@ hot path always runs.
   light boolean ORs; negligible per entity.
 
 ## Exact hot cost & fan-out
-| Path | file:line | Gated by flag? | Per-request fan-out | Cost |
-|---|---|---|---|---|
-| Browse feed `model.getAll` → `getModelsRaw` | `model.service.ts:1428-1447` | **Yes** | 1 DB query + deserialize of full `settings` for **all N feed owners** (N up to ~100) | **Dominant** — highest volume on api-primary |
-| v1 models list `getModelsWithVersions` | `model.service.ts:3350-3359` | No (always-on) | same, all owners in page | always-on baseline cost |
-| associated models | `model.controller.ts:1637-1647` | Yes | same, all associated owners | lower volume |
-| single `getModel` | `model.controller.ts:307-324` | Yes | 1 owner `findUnique`, short-circuited | small — leave as-is |
+
+| Path                                        | file:line                       | Gated by flag? | Per-request fan-out                                                                  | Cost                                         |
+| ------------------------------------------- | ------------------------------- | -------------- | ------------------------------------------------------------------------------------ | -------------------------------------------- |
+| Browse feed `model.getAll` → `getModelsRaw` | `model.service.ts:1428-1447`    | **Yes**        | 1 DB query + deserialize of full `settings` for **all N feed owners** (N up to ~100) | **Dominant** — highest volume on api-primary |
+| v1 models list `getModelsWithVersions`      | `model.service.ts:3350-3359`    | No (always-on) | same, all owners in page                                                             | always-on baseline cost                      |
+| associated models                           | `model.controller.ts:1637-1647` | Yes            | same, all associated owners                                                          | lower volume                                 |
+| single `getModel`                           | `model.controller.ts:307-324`   | Yes            | 1 owner `findUnique`, short-circuited                                                | small — leave as-is                          |
 
 The synchronous longtask = JSON deserialization of N large `settings` blobs per request,
 attributed to the feed because it is the hottest gated caller.
 
 ## Fix design (minimal, deterministic, byte-identical privacy)
+
 Add a tiny read-through per-user cache of the **three derived hide-default booleans only**,
 mirroring the proven `getValidCreatorMembershipMap` pattern in the same dependency-light module:
 
@@ -100,6 +106,7 @@ existing `userSettingsCache` and membership cache, and it can only make the cach
 OWN setting change; it can never expose another creator's metric that membership would hide.
 
 ## Verification plan
+
 1. **Compile:** `NODE_OPTIONS=--max_old_space_size=8192 npx tsc --noEmit` (default heap OOMs).
 2. **Unit tests:** cache hit/miss/batch-backfill/fail-open/bust + byte-identical-vs-raw-settings
    (a stored 3-bool object resolves the same hidden metrics as reading full settings), and the
@@ -109,11 +116,12 @@ OWN setting change; it can never expose another creator's metric that membership
    baseline. Metrics: per-request CPU (Pyroscope / cpuprofile) and the event-loop **longtask**
    metric (the +71% signal). Success = the ON/OFF gap collapses (longtask ON ≈ OFF).
 4. **Cache-hit confirmation:** watch the new key populate (`packed:caches:user-metric-privacy-
-   defaults:*`) and DB `user` findMany volume from these paths drop after warmup; confirm no
+defaults:*`) and DB `user` findMany volume from these paths drop after warmup; confirm no
    change in emitted hidden-metric values on a hide-owner model (spot-check a known CP member's
    card + version stats look identical pre/post).
 
 ## Residual uncertainty (honest)
+
 Static analysis proves the feed unconditionally does an uncached full-`settings` fetch per
 request that #3322 left in place and that the common hot path never calls membership — so this
 IS a real, dominant, always-run synchronous cost the A/B flag toggles. What static reading
