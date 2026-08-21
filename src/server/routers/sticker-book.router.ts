@@ -20,7 +20,8 @@ export const stickerBookRouter = router({
     getStickerBook({
       username: input.username,
       limit: input.limit,
-      viewerId: ctx.user?.id,
+      browsingLevel: input.browsingLevel,
+      user: ctx.user ?? undefined,
       isModerator: !!ctx.user?.isModerator,
     })
   ),
@@ -36,7 +37,8 @@ export const stickerBookRouter = router({
       username: input.username,
       side: input.side,
       page: input.page,
-      viewerId: ctx.user?.id,
+      browsingLevel: input.browsingLevel,
+      user: ctx.user ?? undefined,
       isModerator: !!ctx.user?.isModerator,
     })
   ),

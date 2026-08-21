@@ -1,5 +1,8 @@
 import { dbRead } from '~/server/db/client';
+import { getInfiniteImagesSchema } from '~/server/schema/image.schema';
+import { getAllImages } from '~/server/services/image.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
+import type { SessionUser } from '~/types/session';
 import type { StickerBookSettings } from '~/shared/utils/sticker-book';
 import { getStickerBalances } from '~/server/services/sticker.service';
 import { getBlockedPairIds } from '~/server/services/user-preferences.service';
@@ -192,6 +195,79 @@ async function getEarnedBuzz(userId: number) {
 }
 
 /**
+ * The book's images, in the feed's own shape, so the page can draw them with the
+ * standard image card.
+ *
+ * 🔴 THROUGH `getAllImages`, NOT A READ OF OUR OWN. Every rule about whether an
+ * image may be shown lives in there — the browsing level, the domain ceiling,
+ * the publish and moderation state, the blocked-browsing-tag policy — and a
+ * hand-written `image.findMany` beside it is a second copy that drifts. The
+ * sticker book decides WHICH images and in what order; it does not get to decide
+ * what may be seen.
+ *
+ * Called as a function rather than through the feed endpoint: the dispatcher in
+ * `image.controller` may route a feed query to the search index, which has no
+ * `ids` filter and drops it silently — an `ids` query served that way comes back
+ * with the global feed rather than empty.
+ */
+async function imagesForBook({
+  ids,
+  browsingLevel,
+  user,
+}: {
+  ids: number[];
+  browsingLevel: number;
+  user?: SessionUser;
+}) {
+  if (!ids.length) return [];
+
+  const input = getInfiniteImagesSchema.parse({
+    ids,
+    browsingLevel,
+    period: 'AllTime',
+    sort: 'Newest',
+    limit: ids.length,
+    include: [],
+  });
+
+  const { items } = await getAllImages({ ...input, user, userId: user?.id });
+  const byId = new Map(items.map((image) => [image.id, image]));
+
+  // The book's order, not the feed's. An image the feed withheld is simply
+  // absent, which is the same answer as it not being in the book.
+  return ids.flatMap((id) => {
+    const image = byId.get(id);
+    return image ? [image] : [];
+  });
+}
+
+/**
+ * The section's rows with their image attached, and rows whose image the feed
+ * withheld dropped.
+ *
+ * Dropped rather than sent without a picture: a book is a browse surface and
+ * nobody has to act on a row here, unlike the review queues, which keep a
+ * withheld row so its escrow can still be answered.
+ */
+async function withImages<T extends { imageId: number }>(
+  rows: T[],
+  browsingLevel: number,
+  user?: SessionUser
+) {
+  const images = await imagesForBook({
+    ids: rows.map((row) => row.imageId),
+    browsingLevel,
+    user,
+  });
+  const byId = new Map(images.map((image) => [image.id, image]));
+
+  return rows.flatMap((row) => {
+    const image = byId.get(row.imageId);
+    return image ? [{ ...row, image }] : [];
+  });
+}
+
+/**
  * Whose book this is, and what this viewer may have of it.
  *
  * 🔴 SHARED BY EVERY ENTRY POINT, AND THAT IS THE POINT. The tab and the
@@ -208,25 +284,25 @@ async function resolveBookAccess({
   viewerId?: number;
   isModerator: boolean;
 }) {
-  const user = await dbRead.user.findFirst({
+  const subject = await dbRead.user.findFirst({
     where: { username },
     select: { id: true, username: true, settings: true, bannedAt: true, deletedAt: true },
   });
 
-  if (!user || user.deletedAt) throw throwNotFoundError('User not found');
+  if (!subject || subject.deletedAt) throw throwNotFoundError('User not found');
 
-  const isOwner = !!viewerId && viewerId === user.id;
-  const access = stickerBookAccess(user.settings as StickerBookSettings | null, {
+  const isOwner = !!viewerId && viewerId === subject.id;
+  const access = stickerBookAccess(subject.settings as StickerBookSettings | null, {
     isOwner,
     isModerator,
   });
 
   // A banned account's book is closed to visitors for the same reason its other
   // tabs are, and open to moderators for the same reason theirs are.
-  const banned = !!user.bannedAt && !isOwner && !isModerator;
+  const banned = !!subject.bannedAt && !isOwner && !isModerator;
 
   return {
-    user,
+    subject,
     isOwner,
     access:
       banned || !access.canViewBook
@@ -247,17 +323,20 @@ export async function getStickerBookSection({
   side,
   page = 1,
   limit = 30,
-  viewerId,
+  browsingLevel,
+  user,
   isModerator = false,
 }: {
   username: string;
   side: 'placer' | 'owner';
   page?: number;
   limit?: number;
-  viewerId?: number;
+  browsingLevel: number;
+  user?: SessionUser;
   isModerator?: boolean;
 }) {
-  const { user, isOwner, access } = await resolveBookAccess({ username, viewerId, isModerator });
+  const viewerId = user?.id;
+  const { subject, isOwner, access } = await resolveBookAccess({ username, viewerId, isModerator });
 
   // The gate is re-asked here rather than assumed from the tab having rendered.
   // A procedure is a URL, and a hidden book must refuse this one on its own.
@@ -267,32 +346,35 @@ export async function getStickerBookSection({
   const blockedIds = viewerId ? await getBlockedPairIds(viewerId) : [];
 
   const { items, hasMore } = await getPlacementSection({
-    userId: user.id,
+    userId: subject.id,
     side,
     limit: sectionLimit,
     skip: Math.max(page - 1, 0) * sectionLimit,
     blockedIds,
   });
 
-  return { items, hasMore, isOwner, access };
+  return { items: await withImages(items, browsingLevel, user), hasMore, isOwner, access };
 }
 
 export async function getStickerBook({
   username,
-  viewerId,
+  browsingLevel,
+  user,
   isModerator = false,
   limit = 12,
 }: {
   username: string;
-  viewerId?: number;
+  browsingLevel: number;
+  user?: SessionUser;
   isModerator?: boolean;
   limit?: number;
 }) {
-  const { user, isOwner, access } = await resolveBookAccess({ username, viewerId, isModerator });
+  const viewerId = user?.id;
+  const { subject, isOwner, access } = await resolveBookAccess({ username, viewerId, isModerator });
 
   if (!access.canViewBook) {
     return {
-      userId: user.id,
+      userId: subject.id,
       isOwner,
       access,
       stickers: [],
@@ -309,25 +391,25 @@ export async function getStickerBook({
     // Newest acquisition first — the order the placement tray presents the same
     // collection in.
     access.canViewStickers
-      ? getStickerBalances(user.id, { newestFirst: true })
+      ? getStickerBalances(subject.id, { newestFirst: true })
       : Promise.resolve([]),
     getPlacementSection({
-      userId: user.id,
+      userId: subject.id,
       side: 'placer',
       limit: sectionLimit,
       blockedIds,
     }),
     getPlacementSection({
-      userId: user.id,
+      userId: subject.id,
       side: 'owner',
       limit: sectionLimit,
       blockedIds,
     }),
-    access.canViewEarnings ? getEarnedBuzz(user.id) : Promise.resolve(null),
+    access.canViewEarnings ? getEarnedBuzz(subject.id) : Promise.resolve(null),
   ]);
 
   return {
-    userId: user.id,
+    userId: subject.id,
     isOwner,
     access,
     stickers: holdings.map(({ cosmeticId, remaining }) => ({
@@ -338,8 +420,8 @@ export async function getStickerBook({
     })),
     // The row's items only. `hasMore` belongs to the drill-in page, which asks
     // for its own pages; on the tab the "View all" link is there either way.
-    placed: placed.items,
-    received: received.items,
+    placed: await withImages(placed.items, browsingLevel, user),
+    received: await withImages(received.items, browsingLevel, user),
     earnedBuzz,
   };
 }

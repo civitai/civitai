@@ -1,7 +1,6 @@
-import { Loader, Text } from '@mantine/core';
+import { Text } from '@mantine/core';
 import { IconSticker } from '@tabler/icons-react';
 import { useMemo } from 'react';
-import { useQueryImages } from '~/components/Image/image.utils';
 import { ImagesCard } from '~/components/Image/Infinite/ImagesCard';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -16,53 +15,28 @@ const CARD_HEIGHT = 450;
 /**
  * The images in one section, drawn with the standard feed card.
  *
- * 🔴 THE SERVER SENDS IDS, NOT IMAGES, AND THAT IS THE POINT. The book's own
- * query answers "which images, in what order, and who was on the other end";
- * everything about whether an image may be *shown* — the browsing level, the
- * domain ceiling, the publish and moderation rules, the viewer's hidden users
- * and tags — belongs to `image.getInfinite`, which every other feed on the site
- * already goes through. A second, hand-written copy of those rules here is a
- * copy that drifts, and the half that drifts is the half that leaks.
+ * The card is the feed's own `ImagesCard`, and the rows arrive already in the
+ * feed's shape — the service hydrates them through `getAllImages`, so what may
+ * be shown is decided in the one place that decides it everywhere else. Nothing
+ * here re-fetches: a second infinite query on a profile tab would be a feed
+ * inside a feed.
  *
- * The cost is one extra request per section and losing control of the order,
- * which is why the ids are re-sorted below.
+ * `ImagesProvider` is what makes the card's dialog carry the section as its
+ * gallery, so paging through an image opens the next one in the book rather
+ * than the global feed.
  */
 export function StickerBookGrid({ items, side }: { items: BookItems; side: StickerBookSide }) {
-  const ids = useMemo(() => items.map((item) => item.imageId), [items]);
-  const { images, isLoading } = useQueryImages({ ids }, { enabled: ids.length > 0 });
+  const images = useMemo(() => items.map((item) => item.image), [items]);
 
-  const ordered = useMemo(() => {
-    const byId = new Map(images.map((image) => [image.id, image]));
-    // The book's order, not the feed's: `getInfinite` sorts by its own rules, and
-    // these sections mean "most recently stickered". An image the feed withheld
-    // is simply absent, which is the same answer as it not being in the book.
-    return ids.flatMap((id) => {
-      const image = byId.get(id);
-      return image ? [image] : [];
-    });
-  }, [ids, images]);
-
-  const counterpartsById = useMemo(
-    () => new Map(items.map((item) => [item.imageId, item.counterparts])),
-    [items]
-  );
-
-  if (isLoading && !ordered.length)
-    return (
-      <div className="flex justify-center py-8">
-        <Loader />
-      </div>
-    );
-
-  if (!ordered.length) return null;
+  if (!items.length) return null;
 
   return (
-    <ImagesProvider images={ordered}>
+    <ImagesProvider images={images}>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
-        {ordered.map((image) => (
-          <div key={image.id} className="relative">
-            <ImagesCard data={image} height={CARD_HEIGHT} />
-            <PlacedBy counterparts={counterpartsById.get(image.id) ?? []} side={side} />
+        {items.map((item) => (
+          <div key={item.imageId} className="relative">
+            <ImagesCard data={item.image} height={CARD_HEIGHT} />
+            <PlacedBy counterparts={item.counterparts} side={side} />
           </div>
         ))}
       </div>

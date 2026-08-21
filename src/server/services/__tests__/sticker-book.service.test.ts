@@ -1,12 +1,27 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as ImageService from '~/server/services/image.service';
 import type * as UserPreferences from '~/server/services/user-preferences.service';
 
 const blockedPairIds = vi.fn(async () => [] as number[]);
+/**
+ * Stands in for the feed. The book asks it for the images behind the ids it
+ * chose, so a test can withhold one by leaving it out of the answer — which is
+ * exactly what the feed does to an image the viewer may not see.
+ */
+const allImages = vi.fn(async ({ ids }: { ids?: number[] }) => ({
+  items: (ids ?? []).map((id) => ({ id, url: `url-${id}` })),
+  nextCursor: undefined,
+}));
 
 vi.mock('~/server/services/user-preferences.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserPreferences>()),
   getBlockedPairIds: (...args: [number]) => blockedPairIds(...args),
+}));
+
+vi.mock('~/server/services/image.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ImageService>()),
+  getAllImages: (...args: [{ ids?: number[] }]) => allImages(...args),
 }));
 
 const { getStickerBook, getStickerBookSection } = await import(
@@ -31,12 +46,11 @@ const placementFindMany = dbMock.dbRead.placement.findMany;
 const imageFindMany = dbMock.dbRead.image.findMany;
 const queryRaw = dbMock.dbRead.$queryRaw;
 
-/**
- * Kept as an empty spread so every call reads the same. The service takes no
- * browsing level any more — it returns ids, and the page's own image query is
- * where levels apply.
- */
-const levels = {};
+/** The level every call asserts, held constant so a difference is a permission. */
+const levels = { browsingLevel: 1 };
+
+/** The viewer, as the service takes them — it reads `user.id` for everything. */
+const viewer = (id: number) => ({ user: { id } as never });
 
 /** The profile whose book is being asked for. */
 const creatorWithSettings = (settings: Record<string, unknown> | null) =>
@@ -119,6 +133,10 @@ const holdings = () =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  allImages.mockImplementation(async ({ ids }: { ids?: number[] }) => ({
+    items: (ids ?? []).map((id) => ({ id, url: `url-${id}` })),
+    nextCursor: undefined,
+  }));
   blockedPairIds.mockResolvedValue([]);
   creatorWithSettings(null);
   oneStickeredImage();
@@ -127,7 +145,7 @@ beforeEach(() => {
 
 describe('getStickerBook — what leaves the server', () => {
   it('sends a stranger the stickers but never the quantities', async () => {
-    const book = await getStickerBook({ username: 'creator', viewerId: STRANGER, ...levels });
+    const book = await getStickerBook({ username: 'creator', ...viewer(STRANGER), ...levels });
 
     expect(book.stickers).toHaveLength(2);
     // Absent, not null and not zero: `null` already means unlimited on this
@@ -137,7 +155,7 @@ describe('getStickerBook — what leaves the server', () => {
   });
 
   it('sends the owner their own quantities, unlimited included', async () => {
-    const book = await getStickerBook({ username: 'creator', viewerId: CREATOR, ...levels });
+    const book = await getStickerBook({ username: 'creator', ...viewer(CREATOR), ...levels });
 
     expect(book.stickers).toEqual([
       { cosmeticId: 1, remaining: 4 },
@@ -148,7 +166,7 @@ describe('getStickerBook — what leaves the server', () => {
   it('does not send quantities to a moderator', async () => {
     const book = await getStickerBook({
       username: 'creator',
-      viewerId: MODERATOR,
+      ...viewer(MODERATOR),
       isModerator: true,
       ...levels,
     });
@@ -164,7 +182,7 @@ describe('getStickerBook — what leaves the server', () => {
   it('sends a hidden book to nobody but privileged viewers, content included', async () => {
     creatorWithSettings({ hideStickerBook: true });
 
-    const book = await getStickerBook({ username: 'creator', viewerId: STRANGER, ...levels });
+    const book = await getStickerBook({ username: 'creator', ...viewer(STRANGER), ...levels });
 
     expect(book.access.canViewBook).toBe(false);
     // The sections are the point of the assertion, not the flag: a payload that
@@ -183,7 +201,7 @@ describe('getStickerBook — what leaves the server', () => {
 
     const book = await getStickerBook({
       username: 'creator',
-      viewerId: MODERATOR,
+      ...viewer(MODERATOR),
       isModerator: true,
       ...levels,
     });
@@ -196,7 +214,7 @@ describe('getStickerBook — what leaves the server', () => {
   it('withholds the stickers alone when only that toggle is set', async () => {
     creatorWithSettings({ hidePurchasedStickers: true });
 
-    const book = await getStickerBook({ username: 'creator', viewerId: STRANGER, ...levels });
+    const book = await getStickerBook({ username: 'creator', ...viewer(STRANGER), ...levels });
 
     expect(book.stickers).toEqual([]);
     // The rest of the book is untouched by that toggle.
@@ -204,7 +222,7 @@ describe('getStickerBook — what leaves the server', () => {
   });
 
   it('never sends earnings to a stranger', async () => {
-    const book = await getStickerBook({ username: 'creator', viewerId: STRANGER, ...levels });
+    const book = await getStickerBook({ username: 'creator', ...viewer(STRANGER), ...levels });
 
     expect(book.earnedBuzz).toBeNull();
     // Two raw queries exist — holdings and earnings — and the earnings one must
@@ -218,31 +236,40 @@ describe('getStickerBook — what leaves the server', () => {
   it('returns one card per image, however many placements it carries', async () => {
     // Two placements on one image. The section is a grid of images, not of
     // placements — a repeat per sticker is the shape Ellie objected to.
-    const book = await getStickerBook({ username: 'creator', viewerId: CREATOR, ...levels });
+    const book = await getStickerBook({ username: 'creator', ...viewer(CREATOR), ...levels });
 
     expect(book.received).toHaveLength(1);
     expect(book.received[0].counterparts).toHaveLength(1);
   });
 
-  it('sends image IDS and no image payload', async () => {
-    const book = await getStickerBook({ username: 'creator', viewerId: CREATOR, ...levels });
+  it('hydrates its images through the feed, not through a read of its own', async () => {
+    const book = await getStickerBook({ username: 'creator', ...viewer(CREATOR), ...levels });
 
     // 🔴 The invariant that keeps the visibility rules in ONE place. This service
     // decides which images and in what order; whether an image may be SHOWN —
     // browsing level, domain ceiling, publish state, moderation flags, the
-    // viewer's hidden users and tags — belongs to `image.getInfinite`, which the
-    // page calls with these ids. A url appearing in this payload means a second
-    // copy of those rules has grown here, and it is the copy that will drift.
-    expect(book.received[0]).not.toHaveProperty('image');
-    expect(JSON.stringify(book)).not.toMatch(/"url"/);
-    expect(book.received[0].imageId).toBe(IMAGE);
-
-    // And this service asks the image table for nothing at all.
+    // blocked-tag policy — belongs to `getAllImages`. A `dbRead.image` call here
+    // would be a second copy of those rules, and it is the copy that drifts.
     expect(imageFindMany).not.toHaveBeenCalled();
+    expect(allImages).toHaveBeenCalled();
+    expect(allImages.mock.calls[0][0]).toMatchObject({ ids: [IMAGE], browsingLevel: 1 });
+    expect(book.received[0].image).toMatchObject({ id: IMAGE });
+  });
+
+  it('drops a row whose image the feed withheld', async () => {
+    // The feed answering with nothing is how it says "not for this viewer". A
+    // book has nothing to act on, so the row goes with it — unlike the review
+    // queues, which keep a withheld row so its escrow can still be answered.
+    allImages.mockResolvedValue({ items: [], nextCursor: undefined });
+
+    const book = await getStickerBook({ username: 'creator', ...viewer(CREATOR), ...levels });
+
+    expect(book.received).toEqual([]);
+    expect(book.placed).toEqual([]);
   });
 
   it('reports the Buzz the ledger actually paid the owner', async () => {
-    const book = await getStickerBook({ username: 'creator', viewerId: CREATOR, ...levels });
+    const book = await getStickerBook({ username: 'creator', ...viewer(CREATOR), ...levels });
 
     // The number, not just the gate. Dropping the `transactionId IS NOT NULL`
     // guard, dropping `feeToOwner`, or dropping the surface filter all change
@@ -261,7 +288,7 @@ describe('getStickerBook — what leaves the server', () => {
   });
 
   it("applies the VIEWER's blocks, not the profile owner's", async () => {
-    await getStickerBook({ username: 'creator', viewerId: STRANGER, ...levels });
+    await getStickerBook({ username: 'creator', ...viewer(STRANGER), ...levels });
 
     // The mock ignores its argument, so without this the whole block feature can
     // be pointed at the wrong user — the creator's blocks applied to everyone's
@@ -277,7 +304,7 @@ describe('getStickerBook — what leaves the server', () => {
   });
 
   it('names the other end of the placement on each side', async () => {
-    const book = await getStickerBook({ username: 'creator', viewerId: CREATOR, ...levels });
+    const book = await getStickerBook({ username: 'creator', ...viewer(CREATOR), ...levels });
 
     // Collapsing `side === 'placer' ? row.owner : row.placer` to either arm
     // survives a fixture where the two are the same person — in production the
@@ -287,7 +314,7 @@ describe('getStickerBook — what leaves the server', () => {
   });
 
   it('asks only for approved placements', async () => {
-    await getStickerBook({ username: 'creator', viewerId: CREATOR, ...levels });
+    await getStickerBook({ username: 'creator', ...viewer(CREATOR), ...levels });
 
     // `surface` and `targetType` alongside the status: without them this is a
     // book of every placement surface and every target type, and nothing goes
@@ -303,7 +330,7 @@ describe('getStickerBook — what leaves the server', () => {
   it('excludes the other end of a block from both sections', async () => {
     blockedPairIds.mockResolvedValue([STRANGER]);
 
-    await getStickerBook({ username: 'creator', viewerId: STRANGER, ...levels });
+    await getStickerBook({ username: 'creator', ...viewer(STRANGER), ...levels });
 
     const wheres = placementGroupBy.mock.calls.map((call) => call[0].where);
     // Asserted as a PAIR on each side, not as two independent facts. Naming the
@@ -327,7 +354,7 @@ describe('getStickerBook — what leaves the server', () => {
       deletedAt: null,
     });
 
-    const visitor = await getStickerBook({ username: 'creator', viewerId: STRANGER, ...levels });
+    const visitor = await getStickerBook({ username: 'creator', ...viewer(STRANGER), ...levels });
     expect(visitor.access.canViewBook).toBe(false);
     // The flag alone would keep passing if the early return were ever split from
     // it — which `resolveBookAccess` has just done.
@@ -336,7 +363,7 @@ describe('getStickerBook — what leaves the server', () => {
 
     const moderator = await getStickerBook({
       username: 'creator',
-      viewerId: MODERATOR,
+      ...viewer(MODERATOR),
       isModerator: true,
       ...levels,
     });
@@ -356,7 +383,7 @@ describe('getStickerBook — what leaves the server', () => {
   });
 
   it('bounds the section limit rather than passing a caller number through', async () => {
-    await getStickerBook({ username: 'creator', viewerId: CREATOR, limit: 5000, ...levels });
+    await getStickerBook({ username: 'creator', ...viewer(CREATOR), limit: 5000, ...levels });
 
     // The cap plus the one row that decides `hasMore`. Asserted as the cap it
     // came from rather than as 61, so raising the cap fails here rather than
@@ -375,7 +402,7 @@ describe('getStickerBookSection — the drill-in page', () => {
     const section = await getStickerBookSection({
       username: 'creator',
       side: 'owner',
-      viewerId: STRANGER,
+      ...viewer(STRANGER),
       ...levels,
     });
 
@@ -390,7 +417,7 @@ describe('getStickerBookSection — the drill-in page', () => {
     const section = await getStickerBookSection({
       username: 'creator',
       side: 'owner',
-      viewerId: MODERATOR,
+      ...viewer(MODERATOR),
       isModerator: true,
       ...levels,
     });
@@ -404,7 +431,7 @@ describe('getStickerBookSection — the drill-in page', () => {
     await getStickerBookSection({
       username: 'creator',
       side: 'owner',
-      viewerId: STRANGER,
+      ...viewer(STRANGER),
       ...levels,
     });
 
@@ -420,7 +447,7 @@ describe('getStickerBookSection — the drill-in page', () => {
       side: 'placer',
       page: 3,
       limit: 10,
-      viewerId: CREATOR,
+      ...viewer(CREATOR),
       ...levels,
     });
 
@@ -432,7 +459,7 @@ describe('getStickerBookSection — the drill-in page', () => {
     await getStickerBookSection({
       username: 'creator',
       side: 'placer',
-      viewerId: CREATOR,
+      ...viewer(CREATOR),
       ...levels,
     });
 
@@ -452,7 +479,7 @@ describe('getStickerBookSection — the drill-in page', () => {
       username: 'creator',
       side: 'owner',
       limit: 1,
-      viewerId: CREATOR,
+      ...viewer(CREATOR),
       ...levels,
     });
 
