@@ -31,6 +31,14 @@ const { mockDb, mockWriteDb } = vi.hoisted(() => {
       findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
       findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
     },
+    // `hydrateMyAppListings` reads the latest moderation event for any `removed` row, to
+    // separate an owner self-unpublish from a moderator takedown. No fixture here is
+    // `removed`, so the guarded call does not fire — the model is declared anyway because
+    // the failure mode if it ever did would be `Cannot read properties of undefined`, which
+    // reads as a broken mock rather than as the one-line fixture change that caused it.
+    appListingModerationEvent: {
+      findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
+    },
   });
   return { mockDb: make(), mockWriteDb: make() };
 });
