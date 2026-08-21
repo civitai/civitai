@@ -269,7 +269,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
                     <IconTrash size={26} strokeWidth={2.5} />
                   </LegacyActionIcon>
                 </div>
-                {image.meta && (
+                {image.hasMeta && (
                   <div style={{ position: 'absolute', bottom: 12, right: 12 }}>
                     <ImageMetaPopover2 imageId={image.id} type={image.type}>
                       <LegacyActionIcon component="div" variant="light" color="dark" size="lg">

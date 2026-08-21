@@ -6894,7 +6894,6 @@ type GetImageConnectionRaw = {
   width: number;
   height: number;
   hash: string;
-  meta: ImageMetaProps; // TODO - remove
   hideMeta: boolean;
   createdAt: Date;
   mimeType: string;
@@ -6907,7 +6906,7 @@ type GetImageConnectionRaw = {
   metadata: ImageMetadata | VideoMetadata;
   entityId: number;
   hasMeta: boolean;
-  hasPositivePrompt?: boolean;
+  hasPositivePrompt: boolean;
   poi?: boolean;
   minor?: boolean;
 };
@@ -6978,7 +6977,6 @@ export const getImagesByEntity = async ({
       i.width,
       i.height,
       i.hash,
-      i.meta,
       i."hideMeta",
       i."createdAt",
       i."mimeType",
