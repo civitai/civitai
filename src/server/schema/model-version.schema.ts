@@ -77,6 +77,7 @@ export const trainingDetailsBaseModelsAnima = ['anima'] as const;
 export const trainingDetailsBaseModelsBoogu = ['boogu'] as const;
 export const trainingDetailsBaseModelsKrea2 = ['krea2'] as const;
 export const trainingDetailsBaseModelsMageFlow = ['mageflow'] as const;
+export const trainingDetailsBaseModelsIdeogram4 = ['ideogram4'] as const;
 export const trainingDetailsBaseModelsAcestep15 = ['acestep_15'] as const;
 export const trainingDetailsBaseModelsAcestep15Xl = [
   'acestep_15_xl_base',
@@ -99,6 +100,7 @@ const trainingDetailsBaseModelsImage = [
   ...trainingDetailsBaseModelsBoogu,
   ...trainingDetailsBaseModelsKrea2,
   ...trainingDetailsBaseModelsMageFlow,
+  ...trainingDetailsBaseModelsIdeogram4,
 ] as const;
 const trainingDetailsBaseModelsVideo = [
   ...trainingDetailsBaseModelsHunyuan,

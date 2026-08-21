@@ -5,7 +5,6 @@ import { isEmpty, uniq } from 'lodash-es';
 import dayjs from '~/shared/utils/dayjs';
 import type { SearchParams, SearchResponse } from 'meilisearch';
 import type { SessionUser } from '~/types/session';
-import { env } from '~/env/server';
 import { clickhouse, Tracker } from '~/server/clickhouse/client';
 import type { BaseModelType } from '~/server/common/constants';
 import {
@@ -40,7 +39,11 @@ import {
 } from '~/server/meilisearch/client';
 import { modelMetrics } from '~/server/metrics';
 import { withSpan } from '~/server/utils/otel-helpers';
-import { diffEntityChanges, resolveActorRole } from '~/server/utils/entity-change-helpers';
+import {
+  diffEntityChanges,
+  resolveActorRole,
+  stableStringify,
+} from '~/server/utils/entity-change-helpers';
 import {
   dataForModelsCache,
   modelTagCache,
@@ -55,7 +58,6 @@ import type {
   GetAllModelsOutput,
   GetModelVersionsSchema,
   GetMyTrainingModelsSchema,
-  IngestModelInput,
   LimitOnly,
   MigrateResourceToCollectionInput,
   ModelGallerySettingsSchema,
@@ -73,7 +75,6 @@ import type {
   TransferModelOwnershipInput,
   UnpublishModelSchema,
 } from '~/server/schema/model.schema';
-import { ingestModelSchema } from '~/server/schema/model.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import {
   collectionsSearchIndex,
@@ -189,7 +190,6 @@ import type {
 } from './../schema/model.schema';
 import { Flags } from '~/shared/utils/flags';
 import { isGenerationDisabled } from '~/shared/constants/model-version-flags.constants';
-import { isDev } from '~/env/other';
 import { pgDbRead } from '~/server/db/pgDb';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
@@ -2096,8 +2096,6 @@ export async function applyModelFlagSideEffects({
   before,
   after,
   tagsChanged = false,
-  nameChanged = false,
-  descriptionChanged = false,
 }: {
   before: {
     poi: boolean;
@@ -2118,13 +2116,10 @@ export async function applyModelFlagSideEffects({
     gallerySettings: Prisma.JsonValue;
   };
   tagsChanged?: boolean;
-  nameChanged?: boolean;
-  descriptionChanged?: boolean;
 }): Promise<void> {
   const { id } = after;
   const poiChanged = after.poi !== before.poi;
   const minorChanged = after.minor !== before.minor || after.sfwOnly !== before.sfwOnly;
-  const nsfwChanged = after.nsfw !== before.nsfw;
 
   // Update search index if listing changes
   if (tagsChanged || poiChanged || minorChanged) {
@@ -2138,18 +2133,6 @@ export async function applyModelFlagSideEffects({
   const galleryBrowsingLevelChanged = prevGallerySettings?.level !== newGallerySettings?.level;
 
   if (galleryBrowsingLevelChanged) await redis.del(`${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:${id}`);
-
-  // Ingest model if it's published and any of the following fields have changed:
-  if (
-    (after.status === 'Published' || after.status === 'Scheduled') &&
-    (poiChanged || minorChanged || nsfwChanged || nameChanged || descriptionChanged)
-  ) {
-    const parsedModel = ingestModelSchema.parse(after);
-    // Run it in the background to prevent blocking the request
-    ingestModel({ ...parsedModel }).catch((error) =>
-      logToAxiom({ type: 'error', name: 'model-ingestion', error, modelId: parsedModel.id })
-    );
-  }
 
   if (minorChanged || poiChanged) {
     const modelVersions = await dbWrite.modelVersion.findMany({
@@ -2323,6 +2306,10 @@ export async function setModelMinor({
   return result;
 }
 
+// Model columns the GenerationCoverage view reads. `poi` belongs to the same set but is left out
+// here because applyModelFlagSideEffects already busts the version caches when it moves.
+const coverageModelFields = ['allowCommercialUse', 'availability', 'type', 'uploadType'] as const;
+
 export const upsertModel = async (
   input: ModelUpsertInput & {
     userId: number;
@@ -2372,6 +2359,8 @@ export const upsertModel = async (
             allowCommercialUse: true,
             allowDerivatives: true,
             allowDifferentLicense: true,
+            type: true,
+            uploadType: true,
           },
         })
       : null;
@@ -2584,9 +2573,30 @@ export const upsertModel = async (
       before: beforeUpdate,
       after: result,
       tagsChanged: !!tagsOnModels,
-      nameChanged: input.name !== beforeUpdate.name,
-      descriptionChanged: input.description !== beforeUpdate.description,
     });
+
+    // GenerationCoverage is a view over these columns, but the orchestrator holds its own copy of
+    // each resource: without this, a creator who adds RentCivit is told the model is "not enabled
+    // for generation" until something else makes the orchestrator refetch. bustMvCache wraps
+    // bustOrchestratorModelCache plus the resource-data/data-for-model/search-index busts that read
+    // `covered` too. Never rejects — the write has already committed.
+    const coverageChanged = coverageModelFields.some(
+      (field) =>
+        data[field] !== undefined &&
+        stableStringify(data[field]) !== stableStringify(beforeUpdate[field])
+    );
+    if (coverageChanged) {
+      const versions = await dbWrite.modelVersion.findMany({
+        where: { modelId: result.id },
+        select: { id: true },
+      });
+      if (versions.length)
+        await bustMvCache(
+          versions.map((v) => v.id),
+          result.id,
+          userId
+        ).catch(() => undefined);
+    }
 
     if (showcaseCollectionChanged) {
       if (modelMeta?.showcaseCollectionId) {
@@ -2832,14 +2842,6 @@ export const publishModelById = async ({
   await imagesMetricsSearchIndex.queueUpdate(
     images.map((x) => ({ id: x.id, action: SearchIndexUpdateQueueAction.Update }))
   );
-
-  // Run it in the background to prevent blocking the request
-  if (!republishing) {
-    const parsedModel = ingestModelSchema.parse(model);
-    ingestModel({ ...parsedModel }).catch((error) =>
-      logToAxiom({ type: 'error', name: 'model-ingestion', error, modelId: parsedModel.id })
-    );
-  }
 
   return model;
 };
@@ -4132,79 +4134,6 @@ export async function migrateResourceToCollection({
   );
 
   return { ok: true };
-}
-
-export async function ingestModelById({ id }: GetByIdInput) {
-  const model = await dbRead.model.findUnique({
-    where: { id },
-    select: {
-      id: true,
-      name: true,
-      description: true,
-      poi: true,
-      nsfw: true,
-      minor: true,
-      sfwOnly: true,
-    },
-  });
-  if (!model) throw new TRPCError({ code: 'NOT_FOUND' });
-
-  const parsedModel = ingestModelSchema.parse(model);
-  return await ingestModel({ ...parsedModel });
-}
-
-export async function ingestModel(data: IngestModelInput) {
-  if (!env.CONTENT_SCAN_ENDPOINT || isDev) {
-    console.log('Skipping model ingestion');
-    await dbWrite.model.update({
-      where: { id: data.id },
-      data: { scannedAt: new Date() },
-    });
-    return true;
-  }
-
-  // get version data
-  const db = await getDbWithoutLag('model', data.id);
-  const versions = await db.modelVersion.findMany({
-    where: { modelId: data.id, status: { in: [ModelStatus.Published, ModelStatus.Scheduled] } },
-    select: { description: true, trainedWords: true },
-  });
-
-  const versionDescriptions = versions.map((x) => x.description || null).filter(isDefined);
-  const triggerWords = versions.flatMap((x) => x.trainedWords);
-
-  const payload = {
-    callbackUrl:
-      env.CONTENT_SCAN_CALLBACK_URL ??
-      `${env.NEXTAUTH_URL}/api/webhooks/model-scan-result?token=${env.WEBHOOK_TOKEN}`,
-    request: {
-      llm_model: env.CONTENT_SCAN_MODEL ?? 'gpt-4o-mini',
-      content: {
-        id: data.id,
-        name: data.name,
-        content: [data.description, ...versionDescriptions].join('\n'),
-        POI: data.poi,
-        NSFW: data.nsfw,
-        minor: data.minor,
-        sfwOnly: data.sfwOnly,
-        triggerwords: triggerWords,
-      },
-    },
-  };
-
-  const response = await fetch(`${env.CONTENT_SCAN_ENDPOINT}/scan_model`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  if (!response.ok)
-    throw new TRPCError({
-      code: 'BAD_REQUEST',
-      message: 'Failed to scan model. Service is unavailable.',
-    });
-
-  if (response.status === 202) return true;
-  else return false;
 }
 
 export type GetFeaturedModels = AsyncReturnType<typeof getFeaturedModels>;

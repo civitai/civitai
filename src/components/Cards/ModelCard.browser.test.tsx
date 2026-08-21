@@ -1,6 +1,7 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
-// Type-only, so it is erased before the hoisted `vi.mock` factories run.
+// Type-only, so they are erased before the hoisted `vi.mock` factories run.
 import type * as ModelCardContext from '~/components/Cards/ModelCardContext';
+import type * as TrpcModule from '~/utils/trpc';
 
 // =============================================================================
 // ModelCard — feed review-indicator now reads batched membership, not the
@@ -41,7 +42,15 @@ vi.mock('~/hooks/useEngagedModelMembership', () => ({
 }));
 
 // --- legacy endpoint spy (must never fire) ----------------------------------
-vi.mock('~/utils/trpc', () => ({
+// The `trpc` export is still replaced wholesale — that object IS the spy, and
+// keeping it bare is what makes "the card touched no other endpoint" observable
+// rather than merely unasserted. What changed is that the MODULE is spread, so
+// its other exports (`trpcVanilla`, `setTrpcBatchingEnabled`, …) survive. A
+// factory that omitted them handed `undefined` to every importer in this file's
+// module graph — the failure mode `local-rules/no-wholesale-module-mock` exists
+// to stop, which has silently disabled ~36 tests here before.
+vi.mock('~/utils/trpc', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrpcModule>()),
   trpc: { user: { getEngagedModels: { useQuery: mocks.getEngagedModelsUseQuery } } },
 }));
 
@@ -63,18 +72,26 @@ vi.mock('~/components/Metrics', () => ({
   Metrics: ({ children, initial }: any) => children(initial),
   AnimatedCount: ({ value }: any) => <>{value}</>,
 }));
-// `importOriginal`, not a hand-listed factory: `ModelCard` imports TWO things from this module and a
-// factory listing one of them fails the whole file at IMPORT time — "does not provide an export named
-// `useModelSaleBadge`" — so the suite collected 0 of its 2 tests rather than failing an assertion.
-// It had been dark since `bf71f39af4` added that import. Spreading the real module means the next
-// import added to `ModelCard` cannot silently switch these tests off again.
+// Spreads the real module rather than listing its exports, and that is the whole
+// point rather than tidiness. The hand-listed version of this mock supplied only
+// `useModelCardContext`; when #4112 gave `ModelCard.tsx` a second import from
+// here — `useModelSaleBadge` — the module the card linked against no longer had
+// it, and the file died at IMPORT with "does not provide an export named
+// 'useModelSaleBadge'". That reports as `Tests no tests`, not as a failure count,
+// so the whole component tier went red with nothing naming a broken assertion.
+// A spread cannot go stale the same way: a new export arrives on its own.
+//
+// The two sale hooks are then stubbed back out deliberately. Both route through
+// `trpc.model.getActiveSales.useQuery`, and the `~/utils/trpc` mock above is a
+// deliberately minimal spy that carries only `user.getEngagedModels` — so
+// running the real hooks would reach an undefined namespace. Stubbing them keeps
+// the spread from ever touching it. `undefined` is "no sale", the default state,
+// and the sale badge is shadowed here rather than under test.
 vi.mock('~/components/Cards/ModelCardContext', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelCardContext>()),
   useModelCardContext: () => ({ useModelVersionRedirect: false, activeBaseModels: undefined }),
-  // Stubbed like the other heavy children: the real one reads `trpc.model.getActiveSales`, which the
-  // trpc mock above does not carry. `undefined` is "no sale on this card", the state these two cases
-  // are written against.
   useModelSaleBadge: () => undefined,
+  useModelSaleBadges: () => undefined,
 }));
 vi.mock('~/components/Cards/ModelCardContextMenu', () => ({ ModelCardContextMenu: () => null }));
 vi.mock('~/components/Cards/components/RemixButton', () => ({ RemixButton: () => null }));
@@ -94,6 +111,9 @@ vi.mock('~/components/Cards/model-card.utils', () => ({ getCardBaseModels: () =>
 
 import { renderWithProviders } from '../../../test/component-setup';
 import { ModelCard } from '~/components/Cards/ModelCard';
+// Value import, deliberately — this resolves to the MOCKED module (vi.mock is hoisted), and
+// the beforeEach below asserts the mock is wired the way the factory intends.
+import { trpc } from '~/utils/trpc';
 
 // Minimal fixture — only the fields ModelCardContent/ModelCardStats read.
 // thumbsUpCount>0 + locked:false is the gate that renders the review badge.
@@ -142,6 +162,27 @@ describe('ModelCard review indicator (batched membership)', () => {
     mocks.state.engaged = false;
     mocks.membershipMock.mockClear();
     mocks.getEngagedModelsUseQuery.mockClear();
+
+    // 🔴 The `trpc:` override MUST come after the `importOriginal` spread in the factory
+    // above, and nothing else enforces that. `local-rules/no-wholesale-module-mock` requires
+    // that *a* top-level spread exists, not that it comes first — so a merge, a formatter or
+    // a key-sort can silently reverse the two and hand every importer the REAL client.
+    //
+    // Measured: with the order reversed this file still reports 2 passed while the spy below
+    // is dead. The `not.toHaveBeenCalled()` guard — the one assertion this spec exists for —
+    // then never executes, and if production does regress it fails on an unrelated
+    // "Unable to find tRPC Context" after two 10s waitFor timeouts, naming neither the spy
+    // nor the endpoint. A vacuous guard that still reports success is worse than no guard,
+    // so assert the wiring itself rather than trusting the key order to survive.
+    // Cast, narrowly and deliberately: `user.getEngagedModels` is the LEGACY endpoint this
+    // spec exists to prove is never called, and it no longer exists on the real router's
+    // types (it is `getEngagedModelsByIds` now). The value import is typed against the REAL
+    // module while the runtime value is the mock, so the property is absent at type level and
+    // present at run time. Casting here is narrower than widening the mock's shape.
+    const spiedUseQuery = (
+      trpc.user as unknown as { getEngagedModels: { useQuery: unknown } }
+    ).getEngagedModels.useQuery;
+    expect(spiedUseQuery).toBe(mocks.getEngagedModelsUseQuery);
   });
 
   test('renders the reviewed indicator when the model is Recommended by the user', async () => {

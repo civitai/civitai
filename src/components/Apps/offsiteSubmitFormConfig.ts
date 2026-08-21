@@ -126,6 +126,45 @@ export function emptyOffsiteSubmitForm(): OffsiteSubmitFormValues {
 }
 
 /**
+ * Has the author entered ANYTHING that a Cancel would throw away?
+ *
+ * 🔴 The point of this predicate is what it must NOT report. `Cancel` in the create
+ * wizard navigates away and silently discards every field; confirming that is right,
+ * but confirming an UNTOUCHED form is a nag, and a confirmation people learn to
+ * dismiss protects nothing. So dirtiness is measured against the blank state, field
+ * by field — NOT against "did the component mount".
+ *
+ * 🔴 `contentRating` is compared to its DEFAULT (`'g'`), not to emptiness. It is the
+ * one field that starts non-empty, so an `Object.values(...).some(Boolean)` shortcut
+ * would call a pristine form dirty from the very first render and nag every single
+ * author. That is the mutation this predicate is written to survive.
+ *
+ * Whitespace-only text does not count as input: a stray space is not work worth a
+ * modal. `scopeJustifications` counts only if some entry has real text — the object
+ * is re-keyed (to empty strings) merely by picking a client, which `connectClientId`
+ * already reports.
+ */
+export function isOffsiteSubmitFormDirty(values: OffsiteSubmitFormValues): boolean {
+  const blank = emptyOffsiteSubmitForm();
+  const texts: Array<keyof OffsiteSubmitFormValues> = [
+    'slug',
+    'name',
+    'externalUrl',
+    'tagline',
+    'description',
+    'changelog',
+  ];
+  if (texts.some((k) => String(values[k] ?? '').trim().length > 0)) return true;
+  if (values.category !== blank.category) return true;
+  if (values.contentRating !== blank.contentRating) return true;
+  if (values.connectClientId !== blank.connectClientId) return true;
+  if (values.requestedScopes !== blank.requestedScopes) return true;
+  return Object.values(values.scopeJustifications ?? {}).some(
+    (v) => String(v ?? '').trim().length > 0
+  );
+}
+
+/**
  * Validate the METADATA fields client-side, mirroring `submitExternalListingSchema`'s
  * display shape. Returns a per-field error map (empty = valid). Delegates the URL
  * shape to the shared `validateExternalUrl` (https-only, length-bounded) ONLY WHEN a

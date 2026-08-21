@@ -101,6 +101,7 @@ import { ModelVersionSaleBanner } from '~/components/Model/ModelVersions/ModelVe
 import { ModelVersionEarlyAccessPurchase } from '~/components/Model/ModelVersions/ModelVersionEarlyAccessPurchase';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PermissionIndicator } from '~/components/PermissionIndicator/PermissionIndicator';
+import { BaseModelWarningAlert } from '~/components/Model/BaseModelWarningAlert/BaseModelWarningAlert';
 import { PoiAlert } from '~/components/PoiAlert/PoiAlert';
 import { SchedulePostModal } from '~/components/Post/EditV2/SchedulePostModal';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
@@ -1072,6 +1073,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
             baseModel={version.baseModel}
             usageControl={version.usageControl}
           />
+          <BaseModelWarningAlert baseModel={version.baseModel} />
 
           <Accordion
             variant="separated"

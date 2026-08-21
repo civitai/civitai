@@ -45,6 +45,7 @@ import type {
   ListingCard,
   ListingRecommendRollup,
 } from '~/server/schema/blocks/app-listing-read.schema';
+import { STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
 import type { AppListingStatus } from '~/server/services/blocks/app-listing-status.constants';
 
 /** Kind badge shown on the card face. */
@@ -66,7 +67,7 @@ export type ListingBadge = { label: string; kind: ListingBadgeKind };
  */
 export function getListingBadge(card: Pick<ListingCard, 'kind' | 'kindData'>): ListingBadge {
   if (card.kindData.kind === 'onsite') return { label: 'App', kind: 'onsite' };
-  return { label: 'Standalone', kind: 'offsite' };
+  return { label: STANDALONE_KIND_LABEL, kind: 'offsite' };
 }
 
 /**
@@ -75,10 +76,7 @@ export function getListingBadge(card: Pick<ListingCard, 'kind' | 'kindData'>): L
  * rather than a misleading "0% recommend". Otherwise a Steam-style
  * "N% recommend (M)" with the review count.
  */
-export function getRecommendLabel(
-  recommend: ListingRecommendRollup,
-  reviewCount: number
-): string {
+export function getRecommendLabel(recommend: ListingRecommendRollup, reviewCount: number): string {
   if (recommend.recommendPct == null) return 'No reviews yet';
   const pct = Math.round(recommend.recommendPct * 100);
   return `${pct}% recommend (${reviewCount.toLocaleString()})`;
@@ -211,9 +209,7 @@ export function getOwnerEditHref(
   listingId: string
 ): string | null {
   if (kindData.kind === 'onsite') {
-    return kindData.appBlockId
-      ? `/apps/${encodeURIComponent(kindData.appBlockId)}/edit`
-      : null;
+    return kindData.appBlockId ? `/apps/${encodeURIComponent(kindData.appBlockId)}/edit` : null;
   }
   return `/apps/submit?edit=${encodeURIComponent(listingId)}`;
 }
