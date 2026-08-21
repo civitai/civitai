@@ -304,9 +304,27 @@ describe('scanFilesFallbackJob fairness ordering', () => {
     // Asserted as a literal so replacing it with the bare form fails here.
     expect(mockDbWrite.modelFile.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        orderBy: [{ scanRequestedAt: { sort: 'asc', nulls: 'first' } }],
+        orderBy: [{ scanRequestedAt: { sort: 'asc', nulls: 'first' } }, { id: 'asc' }],
       })
     );
+  });
+
+  it('breaks ties on id ascending so the batch is a total, stable order', async () => {
+    mockDbWrite.modelFile.findMany.mockResolvedValue([]);
+
+    await runJob(scanFilesFallbackJob);
+
+    // Sorting on a single nullable column leaves big ties — every NULL ties with
+    // every other NULL, and the upfront updateMany stamps one identical
+    // timestamp across the whole batch. Postgres may break those ties
+    // arbitrarily and differently each run, so the tiebreaker is what makes the
+    // batch deterministic. Asserted by position and direction, not just presence.
+    const [args] = mockDbWrite.modelFile.findMany.mock.calls[0];
+    expect(args.orderBy).toHaveLength(2);
+    expect(args.orderBy[1]).toEqual({ id: 'asc' });
+    // Descending would prefer the NEWEST row inside a tie — the inverse of
+    // "longest-waiting first".
+    expect(args.orderBy[1]).not.toEqual({ id: 'desc' });
   });
 
   it('does not pass the bare asc form, which would sort nulls last', async () => {
@@ -374,6 +392,51 @@ describe('scanFilesFallbackJob per-run budget', () => {
     });
   });
 
+  // 🔴 Boundary pair. These two are what pin the budget's VALUE behaviourally.
+  // Without them the constant is only pinned by the `runBudgetMs` field in the
+  // Axiom payload — an observability field, and itself hardcodable — so the
+  // budget could be anything under the test's overshoot and still run green.
+  // The literals are written out rather than derived from the constant, so
+  // moving the constant in either direction fails one of these.
+  it('still submits at one millisecond under the budget', async () => {
+    mockDbWrite.modelFile.findMany.mockResolvedValue(twoFiles);
+    mockCreateModelFileScanRequest.mockImplementation(async () => {
+      vi.setSystemTime(new Date(FIXED_NOW.getTime() + 179_999));
+    });
+
+    const result = await runJob(scanFilesFallbackJob);
+
+    expect(mockCreateModelFileScanRequest).toHaveBeenCalledTimes(2);
+    expect(result).toEqual({ submitted: 2, failed: 0, skipped: 0 });
+  });
+
+  it('still submits at exactly the budget (the bound is exclusive)', async () => {
+    mockDbWrite.modelFile.findMany.mockResolvedValue(twoFiles);
+    mockCreateModelFileScanRequest.mockImplementation(async () => {
+      vi.setSystemTime(new Date(FIXED_NOW.getTime() + 180_000));
+    });
+
+    const result = await runJob(scanFilesFallbackJob);
+
+    // Pins `>` rather than `>=`. Without this the two differ only at this exact
+    // millisecond, which no other test visits, so flipping the operator is
+    // otherwise invisible.
+    expect(mockCreateModelFileScanRequest).toHaveBeenCalledTimes(2);
+    expect(result).toEqual({ submitted: 2, failed: 0, skipped: 0 });
+  });
+
+  it('skips at one millisecond over the budget', async () => {
+    mockDbWrite.modelFile.findMany.mockResolvedValue(twoFiles);
+    mockCreateModelFileScanRequest.mockImplementation(async () => {
+      vi.setSystemTime(new Date(FIXED_NOW.getTime() + 180_001));
+    });
+
+    const result = await runJob(scanFilesFallbackJob);
+
+    expect(mockCreateModelFileScanRequest).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ submitted: 1, failed: 0, skipped: 1 });
+  });
+
   it('does not skip when the run stays inside the budget', async () => {
     mockDbWrite.modelFile.findMany.mockResolvedValue(twoFiles);
     // Well inside 180s, and a different magnitude from PAST_BUDGET_MS.
@@ -387,27 +450,49 @@ describe('scanFilesFallbackJob per-run budget', () => {
     expect(result).toEqual({ submitted: 2, failed: 0, skipped: 0 });
   });
 
-  it('reports the truncated run to Axiom so the bound is observable', async () => {
-    mockDbWrite.modelFile.findMany.mockResolvedValue(twoFiles);
-    mockCreateModelFileScanRequest.mockImplementation(async () => {
-      vi.setSystemTime(new Date(FIXED_NOW.getTime() + PAST_BUDGET_MS));
-    });
+  // 🔴 Run at TWO different batch sizes. One size is not enough: with a single
+  // fixture the asserted `batchSize` equals that fixture's own length, so a
+  // mutant hardcoding the literal survives — and simply picking a bigger single
+  // fixture just relocates the coincidence instead of removing it. Across two
+  // sizes no constant can satisfy both, so `batchSize` and `skipped` have to be
+  // derived. Within each case every asserted number is distinct as well, so no
+  // field can be satisfied by another field's value.
+  it.each([
+    { size: 3, expectedSkipped: 2 },
+    { size: 5, expectedSkipped: 4 },
+  ])(
+    'reports the truncated run to Axiom so the bound is observable (batch of $size)',
+    async ({ size, expectedSkipped }) => {
+      mockDbWrite.modelFile.findMany.mockResolvedValue(
+        Array.from({ length: size }, (_, i) => ({
+          id: i + 1,
+          modelVersion: {
+            id: (i + 1) * 10,
+            baseModel: 'SD 1.5',
+            model: { id: (i + 1) * 100, type: 'Checkpoint' },
+          },
+        }))
+      );
+      mockCreateModelFileScanRequest.mockImplementation(async () => {
+        vi.setSystemTime(new Date(FIXED_NOW.getTime() + PAST_BUDGET_MS));
+      });
 
-    await runJob(scanFilesFallbackJob);
+      await runJob(scanFilesFallbackJob);
 
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'warning',
-        name: 'scan-files-fallback',
-        skipped: 1,
-        submitted: 1,
-        failed: 0,
-        batchSize: 2,
-        runBudgetMs: 180_000,
-      }),
-      'webhooks'
-    );
-  });
+      expect(mockLogToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'warning',
+          name: 'scan-files-fallback',
+          skipped: expectedSkipped,
+          submitted: 1,
+          failed: 0,
+          batchSize: size,
+          runBudgetMs: 180_000,
+        }),
+        'webhooks'
+      );
+    }
+  );
 
   it('emits no budget warning on a run that skips nothing', async () => {
     mockDbWrite.modelFile.findMany.mockResolvedValue(twoFiles);

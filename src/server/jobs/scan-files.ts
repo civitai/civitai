@@ -22,9 +22,17 @@ import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 // (giving up permanently) is the `exists=false` tombstone that left Published,
 // Public files permanently unscanned. Since we cannot bound the queue by dropping
 // work, we bound the WORK PER RUN instead, on three axes:
-//   1. fairness  — nulls-first ordering, so never-submitted files always win a slot
+//   1. fairness  — nulls-first ordering, so a file that has never been attempted
+//                  sorts ahead of every file already tried and backed off
 //   2. backoff   — a failing file costs a slot every 30 min, not every 5 min
 //   3. budget    — a fully-failing batch stops starting work before its lock expires
+//
+// 🔴 Bound 1 is NOT a guarantee that a new upload is scanned on the next tick.
+// The budget releases files it never attempted back to `scanRequestedAt = null`
+// (see below), so in a truncating run the NULL group holds those released files
+// as well as genuinely-new uploads, and they compete for the same slots. What
+// nulls-first buys is that neither of them ever queues behind the backed-off
+// failures — not that a new upload wins immediately.
 const SCAN_FALLBACK_CONCURRENCY = 10;
 const SCAN_FALLBACK_BATCH_SIZE = 200;
 
@@ -108,14 +116,22 @@ export const scanFilesFallbackJob = createJob('scan-files-fallback', '*/5 * * * 
         },
       },
     },
-    // Fairness: never-submitted files (scanRequestedAt IS NULL) first, then the
+    // Fairness: unattempted files (scanRequestedAt IS NULL) first, then the
     // longest-waiting. Without an explicit order the batch is whatever Postgres
     // hands back, so a failing population larger than SCAN_FALLBACK_BATCH_SIZE
     // can fill every batch with the same files and starve new uploads forever.
     // 🔴 `nulls: 'first'` is load-bearing and NOT the default — Postgres orders
     // ASC with NULLS LAST, so a bare `{ scanRequestedAt: 'asc' }` would sort
-    // never-submitted files LAST and make the starvation worse, not better.
-    orderBy: [{ scanRequestedAt: { sort: 'asc', nulls: 'first' } }],
+    // unattempted files LAST and make the starvation worse, not better.
+    //
+    // `id` is the tiebreaker, and it is what makes the order TOTAL. Sorting on
+    // scanRequestedAt alone leaves large ties that Postgres may break
+    // arbitrarily and differently run-to-run: every NULL ties with every other
+    // NULL, and the upfront updateMany below stamps one identical timestamp
+    // across the whole batch, so those rows tie too. `id` is unique and
+    // monotonic with insertion, so it both breaks every tie and makes "oldest
+    // first" real rather than incidental.
+    orderBy: [{ scanRequestedAt: { sort: 'asc', nulls: 'first' } }, { id: 'asc' }],
     take: SCAN_FALLBACK_BATCH_SIZE,
   });
 
