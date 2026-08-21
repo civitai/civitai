@@ -7154,8 +7154,9 @@ type GetEntityImageRaw = {
   width: number;
   height: number;
   hash: string;
-  meta: ImageMetaProps;
   hideMeta: boolean;
+  hasMeta: boolean;
+  hasPositivePrompt: boolean;
   createdAt: Date;
   mimeType: string;
   scannedAt: Date;
@@ -7198,8 +7199,21 @@ export const getEntityCoverImage = async ({
       i.width,
       i.height,
       i.hash,
-      i.meta,
       i."hideMeta",
+      (
+        CASE
+          WHEN i.meta IS NULL OR jsonb_typeof(i.meta) = 'null' OR i."hideMeta" THEN FALSE
+          ELSE TRUE
+        END
+      ) AS "hasMeta",
+      (
+        CASE
+          WHEN i.meta IS NOT NULL AND jsonb_typeof(i.meta) != 'null' AND NOT i."hideMeta"
+            AND i.meta->>'prompt' IS NOT NULL
+          THEN TRUE
+          ELSE FALSE
+        END
+      ) AS "hasPositivePrompt",
       i."createdAt",
       i."mimeType",
       i.type,
