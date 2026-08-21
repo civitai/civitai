@@ -4,18 +4,18 @@ import type { Actions, PageServerLoad } from './$types';
 import { canAccess } from '$lib/server/access';
 import { parseForm, parseIdList, parseQuery, checkboxField } from '$lib/server/query';
 import { BULK_SOURCES } from './sources';
-import { DEFAULT_LIMIT, MAX_LIMIT } from './limits';
+import { DEFAULT_LIMIT, MAX_LIMIT, MAX_OFFSET } from './limits';
 import { VIOLATION_TYPES } from '$lib/violations';
 import { MAX_INT4, usersByIds } from '$lib/server/users.service';
 import { resolveUserId, resolveUsername } from '$lib/server/user-lookup.service';
 import {
   removeAllImagesForUser,
-  removeImages,
   restoreImages,
   setImageFlag,
 } from '$lib/server/user-actions.service';
 import { sendModNotification } from '$lib/server/moderation-memory.service';
 import {
+  countImagesForUser,
   getBatchOwners,
   getImagesByIds,
   getImagesForCollection,
@@ -24,23 +24,27 @@ import {
   getImagesForPost,
   getImagesForUser,
   countBlockedImages,
-  strikeBatchOwners,
+  removeImagesWithFollowUps,
   type BulkBatch,
 } from '$lib/server/bulk-image.service';
 import { imageFlagValueSchema, splitImageFlagValue } from '$lib/image-flags';
 
 // `source` + `q` in the URL so a moderator can hand a colleague the exact batch they are looking at.
-// `limit` rides along for the same reason. Retool's cap was 200 and that stayed the default, but an
-// account with more than that could only be worked 200 at a time with no way to reach the rest short of
-// the account-wide nuke — which is not a review, it is a purge.
+// `limit` and `offset` ride along for the same reason — a page of a 40k-image account is as much a
+// thing to hand over as the account itself.
+//
+// Offset paging rather than a keyset cursor because the window has to be addressable in both
+// directions and by number: a moderator working an account in 1000-image passes needs to say which
+// pass they are on, and the post source orders by the author's own `index` rather than by id.
 const querySchema = z.object({
   source: z.enum(BULK_SOURCES).catch('post'),
   q: z.string().trim().catch(''),
   limit: z.coerce.number().int().min(1).max(MAX_LIMIT).catch(DEFAULT_LIMIT),
+  offset: z.coerce.number().int().min(0).max(MAX_OFFSET).catch(0),
 });
 
 export const load: PageServerLoad = async ({ url, locals }) => {
-  const { source, q, limit } = parseQuery(url, querySchema);
+  const { source, q, limit, offset } = parseQuery(url, querySchema);
   // Reaching the page is an investigation permission; removing content is not.
   const canAct = canAccess(locals.user, '/users');
 
@@ -49,29 +53,33 @@ export const load: PageServerLoad = async ({ url, locals }) => {
       source,
       q,
       limit,
+      offset,
       canAct,
       batch: null,
       notFound: false,
       owners: [],
       subjectUserId: null,
+      subjectImageTotal: null,
     };
 
   // The id-list source is the one that isn't a single id — Retool took it as newlines, and a pasted
   // column from a spreadsheet arrives that way, so both separators are accepted.
   if (source === 'imageIds') {
     const ids = parseIdList(q.replace(/[\s\n]+/g, ','));
-    const batch = await getImagesByIds(ids, limit);
+    const batch = await getImagesByIds(ids, limit, offset);
     const ownerIds = [...new Set(batch.items.map((i) => i.userId))];
     const owners = [...(await usersByIds(ownerIds))].map(([id, u]) => ({ id, ...u }));
     return {
       source,
       q,
       limit,
+      offset,
       canAct,
       batch,
-      notFound: batch.items.length === 0,
+      notFound: batch.items.length === 0 && offset === 0,
       owners,
       subjectUserId: null,
+      subjectImageTotal: null,
     };
   }
 
@@ -83,11 +91,13 @@ export const load: PageServerLoad = async ({ url, locals }) => {
       source,
       q,
       limit,
+      offset,
       canAct,
       batch: null,
       notFound: true,
       owners: [],
       subjectUserId: null,
+      subjectImageTotal: null,
     };
 
   const id = byUser ? await resolveUserId(q) : /^\d+$/.test(q) ? Number(q) : null;
@@ -96,40 +106,47 @@ export const load: PageServerLoad = async ({ url, locals }) => {
       source,
       q,
       limit,
+      offset,
       canAct,
       batch: null,
       notFound: true,
       owners: [],
       subjectUserId: null,
+      subjectImageTotal: null,
     };
 
   const batch: BulkBatch =
     source === 'post'
-      ? await getImagesForPost(id, limit)
+      ? await getImagesForPost(id, limit, 'newest', offset)
       : source === 'model'
-      ? await getImagesForModel(id, limit)
+      ? await getImagesForModel(id, limit, offset)
       : source === 'modelVersion'
-      ? await getImagesForModelVersion(id, limit)
+      ? await getImagesForModelVersion(id, limit, offset)
       : source === 'collection'
-      ? await getImagesForCollection(id, limit)
-      : await getImagesForUser(id, limit, source === 'userRemoved');
+      ? await getImagesForCollection(id, limit, offset)
+      : await getImagesForUser(id, limit, source === 'userRemoved', offset);
 
   // Whose content this batch actually is. A model's images belong to whoever posted them, which is
   // often not the model's owner — so a removal here can touch accounts the moderator did not look up.
   const ownerIds = [...new Set(batch.items.map((i) => i.userId))];
   const owners = [...(await usersByIds(ownerIds))].map(([id, u]) => ({ id, ...u }));
 
-  // The RESOLVED account, not the term that was typed: the account-wide removal below is scoped by id,
-  // and `q` may be a username, a display name or a stale id.
+  const subjectUserId = byUser ? id : null;
+  const subjectImageTotal = subjectUserId === null ? null : await countImagesForUser(subjectUserId);
+
+  // The RESOLVED account, not the term that was typed: the removal is scoped by id, and `q` may be a
+  // username, a display name or a stale id.
   return {
     source,
     q,
     limit,
+    offset,
     canAct,
     batch,
-    notFound: batch.items.length === 0,
+    notFound: batch.items.length === 0 && offset === 0,
     owners,
-    subjectUserId: byUser ? id : null,
+    subjectUserId,
+    subjectImageTotal,
   };
 };
 
@@ -158,78 +175,37 @@ export const actions: Actions = {
       await request.formData()
     );
     if (typeof input === 'string') return actionFail(input);
-    // The strike's description is what the account is shown. Refused BEFORE the removal: after it, the
-    // images are gone and the moderator's other half of the gesture cannot be retried from here.
-    if (input.strikeOwners && !input.reason)
-      return actionFail('A strike needs a reason — it is the message the user is sent.');
 
-    // BEFORE the write, or every id reads as already-blocked afterwards.
-    const alreadyBlocked = await countBlockedImages(input.imageIds);
-
-    const result = await removeImages({
-      imageIds: input.imageIds,
-      reason: input.reason || undefined,
-      violationType: input.violationType,
-      moderatorId: locals.user.id,
-    });
-
+    const result = await removeImagesWithFollowUps({ ...input, moderatorId: locals.user.id });
     if (!result.ok) return actionFail(result.error);
 
-    // ONLY once the removal has landed. Run before that check, a failed removal still flagged every
-    // submitted id — thousands of images marked POI under a red "removal failed" banner.
-    const flagged =
-      input.alsoFlag === 'poi' || input.alsoFlag === 'minor'
-        ? await setImageFlag({
-            imageIds: input.imageIds,
-            flag: input.alsoFlag,
-            value: true,
-            moderatorId: locals.user.id,
-          })
-        : null;
-
-    // A silent flag failure is worse than none: the moderator believes the images are marked. `tag`
-    // is offered by the reason list but is not an image flag, so say that rather than drop it.
     const flagWarning =
-      flagged && !flagged.ok
-        ? `The ${input.alsoFlag} flag was NOT applied: ${flagged.error}`
-        : input.alsoFlag === 'tag'
-        ? '"tag" is not an image flag and was not applied.'
+      result.flag && !result.flag.applied
+        ? `The ${result.flag.flag} flag was NOT applied: ${result.flag.error}`
         : undefined;
-
-    // Same ordering as the flag: a failed removal must not strike anybody.
-    const struck =
-      input.strikeOwners && input.reason
-        ? await strikeBatchOwners({
-            imageIds: input.imageIds,
-            description: input.reason,
-            moderatorId: locals.user.id,
-          })
-        : null;
-
-    const strikeWarning = struck?.error
-      ? `Struck ${struck.struck} of ${struck.owners} owners: ${struck.error}`
+    const strikeWarning = result.struck?.error
+      ? `Struck ${result.struck.struck} of ${result.struck.owners} owners: ${result.struck.error}`
       : undefined;
 
     return {
       success: true,
-      removed: result.count,
-      alreadyBlocked,
-      struck: struck?.struck,
+      removed: result.removed,
+      alreadyBlocked: result.alreadyBlocked,
+      struck: result.struck?.struck,
       // Both halves are reported, and the strike one wins the single warning slot: a missing flag is
       // recoverable from this screen, an unissued strike is not. A removal that changed nothing is
       // last, because it is the only one of the three that is not a partial failure of the action.
       warning:
         strikeWarning ??
         flagWarning ??
-        (result.count - alreadyBlocked === 0
+        (result.removed - result.alreadyBlocked === 0
           ? 'Nothing changed — every image submitted was already blocked.'
           : undefined),
     };
   },
 
   // Retool's image-only account nuke. Unlike every other action here it is NOT scoped to the ids on
-  // screen — the endpoint takes the account and blocks everything it owns, including the images past
-  // the 200-image cap this page loads, which is the only reason it exists.
+  // screen — the endpoint takes the account and blocks everything it owns, however many pages that is.
   removeAllForUser: async ({ request, locals }) => {
     if (!canAccess(locals.user, '/users')) return actionFail('Not permitted.');
     const input = parseForm(

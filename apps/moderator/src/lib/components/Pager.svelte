@@ -1,8 +1,8 @@
 <script lang="ts">
   import { LINK_CLASS, num } from '$lib/format';
 
-  // Prefer `@civitai/ui`'s `Pagination` (numbered pages) for a full-width table. This narrow
-  // prev/next form is for a sidebar column where numbers do not fit.
+  // Prefer `NumberedPager` (numbered pages) for a full-width table. This narrow prev/next form is for
+  // a sidebar column where numbers do not fit.
   let {
     page: current,
     pageCount,

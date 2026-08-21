@@ -1121,7 +1121,8 @@ export async function setModerationFlag(input: {
 }
 
 // TIMED MUTES. A timed mute is `User.muteExpiresAt`, drained hourly by the main app's
-// `processTimedUnmutesJob` — not a side table. See moderator-db-types.ts for why one is not coming back.
+// `processTimedUnmutesJob` — not a side table. The moderator DB has a `TimedMutes` table; its model
+// comment says why nothing may read it.
 export type TimedMute = {
   muteExpiresAt: Date;
   /** Who set it. `strikes` means the escalation engine, and carries no reason or moderator. */

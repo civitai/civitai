@@ -12,7 +12,8 @@
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import { reportDetail, reportReasonLabel, reportStatusVariant } from '$lib/reports';
   import { userLookupUrl } from '$lib/entity-url';
-  import QueueFilterBar from './QueueFilterBar.svelte';
+  import ReportQueueFilterBar from '$lib/components/ReportQueueFilterBar.svelte';
+  import { clearPaging } from '$lib/paging';
 
   let {
     queue,
@@ -58,24 +59,23 @@
   );
 
   // Both params have to survive each other: a bare `?user=` sent the moderator back to page 1, and a
-  // bare `?page=` closed the account they had open.
-  // Keeps the image filters, like `pageHref` below — a moderator triaging with "Only ToS'd" set is
-  // using it as a lens across accounts, and rebuilding it on every row click is the tax this avoids.
-  // The cursor still goes: it indexes the previous account's batch.
+  // bare `?page=` closed the account they had open. The image filters survive too — a moderator
+  // triaging with "Only ToS'd" set is using it as a lens across accounts. The image page does not:
+  // it indexes the previous account's grid.
   const suspectHref = (entityId: number) => {
     const params = new URLSearchParams(pageState.url.search);
     params.set('page', String(page));
     params.set('user', String(entityId));
-    params.delete('cursor');
+    clearPaging(params);
     return `${pageState.url.pathname}?${params}`;
   };
 
-  // Paging the queue keeps the image filters, which describe the open account, but never the cursor —
-  // it indexes a batch belonging to whatever was on screen before.
+  // Keeps the image filters, which describe the open account. Drops the image page — it indexes a
+  // grid belonging to whatever was on screen before.
   const pageHref = (n: number) => {
     const params = new URLSearchParams(pageState.url.search);
     params.set('page', String(n));
-    params.delete('cursor');
+    clearPaging(params);
     if (suspectId) params.set('user', String(suspectId));
     return `?${params}`;
   };
@@ -97,7 +97,7 @@
     Select a row to review that account's content below.
   </p>
 
-  <QueueFilterBar
+  <ReportQueueFilterBar
     statuses={queueFilters.statuses}
     reportedBy={queueFilters.reportedBy}
     reportedFrom={queueFilters.reportedFrom}
@@ -137,33 +137,43 @@
               aria-label="Open reports for {r.suspect?.username ?? `#${r.entityId}`}"
             ></a>
           {/if}
-          <div class="relative flex flex-wrap items-baseline gap-x-2">
-            <Badge variant={reportStatusVariant(r.status)}>{r.status}</Badge>
-            <span class="text-dark-0">
-              {reportReasonLabel(r.details, r.reason)}
-            </span>
-            {#if r.entityId}
-              <a href={userLookupUrl(r.entityId)} class="relative z-20 font-medium {LINK_CLASS}">
-                {r.suspect?.username ?? `#${r.entityId}`}
-              </a>
-            {/if}
-            {#if r.suspect?.bannedAt}<Badge variant="destructive">banned</Badge>{/if}
-            {#if r.suspect?.muted}<Badge variant="destructive">muted</Badge>{/if}
-            {#if r.suspect?.deletedAt}<Badge variant="secondary">deleted</Badge>{/if}
-            {#if r.alsoReportedByCount > 0}
-              <span class="text-xs text-amber-300">+{num(r.alsoReportedByCount)} also reported</span>
-            {/if}
-            {#await imageCounts then counts}
-              {@const c = counts?.[String(r.entityId)]}
-              {#if c}
-                <span class="text-xs text-dark-2">
-                  {num(c.remaining)} of {num(c.total)} images left
+          <!-- Own column: behind a long username it wrapped to a second line, and "banned" is what a
+               moderator scans the queue for. -->
+          <div class="relative flex items-start justify-between gap-3">
+            <div class="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2">
+              <Badge variant={reportStatusVariant(r.status)}>{r.status}</Badge>
+              <span class="text-dark-0">
+                {reportReasonLabel(r.details, r.reason)}
+              </span>
+              {#if r.entityId}
+                <a href={userLookupUrl(r.entityId)} class="relative z-20 font-medium {LINK_CLASS}">
+                  {r.suspect?.username ?? `#${r.entityId}`}
+                </a>
+              {/if}
+              {#if r.alsoReportedByCount > 0}
+                <span class="text-xs text-amber-300">
+                  +{num(r.alsoReportedByCount)} also reported
                 </span>
               {/if}
-            {:catch}
-              <span class="text-xs text-dark-3">image counts unavailable</span>
-            {/await}
-            <span class="text-xs text-dark-2">{dateTime(r.createdAt)}</span>
+              {#await imageCounts then counts}
+                {@const c = counts?.[String(r.entityId)]}
+                {#if c}
+                  <span class="text-xs text-dark-2">
+                    {num(c.remaining)} of {num(c.total)} images left
+                  </span>
+                {/if}
+              {:catch}
+                <span class="text-xs text-dark-2">image counts unavailable</span>
+              {/await}
+              <span class="text-xs text-dark-2">{dateTime(r.createdAt)}</span>
+            </div>
+            {#if r.suspect?.bannedAt || r.suspect?.muted || r.suspect?.deletedAt}
+              <div class="flex shrink-0 flex-wrap justify-end gap-1">
+                {#if r.suspect?.bannedAt}<Badge variant="destructive">banned</Badge>{/if}
+                {#if r.suspect?.muted}<Badge variant="destructive">muted</Badge>{/if}
+                {#if r.suspect?.deletedAt}<Badge variant="secondary">deleted</Badge>{/if}
+              </div>
+            {/if}
           </div>
 
           {#if reportDetail(r.details, 'comment')}
@@ -196,21 +206,8 @@
                   Action
                 </Button>
                 <Button type="submit" name="status" value="Unactioned" size="xs" variant="outline" disabled={busy}>
-                  Dismiss
+                  Unaction
                 </Button>
-                {#if r.status !== 'Processing'}
-                  <Button
-                    type="submit"
-                    name="status"
-                    value="Processing"
-                    size="xs"
-                    variant="outline"
-                    disabled={busy}
-                    title="Marks this report Processing, so another moderator can see it is being worked"
-                  >
-                    Claim
-                  </Button>
-                {/if}
               </form>
             {/if}
           </div>

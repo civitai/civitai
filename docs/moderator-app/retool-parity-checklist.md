@@ -69,8 +69,8 @@ tracker only ever listed nine of the parent's **thirteen** subtasks. Export pull
       already happened** — two `UserNotes` ids were spent locally on 2026-08-07 while Retool spent the
       same two, so id preservation is no longer universal and those two rows are re-idded with the remap
       recorded. Everything else is byte-identical below its watermark (md5-verified, not just counted).
-      `ModelNotes` **is** being migrated (935 rows, wanted by `868kn8aa0`); it still needs a
-      `moderator-db-types.ts` entry when that feature is built.
+      `ModelNotes` **is** being migrated (935 rows, wanted by `868kn8aa0`), and is already typed by the
+      schema introspection.
       🔒 That ticket body contains a **live Postgres connection string with its password** — rotate it.
 
 ## 1. User Lookup — the primary console
@@ -493,10 +493,12 @@ browser as user 1290051, not by reading the code.
       same bar, so it composes with the rating and prompt filters instead of being a mode).
       Filtering client-side, as Retool did: the batch is one query already paid for, and re-fetching per
       filter change would discard the selection being assembled. Two consequences handled: `Select all`
-      counts the **filtered** set, which is the point of filtering to ToS'd before acting; and the action
-      bar now says "**N not shown by the current filter**" when the selection includes images the filter
-      hides — the removal posts ids, not what is on screen, so without it filtering after selecting is a
-      way to remove 40 images while looking at 12.
+      counts the **filtered** set and says so — "**Select all N on screen**" — which is the point of
+      filtering to ToS'd before acting; and the bar says "**N selected but not on screen**" whenever the
+      selection outlives the screen, which it can do two ways: the filter hides an image, or the
+      moderator pages past it (selections deliberately survive paging on the suspect grid — the batch
+      key is the non-paging part of the query string). The removal posts ids, not what is on screen, so
+      without it, filtering or paging after selecting is a way to remove 40 images while looking at 12.
 - [x] **Bulk selection helpers** — Select All / Select 100 / Unselect All (2026-08-09, in the shared
       `ImageActionBar` that Bulk Image Manager and User Reports both use).
 - [x] `negativePrompt` is selected and rendered nowhere (2026-08-12 — on the card under the prompt, and
@@ -548,14 +550,22 @@ in the same screen instead of having to click around a bunch."*
 - [x] **Prompt/negativePrompt dropped** from the cards (2026-08-09 — prompt renders on the card, clamped
       to 3 lines with the full text on hover; `negativePrompt` is selected, awaiting the search filters
       above that are the only thing that reads it).
-- [x] 60-image cap **with no paging wired** (2026-08-09 — cursor paging wired; the whole account is
-      reachable 60 at a time, and the filters narrow it server-side rather than the batch).
+- [x] 60-image cap **with no paging wired** (2026-08-09 — paging wired; the whole account is reachable
+      60 at a time, and the filters narrow it server-side rather than the batch). Now **offset** paging
+      (`imgPage` in the URL, numbered pager), swapped from the original cursor 2026-08-21: `matched` is
+      counted for the heading anyway, so page numbers are free, and a moderator combing a 500-image
+      account has to be able to get back to page 3 — which forward-only paging cannot express.
 - [x] The suspect's history — Retool's three-tab panel **ModActivity / Reports / UserReport History**
       (2026-08-12). Notes were already here; **moderation activity** and **reports received** are now
-      beside them, each with actor, reason and date, capped at 20 with the full history in User Lookup.
-      Both are server-side in this page's own `load` rather than the client-fetched endpoints User
-      Lookup uses: those guard on `/retool/user-lookup`, so a moderator with the reports permission and
-      not that one would have got an empty panel instead of a history.
+      beside them, each with actor, reason and date. Mod activity and ReToolActions load 100 in this
+      page's own `load`, previewed 8 with an expand, and ratings/tagging (`setNsfwLevelKono`,
+      `setNsfwLevel`, `ratingReview`, the tag activities) are filtered behind a toggle — those are
+      Knights-of-New-Order crowd votes and tag cleanups, not enforcement, and they are the bulk of the
+      table. Entity ids link out via `entityUrl`. Reports **on the account** stay server-side (20,
+      human reasons); reports **on their content** are client-fetched from
+      `/api/user-reports/[userId]?only=received&human=1&limit=20`, whose grant list now names all three
+      pages that mount this panel (User Lookup, User Reports, Post Reports) — so the guard reason that
+      originally forced everything server-side no longer applies.
       **Reports received is filtered to human-filed reasons.** `Automated` is ~99.9% of that table —
       one dev account carries **556** of them against **2** human — so the unfiltered list of 20 that
       shipped first was 20 Clavata rows and answered nothing. Filtered, the same account reads

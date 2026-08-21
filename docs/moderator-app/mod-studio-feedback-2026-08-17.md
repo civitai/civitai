@@ -251,7 +251,7 @@ verifying individually.
 | Item | Local state | Note |
 | --- | --- | --- |
 | `CIVITAI_MOD_API_KEY` | **retired 08-19** | **Do NOT provision.** The spoke authenticates as the acting moderator instead; nothing reads this variable and it is gone from the code and from `.env.example` |
-| `RETOOL_DATABASE_URL` | set | Needs confirming in every deployed env — without it notes/strikes/mutes read the wrong database |
+| `RETOOL_DATABASE_URL` | **retired 08-21** | **Do NOT provision.** The Retool and moderator databases were consolidated; `getModeratorDb()` reads `MODERATOR_DATABASE_URL`, which is the variable to confirm in every deployed env |
 | 3 SQL migrations | see below | Each is `CREATE INDEX CONCURRENTLY`, so each runs outside a transaction |
 
 - `20260803120000_add_app_page_access` — **almost certainly already applied**: `/admin` grants

@@ -84,7 +84,7 @@ Do not block a slice on this. Functionality first; attribution is a follow-up mi
 For scoping and schema questions, outside the app:
 
 ```bash
-cp .env.example .env      # then fill in RETOOL_DATABASE_URL
+cp .env.example .env      # then fill in MODERATOR_DATABASE_URL
 node .claude/skills/retool-migration/retool-db.mjs --tables
 node .claude/skills/retool-migration/retool-db.mjs --describe UserStrikes
 node .claude/skills/retool-migration/retool-db.mjs "SELECT * FROM \"UserStrikes\" LIMIT 5"
@@ -193,7 +193,7 @@ as permission to drop one. Bucket it as `port` and build it.
 | `Replicated_Read_Prod` | `dbRead` (`$lib/server/db`) |
 | `Prod` (write) | `dbWrite` |
 | `Clickhouse` | `$lib/server/clickhouse` |
-| `retool_db` | `getModeratorDb()` (`$lib/server/moderator-db`) — a single read-write Kysely client over the **moderator database**. Points at Retool's own Postgres today, so the data is live; later it moves and only the connection string changes. Types: `ModeratorDB` in `moderator-db-types.ts`. |
+| `retool_db` | `getModeratorDb()` (`$lib/server/moderator-db`) — a single read-write Kysely client over the **moderator database**. Points at Retool's own Postgres today, so the data is live; later it moves and only the connection string changes. Types: `ModeratorDB` from `$lib/server/moderator-db/types`, generated from `apps/moderator/prisma/schema.prisma`. |
 | `REST-WithoutResource` → `/api/mod/*` | existing main-app mod endpoints, or a spoke service |
 | `BuzzTemp` / buzz API | `$lib/server/buzz` |
 | `Notifications DB` | `$lib/server/notifications` |

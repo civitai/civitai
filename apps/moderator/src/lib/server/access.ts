@@ -141,6 +141,7 @@ export const NAVIGATION: NavLink[] = [
       { path: '/retool/image-lookup', label: 'Image Lookup' },
       { path: '/retool/article-lookup', label: 'Article Lookup' },
       { path: '/retool/user-reports', label: 'User Reports' },
+      { path: '/retool/post-reports', label: 'Post Reports' },
       { path: '/retool/bulk-image-manager', label: 'Bulk Image Manager' },
       { path: '/retool/chat-audit', label: 'Chat Audit' },
       { path: '/retool/front-page-audit', label: 'Front Page Audit' },

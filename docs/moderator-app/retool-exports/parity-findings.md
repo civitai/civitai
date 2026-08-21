@@ -94,9 +94,10 @@ to XXX" is answerable for the Retool era and not for ours.
       longer shows which accounts have content worth reviewing
 - [x] The suspect's history datasets were "shipped in User Lookup" — true of the datasets, false of
       this page. Strikes and now **notes** render here beside the strike form, which is where they
-      change a decision. ClickHouse activity and received reports stay a deep link (both are heavy and
-      neither is read while filing a strike), and `ReToolActions` has no subject key, so it cannot be
-      shown per-account anywhere.
+      change a decision. Mod activity and received reports were also deep links at first and are now
+      inline too (2026-08-12, widened 2026-08-21) — see the User Reports section of
+      [`retool-parity-checklist.md`](../retool-parity-checklist.md). `ReToolActions` has no subject key,
+      so it cannot be shown per-account anywhere.
 - [x] `ReportHistory` 300 → 100
 - [x] Pagination links drop the `user` param, closing the suspect drill-down
 
@@ -358,7 +359,7 @@ Every claim below was checked against the code before being recorded; several of
 - [x] **Front Page Audit — `LogTimestamp`'s column list is NOT missing from the export.** The recorded
       reason for leaving three writes unported ("GUI-mode writes whose column lists the export does not
       carry") does not survive reading `raw/front-page-audit.json`, which has all three changesets
-      verbatim. `numberOfImages` is also absent from the typed model in `moderator-db-types.ts`.
+      verbatim. `numberOfImages` is typed as of the schema introspection.
 - [x] **Front Page Audit — `InsertRatingGame` unported, and Queue Stats renders the frozen result.**
       "Research ratings — All time" sits directly beside "Ratings set", which is `ModActivity`-backed and
       still counts. One list grows, the other cannot, with nothing on screen saying why.
@@ -483,8 +484,8 @@ acted on; two did not survive that check and are corrected rather than fixed.
       (see the canonical block above). This is now ordinary porting work. Until it lands,
       `recordModActivity` stores no before/after, so "who changed this image from X to XXX" stays
       answerable for the Retool era and not for ours.
-- [ ] **`numberOfImages` on `FrontPageTimers`.** **Confirmed to exist** (integer) 2026-08-20, so
-      `markSweepChecked` can write it and `moderator-db-types.ts` should carry it. Not blocked.
+- [ ] **`numberOfImages` on `FrontPageTimers`.** **Confirmed to exist** (integer) 2026-08-20, and typed
+      since the schema introspection, so `markSweepChecked` can write it. Not blocked, and no type work left.
 - [ ] **Scheduled mute start.** Not blocked on a cron — expiry runs hourly (`processTimedUnmutesJob`).
       There is no `muteStartsAt` column, so this is a schema change plus a second job. Confirm anyone
       wants it before building.

@@ -8,6 +8,7 @@
   import ImageQueueGrid from '$lib/components/ImageQueueGrid.svelte';
   import { ingestionErrorLevels, getBrowsingLevelLabel } from '@civitai/shared';
   import type { ActionData, PageData } from './$types';
+  import { clearPaging } from '$lib/paging';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
   // All nsfwLevel 0 here — strip it so the grid doesn't draw a meaningless rating badge.
@@ -26,7 +27,7 @@
   function limitHref(n: number) {
     const url = new URL(page.url);
     url.searchParams.set('limit', String(n));
-    url.searchParams.delete('cursor');
+    clearPaging(url.searchParams);
     return url.pathname + url.search;
   }
 

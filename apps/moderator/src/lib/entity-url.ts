@@ -60,6 +60,13 @@ export const userLookupUrl = (idOrUsername: number | string, section?: string) =
   return section ? `/retool/user-lookup/${section}${q}` : `/retool/user-lookup${q}`;
 };
 
+/** Bulk Image Manager takes the entity it lists images for as `source` + `q`, not a per-entity param.
+ *  The same shape the main app's `moderatorBulkImageManagerPath` builds — keep the two in step. */
+export const bulkImageManagerUrl = (
+  source: 'post' | 'model' | 'modelVersion' | 'collection' | 'user',
+  idOrUsername: number | string
+) => `/retool/bulk-image-manager?source=${source}&q=${encodeURIComponent(String(idOrUsername))}`;
+
 export const chatAuditChatUrl = (chatId: number) => `/retool/chat-audit/chats?chat=${chatId}`;
 
 /**

@@ -56,9 +56,14 @@ provenance is the only reason it differs from the standard at all.
   can carry dozens of unsaved ticks. Return `fail(status, { error })` and render it — and check that the
   page actually *shows* it: the default `enhance` does not invalidate on failure, so any status line
   led by a "you have unsaved changes" branch will hide every refusal behind it.
-- **Two databases.** `$lib/server/db.ts` is the main app's Postgres; `getModeratorDb()` is moderation
-  data that never lived there (notes, strikes, help requests), typed by hand in
-  `moderator-db-types.ts` because those tables are not in the Prisma schema.
+- **Two databases, and BOTH are Prisma-introspected into Kysely types.** `$lib/server/db.ts` is the main
+  app's Postgres; `getModeratorDb()` is moderation data that never lived there (notes, strikes, help
+  requests). The second has its own schema at `apps/moderator/prisma/schema.prisma` — introspected from
+  the database, never authored, regenerated with `pnpm run db:moderator:pull` then
+  `pnpm run db:moderator:generate`. Read [`apps/moderator/prisma/README.md`](prisma/README.md) before
+  running either: the pull needs `?sslmode=disable`, and it silently drops any comment not attached to a
+  model. Hand-maintaining these types is what this replaced, so do not edit
+  `src/lib/server/moderator-db/` — it is generated output.
 - **The test suite has a DB-backed tier, and `vitest.config.ts` feeds it the root `.env`.** See the
   Tests section of the standard for the shape. Two things specific to this app: `DATABASE_REPLICA_URL`
   is deliberately **not** surfaced, so a suite that forgets to mock `$lib/server/db` throws on import
@@ -75,9 +80,9 @@ provenance is the only reason it differs from the standard at all.
   [`moderator-page-migration`](../../.claude/skills/moderator-page-migration/SKILL.md) (from
   `src/pages/moderator/**` — which also deletes the legacy page and trims what it orphans).
 
-- ⚠️ **The suite is narrow — it covers reports and nothing else.** Four files, 76 tests, all on the
-  report queue and its actions. So for work anywhere else in this app a green `pnpm test` says only
-  that reports still pass, and `typecheck` remains the whole of what was verified. Say which of the two
+- ⚠️ **The suite is narrow.** Six files, 86 tests: the report queue and its actions, the orchestrator
+  workflow reader, and the legacy-strike marker protocol. So for work anywhere else in this app a green
+  `pnpm test` says only that those still pass, and `typecheck` remains the whole of what was verified. Say which of the two
   you mean when reporting: a typecheck cannot see a wrong predicate, a mis-attributed row or a mute
   that never lifts, all of which have shipped here and been found later by reading the code.
 
@@ -115,6 +120,9 @@ standard is one link away**. Each of these has cost real time when broken. Full 
 - **`typecheck`, never `check` — and `build` is not a check.** Both run `svelte-kit sync`, which fights
   the dev server's watcher; that collision froze an editor for a full day. Read `svelte-check`'s
   **WARNING** lines too: `state_referenced_locally` is a real bug and appears nowhere else.
+- **`typecheck` stops at `src/`.** It extends `.svelte-kit/tsconfig.json`, so the standalone scripts
+  under `moderator-db/` and `xguard-lab/` are invisible to it — including the one that writes to two
+  production databases. Run `pnpm run typecheck:scripts` (`tsconfig.scripts.json`) when you touch either.
 - **Before calling a segment done**, run `svelte-correctness-review`, `svelte-idiom-review` and
   `svelte-abstraction-review` (or the `/svelte-review` skill) — then **look at the page**. Typecheck
   passes on plenty of pages that render blank.

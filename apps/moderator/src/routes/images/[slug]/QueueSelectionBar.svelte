@@ -12,6 +12,7 @@
     submit,
     appeal,
     minorQueue,
+    reported,
   }: {
     selected: SvelteSet<string | number>;
     /** Comma-separated, resolved by the page — a card key is a report id on the reported queue. */
@@ -21,9 +22,12 @@
     /** Appeals resolve rather than accept, and their images are `Blocked` (so: no rating). */
     appeal: boolean;
     minorQueue: boolean;
+    /** The report queue names its verdicts after report statuses, not the image ones. */
+    reported: boolean;
   } = $props();
 
   const count = $derived(selected.size);
+  const acceptLabel = $derived(reported ? 'Unaction' : 'Accept');
 </script>
 
 {#if count > 0}
@@ -50,7 +54,7 @@
           {@render bulkButton('?/bulkResolveAppeal', `Approve ${count}`, 'border-emerald-600/40 text-emerald-400 hover:bg-emerald-500/10', { status: 'Approved' })}
           {@render bulkButton('?/bulkResolveAppeal', `Reject ${count}`, 'border-rose-500/40 text-rose-400 hover:bg-rose-500/10', { status: 'Rejected' })}
         {:else}
-          {@render bulkButton('?/bulkAccept', `Accept ${count}`, 'border-teal-600/40 text-teal-400 hover:bg-teal-500/10')}
+          {@render bulkButton('?/bulkAccept', `${acceptLabel} ${count}`, 'border-teal-600/40 text-teal-400 hover:bg-teal-500/10')}
           {#if minorQueue}
             {@render bulkButton('?/bulkAccept', `Accept ${count} + clear minor`, 'border-cyan-600/40 text-cyan-400 hover:bg-cyan-500/10', { removeMinorFlag: 'true' })}
           {/if}
@@ -58,7 +62,7 @@
             <TosDeleteButton
               action="?/bulkBlock"
               {submit}
-              label={`Delete ${count}`}
+              label={`Remove ${count}`}
               hidden={{ imageIds, reportIds }}
             />
           {/key}

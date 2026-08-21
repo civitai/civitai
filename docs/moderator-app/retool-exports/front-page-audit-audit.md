@@ -73,9 +73,11 @@ dataset keyed `(userId, imageId)`. They answer different questions.
    the parameter (`selectedAgeRating`) compared against `nsfwLevel`. Porting against
    `@civitai/shared`'s `NsfwLevel` is the obvious reading, but **re-extract to confirm the exact set
    offered** — Retool may have limited the sweep to a subset.
-2. **`FrontPageTimers` and `RatingChanges` are not in `moderator-db-types.ts`** and both are GUI-mode
-   writes, so the export records the target table and no column list. Their live schema must be read
-   before writing to them.
+2. **`FrontPageTimers` and `RatingChanges` are GUI-mode writes**, so the export records the target
+   table and no column list. Their live shape is no longer unknown: introspection generated both
+   (`FrontPageTimers`: `id, nsfw, lastCheckedAt, username, buttonPressedTime, numberOfImages`;
+   `RatingChanges`: `id, imageId, createdAt, updatedBy, rating, originalRating`). What the export cannot
+   tell us is which of those columns each write set.
 3. **`research_ratings` is not in `@civitai/db-schema/kysely`.** It exists in production (Retool writes
    it on the `Prod` resource) but is absent from the generated types, so it needs either a schema
    addition or a raw `sql` insert.

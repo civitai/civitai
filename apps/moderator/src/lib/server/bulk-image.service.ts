@@ -1,7 +1,7 @@
 import { sql, type RawBuilder } from '@civitai/db/kysely';
 import { NsfwLevel } from '@civitai/shared';
 import { dbRead } from './db';
-import { issueStrike } from './user-actions.service';
+import { issueStrike, removeImages, setImageFlag } from './user-actions.service';
 import type { MediaType } from '$lib/media/edge-url';
 
 // Retool's Bulk Image Manager: find a batch of images by one of five sources, then act on the batch.
@@ -72,12 +72,16 @@ const extraColumns = [
 ];
 
 /**
- * A batch is capped: a prolific model can carry tens of thousands of images and the page renders
- * every row it is given. `total` is the true size so a moderator knows a bulk action covers what is
- * on screen, NOT everything the source contains — the distinction that decides whether they act here
- * or reach for the per-user purge.
+ * A batch is one WINDOW over the source: `offset` rows in, at most `limit` wide. `total` is the true
+ * size so a moderator knows a bulk action covers what is on screen, NOT everything the source
+ * contains. `truncated` says another window follows this one.
  */
-export type BulkBatch = { items: BulkImage[]; total: number; truncated: boolean };
+export type BulkBatch = {
+  items: BulkImage[];
+  total: number;
+  truncated: boolean;
+  offset: number;
+};
 
 const imageBase = () => dbRead.selectFrom('Image as i');
 type ImageBase = ReturnType<typeof imageBase>;
@@ -91,7 +95,8 @@ type ImageBase = ReturnType<typeof imageBase>;
 async function batchFrom(
   base: ImageBase,
   limit: number,
-  order: 'newest' | 'index' = 'newest'
+  order: 'newest' | 'index' = 'newest',
+  offset = 0
 ): Promise<BulkBatch> {
   const ordered =
     order === 'index'
@@ -100,7 +105,9 @@ async function batchFrom(
   const [rows, total] = await Promise.all([
     ordered
       .select([...IMAGE_COLUMNS, ...extraColumns])
+      // One row past the window, so "is there a next page" is answered without a second count.
       .limit(limit + 1)
+      .offset(offset)
       .execute(),
     base.select((eb) => eb.fn.countAll<string>().as('c')).executeTakeFirst(),
   ]);
@@ -109,15 +116,17 @@ async function batchFrom(
     items: rows.slice(0, limit),
     total: Number(total?.c ?? 0),
     truncated: rows.length > limit,
+    offset,
   };
 }
 
 export async function getImagesForPost(
   postId: number,
   limit = 200,
-  order: 'newest' | 'index' = 'newest'
+  order: 'newest' | 'index' = 'newest',
+  offset = 0
 ): Promise<BulkBatch> {
-  return batchFrom(imageBase().where('i.postId', '=', postId), limit, order);
+  return batchFrom(imageBase().where('i.postId', '=', postId), limit, order, offset);
 }
 
 /**
@@ -143,24 +152,37 @@ const imagesOfVersions = (versionIds: RawBuilder<unknown>) =>
   `;
 
 /** Every image across every VERSION of a model — Retool's three chained queries as one join. */
-export async function getImagesForModel(modelId: number, limit = 200): Promise<BulkBatch> {
+export async function getImagesForModel(
+  modelId: number,
+  limit = 200,
+  offset = 0
+): Promise<BulkBatch> {
   const versions = sql`SELECT mv."id" FROM "ModelVersion" mv WHERE mv."modelId" = ${modelId}`;
-  return batchFrom(imageBase().where('i.id', 'in', imagesOfVersions(versions)), limit);
+  return batchFrom(
+    imageBase().where('i.id', 'in', imagesOfVersions(versions)),
+    limit,
+    'newest',
+    offset
+  );
 }
 
 export async function getImagesForModelVersion(
   modelVersionId: number,
-  limit = 200
+  limit = 200,
+  offset = 0
 ): Promise<BulkBatch> {
   return batchFrom(
     imageBase().where('i.id', 'in', imagesOfVersions(sql`${modelVersionId}`)),
-    limit
+    limit,
+    'newest',
+    offset
   );
 }
 
 export async function getImagesForCollection(
   collectionId: number,
-  limit = 200
+  limit = 200,
+  offset = 0
 ): Promise<BulkBatch> {
   // IN over the collection's image ids rather than a join: a collection holding two items for one
   // image would otherwise emit it twice, and a duplicate key takes the grid out at runtime.
@@ -170,7 +192,7 @@ export async function getImagesForCollection(
     .where('collectionId', '=', collectionId)
     .where('imageId', 'is not', null);
 
-  return batchFrom(imageBase().where('i.id', 'in', imageIds), limit);
+  return batchFrom(imageBase().where('i.id', 'in', imageIds), limit, 'newest', offset);
 }
 
 /**
@@ -181,10 +203,16 @@ export async function getImagesForCollection(
 export async function getImagesForUser(
   userId: number,
   limit = 200,
-  removedOnly = false
+  removedOnly = false,
+  offset = 0
 ): Promise<BulkBatch> {
   const base = imageBase().where('i.userId', '=', userId);
-  return batchFrom(removedOnly ? base.where('i.nsfwLevel', '=', NsfwLevel.Blocked) : base, limit);
+  return batchFrom(
+    removedOnly ? base.where('i.nsfwLevel', '=', NsfwLevel.Blocked) : base,
+    limit,
+    'newest',
+    offset
+  );
 }
 
 /**
@@ -192,9 +220,13 @@ export async function getImagesForUser(
  * script hands over ids, not a post — without this the moderator has to find each one's post or owner
  * and re-reach it through another source.
  */
-export async function getImagesByIds(imageIds: number[], limit = 200): Promise<BulkBatch> {
-  if (!imageIds.length) return { items: [], total: 0, truncated: false };
-  return batchFrom(imageBase().where('i.id', 'in', imageIds), limit);
+export async function getImagesByIds(
+  imageIds: number[],
+  limit = 200,
+  offset = 0
+): Promise<BulkBatch> {
+  if (!imageIds.length) return { items: [], total: 0, truncated: false, offset };
+  return batchFrom(imageBase().where('i.id', 'in', imageIds), limit, 'newest', offset);
 }
 
 /**
@@ -231,6 +263,24 @@ export async function countBlockedImages(imageIds: number[]): Promise<number> {
 }
 
 /**
+ * Every image the account owns, UNFILTERED — the true size of `removeAllImagesForUser`, which is scoped
+ * to the account and nothing else.
+ *
+ * Not `batch.total`: that comes from the batch's own filtered builder, so under the `userRemoved` source
+ * it counts only what is already blocked. The confirmation copy said "blocks all 300 images this account
+ * owns" over an account holding 12,000, and that sentence is the whole disclosure — the typed
+ * confirmation checks WHICH account, never how many.
+ */
+export async function countImagesForUser(userId: number): Promise<number> {
+  const row = await dbRead
+    .selectFrom('Image')
+    .select((eb) => eb.fn.countAll<string>().as('c'))
+    .where('userId', '=', userId)
+    .executeTakeFirst();
+  return Number(row?.c ?? 0);
+}
+
+/**
  * Retool's `strikeCheckbox`, on both Bulk Image Manager and User Reports: a TOS removal and the strike
  * for it were one gesture. Owners are resolved SERVER-side from the ids rather than passed in — the
  * grid only holds the page in front of the moderator, and a selection can outlive it.
@@ -262,4 +312,84 @@ export async function strikeBatchOwners(input: {
     // than not, and a bare "3 failed" sends the moderator to the logs to find out why.
     error: failed.length ? failed[0].error : undefined,
   };
+}
+
+/**
+ * Remove a batch, then the two things a removal is usually half of: flag the images, strike their
+ * owners.
+ *
+ * 🔴 The ORDER is the whole point:
+ *
+ *  1. count the already-blocked BEFORE the write, or every id reads as already-blocked afterwards;
+ *  2. refuse a reason-less strike BEFORE anything is destroyed, because after it the images are gone
+ *     and the moderator cannot retry the other half from that screen;
+ *  3. flag ONLY once the removal has landed — run before that check, a failed removal still flagged
+ *     every submitted id, i.e. thousands of images marked POI under a red "removal failed" banner;
+ *  4. strike ONLY once the removal has landed, for the same reason.
+ *
+ * The result is structured rather than a sentence: the callers word it differently (a status line on one
+ * page, a warning banner on another) and that difference is the only thing that ever varied between the
+ * three copies.
+ */
+export type RemoveBatchResult =
+  | { ok: false; error: string }
+  | {
+      ok: true;
+      /** Rows the endpoint FOUND, including ones already blocked. */
+      removed: number;
+      alreadyBlocked: number;
+      /** `null` when no flag was asked for. `applied: false` carries why. */
+      flag: { flag: 'poi' | 'minor' | 'tag'; applied: boolean; error?: string } | null;
+      struck: { struck: number; owners: number; error?: string } | null;
+    };
+
+export async function removeImagesWithFollowUps(input: {
+  imageIds: number[];
+  reason?: string;
+  violationType?: string;
+  alsoFlag?: 'poi' | 'minor' | 'tag';
+  strikeOwners?: boolean;
+  moderatorId: number;
+}): Promise<RemoveBatchResult> {
+  if (input.strikeOwners && !input.reason)
+    return { ok: false, error: 'A strike needs a reason — it is the message the user is sent.' };
+
+  const alreadyBlocked = await countBlockedImages(input.imageIds);
+
+  const result = await removeImages({
+    imageIds: input.imageIds,
+    reason: input.reason || undefined,
+    violationType: input.violationType,
+    moderatorId: input.moderatorId,
+  });
+  if (!result.ok) return { ok: false, error: result.error };
+
+  // `tag` is offered by the reason list but is not an image flag. Reported rather than dropped: the
+  // moderator otherwise believes the images are marked.
+  const flag =
+    input.alsoFlag === 'poi' || input.alsoFlag === 'minor'
+      ? await setImageFlag({
+          imageIds: input.imageIds,
+          flag: input.alsoFlag,
+          value: true,
+          moderatorId: input.moderatorId,
+        }).then((r) =>
+          r.ok
+            ? { flag: input.alsoFlag!, applied: true }
+            : { flag: input.alsoFlag!, applied: false, error: r.error }
+        )
+      : input.alsoFlag === 'tag'
+      ? { flag: 'tag' as const, applied: false, error: 'not an image flag' }
+      : null;
+
+  const struck =
+    input.strikeOwners && input.reason
+      ? await strikeBatchOwners({
+          imageIds: input.imageIds,
+          description: input.reason,
+          moderatorId: input.moderatorId,
+        })
+      : null;
+
+  return { ok: true, removed: result.count, alreadyBlocked, flag, struck };
 }

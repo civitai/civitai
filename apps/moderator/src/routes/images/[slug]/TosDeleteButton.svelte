@@ -11,7 +11,7 @@
     action,
     submit,
     hidden,
-    label = 'Delete',
+    label = 'Remove',
     size = 'sm',
   }: {
     action: string;

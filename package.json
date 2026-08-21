@@ -82,6 +82,8 @@
     "db:generate": "node scripts/generate-slim-schema.js && prisma generate --no-hints",
     "db:check-generated": "pnpm run db:generate && git diff --exit-code -- packages/civitai-db-schema/src",
     "db:seed": "prisma db seed",
+    "db:moderator:pull": "prisma db pull --schema apps/moderator/prisma/schema.prisma",
+    "db:moderator:generate": "prisma generate --no-hints --schema apps/moderator/prisma/schema.prisma",
     "share": "ngrok http 3000",
     "prepare": "husky",
     "analyze": "cross-env ANALYZE=true next build",

@@ -3,6 +3,9 @@
 Retool's own Postgres (`retool_db` in the app exports) holds moderation data that never existed in
 Civitai's database.
 
+> **Superseded 2026-08-21.** The two databases were consolidated. `getModeratorDb()` reads
+> `MODERATOR_DATABASE_URL`; `RETOOL_DATABASE_URL` is retired. Every mention of it below is historical.
+
 **The moderator app reads and writes it directly**, through `getModeratorDb()` — `RETOOL_DATABASE_URL`
 points here for now. So porting a `retool_db`-backed feature needs no data migration first: Retool and
 the moderator app share these tables during the transition, which is what allows an incremental cutover.
