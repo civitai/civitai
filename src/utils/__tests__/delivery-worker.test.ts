@@ -173,13 +173,15 @@ describe('resolveDownloadUrl — falls back to delivery worker when resolver dis
   });
 });
 
-describe('isDefiniteNotFound — only a 404 proves the object is absent', () => {
+describe('isDefiniteNotFound — absence must be positively reported (404/410)', () => {
   // Callers act on `true` by writing a PERMANENT tombstone that also permanently
   // exempts the file from virus/pickle scanning, so a wrongly-true answer is far
   // more expensive than a wrongly-false one (which costs a single retry).
   it.each([
     ['DeliveryWorkerError 404', new DeliveryWorkerError(404, 'Not Found')],
+    ['DeliveryWorkerError 410', new DeliveryWorkerError(410, 'Gone')],
     ['StorageResolverError 404', new StorageResolverError(404, 'not found')],
+    ['StorageResolverError 410', new StorageResolverError(410, 'gone')],
   ])('is true for %s', (_label, err) => {
     expect(isDefiniteNotFound(err)).toBe(true);
   });

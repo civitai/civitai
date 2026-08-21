@@ -21,7 +21,12 @@ import { hashContent } from '~/server/services/entity-moderation.service';
 import type { MediaType, ModelType } from '~/shared/utils/prisma/enums';
 import { EntityModerationStatus, ModelHashType, ScanResultCode } from '~/shared/utils/prisma/enums';
 import { stringifyAIR } from '~/shared/utils/air';
-import { isDefiniteNotFound, resolveDownloadUrl } from '~/utils/delivery-worker';
+import {
+  DeliveryWorkerError,
+  StorageResolverError,
+  isDefiniteNotFound,
+  resolveDownloadUrl,
+} from '~/utils/delivery-worker';
 
 // Per-attempt backstop for the image-ingestion orchestrator SUBMIT (enqueue only —
 // this returns a workflow id immediately, it does NOT wait for the scan to finish).
@@ -588,8 +593,8 @@ export async function createXGuardModerationRequest(args: XGuardModerationArgs) 
  * Thrown by createModelFileScanRequest when submission can't proceed. The
  * `code` lets callers branch their recovery:
  *   - 'not-found': pre-flight download-URL resolution failed twice AND the retry
- *     failed with a 404 — i.e. the resolver positively reported the object is not
- *     there. Caller may mark ModelFile.exists=false to exit the scan retry loop.
+ *     failed with an absence status (404/410) reported by the authority that can
+ *     actually see the file — i.e. absence was positively established. Caller may mark ModelFile.exists=false to exit the scan retry loop.
  *     🔴 That tombstone is PERMANENT and also permanently exempts the file from
  *     scanning, so this code must mean "absence was proven", never "we could not
  *     ask". It is emitted only via `isDefiniteNotFound`.
@@ -672,7 +677,8 @@ export async function createModelFileScanRequest({
   //   1) try storage-resolver / delivery-worker (resolveDownloadUrl)
   //   2) on failure, wait 60s and retry once (covers registration sync lag
   //      for recently-uploaded files)
-  //   3) on second failure, classify: only a 404 proves the file is gone
+  //   3) on second failure, classify via isDefiniteNotFound: absence must be
+  //      POSITIVELY reported (404/410) by the authority that can see the file
   //      ('not-found', caller tombstones). Everything else — 5xx, auth, rate
   //      limit, timeout, transport reject — is 'transient' and gets retried.
   //
@@ -695,6 +701,15 @@ export async function createModelFileScanRequest({
         // the first failure may have been the transient one that the retry
         // exists to absorb.
         const code = isDefiniteNotFound(retryError) ? 'not-found' : 'transient';
+        // The verdict turns on WHICH component reported what, and the two message
+        // fields below both carry the delivery worker's text — so without this the
+        // decision input is invisible in production and no one can confirm after
+        // the fact whether a given tombstone was justified.
+        const resolverStatus =
+          retryError instanceof DeliveryWorkerError &&
+          retryError.resolverError instanceof StorageResolverError
+            ? retryError.resolverError.statusCode
+            : undefined;
         logToAxiom({
           type: 'error',
           name: 'model-file-scan',
@@ -702,12 +717,14 @@ export async function createModelFileScanRequest({
           fileId,
           modelVersionId,
           submissionErrorCode: code,
+          deliveryWorkerStatus: retryError instanceof DeliveryWorkerError ? retryError.statusCode : undefined,
+          resolverStatus,
           firstError: firstError instanceof Error ? firstError.message : String(firstError),
           retryError: retryError instanceof Error ? retryError.message : String(retryError),
         });
         throw new ModelFileScanSubmissionError(
           code === 'not-found'
-            ? `Pre-flight resolution returned 404 for file ${fileId}; the file is not there`
+            ? `Pre-flight resolution reported the file absent for file ${fileId}`
             : `Pre-flight resolution failed for file ${fileId} without proving absence; treating as transient`,
           code
         );

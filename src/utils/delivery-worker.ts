@@ -140,10 +140,14 @@ export async function getDownloadUrlByFileId(
 }
 
 /**
- * Statuses that positively assert the object is not there. 410 is included for
- * consistency with the download endpoint, which has always treated `404 || 410`
- * as "the key doesn't resolve to a stored file" (`src/pages/api/download/[...key].ts`),
- * and the delivery worker does return 410 in practice.
+ * Statuses that positively assert the object is not there — 404 and 410 only.
+ *
+ * 410 is included to match the download endpoint, which has always treated
+ * `404 || 410` as "the key doesn't resolve to a stored file"
+ * (`src/pages/api/download/[...key].ts`) — a handling decision that predates this
+ * code. Whether the delivery worker actually EMITS a 410 is not established in
+ * this repo (it is a Cloudflare Worker whose source lives elsewhere), so treat
+ * 410 as defensive parity, not as an observed case.
  */
 const ABSENCE_STATUSES = new Set([404, 410]);
 
@@ -151,11 +155,12 @@ const ABSENCE_STATUSES = new Set([404, 410]);
  * Did this resolution failure prove the file is not there, as opposed to proving
  * only that we could not ask?
  *
- * Deliberately narrow: ONLY a 404 counts. A caller acting on `true` here writes a
- * permanent tombstone that also permanently exempts the file from virus/pickle
- * scanning, so the asymmetry matters — a wrongly-`true` answer silently leaves a
- * public file unscanned forever, while a wrongly-`false` answer costs one retry
- * on the next tick.
+ * Deliberately narrow: only the statuses in `ABSENCE_STATUSES` count, and when the
+ * storage resolver was consulted it must be the one that said so. A caller acting
+ * on `true` writes a permanent tombstone that also permanently exempts the file
+ * from virus/pickle scanning, so the asymmetry matters — a wrongly-`true` answer
+ * silently leaves a public file unscanned forever, while a wrongly-`false` answer
+ * costs one retry on the next tick.
  *
  * 400 (malformed key) is NOT included even though such keys are genuinely
  * unresolvable: 400 is also what a transiently-misbehaving upstream returns, and
@@ -164,21 +169,32 @@ const ABSENCE_STATUSES = new Set([404, 410]);
  * likewise not proof of absence.
  */
 export function isDefiniteNotFound(err: unknown): boolean {
+  // Note: unreachable from the scan pre-flight today — `resolveDownloadUrl` always
+  // falls through to the delivery worker, so a StorageResolverError never escapes
+  // it. Kept so the predicate is correct for any direct caller of
+  // `getDownloadUrlByFileId`.
   if (err instanceof StorageResolverError) return ABSENCE_STATUSES.has(err.statusCode);
 
   if (err instanceof DeliveryWorkerError) {
     if (!ABSENCE_STATUSES.has(err.statusCode)) return false;
     // The resolver was consulted first and also failed. Its answer decides: only
     // the resolver can locate a file registered in `file_locations`, so unless IT
-    // reported absence, this 404 is "the legacy path can't see it", not "gone".
+    // reported absence, this is "the legacy path can't see it", not "gone".
+    //
+    // 🔴 `!== undefined`, NOT an `instanceof` narrowing. A resolver that fails at
+    // the TRANSPORT layer (connection refused, DNS, TCP timeout — what a pod
+    // outage actually looks like) throws a TypeError, not a StorageResolverError.
+    // Narrowing the guard would leave that unattached and fall through to
+    // `return true`, tombstoning the file: precisely the bug this exists to stop.
     if (err.resolverError !== undefined) {
       return (
         err.resolverError instanceof StorageResolverError &&
         ABSENCE_STATUSES.has(err.resolverError.statusCode)
       );
     }
-    // Resolver disabled, or it succeeded and the failure came later: the delivery
-    // worker was the only authority and it said not-there.
+    // Reached only when the resolver is disabled: if it had succeeded,
+    // `resolveDownloadUrl` would have returned rather than reaching the fallback.
+    // The delivery worker was the only authority and it said not-there.
     return true;
   }
 

@@ -92,6 +92,43 @@ describe('resolveDownloadUrl — the resolver verdict survives the delivery-work
     await expect(resolveDownloadUrl(1, 's3://b/k.safetensors')).resolves.toMatchObject({
       url: 'https://cdn.example/ok',
     });
+    // Pin the ORDER, not just the outcome: without this the test would still pass
+    // if the env mock silently degraded to a disabled resolver, because fetch[0]
+    // would then be the delivery worker and the second key candidate would hit OK.
+    expect(fetchMock.mock.calls[0][0]).toContain('resolver.example.com');
+  });
+
+  // 🔴 A resolver pod outage does NOT usually arrive as a clean HTTP status — the
+  // connection is refused, DNS fails, or the socket times out, and `fetch` REJECTS.
+  // That throws a TypeError, not a StorageResolverError. The attach guard is
+  // therefore `!== undefined` rather than an `instanceof` narrowing; tightening it
+  // would leave a transport reject unattached, fall through to `return true`, and
+  // tombstone a healthy file — the exact bug this PR exists to fix.
+  it.each([
+    ['connection refused / DNS', () => new TypeError('fetch failed')],
+    ['socket timeout', () => Object.assign(new Error('The operation timed out.'), { name: 'TimeoutError' })],
+  ])('a resolver TRANSPORT reject (%s) + delivery worker 404 is NOT definite-not-found', async (_l, makeErr) => {
+    fetchMock.mockRejectedValueOnce(makeErr()).mockResolvedValue(deliveryFail(404));
+
+    const err = await resolveDownloadUrl(1, 's3://b/k.safetensors').catch((e) => e);
+
+    expect(err).toBeInstanceOf(DeliveryWorkerError);
+    expect((err as DeliveryWorkerError).statusCode).toBe(404);
+    // Attached but NOT a StorageResolverError — this is the shape the guard must keep.
+    expect((err as DeliveryWorkerError).resolverError).toBeDefined();
+    expect((err as DeliveryWorkerError).resolverError).not.toBeInstanceOf(StorageResolverError);
+    expect(isDefiniteNotFound(err)).toBe(false);
+  });
+
+  it('a resolver CONFIG error (bare Error, no status) + delivery worker 404 is NOT definite-not-found', async () => {
+    // `getDownloadUrlByFileId` throws a plain Error when the endpoint is unset;
+    // it is reachable via other callers and must not read as proof of absence.
+    fetchMock
+      .mockRejectedValueOnce(new Error('STORAGE_RESOLVER_ENDPOINT is not configured'))
+      .mockResolvedValue(deliveryFail(404));
+
+    const err = await resolveDownloadUrl(1, 's3://b/k.safetensors').catch((e) => e);
+    expect(isDefiniteNotFound(err)).toBe(false);
   });
 
   it('attaches the resolver error to the delivery-worker error it throws', async () => {
