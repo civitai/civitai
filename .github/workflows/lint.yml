@@ -55,11 +55,18 @@ name: Lint
 # which is why the gap read as one thing and stayed unexplained for two months:
 #
 #   1. `.github/workflows/pr-check.yml` was deleted by #2547 ("runs in Tekton,
-#      removes GH Actions pr-check"). It was the ONLY workflow this repo has
-#      ever had with `push: branches: [main]`. Everything built afterwards —
-#      this file (#3362, 2026-07-24), submodule-pin-guard, schema-drift (#3643),
-#      windows-dev-env (#4162) — is `pull_request`-only, so the main-push
-#      trigger was never rebuilt. Nobody decided that; it was lost in a move.
+#      removes GH Actions pr-check"). It carried the only live push-to-`main`
+#      trigger. Enumerated rather than assumed — every revision of every one of
+#      the 12 files that has ever existed under `.github/workflows/` was parsed,
+#      and exactly TWO have ever fired on a branch push to `main`:
+#      `docker-deploy.yml` (removed 2023-11) and `pr-check.yml`. Two near
+#      misses are worth naming so they are not re-counted: `auth-app.yml` has a
+#      `push:` block but filters on `tags:` only, which never fires on a branch
+#      push, and the last `docker-deploy.yml` had `main` commented out under
+#      `branches:`. Everything built after the deletion — this file (#3362,
+#      2026-07-24), submodule-pin-guard, schema-drift (#3643), windows-dev-env
+#      (#4162) — is `pull_request`-only, so the trigger was never rebuilt.
+#      Nobody decided that; it was lost in a move.
 #   2. CodeQL, whose runs carried the "Push on main" title in the run list,
 #      stopped the same afternoon (code-scanning default setup now reads
 #      `not-configured`). Unrelated cause, same date, no test coverage either

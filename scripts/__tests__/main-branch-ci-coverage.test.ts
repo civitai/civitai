@@ -9,10 +9,12 @@ import { describe, expect, it } from 'vitest';
 //
 // THE REGRESSION THIS EXISTS FOR, stated so it is not re-derived from scratch.
 // Between 2026-06-14 and 2026-08-21 nothing produced a verdict for a commit on
-// `main`. The cause was not a decision: `.github/workflows/pr-check.yml` was the
-// only workflow this repo ever had with `push: branches: [main]`, and when #2547
-// deleted it ("runs in Tekton, removes GH Actions pr-check") the main-push
-// trigger went with it. Every workflow written afterwards is `pull_request`-only,
+// `main`. The cause was not a decision: `.github/workflows/pr-check.yml` carried
+// the only live push-to-`main` trigger, and when #2547 deleted it ("runs in
+// Tekton, removes GH Actions pr-check") that trigger went with it. Only one
+// other workflow in the repo's history ever fired on a branch push to `main`,
+// `docker-deploy.yml`, removed in 2023-11. Every workflow written afterwards is
+// `pull_request`-only,
 // so nothing rebuilt it and nothing said it was gone. A commit pushed straight to
 // `main` broke the unit suite and sat undetected for ~7 hours.
 //
