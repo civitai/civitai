@@ -69,7 +69,13 @@ import {
   retractRemixGallerySubmission,
   setRemixGalleryPins,
 } from '~/server/services/remix-gallery.service';
-import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
+import {
+  guardedProcedure,
+  moderatorProcedure,
+  protectedProcedure,
+  publicProcedure,
+  router,
+} from '~/server/trpc';
 import { domainSpendType } from '~/server/utils/buzz-helpers';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import {
@@ -231,23 +237,27 @@ export const placementRouter = router({
     .input(getPlacementSettlementStatesSchema)
     .query(({ input, ctx }) => getPlacementSettlementStates(input.placementIds, ctx.user.id)),
 
-  createSticker: protectedProcedure
-    .input(createStickerPlacementSchema)
-    .mutation(({ input, ctx }) => {
-      assertPlacementEnabled(ctx);
-      return createStickerPlacement({
-        ...input,
-        // After the spread, and the schema has no `placerId` to strip anyway —
-        // both, because this is the id the whole free tier is scoped by and
-        // every check downstream is a statement about it rather than a check of
-        // it. Read off the payload it would spend someone else's daily
-        // allowance and place under their name with nothing raising.
-        placerId: ctx.user.id,
-        // From the request's own domain, never the input: `...input` spreads
-        // first, so a client-sent `spendType` cannot survive this line.
-        spendType: domainSpendType(ctx.features),
-      });
-    }),
+  /**
+   * `guardedProcedure`, not `protectedProcedure`: placing a sticker publishes
+   * content onto someone else's image, so a muted account has to be refused the
+   * same way it is refused a comment. Account state lives here; placement state
+   * — the moderator suspension and the block pair — lives in `assertCanPlace`.
+   */
+  createSticker: guardedProcedure.input(createStickerPlacementSchema).mutation(({ input, ctx }) => {
+    assertPlacementEnabled(ctx);
+    return createStickerPlacement({
+      ...input,
+      // After the spread, and the schema has no `placerId` to strip anyway —
+      // both, because this is the id the whole free tier is scoped by and
+      // every check downstream is a statement about it rather than a check of
+      // it. Read off the payload it would spend someone else's daily
+      // allowance and place under their name with nothing raising.
+      placerId: ctx.user.id,
+      // From the request's own domain, never the input: `...input` spreads
+      // first, so a client-sent `spendType` cannot survive this line.
+      spendType: domainSpendType(ctx.features),
+    });
+  }),
 
   /**
    * The one mutation here that is deliberately NOT flag-gated: turning the flag
@@ -414,7 +424,8 @@ export const placementRouter = router({
       })
     ),
 
-  submitToRemixGallery: protectedProcedure
+  /** `guardedProcedure` for the same reason `createSticker` is. */
+  submitToRemixGallery: guardedProcedure
     .input(submitToRemixGallerySchema)
     .mutation(({ input, ctx }) => {
       assertRemixGalleryEnabled(ctx);
