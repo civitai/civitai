@@ -10,51 +10,40 @@
 --
 -- APPLY BY HAND, off-peak. This repo does not run `prisma migrate deploy`.
 --
--- `UserEngagement` is ~42M rows / ~9.6GB in prod. Its indexes are the PK
--- (userId, targetUserId) and (type, userId) — there is NO index on targetUserId
--- alone, so the second half below costs one sequential scan. The work list is
--- materialised by primary key (not ctid, which VACUUM can hand to a different
--- row) and drained in batches so no single statement holds a 42M-row transaction.
+-- Measured on the prod replica 2026-08-21: 42,187,643 rows total, of which
+-- 3,080,711 (7.3%) reference one of 1,317,709 soft-deleted users — 771,882 by a
+-- deleted user, 2,367,030 aimed at one, 58,201 both. The work list below takes
+-- ~35 s to build.
+--
+-- 🔴 Run it with autocommit on (plain psql, no surrounding BEGIN). The DO block
+-- COMMITs per batch, which PostgreSQL refuses inside an explicit transaction.
+--
+-- ONE scan, then a PK-driven drain. `UserEngagement`'s only indexes are the PK
+-- (userId, targetUserId) and (type, userId) — nothing on targetUserId alone — so
+-- matching rows costs a sequential scan whichever direction you come from. Doing
+-- that scan once into a work list is what keeps this linear: a loop that re-finds
+-- its next batch in the live table restarts from the beginning every iteration,
+-- over the dead tuples it just made, and degrades quadratically.
+--
+-- Keyed by primary key, not `ctid` — VACUUM can hand a ctid to a different row.
 
--- Half 1: engagements BY deleted users. PK-prefix driven, cheap.
-DO $$
-DECLARE
-  removed integer;
-BEGIN
-  LOOP
-    DELETE FROM "UserEngagement" ue
-    WHERE (ue."userId", ue."targetUserId") IN (
-      SELECT e."userId", e."targetUserId"
-      FROM "UserEngagement" e
-      JOIN "User" u ON u.id = e."userId"
-      WHERE u."deletedAt" IS NOT NULL
-      LIMIT 10000
-    );
-    GET DIAGNOSTICS removed = ROW_COUNT;
-    RAISE NOTICE 'by-deleted-user batch: % rows', removed;
-    EXIT WHEN removed = 0;
-    COMMIT;
-  END LOOP;
-END $$;
-
--- Half 2: engagements AIMED AT deleted users. One scan to build the list, then
--- batched PK deletes off it.
 CREATE TEMP TABLE doomed_engagement AS
 SELECT e."userId", e."targetUserId"
 FROM "UserEngagement" e
-JOIN "User" u ON u.id = e."targetUserId"
-WHERE u."deletedAt" IS NOT NULL;
+WHERE EXISTS (SELECT 1 FROM "User" u WHERE u.id = e."userId" AND u."deletedAt" IS NOT NULL)
+   OR EXISTS (SELECT 1 FROM "User" u WHERE u.id = e."targetUserId" AND u."deletedAt" IS NOT NULL);
 
 CREATE INDEX ON doomed_engagement ("userId", "targetUserId");
 
 DO $$
 DECLARE
   picked integer;
+  done integer := 0;
 BEGIN
   LOOP
-    -- `picked` counts the WORK LIST batch, not the UserEngagement delete: half 1
-    -- may already have removed some of these rows, and exiting on that count would
-    -- stop the loop with the list still full.
+    -- `picked` counts the WORK LIST batch, not the UserEngagement delete: a row
+    -- can already be gone (a re-run, or `deleteUser` reaching it first), and
+    -- exiting on that count would stop with the list still full.
     WITH batch AS (
       DELETE FROM doomed_engagement d
       WHERE (d."userId", d."targetUserId") IN (
@@ -68,10 +57,18 @@ BEGIN
       RETURNING 1
     )
     SELECT count(*) INTO picked FROM batch;
-    RAISE NOTICE 'at-deleted-user batch: % rows', picked;
     EXIT WHEN picked = 0;
+    done := done + picked;
+    RAISE NOTICE 'drained % of the work list', done;
     COMMIT;
   END LOOP;
 END $$;
 
 DROP TABLE IF EXISTS doomed_engagement;
+
+-- Confirm from the database's own state, not from an exit code. This must return
+-- 0; it is the same predicate the work list was built from.
+SELECT count(*) AS engagements_still_referencing_a_deleted_user
+FROM "UserEngagement" e
+WHERE EXISTS (SELECT 1 FROM "User" u WHERE u.id = e."userId" AND u."deletedAt" IS NOT NULL)
+   OR EXISTS (SELECT 1 FROM "User" u WHERE u.id = e."targetUserId" AND u."deletedAt" IS NOT NULL);
