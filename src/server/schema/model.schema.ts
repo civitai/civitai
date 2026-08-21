@@ -139,6 +139,15 @@ export const getAllModelsSchema = z.object({
 export type GetAllModelsInput = z.input<typeof getAllModelsSchema>;
 export type GetAllModelsOutput = z.infer<typeof getAllModelsSchema>;
 
+/** Query contract for /api/v1/models, which parses it off `req.query` where every value is a string. */
+export const modelsEndpointSchema = getAllModelsSchema.extend({
+  limit: z.preprocess((val) => Number(val), z.number().min(0).max(100)).default(100),
+  nsfw: booleanString().optional(),
+  primaryFileOnly: booleanString().optional(),
+  favorites: booleanString().optional().default(false),
+  hidden: booleanString().optional().default(false),
+});
+
 export type ModelInput = z.infer<typeof modelSchema>;
 export const modelSchema = licensingSchema.extend({
   id: z.number().optional(),
