@@ -122,7 +122,10 @@ export type UserLookupResult = {
   ranks: LeaderboardRank[];
   /** Retool-era strikes, from the moderator database. Historical: the main app's strike system does
    *  NOT write here, so this alone reads 0 on an account carrying active strikes. */
-  legacyStrikeCount: number;
+  /** Every strike the account has ever had, across both stores and all statuses — NOT the active
+   *  count beside it. `strikeCountsByUserIds` spans both by design; since the 2026-08-21 import the
+   *  legacy half is empty, so in practice this is the all-time `UserStrike` total. */
+  strikeCountAllTime: number;
   /** The number that means "how much rope is left": active, unexpired, unvoided main-app strikes and
    *  their points. */
   strikes: { count: number; points: number };
@@ -249,7 +252,7 @@ export async function getUserLookup(userId: number): Promise<UserLookupResult | 
     subscription,
     curator,
     ranks,
-    legacyStrikes,
+    strikeCountAllTime,
     modContact,
     strikes,
   ] = await Promise.all([
@@ -283,7 +286,7 @@ export async function getUserLookup(userId: number): Promise<UserLookupResult | 
         subscription,
         curator,
         ranks,
-        legacyStrikeCount: legacyStrikes.get(userId) ?? 0,
+        strikeCountAllTime: strikeCountAllTime.get(userId) ?? 0,
         strikes,
         modContact,
       }

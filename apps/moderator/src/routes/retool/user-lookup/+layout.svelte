@@ -125,10 +125,11 @@
         ({data.result.strikes.points} pt{data.result.strikes.points > 1 ? 's' : ''})
       </Badge>
     {/if}
-    <!-- Retool-era strikes are a DIFFERENT table that the live strike system never writes. Shown apart
-         so the two are not read as one number. -->
-    {#if data.result?.legacyStrikeCount}
-      <Badge variant="secondary">{data.result.legacyStrikeCount} legacy</Badge>
+    <!-- All-time beside active, so a cleared account still shows its history. It was labelled
+         "legacy" and fed by a count that spans BOTH stores, so it read as Retool-era while including
+         every modern strike too — and after the 2026-08-21 import there is no separate era to name. -->
+    {#if data.result?.strikeCountAllTime}
+      <Badge variant="secondary">{data.result.strikeCountAllTime} all-time</Badge>
     {/if}
     {#if data.result?.subscription?.productName}
       <!-- Status is carried, not assumed: a cancelled subscription must not read as a paying one. -->

@@ -16,7 +16,6 @@
     userId,
     civitaiUrl,
     strikes,
-    legacyStrikeCount,
     modActivity,
     ratingActivity,
     retoolActivity,
@@ -26,7 +25,6 @@
     userId: number;
     civitaiUrl: string;
     strikes: LiveStrike[];
-    legacyStrikeCount: number;
     /** Enforcement rows only. The rating/tagging ones are `ratingActivity` — two separately limited
      *  queries, because filtering one merged window drops rows the window was already truncated by. */
     modActivity: ModActivityRow[];
@@ -104,18 +102,9 @@
 
 <div class="mb-4">
   <h3 class="mb-2 text-xs tracking-wide text-dark-2 uppercase">Strikes ({strikes.length})</h3>
-  <StrikeList
-    {strikes}
-    empty={legacyStrikeCount > 0
-      ? 'No strikes issued since the Retool cutover.'
-      : 'No strikes on this account.'}
-  />
-  {#if legacyStrikeCount > 0}
-    <p class="mt-1 text-xs text-dark-2">
-      Plus {legacyStrikeCount} from the Retool era, in User Lookup — that table is history and is not
-      part of the counts above.
-    </p>
-  {/if}
+  <!-- One store since the 2026-08-21 import: every Retool-era strike is a `UserStrike` row and shows
+       in the list above. There is no "plus N elsewhere" left to say. -->
+  <StrikeList {strikes} empty="No strikes on this account." />
 </div>
 
 <div class="mb-4 grid gap-4 sm:grid-cols-2">
