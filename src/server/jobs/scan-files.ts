@@ -82,6 +82,11 @@ const retryBackoffAt = () =>
 // pre-deprecation cron registry. The legacy `scan-files` job was removed when
 // the orchestrator path became the only scan path.
 export const scanFilesFallbackJob = createJob('scan-files-fallback', '*/5 * * * *', async () => {
+  // Started here, not after the batch query: the budget is sized against the
+  // job LOCK, which is already running during the select and the upfront stamp.
+  // Starting the clock later would let two DB round-trips fall outside the
+  // bound and quietly overspend it.
+  const runStartedAt = Date.now();
   const scanCutOff = dayjs().subtract(1, 'day').toDate();
 
   const files = await dbWrite.modelFile.findMany({
@@ -121,8 +126,6 @@ export const scanFilesFallbackJob = createJob('scan-files-fallback', '*/5 * * * 
     where: { id: { in: files.map((f) => f.id) } },
     data: { scanRequestedAt: new Date() },
   });
-
-  const runStartedAt = Date.now();
 
   let submitted = 0;
   let failed = 0;
