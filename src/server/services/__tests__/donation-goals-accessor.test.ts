@@ -23,6 +23,7 @@ vi.mock('~/server/redis/caches', () => ({
 vi.mock('~/server/services/paid-access.service', () => ({
   getPaidAccess: mockGetPaidAccess,
   bustPaidAccessCache: vi.fn(),
+  bustModelSaleCache: vi.fn(),
 }));
 vi.mock('~/server/services/creator-membership.service', () => ({
   getValidCreatorMembershipMap: mockMembership,

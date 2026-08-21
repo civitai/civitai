@@ -2575,7 +2575,11 @@ export const bustMvCache = async (
   await resourceDataCache.bust(versionIds);
   // The sale badge is cached per MODEL and reached only from here — Creator Studio's bust POSTs to the
   // endpoint that calls this, so without it a cancelled sale stayed advertised for the whole TTL.
-  await bustModelSaleCache(versionIds).catch(() => undefined);
+  try {
+    await bustModelSaleCache(versionIds);
+  } catch {
+    // Best-effort, like the busts around it: a stale badge is not worth failing an unpublish over.
+  }
   await bustOrchestratorModelCache(versionIds, userId);
   await modelVersionAccessCache.refresh(versionIds);
   // Refresh imagesForModelVersionsCache too — TTL is up to 1 day on Datapacket,

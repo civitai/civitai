@@ -5,12 +5,9 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 // Prisma findMany path, and both the service suite and the purchase suite stub the layer above. A review
 // found the badge advertising sales up to 14 days before they start, because nothing here could see the
 // query's time predicates. This drives the real function and reads the SQL it builds.
-vi.mock('~/server/common/constants', () => ({ CacheTTL: { hour: 3600, xs: 60 } }));
-vi.mock('~/server/redis/client', () => ({
-  REDIS_KEYS: {
-    CACHES: { PAID_ACCESS: 'test:paid-access', PAID_ACCESS_CAP_TIER: 'test:cap-tier' },
-  },
-}));
+// constants and redis/client have canonical mocks registered globally, so this file must not mock them
+// itself — a per-file mock of a shared module leaks into other files under --no-isolate. cache-helpers
+// is mocked deliberately: running lookupFn is the whole point here, and the canonical fake never calls it.
 vi.mock('~/server/utils/cache-helpers', () => ({
   createCachedObject: ({
     lookupFn,

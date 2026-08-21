@@ -59,6 +59,7 @@ vi.mock('~/server/services/model.service', () => ({
 
 vi.mock('~/server/services/paid-access.service', () => ({
   getCapTiers: mockGetCapTiers,
+  bustModelSaleCache: vi.fn(),
 }));
 
 // MixedAuthEndpoint resolves the (optional) session and passes it as the 3rd

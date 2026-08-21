@@ -65,6 +65,7 @@ vi.mock('~/server/services/paid-access.service', () => ({
   getFreshSalesForVersion: mockGetFreshSalesForVersion,
   getFreshSalesForPermanentGate: mockGetFreshSalesForPermanentGate,
   getCachedCapTier: mockGetCachedCapTier,
+  bustModelSaleCache: vi.fn(),
 }));
 vi.mock('~/server/services/auction.service', () => ({ deleteBidsForModelVersion: vi.fn() }));
 vi.mock('~/server/services/blocklist.service', () => ({ throwOnBlockedLinkDomain: vi.fn() }));

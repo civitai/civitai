@@ -108,6 +108,7 @@ vi.mock('~/server/services/paid-access.service', () => ({
   paidAccessInputFromLegacyConfig: vi.fn(() => null),
   earlyAccessDonationGoalFromLegacyConfig: vi.fn(() => null),
   earlyAccessConfigFromPaidAccess: vi.fn(),
+  bustModelSaleCache: vi.fn(),
 }));
 vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
 vi.mock('~/server/db/db-lag-helpers', async (importOriginal) => {

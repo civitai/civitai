@@ -62,6 +62,7 @@ vi.mock('~/server/services/paid-access.service', () => ({
   paidAccessInputFromLegacyConfig: vi.fn(() => null),
   earlyAccessDonationGoalFromLegacyConfig: vi.fn(() => null),
   earlyAccessConfigFromPaidAccess: vi.fn(),
+  bustModelSaleCache: vi.fn(),
 }));
 
 import { addLinkedComponent } from '~/server/services/model-version.service';
