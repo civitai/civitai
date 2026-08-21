@@ -33,17 +33,20 @@
   --chat-bg-image: none;
 
   /* Type and geometry are as much of a skin as colour is — a terminal that is
-     merely green is a recolour, not a terminal. */
+     merely green is a recolour, not a terminal. --chat-ui-font is the window's
+     own face: the rail, the headers and the usernames, which a theme that
+     restyles only the messages leaves speaking in the app's voice. */
+  --chat-ui-font: inherit;
   --chat-msg-font: inherit;
   --chat-msg-size: 13.5px;
   --chat-radius: 19px;
 
-  /* Off by default: the stock surface is flat rows, and a bubble is a thing a
-     theme opts into. Transparent with no padding leaves the row untouched. */
-  --chat-bubble: transparent;
-  --chat-bubble-me: transparent;
-  --chat-bubble-pad: 0;
-  --chat-bubble-radius: 0;
+  /* Left UNDEFINED rather than set to transparent: the stock surface is flat
+     rows, and a bubble is a thing a theme opts into — but the Bubbles layout has
+     to draw one whatever theme is on, and var()'s fallback is the only way to
+     say "unless someone already answered this". Defining them here as
+     transparent would answer it, and every theme would flatten to one palette.
+     See .messageText / .bubbles in ExistingChat.module.scss. */
 
   /* Derived so a theme only has to name its accent — the quote and reply tints
      follow it instead of each carrying a hand-mixed colour. */
@@ -53,6 +56,7 @@
 .surface.surface {
   background-color: var(--chat-bg);
   background-image: var(--chat-bg-image);
+  font-family: var(--chat-ui-font);
 }
 
 /* The rail, the conversation header and the composer are the chrome around the
