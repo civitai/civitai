@@ -42,7 +42,7 @@ export function HideUserButton({ userId, as = 'button', onToggleHide, ...props }
 
         const nowHidden = hidden ?? wantHidden;
         showSuccessNotification({
-          title: `User marked as ${nowHidden ? 'hidden' : 'show'}`,
+          title: nowHidden ? 'User hidden' : 'User unhidden',
           message: `Content from this user will${nowHidden ? ' not' : ''} show up in your feed`,
         });
       });

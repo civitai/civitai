@@ -291,7 +291,7 @@ export interface HiddenImage extends HiddenPreferenceBase {
   hidden?: boolean;
 }
 
-type HiddenPreferencesKind =
+export type HiddenPreferencesKind =
   | ({ kind: 'tag' } & HiddenTag)
   | ({ kind: 'model' } & HiddenModel)
   | ({ kind: 'model3d' } & HiddenModel3D)

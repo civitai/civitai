@@ -37,6 +37,7 @@
 import produce from 'immer';
 import type {
   HiddenImage,
+  HiddenPreferencesKind,
   HiddenPreferenceTypes,
   HiddenTag,
   HiddenUser,
@@ -212,6 +213,15 @@ export function applyOptimisticHiddenToggle(
  * Apply the server's `added`/`removed` diff. Same shape-branching as the optimistic
  * path; object sets replace-in-place to pick up server-provided fields.
  *
+ * The item type is the server's, not `{ id: number }`, because what goes into the
+ * cache is the whole item minus `kind` — a tag's `name`/`nsfwLevel`, a user's
+ * `username`, all of which the account pages render. The narrower type could not
+ * describe that and needed a cast to an index signature to compile.
+ *
+ * The compiler still cannot enforce it: immer's draft is `any`, so dropping the
+ * payload type-checks. The test asserting `username` survives a server diff is the
+ * guard.
+ *
  * Module-private on purpose: it ignores `hidden`, so a caller that reaches for it
  * instead of `reconcileHiddenToggle` silently keeps an optimistic write the server
  * refused. Go through `reconcileHiddenToggle`.
@@ -219,8 +229,8 @@ export function applyOptimisticHiddenToggle(
 function applyServerHiddenToggle(
   cache: HiddenCache,
   key: string,
-  added: Array<{ id: number }>,
-  removed: Array<{ id: number }>
+  added: Array<HiddenPreferencesKind>,
+  removed: Array<HiddenPreferencesKind>
 ): HiddenCache {
   return produce(cache, (draft: any) => {
     if (isCompactIdKey(draft, key)) {
@@ -229,12 +239,12 @@ function applyServerHiddenToggle(
       for (const { id } of removed) toggleCompactId(arr, id, false);
       return;
     }
-    for (const { kind, id, ...props } of added as Array<Record<string, unknown> & { id: number }>) {
-      const index = draft[key].findIndex((x: any) => x.id === id && x.hidden);
-      if (index === -1) draft[key].push({ id, ...props });
-      else draft[key][index] = { id, ...props };
+    for (const { kind, ...item } of added) {
+      const index = draft[key].findIndex((x: any) => x.id === item.id && x.hidden);
+      if (index === -1) draft[key].push(item);
+      else draft[key][index] = item;
     }
-    for (const { kind, id, ...props } of removed as Array<Record<string, unknown> & { id: number }>) {
+    for (const { id } of removed) {
       const index = draft[key].findIndex((x: any) => x.id === id && x.hidden);
       if (index > -1) draft[key].splice(index, 1);
     }
@@ -269,7 +279,11 @@ export function reconcileHiddenToggle(
   cache: HiddenCache,
   kind: HiddenToggleKind,
   items: Array<{ id: number }>,
-  result: { added: Array<{ id: number }>; removed: Array<{ id: number }>; hidden?: boolean }
+  result: {
+    added: Array<HiddenPreferencesKind>;
+    removed: Array<HiddenPreferencesKind>;
+    hidden?: boolean;
+  }
 ): HiddenCache {
   const key = HIDDEN_KIND_TO_KEY[kind];
   const next = applyServerHiddenToggle(cache, key, result.added, result.removed);
@@ -301,7 +315,11 @@ export const EMPTY_HIDDEN_CACHE = {
 export function applyToggleSuccess(
   cache: HiddenCache | undefined,
   variables: { kind: HiddenToggleKind; data: Array<{ id: number }> },
-  result: { added: Array<{ id: number }>; removed: Array<{ id: number }>; hidden?: boolean }
+  result: {
+    added: Array<HiddenPreferencesKind>;
+    removed: Array<HiddenPreferencesKind>;
+    hidden?: boolean;
+  }
 ): HiddenCache {
   return reconcileHiddenToggle(cache ?? EMPTY_HIDDEN_CACHE, variables.kind, variables.data, result);
 }

@@ -140,7 +140,7 @@ describe('HideUserButton — a blocked target is not offered the Hide control', 
     await vi.waitFor(() => expect(mocks.showSuccess).toHaveBeenCalled());
     expect(mocks.showSuccess).toHaveBeenCalledTimes(1);
     const { title, message } = mocks.showSuccess.mock.calls[0][0];
-    expect(title).toBe('User marked as hidden');
+    expect(title).toBe('User hidden');
     expect(message).toContain('will not show up in your feed');
   });
 

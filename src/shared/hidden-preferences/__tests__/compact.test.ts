@@ -234,6 +234,20 @@ describe('optimistic cache mutation — shape parity (compact vs legacy)', () =>
     expect(res.hiddenModels.map((x) => x.id)).not.toContain(100);
   });
 
+  // `applyServerHiddenToggle` writes the item minus `kind`, and the account pages
+  // render what it carries. immer's draft is `any`, so narrowing that write to
+  // `{ id }` type-checks — this is the only thing that catches it.
+  it('a server-added user keeps its username', () => {
+    const res = bothShapesAgree('hiddenUsers', (cache) =>
+      reconcileHiddenToggle(cache, 'user', [], {
+        added: [{ kind: 'user', id: 30, username: 'dave', hidden: true }],
+        removed: [],
+      })
+    );
+
+    expect(res.hiddenUsers).toContainEqual({ id: 30, username: 'dave', hidden: true });
+  });
+
   it('server-diff reconcile (added/removed) matches across shapes', () => {
     const res = bothShapesAgree('hiddenModels', (cache) =>
       reconcileHiddenToggle(cache, 'model', [], {
