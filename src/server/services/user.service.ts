@@ -1003,13 +1003,7 @@ export const toggleHideUser = async ({
   // Scoped by `type`, never by the PK alone: the row read above may already be a
   // Block, and an unqualified `delete`/`update` would destroy it while reporting
   // success.
-  if (hiding)
-    await setUserEngagement({
-      userId,
-      targetUserId,
-      type: UserEngagementType.Hide,
-      outrankedBy: [UserEngagementType.Block],
-    });
+  if (hiding) await setUserEngagement({ userId, targetUserId, type: UserEngagementType.Hide });
   else await clearUserEngagement({ userId, targetUserId, type: UserEngagementType.Hide });
 
   await userFollowsCache.refresh(userId);

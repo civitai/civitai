@@ -1,7 +1,10 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { UserEngagementType } from '~/shared/utils/prisma/enums';
 import { HiddenUsers, toggleHidden } from '~/server/services/user-preferences.service';
+import { userFollowsCache } from '~/server/redis/caches';
 import { toggleFollowUser, toggleHideUser } from '~/server/services/user.service';
+import { clearUserEngagement, setUserEngagement } from '~/server/services/user-engagement';
 
 const { Prisma } = await import('@prisma/client');
 
@@ -22,6 +25,23 @@ const engagement = dbMock.dbWrite.userEngagement;
 // about which `type` survives a write aimed at a different one.
 const scoped = { userId, targetUserId };
 
+// Every pass fails: nothing claimable to update, and the insert always conflicts.
+// The fake must TERMINATE on its own — an unbounded-loop mutant driven by a
+// persistent `mockResolvedValue` is a pure MICROTASK spin, measured at 4.24M
+// iterations in 4s with a queued 300ms setTimeout that never ran. vitest's
+// testTimeout is setTimeout-based, so that mutant does not fail, it kills the
+// worker with `Worker exited unexpectedly` and no test named. Throwing after ten
+// passes turns it into a named failure in under a second.
+const everyPassFails = () => {
+  const state = { passes: 0 };
+  engagement.updateMany.mockImplementation(async () => {
+    if (++state.passes > 10) throw new Error(`setUserEngagement did not stop: ${state.passes}`);
+    return { count: 0 };
+  });
+  engagement.create.mockRejectedValue(p2002());
+  return state;
+};
+
 const hide = (hidden?: boolean) =>
   toggleHidden({ kind: 'user', data: [{ id: targetUserId }], hidden, userId });
 
@@ -32,10 +52,19 @@ beforeEach(() => {
   // drain a queued once-implementation, so a test that threw early would leak its
   // fixture into the next one.
   engagement.findUnique.mockResolvedValue(null);
-  engagement.create.mockResolvedValue({});
+  // `toggleFollowUser`'s create selects `user.username` for the follow
+  // notification, so a bare `{}` throws on the success path rather than failing an
+  // assertion — a fixture gap that reads as a code bug.
+  engagement.create.mockResolvedValue({ user: { username: 'target' } });
   engagement.deleteMany.mockResolvedValue({ count: 0 });
   // A row matched by default, so a test that means "nothing matched" has to say so.
   engagement.updateMany.mockResolvedValue({ count: 1 });
+});
+
+// The LAST spy created in a file has no following `beforeEach` to restore it, so
+// the `beforeEach` above is order-dependent on its own. This makes it not.
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 // 868kunqg5. `UserEngagement` is one row per (user, target) carrying one type, so a
@@ -113,8 +142,7 @@ describe('toggleHidden kind=user — a Block outranks a Hide', () => {
 
   it('survives the create losing to the Block row', async () => {
     engagement.findUnique.mockResolvedValue({ type: 'Block' });
-    engagement.updateMany.mockResolvedValue({ count: 0 });
-    engagement.create.mockRejectedValue(p2002());
+    everyPassFails();
 
     // Nothing matched the update and the insert conflicts with the block — the
     // intended end state either way, so the toggle must not 500 on a safety
@@ -260,8 +288,7 @@ describe('toggleHideUser (user.service) — reports what it did', () => {
   });
 
   it('survives the create losing to a Block that arrived in between', async () => {
-    engagement.updateMany.mockResolvedValue({ count: 0 });
-    engagement.create.mockRejectedValue(p2002());
+    everyPassFails();
 
     await expect(toggleHideUser({ userId, targetUserId })).resolves.toBe(true);
   });
@@ -319,13 +346,25 @@ describe('toggleFollowUser — scoped writes', () => {
   // exists". Once every writer is scoped it means only "something holds the PK",
   // and `toggleFollowUserHandler` pays a Buzz reward and fires a notification on
   // the strength of the return value.
-  it('reports NO follow when a Block won the insert race', async () => {
+  // Only a Follow is a follow. `winner?.type !== 'Block'` reads as equivalent and
+  // is not: it pays the reward for a Hide the user's own toggle established in the
+  // race, and for a pair that was cleared between the conflict and the re-read.
+  it.each([
+    ['Block', false],
+    ['Hide', false],
+    [null, false],
+    ['Follow', true],
+  ] as const)('reports the pair honestly when %s won the insert race', async (type, expected) => {
     engagement.create.mockRejectedValue(p2002());
     engagement.findUnique
       .mockResolvedValueOnce(null) // the read that chose the create path
-      .mockResolvedValueOnce({ type: 'Block' }); // what actually holds the pair
+      .mockResolvedValueOnce(type === null ? null : { type }); // what actually holds it
 
-    await expect(toggleFollowUser({ userId, targetUserId })).resolves.toBe(false);
+    await expect(toggleFollowUser({ userId, targetUserId })).resolves.toBe(expected);
+
+    // Pins the re-read itself, so a mutant that skips it fails in the test that
+    // owns it rather than leaking its queued fixture into the next one.
+    expect(engagement.findUnique).toHaveBeenCalledTimes(2);
   });
 
   it('still reports a follow when the toggle merely raced ITSELF', async () => {
@@ -377,15 +416,105 @@ describe('setUserEngagement — the second pass, and its ceiling', () => {
   });
 
   it('gives up after the second pass rather than spinning', async () => {
-    engagement.updateMany.mockResolvedValue({ count: 0 });
-    engagement.create.mockRejectedValue(p2002());
+    // The fake TERMINATES on its own. Against a standing Block an unbounded loop
+    // here is a pure microtask loop — measured at 4.24M iterations in 4s with a
+    // queued 300ms setTimeout that never ran — and vitest's testTimeout is
+    // setTimeout-based, so the run would hang until CI killed it with no
+    // assertion to read. A fake that throws turns that into a named failure in
+    // under a second; `toBe(2)` still pins the ceiling from below.
+    const state = everyPassFails();
 
     await hide(true);
 
-    // A `while` here would loop forever against a standing Block — and a pure
-    // microtask loop starves the macrotask queue, so vitest's setTimeout-based
-    // testTimeout never fires and the run hangs with nothing to read.
-    expect(engagement.updateMany).toHaveBeenCalledTimes(2);
+    expect(state.passes).toBe(2);
     expect(engagement.create).toHaveBeenCalledTimes(2);
+  });
+});
+
+// The precedence order lives in exactly one place, so this is where it is pinned.
+// It used to be an optional `outrankedBy` argument, which defaults to NO guard —
+// omitting it at one call site silently reproduces 868kun67j.
+describe('setUserEngagement — the guard is derived from the type, not passed in', () => {
+  it.each([
+    [
+      UserEngagementType.Follow,
+      { type: { notIn: [UserEngagementType.Hide, UserEngagementType.Block] } },
+    ],
+    [UserEngagementType.Hide, { type: { notIn: [UserEngagementType.Block] } }],
+    // Nothing outranks a Block, so its update carries no type filter at all.
+    [UserEngagementType.Block, {}],
+  ])('claims a pair for %s only against what it outranks', async (type, guard) => {
+    await setUserEngagement({ userId, targetUserId, type });
+
+    expect(engagement.updateMany).toHaveBeenCalledWith({
+      where: { ...scoped, ...guard },
+      data: { type },
+    });
+  });
+});
+
+// Both helpers advertise a boolean, and nothing in the repo reads it today — which
+// is correct for a hide, since the only way `setUserEngagement` returns false is a
+// standing Block and a blocked target is hidden. Pinned anyway: this module is the
+// one place every future writer is meant to go through, so its contract should
+// break loudly rather than drift.
+describe('user-engagement helpers — the returned contract', () => {
+  it('reports the claim when the scoped update matched', async () => {
+    await expect(
+      setUserEngagement({ userId, targetUserId, type: UserEngagementType.Hide })
+    ).resolves.toBe(true);
+  });
+
+  it('reports the claim when the row had to be created', async () => {
+    engagement.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(
+      setUserEngagement({ userId, targetUserId, type: UserEngagementType.Hide })
+    ).resolves.toBe(true);
+  });
+
+  it('reports NO claim when something outranking holds the pair', async () => {
+    everyPassFails();
+
+    await expect(
+      setUserEngagement({ userId, targetUserId, type: UserEngagementType.Hide })
+    ).resolves.toBe(false);
+  });
+
+  it('reports whether a row was actually removed', async () => {
+    engagement.deleteMany.mockResolvedValue({ count: 1 });
+    await expect(
+      clearUserEngagement({ userId, targetUserId, type: UserEngagementType.Hide })
+    ).resolves.toBe(true);
+
+    engagement.deleteMany.mockResolvedValue({ count: 0 });
+    await expect(
+      clearUserEngagement({ userId, targetUserId, type: UserEngagementType.Hide })
+    ).resolves.toBe(false);
+  });
+});
+
+// Same class as the HiddenUsers pair above, opposite cache: delete any of these
+// refreshes and the user's own follow set stays stale until the hash TTL.
+describe('cache invalidation on the follow set', () => {
+  it.each([
+    ['Follow', 'unfollowing'],
+    ['Hide', 'following someone hidden'],
+    [null, 'following from nothing'],
+  ] as const)('refreshes userFollowsCache when %s (%s)', async (type) => {
+    engagement.findUnique.mockResolvedValue(type === null ? null : { type });
+    const follows = vi.spyOn(userFollowsCache, 'refresh').mockResolvedValue(undefined);
+
+    await toggleFollowUser({ userId, targetUserId });
+
+    expect(follows).toHaveBeenCalledWith(userId);
+  });
+
+  it('refreshes it on a hide too', async () => {
+    const follows = vi.spyOn(userFollowsCache, 'refresh').mockResolvedValue(undefined);
+
+    await toggleHideUser({ userId, targetUserId });
+
+    expect(follows).toHaveBeenCalledWith(userId);
   });
 });

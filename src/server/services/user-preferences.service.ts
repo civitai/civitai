@@ -728,13 +728,7 @@ async function toggleHideUser({
   // type a hide must never overwrite. Un-hiding removes a Hide and only a Hide:
   // unqualified, it deleted whatever Follow or Block held the pair, and unfiltered
   // on intent it created a Hide row when asked to un-hide a pair that had none.
-  if (hiding)
-    await setUserEngagement({
-      userId,
-      targetUserId,
-      type: UserEngagementType.Hide,
-      outrankedBy: [UserEngagementType.Block],
-    });
+  if (hiding) await setUserEngagement({ userId, targetUserId, type: UserEngagementType.Hide });
   else await clearUserEngagement({ userId, targetUserId, type: UserEngagementType.Hide });
 
   await userFollowsCache.refresh(userId);
@@ -855,10 +849,7 @@ async function toggleBlockUser({
       .catch((error) => {
         if (!isPrismaUniqueViolation(error)) throw error;
       });
-  else
-    await dbWrite.userEngagement.deleteMany({
-      where: { userId, targetUserId, type: UserEngagementType.Block },
-    });
+  else await clearUserEngagement({ userId, targetUserId, type: UserEngagementType.Block });
 
   await userFollowsCache.refresh(userId);
   await BlockedUsers.refreshCache({ userId });
