@@ -44,11 +44,17 @@
   } = $props();
 
   // What a buyer would actually be charged for a given stored price on THIS version.
+  // 🔴 The STORED gate's permanence, not the form's. `ea.permanent` is whatever the creator currently
+  // has selected, and `effectivePaidAccessPrice` returns the price uncapped for a timed gate — so
+  // flicking the radio to early access made the "currently" figure jump from 500 back to 5000, which is
+  // the exact wrong number this was written to remove. What buyers pay right now depends on the gate on
+  // record, not on a draft.
+  const storedGateIsPermanent = $derived(version.paidAccessConfig?.permanent === true);
   const cappedPrice = $derived((stored: number | undefined) =>
     stored == null
       ? undefined
       : effectivePaidAccessPrice(stored, caps.capTier, {
-          permanent: ea.permanent,
+          permanent: storedGateIsPermanent,
           mediaType: capMediaType(version.baseModel),
         })
   );
@@ -270,8 +276,10 @@
       <!-- Capped, not stored. A sale composes over `cappedTerms`, so a lapsed gold creator storing
            5000 is billed 500 and a 20% sale takes buyers to 400 — quoting 4000 here would be wrong on
            the one screen whose whole job is stating a price. The ceiling governs permanent gates only. -->
+      <!-- Only for a permanent gate: a sale cannot cover early access, so quoting a sale price beside a
+           timed gate advertises a discount that will never apply. -->
       <SaleUndercutNotice
-        {sales}
+        sales={storedGateIsPermanent ? sales : []}
         storedPrice={cappedPrice(version.paidAccessConfig?.accessPrice ?? 0) ?? 0}
         newPrice={cappedPrice(ea.accessPrice)}
       />

@@ -481,6 +481,17 @@ describe('shortenBounds', () => {
   it('never offers a day already past — the floor is now, not the start', () => {
     const b = shortenBounds(sale, new Date('2026-03-12T09:00:00Z'));
     expect(b.min.toISOString().slice(0, 10)).toBe('2026-03-12');
+    // 🔴 And it is still shortenable. `max` is midnight-aligned while `now` carries a time of day, so
+    // comparing them as instants declared a two-day sale finished from 00:00 on its second-to-last day —
+    // the control vanished and the creator was told their sale was on its last day when it was not.
+    expect(b.possible).toBe(true);
+  });
+
+  it('compares days, not instants, at every hour of the latest offerable day', () => {
+    for (const hour of ['00:00', '09:00', '23:59']) {
+      const b = shortenBounds(sale, new Date(`2026-03-12T${hour}:00Z`));
+      expect({ hour, possible: b.possible }).toEqual({ hour, possible: true });
+    }
   });
 
   it('floors at the start for a sale that has not begun', () => {

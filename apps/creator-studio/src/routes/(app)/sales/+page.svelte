@@ -353,7 +353,9 @@
             <span class="text-sm font-medium text-white">End earlier</span>
             {#if !bounds.possible}
               <p class="text-xs text-dark-2">
-                This sale is down to its last day — end it below rather than shortening it.
+                {live
+                  ? 'This sale is down to its last day — end it below rather than shortening it.'
+                  : 'This sale runs for a single day, so there is nothing to shorten — cancel it below instead.'}
               </p>
             {:else}
               <form

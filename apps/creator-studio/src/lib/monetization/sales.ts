@@ -257,7 +257,11 @@ export function shortenBounds(
 ): { min: Date; max: Date; possible: boolean } {
   const currentLastDay = new Date(sale.endsAt.getTime() - DAY_MS);
   const max = new Date(currentLastDay.getTime() - DAY_MS);
-  const min = new Date(Math.max(sale.startsAt.getTime(), now.getTime()));
+  // 🔴 Compared as DAYS, not instants. `max` is midnight-aligned while `now` carries a time of day, so
+  // an instant comparison calls a sale unshortenable from the moment its latest offerable day begins —
+  // a two-day sale looks like a one-day sale at 09:00, the control disappears, and the creator is told
+  // something false about their own sale. The picker renders both through `isoDay` anyway.
+  const min = startOfDayUtc(new Date(Math.max(sale.startsAt.getTime(), now.getTime())));
   return { min, max, possible: max.getTime() >= min.getTime() };
 }
 
