@@ -9,6 +9,7 @@
   import { ingestionErrorLevels, getBrowsingLevelLabel } from '@civitai/shared';
   import type { ActionData, PageData } from './$types';
   import { clearPaging } from '$lib/paging';
+  import ErrorAlert from '$lib/components/ErrorAlert.svelte';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
   // All nsfwLevel 0 here — strip it so the grid doesn't draw a meaningless rating badge.
@@ -61,9 +62,7 @@
 </header>
 
 {#if form?.error}
-  <div class="mb-4 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300">
-    {form.error}
-  </div>
+  <ErrorAlert class="mb-4" message={form.error} />
 {/if}
 
 {#snippet card(image: Item)}

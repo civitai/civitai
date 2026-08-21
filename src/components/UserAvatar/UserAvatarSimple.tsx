@@ -106,7 +106,8 @@ export function UserAvatarSimple({
           </div>
         )}
         {deletedAt ? (
-          <Text size="sm">[deleted]</Text>
+          // Moderators get the id, which is otherwise unrecoverable from this row — see `Username`.
+          <Text size="sm">{currentUser?.isModerator ? `[deleted] #${id}` : '[deleted]'}</Text>
         ) : (
           <>
             <Text

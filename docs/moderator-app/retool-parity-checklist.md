@@ -57,12 +57,18 @@ tracker only ever listed nine of the parent's **thirteen** subtasks. Export pull
 `868kne95c` Model Reports · `868kn8aa0` Misc Mod Asks · `868kn67aq` ReTool Database Migration ·
 `868kn87qj` Bulk Ban. Only the last is a page to build; the others are covered below and in the backlog.
 
-- [ ] **Model Reports** (`868kne95c`): *"include the link and display the modelId to reduce the amount
-      of clicking."* 🎥 the walkthrough says *"we don't need this one, actually"* — **the ticket and the
-      video disagree; ask before building or dropping.**
-- [x] **ReTool Database Migration** (`868kn67aq`) — **planned and the SQL is written**; a human still has
-      to run it. Plan: [`retool-db-cutover.md`](retool-db-cutover.md), scripts:
-      `apps/moderator/moderator-db/cutover/`. The tables are already copied into the moderator database;
+- [x] **Model Reports** (`868kne95c`): *"include the link and display the modelId to reduce the amount
+      of clicking."* **Shipped 2026-08-21** (`45a3e7beb8`) — a leading `#<id>` column on
+      `/reports/[slug]`, headed with the queue's entity label and linked through the same
+      `getReportItemUrl` the trailing icon used, plus the id on the detail sheet's "View model". Built
+      generically rather than model-only: one table serves all fifteen entity types, so a special case
+      was more code than the column. 🎥 the walkthrough said *"we don't need this one, actually"*; the
+      ticket won, and the cost was display-only — `entityId` was already selected by `getReports`.
+- [x] **ReTool Database Migration** (`868kn67aq`) — **the SQL is written and has partly been run.** The
+      app was repointed off Retool on 2026-08-21; a 2026-08-21 measurement found the moderator database
+      already carrying a populated `cutover` schema through step 3. **Confirm the environment's actual
+      state before running anything** — canonical: [`retool-db-cutover.md`](retool-db-cutover.md),
+      scripts: `apps/moderator/moderator-db/cutover/`. The tables are already copied into the moderator database;
       what remained was a delta, the sequences, and one collision.
       Two findings that change earlier assumptions: **`Mods_TaskTimers` (+22) and `FrontPageTimers` (+18)
       are drifting too** and were on no list, though the dashboard reads both; and **the id collision has

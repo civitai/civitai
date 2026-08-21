@@ -32,7 +32,7 @@ anyone complained. Same action, different population; both are needed.
 | --- | --- |
 | `UpdateNsfwLevel` | `updateImageNsfwLevel` (`image-nsfw-level.ts`) — same `UPDATE Image SET nsfwLevel, nsfwLevelLocked = TRUE`, and it additionally recomputes the parent model's level, busts the cache and finalises KoNO. Strictly more correct than Retool's bare UPDATE. |
 | `InsertModActivity` | `recordModActivity`, called by `updateImageNsfwLevel`. Retool's literal `activity = 'setNsfwLevel'` is what that helper writes. |
-| `LogNsfwLevel`, `LogNsfwLevel2` | Two GUI-mode writes to the same `RatingChanges` table — a duplicate, not two behaviours. **One port, not two.** |
+| `LogNsfwLevel`, `LogNsfwLevel2` | **Not duplicates — two behaviours, two ports.** `LogNsfwLevel` fires on setting a rating; `LogNsfwLevel2` on a moderation-tag vote, additions only, taking the rating from the tag. Both are `UPDATE_OR_INSERT_BY` on `imageId`, so `RatingChanges` holds the latest change per image, not a history. Both ported 2026-08-21 — see the `RatingChanges` row in [`parity-findings.md`](parity-findings.md). |
 
 ### superseded (2)
 

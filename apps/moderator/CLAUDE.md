@@ -80,8 +80,9 @@ provenance is the only reason it differs from the standard at all.
   [`moderator-page-migration`](../../.claude/skills/moderator-page-migration/SKILL.md) (from
   `src/pages/moderator/**` — which also deletes the legacy page and trims what it orphans).
 
-- ⚠️ **The suite is narrow.** Six files, 86 tests: the report queue and its actions, the orchestrator
-  workflow reader, and the legacy-strike marker protocol. So for work anywhere else in this app a green
+- ⚠️ **The suite is narrow.** Nine files, 129 tests: the report queue and its actions (five files,
+  111 of them), plus the orchestrator workflow reader, the legacy-strike marker protocol, the
+  `RatingChanges` upsert and one emitted-SQL guard on Bulk Image Manager. So for work anywhere else in this app a green
   `pnpm test` says only that those still pass, and `typecheck` remains the whole of what was verified. Say which of the two
   you mean when reporting: a typecheck cannot see a wrong predicate, a mis-attributed row or a mute
   that never lifts, all of which have shipped here and been found later by reading the code.

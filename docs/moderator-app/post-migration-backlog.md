@@ -60,8 +60,26 @@ Re-read off the live ticket 2026-08-21; the section above had captured the middl
 
 - [ ] **CommentV2 has no ToS field**, so moderators cannot ToS article comments etc. on the site. Main-app
       schema change.
-- [ ] **Unpublishing toggle**: when unpublishing a model for a real person or a minor, offer a toggle
-      that marks the model poi/minor in the same gesture. Main app.
+- [x] **Unpublishing toggle — the MINOR half.** `UnpublishModal` offers "Also mark this model as
+      depicting a minor" on the two minor reasons (`mature-underage`, `photo-real-underage`), ticked by
+      default, and runs `model.setMinor` **before** the unpublish: that mutation snapshots the model's
+      pre-flag state and propagates the flag to its images, so running it afterwards would snapshot a
+      model that is already down. A failure stops the unpublish rather than leaving a model down and
+      unflagged. Model-level only — `setMinor` flags the whole model, so offering it on a *version*
+      unpublish would act wider than the button says.
+
+- [ ] 🔴 **Unpublishing toggle — the POI half needs a decision, and this is the first time anyone has
+      looked.** It was filed as one item with the minor half; it is not.
+
+      `minor` has a whole subsystem: `setModelMinor` (snapshot, `MINOR_LOCKED_PROPERTIES`, forces
+      `sfwOnly`, rewrites gallery level, propagates to images), a `moderatorProcedure`, and four
+      `minor-flag/*` mod endpoints. **`poi` has none of it.** `Model.poi` is a plain optional field on
+      the model upsert schema, with no setter, no cascade, no endpoint and no snapshot.
+
+      So "mark it poi in the same gesture" cannot be built without first deciding what marking a model
+      poi is supposed to DO — cascade to its images? lock properties? force a rating? notify? Writing
+      `poi: true` from a modal would invent those answers silently, which is the failure mode that flag
+      exists to prevent. Needs the same treatment `minor` got, or an explicit "it is just a column".
 - [ ] **When are users notified that their model was marked as a minor?** — automated marks vs manual.
       A question to answer, not work to do.
 - [ ] **Data collection: the REASON for a rating change.** Distinct from the before/after pair

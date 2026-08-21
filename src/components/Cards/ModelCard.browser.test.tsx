@@ -1,4 +1,6 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
+// Type-only, so it is erased before the hoisted `vi.mock` factories run.
+import type * as ModelCardContext from '~/components/Cards/ModelCardContext';
 
 // =============================================================================
 // ModelCard — feed review-indicator now reads batched membership, not the
@@ -61,8 +63,18 @@ vi.mock('~/components/Metrics', () => ({
   Metrics: ({ children, initial }: any) => children(initial),
   AnimatedCount: ({ value }: any) => <>{value}</>,
 }));
-vi.mock('~/components/Cards/ModelCardContext', () => ({
+// `importOriginal`, not a hand-listed factory: `ModelCard` imports TWO things from this module and a
+// factory listing one of them fails the whole file at IMPORT time — "does not provide an export named
+// `useModelSaleBadge`" — so the suite collected 0 of its 2 tests rather than failing an assertion.
+// It had been dark since `bf71f39af4` added that import. Spreading the real module means the next
+// import added to `ModelCard` cannot silently switch these tests off again.
+vi.mock('~/components/Cards/ModelCardContext', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModelCardContext>()),
   useModelCardContext: () => ({ useModelVersionRedirect: false, activeBaseModels: undefined }),
+  // Stubbed like the other heavy children: the real one reads `trpc.model.getActiveSales`, which the
+  // trpc mock above does not carry. `undefined` is "no sale on this card", the state these two cases
+  // are written against.
+  useModelSaleBadge: () => undefined,
 }));
 vi.mock('~/components/Cards/ModelCardContextMenu', () => ({ ModelCardContextMenu: () => null }));
 vi.mock('~/components/Cards/components/RemixButton', () => ({ RemixButton: () => null }));

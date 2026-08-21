@@ -30,6 +30,7 @@
   import CosmeticSample from '$lib/components/CosmeticSample.svelte';
   import { cosmeticTypeFilters, humanizeCosmeticType } from '$lib/cosmetics';
   import type { ActionData, PageData } from './$types';
+  import ErrorAlert from '$lib/components/ErrorAlert.svelte';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -126,9 +127,7 @@
 </header>
 
 {#if form?.error}
-  <div class="mb-4 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300">
-    {form.error}
-  </div>
+  <ErrorAlert class="mb-4" message={form.error} />
 {:else if form?.success}
   <div class="mb-4 rounded-md border border-teal-500/30 bg-teal-500/10 p-2 text-sm text-teal-300">
     {form.newlyGranted} of {form.totalPairs} grants applied{form.alreadyOwned > 0

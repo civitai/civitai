@@ -140,7 +140,11 @@
   {selected}
 />
 
-{#snippet userHeader(item: { username: string | null; profilePicture?: boolean | null })}
+{#snippet userHeader(item: {
+  userId: number;
+  username: string | null;
+  profilePicture?: boolean | null;
+})}
   <div class="flex items-center gap-1.5">
     <!-- On the report queue a username is the start of an investigation, not a profile visit, so it
          goes to User Lookup. The other queues rule on one image and the profile is the useful page. -->
@@ -152,7 +156,7 @@
       rel="noreferrer"
       class="truncate text-xs text-muted-foreground hover:text-foreground"
     >
-      {item.username ?? '[deleted]'}
+      {item.username ?? `[deleted] #${item.userId}`}
     </a>
     {#if item.profilePicture}
       <Badge class="shrink-0 bg-indigo-500/15 text-indigo-400">Avatar</Badge>
@@ -258,13 +262,12 @@
         </div>
         <div class="mt-0.5 text-muted-foreground">
           by
-          {#if item.report.username}
-            <a href={userLookupUrl(item.report.username)} class="hover:text-foreground">
-              {item.report.username}
-            </a>
-          {:else}
-            [deleted]
-          {/if}
+          <a
+            href={userLookupUrl(item.report.username ?? item.report.userId)}
+            class="hover:text-foreground"
+          >
+            {item.report.username ?? `[deleted] #${item.report.userId}`}
+          </a>
           · {new Date(item.report.createdAt).toLocaleDateString()}
         </div>
         {#each detailEntries(item.report.details) as [k, v] (k)}
@@ -309,7 +312,8 @@
             href={`${data.civitaiUrl}/user/${item.appeal.username}`}
             target="_blank"
             rel="noreferrer"
-            class="hover:text-foreground">{item.appeal.username ?? '[deleted]'}</a
+            class="hover:text-foreground"
+            >{item.appeal.username ?? `[deleted] #${item.appeal.userId}`}</a
           >
           · {fmt(item.appeal.createdAt)}
         </div>

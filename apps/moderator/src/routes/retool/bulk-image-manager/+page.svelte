@@ -21,6 +21,7 @@
   import ImageActionBar from '$lib/components/ImageActionBar.svelte';
   import ListFilterBar, { type FilterField } from '$lib/components/ListFilterBar.svelte';
   import { NsfwLevel } from '@civitai/shared';
+  import ErrorAlert from '$lib/components/ErrorAlert.svelte';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -179,12 +180,7 @@
 </form>
 
 {#if form?.error}
-  <div
-    class="mb-4 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300"
-    role="alert"
-  >
-    {form.error}
-  </div>
+  <ErrorAlert class="mb-4" message={form.error} />
 {:else}
   <!-- A warning no longer HIDES the success line. A removal that struck only some of its owners has
        two facts to report, and the one the moderator has to act on is not the one that succeeded. -->

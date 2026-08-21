@@ -17,6 +17,7 @@
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import { bulkImageManagerUrl, userLookupUrl } from '$lib/entity-url';
   import { nonPagingSearch } from '$lib/paging';
+  import ErrorAlert from '$lib/components/ErrorAlert.svelte';
 
   let {
     lookup,
@@ -116,12 +117,7 @@
     <form method="POST" action="?/strike" use:enhance={onSubmit.enhance} class="mb-3">
       <input type="hidden" name="userId" value={ownerId} />
       {#if strikeError}
-        <div
-          class="mb-2 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300"
-          role="alert"
-        >
-          {strikeError}
-        </div>
+        <ErrorAlert class="mb-2" message={strikeError} />
       {/if}
       <CannedReasonPicker reasons={STRIKE_REASONS} idPrefix="strike" bind:value={strikeReason} />
       <div class="mt-2 flex gap-2">
@@ -139,12 +135,7 @@
     <form method="POST" action="?/notify" use:enhance={onSubmit.enhance} class="mb-3">
       <input type="hidden" name="userId" value={ownerId} />
       {#if notifyError}
-        <div
-          class="mb-2 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300"
-          role="alert"
-        >
-          {notifyError}
-        </div>
+        <ErrorAlert class="mb-2" message={notifyError} />
       {/if}
       <Textarea name="message" rows={2} placeholder="What should this user be told?" required />
       <div class="mt-2 flex gap-2">
@@ -162,12 +153,7 @@
 </section>
 
 {#if imagesError}
-  <div
-    class="mb-3 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300"
-    role="alert"
-  >
-    {imagesError}
-  </div>
+  <ErrorAlert class="mb-3" message={imagesError} />
 {:else if imageResult}
   <div class="mb-3 rounded-md border border-dark-4 bg-dark-6 p-2 text-sm text-dark-0" role="status">
     {imageResult}

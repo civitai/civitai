@@ -1,3 +1,8 @@
+import {
+  moderatorBulkImageManagerPath,
+  moderatorUserLookupPath,
+} from '@civitai/shared/moderator-paths';
+
 // Entity type → the main app's URL segment for it. Shared because the dashboard and User Lookup both
 // render moderator-activity rows, and their private copies had already drifted: the lookup's was missing
 // `post`, so a post action rendered as unlinked text there and as a link on the dashboard.
@@ -50,22 +55,12 @@ export function userUrl(civitaiUrl: string, username: string, section?: string |
   return section ? `${base}/${section}` : base;
 }
 
-/** `/retool/*` is documented as a transitional namespace, and this path was hardcoded at nine sites
- *  across three pages. When it moves, those become silent dead links.
- *
- *  `section` is a slug from `user-lookup/sections.ts` (`reports`, `notes`, …). Without one the bare
- *  route redirects to the default section, so a link that means "their reports" must say so. */
-export const userLookupUrl = (idOrUsername: number | string, section?: string) => {
-  const q = `?q=${encodeURIComponent(String(idOrUsername))}`;
-  return section ? `/retool/user-lookup/${section}${q}` : `/retool/user-lookup${q}`;
-};
-
-/** Bulk Image Manager takes the entity it lists images for as `source` + `q`, not a per-entity param.
- *  The same shape the main app's `moderatorBulkImageManagerPath` builds — keep the two in step. */
-export const bulkImageManagerUrl = (
-  source: 'post' | 'model' | 'modelVersion' | 'collection' | 'user',
-  idOrUsername: number | string
-) => `/retool/bulk-image-manager?source=${source}&q=${encodeURIComponent(String(idOrUsername))}`;
+// The `/retool/*` builders live in `@civitai/shared/moderator-paths` so this app and the main app read
+// ONE definition. They were two, each carrying a comment telling the reader to keep them in step, and
+// they had already diverged on whether user-lookup takes a `section`. When the transitional namespace
+// moves, the copy nobody updated is the one that becomes a dead link.
+export const userLookupUrl = moderatorUserLookupPath;
+export const bulkImageManagerUrl = moderatorBulkImageManagerPath;
 
 export const chatAuditChatUrl = (chatId: number) => `/retool/chat-audit/chats?chat=${chatId}`;
 

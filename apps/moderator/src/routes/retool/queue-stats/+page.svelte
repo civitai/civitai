@@ -5,6 +5,7 @@
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import { userLookupUrl } from '$lib/entity-url';
   import type { ActionData, PageData } from './$types';
+  import ErrorAlert from '$lib/components/ErrorAlert.svelte';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -49,12 +50,7 @@
 </header>
 
 {#if form?.error}
-  <div
-    class="mb-4 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300"
-    role="alert"
-  >
-    {form.error}
-  </div>
+  <ErrorAlert class="mb-4" message={form.error} />
 {:else if form?.success}
   <div
     class="mb-4 rounded-md border border-green-500/30 bg-green-500/10 p-2 text-sm text-green-200"

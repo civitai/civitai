@@ -16,10 +16,8 @@ export const LEGACY_STRIKE_MARKER = 'retool:UserStrikes:';
 export function legacyStrikeId(internalNotes: string | null): number | null {
   if (!internalNotes?.startsWith(LEGACY_STRIKE_MARKER)) return null;
   const raw = internalNotes.slice(LEGACY_STRIKE_MARKER.length).split(' ')[0];
-  // `> 0`, not `Number.isInteger`: an empty segment coerces to 0, which is an integer, so a bare marker
-  // would resolve to legacy id 0 and mark a row imported that never was.
   const id = Number(raw);
-  return raw && Number.isInteger(id) && id > 0 ? id : null;
+  return Number.isInteger(id) && id > 0 ? id : null;
 }
 
 /** What the import writes. The name is the legacy `createdBy`, which is a display name, not an id. */

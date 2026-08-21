@@ -6,6 +6,7 @@
   import type { ActionData, PageData } from './$types';
   import { FormState } from '$lib/form-state.svelte';
   import { dateTime, num } from '$lib/format';
+  import ErrorAlert from '$lib/components/ErrorAlert.svelte';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -24,12 +25,7 @@
 </header>
 
 {#if form?.error}
-  <div
-    class="mb-4 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300"
-    role="alert"
-  >
-    {form.error}
-  </div>
+  <ErrorAlert class="mb-4" message={form.error} />
 {:else}
   <!-- Both, not either/or: a capped batch sets `filed` AND `warning`, and testing the warning first
        hid the fact that a request was created at all. -->

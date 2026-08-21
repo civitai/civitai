@@ -363,17 +363,13 @@ Every claim below was checked against the code before being recorded; several of
 - [x] **Front Page Audit — `InsertRatingGame` unported, and Queue Stats renders the frozen result.**
       "Research ratings — All time" sits directly beside "Ratings set", which is `ModActivity`-backed and
       still counts. One list grows, the other cannot, with nothing on screen saying why.
-- [ ] **Front Page Audit — `RatingChanges` is two writes, not one.** `LogNsfwLevel` (on rating: records
-      the set level *and* the swept level) and `LogNsfwLevel2` (on tag vote: additions only, level from
-      the tag). The audit called them duplicates of each other.
-
-      **`LogNsfwLevel` built 2026-08-21** — `recordRatingChange` in `front-page-audit.service.ts`, called
-      from `setRating` after the rating commits, best-effort like `recordResearchRating` beside it. The
-      old level is read *before* the update, because that pair is the whole value of the row.
-
-      **`LogNsfwLevel2` stays open**, and not for the reason recorded: the table shape is known and now
-      generated. What is missing is what `originalRating` — NOT NULL — holds on the tag-vote path. That
-      needs the changeset, not more reasoning.
+- [x] **Front Page Audit — `RatingChanges` is two writes, not one.** `LogNsfwLevel` (on rating) and
+      `LogNsfwLevel2` (on tag vote: additions only, level from the tag). The audit called them
+      duplicates of each other. **Both built 2026-08-21** — `recordRatingChange` in
+      `front-page-audit.service.ts`, best-effort like `recordResearchRating` beside it. The blocker
+      recorded here ("what `originalRating` holds on the tag-vote path") was answered from the app
+      export, not from more reasoning: it is the TAG's `nsfwLevel`, and the write is disabled on a
+      downvote. Canonical detail and the two corrected facts: the `RatingChanges` row above.
 - [x] **Front Page Audit — the sweep's coordination mechanic is absent**: no shared checkpoint, no "who
       swept this last". Two moderators sweeping the same rating work the same rows. The page discloses
       this; the Split control above now contradicts the disclosure.

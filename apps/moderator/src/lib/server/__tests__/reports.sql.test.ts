@@ -7,8 +7,8 @@ import { explainHarness } from '../../../test/explain-harness';
  * tier runs with NO DATABASE.
  *
  * That gap is why this file exists. The EXPLAIN tier is `describe.skipIf(!h.hasDb)` and CI has no
- * database, so `reports.service.ts` — 14 raw `sql` fragments assembled from `REPORT_ENTITIES`, where not
- * one identifier is typechecked — is unguarded on every CI run. Bulk Image Manager shipped a
+ * database, so `reports.service.ts`, whose subqueries are all raw `sql` assembled from
+ * `REPORT_ENTITIES` with not one identifier typechecked, is unguarded on every CI run. Bulk Image Manager shipped a
  * raw-fragment defect through typecheck, lint and three review agents on 2026-08-21 (`4cf7034ea6`): it
  * emitted `where "i"."id" in SELECT …` and 500'd on every id. Only the emitted text sees that.
  *

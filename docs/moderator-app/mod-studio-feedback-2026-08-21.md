@@ -140,10 +140,10 @@ The **legacy strike migration is written but unapplied**. Everything else in thi
 deploy; that one needs a human to run the script — once dry, once with `--apply` — per environment, at
 whatever point suits.
 
-Verified by `typecheck`, the new `typecheck:scripts`, and the app's own suite (86 tests). Three of this
+Verified by `typecheck`, the new `typecheck:scripts`, and the app's own suite (129 tests). Four of this
 round's items carry tests: the Post Reports queue reuses `getReports`, the workflow reader has its own
-file, and the legacy-strike marker protocol is tested on both sides. Everything else in this round was
-verified by typecheck and by reading the code.
+file, the legacy-strike marker protocol is tested on both sides, and `getReports`' raw SQL is now
+guarded without a database. Everything else in this round was verified by typecheck and by reading the code.
 
 ---
 
@@ -171,8 +171,20 @@ it was first raised.
 - [ ] **User Lookup unavailable for the staff role** *(08-17)*. Not a defect — part of the `/admin` pass.
 - [ ] **`reportedUser` renders greyed out on reports** *(08-18)*. Suspected downstream of the above.
 - [ ] **Comment rows are "funky" to read** *(08-18)*. Needs the reporter to say what is wrong.
-- [ ] **Why are banned users' comics queued for review at all?** *(08-18)*. Predicate known, volume not
-      measured, decision not made.
+- [x] **Why are banned users' comics queued for review at all?** *(08-18)*. **Measured 2026-08-21 —
+      it is moot.** The queue is empty in production for everyone, not just banned authors:
+
+      | | |
+      | --- | --- |
+      | `ComicPanel` rows | 22,750 |
+      | `ComicProject` rows | 2,990 |
+      | panels matching the queue predicate | **0** |
+      | of those, banned or deleted author | 0 |
+
+      Nothing is `needsReview`, nothing is `tosViolation`, and the 33 unscanned panels do not match
+      because the predicate needs `needsReview IS NOT NULL` as well. So there is no volume to weigh a
+      `where` clause against, and adding one now would be changing a queue nobody is in. Re-measure
+      before deciding if comics review starts filling up.
 
 ## P2 — decisions
 

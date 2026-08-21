@@ -193,7 +193,7 @@ as permission to drop one. Bucket it as `port` and build it.
 | `Replicated_Read_Prod` | `dbRead` (`$lib/server/db`) |
 | `Prod` (write) | `dbWrite` |
 | `Clickhouse` | `$lib/server/clickhouse` |
-| `retool_db` | `getModeratorDb()` (`$lib/server/moderator-db`) — a single read-write Kysely client over the **moderator database**. Points at Retool's own Postgres today, so the data is live; later it moves and only the connection string changes. Types: `ModeratorDB` from `$lib/server/moderator-db/types`, generated from `apps/moderator/prisma/schema.prisma`. |
+| `retool_db` | `getModeratorDb()` (`$lib/server/moderator-db`) — a single read-write Kysely client over the **moderator database**, which since 2026-08-21 is one instance holding both the moderation tables and the xguard-lab tables, read from `MODERATOR_DATABASE_URL` (`RETOOL_DATABASE_URL` is retired). Types: `ModeratorDB` from `$lib/server/moderator-db/types`, generated from `apps/moderator/prisma/schema.prisma`. |
 | `REST-WithoutResource` → `/api/mod/*` | existing main-app mod endpoints, or a spoke service |
 | `BuzzTemp` / buzz API | `$lib/server/buzz` |
 | `Notifications DB` | `$lib/server/notifications` |

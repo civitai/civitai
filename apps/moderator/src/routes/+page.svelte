@@ -23,6 +23,7 @@
   import { URGENT_REPORT_COUNT, queueSeverityClass } from '$lib/queue-thresholds';
   import { FormState } from '$lib/form-state.svelte';
   import type { ActionData, PageData } from './$types';
+  import ErrorAlert from '$lib/components/ErrorAlert.svelte';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -412,9 +413,7 @@
      banner nested inside it vanishes on success and is replaced by the catch branch if the refetch
      then fails — reporting an error for an action that worked. -->
 {#if form?.error}
-  <div class="mt-8 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300" role="alert">
-    {form.error}
-  </div>
+  <ErrorAlert class="mt-8" message={form.error} />
 {:else if form && 'swept' in form && form.swept}
   <div class="mt-8 rounded-md border border-green-500/30 bg-green-500/10 p-2 text-sm text-green-200" role="status">
     Marked {form.swept} swept.

@@ -11,6 +11,7 @@
   import { PROFILE_FIELDS } from './enforcement-options';
   import { getBrowsingLevelLabel } from '@civitai/shared';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
+  import ErrorAlert from '$lib/components/ErrorAlert.svelte';
 
   type Identity = NonNullable<LayoutData['result']>['identity'];
   type Profile = NonNullable<LayoutData['result']>['profile'];
@@ -237,12 +238,7 @@
               Requires the identity-edit permission; the API refuses it otherwise.
             </p>
             {#if editForm.error}
-              <div
-                class="w-full rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300"
-                role="alert"
-              >
-                {editForm.error}
-              </div>
+              <ErrorAlert class="w-full" message={editForm.error} />
             {/if}
           </form>
         {/if}
@@ -267,12 +263,7 @@
   </dl>
 
   {#if clearForm.error}
-    <div
-      class="mt-4 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300"
-      role="alert"
-    >
-      {clearForm.error}
-    </div>
+    <ErrorAlert class="mt-4" message={clearForm.error} />
   {/if}
 
   {#if media.length}

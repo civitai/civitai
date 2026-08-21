@@ -11,6 +11,7 @@
   import { reportDetail, reportReasonLabel, reportStatusVariant } from '$lib/reports';
   import { userLookupUrl } from '$lib/entity-url';
   import ReportQueueFilterBar from '$lib/components/ReportQueueFilterBar.svelte';
+  import ErrorAlert from '$lib/components/ErrorAlert.svelte';
 
   let {
     queue,
@@ -84,12 +85,7 @@
   />
 
   {#if error}
-    <div
-      class="mb-3 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300"
-      role="alert"
-    >
-      {error}
-    </div>
+    <ErrorAlert class="mb-3" message={error} />
   {/if}
 
   {#if queue.length === 0}

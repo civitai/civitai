@@ -147,12 +147,12 @@ before discarding.
 
 ```bash
 cd .claude/skills/retool-migration && npm install   # once
-cp .env.example .env                                # add RETOOL_DATABASE_URL
+cp .env.example .env                                # add MODERATOR_DATABASE_URL
 node retool-db.mjs --tables
 node retool-db.mjs --describe UserStrikes
 node retool-db.mjs "SELECT * FROM \"UserNotes\" LIMIT 5"
 ```
 
 `retool-db.mjs` is read-only — it exists for scoping and schema questions. **The app itself reads *and
-writes* this database** through `getModeratorDb()`; that is the point of pointing `RETOOL_DATABASE_URL`
-here. See the skill's moderator-database section.
+writes* this database** through `getModeratorDb()`, on the same `MODERATOR_DATABASE_URL`. See the
+skill's moderator-database section.

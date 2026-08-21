@@ -123,7 +123,7 @@ const connectionString = process.env.MODERATOR_DATABASE_URL ?? process.env.RETOO
 
 if (!connectionString) {
   console.error('Error: MODERATOR_DATABASE_URL not set');
-  console.error('Create .claude/skills/retool-query/.env with the Retool database URL');
+  console.error('Create .claude/skills/retool-query/.env with MODERATOR_DATABASE_URL');
   console.error('See .env.example for details');
   process.exit(1);
 }
