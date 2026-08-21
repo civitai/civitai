@@ -235,6 +235,16 @@ async function listFlags() {
   }
 }
 
+// A rollout matching two segments under AND vs OR reaches completely different
+// audiences, so the operator is only omitted when there is nothing to combine.
+function formatSegments(segments, segmentOperator) {
+  const keys = segments ?? [];
+  if (keys.length === 0) return 'unknown';
+  if (keys.length === 1) return keys[0];
+  const op = segmentOperator === 'AND_SEGMENT_OPERATOR' ? 'AND' : 'OR';
+  return keys.join(` ${op} `);
+}
+
 async function getFlag(key) {
   let data;
   try {
@@ -271,12 +281,9 @@ async function getFlag(key) {
   if (data.rules?.length > 0) {
     console.log('\nRules:');
     for (const rule of data.rules) {
-      if (rule.segment) {
-        const segs = rule.segment.keys?.join(', ') || 'unknown';
-        console.log(`  - Segment: ${segs}`);
-        for (const dist of rule.distributions || []) {
-          console.log(`    → variant "${dist.variant}" at ${dist.rollout}%`);
-        }
+      console.log(`  - Segment: ${formatSegments(rule.segments, rule.segmentOperator)}`);
+      for (const dist of rule.distributions || []) {
+        console.log(`    → variant "${dist.variant}" at ${dist.rollout}%`);
       }
     }
   }
@@ -288,7 +295,8 @@ async function getFlag(key) {
         console.log(`  - ${rollout.threshold.percentage}% → ${rollout.threshold.value}`);
       }
       if (rollout.segment) {
-        console.log(`  - Segment: ${rollout.segment.keys?.join(', ')} → ${rollout.segment.value}`);
+        const segs = formatSegments(rollout.segment.segments, rollout.segment.segmentOperator);
+        console.log(`  - Segment: ${segs} → ${rollout.segment.value}`);
       }
     }
   }
