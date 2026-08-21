@@ -233,7 +233,15 @@ export function CardStickerOverlay({
   if (!batch || !hasPlacements) return null;
 
   return (
-    <div ref={ref} className="pointer-events-none absolute inset-0 overflow-hidden">
+    <div
+      ref={ref}
+      // The hook the card templates use to make this ride whatever transform
+      // they apply to the media on hover. An attribute rather than a class
+      // because the two templates own different stylesheets and neither should
+      // have to import a class from this component to scale it.
+      data-sticker-overlay=""
+      className="pointer-events-none absolute inset-0 overflow-hidden"
+    >
       {box && (
         <div className="pointer-events-none absolute" style={box}>
           <StickerPlacementOverlay

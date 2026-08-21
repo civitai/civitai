@@ -7,7 +7,26 @@
     .image {
       transform: scale(1.05) rotate(0.02deg);
     }
+
+    // Placed stickers ride the same zoom as the picture they were placed on.
+    // The overlay is a SIBLING of this link rather than a child — it must paint
+    // above the media and must not join the link's click target — so it cannot
+    // inherit the transform and has to be given the same one. Left out, the
+    // artwork grows under stickers that stay put, and every one of them drifts
+    // off the spot it was placed on for as long as the pointer is on the card.
+    //
+    // Same box, so the same transform is exact: the overlay is `inset-0` of the
+    // element the media fills, and both scale about their own centre.
+    ~ :global([data-sticker-overlay]) {
+      transform: scale(1.05) rotate(0.02deg);
+    }
   }
+}
+
+// Matches `.image`'s transition, so the two move together rather than the
+// stickers snapping to the zoomed position while the picture eases into it.
+:global([data-sticker-overlay]) {
+  transition: transform 400ms ease;
 }
 
 .image {
