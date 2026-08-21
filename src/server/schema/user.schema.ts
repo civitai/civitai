@@ -304,6 +304,10 @@ export const userSettingsSchema = z.object({
   // Creator opt-out: when true, the public donation-goal display (progress + collected
   // amount) is hidden from non-owner/non-mod viewers on all of this user's models.
   hideDonationGoals: z.boolean().optional(),
+  // The two sticker book opt-outs. Both absent means a visible book showing the
+  // stickers the creator owns; the rules are in `shared/utils/sticker-book.ts`.
+  hideStickerBook: z.boolean().optional(),
+  hidePurchasedStickers: z.boolean().optional(),
   // Creator Controls defaults: baseline metric-privacy for all of this user's
   // models. Effective only while the user holds a valid Creator Program
   // membership (see server/utils/model-metric-privacy.ts).
@@ -369,6 +373,8 @@ export const setUserSettingsInput = z.object({
   disableStickerMotion: z.boolean().optional(),
   hideBlueBuzzInHeader: z.boolean().optional(),
   hideDonationGoals: z.boolean().optional(),
+  hideStickerBook: z.boolean().optional(),
+  hidePurchasedStickers: z.boolean().optional(),
   hideModelBuzz: z.boolean().optional(),
   hideModelDownloads: z.boolean().optional(),
   hideModelGenerations: z.boolean().optional(),

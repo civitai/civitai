@@ -79,9 +79,9 @@ import {
 import { domainSpendType } from '~/server/utils/buzz-helpers';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import {
-  allBrowsingLevelsFlag,
-  sfwBrowsingLevelsFlag,
-} from '~/shared/constants/browsingLevel.constants';
+  domainServableLevels,
+  viewerBrowsingLevel,
+} from '~/server/utils/placement-levels';
 import type { PlacementSurface } from '~/shared/utils/placement';
 import type { Context } from '~/server/createContext';
 
@@ -129,28 +129,6 @@ function assertSurfaceEnabled(ctx: Context, surface: PlacementSurface) {
   if (surface === 'remixGallery') return assertRemixGalleryEnabled(ctx);
   return assertPlacementEnabled(ctx);
 }
-
-/**
- * What the viewer may see, with the SFW domain applied.
- *
- * The level itself is client-supplied, as it is for every image listing. The
- * clamp is not a second opinion about the viewer's preference — it is the
- * domain's rule, and a gallery shows content the host creator did not choose,
- * so it cannot inherit the host image's own admissibility.
- */
-const viewerBrowsingLevel = (ctx: Context, requested: number) =>
-  ctx.features.isGreen ? requested & sfwBrowsingLevelsFlag : requested;
-
-/**
- * What this domain may be SENT, as opposed to what the viewer asked for.
- *
- * The review queues carry no browsing level by design — an owner has to see what
- * is waiting on them whatever their own settings say — which makes them the one
- * path that hands an above-ceiling asset to a SFW client. Blur is not that
- * control: it is built from the viewer's own level and never reads the domain's.
- */
-const domainServableLevels = (ctx: Context) =>
-  ctx.features.isGreen ? sfwBrowsingLevelsFlag : allBrowsingLevelsFlag;
 
 export const placementRouter = router({
   getSpace: publicProcedure

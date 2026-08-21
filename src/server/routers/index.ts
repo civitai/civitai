@@ -50,6 +50,7 @@ export const appRouter = router({
   report: lazy(() => import('./report.router').then((m) => m.reportRouter)),
   resourceReview: lazy(() => import('./resourceReview.router').then((m) => m.resourceReviewRouter)),
   signals: lazy(() => import('./signals.router').then((m) => m.signalsRouter)),
+  stickerBook: lazy(() => import('./sticker-book.router').then((m) => m.stickerBookRouter)),
   stripe: lazy(() => import('./stripe.router').then((m) => m.stripeRouter)),
   subscriptions: lazy(() =>
     import('~/server/routers/subscriptions.router').then((m) => m.subscriptionsRouter)

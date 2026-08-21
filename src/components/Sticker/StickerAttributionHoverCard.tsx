@@ -1,7 +1,7 @@
 import { Anchor, Group, Popover, Skeleton, Text } from '@mantine/core';
 import { IconSticker } from '@tabler/icons-react';
 import type { RefObject } from 'react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import {
   CREATOR_HOVER_DROPDOWN_CLASS,
@@ -14,8 +14,7 @@ import {
   useHoverCapable,
   useNestedHoverCard,
 } from '~/components/UserAvatar/UserHoverCard';
-import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
-import { trpc } from '~/utils/trpc';
+import { useStickerAttribution } from '~/components/Sticker/sticker-attribution.util';
 
 type Hovered = { cosmeticId: number; rect: DOMRect };
 
@@ -149,36 +148,7 @@ function StickerAttributionCard({
   onDropdownEnter: () => void;
 }) {
   const { rect, cosmeticId } = hovered;
-  const { data, isLoading } = trpc.cosmetic.getStickerAttribution.useQuery(
-    { ids: [cosmeticId] },
-    { staleTime: 5 * 60_000 }
-  );
-  const raw = data?.[0];
-
-  // A block hides that creator's shop entries already — `getBlockedPairIds` is
-  // applied to creator-made cosmetics in the shop for exactly this. The sticker's
-  // creator is not the comment's author, so comment-level filtering never sees
-  // them: without this, blocking someone still leaves their storefront one hover
-  // away on any comment using their art. The name stays; the route and the
-  // creator card do not.
-  //
-  // Three separate lists, and only one of them is a block: `hiddenUsers` is
-  // "people I hid", while a block is a *pair* — `blockedUsers` one way and
-  // `blockedByUsers` the other. `getBlockedPairIds`, which the shop filters on,
-  // is both directions, so checking hidden alone would leave a creator who
-  // blocked this viewer still one hover from their shop.
-  const preferences = useHiddenPreferencesData();
-  const suppressed = useMemo(
-    () =>
-      new Set([
-        ...preferences.hiddenUsers.map((user) => user.id),
-        ...preferences.blockedUsers.map((user) => user.id),
-        ...preferences.blockedByUsers.map((user) => user.id),
-      ]),
-    [preferences.hiddenUsers, preferences.blockedUsers, preferences.blockedByUsers]
-  );
-  const blocked = !!raw?.creatorId && suppressed.has(raw.creatorId);
-  const sticker = raw && blocked ? { ...raw, shopHref: null, creatorId: null } : raw;
+  const { sticker, blocked, isLoading } = useStickerAttribution(cosmeticId);
 
   return (
     <Popover
