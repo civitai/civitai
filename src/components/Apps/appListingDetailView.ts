@@ -23,7 +23,7 @@
  * which that URL resolves to something new: from the store detail it redirects
  * straight back to the page the viewer is already on.
  *
- * PRIMARY-ACTION policy (kind × hasPage × subKind), all with NO dead 404 nav:
+ * PRIMARY-ACTION policy (kind × hasPage × destination), all with NO dead 404 nav:
  *   - on-site + hasPage + canOpenPage → **Open** (`/apps/run/<slug>`, the LIVE
  *     W10 in-host page route; flag-gated on `appBlocksPages`). The raw-origin
  *     "Open live" action is HIDDEN here: the app opens properly in-page, so a
@@ -58,31 +58,47 @@
  *     explicitly in the "no on-site state strands the viewer" matrix test — but
  *     the branch is vacuous today: every approved on-site listing declares a
  *     page, so nothing takes it.
- *   - off-site, EITHER sub-kind, with an https `externalUrl` → **Visit ↗** →
- *     external anchor. 🔴 The sub-kind does NOT decide this; the presence of a
- *     destination does. See the connect note below.
- *   - off-site external-link with no usable target (missing / non-https) →
- *     **informational** (guarded out; no target).
- *   - off-site connect (OAuth) with no usable target → **Connect** STUB with a
- *     note — the only remaining state with nowhere to send the viewer.
+ *   - off-site with an https `externalUrl` → **Visit ↗** → external anchor.
+ *     🔴 The presence of a destination decides this, and nothing else.
+ *   - off-site with NO usable target → **informational** ("Unavailable"),
+ *     regardless of whether an OAuth client is connected. There is nowhere to
+ *     send the viewer, and the page says so.
  *
- * 🔴 THE CONNECT STUB USED TO BE UNCONDITIONAL, AND THAT WAS THE BUG. Every
- * off-site listing with a linked OAuth client rendered a dead
- * "Connecting this app will be available soon." affordance — no href, disabled
- * button — because `resolveOffsiteSubKind` routes on `connectClientId != null`
- * alone (`app-listing.service.ts`), so linking a client was the ONLY thing that
- * moved a listing off the working `Visit ↗` path. Three approved, live listings
- * were in that state; a fourth, with no client, worked.
+ * 🔴 THE "CONNECT" STUB IS DELETED (#4208) — DO NOT REINTRODUCE IT.
  *
- * The stub's stated premise — "a complete OAuth authorize URL is NOT derivable
- * from the public DTO" — is true and irrelevant. These are CONFIDENTIAL clients
- * that own their own `redirect_uri` / `state` / PKCE and start the flow from
- * their own site; the store never needed to build an authorize URL, only to get
- * the viewer to the app. That destination is already on the public DTO as
- * `externalUrl`, https-guarded, and the external-link branch has always
- * rendered it correctly. So connect now reuses that same proven path rather
- * than growing a second one, and the stub survives only for a connect listing
- * with genuinely no destination — where it still fails safe.
+ * History, because the shape recurs. The stub was once UNCONDITIONAL for the
+ * `connect` sub-kind: every off-site listing with a linked OAuth client rendered
+ * a dead affordance — no href, disabled button, and a note promising the flow
+ * was coming soon — because the sub-kind routed on `connectClientId != null`
+ * alone, so linking a client was the ONLY thing that moved a listing off the
+ * working `Visit ↗` path. Three approved, live listings were in that state.
+ * #4200 fixed that by routing on the destination, which left the stub reachable
+ * only for a connect listing with genuinely no destination.
+ *
+ * #4208 removes what was left. The stub promised an action and delivered
+ * nothing: there is no connect flow behind it, and a CTA that costs a click and
+ * returns nowhere reads as broken rather than incomplete. Measured against
+ * production before removing it — ZERO listings sat in that state (all five
+ * off-site rows, every status, carry an https destination), so nothing regressed
+ * for a live listing.
+ *
+ * 🔴 The state is still REACHABLE — `submitExternalListingSchema`
+ * (`src/server/schema/blocks/offsite-listing.schema.ts`) requires
+ * `connectClientId` but leaves `externalUrl` OPTIONAL, so a submission with no
+ * URL lands here. Closing that is an API-contract change, deliberately NOT made
+ * a rider on this one. So this branch must keep failing safe; it now does so by
+ * saying "Unavailable" instead of lying.
+ *
+ * 🔴 `'connect'` IS GONE FROM `DetailActionMode`. That is the guard: reintroducing
+ * the stub is a COMPILE ERROR, not a silent behaviour change a reviewer has to
+ * notice. Do not re-add the member to make a new branch type-check.
+ *
+ * (For the record, the stub's stated premise — "a complete OAuth authorize URL is
+ * NOT derivable from the public DTO" — was true and irrelevant. These are
+ * CONFIDENTIAL clients that own their own `redirect_uri` / `state` / PKCE and
+ * start the flow from their own site; the store never needed to build an
+ * authorize URL, only to get the viewer to the app, which `externalUrl` already
+ * does.)
  */
 
 import { safeExternalHref } from '~/components/Apps/appListingCardView';
@@ -103,24 +119,29 @@ export {
  * Primary-action mode:
  *   - `open`    → internal nav to the in-host page runner.
  *   - `visit`   → external new-tab anchor (Visit / Open live).
- *   - `connect` → the OAuth connect affordance (stubbed until cutover; `note` set).
  *   - `info`    → informational affordance. NO href is produced for this mode
  *                 today (the only "learn more" target was the retired
  *                 `/apps/[appBlockId]`); the field stays optional on the type
  *                 and both renderers keep their text-only fallback.
+ *
+ * 🔴 There is deliberately NO `'connect'` member (#4208). It described a CTA with
+ * no flow behind it. Its absence from this union is what makes the dead button
+ * un-reintroducible without a compile error — see the module docstring. If you
+ * are here to add it back because a new branch won't type-check, build the
+ * connect flow first.
  */
-export type DetailActionMode = 'open' | 'visit' | 'connect' | 'info';
+export type DetailActionMode = 'open' | 'visit' | 'info';
 
 export type DetailPrimaryAction = {
   /** Button / affordance copy. */
   label: string;
   mode: DetailActionMode;
   /** Nav target (internal for `open`, external for `visit`), or undefined. Never
-   *  set for `info`/`connect` — see the mode docs above. */
+   *  set for `info` — see the mode docs above. */
   href?: string;
   /** True → open in a new tab as an external anchor (rel=noopener noreferrer). */
   external: boolean;
-  /** Informational copy for the `info` / `connect`-stub modes. */
+  /** Informational copy for the `info` mode. */
   note?: string;
 };
 
@@ -191,31 +212,154 @@ export function getDetailPrimaryAction(
     };
   }
 
-  // Off-site — BOTH sub-kinds. An off-site app lives at its own address, and
-  // that address is the only thing this page can route to; a connect app then
-  // runs its own confidential-client OAuth flow from there. So the destination,
-  // not the sub-kind, decides the action: one https-guarded path
-  // (`safeExternalHref`), shared with the external-link case that has always
-  // worked. Do NOT reintroduce a sub-kind test above this line — that is
-  // precisely what made a linked OAuth client the sole cause of a dead CTA.
+  // Off-site — ONE kind. An off-site app lives at its own address, and that
+  // address is the only thing this page can route to; an OAuth-connected app
+  // then runs its own confidential-client OAuth flow from there. So the
+  // destination decides the action: one https-guarded path
+  // (`safeExternalHref`). Do NOT reintroduce a `connectClientId` test above this
+  // line — that is precisely what made a linked OAuth client the sole cause of a
+  // dead CTA.
   const href = safeExternalHref(kd.externalUrl);
   if (href) return { label: 'Visit', mode: 'visit', href, external: true };
 
-  if (kd.subKind === 'external-link') {
-    return {
-      label: 'Unavailable',
-      mode: 'info',
-      external: false,
-      note: 'This app has no valid external link.',
-    };
-  }
-
-  // Off-site connect with NO usable destination — the honest stub, now reached
-  // only in that genuinely-nowhere-to-go state. Fails safe: no dead nav.
+  // NO usable destination → ONE informational fallback, whether or not an OAuth
+  // client is connected.
+  //
+  // 🔴 This used to fork on `kd.connectClientId`, giving the OAuth arm a
+  // "Connect" stub for a flow that does not exist. #4208 deleted that arm: the
+  // capability is real, but it is not a NAVIGATION target, and the store has
+  // nowhere to send this viewer either way. Do NOT reintroduce a
+  // `connectClientId` test here — the capability is communicated by the
+  // permission signal on the page body (`shouldShowOffsiteDisclosure` and its
+  // positive counterpart), not by a button that does nothing.
+  //
+  // The note is accurate for both arms: a listing in this state has no valid
+  // external link, which is exactly why there is no action to offer.
   return {
-    label: 'Connect',
-    mode: 'connect',
+    label: 'Unavailable',
+    mode: 'info',
     external: false,
-    note: 'Connecting this app will be available soon.',
+    note: 'This app has no valid external link.',
   };
+}
+
+/**
+ * The DOMAIN both permission signals live in: an off-site listing that has
+ * somewhere to run.
+ *
+ * 🔴 This exists so the disclosure and the connect indicator are complements BY
+ * CONSTRUCTION rather than by coincidence. Two independently-written predicates
+ * reading the same field is exactly the shape that drifts — one gets a fix, the
+ * other does not, and the page then either makes both claims at once or neither.
+ * Factoring the shared half out means the only difference between them is the
+ * sense of one negation.
+ *
+ * A listing OUTSIDE this domain (on-site, or off-site with no destination) shows
+ * NEITHER signal, which is correct: an on-site app runs on platform, and there
+ * is no "where it runs" claim to make about a listing with nowhere to run.
+ */
+function hasOffsitePermissionSignal(
+  kindData: ListingDetail['kindData']
+): kindData is Extract<ListingDetail['kindData'], { kind: 'offsite' }> {
+  return kindData.kind === 'offsite' && !!kindData.externalUrl;
+}
+
+/**
+ * Does the detail page show the "runs entirely off-platform — no Civitai
+ * install, account access, or permissions" disclosure?
+ *
+ * 🔴 EXTRACTED FROM THE JSX ON PURPOSE. This predicate makes a SECURITY CLAIM to
+ * the viewer, and it is FALSE of a listing with an OAuth app connected — that
+ * app can be granted account access, which is the whole point of connecting it.
+ * Inline in `AppListingDetailBody` it was unreachable by the blocking node
+ * `unit` project, and the report-only browser suite asserted it nowhere at all,
+ * so deleting the condition — printing "no account access" over every off-site
+ * listing — was a change no test could catch. Here it is a pure function with
+ * its own truth-table tests.
+ *
+ * Three conjuncts, each load-bearing — now expressed as a shared DOMAIN
+ * (`hasOffsitePermissionSignal`: offsite + a destination) plus the capability
+ * term:
+ *   - `offsite` — an on-site app runs ON platform, so the sentence is simply
+ *     wrong about it;
+ *   - a non-null `externalUrl` — there is no "runs off-platform" claim to make
+ *     about a listing with nowhere to run;
+ *   - no `connectClientId` — the capability check; see above.
+ *
+ * 🔴 The domain is factored out so this predicate and its positive counterpart
+ * `shouldShowConnectCapability` CANNOT DRIFT APART. They differ by exactly one
+ * negation, over one shared domain, so "both shown" and "both hidden inside the
+ * domain" are unrepresentable rather than merely untested. See that function.
+ *
+ * Truthiness on `connectClientId`, matching `app-listing.service`'s `|| null`,
+ * and `shouldShowConnectCapability` below — so all THREE read the capability the
+ * same way.
+ *
+ * 🔴 THAT COUNT IS LOAD-BEARING AND IT MOVES — recount it against the tree, never
+ * restate it. It has now been wrong in BOTH directions. It originally read three:
+ * this predicate, the service projection, and `getDetailPrimaryAction`'s
+ * no-destination fallback. #4208 deleted that fallback's `connectClientId` test
+ * outright — the primary action no longer reads the capability at all, and a
+ * region gate in the tests asserts the CTA renderer cannot — taking it to two.
+ * #4207 then added `shouldShowConnectCapability`, bringing it back to three with
+ * DIFFERENT membership. Counted on this tree the three are: this predicate
+ * (`!connectClientId`), `shouldShowConnectCapability` (`!!connectClientId`), and
+ * `app-listing.service`'s `row.connectClientId || null` projection.
+ *
+ * 🔴 TWO PRODUCERS FEED THIS, and only one is the store read path.
+ * `OffsiteReviewQueue`'s `ListingPreviewSection` renders `AppListingDetailBody`
+ * with a detail from `buildListingDetailPreview` whenever the mod-only
+ * projection query is loading, errors, or the row has no `appListingId` — so
+ * that builder's `connectClientId` is load-bearing for THIS claim, and it has
+ * its own passthrough test for exactly that reason. If you add a third
+ * producer, give it one too.
+ *
+ * That preview builder passes the field through with `?? null` while its old
+ * sub-kind used `!= null`, so at `connectClientId === ''` this predicate now
+ * SHOWS the disclosure where the old code hid it. Practically unreachable
+ * (`connect_client_id` is an FK to `OauthClient.id`; `offsite-listing.schema.ts`
+ * requires `z.string().min(1)` on create) and the safer of the two answers — an
+ * empty string is not a connected OAuth app — but it is a real difference, so
+ * do not read "identical rendering" as universal across both producers.
+ */
+export function shouldShowOffsiteDisclosure(kindData: ListingDetail['kindData']): boolean {
+  return hasOffsitePermissionSignal(kindData) && !kindData.connectClientId;
+}
+
+/**
+ * Does the detail page show the POSITIVE "this app can connect to your Civitai
+ * account" indicator?
+ *
+ * 🔴 A CAPABILITY, NOT A KIND. #4200 deleted the off-site sub-kind because a
+ * parent category and one of its children were sharing a word; this does not
+ * bring that back. There is one off-site kind, one badge, one CTA path. What
+ * this adds is a PROPERTY of a listing — it has an OAuth client, so it can ask
+ * for access to your account — surfaced on the page body next to the
+ * disclosure. Nothing here forks the taxonomy, the kind label, or the action.
+ * If a future change makes this select a different badge or a different CTA,
+ * that is the sub-kind returning under a new name; don't.
+ *
+ * WHY IT EXISTS (#4207). "This app can connect to your Civitai account" is a
+ * permission-relevant fact, and until now it was communicated ONLY by the
+ * ABSENCE of the off-platform disclosure. A user had to notice that a sentence
+ * they had never seen was missing. That is the weakest possible form of a
+ * permission signal, and it is invisible to anyone who has not seen the other
+ * variant for comparison.
+ *
+ * 🔴 THE EXACT COMPLEMENT of `shouldShowOffsiteDisclosure` over the shared
+ * domain — same truthiness test on `connectClientId`, opposite sense. So for any
+ * listing in the domain EXACTLY ONE of the two renders, and outside it neither
+ * does. That relationship is the thing worth pinning, and it is pinned as a
+ * relationship (one test, both states) rather than as two isolated assertions —
+ * testing them separately is precisely how a contradiction between them would be
+ * missed.
+ *
+ * Truthiness, not `!= null`, matching the disclosure, `app-listing.service`'s
+ * `|| null`, and the no-destination fallback — so every reader of this field
+ * agrees. At `connectClientId === ''` this is false and the disclosure is true:
+ * an empty string is not a connected OAuth app, and that is the safe direction
+ * (we under-claim the capability rather than over-claim it).
+ */
+export function shouldShowConnectCapability(kindData: ListingDetail['kindData']): boolean {
+  return hasOffsitePermissionSignal(kindData) && !!kindData.connectClientId;
 }

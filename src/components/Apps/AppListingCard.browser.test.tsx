@@ -206,18 +206,25 @@ describe('AppListingCard', () => {
         card={base({
           kind: 'offsite',
           name: 'External App',
-          kindData: { kind: 'offsite', subKind: 'external-link', externalUrl: 'https://ext.app' },
+          kindData: { kind: 'offsite', externalUrl: 'https://ext.app' },
         })}
       />
     );
-    // The kind signal ("Off-site") is no longer a badge — it's conveyed by the
-    // CTA below (an external "Visit" anchor vs. an internal Open/View details
-    // link) plus the off-site disclosure Alert on the detail page.
-    await expect.element(page.getByText('Off-site', { exact: true })).not.toBeInTheDocument();
     const visit = page.getByRole('link', { name: 'Visit' });
     await expect.element(visit).toHaveAttribute('href', 'https://ext.app');
     await expect.element(visit).toHaveAttribute('target', '_blank');
     await expect.element(visit).toHaveAttribute('rel', 'noopener noreferrer');
+    // The kind signal ("Standalone") is no longer a badge — it's conveyed by the
+    // CTA above (an external "Visit" anchor vs. an internal Open/View details
+    // link) plus the off-site disclosure Alert on the detail page.
+    //
+    // 🔴 `expect(locator.query()).toBeNull()`, NOT `expect.element(...).not.toBeInTheDocument()`.
+    // The latter is REACHABLE BUT NON-ASSERTING: it passes for every string, including
+    // ones the card demonstrably renders. Controlled both ways — asserting absence of
+    // 'Visit' (rendered, per the three awaits above) goes RED in this form and PASSED in
+    // the old one. Ordering is load-bearing too: `.query()` is a point-in-time read, so
+    // it must follow an awaited positive assertion or it can pass on an unsettled render.
+    expect(page.getByText('Standalone', { exact: true }).query()).toBeNull();
   });
 
   test('off-site connect with NO external target → View details → unified detail', async () => {
@@ -233,7 +240,7 @@ describe('AppListingCard', () => {
         card={base({
           kind: 'offsite',
           name: 'Connect App',
-          kindData: { kind: 'offsite', subKind: 'connect', externalUrl: null },
+          kindData: { kind: 'offsite', externalUrl: null },
         })}
       />
     );
@@ -251,7 +258,7 @@ describe('AppListingCard', () => {
         card={base({
           kind: 'offsite',
           name: 'Connect App',
-          kindData: { kind: 'offsite', subKind: 'connect', externalUrl: 'https://connect.app' },
+          kindData: { kind: 'offsite', externalUrl: 'https://connect.app' },
         })}
       />
     );
@@ -400,7 +407,7 @@ describe('AppListingCard', () => {
         card={base({
           kind: 'offsite',
           name: 'External App',
-          kindData: { kind: 'offsite', subKind: 'external-link', externalUrl: 'https://ext.app' },
+          kindData: { kind: 'offsite', externalUrl: 'https://ext.app' },
         })}
       />
     );
@@ -432,7 +439,7 @@ describe('AppListingCard', () => {
       <AppListingCard
         card={base({
           kind: 'offsite',
-          kindData: { kind: 'offsite', subKind: 'external-link', externalUrl: 'https://ext.app' },
+          kindData: { kind: 'offsite', externalUrl: 'https://ext.app' },
         })}
       />
     );
@@ -593,7 +600,7 @@ describe('AppListingCard', () => {
       <AppListingCard
         card={base({
           kind: 'offsite',
-          kindData: { kind: 'offsite', subKind: 'external-link', externalUrl: 'https://ext.app' },
+          kindData: { kind: 'offsite', externalUrl: 'https://ext.app' },
         })}
       />
     );
@@ -673,7 +680,6 @@ describe('AppListingCard', () => {
             kind: 'offsite',
             kindData: {
               kind: 'offsite',
-              subKind: 'external-link',
               externalUrl: 'https://ext.example/app',
             },
           })}
@@ -770,20 +776,19 @@ describe('AppListingCard', () => {
         recommend: { recommendedCount: 91, notRecommendedCount: 9, recommendPct: 0.91 },
         reviewCount: 100,
       };
-      // The widest CTA ("View details") — the tight cell in the table above. A
-      // connect-kind listing has no external target, so `getListingCta` falls
+      // The widest CTA ("View details") — the tight cell in the table above. An
+      // off-site listing with no external target makes `getListingCta` fall
       // through to the unified detail. Fully typed (`externalUrl` included)
-      // rather than cast. Two bugs the cast was HIDING, both surfaced the moment
-      // it became a `satisfies`: `externalUrl` was missing, and the subKind was
-      // `'oauth-connect'` — not a member of `OffsiteSubKind` at all
-      // (`'connect' | 'external-link'`). Neither `tsc` error reached vitest,
-      // which type-strips.
+      // rather than cast: the cast was HIDING a missing `externalUrl` and a
+      // `subKind: 'oauth-connect'` that was not a member of the sub-kind union
+      // at all, and neither `tsc` error reached vitest, which type-strips.
+      // (The sub-kind itself is now gone — `externalUrl` is the only off-site
+      // card input, so that particular typo has no shape left to take.)
       const OFFSITE_CONNECT = {
         ...REVIEWED,
         kind: 'offsite' as const,
         kindData: {
           kind: 'offsite',
-          subKind: 'connect',
           externalUrl: null,
         } satisfies ListingCard['kindData'],
       };
@@ -806,7 +811,6 @@ describe('AppListingCard', () => {
         reviewCount: 0,
         kindData: {
           kind: 'offsite',
-          subKind: 'connect',
           externalUrl: null,
         } satisfies ListingCard['kindData'],
       };

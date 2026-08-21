@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { getActiveSalesForModels } from '~/server/services/paid-access.service';
 import { env } from '~/env/server';
 import { CacheTTL } from '~/server/common/constants';
 import {
@@ -42,6 +43,8 @@ import {
 import { dbRead } from '~/server/db/client';
 import { applyUserPreferences, cacheIt, edgeCacheIt } from '~/server/middleware.trpc';
 import { getAllQuerySchema, getByIdSchema } from '~/server/schema/base.schema';
+import type { EarlyAccessRefundSummary } from '~/server/services/model-early-access-refund.service';
+import { toEarlyAccessRefundSummary } from '~/server/services/model-early-access-refund.service';
 import type { GetAllModelsOutput } from '~/server/schema/model.schema';
 import {
   changeModelModifierSchema,
@@ -92,7 +95,6 @@ import {
   setModelOfficial,
   setModelsCategory,
   toggleCannotPromote,
-  toggleCannotPublish,
   toggleLockComments,
 } from '~/server/services/model.service';
 import { getResourceSelectModels } from '~/server/services/resource-select.service';
@@ -136,13 +138,6 @@ const skipEdgeCache = middleware(async ({ input, ctx, next }) => {
     ctx: { user: ctx.user, cache: { ...ctx.cache, skip: _input.favorites || _input.hidden } },
   });
 });
-
-type EarlyAccessRefundSummary = {
-  purchaseCount: number;
-  buyerCount: number;
-  totalBuzz: number;
-  exemptBuyerCount: number;
-};
 
 export const modelRouter = router({
   getById: publicProcedure
@@ -202,6 +197,14 @@ export const modelRouter = router({
   getFeaturedModels: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .query(() => getFeaturedModels()),
+  // Which of the cards on screen are on sale. Kept off the feed query and out of the search document:
+  // a sale turns on and off at a wall-clock moment, so indexing it would mean re-indexing at every edge.
+  getActiveSales: publicProcedure
+    .meta({ requiredScope: TokenScope.ModelsRead })
+    // Bounded on its own schema: this is a public procedure reaching raw SQL, and the shared
+    // getByIdsSchema has no cap.
+    .input(z.object({ ids: z.number().array().max(500) }))
+    .query(({ input }) => getActiveSalesForModels(input.ids)),
   getResourceSelect: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getResourceSelectSchema)
@@ -231,11 +234,10 @@ export const modelRouter = router({
     .use(isOwnerOrModerator)
     // Annotated so dropping a field is a type error rather than a silently missing dialog: the
     // caller reads `exemptBuyerCount > 0`, which an absent field answers with `false`.
-    .query(async ({ input }): Promise<EarlyAccessRefundSummary> => {
-      const { purchases, buyerCount, totalBuzz, exemptBuyerCount } =
-        await getModelEarlyAccessRefundRequirement(input);
-      return { purchaseCount: purchases.length, buyerCount, totalBuzz, exemptBuyerCount };
-    }),
+    .query(
+      async ({ input }): Promise<EarlyAccessRefundSummary> =>
+        toEarlyAccessRefundSummary(await getModelEarlyAccessRefundRequirement(input))
+    ),
   // TODO - TEMP HACK for reporting modal
   getModelReportDetails: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
@@ -365,11 +367,6 @@ export const modelRouter = router({
     .input(getByIdSchema)
     .mutation(({ input, ctx }) =>
       toggleCannotPromote({ ...input, isModerator: ctx.user.isModerator ?? false })
-    ),
-  toggleCannotPublish: moderatorProcedure
-    .input(getByIdSchema)
-    .mutation(({ input, ctx }) =>
-      toggleCannotPublish({ ...input, isModerator: ctx.user.isModerator ?? false })
     ),
   setOfficial: moderatorProcedure
     .input(setModelOfficialSchema)

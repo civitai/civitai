@@ -1,25 +1,22 @@
-import type { ButtonVariant } from '@mantine/core';
-import { ActionIcon, Button, Title, useMantineTheme } from '@mantine/core';
 import { IconX } from '@tabler/icons-react';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
-import type { AnnouncementDTO } from '~/server/services/announcement.service';
+import React from 'react';
+import { AnnouncementCard } from '~/components/Announcements/AnnouncementCard';
 import {
   dismissAnnouncements,
   useAnnouncementsStore,
 } from '~/components/Announcements/announcements.utils';
-import { ANNOUNCEMENT_IMAGE_WIDTH } from '~/components/Announcements/announcement-image';
-import clsx from 'clsx';
-import { TwCard } from '~/components/TwCard/TwCard';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import type { AnnouncementDTO } from '~/server/services/announcement.service';
 
+/**
+ * A sitewide (Civitai-authored) announcement. Layout lives in `AnnouncementCard`, shared
+ * with the creator variant so the two cannot drift apart; everything here is the part that
+ * is specific to a platform announcement — dismissal and moderator controls.
+ */
 export function Announcement({
   announcement,
   dismissible,
   moderatorActions,
-  className,
-  style,
   ...props
 }: {
   announcement: AnnouncementDTO;
@@ -29,7 +26,6 @@ export function Announcement({
   const { actions, image } = announcement.metadata || {};
   const announcementType = announcement.metadata.type ?? 'site';
   const dismissed = useAnnouncementsStore((state) => state.dismissed[announcementType]);
-  const theme = useMantineTheme();
   const canDismiss = dismissed.includes(announcement.id)
     ? false
     : dismissible ?? announcement.metadata.dismissible ?? true;
@@ -39,67 +35,29 @@ export function Announcement({
   }
 
   return (
-    <TwCard
-      className={clsx('items-stretch border', className)}
-      direction="row"
-      style={{ borderColor: theme.colors[announcement.color][4], ...style }}
+    <AnnouncementCard
+      title={announcement.title}
+      content={announcement.content}
+      color={announcement.color}
+      // A bare storage key, not an Image row — see AnnouncementCardCover.
+      cover={image ? { kind: 'key', src: image } : null}
+      actions={actions ?? []}
+      controls={moderatorActions}
+      overlay={
+        canDismiss ? (
+          <LegacyActionIcon
+            variant="subtle"
+            radius="xl"
+            color="red"
+            onClick={handleDismiss}
+            className="absolute right-2 top-2"
+            aria-label="Dismiss announcement"
+          >
+            <IconX size={20} />
+          </LegacyActionIcon>
+        ) : null
+      }
       {...props}
-    >
-      {canDismiss && (
-        <LegacyActionIcon
-          variant="subtle"
-          radius="xl"
-          color="red"
-          onClick={handleDismiss}
-          className="absolute right-2 top-2"
-          aria-label="Dismiss announcement"
-        >
-          <IconX size={20} />
-        </LegacyActionIcon>
-      )}
-
-      {image && (
-        <div className="relative min-h-40 w-40 @max-md:hidden">
-          <EdgeMedia
-            src={image}
-            // Shared with `announcement-media-check` so the monitored variant stays the
-            // variant users actually load. See announcement-image.ts.
-            width={ANNOUNCEMENT_IMAGE_WIDTH}
-            alt="Announcement banner image"
-            className="absolute inset-0 size-full object-cover"
-          />
-        </div>
-      )}
-      <div className="flex flex-1 flex-col justify-center gap-2 p-3">
-        <div className="flex justify-between gap-2">
-          <Title order={4}>{announcement.title}</Title>
-          {moderatorActions}
-        </div>
-        <CustomMarkdown allowedElements={['a']} unwrapDisallowed>
-          {announcement.content}
-        </CustomMarkdown>
-        {actions && (
-          <div className="flex gap-2">
-            {actions.map((action, index) => (
-              <Button
-                key={index}
-                component={Link}
-                href={action.link}
-                variant={action.variant ? (action.variant as ButtonVariant) : 'outline'}
-                color={action.color ?? announcement.color}
-                // onClick={handleDismiss}
-                // onMouseUp={(e) => {
-                //   if (e.button === 1) {
-                //     handleDismiss();
-                //   }
-                // }}
-              >
-                {action.linkText}
-              </Button>
-            ))}
-          </div>
-        )}
-      </div>
-    </TwCard>
+    />
   );
 }

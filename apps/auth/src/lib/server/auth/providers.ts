@@ -140,6 +140,13 @@ const PROVIDERS: Record<ProviderId, ProviderDef> = {
   // It is enabled ONLY when AUTH_ENABLE_STUB_PROVIDER is truthy AND its STUB_CLIENT_ID/SECRET are set
   // (see listEnabledProviders' stubEnabled gate) — so with the flag unset (prod) it never appears in the
   // provider list and /login/stub 404s (the start route rejects an unconfigured provider).
+  //
+  // TYPES: this entry's key is a COMPUTED property whose type is the whole `ProviderId` union rather than a
+  // single literal, so TypeScript cannot match it to a member of `Record<ProviderId, ProviderDef>` and drops
+  // contextual typing for the value — which left `mapProfile`'s parameter implicitly `any` (and the rest of
+  // the entry unchecked against `ProviderDef`). The four literal-keyed entries above are unaffected because
+  // their keys resolve to a single member. `satisfies ProviderDef` restores both: the object is checked
+  // against the interface, and `mapProfile`'s `p` infers `Record<string, unknown>` from it.
   ['stub' as ProviderId]: {
     id: 'stub' as ProviderId,
     name: 'Stub',
@@ -172,7 +179,7 @@ const PROVIDERS: Record<ProviderId, ProviderDef> = {
         username: p.preferred_username as string | undefined,
       };
     },
-  },
+  } satisfies ProviderDef,
 };
 
 export function getProvider(id: string): ProviderDef | undefined {
@@ -215,7 +222,8 @@ function validatedStubUrl(raw: string | undefined): string {
   // CONSTRAINT: the stub MUST be a plain ClusterIP Service (2-label host). A headless/StatefulSet pod
   // FQDN (<pod>.<svc>.<ns>.svc.cluster.local, 3 labels) does NOT match and would fail-close the provider.
   const clusterServiceFqdn = /^[a-z0-9-]+\.[a-z0-9-]+\.svc\.cluster\.local$/;
-  if ((u.protocol === 'http:' || u.protocol === 'https:') && clusterServiceFqdn.test(u.hostname)) return raw;
+  if ((u.protocol === 'http:' || u.protocol === 'https:') && clusterServiceFqdn.test(u.hostname))
+    return raw;
   return '';
 }
 

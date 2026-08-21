@@ -1,0 +1,35 @@
+/**
+ * App-listing detail — the SCREENSHOT GALLERY's use of the tracks it has.
+ *
+ * The gallery is a fixed two-track grid (`SimpleGrid cols={{ base: 1, sm: 2 }}`).
+ * A tile that has no partner in its row therefore occupied ONE track and left the
+ * other empty: a listing with a single screenshot rendered its only image at half
+ * the main column with dead space beside it, and so did the trailing tile of any
+ * ODD count. This rule is the whole fix — a tile that is both the LAST child and
+ * at an ODD position has nothing to sit beside, so it spans every track instead.
+ *
+ * 🔴 STRUCTURAL, NOT COUNT-AWARE, AND THAT IS THE POINT. `ScreenshotTile` returns
+ * `null` when its image 404s, so the number of tiles the browser ends up with is
+ * NOT `screenshots.length` and is not known at render time — a `cols` value
+ * computed from the array would be wrong for exactly the listings whose art is
+ * broken. `:last-child` / `:nth-child` are matched against the LIVE DOM, so when a
+ * tile is dropped the remaining ones are re-matched for free: 3 shots of which
+ * the middle one 404s leaves two tiles that correctly stay half-width, and 3 of
+ * which two 404 leaves one tile that correctly goes full-width. Pinned as measured
+ * geometry in `AppListingDetailBody.gallery.browser.test.tsx`.
+ *
+ * `1 / -1` (first line to last line), never a hard-coded `span 2`: the track count
+ * is `1` below Mantine's `sm` breakpoint and `2` above it, and `1 / -1` is the only
+ * form that is correct at both. On the one-track layout it is a no-op, which is
+ * what it should be — every tile is already full width there.
+ *
+ * The class is applied in `AppListingDetailBody.tsx`'s `ScreenshotGallery`; the
+ * pairing (rule here, class there) is pinned in the BLOCKING node project by
+ * `__tests__/appListingGalleryFill.test.ts`, because a rule nothing references and
+ * a `className` pointing at a rule that no longer exists are both silent.
+ */
+.gallery {
+  > :last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+  }
+}

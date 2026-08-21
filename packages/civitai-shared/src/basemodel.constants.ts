@@ -1115,11 +1115,17 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // Flux 3 Video - checkpoint only (BFL via FAL, closed weights)
   { ecosystemId: ECO.Flux3Video, supportType: 'generation', modelTypes: checkpointOnly },
 
-  // Anima - checkpoint, LORA, DoRA and VAE generation, LORA training
+  // Anima - checkpoint, LORA, LoCon, DoRA and VAE generation, LORA training
   {
     ecosystemId: ECO.Anima,
     supportType: 'generation',
-    modelTypes: [ModelType.Checkpoint, ModelType.LORA, ModelType.DoRA, ModelType.VAE],
+    modelTypes: [
+      ModelType.Checkpoint,
+      ModelType.LORA,
+      ModelType.LoCon,
+      ModelType.DoRA,
+      ModelType.VAE,
+    ],
   },
   { ecosystemId: ECO.Anima, supportType: 'training', modelTypes: loraOnly },
 

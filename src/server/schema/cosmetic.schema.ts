@@ -12,12 +12,6 @@ export const getPaginatedCosmeticsSchema = paginationSchema.merge(
   })
 );
 
-export type GrantCosmeticsToUsersInput = z.infer<typeof grantCosmeticsToUsersSchema>;
-export const grantCosmeticsToUsersSchema = z.object({
-  cosmeticIds: z.array(z.number()).min(1).max(100),
-  userIds: z.array(z.number()).min(1).max(100),
-});
-
 /**
  * The cap on one sticker lookup. Exported so a caller can slice to it rather
  * than discover it as a zod failure — which is silent on a query, and takes the

@@ -1,7 +1,8 @@
 import { trpc } from '~/utils/trpc';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { FeatureNotice } from '~/components/Alerts/notice-registry';
-import { isNoticeDismissed } from '~/components/Alerts/notice-registry';
+import { isNoticeAudienceMatched, isNoticeDismissed } from '~/components/Alerts/notice-registry';
+import { useFeatureFlagsReady, useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export type UseFeatureNoticeResult = {
   /** The notice's id is present in the user's stored `dismissedAlerts`. */
@@ -17,6 +18,23 @@ export type UseFeatureNoticeResult = {
   hasSettings: boolean;
   /** The settings query is in flight. Weaker than `!hasSettings` — see below. */
   isLoading: boolean;
+  /**
+   * This user is in the notice's `audience`.
+   *
+   * `true` for a notice that declares no audience whenever there is a signed-in
+   * user, so an untargeted notice is unaffected by targeting existing. For a
+   * targeted one it is the per-user answer to the flag the notice names, and it
+   * fails closed while that answer is unknown — AND it into the render condition
+   * exactly like `hasSettings`.
+   *
+   * 🔴 `false` for a SIGNED-OUT visitor, for every notice. There is no user to
+   * be in an audience, and `flagsReady` does NOT say otherwise — it is `true`
+   * for a logged-out visitor by construction (see `FeatureFlagsProvider`), so
+   * the flags on offer there are the anonymous snapshot. That costs nothing at
+   * any call site that composes as documented: `hasSettings` is already `false`
+   * signed out, because the settings query is disabled without a user.
+   */
+  isInAudience: boolean;
   /** Persist a dismissal, optimistically. */
   dismiss: () => void;
   /** Undo a dismissal, optimistically. Only meaningful where UI offers it. */
@@ -44,10 +62,17 @@ export type UseFeatureNoticeResult = {
  * means showing it to someone who already dismissed it. Prefer `hasSettings`
  * for anything a user can dismiss.
  *
- * Deliberately NOT owned here: WHEN a notice should be shown. Visibility is
- * per-site (a feature flag, a balance, a mount context) and folding it in would
- * mean every site paying for every other site's conditions. Sites compose
- * `hasSettings && !isDismissed && <their own condition>`.
+ * Still NOT owned here: WHEN a notice should be shown. Visibility is per-site (a
+ * balance, a mount context, a layout state) and folding it in would mean every
+ * site paying for every other site's conditions. Sites compose
+ * `hasSettings && !isDismissed && isInAudience && <their own condition>`.
+ *
+ * The ONE condition that did move in is `audience`, and the distinction is
+ * worth keeping straight: a per-site condition describes the moment, while an
+ * audience describes the NOTICE — it is the same answer at every site that
+ * shows it, so leaving it to the sites means N chances to get it wrong and no
+ * way to enumerate who is being told what. It is declared in the registry and
+ * applied here; `isInAudience` is the result.
  *
  * @param notice  A registry entry, never a bare string — that is what keeps the
  *                persisted id set enumerable and collision-checkable.
@@ -60,6 +85,16 @@ export function useFeatureNotice(
 ): UseFeatureNoticeResult {
   const currentUser = useCurrentUser();
   const queryEnabled = enabled && !!currentUser;
+
+  // 🔴 The provider's RESOLVED flags, NOT a keyed flag evaluation. What the
+  // provider hands out is `{ ...ssrFlags, ...toggleableOverlay }`, and BOTH
+  // halves are computed server-side from the caller's own session — which is
+  // what makes a segment-scoped flag able to match at all. A keyed evaluation
+  // with no context answers "not in the segment" for every user, uniformly and
+  // silently. Which half a given flag arrives on depends only on whether it is
+  // declared `toggleable`; see `NoticeAudience` in the registry.
+  const featureFlags = useOptionalFeatureFlags();
+  const flagsReady = useFeatureFlagsReady();
 
   const { data: settings, isLoading } = trpc.user.getSettings.useQuery(undefined, {
     enabled: queryEnabled,
@@ -94,6 +129,13 @@ export function useFeatureNotice(
     isDismissed: isNoticeDismissed(settings?.dismissedAlerts, notice),
     hasSettings: !!settings,
     isLoading,
+    // 🔴 `!!currentUser` is a gate `isNoticeAudienceMatched` cannot apply for
+    // itself: it is handed `flagsReady`, which is TRUE for a logged-out visitor
+    // (`!session.data` — see `FeatureFlagsProvider`), so from inside the pure
+    // function the anonymous snapshot is indistinguishable from a resolved
+    // per-user one. Answering "in the audience" for someone with no session is
+    // the one thing this must never do.
+    isInAudience: !!currentUser && isNoticeAudienceMatched(notice, featureFlags, flagsReady),
     // `dismiss` omits the flag and `restore` sends `false`, matching the wire
     // payloads these call sites have always sent.
     dismiss: () => mutation.mutate({ alertId: notice.id }),

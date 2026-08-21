@@ -15,8 +15,10 @@ import clsx from 'clsx';
 import { useState } from 'react';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
+import { SHARED_ALLOWANCE_NOTE } from '~/shared/utils/placement';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { useQueryImages } from '~/components/Image/image.utils';
+import { remixSubmitPickerFilters } from '~/components/RemixGallery/remix-gallery.utils';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { NoContent } from '~/components/NoContent/NoContent';
 import {
@@ -73,7 +75,7 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
   );
 
   const { images, isLoading, fetchNextPage, hasNextPage, isRefetching } = useQueryImages(
-    { userId: currentUser?.id, period: 'AllTime', limit: 50 },
+    remixSubmitPickerFilters(currentUser?.id),
     { enabled: !!currentUser }
   );
 
@@ -499,11 +501,13 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
                 data={[
                   {
                     value: 'free',
-                    // Always "needs review" on this surface: a gallery places
-                    // arbitrary media on someone else's page, so `auto` is
-                    // refused for it in three places. Written out rather than
-                    // branched on the mode, which cannot be anything else here.
-                    label: 'Free · needs review',
+                    // 🔴 Just "Free". It read `Free · needs review` beside a
+                    // plain `N Buzz`, which says the paid one does not — and on
+                    // this surface EVERY submission goes to the creator, free or
+                    // paid, because a gallery places arbitrary media on someone
+                    // else's page and `auto` is refused for it in three places.
+                    // The review is said once, below, where it applies to both.
+                    label: 'Free',
                     disabled: !freeAvailable,
                   },
                   {
@@ -523,11 +527,16 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
               {/* No number and no reset time written here. The allowance is a
                   server-side rule and both of its facts already come back from
                   `getFreePlacementAllowance`; a sentence that spells either one
-                  out is a claim this file cannot keep true. */}
+                  out is a claim this file cannot keep true.
+
+                  What the allowance is SHARED with is not such a claim — it is a
+                  product rule, it is the one readers were getting wrong, and it
+                  comes from the same constant the sticker surface uses so the
+                  two cannot describe different budgets. */}
               {method === 'free' && freeAvailable && (
                 <Text size="xs" c="dimmed">
-                  This spends a free placement from today&apos;s allowance, and it is spent even if
-                  the creator declines.
+                  This spends your free placement for today &mdash; {SHARED_ALLOWANCE_NOTE} &mdash;
+                  and it is spent even if the creator declines.
                 </Text>
               )}
             </Stack>

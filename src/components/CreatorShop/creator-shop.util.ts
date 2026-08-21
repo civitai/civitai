@@ -1,3 +1,4 @@
+import { keepPreviousData } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import { withPlaceholderData } from '~/hooks/trpcHelpers';
 import { trpc } from '~/utils/trpc';
@@ -5,6 +6,7 @@ import type { RouterOutput } from '~/types/router';
 import type {
   GetCommunityCosmeticsInput,
   GetPublicShopItemsInput,
+  ReviewQueueSort,
 } from '~/server/schema/creator-shop.schema';
 import type { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -114,28 +116,38 @@ export const useQueryEarlyAccessPrices = (modelVersionIds: number[]) => {
   return prices;
 };
 
+const REVIEW_QUEUE_PAGE_SIZE = 20;
+
 export const useQueryCreatorShopReviewQueue = ({
   status,
   username,
   userId,
   cosmeticTypes,
+  sort = 'oldest',
+  page = 1,
   enabled = true,
 }: {
   status?: CosmeticShopItemStatus | undefined;
   username?: string;
   userId?: number;
   cosmeticTypes?: (CosmeticType | 'Pack')[];
+  sort?: ReviewQueueSort;
+  page?: number;
   enabled?: boolean;
 } = {}) =>
-  trpc.creatorShop.getReviewQueue.useInfiniteQuery(
+  trpc.creatorShop.getReviewQueue.useQuery(
     {
-      limit: 20,
+      limit: REVIEW_QUEUE_PAGE_SIZE,
+      page,
+      sort,
       status,
       username: username?.trim() || undefined,
       userId,
       cosmeticTypes: cosmeticTypes?.length ? cosmeticTypes : undefined,
     },
-    { enabled, getNextPageParam: (lastPage) => lastPage.nextCursor }
+    // Without this the list unmounts on every page step, which also clears the
+    // selection the moderator is reviewing.
+    { enabled, placeholderData: keepPreviousData }
   );
 
 // Everyone who has ever submitted a shop item — the option list for the review

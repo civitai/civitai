@@ -62,6 +62,41 @@ export const appendItemHistory = (
   history: [...(meta.history ?? []), entry].slice(-CREATOR_SHOP_HISTORY_LIMIT),
 });
 
+// Rejection is terminal on every path a creator can reach — edit, list, archive,
+// restore. Only a moderator re-reviewing it can bring one back, so the message
+// says where that happens rather than implying nothing can. One wording, so each
+// blocked path reads the same.
+export const REJECTED_IS_FINAL =
+  'Rejected items are final — a moderator has to reopen it from the review queue first';
+
+/**
+ * Index of the most recent review verdict in an item's history, or -1.
+ *
+ * Shared because two very different questions start with the same scan: the
+ * review queue asks what the last verdict SAID, and the terminal-rejection
+ * guards ask whether it was a rejection.
+ */
+export const lastReviewIndex = (history?: CosmeticShopItemHistoryEntry[]) => {
+  if (!history?.length) return -1;
+  for (let i = history.length - 1; i >= 0; i--) if (history[i].kind === 'reviewed') return i;
+  return -1;
+};
+
+/**
+ * Whether the last thing a moderator did to this item was reject it.
+ *
+ * A rejection is terminal, but archiving overwrites `status`, so an item that
+ * was archived after being rejected no longer says so — and restoring it clears
+ * the verdict and puts it back in the queue. Reading the history is the only way
+ * to tell those apart. An item whose rejection has aged out of the capped log
+ * reads as not-rejected; the status guards on the paths that can still see it
+ * are what keep new items out of that state.
+ */
+export const wasLastReviewARejection = (history?: CosmeticShopItemHistoryEntry[]) => {
+  const index = lastReviewIndex(history);
+  return index >= 0 && history![index].action === 'reject';
+};
+
 /**
  * Resolves the `Cosmetic.data` write for an edit. Replaced artwork rebuilds the
  * blob; an offsets- or slug-only edit patches the existing one. Returns

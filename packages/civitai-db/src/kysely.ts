@@ -3,7 +3,7 @@ import { Pool, types, type PoolConfig } from 'pg';
 
 // Re-export `sql` so apps build raw fragments without a direct kysely dependency — the db layer owns it.
 export { sql } from 'kysely';
-export type { RawBuilder } from 'kysely';
+export type { Generated, RawBuilder } from 'kysely';
 
 // Kysely client builder. Standalone — imports only kysely + pg (NOT the Prisma client /
 // db-helpers / env), so a Vite/SSR app can import `@civitai/db/kysely` without pulling Prisma.
@@ -27,6 +27,14 @@ function registerNumericTypeParsers() {
   if (numericParsersRegistered) return;
   types.setTypeParser(types.builtins.NUMERIC, (val) => parseFloat(val));
   types.setTypeParser(types.builtins.INT8, (val) => parseFloat(val));
+  // TIMESTAMP (oid 1114) is `timestamp without time zone`, which pg's default parser reads as LOCAL
+  // time. db-helpers.ts registers a UTC parser for the same oid, so the main app and any Kysely app
+  // read the SAME COLUMN hours apart — which is how a scheduled sale twice appeared to start in the
+  // future to one app and in the past to the other. These columns are written as UTC instants; read
+  // them that way everywhere.
+  // Byte-identical to db-helpers.ts's parser on purpose: two near-copies of a date transform is how
+  // the two apps disagreed in the first place.
+  types.setTypeParser(types.builtins.TIMESTAMP, (val) => new Date(val.replace(' ', 'T') + 'Z'));
   numericParsersRegistered = true;
 }
 
@@ -140,12 +148,21 @@ export function createKyselyClients<DB>(
 
   const make = (p: Pool) => new Kysely<DB>({ dialect: new PostgresDialect({ pool: p }), plugins });
 
-  const primary = make(pool ?? new Pool(config));
+  // node-postgres emits 'error' on the POOL when an IDLE client dies — a managed database dropping idle
+  // connections, a network blip, a laptop sleeping. `error` is a special event in Node: with no listener
+  // it is rethrown, so an idle-connection drop takes down the process or fails the next request rather
+  // than being retired quietly. The pool already discards the bad client; this only stops the throw.
+  const guard = (p: Pool) => {
+    p.on('error', (err) => console.error('[db] idle client error (pool will recycle it)', err));
+    return p;
+  };
+
+  const primary = make(pool ?? guard(new Pool(config)));
   if (singleClient) return { db: primary };
 
   const dbRead =
     readPool || replicaString
-      ? make(readPool ?? new Pool({ ...config, connectionString: replicaString }))
+      ? make(readPool ?? guard(new Pool({ ...config, connectionString: replicaString })))
       : primary;
   return { dbRead, dbWrite: primary };
 }

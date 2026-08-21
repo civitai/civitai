@@ -244,9 +244,13 @@ export function AppBlockChrome({
   // Excludes the app currently being viewed (matched by appBlockId — the store's
   // stable id) and is capped to a short list for the compact dropdown.
   const [recents, setRecents] = useState<RecentApp[]>([]);
+  // 🔴 Keyed by ACCOUNT (#4048) — localStorage is per browser profile, so the
+  // store hands back only what the CURRENT viewer recorded (`null` = signed
+  // out, its own bucket). In the dep list so an in-SPA account change re-reads.
+  const recentsOwnerId = currentUser?.id ?? null;
   useEffect(() => {
-    setRecents(getRecentlyOpenedApps());
-  }, []);
+    setRecents(getRecentlyOpenedApps(recentsOwnerId));
+  }, [recentsOwnerId]);
   // Which of those entries this menu may offer. The rules (off-site exclusion,
   // the `appBlocksPages` gate that keeps a dark-flag viewer off guaranteed-404
   // `/apps/run/` links, self-exclusion, the cap) live in the pure
@@ -263,10 +267,13 @@ export function AppBlockChrome({
   // store on the transition to open, so the "Recently run" list is fresh within
   // an SPA session. Still SSR-safe — the read only happens on a user-driven open
   // (never during render) and getRecentlyOpenedApps() self-guards `isClient`.
-  const handleMenuChange = useCallback((opened: boolean) => {
-    setMenuOpened(opened);
-    if (opened) setRecents(getRecentlyOpenedApps());
-  }, []);
+  const handleMenuChange = useCallback(
+    (opened: boolean) => {
+      setMenuOpened(opened);
+      if (opened) setRecents(getRecentlyOpenedApps(recentsOwnerId));
+    },
+    [recentsOwnerId]
+  );
   // The full-page run surface (`app.page`) has no model-page slot to hide the
   // block from — the page IS the block — so suppress the "Hide" item there.
   const isPage = slotId != null && isPageSlot(slotId);
@@ -364,10 +371,10 @@ export function AppBlockChrome({
             </Menu.Item>
             <Menu.Item
               component={Link}
-              href="/apps/my-submissions"
+              href="/apps/mine"
               leftSection={<IconUpload size={14} stroke={1.5} />}
             >
-              My submissions
+              My apps
             </Menu.Item>
             {isModerator && (
               <Menu.Item

@@ -332,7 +332,7 @@ export async function updateByTipaltiAccount({
       }).catch();
     }
   } else if (
-    tipaltiAccountStatus === TipaltiStatus.BlockedByTipalti ||
+    tipaltiAccountStatus === TipaltiStatus.BlockedByProvider ||
     tipaltiAccountStatus === TipaltiStatus.Blocked
   ) {
     await createNotification({

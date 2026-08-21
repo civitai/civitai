@@ -1,4 +1,5 @@
 import { Menu, useComputedColorScheme } from '@mantine/core';
+import { moderatorUserLookupPath } from '~/shared/constants/moderator-app';
 import { openConfirmModal } from '@mantine/modals';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { showNotification, updateNotification } from '@mantine/notifications';
@@ -276,16 +277,14 @@ export const UserContextMenu = ({ username }: { username: string }) => {
         <>
           {isMod && (
             <>
-              {env.NEXT_PUBLIC_USER_LOOKUP_URL && (
-                <Menu.Item
-                  component="a"
-                  target="_blank"
-                  leftSection={<IconInfoCircle size={14} stroke={1.5} />}
-                  href={`${env.NEXT_PUBLIC_USER_LOOKUP_URL}${user.id}`}
-                >
-                  Lookup User
-                </Menu.Item>
-              )}
+              <Menu.Item
+                component="a"
+                target="_blank"
+                leftSection={<IconInfoCircle size={14} stroke={1.5} />}
+                href={`${env.NEXT_PUBLIC_MODERATOR_APP_URL}${moderatorUserLookupPath(user.id)}`}
+              >
+                Lookup User
+              </Menu.Item>
               {features.impersonation && user.id !== currentUser.id && (
                 <Menu.Item
                   color="yellow"

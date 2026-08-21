@@ -28,15 +28,26 @@ const chip = async () => {
 const backgroundOf = (element: Element) => getComputedStyle(element).backgroundColor;
 
 describe('StickerCountChip', () => {
-  test('says the word at zero, and never the number', async () => {
+  test('shows the icon alone at zero — no word, and never the number', async () => {
     renderWithProviders(
-      <StickerCountChip count={0} revealed={false} tooltip="Place a sticker" onClick={vi.fn()} />
+      <StickerCountChip
+        count={0}
+        revealed={false}
+        ariaLabel="No stickers yet"
+        tooltip="Place a sticker"
+        onClick={vi.fn()}
+      />
     );
 
     const text = (await chip()).textContent;
-    expect(text).toContain('stickers');
-    // A count of zero rendered as a numeral is the regression this guards.
+    // The word "stickers" was the widest thing in a row that has to fit beside
+    // the reaction buttons on a phone, and the icon already says it.
+    expect(text).not.toContain('sticker');
+    // A count of zero rendered as a numeral is the older regression this guards.
     expect(text).not.toContain('0');
+    // 🔴 But the accessible name still spells it out. Dropping a word to save
+    // space is a layout decision and must not reach a screen reader.
+    expect(page.getByRole('button', { name: 'No stickers yet' }).elements()).toHaveLength(1);
   });
 
   test('says the number when there are stickers', async () => {
@@ -47,25 +58,23 @@ describe('StickerCountChip', () => {
     expect((await chip()).textContent).toContain('3');
   });
 
-  test('spells the count out only where the row has room, and gets the singular right', async () => {
+  test('renders the bare number, whatever the count', async () => {
     renderWithProviders(
       <>
-        <StickerCountChip count={1} revealed={false} showLabel tooltip="Show" onClick={vi.fn()} />
-        <StickerCountChip count={4} revealed={false} showLabel tooltip="Show" onClick={vi.fn()} />
-        <StickerCountChip count={7} revealed={false} tooltip="Show" onClick={vi.fn()} />
+        <StickerCountChip count={1} revealed={false} tooltip="Show" onClick={vi.fn()} />
+        <StickerCountChip count={4} revealed={false} tooltip="Show" onClick={vi.fn()} />
       </>
     );
 
-    // Anchor the wait on the unlabelled chip: its text is "7" whether or not
-    // `showLabel` works, and no other chip here renders that. Awaiting a
-    // labelled one would spend the full 15 s matcher budget on precisely the
-    // regression this test exists to catch, and anchoring on a name two chips
-    // could share turns the same failure into a strict-mode retry.
-    await expect.element(page.getByRole('button', { name: /^7$/ })).toBeInTheDocument();
-
-    expect(page.getByRole('button', { name: /^1 sticker$/ }).elements()).toHaveLength(1);
-    expect(page.getByRole('button', { name: /^1 stickers$/ }).elements()).toHaveLength(0);
+    // No singular/plural to get right any more, because there is no noun: the
+    // chip is the icon and the number, and nothing else.
+    // The FACE of the chip is the number alone; the accessible name still
+    // carries the noun, and gets the singular right.
+    await expect.element(page.getByRole('button', { name: /^1 sticker$/ })).toBeInTheDocument();
     expect(page.getByRole('button', { name: /^4 stickers$/ }).elements()).toHaveLength(1);
+    expect(page.getByRole('button', { name: /^1 stickers$/ }).elements()).toHaveLength(0);
+    // Nothing rendered says it, though — that is the space this saves.
+    expect(page.getByText(/sticker/i).elements()).toHaveLength(0);
   });
 
   /**
@@ -88,9 +97,9 @@ describe('StickerCountChip', () => {
     // Anchored on the counted chip, whose name survives any regression in the
     // empty state — anchoring on "stickers" would make a lost empty state a 15 s
     // poll here instead of the millisecond failure it already is above.
-    await expect.element(page.getByRole('button', { name: /^3$/ })).toBeInTheDocument();
+    await expect.element(page.getByRole('button', { name: /^3 stickers$/ })).toBeInTheDocument();
     const empty = backgroundOf(page.getByRole('button', { name: /^stickers$/ }).element());
-    const counted = backgroundOf(page.getByRole('button', { name: /^3$/ }).element());
+    const counted = backgroundOf(page.getByRole('button', { name: /^3 stickers$/ }).element());
 
     expect(empty).not.toBe(counted);
     expect(empty).not.toBe('rgba(0, 0, 0, 0)');
@@ -148,13 +157,19 @@ describe('StickerCountChip', () => {
       </>
     );
 
-    await expect.element(page.getByRole('button', { name: /^3$/ })).toBeInTheDocument();
-    expect(page.getByRole('button', { name: /^3$/ }).element().getAttribute('data-variant')).toBe(
-      'light'
-    );
-    expect(page.getByRole('button', { name: /^5$/ }).element().getAttribute('data-variant')).toBe(
-      'subtle'
-    );
+    await expect.element(page.getByRole('button', { name: /^3 stickers$/ })).toBeInTheDocument();
+    expect(
+      page
+        .getByRole('button', { name: /^3 stickers$/ })
+        .element()
+        .getAttribute('data-variant')
+    ).toBe('light');
+    expect(
+      page
+        .getByRole('button', { name: /^5 stickers$/ })
+        .element()
+        .getAttribute('data-variant')
+    ).toBe('subtle');
   });
 
   test('paints the empty state as its own thing, not as the revealed state', async () => {
@@ -165,7 +180,7 @@ describe('StickerCountChip', () => {
       </>
     );
 
-    await expect.element(page.getByRole('button', { name: /^5$/ })).toBeInTheDocument();
+    await expect.element(page.getByRole('button', { name: /^5 stickers$/ })).toBeInTheDocument();
     const empty = page.getByRole('button', { name: /^stickers$/ }).element() as HTMLElement;
 
     expect(empty.getAttribute('data-variant')).toBe('light');

@@ -41,12 +41,21 @@ const mocks = vi.hoisted(() => ({
   currentUser: null as null | { id: number; username: string },
   // Items the mocked `appListings.listAvailable` returns to the related rail.
   relatedItems: [] as unknown[],
-  // Every `recordRecentlyOpenedApp(...)` argument seen this test, in order.
+  // Every `recordRecentlyOpenedApp(...)` CALL seen this test, in order —
+  // `{ app, ownerId }`, because the owner is now half the contract (#4048).
   recorded: [] as unknown[],
   // What the mocked `user.getCreator` resolves to (the SmartCreatorCard's data).
   creator: null as null | Record<string, unknown>,
   reportMutate: vi.fn(),
   upsertMutate: vi.fn(),
+  // Store-visibility flags, MUTABLE per test. Previously a fixed literal inside the
+  // provider mock, which meant this suite could only ever construct a `full`-scope
+  // viewer — and so was structurally unable to see the `public-external` seam the
+  // review affordance is gated on. See the store-scope block at the end.
+  features: { appBlocks: true, appListings: true, appBlocksPages: false } as Record<
+    string,
+    boolean
+  >,
 }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({
@@ -62,9 +71,12 @@ vi.mock('~/components/Apps/recentlyOpenedAppsStore', async (importOriginal) => {
   const actual = await importOriginal<typeof RecentsMod>();
   return {
     ...actual,
-    recordRecentlyOpenedApp: (app: Parameters<typeof actual.recordRecentlyOpenedApp>[0]) => {
-      mocks.recorded.push(app);
-      return actual.recordRecentlyOpenedApp(app);
+    recordRecentlyOpenedApp: (
+      app: Parameters<typeof actual.recordRecentlyOpenedApp>[0],
+      ownerId: Parameters<typeof actual.recordRecentlyOpenedApp>[1]
+    ) => {
+      mocks.recorded.push({ app, ownerId });
+      return actual.recordRecentlyOpenedApp(app, ownerId);
     },
   };
 });
@@ -82,9 +94,15 @@ vi.mock('~/components/Apps/recentlyOpenedAppsStore', async (importOriginal) => {
 // listed only `useFeatureFlags` made four SIBLING suites fail to IMPORT with
 // `does not provide an export named 'useFeatureFlagsReady'` — reported as
 // `Tests no tests`, i.e. as nothing to see rather than as a failure.
+// 🔴 BOTH hooks are overridden, and they must return the SAME flags. `useCanReviewListing`
+// reads `useOptionalFeatureFlags` (it must not throw outside a provider); overriding only
+// `useFeatureFlags` left the optional one resolving to the REAL null-outside-provider
+// value, i.e. store scope `none`, which silently hid the review affordance and failed two
+// tests here for a reason that had nothing to do with what they assert.
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsMod>()),
-  useFeatureFlags: () => ({ appBlocks: true, appListings: true, appBlocksPages: false }),
+  useFeatureFlags: () => mocks.features,
+  useOptionalFeatureFlags: () => mocks.features,
 }));
 // Spread the REAL module and override only `trpc` (local-rules/no-wholesale-
 // module-mock): a hand-written replacement silently breaks every importer the
@@ -106,8 +124,17 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       upsertReview: {
         useMutation: () => ({ mutate: mocks.upsertMutate, isPending: false }),
       },
+      // 🔴 This one INVOKES the caller's `onSuccess`, unlike its siblings. The thing
+      // under test below is what the detail page does AFTER a report lands (its menu
+      // item has to go spent), and a `mutate` that never resolves can never show it.
       reportListing: {
-        useMutation: () => ({ mutate: mocks.reportMutate, isPending: false }),
+        useMutation: (opts?: { onSuccess?: () => void }) => ({
+          mutate: (input: unknown) => {
+            mocks.reportMutate(input);
+            opts?.onSuccess?.();
+          },
+          isPending: false,
+        }),
       },
     },
     // The SmartCreatorCard's own fetch. 🔴 VERIFIED PUBLIC: `user.getCreator` is a
@@ -166,8 +193,15 @@ vi.mock('~/components/UserAvatar/UserAvatar', () => ({
 
 // Import AFTER the mocks are declared (vi.mock is hoisted, imports are not).
 const { AppListingDetailBody } = await import('./AppListingDetailBody');
+// The store itself, through the same partial mock (the readers are the REAL
+// implementations — only the writer is wrapped above), so the owner-scoping
+// assertions below read what the component actually persisted.
+const { clearRecentlyOpenedApps, getRecentlyOpenedApps } = await import(
+  '~/components/Apps/recentlyOpenedAppsStore'
+);
 
 beforeEach(async () => {
+  mocks.features = { appBlocks: true, appListings: true, appBlocksPages: false };
   mocks.currentUser = null;
   mocks.relatedItems = [];
   mocks.recorded = [];
@@ -203,7 +237,12 @@ function base(over: Partial<ListingDetail>): ListingDetail {
     installCount: 4213,
     updatedAt: '2026-03-04T05:06:07.000Z',
     screenshots: [],
-    kindData: { kind: 'onsite', appBlockId: 'blk-1', hasPage: true, liveUrl: 'https://my-app.civit.ai' },
+    kindData: {
+      kind: 'onsite',
+      appBlockId: 'blk-1',
+      hasPage: true,
+      liveUrl: 'https://my-app.civit.ai',
+    },
     ...over,
   };
 }
@@ -255,6 +294,22 @@ async function renderScoped(ui: Parameters<typeof renderWithProviders>[0]) {
   return { container, within: page.elementLocator(container) };
 }
 
+const MENU = 'apps-listing-actions-menu';
+
+/** Open the `⋮` menu of THIS mount and return the portalled dropdown element. */
+async function openMenu(within: ReturnType<typeof page.elementLocator>) {
+  const trigger = within.getByTestId(MENU);
+  await expect.element(trigger).toBeInTheDocument();
+  await userEvent.click(trigger);
+  // The dropdown is PORTALLED (`withinPortal`), so it is not inside the render
+  // container — query it page-wide, and wait for it rather than reading a
+  // still-empty DOM.
+  return vi.waitUntil(() => document.querySelector('[role="menu"], .mantine-Menu-dropdown'), {
+    timeout: 10000,
+    interval: 25,
+  });
+}
+
 describe('AppListingDetailBody', () => {
   test('kind + category badges are NOT rendered as HEADER badges (round-2 truncation fix)', async () => {
     // "App" was formerly the on-site kind badge's exact-match text. It must not come
@@ -275,28 +330,69 @@ describe('AppListingDetailBody', () => {
     expect(row?.textContent).toContain('PG');
   });
 
+  /**
+   * 🔴 #4207 — THE TWO PERMISSION SIGNALS, AS A RELATIONSHIP, AT THE RENDER LAYER.
+   *
+   * The view-model test pins the predicates; this pins that the JSX actually
+   * wires them to two mutually-exclusive Alerts. The failure that matters is the
+   * page CONTRADICTING itself — telling a viewer an OAuth app has "no account
+   * access" — so both states are asserted in ONE test rather than separately.
+   *
+   * 🔴 The absence assertions are plain `toContain` on `textContent`, NOT
+   * `expect.element(...).not.toBeInTheDocument()`, which is inert in this repo
+   * (#4197) and passes for any string whatsoever.
+   *
+   * Each state asserts one sentence PRESENT and the other ABSENT in the same
+   * container, so the present-check is the positive control for the absent-check:
+   * a container wired to nothing fails the `toContain` before the `not` can pass
+   * vacuously. Both awaits settle the render first.
+   *
+   * Fixtures are the two REAL production shapes (measured): `vitrine` is the one
+   * approved off-site listing with no OAuth client; `comfy` carries one.
+   */
+  test('🔴 #4207 disclosure XOR connect indicator — never both, never neither', async () => {
+    const DISCLOSURE = 'This app runs entirely off-platform';
+    const INDICATOR = 'can connect to your Civitai account';
+
+    const grandfathered = await renderScoped(
+      <AppListingDetailBody
+        detail={base({
+          kind: 'offsite',
+          kindData: {
+            kind: 'offsite',
+            externalUrl: 'https://vitrine.civitai.com/',
+            connectClientId: null,
+          },
+        })}
+      />
+    );
+    await expect.element(grandfathered.within.getByText('My App')).toBeInTheDocument();
+    expect(grandfathered.container.textContent).toContain(DISCLOSURE);
+    expect(grandfathered.container.textContent).not.toContain(INDICATOR);
+
+    const withOauth = await renderScoped(
+      <AppListingDetailBody
+        detail={base({
+          kind: 'offsite',
+          kindData: {
+            kind: 'offsite',
+            externalUrl: 'https://comfy.civitai.com/',
+            connectClientId: 'oauth_comfy',
+          },
+        })}
+      />
+    );
+    await expect.element(withOauth.within.getByText('My App')).toBeInTheDocument();
+    expect(withOauth.container.textContent).toContain(INDICATOR);
+    expect(withOauth.container.textContent).not.toContain(DISCLOSURE);
+  });
+
   // ── The `⋮` overflow menu ──────────────────────────────────────────────────
   //
   // 🔴 RED AT BASE. The base renders the secondary actions as a stacked full-width
   // button column with no menu at all, so `apps-listing-actions-menu` does not exist
   // there and every test in this block fails on it. Genuine regression coverage for
   // the header restructure.
-
-  const MENU = 'apps-listing-actions-menu';
-
-  /** Open the `⋮` menu of THIS mount and return the portalled dropdown element. */
-  async function openMenu(within: ReturnType<typeof page.elementLocator>) {
-    const trigger = within.getByTestId(MENU);
-    await expect.element(trigger).toBeInTheDocument();
-    await userEvent.click(trigger);
-    // The dropdown is PORTALLED (`withinPortal`), so it is not inside the render
-    // container — query it page-wide, and wait for it rather than reading a
-    // still-empty DOM.
-    return vi.waitUntil(() => document.querySelector('[role="menu"], .mantine-Menu-dropdown'), {
-      timeout: 10000,
-      interval: 25,
-    });
-  }
 
   test('🔴 the owner sees Edit in the menu → on-site manifest editor', async () => {
     mocks.currentUser = { id: 5, username: 'alice' }; // matches base().creator.id
@@ -315,7 +411,6 @@ describe('AppListingDetailBody', () => {
           kind: 'offsite',
           kindData: {
             kind: 'offsite',
-            subKind: 'external-link',
             externalUrl: 'https://ext.app',
             connectClientId: null,
           },
@@ -367,20 +462,75 @@ describe('AppListingDetailBody', () => {
     mocks.currentUser = { id: 999, username: 'bob' };
     const { within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
     const dropdown = (await openMenu(within)) as HTMLElement;
-    const item = dropdown.querySelector('[data-testid="apps-listing-review-action"]') as HTMLElement;
+    const item = dropdown.querySelector(
+      '[data-testid="apps-listing-review-action"]'
+    ) as HTMLElement;
     expect(item).not.toBeNull();
     await userEvent.click(item);
     // The modal is portalled to the body. Its own copy is the REAL component.
-    await expect.element(page.getByText('Would you recommend this app to others?')).toBeInTheDocument();
+    await expect
+      .element(page.getByText('Would you recommend this app to others?'))
+      .toBeInTheDocument();
   });
 
   test('🔴 the Report menu item opens the report modal', async () => {
     mocks.currentUser = { id: 999, username: 'bob' };
     const { within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
     const dropdown = (await openMenu(within)) as HTMLElement;
-    const item = dropdown.querySelector('[data-testid="apps-listing-report-action"]') as HTMLElement;
+    const item = dropdown.querySelector(
+      '[data-testid="apps-listing-report-action"]'
+    ) as HTMLElement;
     await userEvent.click(item);
     await expect.element(page.getByRole('button', { name: 'Submit report' })).toBeInTheDocument();
+  });
+
+  test('🔴 REGRESSION: after a successful report the menu item is DISABLED and reads "Reported"', async () => {
+    // The shipped defect: the modal's `onReported` callback existed and was wired
+    // only in a standalone `ReportListingButton` that nothing rendered, while THIS —
+    // the live path — mounted the modal without it. The item stayed clickable, so a
+    // second report hit the server's one-open-report-per-reporter CONFLICT and the
+    // user got an ERROR where they expected a confirmation.
+    //
+    // 🔴 Asserted on the STATE, never on the word: `disabled` + Mantine's
+    // `data-disabled` on the item itself. "Reported" as text is checked too, but it
+    // is the weakest half of the claim — any feature can spell a word.
+    mocks.currentUser = { id: 999, username: 'bob' };
+    const { within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
+
+    const item = () =>
+      document.querySelector(
+        '[data-testid="apps-listing-report-action"]'
+      ) as HTMLButtonElement | null;
+
+    // POSITIVE CONTROL, from the same element: it is LIVE before the report, so the
+    // disabled state below is about the report and not about how the item renders.
+    await openMenu(within);
+    const before = item() as HTMLButtonElement;
+    expect(before).not.toBeNull();
+    expect(before.disabled).toBe(false);
+    expect(before.getAttribute('data-disabled')).toBeNull();
+    expect(before.textContent).toContain('Report');
+    expect(before.textContent).not.toContain('Reported');
+
+    await userEvent.click(before);
+    await page.getByRole('radio', { name: 'Spam' }).click();
+    await page.getByRole('button', { name: 'Submit report' }).click();
+    expect(mocks.reportMutate).toHaveBeenCalledTimes(1);
+    expect(mocks.reportMutate.mock.calls[0][0]).toMatchObject({
+      appListingId: 'l1',
+      reason: 'spam',
+    });
+
+    // Re-open the menu (the dropdown UNMOUNTS on close, so this is a fresh element).
+    await openMenu(within);
+    await vi.waitFor(() => {
+      const spent = item();
+      expect(spent).not.toBeNull();
+      expect((spent as HTMLButtonElement).disabled).toBe(true);
+    });
+    const spent = item() as HTMLButtonElement;
+    expect(spent.getAttribute('data-disabled')).toBe('true');
+    expect(spent.textContent).toContain('Reported');
   });
 
   // ── Header stat chips ──────────────────────────────────────────────────────
@@ -425,8 +575,9 @@ describe('AppListingDetailBody', () => {
     // `formatDate` default format is `MMM D, YYYY`; base() pins 2026-03-04.
     expect(meta.element().textContent).toContain('Updated:');
     expect(meta.element().textContent).toContain('2026');
+    // 🔴 The DISPLAY label, not the stored `utility` this fixture holds.
     expect(container.querySelector('[data-testid="apps-listing-category"]')?.textContent).toBe(
-      'utility'
+      'Utility'
     );
   });
 
@@ -459,7 +610,9 @@ describe('AppListingDetailBody', () => {
     await expect.element(within.getByText('My App')).toBeInTheDocument();
 
     const cols = Array.from(
-      container.querySelectorAll('[data-testid="apps-listing-main-col"], [data-testid="apps-listing-rail-col"]')
+      container.querySelectorAll(
+        '[data-testid="apps-listing-main-col"], [data-testid="apps-listing-rail-col"]'
+      )
     );
     expect(cols).toHaveLength(2);
     // 🔴 RAIL FIRST, MAIN SECOND — the same source order `ModelVersionDetails` uses,
@@ -489,7 +642,9 @@ describe('AppListingDetailBody', () => {
     expect(container.querySelectorAll('[data-testid="apps-listing-rail-col"]')).toHaveLength(1);
     // …and the rail's contents came with it, rather than being dropped on mobile.
     expect(container.querySelectorAll('[data-testid="apps-listing-action-card"]')).toHaveLength(1);
-    expect(container.querySelectorAll('[data-testid="apps-listing-details-accordion"]')).toHaveLength(1);
+    expect(
+      container.querySelectorAll('[data-testid="apps-listing-details-accordion"]')
+    ).toHaveLength(1);
   });
 
   test('🔴 the rail holds the action card, the creator card and the details accordion; the main column holds About', async () => {
@@ -661,7 +816,10 @@ describe('AppListingDetailBody', () => {
         testid === 'apps-listing-stat-chips'
           ? live.container.querySelectorAll('[data-listing-stat]').length
           : live.container.querySelectorAll(`[data-testid="${testid}"]`).length;
-      expect(liveCount, `positive control: ${what} must be findable in the live arm`).toBeGreaterThan(0);
+      expect(
+        liveCount,
+        `positive control: ${what} must be findable in the live arm`
+      ).toBeGreaterThan(0);
 
       // …and now the preview arm. `canOpenPage` stays TRUE so the ONLY thing
       // suppressing anything is `preview`.
@@ -686,16 +844,23 @@ describe('AppListingDetailBody', () => {
     expect(prev.within.getByText('Back to store').elements()).toHaveLength(0);
   });
 
-  test('🔴 preview omits the REVIEWS row from the details rail, keeping the others', async () => {
+  test('🔴 preview omits the REVIEWS / INSTALLS / UPDATED rows, keeping the others', async () => {
     const prev = await renderScoped(
       <AppListingDetailBody detail={base({ contentRating: 'PG' })} preview />
     );
-    await expect.element(prev.within.getByTestId('apps-listing-details-accordion')).toBeInTheDocument();
-    const rows = Array.from(
-      prev.container.querySelectorAll('[data-listing-detail-row]')
-    ).map((r) => r.getAttribute('data-listing-detail-row'));
+    await expect
+      .element(prev.within.getByTestId('apps-listing-details-accordion'))
+      .toBeInTheDocument();
+    const rows = Array.from(prev.container.querySelectorAll('[data-listing-detail-row]')).map((r) =>
+      r.getAttribute('data-listing-detail-row')
+    );
     // Control: the live arm has 6 rows including `reviews` (asserted above).
-    expect(rows).toEqual(['kind', 'category', 'rating', 'installs', 'updated']);
+    // The three dropped here are the ones a shadow listing cannot state honestly: two
+    // usage aggregates and a date that is the SUBMISSION time, not `updated_at`.
+    expect(rows).toEqual(['kind', 'category', 'rating']);
+    // 🔴 The rule itself is pinned in the blocking node project
+    // (`__tests__/appListingDetailRows.test.ts` + `__tests__/reviewListingPreview.test.ts`);
+    // this arm only pins that the DOM the component renders agrees with it.
   });
 
   test('🔴 preview keeps the read-only creator CHIP so the submitter is still named', async () => {
@@ -858,13 +1023,12 @@ describe('AppListingDetailBody', () => {
     return modifier.replace('tabler-icon-', '');
   }
 
-  /** The off-site (external-link) variant of `base()`. */
+  /** The off-site variant of `base()` — no OAuth client (the grandfathered shape). */
   const offsite = () =>
     base({
       kind: 'offsite',
       kindData: {
         kind: 'offsite',
-        subKind: 'external-link',
         externalUrl: 'https://ext.app',
         connectClientId: null,
       },
@@ -961,7 +1125,6 @@ describe('AppListingDetailBody', () => {
           kind: 'offsite',
           kindData: {
             kind: 'offsite',
-            subKind: 'connect',
             externalUrl: 'https://connect.app',
             connectClientId: 'oauth-client-1',
           },
@@ -978,21 +1141,31 @@ describe('AppListingDetailBody', () => {
     expect(container.textContent).not.toContain('Connecting this app will be available soon');
   });
 
-  test('the connect branch keeps its own glyph', async () => {
+  // 🔴 #4208 — was "the connect branch keeps its own glyph", asserting a disabled
+  // "Connect" button with a `plug-connected` glyph. That CTA had no flow behind
+  // it and is deleted; an OAuth listing with no destination now takes the SAME
+  // informational arm as a grandfathered one. NEW-BEHAVIOUR GUARD.
+  test('🔴 an OAuth listing with NO destination renders Unavailable, not a Connect CTA', async () => {
     const { container } = await renderScoped(
       <AppListingDetailBody
         detail={base({
           kind: 'offsite',
           kindData: {
             kind: 'offsite',
-            subKind: 'connect',
             externalUrl: null,
             connectClientId: 'oauth-client-1',
           },
         })}
       />
     );
-    expect(await waitForCtaGlyph(container as HTMLElement, 'Connect')).toBe('plug-connected');
+    // Positive assertion first — this also settles the render before the
+    // point-in-time absence reads below.
+    expect(await waitForCtaGlyph(container as HTMLElement, 'Unavailable')).toBe('info-circle');
+    expect(container.textContent).toContain('This app has no valid external link.');
+    // 🔴 Plain string absence, NOT `expect.element(...).not.toBeInTheDocument()`,
+    // which is inert in this repo (#4197) and passes for any string.
+    expect(container.textContent).not.toContain('Connecting this app will be available soon');
+    expect(container.querySelector('button[disabled]')).toBeNull();
   });
 
   test('the info (model-slot) branch keeps its own glyph', async () => {
@@ -1029,8 +1202,9 @@ describe('AppListingDetailBody', () => {
     // Two related cards, not three — self was dropped.
     expect(container.querySelectorAll('[data-testid="apps-related-grid-col"]')).toHaveLength(2);
     // No related card links back to this very listing.
-    const hrefs = Array.from(container.querySelectorAll('[data-testid="apps-related-grid-col"]'))
-      .flatMap((col) => Array.from(col.querySelectorAll('a')).map((a) => a.getAttribute('href')));
+    const hrefs = Array.from(
+      container.querySelectorAll('[data-testid="apps-related-grid-col"]')
+    ).flatMap((col) => Array.from(col.querySelectorAll('a')).map((a) => a.getAttribute('href')));
     expect(hrefs).not.toContain('/apps/store-preview/my-app');
   });
 
@@ -1191,6 +1365,36 @@ describe('AppListingDetailBody', () => {
     expect(mocks.recorded).toHaveLength(1);
   });
 
+  /**
+   * 🔴 BEHAVIOURAL COVER FOR THE CALL-SITE LEDGER (#4048).
+   *
+   * `recentsCallSites.test.ts` proves this module CALLS the store with a
+   * session-shaped owner expression; it cannot prove the expression reads the
+   * VIEWER. This does: a real click, a mounted session, and the entry readable
+   * by that account and by no other.
+   *
+   * The viewer id (77) is deliberately distinct from `base().creator.id` (5) —
+   * the plausible copy-paste is to stamp the listing's CREATOR, and against a
+   * fixture where the two coincide that mutant survives.
+   */
+  test('🔴 the recorded write is OWNED by the mounted session, not by anyone else', async () => {
+    clearRecentlyOpenedApps();
+    mocks.currentUser = { id: 77, username: 'viewer' };
+    const detail = offsite();
+    const { within } = await renderScoped(<AppListingDetailBody detail={detail} />);
+    const cta = within.getByTestId('apps-listing-open-live');
+    await expect.element(cta).toBeInTheDocument();
+    await withoutNavigating(() => userEvent.click(cta));
+
+    expect(mocks.recorded).toHaveLength(1);
+    expect((mocks.recorded[0] as { ownerId: unknown }).ownerId).toBe(77);
+    // …and the store agrees: only that account reads it back.
+    expect(getRecentlyOpenedApps(77).map((r) => r.id)).toEqual([detail.id]);
+    expect(getRecentlyOpenedApps(5)).toEqual([]); // the listing's creator
+    expect(getRecentlyOpenedApps(null)).toEqual([]); // the anonymous bucket
+    clearRecentlyOpenedApps();
+  });
+
   test('🔴 the banner records recents exactly as the Open CTA does — i.e. not on click at all', async () => {
     // `/apps/run/<slug>` records the open in its own mount effect, which is why
     // the `open` CTA has no onClick. The banner must match it: 0 here, 1 there.
@@ -1257,11 +1461,21 @@ describe('AppListingDetailBody — the public collaborator byline (anonymous vie
     );
     // The page itself rendered (so this zero is not "nothing rendered at all").
     await expect.element(within.getByText('My App')).toBeInTheDocument();
-    expect(container.querySelectorAll('[data-testid="apps-listing-collaborators"]')).toHaveLength(0);
+    expect(container.querySelectorAll('[data-testid="apps-listing-collaborators"]')).toHaveLength(
+      0
+    );
   });
 
   test('the byline is rendered alongside — not instead of — the creator card', async () => {
-    mocks.creator = { id: 5, username: 'alice', image: null, rank: null, links: [], cosmetics: [], stats: null };
+    mocks.creator = {
+      id: 5,
+      username: 'alice',
+      image: null,
+      rank: null,
+      links: [],
+      cosmetics: [],
+      stats: null,
+    };
     const { container, within } = await renderScoped(
       <AppListingDetailBody
         detail={base({ collaborators: [{ id: 42, username: 'bob', image: null }] })}
@@ -1269,5 +1483,72 @@ describe('AppListingDetailBody — the public collaborator byline (anonymous vie
     );
     await expect.element(within.getByTestId('apps-listing-creator-card')).toBeInTheDocument();
     expect(container.querySelector('[data-testid="apps-listing-collaborator-42"]')).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// STORE-SCOPE SEAM — the join between the resolved scope and the review affordance.
+//
+// 🔴 THIS BLOCK EXISTS BECAUSE BOTH HALVES WERE ALREADY MUTATION-KILLED AND THE JOIN
+// STILL WAS NOT. `useCanReviewListing`'s kind term is covered by
+// `ReviewListingButton.storeScope.browser.test.tsx`, and the server gate by its own
+// suites — but the only LIVE wiring of the two, `listingKind: detail.kind` in
+// `AppListingDetailBody`, was owned by nobody. Measured: deleting that one property
+// makes the entire client half inert and the whole component tier stays 982/982
+// GREEN. Neither detail suite could see it, because until now neither could
+// construct a `public-external` viewer at all (`mocks.features` was a fixed literal).
+//
+// A component-scoped test cannot catch a seam by construction; the fixture has to
+// build the COMBINED state — this viewer, this listing kind — which is what these do.
+// ---------------------------------------------------------------------------
+
+describe('AppListingDetailBody — store-scope review seam', () => {
+  /** The external-only tester cohort: neither store flag, only the external one. */
+  const PUBLIC_EXTERNAL = {
+    appBlocks: false,
+    appListings: false,
+    appListingsPublicExternal: true,
+  };
+
+  test('🔴 public-external viewer on an ONSITE listing gets NO Review item', async () => {
+    mocks.features = PUBLIC_EXTERNAL;
+    mocks.currentUser = { id: 999, username: 'bob' };
+    const { within } = await renderScoped(
+      <AppListingDetailBody detail={base({ kind: 'onsite' })} />
+    );
+    const dropdown = (await openMenu(within)) as HTMLElement;
+    // POSITIVE half first — the dropdown really is populated, so the Review zero
+    // below is about the scope gate and not about an empty or unopened menu.
+    expect(dropdown.querySelector('[data-testid="apps-listing-report-action"]')).not.toBeNull();
+    expect(dropdown.querySelectorAll('[data-testid="apps-listing-review-action"]')).toHaveLength(0);
+  });
+
+  test('🔴 the SAME viewer on an OFFSITE listing DOES get the Review item', async () => {
+    // The discriminating arm. Without it, a gate that hid the affordance from this
+    // cohort unconditionally would pass the test above and look correct.
+    mocks.features = PUBLIC_EXTERNAL;
+    mocks.currentUser = { id: 999, username: 'bob' };
+    const { within } = await renderScoped(
+      <AppListingDetailBody
+        detail={base({
+          kind: 'offsite',
+          kindData: { kind: 'offsite', externalUrl: 'https://example.com', connectClientId: null },
+        })}
+      />
+    );
+    const dropdown = (await openMenu(within)) as HTMLElement;
+    expect(dropdown.querySelector('[data-testid="apps-listing-review-action"]')).not.toBeNull();
+  });
+
+  test('a FULL-scope viewer still gets Review on an ONSITE listing (unchanged)', async () => {
+    // The control that a moderator would have run — and the reason this defect was
+    // invisible from a privileged account.
+    mocks.features = { appBlocks: true, appListings: true, appListingsPublicExternal: false };
+    mocks.currentUser = { id: 999, username: 'bob' };
+    const { within } = await renderScoped(
+      <AppListingDetailBody detail={base({ kind: 'onsite' })} />
+    );
+    const dropdown = (await openMenu(within)) as HTMLElement;
+    expect(dropdown.querySelector('[data-testid="apps-listing-review-action"]')).not.toBeNull();
   });
 });

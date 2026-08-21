@@ -8,6 +8,7 @@ import {
   countPendingPlacementsFromSchema,
   getPlacementSettlementStatesSchema,
   getMyRemixGallerySubmissionsSchema,
+  getMyStickerPlacementsSchema,
   getPendingRemixGallerySubmissionsSchema,
   getPendingStickerPlacementsSchema,
   getRemixGallerySchema,
@@ -48,6 +49,7 @@ import {
 import {
   actOnStickerPlacements,
   createStickerPlacement,
+  getMyStickerPlacements,
   getPendingStickerPlacements,
   getStickerPlacementDetail,
   getPlacementSettlementStates,
@@ -349,6 +351,21 @@ export const placementRouter = router({
       viewerLevels: viewerBrowsingLevel(ctx, input.browsingLevel),
     })
   ),
+
+  /**
+   * The placer's own side of the same queue. `ctx.user.id` is the only source of
+   * `placerId` — there is no input for it, so this cannot be pointed at anyone
+   * else's placements.
+   */
+  getMyStickerPlacements: protectedProcedure
+    .input(getMyStickerPlacementsSchema)
+    .query(({ input, ctx }) =>
+      getMyStickerPlacements({
+        placerId: ctx.user.id,
+        domainLevels: domainServableLevels(ctx),
+        viewerLevels: viewerBrowsingLevel(ctx, input.browsingLevel),
+      })
+    ),
 
   // How many pending placements blocking someone would decline, so the confirm
   // dialog can say. Advisory by construction — holding it accurate across a

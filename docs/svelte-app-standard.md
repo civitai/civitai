@@ -67,6 +67,34 @@ the columns that make it unique:
 
 Prefer selecting a real primary key in the query over composing one in the template.
 
+### A `$bindable` prop passed one-way can latch
+
+The shadcn wrappers declare interactive state — `checked`, `indeterminate`, `value`, `open` — as
+`$bindable`, and the underlying primitive **writes to it on interaction**. Passed as a plain prop, that
+write becomes a child-local override, and Svelte only discards it when the parent's expression yields a
+*different* value than it last pushed.
+
+So any interaction whose resulting state leaves that prop unchanged leaves the control rendering the
+opposite of your data — through re-renders, and through a reset button. A tri-state checkbox is the
+classic: clicking an unchecked box to reach `mixed` keeps `checked` false the whole time, so the box
+latches on `true` locally and disagrees with the buffer, the change set and the server.
+
+Whenever the parent owns the state, use a function binding:
+
+```svelte
+<Checkbox
+  bind:checked={() => state === 'on', () => toggle(row)}
+  bind:indeterminate={() => state === 'mixed', () => {}}
+/>
+```
+
+The setter may ignore its argument — often it must, since a primitive resolves a click on an
+indeterminate box to `true`, which would always grant rather than toggle.
+
+⚠️ **`svelte-check` cannot see this, and neither can a review that reads the diff** — the one-way version
+type-checks and reads correctly. It was found by clicking the page (`apps/moderator` `/admin`,
+2026-08-14). Interact with any tri-state or primitive-owned control before calling it done.
+
 ### Forms
 
 Server mutations are **form actions**, progressively enhanced with `use:enhance` — not `fetch` + JSON.
@@ -163,6 +191,39 @@ dev server's file watcher; see the root [`CLAUDE.md`](../CLAUDE.md) for the full
 `svelte-check`'s **WARNING** lines as well as its errors: `state_referenced_locally` is a real bug and
 appears nowhere else.
 
+🔴 **Never write an optional parameter (`n?: number`) in a function signature in a `.svelte` file.**
+Svelte 5's TS stripping erases type *annotations* but leaves the `?`, so rollup receives invalid JS and
+**only `build` fails** — `typecheck` is clean, dev serves the page, and every review passes. Use a
+default (`n = 0`) or an explicit union (`e: SubmitEvent | null = null`) instead. A `?` inside a *type*
+(`{ reset: (id?: string) => void }`) is fine: the whole annotation is erased.
+
+That asymmetry is the reason to run `build` **once** before handing work over, even though it is not
+part of the edit→verify loop. Once — not as a diagnostic loop. It took two of these to reach production
+unnoticed because the loop that would have caught them is the one we tell you not to run.
+
+### Tests
+
+Each app owns a `vitest.config.ts` declaring `name: 'app:<slug>'`, and the root config globs those
+**config files** — so an app without one is silently not selected. Run one app with
+`pnpm --filter @civitai/<app> test`, or every app with `pnpm run test:apps:run` (CI's `App unit tests`
+job). The `app:` prefix is load-bearing: every app is also published as `@civitai/*`, so dropping the
+`name` moves the suite into the packages job instead.
+
+These are **node-env tests over plain modules** — no SvelteKit pipeline, so `$lib` and the `$env`
+virtual modules are aliased in each app's config, and a module reaching an unaliased `$app/*` cannot be
+imported at all. Route logic is reachable: import `load`/`actions` from a `+page.server.ts` and call
+them with the slice of the event they read. Component behaviour is **not** — no SvelteKit app has a
+browser-test project, so anything that depends on `use:enhance`, bindings or lifecycle is verified by
+review and by opening the page, not by a test.
+
+🔴 **A suite must not open a connection to whatever `DATABASE_URL` points at.** Mock the app's db
+module. Where a suite genuinely needs the real schema, plan the statement rather than run it — compile
+through Kysely's `DummyDriver` and send `EXPLAIN` *without* `ANALYZE`, which validates columns, joins
+and types without executing, safely for writes as well as reads. Gate it on `describe.skipIf(!hasDb)` so
+a checkout with no database still runs the rest. Worked example:
+[`apps/moderator/src/test/explain-harness.ts`](../apps/moderator/src/test/explain-harness.ts); the
+original is `packages/civitai-db-queries`. Never write fixtures to a URL you did not create.
+
 ## Reviews: run these before calling a segment done
 
 Three agents, on the diff for the segment:
@@ -174,6 +235,12 @@ Three agents, on the diff for the segment:
 | `svelte-abstraction-review` | Duplication, missing components, placement |
 
 Each takes the app directory as its scope and reads that app's `CLAUDE.md` for local deltas.
+
+**After fixing a non-trivial bug, and after extracting or changing a shared component, run
+`svelte-recurrence-sweep`.** It takes one known defect and finds every other place that shape exists,
+across all three apps. The three reviews above are each scoped to the segment in front of them, so a
+bug fixed in one page stays live in its sibling until somebody happens to remember — which is exactly
+how two `$effect` bugs survived in `apps/moderator` for days after being fixed next door.
 
 A segment with unresolved findings is not done, and neither is one that only typechecks — **look at the
 page**. Typecheck and build pass on plenty of pages that render blank.

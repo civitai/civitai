@@ -4,6 +4,7 @@ import handler from '~/pages/api/webhooks/image-scan-result';
 import type * as ClickhouseClient from '~/server/clickhouse/client';
 import { TagSource, ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { NsfwLevel } from '~/server/common/enums';
+import type * as BlocklistService from '~/server/services/blocklist.service';
 
 const {
   mockDbWrite,
@@ -123,6 +124,15 @@ const {
     }),
   };
 });
+
+// Partial mock: the real `stripBenignPhrases` reads Redis/Postgres, which no other
+// test in this file needs. Default is passthrough so every existing case is
+// unaffected; the benign-phrase cases below drive it directly.
+const mockStripBenignPhrases = vi.fn(async (text?: string) => text ?? '');
+vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof BlocklistService>()),
+  stripBenignPhrases: (text?: string, type?: unknown) => mockStripBenignPhrases(text, type),
+}));
 
 vi.mock('~/server/db/client', () => ({
   dbWrite: mockDbWrite,
@@ -681,6 +691,70 @@ describe('image-scan-result webhook - pipeline tests', () => {
       expect(update).toBeDefined();
       expect(update!.params).toContain(4611686018427387904n);
       expect(update!.text).not.toContain('4611686018427387904');
+    });
+  });
+
+  describe('moderator benign phrases reach the POI tagger', () => {
+    // The file's own `beforeEach` is `vi.clearAllMocks()`, which clears calls but NOT
+    // implementations — so the one a test below installs would leak into anything appended
+    // after this describe. Harmless while this is the last block, which is exactly the kind
+    // of "harmless" that stops being true without anyone noticing.
+    beforeEach(() => {
+      mockStripBenignPhrases.mockImplementation(async (text?: string) => text ?? '');
+    });
+
+    const seedImageWithPrompt = (id: number, prompt: string) => {
+      imageDbState.set(id, {
+        id,
+        createdAt: new Date(),
+        scannedAt: null,
+        type: 'image',
+        userId: 1,
+        meta: { prompt },
+        metadata: {},
+        postId: null,
+        nsfwLevelLocked: false,
+        nsfwLevel: null,
+        scanJobs: { scans: {} },
+        ingestion: ImageIngestionStatus.Pending,
+      });
+    };
+
+    const requestedTagNames = () =>
+      mockDbWrite.tag.findMany.mock.calls.flatMap((call: any) => call[0]?.where?.name?.in ?? []);
+
+    it('CONTROL: a POI name that is not whitelisted is still tagged', async () => {
+      seedImageWithPrompt(30, 'emma stone');
+
+      const req = runWebhook({ id: 30, status: 0, source: TagSource.WD14, tags: [] });
+      await req.promise;
+
+      // Deliberately asserts only the tag, with the strip passing the text through: it
+      // stays green with the fix reverted, so a failure below is the strip and not a
+      // broken fixture.
+      expect(requestedTagNames()).toContain('emma stone');
+    });
+
+    it('a whitelisted phrase is stripped before the POI check, so no POI tag is written', async () => {
+      mockStripBenignPhrases.mockImplementation(async (text?: string) =>
+        (text ?? '').replace('emma stone', '')
+      );
+      // Two real POI names, only one whitelisted. `tom hanks` survives the strip and must
+      // still be tagged, which proves this run reached the tag write at all — otherwise an
+      // early throw would satisfy the negative assertion below with an empty array.
+      seedImageWithPrompt(31, 'emma stone and tom hanks');
+
+      const req = runWebhook({ id: 31, status: 0, source: TagSource.WD14, tags: [] });
+      await req.promise;
+
+      // Pins WHICH list is consulted. Pointing the strip at ProfanityBenignWord instead
+      // leaves the whole fix inert in production and every other assertion here green.
+      expect(mockStripBenignPhrases).toHaveBeenCalledWith(
+        'emma stone and tom hanks',
+        'PromptBenignPhrase'
+      );
+      expect(requestedTagNames()).not.toContain('emma stone');
+      expect(requestedTagNames()).toContain('tom hanks');
     });
   });
 });

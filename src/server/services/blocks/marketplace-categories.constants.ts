@@ -44,3 +44,27 @@ export function isMarketplaceCategory(value: unknown): value is MarketplaceCateg
     (MARKETPLACE_CATEGORIES as readonly string[]).includes(value)
   );
 }
+
+/**
+ * Stored category value → its DISPLAY label, with a raw fallback.
+ *
+ * 🔴 THE ONE PLACE this rule lives. `app_blocks.category` / `app_listings.category`
+ * is a FREE-TEXT column, so the value a surface receives is a `string`, not the
+ * `MarketplaceCategory` union — every renderer therefore needs the same
+ * guard-then-map-else-raw shape, and this is it.
+ *
+ * It exists because the rule was open-coded instead: two byte-identical private
+ * `categoryLabel` helpers (`AppBlockCard`, `RelatedListings`), one title-casing
+ * re-derivation (`offsiteSubmitFormConfig`'s `OFFSITE_CATEGORY_OPTIONS`), and five
+ * sites that skipped it entirely and rendered the raw lowercase enum to a user.
+ * A predicate open-coded at N sites is wrong at N−1 of them; import this instead
+ * of writing the guard again.
+ *
+ * FALLBACK IS DELIBERATE — an unknown/legacy value renders RAW, never blank and
+ * never a throw. Adding a category is a one-line const edit with no migration, so
+ * an older client will meet a category it has no label for; a chip reading
+ * `something-new` is honest, an empty chip is a bug report.
+ */
+export function marketplaceCategoryLabel(category: string): string {
+  return isMarketplaceCategory(category) ? MARKETPLACE_CATEGORY_LABELS[category] : category;
+}

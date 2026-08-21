@@ -27,7 +27,10 @@ describe('APPS_PAGE_WIDTHS — the decided value per route', () => {
     expect(APPS_WIDE_PAGE_WIDTH).toBe(1920);
     expect(APPS_PAGE_WIDTHS['/apps']).toBe(1920);
     expect(APPS_PAGE_WIDTHS['/apps/installed']).toBe(1920);
-    expect(APPS_PAGE_WIDTHS['/apps/my-submissions']).toBe(1920);
+    // `/apps/mine` took this width when it absorbed `/apps/my-submissions` (which now
+    // 301s to it and has no page file): it went from a single-column card list to a table
+    // carrying an icon, a cover, three badges and a date per row.
+    expect(APPS_PAGE_WIDTHS['/apps/mine']).toBe(1920);
     expect(APPS_PAGE_WIDTHS['/apps/review/[publishRequestId]']).toBe(1920);
     expect(APPS_PAGE_WIDTHS['/apps/revenue']).toBe(1920);
   });
@@ -44,8 +47,12 @@ describe('APPS_PAGE_WIDTHS — the decided value per route', () => {
     // later pass narrows the queue further, this is the pin that stops the detail
     // page being dragged along by association.
     expect(APPS_PAGE_WIDTHS['/apps/review/[publishRequestId]']).toBe(1920);
-    // …and my-submissions keeps 1920: its table has a real 1424px scroll floor.
-    expect(APPS_PAGE_WIDTHS['/apps/my-submissions']).toBe(1920);
+    // …and the merged author table keeps 1920: two images + three badges per row is the
+    // same class of wide surface `/apps/my-submissions` was before the merge.
+    expect(APPS_PAGE_WIDTHS['/apps/mine']).toBe(1920);
+    // 🔴 The retired route must NOT come back as a listed width — its page is deleted, so
+    // a re-added entry would fail the consumption walk below with a confusing message.
+    expect(APPS_PAGE_WIDTHS).not.toHaveProperty('/apps/my-submissions');
   });
 
   test('the form surfaces are all the READABLE width (1100)', () => {
@@ -229,7 +236,7 @@ describe('every /apps page on disk is classified', () => {
   test('every APPS_PAGE_WIDTHS entry is actually consumed by its page', () => {
     const ALIASES: Record<string, string> = {
       '/apps': 'LISTING_STORE_CONTAINER_SIZE',
-      '/apps/my-submissions': 'MY_SUBMISSIONS_CONTAINER_SIZE',
+      '/apps/mine': 'MY_APPS_CONTAINER_SIZE',
     };
     const unconsumed: string[] = [];
     for (const route of Object.keys(APPS_PAGE_WIDTHS)) {

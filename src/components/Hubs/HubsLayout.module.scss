@@ -1,0 +1,49 @@
+.container {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: flex-start;
+}
+
+.sidebar {
+  display: block;
+  // The toggle below sits in the gutter at right: -32px, so this must not clip.
+  // Do NOT add an inline `overflow` on the Card — an inline style out-ranks this
+  // class and is exactly what silently disabled the collections sidebar toggle
+  // from the Mantine v7 migration until PR #4134.
+  overflow: visible;
+  transition: margin-left 500ms;
+  position: sticky;
+  top: var(--header-height, 80px);
+  align-self: flex-start;
+
+  @container (max-width: theme('screens.sm')) {
+    display: none;
+  }
+}
+
+.sidebarToggle {
+  position: absolute;
+  top: 0;
+  right: -32px;
+}
+
+.content {
+  flex: 1;
+  min-width: 0;
+
+  // The collapse toggle lives in the gutter at right: -32px so it stays reachable
+  // once the rail slides out; without this it lands on top of the hub title.
+  padding-left: 36px;
+
+  @container (max-width: theme('screens.sm')) {
+    padding-left: 0;
+  }
+}
+
+.drawerButton {
+  display: none;
+
+  @container (max-width: theme('screens.sm')) {
+    display: block;
+  }
+}

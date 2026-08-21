@@ -383,7 +383,12 @@ describe('a gallery that takes free submissions and refuses paid ones', () => {
     // worse than the paid button this replaced.
     await expect.element(page.getByText(/once per gallery/i)).toBeInTheDocument();
     // Not a claim about spending, on a path that cannot be pressed.
-    await expect.element(page.getByText(/spends a free placement/i)).not.toBeInTheDocument();
+    //
+    // ⚠️ Matched against the note's CURRENT wording. This assertion is a
+    // negative, so a reworded note turns it green forever rather than red once —
+    // it went vacuous exactly that way when the note gained the shared-allowance
+    // clause. If you change the copy, change this with it.
+    await expect.element(page.getByText(/spends your free placement/i)).not.toBeInTheDocument();
   });
 
   /**

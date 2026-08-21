@@ -1914,6 +1914,13 @@ export interface NormalizedStepMetadata {
    */
   partialParams?: boolean;
   /**
+   * True when `params`/`resources` are the source generation rather than this step's own
+   * input. The raw `metadata.workflow` marker that distinguishes them doesn't survive
+   * normalization, so readers have no other way to tell. Never set when the source params
+   * are empty — an absent flag always means "fall back to workflow params".
+   */
+  sourceLineage?: boolean;
+  /**
    * Source generation resources (for steps with source lineage).
    * Undefined for standard generation steps (use workflow.metadata.resources instead).
    */
@@ -2537,18 +2544,21 @@ function formatStep(
   let resolvedParams: Record<string, unknown> | undefined;
   let resolvedResources: GenerationResource[] | undefined;
   let remixOfId: number | undefined;
+  let fromSourceLineage = false;
 
   if (Array.isArray(transformations) && transformations.length > 0) {
     // Legacy format (transformations[]): root params/resources are the original generation.
     resolvedParams = rawParams;
     resolvedResources = stepResources;
     remixOfId = metadata.remixOfId as number | undefined;
+    fromSourceLineage = true;
   } else if (metadata.source && typeof metadata.source === 'object') {
     // Legacy format (source field): source has the original generation, root has step's own action.
     const rawSource = metadata.source as Record<string, unknown>;
     const sourceParams = (rawSource.params as Record<string, unknown>) ?? {};
     resolvedParams = sourceParams;
     remixOfId = (rawSource.remixOfId ?? metadata.remixOfId) as number | undefined;
+    fromSourceLineage = true;
 
     // Enrich source resources
     const rawSourceResources = rawSource.resources as Array<Record<string, unknown>> | undefined;
@@ -2566,9 +2576,12 @@ function formatStep(
         : stepResources;
   } else if (hasStepParams) {
     // Step has its own params (legacy standard gen, or enhancement with params at root).
+    // Only buildResolvedSource writes `metadata.workflow`, so it is what separates an
+    // enhancement's source snapshot from a standard gen's own params.
     resolvedParams = rawParams;
     resolvedResources = stepResources;
     remixOfId = metadata.remixOfId as number | undefined;
+    fromSourceLineage = 'workflow' in metadata;
   } else {
     // New format: step has no params/resources (standard gen).
     // Data lives on workflow.metadata — don't fabricate step-level data.
@@ -2622,6 +2635,12 @@ function formatStep(
     metadata: {
       ...removeEmpty({
         params: finalParams,
+        // An empty source snapshot must read as no-lineage, or remix prefers it and
+        // loads a blank form.
+        sourceLineage:
+          fromSourceLineage && finalParams && Object.keys(finalParams).length > 0
+            ? true
+            : undefined,
         remixOfId,
         // Pass both raw keys through. Client merges `output + images` for display
         // via `BlobData.outputMeta`; client's patch builder inspects `output`

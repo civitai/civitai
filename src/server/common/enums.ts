@@ -141,6 +141,8 @@ export enum SignalMessages {
   ChatNewMessage = 'chat:new-message',
   ChatNewRoom = 'chat:new-room',
   ChatTypingStatus = 'chat:typing-status',
+  ChatMessageDeleted = 'chat:message-deleted',
+  ChatMessageUpdated = 'chat:message-updated',
   OrchestratorUpdate = 'orchestrator-job:status-update',
   TextToImageUpdate = 'orchestrator:text-to-image-update',
   WorkflowUpdate = 'orchestrator:workflow-update',
@@ -342,12 +344,16 @@ export enum StripeConnectStatus {
   Rejected = 'Rejected',
 }
 
+// Tipalti's own spelling. The webhook stores `eventData.status` verbatim into
+// UserPaymentConfiguration.tipaltiAccountStatus, so these ARE the stored strings — normalising
+// their casing here silently breaks every comparison. INTERNAL_VALUE is Tipalti's sentinel for
+// a status this API version does not expose.
 export enum TipaltiStatus {
   PendingOnboarding = 'PendingOnboarding',
-  Active = 'ACTIVE',
-  Suspended = 'SUSPENDED',
-  Blocked = 'BLOCKED',
-  BlockedByTipalti = 'BLOCKED_BY_TIPALTI',
+  Active = 'Active',
+  Suspended = 'Suspended',
+  Blocked = 'Blocked',
+  BlockedByProvider = 'BlockedByProvider',
   InternalValue = 'INTERNAL_VALUE',
 }
 
@@ -378,6 +384,10 @@ export enum BlocklistType {
   // false-flag `needsReview='minor'`. Edited by moderators at /moderator/blocklists.
   PromptBenignPhrase = 'PromptBenignPhrase',
   NegativeBenignPhrase = 'NegativeBenignPhrase',
+  // Single words that innocently CONTAIN a profanity token ("spreadsheet" holds
+  // "spread"). Suppresses a substring match from the profanity filter rather than
+  // being blanked from the text — different matcher to the two phrase lists above.
+  ProfanityBenignWord = 'ProfanityBenignWord',
 }
 
 export enum ToolSort {
@@ -433,17 +443,6 @@ export enum ExternalModerationType {
   Clavata = 'Clavata',
 }
 
-export enum ModReviewType {
-  Minor = 'minor',
-  POI = 'poi',
-  Reported = 'reported',
-  CSAM = 'csam',
-  BlockedTags = 'tag',
-  NewUsers = 'newUser',
-  Appeals = 'appeal',
-  RuleViolations = 'modRule',
-  RemixSource = 'remixSource',
-}
 
 export enum MarketplacePaymentMethod {
   CashApp = 'CashApp',

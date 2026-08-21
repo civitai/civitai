@@ -415,6 +415,7 @@ describe('getViewerMonetization — an unset gate/fee is never invented', () => 
 
     expect(out[1]).toEqual({
       paidAccess: undefined,
+      sale: null,
       licensingFee: null,
       effectiveLicensingFee: null,
     });
@@ -517,5 +518,186 @@ describe('assertPaidAccessCaps — the price ceiling is permanent-only', () => {
         tier: 'free',
       })
     ).resolves.toBeUndefined();
+  });
+});
+
+describe('getViewerMonetization — a scheduled sale on top of the gate price', () => {
+  const OWNER = 7;
+  const FUTURE = new Date('2099-01-01T00:00:00.000Z');
+  const PAST = new Date('2020-01-01T00:00:00.000Z');
+
+  const sale = (over: Record<string, unknown> = {}) => ({
+    id: 1,
+    discountType: 'Percent',
+    discountAmount: 20,
+    startsAtMs: PAST.getTime(),
+    endsAtMs: FUTURE.getTime(),
+    canceledAtMs: null,
+    ...over,
+  });
+
+  const row = (over: Record<string, unknown> = {}) => ({
+    entityId: 1,
+    ownerId: OWNER,
+    endsAtMs: FUTURE.getTime(),
+    timeframeDays: null,
+    terms: { download: { price: 1000 } },
+    sales: [],
+    ...over,
+  });
+
+  const drive = (
+    gates: Record<string, unknown>,
+    tiers: Record<number, string | null> = { [OWNER]: 'gold' }
+  ) =>
+    mockCacheFetch.mockImplementation(async (key: string) =>
+      key === 'test:cap-tier'
+        ? Object.fromEntries(
+            Object.entries(tiers).map(([id, tier]) => [id, { userId: Number(id), tier }])
+          )
+        : gates
+    );
+
+  it('discounts the price a buyer is shown', async () => {
+    drive({ 1: row({ sales: [sale()] }) });
+
+    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: 2 } });
+
+    expect(out[1].paidAccess?.terms).toEqual({ download: { price: 800 } });
+  });
+
+  it('takes the sale off the CAPPED price, not the stored one', async () => {
+    // Lapsed owner: 5000 stored is billed at the free cap of 500, so 20% off must be 400. Discounting
+    // the stored price first would give 4000, which the cap flattens back to 500 and the sale vanishes.
+    drive({ 1: row({ terms: { download: { price: 5000 } }, sales: [sale()] }) }, { [OWNER]: null });
+
+    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: 2 } });
+
+    expect(out[1].paidAccess?.terms).toEqual({ download: { price: 400 } });
+  });
+
+  it('ignores a sale that has been cancelled, even while its window is still open', async () => {
+    drive({ 1: row({ sales: [sale({ canceledAtMs: PAST.getTime() })] }) });
+
+    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: 2 } });
+
+    expect(out[1].paidAccess?.terms).toEqual({ download: { price: 1000 } });
+  });
+
+  it('ignores a sale whose window has not opened yet', async () => {
+    drive({ 1: row({ sales: [sale({ startsAtMs: FUTURE.getTime() })] }) });
+
+    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: 2 } });
+
+    expect(out[1].paidAccess?.terms).toEqual({ download: { price: 1000 } });
+  });
+
+  it('leaves the OWNER the undiscounted stored price, as with the cap', async () => {
+    drive({ 1: row({ sales: [sale()] }) });
+
+    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: OWNER } });
+
+    expect(out[1].paidAccess?.terms).toEqual({ download: { price: 1000 } });
+  });
+});
+
+describe('getViewerMonetization — what the UI is told about a sale', () => {
+  const OWNER = 7;
+  const FUTURE = new Date('2099-01-01T00:00:00.000Z');
+  const PAST = new Date('2020-01-01T00:00:00.000Z');
+
+  const sale = (over: Record<string, unknown> = {}) => ({
+    id: 1,
+    discountType: 'Percent',
+    discountAmount: 20,
+    startsAtMs: PAST.getTime(),
+    endsAtMs: FUTURE.getTime(),
+    canceledAtMs: null,
+    ...over,
+  });
+
+  const row = (over: Record<string, unknown> = {}) => ({
+    entityId: 1,
+    ownerId: OWNER,
+    endsAtMs: FUTURE.getTime(),
+    timeframeDays: null,
+    terms: { download: { price: 1000 } },
+    sales: [],
+    ...over,
+  });
+
+  const drive = (gates: Record<string, unknown>, tier: string | null = 'gold') =>
+    mockCacheFetch.mockImplementation(async (key: string) =>
+      key === 'test:cap-tier' ? { [OWNER]: { userId: OWNER, tier } } : gates
+    );
+
+  it('reports the pre-sale price and the end date, so the UI never recomputes the discount', async () => {
+    drive({ 1: row({ sales: [sale()] }) });
+
+    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: 2 } });
+
+    expect(out[1].paidAccess?.terms).toEqual({ download: { price: 800 } });
+    expect(out[1].sale?.listTerms).toEqual({ download: { price: 1000 } });
+    expect(out[1].sale?.buyerTerms).toEqual({ download: { price: 800 } });
+    expect(out[1].sale?.endsAt).toEqual(FUTURE);
+    // The discount travels with the sale so a badge can say "20% off" without deriving it client-side.
+    expect(out[1].sale?.discountType).toBe('Percent');
+    expect(out[1].sale?.discountAmount).toBe(20);
+  });
+
+  it('tells the OWNER about their own sale, while still quoting them the stored price', async () => {
+    // Their editors write the stored terms back, so those must not be discounted — but suppressing the
+    // sale entirely made a creator's own model page the one place their live sale was invisible.
+    drive({ 1: row({ sales: [sale()] }) });
+
+    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: OWNER } });
+
+    expect(out[1].paidAccess?.terms).toEqual({ download: { price: 1000 } });
+    expect(out[1].sale?.discountType).toBe('Percent');
+    expect(out[1].sale?.discountAmount).toBe(20);
+    expect(out[1].sale?.endsAt).toEqual(FUTURE);
+    // And the buyer price, or the owner is shown a page of stored prices with a banner claiming a
+    // discount whose actual number appears nowhere.
+    expect(out[1].sale?.buyerTerms).toEqual({ download: { price: 800 } });
+  });
+
+  it('reports no sale when there is none', async () => {
+    drive({ 1: row() });
+
+    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: 2 } });
+
+    expect(out[1].sale).toBeNull();
+  });
+
+  it('reports a sale on a GENERATION-ONLY gate, which has no download price at all', async () => {
+    // Every other fixture here has a download tier. A review found that both branches decided "is there
+    // a sale" from the download price alone, so a gen-only gate reported NO sale to anyone while the
+    // charge discounted it — and the card badged it, promising what the page then denied.
+    drive({ 1: row({ terms: { generation: { price: 1000, trialLimit: 5 } }, sales: [sale()] }) });
+
+    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: 2 } });
+
+    expect(out[1].paidAccess?.terms).toEqual({ generation: { price: 800, trialLimit: 5 } });
+    expect(out[1].sale?.discountAmount).toBe(20);
+    expect(out[1].sale?.buyerTerms).toEqual({ generation: { price: 800, trialLimit: 5 } });
+  });
+
+  it('still reports nothing on a gen-only gate when no sale is running', async () => {
+    drive({ 1: row({ terms: { generation: { price: 1000, trialLimit: 5 } } }) });
+
+    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: 2 } });
+
+    expect(out[1].sale).toBeNull();
+    expect(out[1].paidAccess?.terms).toEqual({ generation: { price: 1000, trialLimit: 5 } });
+  });
+
+  it('reports no sale when the discount rounds away to nothing', async () => {
+    // 1% of 50 floors to 0. Drawing a strikethrough over an unchanged number would read as a broken page.
+    drive({ 1: row({ terms: { download: { price: 50 } }, sales: [sale({ discountAmount: 1 })] }) });
+
+    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: 2 } });
+
+    expect(out[1].paidAccess?.terms).toEqual({ download: { price: 50 } });
+    expect(out[1].sale).toBeNull();
   });
 });

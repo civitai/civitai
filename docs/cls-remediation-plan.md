@@ -103,6 +103,18 @@ model3d) share `TagScroller` and it has no other usages, so this one change cove
 Chosen over SSR-seeding `useCategoryTags` (cleaner first paint, no reserved space,
 but more plumbing) for being surgical and zero-risk.
 
+> **Superseded (2026-08-19), then partly reinstated (2026-08-20).** The category tag
+> filter bar was removed from every feed-like surface, and `TagScroller` and its five
+> `*Categories` consumers were deleted with it (ClickUp 868ku6983). The file links
+> above point at deleted paths and are kept for the record.
+>
+> The bar came back for **models only** (ClickUp 868kumr1c) — `/models` and
+> `/user/[username]/models`, via `CategoryTags`, which never used `TagScroller` and so
+> never carried the reservation this section describes. It carries its own `min-h-[26px]`
+> now, in both the empty and populated states. So the shift cannot occur on any surface:
+> removed from every other feed, and reserved on all three surfaces that still render
+> `CategoryTags` — those two pages and the generation resource-select modal.
+
 **Verified (local dev build, same `layout-shift` harness):**
 
 | Page      | Before (prod field) | After (local)                         |

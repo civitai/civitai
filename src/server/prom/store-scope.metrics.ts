@@ -80,7 +80,8 @@ const metrics =
     resolutions: new client.Counter({
       name: PROM_PREFIX + 'store_scope_resolutions_total',
       help:
-        'Cumulative App-store read-scope resolutions, by resolved scope ' +
+        'Cumulative App-store visibility-scope resolutions (READ and WRITE paths — the ' +
+        'review write gate keys on this same scope), by resolved scope ' +
         '(full|public-external|none) and whether a session user was present (user|anon). ' +
         'Monotonic; use rate(). A logged-in population that is entirely `none` while a ' +
         'cohort flag is open is the civitai#3983 signature.',
@@ -89,9 +90,11 @@ const metrics =
     applied: new client.Counter({
       name: PROM_PREFIX + 'store_scope_applied_total',
       help:
-        'Cumulative store-scope values a read ENTRY POINT actually branched on, by entrypoint. ' +
-        "`scope` is `absent` when no scope reached the branch at all — the one case a caller's " +
-        'own default (`?? none` on tRPC, `?? full` in the listing service) silently erases. ' +
+        'Cumulative store-scope values an ENTRY POINT actually branched on, by entrypoint. ' +
+        'Covers the store READS and the review WRITES (trpc-review-write, trpc-my-review), ' +
+        'which key on the same scope. ' +
+        '`scope` is `absent` when no scope reached the branch at all — the case a defaulting ' +
+        'caller would silently erase (every such default now fails CLOSED via narrowStoreScope). ' +
         'Compare against store_scope_resolutions_total: a resolution mix that disagrees with ' +
         'the applied mix means the scope is being LOST between the resolver and the branch.',
       labelNames: ['scope', 'entrypoint'],
@@ -109,23 +112,39 @@ const metrics =
       name: PROM_PREFIX + 'store_public_catalog_decisions_total',
       help:
         'Cumulative PUBLIC App-catalog grant decisions at the /api/v1/apps REST endpoints, ' +
-        'by outcome and entrypoint. `granted` = a caller who resolved no scope of their own ' +
-        'was served the public catalog (the intended steady state); `withheld` = the ' +
-        'apps-public-catalog-disabled kill switch was on; `privileged` = the caller resolved ' +
-        'a real scope and was passed through untouched. This is the ONLY signal that says ' +
-        'whether the public catalog is actually open — a `withheld` rate rising from zero is ' +
-        'the kill switch having been thrown, deliberately or not.',
+        'by outcome and entrypoint. `granted` = the caller was LIFTED to the public catalog ' +
+        'floor because their own scope was narrower than it (the intended steady state, and ' +
+        'the anonymous case); `withheld` = the apps-public-catalog-disabled kill switch was ' +
+        'on, so the caller kept THEIR OWN resolved scope and nothing more — that is `none` ' +
+        'for an anonymous caller but NOT necessarily nothing, a cohort caller still reads ' +
+        'their own scope through it; `privileged` = the caller was already at or above the ' +
+        'floor and was passed through untouched, without the switch even being evaluated. ' +
+        'This is the ONLY signal that says whether the public catalog is actually open — a ' +
+        '`withheld` rate rising from zero is the kill switch having been thrown, ' +
+        'deliberately or not.',
       labelNames: ['outcome', 'entrypoint'],
     }),
   });
 
 export type StoreScopePrincipal = 'user' | 'anon';
 
-/** Every store read surface that branches on a resolved scope. */
+/**
+ * Every store surface that branches on a resolved scope.
+ *
+ * 🔴 No longer read-only. `trpc-review-write` / `trpc-my-review` are the review
+ * WRITE procs, which moved off the `app-listings` flag onto this same scope (the
+ * external-only cohort could see the review affordance and be refused on submit).
+ * They are labelled distinctly from `trpc-reviews` (the public list read) on
+ * purpose: a scope mix that differs between the read and the write of the same
+ * surface is precisely the shape of that defect, and folding them into one label
+ * would make it unobservable again.
+ */
 export type StoreScopeEntrypoint =
   | 'trpc-list'
   | 'trpc-detail'
   | 'trpc-reviews'
+  | 'trpc-review-write'
+  | 'trpc-my-review'
   | 'rest-list'
   | 'rest-detail';
 
@@ -174,6 +193,16 @@ export type PublicCatalogOutcome = 'granted' | 'withheld' | 'privileged';
  * it. `applied{scope="absent"}` with `decisions{outcome="granted"}` is the known,
  * open #3983 resolver defect being absorbed by the deliberate grant — not a new
  * exposure, because `absent` and a resolved `none` take the identical branch.
+ *
+ * 🔴 `withheld` DOES NOT MEAN THE CALLER GOT NOTHING — read the name as "the public
+ * GRANT was withheld", not "the response was empty". Since civitai#4048 the withheld
+ * branch returns the caller's OWN resolved scope, so a caller in the external-only
+ * cohort still reads `public-external` while the switch is on; only a caller who
+ * resolved `none` of their own (every anonymous one) actually goes dark. The three
+ * outcomes partition callers by what the grant DID to them — lifted them
+ * (`granted`), was withdrawn from them (`withheld`), or had nothing to offer them
+ * because they were already at or above the floor (`privileged`) — not by what they
+ * ended up being able to read.
  */
 export function recordPublicCatalogDecision(
   outcome: PublicCatalogOutcome,

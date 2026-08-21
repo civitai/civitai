@@ -282,7 +282,6 @@ const featureFlags = createFeatureFlags({
   safety: ['public'],
   csamReports: isDev ? ['mod'] : ['granted'],
   appealReports: isDev ? ['mod'] : ['granted'],
-  reviewTrainingData: isDev ? ['mod'] : ['granted'],
   moderateTags: ['granted'],
   chat: {
     toggleable: true,
@@ -291,6 +290,10 @@ const featureFlags = createFeatureFlags({
     description: 'Send and receive DMs from users across the site.',
     availability: ['blue', 'red', 'user'],
   },
+  // The whole DM redesign (868kguhpy): rebuilt message surface, Inbox/Requests
+  // rail, chat settings, per-conversation controls, emoji. Mods only until it
+  // ramps; everyone else keeps the current chat, which still ships alongside it.
+  chatRedesign: { availability: ['mod'], fliptKey: 'chat-redesign' },
   creatorsProgram: ['mod', 'granted'],
   buzzWithdrawalTransfer: ['granted'],
   vault: ['user'],
@@ -299,6 +302,10 @@ const featureFlags = createFeatureFlags({
   cosmeticShop: ['public'],
   // Mods get it by default; unlock testers via the `creator-shop` Flipt flag.
   creatorShop: { availability: ['mod'], fliptKey: 'creator-shop' },
+  // One flag drives both halves of creator announcements: these surfaces and the
+  // Creator Studio composer. Both apps must read the key `creator-announcements`
+  // verbatim — a flag only one side honours ships the half-visible state.
+  creatorAnnouncements: { availability: ['mod'], fliptKey: 'creator-announcements' },
   // Gates CREATING stickers, seeing them in shops, and the picker. Deliberately
   // does NOT gate rendering — a sticker already in a comment or DM must render
   // for everyone, or flipping this off orphans content that is already out there.
@@ -360,6 +367,13 @@ const featureFlags = createFeatureFlags({
     fliptKey: 'model-metric-privacy-readtime',
   },
   imageIndexFeed: { availability: ['public'], fliptKey: 'image-index-feed' },
+  // User-composed hubs (/hubs). `availability: []` = DARK by default and FAILS
+  // CLOSED, so the pages, the tRPC router and the nav entry all stay off until the
+  // `user-hubs` flag exists in Flipt — the flag lands separately, in the private
+  // GitOps repo. On a Flipt boolean, `enabled: true` is the NO-ROLLOUT-MATCHED
+  // fallback (on for every anonymous request), not the on-switch: the rollout is
+  // `enabled: false` plus a segment rule.
+  userHubs: { availability: [], fliptKey: 'user-hubs' },
   // Rewrite orchestrator blob URLs to the Cloudflare-fronted proxy for RU users
   // (their ISPs DPI-block the bare orchestration origin). `availability: []` =
   // DARK by default and FAILS CLOSED (empty availability → static eval false when
@@ -378,7 +392,6 @@ const featureFlags = createFeatureFlags({
   canBuyBuzz: ['public'],
   // #endregion
   // Temporarily disabled until we change ads provider -Manuel
-  paddleAdjustments: ['granted'],
   announcements: ['granted'],
   blocklists: ['granted'],
   toolSearch: ['public'],
@@ -404,7 +417,6 @@ const featureFlags = createFeatureFlags({
   datapacketRead: ['public'],
   modelVersionPopularity: ['mod'],
   kinguinIframe: ['dev'],
-  trainingModelsModeration: ['granted'],
   serviceStatus: ['granted'],
   cashManagement: { availability: ['granted'], fliptKey: 'feature-cash-management' },
   auctionsMod: ['granted'],

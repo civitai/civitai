@@ -1,0 +1,433 @@
+import { randomUUID } from 'node:crypto';
+import { civitaiAppUrl } from './civitai-url';
+import { sql } from '@civitai/db/kysely';
+import { NsfwLevel } from '@civitai/shared';
+import { VIOLATION_LABELS } from '$lib/violations';
+import { REDIS_KEYS, REDIS_SYS_KEYS } from '@civitai/redis';
+import { NotificationCategory } from '@civitai/notifications';
+import { dbRead } from './db';
+import { getBuzz } from './buzz';
+import { bustCacheTag, bustCachedObject } from './cache';
+import { getClickhouse } from './clickhouse';
+import { getNotifications } from './notifications';
+import { getSysRedis } from './redis';
+import { syncSearchIndex } from './search-index';
+import { logAxiomError } from './axiom';
+import { appealResolutionEmail } from './emails/appeal-resolution.email';
+
+/**
+ * Run a post-write side effect so it cannot fail the moderation action that already happened.
+ *
+ * These run AFTER the Image row is blocked or accepted, and none of them can undo it: a ClickHouse
+ * blocklist row, a Redis invalidation, a comic re-queue. When one threw, the whole action rejected and
+ * the moderator got a 500 page for work that had in fact succeeded — reported as "actioning items still
+ * causes 500 error, but does action" on both Comics Review and the image queues (2026-08-12). Retrying
+ * is then the worst move available, because the write is already done.
+ *
+ * `trackImageDeleteTos` and `notifyImageTosViolation` already swallowed their own failures, which is
+ * why the same click was sometimes fine — this makes the rest of the set behave the same way, and logs
+ * so a degraded dependency is visible instead of silent.
+ */
+async function bestEffort(
+  step: string,
+  imageId: number,
+  run: () => Promise<unknown>
+): Promise<void> {
+  try {
+    await run();
+  } catch (error) {
+    void logAxiomError(error, { event: 'image moderation side effect failed', step, imageId });
+  }
+}
+
+// The legacy always stored 'TOS' here — its one caller fed `blockedFor ?? 'moderated'`, which never matched
+// the CSAM/newUser keys (a latent bug). We key off needsReview to store the intended reason; do NOT "fix"
+// this back to always-'TOS'.
+function reviewTypeToBlockReason(reason: string | null | undefined): 'Ownership' | 'CSAM' | 'TOS' {
+  switch (reason) {
+    case 'csam':
+      return 'CSAM';
+    case 'newUser':
+      return 'Ownership';
+    default:
+      return 'TOS';
+  }
+}
+
+export async function queueComicsForImages(imageIds: number[]): Promise<void> {
+  if (!imageIds.length) return;
+  const rows = await dbRead
+    .selectFrom('ComicPanel')
+    .select('projectId')
+    .distinct()
+    .where('imageId', 'in', imageIds)
+    .execute();
+  for (const { projectId } of rows)
+    syncSearchIndex({ entityType: 'comic', entityId: projectId, action: 'update' });
+}
+
+// Per-key set to avoid CROSSSLOT; write the exact `'false'` value the main app's existence reader expects.
+export async function invalidateImagesExistence(imageIds: number[]): Promise<void> {
+  if (!imageIds.length) return;
+  const sys = getSysRedis();
+  await Promise.all(
+    imageIds.map((id) =>
+      sys.packed.set(`${REDIS_SYS_KEYS.CACHES.IMAGE_EXISTS}:${id}`, 'false', { EX: 60 * 5 })
+    )
+  );
+}
+
+// dbRead is safe here: Post→version/model links don't change on a moderation write.
+export async function bustPostGalleryCaches(postIds: number[]): Promise<void> {
+  const ids = [...new Set(postIds.filter((id) => id != null))];
+  if (!ids.length) return;
+  const rows = await dbRead
+    .selectFrom('Post as p')
+    .leftJoin('ModelVersion as mv', 'mv.id', 'p.modelVersionId')
+    .select([
+      'p.modelVersionId as modelVersionId',
+      'mv.modelId as modelId',
+      'p.model3dId as model3dId',
+    ])
+    .where('p.id', 'in', ids)
+    .execute();
+
+  const modelVersionIds = [
+    ...new Set(rows.map((r) => r.modelVersionId).filter((x): x is number => x != null)),
+  ];
+  const modelIds = [...new Set(rows.map((r) => r.modelId).filter((x): x is number => x != null))];
+  const model3dIds = [
+    ...new Set(rows.map((r) => r.model3dId).filter((x): x is number => x != null)),
+  ];
+
+  const tags = [
+    ...modelVersionIds.map((id) => `images-modelVersion:${id}`),
+    ...modelIds.map((id) => `images-model:${id}`),
+    ...model3dIds.map((id) => `images-model3d:${id}`),
+  ];
+  await Promise.all([
+    tags.length ? bustCacheTag(tags) : Promise.resolve(),
+    bustCachedObject(REDIS_KEYS.CACHES.IMAGES_FOR_MODEL_VERSION, modelVersionIds),
+  ]);
+}
+
+// Keep pHash as the full-precision string: it's a signed 64-bit value that overflows JS `number`
+// (`Number(hash)` truncates), and the re-upload match needs the exact bigint. ClickHouse parses the Int64.
+type BlockableImage = {
+  pHash: string | null;
+  needsReview: string | null;
+  blockedFor: string | null;
+};
+
+export async function addImagesToBlocklist(images: BlockableImage[]): Promise<void> {
+  const values = images
+    .filter((i): i is BlockableImage & { pHash: string } => !!i.pHash)
+    .map((i) => ({
+      hash: i.pHash,
+      reason: reviewTypeToBlockReason(i.blockedFor ?? i.needsReview),
+    }));
+  if (!values.length) return;
+  await getClickhouse().insert({ table: 'blocked_images', values, format: 'JSONEachRow' });
+}
+
+export async function removeImagesFromBlocklist(pHashes: (string | null)[]): Promise<void> {
+  const hashes = pHashes.filter((h): h is string => !!h);
+  if (!hashes.length) return;
+  const ch = getClickhouse();
+  const resultSet = await ch.query({
+    query: `SELECT hash, reason FROM "blocked_images" WHERE hash IN (${hashes.join(
+      ','
+    )}) AND disabled = false`,
+    format: 'JSONEachRow',
+  });
+  const blocked = await resultSet.json<{ hash: string; reason: string }[]>();
+  if (!blocked.length) return;
+  await ch.insert({
+    table: 'blocked_images',
+    values: blocked.map((b) => ({ hash: b.hash, reason: b.reason, disabled: true })),
+    format: 'JSONEachRow',
+  });
+}
+
+const NSFW_LEVEL_TO_DEPRECATED: Record<number, 'None' | 'Soft' | 'Mature' | 'X' | 'Blocked'> = {
+  [NsfwLevel.PG]: 'None',
+  [NsfwLevel.PG13]: 'Soft',
+  [NsfwLevel.R]: 'Mature',
+  [NsfwLevel.X]: 'X',
+  [NsfwLevel.XXX]: 'X',
+  [NsfwLevel.Blocked]: 'Blocked',
+};
+
+const NEEDS_REVIEW_TO_VIOLATION: Record<string, string> = {
+  minor: 'realisticMinor',
+  poi: 'realPerson',
+  csam: 'realisticMinorNsfw',
+  tag: 'other',
+  newUser: 'other',
+  blocked: 'other',
+  appeal: 'other',
+  bestiality: 'bestiality',
+};
+
+const REPORT_VIOLATION_TO_TYPE: Record<string, string> = {
+  'Depiction of real-person likeness': 'realPerson',
+  'Graphic violence': 'gore',
+  'False impersonation': 'other',
+  'Deceptive content': 'other',
+  'Sale of illegal substances': 'other',
+  'Child abuse and exploitation': 'realisticMinorNsfw',
+  'Photorealistic depiction of a minor': 'realisticMinor',
+  'Prohibited concepts': 'other',
+};
+
+function mapToViolationType(
+  needsReview: string | null | undefined,
+  reportViolation: string | null | undefined
+): string {
+  if (reportViolation && REPORT_VIOLATION_TO_TYPE[reportViolation])
+    return REPORT_VIOLATION_TO_TYPE[reportViolation];
+  if (needsReview && NEEDS_REVIEW_TO_VIOLATION[needsReview])
+    return NEEDS_REVIEW_TO_VIOLATION[needsReview];
+  return 'other';
+}
+
+export type ImageDeleteTosInput = {
+  imageId: number;
+  ownerId: number;
+  // nsfwLevel BEFORE the block write.
+  nsfwLevel: number;
+  needsReview: string | null;
+  actorUserId: number;
+  ip?: string;
+  userAgent?: string;
+  violationType?: string;
+  violationDetails?: string;
+};
+
+export async function trackImageDeleteTos(input: ImageDeleteTosInput): Promise<void> {
+  const { imageId, ownerId, nsfwLevel, needsReview, actorUserId } = input;
+  try {
+    const [tagRows, resourceRows, reportRes] = await Promise.all([
+      dbRead
+        .selectFrom('TagsOnImageDetails as toi')
+        .innerJoin('Tag as t', 't.id', 'toi.tagId')
+        .select('t.name')
+        .where('toi.imageId', '=', imageId)
+        .where('toi.disabled', '=', false)
+        .execute(),
+      dbRead
+        .selectFrom('ImageResourceNew')
+        .select('modelVersionId')
+        .where('imageId', '=', imageId)
+        .execute(),
+      sql<{ violation: string | null; comment: string | null }>`
+        SELECT r.details->>'violation' AS violation, r.details->>'comment' AS comment
+        FROM "Report" r
+        JOIN "ImageReport" ir ON ir."reportId" = r.id
+        WHERE ir."imageId" = ${imageId} AND r.reason = 'TOSViolation'
+        ORDER BY r."createdAt" DESC
+        LIMIT 1
+      `.execute(dbRead),
+    ]);
+
+    const report = reportRes.rows[0];
+    await getClickhouse().insert({
+      table: 'images',
+      values: [
+        {
+          type: 'DeleteTOS',
+          userId: actorUserId,
+          imageId,
+          tags: tagRows.map((r) => r.name),
+          nsfw: NSFW_LEVEL_TO_DEPRECATED[nsfwLevel] ?? 'None',
+          ip: input.ip ?? 'unknown',
+          userAgent: input.userAgent ?? 'unknown',
+          ownerId,
+          // The moderator's explicit call outranks the queue the image came from — this field is what
+          // the appeal queue shows the next reviewer as the reason for removal.
+          tosReason: input.violationType ?? needsReview ?? 'other',
+          violationType: input.violationType ?? mapToViolationType(needsReview, report?.violation),
+          violationDetails: input.violationDetails ?? report?.comment ?? '',
+          resources: resourceRows.map((r) => r.modelVersionId),
+          via: 'web',
+          viaClientId: '',
+          viaApiKeyId: 0,
+        },
+      ],
+      format: 'JSONEachRow',
+    });
+  } catch (e) {
+    console.error('trackImageDeleteTos failed', { imageId, error: (e as Error).message });
+  }
+}
+
+export async function notifyImageTosViolation(image: {
+  imageId: number;
+  ownerId: number;
+  postId: number | null;
+  /** The moderator's own wording for what was wrong. Omitted where they did not pick one — the main
+   *  app's processor keeps the unreasoned message for that case, and for every notification written
+   *  before this field existed. */
+  reason?: string;
+}): Promise<void> {
+  try {
+    await getNotifications().createNotification({
+      userId: image.ownerId,
+      type: 'tos-violation',
+      category: NotificationCategory.System,
+      key: `tos-violation:image:${randomUUID()}`,
+      details: {
+        modelName: image.postId ? `post #${image.postId}` : 'a post',
+        entity: 'image',
+        url: `/images/${image.imageId}`,
+        ...(image.reason ? { reason: image.reason } : {}),
+      },
+    });
+  } catch {
+    // onFailure already logged; best-effort.
+  }
+}
+
+export async function applyVisibilitySideEffects(
+  imageId: number,
+  postId: number | null
+): Promise<void> {
+  await Promise.all([
+    bustPostGalleryCaches(postId != null ? [postId] : []),
+    queueComicsForImages([imageId]),
+  ]);
+}
+
+// `img` is the PRE-block row (captured before the update).
+export type BlockedImageRow = {
+  pHash: string | null;
+  needsReview: string | null;
+  blockedFor: string | null;
+  nsfwLevel: number;
+  postId: number | null;
+  userId: number;
+};
+
+export async function applyBlockSideEffects(
+  img: BlockedImageRow,
+  actor: {
+    imageId: number;
+    actorUserId: number;
+    ip?: string;
+    userAgent?: string;
+    violationType?: string;
+    violationDetails?: string;
+  }
+): Promise<void> {
+  const { imageId, actorUserId, ip, userAgent, violationType, violationDetails } = actor;
+  await Promise.all([
+    bestEffort('blocklist', imageId, () =>
+      addImagesToBlocklist([
+        { pHash: img.pHash, needsReview: img.needsReview, blockedFor: img.blockedFor },
+      ])
+    ),
+    trackImageDeleteTos({
+      imageId,
+      ownerId: img.userId,
+      nsfwLevel: img.nsfwLevel,
+      needsReview: img.needsReview,
+      actorUserId,
+      ip,
+      userAgent,
+      violationType,
+      violationDetails,
+    }),
+    notifyImageTosViolation({
+      imageId,
+      ownerId: img.userId,
+      postId: img.postId,
+      // The chosen violation only — not the one `trackImageDeleteTos` infers for analytics. Telling
+      // someone their image broke a rule no moderator picked is worse than telling them nothing.
+      reason: violationType
+        ? VIOLATION_LABELS[violationType as keyof typeof VIOLATION_LABELS]
+        : undefined,
+    }),
+    bestEffort('invalidate-existence', imageId, () => invalidateImagesExistence([imageId])),
+    bestEffort('visibility', imageId, () => applyVisibilitySideEffects(imageId, img.postId)),
+  ]);
+}
+
+export async function applyAcceptSideEffects(
+  img: { pHash: string | null; postId: number | null },
+  imageId: number
+): Promise<void> {
+  await Promise.all([
+    bestEffort('unblocklist', imageId, () => removeImagesFromBlocklist([img.pHash])),
+    bestEffort('visibility', imageId, () => applyVisibilitySideEffects(imageId, img.postId)),
+  ]);
+}
+
+const isAppealPrefix = (prefix: string) => prefix.startsWith('appeal-');
+
+// A multi-account appeal charge uses an `appeal-`-prefixed external id → refundMultiTransaction.
+export async function refundAppealFee(appeal: {
+  id: number;
+  buzzTransactionId: string | null;
+  entityId: number;
+}): Promise<void> {
+  if (!appeal.buzzTransactionId) return;
+  const description = `Refunded appeal ${appeal.id} for Image ${appeal.entityId}`;
+  try {
+    if (isAppealPrefix(appeal.buzzTransactionId))
+      await getBuzz().refundMultiTransaction({
+        externalTransactionIdPrefix: appeal.buzzTransactionId,
+        description,
+      });
+    else await getBuzz().refundTransaction(appeal.buzzTransactionId, { description });
+  } catch (e) {
+    console.error('refundAppealFee failed', { appealId: appeal.id, error: (e as Error).message });
+  }
+}
+
+export async function notifyAppealResolved(input: {
+  userId: number;
+  entityId: number;
+  status: 'Approved' | 'Rejected';
+  resolvedMessage?: string;
+}): Promise<void> {
+  try {
+    await getNotifications().createNotification({
+      userId: input.userId,
+      type: 'entity-appeal-resolved',
+      category: NotificationCategory.Other,
+      key: `entity-appeal-resolved:Image:${input.entityId}`,
+      details: {
+        entityType: 'Image',
+        entityId: input.entityId,
+        status: input.status,
+        resolvedMessage: input.resolvedMessage ?? '',
+      },
+    });
+  } catch {
+    // onFailure already logged; best-effort.
+  }
+}
+
+// resolvedMessage is intentionally NOT emailed — only the decision + item links.
+export async function emailAppealResolution(input: {
+  to: string;
+  username: string;
+  approved: boolean;
+  imageIds: number[];
+}): Promise<void> {
+  if (!input.imageIds.length) return;
+  const base = civitaiAppUrl();
+  try {
+    await appealResolutionEmail.send({
+      to: input.to,
+      username: input.username,
+      approved: input.approved,
+      items: input.imageIds.map((id) => ({ url: `${base}/images/${id}`, label: `Image #${id}` })),
+    });
+  } catch (e) {
+    console.error('emailAppealResolution failed', {
+      imageIds: input.imageIds,
+      error: (e as Error).message,
+    });
+  }
+}

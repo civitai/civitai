@@ -94,8 +94,22 @@ describe('getMonitoredAnnouncementImageRefs', () => {
     expect(ANNOUNCEMENT_MEDIA_LOOKAHEAD_MS).toBe(24 * 60 * 60 * 1000);
 
     await getMonitoredAnnouncementImageRefs(0);
-    // A zero look-ahead collapses back to exactly the read path's "live now".
-    expect(findMany.mock.calls[0][0].where).toEqual(activeAnnouncementWhere(NOW));
+    // A zero look-ahead collapses back to exactly the read path's "live now", plus the
+    // site-only scope the monitor adds on top of it.
+    expect(findMany.mock.calls[0][0].where).toEqual({
+      userId: null,
+      ...activeAnnouncementWhere(NOW),
+    });
+  });
+
+  it('monitors site announcements only', async () => {
+    // 🔴 Not a tidy-up. A creator's cover is a coverId Image row, never a metadata.image
+    // key, so creator rows can never produce a finding — and the profile-banner migration
+    // adds ~25k of them against ~260 site rows. Without this the hourly job seq-scans all
+    // of them and ships every metadata blob to the app to be discarded in JS.
+    await getMonitoredAnnouncementImageRefs();
+
+    expect(findMany.mock.calls[0][0].where).toMatchObject({ userId: null });
   });
 
   it('returns one ref per announcement carrying a banner key', async () => {

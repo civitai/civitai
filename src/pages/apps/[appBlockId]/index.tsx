@@ -51,6 +51,7 @@ import {
 import { dbRead } from '~/server/db/client';
 import { resolveStoreVisibilityScope } from '~/server/services/app-blocks-flag';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { offsiteContentRatingLabel } from '~/shared/constants/browsingLevel.constants';
 import { hasInstallSlot } from '~/shared/constants/slot-registry';
 import { trpc } from '~/utils/trpc';
 
@@ -339,7 +340,7 @@ export default function AppDetailPage() {
                     )}
                     {detail.contentRating && (
                       <Badge variant="light" color="gray" size="sm">
-                        {detail.contentRating}
+                        {offsiteContentRatingLabel(detail.contentRating)}
                       </Badge>
                     )}
                   </Group>
@@ -481,7 +482,7 @@ export default function AppDetailPage() {
                   <Stack gap="xs">
                     <Title order={4}>External site</Title>
                     <Text size="sm" c="dimmed">
-                      This app opens an external, off-site link in a new tab:{' '}
+                      This standalone app opens an external link in a new tab:{' '}
                       <Anchor href={externalUrl!} target="_blank" rel="noopener noreferrer">
                         {externalUrl!.replace(/^https?:\/\//, '')}
                       </Anchor>

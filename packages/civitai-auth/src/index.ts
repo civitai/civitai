@@ -46,6 +46,7 @@ export {
   type SessionKeys,
   type InvalidateInfo,
 } from './session-registry';
+export { SESSION_REGISTRY_KEYS } from './session-registry-keys';
 export {
   cookiePrefix,
   isSecureCookie,

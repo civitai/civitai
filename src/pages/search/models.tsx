@@ -11,7 +11,7 @@ import {
 } from '~/components/Search/CustomSearchComponents';
 import { useEffect } from 'react';
 import { ModelCard } from '~/components/Cards/ModelCard';
-import { ModelCardContextProvider } from '~/components/Cards/ModelCardContext';
+import { ModelCardContextProvider, useModelSaleBadges } from '~/components/Cards/ModelCardContext';
 import { SearchHeader } from '~/components/Search/SearchHeader';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
 import { IconCloudOff } from '@tabler/icons-react';
@@ -65,7 +65,7 @@ const RenderFilters = () => {
 
   return (
     <>
-      <BrowsingLevelFilter filters={filters} attributeName="nsfwLevel" />
+      <BrowsingLevelFilter indexKey="models" filters={filters} />
       <SortBy
         title="Sort models by"
         items={[
@@ -194,6 +194,8 @@ export function ModelsHitList() {
     );
   }
 
+  const salesByModelId = useModelSaleBadges((items as { id: number }[]).map((x) => x.id));
+
   return (
     <Stack>
       {hiddenCount > 0 && (
@@ -202,6 +204,8 @@ export function ModelsHitList() {
       <ModelCardContextProvider
         activeBaseModels={activeBaseModels}
         useModelVersionRedirect={activeBaseModels.length > 0}
+        hasSaleProvider
+        salesByModelId={salesByModelId}
       >
         <MasonryGrid
           data={items as any}

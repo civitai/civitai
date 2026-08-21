@@ -38,7 +38,7 @@ describe('app-block-approved — prepareMessage', () => {
     expect(m).toBeTruthy();
     expect(m!.message).toContain('Cool App');
     expect(m!.message.toLowerCase()).toMatch(/approved/);
-    expect(m!.url).toBe('/apps/my-submissions');
+    expect(m!.url).toBe('/apps/mine');
   });
 
   it('falls back to a terse "Your app block" when no name is present', () => {
@@ -65,7 +65,7 @@ describe('app-block-rejected — prepareMessage', () => {
     expect(m!.message).toContain('Cool App');
     expect(m!.message.toLowerCase()).toMatch(/not approved/);
     expect(m!.message).toContain('Uses a disallowed scope');
-    expect(m!.url).toBe('/apps/my-submissions');
+    expect(m!.url).toBe('/apps/mine');
   });
 
   it('falls back to a clean sentence (period, no dangling colon) when no reason is given', () => {

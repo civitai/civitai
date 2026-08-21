@@ -306,6 +306,7 @@ export const ModelHashType = {
   SHA256: 'SHA256',
   CRC32: 'CRC32',
   BLAKE3: 'BLAKE3',
+  SHA256_12: 'SHA256_12',
 } as const;
 
 export type ModelHashType = (typeof ModelHashType)[keyof typeof ModelHashType];
@@ -535,6 +536,7 @@ export const CosmeticType = {
   ProfileDecoration: 'ProfileDecoration',
   ProfileBackground: 'ProfileBackground',
   Sticker: 'Sticker',
+  ChatTheme: 'ChatTheme',
 } as const;
 
 export type CosmeticType = (typeof CosmeticType)[keyof typeof CosmeticType];
@@ -681,7 +683,8 @@ export const CollectionItemRejectionReason = {
   Automated: 'Automated',
 } as const;
 
-export type CollectionItemRejectionReason = (typeof CollectionItemRejectionReason)[keyof typeof CollectionItemRejectionReason];
+export type CollectionItemRejectionReason =
+  (typeof CollectionItemRejectionReason)[keyof typeof CollectionItemRejectionReason];
 
 export const CollectionContributorPermission = {
   VIEW: 'VIEW',
@@ -788,6 +791,13 @@ export const PaidAccessEntityType = {
 
 export type PaidAccessEntityType = (typeof PaidAccessEntityType)[keyof typeof PaidAccessEntityType];
 
+export const SaleDiscountType = {
+  Fixed: 'Fixed',
+  Percent: 'Percent',
+} as const;
+
+export type SaleDiscountType = (typeof SaleDiscountType)[keyof typeof SaleDiscountType];
+
 export const EntityCollaboratorStatus = {
   Pending: 'Pending',
   Approved: 'Approved',
@@ -817,6 +827,14 @@ export const ChatMemberStatus = {
 } as const;
 
 export type ChatMemberStatus = (typeof ChatMemberStatus)[keyof typeof ChatMemberStatus];
+
+export const ChatNotifyLevel = {
+  All: 'All',
+  Mentions: 'Mentions',
+  None: 'None',
+} as const;
+
+export type ChatNotifyLevel = (typeof ChatNotifyLevel)[keyof typeof ChatNotifyLevel];
 
 export const ChatMessageType = {
   Markdown: 'Markdown',
@@ -1184,3 +1202,12 @@ export const OutboxEntity = {
 } as const;
 
 export type OutboxEntity = (typeof OutboxEntity)[keyof typeof OutboxEntity];
+
+export const UserHubSourceType = {
+  User: 'User',
+  Model: 'Model',
+  ModelVersion: 'ModelVersion',
+  Collection: 'Collection',
+} as const;
+
+export type UserHubSourceType = (typeof UserHubSourceType)[keyof typeof UserHubSourceType];

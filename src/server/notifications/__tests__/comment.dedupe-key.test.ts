@@ -237,6 +237,18 @@ describe('a type that claims the dedupe key must render', () => {
             threadType: 'model3d',
             threadParentId: 1,
           },
+          // App-store listing threads claim the key too now, and they are the one shape whose URL
+          // comes from a joined SLUG rather than `threadParentId` — so `threadParentId` is null
+          // here on purpose. A claimant that cannot render is the whole point of this suite.
+          {
+            ...base,
+            mentionedIn: 'comment',
+            version: 2,
+            threadId: 7,
+            threadType: 'appListing',
+            threadParentId: null,
+            appListingSlug: 'pixel-forge',
+          },
           {
             ...base,
             mentionedIn: 'comment',
@@ -250,11 +262,29 @@ describe('a type that claims the dedupe key must render', () => {
       case 'new-thread-response':
         return [
           { ...base, version: 2, threadId: 7, threadType: 'model', threadParentId: 1 },
+          {
+            ...base,
+            version: 2,
+            threadId: 7,
+            threadType: 'appListing',
+            threadParentId: null,
+            appListingSlug: 'pixel-forge',
+          },
           { ...base, modelId: 1, modelName: 'M', parentId: 5, parentType: 'comment' },
         ];
       // CommentV2 only — its SQL always stamps version 2.
       case 'new-comment-reply':
-        return [{ ...base, version: 2, threadId: 7, threadType: 'model', threadParentId: 1 }];
+        return [
+          { ...base, version: 2, threadId: 7, threadType: 'model', threadParentId: 1 },
+          {
+            ...base,
+            version: 2,
+            threadId: 7,
+            threadType: 'appListing',
+            threadParentId: null,
+            appListingSlug: 'pixel-forge',
+          },
+        ];
       case 'new-review-response':
         return [{ ...base, version: 2, reviewId: 3, modelId: 1, modelName: 'M' }];
       case 'new-image-comment':
@@ -265,6 +295,11 @@ describe('a type that claims the dedupe key must render', () => {
           { ...base, version: 2, postId: 6, postTitle: 'P' },
           { ...base, version: 2, postId: 6, postTitle: null },
         ];
+      // SLUG-addressed, so its URL comes from `appListingSlug` rather than any id. Without this
+      // case it falls to the `default:` model3d shape, carries no slug, and renders no URL —
+      // which is precisely what this suite is here to catch.
+      case 'new-app-listing-comment':
+        return [{ ...base, version: 2, appListingSlug: 'pixel-forge', listingName: 'Pixel Forge' }];
       case 'new-article-comment':
         return [{ ...base, version: 2, articleId: 4, articleTitle: 'A' }];
       case 'new-bounty-comment':
@@ -324,8 +359,18 @@ describe('a type that claims the dedupe key must render', () => {
     for (const entity of ['challengeId', 'model3dId']) {
       expect(mention, `new-mention resolves ${entity}`).toContain(`t."${entity}"`);
     }
-    // ...and it skips appListing threads for the same reason the reply processors do.
-    expect(mention).toContain('root."appListingId" IS NULL');
-    expect(mention).toContain('t."appListingId" IS NULL');
+    // ...and it ADDRESSES appListing threads, for the same reason the reply processors now do.
+    //
+    // 🔴 INVERTED, deliberately. This used to assert the opposite — that new-mention carried the
+    // same `appListingId IS NULL` exclusion the reply processors did. The parity invariant is
+    // unchanged and is what matters: whatever new-thread-response can address, new-mention must
+    // address too, or a mention silently suppresses a working thread-response. Both sides moved
+    // together, so the pair is asserted together.
+    const threadResponse = defs['new-thread-response'].prepareQuery!({ lastSent: '2026-01-01' });
+    for (const sql of [mention, threadResponse]) {
+      expect(sql).toContain('LEFT JOIN "app_listings" al ON al."serial_id" =');
+      expect(sql).toContain(`WHEN al.slug IS NOT NULL THEN 'appListing'`);
+      expect(sql).toContain(`'appListingSlug', al.slug`);
+    }
   });
 });

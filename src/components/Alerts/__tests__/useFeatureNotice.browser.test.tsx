@@ -25,6 +25,9 @@ const mocks = vi.hoisted(() => {
     invalidateCount: 0,
     mutateCalls: [] as Array<{ alertId: string; dismiss?: boolean }>,
     queryEnabledSeen: [] as (boolean | undefined)[],
+    /** The per-user flag overlay a notice's `audience` is resolved against. */
+    features: {} as Record<string, boolean> | null,
+    flagsReady: true,
   };
 
   const listeners = new Set<() => void>();
@@ -94,6 +97,17 @@ vi.mock('~/hooks/useCurrentUser', () => ({
   useCurrentUser: () => mocks.state.currentUser,
 }));
 
+// `useFeatureNotice` reads the per-user flag overlay to answer a notice's
+// `audience`. Mocked rather than left to the real provider so this file keeps
+// controlling every input it asserts on — and because an export a consumer
+// imports must exist in the factory or the file fails at COLLECTION, which
+// reports as "no tests" instead of as a failure.
+vi.mock('~/providers/FeatureFlagsProvider', () => ({
+  useFeatureFlags: () => mocks.state.features,
+  useOptionalFeatureFlags: () => mocks.state.features,
+  useFeatureFlagsReady: () => mocks.state.flagsReady,
+}));
+
 import { renderWithProviders } from '../../../../test/component-setup';
 import { FEATURE_NOTICES } from '~/components/Alerts/notice-registry';
 import { useFeatureNotice } from '~/components/Alerts/useFeatureNotice';
@@ -108,7 +122,7 @@ function Probe({
   enabled?: boolean;
   testId?: string;
 }) {
-  const { isDismissed, hasSettings, isLoading, dismiss, restore } = useFeatureNotice(
+  const { isDismissed, hasSettings, isLoading, isInAudience, dismiss, restore } = useFeatureNotice(
     notice,
     enabled === undefined ? undefined : { enabled }
   );
@@ -120,6 +134,7 @@ function Probe({
       data-dismissed={String(isDismissed)}
       data-has-settings={String(hasSettings)}
       data-loading={String(isLoading)}
+      data-in-audience={String(isInAudience)}
     >
       <button type="button" onClick={dismiss} aria-label={`dismiss-${testId}`}>
         dismiss
@@ -140,6 +155,7 @@ const probeState = async (testId = 'probe') => {
     dismissed: el.getAttribute('data-dismissed'),
     hasSettings: el.getAttribute('data-has-settings'),
     loading: el.getAttribute('data-loading'),
+    inAudience: el.getAttribute('data-in-audience'),
   };
 };
 
@@ -151,6 +167,8 @@ beforeEach(() => {
   mocks.state.invalidateCount = 0;
   mocks.state.mutateCalls = [];
   mocks.state.queryEnabledSeen = [];
+  mocks.state.features = {};
+  mocks.state.flagsReady = true;
 });
 
 describe('useFeatureNotice — reading dismissed state', () => {
@@ -160,6 +178,7 @@ describe('useFeatureNotice — reading dismissed state', () => {
       dismissed: 'false',
       hasSettings: 'true',
       loading: 'false',
+      inAudience: 'true',
     });
   });
 
@@ -194,6 +213,7 @@ describe('useFeatureNotice — hasSettings vs isLoading', () => {
       dismissed: 'false',
       hasSettings: 'false',
       loading: 'false',
+      inAudience: 'true',
     });
   });
 
@@ -205,6 +225,7 @@ describe('useFeatureNotice — hasSettings vs isLoading', () => {
       dismissed: 'false',
       hasSettings: 'false',
       loading: 'true',
+      inAudience: 'true',
     });
   });
 
@@ -215,6 +236,7 @@ describe('useFeatureNotice — hasSettings vs isLoading', () => {
       dismissed: 'false',
       hasSettings: 'true',
       loading: 'false',
+      inAudience: 'true',
     });
   });
 });
@@ -327,5 +349,75 @@ describe('useFeatureNotice — writing', () => {
       expect(mocks.state.settings).toEqual({ dismissedAlerts: ['nav-tidy-notice'] });
       expect(mocks.state.invalidateCount).toBe(1);
     });
+  });
+});
+
+describe('useFeatureNotice — audience targeting', () => {
+  // 🔴 The same claim as `useFeatureNotice.audience.test.ts`, driven through a
+  // real browser render instead of happy-dom. That file is the GATE (project
+  // `unit`, which is what CI runs); this is the corroborating end-to-end pass.
+  //
+  // `remixGalleryExplainer` is the only registry entry that declares an
+  // audience, and `navTidy` declares none — so the pair below moves BOTH ways
+  // from one flag map, which a constant cannot do.
+  const TARGETED = FEATURE_NOTICES.remixGalleryExplainer;
+  const UNTARGETED = FEATURE_NOTICES.navTidy;
+
+  test('a targeted notice is out of audience when its flag is off', async () => {
+    mocks.state.features = { remixGallery: false };
+    renderWithProviders(<Probe notice={TARGETED} testId="targeted" />);
+    expect((await probeState('targeted')).inAudience).toBe('false');
+  });
+
+  test('a targeted notice is in audience when its flag is on', async () => {
+    mocks.state.features = { remixGallery: true };
+    renderWithProviders(<Probe notice={TARGETED} testId="targeted" />);
+    expect((await probeState('targeted')).inAudience).toBe('true');
+  });
+
+  test('targeted and untargeted notices disagree under ONE flag map', async () => {
+    // The strongest shape available here: one render, one set of flags, two
+    // notices, opposite answers. An implementation that returned a constant —
+    // or that read "is any flag on" — cannot produce this.
+    mocks.state.features = { remixGallery: false, imageCardInfoButton: true };
+    renderWithProviders(
+      <>
+        <Probe notice={TARGETED} testId="targeted" />
+        <Probe notice={UNTARGETED} testId="untargeted" />
+      </>
+    );
+    expect((await probeState('targeted')).inAudience).toBe('false');
+    expect((await probeState('untargeted')).inAudience).toBe('true');
+  });
+
+  test('a targeted notice fails closed until the per-user overlay is ready', async () => {
+    // The flags say the user IS in the audience; readiness is the only
+    // variable. Announcing against the anonymous snapshot then retracting is
+    // the flash this withholding exists to prevent.
+    mocks.state.features = { remixGallery: true };
+    mocks.state.flagsReady = false;
+    renderWithProviders(<Probe notice={TARGETED} testId="targeted" />);
+    expect((await probeState('targeted')).inAudience).toBe('false');
+  });
+
+  test('an untargeted notice is unaffected by readiness or by missing flags', async () => {
+    // INVARIANT guard: pins that the eight untargeted notices are untouched by
+    // targeting existing. Stays green if the audience branch is deleted.
+    mocks.state.features = null;
+    mocks.state.flagsReady = false;
+    renderWithProviders(<Probe notice={UNTARGETED} testId="untargeted" />);
+    expect((await probeState('untargeted')).inAudience).toBe('true');
+  });
+
+  test('audience does not disturb dismissal state', async () => {
+    // The two gates are independent: out of audience is not "dismissed", and a
+    // dismissal is still recorded against the notice's own id.
+    mocks.state.features = { remixGallery: false };
+    mocks.state.settings = { dismissedAlerts: [] };
+    renderWithProviders(<Probe notice={TARGETED} testId="targeted" />);
+    const state = await probeState('targeted');
+    expect(state.inAudience).toBe('false');
+    expect(state.dismissed).toBe('false');
+    expect(state.hasSettings).toBe('true');
   });
 });

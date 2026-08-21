@@ -97,6 +97,7 @@ import {
 } from '~/components/Model/ModelVersions/model-version.utils';
 import { getModelVersionActionLayout } from '~/components/Model/ModelVersions/model-version-layout';
 import ModelVersionDonationGoal from '~/components/Model/ModelVersions/ModelVersionDonationGoal';
+import { ModelVersionSaleBanner } from '~/components/Model/ModelVersions/ModelVersionSaleBadge';
 import { ModelVersionEarlyAccessPurchase } from '~/components/Model/ModelVersions/ModelVersionEarlyAccessPurchase';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PermissionIndicator } from '~/components/PermissionIndicator/PermissionIndicator';
@@ -286,6 +287,14 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
   const paidAccessEndsAt = version?.paidAccess?.endsAt;
   const isEarlyAccess = !!paidAccessEndsAt && paidAccessEndsAt > new Date();
   const paidAccessTerms = version?.paidAccess?.terms as ModelVersionTerms | undefined;
+  // Owners see it too, worded differently: they are quoted their stored price, but their own live sale
+  // should not be invisible on their own model page.
+  const saleForViewer = version?.paidAccess?.sale ?? null;
+  // What the PAGE shows. `paidAccess.terms` stays the stored value because the version edit form
+  // initialises from it and would otherwise save a discounted price back over the creator's own — the
+  // same reason the tier cap is never folded into it. That rule protects an editor, not a button: an
+  // owner reading their own model page should see the price a buyer is quoted, like everyone else.
+  const displayTerms = saleForViewer?.buyerTerms ?? paidAccessTerms;
   const isDraft = version?.status === ModelStatus.Draft;
 
   // const shouldOmit = [1562709, 1672021, 1669468].includes(model.id) && !user?.isModerator;
@@ -551,13 +560,13 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
           onSelectFileId={setSelectedFileId}
           canDownload={canDownload}
           downloadPrice={
-            !hasDownloadPermissions && !isLoadingAccess && paidAccessTerms?.download
-              ? paidAccessTerms.download.price
+            !hasDownloadPermissions && !isLoadingAccess && displayTerms?.download
+              ? displayTerms.download.price
               : undefined
           }
           listedPrice={
-            hasDownloadPermissions && isOwnerOrMod && paidAccessTerms?.download
-              ? paidAccessTerms.download.price
+            hasDownloadPermissions && isOwnerOrMod && displayTerms?.download
+              ? displayTerms.download.price
               : undefined
           }
           isLoadingAccess={isLoadingAccess}
@@ -692,6 +701,11 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                   </Group>
                 </Stack>
               )}
+              <ModelVersionSaleBanner
+                sale={saleForViewer}
+                isOwner={isOwner}
+                isModerator={!!user?.isModerator}
+              />
               {downloadSection}
             </Stack>
           ) : (
@@ -719,13 +733,13 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                       data-activity="create:model"
                       disabled={isLoadingAccess || !!model.mode}
                       generationPrice={
-                        generationRequiresPurchase && !isLoadingAccess && paidAccessTerms
-                          ? generationPrice(paidAccessTerms)
+                        generationRequiresPurchase && !isLoadingAccess && displayTerms
+                          ? generationPrice(displayTerms)
                           : undefined
                       }
                       listedPrice={
-                        !generationRequiresPurchase && isOwnerOrMod && paidAccessTerms
-                          ? generationPrice(paidAccessTerms) || undefined
+                        !generationRequiresPurchase && isOwnerOrMod && displayTerms
+                          ? generationPrice(displayTerms) || undefined
                           : undefined
                       }
                       onPurchase={() => onPurchase('generation')}
@@ -964,6 +978,11 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                 </AlertWithIcon>
               )}
               {/* Download Section */}
+              <ModelVersionSaleBanner
+                sale={saleForViewer}
+                isOwner={isOwner}
+                isModerator={!!user?.isModerator}
+              />
               {downloadSection}
             </Stack>
           )}

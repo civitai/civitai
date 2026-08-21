@@ -153,3 +153,80 @@ describe('feature-notice call-site ledger', () => {
     ).toEqual([]);
   });
 });
+
+/**
+ * 🔴 THE AUDIENCE LEDGER — a second population gate, for the same reason as the
+ * first.
+ *
+ * `useFeatureNotice` computes `isInAudience`, but a hook can only OFFER an
+ * answer; a call site that never reads it renders the notice to everyone and
+ * the suite stays green. That is phase 1's warning one level up — the field is
+ * read by the hook, and then the hook's answer is the thing nothing reads.
+ *
+ * WHAT THIS IS NOT: it is structural, and structural is weak. It cannot tell
+ * `if (!isInAudience) return null` from `if (isInAudience) return null`. The
+ * BEHAVIOURAL claim — a targeted notice is withheld from a non-member — is
+ * asserted against the hook's return value in
+ * `useFeatureNotice.audience.test.ts`, in this same project, and was
+ * mutation-checked. This gate exists only so that claim's population cannot
+ * silently grow a member that skips it.
+ */
+describe('feature-notice audience ledger', () => {
+  const actual = scanCallSites();
+
+  // 🔴 Hand-typed, like CALL_SITE_LEDGER above. Deriving this from the registry
+  // would make it agree with a notice that silently loses its audience.
+  const TARGETED_KEYS = ['remixGalleryExplainer'];
+
+  /** Files that must read the hook's audience answer, derived from the ledger. */
+  const filesReferencing = (key: string) =>
+    Object.keys(CALL_SITE_LEDGER).filter((f) => CALL_SITE_LEDGER[f].includes(key));
+
+  const readsAudience = (relFile: string) =>
+    /\bisInAudience\b/.test(stripComments(readFileSync(path.join(SRC, relFile), 'utf8')));
+
+  test('the hand-typed targeted set matches the registry', () => {
+    // Both directions. A notice gaining an audience with no row here would
+    // otherwise be unguarded; a notice LOSING one silently would leave this
+    // demanding a gate that no longer exists.
+    const fromRegistry = Object.entries(FEATURE_NOTICES)
+      .filter(([, notice]) => (notice as { audience?: unknown }).audience !== undefined)
+      .map(([key]) => key)
+      .sort();
+    expect(
+      fromRegistry,
+      'A notice gained or lost an `audience`. Update TARGETED_KEYS here, and make sure every ' +
+        'call site for it reads `isInAudience` from useFeatureNotice.'
+    ).toEqual([...TARGETED_KEYS].sort());
+  });
+
+  test('the audience scanner can see a consumer at all', () => {
+    // Positive control, and a real one: it names a file that DOES read the
+    // field and a file that legitimately does not. Without the second half a
+    // detector wired to `true` would pass.
+    expect(readsAudience('components/RemixGallery/RemixGalleryExplainer.tsx')).toBe(true);
+    expect(readsAudience('components/Alerts/NavTidyNotice.tsx')).toBe(false);
+  });
+
+  test('every call site of a TARGETED notice reads isInAudience', () => {
+    const unguarded = TARGETED_KEYS.flatMap((key) =>
+      filesReferencing(key)
+        .filter((file) => !readsAudience(file))
+        .map((file) => `${file} (notice: ${key})`)
+    );
+    expect(
+      unguarded,
+      'A call site renders a notice that declares an `audience` without reading `isInAudience` ' +
+        'from useFeatureNotice, so it would announce the feature to users who do not have it. ' +
+        'AND `isInAudience` into its render condition.'
+    ).toEqual([]);
+  });
+
+  test('a targeted notice actually has call sites to guard', () => {
+    // Positive control on the test above: `filesReferencing` returning [] would
+    // make an empty `unguarded` prove nothing.
+    for (const key of TARGETED_KEYS) {
+      expect(filesReferencing(key).length).toBeGreaterThan(0);
+    }
+  });
+});

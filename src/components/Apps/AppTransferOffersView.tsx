@@ -2,6 +2,7 @@ import { Alert, Badge, Button, Group, List, Paper, Stack, Text, Title } from '@m
 import { IconAlertTriangle, IconArrowsExchange } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
 
+import type { IncomingTransferView } from '~/server/services/blocks/app-ownership-transfer.service';
 import type { ListingKind } from '~/shared/constants/app-capabilities.constants';
 import { capabilitiesForKind } from '~/shared/constants/app-capabilities.constants';
 
@@ -24,15 +25,27 @@ import { capabilitiesForKind } from '~/shared/constants/app-capabilities.constan
  * directly renderable in a component test.
  */
 
-export type IncomingTransferRow = {
-  transferId: string;
-  appListingId: string;
-  slug: string;
-  name: string;
-  kind: ListingKind;
-  appBlockId: string | null;
-  iconUrl: string | null;
-  fromUserId: number;
+/**
+ * 🔴 DERIVED FROM THE SERVICE'S OWN RETURN TYPE, not hand-written beside it.
+ *
+ * This used to be a structural duplicate of {@link IncomingTransferView}, and the
+ * container's `as IncomingTransferRow[]` cast made the duplication INVISIBLE to `tsc`: a
+ * cast to a wider type is legal, so a field the service stopped sending — or never started
+ * sending — compiled clean at exactly the hop where the defect lives. #3935 hit the same
+ * hole on `edit.tsx` and fixed it the same way; the container's cast is now GONE as well,
+ * so the tRPC output type is checked against this one directly.
+ *
+ * The two date fields are deliberately WIDENED rather than inherited. The service types
+ * them `Date`; what actually arrives depends on the tRPC transformer, and a component that
+ * hard-required `Date` would be making a claim about the wire that this file cannot settle.
+ * {@link formatTransferExpiry} accepts either, so the widening costs nothing and the other
+ * fields — including `acceptBlockedReason`, the point of this change — stay pinned to the
+ * server's shape.
+ *
+ * A type-only import is erased at build time, so nothing of the service's module graph
+ * reaches the client bundle.
+ */
+export type IncomingTransferRow = Omit<IncomingTransferView, 'expiresAt' | 'createdAt'> & {
   expiresAt: Date | string;
   createdAt: Date | string;
 };
@@ -126,6 +139,46 @@ export function AppTransferOffersView({
       <Title order={4}>Ownership transfers</Title>
       {transfers.map((transfer) => {
         const busy = busyTransferId === transfer.transferId;
+        /**
+         * 🔴 THE VERDICT ARRIVES ON THE PAYLOAD, ALREADY DECIDED. No predicate is
+         * re-run here and no `connectClientId` is in scope — the service computed this
+         * from the SAME `refusesTransferForConnectClient` its two enforcement gates use,
+         * so this surface cannot invent a stricter or looser rule of its own.
+         *
+         * 🔴 ONE PREDICATE, READ ONCE, USED BY BOTH BRANCHES. The banner below and the
+         * Accept button used to test this value differently — `blockedReason ? …` for the
+         * banner, `blockedReason != null` for the button — which agree on today's two
+         * possible values and disagree on a third: an EMPTY-STRING reason would have
+         * disabled Accept while rendering no explanation at all, leaving a card the
+         * recipient can neither accept nor understand. Unreachable while the service can
+         * only send the constant or `null`, and reachable the moment a second reason is
+         * added by someone who has no way to know the two branches differ. `blocked` is
+         * the single test.
+         *
+         * 🔴 LOOSE `!= null`, DELIBERATELY — IT FAILS OPEN ON AN ABSENT FIELD. The two
+         * checks are behaviourally identical for every value the TYPE permits (`string`
+         * or `null`) and differ on one the type does not: `undefined`. `!== null` would
+         * score a MISSING field as blocked, so an older API pool that does not send
+         * `acceptBlockedReason` yet would make this bundle refuse EVERY pending offer,
+         * with an empty explanation and Decline still live. That skew is structural here,
+         * not hypothetical: the bundle and the tRPC API are served by separate pools that
+         * roll independently, so new-client/old-server is a state every deploy passes
+         * through. And because the banner is otherwise unreachable (see the reachability
+         * note in `app-ownership-transfer.service.ts`), a mid-roll false refusal would be
+         * the ONLY way a real user ever sees it.
+         *
+         * Failing OPEN is the right direction: the server refuses an unacceptable
+         * transfer anyway — both gates are unchanged and authoritative — so the cost of
+         * a missed banner is one honest error toast, while the cost of a false banner is
+         * blocking a transfer that would have succeeded.
+         *
+         * This also matches how this file already treats the wire 118 lines up, where
+         * `expiresAt`/`createdAt` are widened because "a component that hard-required
+         * `Date` would be making a claim about the wire that this file cannot settle".
+         * The same is true of a field's presence.
+         */
+        const blocked = transfer.acceptBlockedReason != null;
+        const blockedReason = transfer.acceptBlockedReason;
         return (
           <Paper
             key={transfer.transferId}
@@ -162,8 +215,61 @@ export function AppTransferOffersView({
                 </Group>
               </Group>
 
+              {/* 🔴 THE REFUSAL, BEFORE THE CLICK — the recipient half of #3935.
+                  `acceptTransfer` re-asserts the connect-client refusal IN-TRANSACTION, so
+                  a card here can be live, valid-looking and guaranteed to fail. Without
+                  this the recipient learned that only by pressing Accept and reading a
+                  toast — the same learn-it-by-doing-the-work shape the owner's tab already
+                  fixed, on the other side of the wire. (How reachable that state actually
+                  is today is answered honestly at the field's definition in
+                  `app-ownership-transfer.service.ts` — the short version is "not, through
+                  the product", so this is gap-closure ahead of traffic.)
+
+                  The message is the SERVER's own constant, verbatim, not a paraphrase: the
+                  recipient reads the same sentence the mutation would have returned, and it
+                  instructs nothing.
+
+                  🔴 THE STATED REASON FOR THAT — "there is no unlink path in the product" —
+                  IS REFUTED, and this comment used to repeat it. An owner CAN unlink today,
+                  by deleting the OAuth client: the relation is `onDelete: SetNull` and
+                  `oauth-client.router::delete` has no referencing-listing check. What is
+                  still true is the part that matters HERE: the RECIPIENT cannot do it — they
+                  own neither the listing nor the client — so a remedy addressed to them
+                  would still be a dead end, and the copy stays as it is.
+
+                  🔴 AND THE OWNER'S SIDE IS NOW DECIDED TOO. #4126 re-took that product
+                  question on its merits with the delete route known to exist, and kept the
+                  constraint-only wording — chiefly because the route is a destructive
+                  client delete rather than a detach, and because this very component
+                  proves the string has two audiences, one of whom can never act on it. The
+                  full argument now lives at the constant in
+                  `shared/constants/app-transfer.constants.ts`, which no longer rests on the
+                  refuted premise. */}
+              {blocked ? (
+                <Alert
+                  color="yellow"
+                  variant="light"
+                  icon={<IconAlertTriangle size={16} />}
+                  title="This offer can no longer be accepted"
+                  data-testid={`apps-transfer-blocked-${transfer.transferId}`}
+                >
+                  {blockedReason}
+                </Alert>
+              ) : null}
+
               {/* 🔴 RED, not the seat invite's yellow, and it names the consequences
-                  BEFORE the button rather than after the click. */}
+                  BEFORE the button rather than after the click.
+
+                  🔴 RETAINED ON A BLOCKED CARD, DELIBERATELY, and this diverges from the
+                  owner-side treatment in #3935 (which suppressed its equivalent copy).
+                  Two reasons. It is a load-bearing IDENTITY marker: the pair test in
+                  `AppTransferOffersView.browser.test.tsx` names this panel as one of three
+                  things stopping an irreversible ownership transfer from reading like a
+                  reversible seat invite, and dropping it on some cards makes that property
+                  conditional. And unlike the owner's suppressed copy — which described
+                  MECHANICS of a transfer that can never start — this describes what the
+                  offer WAS FOR, which is exactly what the recipient still needs in order
+                  to decide to decline it. */}
               <Alert
                 color="red"
                 variant="light"
@@ -187,10 +293,19 @@ export function AppTransferOffersView({
               </Text>
 
               <Group gap="xs">
+                {/* 🔴 ACCEPT IS DISABLED, DECLINE IS NOT, and the asymmetry is the point.
+                    `acceptTransfer` refuses this offer every time; `cancelTransfer` — which
+                    is how a recipient DECLINES — carries no connect-client gate at all and
+                    admits either party. So getting out of a dead offer is exactly the
+                    action that must still work, and disabling both would strand the
+                    recipient with a card they can neither accept nor clear.
+
+                    DISABLED, NOT HIDDEN, for the same reason the owner's control is: a
+                    vanished button leaves them wondering whether the offer is real. */}
                 <Button
                   size="xs"
                   color="red"
-                  disabled={busy}
+                  disabled={busy || blocked}
                   loading={busy}
                   data-testid={`apps-transfer-accept-${transfer.transferId}`}
                   onClick={() => onRespond?.(transfer.transferId, true)}

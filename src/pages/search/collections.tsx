@@ -34,7 +34,7 @@ export default function CollectionSearch() {
 const RenderFilters = () => {
   return (
     <>
-      <BrowsingLevelFilter attributeName="nsfwLevel" />
+      <BrowsingLevelFilter indexKey="collections" />
       <SortBy
         title="Sort collections by"
         items={[

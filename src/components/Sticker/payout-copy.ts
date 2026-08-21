@@ -79,6 +79,21 @@ export const placementAmountLine = (free: boolean, amount: number) =>
   free ? 'placed this' : placementPaymentSummary(amount);
 
 /**
+ * What the placer's own row says about what it cost them.
+ *
+ * `null` on a free row, because there is no amount to name: `amount` is 0 by
+ * DB constraint, so a number here reports a payment of zero rather than no
+ * payment, and the badge beside it is what carries the fact. Same split as
+ * `placementAmountLine` on the owner side, kept as its own function because the
+ * two sentences are read by different people — the owner is told who paid them,
+ * the placer is told what they spent.
+ *
+ * Here rather than as a ternary in the page: `src/pages` cannot carry a test, so
+ * a money branch written inline there is one nothing can assert.
+ */
+export const placedSpendLabel = (free: boolean, amount: number) => (free ? null : `${amount} Buzz`);
+
+/**
  * What a moderator take-down does to the money.
  *
  * Two axes, and free breaks the pending one specifically: a pending PAID row

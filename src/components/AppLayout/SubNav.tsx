@@ -2,6 +2,7 @@ import { useRouter } from 'next/router';
 import { ArticleFeedFilters } from '~/components/Filters/FeedFilters/ArticleFeedFilters';
 import { BountyFeedFilters } from '~/components/Filters/FeedFilters/BountyFeedFilters';
 import { ComicFeedFilters } from '~/components/Filters/FeedFilters/ComicFeedFilters';
+import { HubFeedFilters } from '~/components/Filters/FeedFilters/HubFeedFilters';
 
 import { ImageFeedFilters } from '~/components/Filters/FeedFilters/ImageFeedFilters';
 import { Model3DFeedFilters } from '~/components/Filters/FeedFilters/Model3DFeedFilters';
@@ -28,6 +29,7 @@ const filterSections = [
   { pathname: '/tools', component: <ToolFeedFilters ml="auto" /> },
   { pathname: '/tools/[slug]', component: <ToolImageFeedFilters ml="auto" /> },
   { pathname: '/comics', component: <ComicFeedFilters ml="auto" /> },
+  { pathname: '/hubs/[id]', component: <HubFeedFilters ml="auto" /> },
 ];
 
 export function SubNav2() {

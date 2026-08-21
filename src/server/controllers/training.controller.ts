@@ -88,8 +88,28 @@ export const getModelData = async ({ input }: { input: GetByIdInput }) => {
   }
 };
 
+/**
+ * The training file whose run is still AWAITING a gate.
+ *
+ * Deliberately not `pickBestTrainingFile`: that scores a run UP for completion markers (+2 epochs,
+ * +1 `completedAt`), which is right for "show me this version's dataset" and exactly backwards here —
+ * a run waiting on a gate is by construction the least complete one. On a version carrying two runs it
+ * would hand back the finished one and gate the wrong workflow.
+ */
+function pickGatedTrainingFile<T extends { metadata: unknown }>(files: T[]): T | undefined {
+  const pending = files.filter((file) => {
+    const tr = ((file.metadata ?? {}) as FileMetadata).trainingResults as
+      | TrainingResultsV2
+      | undefined;
+    return !!tr?.workflowId && !tr?.completedAt;
+  });
+  // Oldest-first among the pending ones, and the plain first row when nothing looks pending — which is
+  // what this did before.
+  return pending[0] ?? files[0];
+}
+
 const getJobIdFromVersion = async (modelVersionId: number) => {
-  const modelFile = await dbWrite.modelFile.findFirst({
+  const modelFiles = await dbWrite.modelFile.findMany({
     where: { modelVersionId, type: 'Training Data' },
     select: {
       metadata: true,
@@ -100,6 +120,7 @@ const getJobIdFromVersion = async (modelVersionId: number) => {
       },
     },
   });
+  const modelFile = pickGatedTrainingFile(modelFiles);
   if (!modelFile) {
     logWebhook({
       message: 'Could not find modelVersion of type "Paused"',
@@ -219,12 +240,6 @@ const moderateTrainingData = async ({
     throw e;
   }
 };
-
-export async function handleApproveTrainingData({ input }: { input: GetByIdInput }) {
-  const modelVersionId = input.id;
-  const { gateId, workflowId, status } = await getJobIdFromVersion(modelVersionId);
-  return await moderateTrainingData({ modelVersionId, gateId, workflowId, status, approve: true });
-}
 
 export async function handleDenyTrainingData({ input }: { input: GetByIdInput }) {
   const modelVersionId = input.id;

@@ -241,7 +241,20 @@ describe('GET /api/v1/apps — an absent scope must never buy more than a resolv
     expect((res.body as { items: unknown[] }).items).toHaveLength(2);
   });
 
-  it('POSITIVE CONTROL: a resolved `public-external` is threaded through unchanged', async () => {
+  // 🔴 CHANGED BY civitai#4048, deliberately. A `public-external` caller is BELOW the
+  // public floor, so with the grant ACTIVE they are widened to it — before #4048 they
+  // short-circuited past the grant and read FEWER listings than an anonymous caller
+  // did from the same endpoint (measured live: 4 vs 14). The pass-through property
+  // still holds where it means something: with the grant WITHHELD.
+  it('a resolved `public-external` is WIDENED to the public floor while the grant is active', async () => {
+    const res = await callList('public-external');
+    expect(res.serviceCalls).toEqual([expect.objectContaining({ scope: 'full' })]);
+  });
+
+  it('POSITIVE CONTROL: with the switch ON, a resolved `public-external` is threaded through unchanged', async () => {
+    // The never-narrows invariant at the handler: withholding the public FLOOR must
+    // not revoke the scope this caller resolved for themselves.
+    mockIsFlipt.mockResolvedValue(true);
     const res = await callList('public-external');
     expect(res.serviceCalls).toEqual([expect.objectContaining({ scope: 'public-external' })]);
   });

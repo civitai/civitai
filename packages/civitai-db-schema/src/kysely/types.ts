@@ -90,6 +90,7 @@ import type {
   EntityCollaboratorStatus,
   ClubAdminPermission,
   ChatMemberStatus,
+  ChatNotifyLevel,
   ChatMessageType,
   PurchasableRewardUsage,
   EntityType,
@@ -130,6 +131,7 @@ import type {
   Model3DEngagementType,
   ShopifyMerchOrderStatus,
   OutboxEntity,
+  UserHubSourceType,
 } from './enums';
 
 export type Account = {
@@ -167,6 +169,22 @@ export type Announcement = {
   endsAt: Timestamp | null;
   metadata: unknown | null;
   disabled: Generated<boolean>;
+  /**
+   * Author. Null is Civitai itself; the sitewide caches select on null, so a
+   * non-null row can never reach the global banner.
+   */
+  userId: number | null;
+  coverId: number | null;
+  /**
+   * Profile-only rows never enter the announcements feed and never notify.
+   */
+  profileOnly: Generated<boolean>;
+};
+export type AnnouncementSpend = {
+  id: Generated<number>;
+  userId: number;
+  announcementId: number | null;
+  createdAt: Generated<Timestamp>;
 };
 export type AnnouncementUser = {
   announcementId: number;
@@ -529,6 +547,13 @@ export type AppOwnershipTransfer = {
   expires_at: Timestamp;
   created_at: Generated<Timestamp>;
   responded_at: Timestamp | null;
+};
+export type AppPageAccess = {
+  app: string;
+  path: string;
+  roles: string[];
+  updatedById: number | null;
+  updatedAt: Generated<Timestamp>;
 };
 export type AppReviewAgentReport = {
   id: string;
@@ -1614,6 +1639,10 @@ export type ChatMember = {
   leftAt: Timestamp | null;
   kickedAt: Timestamp | null;
   unkickedAt: Timestamp | null;
+  filteredAt: Timestamp | null;
+  notifyLevel: Generated<ChatNotifyLevel>;
+  pinnedAt: Timestamp | null;
+  clearedAt: Timestamp | null;
 };
 export type ChatMessage = {
   id: Generated<number>;
@@ -1624,6 +1653,7 @@ export type ChatMessage = {
   contentType: Generated<ChatMessageType>;
   referenceMessageId: number | null;
   editedAt: Timestamp | null;
+  deletedAt: Timestamp | null;
 };
 export type ChatReport = {
   chatId: number;
@@ -3351,15 +3381,6 @@ export type Product = {
   defaultPriceId: string | null;
   provider: Generated<PaymentProvider>;
 };
-export type PromptAllowlist = {
-  id: Generated<number>;
-  trigger: string;
-  category: string;
-  addedBy: number;
-  reason: string | null;
-  userRestrictionId: number | null;
-  createdAt: Generated<Timestamp>;
-};
 export type PurchasableReward = {
   id: Generated<number>;
   createdAt: Generated<Timestamp>;
@@ -3933,6 +3954,11 @@ export type User = {
   settings: Generated<unknown | null>;
   publicSettings: Generated<unknown | null>;
 };
+export type UserAnnouncementMute = {
+  userId: number;
+  creatorId: number;
+  createdAt: Generated<Timestamp>;
+};
 export type UserCosmetic = {
   userId: number;
   cosmeticId: number;
@@ -3979,6 +4005,27 @@ export type UserEngagement = {
   targetUserId: number;
   type: UserEngagementType;
   createdAt: Generated<Timestamp>;
+};
+export type UserHub = {
+  id: Generated<number>;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
+  userId: number;
+  name: string;
+  index: Generated<number>;
+  sort: Generated<string>;
+  period: Generated<MetricTimeframe>;
+  mediaTypes: MediaType[];
+  metadata: Generated<unknown>;
+};
+export type UserHubSource = {
+  id: Generated<number>;
+  hubId: number;
+  type: UserHubSourceType;
+  targetId: number;
+  alias: string | null;
+  enabled: Generated<boolean>;
+  index: Generated<number>;
 };
 export type UserLink = {
   id: Generated<number>;
@@ -4050,51 +4097,6 @@ export type UserPurchasedRewards = {
 };
 export type UserRank = {
   userId: number;
-  downloadCountDayRank: Generated<number | null>;
-  downloadCountWeekRank: Generated<number | null>;
-  downloadCountMonthRank: Generated<number | null>;
-  downloadCountYearRank: Generated<number | null>;
-  downloadCountAllTimeRank: Generated<number | null>;
-  ratingCountDayRank: Generated<number | null>;
-  ratingCountWeekRank: Generated<number | null>;
-  ratingCountMonthRank: Generated<number | null>;
-  ratingCountYearRank: Generated<number | null>;
-  ratingCountAllTimeRank: Generated<number | null>;
-  followerCountDayRank: Generated<number | null>;
-  followerCountWeekRank: Generated<number | null>;
-  followerCountMonthRank: Generated<number | null>;
-  followerCountYearRank: Generated<number | null>;
-  followerCountAllTimeRank: Generated<number | null>;
-  ratingDayRank: Generated<number | null>;
-  ratingWeekRank: Generated<number | null>;
-  ratingMonthRank: Generated<number | null>;
-  ratingYearRank: Generated<number | null>;
-  ratingAllTimeRank: Generated<number | null>;
-  favoriteCountDayRank: Generated<number | null>;
-  favoriteCountWeekRank: Generated<number | null>;
-  favoriteCountMonthRank: Generated<number | null>;
-  favoriteCountYearRank: Generated<number | null>;
-  favoriteCountAllTimeRank: Generated<number | null>;
-  answerCountDayRank: Generated<number | null>;
-  answerCountWeekRank: Generated<number | null>;
-  answerCountMonthRank: Generated<number | null>;
-  answerCountYearRank: Generated<number | null>;
-  answerCountAllTimeRank: Generated<number | null>;
-  answerAcceptCountDayRank: Generated<number | null>;
-  answerAcceptCountWeekRank: Generated<number | null>;
-  answerAcceptCountMonthRank: Generated<number | null>;
-  answerAcceptCountYearRank: Generated<number | null>;
-  answerAcceptCountAllTimeRank: Generated<number | null>;
-  thumbsUpCountDayRank: Generated<number | null>;
-  thumbsUpCountWeekRank: Generated<number | null>;
-  thumbsUpCountMonthRank: Generated<number | null>;
-  thumbsUpCountYearRank: Generated<number | null>;
-  thumbsUpCountAllTimeRank: Generated<number | null>;
-  thumbsDownCountDayRank: Generated<number | null>;
-  thumbsDownCountWeekRank: Generated<number | null>;
-  thumbsDownCountMonthRank: Generated<number | null>;
-  thumbsDownCountYearRank: Generated<number | null>;
-  thumbsDownCountAllTimeRank: Generated<number | null>;
   leaderboardRank: number | null;
   leaderboardId: string | null;
   leaderboardTitle: string | null;
@@ -4262,6 +4264,7 @@ export type DB = {
   Account: Account;
   AdToken: AdToken;
   Announcement: Announcement;
+  AnnouncementSpend: AnnouncementSpend;
   AnnouncementUser: AnnouncementUser;
   Answer: Answer;
   AnswerMetric: AnswerMetric;
@@ -4286,6 +4289,7 @@ export type DB = {
   app_review_agent_reports: AppReviewAgentReport;
   app_user_scope_grants: AppUserScopeGrant;
   Appeal: Appeal;
+  AppPageAccess: AppPageAccess;
   Article: Article;
   ArticleEngagement: ArticleEngagement;
   ArticleMetric: ArticleMetric;
@@ -4488,7 +4492,6 @@ export type DB = {
   PressMention: PressMention;
   Price: Price;
   Product: Product;
-  PromptAllowlist: PromptAllowlist;
   PurchasableReward: PurchasableReward;
   Purchase: Purchase;
   Question: Question;
@@ -4544,12 +4547,15 @@ export type DB = {
   Tool: Tool;
   TrustedSpokeDomain: TrustedSpokeDomain;
   User: User;
+  UserAnnouncementMute: UserAnnouncementMute;
   UserCosmetic: UserCosmetic;
   UserCosmeticShopItemResale: UserCosmeticShopItemResale;
   UserCosmeticShopItemWishlist: UserCosmeticShopItemWishlist;
   UserCosmeticShopPurchaseCosmetic: UserCosmeticShopPurchaseCosmetic;
   UserCosmeticShopPurchases: UserCosmeticShopPurchases;
   UserEngagement: UserEngagement;
+  UserHub: UserHub;
+  UserHubSource: UserHubSource;
   UserLink: UserLink;
   UserMembershipOverride: UserMembershipOverride;
   UserMetric: UserMetric;

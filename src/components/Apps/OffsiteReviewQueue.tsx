@@ -34,6 +34,7 @@ import {
 import { useRef, useState } from 'react';
 import { AppListingCard } from '~/components/Apps/AppListingCard';
 import { AppListingDetailBody } from '~/components/Apps/AppListingDetailBody';
+import { useOpenerFocusReturn } from '~/components/Apps/useOpenerFocusReturn';
 import {
   buildListingCardPreview,
   buildListingDetailPreview,
@@ -74,9 +75,12 @@ import {
   type OffsiteContentRating,
 } from '~/server/schema/blocks/offsite-listing.schema';
 import { validateExternalUrl } from '~/server/schema/blocks/external-app.schema';
+import { OFFSITE_CONTENT_RATING_OPTIONS } from '~/components/Apps/offsiteSubmitFormConfig';
+import { marketplaceCategoryLabel } from '~/server/services/blocks/marketplace-categories.constants';
 import {
   deriveContentRatingFromAssets,
   nsfwLevelFromContentRating,
+  offsiteContentRatingLabel,
 } from '~/shared/constants/browsingLevel.constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { formatDate as formatDateHelper } from '~/utils/date-helpers';
@@ -195,7 +199,7 @@ export function OffsiteReviewQueue() {
         labelPosition="left"
       />
       <Text size="xs" c="dimmed">
-        Off-site apps — a lighter, content-only review (no code / bundle). Approving requires an
+        Standalone apps — a lighter, content-only review (no code / bundle). Approving requires an
         asset-complete draft (icon + cover + ≥1 screenshot).
       </Text>
 
@@ -280,6 +284,28 @@ export function OffsiteReviewQueue() {
  * resetting its approve/reject UI state — mirrors `OnsiteReviewModal`). The body is
  * exported so the combined code+media review surface can re-host it WITHOUT this
  * `<Modal>` shell.
+ *
+ * 🔴 THE `Modal.Stack` WRAPPER IS LOAD-BEARING, NOT DECORATION, AND IT IS HALF OF A
+ * SEAM. The listing PREVIEW inside this modal renders `AppListingDetailBody`, whose
+ * screenshot gallery opens a full-screen `AppListingScreenshotViewer` — a second
+ * `<Modal>`, nested inside this one. Mantine's Esc handling is a per-Modal `window`
+ * keydown listener in CAPTURE phase (`ModalBase/use-modal.mjs`), so with no
+ * coordination BOTH handlers fire for one key: dismissing the lightbox also closed
+ * THIS modal, discarding the `rejectionReason` / `approvalNotes` the moderator was
+ * typing (local state in `OffsiteReviewModalBody`, and `keepMounted` is false so it is
+ * gone) along with their place in the queue. Measured, not theorised.
+ *
+ * `Modal.Stack` + `stackId` makes Mantine gate instead of race: `closeOnEscape` and
+ * `trapFocus` become `ctx.currentId === stackId` (`Modal.mjs:53-57`), so only the
+ * top-most member of the stack responds to Escape, and the key is handed back to this
+ * modal the moment the viewer closes.
+ *
+ * 🔴 BOTH HALVES ARE REQUIRED AND NEITHER ERRORS WITHOUT THE OTHER — the viewer's
+ * `stackId` is inert with no `Modal.Stack` ancestor, and this wrapper does nothing on
+ * its own. That is what makes it a seam rather than two settings, and it is pinned as
+ * one in `__tests__/appListingScreenshotViewerWiring.test.ts`. Do not remove the
+ * wrapper because "there is only one modal here" — the second one is three components
+ * down, inside the preview.
  */
 export function OffsiteReviewModal({
   request,
@@ -294,42 +320,51 @@ export function OffsiteReviewModal({
 }) {
   const busyRef = useRef(false);
   const isOnsite = request?.kind === 'onsite';
+  // Inside the stack Mantine's own focus return captures the wrong element and drops
+  // the moderator on `<body>` — measured. This restores the opener; the
+  // `returnFocus={false}` below leaves Mantine's inert so there is one owner.
+  // (Deleting that prop alone did NOT break the focus tests — see the hook's header.)
+  useOpenerFocusReturn(!!request);
   return (
-    <Modal
-      opened={!!request}
-      onClose={() => {
-        if (busyRef.current) return;
-        onClose();
-      }}
-      title={
-        request ? (
-          <Group gap={6}>
-            <Text fw={600}>{request.slug}</Text>
-            <Badge
-              color={isOnsite ? 'teal' : 'grape'}
-              size="sm"
-              variant="light"
-              data-testid="apps-offsite-kind-badge"
-            >
-              {isOnsite ? 'listing media' : 'external'}
-            </Badge>
-          </Group>
-        ) : null
-      }
-      size="lg"
-      centered
-    >
-      {request && (
-        <OffsiteReviewModalBody
-          key={request.id}
-          request={request}
-          onClose={onClose}
-          onActioned={onActioned}
-          readOnly={readOnly}
-          busyRef={busyRef}
-        />
-      )}
-    </Modal>
+    <Modal.Stack>
+      <Modal
+        stackId="offsite-review"
+        returnFocus={false}
+        opened={!!request}
+        onClose={() => {
+          if (busyRef.current) return;
+          onClose();
+        }}
+        title={
+          request ? (
+            <Group gap={6}>
+              <Text fw={600}>{request.slug}</Text>
+              <Badge
+                color={isOnsite ? 'teal' : 'grape'}
+                size="sm"
+                variant="light"
+                data-testid="apps-offsite-kind-badge"
+              >
+                {isOnsite ? 'listing media' : 'external'}
+              </Badge>
+            </Group>
+          ) : null
+        }
+        size="lg"
+        centered
+      >
+        {request && (
+          <OffsiteReviewModalBody
+            key={request.id}
+            request={request}
+            onClose={onClose}
+            onActioned={onActioned}
+            readOnly={readOnly}
+            busyRef={busyRef}
+          />
+        )}
+      </Modal>
+    </Modal.Stack>
   );
 }
 
@@ -589,7 +624,7 @@ export function OffsiteReviewModalBody({
                     Category
                   </Text>
                   <Badge size="sm" variant="light">
-                    {request.appListing.category}
+                    {marketplaceCategoryLabel(request.appListing.category)}
                   </Badge>
                 </Group>
               )}
@@ -599,7 +634,7 @@ export function OffsiteReviewModalBody({
                     Content rating
                   </Text>
                   <Badge size="sm" color="gray" variant="light">
-                    {request.appListing.contentRating}
+                    {offsiteContentRatingLabel(request.appListing.contentRating)}
                   </Badge>
                   <Text size="xs" c="dimmed">
                     {isOnsite ? 'app rating (cap)' : 'declared'}
@@ -617,7 +652,7 @@ export function OffsiteReviewModalBody({
                     variant="light"
                     data-testid="apps-offsite-derived-rating"
                   >
-                    {derivedRating}
+                    {offsiteContentRatingLabel(derivedRating)}
                   </Badge>
                 </Group>
               )}
@@ -752,15 +787,18 @@ export function OffsiteReviewModalBody({
           >
             {isOnsite ? (
               <Text size="sm">
-                Media assets are rated higher ({derivedRating}) than the app’s rating (
-                {declaredRating ?? '—'}). Listing media must not exceed the app’s rating — reject
-                this revision or ask the author to trim the over-rated assets.
+                Media assets are rated higher ({offsiteContentRatingLabel(derivedRating)}) than
+                the app’s rating (
+                {declaredRating ? offsiteContentRatingLabel(declaredRating) : '—'}). Listing media
+                must not exceed the app’s rating — reject this revision or ask the author to trim
+                the over-rated assets.
               </Text>
             ) : (
               <Text size="sm">
-                Assets contain higher-maturity content ({derivedRating}) than the declared rating (
-                {declaredRating ?? '—'}). The final rating defaults to the detected value; rate it at
-                least that high.
+                Assets contain higher-maturity content (
+                {offsiteContentRatingLabel(derivedRating)}) than the declared rating (
+                {declaredRating ? offsiteContentRatingLabel(declaredRating) : '—'}). The final
+                rating defaults to the detected value; rate it at least that high.
               </Text>
             )}
           </Alert>
@@ -808,7 +846,10 @@ export function OffsiteReviewModalBody({
                   ? 'Defaults to the app’s rating (the cap). Listing media must not exceed the app’s rating; assets rated higher are a reject reason.'
                   : 'Defaults to the rating detected from the assets. You may rate up; an under-rating is floored to the detected value on save.'
               }
-              data={OFFSITE_CONTENT_RATINGS.map((r) => ({ value: r, label: r }))}
+              // Same display map as the store rail and the submit form — the mod
+              // picks the rating a visitor will read, so it must be spelled the
+              // same. (Was `label: r`, i.e. the raw lowercase key.)
+              data={OFFSITE_CONTENT_RATING_OPTIONS}
               value={selectedRating}
               onChange={(v) => setRatingOverride((v as OffsiteContentRating) ?? null)}
               disabled={busy}
@@ -1221,7 +1262,7 @@ export function OffsiteReportsQueue() {
           <Group gap={6}>
             <IconFlag size={14} />
             <Text size="sm" fw={600}>
-              Off-site listing reports
+              Standalone listing reports
             </Text>
             <Badge size="sm" variant="light" color={items.length > 0 ? 'red' : 'gray'}>
               {items.length}
@@ -1232,8 +1273,8 @@ export function OffsiteReportsQueue() {
       />
       <Group justify="space-between">
         <Text size="xs" c="dimmed">
-          User reports of approved off-site apps. Verify ownership out-of-band, then delist / relist
-          / purge and resolve or dismiss the report.
+          User reports of approved standalone apps. Verify ownership out-of-band, then delist /
+          relist / purge and resolve or dismiss the report.
         </Text>
         <SegmentedControl
           size="xs"

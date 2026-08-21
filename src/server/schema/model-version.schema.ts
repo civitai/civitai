@@ -2,13 +2,9 @@ import { v4 as uuidv4 } from 'uuid';
 import type { ModelVersionTerms, RightsAffirmation } from '@civitai/buzz';
 import { MAX_LICENSING_FEE, maxLicensingFeeCeiling } from '@civitai/buzz';
 import * as z from 'zod';
-import {
-  MAX_DONATION_GOAL,
-  MIN_DONATION_GOAL,
-} from '~/shared/constants/donation-goal.constants';
+import { MAX_DONATION_GOAL, MIN_DONATION_GOAL } from '~/shared/constants/donation-goal.constants';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { constants } from '~/server/common/constants';
-import { infiniteQuerySchema } from '~/server/schema/base.schema';
 import { imageSchema } from '~/server/schema/image.schema';
 import { modelFileSchema } from '~/server/schema/model-file.schema';
 import type { ModelMeta } from '~/server/schema/model.schema';
@@ -32,12 +28,6 @@ import {
   optimizerTypes,
   trainingBaseModelType,
 } from '~/utils/training';
-
-export type QueryModelVersionSchema = z.infer<typeof queryModelVersionsSchema>;
-export const queryModelVersionsSchema = infiniteQuerySchema.extend({
-  trainingStatus: z.enum(TrainingStatus).optional(),
-  // uploadType: z.enum(ModelUploadType).optional(),
-});
 
 export type RecipeModelInput = z.infer<typeof recipeModelSchema>;
 export const recipeModelSchema = z.object({
@@ -407,7 +397,20 @@ export const donationGoalInputSchema = z.object({
 export type ModelVersionPaidAccessDto = {
   endsAt: Date | null;
   timeframeDays: number | null;
+  /** Already discounted when a sale is live — `sale.listTerms` carries what it was before. */
   terms: ModelVersionTerms;
+  /**
+   * Present only while a sale is actually discounting this viewer's price. `listTerms` is the
+   * pre-sale price so the UI can strike it through; `endsAt` is what a countdown reads.
+   */
+  sale: {
+    listTerms: ModelVersionTerms;
+    /** What a buyer is quoted, so an owner can be shown it without recomputing the discount. */
+    buyerTerms: ModelVersionTerms;
+    endsAt: Date;
+    discountType: 'Fixed' | 'Percent';
+    discountAmount: number;
+  } | null;
 };
 
 // Narrow input for editing only a version's paid access (e.g. from the creator studio) without

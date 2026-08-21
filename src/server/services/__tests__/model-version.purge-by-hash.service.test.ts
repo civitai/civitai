@@ -108,6 +108,7 @@ vi.mock('~/server/services/paid-access.service', () => ({
   paidAccessInputFromLegacyConfig: vi.fn(() => null),
   earlyAccessDonationGoalFromLegacyConfig: vi.fn(() => null),
   earlyAccessConfigFromPaidAccess: vi.fn(),
+  bustModelSaleCache: vi.fn(),
 }));
 vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
 vi.mock('~/server/db/db-lag-helpers', async (importOriginal) => {
@@ -233,6 +234,11 @@ describe('unpublishModelVersionById — by-hash edge-cache purge', () => {
     mockDb.image.findMany.mockResolvedValue([]);
     // Rows still exist on unpublish — resolved by-hash via modelFileHash.findMany.
     mockDb.modelFileHash.findMany.mockResolvedValue([{ hash: 'DEADBEEF' }]);
+    // Nothing was ever bought here, so the refund gate finds no obligation and lets the
+    // unpublish through — this file is about the cache purge, not the gate.
+    mockDb.modelVersion.findMany.mockResolvedValue([{ id: VERSION_ID, meta: null }]);
+    // An ordinary published version, so the moderator-status guard does not preserve anything.
+    mockDb.modelVersion.findUniqueOrThrow.mockResolvedValue({ status: 'Published' });
   }
 
   it('resolves the version hashes and purges the by-hash URL(s)', async () => {

@@ -293,12 +293,14 @@ describe('🔴 an OFF-SITE listing WITH a connect client — refused UP FRONT', 
     // running this file against the previous branch tip, where the assertion passed
     // against the OLD constant. Match on the message BODY, which the title cannot supply.
     await expect.element(blocked).toHaveTextContent(/split ownership/i);
-    // 🔴 AND IT INSTRUCTS NOTHING THE OWNER CANNOT DO. This banner is now PERMANENT on a
-    // connect-linked listing, so a false remedy would be a permanent false remedy — there
-    // is no unlink path in the product (`connectClientId` is required at submit and
-    // immutable on edit). Pinned on the RENDERED text, not just the constant, because this
-    // surface is what made the difference between "a wrong sentence in an error" and "a
-    // wrong sentence on every visit".
+    // 🔴 AND IT INSTRUCTS NOTHING. This banner is PERMANENT on a connect-linked listing,
+    // so any remedy here would be a standing instruction rather than one-off advice.
+    // 🔴 THE REASON IS NOT "there is no unlink path in the product" — that premise is
+    // FALSE and #4126 refuted it (deleting the OAuth client cascades `onDelete: SetNull`).
+    // The copy names no remedy on merits recorded at the constant, chiefly that the route
+    // is a destructive client delete rather than a detach. Pinned on the RENDERED text,
+    // not just the constant, because this surface is what made the difference between
+    // "a wrong sentence in an error" and "a wrong sentence on every visit".
     await expect.element(blocked).not.toHaveTextContent(/unlink/i);
   });
 
@@ -370,10 +372,14 @@ describe('🔴 an OFF-SITE listing WITH a connect client — refused UP FRONT', 
 
 describe('🔴 a LIVE OFFER on a connect-linked listing — dead on accept, and said so', () => {
   /**
-   * 🔴 A REAL CO-EXISTING STATE, NOT A HYPOTHETICAL. `app-ownership-transfer.service`
-   * re-asserts the connect-client refusal IN-TRANSACTION at accept precisely because "a
-   * revision approve can link a client while the offer sits open" — so a listing can carry
-   * a live `pending` offer AND be un-transferable at the same time.
+   * 🔴 A CO-EXISTING STATE THE COMPONENT MUST HANDLE — but NOT, as this docstring used to
+   * claim, because "a revision approve can link a client while the offer sits open". That
+   * claim was false and #4126 corrected it in all seven places it had been copied to: no
+   * writer can move `AppListing.connectClientId` from null to non-null on an existing row,
+   * and initiate refuses a listing born linked, so the pair needs a direct DB write, a
+   * migration or a future link flow to arise. `app-ownership-transfer.service` re-asserts
+   * the refusal IN-TRANSACTION at accept as defence-in-depth against exactly that, and the
+   * tab must render a coherent answer whenever the pair does occur.
    *
    * Before this arm existed the tab rendered "ownership cannot be transferred" directly
    * above a "Transfer pending → Cancel transfer" card, with nothing saying which one won.

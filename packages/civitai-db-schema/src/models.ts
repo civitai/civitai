@@ -60,7 +60,7 @@ export type LicensingFeeSettlementCurrency = "Buzz" | "Cash";
 
 export type ModelVersionEngagementType = "Notify";
 
-export type ModelHashType = "AutoV1" | "AutoV2" | "AutoV3" | "SHA256" | "CRC32" | "BLAKE3";
+export type ModelHashType = "AutoV1" | "AutoV2" | "AutoV3" | "SHA256" | "CRC32" | "BLAKE3" | "SHA256_12";
 
 export type ScanResultCode = "Pending" | "Success" | "Danger" | "Error";
 
@@ -108,7 +108,7 @@ export type TagEngagementType = "Hide" | "Follow" | "Allow";
 
 export type DomainColor = "red" | "green" | "blue" | "all";
 
-export type CosmeticType = "Badge" | "NamePlate" | "ContentDecoration" | "ProfileDecoration" | "ProfileBackground" | "Sticker";
+export type CosmeticType = "Badge" | "NamePlate" | "ContentDecoration" | "ProfileDecoration" | "ProfileBackground" | "Sticker" | "ChatTheme";
 
 export type CosmeticSource = "Trophy" | "Purchase" | "Event" | "Membership" | "Claim";
 
@@ -162,11 +162,15 @@ export type Availability = "Public" | "Unsearchable" | "Private" | "EarlyAccess"
 
 export type PaidAccessEntityType = "ModelVersion" | "ComicChapter";
 
+export type SaleDiscountType = "Fixed" | "Percent";
+
 export type EntityCollaboratorStatus = "Pending" | "Approved" | "Rejected";
 
 export type ClubAdminPermission = "ManageMemberships" | "ManageTiers" | "ManagePosts" | "ManageClub" | "ManageResources" | "ViewRevenue" | "WithdrawRevenue";
 
 export type ChatMemberStatus = "Invited" | "Joined" | "Ignored" | "Left" | "Kicked";
+
+export type ChatNotifyLevel = "All" | "Mentions" | "None";
 
 export type ChatMessageType = "Markdown" | "Image" | "Video" | "Audio" | "Embed";
 
@@ -247,6 +251,8 @@ export type Model3DEngagementType = "Favorite" | "Hide" | "Notify";
 export type ShopifyMerchOrderStatus = "Pending" | "Granted";
 
 export type OutboxEntity = "Article" | "Image" | "Model" | "Post" | "ModelVersion";
+
+export type UserHubSourceType = "User" | "Model" | "ModelVersion" | "Collection";
 
 export interface Account {
   id: number;
@@ -564,6 +570,7 @@ export interface User {
   receivedReports?: UserReport[];
   engagedImages?: ImageEngagement[];
   collections?: Collection[];
+  hubs?: UserHub[];
   collectionItems?: CollectionItem[];
   reviewedCollectionItems?: CollectionItem[];
   contributingCollections?: CollectionContributor[];
@@ -672,6 +679,10 @@ export interface User {
   appOwnershipTransfersFrom?: AppOwnershipTransfer[];
   appOwnershipTransfersTo?: AppOwnershipTransfer[];
   targetedAnnouncements?: AnnouncementUser[];
+  authoredAnnouncements?: Announcement[];
+  announcementSpends?: AnnouncementSpend[];
+  announcementMutesGiven?: UserAnnouncementMute[];
+  announcementMutesReceived?: UserAnnouncementMute[];
   placementSuspension?: PlacementSuspension | null;
   placementsReceived?: Placement[];
   placementsMade?: Placement[];
@@ -1440,6 +1451,7 @@ export interface Image {
   connections?: ImageConnection[];
   UserProfile?: UserProfile[];
   userProfileSfwCover?: UserProfile[];
+  announcementCovers?: Announcement[];
   clubCover?: Club[];
   clubHeader?: Club[];
   clubAvatar?: Club[];
@@ -2655,7 +2667,30 @@ export interface Announcement {
   endsAt: Date | null;
   metadata: JsonValue | null;
   disabled: boolean;
+  userId: number | null;
+  user?: User | null;
+  coverId: number | null;
+  cover?: Image | null;
+  profileOnly: boolean;
   targetUsers?: AnnouncementUser[];
+  spends?: AnnouncementSpend[];
+}
+
+export interface AnnouncementSpend {
+  id: number;
+  userId: number;
+  announcementId: number | null;
+  createdAt: Date;
+  user?: User;
+  announcement?: Announcement | null;
+}
+
+export interface UserAnnouncementMute {
+  userId: number;
+  creatorId: number;
+  createdAt: Date;
+  user?: User;
+  creator?: User;
 }
 
 export interface AnnouncementUser {
@@ -3254,6 +3289,26 @@ export interface PaidAccess {
   updatedAt: Date;
 }
 
+export interface ModelVersionSale {
+  id: number;
+  userId: number;
+  name: string | null;
+  discountType: SaleDiscountType;
+  discountAmount: number;
+  startsAt: Date;
+  endsAt: Date;
+  canceledAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+  versions?: ModelVersionSaleItem[];
+}
+
+export interface ModelVersionSaleItem {
+  saleId: number;
+  modelVersionId: number;
+  sale?: ModelVersionSale;
+}
+
 export interface EntityCollaborator {
   entityType: EntityType;
   entityId: number;
@@ -3445,6 +3500,10 @@ export interface ChatMember {
   leftAt: Date | null;
   kickedAt: Date | null;
   unkickedAt: Date | null;
+  filteredAt: Date | null;
+  notifyLevel: ChatNotifyLevel;
+  pinnedAt: Date | null;
+  clearedAt: Date | null;
   user?: User;
   chat?: Chat;
   lastViewedMessage?: ChatMessage | null;
@@ -3459,6 +3518,7 @@ export interface ChatMessage {
   contentType: ChatMessageType;
   referenceMessageId: number | null;
   editedAt: Date | null;
+  deletedAt: Date | null;
   user?: User;
   chat?: Chat;
   referenceMessage?: ChatMessage | null;
@@ -4275,51 +4335,6 @@ export interface UserStat {
 export interface UserRank {
   user?: User;
   userId: number;
-  downloadCountDayRank: number | null;
-  downloadCountWeekRank: number | null;
-  downloadCountMonthRank: number | null;
-  downloadCountYearRank: number | null;
-  downloadCountAllTimeRank: number | null;
-  ratingCountDayRank: number | null;
-  ratingCountWeekRank: number | null;
-  ratingCountMonthRank: number | null;
-  ratingCountYearRank: number | null;
-  ratingCountAllTimeRank: number | null;
-  followerCountDayRank: number | null;
-  followerCountWeekRank: number | null;
-  followerCountMonthRank: number | null;
-  followerCountYearRank: number | null;
-  followerCountAllTimeRank: number | null;
-  ratingDayRank: number | null;
-  ratingWeekRank: number | null;
-  ratingMonthRank: number | null;
-  ratingYearRank: number | null;
-  ratingAllTimeRank: number | null;
-  favoriteCountDayRank: number | null;
-  favoriteCountWeekRank: number | null;
-  favoriteCountMonthRank: number | null;
-  favoriteCountYearRank: number | null;
-  favoriteCountAllTimeRank: number | null;
-  answerCountDayRank: number | null;
-  answerCountWeekRank: number | null;
-  answerCountMonthRank: number | null;
-  answerCountYearRank: number | null;
-  answerCountAllTimeRank: number | null;
-  answerAcceptCountDayRank: number | null;
-  answerAcceptCountWeekRank: number | null;
-  answerAcceptCountMonthRank: number | null;
-  answerAcceptCountYearRank: number | null;
-  answerAcceptCountAllTimeRank: number | null;
-  thumbsUpCountDayRank: number | null;
-  thumbsUpCountWeekRank: number | null;
-  thumbsUpCountMonthRank: number | null;
-  thumbsUpCountYearRank: number | null;
-  thumbsUpCountAllTimeRank: number | null;
-  thumbsDownCountDayRank: number | null;
-  thumbsDownCountWeekRank: number | null;
-  thumbsDownCountMonthRank: number | null;
-  thumbsDownCountYearRank: number | null;
-  thumbsDownCountAllTimeRank: number | null;
   leaderboardRank: number | null;
   leaderboardId: string | null;
   leaderboardTitle: string | null;
@@ -5023,16 +5038,6 @@ export interface UserRestriction {
   userMessageAt: Date | null;
 }
 
-export interface PromptAllowlist {
-  id: number;
-  trigger: string;
-  category: string;
-  addedBy: number;
-  reason: string | null;
-  userRestrictionId: number | null;
-  createdAt: Date;
-}
-
 export interface UserStrike {
   id: number;
   userId: number;
@@ -5308,6 +5313,14 @@ export interface Outbox {
   attempts: number | null;
 }
 
+export interface AppPageAccess {
+  app: string;
+  path: string;
+  roles: string[];
+  updatedById: number | null;
+  updatedAt: Date;
+}
+
 export interface PlacementSpace {
   id: number;
   surface: string;
@@ -5370,6 +5383,32 @@ export interface PlacementSuspension {
   reason: string | null;
   createdAt: Date;
   createdById: number | null;
+}
+
+export interface UserHub {
+  id: number;
+  createdAt: Date;
+  updatedAt: Date;
+  userId: number;
+  user?: User;
+  name: string;
+  index: number;
+  sort: string;
+  period: MetricTimeframe;
+  mediaTypes: MediaType[];
+  metadata: JsonValue;
+  sources?: UserHubSource[];
+}
+
+export interface UserHubSource {
+  id: number;
+  hubId: number;
+  hub?: UserHub;
+  type: UserHubSourceType;
+  targetId: number;
+  alias: string | null;
+  enabled: boolean;
+  index: number;
 }
 
 type JsonValue = string | number | boolean | { [key in string]?: JsonValue } | Array<JsonValue> | null;

@@ -368,7 +368,8 @@ export const getModelHandler = async ({
     const hideIf = (hidden: boolean, value: number) => (hidden ? null : value);
 
     const mappedVersions = filteredVersions.map((version) => {
-      const { paidAccess, licensingFee, effectiveLicensingFee } = monetizationByVersion[version.id];
+      const { paidAccess, licensingFee, effectiveLicensingFee, sale } =
+        monetizationByVersion[version.id];
       const eaDonationGoal = donationGoalsByVersion[version.id] ?? null;
       const paidAccessGated =
         features.earlyAccessModel && !!paidAccess && isPaidAccessActive(paidAccess);
@@ -450,7 +451,7 @@ export const getModelHandler = async ({
         posts: posts.filter((x) => x.modelVersionId === version.id).map((x) => ({ id: x.id })),
         hashes,
         earlyAccessDeadline,
-        paidAccess: toModelVersionPaidAccessDto(paidAccess),
+        paidAccess: toModelVersionPaidAccessDto(paidAccess, sale),
         donationGoal: eaDonationGoal ? { goalAmount: eaDonationGoal.goalAmount } : null,
         canDownload,
         canGenerate,
@@ -1851,6 +1852,11 @@ export const getModelByHashesHandler = async ({ input }: { input: ModelByHashesI
     return [];
   }
 
+  // `ModelFileHash.hash` is citext, so the ::citext[] cast is what makes this case-insensitive
+  // AND indexable on modelFileHash_hash_cs. Do not "simplify" it to a plain IN over text or a
+  // subquery: citext compared against an explicitly-typed text value degrades to a
+  // case-sensitive text comparison, stored hashes are UPPERCASE, and the query then silently
+  // returns nothing.
   const modelsByHashes = await dbRead.$queryRaw<
     { userId: number; modelId: number; hash: string }[]
   >`
@@ -1861,7 +1867,7 @@ export const getModelByHashesHandler = async ({ input }: { input: ModelByHashesI
            JOIN "ModelFile" mf ON mf."id" = mfh."fileId"
            JOIN "ModelVersion" mv ON mv."id" = mf."modelVersionId"
            JOIN "Model" m ON mv."modelId" = m.id
-    WHERE LOWER(mfh."hash") IN (${Prisma.join(hashes.map((h) => h.toLowerCase()))})
+    WHERE mfh."hash" = ANY(ARRAY[${Prisma.join(hashes.map((h) => h.toLowerCase()))}]::citext[])
       AND m."deletedAt" IS NULL;
   `;
 

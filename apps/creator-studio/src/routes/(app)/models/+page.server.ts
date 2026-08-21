@@ -38,7 +38,7 @@ import {
   bulkSetUsageControl,
   versionsLosingFreeGeneration,
 } from '$lib/server/monetization/paid-access';
-import { checkbox } from '$lib/server/monetization/form-fields';
+import { checkbox } from '$lib/server/form-fields';
 import {
   resolveCreatorScore,
   resolveModelsScore,

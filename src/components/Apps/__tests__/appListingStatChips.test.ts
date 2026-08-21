@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { fileURLToPath } from 'url';
 
 import {
   buildListingStatChips,
@@ -235,7 +236,9 @@ describe('🔴 buildListingStatChips — the `preview` posture', () => {
  * above would stay green if someone put one back there.
  */
 describe('🔴 AppListingDetailBody delegates the chip decision (invariant guard)', () => {
-  const SOURCE = new URL('../AppListingDetailBody.tsx', import.meta.url).pathname;
+  // `fileURLToPath`, not `.pathname` — on Windows the latter yields `/C:/…`, which `readFileSync`
+  // then resolves against the drive root as `C:\C:\…` and cannot open.
+  const SOURCE = fileURLToPath(new URL('../AppListingDetailBody.tsx', import.meta.url));
 
   /**
    * A real dependency on the view-model — `from '~/components/Apps/appListingStatChips'`,

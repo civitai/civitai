@@ -1,6 +1,9 @@
 import { TRPCError } from '@trpc/server';
 
 import { dbRead } from '~/server/db/client';
+import { listingCoverUrl, listingIconUrl } from '~/server/services/blocks/listing-media-url';
+import type { ListingProblem } from '~/server/services/blocks/listing-problems';
+import { computeListingProblems } from '~/server/services/blocks/listing-problems';
 import type {
   AppRole,
   ListingCapability,
@@ -134,6 +137,17 @@ export type ListingAccess = {
    * seat is ever read or written under.
    */
   seatListingId: string;
+  /**
+   * The SEAT (parent) listing's slug.
+   *
+   * 🔴 CARRIED BECAUSE IT IS THE ONLY JOIN LEFT WHEN A BLOCK FK IS NULL.
+   * `app_block_publish_requests.app_block_id` is NULL until approve, so an app's first
+   * pending/rejected/withdrawn version cannot be found by block id at all — `slug` is what
+   * carries identity across that lifecycle. Taken from the PARENT for the same reason
+   * `kind` and `appBlockId` are: a shadow revision has a synthetic `rev-<ulid>` slug.
+   * Read by {@link blockRequestWhereForListing}.
+   */
+  slug: string;
   /**
    * 🔴 THE CANONICAL OWNER, resolved KIND-AWARE — **not** `AppListing.userId`.
    *
@@ -449,6 +463,7 @@ export async function resolveListingAccess(
     select: {
       id: true,
       userId: true,
+      slug: true,
       kind: true,
       appBlockId: true,
       revisionOfId: true,
@@ -459,6 +474,9 @@ export async function resolveListingAccess(
       revisionOf: {
         select: {
           id: true,
+          // The PUBLIC slug. A shadow's own slug is the synthetic `rev-<ulid>`, which
+          // matches no publish request, so the parent's is the one that can join.
+          slug: true,
           // 🔴 THE PARENT'S OWNER COLUMN, and it is NOT redundant with the shadow's own.
           // The shadow froze a copy of it at clone time; for an OFF-SITE listing that
           // column IS the owner, so reading the frozen one keeps naming whoever owned the
@@ -508,6 +526,9 @@ export async function resolveListingAccess(
     ownerUserId,
     kind,
     appBlockId,
+    // 🔴 THE PARENT'S slug, on the same `?? listing.slug` fallback as `kind`/`appBlockId`
+    // above — a shadow carries the synthetic `rev-<ulid>`, which joins to nothing.
+    slug: ((listing.revisionOfId ? parent?.slug : listing.slug) ?? listing.slug) as string,
   };
   if (typeof userId !== 'number') return { ...base, role: null };
   if (ownerUserId === userId) return { ...base, role: 'owner' };
@@ -787,6 +808,70 @@ export type MyAppListing = {
    * rendering a guaranteed 403.
    */
   capabilities: Readonly<Record<ListingCapability, boolean>>;
+  /**
+   * The listing's ICON as a CDN URL, or `null` when it has none.
+   *
+   * 🔴 CARRIED BECAUSE THE CONSUMER IS THE ROW ITSELF, which is the bar the
+   * `connectClientId` note below sets. `/apps/mine` is now the one author-facing table for
+   * every listing, on-site and off-site, and a table of apps that cannot show the apps is
+   * not the surface. It is a MEDIA URL derived from `Image.url` — the same string the
+   * PUBLIC store card already serves for an approved listing — so it discloses nothing to
+   * a seated editor that the store does not, and for a `draft` it discloses that editor's
+   * own collaborators' work, which the seat is exactly consent for.
+   *
+   * `null` is a REAL STATE, not an error: measured on production 2026-08-19, all 11
+   * `removed` listings have `cover_id IS NULL`, so the placeholder path is the main render
+   * path for the Inactive table rather than an edge case.
+   */
+  iconUrl: string | null;
+  /**
+   * The listing's COVER as a CDN URL, or `null`.
+   *
+   * 🔴 NO SCREENSHOT FALLBACK HERE, unlike the public store card — see
+   * {@link listingCoverUrl}. A missing cover is the fact its author needs to see.
+   */
+  coverUrl: string | null;
+  /**
+   * Last write to the listing row. Drives the table's default "recently updated first"
+   * order, computed client-side so the server's `serialId` keyset (which is what makes
+   * `take: limit` deterministic) is untouched.
+   */
+  updatedAt: Date;
+  /**
+   * The listing-completeness ADVISORY — missing icon / cover / screenshots / description
+   * / tagline / category, from {@link computeListingProblems}.
+   *
+   * 🔴 CARRIED BECAUSE `/apps/mine` IS NOW ITS ONLY POSSIBLE HOME. The advisory rendered
+   * on the two `/apps/my-submissions` tables; that page merged into this one, so without
+   * this field the warning has no surface at all and an author simply stops being told
+   * their listing is incomplete. It is also what makes {@link listingCoverUrl}'s "no
+   * screenshot fallback, the author must see the gap" argument true rather than merely
+   * asserted — that rationale cites this warning by name.
+   *
+   * Empty array = nothing to flag. Never `undefined`.
+   */
+  problems: ListingProblem[];
+  /**
+   * The listing's MOST-RECENT moderation-event action, or `null`.
+   *
+   * 🔴 CARRIED BECAUSE `removed` ALONE CANNOT TELL THE AUTHOR APART FROM A MODERATOR, and
+   * that distinction is what decides whether the row may offer **Republish**.
+   * `app_listings.status = 'removed'` is written by BOTH an owner self-unpublish and a mod
+   * takedown; only the last event separates them (`owner-unpublish` ⇒ the owner may restore
+   * it, anything else ⇒ `republishOwnListing` 403s and a moderator `relistListing` is the
+   * only way back). Without this field `/apps/mine` cannot render either affordance
+   * correctly — it would either hide Republish from an author who is entitled to it, or
+   * offer a guaranteed-403 button on a moderator takedown.
+   *
+   * Populated ONLY for a `removed` listing (the sole state that reads it); `null`
+   * everywhere else — including on a removed listing with no recorded event, which
+   * {@link ownerListingState} treats as a mod removal, the SAFE direction.
+   *
+   * 🔴 NORMALISED, NOT RAW — see {@link normalizeLastModerationAction} and the note at its
+   * call site. This read is reachable by a seated EDITOR, so it carries the one bit the UI
+   * branches on and never the moderator's actual verb.
+   */
+  lastModerationAction: NormalizedModerationAction | null;
 };
 
 /**
@@ -803,9 +888,21 @@ export type MyAppListing = {
  * and bought nothing, which is precisely why it should not be paid.
  *
  * So the field is carried ONLY on the read that has a consumer. If a list surface ever
- * needs it, widen `MyAppListing` then — with the consumer, and a test that pins it.
+ * needs it, widen `MyAppListing` then — with the consumer, and a test that pins it. (That
+ * is precisely what happened for `iconUrl`/`coverUrl`/`updatedAt`: the merged `/apps/mine`
+ * table is the consumer, and `app-access.my-app-listings-media.test.ts` pins them.)
+ *
+ * 🔴 AND THE SAME RULE RUNS THE OTHER WAY, which is why this is an `Omit` and not a bare
+ * `&`. The authoring page reads `kind`/`appBlockId`/`role`/`capabilities`/`name` and
+ * nothing else; it has no consumer for the three LIST-only fields, and inheriting them
+ * would oblige `getAppListingAuthoringContext` to join `Image` twice per page load to
+ * populate columns nobody renders. Narrowing here keeps each read carrying exactly what
+ * its own surface uses.
  */
-export type AppListingAuthoringContext = MyAppListing & {
+export type AppListingAuthoringContext = Omit<
+  MyAppListing,
+  'iconUrl' | 'coverUrl' | 'updatedAt' | 'problems' | 'lastModerationAction'
+> & {
   /**
    * The listing's linked OAuth `client_id`, or `null`. PUBLIC, not a secret — the same
    * column the public listing-detail read already exposes (`ListingDetailKindData`).
@@ -821,6 +918,24 @@ export type AppListingAuthoringContext = MyAppListing & {
   connectClientId: string | null;
 };
 
+/**
+ * The one moderation-event action `/apps/mine` is allowed to name, and the bucket for
+ * everything else.
+ *
+ * 🔴 THE VALUE SPACE IS THE POINT. `owner-unpublish` is the only action the client may act
+ * on (it is what `republishOwnListing`'s last-event guard permits), so every other verb
+ * collapses to `other` before it leaves the server. Widening this back to the raw string
+ * re-opens the editor-disclosure hole described at the call site — do not "simplify" it away.
+ */
+export const OWNER_UNPUBLISH_EVENT = 'owner-unpublish';
+export type NormalizedModerationAction = typeof OWNER_UNPUBLISH_EVENT | 'other';
+
+/** `null` in ⇒ `null` out (no event); the owner's own unpublish keeps its name; all else → `other`. */
+function normalizeLastModerationAction(action: string | null): NormalizedModerationAction | null {
+  if (action == null) return null;
+  return action === OWNER_UNPUBLISH_EVENT ? OWNER_UNPUBLISH_EVENT : 'other';
+}
+
 /** Hydrate {@link resolveAccessibleListingIds} into rows, newest listing first. */
 async function hydrateMyAppListings(
   ids: AccessibleListings,
@@ -832,10 +947,72 @@ async function hydrateMyAppListings(
     // 🔴 NO `connectClientId` HERE, deliberately — see {@link AppListingAuthoringContext}.
     // This is a LIST read reachable by an accepted editor; only the single-listing
     // authoring read has a consumer for that column.
-    select: { id: true, slug: true, name: true, status: true, kind: true, appBlockId: true },
+    //
+    // 🔴 `icon`/`cover` ARE NESTED RELATION SELECTS ON THE SAME `findMany`, not a second
+    // query. `app_listings.icon_id`/`cover_id` are integer FKs to `Image`, so the URL is
+    // one join away; doing it here keeps this read at ONE hydrate query, which
+    // `app-access.accessible-listings.test.ts` pins by call count.
+    //
+    // 🔴 `iconId`/`coverId`/`description`/`tagline`/`category` + the FILTERED screenshot
+    // COUNT are the exact inputs of {@link computeListingProblems} — the listing-
+    // completeness advisory. They are selected HERE rather than fetched by a second
+    // surface because `/apps/mine` is now the ONLY place that advisory can render: it used
+    // to hang off the two `/apps/my-submissions` tables, and those lost their importer
+    // when that page merged into this one. Deriving "the cover is missing" from
+    // `coverUrl == null` would cover one of six problems and silently drop the other five.
+    //
+    // The screenshot count is `_count` with the SAME `imageId: { not: null }` filter the
+    // authoritative asset gate uses (`buildAssetStatus`) — a screenshot whose Image was
+    // deleted has nothing to display, so counting it would make `no-screenshots` a
+    // false negative.
+    select: {
+      id: true,
+      slug: true,
+      name: true,
+      status: true,
+      kind: true,
+      appBlockId: true,
+      updatedAt: true,
+      icon: { select: { url: true } },
+      cover: { select: { url: true } },
+      iconId: true,
+      coverId: true,
+      description: true,
+      tagline: true,
+      category: true,
+      _count: { select: { screenshots: { where: { imageId: { not: null } } } } },
+    },
     orderBy: { serialId: 'desc' },
     take: limit,
   });
+  /**
+   * For every REMOVED listing, its MOST-RECENT moderation-event action.
+   *
+   * 🔴 ONE batched query, and ONLY over the removed subset — the same shape
+   * `blocks.router::listMyPublishRequests` and the off-site `listMySubmissions` already use,
+   * so the three author surfaces derive owner-hidden-vs-mod-removed from one query pattern
+   * rather than three. `distinct` + `orderBy desc` is the latest-per-listing keyset.
+   *
+   * The `.length` guard is not micro-optimisation: the overwhelmingly common case is an
+   * author with no removed listings, and skipping the round-trip keeps this read at the ONE
+   * hydrate query `app-access.accessible-listings.test.ts` pins by call count.
+   */
+  const removedListingIds = rows
+    .filter((r: { status: string }) => r.status === 'removed')
+    .map((r: { id: string }) => r.id);
+  const lastEvents = removedListingIds.length
+    ? await dbRead.appListingModerationEvent.findMany({
+        where: { appListingId: { in: removedListingIds } },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        distinct: ['appListingId'],
+        select: { appListingId: true, action: true },
+      })
+    : [];
+  const lastActionByListingId = new Map<string, string>(
+    (lastEvents as Array<{ appListingId: string | null; action: string }>)
+      .filter((e): e is { appListingId: string; action: string } => e.appListingId != null)
+      .map((e) => [e.appListingId, e.action])
+  );
   const ownedSet = new Set(ids.ownedIds);
   return rows.map(
     (r: {
@@ -845,6 +1022,15 @@ async function hydrateMyAppListings(
       status: string;
       kind: string;
       appBlockId: string | null;
+      updatedAt?: Date | null;
+      icon?: { url: string | null } | null;
+      cover?: { url: string | null } | null;
+      iconId?: number | null;
+      coverId?: number | null;
+      description?: string | null;
+      tagline?: string | null;
+      category?: string | null;
+      _count?: { screenshots: number } | null;
     }) => {
       const kind = r.kind as ListingKind;
       return {
@@ -856,6 +1042,43 @@ async function hydrateMyAppListings(
         appBlockId: r.appBlockId,
         role: (ownedSet.has(r.id) ? 'owner' : 'editor') as AppRole,
         capabilities: capabilitiesForKind(kind),
+        iconUrl: listingIconUrl(r.icon),
+        // 🔴 `null`, NOT a screenshot — see {@link listingCoverUrl}. The author must be
+        // able to see that their own cover is missing. That is only true as long as the
+        // advisory below actually renders somewhere; `problems` is what makes it true.
+        coverUrl: listingCoverUrl(r.cover, null),
+        // A narrow test fake that ignores `select` yields `undefined` here; the epoch
+        // keeps the row sortable rather than producing an `Invalid Date` that poisons
+        // every comparison it takes part in.
+        updatedAt: r.updatedAt ?? new Date(0),
+        // 🔴 NO `assetScans` PASSED, so no scan-state problems are computed here. That
+        // input needs each asset's `ingestion` state, which is a per-listing fan-out this
+        // LIST read deliberately does not do — the same reasoning as the omitted
+        // `connectClientId`. The scan problems remain on the single-listing surfaces.
+        problems: computeListingProblems({
+          iconId: r.iconId ?? null,
+          coverId: r.coverId ?? null,
+          screenshotCount: r._count?.screenshots ?? 0,
+          description: r.description ?? null,
+          tagline: r.tagline ?? null,
+          category: r.category ?? null,
+        }).problems,
+        // 🔴 Only a `removed` row can carry one — see the field's doc. A non-removed row
+        // returning an action would let a stale event re-open Republish on a live listing.
+        //
+        // 🔴 NORMALISED TO THE DISTINCTION, NOT THE VERB, AND THAT IS A DISCLOSURE BOUNDARY.
+        // `listMine` is reachable by an accepted EDITOR, and the only other route to a
+        // listing's moderation actions (`listMyListingModerationEvents`) is owner-scoped —
+        // so shipping the raw action would hand a seated collaborator facts they have no
+        // route to today, and specific ones: `claim` says a moderator seized the app from
+        // an impersonating owner, `purge`/`report-resolve`/`report-dismiss` each narrate a
+        // different enforcement history. The consumer needs exactly one bit — may the owner
+        // press Republish — so that is all this carries. Same bar {@link MyAppListing}
+        // already sets for `iconUrl` ("discloses nothing to a seated editor that the store
+        // does not"); the raw verb neither met it nor argued for an exception.
+        lastModerationAction: normalizeLastModerationAction(
+          r.status === 'removed' ? lastActionByListingId.get(r.id) ?? null : null
+        ),
       };
     }
   );

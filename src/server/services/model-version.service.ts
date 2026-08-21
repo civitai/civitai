@@ -62,7 +62,6 @@ import type {
   ModelVersionsGeneratedImagesOnTimeframeSchema,
   ModelVersionUpsertInput,
   PublishVersionInput,
-  QueryModelVersionSchema,
   RecommendedSettingsSchema,
   AddLinkedComponentInput,
   LinkedComponentSettings,
@@ -82,6 +81,8 @@ import {
   assertPaidAccessInput,
   getCachedCapTier,
   getPaidAccess,
+  getFreshSalesForPermanentGate,
+  bustModelSaleCache,
   materializePaidAccessEndsAt,
   writePaidAccessForModelVersion,
 } from '~/server/services/paid-access.service';
@@ -89,6 +90,7 @@ import {
   type ModelVersionTerms,
   capMediaType,
   effectivePaidAccessPrice,
+  discountedPrice,
   isPermanentGate,
   acceptsBlueBuzz,
   generationPrice,
@@ -120,10 +122,15 @@ import { addPostImage, createPost } from '~/server/services/post.service';
 import { createCachedArray } from '~/server/utils/cache-helpers';
 import {
   sleep,
+  throwAuthorizationError,
   throwBadRequestError,
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import {
+  getModelVersionEarlyAccessRefundRequirement,
+  refundModelEarlyAccessPurchases,
+} from '~/server/services/model-early-access-refund.service';
 import type {
   ModelType,
   ModelVersionEngagementType,
@@ -748,6 +755,29 @@ export const upsertModelVersion = async ({
     if (existingModelMeta?.cannotPublish && data.status === ModelStatus.Published) {
       throw throwBadRequestError(
         'This model version cannot be published due to moderation restrictions.'
+      );
+    }
+
+    // `status` is client-settable on this route (`z.enum(ModelStatus)`, unconstrained) and rides the
+    // general `...data` spread into the update, so an edit-and-save could move a published version to
+    // any other status. Downloads and the public reads both gate on `status === 'Published'`, so
+    // EVERY other value takes the version off the page — Draft as surely as Unpublished — and none of
+    // them computes the refund that unpublishModelVersionById owes its buyers. So this refuses
+    // LEAVING Published rather than listing the values that do it: an enumeration of forbidden
+    // statuses is not a control, and ModelStatus has eight members.
+    //
+    // ⚠️ This closes the take-down, NOT every way this route can defeat the gate. The same save
+    // clears the PaidAccess row when `paidAccess` is omitted (writePaidAccessForModelVersion →
+    // deleteMany), and the requirement returns empty with no active gate — so one save then an
+    // ordinary unpublish still refunds nobody. That is tracked separately; do not read this guard
+    // as "the editor can no longer strand a buyer".
+    if (
+      existingVersion.status === ModelStatus.Published &&
+      data.status !== undefined &&
+      data.status !== ModelStatus.Published
+    ) {
+      throw throwBadRequestError(
+        'Use the unpublish action to take a published version down — it settles any refunds owed to buyers.'
       );
     }
 
@@ -1632,32 +1662,126 @@ export const publishModelVersionById = async ({
   return version;
 };
 
+/**
+ * Whether unpublishing this version takes the whole model down with it.
+ *
+ * It removes the SURPRISE, not the state: unpublishing a Published version while a Scheduled one
+ * waits leaves the model up (correct — a release is coming), and unpublishing that scheduled version
+ * afterwards takes the early return, so a model can still end up published with nothing live under
+ * it in two ordinary steps. Closing that needs a rule about scheduled versions, not a bigger count.
+ *
+ * 🔴 Read from the PRIMARY. On a replica this decides a take-down against lagged rows: stale-low
+ * unpublishes a model whose sibling has just been published, and stale-high leaves a model
+ * Published with nothing published under it — the state the cascade exists to prevent.
+ *
+ * The dialog and the mutation both call this, so what a creator consents to and what the server
+ * does come from one answer rather than two that have to agree.
+ */
+export type UnpublishScope = 'model' | 'version';
+
+export const resolveUnpublishScope = async (
+  id: number
+): Promise<{ kind: UnpublishScope; modelId: number }> => {
+  const version = await dbWrite.modelVersion.findUniqueOrThrow({
+    where: { id },
+    select: { modelId: true, status: true },
+  });
+  // A version that is not itself published cannot be the last published one; treating it as such
+  // would run a full model unpublish off an edit to a draft.
+  if (version.status !== ModelStatus.Published)
+    return { kind: 'version', modelId: version.modelId };
+
+  // Scheduled counts as a sibling. unpublishModelById takes Published AND Scheduled versions down,
+  // so cascading past a pending release would silently unpublish tomorrow's launch on a confirm
+  // whose copy said "this is the only published version" — true, and not what the creator agreed to.
+  // Leaving the model published with a scheduled release under it is the correct outcome: something
+  // is coming.
+  const liveSiblings = await dbWrite.modelVersion.count({
+    where: {
+      modelId: version.modelId,
+      status: { in: [ModelStatus.Published, ModelStatus.Scheduled] },
+      id: { not: id },
+    },
+  });
+  return { kind: liveSiblings === 0 ? 'model' : 'version', modelId: version.modelId };
+};
+
 export const unpublishModelVersionById = async ({
   id,
   reason,
   customMessage,
+  refundEarlyAccess,
   meta,
   user,
 }: UnpublishModelSchema & { meta?: ModelMeta; user: SessionUser }) => {
+  // Same obligation as unpublishing the whole model, scoped to this version: taking a version down
+  // revokes its buyers' access, so recent purchases have to be refunded first. Moderators bypass it
+  // exactly as they do in unpublishModelById.
+  if (!user.isModerator) {
+    // Same rule as unpublishModelById: only a moderator gives a reason. Without it the preserve
+    // guard below has a precondition rather than an assumption on one half and not the other — an
+    // owner supplying a reason takes the non-preserve branch, overwrites a moderator's verdict and
+    // attribution on the version they took down, and re-fires the per-version notification.
+    if (reason || customMessage)
+      throw throwAuthorizationError('Only a moderator can give a reason for unpublishing.');
+
+    const requirement = await getModelVersionEarlyAccessRefundRequirement({ id });
+    if (requirement.purchases.length > 0) {
+      if (!refundEarlyAccess) {
+        throw throwBadRequestError(
+          `Cannot unpublish a version with active early access purchases without refunding buyers. ${requirement.buyerCount} member(s) must be refunded a total of ${requirement.totalBuzz} Buzz.`
+        );
+      }
+      const { modelId } = await dbWrite.modelVersion.findUniqueOrThrow({
+        where: { id },
+        select: { modelId: true },
+      });
+      await refundModelEarlyAccessPurchases({ modelId, requirement, scope: 'version' });
+    }
+  }
+
   const unpublishedAt = new Date().toISOString();
   const version = await dbWrite.$transaction(
     async (tx) => {
+      // 🔴 Same rule as unpublishModelById, and this is the SHORTER path to the same place: a
+      // moderator takes one version down, the owner calls unpublish on it with no reason, and
+      // without this it lands at plain Unpublished with the owner as the actor — which is all the
+      // status-keyed republish gate checks. One call, no setup.
+      //
+      // Preserves any moderator-only status, not UnpublishedViolation alone: Deleted is the other
+      // one, and clearing it lets an owner republish a soft-deleted version.
+      const existing = await tx.modelVersion.findUniqueOrThrow({
+        where: { id },
+        select: { status: true },
+      });
+      const preserveModStatus =
+        !reason && constants.modPublishOnlyStatuses.includes(existing.status);
+
       const updatedVersion = await tx.modelVersion.update({
         where: { id },
         data: {
-          status: reason ? ModelStatus.UnpublishedViolation : ModelStatus.Unpublished,
+          status: reason
+            ? ModelStatus.UnpublishedViolation
+            : preserveModStatus
+            ? existing.status
+            : ModelStatus.Unpublished,
 
-          meta: {
-            ...meta,
-            ...(reason
-              ? {
-                  unpublishedReason: reason,
-                  customMessage,
-                }
-              : {}),
-            unpublishedAt,
-            unpublishedBy: user.id,
-          },
+          // Untouched on the preserve path: the moderator's explanation is what the take-down
+          // notification and the model-page banner render, and refreshing unpublishedAt re-fires
+          // that notification against the creator with the owner named as the actor.
+          meta: preserveModStatus
+            ? (meta as Prisma.ModelVersionUpdateInput['meta']) ?? undefined
+            : {
+                ...meta,
+                ...(reason
+                  ? {
+                      unpublishedReason: reason,
+                      customMessage,
+                    }
+                  : {}),
+                unpublishedAt,
+                unpublishedBy: user.id,
+              },
         },
         select: { id: true, model: { select: { id: true, userId: true, nsfw: true } } },
       });
@@ -2109,10 +2233,17 @@ export const earlyAccessPurchase = async ({
   const permanent = isPermanentGate(paidAccess);
   // Skipped for a timed gate: there's nothing to clamp against, so no reason to pay for the lookup.
   const ownerTier = permanent ? await getCachedCapTier(modelVersion.model.userId) : null;
-  const amount = effectivePaidAccessPrice(storedPrice, ownerTier, {
+  const cappedAmount = effectivePaidAccessPrice(storedPrice, ownerTier, {
     permanent,
     mediaType: capMediaType(modelVersion.baseModel),
   });
+  // Sales are read from the PRIMARY, not the cached gate: a cancelled sale must stop discounting the moment
+  // the creator ends it, and the cache is an hour behind with a fire-and-forget bust. Applied after the cap
+  // for the same reason getViewerMonetization does — the two must agree or buyers are billed a price they
+  // were never shown — so both call the SAME discountedPrice, which also owns the floor. Two copies of this
+  // arithmetic had already drifted apart on that floor once.
+  const sales = await getFreshSalesForPermanentGate(modelVersionId, permanent, paidAccess.ownerId);
+  const amount = discountedPrice(cappedAmount, sales);
 
   const accessRecord = await dbWrite.entityAccess.findFirst({
     where: {
@@ -2404,39 +2535,6 @@ export const modelVersionDonationGoal = async ({
   return (await getOwnerDonationGoals('ModelVersion', [id]))[id] ?? null;
 };
 
-export async function queryModelVersions<TSelect extends Prisma.ModelVersionSelect & { id: true }>({
-  user,
-  query,
-  select,
-}: {
-  user?: SessionUser;
-  query: QueryModelVersionSchema;
-  select: TSelect;
-}) {
-  const { cursor, limit, trainingStatus } = query;
-  const AND: Prisma.Enumerable<Prisma.ModelVersionWhereInput> = [];
-  if (trainingStatus) AND.push({ trainingStatus });
-
-  const where: Prisma.ModelVersionWhereInput = { AND };
-
-  // TODO(replica-toast): moderator-only training-review caller reads ModelFile.metadata; revert to dbRead once replication fixed.
-  const items = await dbWrite.modelVersion.findMany({
-    where,
-    cursor: cursor ? { id: cursor } : undefined,
-    take: limit + 1,
-    select: select,
-    orderBy: { id: 'desc' },
-  });
-
-  let nextCursor: number | undefined;
-  if (items.length > limit) {
-    const nextItem = (items as { id: number }[]).pop();
-    nextCursor = nextItem?.id;
-  }
-
-  return { items, nextCursor };
-}
-
 // Public-response cache (origin-side cache for GET /api/v1/models/[id]) toggle —
 // only populated on Datapacket (see PUBLIC_MODEL_RESPONSE_TTL in the handler).
 const PUBLIC_MODEL_RESPONSE_CACHE_ENABLED = env.IS_DATAPACKET;
@@ -2475,6 +2573,13 @@ export const bustMvCache = async (
 ) => {
   const versionIds = Array.isArray(ids) ? ids : [ids];
   await resourceDataCache.bust(versionIds);
+  // The sale badge is cached per MODEL and reached only from here — Creator Studio's bust POSTs to the
+  // endpoint that calls this, so without it a cancelled sale stayed advertised for the whole TTL.
+  try {
+    await bustModelSaleCache(versionIds);
+  } catch {
+    // Best-effort, like the busts around it: a stale badge is not worth failing an unpublish over.
+  }
   await bustOrchestratorModelCache(versionIds, userId);
   await modelVersionAccessCache.refresh(versionIds);
   // Refresh imagesForModelVersionsCache too — TTL is up to 1 day on Datapacket,

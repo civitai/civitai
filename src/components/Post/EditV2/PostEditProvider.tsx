@@ -10,6 +10,7 @@ import { FileUploadProvider } from '~/components/FileUpload/FileUploadProvider';
 import type { MediaUploadOnCompleteProps } from '~/hooks/useMediaUpload';
 import type { PostEditQuerySchema } from '~/server/schema/post.schema';
 import type { PostDetailEditable, PostEditImageDetail } from '~/server/services/post.service';
+import type { Debouncer } from '~/utils/debouncer';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
@@ -65,6 +66,9 @@ type State = {
   setImages: (cb: (images: ControlledImage[]) => ControlledImage[]) => void;
   updateImage: (id: number, cb: (image: PostEditImageDetail) => void) => void;
   toggleReordering: () => void;
+  /** Returns its own unregister, so callers can use it as an effect cleanup. */
+  registerPendingSave: (key: string, flush: () => void) => () => void;
+  flushPendingSaves: () => void;
   updateCollection: (
     collectionId: number | null,
     tagId?: number | null,
@@ -75,8 +79,14 @@ type State = {
 
 // #region [create store]
 type Store = ReturnType<typeof createContextStore>;
-const createContextStore = (post?: PostDetailEditable) =>
-  createStore<State>()(
+const createContextStore = (post?: PostDetailEditable) => {
+  // Deliberately outside the store's reactive state: these are per-mount callbacks, not data.
+  // Keeping them here means registering costs no `set()` (so no notification to every
+  // subscriber, and nothing extra for the devtools middleware to serialize) and lets the many
+  // tool/technique rows register at once — a single slot would silently drop all but the last.
+  const pendingSaves = new Map<string, () => void>();
+
+  return createStore<State>()(
     devtools(
       immer((set) => ({
         post,
@@ -111,6 +121,15 @@ const createContextStore = (post?: PostDetailEditable) =>
           set((state) => {
             state.isReordering = !state.isReordering;
           }),
+        registerPendingSave: (key, flush) => {
+          pendingSaves.set(key, flush);
+          return () => {
+            if (pendingSaves.get(key) === flush) pendingSaves.delete(key);
+          };
+        },
+        flushPendingSaves: () => {
+          for (const flush of pendingSaves.values()) flush();
+        },
         updateCollection: (collectionId, tagId, collectionItemExists) =>
           set({
             collectionId,
@@ -119,9 +138,16 @@ const createContextStore = (post?: PostDetailEditable) =>
             collectionItemExists: collectionItemExists ?? true,
           }),
       })),
-      { name: 'PostDetailEditable' }
+      {
+        name: 'PostDetailEditable',
+        // `import.meta.env` doesn't exist in a Next bundle, so zustand's own default resolves
+        // to enabled everywhere — which serializes the whole store, images included, on every
+        // `set()` for anyone with the Redux devtools extension installed.
+        enabled: process.env.NODE_ENV !== 'production',
+      }
     )
   );
+};
 // #endregion
 
 // #region [state context]
@@ -130,6 +156,20 @@ export function usePostEditStore<T>(selector: (state: State) => T) {
   const store = useContext(StoreContext);
   if (!store) throw new Error('missing PostEditProvider');
   return useStore(store, selector, shallow);
+}
+// #endregion
+
+/**
+ * Lets an intentional exit flush this debouncer before it navigates. An effect is the right
+ * shape here and not an incidental one: the registry lives outside React, so registering is a
+ * subscription, and the unregister has to run on unmount or a stale row's flush outlives it.
+ */
+export function usePendingSave(key: string, debouncer: Debouncer) {
+  const registerPendingSave = usePostEditStore((state) => state.registerPendingSave);
+  useEffect(
+    () => registerPendingSave(key, debouncer.flush),
+    [registerPendingSave, key, debouncer]
+  );
 }
 // #endregion
 
@@ -180,6 +220,11 @@ export function PostEditProvider({ post, params = {}, children, ...extendedParam
 
   useEffect(() => {
     const handleBrowsingAway = async () => {
+      // Runs after `useCatchNavigation`'s guard (registered first, by a descendant), so by here
+      // the navigation is going ahead. Flush before the snapshot below: an edit still inside the
+      // autosave debounce would otherwise be dropped on unmount, and the snapshot would record
+      // the value it replaced.
+      store.getState().flushPendingSaves();
       if (postId) {
         // console.log('browse away');
         await queryUtils.post.get.invalidate({ id: postId });

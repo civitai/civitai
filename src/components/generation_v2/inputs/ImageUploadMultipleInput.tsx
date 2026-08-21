@@ -32,6 +32,7 @@ import { sourceImageKey, useRecentSourceImagesStore } from '~/store/recent-sourc
 import type { DrawingElement } from '~/components/Generation/Input/DrawingEditor/drawing.types';
 import type { SourceImageProps } from '~/server/orchestrator/infrastructure/base.schema';
 import { useSourceMetadataStore, sourceMetadataStore } from '~/store/source-metadata.store';
+import type { ImageMetadataApply } from '~/components/Generation/Input/ImageMetadataModal';
 
 // =============================================================================
 // Types
@@ -82,6 +83,10 @@ export interface ImageUploadMultipleInputProps
   imageAnnotations?: (ImageStatusAnnotation | null)[];
   /** Image strip layout: 'scroll' (horizontal scroll, default) or 'wrap' (flex-wrap) */
   imageLayout?: 'scroll' | 'wrap';
+  /** Show a per-image action that opens the extracted-metadata modal */
+  enableMetadataExtraction?: boolean;
+  /** How the form takes prompts pulled out of an image. Omit to make the modal read-only. */
+  metadataApply?: ImageMetadataApply;
 }
 
 // Re-export ImageSlot for convenience
@@ -111,6 +116,8 @@ export function ImageUploadMultipleInput({
   urlHint,
   imageAnnotations,
   imageLayout = 'scroll',
+  enableMetadataExtraction = false,
+  metadataApply,
   ...inputWrapperProps
 }: ImageUploadMultipleInputProps) {
   const isSlotsMode = !!slots?.length;
@@ -265,6 +272,8 @@ export function ImageUploadMultipleInput({
           aspectRatios={aspectRatios}
           cropToFirstImage={cropToFirstImage}
           disabled={disabled}
+          enableMetadataExtraction={enableMetadataExtraction}
+          metadataApply={metadataApply}
         />
       </Input.Wrapper>
     );
@@ -290,6 +299,8 @@ export function ImageUploadMultipleInput({
           aspectRatios={aspectRatios}
           cropToFirstImage={cropToFirstImage}
           disabled={disabled}
+          enableMetadataExtraction={enableMetadataExtraction}
+          metadataApply={metadataApply}
         >
           {(previewItems) => {
             const hasImages = previewItems.length > 0;
@@ -363,6 +374,8 @@ export function ImageUploadMultipleInput({
         annotations={annotations}
         onDrawingComplete={enableDrawing ? handleDrawingComplete : undefined}
         onRemove={enableDrawing ? handleRemove : undefined}
+        enableMetadataExtraction={enableMetadataExtraction}
+        metadataApply={metadataApply}
       >
         {(previewItems) => {
           const hasImages = previewItems.length > 0;

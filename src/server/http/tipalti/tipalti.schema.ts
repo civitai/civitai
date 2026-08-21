@@ -53,7 +53,9 @@ export namespace Tipalti {
   export const createPayeeResponseSchema = z.object({
     id: z.string(),
     refCode: z.string().optional(),
-    status: z.enum(TipaltiStatus),
+    // Tipalti may return a status we don't list; falling back keeps payee creation from
+    // throwing on it, and callers only read `id`.
+    status: z.enum(TipaltiStatus).catch(TipaltiStatus.InternalValue),
     statusChangeDateTimeUTC: z.string().nullish(),
     statusReason: z.string().nullish(),
     isAccountClosed: z.boolean().optional(),

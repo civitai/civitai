@@ -4,6 +4,7 @@ import { MyModelsSection } from '~/components/Profile/Sections/MyModelsSection';
 import { PopularArticlesSection } from '~/components/Profile/Sections/PopularArticlesSection';
 import { PopularModelsSection } from '~/components/Profile/Sections/PopularModelsSection';
 import { RecentReviewsSection } from '~/components/Profile/Sections/RecentReviewsSection';
+import { OnSaleSection } from '~/components/Profile/Sections/OnSaleSection';
 import { ShopSection } from '~/components/Profile/Sections/ShopSection';
 import { ShowcaseSection } from '~/components/Profile/Sections/ShowcaseSection';
 import type {
@@ -24,6 +25,8 @@ export const defaultProfileSectionStatus: Record<ProfileSectionType, boolean> = 
   imagesOverview: true,
   recentReviews: true,
   shop: false,
+  // Off by default: a creator running no sales should not get an empty section they never asked for.
+  onSale: false,
 } as const;
 
 export const ProfileSectionComponent: Record<
@@ -37,6 +40,7 @@ export const ProfileSectionComponent: Record<
   imagesOverview: MyImagesSection,
   recentReviews: RecentReviewsSection,
   shop: ShopSection,
+  onSale: OnSaleSection,
 } as const;
 
 export const profileSectionLabels: Record<ProfileSectionType, string> = {
@@ -47,6 +51,7 @@ export const profileSectionLabels: Record<ProfileSectionType, string> = {
   imagesOverview: 'Images overview',
   recentReviews: 'Recent reviews',
   shop: 'Shop',
+  onSale: 'On sale',
 } as const;
 export const getAllAvailableProfileSections = (userSections: ProfileSectionSchema[] = []) => {
   const sections: ProfileSectionSchema[] = [
@@ -93,3 +98,18 @@ export const shouldDisplayUserNullState = ({
     (!overview?.hasReceivedReviews || !someSectionEnabled(['recentReviews']))
   );
 };
+
+/**
+ * The legacy `UserProfile.message` banner is superseded by a live announcement, not replaced
+ * by the feature flag: the `message` columns stay populated until the migration retires them,
+ * so a creator with no announcement yet must keep the banner they have.
+ */
+export const shouldShowProfileMessage = ({
+  message,
+  userMuted,
+  announcementCount,
+}: {
+  message?: string | null;
+  userMuted?: boolean;
+  announcementCount: number;
+}) => !!message && !userMuted && announcementCount === 0;

@@ -11,9 +11,11 @@ import {
   createTrainingRequestSchema,
   getAutoLabelUploadUrlSchema,
   getAutoLabelWorkflowSchema,
+  getTrainingEpochArchiveSchema,
   moveAssetInput,
   submitAutoLabelWorkflowSchema,
 } from '~/server/schema/training.schema';
+import { getTrainingEpochArchive } from '~/server/services/orchestrator/training/epoch-archive';
 import {
   autoCaptionHandler,
   autoTagHandler,
@@ -38,12 +40,11 @@ import {
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const TRAINING_ANNOUNCEMENT_KEY = 'training-announcement';
-const announcementColors = ['yellow', 'red', 'blue', 'green', 'gray'] as const;
-const trainingAnnouncementSchema = z.object({
-  message: z.string().max(2000),
-  color: z.enum(announcementColors).default('yellow'),
-});
-type TrainingAnnouncement = z.infer<typeof trainingAnnouncementSchema>;
+// Written by the moderator app's Training Models page; read here for the training form's alert box.
+type TrainingAnnouncement = {
+  message: string;
+  color: 'yellow' | 'red' | 'blue' | 'green' | 'gray';
+};
 
 export const trainingRouter = router({
   /**
@@ -68,6 +69,20 @@ export const trainingRouter = router({
     .input(moveAssetInput)
     .use(isFlagProtected('imageTraining'))
     .mutation(({ input, ctx }) => moveAsset({ ...input, userId: ctx.user.id })),
+  // One zip of everything a finished run produced (epoch models + sample media).
+  // A mutation rather than a query: each call mints a short-lived signed URL from
+  // the orchestrator, which must not be served from the tRPC query cache.
+  getEpochArchive: protectedProcedure
+    .meta({ requiredScope: TokenScope.AIServicesRead })
+    .input(getTrainingEpochArchiveSchema)
+    .use(rateLimit({ limit: 30, period: 60 }))
+    .mutation(({ input, ctx }) =>
+      getTrainingEpochArchive({
+        ...input,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      })
+    ),
   getModelBasic: publicProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(getByIdSchema)
@@ -147,12 +162,5 @@ export const trainingRouter = router({
     .query(async () => {
       const announcement = await dbKV.get<TrainingAnnouncement>(TRAINING_ANNOUNCEMENT_KEY);
       return announcement ?? null;
-    }),
-
-  setAnnouncement: moderatorProcedure
-    .input(trainingAnnouncementSchema)
-    .mutation(async ({ input }) => {
-      await dbKV.set(TRAINING_ANNOUNCEMENT_KEY, input);
-      return { success: true };
     }),
 });

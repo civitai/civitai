@@ -6,12 +6,12 @@ import {
   isRelatedRailLoading,
   needsPopularTopUp,
   RELATED_LISTINGS_LIMIT,
+  relatedRailHeading,
   selectRelatedListings,
 } from '~/components/Apps/related-listings';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   isMarketplaceCategory,
-  MARKETPLACE_CATEGORY_LABELS,
 } from '~/server/services/blocks/marketplace-categories.constants';
 import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
 import { hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
@@ -37,11 +37,6 @@ import { trpc } from '~/utils/trpc';
  * queries load and when the rail resolves to nothing — so the detail page always
  * offers a way back into the store.
  */
-
-function categoryLabel(category: string | null): string | null {
-  if (!category) return null;
-  return isMarketplaceCategory(category) ? MARKETPLACE_CATEGORY_LABELS[category] : category;
-}
 
 export interface RelatedListingsProps {
   /** The listing being viewed — excluded from the rail. */
@@ -89,8 +84,9 @@ export function RelatedListings({ listingId, category }: RelatedListingsProps) {
     popular: (popularQuery.data?.items ?? []) as ListingCard[],
   });
 
-  const label = categoryLabel(category);
-  const heading = label ? `More in ${label}` : 'More apps';
+  // 🔴 From the PURE module, so the blocking `unit` gate covers the one string on
+  // this surface that a reader actually sees the category in.
+  const heading = relatedRailHeading(category);
   const loading = isRelatedRailLoading({
     hasCategoryFilter: !!categoryFilter,
     categoryPending: categoryQuery.isPending,

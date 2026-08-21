@@ -101,7 +101,6 @@ import type { CollectionMetadataSchema } from '~/server/schema/collection.schema
 import type {
   AddOrRemoveImageTechniquesOutput,
   AddOrRemoveImageToolsOutput,
-  DownleveledReviewOutput,
   GetEntitiesCoverImage,
   GetImageInput,
   GetInfiniteImagesOutput,
@@ -111,9 +110,6 @@ import type {
   ImageModerationBlockSchema,
   ImageModerationSchema,
   ImageModerationUnblockSchema,
-  ImageRatingReviewOutput,
-  ImageReviewQueueInput,
-  IngestionErrorReviewInput,
   ImageSchema,
   ImageUploadProps,
   IngestImageInput,
@@ -170,7 +166,6 @@ import {
 } from '~/server/services/nsfwLevels.service';
 import { bustCachesForPosts, updatePostNsfwLevel } from '~/server/services/post.service';
 import { bulkSetReportStatus, resolveEntityAppeal } from '~/server/services/report.service';
-import { getVotableTags2 } from '~/server/services/tag.service';
 import { upsertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
 import {
   getBasicDataForUsers,
@@ -239,6 +234,10 @@ import {
   recordBitdexError,
   recordSortAtOnlyHolds,
 } from '~/server/bitdex/compare';
+import {
+  recordBitdexPrimaryResult,
+  type BitdexQueryFailureReason,
+} from '~/server/metrics/bitdex-feed-serve.metrics';
 
 // --- BitDex native filter helpers ---
 const _int = (v: number): Value => ({ Integer: v });
@@ -864,16 +863,12 @@ export async function handleBlockImages({
   return images;
 }
 
-export const moderateImages = async (
-  args: ImageModerationSchema & (ImageModerationUnblockSchema | ImageModerationBlockSchema)
-) => {
-  switch (args.reviewAction) {
-    case 'unblock':
-      return handleUnblockImages(args);
-    case 'block':
-      return handleBlockImages(args);
-  }
-};
+// NOTE: the moderator `image.moderate` verdict (block/unblock from the review queue + inline badges) now
+// lives in the moderator spoke app (apps/moderator); the main app delegates via callModAction. The
+// handleBlockImages/handleUnblockImages primitives below remain only for the not-yet-migrated consumers
+// that call them directly (the Knights-of-New-Order game, the /api/mod/{remove,restore}-images automation
+// endpoints). Their `include: ['phash-block' | 'user-notification']` branches are dead until those callers
+// migrate — do not add new callers.
 
 export async function updateNsfwLevel(ids: number | number[]) {
   if (!Array.isArray(ids)) ids = [ids];
@@ -1543,6 +1538,13 @@ export const getAllImages = async (
     userId?: number;
   }
 ) => {
+  // Fail loud rather than serve unfiltered. This path has no way to express a
+  // hub — collection membership lives on the search index, not in a column here —
+  // so a hubId arriving means the dispatcher routed wrongly. Returning results
+  // would hand the caller the global feed labelled as their hub.
+  if (input.hubId)
+    throw new Error('getAllImages cannot serve a hub; hub queries must use the index path');
+
   const blockedEnforcement = await enforceBlockedBrowsingTags(input, {
     id: input.user?.id,
     username: input.user?.username,
@@ -2911,6 +2913,10 @@ type ImageSearchInput = GetInfiniteImagesOutput & {
   // When provided, getImagesFromSearch skips its own Flipt evaluation.
   bitdexMode?: string | null;
   actor?: string;
+  // Per-request memo of `resolveHubSources`, set by `resolvedHubSources` below.
+  // `undefined` means "not resolved yet"; `null` is a resolved answer meaning the
+  // hub is not the viewer's, which callers must serve as nothing.
+  resolvedHub?: ResolvedHubSources | null;
   // Unhandled
   //prioritizedUserIds?: number[];
   //userIds?: number | number[];
@@ -3126,7 +3132,193 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
   // queue and is shown a different population, with nothing signalling that the
   // wrong question was answered. Declining is the honest containment; answering
   // properly means changing what the query asks for, which is not this PR.
+  // 🔴 Deliberately BEFORE any outcome is recorded, and deliberately not
+  // recorded itself. This declines the request without issuing a single BitDex
+  // query, so it is not a served page, not an empty index and not a failure — it
+  // is a policy choice. Counting it as a fallback would make the served ratio
+  // sag every time a moderator opened one of these queues. The denominator of
+  // `bitdex_primary_result_total` is therefore "requests that engaged BitDex",
+  // which the metric's help string states.
   if (input.isModerator && (input.scheduled || input.notPublished)) return null;
+
+  // Resolve `username` → `userId` BEFORE anything reads the creator scope.
+  //
+  // `skipOwnExcluded` below decides whether to issue the own-excluded second
+  // pass from `input.userId`. When the caller addresses a creator by handle
+  // instead of id, that field is empty here — the resolution used to happen
+  // later and locally, inside `getImagesFromBitdexPreFilter` — so the "viewing
+  // someone else's profile" arm of that guard tested `undefined`, never fired,
+  // and the caller's own private/blocked/nsfw0 content was merged into a feed
+  // it does not belong to (#3929). Every document involved belongs to the
+  // caller, so nothing of anyone else's is exposed; what breaks is feed
+  // integrity — the feed misrepresents what that creator posted.
+  //
+  // Precedence is spelled exactly as every other resolution site in this file
+  // spells it (`username && !userId`): an explicit `userId` wins and a
+  // disagreeing `username` is ignored. Spelling it differently here would make
+  // the two forms of the same request address different creators depending on
+  // which backend answered.
+  //
+  // The handle is passed to the lookup verbatim — no lowercasing. Case
+  // semantics stay whatever the column's collation already decides, and the
+  // BitDex and Meili legs keep agreeing about which account a handle names.
+  // (Trimming is not a concern reachable from the request surface.
+  // `usernameSchema` is `.regex(/^[A-Za-z0-9_]*$/).trim()` and the REGEX RUNS
+  // FIRST — that ordering is what makes padding unreachable, since a padded
+  // handle is rejected outright rather than trimmed into a valid one. The
+  // ordering is pinned by a premise guard in
+  // `src/server/services/__tests__/bitdex-username-own-excluded-scope.test.ts`,
+  // because this argument rests on a file this one does not own.)
+  //
+  // Normally this costs no extra round trip: `getImagesFromBitdexPreFilter`
+  // guards its own resolution on `!userId`, so handing it the resolved input
+  // makes that a no-op — and it runs once PER PASS, so one lookup here replaces
+  // up to MAX_PASSES + MAX_EMPTIED_PAGES of them. The one exception is
+  // `hidden: true`, whose branch sits BEFORE that resolution and can return
+  // null without reaching it; such a request now pays one lookup it previously
+  // skipped.
+  //
+  // Same client (`dbRead`) and same query as the resolution it replaces, so
+  // this path's replica-lag behaviour is unchanged. It does NOT have the
+  // `dbRead ?? dbWrite` fallback the Meili-side sites have — deliberately, to
+  // keep a primary read off the feed hot path. On a replica miss the effect is
+  // strictly better than before: BitDex declines and the Meili leg, which does
+  // have the fallback, resolves and answers.
+  if (input.username && !input.userId) {
+    const targetUser = await dbRead.user.findUnique({
+      where: { username: input.username },
+      select: { id: true },
+    });
+    // A handle that resolves to nothing names no view, so there is nothing for
+    // a second pass to be scoped to. Returning null hands the request to the
+    // Meili leg, which raises NotFound — which is what a bad handle should do
+    // and, before this, did not: the main pass declined, but the own-excluded
+    // pass had already been issued, so `data` was non-empty and BitDex served
+    // the caller their own private images under a creator who does not exist.
+    if (!targetUser) return null;
+    // A NEW object, never an in-place mutation. `getImagesFromSearch` hands the
+    // caller's own `input` to the Meili leg after this function returns null,
+    // and to the shadow comparator; writing `userId` into it would rob the
+    // Meili leg of its own `dbRead ?? dbWrite` resolution and its NotFound, and
+    // would flip the shadow comparator's `hasFilters` from false to true for
+    // every username-addressed request. Pinned by a test.
+    input = { ...input, userId: targetUser.id };
+  }
+
+  // Which cohort this run belongs to. Read once so the three emit points below
+  // cannot disagree, and computed here rather than at each call so a later
+  // caller-mode cannot be added to one of them and missed by the others.
+  const serveMode = opts.serving ? ('primary' as const) : ('shadow' as const);
+
+  // 🔴 THE PER-REQUEST PREDICATE: did ANY BitDex call in this request fail?
+  //
+  // Not "did the last call fail" and not "did the main pass fail". A request
+  // issues 1-4 calls — the paginating main pass plus, for a signed-in caller on
+  // the first page, an own-content pass that runs in PARALLEL. If the
+  // own-content pass failed while the main pass legitimately came back empty,
+  // the page is not known to be empty: the documents that would have filled it
+  // are exactly the ones the failed call was fetching. Collapsing that into
+  // `fallback_empty` would report the one case this instrument exists to find as
+  // the healthy one.
+  //
+  // Read AFTER `await ownExcludedPromise` below, which is where both passes have
+  // settled and which already precedes the `!data.length` guard.
+  // 🔴 DID THIS REQUEST ACTUALLY REACH BITDEX AT ALL? It can be ZERO, and the
+  // empty-result guard below cannot tell — an empty page and a page nobody asked
+  // for are the same `data.length === 0`.
+  //
+  // COUNTED FROM EVIDENCE THAT A CALL HAPPENED, NOT FROM LOOP ENTRY. An earlier
+  // revision incremented just before calling `getImagesFromBitdexPreFilter`,
+  // which was wrong in a way that looked right: that function has FIVE early
+  // `return null` paths that never reach `queryBitdex` — `hidden` with no
+  // signed-in user, `hidden` with no hidden images, an unresolvable username,
+  // followed-with-zero-follows, and newCreators-with-none. Counting on entry
+  // re-created the same overcount one door down.
+  //
+  // ⚠️ SCOPE. Do NOT paraphrase this — READ THE PREDICATE. Three successive
+  // hand-written glosses of it were each refuted by measurement ("all five doors
+  // are excluded"; "an anonymous caller, or any paginated request"), so the rule
+  // here is to name the predicate and enumerate it exactly, never to describe it.
+  //
+  // A door-walking request is excluded from this counter exactly when
+  // `skipOwnExcluded` (declared below, next to the own-content pass) is TRUE,
+  // because that is what decides whether a SECOND query goes out. Its three
+  // disjuncts, verbatim from that line:
+  //   1. `!input.currentUserId`                                  — anonymous caller
+  //   2. `bitdexCursor`                — a `bdx:` cursor, i.e. a BitDex-paginated
+  //                                      request (NOT any paginated request)
+  //   3. `creatorScopeExcludesCaller`  — the request is scoped to a set of
+  //                                      creators that does not contain the
+  //                                      caller (#4123). Reference it BY SYMBOL:
+  //                                      it is computed from three scopes and a
+  //                                      gloss of it drifts, which is what
+  //                                      happened to the `input.userId` version
+  //                                      this replaced.
+  // If none holds, the own-content pass is issued regardless of what the feed
+  // query did, a call goes out, and the request IS counted.
+  //
+  // Measured, driving the real path (each row is a request that walks a door):
+  //   signed-in, other user's profile        → 0 calls, nothing recorded
+  //   signed-in, `bdx:` cursor               → 0 calls, nothing recorded
+  //   signed-in, followed-with-zero-follows  → 0 calls, nothing recorded  (#4123)
+  //   signed-in, newCreators-with-none       → 0 calls, nothing recorded  (#4123)
+  //   signed-in, `hidden`-with-none, page 1  → 1 call,  `fallback_empty` recorded
+  //   signed-in, unscoped, NON-`bdx:` cursor → 1 call,  `fallback_empty` recorded
+  // 🔴 THE TWO SHAPES followed-with-zero-follows AND newCreators-with-none USED TO
+  // READ `1 call, fallback_empty recorded`, AND #4123 CHANGED THEM. (Named by
+  // shape, not by row number: #4123 reordered this table.) A set-shaped creator scope is now resolved before the decision,
+  // so those two doors stopped issuing the own pass and joined the other doors
+  // instead of being the ones that leaked a call. That is a REDUCTION in what
+  // `fallback_empty` counts — it shifts the served-ratio baseline, exactly as
+  // #4122 did. Do not compare that ratio across #4123.
+  // The last row is why "any paginated request" was wrong, and it is the NORMAL
+  // shape: a request that walks a door falls back to Meili, so its next page
+  // carries a MEILI cursor, which the `bdx:` decode above does not accept.
+  //
+  // Counting the remaining two is correct under the stated denominator — a call
+  // did go out — and is deliberately left as is.
+  //
+  // ⚠️ PIN SCOPE, STATED NARROWLY ON PURPOSE: of the six rows above, exactly TWO
+  // are driven in bitdex-feed-source.test.ts — followed-with-zero-follows and
+  // `hidden`-with-none, the two the counter's behaviour turns on. The other four
+  // are read from the code, not pinned by a test there. An earlier revision of
+  // this comment said "every shape above is pinned", which was a true narrow claim
+  // widened into a false one — the exact failure this comment block exists to
+  // prevent.
+  //
+  // The two observations that mean "a call was made": the client reported a
+  // FAILURE, or it handed back a NON-NULL result (it returns null on every
+  // failure). At most one fires per call, so this cannot double-count.
+  //
+  // ⚠️ Neither is exhaustive, in opposite directions, and both are accepted:
+  //   • `unconfigured` fires the failure callback WITHOUT a request leaving the
+  //     process (the client returns before any fetch — pinned by the
+  //     `not.toHaveBeenCalled()` assertion in the client suite). So a
+  //     misconfigured deployment counts as a call and records `fallback_error`.
+  //     Deliberate: a missing endpoint is a real degradation and that is exactly
+  //     when the tripwire should fire, not go quiet.
+  //   • A completed call whose body decodes to a value that is FALSY BUT SURVIVES
+  //     A PROPERTY READ (`0`, `""`, `false`, `NaN`) is returned unfiltered by the
+  //     client, so it is falsy here and neither observation fires — the call is
+  //     NOT counted. An UNDER-count, the worse direction, since the served ratio
+  //     silently improves. Measured. `null` is NOT in that set: the client
+  //     dereferences `.total_matched` on the parsed body, which THROWS on null,
+  //     so a null body is classified `parse` and IS counted — an earlier revision
+  //     of this comment listed it here and was wrong. Whether a falsy body throws
+  //     on that dereference is the whole distinction. Not reachable against a
+  //     backend that returns an object.
+  //
+  // Why it matters: recording a request that never contacted BitDex inflates the
+  // FALLBACK side of the exact ratio a roll-forward/rollback decision is read
+  // from. (Reachability is measured; organic frequency is NOT.)
+  let bitdexCallsObserved = 0;
+
+  let anyQueryFailed = false;
+  const noteQueryFailure = () => {
+    anyQueryFailed = true;
+    // Evidence of a call, with the `unconfigured` exception noted above.
+    bitdexCallsObserved++;
+  };
 
   const limit = input.limit ?? 100;
   // Opt-in to one's own not-yet-published content. Read once so the main
@@ -3167,9 +3359,109 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
   //
   // Content-scoping filters from the main query are applied so the second pass
   // only returns content relevant to the current view (e.g. same model, same post).
-  // Skip entirely if viewing another user's profile (userId !== currentUserId).
-  const skipOwnExcluded =
-    !input.currentUserId || bitdexCursor || (input.userId && input.userId !== input.currentUserId);
+  //
+  // 🔴 #4123 — THE CREATOR SCOPE CAN BE A SET, AND IT WAS RESOLVED TOO LATE.
+  //
+  // This decision used to read `input.userId` alone — "skip entirely if viewing
+  // another user's profile". That covers a feed addressed to ONE creator, and
+  // since #4122 one addressed by handle. But a Following or new-creators feed has
+  // no `userId` at all: its creator scope is a SET, resolved later and locally
+  // inside `getImagesFromBitdexPreFilter`. The `userId`-shaped test therefore read
+  // `undefined`, did not fire, the second pass ran anyway, and the caller's own
+  // private/blocked/nsfw0 content was merged into a feed that exists to show OTHER
+  // people's work. Not a cross-user exposure — every document returned belongs to
+  // the caller — but the feed misrepresents whose work it is showing, and Following
+  // is a primary browsing surface.
+  //
+  // Generalised to the invariant both shapes share: THE OWN PASS BELONGS ONLY IN A
+  // FEED WHOSE CREATOR SCOPE CONTAINS THE CALLER. A single `userId` is a
+  // one-element set, so the old disjunct is SUBSUMED here rather than left sitting
+  // beside this one — one rule in one place, so a third scope shape cannot be added
+  // to one test and missed by the other.
+  //
+  // ⚠️ MEMBERSHIP, not "is this feed scoped to somebody else". `toggleFollowUser`
+  // creates `{ userId, targetUserId }` with no `userId !== targetUserId` guard, so
+  // a caller CAN sit inside their own followed set, and can be on the
+  // new-and-upcoming board. Both are pinned as positive controls in
+  // `src/server/services/__tests__/bitdex-followed-own-excluded-scope.test.ts`; a
+  // blanket "never run the second pass on a scoped feed" fails them.
+  //
+  // COST: both helpers are cached — `getNewCreatorUserIds` via `fetchThroughCache`
+  // (genuinely shared: the pre-filter calls the very same helper), and
+  // `getUserFollows` via `userFollowsCache`. ⚠️ `getUserFollows` is NOT already on
+  // this path: the search legs read follows with a raw
+  // `dbRead.userEngagement.findMany` (`getImagesFromSearchPreFilter`,
+  // `getImagesFromBitdexPreFilter`, `getImagesFromSearchPostFilter`), and the only
+  // other `getUserFollows` call in this file is in `getAllImages`, the legacy SQL
+  // feed. So this introduces a NEW `userFollowsCache` dependency into the
+  // image-search hot path rather than reusing one. Steady-state cost is still
+  // small — `cacheNotFound` defaults to true, so a zero-follow caller is
+  // negatively cached instead of falling through to the DB every request — but
+  // the basis is "a new, cheap cache read", not "a read we already do".
+  //
+  // The cheap disjuncts are evaluated FIRST and short-circuit the awaits entirely,
+  // so an anonymous request and any `bdx:`-paginated page (i.e. every page ≥2 of a
+  // BitDex-served Following feed) pay nothing here.
+  //
+  // ⚠️ THE STALENESS WINDOW IS REPLICA LAG, NOT CACHE TTL — and the cache is the
+  // FRESHER of the two. `userFollowsCache.refresh()` re-reads through `lookupFn(…,
+  // true)`, i.e. dbWrite, and `toggleFollowUser` calls it on both follow and
+  // unfollow; the pre-filter reads the REPLICA. So the reachable disagreement is a
+  // caller who has just self-followed: for the replica-lag window this guard says
+  // "in scope" and runs the own pass while the replica-derived filter still
+  // excludes them. It needs a self-follow to reach at all, is self-healing, and
+  // the other direction merely withholds the caller's own excluded content from
+  // their own feed. Deliberately NOT unified here — repointing the pre-filter at
+  // the cache would change what the FEED CONTAINS, which is a different change
+  // from what this decision READS.
+  //
+  // 🔴 THIS HOIST INTRODUCES THE SHORT-CIRCUIT — IT DOES NOT PRESERVE ONE. An
+  // earlier revision claimed the guard "already had it by virtue of `||`". Two
+  // different baselines, and neither had it: pre-#4123 there were no awaits here
+  // at all, so there was nothing to short-circuit; and in #4123's own first
+  // revision the scope resolution was an unconditional `await Promise.all([...])`
+  // on the line ABOVE the guard, where `||` short-circuited only the read of an
+  // already-computed boolean. So removing the `skipOwnExcludedCheaply ? [] :`
+  // ternary below is NOT a no-op — it reinstates a lookup on every request already
+  // destined to skip, notably an anonymous `newCreators` request and every page
+  // >= 2 of a BitDex-served Following feed.
+  //
+  // ⚠️ It is also load-bearing for the `getUserFollows(input.currentUserId!)`
+  // call below, which dropped its own `input.currentUserId &&` guard because this
+  // line makes it unreachable when `currentUserId` is absent. Reorder or remove
+  // the hoist and that non-null assertion becomes `getUserFollows(undefined)`.
+  const skipOwnExcludedCheaply = !input.currentUserId || !!bitdexCursor;
+
+  // 🔴 The four scopes here must stay 1:1 with the creator-scoping filters
+  // `getImagesFromBitdexPreFilter` applies — `followed`, `newCreators`, `userId`
+  // and a creator-only hub. That coupling IS the correctness argument: the guard has to read
+  // the same creator scope the feed is filtered by, or it decides from a
+  // different set than the one that shaped the results. The ARGUMENTS matter as
+  // much as the calls — `entity` and `domain` select which board
+  // `getNewCreatorUserIds` reads, and passing a different `domain` here would
+  // silently consult the SFW board while the feed filters on the red one. Pinned
+  // by argument assertions in bitdex-followed-own-excluded-scope.test.ts.
+  const creatorScopes = skipOwnExcludedCheaply
+    ? []
+    : await Promise.all([
+        input.userId ? [input.userId] : null,
+        input.followed ? getUserFollows(input.currentUserId!) : null,
+        input.newCreators ? getNewCreatorUserIds({ entity: 'images', domain: input.domain }) : null,
+        // A hub is a creator scope ONLY when every arm of it is one. The arms are
+        // ORed, so a hub carrying a model source can match an image whose author
+        // is outside `userIds`, and treating that as a creator scope would skip
+        // the own-excluded pass for a feed the caller does legitimately appear in.
+        // Resolution is memoized on `input`, so this costs no extra query — the
+        // filter build below reads the same answer.
+        hubCreatorScope(await resolvedHubSources(input)),
+      ]);
+  // `some`, not `every`: the pre-filter ANDs these scopes, so exclusion by ANY
+  // one of them excludes the caller from the feed.
+  const creatorScopeExcludesCaller = creatorScopes.some(
+    (scope) => scope !== null && !scope.includes(input.currentUserId!)
+  );
+
+  const skipOwnExcluded = skipOwnExcludedCheaply || creatorScopeExcludesCaller;
 
   let ownExcludedPromise: ReturnType<typeof queryBitdex> | null = null;
   if (!skipOwnExcluded) {
@@ -3230,7 +3522,8 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
       500,
       undefined,
       undefined,
-      true
+      true,
+      noteQueryFailure
     );
   }
 
@@ -3253,8 +3546,15 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
 
   while (pass < MAX_PASSES && accumulated.length < limit) {
     const result = await (firstPage
-      ? getImagesFromBitdexPreFilter(input, true, bitdexCursor)
-      : getImagesFromBitdexPreFilter(input, true, lastCursor));
+      ? getImagesFromBitdexPreFilter(input, true, bitdexCursor, noteQueryFailure)
+      : getImagesFromBitdexPreFilter(input, true, lastCursor, noteQueryFailure));
+    // Non-null ⇒ the client completed a call (it returns null on every failure,
+    // and the wrapper returns null without calling it at all on its early-return
+    // paths). A failed call is counted by `noteQueryFailure` instead, so AT MOST
+    // one of the two fires per call — not exactly one. For a body that decodes
+    // falsy-but-non-throwing, NEITHER fires; see the exhaustiveness note at
+    // `bitdexCallsObserved`, which is the single place that scope is stated.
+    if (result) bitdexCallsObserved++;
     if (skipBudgetStartedAt === 0) skipBudgetStartedAt = Date.now();
     firstPage = false;
 
@@ -3331,6 +3631,10 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
   // Since the second pass is unscoped (for cacheability), we apply content-scoping
   // filters here to match the current view.
   const ownExcluded = await ownExcludedPromise;
+  // Same rule as the main pass. `ownExcludedPromise` is null when the pass was
+  // skipped entirely, and `await null` is null, so this counts only a pass that
+  // both ran and completed.
+  if (ownExcluded) bitdexCallsObserved++;
   if (ownExcluded?.documents?.length) {
     const mainIds = new Set(data.map((d) => d.id));
     let ownDocs = ownExcluded.documents
@@ -3338,6 +3642,42 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
       .filter((d) => !mainIds.has(d.id));
 
     // Content-scope filtering — narrow unscoped results to the current view
+    //
+    // A hub is not expressible here: this pass fetches the viewer's own excluded
+    // content unscoped, and the narrowing below enumerates scalar inputs only, so
+    // a hub's source set has nothing to match against. Dropping the pass entirely
+    // is the fail-closed choice — the alternative is the viewer's own private,
+    // blocked and unscanned images from anywhere in their account appearing in a
+    // hub they may have composed entirely from other creators. It also keeps the
+    // two backends agreeing: Meili carries these carve-outs inside clauses ANDed
+    // with the hub group, so they stay hub-scoped there.
+    if (input.hubId) ownDocs = [];
+
+    // Creator scope first, because it is the one the rest of this list was
+    // missing. The second pass asks BitDex for `userId = currentUserId` and
+    // nothing else, so on a view pinned to a single creator these documents
+    // belong on the page only when that creator IS the caller. The
+    // `skipOwnExcluded` guard above already refuses to issue the pass
+    // otherwise — this makes the constraint hold where the documents are ADDED
+    // to the page rather than only where the decision to fetch them was made.
+    //
+    // That separation is exactly what #3929 broke: the decision was computed
+    // from a field that had not been resolved yet, and nothing downstream
+    // re-checked it. With the resolution above in place no live caller reaches
+    // this clause, so it is a structural guard rather than a second fix.
+    //
+    // 🔴 Be precise about what it does and does not catch, because the obvious
+    // reading is backwards. It catches a RESOLVED creator that reaches the
+    // merge past a wrong upstream decision — e.g. `skipOwnExcluded` recomputed
+    // from a stale pre-resolution binding. It does NOT catch an UNRESOLVED
+    // creator: `input.userId` is falsy in that case, so this clause is skipped
+    // entirely and the merge fails OPEN. That is measured, not assumed —
+    // deleting the resolution above while leaving this clause in place still
+    // serves the caller's own private image on another creator's feed. The two
+    // guards are therefore SEQUENTIAL, not independent: this one only has
+    // anything to test once the resolution has run. Do not cite it as coverage
+    // for a caller that arrives here with no creator resolved.
+    if (input.userId) ownDocs = ownDocs.filter((d) => d.userId === input.userId);
     if (input.modelVersionId) {
       ownDocs = ownDocs.filter(
         (d) =>
@@ -3379,7 +3719,14 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
     // for them. Without this a moderator's own unpublished image would be served
     // when it arrived through the main pass and dropped when it arrived through
     // this one — visibility decided by which door it came in by.
-    if (!wantsUnpublished && !input.isModerator) {
+    //
+    // `publishedOnly` withdraws that exemption, because it withdraws its
+    // premise: the main post-filter drops the `OR userId = me` carve-out for
+    // such a caller, so keeping the exemption here would restore by the back
+    // door exactly what they asked to be rid of. This is the door the remix
+    // submit picker came in by — it asks for published images only, and a
+    // moderator was still offered their own drafts.
+    if (!wantsUnpublished && (!input.isModerator || input.publishedOnly)) {
       const mergeNow = Date.now();
       ownDocs = ownDocs.filter((d) => isPublicallyPublished(d, mergeNow, stats));
     }
@@ -3443,6 +3790,21 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
     // cost the user nothing.
     recordSortAtOnlyHolds(stats.sortAtOnlyIds.size, 'fallback');
 
+    // 🔴 THE SPLIT THIS PR EXISTS FOR. Both branches return the same `null` and
+    // land the user on the same Meilisearch page; what differs is whether the
+    // emptiness is TRUSTWORTHY. `fallback_empty` says every call succeeded and
+    // the index had nothing — routine, and the bulk of today's fallback volume.
+    // `fallback_error` says at least one call in this request failed, so nobody
+    // knows what was in the index. Before this line the two were the same
+    // observable, which is why a BitDex outage looked exactly like a quiet index.
+    //
+    // Gated on `bitdexCallsObserved` for the reason given at its declaration: a
+    // request that never contacted BitDex is neither of these things, and
+    // recording it would make this counter's denominator disagree with its own
+    // help string.
+    if (bitdexCallsObserved > 0)
+      recordBitdexPrimaryResult(anyQueryFailed ? 'fallback_error' : 'fallback_empty', serveMode);
+
     // ⚠️ A cursored request does not fall back cleanly — the Meili path parses
     // cursors as `offset|entryTimestamp` (:2594) and a `bdx:{…}` cursor fails
     // both `isNumber` guards, so offset degrades to 0. An earlier revision of
@@ -3458,6 +3820,25 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
   data = data.slice(0, limit);
 
   recordSortAtOnlyHolds(stats.sortAtOnlyIds.size, opts.serving ? 'serving' : 'shadow');
+
+  // Recorded on the RESULT, not on the flag: a request can serve a full page
+  // while one of its calls failed (a failed own-content pass alongside a healthy
+  // main pass), and that is a served page. `anyQueryFailed` only decides which
+  // KIND of empty an empty result is; it never demotes a page that exists.
+  //
+  // 🔴 THE CONSEQUENCE, STATED SO NOBODY HAS TO REDERIVE IT FROM AN ALERT THAT
+  // LOOKS FINE. If the own-content pass fails PERSISTENTLY while the main pass
+  // stays healthy, users silently lose their own private / blocked / unpublished
+  // content from their feed — a real, user-visible degradation — and THIS
+  // counter reads 100% `served` throughout, because a page was in fact served.
+  // That is a deliberate choice (a served page is a served page; demoting it
+  // would make `served` mean "served and perfect", which no threshold could then
+  // interpret), but it means `bitdex_primary_result_total` ALONE cannot see this
+  // failure. `bitdex_query_failures_total` is the only counter that moves.
+  //
+  // ⇒ Any dashboard or alert built on this family MUST watch BOTH counters. One
+  // keyed on the served ratio alone will stay green straight through this.
+  recordBitdexPrimaryResult('served', serveMode);
 
   const nextCursor = lastCursor ? `bdx:${JSON.stringify(lastCursor)}` : undefined;
   console.log(
@@ -3518,6 +3899,12 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
     } catch (err) {
       console.error('[BitDex] PRIMARY error, falling through to Meili:', err);
       recordBitdexError(err);
+      // Distinct from `fallback_error`, and the distinction is the point: the
+      // client never throws, so nothing that reaches here came from BitDex being
+      // unhealthy. This is the application's own map/merge/sort code throwing —
+      // a different team's page. It reads a flat zero today, which is what makes
+      // it a usable tripwire rather than a redundant series.
+      recordBitdexPrimaryResult('fallback_exception', 'primary');
     }
     // Fall through to Meili if BitDex fails
   }
@@ -3560,7 +3947,13 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
             });
           }
         })
-        .catch((err) => recordBitdexError(err))
+        .catch((err) => {
+          recordBitdexError(err);
+          // Same meaning as the primary arm above, in the cohort where nothing
+          // reaches a user. Recorded so an app-side throw is visible BEFORE the
+          // cohort is flipped, rather than only once it is serving.
+          recordBitdexPrimaryResult('fallback_exception', 'shadow');
+        })
     );
   }
 
@@ -3577,6 +3970,16 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
 export async function getImagesFromFeedSearch(
   input: ImageSearchInput
 ): Promise<GetAllImagesIndexResult> {
+  // The fifth filter builder, and the one with no hub clause. Unreachable today
+  // only because the REST zod for /api/v1/images does not declare `hubId` and
+  // strips unknown keys — the same accident the hideChallenges comment above
+  // describes. Adding the key to that schema without a clause here would serve an
+  // unfiltered feed from one of three branches, so fail loudly instead.
+  if (input.hubId)
+    throw new Error(
+      'getImagesFromFeedSearch cannot serve a hub; hub queries must use the index path'
+    );
+
   try {
     const blockedEnforcement = await enforceBlockedBrowsingTags(input, {
       id: input.currentUserId,
@@ -3787,6 +4190,81 @@ export async function getImagesFromFeedSearch(
   }
 }
 
+import type { ResolvedHubSources } from '~/server/services/user-hub.service';
+import { resolveHubSources } from '~/server/services/user-hub.service';
+import { HUB_COLLECTION_SOURCES_ENABLED } from '~/server/schema/user-hub.schema';
+
+// The OR-group a hub's sources become. Mirrors the single-`modelVersionId`
+// branch below, including its two gates: a hub must honour hideAutoResources /
+// hideManualResources or it silently ignores two filters the user set.
+//
+// Returns null when the hub resolved to nothing. Callers must return an empty
+// page for null — never fall through unfiltered, which would serve the global
+// feed to someone who asked for their hub.
+// The creator scope a hub represents, or null when it is not purely one. Null means
+// "not a creator scope", which leaves the own-excluded pass alone — never "empty
+// scope", which would exclude the caller from their own feed.
+function hubCreatorScope(sources: ResolvedHubSources | null) {
+  if (!sources || !sources.userIds.length) return null;
+  if (sources.modelVersionIds.length || sources.collectionIds.length) return null;
+  return sources.userIds;
+}
+
+// One resolution per request, memoized on the input object itself. A hub feed page
+// runs the BitDex pass loop up to 8 times and can then fall through to Meili, and
+// each of those rebuilt the whole filter — 8-9 resolutions of the same hub, at 3 SQL
+// statements each. The memo is per-request state, not a cache: nothing outlives the
+// object, so there is no TTL, no invalidation, and no way to serve one viewer's hub
+// resolution to another.
+async function resolvedHubSources(input: ImageSearchInput) {
+  if (!input.hubId) return null;
+  if (input.resolvedHub !== undefined) return input.resolvedHub;
+  const sources = await resolveHubSources({ hubId: input.hubId, userId: input.currentUserId });
+  input.resolvedHub = sources;
+  return sources;
+}
+
+type HubFilterArm = { field: MetricsImageFilterableAttribute; ids: number[] };
+
+// The single enumeration of the arms a hub ORs together. Both backends build their
+// own clause syntax from this, so an arm added here cannot reach one of them only —
+// which is how the BitDex copy drifted into a third builder.
+// Returns null for "no arm", which callers must treat as "serve nothing"; treating
+// it as "no filter" hands the caller the global feed as their hub.
+function hubFilterArms(
+  sources: ResolvedHubSources,
+  {
+    hideAutoResources,
+    hideManualResources,
+  }: Pick<ImageSearchInput, 'hideAutoResources' | 'hideManualResources'>
+): HubFilterArm[] | null {
+  const arms: HubFilterArm[] = [];
+  if (sources.userIds.length) arms.push({ field: 'userId', ids: sources.userIds });
+  if (sources.modelVersionIds.length) {
+    arms.push({ field: 'postedToId', ids: sources.modelVersionIds });
+    if (!hideAutoResources) arms.push({ field: 'modelVersionIds', ids: sources.modelVersionIds });
+    if (!hideManualResources)
+      arms.push({ field: 'modelVersionIdsManual', ids: sources.modelVersionIds });
+  }
+  // Guarded, not merely unused: filtering on an attribute the index has not been
+  // rebuilt with makes Meilisearch reject the entire query, which surfaces as a 503.
+  if (HUB_COLLECTION_SOURCES_ENABLED && sources.collectionIds.length)
+    arms.push({ field: 'collectionIds', ids: sources.collectionIds });
+
+  return arms.length ? arms : null;
+}
+
+function buildHubFilter(
+  sources: ResolvedHubSources,
+  input: Pick<ImageSearchInput, 'hideAutoResources' | 'hideManualResources'>
+): string | null {
+  const arms = hubFilterArms(sources, input);
+  if (!arms) return null;
+  return `(${arms
+    .map((arm) => makeMeiliImageSearchFilter(arm.field, `IN [${arm.ids.join(',')}]`))
+    .join(' OR ')})`;
+}
+
 export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   if (!metricsSearchClient) return { data: [], nextCursor: undefined };
   let { postIds = [] } = input;
@@ -3800,6 +4278,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     fromPlatform,
     notPublished,
     scheduled,
+    publishedOnly,
     username,
     tags,
     tools,
@@ -3832,6 +4311,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     minorOnly,
     blockedFor,
     newCreators,
+    hubId,
     domain,
     // TODO check the unused stuff in here
   } = input;
@@ -3929,6 +4409,13 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     const newCreatorIds = await getNewCreatorUserIds({ entity: 'images', domain });
     if (!newCreatorIds.length) return { data: [], nextCursor: undefined };
     filters.push(makeMeiliImageSearchFilter('userId', `IN [${newCreatorIds.join(',')}]`));
+  }
+
+  if (hubId) {
+    const sources = await resolvedHubSources(input);
+    const hubFilter = sources && buildHubFilter(sources, input);
+    if (!hubFilter) return { data: [], nextCursor: undefined };
+    filters.push(hubFilter);
   }
 
   // nb: commenting this out while we try checking existence in the db
@@ -4043,7 +4530,11 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
       filters.push(makeMeiliImageSearchFilter('publishedAtUnix', `> ${snappedNow}`));
     else {
       const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snappedNow}`)];
-      if (currentUserId) {
+      // `publishedOnly` is the caller saying it cannot use an unpublished row at
+      // all, so the moderator's own-content carve-out is lifted too. Without
+      // this a moderator got their own drafts in a picker whose mutation
+      // refuses them, and no other caller could opt out of that.
+      if (currentUserId && !publishedOnly) {
         publishedFilters.push(makeMeiliImageSearchFilter('userId', `= ${currentUserId}`));
       }
       filters.push(`(${publishedFilters.join(' OR ')})`);
@@ -4457,7 +4948,12 @@ export function mapBitdexDoc(doc: Record<string, unknown>) {
 export async function getImagesFromBitdexPreFilter(
   input: ImageSearchInput,
   includeDocs?: boolean | string[],
-  cursor?: any
+  cursor?: any,
+  // Threaded through to the client so the per-request outcome in
+  // fetchBitdexPrimary can tell "this page is empty" from "we do not know
+  // whether this page is empty" (#3930). Optional: the internal comparison
+  // endpoint calls this with `input` alone and is unaffected.
+  onFailure?: (reason: BitdexQueryFailureReason) => void
 ) {
   let { postIds = [] } = input;
   const {
@@ -4569,6 +5065,25 @@ export async function getImagesFromBitdexPreFilter(
     const newCreatorIds = await getNewCreatorUserIds({ entity: 'images', domain });
     if (!newCreatorIds.length) return null;
     filters.push(_in('userId', newCreatorIds.map(_int)));
+  }
+
+  // Hubs are served here rather than declined, so they ride the BitDex migration
+  // instead of pinning themselves to Meili. Returning null anywhere below means
+  // "cannot serve this" and falls through to Meili — never "no filter", which
+  // would hand the caller the global feed as their hub.
+  if (input.hubId) {
+    const sources = await resolvedHubSources(input);
+    if (!sources) return null;
+
+    // Collection membership is not a BitDex field. While collection sources are
+    // switched off this cannot happen; once they are enabled, a hub containing one
+    // has to go to Meili, because filtering on a field BitDex does not know 400s
+    // the whole query rather than just that clause.
+    if (HUB_COLLECTION_SOURCES_ENABLED && sources.collectionIds.length) return null;
+
+    const arms = hubFilterArms(sources, { hideAutoResources, hideManualResources });
+    if (!arms) return null;
+    filters.push(_or(...arms.map((arm) => _in(arm.field, arm.ids.map(_int)))));
   }
 
   // --- NSFW Browsing Level ---
@@ -4690,7 +5205,8 @@ export async function getImagesFromBitdexPreFilter(
     limit,
     cursor,
     cursor ? undefined : offset,
-    includeDocs
+    includeDocs,
+    onFailure
   );
   return result;
 }
@@ -4708,6 +5224,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     fromPlatform,
     notPublished,
     scheduled,
+    publishedOnly,
     username,
     tags,
     tools,
@@ -4741,6 +5258,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     blockedFor,
     // TODO check the unused stuff in here
     newCreators,
+    hubId,
     domain,
   } = input;
   let { browsingLevel, userId } = input;
@@ -4822,6 +5340,13 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     const newCreatorIds = await getNewCreatorUserIds({ entity: 'images', domain });
     if (!newCreatorIds.length) return { data: [], nextCursor: undefined };
     filters.push(makeMeiliImageSearchFilter('userId', `IN [${newCreatorIds.join(',')}]`));
+  }
+
+  if (hubId) {
+    const sources = await resolvedHubSources(input);
+    const hubFilter = sources && buildHubFilter(sources, input);
+    if (!hubFilter) return { data: [], nextCursor: undefined };
+    filters.push(hubFilter);
   }
 
   // nb: commenting this out while we try checking existence in the db
@@ -4936,7 +5461,11 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
       filters.push(makeMeiliImageSearchFilter('publishedAtUnix', `> ${snappedNow}`));
     else {
       const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snappedNow}`)];
-      if (currentUserId) {
+      // `publishedOnly` is the caller saying it cannot use an unpublished row at
+      // all, so the moderator's own-content carve-out is lifted too. Without
+      // this a moderator got their own drafts in a picker whose mutation
+      // refuses them, and no other caller could opt out of that.
+      if (currentUserId && !publishedOnly) {
         publishedFilters.push(makeMeiliImageSearchFilter('userId', `= ${currentUserId}`));
       }
       filters.push(`(${publishedFilters.join(' OR ')})`);
@@ -6932,475 +7461,6 @@ export const updateEntityImages = async ({
   return imageRecords;
 };
 
-const imageReviewQueueJoinMap = {
-  report: {
-    select: `
-      report.id as "reportId",
-      report.reason as "reportReason",
-      report.status as "reportStatus",
-      report.details as "reportDetails",
-      array_length("alsoReportedBy", 1) as "reportCount",
-      ur.username as "reportUsername",
-      ur.id as "reportUserId",
-    `,
-    join: `
-      JOIN "ImageReport" imgr ON i.id = imgr."imageId"
-      JOIN "Report" report ON report.id = imgr."reportId"
-      JOIN "User" ur ON ur.id = report."userId"
-    `,
-  },
-  appeal: {
-    select: `
-      appeal.id as "appealId",
-      appeal."appealMessage" as "appealMessage",
-      appeal."createdAt" as "appealCreatedAt",
-      au.id as "appealUserId",
-      au.username as "appealUsername",
-      mu.id as "moderatorId",
-      mu.username as "moderatorUsername",
-      ma."createdAt" as "removedAt",
-    `,
-    join: `
-      LEFT JOIN LATERAL (
-        SELECT * FROM "Appeal"
-        WHERE "entityId" = i.id AND "entityType" = 'Image'
-        ORDER BY "createdAt" DESC
-        LIMIT 1
-      ) appeal ON true
-      JOIN "User" au ON au.id = appeal."userId"
-      LEFT JOIN "ModActivity" ma ON ma."entityId" = i.id
-        AND ma."entityType" = 'image'
-        AND ma.activity = 'review'
-      LEFT JOIN "User" mu ON mu.id = ma."userId"
-    `,
-  },
-} as const;
-type AdditionalQueryKey = keyof typeof imageReviewQueueJoinMap;
-
-type GetImageModerationReviewQueueRaw = {
-  id: number;
-  name: string;
-  url: string;
-  nsfwLevel: NsfwLevel;
-  width: number;
-  height: number;
-  hash: string;
-  meta: ImageMetaProps;
-  hideMeta: boolean;
-  createdAt: Date;
-  sortAt: Date;
-  mimeType: string;
-  scannedAt: Date;
-  ingestion: ImageIngestionStatus;
-  blockedFor: BlockedReason | null;
-  needsReview: string | null;
-  userId: number;
-  index: number;
-  postId: number;
-  postTitle: string;
-  modelVersionId: number | null;
-  imageId: number | null;
-  publishedAt: Date | null;
-  username: string | null;
-  userImage: string | null;
-  deletedAt: Date | null;
-  cursorId?: bigint;
-  type: MediaType;
-  metadata: Prisma.JsonValue;
-  baseModel?: string;
-  entityType: string;
-  entityId: number;
-  reportId?: number;
-  reportReason?: string;
-  reportStatus?: ReportStatus;
-  reportDetails?: Prisma.JsonValue;
-  reportUsername?: string;
-  reportUserId?: number;
-  reportCount?: number;
-  appealId?: number;
-  appealMessage?: string;
-  appealCreatedAt?: Date;
-  appealUserId?: number;
-  appealUsername?: string;
-  moderatorId?: number;
-  moderatorUsername?: string;
-  removedAt?: Date;
-  minor: boolean;
-  acceptableMinor: boolean;
-  poi?: boolean;
-};
-type ReviewTag = { id: number; name: string; nsfwLevel: number; imageId: number };
-export const getImageModerationReviewQueue = async ({
-  limit,
-  cursor,
-  needsReview,
-  tagReview,
-  reportReview,
-  browsingLevel,
-  tagIds,
-  excludedTagIds,
-}: ImageReviewQueueInput) => {
-  const AND: Prisma.Sql[] = [];
-  // nsfwLevel=0 is unrated: bitmask-AND against 0 is always 0, so a plain
-  // browsing-level match would hide unrated images from the queue no matter
-  // which levels a mod toggles. Keep them reviewable.
-  AND.push(Prisma.sql`(i."nsfwLevel" = 0 OR (i."nsfwLevel" & ${browsingLevel}) != 0)`);
-
-  if (needsReview) {
-    AND.push(Prisma.sql`i."needsReview" = ${needsReview}`);
-  }
-
-  if (needsReview && needsReview !== 'appeal') {
-    AND.push(Prisma.sql`(i."ingestion" = 'Scanned')`);
-  }
-
-  if (tagIds?.length) {
-    AND.push(Prisma.sql`EXISTS (
-      SELECT 1 FROM "TagsOnImageDetails" toi
-      WHERE toi."imageId" = i.id AND toi."tagId" IN (${Prisma.join(tagIds)})
-    )`);
-  }
-
-  if (excludedTagIds?.length) {
-    AND.push(Prisma.sql`NOT EXISTS (
-      SELECT 1 FROM "ImageTagForReview" toi
-      WHERE toi."imageId" = i.id AND toi."tagId" IN (${Prisma.join(excludedTagIds)})
-    )`);
-  }
-  // Order by oldest first. This is to ensure that images that have been in the queue the longest
-  // are reviewed first.
-  let orderBy = `i."id" DESC`;
-
-  let cursorProp = 'i."id"';
-  let cursorDirection = 'DESC';
-  let tagReviewCTE: Prisma.Sql | undefined;
-  let tagReviewJoin: Prisma.Sql | undefined;
-
-  if (tagReview) {
-    AND.push(Prisma.sql`
-      i."nsfwLevel" < ${NsfwLevel.Blocked}
-    `);
-
-    // Optimize: Use CTE to filter tags first with explicit materialization
-    // This forces PostgreSQL to scan the partial index first before joining to images
-    tagReviewCTE = Prisma.sql`
-      WITH reviewable_images AS MATERIALIZED (
-        SELECT DISTINCT "imageId"
-        FROM "TagsOnImageNew"
-        WHERE (((attributes >> 9)::integer & 1) = 1)      -- needsReview = true
-          AND (((attributes >> 10)::integer & 1) <> 1)    -- disabled = false
-          ${cursor ? Prisma.sql`AND "imageId" < ${cursor}` : Prisma.sql``}
-        ORDER BY "imageId" DESC
-      )
-    `;
-
-    // Join to the materialized CTE
-    tagReviewJoin = Prisma.sql`
-      INNER JOIN reviewable_images ri ON ri."imageId" = i.id
-    `;
-  } else {
-    if (reportReview) {
-      // Add this to the WHERE:
-      AND.push(Prisma.sql`report."status" = 'Pending'`);
-      // Also, update sorter to most recent:
-      orderBy = `report."createdAt" ASC`;
-      cursorProp = 'report.id';
-      cursorDirection = 'ASC';
-    }
-  }
-
-  if (cursor) {
-    const cursorOperator = cursorDirection === 'DESC' ? '<' : '>';
-    AND.push(Prisma.sql`${Prisma.raw(cursorProp)} ${Prisma.raw(cursorOperator)} ${cursor}`);
-  }
-
-  // TODO: find a better way to handle different select/join for each type of review
-  const queryKey = reportReview ? 'report' : (needsReview as AdditionalQueryKey);
-  const additionalQuery = queryKey ? imageReviewQueueJoinMap[queryKey] : undefined;
-
-  const query = Prisma.sql`
-    -- Image moderation queue
-    ${tagReviewCTE ? tagReviewCTE : Prisma.empty}
-    SELECT
-      i.id,
-      i.name,
-      i.url,
-      i."nsfwLevel",
-      i.width,
-      i.height,
-      i.hash,
-      i.meta,
-      i."hideMeta",
-      i."createdAt",
-      GREATEST(p."publishedAt", i."scannedAt", i."createdAt") as "sortAt",
-      i."mimeType",
-      i.type,
-      i.metadata,
-      i.ingestion,
-      i."blockedFor",
-      i."scannedAt",
-      i."needsReview",
-      i."userId",
-      i."postId",
-      p."title" "postTitle",
-      i."index",
-      i.minor,
-      i.poi,
-      i."acceptableMinor",
-      p."publishedAt",
-      p."modelVersionId",
-      u.username,
-      u.image "userImage",
-      u."deletedAt",
-      ic."entityType",
-      ic."entityId",
-      ${Prisma.raw(additionalQuery ? additionalQuery.select : '')}
-      ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
-      FROM "Image" i
-      JOIN "User" u ON u.id = i."userId"
-      LEFT JOIN "Post" p ON p.id = i."postId"
-      LEFT JOIN "ImageConnection" ic on ic."imageId" = i.id
-      ${Prisma.raw(additionalQuery ? additionalQuery.join : '')}
-      ${tagReviewJoin ? tagReviewJoin : Prisma.empty}
-      WHERE ${Prisma.join(AND, ' AND ')}
-      ORDER BY ${Prisma.raw(orderBy)}
-      LIMIT ${limit + 1}
-  `;
-
-  // if (isDev) {
-  //   console.log(getExplainSql(query));
-  // }
-
-  const rawImages = await dbRead.$queryRaw<GetImageModerationReviewQueueRaw[]>`${query}`;
-
-  let nextCursor: bigint | undefined;
-
-  if (rawImages.length > limit) {
-    const nextItem = rawImages.pop();
-    nextCursor = nextItem?.cursorId;
-  }
-
-  const imageIds = rawImages.map((i) => i.id);
-  let tagsVar: (VotableTagModel & { imageId: number })[] | undefined;
-
-  if (tagReview) {
-    tagsVar = await getImageTagsForImages(imageIds);
-  }
-
-  const reviewTags =
-    needsReview && imageIds.length > 0
-      ? await dbWrite.$queryRaw<ReviewTag[]>`
-          SELECT
-            t.id,
-            t.name,
-            t."nsfwLevel",
-            itr."imageId"
-          FROM "ImageTagForReview" itr
-          JOIN "Tag" t ON itr."tagId" = t.id
-          WHERE itr."imageId" IN (${Prisma.join(imageIds)})
-        `
-      : [];
-
-  let tosDetails: Map<number, { tosReason: string }> | undefined;
-  if (clickhouse && needsReview === 'appeal' && imageIds.length > 0) {
-    const tosImages = await clickhouse.$query<{ imageId: number; tosReason: string }>`
-      SELECT imageId, tosReason
-      FROM images
-      WHERE imageId IN (${imageIds})
-        AND type = 'DeleteTOS'
-        AND tosReason IS NOT NULL
-    `;
-
-    for (const image of tosImages) {
-      if (!tosDetails) tosDetails = new Map();
-      tosDetails.set(image.imageId, { tosReason: image.tosReason });
-    }
-  }
-
-  // For the appeal queue, surface the report(s) that triggered the original moderation.
-  // Capped at 5 per image, newest first, so spam-report patterns are visible.
-  type AppealReport = {
-    id: number;
-    reason: string;
-    details: Prisma.JsonValue;
-    status: ReportStatus;
-    createdAt: Date;
-    user: { id: number; username?: string | null };
-  };
-  let appealReports: Map<number, AppealReport[]> | undefined;
-  if (needsReview === 'appeal' && imageIds.length > 0) {
-    const reportRows = await dbRead.$queryRaw<
-      {
-        imageId: number;
-        id: number;
-        reason: string;
-        details: Prisma.JsonValue;
-        status: ReportStatus;
-        createdAt: Date;
-        username: string | null;
-        userId: number;
-      }[]
-    >`
-      SELECT
-        imgr."imageId" as "imageId",
-        r.id as "id",
-        r.reason as "reason",
-        r.details as "details",
-        r.status as "status",
-        r."createdAt" as "createdAt",
-        ru.username as "username",
-        ru.id as "userId"
-      FROM "ImageReport" imgr
-      JOIN "Report" r ON r.id = imgr."reportId"
-      JOIN "User" ru ON ru.id = r."userId"
-      WHERE imgr."imageId" IN (${Prisma.join(imageIds)})
-      ORDER BY r."createdAt" DESC
-    `;
-
-    appealReports = new Map();
-    for (const row of reportRows) {
-      const report: AppealReport = {
-        id: row.id,
-        reason: row.reason,
-        details: row.details,
-        status: row.status,
-        createdAt: row.createdAt,
-        user: { id: row.userId, username: row.username },
-      };
-      const list = appealReports.get(row.imageId);
-      if (!list) appealReports.set(row.imageId, [report]);
-      else if (list.length < 5) list.push(report);
-    }
-  }
-
-  const images: Array<
-    Omit<ImageV2Model, 'stats' | 'metadata'> & {
-      meta: ImageMetaProps | null;
-      tags?: VotableTagModel[] | undefined;
-      report?:
-        | {
-            id: number;
-            reason: string;
-            details: Prisma.JsonValue;
-            status: ReportStatus;
-            count: number;
-            user: { id: number; username?: string | null };
-          }
-        | undefined;
-      appeal?:
-        | {
-            id: number;
-            reason: string;
-            createdAt: Date;
-            user: { id: number; username?: string | null };
-            moderator?: { id: number; username?: string | null };
-          }
-        | undefined;
-      reports?: AppealReport[] | undefined;
-      publishedAt?: Date | null;
-      modelVersionId?: number | null;
-      entityType?: string | null;
-      entityId?: number | null;
-      metadata?: ImageMetadata | VideoMetadata | null;
-      removedAt?: Date | null;
-      tosReason?: string | null;
-      minor: boolean;
-      acceptableMinor: boolean;
-      reviewTags: ReviewTag[];
-    }
-  > = rawImages.map(
-    ({
-      userId: creatorId,
-      username,
-      userImage,
-      deletedAt,
-      reportId,
-      reportReason,
-      reportStatus,
-      reportDetails,
-      reportUsername,
-      reportUserId,
-      reportCount,
-      appealId,
-      appealMessage,
-      appealCreatedAt,
-      appealUserId,
-      appealUsername,
-      removedAt,
-      moderatorId,
-      moderatorUsername,
-      ...i
-    }) => ({
-      ...i,
-      metadata: i.metadata as ImageMetadata | VideoMetadata | null,
-      user: {
-        id: creatorId,
-        username,
-        image: userImage,
-        deletedAt,
-        cosmetics: [],
-        // No need for profile picture
-        profilePicture: null,
-      },
-      reactions: [],
-      tags: tagsVar?.filter((x) => x.imageId === i.id),
-      reviewTags: reviewTags.filter((x) => x.imageId === i.id),
-      report: reportId
-        ? {
-            id: reportId,
-            reason: reportReason as string,
-            details: reportDetails as Prisma.JsonValue,
-            status: reportStatus as ReportStatus,
-            count: (reportCount ?? 0) + 1,
-            user: { id: reportUserId as number, username: reportUsername },
-          }
-        : undefined,
-      appeal: appealId
-        ? {
-            id: appealId,
-            reason: appealMessage as string,
-            createdAt: appealCreatedAt as Date,
-            user: { id: appealUserId as number, username: appealUsername },
-            moderator: { id: moderatorId as number, username: moderatorUsername },
-          }
-        : undefined,
-      removedAt,
-      tosReason: tosDetails?.get(i.id)?.tosReason,
-      reports: appealReports?.get(i.id),
-    })
-  );
-
-  return { nextCursor, items: images };
-};
-
-export async function getImageModerationCounts() {
-  const result = await dbWrite.$queryRaw<{ needsReview: string; count: number }[]>`
-    SELECT
-      "needsReview",
-      COUNT(*)
-    FROM (
-      SELECT "needsReview" FROM "Image"
-      WHERE "needsReview" IS NOT NULL AND (("needsReview" != 'appeal' AND "ingestion" = 'Scanned') OR "needsReview" = 'appeal')
-
-      UNION ALL
-
-      SELECT 'reported' AS "needsReview" FROM (
-        SELECT ir."imageId" FROM "Report" r
-        JOIN "ImageReport" ir ON ir."reportId" = r.id
-        JOIN "Image" i ON i.id = ir."imageId"
-        WHERE r.status = 'Pending'
-        GROUP BY ir."imageId"
-      )
-    )
-    GROUP BY "needsReview";
-  `;
-
-  return result.reduce<Record<string, number>>(
-    (acc, { needsReview, count }) => ({ ...acc, [needsReview]: Number(count) }),
-    {}
-  );
-}
-
 export async function get404Images() {
   const imagesRaw = await dbRead.$queryRaw<
     { url: string; username: string; meta: ImageMetaProps | null }[]
@@ -7427,36 +7487,6 @@ export async function get404Images() {
   });
 
   return images;
-}
-
-type POITag = {
-  id: number;
-  name: string;
-  count: number;
-};
-
-export async function getModeratorPOITags() {
-  const tags = await dbRead.$queryRaw<POITag[]>`
-    WITH real_person_tags AS MATERIALIZED (
-      SELECT t.id, t.name
-      FROM "TagsOnTags" tot
-      JOIN "Tag" t ON t.id = tot."toTagId"
-      JOIN "Tag" f ON f.id = tot."fromTagId"
-      WHERE f.name = 'real person'
-    )
-    SELECT
-      rpt.id,
-      rpt.name,
-      CAST(COUNT(i.id) as int) as count
-    FROM "Image" i
-    JOIN "TagsOnImageNew" toi ON toi."imageId" = i.id
-    JOIN real_person_tags rpt ON rpt.id = toi."tagId"
-    WHERE i."needsReview" = 'poi'
-    GROUP BY rpt.id, rpt.name
-    ORDER BY 3 DESC;
-  `;
-
-  return tags;
 }
 
 type NameReference = {
@@ -7645,235 +7675,12 @@ export async function updateImageNsfwLevel({
   return nsfwLevel;
 }
 
-type ImageRatingRequestResponse = {
-  id: number;
-  votes: Record<number, number>;
-  url: string;
-  nsfwLevel: number;
-  nsfwLevelLocked: boolean;
-  width: number | null;
-  height: number | null;
-  type: MediaType;
-  total: number;
-  createdAt: Date;
-};
-
-export async function getImageRatingRequests({
-  cursor,
-  limit,
-  user,
-}: ImageRatingReviewOutput & { user: SessionUser }) {
-  // const results = await dbRead.$queryRaw<ImageRatingRequestResponse[]>`
-  //   WITH CTE_Requests AS (
-  //     SELECT
-  //       DISTINCT ON (irr."imageId") irr."imageId" as id,
-  //       MIN(irr."createdAt") as "createdAt",
-  //       COUNT(CASE WHEN i."nsfwLevel" != irr."nsfwLevel" THEN i.id END)::INT "total",
-  //       SUM(CASE WHEN irr."userId" = i."userId" THEN irr."nsfwLevel" ELSE 0 END)::INT "ownerVote",
-  //       i.url,
-  //       i."nsfwLevel",
-  //       i."nsfwLevelLocked",
-  //       i.type,
-  //       i.height,
-  //       i.width,
-  //       jsonb_build_object(
-  //         ${NsfwLevel.PG}, count(irr."nsfwLevel")
-  //           FILTER (where irr."nsfwLevel" = ${NsfwLevel.PG}),
-  //         ${NsfwLevel.PG13}, count(irr."nsfwLevel")
-  //           FILTER (where irr."nsfwLevel" = ${NsfwLevel.PG13}),
-  //         ${NsfwLevel.R}, count(irr."nsfwLevel")
-  //           FILTER (where irr."nsfwLevel" = ${NsfwLevel.R}),
-  //         ${NsfwLevel.X}, count(irr."nsfwLevel")
-  //           FILTER (where irr."nsfwLevel" = ${NsfwLevel.X}),
-  //         ${NsfwLevel.XXX}, count(irr."nsfwLevel")
-  //           FILTER (where irr."nsfwLevel" = ${NsfwLevel.XXX})
-  //       ) "votes"
-  //       FROM "ImageRatingRequest" irr
-  //       JOIN "Image" i on i.id = irr."imageId"
-  //       WHERE irr.status = ${ReportStatus.Pending}::"ReportStatus"
-  //         AND i."nsfwLevel" != ${NsfwLevel.Blocked}
-  //       GROUP BY irr."imageId", i.id
-  //   )
-  //   SELECT
-  //     r.*
-  //   FROM CTE_Requests r
-  //   WHERE (r.total >= 3 OR (r."ownerVote" != 0 AND r."ownerVote" != r."nsfwLevel"))
-  //   ${!!cursor ? Prisma.sql` AND r."createdAt" >= ${new Date(cursor)}` : Prisma.sql``}
-  //   ORDER BY r."createdAt"
-  //   LIMIT ${limit + 1}
-  // `;
-
-  // const results = await dbRead.$queryRaw<ImageRatingRequestResponse[]>`
-  // WITH image_rating_requests AS (
-  //     SELECT
-  //       irr.*,
-  //       i."userId"  "imageUserId",
-  //       i."nsfwLevel"  "imageNsfwLevel"
-  //     FROM "ImageRatingRequest" irr
-  //     JOIN "Image" i ON i.id = irr."imageId"
-  //     WHERE irr.status = ${ReportStatus.Pending}::"ReportStatus"
-  //     AND irr."nsfwLevel" != ${NsfwLevel.Blocked}
-  //     ORDER BY irr."createdAt"
-  //   ),
-  //   requests AS (
-  //     SELECT
-  //       "imageId" id,
-  //       MIN("createdAt") as "createdAt",
-  //       COUNT(CASE WHEN "nsfwLevel" != "imageNsfwLevel" THEN "imageId" END)::INT "total",
-  //       COALESCE(bit_or(CASE WHEN "userId" = "imageUserId" THEN "nsfwLevel" ELSE 0 END))::INT "ownerVote",
-  //       jsonb_build_object(
-  //           ${NsfwLevel.PG}, count("nsfwLevel")
-  //             FILTER (where "nsfwLevel" = ${NsfwLevel.PG}),
-  //           ${NsfwLevel.PG13}, count("nsfwLevel")
-  //             FILTER (where "nsfwLevel" = ${NsfwLevel.PG13}),
-  //           ${NsfwLevel.R}, count("nsfwLevel")
-  //             FILTER (where "nsfwLevel" = ${NsfwLevel.R}),
-  //           ${NsfwLevel.X}, count("nsfwLevel")
-  //             FILTER (where "nsfwLevel" = ${NsfwLevel.X}),
-  //           ${NsfwLevel.XXX}, count("nsfwLevel")
-  //             FILTER (where "nsfwLevel" = ${NsfwLevel.XXX})
-  //         ) "votes"
-  //     FROM image_rating_requests
-  //     GROUP BY "imageId"
-  //   )
-  //   SELECT
-  //     i.url,
-  //     i."nsfwLevel",
-  //     i."nsfwLevelLocked",
-  //     i."userId",
-  //     i.type,
-  //     i.width,
-  //     i.height,
-  //     r.*
-  //   FROM requests r
-  //   JOIN "Image" i ON i.id = r."id"
-  //   WHERE (r.total >= 3 OR (r."ownerVote" != 0 AND r."ownerVote" != i."nsfwLevel"))
-  //   AND i."blockedFor" IS NULL
-  //   ${!!cursor ? Prisma.sql` AND r."createdAt" >= ${new Date(cursor)}` : Prisma.sql``}
-  //   ORDER BY r."createdAt"
-  //   LIMIT ${limit + 1}
-  // `;
-
-  const query = Prisma.sql`
-      WITH image_rating_requests AS (
-        SELECT
-          "imageId",
-          COALESCE(SUM(weight), 0) total,
-          MIN("createdAt") "createdAt",
-          jsonb_build_object(
-            1, COALESCE(SUM(weight) FILTER (where "nsfwLevel" = 1),0),
-            2, COALESCE(SUM(weight) FILTER (where "nsfwLevel" = 2),0),
-            4, COALESCE(SUM(weight) FILTER (where "nsfwLevel" = 4),0),
-            8, COALESCE(SUM(weight) FILTER (where "nsfwLevel" = 8),0),
-            16, COALESCE(SUM(weight) FILTER (where "nsfwLevel" = 16),0)
-          ) "votes"
-        FROM "ImageRatingRequest"
-        WHERE status = 'Pending'
-        GROUP BY "imageId"
-      )
-      SELECT
-        i.id,
-        irr.votes,
-        irr.total::int,
-        i.url,
-        i."nsfwLevel",
-        i."nsfwLevelLocked",
-        i.width,
-        i.height,
-        i.type,
-        i."createdAt"
-      FROM image_rating_requests irr
-      JOIN "Image" i ON i.id = irr."imageId"
-      WHERE irr.total >= 3
-        AND i."blockedFor" IS NULL
-        AND i."nsfwLevelLocked" = FALSE
-        AND i.ingestion != 'PendingManualAssignment'::"ImageIngestionStatus"
-        AND i."nsfwLevel" < ${NsfwLevel.Blocked}
-        ${!!cursor ? Prisma.sql` AND i."id" >= ${cursor}` : Prisma.empty}
-      ORDER BY i."id" ASC
-      LIMIT ${limit + 1}
-  `;
-
-  const results = await dbRead.$queryRaw<ImageRatingRequestResponse[]>`${query}`;
-
-  let nextCursor: number | undefined;
-  if (limit && results.length > limit) {
-    const nextItem = results.pop();
-    nextCursor = nextItem?.id || undefined;
-  }
-
-  const imageIds = results.map((x) => x.id);
-  const tags = await getVotableTags2({
-    ids: imageIds,
-    user,
-    type: 'image',
-    nsfwLevel: Flags.arrayToInstance([
-      NsfwLevel.PG13,
-      NsfwLevel.R,
-      NsfwLevel.X,
-      NsfwLevel.XXX,
-      NsfwLevel.Blocked,
-    ]),
-  });
-
-  return {
-    nextCursor,
-    items: results.map((item) => ({ ...item, tags: tags.filter((x) => x.imageId === item.id) })),
-  };
-}
-
-export async function getIngestionErrorImages({ cursor, limit }: IngestionErrorReviewInput) {
-  const query = Prisma.sql`
-    SELECT
-      i.id,
-      i.url,
-      i.name,
-      i."nsfwLevel",
-      i."aiNsfwLevel",
-      i."needsReview",
-      i.width,
-      i.height,
-      i.type,
-      i."createdAt",
-      i.poi
-    FROM "Image" i
-    WHERE i."createdAt" > now() - INTERVAL '2 days'
-      AND i."createdAt" < now() - INTERVAL '1 hour'
-      AND i.ingestion = 'Error'::"ImageIngestionStatus"
-      AND i."nsfwLevel" = 0
-      ${cursor ? Prisma.sql`AND i.id < ${cursor}` : Prisma.empty}
-    ORDER BY i."createdAt" DESC
-    LIMIT ${limit + 1}
-  `;
-
-  const results = await dbRead.$queryRaw<
-    {
-      id: number;
-      url: string;
-      name: string | null;
-      nsfwLevel: number;
-      aiNsfwLevel: number | null;
-      needsReview: string | null;
-      width: number | null;
-      height: number | null;
-      type: string;
-      createdAt: Date;
-      poi: boolean;
-    }[]
-  >`${query}`;
-
-  let nextCursor: number | undefined;
-  if (results.length > limit) {
-    const nextItem = results.pop();
-    nextCursor = nextItem?.id;
-  }
-
-  return {
-    nextCursor,
-    items: results,
-  };
-}
-
+// NOTE(moderator-migration): getImageRatingRequests + getDownleveledImages (the image-rating-review and
+// downleveled-review queues) now live in the spoke app (apps/moderator). updateImageNsfwLevel STAYS — it
+// backs user rating votes + the mod APIs (set-image-nsfw-level, retool) + new-order.
+// NOTE(moderator-migration): getIngestionErrorImages (the ingestion-error-review queue) now lives in the
+// spoke app (apps/moderator, Kysely). resolveIngestionError STAYS — main's article-image-scan
+// (resolveArticleImageScan) reuses it to pin an article image's nsfwLevel.
 export async function resolveIngestionError({
   id,
   nsfwLevel,
@@ -7908,7 +7715,6 @@ export async function resolveIngestionError({
   });
   await imageMetadataCache.refresh(id);
 
-  // Post-scan actions matching what image-scan-result does on successful scan
   await tagIdsForImagesCache.refresh(id);
 
   if (image.postId) await updatePostNsfwLevel(image.postId);
@@ -7923,110 +7729,6 @@ export async function resolveIngestionError({
     entityId: id,
     activity: 'setNsfwLevel',
   });
-}
-
-type DownleveledImageRecord = {
-  imageId: number;
-  originalLevel: number;
-  createdAt: string;
-};
-
-type DownleveledImageResponse = {
-  id: number;
-  url: string;
-  nsfwLevel: number;
-  type: MediaType;
-  width: number | null;
-  height: number | null;
-  originalLevel: number;
-};
-
-export async function getDownleveledImages({
-  cursor,
-  limit,
-  originalLevel,
-  user,
-}: DownleveledReviewOutput & { user: SessionUser }) {
-  if (!clickhouse) {
-    throw new TRPCError({
-      code: 'INTERNAL_SERVER_ERROR',
-      message: 'ClickHouse is not available',
-    });
-  }
-
-  // Build WHERE conditions for ClickHouse query
-  const whereConditions: string[] = [];
-  if (cursor) {
-    whereConditions.push(`createdAt <= '${cursor}'`);
-  }
-  if (originalLevel !== undefined) {
-    whereConditions.push(`originalLevel = ${originalLevel}`);
-  }
-
-  const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
-
-  // Query ClickHouse for downleveled images
-  const query = `
-    SELECT imageId, originalLevel, createdAt
-    FROM knights_new_order_downleveled
-    ${whereClause}
-    ORDER BY createdAt DESC
-    LIMIT ${limit + 1}
-  `;
-
-  const clickhouseResults = await clickhouse.$query<DownleveledImageRecord>(query);
-
-  let nextCursor: string | undefined;
-  if (limit && clickhouseResults.length > limit) {
-    const nextItem = clickhouseResults.pop();
-    nextCursor = nextItem?.createdAt;
-  }
-
-  if (clickhouseResults.length === 0) {
-    return {
-      nextCursor,
-      items: [],
-    };
-  }
-
-  // Get image data from PostgreSQL
-  const imageIds = clickhouseResults.map((x) => x.imageId);
-  const images = await dbRead.image.findMany({
-    where: { id: { in: imageIds } },
-    select: {
-      id: true,
-      url: true,
-      nsfwLevel: true,
-      type: true,
-      width: true,
-      height: true,
-    },
-  });
-
-  // Create a map for quick lookup
-  const imageMap = new Map(images.map((img) => [img.id, img]));
-
-  // Combine data
-  const items: DownleveledImageResponse[] = clickhouseResults
-    .map((chRecord) => {
-      const image = imageMap.get(chRecord.imageId);
-      if (!image) return null;
-      return {
-        id: image.id,
-        url: image.url,
-        nsfwLevel: image.nsfwLevel,
-        type: image.type,
-        width: image.width,
-        height: image.height,
-        originalLevel: chRecord.originalLevel,
-      };
-    })
-    .filter((item): item is DownleveledImageResponse => item !== null);
-
-  return {
-    nextCursor,
-    items,
-  };
 }
 
 // #region [image tools]
@@ -8518,21 +8220,8 @@ export async function bulkRemoveBlockedImages(hashes: bigint[]) {
 //   return dbWrite.blockedImage.deleteMany({ where: { hash: { in: hashes } } });
 // }
 
-export async function getImagesPendingIngestion() {
-  const date = new Date();
-  date.setDate(date.getDate() - 5);
-  return await dbRead.image.findMany({
-    where: { ingestion: 'Pending', createdAt: { gt: date } },
-    select: {
-      id: true,
-      name: true,
-      url: true,
-      createdAt: true,
-      metadata: true,
-    },
-    orderBy: { id: 'desc' },
-  });
-}
+// NOTE(moderator-migration): getImagesPendingIngestion (the images/to-ingest queue) now lives in the
+// spoke app (apps/moderator, Kysely).
 
 export async function queueImageSearchIndexUpdate({
   ids,

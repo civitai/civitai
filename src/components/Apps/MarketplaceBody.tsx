@@ -69,9 +69,14 @@ export function MarketplaceBody() {
   // hydration mismatch); the real list is loaded in an effect after mount, and
   // updated whenever the viewer opens an app via handleOpen.
   const [recents, setRecents] = useState<RecentApp[]>([]);
+  // 🔴 Keyed by ACCOUNT (#4048): localStorage is per browser profile, so the
+  // store only hands back entries the CURRENT viewer wrote. `ownerId` is in the
+  // dep list so a sign-in / sign-out / account switch inside the SPA re-reads
+  // the (now different, usually empty) bucket instead of keeping the old rail.
+  const ownerId = currentUser?.id ?? null;
   useEffect(() => {
-    setRecents(getRecentlyOpenedApps());
-  }, []);
+    setRecents(getRecentlyOpenedApps(ownerId));
+  }, [ownerId]);
 
   // The marketplace listing is anon-CAPABLE (publicProcedure) — it fires for
   // any viewer who has the appBlocks flag, including a session-less one once
@@ -234,12 +239,15 @@ export function MarketplaceBody() {
     // optional in the store, so a null coverUrl/appName just falls back to the
     // generic icon / blockId handle.
     setRecents(
-      recordRecentlyOpenedApp({
-        id: block.id,
-        blockId: block.blockId,
-        name: block.appName ?? undefined,
-        iconUrl: block.coverUrl ?? undefined,
-      })
+      recordRecentlyOpenedApp(
+        {
+          id: block.id,
+          blockId: block.blockId,
+          name: block.appName ?? undefined,
+          iconUrl: block.coverUrl ?? undefined,
+        },
+        ownerId
+      )
     );
   }
 

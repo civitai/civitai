@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { buildAppsStoreFeedbackContext } from '~/components/Apps/appsStoreFeedbackContext';
-import { APPS_STORE_DEFAULTS } from '~/components/Apps/appsStoreQueryParams';
+import {
+  APPS_STORE_DEFAULTS,
+  resolveAppsStoreFilters,
+} from '~/components/Apps/appsStoreQueryParams';
 import { createFeedbackSchema } from '~/server/schema/feedback.schema';
 import { FEEDBACK_FILTER_VALUE_MAX_LENGTH } from '~/shared/constants/feedback.constants';
 
@@ -72,6 +75,258 @@ describe('buildAppsStoreFeedbackContext', () => {
     const context = buildAppsStoreFeedbackContext({ filters: filters() });
     expect(context?.path).toBeUndefined();
     expect(throughSchema(context)?.filters?.kind).toBe('all');
+  });
+
+  /**
+   * 🔴 THE STORAGE-SHAPE CASE. Decided while the table held no rows, because it stops
+   * being free the moment it does: a column carrying both `'upscale'` and `'  upscale  '`
+   * fragments every later aggregate over it, and no later change can un-mix the rows.
+   *
+   * `resolveAppsStoreFilters` trims only to TEST emptiness and then keeps the original,
+   * so the untrimmed term really does reach this builder — the first assertion below
+   * pins that premise rather than assuming it.
+   *
+   * Whitespace is droppable because it is provably not signal: the store's matcher is
+   * `debouncedSearch.trim().toLowerCase()`, so surrounding space cannot change which
+   * listings the reporter saw. Case survives that same argument but is KEPT, because it
+   * is readable and `lower()` recovers grouping at read time while folded case is gone
+   * for good. The case control below is what makes that a decision instead of an
+   * accident — it fails against a `.toLowerCase()` in the builder.
+   */
+  describe('the search term is TRIMMED for storage, but not case-folded', () => {
+    // The premise. If `resolveAppsStoreFilters` ever starts trimming, this goes red and
+    // the trim in the builder becomes redundant rather than silently load-bearing.
+    it('receives an untrimmed term from the store filter resolver', () => {
+      expect(resolveAppsStoreFilters({ query: '  upscale  ' }).query).toBe('  upscale  ');
+    });
+
+    it('drops surrounding whitespace so two spellings of one term agree', () => {
+      const padded = buildAppsStoreFeedbackContext({
+        path: '/apps',
+        filters: filters({ query: '  upscale  ' }),
+      });
+      const bare = buildAppsStoreFeedbackContext({
+        path: '/apps',
+        filters: filters({ query: 'upscale' }),
+      });
+
+      expect(padded?.filters?.query).toBe('upscale');
+      expect(padded?.filters?.query).toBe(bare?.filters?.query);
+      expect(throughSchema(padded)?.filters?.query).toBe('upscale');
+    });
+
+    // Tabs/newlines reach `?query=` through a paste or a hand-edited address bar, and
+    // `\s` is what the matcher's own `trim()` removes — so pin the same class, not just
+    // the space character.
+    it('drops tabs and newlines too, not just spaces', () => {
+      const context = buildAppsStoreFeedbackContext({
+        path: '/apps',
+        filters: filters({ query: '\t\n upscale \n\t' }),
+      });
+      expect(context?.filters?.query).toBe('upscale');
+    });
+
+    /**
+     * 🔴 THE PADDING CLASS MUST BE `trim()`'s, NOT ASCII. Every fixture above pads with
+     * space/tab/newline, and a fixture that cannot contain an exotic space cannot observe
+     * a narrowed whitespace class — a hand-rolled
+     * `replace(/^[ \t\n]+|[ \t\n]+$/g, '')` passes all of them while leaving NBSP-padded
+     * terms untrimmed, reintroducing exactly the fragmentation this change exists to
+     * prevent. NBSP is the COMMON real case: pasting a term out of a rendered page carries
+     * U+00A0, not a space.
+     *
+     * The set is `String.prototype.trim`'s own: WhiteSpace + LineTerminator, which includes
+     * NBSP (U+00A0), BOM (U+FEFF), CR, VT/FF, LS/PS (U+2028/9) and ideographic space
+     * (U+3000). NOTE: nothing here EXERCISES the store's matcher, so this table does not
+     * enforce that the two stay in step — if `AppListingsMarketplaceBody.tsx:331` stopped
+     * using `trim()`, no assertion in this file would go red. It pins our side only.
+     */
+    const TRIMMED_CHARS: [string, string][] = [
+      // The ASCII three belong in the table too, not only in the mixed-padding case above:
+      // leaving them out left interior TAB unpinned, and `replace(/\t+/g, ' ')` survived a
+      // fully green suite on exactly that hole. The table IS the class — nothing here is
+      // "covered elsewhere".
+      ['space', ' '],
+      ['tab', '\t'],
+      ['newline', '\n'],
+      ['NBSP', '\u00A0'],
+      ['BOM / ZWNBSP', '\uFEFF'],
+      ['ideographic space', '\u3000'],
+      ['carriage return', '\r'],
+      ['vertical tab', '\v'],
+      ['form feed', '\f'],
+      ['line separator', '\u2028'],
+      ['paragraph separator', '\u2029'],
+    ];
+
+    it.each(TRIMMED_CHARS)('drops %s padding, not just ASCII whitespace', (_label, pad) => {
+      const context = buildAppsStoreFeedbackContext({
+        path: '/apps',
+        filters: filters({ query: `${pad}upscale${pad}` }),
+      });
+      expect(context?.filters?.query).toBe('upscale');
+    });
+
+    /**
+     * 🔴 THE SAME BLIND SPOT, ONE POSITION OVER. The table above places each exotic
+     * character only in the PADDING, so the term's INTERIOR is ASCII in every fixture —
+     * and a fixture whose interior cannot contain the character cannot observe an
+     * implementation that rewrites it there. Four mutants survived a fully green suite on
+     * exactly that gap, including `replace(/\uFEFF/g, '')` (a global BOM strip, a very
+     * common real idiom) and `replace(/\u00A0/g, ' ')`.
+     *
+     * Trimming the ends and rewriting the middle are different decisions: this change
+     * takes the first and explicitly declines the second, because the middle is what the
+     * reporter actually typed. So every character the table trims at the ends must be
+     * proven to SURVIVE in the interior.
+     *
+     * 🔴 The interior carries a SINGLE occurrence AND a DOUBLED one, because position and
+     * OCCURRENCE-COUNT are separate holes. With only a single occurrence the run-collapsing
+     * mutants survive — `replace(/\n{2,}/g, '\n')` and `replace(/\t{2,}/g, '\t')` both did
+     * — and collapsing blank lines is exactly the "tidy a pasted term" idiom someone
+     * reaches for. Same class as the padding-vs-interior hole above, one dimension over.
+     */
+    it.each(TRIMMED_CHARS)('keeps %s INSIDE the term, where it is not padding', (_label, ch) => {
+      const query = `up${ch}scale${ch}${ch}down`;
+      const context = buildAppsStoreFeedbackContext({
+        path: '/apps',
+        filters: filters({ query }),
+      });
+      expect(context?.filters?.query).toBe(query);
+    });
+
+    /**
+     * CRLF specifically. The doubled-occurrence table above pairs each character with
+     * ITSELF, so it produces `\r\r` and `\n\n` but never the `\r\n` SEQUENCE — and
+     * `replace(/\r\n/g, '\n')`, line-ending normalisation and the most reached-for text
+     * tidy of all, survives on exactly that gap. A term pasted out of a Windows editor
+     * carries CRLF.
+     */
+    it('keeps a CRLF sequence inside the term', () => {
+      const query = 'up\r\nscale';
+      const context = buildAppsStoreFeedbackContext({
+        path: '/apps',
+        filters: filters({ query }),
+      });
+      expect(context?.filters?.query).toBe(query);
+    });
+
+    /**
+     * 🔴 NO UNICODE NORMALISATION. `.normalize('NFKC')` is the plausible "tidy the term"
+     * addition and it is a storage-shape REWRITE, not a tidy: it maps fullwidth `Ｂｉｔ`
+     * to `Bit`, folding characters the reporter deliberately typed. The module doc says
+     * "normalise away only what can never be wanted back"; nothing tested that until now,
+     * and both `NFKC` and `NFC` survived the suite.
+     */
+    it('does not Unicode-normalise the term (NFKC would fold fullwidth)', () => {
+      const query = '\uFF22\uFF49\uFF54\uFF44\uFF45\uFF58'; // fullwidth "Bitdex"
+      const context = buildAppsStoreFeedbackContext({
+        path: '/apps',
+        filters: filters({ query }),
+      });
+      expect(context?.filters?.query).toBe(query);
+      expect(context?.filters?.query).not.toBe('Bitdex');
+    });
+
+    /**
+     * The fullwidth fixture above cannot see `.normalize('NFC')` — fullwidth characters
+     * are already NFC-stable, so that mutant survives it. NFC's real effect is COMPOSING a
+     * decomposed sequence, so it takes a decomposed fixture to observe. This is the
+     * common real input: text pasted from macOS is frequently NFD.
+     */
+    it('does not compose a decomposed term (NFC)', () => {
+      const query = 'cafe\u0301'; // "cafe" + COMBINING ACUTE — NFD, composes to "café"
+      expect(query.normalize('NFC')).not.toBe(query); // the fixture can see NFC at all
+      const context = buildAppsStoreFeedbackContext({
+        path: '/apps',
+        filters: filters({ query }),
+      });
+      expect(context?.filters?.query).toBe(query);
+    });
+
+    /**
+     * 🔴 AND THE DECOMPOSING DIRECTION. The two fixtures above pin only the COMPOSING
+     * normalisations: NFD is the identity on both of them (fullwidth has no canonical
+     * decomposition, and `cafe\u0301` is already decomposed), so `.normalize('NFD')`
+     * survived them both while the comment overhead claimed "NO UNICODE NORMALISATION".
+     * Decomposing is the same silent storage-shape rewrite as composing, and normalising
+     * to NFD is a real search-folding idiom. It takes a PRECOMPOSED fixture to see it.
+     */
+    it('does not decompose a precomposed term (NFD)', () => {
+      const query = 'caf\u00E9'; // precomposed U+00E9 — NFD would split it into e + U+0301
+      expect(query.normalize('NFD')).not.toBe(query); // the fixture can see NFD at all
+      const context = buildAppsStoreFeedbackContext({
+        path: '/apps',
+        filters: filters({ query }),
+      });
+      expect(context?.filters?.query).toBe(query);
+    });
+
+    /**
+     * CONTROL 1 — interior whitespace must survive, RUNS INCLUDED. A fix that reached for
+     * `replace(/\s/g, '')` rather than `trim()` would pass every assertion above and
+     * silently destroy every multi-word search term.
+     *
+     * 🔴 The interior runs are of DIFFERENT LENGTHS on purpose. With a single interior
+     * space this fixture cannot distinguish `trim()` from `trim()` + an interior collapse
+     * (`replace(/\s+/g, ' ')`) — both yield `'anime upscale'` — so that mutant survived a
+     * fully green suite. Collapsing runs is a different storage-shape decision than
+     * trimming (it silently rewrites what the reporter typed) and is not one this change
+     * takes, so the fixture has to be able to see it.
+     *
+     * Carrying BOTH a 2-run and a 3-run kills the whole width-indexed family in one
+     * fixture: a collapse written `/\s+/`, `/\s\s+/`, `/\s{2}/` or `/\s{3,}/` moves at
+     * least one of the two runs. A single 2-run left `/\s{3,}/` alive.
+     */
+    it('keeps whitespace INSIDE the term, including runs of differing length', () => {
+      const context = buildAppsStoreFeedbackContext({
+        path: '/apps',
+        filters: filters({ query: '  anime  upscale   pro  ' }),
+      });
+      expect(context?.filters?.query).toBe('anime  upscale   pro');
+    });
+
+    /**
+     * CONTROL 2 — case is NOT folded. This is the assertion that pins the half of the
+     * decision we chose not to take; it fails the moment someone "finishes the job"
+     * with a `.toLowerCase()`.
+     */
+    it('preserves the case the reporter typed', () => {
+      const context = buildAppsStoreFeedbackContext({
+        path: '/apps',
+        filters: filters({ query: '  BitDex  ' }),
+      });
+      expect(context?.filters?.query).toBe('BitDex');
+    });
+
+    /**
+     * CONTROL 3 — trimming must not disturb the empty case. `''` is the explicit
+     * "searched for nothing" marker (same reading as `category: 'none'`), and a
+     * whitespace-only term already resolves to it upstream.
+     */
+    it('leaves the empty term as the empty string', () => {
+      expect(resolveAppsStoreFilters({ query: '   ' }).query).toBe('');
+      const context = buildAppsStoreFeedbackContext({
+        path: '/apps',
+        filters: filters({ query: '   ' }),
+      });
+      expect(context?.filters).toHaveProperty('query');
+      expect(context?.filters?.query).toBe('');
+    });
+
+    /**
+     * The trim runs BEFORE the clip, so the bound applies to the real term rather than
+     * to whitespace about to be discarded. Clip-then-trim gives 195 characters here;
+     * trim-then-clip gives the full 200.
+     */
+    it('applies the bound to the term, not to the padding around it', () => {
+      const query = `     ${'q'.repeat(FEEDBACK_FILTER_VALUE_MAX_LENGTH + 50)}     `;
+      const context = buildAppsStoreFeedbackContext({ path: '/apps', filters: filters({ query }) });
+
+      expect(context?.filters?.query).toHaveLength(FEEDBACK_FILTER_VALUE_MAX_LENGTH);
+      expect(context?.filters?.query).toBe('q'.repeat(FEEDBACK_FILTER_VALUE_MAX_LENGTH));
+      expect(() => throughSchema(context)).not.toThrow();
+    });
   });
 
   describe('the search term is CLIPPED to the schema bound, not passed through', () => {
