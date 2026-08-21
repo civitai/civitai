@@ -27,8 +27,6 @@ import {
   purgeAllContent,
   removeSocial,
   resolveRestriction,
-  findPaddleCustomerOwner,
-  setPaddleCustomer,
   setModerationFlag,
   forceLogout,
   refreshSessionCache,
@@ -56,8 +54,7 @@ export const load: PageServerLoad = async ({ params, url }) => {
 
 const NOTE_MAX = 5000;
 
-// Every action's input is a zod parse, per the app standard. `fail` shapes carry the panel scope so each
-// panel renders only its own error — see format.ts.
+// Every action's input is a zod parse, per the app standard.
 const accountFail = (message: string) => fail(400, { scope: 'account' as const, error: message });
 // Separate from `account`: the only renderer of that scope is the panel on Admin, so an identity
 // refusal scoped there is invisible on Basic, where the form actually is.
@@ -118,51 +115,6 @@ export const actions: Actions = {
     const result = await setMuted({
       userId: input.userId,
       muted: input.muted === 'true',
-      moderatorId: locals.user.id,
-    });
-    if (!result.ok) return accountFail(result.error);
-    return { success: true };
-  },
-
-  // Retool's Paddle wizard, in one form: submitting an id that another account holds comes back with
-  // that account rather than moving it, and the second submit does the move explicitly.
-  linkPaddle: async ({ request, locals }) => {
-    if (!canAccess(locals.user, '/users')) return accountFail('Not permitted.');
-    const input = parseForm(
-      userIdSchema.extend({
-        paddleCustomerId: z.string().trim().max(255).optional(),
-        takeFrom: z.coerce.number().int().positive().optional(),
-        unlink: z.literal('1').optional(),
-      }),
-      await request.formData()
-    );
-    if (typeof input === 'string') return accountFail(input);
-
-    if (input.unlink) {
-      const cleared = await setPaddleCustomer({
-        userId: input.userId,
-        paddleCustomerId: null,
-        moderatorId: locals.user.id,
-      });
-      return cleared.ok ? { success: true } : accountFail(cleared.error);
-    }
-
-    if (!input.paddleCustomerId) return accountFail('Enter a Paddle customer id.');
-
-    // Checked even when `takeFrom` was sent: the holder can have changed since the page rendered, and
-    // the confirmation the moderator gave was about a specific account.
-    const owner = await findPaddleCustomerOwner(input.paddleCustomerId);
-    if (owner && owner.id !== input.userId && owner.id !== input.takeFrom)
-      return fail(409, {
-        scope: 'account',
-        error: `That customer id is linked to another account.`,
-        paddleConflict: { ...owner, paddleCustomerId: input.paddleCustomerId },
-      });
-
-    const result = await setPaddleCustomer({
-      userId: input.userId,
-      paddleCustomerId: input.paddleCustomerId,
-      takeFrom: owner?.id === input.takeFrom ? input.takeFrom : undefined,
       moderatorId: locals.user.id,
     });
     if (!result.ok) return accountFail(result.error);

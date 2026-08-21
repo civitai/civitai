@@ -105,7 +105,8 @@ which is worse than a consistent default.
 
 **The Paddle account-linking workflow (`tabbedContainer14`) — not ported.** Three tabs, no queries
 behind them, and Civitai no longer uses Paddle (confirmed 2026-08-07). Recorded here so the next
-audit does not rediscover it as a gap.
+audit does not rediscover it as a gap — it was rediscovered and built anyway on 2026-08-12, and
+removed again 2026-08-21. This entry is the decision; do not re-port it from the export.
 
 ### What is actually left
 

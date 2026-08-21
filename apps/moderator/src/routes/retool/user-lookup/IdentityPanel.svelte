@@ -264,21 +264,6 @@
         {/if}
       </dd>
     </div>
-    <div>
-      <dt class="text-xs tracking-wide text-dark-2 uppercase">Paddle customer</dt>
-      <dd class="break-all">
-        {#if identity.paddleCustomerId}
-          <a
-            href="https://vendors.paddle.com/customers-v2/{identity.paddleCustomerId}"
-            target="_blank"
-            rel="noreferrer"
-            class={LINK_CLASS}>{identity.paddleCustomerId}</a
-          >
-        {:else}
-          <span class="text-dark-0">—</span>
-        {/if}
-      </dd>
-    </div>
   </dl>
 
   {#if clearForm.error}

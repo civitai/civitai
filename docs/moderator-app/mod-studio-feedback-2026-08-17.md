@@ -358,6 +358,9 @@ to [`post-migration-backlog.md`](post-migration-backlog.md) once confirmed.
       (08-07), a week before it was reported missing. Nothing to build; it was a naming gap, since the
       other two buttons are named for their verb and this one for its gesture. It now says what status
       it sets on hover.
+
+      **Superseded 2026-08-21:** the team asked for claiming to be removed, and it is. Neither report
+      queue can set `Processing` any more; both still filter on it, for the reports that carry it.
 - [x] Queue filtering by status, reporter and filed-on date. Status uses the repo's URL-filter
       convention — absent `?status=` is the Pending+Processing default that matches the sidebar badge,
       a present-but-empty one is a deliberate "every status". Date support was added to `getReports`,
@@ -404,8 +407,8 @@ to [`post-migration-backlog.md`](post-migration-backlog.md) once confirmed.
       chip rather than prose, since that is the anti-overlap signal the banner exists for.
 - [x] "Spoke with a mod" chip is red like a ban — same commit
 - [x] `name` from the user table — shown as "Full name"
-- [x] Subscription moved onto Basic. Moved rather than duplicated: a second copy of a panel that can
-      re-link a Paddle customer is two places to fix a bug in.
+- [x] Subscription moved onto Basic. Moved rather than duplicated: a second instance of the
+      subscription panel is two places to fix a bug in.
 - [x] Creator-program membership, including the banned-from-it state
 - [x] Timed Mutes holds only timed mutes
 - [x] **Socials folded into Basic and the tab retired.** Once avatar, bio and location moved onto Basic,
@@ -470,7 +473,8 @@ report, the username opens User Lookup, and prior mod activity and human-filed r
 notes. The article and bounty timestamp queue sweeps render. Report queues gained a details column
 carrying the reporter's own words. User Lookup: payouts,
 training parameters, notes and strikes on basic information, the CSAM chip opens its report, Paddle customer
-re-linking, quick-info checkboxes, and chat links that no longer 404. Bulk Ban took the full list of
+re-linking (**removed 08-21** — Civitai no longer uses Paddle; every Paddle reference is gone from the
+page), quick-info checkboxes, and chat links that no longer 404. Bulk Ban took the full list of
 requests from that round. Dashboard gained an urgent-content banner.
 
 **08-14 (v0.0.24–v0.0.26)** — Sub-permissions: individual actions inside a page can be gated, granted per

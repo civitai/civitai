@@ -1,7 +1,6 @@
 <script lang="ts">
   import { browser } from '$app/environment';
   import type { PageData } from './$types';
-  import type { FormResult } from '../form-result';
   import { fetchAccount } from '../user-account';
   import { fetchSignals } from '../signals';
   import AccountActionsPanel from '../AccountActionsPanel.svelte';
@@ -31,15 +30,7 @@
   import TimedMutesPanel from '../TimedMutesPanel.svelte';
   import TrainingsPanel from '../TrainingsPanel.svelte';
 
-  let { data, form }: { data: PageData; form: FormResult } = $props();
-
-  // `fail()` payloads collapse to a union across every action on this page, so the conflict shape has
-  // to be recovered with a runtime check rather than read off the type.
-  type PaddleConflict = { id: number; username: string | null; paddleCustomerId: string };
-  const paddleConflict = $derived.by((): PaddleConflict | null => {
-    const value = form && 'paddleConflict' in form ? form.paddleConflict : null;
-    return value && typeof value === 'object' && 'id' in value ? (value as PaddleConflict) : null;
-  });
+  let { data }: { data: PageData } = $props();
 
   const result = $derived(data.result);
   const section = $derived(data.section);
@@ -71,17 +62,9 @@
         canEditIdentity={!!data.grants['user.identity.edit']}
         civitaiUrl={data.civitaiUrl}
       />
-      <!-- Both asked for by the mod team, twice by two people for the notes: the enforcement history
-           and the paying relationship are what the first screen is read FOR, and both were two clicks
-           and a scroll away. Subscription MOVED off Buzz rather than being duplicated — a second copy
-           of a panel that can re-link a Paddle customer is two places to fix a bug in. -->
-      <SubscriptionPanel
-        subscription={result.subscription}
-        userId={result.identity.id}
-        paddleCustomerId={result.identity.paddleCustomerId}
-        canAct={data.canAct}
-        conflict={paddleConflict}
-      />
+      <!-- On the first screen because the enforcement history and the paying relationship are what it
+           is read FOR; both were two clicks and a scroll away. -->
+      <SubscriptionPanel subscription={result.subscription} />
       <ModerationMemoryPanel userId={result.identity.id} canAct={data.canAct} />
       <AddressesPanel {signals} />
       <!-- Folded in from its own tab: once avatar, bio and location moved onto this section, Socials

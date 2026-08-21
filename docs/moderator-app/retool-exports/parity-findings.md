@@ -263,11 +263,9 @@ the committed raw export: it is a **Paddle account-linking workflow**, three pan
 paddleCustomerId account` (`textInput14` "Enter User Id" → `button95` "Remove Link"), and
 `3. Link Paddle Account` (`textInput12`).
 
-- [x] **BUILT — corrected 2026-08-20.** All three panes shipped as one `linkPaddle` form action:
-      submitting an id another account holds returns that account rather than moving it, and a second
-      submit does the move explicitly (`findPaddleCustomerOwner` / `setPaddleCustomer`, plus an unlink
-      path). The "needs a decision before the spoke owns a billing write" note was left unticked after
-      the work landed and was still being cited as a blocker months later.
+- [x] **NOT PORTING — removed 2026-08-21.** Built as a `linkPaddle` form action, then removed
+      along with every other Paddle reference on the page: Civitai no longer uses Paddle, so there is
+      no customer id worth linking. Nothing replaces it.
 
 ## Cross-cutting
 
