@@ -1490,8 +1490,7 @@ export const requestReviewHandler = async ({ input }: { input: GetByIdInput }) =
 
     const meta = (model.meta as ModelMeta | null) || {};
     // Deliberately not upsertModel: this only sets meta, and routing it through the full
-    // upsert ran the non-moderator profanity filter over the model name and re-triggered
-    // ingestModel (the select omits `description`, so descriptionChanged was always true).
+    // upsert ran the non-moderator profanity filter over the model name.
     const updatedModel = await updateModelById({
       id: model.id,
       data: { meta: { ...meta, needsReview: true } as Prisma.JsonObject },
