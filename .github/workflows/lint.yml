@@ -47,22 +47,93 @@ name: Lint
 #
 # The modified-file steps flip to blocking once the backlog is cleared, planned to
 # ride along with the Prettier 2->3 upgrade (which forces a reformat anyway).
+#
+# ── ALSO RUNS ON PUSH TO `main`, and that is not decoration ──────────────────
+#
+# Between 2026-06-14 and 2026-08-21 NO CI of any kind produced a verdict for a
+# commit on `main`. Two unrelated mechanisms happened to stop on the same day,
+# which is why the gap read as one thing and stayed unexplained for two months:
+#
+#   1. `.github/workflows/pr-check.yml` was deleted by #2547 ("runs in Tekton,
+#      removes GH Actions pr-check"). It was the ONLY workflow this repo has
+#      ever had with `push: branches: [main]`. Everything built afterwards —
+#      this file (#3362, 2026-07-24), submodule-pin-guard, schema-drift (#3643),
+#      windows-dev-env (#4162) — is `pull_request`-only, so the main-push
+#      trigger was never rebuilt. Nobody decided that; it was lost in a move.
+#   2. CodeQL, whose runs carried the "Push on main" title in the run list,
+#      stopped the same afternoon (code-scanning default setup now reads
+#      `not-configured`). Unrelated cause, same date, no test coverage either
+#      way — it is named here only so the next reader does not "confirm" the
+#      workflow deletion by pointing at a CodeQL run and vice versa.
+#
+# And Tekton does NOT close it. The in-cluster `pr-check` pipeline is driven by
+# a resource that watches OPEN PULL REQUESTS targeting `main`; the only
+# main-branch trigger is a container image build for the staging deployment,
+# which runs no test suite and posts no commit status. So "Tekton covers main"
+# is false, and was the assumption that let the gap persist.
+#
+# What that cost, concretely: a3e790ff2e was pushed straight to `main` with no
+# PR, broke `model-file-scan.service.test.ts`, and sat undetected for ~7 hours.
+# It surfaced only when unrelated PRs inherited the failure through their merge
+# commits — every open PR going red at once, which reads as a CI outage rather
+# than as one bad commit.
+#
+# The push path deliberately does NOT run every job here. `eslint` is diff-vs-
+# base by construction and is skipped; so are the three sibling workflows
+# (schema-drift, submodule-pin-guard, windows-dev-env), which are all
+# base-relative gates with nothing to compare against on a push. The consequence
+# is worth stating rather than leaving implied: the added-file ESLint/Prettier
+# gate and the stray-migrations guard remain reachable only through a PR, so a
+# direct push to `main` still bypasses them. Closing that is a separate change,
+# and requires deciding what "the base" means for a push.
+#
+# A red run on `main` blocks nothing — the merge has already happened, and
+# `main` carries no required_status_checks in any case. Its whole value is that
+# it renders RED, on the commit that caused it, within minutes instead of
+# whenever the next PR happens to inherit it.
 
 on:
   pull_request:
     branches: [main, release]
+  push:
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+# On a PR this is unchanged: `github.ref` is `refs/pull/N/merge`, so a new push
+# to the branch cancels the in-flight run.
+#
+# On a push to `main` it MUST NOT be `github.ref` — that is the same string for
+# every commit on the branch, so a busy `main` would cancel its own runs and the
+# only commit with a verdict would be whichever one happened to be last. Worse,
+# the losers would render as `cancelled`, a status this repo already has an open
+# complaint about being indistinguishable from a real failure. Grouping by
+# `github.sha` gives each commit its own group, so nothing cancels anything and
+# every commit on `main` gets its own answer.
 concurrency:
-  group: lint-${{ github.ref }}
+  group: lint-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: true
 
 jobs:
   eslint:
     name: ESLint + Prettier (changed files)
     runs-on: ubuntu-latest
+    # PULL REQUESTS ONLY, and not as a matter of taste. Every step in this job
+    # is defined against `FETCH_HEAD...HEAD` where FETCH_HEAD is
+    # `origin/$BASE_REF`, and `github.base_ref` is EMPTY on a push event — so on
+    # `main` the first step would run `git fetch -q origin ""` and the job would
+    # fail for a reason that has nothing to do with the code. "Changed files" is
+    # a PR concept here; a push has no base to diff against.
+    #
+    # `scripts/__tests__/main-branch-ci-coverage.test.ts` pins this as a
+    # RELATIONSHIP rather than as this one job's setting: any job in this file
+    # that reads `github.base_ref` or `github.event.pull_request` must be gated
+    # to pull_request events. That is the guard that catches the NEXT
+    # base-relative job someone adds, which would otherwise be red on every
+    # commit to `main` from the day it lands.
+    if: github.event_name == 'pull_request'
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -174,7 +245,7 @@ jobs:
           echo "all modified files formatted"
 
   typecheck:
-    name: Typecheck (fork PRs / non-main base)
+    name: Typecheck (main pushes / fork PRs / non-main base)
     runs-on: ubuntu-latest
     # 🔴 NARROWED, not retired (talos-infra #855, stage 1). The in-cluster Tekton
     # `pr-check` pipeline runs `tsc --noEmit` on every PR and posts the result as
@@ -199,16 +270,35 @@ jobs:
     #     recent #2582, closed 2026-06-16; last merged #2248, 2026-05-09. Rare is
     #     what makes this cheap, not a reason to drop it.
     #
-    # Deleting either disjunct silently removes the only typecheck on that path.
+    #   push to main — the THIRD disjunct, added 2026-08-21. Read this before
+    #     trimming it as redundant with the first: the Tekton `pr-check`
+    #     pipeline is driven by a resource that watches OPEN PULL REQUESTS
+    #     targeting `main`, so a COMMIT on `main` is outside its trigger
+    #     entirely. The only Tekton trigger on the main branch builds a
+    #     container image for the staging deployment; it runs no `tsc` and posts
+    #     no status. So on this path there is no second typecheck to be a
+    #     duplicate of — this job is the only one, exactly as in the fork case.
+    #
+    # Deleting any disjunct silently removes the only typecheck on that path.
     # The honest way to retire this job entirely is to widen Tekton's coverage
     # first and prove it on a real PR of each shape.
     #
+    # ⚠️ `github.event.pull_request` is null on a push event, so BOTH PR
+    # disjuncts evaluate to `null != <string>` — which is TRUE. The push arm is
+    # therefore already implied and the explicit `github.event_name == 'push'`
+    # below is redundant *today*. It is written anyway because the redundancy is
+    # an accident of null-comparison semantics rather than a decision, and the
+    # next person to tighten these disjuncts (e.g. by pinning
+    # `github.event_name == 'pull_request' && ...`) would silently drop main
+    # coverage with no test naming it. The guard test asserts the push arm.
+    #
     # The name changed with the gate so the checks list explains its own absence.
     # Safe: neither `main` nor `release` has any required_status_checks (verified
-    # 2026-08-07 via the branch-protection API), so no merge gate keys on the old
-    # name.
+    # 2026-08-07 via the branch-protection API, re-verified 2026-08-21), so no
+    # merge gate keys on the old name.
     if: >-
-      github.event.pull_request.head.repo.full_name != github.repository
+      github.event_name == 'push'
+      || github.event.pull_request.head.repo.full_name != github.repository
       || github.event.pull_request.base.ref != 'main'
     # event-engine-common is public and fetched over HTTPS, so this needs no
     # secret — which is why the ssh-agent step is gone rather than merely unused.
@@ -274,13 +364,36 @@ jobs:
     # merge, 5 of 5 are green across 4 branches. Encouraging, and far too short a
     # window to act on — 36 minutes is not "a couple of weeks".
     #
-    # Two things to know before re-measuring. The run-level `conclusion` is USELESS
-    # here: `continue-on-error` makes it `success` while the step underneath is
-    # `failure`, so read `steps[].conclusion` from the jobs endpoint, not the run.
-    # And this workflow is `pull_request`-only, so the suite never runs against `main`
-    # itself — a trunk-red test shows up as every PR going red at once, which is the
-    # signature to look for and exactly what the 8 above turned out to be.
-    continue-on-error: true
+    # Two things to know before re-measuring. On a PULL REQUEST the run-level
+    # `conclusion` is USELESS here: `continue-on-error` makes it `success` while the
+    # step underneath is `failure`, so read `steps[].conclusion` from the jobs
+    # endpoint, not the run. That is not true of a push run — see below.
+    #
+    # The second used to read "this workflow is `pull_request`-only, so the suite
+    # never runs against `main` itself — a trunk-red test shows up as every PR going
+    # red at once". That was accurate when written and is now the thing this change
+    # fixes; the signature it describes is still worth recognising in runs from
+    # before 2026-08-21.
+    #
+    # ── REPORT-ONLY ON PULL REQUESTS, REAL VERDICT ON `main` ────────────────────
+    #
+    # The soak above is a claim about PRs and it is left exactly as it is: flipping
+    # the PR side to blocking is a separate, deliberately-unmade decision with its own
+    # open ticket, and nothing here should be read as making it.
+    #
+    # `main` is a different question, because the reason for report-only does not
+    # exist there. Report-only buys "do not red an unrelated PR over a load-timeout";
+    # on a push the merge has already happened, so there is no unrelated work to red
+    # and nothing to block. What `continue-on-error: true` WOULD buy on `main` is the
+    # exact failure this repo just spent two months inside: a run whose conclusion is
+    # `success` while the suite underneath is broken. A green that has to be
+    # disbelieved is worse than no run at all — checking "is main green?" would go on
+    # returning success, and the staleness would merely have been replaced by a lie.
+    #
+    # So: the flake risk is accepted on `main` and the verdict is rendered honestly.
+    # If the suite proves too noisy there, the fix is to de-flake the tests or to
+    # narrow what runs on push — NOT to hide the result behind continue-on-error.
+    continue-on-error: ${{ github.event_name == 'pull_request' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
