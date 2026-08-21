@@ -83,6 +83,11 @@ import classes from './[[...slug]].module.scss';
 import { RenderRichText } from '~/components/RichTextEditor/RenderRichText';
 import { useInView } from 'react-intersection-observer';
 
+const NOT_FOUND = Symbol('article-not-found');
+
+const isNotFoundError = (error: unknown) =>
+  (error as { code?: string } | null | undefined)?.code === 'NOT_FOUND';
+
 const querySchema = z.object({
   id: z.preprocess(parseNumericString, z.number()),
   slug: z.array(z.string()).optional(),
@@ -109,7 +114,15 @@ export const getServerSideProps = createServerSideProps({
 
     if (ssg) {
       // Fetch article to check slug and prefetch for client hydration
-      const article = await ssg.article.getById.fetch({ id: result.data.id }).catch(() => null);
+      const article = await ssg.article.getById
+        .fetch({ id: result.data.id })
+        .catch((error) => (isNotFoundError(error) ? NOT_FOUND : null));
+
+      // `getById` is viewer-scoped: it resolves for the owner and moderators and throws
+      // NOT_FOUND for everyone else, so this 404s a draft/hidden article for crawlers while
+      // its author still loads it. Only NOT_FOUND — any other failure keeps the 200 and lets
+      // the client refetch, rather than 404ing a live article on a transient error.
+      if (article === NOT_FOUND) return { notFound: true };
 
       if (article) {
         gating = { contentNsfwLevel: article.nsfwLevel };
@@ -333,6 +346,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
         canonical: `/articles/${article.id}/${slugit(article.title)}`,
         alternate: `/articles/${article.id}`,
         schema: articleSchema,
+        ogType: 'article' as const,
         deIndex: !article?.publishedAt || article?.availability === Availability.Unsearchable,
       }}
     >
