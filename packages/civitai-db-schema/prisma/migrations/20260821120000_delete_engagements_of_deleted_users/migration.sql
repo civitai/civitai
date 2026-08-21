@@ -28,9 +28,15 @@
 --
 -- MEASURED on the prod replica, 2026-08-21 (PG 18.3): 42,187,643 rows total;
 -- 3,080,712 (7.3%) reference one of 1,317,709 soft-deleted users — 771,882 by a
--- deleted user, 2,367,030 aimed at one, 58,201 both. Excluding Blocks takes a little
--- off that. EXPLAIN ANALYZE of the work-list build: one Seq Scan, two hashed
--- subplans off `User_deletedAt_notnull_idx`, 16.1 s.
+-- deleted user, 2,367,030 aimed at one, 58,201 both. Excluding Blocks, this script
+-- clears 3,038,591 of them and leaves 42,121 Blocks standing: 304 batches of 10,000.
+-- EXPLAIN ANALYZE of the work-list build: one Seq Scan, two hashed subplans off
+-- `User_deletedAt_notnull_idx`, 16.1 s.
+--
+-- REHEARSED on dev 2026-08-21, scoped to 200 deleted users: work list 711 rows,
+-- drained in 4 batches of 200 with the keyset cursor advancing each time, the temp
+-- table surviving every COMMIT, the loop exiting on its own, and the post-check
+-- going 711 -> 0.
 --
 -- ONE scan, then a keyset drain. Doing that scan once is what keeps this linear: a
 -- loop that re-finds its next batch in the live table restarts from block 0 every
