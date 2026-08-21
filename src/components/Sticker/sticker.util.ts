@@ -453,5 +453,7 @@ export function allocateDraftEntitlements({
 export function purchaseCanBeRetriedFresh(error: unknown): boolean {
   const status = (error as { data?: { httpStatus?: number } } | null)?.data?.httpStatus;
 
-  return typeof status === 'number' && status >= 400 && status < 500;
+  // 408 is the one 4xx that does not mean "nothing happened": a request timed
+  // out at an edge or proxy may still have been forwarded and processed.
+  return typeof status === 'number' && status >= 400 && status < 500 && status !== 408;
 }
