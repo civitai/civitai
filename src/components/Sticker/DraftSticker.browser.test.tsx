@@ -619,3 +619,59 @@ describe('alt-dragging a draft', () => {
     expect(gestures.at(-1)?.draftId).toBe(draft.id);
   });
 });
+
+/**
+ * 🔴 THE KEY IS RELEASED WHEN THE PURCHASE RESOLVES.
+ *
+ * The server's idempotency check reads a persisted purchase row and THROWS, so a
+ * key held past success refuses the next legitimate purchase of the same pack in
+ * that session — "this purchase has already been completed" — and the sticker
+ * stays unbuyable until a reload. Buy a refill pack, spend it, want another:
+ * that flow predates this feature and has to keep working.
+ *
+ * Asserted at the call site rather than on the store, because the store's own
+ * test cannot see whether anything calls it.
+ */
+describe('the pack purchase key across one session', () => {
+  const gated: StickerDraft = {
+    ...draft,
+    purchase: {
+      refill: true,
+      pack: { shopItemId: 7, unitAmount: 500, acceptsBlue: false, uses: 1 },
+      creatorUsername: 'maker',
+    },
+  };
+
+  test('is released once the purchase resolves, so the same pack can be bought again', async () => {
+    renderWithProviders(
+      <div style={{ position: 'relative', width: 380, height: 600 }}>
+        <DraftSticker
+          draft={gated}
+          art={art}
+          selected
+          dressed={resolveTreatment({ treatment: 'none', surface: 'detail', isPending: false })}
+          price={PRICE}
+          freeOffer={null}
+          ownerShare={undefined}
+          ownerUsername="creator"
+          onGesture={() => true}
+        />
+      </div>
+    );
+
+    const buy = page.getByRole('button', { name: 'Buy another pack' });
+    await expect.element(buy).toBeInTheDocument();
+
+    const store = useStickerPlacementDraftStore.getState();
+    const before = store.packPurchaseKey(gated.cosmeticId);
+
+    ((await buy.element()) as HTMLElement).click();
+
+    // The handler is async — it invalidates a query before releasing the key.
+    await vi.waitFor(() =>
+      expect(useStickerPlacementDraftStore.getState().packPurchaseKey(gated.cosmeticId)).not.toBe(
+        before
+      )
+    );
+  });
+});

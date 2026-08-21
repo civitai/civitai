@@ -12,7 +12,11 @@ import {
   useImagePlacementSpace,
 } from '~/components/Sticker/placement.util';
 import { stickerMaxScale } from '~/shared/utils/sticker-placement';
-import { useOwnedSticker, useStickerRefill } from '~/components/Sticker/sticker.util';
+import {
+  remainingStickerUses,
+  useOwnedSticker,
+  useStickerRefill,
+} from '~/components/Sticker/sticker.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.store';
 import { trpc } from '~/utils/trpc';
@@ -95,12 +99,10 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
   // Drafts already on the image are subtracted, because each one will spend a
   // use when it is bought. Without this you could lay out three with one use
   // left and only find out at the third purchase, having arranged all of them.
-  const balanceFor = (cosmeticId: number) => {
-    const remaining = balances?.find((balance) => balance.cosmeticId === cosmeticId)?.remaining;
-    if (remaining == null) return remaining;
-    const drafted = drafts.filter((draft) => draft.cosmeticId === cosmeticId).length;
-    return Math.max(remaining - drafted, 0);
-  };
+  // Shared with the duplicate action, which asks the same question about the
+  // same three states. It was this rule written out twice, which is the drift
+  // the refill offer had already been split into two copies by.
+  const balanceFor = (cosmeticId: number) => remainingStickerUses({ balances, drafts, cosmeticId });
 
   const price = space?.price ?? 0;
   // The same predicate the draft's own control uses, so the sentence here and

@@ -131,3 +131,41 @@ describe('remaining uses', () => {
     expect(remainingStickerUses({ balances: owned(1), drafts, cosmeticId: 42 })).toBe(0);
   });
 });
+
+/**
+ * 🔴 THE DEPENDENCY THE UNOWNED BRANCH RESTS ON, PINNED.
+ *
+ * `duplicateGateFor` gives a copy of an unbought shop sticker the SAME gate as
+ * its original, which is only right because one purchase grants the sticker and
+ * `markPurchased(cosmeticId)` then frees every draft of it. Scope that per-draft
+ * later and the branch silently becomes "sell the same sticker twice" — with no
+ * test failing, because the gate decision itself would still be correct.
+ */
+describe('one purchase frees every copy of the sticker', () => {
+  it('lifts the gate from the original and its duplicate together', async () => {
+    const { useStickerPlacementDraftStore } = await import('~/store/sticker-placement-draft.store');
+    const store = () => useStickerPlacementDraftStore.getState();
+
+    store().close();
+    store().open(1);
+    store().begin(42, { x: 0.4, y: 0.4 }, 0.4, pack);
+
+    const originalId = store().drafts[0].id;
+    // The gate the unowned branch hands a copy: the source's own.
+    store().duplicateDraft(
+      originalId,
+      duplicateGateFor({
+        source: store().drafts[0],
+        drafts: store().drafts,
+        balances: [],
+        refillFor,
+      })
+    );
+
+    expect(store().drafts.map((draft) => draft.purchase)).toEqual([pack, pack]);
+
+    store().markPurchased(42);
+
+    expect(store().drafts.map((draft) => draft.purchase)).toEqual([undefined, undefined]);
+  });
+});

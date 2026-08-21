@@ -178,6 +178,18 @@ export function DraftSticker({
       // tray keeps calling this sticker spent and offering to sell it again.
       await queryUtils.cosmetic.getStickerBalances.invalidate();
       markPurchased(draft.cosmeticId);
+      // 🔴 SUCCESS ENDS THE INTENT; THE SESSION DOES NOT. The server's
+      // idempotency check is not a soft dedupe — it looks up a persisted
+      // purchase row and throws — so holding this key would refuse the NEXT
+      // legitimate purchase of the same pack in this session with "this purchase
+      // has already been completed", and the sticker would stay unbuyable until
+      // a reload. Buy a refill pack, spend it, want another: that flow worked
+      // before the key became session-scoped and has to keep working.
+      //
+      // The race this key exists for is unaffected: two copies pressed inside
+      // the same second both read the key BEFORE either resolves, so the second
+      // is still refused as one intent charged once.
+      clearPackPurchaseKey(draft.cosmeticId);
       showSuccessNotification({
         title: 'Sticker purchased',
         message: 'Place it whenever you like — it stays where you put it.',

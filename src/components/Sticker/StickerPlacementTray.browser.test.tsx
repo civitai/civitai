@@ -1,6 +1,7 @@
 import { describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import type * as PlacementUtil from '~/components/Sticker/placement.util';
+import type * as StickerUtil from '~/components/Sticker/sticker.util';
 import type * as Trpc from '~/utils/trpc';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
@@ -72,11 +73,20 @@ vi.mock('~/store/sticker-placement-draft.store', () => ({
 
 // Owning nothing is the tray's simplest state and says nothing about the free
 // offer, which is the only thing this file asserts.
-vi.mock('~/components/Sticker/sticker.util', () => ({
+// Spread rather than hand-listed, which is not tidiness: a hand-written factory
+// replaces the module, so the day `sticker.util` gains an export this file omits,
+// the import fails and the WHOLE FILE collects zero tests — silently green. It
+// happened twice while the duplicate action was being built, once for
+// `useStickerRefill` and once for `remainingStickerUses`. Only the two hooks
+// that would reach the network are overridden.
+vi.mock('~/components/Sticker/sticker.util', async (importOriginal) => ({
+  ...(await importOriginal<typeof StickerUtil>()),
+  // Owning nothing is the tray's simplest state and says nothing about the free
+  // offer, which is the only thing this file asserts.
   useOwnedSticker: () => ({ sticker: [], isLoading: false }),
-  // The tray asks this for a top-up offer when a spent sticker is dragged out.
-  // Owning nothing, nothing here is ever spent — but the hook still has to
-  // exist, or the module fails to load and this file collects zero tests.
+  // Owning nothing, nothing here is ever spent — but the hook runs a query, so
+  // it is stubbed rather than left to reach a client this scaffold does not
+  // provide.
   useStickerRefill: () => () => ({ refill: true }),
 }));
 vi.mock('~/components/Sticker/StickerShopPanel', () => ({ StickerShopPanel: () => null }));
