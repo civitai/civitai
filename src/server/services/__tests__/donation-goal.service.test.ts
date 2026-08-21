@@ -42,6 +42,7 @@ vi.mock('~/server/services/paid-access.service', () => ({
   getPaidAccess: mockGetPaidAccess,
   bustPaidAccessCache: mockBustPaidAccess,
   endPaidAccessNow: mockEndPaidAccessNow,
+  bustModelSaleCache: vi.fn(),
 }));
 
 import { checkDonationGoalComplete } from '~/server/services/donation-goal.service';

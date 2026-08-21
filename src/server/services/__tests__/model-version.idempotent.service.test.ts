@@ -58,6 +58,7 @@ vi.mock('~/server/services/paid-access.service', () => ({
   materializePaidAccessEndsAt: mockMaterialize,
   writePaidAccessForModelVersion: vi.fn(),
   getPaidAccess: vi.fn().mockResolvedValue({}),
+  bustModelSaleCache: vi.fn(),
 }));
 vi.mock('~/server/services/auction.service', () => ({ deleteBidsForModelVersion: vi.fn() }));
 vi.mock('~/server/services/blocklist.service', () => ({ throwOnBlockedLinkDomain: vi.fn() }));

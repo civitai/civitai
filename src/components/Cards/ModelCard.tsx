@@ -22,7 +22,8 @@ import {
 import cardClasses from '~/components/Cards/Cards.module.css';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { RemixButton } from '~/components/Cards/components/RemixButton';
-import { useModelCardContext } from '~/components/Cards/ModelCardContext';
+import { useModelCardContext, useModelSaleBadge } from '~/components/Cards/ModelCardContext';
+import { SaleDiscountLabel } from '~/components/Model/ModelVersions/ModelVersionSaleBadge';
 import { ModelCardContextMenu } from '~/components/Cards/ModelCardContextMenu';
 import { getCardBaseModels } from '~/components/Cards/model-card.utils';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
@@ -97,7 +98,16 @@ function ModelCardContent({ data }: Props) {
     [isEarlyAccess, isUpdated, theme, colorScheme]
   );
 
-  const { useModelVersionRedirect, activeBaseModels } = useModelCardContext();
+  const { useModelVersionRedirect, activeBaseModels, salesByModelId, hasSaleProvider } =
+    useModelCardContext();
+  // Absent until the batched lookup lands, so the badge appears a beat after the card — deliberate: a
+  // sale is worth an extra request, not a slower feed.
+  // The feed passes a map down; surfaces that cannot ask for their own. `hasSaleProvider` is set by the
+  // provider itself, so a card does not fire its own query during the render before the map resolves —
+  // reading `!!salesByModelId` fired every card once on first paint and the requests were already gone
+  // by the time the flag flipped.
+  const ownSale = useModelSaleBadge(data.id, !!hasSaleProvider);
+  const sale = salesByModelId?.[data.id] ?? ownSale;
   const cardBaseModels = getCardBaseModels(
     data as Parameters<typeof getCardBaseModels>[0],
     activeBaseModels
@@ -162,6 +172,14 @@ function ModelCardContent({ data }: Props) {
               baseModel={data.version.baseModel}
               baseModels={cardBaseModels}
             />
+
+            {sale && (
+              <Badge className={cardClasses.chip} variant="filled" radius="xl" color="green">
+                <Text c="white" size="xs" tt="capitalize">
+                  <SaleDiscountLabel sale={sale} />
+                </Text>
+              </Badge>
+            )}
 
             {(isNew || isUpdated || isEarlyAccess) && (
               <Badge

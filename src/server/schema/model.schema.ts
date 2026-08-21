@@ -111,6 +111,8 @@ export const getAllModelsSchema = z.object({
   needsReview: booleanString().optional(),
   earlyAccess: booleanString().optional(),
   paidAccess: booleanString().optional(),
+  /** Models with a live scheduled sale on a permanent paid-access version. */
+  onSale: booleanString().optional(),
   ids: commaDelimitedNumberArray().optional(),
   modelVersionIds: commaDelimitedNumberArray().optional(),
   supportsGeneration: booleanString().optional(),

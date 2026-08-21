@@ -55,6 +55,7 @@ vi.mock('~/server/redis/caches', () => ({
 const getPaidAccessMock = vi.fn();
 vi.mock('~/server/services/paid-access.service', () => ({
   getPaidAccess: (...args: unknown[]) => getPaidAccessMock(...args),
+  bustModelSaleCache: vi.fn(),
 }));
 
 import { hasEntityAccess } from '~/server/services/common.service';
