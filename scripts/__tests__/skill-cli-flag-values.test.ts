@@ -63,7 +63,9 @@ describe.each(PARSERS)('%s flag values', (name, parse) => {
 // a boolean flag left off it starts erroring, and a value-taking flag added to it silently degrades again.
 describe('boolean flags keep working', () => {
   it('metabase --required', () => {
-    expect(metabase.parseOpts(['cmd', '--id', '1', '--required'])).toMatchObject({ required: true });
+    expect(metabase.parseOpts(['cmd', '--id', '1', '--required'])).toMatchObject({
+      required: true,
+    });
     expect(metabase.BOOLEAN_FLAGS.has('required')).toBe(true);
   });
 

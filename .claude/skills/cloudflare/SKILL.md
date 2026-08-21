@@ -52,6 +52,10 @@ node .claude/skills/cloudflare/query.mjs <command> [options]
 | `--pro-compat` | Strip Enterprise-only syntax to fit Pro/Free target zones (see below) |
 | `--apply` | Actually write. Without this, `port-rules` is a dry run |
 
+Only `--skip-disabled`, `--pro-compat` and `--apply` carry no value. Every other flag must be given one —
+a bare flag, or one whose value starts with `--`, is an error rather than the string `'true'` it used to
+become. Use `--flag=value` for a value that legitimately starts with `--`.
+
 ### Examples
 
 ```bash
