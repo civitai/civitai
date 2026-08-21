@@ -23,16 +23,6 @@
   let removing = $state<string | null>(null);
   let confirming = $state<string | null>(null);
 
-  // TEMPORARY DIAGNOSTIC — remove before merge. Justin and I could not establish whether we were
-  // looking at the same build. `hydrated` only ever becomes true from an effect, which does not run
-  // during SSR, so "idle" means the client JS never took over.
-  const BUILD_MARKER = 'BLK-7';
-  let hydrated = $state(false);
-  let lastEvent = $state('none');
-  $effect(() => {
-    hydrated = true;
-  });
-
   // EmailDomain is 8295 entries in production. Rendering the whole list is both unusable and
   // enough DOM to stall the tab, so the list is filtered first and then capped.
   const CHIP_LIMIT = 200;
@@ -109,11 +99,6 @@
 <header class="page-header">
   <h1>Blocklists</h1>
 </header>
-
-<!-- TEMPORARY DIAGNOSTIC — remove before merge. -->
-<p class="mb-3 rounded border border-amber-500/30 bg-amber-500/10 p-1 text-xs text-amber-200">
-  build {BUILD_MARKER} · js {hydrated ? 'LIVE' : 'IDLE'} · last event: {lastEvent}
-</p>
 
 <Tabs
   value={data.type}
@@ -221,10 +206,7 @@
                   disabled={removing !== null}
                   aria-label="Remove {item}"
                   title="Remove {item}"
-                  onclick={() => {
-                    lastEvent = 'x:' + item;
-                    confirming = item;
-                  }}
+                  onclick={() => (confirming = item)}
                 >
                   &times;
                 </Button>
