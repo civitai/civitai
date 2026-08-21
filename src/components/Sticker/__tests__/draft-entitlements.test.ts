@@ -167,3 +167,83 @@ describe('allocating the free placement', () => {
     expect(freeIds(result)).toEqual(['owned']);
   });
 });
+
+/**
+ * 🔴 THE USE BELONGS TO THE DRAFT THAT PAID FOR IT.
+ *
+ * Coverage is otherwise assigned in creation order, so buying a use from the
+ * SECOND of two gated copies raised the balance and covered the FIRST: the
+ * button that was pressed did not change, which reads as a purchase that failed
+ * and invites paying again. Uses are fungible per sticker so no Buzz is lost —
+ * the wrong sticker simply becomes the placeable one.
+ */
+describe('a draft that paid for a use gets it', () => {
+  it('covers the draft that bought, not the one created first', () => {
+    const result = allocateDraftEntitlements({
+      drafts: [draft('first'), draft('second')],
+      balances: owned(1),
+      freeAvailable: false,
+      paidDraftIds: ['second'],
+    });
+
+    expect(coveredIds(result)).toEqual(['second']);
+  });
+
+  it('resolves two purchases in the order they were made', () => {
+    const result = allocateDraftEntitlements({
+      drafts: [draft('a'), draft('b'), draft('c')],
+      balances: owned(2),
+      freeAvailable: false,
+      paidDraftIds: ['c', 'b'],
+    });
+
+    expect(coveredIds(result).sort()).toEqual(['b', 'c']);
+  });
+
+  it('falls back to creation order for drafts nobody paid for', () => {
+    const result = allocateDraftEntitlements({
+      drafts: [draft('a'), draft('b')],
+      balances: owned(1),
+      freeAvailable: false,
+      paidDraftIds: [],
+    });
+
+    expect(coveredIds(result)).toEqual(['a']);
+  });
+});
+
+/**
+ * 🔴 THE FREE PLACEMENT HAS TO GO TO A DRAFT THAT CAN TAKE IT.
+ *
+ * Chosen before coverage, it landed on a spent owned sticker — which then
+ * renders a buy button, and a draft with a gate hides the free option. Every
+ * other draft was told there was no free offer, so the placer had a free
+ * placement available and nowhere to spend it.
+ */
+describe('the free placement skips drafts that cannot use it', () => {
+  const freeIds = (result: Map<string, { free: boolean }>) =>
+    [...result].filter(([, value]) => value.free).map(([id]) => id);
+
+  it('passes over an uncovered draft to one that is covered', () => {
+    const result = allocateDraftEntitlements({
+      drafts: [draft('spent', 42), draft('has-uses', 99)],
+      balances: [
+        { cosmeticId: 42, remaining: 0 },
+        { cosmeticId: 99, remaining: 3 },
+      ],
+      freeAvailable: true,
+    });
+
+    expect(freeIds(result)).toEqual(['has-uses']);
+  });
+
+  it('offers it to nobody when every draft needs buying first', () => {
+    const result = allocateDraftEntitlements({
+      drafts: [draft('spent')],
+      balances: owned(0),
+      freeAvailable: true,
+    });
+
+    expect(freeIds(result)).toEqual([]);
+  });
+});

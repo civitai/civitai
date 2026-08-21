@@ -40,7 +40,10 @@ import {
 import { payoutCopy, stickerPurchaseCopy } from '~/components/Sticker/payout-copy';
 import { stickerArtworkStyle } from '~/components/Sticker/placement-appearance';
 import { useCreateStickerPlacement } from '~/components/Sticker/placement.util';
-import { useBuyStickerUses } from '~/components/Sticker/sticker.util';
+import {
+  purchaseDefinitelyDidNotCharge,
+  useBuyStickerUses,
+} from '~/components/Sticker/sticker.util';
 import type { ResolvedSticker } from '~/components/Sticker/sticker.util';
 import type { StickerTreatment } from '~/components/Sticker/treatments/sticker-treatments';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
@@ -155,6 +158,7 @@ export function DraftSticker({
   purchase?: DraftPurchase;
 }) {
   const markPurchased = useStickerPlacementDraftStore((state) => state.markPurchased);
+  const markPaidForUse = useStickerPlacementDraftStore((state) => state.markPaidForUse);
   const { purchaseShopItem, purchasingShopItem } = useMutateCosmeticShop();
   const queryUtils = trpc.useUtils();
   // 🔴 ONE KEY PER STICKER PER SESSION, HELD IN THE STORE — not one per draft.
@@ -206,10 +210,12 @@ export function DraftSticker({
         message: 'Place it whenever you like — it stays where you put it.',
       });
     } catch (error) {
-      // The attempt is over, so the next press is a new intent rather than a
-      // retry of this one. Holding the key would have a server that records
-      // failed keys refuse every later attempt this session.
-      clearPackPurchaseKey(draft.cosmeticId);
+      // 🔴 ONLY WHERE THE SERVER SAID NO. A refusal is the end of the attempt, so
+      // the next press is a new intent and needs a new key. A timeout or a 5xx
+      // is NOT: the charge may well have gone through, and minting a fresh key
+      // for the retry is how one purchase becomes two. Holding it wrongly costs
+      // a refusal on the next press; releasing it wrongly costs someone's Buzz.
+      if (purchaseDefinitelyDidNotCharge(error)) clearPackPurchaseKey(draft.cosmeticId);
       showErrorNotification({
         title: 'Could not buy that sticker',
         error: error instanceof Error ? error : new Error('Purchase failed'),
@@ -233,10 +239,13 @@ export function DraftSticker({
         expectedPricePerUse: perUse,
         payWith: 'default',
       });
-      // This draft only. One use funds one placement, so lifting the gate from
-      // every draft of the sticker would show a Place button on stickers that
-      // cannot be placed — the server refuses them at `assertHasUse`, after the
-      // button has already claimed they were paid for.
+      // 🔴 THE USE BELONGS TO THE DRAFT THAT PAID FOR IT. Coverage is otherwise
+      // assigned in creation order, so buying from the second of two copies
+      // raised the balance and covered the FIRST — this button would not change,
+      // which reads as a purchase that failed and invites paying twice.
+      markPaidForUse(draft.id);
+      // Kept for the case where a gate IS stored on this draft (a sticker being
+      // bought outright). One use funds one placement, so this draft only.
       markPurchased(draft.cosmeticId, draft.id);
     } catch (error) {
       showErrorNotification({

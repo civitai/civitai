@@ -356,23 +356,41 @@ export function allocateDraftEntitlements({
   drafts,
   balances,
   freeAvailable,
+  paidDraftIds = [],
 }: {
   /** In creation order — the store appends, so `drafts` already is. */
   drafts: { id: string; cosmeticId: number; purchase?: DraftPurchase }[];
   balances: { cosmeticId: number; remaining: number | null }[] | undefined;
   freeAvailable: boolean;
+  /** Drafts whose own buy button paid for a use, oldest purchase first. */
+  paidDraftIds?: string[];
 }): Map<string, DraftEntitlement> {
   const seen = new Map<number, number>();
   const result = new Map<string, DraftEntitlement>();
 
-  // The free placement goes to the first draft that could actually take it. A
-  // draft of a sticker the placer does not own yet cannot: it has to be bought
-  // before it can be placed at all, and buying it is not what "free" means here.
-  const freeDraft = freeAvailable
-    ? drafts.find((draft) => !draft.purchase?.pack || draft.purchase.refill)?.id
-    : undefined;
+  /**
+   * Drafts that paid for a use come first.
+   *
+   * 🔴 WITHOUT THIS, BUYING A USE HANDS IT TO A DIFFERENT STICKER. Coverage is
+   * assigned in creation order, so pressing "Buy a use" on the SECOND of two
+   * gated copies raised the balance and covered the FIRST — the button you paid
+   * on did not change, which reads as a failed purchase and invites paying
+   * again. Uses are fungible per sticker so no Buzz is lost, but the wrong
+   * sticker becomes placeable and the right one keeps asking.
+   *
+   * Purchase order among themselves, so two purchases resolve in the order they
+   * were made rather than by where the drafts happen to sit.
+   */
+  const ordered = [...drafts].sort((a, b) => {
+    const paidA = paidDraftIds.indexOf(a.id);
+    const paidB = paidDraftIds.indexOf(b.id);
+    if (paidA === paidB) return 0;
+    if (paidA < 0) return 1;
+    if (paidB < 0) return -1;
+    return paidA - paidB;
+  });
 
-  for (const draft of drafts) {
+  for (const draft of ordered) {
     const before = seen.get(draft.cosmeticId) ?? 0;
     seen.set(draft.cosmeticId, before + 1);
 
@@ -386,8 +404,64 @@ export function allocateDraftEntitlements({
         ? true
         : remaining === null || before < remaining;
 
-    result.set(draft.id, { covered, free: draft.id === freeDraft });
+    result.set(draft.id, { covered, free: false });
+  }
+
+  /**
+   * The free placement goes to the first draft that can actually take it — which
+   * is decided AFTER coverage, not before.
+   *
+   * 🔴 CHOSEN BEFORE COVERAGE, IT LANDED ON A DRAFT THAT COULD NOT USE IT. A
+   * spent owned sticker created first won the free slot and then rendered a buy
+   * button, because a draft that has to be bought hides the free option — and
+   * every other draft was told there was no free offer. The placer had a free
+   * placement available and nowhere to spend it.
+   *
+   * A sticker not owned at all is skipped for the same reason from the other
+   * direction: it must be bought before it can be placed, which is not what free
+   * means here.
+   */
+  if (freeAvailable) {
+    const freeDraft = drafts.find(
+      (draft) => result.get(draft.id)?.covered && (!draft.purchase?.pack || !!draft.purchase.refill)
+    );
+
+    if (freeDraft) result.set(freeDraft.id, { ...result.get(freeDraft.id)!, free: true });
   }
 
   return result;
+}
+
+/**
+ * Whether a failed purchase definitely did NOT take the money.
+ *
+ * 🔴 THE DEFAULT MUST BE "IT MIGHT HAVE". An idempotency key is released so the
+ * next press is a new intent — right after a refusal, wrong after a timeout,
+ * because a request that timed out may well have been processed. Releasing the
+ * key there mints a fresh one and charges the same purchase twice, which is the
+ * exact thing the key exists to prevent.
+ *
+ * So this recognises refusals the server states, and treats everything else —
+ * network errors, 5xx, an unreadable message — as unknown, holding the key. The
+ * cost of holding it wrongly is a refusal on the next press; the cost of
+ * releasing it wrongly is someone's Buzz.
+ */
+const DEFINITIVE_REFUSALS = [
+  'insufficient',
+  'not enough',
+  'price has changed',
+  'no longer available',
+  'sold out',
+  'not on sale',
+  'already own',
+  'already been completed',
+  'invalid',
+];
+
+export function purchaseDefinitelyDidNotCharge(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+  if (!message) return false;
+
+  const normalised = message.toLowerCase();
+  return DEFINITIVE_REFUSALS.some((refusal) => normalised.includes(refusal));
 }

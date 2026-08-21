@@ -128,6 +128,17 @@ interface StickerPlacementDraftStore {
   interactionPointerId: number | null;
   /** Idempotency keys for pack purchases, one per sticker per session. */
   packKeys: Record<number, string>;
+  /**
+   * Drafts whose own buy button paid for a use, oldest purchase first.
+   *
+   * 🔴 WITHOUT THIS THE USE GOES TO THE WRONG STICKER. Coverage is otherwise
+   * assigned in creation order, so buying a use from the second of two copies
+   * raised the balance and covered the FIRST — the button that was pressed did
+   * not change, which reads as a purchase that failed.
+   */
+  paidDraftIds: string[];
+  /** Records that this draft's own purchase bought a use. */
+  markPaidForUse: (draftId: string) => void;
 
   open: (imageId: number) => void;
   /** End the session outright — every draft, the panel and the target. */
@@ -267,11 +278,15 @@ const ENDED = {
   // Minted per session: a key reused across sessions would have the server
   // refuse a purchase someone genuinely wants to make again.
   packKeys: {} as Record<number, string>,
+  // Cleared with the session for the same reason the keys are: it describes
+  // purchases made against THESE drafts.
+  paidDraftIds: [] as string[],
 };
 
 export const useStickerPlacementDraftStore = create<StickerPlacementDraftStore>((set, get) => ({
   drafts: [],
   packKeys: {},
+  paidDraftIds: [],
   selectedDraftId: null,
   targetImageId: null,
   trayOpen: false,
@@ -392,6 +407,13 @@ export const useStickerPlacementDraftStore = create<StickerPlacementDraftStore>(
     set((state) => ({ packKeys: { ...state.packKeys, [cosmeticId]: key } }));
     return key;
   },
+
+  markPaidForUse: (draftId) =>
+    set((state) =>
+      state.paidDraftIds.includes(draftId)
+        ? state
+        : { paidDraftIds: [...state.paidDraftIds, draftId] }
+    ),
 
   clearPackPurchaseKey: (cosmeticId) =>
     set((state) => {

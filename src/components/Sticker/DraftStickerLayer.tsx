@@ -87,6 +87,7 @@ export function DraftStickerLayer() {
   });
   const refillFor = useStickerRefill();
 
+  const paidDraftIds = useStickerPlacementDraftStore((state) => state.paidDraftIds);
   const duplicateDraft = useStickerPlacementDraftStore((state) => state.duplicateDraft);
 
   /**
@@ -99,8 +100,8 @@ export function DraftStickerLayer() {
    * a use that had just been handed back. Entitlement belongs to the set.
    */
   const entitlements = useMemo(
-    () => allocateDraftEntitlements({ drafts, balances, freeAvailable: !!freeOffer }),
-    [drafts, balances, freeOffer]
+    () => allocateDraftEntitlements({ drafts, balances, freeAvailable: !!freeOffer, paidDraftIds }),
+    [drafts, balances, freeOffer, paidDraftIds]
   );
 
   const onDuplicate = useCallback(
