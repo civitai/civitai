@@ -67,6 +67,20 @@ app that gates on them (the monolith's list is `FLIPT_FEATURE_FLAGS` in
 - **Prefer lowering `FLIPT_EVAL_CACHE_TTL_MS` over growing `cacheBypass`.** Bypassing a flag evaluated
   on a hot path re-adds a per-request wasm call — that cache exists because those calls were a top-10
   CPU frame at ~1500 req/s.
+- 🔴 **Before changing either cache knob, read `getCacheStats()` — a hit rate alone cannot tell you
+  which knob to turn.** The two failure modes look identical from a hit rate and have opposite
+  remedies:
+  - misses dominated by `expiredMisses` → **TTL-bound**: the key was cached and its TTL lapsed, so a
+    longer `FLIPT_EVAL_CACHE_TTL_MS` converts those misses into hits.
+  - `rotations` climbing → **capacity-bound**: inserts are overflowing `evalCacheMaxEntries`, so
+    entries are evicted *before* they can expire. A longer TTL then recovers **nothing** — it is an
+    inert change that reads as a fix. Raise the ceiling instead.
+
+  Note the cache key is `(flag, entityId, context)`, so a per-user `entityId` multiplies the key
+  space by your active-user count; capacity-bound is the likelier of the two on hot paths. The
+  monolith exports these as `civitai_app_flipt_eval_cache_*` (see
+  `src/server/metrics/flipt-eval-cache.metrics.ts`); `misses - expiredMisses` is an upper bound on
+  cold traffic, not a measurement of it.
 - **`FLIPT_EVAL_CACHE_TTL_MS` is parsed with `parseInt`**: `"0.5"` → `0` (cache off) and `"1e4"` → `1`.
   The resolved value is logged through the factory's `log` on startup — read it if behavior surprises you.
 - After an init failure the client stays `null` for `failureCooldownMs` (30s) and every read returns
