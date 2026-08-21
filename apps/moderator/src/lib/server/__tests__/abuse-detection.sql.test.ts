@@ -114,6 +114,13 @@ describe('compiled SQL — column names and shape', () => {
     expect(params[params.length - 1]).toContain(true);
   });
 
+  // Sibling of the `getAbuseFindings` default the last round pinned. Unpinned, the board's list
+  // silently shows a handful of runs and reads as "that is all there is".
+  it('getAbuseRuns defaults to a page of 50 runs', async () => {
+    await service.getAbuseRuns({});
+    expect(params[params.length - 1]).toContain(50);
+  });
+
   it('getAbuseRuns filters by detector only when one is given', async () => {
     await service.getAbuseRuns({});
     expect(lastSql()).not.toContain('"r"."detector" =');

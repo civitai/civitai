@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { MOD_ACTION, abuseReportInput } from '@civitai/moderation';
+import { MAX_FINDINGS_PER_REPORT, MOD_ACTION, abuseReportInput } from '@civitai/moderation';
 
 /**
  * The abuse-detection report surface: the wire contract, the write, and the jsonb hardening.
@@ -220,20 +220,45 @@ describe('abuseReportInput — the wire contract', () => {
   });
 
   // The object-level refinement runs EVEN WHEN a field failed its own validation, and `Date.parse`
-  // does not fail on a rejected string — it guesses, reading a naive timestamp as local time. West
-  // of UTC that compares as later than a `Z` finish and adds a false ordering error beside the real
-  // one. Asserting the COUNT is what makes the bail observable; asserting `success: false` alone
-  // passes either way.
-  it('reports exactly one issue for a naive timestamp, not a spurious ordering error too', () => {
+  // does not fail on a rejected string — it guesses, reading a naive timestamp as LOCAL time. That
+  // guess can land on the wrong side of the other timestamp and add a false ordering error beside
+  // the real one. Asserting the ISSUE COUNT is what makes the bail observable; `success: false`
+  // alone passes either way.
+  //
+  // 🔴 The naive value is a WHOLE DAY past the other field, and that is the entire point. The first
+  // version of this test used a same-day time, so the local guess only overtook `finishedAt` on a
+  // host ≥4h west of UTC: it killed the mutant on this machine and SURVIVED under UTC and
+  // Asia/Tokyo — i.e. it read as coverage while providing none in the environment CI runs in.
+  // Nothing pins `TZ` in either vitest config, so the fixture has to be correct at every offset
+  // rather than rely on one. A day's margin clears the entire UTC-12..UTC+14 range.
+  it.each([
+    ['startedAt', { startedAt: '2026-08-22T23:00:00.123456' }],
+    // Mirrored, because the two fields are independent schemas and the bail is two separate lines:
+    // deleting only the `finishedAt` half survived every timezone until this case existed.
+    [
+      'finishedAt',
+      { startedAt: '2026-08-19T01:00:00.000Z', finishedAt: '2026-08-17T23:00:00.123456' },
+    ],
+  ])(
+    'reports exactly one issue for a naive %s, not a spurious ordering error too',
+    (field, override) => {
+      const parsed = abuseReportInput.safeParse({ ...baseRun, ...override, findings: [] });
+      expect(parsed.success).toBe(false);
+      if (parsed.success) return;
+      expect(parsed.error.issues).toHaveLength(1);
+      expect(parsed.error.issues[0].path).toEqual([field]);
+    }
+  );
+
+  // The WRITER's cap, as distinct from the reader's default. The shared-constant argument is about
+  // the two being equal; nothing pinned this side of it at all.
+  it('refuses a report carrying more findings than the contract allows', () => {
+    const one = { userId: 5, confidence: 0.5, reason: 'r', actioned: false };
     const parsed = abuseReportInput.safeParse({
       ...baseRun,
-      startedAt: '2026-08-21T11:00:00.123456',
-      findings: [],
+      findings: Array.from({ length: MAX_FINDINGS_PER_REPORT + 1 }, () => one),
     });
     expect(parsed.success).toBe(false);
-    if (parsed.success) return;
-    expect(parsed.error.issues).toHaveLength(1);
-    expect(parsed.error.issues[0].path).toEqual(['startedAt']);
   });
 
   it.each([
