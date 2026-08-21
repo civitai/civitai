@@ -1,7 +1,13 @@
 # `pnpm typecheck` is structurally blind to every file under `src/**/__tests__/`
 
-**Status: proposal. Nothing here is a mass fix.** Measured 2026-08-12 against `main` at
-`f19574a9cb`, on Node 22.22.2 / TypeScript 5.9.2.
+**Status (corrected 2026-08-21): merged, but NOT WIRED — the gate runs nowhere.** PR #3868
+merged 2026-08-13 (its title reads `PROPOSAL (do not merge)`, which is misleading); PR #4189
+extended it to `scripts/` 2026-08-20. `tsconfig.tests.json`, `scripts/ci/typecheck-tests-gate.mjs`
+and its baseline are all on `main`, and the gate has its own unit tests — but **nothing invokes
+it**: no `package.json` script (`typecheck` runs the base config, which still excludes
+`src/**/__tests__/**`), and no workflow reference. Verified at `312a91ad7c`. So the ratchet that
+was meant to stop the inflow currently fires on nothing, and reads as done.
+Original measurement: 2026-08-12 against `main` at `f19574a9cb`, Node 22.22.2 / TypeScript 5.9.2.
 
 ---
 

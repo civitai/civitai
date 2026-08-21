@@ -1,5 +1,7 @@
 # Is vitest the right runner? Scouting Bun and node:test
 
+**Status (added 2026-08-21):** Recommendation unchanged — stay on vitest. The measurement was single-shot and not re-run; the ~20x ratio on the like-for-like file is a point estimate.
+
 Recorded 2026-08-15. Measurement and a recommendation; no migration was attempted, and no box time
 was used — every probe is a single-process module import, not a suite run.
 

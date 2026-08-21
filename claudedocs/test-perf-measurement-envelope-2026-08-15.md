@@ -1,5 +1,7 @@
 # The measuring box moves further than most of the effects we measured
 
+**Status (added 2026-08-21):** Historical measurement. The ~20% drift envelope is a point estimate from one contaminated pair; a clean pair has not been taken. The methodological conclusions (pair controls, cost-comparable control groups) remain valid.
+
 Recorded 2026-08-15 from the unit-suite performance work. This is the number that decides which of
 the day's other numbers are readable, so it belongs beside them rather than inside any one PR.
 

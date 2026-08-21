@@ -1,5 +1,7 @@
 # Triage: the "16 pre-existing test failures on main"
 
+**Status (added 2026-08-21):** Historical analysis. Verified at baseline `a43e49a4ba` and `2a2fe66428`. The 16 failures were environment-caused, not code-caused. The worktree/submodule/.envrc traps documented here are now in CLAUDE.md (PR #3567).
+
 **Measured 2026-08-10.** Baseline commit `a43e49a4ba` (`origin/main`, "5.0.2262"), plus a
 second baseline at `2a2fe66428` — the tip of `main` on 2026-08-08, the day the ticket was
 filed. Every run below was made in a clean throwaway worktree off the remote tip, with a

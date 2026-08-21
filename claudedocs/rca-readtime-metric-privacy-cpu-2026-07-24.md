@@ -1,5 +1,7 @@
 # RCA — read-time model-metric-privacy CPU regression (`model-metric-privacy-readtime`)
 
+**Status (added 2026-08-21):** Fix merged as PR #3331 (2026-07-24). The root cause and proposed fix in this doc describe the change that shipped. Production A/B verification (step 3 in the doc's verification plan) is NOT VERIFIED — see report.
+
 Date: 2026-07-24
 Author: perf investigation (static source + measured A/B evidence)
 Repo: `civitai/civitai` @ `origin/main` (f5fe73fd5f)

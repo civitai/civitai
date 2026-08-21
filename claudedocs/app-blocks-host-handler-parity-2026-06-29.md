@@ -1,5 +1,7 @@
 # App Blocks host↔SDK handler parity audit (2026-06-29)
 
+**Status (added 2026-08-21):** Historical audit snapshot. Coverage matrix verified at the `@civitai/app-sdk@0.6.0` dist. PR #2799 (merged 2026-06-29) fixed `OPEN_CHECKPOINT_PICKER` on pages. The handler parity gap for remaining REQUEST-style messages remains open.
+
 ## The bug class (gotcha-#73 — "spins forever, no network call, no console error")
 
 App Blocks has multiple host components that bridge block→host `postMessage`s, each

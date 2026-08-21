@@ -1,6 +1,6 @@
 # RCA — the App Blocks component-suite flake: an unwinnable race on a self-deleting state
 
-**Date:** 2026-08-05 · **PR:** #3645 · **Status:** one defect fixed; the class is open.
+**Date:** 2026-08-05 · **PR:** #3645 · **Status (corrected 2026-08-21):** two defects fixed; the class is open.
 
 `preview / component-tests` had been intermittently red with no PR to blame — two pipeline
 runs on **byte-identical trees** (the second an empty commit on the first) produced opposite
@@ -173,7 +173,7 @@ Measured gate health: **3 fails / 19 recent PRs carrying a `component-tests` che
 a _lower bound_, since it reads each PR's latest run and a PR retried until green counts as a
 pass.
 
-### Confirmed member #2 — `AppListingsMarketplaceBody.browser.test.tsx:221` (NOT fixed)
+### Confirmed member #2 — `AppListingsMarketplaceBody.browser.test.tsx:221` (fixed by PR #3654, merged 2026-08-05)
 
 _"the search box does NOT write the URL per keystroke — only the debounced value"_
 

@@ -1,5 +1,7 @@
 # Notifications App — Test Coverage Audit (2026-07-03)
 
+**Status (added 2026-08-21):** Historical snapshot. Coverage numbers measured at the stated commit; NOT VERIFIED against current `main`.
+
 **Scope:** `apps/notifications` (`@civitai/notifications-app`) — the Fastify + raw-pg fan-out/producer service.
 **Method:** ran `corepack pnpm exec vitest run --coverage` (v8 provider, worked) + static analysis of every source module and test. Read-only; no source or tests changed.
 
