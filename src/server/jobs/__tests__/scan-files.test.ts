@@ -293,48 +293,39 @@ describe('scanFilesFallbackJob', () => {
 });
 
 describe('scanFilesFallbackJob fairness ordering', () => {
-  it('orders never-submitted files first via an explicit NULLS FIRST sort', async () => {
+  it('sorts unattempted files first, then oldest id, as one total order', async () => {
     mockDbWrite.modelFile.findMany.mockResolvedValue([]);
 
     await runJob(scanFilesFallbackJob);
 
-    // 🔴 The `{ sort, nulls }` object form is load-bearing. Postgres orders ASC
-    // with NULLS LAST by default, so the bare `'asc'` string would sort
-    // never-submitted files LAST — the exact inverse of what fairness needs.
-    // Asserted as a literal so replacing it with the bare form fails here.
+    // ONE assertion deliberately, on the whole array literal. Array deep
+    // equality pins length, element order and element identity at once, so this
+    // single expectation covers every way the sort can be wrong:
+    //
+    //  - `nulls: 'first'` replaced or dropped. Load-bearing: Postgres orders ASC
+    //    with NULLS LAST by default, so the bare `'asc'` string sorts
+    //    unattempted files LAST — the exact inverse of what fairness needs.
+    //  - `sort` flipped to 'desc'.
+    //  - the `{ id: 'asc' }` tiebreaker removed, reversed, or moved to another
+    //    column. It is what makes the order TOTAL: sorting on the nullable
+    //    column alone leaves big ties (every NULL ties with every other NULL,
+    //    and the upfront updateMany stamps one identical timestamp across the
+    //    whole batch) that Postgres may break arbitrarily and differently on
+    //    each run.
+    //  - the array collapsed to a bare object.
+    //
+    // 🔴 Earlier revisions of this file split those into extra tests that
+    // re-checked pieces of this same literal. They contributed no unique kill,
+    // and adding the tiebreaker silently made one of them VACUOUS: it asserted
+    // `orderBy` was not the one-element bare form, which a two-element array can
+    // never equal regardless of what is inside it. A test that reads as coverage
+    // while providing none is worse than no test, so they are gone rather than
+    // left to reassure the next reader.
     expect(mockDbWrite.modelFile.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         orderBy: [{ scanRequestedAt: { sort: 'asc', nulls: 'first' } }, { id: 'asc' }],
       })
     );
-  });
-
-  it('breaks ties on id ascending so the batch is a total, stable order', async () => {
-    mockDbWrite.modelFile.findMany.mockResolvedValue([]);
-
-    await runJob(scanFilesFallbackJob);
-
-    // Sorting on a single nullable column leaves big ties — every NULL ties with
-    // every other NULL, and the upfront updateMany stamps one identical
-    // timestamp across the whole batch. Postgres may break those ties
-    // arbitrarily and differently each run, so the tiebreaker is what makes the
-    // batch deterministic. Asserted by position and direction, not just presence.
-    const [args] = mockDbWrite.modelFile.findMany.mock.calls[0];
-    expect(args.orderBy).toHaveLength(2);
-    expect(args.orderBy[1]).toEqual({ id: 'asc' });
-    // Descending would prefer the NEWEST row inside a tie — the inverse of
-    // "longest-waiting first".
-    expect(args.orderBy[1]).not.toEqual({ id: 'desc' });
-  });
-
-  it('does not pass the bare asc form, which would sort nulls last', async () => {
-    mockDbWrite.modelFile.findMany.mockResolvedValue([]);
-
-    await runJob(scanFilesFallbackJob);
-
-    const [args] = mockDbWrite.modelFile.findMany.mock.calls[0];
-    expect(args.orderBy).not.toEqual([{ scanRequestedAt: 'asc' }]);
-    expect(args.orderBy).not.toEqual({ scanRequestedAt: 'asc' });
   });
 });
 
@@ -437,6 +428,28 @@ describe('scanFilesFallbackJob per-run budget', () => {
     expect(result).toEqual({ submitted: 1, failed: 0, skipped: 1 });
   });
 
+  it('counts time spent in the batch query against the budget', async () => {
+    // 🔴 This pins WHERE the run clock starts, which is the whole point of
+    // moving `runStartedAt` above the batch query. The job lock is already
+    // running during the select and the upfront stamp, so that time has to
+    // count; if the clock started afterwards, two DB round-trips would fall
+    // outside the bound and quietly overspend it.
+    //
+    // Observable precisely because the query is a mock: advancing the clock
+    // INSIDE it makes the query itself consume the entire budget. With the
+    // clock started before the query, nothing may be admitted; with it started
+    // after, elapsed time reads as 0 and everything is admitted.
+    mockDbWrite.modelFile.findMany.mockImplementation(async () => {
+      vi.setSystemTime(new Date(FIXED_NOW.getTime() + 180_001));
+      return twoFiles;
+    });
+
+    const result = await runJob(scanFilesFallbackJob);
+
+    expect(mockCreateModelFileScanRequest).not.toHaveBeenCalled();
+    expect(result).toEqual({ submitted: 0, failed: 0, skipped: 2 });
+  });
+
   it('does not skip when the run stays inside the budget', async () => {
     mockDbWrite.modelFile.findMany.mockResolvedValue(twoFiles);
     // Well inside 180s, and a different magnitude from PAST_BUDGET_MS.
@@ -450,19 +463,27 @@ describe('scanFilesFallbackJob per-run budget', () => {
     expect(result).toEqual({ submitted: 2, failed: 0, skipped: 0 });
   });
 
-  // 🔴 Run at TWO different batch sizes. One size is not enough: with a single
-  // fixture the asserted `batchSize` equals that fixture's own length, so a
-  // mutant hardcoding the literal survives — and simply picking a bigger single
-  // fixture just relocates the coincidence instead of removing it. Across two
-  // sizes no constant can satisfy both, so `batchSize` and `skipped` have to be
-  // derived. Within each case every asserted number is distinct as well, so no
-  // field can be satisfied by another field's value.
+  // 🔴 Run TWO cases in which EVERY asserted count differs. One case is not
+  // enough: with a single fixture the asserted `batchSize` equals that fixture's
+  // own length, so a mutant hardcoding the literal survives — and simply picking
+  // a bigger single fixture just relocates the coincidence instead of removing
+  // it. But varying only the SIZE is also not enough: it pins `batchSize` and
+  // `skipped` while leaving `submitted` and `failed` identical across cases, so
+  // hardcoding either of those still survives. (Measured — both did.) So the
+  // second case also fails its one attempted submission, which moves
+  // submitted 1→0 and failed 0→1. Across the pair every field takes two
+  // different values, so no constant satisfies both, and within each case all
+  // four counts are mutually distinct so no field can be satisfied by another
+  // field's value.
+  //
+  // This payload is the only signal that the queue is oversubscribed — the whole
+  // motivation for the bound — so a lie in it is not cosmetic.
   it.each([
-    { size: 3, expectedSkipped: 2 },
-    { size: 5, expectedSkipped: 4 },
+    { size: 5, firstAttemptFails: false, submitted: 1, failed: 0, skipped: 4 },
+    { size: 3, firstAttemptFails: true, submitted: 0, failed: 1, skipped: 2 },
   ])(
-    'reports the truncated run to Axiom so the bound is observable (batch of $size)',
-    async ({ size, expectedSkipped }) => {
+    'reports the truncated run to Axiom so the bound is observable (batch $size, failing=$firstAttemptFails)',
+    async ({ size, firstAttemptFails, submitted, failed, skipped }) => {
       mockDbWrite.modelFile.findMany.mockResolvedValue(
         Array.from({ length: size }, (_, i) => ({
           id: i + 1,
@@ -473,8 +494,11 @@ describe('scanFilesFallbackJob per-run budget', () => {
           },
         }))
       );
+      // Burn the budget on the first attempt either way; only its OUTCOME
+      // differs between the two cases.
       mockCreateModelFileScanRequest.mockImplementation(async () => {
         vi.setSystemTime(new Date(FIXED_NOW.getTime() + PAST_BUDGET_MS));
+        if (firstAttemptFails) throw new Error('orchestrator down');
       });
 
       await runJob(scanFilesFallbackJob);
@@ -483,9 +507,9 @@ describe('scanFilesFallbackJob per-run budget', () => {
         expect.objectContaining({
           type: 'warning',
           name: 'scan-files-fallback',
-          skipped: expectedSkipped,
-          submitted: 1,
-          failed: 0,
+          submitted,
+          failed,
+          skipped,
           batchSize: size,
           runBudgetMs: 180_000,
         }),
