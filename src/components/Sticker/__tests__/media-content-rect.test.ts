@@ -127,6 +127,50 @@ describe('what it refuses to guess', () => {
     expect(drawn.top).toBe(-300);
   });
 
+  /**
+   * Refusing beats guessing. Every one of these used to fall through to
+   * centring, which answers a question the parser could not read — and centring
+   * is plausible, so nobody would have found it.
+   */
+  test('an object-position it cannot read gives back the element box', () => {
+    for (const position of [
+      'right 20px bottom 10px', // four tokens: reading the first two is wrong on both axes
+      'calc(50% + 10px) 0%', // legal computed value, matches neither regex
+      '', // nothing at all
+    ])
+      expect(mediaContentRect({ box: CARD, natural: PORTRAIT, fit: 'cover', position })).toEqual({
+        ...CARD,
+        left: 0,
+        top: 0,
+      });
+  });
+
+  /**
+   * `object-position: top center` is the literal value in `Cards.module.css`.
+   * Read positionally, `top` lands on the x axis and pins the artwork to the
+   * LEFT edge — a real card, silently offset, if a browser ever hands the
+   * keywords back unresolved.
+   */
+  test('keyword pairs written vertical-first are not read as horizontal', () => {
+    const wide = { width: 2000, height: 1000 };
+
+    expect(
+      mediaContentRect({ box: CARD, natural: wide, fit: 'cover', position: 'top center' })
+    ).toEqual(mediaContentRect({ box: CARD, natural: wide, fit: 'cover', position: 'center top' }));
+  });
+
+  test('a single keyword centres the other axis', () => {
+    const wide = { width: 2000, height: 1000 };
+
+    // 1200 wide in a 450 box, centred: 375 of overflow either side.
+    expect(mediaContentRect({ box: CARD, natural: wide, fit: 'cover', position: 'top' })).toEqual({
+      width: 1200,
+      height: 600,
+      left: -375,
+      top: 0,
+    });
+  });
+
   test('a pixel offset is an offset, not a proportion', () => {
     const drawn = mediaContentRect({
       box: CARD,

@@ -41,24 +41,31 @@ const scaleFor = (fit: string, box: Size, natural: Size) => {
   }
 };
 
+const HORIZONTAL = new Set(['left', 'right']);
+const VERTICAL = new Set(['top', 'bottom']);
+
 /**
- * One axis of `object-position`, as a fraction of the free space.
+ * One axis of `object-position`, as a fraction of the free space — or `null`
+ * where the value is not one this understands.
  *
- * `getComputedStyle` resolves keywords to percentages (`top` becomes `50% 0%`),
- * so percentages are the common case. A length is an offset from the leading
- * edge rather than a proportion, which is the same distinction
- * `background-position` makes.
+ * `null` matters more than the arithmetic does. Every unparsed value used to
+ * fall back to centring, which is a confident answer to a question this could
+ * not read: `calc(50% + 10px)` is a legal computed value, and centring it puts
+ * every sticker somewhere plausible and wrong. The caller returns the element
+ * box instead, which is the pre-fix behaviour — wrong in the same direction it
+ * has always been wrong, rather than newly and differently wrong.
  */
 const offsetFor = (value: string | undefined, free: number) => {
-  if (!value) return free / 2;
+  if (!value) return null;
 
   const percent = /^(-?[\d.]+)%$/.exec(value);
   if (percent) return (free * Number(percent[1])) / 100;
 
+  // Computed style resolves em/rem/vh to px, so this covers every length that
+  // survives to this point.
   const pixels = /^(-?[\d.]+)px$/.exec(value);
   if (pixels) return Number(pixels[1]);
 
-  // Keywords, in case a browser hands them back unresolved.
   switch (value) {
     case 'left':
     case 'top':
@@ -69,8 +76,33 @@ const offsetFor = (value: string | undefined, free: number) => {
     case 'center':
       return free / 2;
     default:
-      return free / 2;
+      return null;
   }
+};
+
+/**
+ * The two axes of `object-position`, in x-then-y order.
+ *
+ * Keywords may be written either way round — `object-position: top center` is
+ * the literal value in `Cards.module.css` — so a positional read of the tokens
+ * maps `top` onto x and lands the artwork at the left edge. Browsers normally
+ * resolve both to percentages before this sees them; this is for the case where
+ * one does not.
+ *
+ * Anything with more than two tokens (`right 20px bottom 10px`) is refused
+ * rather than truncated: reading the first two of four gives a number that is
+ * confidently wrong on both axes.
+ */
+const axesOf = (position: string) => {
+  const tokens = position.trim().split(/\s+/).filter(Boolean);
+  if (!tokens.length || tokens.length > 2) return null;
+
+  const [first, second] = tokens;
+  if (tokens.length === 1) return VERTICAL.has(first) ? ['center', first] : [first, 'center'];
+
+  // Written the other way round, which CSS allows for keyword pairs.
+  if (VERTICAL.has(first) || HORIZONTAL.has(second)) return [second, first];
+  return [first, second];
 };
 
 /**
@@ -107,21 +139,39 @@ export function mediaContentRect({
 
   const width = natural.width * scale;
   const height = natural.height * scale;
-  const [x, y] = position.split(/\s+/);
+
+  const axes = axesOf(position);
+  if (!axes) return asIs;
+
+  const left = offsetFor(axes[0], box.width - width);
+  const top = offsetFor(axes[1], box.height - height);
+  if (left == null || top == null) return asIs;
 
   return {
     width,
     height,
-    // `+ 0` normalises negative zero, which `0% ` of a zero overflow produces.
+    // `+ 0` normalises negative zero, which `0%` of a zero overflow produces.
     // It styles identically but is a different value to `Object.is`, so without
-    // this a test asserting the uncropped axis compares -0 against 0 and fails
-    // on an equality nobody can see.
-    left: offsetFor(x, box.width - width) + 0,
-    top: offsetFor(y, box.height - height) + 0,
+    // it a test asserting the uncropped axis compares -0 against 0 and fails on
+    // an equality nobody can see.
+    left: left + 0,
+    top: top + 0,
   };
 }
 
-/** `mediaContentRect` for a live element, reading the values off the DOM. */
+/**
+ * `mediaContentRect` for a live element, reading the values off the DOM.
+ *
+ * The box is the CONTENT box, not `offsetWidth`/`offsetHeight`. `object-fit`
+ * fits the content box, so padding or a border on the media would otherwise
+ * make the artwork rect too large and shift every sticker by the border width —
+ * silently, and only on cropped cards. Nothing sets either today; the card
+ * wrapper beside it already carries a border, and one stylesheet change moves
+ * it onto the media.
+ *
+ * The returned rect is in the ELEMENT's coordinates (border box), so the
+ * content box's own inset is added back.
+ */
 export function mediaContentRectOf(element: HTMLElement): Rect {
   const style = getComputedStyle(element);
 
@@ -132,10 +182,24 @@ export function mediaContentRectOf(element: HTMLElement): Rect {
       ? { width: element.videoWidth, height: element.videoHeight }
       : null;
 
-  return mediaContentRect({
-    box: { width: element.offsetWidth, height: element.offsetHeight },
+  const px = (value: string) => parseFloat(value) || 0;
+  const insetLeft = px(style.borderLeftWidth) + px(style.paddingLeft);
+  const insetTop = px(style.borderTopWidth) + px(style.paddingTop);
+  const contentWidth =
+    element.clientWidth > 0
+      ? element.clientWidth - px(style.paddingLeft) - px(style.paddingRight)
+      : element.offsetWidth;
+  const contentHeight =
+    element.clientHeight > 0
+      ? element.clientHeight - px(style.paddingTop) - px(style.paddingBottom)
+      : element.offsetHeight;
+
+  const rect = mediaContentRect({
+    box: { width: contentWidth, height: contentHeight },
     natural,
     fit: style.objectFit,
     position: style.objectPosition,
   });
+
+  return { ...rect, left: rect.left + insetLeft, top: rect.top + insetTop };
 }
