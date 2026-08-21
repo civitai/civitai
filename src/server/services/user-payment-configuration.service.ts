@@ -1,6 +1,11 @@
 import type Stripe from 'stripe';
 import { v4 as uuid } from 'uuid';
-import { NotificationCategory, StripeConnectStatus, TipaltiStatus } from '~/server/common/enums';
+import {
+  isBlockedTipaltiStatus,
+  NotificationCategory,
+  StripeConnectStatus,
+  type TipaltiStatus,
+} from '~/server/common/enums';
 import { env } from '../../env/server';
 import { dbRead, dbWrite } from '../db/client';
 import { logToAxiom } from '../logging/client';
@@ -325,9 +330,9 @@ export async function updateByTipaltiAccount({
     },
   });
 
-  // Tipalti re-sends payeeDetailsChanged for any payee edit, at an unchanged status — so each of
-  // these has to compare the stored row against this event and fire only on the move. Nothing
-  // downstream will collapse a repeat: the notification key carries a fresh uuid.
+  // Both notifications are edge-triggered. Tipalti re-sends payeeDetailsChanged for a payee whose
+  // state has not moved, and the uuid `key` dedupes nothing, so testing the state rather than the
+  // transition re-notifies on every webhook for as long as the account sits in it.
   if (tipaltiPaymentsEnabled) {
     if (!userPaymentConfig.tipaltiPaymentsEnabled) {
       await createNotification({
