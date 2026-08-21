@@ -23,12 +23,8 @@ vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 // Narrow fakes rather than spreads of the real modules: `cache` builds a Redis client at import and
 // `clickhouse` opens a connection, and this test asserts on a query string that neither participates in.
 vi.mock('$lib/server/cache', () => ({
-  createCache:
-    <A, R>({ fetch }: { fetch: (args: A) => Promise<R> }) =>
-    ({ get: fetch }),
-  createSysCache:
-    <A, R>({ fetch }: { fetch: (args: A) => Promise<R> }) =>
-    ({ get: fetch }),
+  createCache: <A, R>({ fetch }: { fetch: (args: A) => Promise<R> }) => ({ get: fetch }),
+  createSysCache: <A, R>({ fetch }: { fetch: (args: A) => Promise<R> }) => ({ get: fetch }),
 }));
 
 vi.mock('$lib/server/clickhouse', () => ({
