@@ -60,6 +60,9 @@
 
   let { data }: { data: PageData } = $props();
 
+  // Arrived from Sales via "New sale": the page is here to collect a selection and hand it back.
+  const pickingForSale = $derived(page.url.searchParams.get('for') === 'sale' && data.salesEnabled);
+
   // The tier every cap on this page resolves against (a lapse falls back to free, never to "no access").
   const tier = $derived(data.caps.capTier);
 
@@ -383,10 +386,43 @@
   }
 </script>
 
-<header class="page-header">
-  <h1>Licensing</h1>
-  <p>Set licensing fees, manage early/paid access, and sell access indefinitely — per version.</p>
-</header>
+{#if pickingForSale}
+  <!-- The whole page is in service of one question while this is up, so it replaces the page's own
+       header and the caps strip rather than sitting under them. Controls stay enabled: a creator may
+       legitimately want to fix a price or a gate before putting a version on sale. -->
+  <div class="mb-4 rounded-lg border border-blue-4/40 bg-blue-4/10 p-4">
+    <div class="flex flex-wrap items-start justify-between gap-3">
+      <div class="flex flex-col gap-1">
+        <h1 class="text-2xl font-bold text-white">Sale preparation</h1>
+        <p class="text-sm text-dark-1">
+          Choose the versions to put on sale, then continue to set the discount and dates.
+        </p>
+      </div>
+      <div class="flex items-center gap-2">
+        <span
+          class="rounded-full border border-dark-4 bg-dark-6/60 px-2.5 py-1 text-xs font-medium tabular-nums text-dark-1"
+        >
+          {selected.size} selected
+        </span>
+        <Button
+          size="sm"
+          disabled={selected.size === 0}
+          onclick={() => goto(`/sales?versions=${selectedIds.join(',')}`)}
+        >
+          Continue
+        </Button>
+        <Button variant="ghost" size="sm" href="/sales">Cancel</Button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+{#if !pickingForSale}
+  <header class="page-header">
+    <h1>Models</h1>
+    <p>Set licensing fees, manage early/paid access, and sell access indefinitely — per version.</p>
+  </header>
+{/if}
 
 {#if data.caps.capTier === 'free'}
   <JoinUpsell
@@ -395,48 +431,51 @@
   />
 {/if}
 
-<div
-  class="mb-4 flex flex-wrap items-center gap-x-6 gap-y-2 rounded-lg border border-dark-5 bg-dark-6/40 px-3 py-2 text-xs"
->
-  <span class="flex items-center gap-1.5">
-    <span class="inline-block h-2 w-2 rounded-full bg-blue-4"></span>
-    <span class="text-dark-2">Permanent access</span>
-    {#if data.caps.permanentCap === 0}
-      <span class="font-medium text-dark-2">Not available on your tier</span>
-    {:else if data.caps.permanentCap === null}
-      <span class="font-medium text-white">{data.caps.permanentUsed} set · unlimited</span>
-    {:else}
-      <span class="font-medium {permAtCap ? 'text-yellow-5' : 'text-white'}">
-        {data.caps.permanentUsed} of {data.caps.permanentCap} set{permAtCap
-          ? ' · limit reached'
-          : ''}
-      </span>
-    {/if}
-  </span>
-  <span class="flex items-center gap-1.5">
-    <span class="inline-block h-2 w-2 rounded-full bg-green-5"></span>
-    <span class="text-dark-2">Early access</span>
-    {#if data.caps.earlyAccessCap === 0}
-      <span class="font-medium text-dark-2">Not unlocked yet — grows with your creator score</span>
-    {:else}
-      <span class="font-medium {eaAtCap ? 'text-yellow-5' : 'text-white'}">
-        {data.caps.earlyAccessUsed} of {data.caps.earlyAccessCap} active{eaAtCap
-          ? ' · limit reached'
-          : ''}
-      </span>
-      <span class="text-dark-2">· up to {data.caps.maxEarlyAccessDays} days</span>
-    {/if}
-  </span>
-  <details class="w-full">
-    <summary
-      class="cursor-pointer select-none text-dark-2 marker:text-dark-2 hover:text-white"
-      data-testid="tier-caps-toggle"
-    >
-      Pricing limits · {data.caps.tier}
-    </summary>
-    <TierCapsTable capTier={data.caps.capTier} class="mt-3" />
-  </details>
-</div>
+{#if !pickingForSale}
+  <div
+    class="mb-4 flex flex-wrap items-center gap-x-6 gap-y-2 rounded-lg border border-dark-5 bg-dark-6/40 px-3 py-2 text-xs"
+  >
+    <span class="flex items-center gap-1.5">
+      <span class="inline-block h-2 w-2 rounded-full bg-blue-4"></span>
+      <span class="text-dark-2">Permanent access</span>
+      {#if data.caps.permanentCap === 0}
+        <span class="font-medium text-dark-2">Not available on your tier</span>
+      {:else if data.caps.permanentCap === null}
+        <span class="font-medium text-white">{data.caps.permanentUsed} set · unlimited</span>
+      {:else}
+        <span class="font-medium {permAtCap ? 'text-yellow-5' : 'text-white'}">
+          {data.caps.permanentUsed} of {data.caps.permanentCap} set{permAtCap
+            ? ' · limit reached'
+            : ''}
+        </span>
+      {/if}
+    </span>
+    <span class="flex items-center gap-1.5">
+      <span class="inline-block h-2 w-2 rounded-full bg-green-5"></span>
+      <span class="text-dark-2">Early access</span>
+      {#if data.caps.earlyAccessCap === 0}
+        <span class="font-medium text-dark-2">Not unlocked yet — grows with your creator score</span
+        >
+      {:else}
+        <span class="font-medium {eaAtCap ? 'text-yellow-5' : 'text-white'}">
+          {data.caps.earlyAccessUsed} of {data.caps.earlyAccessCap} active{eaAtCap
+            ? ' · limit reached'
+            : ''}
+        </span>
+        <span class="text-dark-2">· up to {data.caps.maxEarlyAccessDays} days</span>
+      {/if}
+    </span>
+    <details class="w-full">
+      <summary
+        class="cursor-pointer select-none text-dark-2 marker:text-dark-2 hover:text-white"
+        data-testid="tier-caps-toggle"
+      >
+        Pricing limits · {data.caps.tier}
+      </summary>
+      <TierCapsTable capTier={data.caps.capTier} class="mt-3" />
+    </details>
+  </div>
+{/if}
 
 <!-- Search / filter / sort -->
 <div class="mb-4 flex flex-wrap items-center gap-2">
@@ -644,6 +683,8 @@
     {offViewCount}
     {exportHref}
     onAction={(a) => (bulkAction = a)}
+    onStartSale={() => goto(`/sales?versions=${selectedIds.join(',')}`)}
+    salesEnabled={data.salesEnabled}
     onSelectAllMatching={() => {
       for (const id of data.matchingVersionIds) selected.add(id);
     }}
@@ -878,7 +919,12 @@
         </section>
 
         {#key editing.id}
-          <PaidAccessEditor version={editing} onClose={() => (editing = null)} caps={data.caps} />
+          <PaidAccessEditor
+            version={editing}
+            onClose={() => (editing = null)}
+            caps={data.caps}
+            sales={data.salesByVersion[editing.id]}
+          />
         {/key}
       </div>
     {/if}

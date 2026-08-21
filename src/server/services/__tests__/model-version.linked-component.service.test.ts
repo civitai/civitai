@@ -46,7 +46,6 @@ vi.mock('~/server/services/notification.service', () => ({ createNotification: v
 vi.mock('~/server/services/orchestrator/models', () => ({ bustOrchestratorModelCache: vi.fn() }));
 vi.mock('~/server/services/post.service', () => ({ addPostImage: vi.fn(), createPost: vi.fn() }));
 vi.mock('~/server/services/model.service', () => ({
-  ingestModelById: vi.fn(),
   updateModelLastVersionAt: vi.fn(),
 }));
 vi.mock('~/server/services/model-file.service', () => ({
@@ -62,6 +61,7 @@ vi.mock('~/server/services/paid-access.service', () => ({
   paidAccessInputFromLegacyConfig: vi.fn(() => null),
   earlyAccessDonationGoalFromLegacyConfig: vi.fn(() => null),
   earlyAccessConfigFromPaidAccess: vi.fn(),
+  bustModelSaleCache: vi.fn(),
 }));
 
 import { addLinkedComponent } from '~/server/services/model-version.service';

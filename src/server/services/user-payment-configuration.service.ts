@@ -290,6 +290,10 @@ export async function createTipaltiPayee({ userId }: { userId: number }) {
   }
 }
 
+// Two spellings of the same terminal state, so a move between them is not a new rejection.
+const isBlockedTipaltiStatus = (status: string) =>
+  status === TipaltiStatus.Blocked || status === TipaltiStatus.BlockedByProvider;
+
 export async function updateByTipaltiAccount({
   tipaltiAccountId,
   tipaltiAccountStatus,

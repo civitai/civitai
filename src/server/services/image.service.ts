@@ -179,6 +179,7 @@ import {
   throwAuthorizationError,
   throwBadRequestError,
   throwDbError,
+  throwInternalServerError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { fetchTimeoutSignal } from '~/server/utils/fetch-timeout';
@@ -1543,7 +1544,9 @@ export const getAllImages = async (
   // so a hubId arriving means the dispatcher routed wrongly. Returning results
   // would hand the caller the global feed labelled as their hub.
   if (input.hubId)
-    throw new Error('getAllImages cannot serve a hub; hub queries must use the index path');
+    throw throwInternalServerError(
+      new Error('getAllImages cannot serve a hub; hub queries must use the index path')
+    );
 
   const blockedEnforcement = await enforceBlockedBrowsingTags(input, {
     id: input.user?.id,
@@ -3976,8 +3979,8 @@ export async function getImagesFromFeedSearch(
   // describes. Adding the key to that schema without a clause here would serve an
   // unfiltered feed from one of three branches, so fail loudly instead.
   if (input.hubId)
-    throw new Error(
-      'getImagesFromFeedSearch cannot serve a hub; hub queries must use the index path'
+    throw throwInternalServerError(
+      new Error('getImagesFromFeedSearch cannot serve a hub; hub queries must use the index path')
     );
 
   try {
@@ -6358,7 +6361,7 @@ export type ImagesForModelVersions = {
   height: number;
   hash: string;
   modelVersionId: number;
-  // meta: ImageMetaProps | null;
+  meta?: ImageMetaProps | null;
   type: MediaType;
   metadata: ImageMetadata | VideoMetadata | null;
   tags?: number[];
@@ -6486,7 +6489,11 @@ export const getImagesForModelVersion = async ({
       i.minor,
       i.poi,
       t."modelVersionId",
-      ${Prisma.raw(include.includes('meta') ? 'i.meta,' : '')}
+      ${Prisma.raw(
+        include.includes('meta')
+          ? 'CASE WHEN i."hideMeta" THEN NULL ELSE i.meta END AS meta,'
+          : ''
+      )}
       p."availability",
       (
         CASE
@@ -6589,6 +6596,8 @@ export const imagesForModelVersionsCache = createCachedObject<CachedImagesForMod
     // the lag-aware helper so a cache miss right after image upload doesn't
     // poison the entry with `images: []` for a full TTL cycle.
     const db = fromWrite ? dbWrite : await getDbWithoutLagBatch('modelVersion', ids);
+    // No `include: ['meta']`: these rows reach the Meilisearch model document and
+    // the model.getAll wire, and GETALL_DROPPED_IMAGE_FIELDS does not drop meta.
     const images = await getImagesForModelVersion({
       modelVersionIds: ids,
       imagesPerVersion: 20,
@@ -6894,7 +6903,6 @@ type GetImageConnectionRaw = {
   width: number;
   height: number;
   hash: string;
-  meta: ImageMetaProps; // TODO - remove
   hideMeta: boolean;
   createdAt: Date;
   mimeType: string;
@@ -6907,7 +6915,7 @@ type GetImageConnectionRaw = {
   metadata: ImageMetadata | VideoMetadata;
   entityId: number;
   hasMeta: boolean;
-  hasPositivePrompt?: boolean;
+  hasPositivePrompt: boolean;
   poi?: boolean;
   minor?: boolean;
 };
@@ -6978,7 +6986,6 @@ export const getImagesByEntity = async ({
       i.width,
       i.height,
       i.hash,
-      i.meta,
       i."hideMeta",
       i."createdAt",
       i."mimeType",
@@ -7154,8 +7161,9 @@ type GetEntityImageRaw = {
   width: number;
   height: number;
   hash: string;
-  meta: ImageMetaProps;
   hideMeta: boolean;
+  hasMeta: boolean;
+  hasPositivePrompt: boolean;
   createdAt: Date;
   mimeType: string;
   scannedAt: Date;
@@ -7198,8 +7206,21 @@ export const getEntityCoverImage = async ({
       i.width,
       i.height,
       i.hash,
-      i.meta,
       i."hideMeta",
+      (
+        CASE
+          WHEN i.meta IS NULL OR jsonb_typeof(i.meta) = 'null' OR i."hideMeta" THEN FALSE
+          ELSE TRUE
+        END
+      ) AS "hasMeta",
+      (
+        CASE
+          WHEN i.meta IS NOT NULL AND jsonb_typeof(i.meta) != 'null' AND NOT i."hideMeta"
+            AND i.meta->>'prompt' IS NOT NULL
+          THEN TRUE
+          ELSE FALSE
+        END
+      ) AS "hasPositivePrompt",
       i."createdAt",
       i."mimeType",
       i.type,

@@ -12,13 +12,26 @@ export type MainAppResult<T> = { ok: true; data: T } | { ok: false; status: numb
 export async function callMainApp<T>(
   path: string,
   cookie: string,
-  init?: { method?: string; body?: unknown; parse?: boolean; unreachable?: string }
+  init?: {
+    method?: string;
+    body?: unknown;
+    parse?: boolean;
+    unreachable?: string;
+    /**
+     * Abort after this many ms. Opt-in per call rather than a blanket default: a paid-access write is
+     * the thing the creator asked for and is worth waiting on, while a best-effort cache bust is not —
+     * and an unbounded await on one of those held a creator's form open for 150s+ against a cold main
+     * app, after their write had already committed.
+     */
+    timeoutMs?: number;
+  }
 ): Promise<MainAppResult<T>> {
   try {
     const res = await fetch(`${MAIN_APP_URL}${path}`, {
       method: init?.method ?? 'GET',
       headers: { 'content-type': 'application/json', cookie },
       body: init?.body === undefined ? undefined : JSON.stringify(init.body),
+      signal: init?.timeoutMs ? AbortSignal.timeout(init.timeoutMs) : undefined,
     });
 
     if (res.ok) {

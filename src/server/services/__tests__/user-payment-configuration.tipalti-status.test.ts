@@ -65,9 +65,9 @@ describe('updateByTipaltiAccount notifications', () => {
     mockCreateNotification.mockClear();
   });
 
-  // 🔴 The regression this guards: TipaltiStatus.Active used to be 'ACTIVE' while Tipalti stores
-  // 'Active', so this comparison could never be true and the notification fired on EVERY payable
-  // webhook for the creators who were already payable.
+  // 🔴 The incident: this branch compared the stored status against TipaltiStatus.Active, which was
+  // spelled 'ACTIVE' while Tipalti stores 'Active'. Never true, so every payable webhook re-notified
+  // all 291 payable creators. The enum casing is pinned below; this asserts the branch itself.
   it('does not re-notify an account that was already active and payable', async () => {
     await update({
       storedStatus: WEBHOOK_STATUS.active,
@@ -114,6 +114,32 @@ describe('updateByTipaltiAccount notifications', () => {
     expect(notificationTypes()).not.toContain('creators-program-payments-enabled');
   });
 
+  // Tipalti sends payeeDetailsChanged for edits that move nothing (a new address, a new payment
+  // method), so "already payable, still payable" is the ordinary repeat delivery, not an edge case.
+  it('does not re-notify a payable account whose status is not literally Active', async () => {
+    await update({
+      storedStatus: WEBHOOK_STATUS.pendingOnboarding,
+      storedPayable: true,
+      incomingStatus: WEBHOOK_STATUS.pendingOnboarding,
+      incomingPayable: true,
+    });
+
+    expect(notificationTypes()).not.toContain('creators-program-payments-enabled');
+  });
+
+  // The tax-form path below this branch takes payable -> unpayable at an unchanged Active status;
+  // resolving the form is the same move back, and a status comparison cannot see either one.
+  it('notifies when payability is restored without the status changing', async () => {
+    await update({
+      storedStatus: WEBHOOK_STATUS.active,
+      storedPayable: false,
+      incomingStatus: WEBHOOK_STATUS.active,
+      incomingPayable: true,
+    });
+
+    expect(notificationTypes()).toContain('creators-program-payments-enabled');
+  });
+
   it.each([WEBHOOK_STATUS.blocked, WEBHOOK_STATUS.blockedByProvider])(
     'notifies rejection for %s',
     async (incomingStatus) => {
@@ -128,11 +154,15 @@ describe('updateByTipaltiAccount notifications', () => {
     }
   );
 
-  it('does not re-notify rejection for an account that was already blocked', async () => {
+  it.each([
+    [WEBHOOK_STATUS.blocked, WEBHOOK_STATUS.blocked],
+    [WEBHOOK_STATUS.blocked, WEBHOOK_STATUS.blockedByProvider],
+    [WEBHOOK_STATUS.blockedByProvider, WEBHOOK_STATUS.blocked],
+  ])('does not re-notify rejection for %s -> %s', async (storedStatus, incomingStatus) => {
     await update({
-      storedStatus: WEBHOOK_STATUS.blocked,
+      storedStatus,
       storedPayable: false,
-      incomingStatus: WEBHOOK_STATUS.blockedByProvider,
+      incomingStatus,
       incomingPayable: false,
     });
 

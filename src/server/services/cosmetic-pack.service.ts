@@ -456,8 +456,13 @@ export const purchaseCosmeticPack = async ({
     description: `Cosmetic pack purchase - ${shopItem.title}`,
     externalTransactionIdPrefix: transactionId,
   });
-  if (!transaction.transactionCount)
-    throw throwBadRequestError('There was an error creating the transaction');
+  // 🔴 NOT a 400, and that changed meaning recently. The Buzz service answered
+  // and created nothing, which is AMBIGUOUS — the charge may have happened. The
+  // sticker purchase flow now reads a 4xx as "nothing was charged, retry as a
+  // new intent", so raising a refusal here would release an idempotency key on a
+  // failure that may already have taken the money. The shop path's identical
+  // case is a 500 for the same reason.
+  if (!transaction.transactionCount) throw new Error('There was an error creating the transaction');
   const bluePaid = transaction.transactionIds
     .filter((t) => t.accountType === 'blue')
     .reduce((sum, t) => sum + t.amount, 0);

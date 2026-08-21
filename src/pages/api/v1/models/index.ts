@@ -1,10 +1,8 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Session } from '~/types/session';
-import * as z from 'zod';
-
 import { CollectionType } from '~/shared/utils/prisma/enums';
 import type { GetAllModelsInput } from '~/server/schema/model.schema';
-import { getAllModelsSchema } from '~/server/schema/model.schema';
+import { modelsEndpointSchema } from '~/server/schema/model.schema';
 import {
   ModelSearchMeiliTimeoutError,
   resolveModelSearchIds,
@@ -18,7 +16,6 @@ import {
   publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
-import { booleanString } from '~/utils/zod-helpers';
 import { getUserBookmarkCollections } from '~/server/services/user.service';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 
@@ -36,14 +33,6 @@ export const config = {
 };
 
 const authedOnlyOptions: Array<keyof GetAllModelsInput> = ['favorites', 'hidden'];
-
-export const modelsEndpointSchema = getAllModelsSchema.extend({
-  limit: z.preprocess((val) => Number(val), z.number().min(0).max(100)).default(100),
-  nsfw: booleanString().optional(),
-  primaryFileOnly: booleanString().optional(),
-  favorites: booleanString().optional().default(false),
-  hidden: booleanString().optional().default(false),
-});
 
 export default MixedAuthEndpoint(async function handler(
   req: NextApiRequest,

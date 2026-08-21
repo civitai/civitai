@@ -11,6 +11,7 @@ import type {
 } from '~/shared/utils/placement';
 import {
   effectiveFreeSlots,
+  declineFeeAmount,
   effectivePlacementPrice,
   FREE_SLOT_HOLDING_STATUSES,
   PLACEMENT_SURFACES,
@@ -70,6 +71,12 @@ export type ResolvedPlacementSpace = {
    * stop being true.
    */
   ownerShare: number;
+  /**
+   * What the creator keeps if they decline, in Buzz, at this space's price.
+   * Already an amount rather than a rate: the fee floors at 1⚡ so a client
+   * multiplying a percentage would be wrong on cheap placements.
+   */
+  declineFee: number;
   /**
    * The count the cascade resolved, before the cap — the same relationship
    * `setPrice` has to `price`, so a caller can say "you have set 9, we are
@@ -184,7 +191,8 @@ export async function resolvePlacementSpaceFor({
   });
 
   const { max: cap, freeSlotCap } = await placementPriceRange(ownerId, surface);
-  const shares = (await getPlacementConfig()).approvalShares(surface);
+  const config = await getPlacementConfig();
+  const shares = config.approvalShares(surface);
 
   // `resolvePlacementSpace` is the one place the surface default is applied, so
   // this reads it rather than defaulting again — the same shape as `setPrice`
@@ -211,6 +219,20 @@ export async function resolvePlacementSpaceFor({
     price: effectivePlacementPrice(resolved.price, cap),
     cap,
     ownerShare: 1 - shares.seller - shares.platform,
+    /**
+     * What the creator keeps if they decline, in Buzz, at this space's price.
+     *
+     * Computed here rather than shipped as a rate: the rate is operator-tunable
+     * and the floor is not linear — `declineFeeAmount` clamps to a minimum of 1
+     * so the fee cannot round away to nothing on a cheap placement — so a client
+     * multiplying a percentage would be quietly wrong on exactly the cheap
+     * placements the floor exists for. The placer is told an amount because an
+     * amount is what leaves their wallet.
+     */
+    declineFee: declineFeeAmount(
+      effectivePlacementPrice(resolved.price, cap) ?? 0,
+      config.declineFeeRate(surface)
+    ),
     setFreeSlots,
     freeSlots,
     freeSlotCap,

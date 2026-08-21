@@ -57,3 +57,20 @@ export async function resolveModelsScore(
   }
   return getModelsScore(userId);
 }
+
+// Moderator-only testing override (this app only), mirroring TEST_MODELS_SCORE_COOKIE. Scheduled sales
+// are gated on the AGGREGATE score at every tier, so without this the below-floor state — the one a
+// paying member below 10,000 actually sees — cannot be reached from the sidebar simulator at all.
+export const TEST_CREATOR_SCORE_COOKIE = 'cs-test-creator-score';
+
+export async function resolveCreatorScore(
+  userId: number,
+  isModerator: boolean,
+  testCookie?: string
+): Promise<number> {
+  if (isModerator && testCookie) {
+    const n = Number(testCookie);
+    if (Number.isFinite(n) && n >= 0) return n;
+  }
+  return getCreatorScore(userId);
+}

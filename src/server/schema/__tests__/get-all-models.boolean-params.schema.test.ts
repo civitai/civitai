@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type * as z from 'zod';
-import { getAllModelsSchema } from '~/server/schema/model.schema';
-import { modelsEndpointSchema } from '~/pages/api/v1/models';
+import { getAllModelsSchema, modelsEndpointSchema } from '~/server/schema/model.schema';
 
 /**
  * /api/v1/models parses this schema straight off `req.query`, where every value is a

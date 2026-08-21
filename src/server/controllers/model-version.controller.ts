@@ -302,7 +302,7 @@ const loadModelVersion = async ({
     // The donationGoal seeds ONLY the owner's edit form, so use the RAW owner read (unfiltered by the
     // public EA-window/opt-out) and never hand it to a non-owner — public display reads the goal from
     // modelVersion.donationGoal instead.
-    const { paidAccess, licensingFee } = (
+    const { paidAccess, licensingFee, sale } = (
       await getViewerMonetization({
         versions: [
           {
@@ -328,7 +328,7 @@ const loadModelVersion = async ({
       licensingFee,
       canGenerate,
       wildcardSetId,
-      paidAccess: toModelVersionPaidAccessDto(paidAccess),
+      paidAccess: toModelVersionPaidAccessDto(paidAccess, sale),
       donationGoal: eaDonationGoal ? { goalAmount: eaDonationGoal.goalAmount } : null,
       baseModel: version.baseModel as BaseModel,
       baseModelType: version.baseModelType as BaseModelType,

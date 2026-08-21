@@ -183,8 +183,8 @@
   const sections = [
     {
       href: '/models',
-      title: 'Licensing',
-      body: 'Set licensing fees, manage access, sell indefinitely.',
+      title: 'Monetization',
+      body: 'Set licensing fees, manage access, run sales.',
     },
     { href: '/earnings', title: 'Earnings', body: 'Your earnings broken down by source.' },
     { href: '/analytics', title: 'Analytics', body: 'Usage that drives your fees.' },

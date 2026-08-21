@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.1.31",
+  "version": "5.1.33",
   "private": true,
   "packageManager": "pnpm@10.28.1",
   "engines": {
@@ -100,7 +100,7 @@
     "test:packages:run": "vitest run --project '@civitai/*'",
     "test:apps": "vitest --project 'app:*'",
     "test:apps:run": "vitest run --project 'app:*'",
-    "test:lint-rules": "vitest run --project 'unit*' src/server/services/__tests__/no-io-in-transaction.test.ts src/server/services/__tests__/no-module-scope-cache.test.ts src/server/services/__tests__/no-server-infra-in-app-graph.test.ts src/server/services/__tests__/no-stale-moderator-route-probe.test.ts src/server/services/__tests__/no-unbounded-paging-fake.test.ts src/server/services/__tests__/no-unloadable-image-fixture.test.ts src/server/services/__tests__/no-wholesale-module-mock.test.ts",
+    "test:lint-rules": "vitest run --project 'unit*' src/server/services/__tests__/hub-filter-parity.test.ts src/server/services/__tests__/no-coerce-boolean-in-api.test.ts src/server/services/__tests__/no-io-in-transaction.test.ts src/server/services/__tests__/no-module-scope-cache.test.ts src/server/services/__tests__/no-server-infra-in-app-graph.test.ts src/server/services/__tests__/no-stale-moderator-route-probe.test.ts src/server/services/__tests__/no-unbounded-paging-fake.test.ts src/server/services/__tests__/no-unloadable-image-fixture.test.ts src/server/services/__tests__/no-wholesale-module-mock.test.ts src/server/schema/__tests__/track.addView.schema.test.ts",
     "test:component": "vitest run --project component",
     "test:component:watch": "vitest --project component",
     "meilisearch:migrate": "NODE_ENV=development tsx scripts/oneoffs/meilisearch-migration.ts",
@@ -123,7 +123,7 @@
     "@civitai/app-sdk": "^0.14.0",
     "@civitai/auth": "workspace:*",
     "@civitai/buzz": "workspace:*",
-    "@civitai/client": "0.2.0-beta.91",
+    "@civitai/client": "0.2.0-beta.92",
     "@civitai/cybertipline-tools": "^0.1.0",
     "@civitai/db-queries": "workspace:*",
     "@civitai/db-schema": "workspace:*",

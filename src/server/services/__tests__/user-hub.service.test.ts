@@ -14,11 +14,23 @@ vi.mock('~/server/services/collection.service', () => ({
   getUserCollectionPermissionsByIds: permissionsMock,
 }));
 
-import { resolveHubSources, upsertUserHub } from '~/server/services/user-hub.service';
-import { HUB_COLLECTION_SOURCES_ENABLED, hubLimits } from '~/server/schema/user-hub.schema';
 import {
+  getHubSourceSuggestions,
+  getUserHubById,
+  resolveHubSourceFromUrl,
+  resolveHubSources,
+  upsertUserHub,
+} from '~/server/services/user-hub.service';
+import {
+  HUB_COLLECTION_SOURCES_ENABLED,
+  hubLimits,
+  upsertUserHubSchema,
+} from '~/server/schema/user-hub.schema';
+import {
+  Availability,
   CollectionReadConfiguration,
   MetricTimeframe,
+  ModelStatus,
   UserHubSourceType,
 } from '~/shared/utils/prisma/enums';
 import { ImageSort } from '~/server/common/enums';
@@ -46,6 +58,10 @@ function stubVersions(versionsByModel: Record<number, number[]>) {
 beforeEach(() => {
   vi.clearAllMocks();
   stubVersions({});
+  // The service maps whatever the write returns before handing it back, so the
+  // fakes have to return a row rather than undefined.
+  dbMock.dbWrite.userHub.create.mockResolvedValue({ id: 7, metadata: {} });
+  dbMock.dbWrite.userHub.update.mockResolvedValue({ id: 9, metadata: {} });
 });
 
 describe('resolveHubSources', () => {
@@ -197,7 +213,7 @@ describe('upsertUserHub', () => {
     // The half the title used to claim and never exercised: the same call shape
     // against an existing hub must not carry those values, or toggling a source
     // resets the user's sort.
-    dbMock.dbRead.userHub.findFirst.mockResolvedValue({ id: 9 });
+    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({ id: 9, metadata: {} });
 
     await upsertUserHub({ id: 9, name: 'defaults', sources: [], userId: 5 });
 
@@ -210,7 +226,7 @@ describe('upsertUserHub', () => {
     // A rename and a sort change both used to resend their own cached copy of the
     // whole list, so either could revert a source edit made in between. With the
     // list omitted the update must not touch UserHubSource at all.
-    dbMock.dbRead.userHub.findFirst.mockResolvedValue({ id: 9 });
+    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({ id: 9, metadata: {} });
 
     await upsertUserHub({ id: 9, name: 'renamed', userId: 5 });
 
@@ -223,7 +239,7 @@ describe('upsertUserHub', () => {
   it('still replaces the sources when the input carries them', async () => {
     // Negative control for the test above: without it, an update branch that
     // dropped source writes entirely would pass.
-    dbMock.dbRead.userHub.findFirst.mockResolvedValue({ id: 9 });
+    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({ id: 9, metadata: {} });
 
     await upsertUserHub({
       id: 9,
@@ -313,4 +329,303 @@ describe('upsertUserHub collection sources', () => {
       await expect(upsertUserHub(hubInput(43))).resolves.not.toThrow();
     }
   );
+});
+
+// `UserHub` has no description column, so the field lives on `metadata`. That makes
+// three things silent rather than loud if they break: an update that REPLACES the
+// json drops whatever else is on it; an omitted field that defaults to empty wipes
+// a description the caller never touched; and a filter key the feed refuses would
+// reach `image.getInfinite` if the whole blob were handed back.
+describe('description and filters on metadata', () => {
+  it('merges the description into the existing metadata rather than replacing it', async () => {
+    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({
+      id: 9,
+      metadata: { description: 'old', somethingElse: 'keep me' },
+    });
+
+    await upsertUserHub({ id: 9, description: 'new', userId: 5 });
+
+    const arg = dbMock.dbWrite.userHub.update.mock.calls[0][0];
+    expect(arg.data.metadata).toEqual({ description: 'new', somethingElse: 'keep me' });
+  });
+
+  it('leaves the description alone when the input omits it', async () => {
+    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({
+      id: 9,
+      metadata: { description: 'still here' },
+    });
+
+    await upsertUserHub({ id: 9, name: 'renamed', userId: 5 });
+
+    const arg = dbMock.dbWrite.userHub.update.mock.calls[0][0];
+    expect(arg.data.metadata).toBeUndefined();
+  });
+
+  it('truncates an over-long description instead of rejecting the whole edit', () => {
+    const parsed = upsertUserHubSchema.parse({
+      id: 9,
+      description: 'x'.repeat(hubLimits.descriptionLength + 50),
+    });
+
+    expect(parsed.description).toHaveLength(hubLimits.descriptionLength);
+  });
+
+  it('drops a stored filter key that is not on the allowlist', async () => {
+    // A hub feed is index-only: `collectionId` forces the DB path, and
+    // `getInfiniteImagesSchema` refuses it alongside `hubId`. Reaching the page at
+    // all means it was never handed back.
+    dbMock.dbRead.userHub.findFirst.mockResolvedValue({
+      id: 9,
+      sources: [],
+      metadata: { filters: { withMeta: true, collectionId: 4 } },
+    });
+
+    const hub = await getUserHubById({ id: 9, userId: 5 });
+
+    expect(hub.filters).toEqual({ withMeta: true });
+  });
+
+  it('reads back an empty filter set when the stored json is nonsense', async () => {
+    dbMock.dbRead.userHub.findFirst.mockResolvedValue({
+      id: 9,
+      sources: [],
+      metadata: { filters: 'not an object' },
+    });
+
+    const hub = await getUserHubById({ id: 9, userId: 5 });
+
+    expect(hub.filters).toEqual({});
+    expect(hub.description).toBeNull();
+  });
+});
+
+// A model page carrying `?modelVersionId=` is a version's gallery. Resolving it to
+// the whole model is a silent widening — the hub fills with images from versions
+// the user never linked, and nothing about the row they added says so.
+describe('resolving a pasted link', () => {
+  it('resolves a versioned model link to the version, not the model', async () => {
+    dbMock.dbRead.modelVersion.findFirst.mockResolvedValue({
+      id: 456,
+      name: 'v2',
+      model: { name: 'Nova', deletedAt: null },
+    });
+
+    const source = await resolveHubSourceFromUrl({
+      url: 'https://civitai.com/models/123?modelVersionId=456',
+      userId: 5,
+    });
+
+    expect(source).toEqual({
+      type: UserHubSourceType.ModelVersion,
+      targetId: 456,
+      alias: 'Nova - v2',
+    });
+    // The negative control: widening to the model would have read the Model table.
+    expect(dbMock.dbRead.model.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('still resolves a bare model link to the model', async () => {
+    dbMock.dbRead.model.findFirst.mockResolvedValue({ id: 123, name: 'Nova' });
+
+    const source = await resolveHubSourceFromUrl({
+      url: 'https://civitai.com/models/123',
+      userId: 5,
+    });
+
+    expect(source).toEqual({ type: UserHubSourceType.Model, targetId: 123, alias: 'Nova' });
+  });
+
+  it('returns null for a link on another host', async () => {
+    const source = await resolveHubSourceFromUrl({
+      url: 'https://example.com/models/123',
+      userId: 5,
+    });
+
+    expect(source).toBeNull();
+    expect(dbMock.dbRead.model.findFirst).not.toHaveBeenCalled();
+  });
+});
+
+// The resolve arm is an id-to-name lookup over a dense id space. Every arm that
+// answers without a visibility filter is a sweepable oracle for names the entity
+// pages themselves 404 on, so each one is pinned here rather than trusted.
+describe('what a pasted link is allowed to name', () => {
+  it('asks only for models the viewer owns or that are published and not private', async () => {
+    dbMock.dbRead.model.findFirst.mockResolvedValue(null);
+
+    const source = await resolveHubSourceFromUrl({
+      url: 'https://civitai.com/models/123',
+      userId: 5,
+    });
+
+    expect(source).toBeNull();
+    const where = dbMock.dbRead.model.findFirst.mock.calls[0][0].where;
+    expect(where.OR).toEqual([
+      { userId: 5 },
+      { status: ModelStatus.Published, availability: { not: Availability.Private } },
+    ]);
+  });
+
+  it('drops the visibility filter for a moderator', async () => {
+    dbMock.dbRead.model.findFirst.mockResolvedValue({ id: 123, name: 'Nova' });
+
+    await resolveHubSourceFromUrl({
+      url: 'https://civitai.com/models/123',
+      userId: 5,
+      isModerator: true,
+    });
+
+    const where = dbMock.dbRead.model.findFirst.mock.calls[0][0].where;
+    expect(where.OR).toBeUndefined();
+    expect(where.deletedAt).toBeNull();
+  });
+
+  it('refuses a collection link outright while collection sources are off', async () => {
+    // The write path rejects every collection while the flag is false, so naming
+    // one here would preview a source that then fails to save.
+    expect(HUB_COLLECTION_SOURCES_ENABLED).toBe(false);
+
+    const source = await resolveHubSourceFromUrl({
+      url: 'https://civitai.com/collections/9',
+      userId: 5,
+    });
+
+    expect(source).toBeNull();
+    expect(dbMock.dbRead.collection.findMany).not.toHaveBeenCalled();
+  });
+});
+
+// The write half of `metadata.filters`. The read half is covered above, and the
+// two look alike enough that covering only the read reads as covering both — drop
+// the filters key from the update and nothing else in this suite goes red, while
+// every filter the user picks silently forgets itself on reload.
+describe('persisting the feed filters', () => {
+  it('merges filters into the existing metadata', async () => {
+    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({
+      id: 9,
+      metadata: { description: 'keep me' },
+    });
+
+    await upsertUserHub({ id: 9, filters: { withMeta: true }, userId: 5 });
+
+    const arg = dbMock.dbWrite.userHub.update.mock.calls[0][0];
+    expect(arg.data.metadata).toEqual({ description: 'keep me', filters: { withMeta: true } });
+  });
+
+  it('writes both keys when a save carries description and filters together', async () => {
+    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({ id: 9, metadata: {} });
+
+    await upsertUserHub({
+      id: 9,
+      description: 'both',
+      filters: { hideChallenges: true },
+      userId: 5,
+    });
+
+    const arg = dbMock.dbWrite.userHub.update.mock.calls[0][0];
+    expect(arg.data.metadata).toEqual({
+      description: 'both',
+      filters: { hideChallenges: true },
+    });
+  });
+
+  it('stores filters on a new hub', async () => {
+    dbMock.dbRead.userHub.count.mockResolvedValue(0);
+
+    await upsertUserHub({ name: 'new', filters: { fromPlatform: true }, userId: 5 });
+
+    const arg = dbMock.dbWrite.userHub.create.mock.calls[0][0];
+    expect(arg.data.metadata).toEqual({ filters: { fromPlatform: true } });
+  });
+
+  it('clears the description when an empty string is saved', async () => {
+    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({
+      id: 9,
+      metadata: { description: 'gone soon' },
+    });
+
+    await upsertUserHub({ id: 9, description: '', userId: 5 });
+
+    const arg = dbMock.dbWrite.userHub.update.mock.calls[0][0];
+    expect(arg.data.metadata.description).toBeUndefined();
+  });
+});
+
+// Each arm reads a table that also holds other people's rows. A `userId` dropped
+// from any of these where clauses is a leak with no visible symptom — the picker
+// simply offers more, which looks like the feature working.
+describe('source suggestions stay inside the viewer', () => {
+  it('scopes the creators arm to the viewer, over a bounded window', async () => {
+    dbMock.dbRead.userEngagement.findMany.mockResolvedValue([{ targetUserId: 11 }]);
+    dbMock.dbRead.user.findMany.mockResolvedValue([{ id: 11, username: 'someone' }]);
+
+    await getHubSourceSuggestions({ userId: 5, type: UserHubSourceType.User, query: 'some' });
+
+    const follows = dbMock.dbRead.userEngagement.findMany.mock.calls[0][0];
+    expect(follows.where.userId).toBe(5);
+    // The name filter must NOT ride on the relationship query: expressed there it
+    // is a subquery the planner walks the whole follow list to satisfy.
+    expect(follows.where.targetUser).toBeUndefined();
+    expect(follows.take).toBeGreaterThan(0);
+
+    const names = dbMock.dbRead.user.findMany.mock.calls[0][0];
+    expect(names.where.id).toEqual({ in: [11] });
+    // citext overloads `=`, not `LIKE`, so the substring match needs `insensitive`
+    // — measured live: without it, searching "A" missed a username with a lowercase
+    // "a". Bounded by the id list above, so it is not the scan that ILIKE was on
+    // the unbounded query.
+    expect(names.where.username).toEqual({ contains: 'some', mode: 'insensitive' });
+  });
+
+  it('scopes every models arm to the viewer, and filters names once over the union', async () => {
+    dbMock.dbRead.collection.findFirst.mockResolvedValue({ id: 77 });
+    dbMock.dbRead.model.findMany.mockResolvedValue([{ id: 1 }]);
+    dbMock.dbRead.modelEngagement.findMany.mockResolvedValue([{ modelId: 2 }]);
+    dbMock.dbRead.collectionItem.findMany.mockResolvedValue([{ modelId: 3 }]);
+
+    await getHubSourceSuggestions({ userId: 5, type: UserHubSourceType.Model, query: 'nova' });
+
+    const own = dbMock.dbRead.model.findMany.mock.calls[0][0];
+    const engaged = dbMock.dbRead.modelEngagement.findMany.mock.calls[0][0];
+    expect(own.where.userId).toBe(5);
+    expect(engaged.where.userId).toBe(5);
+    // The bookmark arm is scoped by the collection it reads, which is itself the
+    // viewer's — so assert the lookup that picked it, not the item query.
+    expect(dbMock.dbRead.collection.findFirst.mock.calls[0][0].where.userId).toBe(5);
+    expect(dbMock.dbRead.collectionItem.findMany.mock.calls[0][0].where.collectionId).toBe(77);
+
+    // None of the three id queries may carry the name filter — that is what made
+    // the planner walk every bookmark and every Notify row.
+    expect(own.where.name).toBeUndefined();
+    expect(engaged.where.model).toBeUndefined();
+    const names = dbMock.dbRead.model.findMany.mock.calls[1][0];
+    expect(names.where.id).toEqual({ in: [1, 2, 3] });
+    expect(names.where.name).toEqual({ contains: 'nova', mode: 'insensitive' });
+  });
+
+  it('offers no collections while the write path refuses them', async () => {
+    expect(HUB_COLLECTION_SOURCES_ENABLED).toBe(false);
+
+    const result = await getHubSourceSuggestions({ userId: 5, type: UserHubSourceType.Collection });
+
+    expect(result).toEqual([]);
+    expect(dbMock.dbRead.collectionContributor.findMany).not.toHaveBeenCalled();
+  });
+});
+
+// A source pointed at a taken-down model contributes nothing to the feed forever,
+// and the row gives no clue why.
+describe('taken-down models', () => {
+  it('will not name a version whose model is deleted', async () => {
+    dbMock.dbRead.modelVersion.findFirst.mockResolvedValue(null);
+
+    const source = await resolveHubSourceFromUrl({
+      url: 'https://civitai.com/model-versions/456',
+      userId: 5,
+    });
+
+    expect(source).toBeNull();
+    const where = dbMock.dbRead.modelVersion.findFirst.mock.calls[0][0].where;
+    expect(where.model.deletedAt).toBeNull();
+  });
 });

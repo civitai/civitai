@@ -19,10 +19,11 @@ import { renderWithProviders } from '../../../test/component-setup';
  * nobody.
  */
 
-const { mutate, spaces, sent } = vi.hoisted(() => ({
+const { mutate, spaces, sent, waiting } = vi.hoisted(() => ({
   mutate: vi.fn(),
   spaces: { value: [] as Record<string, unknown>[] },
   sent: { value: [] as { status: string }[] },
+  waiting: { value: 0 },
 }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 7 }) }));
@@ -30,6 +31,13 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ stickerPlacement: true }),
 }));
 vi.mock('~/utils/notifications', () => ({ showErrorNotification: vi.fn() }));
+// The received-queue count comes from the notification bell's query now, not
+// from this card's own paged fetch — one number instead of two, and no 50-row
+// request on a settings page that renders none of them. Mocked at the hook
+// rather than at trpc because the hook also reads the announcements provider.
+vi.mock('~/components/Notifications/notifications.utils', () => ({
+  useQueryNotificationsCount: () => ({ pendingPlacements: waiting.value }),
+}));
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcModule>()),
   trpc: {
@@ -41,7 +49,6 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       getMySpaces: {
         useQuery: () => ({ data: spaces.value, isPending: false, isError: false }),
       },
-      getPending: { useQuery: () => ({ data: { items: [], nextCursor: null } }) },
       // The queue in the OTHER direction — what this creator has placed on other
       // people's images. This mock lists procedures by hand, so a component that
       // starts calling one that isn't here reads `undefined.useQuery` and throws
@@ -72,6 +79,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   spaces.value = [];
   sent.value = [];
+  waiting.value = 0;
 });
 
 describe('PlacementSpaceSection — what a save sends for freeSlots', () => {
@@ -166,5 +174,34 @@ describe('PlacementSpaceSection — the count on the placed-stickers button', ()
     // A `0` badge is a to-do list with nothing on it; the button has to read as
     // plain text. Exact string again, so a rendered "0" cannot hide in here.
     expect(squashed(link.element())).toBe("Stickersyou'veplaced");
+  });
+});
+
+/**
+ * The received count and the user-menu badge must be the SAME number. This card
+ * used to derive its own from one page of `placement.getPending` and render
+ * "50+" for anything larger, so an owner with 96 waiting was told 50+ here and
+ * 96 in the menu — two answers to one question, and the worse one on the page
+ * that exists to explain the queue.
+ */
+describe('PlacementSpaceSection — the received count', () => {
+  test('shows the shared count, not a page-sized floor', async () => {
+    waiting.value = 96;
+    renderWithProviders(<PlacementSpaceSection />);
+
+    await expect.element(page.getByText('96')).toBeInTheDocument();
+  });
+
+  test('renders no badge at all when nothing is waiting', async () => {
+    waiting.value = 0;
+    renderWithProviders(<PlacementSpaceSection />);
+
+    // The button stays; only the count disappears. A "0" badge reads as broken.
+    // Scoped to the button's own text rather than a page-wide search for "0" —
+    // the price and free-slot controls render zeros of their own, so a global
+    // query passes or fails for reasons that have nothing to do with the badge.
+    const label = page.getByText('Review pending stickers');
+    await expect.element(label).toBeInTheDocument();
+    expect(label.element().closest('a')?.textContent?.trim()).toBe('Review pending stickers');
   });
 });

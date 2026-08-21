@@ -16,12 +16,18 @@ const { mockDbWrite } = vi.hoisted(() => ({
 const {
   mockCreateMultiAccountBuzzTransaction,
   mockGetPaidAccess,
+  mockGetFreshSalesForVersion,
+  mockGetCachedCapTier,
+  mockGetFreshSalesForPermanentGate,
   mockGetOwnerDonationGoals,
   mockHasEntityAccess,
   mockCheckDonationGoalComplete,
 } = vi.hoisted(() => ({
   mockCreateMultiAccountBuzzTransaction: vi.fn(),
   mockGetPaidAccess: vi.fn(),
+  mockGetFreshSalesForVersion: vi.fn(),
+  mockGetCachedCapTier: vi.fn(),
+  mockGetFreshSalesForPermanentGate: vi.fn(),
   mockGetOwnerDonationGoals: vi.fn(),
   mockHasEntityAccess: vi.fn(),
   mockCheckDonationGoalComplete: vi.fn(),
@@ -56,6 +62,10 @@ vi.mock('~/server/services/paid-access.service', () => ({
   materializePaidAccessEndsAt: vi.fn(),
   writePaidAccessForModelVersion: vi.fn(),
   getPaidAccess: mockGetPaidAccess,
+  getFreshSalesForVersion: mockGetFreshSalesForVersion,
+  getFreshSalesForPermanentGate: mockGetFreshSalesForPermanentGate,
+  getCachedCapTier: mockGetCachedCapTier,
+  bustModelSaleCache: vi.fn(),
 }));
 vi.mock('~/server/services/auction.service', () => ({ deleteBidsForModelVersion: vi.fn() }));
 vi.mock('~/server/services/blocklist.service', () => ({ throwOnBlockedLinkDomain: vi.fn() }));
@@ -78,7 +88,6 @@ vi.mock('~/server/services/notification.service', () => ({ createNotification: v
 vi.mock('~/server/services/orchestrator/models', () => ({ bustOrchestratorModelCache: vi.fn() }));
 vi.mock('~/server/services/post.service', () => ({ addPostImage: vi.fn(), createPost: vi.fn() }));
 vi.mock('~/server/services/model.service', () => ({
-  ingestModelById: vi.fn(),
   updateModelLastVersionAt: vi.fn(),
 }));
 vi.mock('~/server/services/model-file.service', () => ({
@@ -127,6 +136,9 @@ const seed = ({
     transactionCount: 1,
     transactionIds: [],
   });
+  mockGetFreshSalesForVersion.mockResolvedValue([]);
+  mockGetFreshSalesForPermanentGate.mockResolvedValue([]);
+  mockGetCachedCapTier.mockResolvedValue(null);
 };
 
 beforeEach(() => {
@@ -206,5 +218,187 @@ describe('earlyAccessPurchase — Blue Buzz', () => {
     });
 
     expect(mockDbWrite.donation.create).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('earlyAccessPurchase — a scheduled sale is priced from the PRIMARY, not the cached gate', () => {
+  const liveSale = {
+    id: 1,
+    discountType: 'Percent' as const,
+    discountAmount: 20,
+    startsAt: new Date(Date.now() - 86_400_000),
+    endsAt: new Date(Date.now() + 86_400_000),
+    canceledAt: null,
+  };
+
+  const charged = () => mockCreateMultiAccountBuzzTransaction.mock.calls[0][0].amount;
+
+  it('charges the discounted price when a sale is live', async () => {
+    seed();
+    mockGetFreshSalesForPermanentGate.mockResolvedValue([liveSale]);
+
+    await earlyAccessPurchase({
+      userId: BUYER,
+      modelVersionId: VERSION_ID,
+      type: 'download',
+      buzzType: 'yellow',
+    });
+
+    expect(charged()).toBe(400);
+    // Exactly one charge. Asserting only the amount would stay green if the buyer were billed twice.
+    expect(mockCreateMultiAccountBuzzTransaction).toHaveBeenCalledTimes(1);
+    // These fixtures are a TIMED gate, where sales must not apply — pin that the charge says so.
+    expect(mockGetFreshSalesForPermanentGate).toHaveBeenCalledWith(VERSION_ID, false, OWNER);
+  });
+
+  it('charges full price the moment a sale is cancelled, even though the cached gate still carries it', async () => {
+    // The gate row is cached for an hour and Creator Studio's bust is fire-and-forget, so the cached copy
+    // can still describe a sale the creator has already ended. The charge reads the primary instead —
+    // this test fails if the purchase path is ever repointed at the cached window.
+    seed();
+    mockGetPaidAccess.mockResolvedValue({
+      [VERSION_ID]: {
+        entityType: 'ModelVersion',
+        entityId: VERSION_ID,
+        ownerId: OWNER,
+        endsAt: new Date(Date.now() + 86_400_000),
+        timeframeDays: 3,
+        terms: { download: { price: 500 } },
+        sales: [liveSale],
+      },
+    });
+    mockGetFreshSalesForPermanentGate.mockResolvedValue([]);
+
+    await earlyAccessPurchase({
+      userId: BUYER,
+      modelVersionId: VERSION_ID,
+      type: 'download',
+      buzzType: 'yellow',
+    });
+
+    expect(charged()).toBe(500);
+    expect(mockCreateMultiAccountBuzzTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('moves NO money when a sale is live but the purchase is refused', async () => {
+    // The negative control for the two above: a live sale must not become a reason money moves. Without
+    // this, a resolver that charged before validating would pass every assertion in this file.
+    seed();
+    mockGetFreshSalesForPermanentGate.mockResolvedValue([liveSale]);
+    mockDbWrite.modelVersion.findUnique.mockResolvedValue({
+      id: VERSION_ID,
+      status: 'Draft',
+      name: 'v1',
+      meta: {},
+      baseModel: 'SDXL 1.0',
+      model: { id: 1, name: 'Model', userId: OWNER, nsfw: false },
+    });
+
+    await expect(
+      earlyAccessPurchase({
+        userId: BUYER,
+        modelVersionId: VERSION_ID,
+        type: 'download',
+        buzzType: 'yellow',
+      })
+    ).rejects.toThrow();
+
+    expect(mockCreateMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+    expect(mockDbWrite.entityAccess.upsert).not.toHaveBeenCalled();
+  });
+});
+
+describe('earlyAccessPurchase — a sale on a PERMANENT gate, where the price ceiling actually applies', () => {
+  const liveSale = {
+    id: 1,
+    discountType: 'Percent' as const,
+    discountAmount: 20,
+    startsAt: new Date(Date.now() - 86_400_000),
+    endsAt: new Date(Date.now() + 86_400_000),
+    canceledAt: null,
+  };
+
+  const seedPermanent = (terms: Record<string, unknown> = { download: { price: 5000 } }) => {
+    seed();
+    // Every other sale fixture in this file uses a TIMED gate, where effectivePaidAccessPrice returns the
+    // stored price untouched — so cap-then-discount is a no-op there and the ordering is unpinned. A
+    // permanent gate with a lapsed owner is the only shape where the two orders differ.
+    mockGetPaidAccess.mockResolvedValue({
+      [VERSION_ID]: {
+        entityType: 'ModelVersion',
+        entityId: VERSION_ID,
+        ownerId: OWNER,
+        endsAt: null,
+        timeframeDays: null,
+        terms,
+      },
+    });
+    mockGetCachedCapTier.mockResolvedValue(null);
+  };
+
+  const charged = () => mockCreateMultiAccountBuzzTransaction.mock.calls[0][0].amount;
+
+  it('takes the sale off the CAPPED price, not the stored one', async () => {
+    seedPermanent();
+    mockGetFreshSalesForPermanentGate.mockResolvedValue([liveSale]);
+
+    await earlyAccessPurchase({
+      userId: BUYER,
+      modelVersionId: VERSION_ID,
+      type: 'download',
+      buzzType: 'yellow',
+    });
+
+    // 5000 stored -> 500 at the free cap -> 20% off -> 400. Discounting first gives 4000, which the cap
+    // flattens back to 500 and the sale vanishes.
+    expect(charged()).toBe(400);
+    expect(mockCreateMultiAccountBuzzTransaction).toHaveBeenCalledTimes(1);
+    // The gate type is what decides whether sales are consulted at all, so pin that it is passed.
+    expect(mockGetFreshSalesForPermanentGate).toHaveBeenCalledWith(VERSION_ID, true, OWNER);
+  });
+
+  it('bills the capped price untouched when no sale is live', async () => {
+    seedPermanent();
+
+    await earlyAccessPurchase({
+      userId: BUYER,
+      modelVersionId: VERSION_ID,
+      type: 'download',
+      buzzType: 'yellow',
+    });
+
+    expect(charged()).toBe(500);
+  });
+
+  it('discounts a GENERATION purchase too, not only a download', async () => {
+    seedPermanent({ download: { price: 5000 }, generation: { price: 200 } });
+    mockGetFreshSalesForPermanentGate.mockResolvedValue([liveSale]);
+
+    await earlyAccessPurchase({
+      userId: BUYER,
+      modelVersionId: VERSION_ID,
+      type: 'generation',
+      buzzType: 'yellow',
+    });
+
+    // 200 is under the free cap, so the cap is a no-op and the sale takes 20%.
+    expect(charged()).toBe(160);
+  });
+
+  it('never bills zero: the floor holds when a discount reaches the whole price', async () => {
+    seedPermanent({ download: { price: 400 } });
+    mockGetFreshSalesForPermanentGate.mockResolvedValue([
+      { ...liveSale, discountType: 'Fixed' as const, discountAmount: 100_000 },
+    ]);
+
+    await earlyAccessPurchase({
+      userId: BUYER,
+      modelVersionId: VERSION_ID,
+      type: 'download',
+      buzzType: 'yellow',
+    });
+
+    // A zero-Buzz purchase writes no ledger row, and the 30-day refund path reads amounts back from it.
+    expect(charged()).toBe(1);
   });
 });

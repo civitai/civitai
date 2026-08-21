@@ -9,6 +9,7 @@ import { renderWithProviders } from '../../../test/component-setup';
 import { resolveTreatment } from '~/components/Sticker/treatments/sticker-treatments';
 import { stickerArtworkStyle } from '~/components/Sticker/placement-appearance';
 import type { StickerDraft } from '~/store/sticker-placement-draft.store';
+import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.store';
 
 /**
  * What the buttons on a draft actually SEND.
@@ -291,31 +292,40 @@ describe('what a draft sends when it is placed', () => {
 });
 
 /**
- * The mode belongs to the free option, not to the button upstream, so it has to
- * be readable here — and the two modes have to read differently or the placer
- * cannot tell an instant placement from one that spends their day on a review
- * they may lose.
+ * The free option is a price; the review is a property of the SPACE.
+ *
+ * 🔴 The option used to read `Free · instant` / `Free · needs review` beside a
+ * plain `100 Buzz`, which says the paid one does not get reviewed — and on a
+ * review space both do. Justin, on seeing it: "it makes it seem like the other
+ * one's not going to need review". So the segment says `Free`, and what a
+ * decline costs is said once, under the button that spends the placement, where
+ * it applies to whichever option is selected.
  */
-describe('the free option carries the mode', () => {
-  test('says instant on an auto-accept space, with no review caveat', async () => {
+describe('the free option is a price, not a process', () => {
+  test('says nothing about review on an auto-accept space, and warns of nothing', async () => {
     await renderDraft({ instant: true });
 
-    await expect.element(page.getByText('Free · instant')).toBeInTheDocument();
-    expect(page.getByText(/spent even if they decline/).elements()).toHaveLength(0);
+    // `exact`, because "Place free" on the button below also contains the word.
+    await expect.element(page.getByText('Free', { exact: true })).toBeInTheDocument();
+    // Nothing to warn about: an auto space places it live, so there is no
+    // decline that could take the day with it.
+    expect(page.getByText(/Spends your free placement/).elements()).toHaveLength(0);
   });
 
-  test('says needs review, and warns the day is spent regardless', async () => {
+  test('says the same on a review space, and warns under the button instead', async () => {
     await renderDraft({ instant: false });
 
-    await expect.element(page.getByText('Free · needs review')).toBeInTheDocument();
-    await expect.element(page.getByText(/spent even if they decline/)).toBeInTheDocument();
+    await expect.element(page.getByText('Free', { exact: true })).toBeInTheDocument();
+    // The label does not carry the mode; this line does, and it says the thing
+    // that actually costs the reader something.
+    await expect.element(page.getByText(/Spends your free placement/)).toBeInTheDocument();
   });
 
   test('offers no choice at all where there is no free offer', async () => {
     await renderDraft(null);
 
-    expect(page.getByText(/^Free ·/).elements()).toHaveLength(0);
     expect(page.getByRole('button', { name: 'Place free' }).elements()).toHaveLength(0);
+    expect(page.getByText(/Spends your free placement/).elements()).toHaveLength(0);
   });
 
   /**
@@ -365,5 +375,307 @@ describe('the flip control draws the axis it mirrors across', () => {
     expect(boxes.length).toBeGreaterThan(0);
     expect(boxes.some((box) => box.width === 0 && box.height > 0)).toBe(true);
     expect(boxes.some((box) => box.height === 0 && box.width > 0)).toBe(false);
+  });
+});
+
+/**
+ * The duplicate control, and what it is allowed to do.
+ *
+ * Placement is charged, so the button's whole safety argument is that it does
+ * not place anything: it asks the host for another draft and nothing else. What
+ * is asserted is both halves of that — the handler is called with this draft's
+ * id, AND nothing reached the placement mutation.
+ */
+/**
+ * Which of the two control containers rendered.
+ *
+ * Asserting the button EXISTS cannot tell the branches apart — both render an
+ * identically named control — so a test meaning to cover the pill would pass on
+ * the cluster and the uncovered branch would stay uncovered. The shape differs
+ * and is stable: in the pill, remove lives in its own container; in the buy
+ * cluster, remove is a sibling of duplicate.
+ */
+const removeIsSiblingOfDuplicate = async () => {
+  const duplicate = (await page
+    .getByRole('button', { name: 'Duplicate this sticker' })
+    .element()) as HTMLElement;
+  const remove = (await page
+    .getByRole('button', { name: 'Remove this sticker' })
+    .element()) as HTMLElement;
+
+  return duplicate.parentElement?.contains(remove) ?? false;
+};
+
+describe('the duplicate control', () => {
+  /**
+   * ⚠️ THE NARROW FIXTURE PUTS THE CONTROL IN THE BUY CLUSTER, NOT THE PILL.
+   *
+   * `panelsInside` needs the sticker to be at least 124px wide; the shared
+   * fixture is 0.25 of a 380px container, so 95px — the controls go to the buy
+   * cluster, which this file documents as landing at a negative x here. That is
+   * why this one is pressed through the DOM. The test below covers the pill
+   * branch with a wide draft and an ordinary locator click, so both render paths
+   * are exercised rather than one being described and neither checked.
+   */
+  test('asks the host for another copy, and places nothing', async () => {
+    const duplicated: string[] = [];
+
+    renderWithProviders(
+      <div style={{ position: 'relative', width: 380, height: 600 }}>
+        <DraftSticker
+          draft={draft}
+          art={art}
+          selected
+          dressed={resolveTreatment({ treatment: 'none', surface: 'detail', isPending: false })}
+          price={PRICE}
+          freeOffer={null}
+          ownerShare={undefined}
+          ownerUsername="creator"
+          onGesture={() => true}
+          onDuplicate={(id) => {
+            duplicated.push(id);
+            return 'copy-of-the-draft';
+          }}
+        />
+      </div>
+    );
+
+    const locator = page.getByRole('button', { name: 'Duplicate this sticker' });
+    await expect.element(locator).toBeInTheDocument();
+    ((await locator.element()) as HTMLElement).click();
+
+    expect(duplicated).toEqual([draft.id]);
+    // Pins WHICH branch this covers: at 95px the controls are in the buy
+    // cluster, where remove sits beside duplicate.
+    expect(await removeIsSiblingOfDuplicate()).toBe(true);
+    // 🔴 The half that matters for money: duplicating must not reach the
+    // placement mutation.
+    expect(placed).toHaveLength(0);
+
+    // 🔴 THE POSITIVE CONTROL, IN THE SAME RENDER. Without it the zero above is
+    // an absence measured by an instrument nothing proved was live — a broken
+    // mock would certify "charges nothing" forever.
+    await pressPaid();
+    expect(placed).toHaveLength(1);
+  });
+
+  /**
+   * The OTHER render path. Below 124px of sticker width the controls go to the
+   * buy cluster; above it they go to the pill. Both have to actually render the
+   * duplicate control, and only one of them was being exercised — deleting
+   * `{duplicateControl}` from the pill left every test green.
+   *
+   * ⚠️ What this does NOT assert is reachability. Measured in this harness, the
+   * control sits at x = -95 in the pill branch and x = -73 in the cluster
+   * branch: the whole draft renders at negative coordinates here, so no locator
+   * click succeeds on either path and a passing "it is clickable" test would be
+   * a fiction. Presence is what this harness can honestly check.
+   */
+  test('renders in the pill branch as well as the buy cluster', async () => {
+    renderWithProviders(
+      <div style={{ position: 'relative', width: 380, height: 600 }}>
+        <DraftSticker
+          // 0.5 of 380 is 190px, past the 124px threshold, so the controls sit
+          // in the pill above the sticker rather than in the buy cluster.
+          draft={{ ...draft, scale: 0.5, y: 0.5 }}
+          art={art}
+          selected
+          dressed={resolveTreatment({ treatment: 'none', surface: 'detail', isPending: false })}
+          price={PRICE}
+          freeOffer={null}
+          ownerShare={undefined}
+          ownerUsername="creator"
+          onGesture={() => true}
+          onDuplicate={() => null}
+        />
+      </div>
+    );
+
+    await expect
+      .element(page.getByRole('button', { name: 'Duplicate this sticker' }))
+      .toBeInTheDocument();
+
+    // 🔴 The assertion that makes this a DIFFERENT test rather than a second
+    // copy of the one above. Both branches render a button of the same name, so
+    // presence alone is satisfied by the cluster; the pill keeps remove in its
+    // own container.
+    expect(await removeIsSiblingOfDuplicate()).toBe(false);
+  });
+
+  /**
+   * Absent rather than disabled where the host supplies no handler: a control
+   * that cannot act is a question the placer answers by pressing it.
+   */
+  test('is not rendered at all without a handler', async () => {
+    await renderDraft(null);
+
+    expect(page.getByRole('button', { name: 'Duplicate this sticker' }).elements()).toHaveLength(0);
+  });
+});
+
+/**
+ * Alt-drag: leave a copy behind and drag the new one, the way a photo editor
+ * does it. Justin asked for it alongside the button.
+ *
+ * The property that matters is WHICH sticker the drag then moves. Dragging the
+ * original would leave the copy stranded under the pointer and move the thing
+ * the placer was trying to keep in place — a duplicate that appears to do the
+ * opposite of what it says.
+ */
+describe('alt-dragging a draft', () => {
+  const dragBody = (options: PointerEventInit = {}) => {
+    // The move handler is on the positioned wrapper — the element carrying the
+    // draft's own left/top — rather than on the artwork inside it.
+    const artwork = document.querySelector('img[alt=":star:"], img[alt="Star"]');
+    const body = artwork?.closest('[style*="touch-action"]') as HTMLElement | null;
+
+    body?.dispatchEvent(
+      new PointerEvent('pointerdown', {
+        bubbles: true,
+        cancelable: true,
+        pointerId: 1,
+        clientX: 100,
+        clientY: 100,
+        ...options,
+      })
+    );
+
+    return body;
+  };
+
+  const renderForDrag = async (onDuplicate: (id: string) => string | null) => {
+    const gestures: { draftId: string }[] = [];
+
+    renderWithProviders(
+      <div data-drag-host style={{ position: 'relative', width: 380, height: 600 }}>
+        <DraftSticker
+          draft={draft}
+          art={art}
+          selected
+          dressed={resolveTreatment({ treatment: 'none', surface: 'detail', isPending: false })}
+          price={PRICE}
+          freeOffer={null}
+          ownerShare={undefined}
+          ownerUsername="creator"
+          onGesture={(gesture) => {
+            gestures.push(gesture);
+            return true;
+          }}
+          onDuplicate={onDuplicate}
+        />
+      </div>
+    );
+
+    await expect.element(page.getByRole('button').first()).toBeInTheDocument();
+
+    // 🔴 WITHOUT THIS THE HANDLER RETURNS AT ITS FIRST LINE. A press is
+    // translated into a fraction of the surface the placement session
+    // registered, and with no surface there is no fraction and no gesture — so
+    // every assertion below would pass or fail for the wrong reason. The app
+    // registers it from `ImageStickerOverlay`; here the host stands in for it.
+    const store = useStickerPlacementDraftStore.getState();
+    store.open(IMAGE_ID);
+    store.setSurface(document.querySelector('[data-drag-host]') as HTMLElement);
+
+    return gestures;
+  };
+
+  test('duplicates first, then drags the COPY', async () => {
+    const duplicated: string[] = [];
+    const gestures = await renderForDrag((id) => {
+      duplicated.push(id);
+      return 'the-copy';
+    });
+
+    expect(dragBody({ altKey: true })).not.toBeNull();
+
+    expect(duplicated).toEqual([draft.id]);
+    expect(gestures.at(-1)?.draftId).toBe('the-copy');
+  });
+
+  test('an ordinary drag duplicates nothing and moves the original', async () => {
+    const duplicated: string[] = [];
+    const gestures = await renderForDrag((id) => {
+      duplicated.push(id);
+      return 'the-copy';
+    });
+
+    dragBody();
+
+    expect(duplicated).toEqual([]);
+    expect(gestures.at(-1)?.draftId).toBe(draft.id);
+  });
+
+  /**
+   * The host may refuse — there is no handler on a surface that does not offer
+   * duplication. Alt then has to fall back to an ordinary drag rather than
+   * dropping the gesture on the floor.
+   */
+  test('falls back to moving the original when the copy is refused', async () => {
+    const gestures = await renderForDrag(() => null);
+
+    dragBody({ altKey: true });
+
+    expect(gestures.at(-1)?.draftId).toBe(draft.id);
+  });
+});
+
+/**
+ * 🔴 THE KEY IS RELEASED WHEN THE PURCHASE RESOLVES.
+ *
+ * The server's idempotency check reads a persisted purchase row and THROWS, so a
+ * key held past success refuses the next legitimate purchase of the same pack in
+ * that session — "this purchase has already been completed" — and the sticker
+ * stays unbuyable until a reload. Buy a refill pack, spend it, want another:
+ * that flow predates this feature and has to keep working.
+ *
+ * Asserted at the call site rather than on the store, because the store's own
+ * test cannot see whether anything calls it.
+ */
+describe('the pack purchase key across one session', () => {
+  const gated: StickerDraft = {
+    ...draft,
+    purchase: {
+      refill: true,
+      pack: { shopItemId: 7, unitAmount: 500, acceptsBlue: false, uses: 1 },
+      creatorUsername: 'maker',
+    },
+  };
+
+  test('is released once the purchase resolves, so the same pack can be bought again', async () => {
+    renderWithProviders(
+      <div style={{ position: 'relative', width: 380, height: 600 }}>
+        <DraftSticker
+          draft={gated}
+          // The gate is a prop now, decided across the drafts on the image
+          // rather than frozen onto one of them — so a test that wants a gated
+          // draft has to hand it over the same way the layer does.
+          purchase={gated.purchase}
+          art={art}
+          selected
+          dressed={resolveTreatment({ treatment: 'none', surface: 'detail', isPending: false })}
+          price={PRICE}
+          freeOffer={null}
+          ownerShare={undefined}
+          ownerUsername="creator"
+          onGesture={() => true}
+        />
+      </div>
+    );
+
+    const buy = page.getByRole('button', { name: 'Buy another pack' });
+    await expect.element(buy).toBeInTheDocument();
+
+    const store = useStickerPlacementDraftStore.getState();
+    const before = store.packPurchaseKey(gated.cosmeticId);
+
+    ((await buy.element()) as HTMLElement).click();
+
+    // The handler is async — it invalidates a query before releasing the key.
+    await vi.waitFor(() =>
+      expect(useStickerPlacementDraftStore.getState().packPurchaseKey(gated.cosmeticId)).not.toBe(
+        before
+      )
+    );
   });
 });

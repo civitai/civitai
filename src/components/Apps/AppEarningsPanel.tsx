@@ -1,6 +1,7 @@
 import { Alert, Card, Center, Group, Loader, SimpleGrid, Stack, Text, Title } from '@mantine/core';
 import { IconAlertTriangle, IconCoin } from '@tabler/icons-react';
 
+import { STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
 import type { AppEarningsResult } from '~/server/services/blocks/app-collaborator-earnings.service';
 import { trpc } from '~/utils/trpc';
 
@@ -50,7 +51,7 @@ export function earningsUnavailableMessage(reason: Unavailable): string {
     case 'notFound':
       return 'This app listing could not be found.';
     case 'unsupportedKind':
-      return 'External apps don’t earn Buzz through Civitai, so there are no earnings to show.';
+      return `${STANDALONE_KIND_LABEL} apps don’t earn Buzz through Civitai, so there are no earnings to show.`;
     default: {
       const exhaustive: never = reason;
       return exhaustive;
