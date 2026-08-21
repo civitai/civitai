@@ -454,7 +454,7 @@ describe('the free hint is shown only where there is something to take', () => {
   const USED_HERE = { remaining: 1, usedHere: true, resetsAt: RESETS };
 
   it('announces a free sticker when the reader actually has one', () => {
-    expect(freeHintText(SLOTS_OPEN, READY)).toBe('You have a free sticker today');
+    expect(freeHintText(SLOTS_OPEN, READY)).toBe('Daily free sticker');
   });
 
   it('counts, when the reader can take more than one', () => {
