@@ -110,6 +110,9 @@ vi.mock('~/components/Cards/model-card.utils', () => ({ getCardBaseModels: () =>
 
 import { renderWithProviders } from '../../../test/component-setup';
 import { ModelCard } from '~/components/Cards/ModelCard';
+// Value import, deliberately — this resolves to the MOCKED module (vi.mock is hoisted), and
+// the beforeEach below asserts the mock is wired the way the factory intends.
+import { trpc } from '~/utils/trpc';
 
 // Minimal fixture — only the fields ModelCardContent/ModelCardStats read.
 // thumbsUpCount>0 + locked:false is the gate that renders the review badge.
@@ -158,6 +161,27 @@ describe('ModelCard review indicator (batched membership)', () => {
     mocks.state.engaged = false;
     mocks.membershipMock.mockClear();
     mocks.getEngagedModelsUseQuery.mockClear();
+
+    // 🔴 The `trpc:` override MUST come after the `importOriginal` spread in the factory
+    // above, and nothing else enforces that. `local-rules/no-wholesale-module-mock` requires
+    // that *a* top-level spread exists, not that it comes first — so a merge, a formatter or
+    // a key-sort can silently reverse the two and hand every importer the REAL client.
+    //
+    // Measured: with the order reversed this file still reports 2 passed while the spy below
+    // is dead. The `not.toHaveBeenCalled()` guard — the one assertion this spec exists for —
+    // then never executes, and if production does regress it fails on an unrelated
+    // "Unable to find tRPC Context" after two 10s waitFor timeouts, naming neither the spy
+    // nor the endpoint. A vacuous guard that still reports success is worse than no guard,
+    // so assert the wiring itself rather than trusting the key order to survive.
+    // Cast, narrowly and deliberately: `user.getEngagedModels` is the LEGACY endpoint this
+    // spec exists to prove is never called, and it no longer exists on the real router's
+    // types (it is `getEngagedModelsByIds` now). The value import is typed against the REAL
+    // module while the runtime value is the mock, so the property is absent at type level and
+    // present at run time. Casting here is narrower than widening the mock's shape.
+    const spiedUseQuery = (
+      trpc.user as unknown as { getEngagedModels: { useQuery: unknown } }
+    ).getEngagedModels.useQuery;
+    expect(spiedUseQuery).toBe(mocks.getEngagedModelsUseQuery);
   });
 
   test('renders the reviewed indicator when the model is Recommended by the user', async () => {
