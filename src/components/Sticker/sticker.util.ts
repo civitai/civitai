@@ -433,35 +433,25 @@ export function allocateDraftEntitlements({
 }
 
 /**
- * Whether a failed purchase definitely did NOT take the money.
+ * Whether a failed purchase can be retried as a NEW intent.
  *
- * 🔴 THE DEFAULT MUST BE "IT MIGHT HAVE". An idempotency key is released so the
- * next press is a new intent — right after a refusal, wrong after a timeout,
- * because a request that timed out may well have been processed. Releasing the
- * key there mints a fresh one and charges the same purchase twice, which is the
- * exact thing the key exists to prevent.
+ * 🔴 STRUCTURAL, NOT TEXTUAL — and the first attempt at this was textual, which
+ * is why it was wrong. It matched refusal wording, and the server says "This
+ * cosmetic is not available", "out of stock", "The price changed to N Buzz" and
+ * four others the list never had. A miss locks the placer out of that sticker
+ * until they reload, which is the bug releasing the key was meant to fix.
  *
- * So this recognises refusals the server states, and treats everything else —
- * network errors, 5xx, an unreadable message — as unknown, holding the key. The
- * cost of holding it wrongly is a refusal on the next press; the cost of
- * releasing it wrongly is someone's Buzz.
+ * A 4xx is the server declining: nothing was charged, so the next press is a new
+ * intent and needs a new key. Anything else — a 5xx, a timeout, no response at
+ * all — might have gone through, and reissuing the key there is how one purchase
+ * becomes two. Unknown holds the key, always.
+ *
+ * `data.httpStatus` comes from tRPC's error shape, which this repo's
+ * `errorFormatter` passes through untouched. A network failure has no `data` and
+ * therefore holds, which is the point.
  */
-const DEFINITIVE_REFUSALS = [
-  'insufficient',
-  'not enough',
-  'price has changed',
-  'no longer available',
-  'sold out',
-  'not on sale',
-  'already own',
-  'already been completed',
-  'invalid',
-];
+export function purchaseCanBeRetriedFresh(error: unknown): boolean {
+  const status = (error as { data?: { httpStatus?: number } } | null)?.data?.httpStatus;
 
-export function purchaseDefinitelyDidNotCharge(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
-  if (!message) return false;
-
-  const normalised = message.toLowerCase();
-  return DEFINITIVE_REFUSALS.some((refusal) => normalised.includes(refusal));
+  return typeof status === 'number' && status >= 400 && status < 500;
 }

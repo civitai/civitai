@@ -74,35 +74,47 @@ describe('the pack purchase key', () => {
 /**
  * 🔴 WHICH FAILURES RELEASE THE KEY.
  *
- * Releasing it after a refusal is right — the attempt is over and the next press
- * is a new intent. Releasing it after a TIMEOUT is how one purchase becomes two:
- * the charge may well have gone through, and a fresh key makes the retry a
- * second, separate purchase. So the default is to hold.
+ * Releasing after a refusal is right — the attempt is over and the next press is
+ * a new intent. Releasing after a TIMEOUT is how one purchase becomes two: the
+ * charge may well have gone through, and a fresh key makes the retry a second,
+ * separate purchase.
+ *
+ * ⚠️ THE FIRST VERSION OF THIS TEST PASSED AGAINST INVENTED SERVER MESSAGES. It
+ * matched a hand-written list of refusal wordings, and the fixtures were written
+ * to match the list rather than to match the server — so it certified a
+ * classifier that missed seven of the ten real refusals, including the
+ * re-priced-listing case it was supposed to be for. The rule is structural now,
+ * and these fixtures are tRPC error shapes rather than sentences.
  */
-describe('classifying a failed purchase', () => {
-  it('releases on refusals the server states', async () => {
-    const { purchaseDefinitelyDidNotCharge } = await import('~/components/Sticker/sticker.util');
+const trpcError = (httpStatus: number) => ({ data: { httpStatus } });
 
-    for (const message of [
-      'Insufficient funds',
-      'This purchase has already been completed',
-      'That price has changed',
-      'You already own this cosmetic',
-    ])
-      expect(purchaseDefinitelyDidNotCharge(new Error(message))).toBe(true);
+describe('classifying a failed purchase', () => {
+  it('releases on anything the server declined', async () => {
+    const { purchaseCanBeRetriedFresh } = await import('~/components/Sticker/sticker.util');
+
+    // 400 covers every refusal in the purchase path now that they are TRPCErrors;
+    // the others are here because the rule is the class, not the number.
+    for (const status of [400, 401, 403, 404, 409, 422])
+      expect(purchaseCanBeRetriedFresh(trpcError(status))).toBe(true);
   });
 
-  it('holds the key on anything it cannot read as a refusal', async () => {
-    const { purchaseDefinitelyDidNotCharge } = await import('~/components/Sticker/sticker.util');
+  /**
+   * Everything that might have charged. A network failure has no `data` at all,
+   * which is exactly the case the old string matching could not see.
+   */
+  it('holds the key on anything that might have gone through', async () => {
+    const { purchaseCanBeRetriedFresh } = await import('~/components/Sticker/sticker.util');
 
     for (const error of [
-      new Error('fetch failed'),
+      trpcError(500),
+      trpcError(502),
+      trpcError(504),
+      new Error('Failed to fetch'),
       new Error('The operation timed out'),
-      new Error('Internal server error'),
-      new Error(''),
+      {},
+      null,
       undefined,
-      { message: 'insufficient' },
     ])
-      expect(purchaseDefinitelyDidNotCharge(error)).toBe(false);
+      expect(purchaseCanBeRetriedFresh(error)).toBe(false);
   });
 });

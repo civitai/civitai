@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { TRPCError } from '@trpc/server';
 import { randomUUID } from 'node:crypto';
 import { ImageSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -56,6 +57,25 @@ import {
   MetricTimeframe,
 } from '~/shared/utils/prisma/enums';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
+
+/**
+ * A refusal the buyer can act on, as a 400 rather than a 500.
+ *
+ * 🔴 THESE USED TO BE BARE `Error`s, AND THE CLIENT COULD NOT TELL THEM APART
+ * FROM A CRASH. tRPC wraps an unrecognised throw as INTERNAL_SERVER_ERROR, so
+ * "you already own this" and "the database fell over" arrived identically — and
+ * the sticker purchase flow, which has to decide whether to reuse an idempotency
+ * key, was left matching on message TEXT to guess. That guess is wrong the day
+ * anybody rewords a sentence, and it was already wrong for seven of these.
+ *
+ * With a code the rule is structural: a 4xx means the charge did not happen and
+ * the next press is a new intent; anything else — including no response at all —
+ * means it might have, so the key is held rather than reissued.
+ *
+ * The messages are unchanged. This also stops ordinary refusals being logged and
+ * alerted as server errors.
+ */
+const refusal = (message: string) => new TRPCError({ code: 'BAD_REQUEST', message });
 
 export const getShopItemById = async ({ id }: GetByIdInput) => {
   const shopItemFindArgs = {
@@ -759,19 +779,19 @@ export const purchaseCosmeticShopItem = async ({
   const noun = shopItem && shopItem.cosmeticId == null ? 'pack' : 'cosmetic';
 
   if (!shopItem) {
-    throw new Error('Cosmetic not found');
+    throw refusal('Cosmetic not found');
   }
 
   // Creator-submitted items share this table; only Published items are sellable.
   // Guards against buying Draft/PendingReview/Rejected/Archived items by id.
   if (shopItem.status !== CosmeticShopItemStatus.Published) {
-    throw new Error(`This ${noun} is not available`);
+    throw refusal(`This ${noun} is not available`);
   }
 
   // Delisted: still Published so it stays bundlable, but off individual sale.
   // Resale listings don't outlive this — withdrawing the item ends them.
   if (!shopItem.listed) {
-    throw new Error(`This ${noun} is not available`);
+    throw refusal(`This ${noun} is not available`);
   }
 
   // A pack carries no cosmetic of its own; the guards below are answered per
@@ -782,12 +802,12 @@ export const purchaseCosmeticShopItem = async ({
     // could otherwise pay for a sticker they can't place, since the picker is
     // gated too. Refuse at the mutation, where the cosmetic is already loaded.
     if (shopItem.cosmetic.type === CosmeticType.Sticker && !stickersEnabled) {
-      throw new Error(`This ${noun} is not available`);
+      throw refusal(`This ${noun} is not available`);
     }
 
     // Creators can't buy their own cosmetic — they're granted it on approval.
     if (shopItem.cosmetic.createdById === userId) {
-      throw new Error('You already own this cosmetic');
+      throw refusal('You already own this cosmetic');
     }
 
     // A block between the buyer and the item's creator or lister (either
@@ -800,7 +820,7 @@ export const purchaseCosmeticShopItem = async ({
         (id): id is number => id != null
       );
       if (sellerIds.some((id) => blockedPairIds.includes(id))) {
-        throw new Error(`This ${noun} is not available`);
+        throw refusal(`This ${noun} is not available`);
       }
     }
   }
@@ -821,15 +841,15 @@ export const purchaseCosmeticShopItem = async ({
         },
       });
     }
-    throw new Error(`This ${noun} is out of stock`);
+    throw refusal(`This ${noun} is out of stock`);
   }
 
   if (shopItem.availableFrom && shopItem.availableFrom > new Date()) {
-    throw new Error(`This ${noun} is not available yet`);
+    throw refusal(`This ${noun} is not available yet`);
   }
 
   if (shopItem.availableTo && shopItem.availableTo < new Date()) {
-    throw new Error(`This ${noun} is no longer available`);
+    throw refusal(`This ${noun} is no longer available`);
   }
 
   // Packs diverge here: the money path, the grant and the payout are all
@@ -838,7 +858,7 @@ export const purchaseCosmeticShopItem = async ({
   if (shopItem.cosmeticId == null || !shopItem.cosmetic) {
     // Filtering a pack out of a list is not refusing it — with an id in hand a
     // buyer could otherwise purchase one while the flag is off.
-    if (!packsEnabled) throw new Error('This pack is not available');
+    if (!packsEnabled) throw refusal('This pack is not available');
     const members = await getPackMembers(shopItemId);
     return purchaseCosmeticPack({
       userId,
@@ -879,7 +899,7 @@ export const purchaseCosmeticShopItem = async ({
     });
 
     if (userCosmetic) {
-      throw new Error('You already own this cosmetic');
+      throw refusal('You already own this cosmetic');
     }
   }
 
@@ -892,7 +912,7 @@ export const purchaseCosmeticShopItem = async ({
       where: { userId, cosmeticId: singleCosmeticId, remaining: null },
       select: { claimKey: true },
     });
-    if (unlimited) throw new Error('You already have unlimited uses of this sticker');
+    if (unlimited) throw refusal('You already have unlimited uses of this sticker');
   }
 
   // The buyer confirmed a number on a button. A listing re-priced between that
@@ -901,7 +921,7 @@ export const purchaseCosmeticShopItem = async ({
   // stale price is most likely: a shop panel and a draft can sit open for as
   // long as the image does.
   if (expectedUnitAmount !== undefined && expectedUnitAmount !== shopItem.unitAmount) {
-    throw new Error(
+    throw refusal(
       `The price changed to ${shopItem.unitAmount} Buzz. Check the new price and try again.`
     );
   }
@@ -910,7 +930,7 @@ export const purchaseCosmeticShopItem = async ({
 
   // Blue payment is a per-item creator opt-in (meta.acceptsBlueBuzz).
   if (payWith !== 'default' && !meta.acceptsBlueBuzz) {
-    throw new Error('This item does not accept Blue Buzz');
+    throw refusal('This item does not accept Blue Buzz');
   }
   // 'blue-first' drains blue before completing with the domain color.
   const fromAccountTypes: BuzzSpendType[] =
@@ -959,7 +979,7 @@ export const purchaseCosmeticShopItem = async ({
       where: { buzzTransactionId: transactionId },
       select: { buzzTransactionId: true },
     });
-    if (alreadyProcessed) throw new Error('This purchase has already been completed');
+    if (alreadyProcessed) throw refusal('This purchase has already been completed');
   }
   const transaction = await createMultiAccountBuzzTransaction({
     fromAccountId: userId,
