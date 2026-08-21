@@ -181,13 +181,15 @@ it was first raised.
       confirm which they meant rather than anything needing building.
 - [ ] **`ReToolActions` vs `ModActivity`** *(08-17)* — two mod-action logs that nothing reconciles.
 - [ ] **`aiNsfwLevel` / `aiModel` exist in production but not in `schema.full.prisma`** *(08-17)*.
-- [ ] **`RatingChanges`** *(08-17)* — **half ported 2026-08-21.** `LogNsfwLevel` is built: setting a
-      rating on Front Page Audit now writes the before/after pair to `RatingChanges`, which is the trail
-      `recordModActivity` does not keep. `LogNsfwLevel2` (on a tag vote) is still open and is no longer
-      blocked on the table shape — it is blocked on the Retool changeset: the description says
-      update-or-insert by `imageId`, additions only, level from the tag, and does not say what the
-      NOT NULL `originalRating` holds on that path. **Unexercised** — written with both database tunnels
-      down, so it has never run.
+- [x] **`RatingChanges`** *(08-17)* — **ported 2026-08-21, both writes.** Setting a rating and voting a
+      moderation tag onto an image each record to `RatingChanges`, the before/after trail
+      `recordModActivity` does not keep.
+
+      It was recorded as blocked on "what `originalRating` holds on the tag-vote path". It was not: the
+      answer is in the app export we already had, and reading it corrected two things the audit notes
+      got wrong — `LogNsfwLevel` upserts by `imageId` rather than inserting, and `originalRating` is the
+      sweep's selected rating rather than the image's own previous level. Both facts are now pinned by
+      mutation-checked tests. **Unexercised against a database.**
 - [ ] **How queue sweeps get tracked** *(08-17)* — a new table, or an extension of `ModActivity`.
 
 The "two strike systems" P2 from 08-19 is **closed by this round** — see the strike item above. What is

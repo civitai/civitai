@@ -10,6 +10,7 @@ import {
   voteOnTag,
   recordResearchRating,
   recordRatingChange,
+  recordTagVoteRatingChange,
   getImageRating,
   SWEEP_LIMITS,
 } from '$lib/server/front-page-audit.service';
@@ -174,8 +175,23 @@ export const actions: Actions = {
     );
     if (typeof input === 'string') return actionFail(input);
 
+    // BEFORE the vote, for the same reason `setRating` reads it before the update: it is the level the
+    // sweep is looking at, which is what Retool recorded as `originalRating`.
+    const originalRating = await getImageRating(input.imageId);
+
     const result = await voteOnTag(input);
     if (!result.ok) return actionFail(result.error ?? 'Could not record that vote.');
+
+    // Retool's LogNsfwLevel2. Additions only — the write itself enforces that.
+    if (originalRating !== null)
+      await recordTagVoteRatingChange({
+        imageId: input.imageId,
+        originalRating,
+        tagNsfwLevel: result.tagNsfwLevel ?? null,
+        direction: input.direction,
+        updatedBy: locals.user.username ?? null,
+      });
+
     return { success: true, votedTag: input.tagId };
   },
 };
