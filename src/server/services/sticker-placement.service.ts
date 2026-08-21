@@ -1133,7 +1133,7 @@ export async function getMyStickerPlacements({
     ? await dbRead.image.findMany({
         where: {
           id: { in: [...new Set(rows.map((row) => row.targetId))] },
-          ...publishedPlacementImageWhere,
+          ...publishedPlacementImageWhere(),
         },
         select: placementImageSelect,
       })

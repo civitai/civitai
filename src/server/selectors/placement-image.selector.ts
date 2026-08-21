@@ -23,19 +23,31 @@ export const placementImageSelect = Prisma.validator<Prisma.ImageSelect>()({
  * Whether a host image may be shown at all, independent of who is looking.
  *
  * 🔴 ONE COPY, BECAUSE A DIVERGENCE IS A DISCLOSURE. Every placement surface
- * shows an image its viewer did not upload, and the next exclusion added here —
- * a new ingestion state, a `needsReview`, a takedown flag — has to reach all of
- * them. Added to the queue and not to the sticker book, it would mean the book
- * publishes on a public profile exactly the image the queue was careful to
- * withhold.
+ * shows an image its viewer did not upload, and the next exclusion added here
+ * has to reach all of them. Added to the queue and not to the sticker book, it
+ * would mean the book publishes on a public profile exactly the image the queue
+ * was careful to withhold.
+ *
+ * A function, not a constant, because `publishedAt` is compared against **now**:
+ * a scheduled post carries a non-null future `publishedAt`, so `{ not: null }`
+ * served it ahead of its own publish time. A module-level constant would freeze
+ * that comparison at import.
+ *
+ * `needsReview` and `acceptableMinor` are the two the feeds test that this did
+ * not. Neither is implied by `ingestion`: a moderator flag leaves `ingestion` at
+ * `Scanned`, so an image withheld from browse everywhere else on the site was
+ * being returned in full — url included — to anyone who could see a placement
+ * pointing at it.
  *
  * Not a browsing-level rule: levels are the viewer's and the domain's, applied
  * per request by `toQueueImage`.
  */
-export const publishedPlacementImageWhere = Prisma.validator<Prisma.ImageWhereInput>()({
-  post: { publishedAt: { not: null } },
+export const publishedPlacementImageWhere = (): Prisma.ImageWhereInput => ({
+  post: { publishedAt: { not: null, lte: new Date() } },
   ingestion: 'Scanned',
   tosViolation: false,
   minor: false,
   poi: false,
+  needsReview: null,
+  acceptableMinor: false,
 });

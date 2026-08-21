@@ -58,7 +58,7 @@ async function viewableImages({
   if (!imageIds.length) return new Map<number, StickerBookImage>();
 
   const images = await dbRead.image.findMany({
-    where: { id: { in: [...new Set(imageIds)] }, ...publishedPlacementImageWhere },
+    where: { id: { in: [...new Set(imageIds)] }, ...publishedPlacementImageWhere() },
     select: placementImageSelect,
   });
 
@@ -186,19 +186,38 @@ async function getPlacementSection({
         placer: { select: { id: true, username: true, deletedAt: true } },
       },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      // Deliberately NOT capped with a `take`. The rows are ordered newest-first
+      // across the whole page, so a cap is spent in that order too — one image
+      // carrying a burst of recent placements would eat the budget and leave the
+      // other cards on the page with no name under them at all. A missing
+      // caption on an arbitrary card is a worse outcome than reading rows we
+      // discard, and the bucketing below is what made the discarding cheap.
     }),
   ]);
+
+  // Bucketed once rather than rescanned per group: filtering `rows` inside the
+  // loop below is |page| x |rows|.
+  const byTarget = new Map<number, typeof rows>();
+  for (const row of rows) {
+    const bucket = byTarget.get(row.targetId);
+    if (bucket) bucket.push(row);
+    else byTarget.set(row.targetId, [row]);
+  }
 
   const items = page.flatMap((group) => {
     const image = images.get(group.targetId);
     if (!image) return [];
 
-    const counterparts = rows.flatMap((row) => {
-      if (row.targetId !== group.targetId) return [];
+    // Newest first from the query, de-duplicated by a Set: one person stickering
+    // an image three times is one name, and `findIndex` inside a filter is
+    // quadratic in a number the placer controls.
+    const seen = new Set<number>();
+    const counterparts = (byTarget.get(group.targetId) ?? []).flatMap((row) => {
       const user = side === 'placer' ? row.owner : row.placer;
       // A deleted account keeps the placement — the image still wears the
       // sticker — but it is not somebody to name or link to.
-      if (!user || user.deletedAt || !user.username) return [];
+      if (!user || user.deletedAt || !user.username || seen.has(user.id)) return [];
+      seen.add(user.id);
       return [{ id: user.id, username: user.username }];
     });
 
@@ -207,11 +226,7 @@ async function getPlacementSection({
         imageId: group.targetId,
         image,
         latestAt: group._max.createdAt,
-        // Newest first, de-duplicated: one person stickering an image three
-        // times is one name.
-        counterparts: counterparts.filter(
-          (user, index) => counterparts.findIndex((other) => other.id === user.id) === index
-        ),
+        counterparts,
       },
     ];
   });

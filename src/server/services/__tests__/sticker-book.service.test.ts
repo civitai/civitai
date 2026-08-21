@@ -17,6 +17,13 @@ const { getStickerBook, getStickerBookSection } = await import(
 const CREATOR = 11;
 const STRANGER = 22;
 const MODERATOR = 33;
+/**
+ * The creator on the OTHER end of a placement the profile subject made.
+ * Distinct from everyone else on purpose: with the subject reused as the row's
+ * owner, the two sections become indistinguishable and `side === 'placer' ?
+ * row.owner : row.placer` can be collapsed to either arm with nothing going red.
+ */
+const OTHER = 44;
 const IMAGE = 500;
 
 const userFindFirst = dbMock.dbRead.user.findFirst;
@@ -50,8 +57,24 @@ const oneStickeredImage = () => {
     {
       targetId: IMAGE,
       createdAt: new Date('2026-08-20'),
-      owner: { id: CREATOR, username: 'creator', deletedAt: null },
+      owner: { id: OTHER, username: 'other', deletedAt: null },
       placer: { id: STRANGER, username: 'placer', deletedAt: null },
+    },
+    // A second placement by the same person, so the de-duplication has
+    // something to remove — with one row, deleting the Set is invisible.
+    {
+      targetId: IMAGE,
+      createdAt: new Date('2026-08-19'),
+      owner: { id: OTHER, username: 'other', deletedAt: null },
+      placer: { id: STRANGER, username: 'placer', deletedAt: null },
+    },
+    // And a deleted account, which keeps its placement but is not somebody to
+    // name. Without it, dropping that branch names deleted users and stays green.
+    {
+      targetId: IMAGE,
+      createdAt: new Date('2026-08-18'),
+      owner: { id: 77, username: 'gone', deletedAt: new Date('2026-01-01') },
+      placer: { id: 88, username: 'alsogone', deletedAt: new Date('2026-01-01') },
     },
   ]);
   imageFindMany.mockResolvedValue([
@@ -70,12 +93,25 @@ const oneStickeredImage = () => {
   ]);
 };
 
-/** Two holdings of two different stickers, one of them unlimited. */
+const EARNED = 1234;
+
+/**
+ * Two raw queries share this mock — the sticker holdings and the earnings sum —
+ * and a flat `mockResolvedValue` hands the holdings rows to BOTH. That made
+ * `earnedBuzz` come out as `undefined ?? 0`, so every mutation inside
+ * `getEarnedBuzz` was invisible: dropping the `transactionId IS NOT NULL` guard,
+ * dropping `feeToOwner`, dropping the surface filter. Dispatching on the SQL is
+ * what lets the money path be asserted at all.
+ */
 const holdings = () =>
-  queryRaw.mockResolvedValue([
-    { cosmeticId: 1, remaining: 4, unlimited: false },
-    { cosmeticId: 2, remaining: null, unlimited: true },
-  ]);
+  queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
+    const sql = [...strings].join('');
+    if (sql.includes('PlacementTransaction')) return [{ earned: EARNED }];
+    return [
+      { cosmeticId: 1, remaining: 4, unlimited: false },
+      { cosmeticId: 2, remaining: null, unlimited: true },
+    ];
+  });
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -114,6 +150,10 @@ describe('getStickerBook — what leaves the server', () => {
     });
 
     expect(book.access.canViewStickers).toBe(true);
+    // Without the length, gating holdings on `canViewQuantities` instead of
+    // `canViewStickers` empties the array, the loop body never runs, and a test
+    // named for quantities passes over a payload with no stickers in it.
+    expect(book.stickers).toHaveLength(2);
     for (const sticker of book.stickers) expect(sticker).not.toHaveProperty('remaining');
   });
 
@@ -180,11 +220,82 @@ describe('getStickerBook — what leaves the server', () => {
     expect(book.received[0].counterparts).toHaveLength(1);
   });
 
+  it('applies the public image rules on its own read', async () => {
+    await getStickerBook({ username: 'creator', viewerId: CREATOR, ...levels });
+
+    const { where } = imageFindMany.mock.calls.at(-1)?.[0] as { where: Record<string, unknown> };
+    // Written literally rather than imported from the selector: importing the
+    // constant and comparing it to itself passes however the constant changes,
+    // and the whole risk here is the SHARED rule being right while this surface
+    // fails to apply it. The queue's suite pins the same fields for its own read.
+    expect(where).toMatchObject({
+      post: { publishedAt: { not: null, lte: expect.any(Date) } },
+      ingestion: 'Scanned',
+      tosViolation: false,
+      minor: false,
+      poi: false,
+      needsReview: null,
+      acceptableMinor: false,
+    });
+  });
+
+  it('reports the Buzz the ledger actually paid the owner', async () => {
+    const book = await getStickerBook({ username: 'creator', viewerId: CREATOR, ...levels });
+
+    // The number, not just the gate. Dropping the `transactionId IS NOT NULL`
+    // guard, dropping `feeToOwner`, or dropping the surface filter all change
+    // this value and nothing else in the payload.
+    expect(book.earnedBuzz).toBe(EARNED);
+
+    const earnings = queryRaw.mock.calls.filter((call) =>
+      String((call[0] as TemplateStringsArray | undefined)?.join?.('') ?? '').includes(
+        'PlacementTransaction'
+      )
+    );
+    // The control for the stranger test's zero: if the identifier is ever
+    // renamed or moved behind an interpolation, that filter becomes permanently
+    // empty and its assertion becomes one that cannot fail.
+    expect(earnings).toHaveLength(1);
+  });
+
+  it("applies the VIEWER's blocks, not the profile owner's", async () => {
+    await getStickerBook({ username: 'creator', viewerId: STRANGER, ...levels });
+
+    // The mock ignores its argument, so without this the whole block feature can
+    // be pointed at the wrong user — the creator's blocks applied to everyone's
+    // view of their book — with all three block assertions still green.
+    expect(blockedPairIds).toHaveBeenCalledWith(STRANGER);
+    expect(blockedPairIds).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks nobody for blocks when there is no viewer', async () => {
+    await getStickerBook({ username: 'creator', ...levels });
+
+    expect(blockedPairIds).not.toHaveBeenCalled();
+  });
+
+  it('names the other end of the placement on each side', async () => {
+    const book = await getStickerBook({ username: 'creator', viewerId: CREATOR, ...levels });
+
+    // Collapsing `side === 'placer' ? row.owner : row.placer` to either arm
+    // survives a fixture where the two are the same person — in production the
+    // received section would then name the creator under their own image.
+    expect(book.placed[0].counterparts).toEqual([{ id: OTHER, username: 'other' }]);
+    expect(book.received[0].counterparts).toEqual([{ id: STRANGER, username: 'placer' }]);
+  });
+
   it('asks only for approved placements', async () => {
     await getStickerBook({ username: 'creator', viewerId: CREATOR, ...levels });
 
+    // `surface` and `targetType` alongside the status: without them this is a
+    // book of every placement surface and every target type, and nothing goes
+    // red.
     for (const call of placementGroupBy.mock.calls)
-      expect(call[0].where).toMatchObject({ status: 'approved' });
+      expect(call[0].where).toMatchObject({
+        status: 'approved',
+        surface: 'sticker',
+        targetType: 'image',
+      });
   });
 
   it('excludes the other end of a block from both sections', async () => {
@@ -255,6 +366,10 @@ describe('getStickerBook — what leaves the server', () => {
 
     const visitor = await getStickerBook({ username: 'creator', viewerId: STRANGER, ...levels });
     expect(visitor.access.canViewBook).toBe(false);
+    // The flag alone would keep passing if the early return were ever split from
+    // it — which `resolveBookAccess` has just done.
+    expect(visitor.placed).toEqual([]);
+    expect(visitor.received).toEqual([]);
 
     const moderator = await getStickerBook({
       username: 'creator',
@@ -274,7 +389,7 @@ describe('getStickerBook — what leaves the server', () => {
       deletedAt: new Date(),
     });
 
-    await expect(getStickerBook({ username: 'creator', ...levels })).rejects.toThrow();
+    await expect(getStickerBook({ username: 'creator', ...levels })).rejects.toThrow(/not found/i);
   });
 
   it('bounds the section limit rather than passing a caller number through', async () => {

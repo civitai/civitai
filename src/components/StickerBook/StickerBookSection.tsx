@@ -35,14 +35,12 @@ export function StickerBookSection({
   return (
     <section className="flex flex-col gap-3">
       <div className="flex items-baseline justify-between gap-2">
-        <div className="flex items-baseline gap-2">
-          <Title order={3}>{title}</Title>
-          {!!items.length && (
-            <Text size="sm" c="dimmed">
-              {items.length}
-            </Text>
-          )}
-        </div>
+        {/* No number beside the heading. What this row holds is the page size,
+            not the section's size, and printed next to "View all" it reads as a
+            total — telling a creator with 400 stickered images that they have
+            12. The real count is one aggregate away and not worth the query for
+            a label. */}
+        <Title order={3}>{title}</Title>
         {!!items.length && (
           <Anchor component={Link} href={viewAllHref} size="sm">
             View all
