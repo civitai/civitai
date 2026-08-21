@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-import type * as PromClient from '~/server/prom/client';
-
 /**
  * `getEntityCoverImage` backs a `publicProcedure` callable with arbitrary ids,
  * so the `hideMeta` decision has to be made in SQL: the return map spreads the
@@ -11,11 +9,6 @@ import type * as PromClient from '~/server/prom/client';
  * would prove nothing — feed it a row carrying `meta` and the row leaks, which
  * is a statement about the fixture rather than about the query.
  */
-
-vi.mock('~/server/prom/client', async (importOriginal) => {
-  const actual = await importOriginal<typeof PromClient>();
-  return { ...actual, registerCounter: () => ({ inc: vi.fn() }) };
-});
 
 vi.mock('../../../../event-engine-common/services/metrics', () => ({
   MetricService: class {
@@ -102,12 +95,18 @@ describe('getEntityCoverImage withholds meta the creator chose to hide', () => {
   it('does not select the meta column at all', async () => {
     const { sql } = await captureQuery();
 
-    // A bare `i.meta,` on its own line is the leak: the row spreads straight to
-    // the client. The `hasMeta` CASE below mentions `i.meta` too, hence the
-    // line anchor rather than a substring.
-    expect(sql, 'getEntityCoverImage selects i.meta, which ships to the client').not.toMatch(
-      /^\s*i\.meta,\s*$/m
-    );
+    // The two CASE blocks read `i.meta` legitimately, so they come out first
+    // and whatever remains must not mention the column in any spelling. Pinning
+    // one spelling instead — `i.meta,` — would pass on `i."meta",`, on
+    // `i.meta AS meta,` and on a trailing `i.meta` with no comma, each of which
+    // re-opens the leak this file exists to catch. `metadata` and `hideMeta`
+    // survive the word boundary and the case respectively.
+    const withoutDerivations = sql.replace(/\(\s*CASE[\s\S]*?END\s*\)/g, '');
+
+    expect(
+      withoutDerivations,
+      'getEntityCoverImage selects the meta column, which ships to the client'
+    ).not.toMatch(/\bmeta\b/);
   });
 
   it('derives hasMeta from hideMeta, matching the other read paths', async () => {
