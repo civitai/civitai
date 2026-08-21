@@ -13,11 +13,15 @@
 
 import { EventEmitter } from 'events';
 import { spawn, execFileSync } from 'child_process';
-import { closeSync, openSync, readSync, unlinkSync } from 'fs';
+import { closeSync, openSync, readdirSync, readSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { randomUUID } from 'crypto';
 import { StringDecoder } from 'string_decoder';
+// One implementation of "is this process still there", shared with the pid-file rules — the EPERM
+// case (alive, but somebody else's) is the one a hand-rolled copy gets wrong, and it is the case
+// that decides whether another developer's running capture survives this sweep.
+import { isPidAlive } from './daemon-port.mjs';
 
 /**
  * How much the tail reads at a time.
@@ -33,8 +37,44 @@ export const DEFAULT_CONCURRENCY = 1;
 const DEFAULT_ABANDON_AFTER_MS = 10 * 60 * 1000;
 const DEFAULT_RUN_TIMEOUT_MS = 30 * 60 * 1000;
 const DEFAULT_KILL_GRACE_MS = 30 * 1000;
-const MAX_LOG_LINES = 2000;
+/**
+ * How many output lines one run keeps.
+ *
+ * It was 2000, chosen while the pipe was silently discarding most of a run's output. Now that the
+ * capture delivers everything, 2000 is smaller than the ORDINARY case: measured on this box
+ * 2026-08-21, a fully passing `pnpm run test:unit:run` (1,308 files, 20,504 passed, exit 0) wrote
+ * 675,350 bytes as 4,793 non-blank lines — so every full-suite run clipped 2,793 of them and every
+ * waiter printed `WARNING: this log is INCOMPLETE`. A warning that fires on every run is one people
+ * stop reading, which costs more than the window saves.
+ *
+ * 12,000 is 2.5x that measurement, so the suite can roughly double before the ordinary case starts
+ * warning again. Honest scope: 4,793 is a PASSING run. A run with failures prints a block per
+ * failure and will still trip the window — that is the case the warning is FOR.
+ *
+ * The memory this costs is the reason it was not simply raised. One retained entry is
+ * `{index, level, message, at}` plus its array slot; measured through the real capture pipeline
+ * over that same log at three retention sizes: 335.7 B/entry at 50k, 363.1 B at 100k, 381.0 B at
+ * 240k. Use 381 B. (It is explicable, not just empirical: vitest's output carries `✓`/`⎯`/`❯`, so
+ * most lines are two-byte strings — 138 chars mean x 2 + a 16 B header + ~56 B object + 8 B slot.)
+ *
+ *   before   2,000 x (50 finished + 1 running) x 381 B =  38.9 MB
+ *   after   12,000 x ( 8 finished + 1 running) x 381 B =  41.1 MB
+ *
+ * So the ceiling is held flat by cutting what it is multiplied BY, which is the knob that was
+ * actually wrong: nothing reads the log of the 50th-most-recent run, and keeping 50 of them was
+ * paying 50x for a lookup depth of about one. What 50 was worth keeping is the run RECORD — its
+ * status and exit code, which `test list` shows — and that is now retained separately, at about
+ * 300 B each, by KEEP_FINISHED below.
+ */
+const MAX_LOG_LINES = 12000;
+/** How many finished runs keep a record at all (status, exit code, counts). Cheap without logs. */
 const KEEP_FINISHED = 50;
+/**
+ * How many finished runs keep their LOG LINES. Past this, a run's lines are released and counted
+ * into `logsDropped` — the same field the window already uses, so a reader of an aged-out run gets
+ * the same `INCOMPLETE` warning as a reader of a clipped one rather than a silent empty log.
+ */
+const KEEP_FINISHED_LOGS = 8;
 const DEFAULT_WAIT_COMMAND = 'node .claude/skills/dev-server/cli.mjs test wait';
 
 const TERMINAL = new Set(['completed', 'failed', 'cancelled', 'timeout', 'abandoned', 'error']);
@@ -77,9 +117,94 @@ export function exitCodeFor(run) {
  * recorded as `output` rather than claiming to be one or the other — nothing renders the level for
  * a test run (both consumers print `entry.message`), and a label we cannot support is worse than
  * an honest one.
+ *
+ * (The implementation is below `sweepStaleCaptures`; the name it writes is decided by
+ * `captureFileName`, which the sweep reads back.)
  */
+
+/**
+ * The capture filename, spelled ONCE.
+ *
+ * The pid in the middle is not decoration — it is what lets the reaper below tell an orphan from a
+ * live run, so the writer and the reader have to agree about where it sits. They agree by being the
+ * same two functions, and a test drives a real `createOutputCapture` through `ownerPidOf` so that
+ * agreement is checked rather than assumed.
+ */
+const CAPTURE_PREFIX = 'civitai-test-run-';
+const CAPTURE_SUFFIX = '.log';
+
+export function captureFileName(pid, uuid) {
+  return `${CAPTURE_PREFIX}${pid}-${uuid}${CAPTURE_SUFFIX}`;
+}
+
+/**
+ * The pid a capture filename names, or null if the name is not one of ours.
+ *
+ * Null for anything else in the directory, and that matters more than it looks: this runs over the
+ * whole of /tmp, so a name this cannot parse must never be treated as a zero, a NaN, or "probably
+ * ours". Only an exact prefix + digits + a uuid-shaped tail + the suffix counts.
+ */
+export function ownerPidOf(fileName) {
+  if (!fileName.startsWith(CAPTURE_PREFIX) || !fileName.endsWith(CAPTURE_SUFFIX)) return null;
+  const middle = fileName.slice(CAPTURE_PREFIX.length, -CAPTURE_SUFFIX.length);
+  const match =
+    /^(\d+)-[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.exec(
+      middle
+    );
+  if (!match) return null;
+  const pid = Number(match[1]);
+  return Number.isSafeInteger(pid) && pid > 0 ? pid : null;
+}
+
+/**
+ * Delete capture files whose owning process is gone.
+ *
+ * Nothing else sweeps them. `close()` unlinks on every path the queue controls, but a daemon killed
+ * with -9, or a crash between `openSync` and the release, leaves the file behind with no one left
+ * to remove it — and a full-suite capture is ~675 KB.
+ *
+ * The one thing this must never do is delete a file that is still being written, which is why it
+ * keys on the pid rather than on age: a file whose owner is ALIVE belongs to a running capture —
+ * this daemon's, a second daemon's, or another developer's on a shared box — and is left alone. A
+ * dead owner cannot be writing anything. Pid reuse can only push this toward keeping a file it
+ * could have removed, never toward removing a live one.
+ *
+ * Returns what it did, so a caller (and a test) can assert on it rather than infer it from the
+ * directory afterwards.
+ *
+ * @param {{dir?: string, isAlive?: (pid: number) => boolean}} [options]
+ */
+export function sweepStaleCaptures({ dir = tmpdir(), isAlive = isPidAlive } = {}) {
+  const result = { removed: [], kept: [], errors: [] };
+  let names;
+  try {
+    names = readdirSync(dir);
+  } catch (err) {
+    result.errors.push({ file: dir, error: err?.message ?? String(err) });
+    return result;
+  }
+  for (const name of names) {
+    const pid = ownerPidOf(name);
+    if (pid === null) continue;
+    if (isAlive(pid)) {
+      result.kept.push(name);
+      continue;
+    }
+    try {
+      unlinkSync(join(dir, name));
+      result.removed.push(name);
+    } catch (err) {
+      // Someone else's file we may not remove, or one that vanished under us. Reported rather than
+      // swallowed: a sweep that silently cannot delete anything is indistinguishable from a clean
+      // /tmp, and the caller logs the counts.
+      result.errors.push({ file: name, error: err?.code ?? err?.message ?? String(err) });
+    }
+  }
+  return result;
+}
+
 export function createOutputCapture(onLine) {
-  const path = join(tmpdir(), `civitai-test-run-${process.pid}-${randomUUID()}.log`);
+  const path = join(tmpdir(), captureFileName(process.pid, randomUUID()));
   const writeFd = openSync(path, 'a');
   let readFd;
   try {
@@ -583,6 +708,26 @@ export class TestQueue {
       .filter((run) => isTerminal(run.status))
       .sort((a, b) => a.finishedAt - b.finishedAt);
     while (finished.length > KEEP_FINISHED) this.runs.delete(finished.shift().id);
+    // Oldest-first, so everything past the newest KEEP_FINISHED_LOGS is released. `finished` has
+    // already had the deleted ones shifted off it, so this walks only what is still retained.
+    for (let i = 0; i < finished.length - KEEP_FINISHED_LOGS; i++) this.releaseLogs(finished[i]);
+  }
+
+  /**
+   * Drop a finished run's lines, counting them as dropped.
+   *
+   * Counted, not just cleared — for the same reason the window counts. `logsDropped` is what every
+   * reader uses to tell a fragment from a whole log, so releasing lines without adding them to it
+   * would hand back an empty log that claims to be complete.
+   *
+   * It has to be safe to call repeatedly, because `prune()` runs on EVERY settle and walks the same
+   * aged-out runs again each time. It is, by arithmetic rather than by a guard: a second call adds
+   * `[].length`, which is 0. An early return here would read as the thing keeping the count honest
+   * while doing nothing — measured, deleting one survived the whole suite — so there isn't one.
+   */
+  releaseLogs(run) {
+    run.logsDropped += run.logs.length;
+    run.logs = [];
   }
 
   addLog(run, level, message) {

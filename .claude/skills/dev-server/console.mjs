@@ -12,7 +12,7 @@ import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import readline from 'readline';
-import { resolveDaemonUrl } from './scripts/daemon-port.mjs';
+import { resolveDaemonPidFile, resolveDaemonUrl } from './scripts/daemon-port.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -26,7 +26,9 @@ function findProjectRoot(startDir) {
 }
 
 const projectRoot = findProjectRoot(__dirname);
-const pidFile = resolve(__dirname, 'daemon.pid');
+// Scoped to the port this invocation targets, like cli.mjs — a console pointed at a probe daemon
+// must not overwrite the shared daemon's pid file when it starts one.
+const pidFile = resolveDaemonPidFile(__dirname);
 const serverScript = resolve(__dirname, 'scripts/daemon.mjs');
 
 // The whole decision — port included — is made in scripts/daemon-port.mjs, the same module the

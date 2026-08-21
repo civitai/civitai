@@ -601,10 +601,38 @@ describe('a clipped log announces itself', () => {
   // The count is the difference between what was emitted and what survives, so a reader can tell
   // exactly how much of the run is missing rather than only that some of it is.
   it('counts every line the window threw away', () => {
-    const state = drive(5000);
-    expect(state.logIndex).toBe(5000);
+    const state = drive(15000);
+    expect(state.logIndex).toBe(15000);
     expect(state.logsDropped).toBe(3000);
-    expect(state.logIndex - state.logsDropped).toBe(2000);
+    expect(state.logIndex - state.logsDropped).toBe(12000);
+  });
+
+  /**
+   * The size of the window is a MEASUREMENT, and this is where it is pinned.
+   *
+   * 4,793 is the non-blank line count of a fully passing `pnpm run test:unit:run` on this repo,
+   * measured 2026-08-21 (1,308 files, 20,504 passed, exit 0, 675,350 bytes). At the old 2,000 the
+   * ordinary green run clipped 2,793 lines and every waiter printed `WARNING: this log is
+   * INCOMPLETE` — a warning that fires every time is one nobody reads, which is worse than not
+   * having it.
+   *
+   * The literal is deliberate. Deriving the expectation from MAX_LOG_LINES would make this pass at
+   * any window size, including the one it exists to rule out.
+   */
+  const PASSING_FULL_SUITE_LINES = 4793;
+
+  it('does not clip an ordinary passing full-suite run', () => {
+    const state = drive(PASSING_FULL_SUITE_LINES);
+    expect(state.logIndex).toBe(PASSING_FULL_SUITE_LINES);
+    expect(state.logsDropped).toBe(0);
+  });
+
+  // The other half, and the one that keeps the warning meaningful: the window still clips, so a
+  // run that really does overrun still says so. A window raised to "big enough for anything" would
+  // pass the case above and quietly turn `logsDropped` into a field that is always 0.
+  it('still clips a run that overruns the window', () => {
+    const state = drive(PASSING_FULL_SUITE_LINES * 4);
+    expect(state.logsDropped).toBeGreaterThan(0);
   });
 
   // The waiters warn, but `test logs` fetches the window directly and would otherwise get a
@@ -614,10 +642,82 @@ describe('a clipped log announces itself', () => {
     const queue = new TestQueue({ startRun });
     const { id } = queue.request({ worktree: '/repo' });
     const run = queue.runs.get(id);
-    for (let i = 0; i < 2500; i++) queue.addLog(run, 'stdout', `line ${i}`);
+    for (let i = 0; i < 12500; i++) queue.addLog(run, 'stdout', `line ${i}`);
     expect(queue.droppedFor(id)).toBe(500);
-    expect(queue.logs(id, -1)).toHaveLength(2000);
+    expect(queue.logs(id, -1)).toHaveLength(12000);
     // An unknown run is 0 dropped, not a throw: the route answers 404 on its own terms.
     expect(queue.droppedFor('nope')).toBe(0);
+  });
+});
+
+/**
+ * A run's RECORD and a run's LINES are two different costs, and they are retained for different
+ * lengths of time.
+ *
+ * The window had to grow past a passing full-suite run (4,793 lines, above), and multiplying that
+ * by the 50 finished runs the queue used to keep full logs for would have taken the ceiling from
+ * ~38.9 MB to ~228.6 MB at the measured 381 B/entry. Nothing reads the 50th-most-recent run's log.
+ * What 50 was worth keeping is the record `test list` prints — status, exit code, counts — which
+ * costs about 300 B without its lines.
+ */
+describe('finished runs keep their record longer than their lines', () => {
+  /** Runs `count` runs to completion, one line each, on a monotonic clock so the order is exact. */
+  const runToCompletion = (count: number) => {
+    const { started, startRun } = makeRunner();
+    let clock = 1000;
+    const queue = new TestQueue({ startRun, now: () => (clock += 1) });
+    const ids: string[] = [];
+    for (let i = 0; i < count; i++) {
+      const { id } = queue.request({ worktree: '/repo' });
+      ids.push(id);
+      queue.addLog(queue.runs.get(id), 'output', `run ${i} line`);
+      started[i].finish(0);
+    }
+    return { queue, ids };
+  };
+
+  it('releases the lines of every finished run past the newest 8', () => {
+    const { queue, ids } = runToCompletion(12);
+
+    // The four oldest: lines gone, and COUNTED — an empty log that reports 0 dropped is a
+    // fragment claiming to be whole, which is the exact thing `logsDropped` exists to prevent.
+    for (const id of ids.slice(0, 4)) {
+      expect(queue.logs(id, -1)).toHaveLength(0);
+      expect(queue.get(id)!.logsDropped).toBe(1);
+    }
+
+    // The eight newest still have theirs.
+    for (const id of ids.slice(4)) {
+      expect(queue.logs(id, -1)).toHaveLength(1);
+      expect(queue.get(id)!.logsDropped).toBe(0);
+    }
+  });
+
+  // The separation itself: releasing the lines must not take the record with it, or `test list`
+  // loses the history that made 50 worth keeping in the first place.
+  it('keeps the record of a run whose lines it released', () => {
+    const { queue, ids } = runToCompletion(12);
+    const oldest = queue.get(ids[0]);
+    expect(oldest).not.toBeNull();
+    expect(oldest!.status).toBe('completed');
+    expect(oldest!.exitCode).toBe(0);
+    expect(oldest!.logIndex).toBe(1);
+    expect(queue.list()).toHaveLength(12);
+  });
+
+  /**
+   * Idempotence: prune() runs on EVERY settle, so an already-released run is walked again by each
+   * later run that finishes, and the count must not creep up once per subsequent run.
+   *
+   * Labelled honestly — this is an INVARIANT guard, not regression coverage. `releaseLogs` is
+   * idempotent by arithmetic (a second call adds `[].length`), so no small mutation of it makes
+   * this case fail: an early-return guard was written here, mutated away, and SURVIVED, which is
+   * how it was found to be doing nothing. The guard was deleted rather than left in looking
+   * load-bearing. This case pins the property against a future rewrite that counts something other
+   * than the array it is about to empty — `run.logIndex`, say.
+   */
+  it('does not re-count lines it has already released', () => {
+    const { queue, ids } = runToCompletion(20);
+    for (const id of ids.slice(0, 12)) expect(queue.get(id)!.logsDropped).toBe(1);
   });
 });
