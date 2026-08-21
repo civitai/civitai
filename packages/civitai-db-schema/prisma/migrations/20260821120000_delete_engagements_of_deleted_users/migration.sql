@@ -26,7 +26,12 @@
 --
 --   \i steps 1-2, then repeat step 3 until it prints 0, then steps 4-5.
 --
--- Steps 2-5 must share a SESSION — the work list is a temp table.
+-- The work list is an UNLOGGED table, not a TEMP one, so the run does NOT depend on
+-- holding one session. A dropped connection costs nothing: reconnect and carry on
+-- re-running step 3. It was temp until a dev run lost its session mid-drain and took
+-- the list with it — the second session-lifetime failure this migration hit, after the
+-- DO-block one. Unlogged because it is scratch: no WAL, and losing it to a crash is a
+-- 16 s rebuild, not data loss.
 --
 -- 🔴 THE DRAIN LOOP IS DRIVEN BY THE CLIENT, NOT BY A `DO` BLOCK.
 --
@@ -37,14 +42,13 @@
 -- `statement_timeout` is 0 on this database, so the limit is enforced in front of it
 -- and no amount of internal batching escapes it. One statement per batch does.
 --
--- It also removes two constraints the DO-block version had: no autocommit
--- requirement, and no transaction-pooler restriction, because each statement now
--- commits on its own. The one thing that still matters is that steps 2-4 run in the
--- SAME SESSION, because the work list is a temp table.
+-- It also removes every constraint the DO-block version had: no autocommit
+-- requirement, no transaction-pooler restriction, and — with the unlogged work list
+-- below — no single-session requirement either. Each statement commits on its own.
 --
--- Re-runnable end to end. A run that dies part-way leaves its committed batches
--- deleted; starting again rebuilds the work list from what is left (~16 s) and
--- carries on. Demonstrated for real by the failure above.
+-- Re-runnable at two levels. A dropped connection: reconnect and keep re-running
+-- step 3 — the work list is still there and still marked. A full restart: step 2
+-- rebuilds it from what is left (~16 s) and carries on. Both demonstrated for real.
 --
 -- MEASURED on prod, 2026-08-21 (PG 18.3): 42,187,643 rows total; 3,080,712 (7.3%)
 -- reference one of 1,317,709 soft-deleted users. Excluding Blocks this clears
@@ -59,8 +63,7 @@
 --
 -- The drain walks the work list by KEY rather than deleting from it, so each batch is
 -- an index range read instead of a fresh scan over its accumulating dead tuples
--- (autovacuum never touches a temp table). Keyed by primary key, not `ctid` — VACUUM
--- can hand a ctid to a different row.
+-- Keyed by primary key, not `ctid` — VACUUM can hand a ctid to a different row.
 
 -- ── Step 1: the count BEFORE. Expect ~3,038,591. A 0 at the end proves nothing
 -- unless this was non-zero first.
@@ -73,7 +76,7 @@ WHERE e.type <> 'Block'
 -- ── Step 2: build the work list. One sequential scan, ~16 s.
 DROP TABLE IF EXISTS doomed_engagement;
 
-CREATE TEMP TABLE doomed_engagement AS
+CREATE UNLOGGED TABLE doomed_engagement AS
 SELECT e."userId", e."targetUserId", false AS done
 FROM "UserEngagement" e
 WHERE e.type <> 'Block'
@@ -88,9 +91,8 @@ ANALYZE doomed_engagement;
 -- `done` is flipped rather than the row deleted, so the work table keeps no dead
 -- tuples to re-scan, and the index on `(done, "userId", "targetUserId")` makes each
 -- batch an index range read. Counting the WORK LIST rather than the UserEngagement
--- delete is
--- deliberate: a row can already be gone (a re-run, or `deleteUser` reaching it
--- first), and exiting on that count would stop with the list still full.
+-- delete is deliberate: a row can already be gone (a re-run, or `deleteUser` reaching
+-- it first), and exiting on that count would stop with the list still full.
 WITH batch AS (
   SELECT d."userId", d."targetUserId"
   FROM doomed_engagement d
