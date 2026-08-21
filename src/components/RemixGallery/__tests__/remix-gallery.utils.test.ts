@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { SHARED_ALLOWANCE_NOTE } from '~/shared/utils/placement';
 import type { RemixGalleryItem } from '~/components/RemixGallery/remix-gallery.utils';
 import {
   dedupeGalleryItems,
@@ -447,5 +448,29 @@ describe('remixGalleryModerating', () => {
     expect(
       remixGalleryModerating({ ...base, ownerKnown: false, isOwner: true, asModerator: true })
     ).toBe(false);
+  });
+});
+
+/**
+ * 🔴 The cross-surface guard, on the surface that would drift silently.
+ *
+ * The whole point of one shared constant is that a placer who spends their day
+ * on a remix gallery meets the same description of the budget on the sticker
+ * side. The sticker half is pinned in `free-offer.test.ts`; without this, the
+ * remix half could drop the clause and every test in the repo would stay green.
+ */
+describe('the remix surface names the shared budget too', () => {
+  it('says what the allowance is shared with when it is spent', () => {
+    const spent = freeSubmissionOffer({
+      verified: true,
+      freeSlots: 1,
+      freeSlotsRemaining: 1,
+      allowanceRemaining: 0,
+      usedHere: false,
+      resetsAt: new Date('2026-08-21T00:00:00.000Z'),
+      paidOpen: true,
+    });
+
+    expect(spent.reason).toContain(SHARED_ALLOWANCE_NOTE);
   });
 });

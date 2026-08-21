@@ -291,31 +291,40 @@ describe('what a draft sends when it is placed', () => {
 });
 
 /**
- * The mode belongs to the free option, not to the button upstream, so it has to
- * be readable here — and the two modes have to read differently or the placer
- * cannot tell an instant placement from one that spends their day on a review
- * they may lose.
+ * The free option is a price; the review is a property of the SPACE.
+ *
+ * 🔴 The option used to read `Free · instant` / `Free · needs review` beside a
+ * plain `100 Buzz`, which says the paid one does not get reviewed — and on a
+ * review space both do. Justin, on seeing it: "it makes it seem like the other
+ * one's not going to need review". So the segment says `Free`, and what a
+ * decline costs is said once, under the button that spends the placement, where
+ * it applies to whichever option is selected.
  */
-describe('the free option carries the mode', () => {
-  test('says instant on an auto-accept space, with no review caveat', async () => {
+describe('the free option is a price, not a process', () => {
+  test('says nothing about review on an auto-accept space, and warns of nothing', async () => {
     await renderDraft({ instant: true });
 
-    await expect.element(page.getByText('Free · instant')).toBeInTheDocument();
-    expect(page.getByText(/spent even if they decline/).elements()).toHaveLength(0);
+    // `exact`, because "Place free" on the button below also contains the word.
+    await expect.element(page.getByText('Free', { exact: true })).toBeInTheDocument();
+    // Nothing to warn about: an auto space places it live, so there is no
+    // decline that could take the day with it.
+    expect(page.getByText(/Spends your free placement/).elements()).toHaveLength(0);
   });
 
-  test('says needs review, and warns the day is spent regardless', async () => {
+  test('says the same on a review space, and warns under the button instead', async () => {
     await renderDraft({ instant: false });
 
-    await expect.element(page.getByText('Free · needs review')).toBeInTheDocument();
-    await expect.element(page.getByText(/spent even if they decline/)).toBeInTheDocument();
+    await expect.element(page.getByText('Free', { exact: true })).toBeInTheDocument();
+    // The label does not carry the mode; this line does, and it says the thing
+    // that actually costs the reader something.
+    await expect.element(page.getByText(/Spends your free placement/)).toBeInTheDocument();
   });
 
   test('offers no choice at all where there is no free offer', async () => {
     await renderDraft(null);
 
-    expect(page.getByText(/^Free ·/).elements()).toHaveLength(0);
     expect(page.getByRole('button', { name: 'Place free' }).elements()).toHaveLength(0);
+    expect(page.getByText(/Spends your free placement/).elements()).toHaveLength(0);
   });
 
   /**

@@ -836,20 +836,10 @@ export function DraftSticker({
             value={payMode}
             onChange={(value) => setPayChoice(value as 'free' | 'paid')}
             data={[
-              { label: freeOptionLabel(freeOffer.instant), value: 'free' },
+              { label: freeOptionLabel(), value: 'free' },
               { label: `${numberWithCommas(price)} Buzz`, value: 'paid' },
             ]}
           />
-        )}
-
-        {/* Only where it is true. On an auto-accept space the placement is live
-            the moment it is made, so there is no decline to warn about. */}
-        {placingFree && freeOffer && !freeOffer.instant && (
-          <div className="max-w-[240px] whitespace-normal rounded-lg bg-black/80 px-2 py-1 text-center">
-            <Text size="xs" c="gray.3" className="leading-tight">
-              {FREE_REVIEW_CAVEAT}
-            </Text>
-          </div>
         )}
 
         {draft.purchase && effectiveMode === 'pack' && draft.purchase.pack ? (
@@ -909,6 +899,22 @@ export function DraftSticker({
             loading={place.isPending}
             onPerformTransaction={() => place.mutate(placementInput())}
           />
+        )}
+
+        {/* Under the button, not above it: it is a consequence of pressing, and
+            above the control it read as a description of the option. Same chip
+            shape and same triangle as the second-payment warning below, because
+            they are the same kind of thing — a cost you meet by pressing.
+
+            Only where it is true. On an auto-accept space the placement is live
+            the moment it is made, so there is no decline to warn about. */}
+        {placingFree && freeOffer && !freeOffer.instant && (
+          <div className="flex items-center gap-1 rounded-full bg-black/80 px-2 py-0.5">
+            <IconAlertTriangleFilled size={12} className="shrink-0 text-yellow-4" />
+            <Text size="xs" c="gray.3" className="leading-tight">
+              {FREE_REVIEW_CAVEAT}
+            </Text>
+          </div>
         )}
 
         {/* The second payment, said before the first one is made. Someone who
