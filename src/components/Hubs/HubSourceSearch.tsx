@@ -38,9 +38,9 @@ const tabs = [
  * they follow — rather than searching the whole site. Anything outside that set
  * is added by pasting its link.
  *
- * One type at a time, and capped server-side: this is a type-ahead over the
- * viewer's own relationships, so it costs the same for someone following ten
- * thousand creators as for someone following ten.
+ * One type at a time, and searched over a bounded window of the viewer's most
+ * recent relationships rather than all of them — see SUGGESTIONS_WINDOW in
+ * user-hub.service.ts for why the unbounded version was not viable.
  */
 export function HubSourceSearch({
   onSelect,

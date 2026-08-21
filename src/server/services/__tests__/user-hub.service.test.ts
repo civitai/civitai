@@ -555,28 +555,49 @@ describe('persisting the feed filters', () => {
 // from any of these where clauses is a leak with no visible symptom — the picker
 // simply offers more, which looks like the feature working.
 describe('source suggestions stay inside the viewer', () => {
-  it('scopes the creators arm to the viewer', async () => {
-    dbMock.dbRead.userEngagement.findMany.mockResolvedValue([]);
+  it('scopes the creators arm to the viewer, over a bounded window', async () => {
+    dbMock.dbRead.userEngagement.findMany.mockResolvedValue([{ targetUserId: 11 }]);
+    dbMock.dbRead.user.findMany.mockResolvedValue([{ id: 11, username: 'someone' }]);
 
-    await getHubSourceSuggestions({ userId: 5, type: UserHubSourceType.User });
+    await getHubSourceSuggestions({ userId: 5, type: UserHubSourceType.User, query: 'some' });
 
-    expect(dbMock.dbRead.userEngagement.findMany.mock.calls[0][0].where.userId).toBe(5);
+    const follows = dbMock.dbRead.userEngagement.findMany.mock.calls[0][0];
+    expect(follows.where.userId).toBe(5);
+    // The name filter must NOT ride on the relationship query: expressed there it
+    // is a subquery the planner walks the whole follow list to satisfy.
+    expect(follows.where.targetUser).toBeUndefined();
+    expect(follows.take).toBeGreaterThan(0);
+
+    const names = dbMock.dbRead.user.findMany.mock.calls[0][0];
+    expect(names.where.id).toEqual({ in: [11] });
+    // citext: asking for `insensitive` here is what forced the seq scan.
+    expect(names.where.username).toEqual({ contains: 'some' });
   });
 
-  it('scopes every models arm to the viewer', async () => {
+  it('scopes every models arm to the viewer, and filters names once over the union', async () => {
     dbMock.dbRead.collection.findFirst.mockResolvedValue({ id: 77 });
-    dbMock.dbRead.model.findMany.mockResolvedValue([]);
-    dbMock.dbRead.modelEngagement.findMany.mockResolvedValue([]);
-    dbMock.dbRead.collectionItem.findMany.mockResolvedValue([]);
+    dbMock.dbRead.model.findMany.mockResolvedValue([{ id: 1 }]);
+    dbMock.dbRead.modelEngagement.findMany.mockResolvedValue([{ modelId: 2 }]);
+    dbMock.dbRead.collectionItem.findMany.mockResolvedValue([{ modelId: 3 }]);
 
-    await getHubSourceSuggestions({ userId: 5, type: UserHubSourceType.Model });
+    await getHubSourceSuggestions({ userId: 5, type: UserHubSourceType.Model, query: 'nova' });
 
-    expect(dbMock.dbRead.model.findMany.mock.calls[0][0].where.userId).toBe(5);
-    expect(dbMock.dbRead.modelEngagement.findMany.mock.calls[0][0].where.userId).toBe(5);
+    const own = dbMock.dbRead.model.findMany.mock.calls[0][0];
+    const engaged = dbMock.dbRead.modelEngagement.findMany.mock.calls[0][0];
+    expect(own.where.userId).toBe(5);
+    expect(engaged.where.userId).toBe(5);
     // The bookmark arm is scoped by the collection it reads, which is itself the
     // viewer's — so assert the lookup that picked it, not the item query.
     expect(dbMock.dbRead.collection.findFirst.mock.calls[0][0].where.userId).toBe(5);
     expect(dbMock.dbRead.collectionItem.findMany.mock.calls[0][0].where.collectionId).toBe(77);
+
+    // None of the three id queries may carry the name filter — that is what made
+    // the planner walk every bookmark and every Notify row.
+    expect(own.where.name).toBeUndefined();
+    expect(engaged.where.model).toBeUndefined();
+    const names = dbMock.dbRead.model.findMany.mock.calls[1][0];
+    expect(names.where.id).toEqual({ in: [1, 2, 3] });
+    expect(names.where.name).toEqual({ contains: 'nova', mode: 'insensitive' });
   });
 
   it('offers no collections while the write path refuses them', async () => {

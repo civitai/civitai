@@ -361,8 +361,12 @@ export async function resolveHubSourceFromUrl({
   if (!ref) return null;
 
   if (ref.type === 'user') {
+    // `User.username` is citext, so a plain equals is already case-insensitive
+    // AND index-served. Asking Prisma for `mode: 'insensitive'` emits ILIKE, which
+    // no btree serves: measured on the prod replica at 4.7s and a full read of the
+    // 4.7GB table, against 0.14ms for the equality.
     const user = await dbRead.user.findFirst({
-      where: { username: { equals: ref.username, mode: 'insensitive' }, deletedAt: null },
+      where: { username: { equals: ref.username }, deletedAt: null },
       select: { id: true, username: true },
     });
     if (!user) return null;
@@ -432,6 +436,19 @@ export async function resolveHubSourceFromUrl({
 
 const SUGGESTIONS_LIMIT = 25;
 
+// How much of the viewer's relationship list the type-ahead searches. A name filter
+// expressed as a relation filter does NOT bound the work: Prisma emits it as a
+// subquery, the planner walks every one of the viewer's rows probing the target
+// table, and `take` only stops it early when matches are dense. Measured on the
+// prod replica: a viewer following 130,006 people paid 4.8s and ~4.85GB of buffers
+// for a term matching none of them — worst exactly for the rare term that makes a
+// type-ahead worth having.
+//
+// So the relationship list drives, bounded, and the name filter runs over the ids
+// it returns. That makes this a search of your most recent relationships rather
+// than of all of them, which is the tradeoff worth taking here.
+const SUGGESTIONS_WINDOW = 500;
+
 /**
  * What the source picker searches, one type at a time. Scoped to the viewer's own
  * relationships rather than the whole site: creators they follow, models they own
@@ -441,9 +458,6 @@ const SUGGESTIONS_LIMIT = 25;
  * `ModelEngagementType.Notify` is the bell — the "favourite" button sets it and
  * adds the model to the viewer's bookmark collection at the same time, which is
  * why both are read here.
- *
- * Every arm is capped at `SUGGESTIONS_LIMIT`, so the cost does not grow with how
- * much the viewer follows. The result is a type-ahead, not a list of everything.
  */
 export async function getHubSourceSuggestions({
   userId,
@@ -451,23 +465,29 @@ export async function getHubSourceSuggestions({
   query,
 }: GetHubSourceSuggestionsInput & { userId: number }) {
   const term = query?.trim();
-  const contains = term ? { contains: term, mode: 'insensitive' as const } : undefined;
 
   if (type === UserHubSourceType.User) {
     const follows = await dbRead.userEngagement.findMany({
-      where: {
-        userId,
-        type: UserEngagementType.Follow,
-        targetUser: { deletedAt: null, ...(contains ? { username: contains } : {}) },
-      },
-      select: { targetUser: { select: { id: true, username: true } } },
+      where: { userId, type: UserEngagementType.Follow },
+      select: { targetUserId: true },
       orderBy: { createdAt: 'desc' },
+      take: SUGGESTIONS_WINDOW,
+    });
+    if (!follows.length) return [];
+
+    const users = await dbRead.user.findMany({
+      where: {
+        id: { in: follows.map((f) => f.targetUserId) },
+        deletedAt: null,
+        // citext, so this is case-insensitive without asking for ILIKE.
+        ...(term ? { username: { contains: term } } : {}),
+      },
+      select: { id: true, username: true },
       take: SUGGESTIONS_LIMIT,
     });
 
-    return follows
-      .map(({ targetUser }) => targetUser)
-      .filter((user): user is { id: number; username: string } => !!user?.username)
+    return users
+      .filter((user): user is { id: number; username: string } => !!user.username)
       .map((user) => ({
         type: UserHubSourceType.User,
         targetId: user.id,
@@ -481,71 +501,82 @@ export async function getHubSourceSuggestions({
     if (!HUB_COLLECTION_SOURCES_ENABLED) return [];
 
     const followed = await dbRead.collectionContributor.findMany({
+      where: { userId, permissions: { has: CollectionContributorPermission.VIEW } },
+      select: { collectionId: true },
+      take: SUGGESTIONS_WINDOW,
+    });
+    if (!followed.length) return [];
+
+    const collections = await dbRead.collection.findMany({
       where: {
-        userId,
-        permissions: { has: CollectionContributorPermission.VIEW },
-        ...(contains ? { collection: { name: contains } } : {}),
+        id: { in: followed.map((f) => f.collectionId) },
+        ...(term ? { name: { contains: term, mode: 'insensitive' as const } } : {}),
       },
-      select: { collection: { select: { id: true, name: true } } },
+      select: { id: true, name: true },
       take: SUGGESTIONS_LIMIT,
     });
 
-    return followed
-      .map(({ collection }) => collection)
-      .filter((collection): collection is { id: number; name: string } => !!collection)
-      .map((collection) => ({
-        type: UserHubSourceType.Collection,
-        targetId: collection.id,
-        alias: collection.name,
-      }));
+    return collections.map((collection) => ({
+      type: UserHubSourceType.Collection,
+      targetId: collection.id,
+      alias: collection.name,
+    }));
   }
 
   // Models come from three relationships that overlap — the "favourite" button
-  // writes a Notify engagement AND a bookmark row for the same model — so they are
-  // merged by id and only then capped.
+  // writes a Notify engagement AND a bookmark row for the same model — so the ids
+  // are gathered first and the name filter runs once over the union.
   const bookmarkCollection = await dbRead.collection.findFirst({
     where: { userId, type: CollectionType.Model, mode: CollectionMode.Bookmark },
     select: { id: true },
   });
 
-  const [ownModels, engagedModels, bookmarked] = await Promise.all([
+  const [ownModels, engaged, bookmarked] = await Promise.all([
     dbRead.model.findMany({
-      where: { userId, deletedAt: null, ...(contains ? { name: contains } : {}) },
-      select: { id: true, name: true },
+      where: { userId, deletedAt: null },
+      select: { id: true },
       orderBy: { id: 'desc' },
-      take: SUGGESTIONS_LIMIT,
+      take: SUGGESTIONS_WINDOW,
     }),
     dbRead.modelEngagement.findMany({
-      where: {
-        userId,
-        type: ModelEngagementType.Notify,
-        model: { deletedAt: null, ...(contains ? { name: contains } : {}) },
-      },
-      select: { model: { select: { id: true, name: true } } },
+      where: { userId, type: ModelEngagementType.Notify },
+      select: { modelId: true },
       orderBy: { createdAt: 'desc' },
-      take: SUGGESTIONS_LIMIT,
+      take: SUGGESTIONS_WINDOW,
     }),
     bookmarkCollection
       ? dbRead.collectionItem.findMany({
-          where: {
-            collectionId: bookmarkCollection.id,
-            model: { deletedAt: null, ...(contains ? { name: contains } : {}) },
-          },
-          select: { model: { select: { id: true, name: true } } },
+          where: { collectionId: bookmarkCollection.id, modelId: { not: null } },
+          select: { modelId: true },
           orderBy: { id: 'desc' },
-          take: SUGGESTIONS_LIMIT,
+          take: SUGGESTIONS_WINDOW,
         })
       : Promise.resolve([]),
   ]);
 
-  const models = new Map<number, string>();
-  for (const model of ownModels) models.set(model.id, model.name);
-  for (const { model } of engagedModels) if (model) models.set(model.id, model.name);
-  for (const { model } of bookmarked) if (model) models.set(model.id, model.name);
+  const candidateIds = [
+    ...new Set([
+      ...ownModels.map((m) => m.id),
+      ...engaged.map((e) => e.modelId),
+      ...bookmarked.flatMap((b) => (b.modelId ? [b.modelId] : [])),
+    ]),
+  ];
+  if (!candidateIds.length) return [];
 
-  return [...models].slice(0, SUGGESTIONS_LIMIT).map(([id, name]) => ({
+  const models = await dbRead.model.findMany({
+    where: {
+      id: { in: candidateIds },
+      deletedAt: null,
+      ...(term ? { name: { contains: term, mode: 'insensitive' as const } } : {}),
+    },
+    select: { id: true, name: true },
+    orderBy: { id: 'desc' },
+    take: SUGGESTIONS_LIMIT,
+  });
+
+  return models.map((model) => ({
     type: UserHubSourceType.Model,
-    targetId: id,
-    alias: name,
+    targetId: model.id,
+    alias: model.name,
   }));
 }

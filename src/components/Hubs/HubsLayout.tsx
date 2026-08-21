@@ -139,7 +139,7 @@ function HubsSidebarContent({
 
           {/* Mounted only once opened, which is also what defers the panel's chunk:
               `dynamic` starts fetching as soon as the component renders, so
-              rendering it collapsed would pull instantsearch on every hub load. */}
+              rendering it collapsed would pull it on every hub load. */}
           <Collapse in={sourcesOpen}>
             {sourcesOpen && (
               <div className="px-3 pb-3">
