@@ -56,6 +56,14 @@
   );
   const shown = $derived(visibleBlocklistItems(sortedItems, filters.q ?? '', CHIP_LIMIT));
 
+  // A confirm may only stand for a chip that is still on screen. Without this it survives a filter
+  // change: open the confirm, type in the filter so that chip unmounts, clear the filter later, and
+  // the stale confirm returns unprompted — absolutely positioned at z-50 over whatever chip now
+  // occupies that space, so a click meant for a neighbour's X lands on removing the old entry.
+  $effect(() => {
+    if (confirming && !shown.visible.includes(confirming)) untrack(() => (confirming = null));
+  });
+
   const submit: SubmitFunction = () => async ({ result, update }) => {
     if (result.type === 'success') text = '';
     await update(); // re-runs load → fresh blocklist (and the shared Redis cache is already updated)
@@ -206,6 +214,8 @@
                   disabled={removing !== null}
                   aria-label="Remove {item}"
                   title="Remove {item}"
+                  aria-haspopup="true"
+                  aria-expanded={confirming === item}
                   onclick={() => (confirming = item)}
                 >
                   &times;
@@ -214,10 +224,11 @@
 
               <!-- Anchored inside the form rather than portalled: a portalled confirm is outside the
                    <form> in the DOM, so its submit button loses the implicit association and posts
-                   nothing. Absolute so opening it cannot reflow a 200-chip wrapped list.
-                   🔴 Opens DOWNWARD. Upward put it underneath the filter bar's input, which paints
-                   over it — the confirm was there and invisible, so the X read as a dead control.
-                   z-50 for the same reason: it has to clear the chips it overlaps. -->
+                   nothing. Absolute so opening it cannot reflow a 200-chip wrapped list, and z-50
+                   so it clears the chips it overlaps. Opens downward so it never covers the chip
+                   being acted on.
+                   🔴 Nothing here may sit inside an element with `overflow-hidden` — see the span
+                   above. -->
               {#if confirming === item}
                 <div
                   class="absolute left-0 top-full z-50 mt-1 flex w-max items-center gap-2 rounded-md border bg-popover p-2 text-popover-foreground shadow-md"
@@ -226,10 +237,14 @@
                   <Button type="submit" size="sm" variant="destructive" disabled={removing !== null}>
                     Remove
                   </Button>
+                  <!-- Disabled once the removal is in flight. `enhance` has already issued the
+                       fetch and nothing aborts it, so a live Cancel closes the popover with the
+                       affordance of having stopped something that then happens anyway. -->
                   <Button
                     type="button"
                     size="sm"
                     variant="outline"
+                    disabled={removing !== null}
                     onclick={() => (confirming = null)}
                   >
                     Cancel
