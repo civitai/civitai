@@ -237,6 +237,17 @@ describe('toggleModelEngagement — explicit setTo direction (notify silent-unsu
     expect(refreshCache).toHaveBeenCalledWith({ userId: 42 });
   });
 
+  it('does NOT refresh HiddenModels when the conversion matched no row', async () => {
+    // The `count &&` guard. Without it a lost race still drops the user's per-user
+    // hash field, on a conversion that did not happen.
+    mockDbWrite.modelEngagement.findUnique.mockResolvedValueOnce({ type: 'Hide' });
+    mockDbWrite.modelEngagement.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    await toggleModelEngagement({ userId: 42, modelId: 10, type: 'Notify', setTo: true });
+
+    expect(refreshCache).not.toHaveBeenCalled();
+  });
+
   it('does NOT refresh HiddenModels for a conversion that leaves the hidden set alone', async () => {
     // Control for the test above: refreshing unconditionally would pass it while
     // dropping a per-user hash field on every unrelated Favorite/Mute/Notify click.

@@ -5282,11 +5282,17 @@ export const comicsRouter = router({
         // what lets `comicProjectMetrics` detect un-follows incrementally. The row
         // is bounded — one per (userId, projectId) — so it doesn't accumulate.
         const nextType = engagement.type === input.type ? ComicEngagementType.None : input.type;
-        await dbWrite.comicProjectEngagement.update({
-          where: { userId_projectId: { userId: ctx.user.id, projectId: input.projectId } },
+        // Scoped by the type this call READ, never by the PK alone (868kurkc7). One
+        // row per (user, project) carrying one type, so an unqualified update lands
+        // on whatever a sibling writer established in between — and the read above is
+        // off the REPLICA, so that window is replication lag rather than microseconds.
+        const { count } = await dbWrite.comicProjectEngagement.updateMany({
+          where: { userId: ctx.user.id, projectId: input.projectId, type: engagement.type },
           data: { type: nextType },
         });
-        return nextType !== ComicEngagementType.None;
+        // Zero rows means the pair is no longer what this call read, so it does not
+        // carry `nextType` either, and the client re-reads engagement state anyway.
+        return count > 0 && nextType !== ComicEngagementType.None;
       }
 
       await dbWrite.comicProjectEngagement.create({

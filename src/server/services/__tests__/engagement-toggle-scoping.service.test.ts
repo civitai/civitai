@@ -103,6 +103,49 @@ describe.each(TABLES)('toggleHidden kind=$kind — writes are scoped by type', (
     expect(t.table.updateMany).not.toHaveBeenCalled();
     expect(t.table.deleteMany).not.toHaveBeenCalled();
   });
+
+  // 868kun67j, the OTHER half, and the half that stayed live for these three kinds
+  // after PR #4230 fixed it for users: `toggleHidden` dropped `hidden` on the floor
+  // here, so the toggle could only ever flip whatever row it found.
+  it('hidden=false with no engagement never creates one', async () => {
+    await hide(t.kind, false);
+
+    // Asked to UN-hide, the old blind toggle fell through and wrote a Hide.
+    expect(t.table.create).not.toHaveBeenCalled();
+    expect(t.table.updateMany).not.toHaveBeenCalled();
+    // Positive half, so deleting the branch outright cannot pass on the negatives.
+    expect(t.table.deleteMany).toHaveBeenCalledWith({ where: { ...t.scoped, type: 'Hide' } });
+  });
+
+  it('hidden=true on an ALREADY hidden row is a no-op that keeps it', async () => {
+    t.table.findUnique.mockResolvedValue({ type: 'Hide' });
+
+    await hide(t.kind, true);
+
+    // The blind toggle DELETED here — a client with a stale hidden list sent
+    // "hide" and got an un-hide, with a success either way.
+    expect(t.table.deleteMany).not.toHaveBeenCalled();
+    expect(t.table.create).not.toHaveBeenCalled();
+    expect(t.table.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('hidden=true with no engagement creates the Hide', async () => {
+    await hide(t.kind, true);
+
+    expect(t.table.create).toHaveBeenCalledTimes(1);
+  });
+
+  it(`hidden=false over a ${t.sibling} removes no row at all`, async () => {
+    t.table.findUnique.mockResolvedValue({ type: t.sibling });
+
+    await hide(t.kind, false);
+
+    // Scoped to Hide, so an un-hide cannot take the sibling type with it — and
+    // `deleteMany` on a non-matching row is a no-op rather than a P2025.
+    expect(t.table.deleteMany).toHaveBeenCalledWith({ where: { ...t.scoped, type: 'Hide' } });
+    expect(t.table.updateMany).not.toHaveBeenCalled();
+    expect(t.table.create).not.toHaveBeenCalled();
+  });
 });
 
 // The tag toggle is the one that disagreed with itself: the `hidden === false` branch

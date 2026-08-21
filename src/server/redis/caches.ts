@@ -1639,10 +1639,21 @@ export async function setUserFollowCached({
   following: boolean;
 }) {
   const updated = await userFollowsCache.update(userId, (current) => {
-    const follows = new Set(current.follows);
-    if (following) follows.add(targetUserId);
-    else follows.delete(targetUserId);
-    return { ...current, follows: [...follows] };
+    // `indexOf` rather than a Set round trip. This runs on the single Next.js thread
+    // for the whole toggle, and the tail user's follow set is 130k elements: measured
+    // 13.9 ms to rebuild through a Set against 1.3 ms here, on a payload that costs
+    // 3.8 ms to decode and re-encode. The PK (userId, targetUserId) already makes the
+    // array duplicate-free, so the Set was buying nothing.
+    const at = current.follows.indexOf(targetUserId);
+    if (following) {
+      if (at !== -1) return current;
+      return { ...current, follows: [...current.follows, targetUserId] };
+    }
+    if (at === -1) return current;
+    return {
+      ...current,
+      follows: [...current.follows.slice(0, at), ...current.follows.slice(at + 1)],
+    };
   });
 
   if (!updated) await userFollowsCache.refresh(userId);

@@ -173,9 +173,15 @@ describe('toggleModelVersionEngagement', () => {
 
       await toggleModelVersionEngagement({ userId: 1, versionId: 2, type: 'Notify' as any });
 
+      // The EXACT where, not `objectContaining`: a loose matcher passes whether or
+      // not `type` is in the filter, which is the whole property under test.
       expect(mockDbWrite.modelVersionEngagement[branch]).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({ userId: 1, modelVersionId: 2 }),
+          where: {
+            userId: 1,
+            modelVersionId: 2,
+            type: branch === 'deleteMany' ? 'Notify' : 'Something',
+          },
         })
       );
       expect([

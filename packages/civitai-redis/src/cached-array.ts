@@ -59,7 +59,7 @@ type PackedClient = {
     set<T>(
       key: RedisKeyTemplateCache,
       value: T,
-      options?: { EX?: number; NX?: boolean }
+      options?: { EX?: number; NX?: boolean; KEEPTTL?: boolean }
     ): Promise<unknown>;
   };
   del(key: RedisKeyTemplateCache | RedisKeyTemplateCache[]): Promise<unknown>;
@@ -561,9 +561,18 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
      * missing entry would otherwise be repopulated by the next reader from the
      * REPLICA, which is the one thing a just-written value cannot tolerate.
      *
-     * `cachedAt` is carried over rather than reset, and the physical expiry is the
-     * remainder of the original: an entry maintained by deltas must still age out on
-     * its own schedule, or a drifted one never self-heals.
+     * `cachedAt` is carried over rather than reset, and the entry keeps its own
+     * expiry via `KEEPTTL`: an entry maintained by deltas must still age out on its
+     * own schedule, or a drifted one never self-heals.
+     *
+     * ⚠️ ONE caller today — `userFollowsCache`, which is non-SWR. Two things a second
+     * caller has to weigh. A plain cache-MISS refill takes no lock, so this serialises
+     * `update` against `update` only; a refill that started before a delta can still
+     * land on top of it. And the DB write happens outside the lock, so two mutations
+     * of the same entry can reach Redis in the opposite order to their commits and
+     * leave the entry WRONG rather than stale — where `refresh` re-read the origin and
+     * therefore converged. Both are bounded by the entry's TTL, neither self-heals
+     * sooner.
      */
     async function update(id: number, updater: (current: T) => T): Promise<boolean> {
       const entryKey = `${key}:${id}` as RedisKeyTemplateCache;
@@ -584,14 +593,14 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
         const marker = current as AnyRecord | null;
         if (!current || marker?.notFound || marker?.debounce || !marker?.cachedAt) return false;
 
-        const EX =
-          resolveCacheExpiry(ttl, staleWhileRevalidate, staleWhileRevalidateTtl) -
-          Math.floor((Date.now() - new Date(marker.cachedAt).getTime()) / 1000);
-        if (EX <= 0) return false;
-
         const next = updater(current);
         if (dontCacheFn?.(next)) return false;
-        await redis.packed.set(entryKey, { ...next, cachedAt: marker.cachedAt }, { EX });
+        // KEEPTTL rather than a recomputed EX. Deriving the remainder from `cachedAt`
+        // assumes the entry was written with a full expiry at that instant, and
+        // `invalidate` deliberately breaks that: it writes a BACKDATED `cachedAt` with
+        // a full EX, so the arithmetic would shrink a live entry to about
+        // `debounceTime`. Redis already holds the real remainder.
+        await redis.packed.set(entryKey, { ...next, cachedAt: marker.cachedAt }, { KEEPTTL: true });
         // After the write, not before: a concurrent fetch between the two would
         // otherwise refill L1 with the pre-update value and pin it for localTtl.
         dropLocal([id]);

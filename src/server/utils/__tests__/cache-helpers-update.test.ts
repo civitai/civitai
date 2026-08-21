@@ -7,11 +7,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * per mutation — 19,224 buffers and ~100 ms for the tail user of `userFollowsCache`,
  * measured on prod (868kurkd0).
  *
- * The two properties that make it safe are asserted here rather than at the call
- * site: it never invents an entry that was not already cached (a caller relies on
- * `false` to fall back to the refetch), and it does not extend the entry's life — an
- * entry maintained by deltas has to age out on its original schedule or a drifted
- * one never self-heals.
+ * The properties that make it safe are asserted here rather than at the call site: it
+ * never invents an entry that was not already cached (a caller relies on `false` to
+ * fall back to the refetch), it does not extend the entry's life, and it takes a lock
+ * whose key is the entry's own — a lock on the wrong key silently reverts the whole
+ * perf claim, because the NX would fail against the live entry and every caller would
+ * take the fallback with nothing red.
  */
 
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
@@ -35,18 +36,20 @@ const delMock = redisMock.redis.del;
 type Row = { id: number; members: number[] };
 
 const KEY = 'packed:caches:test-update';
+const ENTRY_KEY = `${KEY}:1`;
+const LOCK_KEY = `cache-lock:${KEY}:1:update`;
 const TTL = 60;
 
 const lookupFn = vi.fn(async () => ({} as Record<string, Row>));
 
-const makeCache = (dontCacheFn?: (data: Row) => boolean) =>
+const makeCache = (opts: { dontCacheFn?: (data: Row) => boolean; localTtl?: number } = {}) =>
   createCachedObject<Row>({
     key: KEY as never,
     idKey: 'id',
     ttl: TTL,
     staleWhileRevalidate: false,
     lookupFn,
-    dontCacheFn,
+    ...opts,
   });
 
 // Tolerant of a missing `members` ON PURPOSE. An updater that throws on a marker
@@ -71,22 +74,39 @@ describe('createCachedArray.update — the write-through path', () => {
     await expect(makeCache().update(1, addMember)).resolves.toBe(true);
 
     expect(lookupFn).not.toHaveBeenCalled();
+    // The entry's OWN key on both the read and the write. Reading `id + 1` while
+    // writing `id` would apply one user's delta to another user's cached set, and
+    // asserting only the write would not see it.
+    expect(mGetMock).toHaveBeenCalledWith([ENTRY_KEY]);
     const [key, value, options] = setMock.mock.calls[0];
-    expect(key).toBe(`${KEY}:1`);
+    expect(key).toBe(ENTRY_KEY);
     // `cachedAt` carried over, not reset: the entry stays as fresh as it was and no
     // fresher, so its revalidation clock is unchanged.
     expect(value).toEqual({ id: 1, members: [7, 9], cachedAt });
-    // The REMAINDER of the original expiry, not a full TTL. Resetting it here lets a
-    // delta-maintained entry live indefinitely, and a drift in the delta logic then
-    // never ages out.
-    expect((options as { EX: number }).EX).toBe(TTL - 10);
+    // KEEPTTL, never a recomputed EX. Redis holds the real remainder; deriving one
+    // from `cachedAt` assumes a full expiry was set at that instant, which
+    // `invalidate` deliberately breaks by writing a BACKDATED `cachedAt`.
+    expect(options).toEqual({ KEEPTTL: true });
+  });
+
+  it('locks the ENTRY, briefly', async () => {
+    mGetMock.mockResolvedValue([{ id: 1, members: [7], cachedAt: new Date() }]);
+
+    await makeCache().update(1, addMember);
+
+    // Lock the wrong key — the entry key, say — and the NX fails against the live
+    // entry, `update` returns false on EVERY call, and every caller silently falls
+    // back to the 19,224-buffer refetch this exists to replace. Nothing goes red.
+    // The TTL bounds one GET and one SET; an hour would wedge a user's toggles for an
+    // hour after a pod dies mid-update.
+    expect(setNxMock).toHaveBeenCalledWith(LOCK_KEY, '1', 5);
   });
 
   it.each([
     ['absent', undefined],
     ['a notFound marker', { id: 1, notFound: true, cachedAt: new Date() }],
     ['a debounce marker', { id: 1, debounce: true, cachedAt: new Date() }],
-    ['past its expiry', { id: 1, members: [7], cachedAt: new Date(Date.now() - TTL * 2000) }],
+    ['missing its cachedAt', { id: 1, members: [7] }],
   ])('reports false and writes nothing when the entry is %s', async (_label, entry) => {
     mGetMock.mockResolvedValue([entry]);
 
@@ -111,19 +131,37 @@ describe('createCachedArray.update — the write-through path', () => {
   it('honours dontCacheFn against the UPDATED value', async () => {
     mGetMock.mockResolvedValue([{ id: 1, members: [7], cachedAt: new Date() }]);
 
-    await expect(makeCache((data) => data.members.includes(9)).update(1, addMember)).resolves.toBe(
-      false
-    );
+    await expect(
+      makeCache({ dontCacheFn: (data) => data.members.includes(9) }).update(1, addMember)
+    ).resolves.toBe(false);
 
     expect(setMock).not.toHaveBeenCalled();
   });
 
-  it('releases the lock on every exit, including a failure', async () => {
-    const lockKey = `cache-lock:${KEY}:1:update`;
+  it('drops the per-pod L1 copy AFTER the write, so a later read sees the delta', async () => {
+    const cache = makeCache({ localTtl: 30 });
+    const cachedAt = new Date();
+    // A FRESH object per call. `fetch` strips `cachedAt` from the record it is
+    // handed, in place — so a shared `mockResolvedValue` reference would leave the
+    // next reader looking at an entry with no `cachedAt`, which `update` correctly
+    // refuses. That is a fixture artifact, and it would read as the guard misfiring.
+    mGetMock.mockImplementation(async () => [{ id: 1, members: [7], cachedAt }]);
 
+    await cache.fetch(1); // populates L1 with members [7]
+    await expect(cache.update(1, addMember)).resolves.toBe(true);
+
+    mGetMock.mockImplementation(async () => [{ id: 1, members: [7, 9], cachedAt }]);
+    await expect(cache.fetch(1)).resolves.toEqual({ '1': { id: 1, members: [7, 9] } });
+    // Without the drop this pod keeps serving its pre-update copy for localTtl, on
+    // the very pod that just processed the mutation. Dropping BEFORE the write is the
+    // other half: a concurrent fetch in that window refills L1 from the stale value
+    // and pins it — which this cannot see, so the ordering is stated in the source.
+  });
+
+  it('releases the lock on every exit, including a failure', async () => {
     mGetMock.mockResolvedValue([{ id: 1, members: [7], cachedAt: new Date() }]);
     await makeCache().update(1, addMember);
-    expect(delMock).toHaveBeenCalledWith(lockKey);
+    expect(delMock).toHaveBeenCalledWith(LOCK_KEY);
 
     delMock.mockClear();
     mGetMock.mockRejectedValue(new Error('cluster down'));
@@ -131,6 +169,6 @@ describe('createCachedArray.update — the write-through path', () => {
     await expect(makeCache().update(1, addMember)).resolves.toBe(false);
     // Without this a wedged read leaves the lock standing for its whole TTL, and
     // every following toggle for that user takes the slow fallback.
-    expect(delMock).toHaveBeenCalledWith(lockKey);
+    expect(delMock).toHaveBeenCalledWith(LOCK_KEY);
   });
 });

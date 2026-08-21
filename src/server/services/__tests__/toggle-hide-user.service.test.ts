@@ -279,9 +279,13 @@ describe('toggleHidden kind=user — reports the outcome the client must trust',
 // only from a controller handler registered on no router. It is gone: a second live
 // writer on this table is the defect family PR #4230 exists to close, and the
 // divergence it accumulated (a missing HiddenUsers invalidation) accumulated
-// precisely because no call path exercised it. Its branch coverage was not deleted —
-// every case it pinned is asserted above against `toggleHidden({ kind: 'user' })`,
-// the writer the product actually reaches, except the one below which it alone had.
+// precisely because no call path exercised it.
+//
+// Every WRITE-SHAPE case its describe pinned is asserted above against
+// `toggleHidden({ kind: 'user' })`, the writer the product actually reaches. What went
+// with it is the REPORT-honesty half — three cases asserting the boolean it returned —
+// because the only thing that read that boolean was the deleted handler's Hide/Delete
+// tracking split. Dead behaviour leaving with its consumer, not coverage dropped.
 
 describe('toggleFollowUser — scoped writes', () => {
   it('unfollowing deletes the Follow row, not whatever occupies the pair', async () => {
@@ -522,17 +526,20 @@ describe('the follow set is maintained by delta, not refetched', () => {
     expect(applied(update, [])).toEqual({ userId, follows: [targetUserId] });
   });
 
-  it('a follow that lost the row to a Block REMOVES rather than adds', async () => {
-    // `updateMany` matching nothing means the Hide is gone — replaced by a Block —
-    // so no follow was established. Adding the id here is the cache half of the
-    // 868kumcfc lie: the user is told they follow someone they do not.
+  it('a follow whose Hide vanished re-derives instead of guessing', async () => {
+    // `updateMany` matching nothing means the Hide is gone and no follow was
+    // established here — but it does NOT mean "not following": a second concurrent
+    // toggle may have won this same statement and made the pair a Follow. Writing
+    // `false` there is a WRONG entry standing for the day-long TTL, where the
+    // refetch merely costs.
     engagement.findUnique.mockResolvedValue({ type: 'Hide' });
     engagement.updateMany.mockResolvedValue({ count: 0 });
-    const { update } = spies();
+    const { update, refresh } = spies();
 
     await expect(toggleFollowUser({ userId, targetUserId })).resolves.toBe(false);
 
-    expect(applied(update, [targetUserId, 7])).toEqual({ userId, follows: [7] });
+    expect(update).not.toHaveBeenCalled();
+    expect(refresh).toHaveBeenCalledWith(userId);
   });
 
   it('a create that lost the PK to a Block REMOVES rather than adds', async () => {

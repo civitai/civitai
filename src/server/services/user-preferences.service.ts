@@ -655,22 +655,20 @@ async function toggleHideModel({
     select: { type: true },
   });
   // `setTo` carries the caller's INTENT; fall back to flipping only when none was
-  // supplied, which is what every in-app caller does today. Without it, an explicit
-  // un-hide of a model with no row CREATED one, and an explicit hide of an
-  // already-hidden model deleted it — both the inverse of what was asked.
+  // supplied. `toggleHidden` used to drop it on the floor for this kind, so asking to
+  // UN-hide a model with no row created a Hide — the same dropped-intent shape as
+  // 868kun67j, which was fixed for users only.
   const hiding = setTo ?? engagement?.type !== 'Hide';
 
-  // Every write below is scoped by the `type` the row was READ as, never by the PK
-  // alone. `ModelEngagement` holds one row per (user, model) carrying one of
-  // Favorite | Hide | Mute | Notify, so a PK-addressed write lands on whatever
-  // occupies the row — including a type a sibling writer established a millisecond
-  // ago, which is then gone. Unlike `UserEngagement` these four have no precedence
-  // order, so the guard is the type this call actually observed: a writer can only
-  // replace what it saw.
-  if (!hiding) {
-    if (engagement?.type === 'Hide')
-      await dbWrite.modelEngagement.deleteMany({ where: { userId, modelId, type: 'Hide' } });
-  } else if (!engagement)
+  // Scoped by the `type` the row was READ as, never by the PK alone. `ModelEngagement`
+  // holds one row per (user, model) carrying one of Favorite | Hide | Mute | Notify,
+  // so a PK-addressed write lands on whatever occupies the row — including a type a
+  // sibling writer established a millisecond ago, which is then gone. Unlike
+  // `UserEngagement` these four have no precedence order, so the guard is the type
+  // this call actually observed: a writer can only replace what it saw.
+  if (!hiding)
+    await dbWrite.modelEngagement.deleteMany({ where: { userId, modelId, type: 'Hide' } });
+  else if (!engagement)
     await dbWrite.modelEngagement
       .create({ data: { userId, modelId, type: 'Hide' } })
       // Toggle racing itself → P2002 on the (userId, modelId) PK. The Hide row
@@ -715,12 +713,11 @@ async function toggleHideModel3D({
   });
   const hiding = setTo ?? engagement?.type !== 'Hide';
 
-  if (!hiding) {
-    if (engagement?.type === 'Hide')
-      await dbWrite.model3DEngagement.deleteMany({
-        where: { userId, model3dId, type: 'Hide' },
-      });
-  } else if (!engagement)
+  if (!hiding)
+    await dbWrite.model3DEngagement.deleteMany({
+      where: { userId, model3dId, type: 'Hide' },
+    });
+  else if (!engagement)
     await dbWrite.model3DEngagement
       .create({ data: { userId, model3dId, type: 'Hide' } })
       // Toggle racing itself → P2002 on the (userId, model3dId) PK. Idempotent
@@ -884,6 +881,7 @@ async function toggleBlockUser({
   // resolved in the statement). `deleteMany` cannot raise P2025 on an
   // already-removed row, and its `type` filter makes "never delete a Follow or
   // a Hide" structural rather than a branch condition.
+  let blocked = true;
   if (blocking) {
     await dbWrite.userEngagement
       .upsert({
@@ -902,9 +900,14 @@ async function toggleBlockUser({
       // on an unverified premise.
       .catch((error) => {
         if (!isPrismaUniqueViolation(error)) throw error;
+        // The Block did NOT land, so the pair can still hold a Follow. The comment
+        // above says this catch is almost certainly dead — it exists so that nothing
+        // DEPENDS on that inference, and a follow assertion made here would.
+        blocked = false;
       });
     // The pair carries a Block now, so it carries no Follow.
-    await setUserFollowCached({ userId, targetUserId, following: false });
+    if (blocked) await setUserFollowCached({ userId, targetUserId, following: false });
+    else await userFollowsCache.refresh(userId);
   } else {
     const removed = await clearUserEngagement({
       userId,
@@ -949,12 +952,11 @@ async function toggleHideImage({
 
   // Same shape as `toggleHideModel`: scoped by the type read, so un-hiding cannot
   // delete a Favorite and hiding cannot overwrite one it never saw.
-  if (!hiding) {
-    if (engagement?.type === 'Hide')
-      await dbWrite.imageEngagement.deleteMany({
-        where: { userId, imageId, type: 'Hide' },
-      });
-  } else if (!engagement)
+  if (!hiding)
+    await dbWrite.imageEngagement.deleteMany({
+      where: { userId, imageId, type: 'Hide' },
+    });
+  else if (!engagement)
     await dbWrite.imageEngagement
       .create({ data: { userId, imageId, type: 'Hide' } })
       // Toggle racing itself → P2002 on the (userId, imageId) PK. Idempotent

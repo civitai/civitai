@@ -924,7 +924,13 @@ export const toggleFollowUser = async ({
         where: { userId, targetUserId, type: UserEngagementType.Hide },
         data: { type: UserEngagementType.Follow },
       });
-      await setUserFollowCached({ userId, targetUserId, following: count > 0 });
+      // Matching nothing does NOT mean "not following". The Hide this call read is
+      // gone, and one of the things that can hold the pair instead is a Follow — a
+      // second concurrent toggle that won this same `updateMany`. Asserting `false`
+      // there writes a WRONG entry that stands for the rest of the day-long TTL,
+      // where the refetch merely costs.
+      if (count) await setUserFollowCached({ userId, targetUserId, following: true });
+      else await userFollowsCache.refresh(userId);
       // This branch REMOVES a Hide, and `HiddenUsers` is keyed on `type = 'Hide'`.
       // Without this the target stays hidden from the feed of the user who just
       // followed them, until the hash TTL expires.
@@ -1076,10 +1082,18 @@ export const deleteUser = async ({ id, username, removeModels, removeImages }: D
     // Two OR elements, not one carrying two fields — that is a single ANDed
     // predicate (`userId = X AND targetUserId = X`), which matches only a
     // self-engagement row and so deleted nothing. `deleteUser` soft-deletes the User
-    // row, so no FK cascade covers for it: every follow, hide and block of a deleted
-    // account survived and kept being counted by `getUserList`.
+    // row, so no FK cascade covers for it: every follow and hide of a deleted account
+    // survived and kept being counted by `getUserList`.
+    //
+    // Blocks are EXEMPT, in both directions. This delete is reversible — `restoreUser`
+    // brings the account back and restores nothing here — so clearing a Block would
+    // silently switch off a safety control that someone else set, with no event
+    // telling them. A Follow or a Hide is list noise; a Block is not.
     dbWrite.userEngagement.deleteMany({
-      where: { OR: [{ userId: user.id }, { targetUserId: user.id }] },
+      where: {
+        OR: [{ userId: user.id }, { targetUserId: user.id }],
+        type: { not: UserEngagementType.Block },
+      },
     }),
     dbWrite.user.update({
       where: { id: user.id },
@@ -1131,7 +1145,9 @@ export async function setLeaderboardEligibility({ id, setTo }: { id: number; set
  * Restore a soft-deleted user account (the inverse of deleteUser).
  *
  * deleteUser scrubs username, email, paddleCustomerId, image, profilePictureId from the User row
- * and sets deletedAt. It also hard-deletes Account / Session / UserEngagement rows and reassigns
+ * and sets deletedAt. It also hard-deletes Account / Session rows and every
+ * UserEngagement row the account appears in EXCEPT Blocks — those survive precisely so
+ * a restore cannot leave someone unblocked without telling them — and reassigns
  * the user's Models to userId = -1.
  * We can only restore what survives the deletion: the User row's scrubbed fields (caller
  * supplies them) and the orphaned Model ownership (via ClickHouse audit).

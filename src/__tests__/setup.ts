@@ -259,6 +259,13 @@ vi.mock('~/server/logging/client', async (importOriginal) => ({
 }));
 
 // Mock session invalidation
+// `invalidateSession` is here rather than mocked per-file on purpose. The module was
+// already globally mocked with `refreshSession` alone, so every path reaching
+// `invalidateSession` — deleteUser, banUser, the moderation paths — died on
+// `No "invalidateSession" export is defined on the mock` rather than by anyone's
+// choice. The two alternatives are worse: `importOriginal` here pulls redis/client and
+// signal-client into every suite's graph (the CI-only failure mode CLAUDE.md warns
+// about), and a local hand-listed mock trips `no-wholesale-module-mock`.
 vi.mock('~/server/auth/session-invalidation', () => ({
   refreshSession: vi.fn().mockResolvedValue(undefined),
   invalidateSession: vi.fn().mockResolvedValue(undefined),
