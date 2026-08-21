@@ -339,3 +339,75 @@ export function duplicateGateFor({
 
   return refillFor(source.cosmeticId, ownedPricePerUse);
 }
+
+/**
+ * Which drafts on the image are covered by what the placer already has, and
+ * which still have to be bought.
+ *
+ * 🔴 AN ALLOCATION, NOT A SNAPSHOT — and that distinction is the bug Justin
+ * found by using it. The gate used to be decided when a draft was CREATED and
+ * written onto it: with one use left, the first draft was free to place and the
+ * second arrived asking to be bought. Delete the first, and the second kept
+ * asking, because the fact that stopped it was frozen into it. The use it was
+ * waiting for had been handed back and nothing reassigned it.
+ *
+ * So entitlement belongs to the SET of drafts, recomputed whenever it changes:
+ * `remaining` uses cover the first `remaining` drafts of that sticker in the
+ * order they were laid down, and every later one needs a top-up. Remove a
+ * covered draft and the next one moves up into the use it left behind.
+ *
+ * The same rule decides the free placement, and for the same reason: a free
+ * placement is once per image, so exactly ONE draft can be the free one. Showing
+ * "free" on all of them is an offer three of them cannot keep — and the free one
+ * has to move too when the draft holding it is deleted.
+ *
+ * Creation order rather than selection or position: it is the only order that
+ * does not change under the placer's hands, so a sticker does not lose its use
+ * because another one was dragged.
+ */
+export type DraftEntitlement = {
+  /** This draft is covered by a use the placer already owns. */
+  covered: boolean;
+  /** This is the one draft that may take the free placement, if one is on offer. */
+  free: boolean;
+};
+
+export function allocateDraftEntitlements({
+  drafts,
+  balances,
+  freeAvailable,
+}: {
+  /** In creation order — the store appends, so `drafts` already is. */
+  drafts: { id: string; cosmeticId: number; purchase?: DraftPurchase }[];
+  balances: { cosmeticId: number; remaining: number | null }[] | undefined;
+  freeAvailable: boolean;
+}): Map<string, DraftEntitlement> {
+  const seen = new Map<number, number>();
+  const result = new Map<string, DraftEntitlement>();
+
+  // The free placement goes to the first draft that could actually take it. A
+  // draft of a sticker the placer does not own yet cannot: it has to be bought
+  // before it can be placed at all, and buying it is not what "free" means here.
+  const freeDraft = freeAvailable
+    ? drafts.find((draft) => !draft.purchase?.pack || draft.purchase.refill)?.id
+    : undefined;
+
+  for (const draft of drafts) {
+    const before = seen.get(draft.cosmeticId) ?? 0;
+    seen.set(draft.cosmeticId, before + 1);
+
+    const remaining = balances?.find((entry) => entry.cosmeticId === draft.cosmeticId)?.remaining;
+
+    // Unknown is not zero. No balances yet, or no holding for a sticker being
+    // bought outright, both mean this rule has nothing to say — the draft's own
+    // stored gate answers instead.
+    const covered =
+      balances === undefined || remaining === undefined
+        ? true
+        : remaining === null || before < remaining;
+
+    result.set(draft.id, { covered, free: draft.id === freeDraft });
+  }
+
+  return result;
+}

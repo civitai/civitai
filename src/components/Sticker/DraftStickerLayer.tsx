@@ -8,6 +8,7 @@ import {
   useImagePlacementSpace,
 } from '~/components/Sticker/placement.util';
 import {
+  allocateDraftEntitlements,
   duplicateGateFor,
   useOwnedSticker,
   useStickerCosmetics,
@@ -87,6 +88,20 @@ export function DraftStickerLayer() {
   const refillFor = useStickerRefill();
 
   const duplicateDraft = useStickerPlacementDraftStore((state) => state.duplicateDraft);
+
+  /**
+   * Who is covered and who is buying, recomputed from the whole set every time
+   * it changes.
+   *
+   * 🔴 THIS REPLACES A SNAPSHOT, AND THAT IS THE POINT. The gate used to be
+   * decided when a draft was created and written onto it — so with one use left,
+   * deleting the covered draft left the other one still asking to be bought for
+   * a use that had just been handed back. Entitlement belongs to the set.
+   */
+  const entitlements = useMemo(
+    () => allocateDraftEntitlements({ drafts, balances, freeAvailable: !!freeOffer }),
+    [drafts, balances, freeOffer]
+  );
 
   const onDuplicate = useCallback(
     (id: string) => {
@@ -285,11 +300,24 @@ export function DraftStickerLayer() {
             selected={draft.id === selectedDraftId}
             dressed={dressed}
             price={space?.price ?? 0}
-            freeOffer={freeOffer}
             ownerShare={space?.ownerShare}
             ownerUsername={space?.ownerUsername}
             onGesture={onGesture}
             onDuplicate={onDuplicate}
+            // The sticker-not-owned-yet gate belongs to the draft; the
+            // is-there-a-use-left gate belongs to the set and is decided above.
+            purchase={
+              draft.purchase ??
+              (entitlements.get(draft.id)?.covered
+                ? undefined
+                : refillFor(
+                    draft.cosmeticId,
+                    sticker.find((option) => option.id === draft.cosmeticId)?.pricePerUse
+                  ))
+            }
+            // Exactly one draft can take the free placement — it is once per
+            // image — so the offer goes to that one rather than to all of them.
+            freeOffer={entitlements.get(draft.id)?.free ? freeOffer : null}
           />
         );
       })}

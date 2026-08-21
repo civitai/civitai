@@ -51,7 +51,7 @@ import {
 import { numberWithCommas } from '~/utils/number-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import type { StickerDraft } from '~/store/sticker-placement-draft.store';
+import type { DraftPurchase, StickerDraft } from '~/store/sticker-placement-draft.store';
 import {
   pointerToSurfaceFraction,
   useStickerPlacementDraftStore,
@@ -119,6 +119,7 @@ export function DraftSticker({
   ownerUsername,
   onGesture,
   onDuplicate,
+  purchase,
 }: {
   draft: StickerDraft;
   art: ResolvedSticker;
@@ -142,6 +143,16 @@ export function DraftSticker({
    * component cannot.
    */
   onDuplicate?: (id: string) => string | null;
+  /**
+   * What this draft still has to buy, decided ACROSS the drafts on the image
+   * rather than frozen onto this one when it was created.
+   *
+   * The draft's own `purchase` is the sticker-not-owned-yet case, which is a
+   * fact about this draft. Whether an owned sticker's use is available is a fact
+   * about the whole set — delete a draft and its use goes to the next one — so
+   * the host recomputes it and passes it down.
+   */
+  purchase?: DraftPurchase;
 }) {
   const markPurchased = useStickerPlacementDraftStore((state) => state.markPurchased);
   const { purchaseShopItem, purchasingShopItem } = useMutateCosmeticShop();
@@ -158,7 +169,7 @@ export function DraftSticker({
   const buyUses = useBuyStickerUses();
 
   const buySticker = async () => {
-    const pack = draft.purchase?.pack;
+    const pack = purchase?.pack;
     if (!pack) return;
 
     try {
@@ -210,7 +221,7 @@ export function DraftSticker({
   // the shop's business, not this button's — the sticker is already arranged and
   // the next press after this one is Place.
   const buyOneUse = async () => {
-    const perUse = draft.purchase?.perUse;
+    const perUse = purchase?.perUse;
     if (perUse == null) return;
 
     try {
@@ -260,8 +271,8 @@ export function DraftSticker({
   // share of them is a claim about money that does not move. PR 3's accept
   // reward is the creator's side of a free placement and is not derived from
   // this split, so it does not belong in this sentence either.
-  const payout = draft.purchase
-    ? stickerPurchaseCopy(draft.purchase.creatorUsername)
+  const payout = purchase
+    ? stickerPurchaseCopy(purchase.creatorUsername)
     : placingFree
     ? null
     : payoutCopy(ownerShare, ownerUsername);
@@ -270,14 +281,14 @@ export function DraftSticker({
   // use: it is the cheaper of the two and exactly what placing this draft
   // spends, so the larger commitment is the one you have to ask for.
   const [buyMode, setBuyMode] = useState<'use' | 'pack'>('use');
-  const canBuyUse = draft.purchase?.perUse != null;
-  const canBuyPack = !!draft.purchase?.pack;
+  const canBuyUse = purchase?.perUse != null;
+  const canBuyPack = !!purchase?.pack;
   const offersBoth = canBuyUse && canBuyPack;
   // A first purchase has no per-use option at all — you cannot top up a sticker
   // you do not own — so the toggle's value only decides anything when both are
   // open.
   const effectiveMode = offersBoth ? buyMode : canBuyPack ? 'pack' : 'use';
-  const packUses = draft.purchase?.pack?.uses;
+  const packUses = purchase?.pack?.uses;
 
   // Local to the draft rather than in the store: it is written once, read once
   // at purchase, and putting it in the store would make every keystroke a
@@ -890,7 +901,7 @@ export function DraftSticker({
             deliberately does not. This is the last moment the placer can change
             their mind, and it is what makes auto-accept and review read as two
             different offers rather than a setting nobody can see. */}
-        {!draft.purchase && freeOffer && (
+        {!purchase && freeOffer && (
           <SegmentedControl
             size="xs"
             radius="xl"
@@ -903,23 +914,23 @@ export function DraftSticker({
           />
         )}
 
-        {draft.purchase && effectiveMode === 'pack' && draft.purchase.pack ? (
+        {purchase && effectiveMode === 'pack' && purchase.pack ? (
           <BuzzTransactionButton
             size="sm"
             style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
-            buzzAmount={draft.purchase.pack.unitAmount}
-            accountTypes={draft.purchase.pack.acceptsBlue ? ['blue', ...spendTypes] : spendTypes}
-            label={draft.purchase.refill ? 'Buy another pack' : 'Purchase sticker'}
+            buzzAmount={purchase.pack.unitAmount}
+            accountTypes={purchase.pack.acceptsBlue ? ['blue', ...spendTypes] : spendTypes}
+            label={purchase.refill ? 'Buy another pack' : 'Purchase sticker'}
             loading={purchasingShopItem}
             onPerformTransaction={buySticker}
           />
-        ) : draft.purchase ? (
+        ) : purchase ? (
           // Owned, and out of uses. One use, because one is what placing this
           // draft spends.
           <BuzzTransactionButton
             size="sm"
             style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
-            buzzAmount={draft.purchase.perUse ?? 0}
+            buzzAmount={purchase.perUse ?? 0}
             accountTypes={spendTypes}
             label="Buy a use"
             loading={buyUses.isPending}
@@ -927,7 +938,7 @@ export function DraftSticker({
             // charge, and the listing price is not a stand-in for one. Says so
             // rather than offering a button that cannot work.
             error={
-              draft.purchase.perUse == null
+              purchase.perUse == null
                 ? 'This sticker sells no extra uses, and it is not on sale right now'
                 : undefined
             }
@@ -981,7 +992,7 @@ export function DraftSticker({
         {/* The second payment, said before the first one is made. Someone who
             buys a sticker to put it here and then meets another price has been
             surprised with their own money. */}
-        {draft.purchase && (
+        {purchase && (
           <div className="flex items-center gap-1 rounded-full bg-black/80 px-2 py-0.5">
             <IconAlertTriangleFilled size={12} className="shrink-0 text-yellow-4" />
             <Text size="xs" c="gray.3" className="leading-tight">

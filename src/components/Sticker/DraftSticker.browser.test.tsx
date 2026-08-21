@@ -647,6 +647,10 @@ describe('the pack purchase key across one session', () => {
       <div style={{ position: 'relative', width: 380, height: 600 }}>
         <DraftSticker
           draft={gated}
+          // The gate is a prop now, decided across the drafts on the image
+          // rather than frozen onto one of them — so a test that wants a gated
+          // draft has to hand it over the same way the layer does.
+          purchase={gated.purchase}
           art={art}
           selected
           dressed={resolveTreatment({ treatment: 'none', surface: 'detail', isPending: false })}
