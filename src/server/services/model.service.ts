@@ -39,7 +39,11 @@ import {
 } from '~/server/meilisearch/client';
 import { modelMetrics } from '~/server/metrics';
 import { withSpan } from '~/server/utils/otel-helpers';
-import { diffEntityChanges, resolveActorRole } from '~/server/utils/entity-change-helpers';
+import {
+  diffEntityChanges,
+  resolveActorRole,
+  stableStringify,
+} from '~/server/utils/entity-change-helpers';
 import {
   dataForModelsCache,
   modelTagCache,
@@ -2302,6 +2306,10 @@ export async function setModelMinor({
   return result;
 }
 
+// Model columns the GenerationCoverage view reads. `poi` belongs to the same set but is left out
+// here because applyModelFlagSideEffects already busts the version caches when it moves.
+const coverageModelFields = ['allowCommercialUse', 'availability', 'type', 'uploadType'] as const;
+
 export const upsertModel = async (
   input: ModelUpsertInput & {
     userId: number;
@@ -2351,6 +2359,8 @@ export const upsertModel = async (
             allowCommercialUse: true,
             allowDerivatives: true,
             allowDifferentLicense: true,
+            type: true,
+            uploadType: true,
           },
         })
       : null;
@@ -2564,6 +2574,29 @@ export const upsertModel = async (
       after: result,
       tagsChanged: !!tagsOnModels,
     });
+
+    // GenerationCoverage is a view over these columns, but the orchestrator holds its own copy of
+    // each resource: without this, a creator who adds RentCivit is told the model is "not enabled
+    // for generation" until something else makes the orchestrator refetch. bustMvCache wraps
+    // bustOrchestratorModelCache plus the resource-data/data-for-model/search-index busts that read
+    // `covered` too. Never rejects — the write has already committed.
+    const coverageChanged = coverageModelFields.some(
+      (field) =>
+        data[field] !== undefined &&
+        stableStringify(data[field]) !== stableStringify(beforeUpdate[field])
+    );
+    if (coverageChanged) {
+      const versions = await dbWrite.modelVersion.findMany({
+        where: { modelId: result.id },
+        select: { id: true },
+      });
+      if (versions.length)
+        await bustMvCache(
+          versions.map((v) => v.id),
+          result.id,
+          userId
+        ).catch(() => undefined);
+    }
 
     if (showcaseCollectionChanged) {
       if (modelMeta?.showcaseCollectionId) {
