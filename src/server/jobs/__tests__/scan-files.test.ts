@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const { mockCreateModelFileScanRequest, mockModelFileScanSubmissionError, mockLimitConcurrency } =
   vi.hoisted(() => {
@@ -44,6 +44,21 @@ const mockLogToAxiom = loggingMock.logToAxiom;
 
 const ctx = {} as Parameters<typeof scanFilesFallbackJob.run>[0];
 
+// Fixed clock so the backoff timestamp can be pinned as a LITERAL rather than
+// recomputed with the same dayjs expression the implementation uses.
+// Deliberately not on a round minute/second: the expected backoff instant must
+// not coincide with `now`, with `now - 1 day`, or with any round value a
+// hardcoding mutant might produce.
+const FIXED_NOW = new Date('2026-03-05T12:07:13.000Z');
+
+// FIXED_NOW - 1 day + 30 min. Written out literally, NOT derived from dayjs.
+const EXPECTED_BACKOFF_AT = new Date('2026-03-04T12:37:13.000Z');
+
+// Distinct from the 180s budget and from the 300s job lock, and strictly
+// between them: a mutant that confuses the budget with `lockExpiration` fails
+// to skip at this elapsed time, so it dies rather than surviving.
+const PAST_BUDGET_MS = 240_000;
+
 // createJob wraps the function so .run() returns { result, cancel }.
 // Await `.result` to get the actual return value of the inner async fn.
 async function runJob<T extends { run: (ctx: any) => { result: Promise<unknown> } }>(
@@ -53,6 +68,8 @@ async function runJob<T extends { run: (ctx: any) => { result: Promise<unknown> 
 }
 
 beforeEach(() => {
+  vi.useFakeTimers();
+  vi.setSystemTime(FIXED_NOW);
   // Reset call records but keep mockResolvedValue defaults set above.
   mockDbWrite.modelFile.findMany.mockReset().mockResolvedValue([]);
   mockDbWrite.modelFile.updateMany.mockReset().mockResolvedValue({ count: 0 });
@@ -61,6 +78,10 @@ beforeEach(() => {
   mockCreateModelFileScanRequest.mockReset();
   mockLogToAxiom.mockReset().mockResolvedValue(undefined);
   // limitConcurrency stays as our sequential runner — never reset
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe('scanFilesFallbackJob', () => {
@@ -114,23 +135,29 @@ describe('scanFilesFallbackJob', () => {
       baseModel: 'SD 1.5',
       priority: 'low',
     });
-    expect(result).toEqual({ submitted: 1, failed: 0 });
+    expect(result).toEqual({ submitted: 1, failed: 0, skipped: 0 });
   });
 
-  it('skips files with a null modelVersion (soft-deleted) and resets scanRequestedAt', async () => {
+  it('backs off files with a null modelVersion (soft-deleted) instead of resetting them', async () => {
     mockDbWrite.modelFile.findMany.mockResolvedValue([{ id: 99, modelVersion: null }]);
 
     const result = await runJob(scanFilesFallbackJob);
 
     expect(mockCreateModelFileScanRequest).not.toHaveBeenCalled();
+    // A soft-deleted ModelVersion never starts resolving again, so a null reset
+    // would re-pick this file every 5 minutes forever.
     expect(mockDbWrite.modelFile.update).toHaveBeenCalledWith({
+      where: { id: 99 },
+      data: { scanRequestedAt: EXPECTED_BACKOFF_AT },
+    });
+    expect(mockDbWrite.modelFile.update).not.toHaveBeenCalledWith({
       where: { id: 99 },
       data: { scanRequestedAt: null },
     });
-    expect(result).toEqual({ submitted: 0, failed: 1 });
+    expect(result).toEqual({ submitted: 0, failed: 1, skipped: 0 });
   });
 
-  it('on submission failure, resets scanRequestedAt and logs to Axiom', async () => {
+  it('on submission failure, backs off scanRequestedAt and logs to Axiom', async () => {
     mockDbWrite.modelFile.findMany.mockResolvedValue([
       {
         id: 5,
@@ -143,7 +170,7 @@ describe('scanFilesFallbackJob', () => {
 
     expect(mockDbWrite.modelFile.update).toHaveBeenCalledWith({
       where: { id: 5 },
-      data: { scanRequestedAt: null },
+      data: { scanRequestedAt: EXPECTED_BACKOFF_AT },
     });
     expect(mockLogToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -153,7 +180,7 @@ describe('scanFilesFallbackJob', () => {
       }),
       'webhooks'
     );
-    expect(result).toEqual({ submitted: 0, failed: 1 });
+    expect(result).toEqual({ submitted: 0, failed: 1, skipped: 0 });
   });
 
   it('on ModelFileScanSubmissionError code=not-found, tombstones via exists=false (no scanRequestedAt reset)', async () => {
@@ -179,11 +206,15 @@ describe('scanFilesFallbackJob', () => {
       where: { id: 7 },
       data: { exists: false },
     });
-    // And the scanRequestedAt-reset path does NOT fire — the file exits the
-    // scan poll permanently via the WHERE-clause `exists` filter.
+    // And neither retry path fires — the file exits the scan poll permanently
+    // via the WHERE-clause `exists` filter.
     expect(mockDbWrite.modelFile.update).not.toHaveBeenCalledWith({
       where: { id: 7 },
       data: { scanRequestedAt: null },
+    });
+    expect(mockDbWrite.modelFile.update).not.toHaveBeenCalledWith({
+      where: { id: 7 },
+      data: { scanRequestedAt: EXPECTED_BACKOFF_AT },
     });
     expect(mockLogToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -192,10 +223,10 @@ describe('scanFilesFallbackJob', () => {
       }),
       'webhooks'
     );
-    expect(result).toEqual({ submitted: 0, failed: 1 });
+    expect(result).toEqual({ submitted: 0, failed: 1, skipped: 0 });
   });
 
-  it('on ModelFileScanSubmissionError code=transient, resets scanRequestedAt (no tombstone)', async () => {
+  it('on ModelFileScanSubmissionError code=transient, backs off scanRequestedAt (no tombstone)', async () => {
     mockDbWrite.modelFile.findMany.mockResolvedValue([
       {
         id: 8,
@@ -214,7 +245,16 @@ describe('scanFilesFallbackJob', () => {
 
     expect(mockDbWrite.modelFile.update).toHaveBeenCalledWith({
       where: { id: 8 },
+      data: { scanRequestedAt: EXPECTED_BACKOFF_AT },
+    });
+    // Not `null` (retried every 5 min) and not `now` (hidden for 24h).
+    expect(mockDbWrite.modelFile.update).not.toHaveBeenCalledWith({
+      where: { id: 8 },
       data: { scanRequestedAt: null },
+    });
+    expect(mockDbWrite.modelFile.update).not.toHaveBeenCalledWith({
+      where: { id: 8 },
+      data: { scanRequestedAt: FIXED_NOW },
     });
     expect(mockDbWrite.modelFile.update).not.toHaveBeenCalledWith({
       where: { id: 8 },
@@ -227,7 +267,7 @@ describe('scanFilesFallbackJob', () => {
       }),
       'webhooks'
     );
-    expect(result).toEqual({ submitted: 0, failed: 1 });
+    expect(result).toEqual({ submitted: 0, failed: 1, skipped: 0 });
   });
 
   it('processes mixed batches: counts per-file successes and failures correctly', async () => {
@@ -248,6 +288,133 @@ describe('scanFilesFallbackJob', () => {
 
     const result = await runJob(scanFilesFallbackJob);
 
-    expect(result).toEqual({ submitted: 1, failed: 2 });
+    expect(result).toEqual({ submitted: 1, failed: 2, skipped: 0 });
+  });
+});
+
+describe('scanFilesFallbackJob fairness ordering', () => {
+  it('orders never-submitted files first via an explicit NULLS FIRST sort', async () => {
+    mockDbWrite.modelFile.findMany.mockResolvedValue([]);
+
+    await runJob(scanFilesFallbackJob);
+
+    // 🔴 The `{ sort, nulls }` object form is load-bearing. Postgres orders ASC
+    // with NULLS LAST by default, so the bare `'asc'` string would sort
+    // never-submitted files LAST — the exact inverse of what fairness needs.
+    // Asserted as a literal so replacing it with the bare form fails here.
+    expect(mockDbWrite.modelFile.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orderBy: [{ scanRequestedAt: { sort: 'asc', nulls: 'first' } }],
+      })
+    );
+  });
+
+  it('does not pass the bare asc form, which would sort nulls last', async () => {
+    mockDbWrite.modelFile.findMany.mockResolvedValue([]);
+
+    await runJob(scanFilesFallbackJob);
+
+    const [args] = mockDbWrite.modelFile.findMany.mock.calls[0];
+    expect(args.orderBy).not.toEqual([{ scanRequestedAt: 'asc' }]);
+    expect(args.orderBy).not.toEqual({ scanRequestedAt: 'asc' });
+  });
+});
+
+describe('scanFilesFallbackJob per-run budget', () => {
+  // Two files; the first submission burns PAST_BUDGET_MS of wall clock, so the
+  // second must be refused admission rather than started.
+  const twoFiles = [
+    {
+      id: 1,
+      modelVersion: { id: 10, baseModel: 'SD 1.5', model: { id: 100, type: 'Checkpoint' } },
+    },
+    {
+      id: 2,
+      modelVersion: { id: 20, baseModel: 'SDXL', model: { id: 200, type: 'LORA' } },
+    },
+  ];
+
+  it('stops starting new submissions once the run budget is spent', async () => {
+    mockDbWrite.modelFile.findMany.mockResolvedValue(twoFiles);
+    mockCreateModelFileScanRequest.mockImplementation(async () => {
+      vi.setSystemTime(new Date(FIXED_NOW.getTime() + PAST_BUDGET_MS));
+    });
+
+    const result = await runJob(scanFilesFallbackJob);
+
+    // File 1 was admitted; file 2 was not even attempted.
+    expect(mockCreateModelFileScanRequest).toHaveBeenCalledTimes(1);
+    expect(mockCreateModelFileScanRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ fileId: 1 })
+    );
+    expect(mockCreateModelFileScanRequest).not.toHaveBeenCalledWith(
+      expect.objectContaining({ fileId: 2 })
+    );
+    expect(result).toEqual({ submitted: 1, failed: 0, skipped: 1 });
+  });
+
+  it('releases a budget-skipped file with scanRequestedAt=null, not the retry backoff', async () => {
+    mockDbWrite.modelFile.findMany.mockResolvedValue(twoFiles);
+    mockCreateModelFileScanRequest.mockImplementation(async () => {
+      vi.setSystemTime(new Date(FIXED_NOW.getTime() + PAST_BUDGET_MS));
+    });
+
+    await runJob(scanFilesFallbackJob);
+
+    // It was never attempted, so it must be immediately eligible again — the
+    // backoff is for files that were tried and failed. The upfront updateMany
+    // already stamped it, so without this reset it hides for the 24h window.
+    expect(mockDbWrite.modelFile.update).toHaveBeenCalledWith({
+      where: { id: 2 },
+      data: { scanRequestedAt: null },
+    });
+    expect(mockDbWrite.modelFile.update).not.toHaveBeenCalledWith({
+      where: { id: 2 },
+      data: { scanRequestedAt: EXPECTED_BACKOFF_AT },
+    });
+  });
+
+  it('does not skip when the run stays inside the budget', async () => {
+    mockDbWrite.modelFile.findMany.mockResolvedValue(twoFiles);
+    // Well inside 180s, and a different magnitude from PAST_BUDGET_MS.
+    mockCreateModelFileScanRequest.mockImplementation(async () => {
+      vi.setSystemTime(new Date(FIXED_NOW.getTime() + 1_000));
+    });
+
+    const result = await runJob(scanFilesFallbackJob);
+
+    expect(mockCreateModelFileScanRequest).toHaveBeenCalledTimes(2);
+    expect(result).toEqual({ submitted: 2, failed: 0, skipped: 0 });
+  });
+
+  it('reports the truncated run to Axiom so the bound is observable', async () => {
+    mockDbWrite.modelFile.findMany.mockResolvedValue(twoFiles);
+    mockCreateModelFileScanRequest.mockImplementation(async () => {
+      vi.setSystemTime(new Date(FIXED_NOW.getTime() + PAST_BUDGET_MS));
+    });
+
+    await runJob(scanFilesFallbackJob);
+
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'warning',
+        name: 'scan-files-fallback',
+        skipped: 1,
+        submitted: 1,
+        failed: 0,
+        batchSize: 2,
+        runBudgetMs: 180_000,
+      }),
+      'webhooks'
+    );
+  });
+
+  it('emits no budget warning on a run that skips nothing', async () => {
+    mockDbWrite.modelFile.findMany.mockResolvedValue(twoFiles);
+    mockCreateModelFileScanRequest.mockResolvedValue(undefined);
+
+    await runJob(scanFilesFallbackJob);
+
+    expect(mockLogToAxiom).not.toHaveBeenCalled();
   });
 });
