@@ -33,7 +33,14 @@ type UnlockResult = {
  */
 export default WebhookEndpoint(async (req, res) => {
   try {
-    const { userIds: targetUserIds, force } = schema.parse(req.query);
+    // safeParse + 400, matching permission.ts: `schema.parse` throws into the catch below,
+    // which reports a rejected query param as a 500 server fault. `?force` as a bare flag
+    // (value '') is a rejected value now, so that path is reachable.
+    const parsed = schema.safeParse(req.query);
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'Invalid request', issues: parsed.error.issues });
+    }
+    const { userIds: targetUserIds, force } = parsed.data;
 
     if (targetUserIds.length === 0) {
       return res.status(400).json({ error: 'userIds is required' });

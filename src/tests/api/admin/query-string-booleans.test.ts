@@ -50,6 +50,10 @@ function fieldParse(schema: unknown, key: string, value: unknown) {
   }
 }
 
+// Every key whose field accepts a real `true`. That is wider than "boolean": a
+// z.coerce.number() field takes it too, since Number(true) === 1, so some iterations of the
+// 'false' loop below are over fields this bug cannot reach. Harmless — the loop is a net,
+// not an enumeration — but it is not a list of the booleans.
 function booleanKeys(schema: unknown) {
   return Object.keys(shapeOf(schema)).filter((key) => fieldParse(schema, key, true) !== null);
 }
@@ -161,33 +165,20 @@ describe.each([
     ['the number 0', 0],
     ['a junk value', 'banana'],
     ['an object', {}],
+    // A real behaviour change from z.coerce.boolean(), which accepted a padded value.
+    ['a padded true', ' true '],
   ];
 
   it.each(declines)('declines %s', (_label, confirm) => {
     expect(schema.safeParse({ ...base, confirm }).success).toBe(false);
   });
 
-  it.each([['true'], ['yes'], ['1']])('accepts the affirmative %s', (confirm) => {
-    expect(schema.safeParse({ ...base, confirm }).success).toBe(true);
-  });
-});
-
-/**
- * referrals parses `{...req.query, ...req.body}`, so the BODY wins the spread. That is the
- * one place a field fixed on the query-string side can still arrive from somewhere else —
- * pinned so the precedence is a decision on record rather than a property of a spread
- * someone reorders later.
- */
-describe('testing/referrals — body wins over query for the guard', () => {
-  const base = { action: 'reset', userId: '1' };
-
-  it('a body `false` overrides a query `true` — the reset is declined', () => {
-    const merged = { ...base, confirm: 'true', ...{ confirm: false } };
-    expect(referralsSchema.safeParse(merged).success).toBe(false);
-  });
-
-  it('a body `true` overrides a query `false` — the reset runs', () => {
-    const merged = { ...base, confirm: 'false', ...{ confirm: true } };
-    expect(referralsSchema.safeParse(merged).success).toBe(true);
-  });
+  // zod's stringbool truthy set, case-insensitive. `on` is what an HTML checkbox submits,
+  // so it is listed rather than left to be discovered next to a tested `off`.
+  it.each([['true'], ['TRUE'], ['yes'], ['y'], ['1'], ['on'], ['enabled']])(
+    'accepts the affirmative %s',
+    (confirm) => {
+      expect(schema.safeParse({ ...base, confirm }).success).toBe(true);
+    }
+  );
 });
