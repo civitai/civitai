@@ -7,6 +7,7 @@ import { useState } from 'react';
 import { FilterButton } from '~/components/Buttons/FilterButton';
 import classes from '~/components/Filters/FeedFilters/FeedFilters.module.scss';
 import { SortFilter } from '~/components/Filters/SortFilter';
+import type { MediaFilterKey } from '~/components/Image/Filters/MediaFiltersDropdown';
 import { MediaFiltersDropdown } from '~/components/Image/Filters/MediaFiltersDropdown';
 import { ImageSort } from '~/server/common/enums';
 import type { HubSort } from '~/server/schema/user-hub.schema';
@@ -14,6 +15,28 @@ import { hubFeedFiltersSchema, hubLimits, hubSortSchema } from '~/server/schema/
 import type { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+
+/**
+ * Controls the hub cannot keep. A hub's filters persist on the row, and the ones
+ * here are either per-session states (a hidden-images view, your own unpublished
+ * or scheduled posts) or moderation tooling — none of them describe the hub, so
+ * offering a control that forgets itself on reload is worse than not offering it.
+ *
+ * `hub-filter-parity.test.ts` asserts everything NOT listed here is persistable.
+ */
+export const hubExcludedFilterKeys: MediaFilterKey[] = [
+  'hidden',
+  'scheduled',
+  'notPublished',
+  'requiringMeta',
+  'includePG13',
+  'poiOnly',
+  'minorOnly',
+  'disablePoi',
+  'disableMinor',
+  'hideManualResources',
+  'hideAutoResources',
+];
 
 const HubSourcePanel = dynamic(
   () => import('~/components/Hubs/HubSourcePanel').then((m) => m.HubSourcePanel),
@@ -109,6 +132,7 @@ export function HubFeedFilters({ ...groupProps }: GroupProps) {
         filterType="images"
         isFeed
         size="compact-sm"
+        exclude={hubExcludedFilterKeys}
         query={{
           ...hub.filters,
           period: hub.period,
