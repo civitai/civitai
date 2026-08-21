@@ -30,6 +30,7 @@ vi.mock('~/server/services/system-cache', () => ({
   getCategoryTags: vi.fn(),
   getReplacedTagIds: vi.fn(),
   getSystemTags: vi.fn().mockResolvedValue([]),
+  clearFeedTagBarTagsCache: vi.fn(),
 }));
 vi.mock('~/server/services/tagsOnImageNew.service', () => ({ upsertTagsOnImageNew: vi.fn() }));
 vi.mock('~/server/services/user-preferences.service', () => ({

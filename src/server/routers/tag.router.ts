@@ -26,7 +26,8 @@ import {
   getVotableTagsSchema,
   removeTagVotesSchema,
 } from '~/server/schema/tag.schema';
-import { getTag } from '~/server/services/tag.service';
+import { FEED_TAG_BAR_EDGE_TAG, getTag } from '~/server/services/tag.service';
+import { getFeedTagBarTags } from '~/server/services/system-cache';
 import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
@@ -54,6 +55,12 @@ export const tagRouter = router({
       })
     )
     .query(getAllTagsHandler),
+  // No input: the chip set is server-owned (see feed-tag-bar.constants), which is
+  // what keeps this edge-cacheable for everyone and keeps a caller from widening it.
+  getFeedTagBar: publicProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .use(edgeCacheIt({ ttl: CacheTTL.hour, tags: () => [FEED_TAG_BAR_EDGE_TAG] }))
+    .query(() => getFeedTagBarTags()),
   getHomeExcluded: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .use(edgeCacheIt({ ttl: 24 * 60 * 60 }))

@@ -2094,6 +2094,7 @@ const REDIS_KEYS_UNPREFIXED = {
     TAGS_NEEDING_REVIEW: 'system:tags-needing-review',
     TAGS_BLOCKED: 'system:tags-blocked',
     HOME_EXCLUDED_TAGS: 'system:home-excluded-tags',
+    FEED_TAG_BAR_TAGS: 'system:feed-tag-bar-tags',
     BLOCKLIST: 'system:blocklist',
     PROMPT_ALLOWLIST: 'packed:system:prompt-allowlist',
     NOTIFICATION_COUNTS: 'system:notification-counts',
