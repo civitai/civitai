@@ -86,8 +86,14 @@ describe('AppEarningsPanelView', () => {
     test('the three messages are DISTINCT — no branch inherits another’s copy', () => {
       const messages = REASONS.map((r) => earningsUnavailableMessage(r));
       expect(new Set(messages).size).toBe(REASONS.length);
-      // …and the off-site one names the actual reason rather than an access refusal.
-      expect(earningsUnavailableMessage('unsupportedKind')).toMatch(/External apps/i);
+      // …and the standalone one names the actual reason rather than an access
+      // refusal. Pinned as the WHOLE string, not a keyword: the store's kind label was
+      // realigned on "Standalone" (it read "External apps" here while the store card
+      // beside it said "Standalone"), and a keyword guard is exactly what let those
+      // two surfaces drift apart in the first place.
+      expect(earningsUnavailableMessage('unsupportedKind')).toBe(
+        'Standalone apps don\u2019t earn Buzz through Civitai, so there are no earnings to show.'
+      );
       expect(earningsUnavailableMessage('notPermitted')).toMatch(/access/i);
     });
   });
