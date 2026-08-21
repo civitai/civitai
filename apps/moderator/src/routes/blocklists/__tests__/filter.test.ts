@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { visibleBlocklistItems } from '../blocklist';
+import { visibleBlocklistItems } from '../filter';
 
 // Alphabetical, so `zzz-late.example` sorts past any cap applied before the filter.
 const bigList = [
@@ -41,5 +41,24 @@ describe('visibleBlocklistItems', () => {
 
   it('treats a whitespace-only filter as no filter', () => {
     expect(visibleBlocklistItems(['a.example', 'b.example'], '   ', 10).matches).toHaveLength(2);
+  });
+  // The lists do not all enforce in the same direction: UsernamePartial and MessagePattern
+  // enforce `input.includes(entry)`, so the entry is a substring of what the moderator types.
+  it('finds the short entry that blocks a long value the moderator pastes', () => {
+    const list = ['scammer', 'unrelated'];
+    expect(visibleBlocklistItems(list, 'xXscammerXx', 10).matches).toEqual(['scammer']);
+  });
+
+  it('still finds a long entry from a short needle', () => {
+    const list = ['scammer', 'unrelated'];
+    expect(visibleBlocklistItems(list, 'scam', 10).matches).toEqual(['scammer']);
+  });
+
+  it('does not match an entry that is neither a substring nor a superstring', () => {
+    expect(visibleBlocklistItems(['scammer'], 'legitimate', 10).matches).toEqual([]);
+  });
+
+  it('matches bidirectionally without regard to case', () => {
+    expect(visibleBlocklistItems(['Scammer'], 'xXSCAMMERXx', 10).matches).toEqual(['Scammer']);
   });
 });

@@ -6,14 +6,11 @@
   import type { SubmitFunction } from '@sveltejs/kit';
   import { Tabs, TabsList, TabsTrigger } from '@civitai/ui/components/ui/tabs/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
-  import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import {
-    BLOCKLIST_TYPES,
-    BLOCKLIST_DESCRIPTIONS,
-    humanizeBlocklistType,
-    visibleBlocklistItems,
-  } from '$lib/blocklist';
+  import { badgeVariants } from '@civitai/ui/components/ui/badge/index.js';
+  import ListFilterBar from '$lib/components/ListFilterBar.svelte';
+  import { BLOCKLIST_TYPES, BLOCKLIST_DESCRIPTIONS, humanizeBlocklistType } from '$lib/blocklist';
+  import { visibleBlocklistItems } from './filter';
   import type { ActionData, PageData } from './$types';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
 
@@ -21,7 +18,8 @@
 
   let mode = $state<'add' | 'remove'>('add');
   let text = $state('');
-  let filter = $state('');
+  let filters = $state<Record<string, string>>({});
+  let removing = $state<string | null>(null);
 
   // EmailDomain is 8295 entries in production. Rendering the whole list is both unusable and
   // enough DOM to stall the tab, so the list is filtered first and then capped.
@@ -33,22 +31,27 @@
   const subject = $derived(page.url.search);
   $effect(() => {
     subject;
-    untrack(() => {
-      text = '';
-      mode = 'add';
-      filter = '';
-    });
+    untrack(resetForTab);
   });
 
-  const sortedItems = $derived([...data.blocklist.data].sort());
-  const shown = $derived(visibleBlocklistItems(sortedItems, filter, CHIP_LIMIT));
-  const matches = $derived(shown.matches);
-  const visibleItems = $derived(shown.visible);
+  function resetForTab() {
+    text = '';
+    mode = 'add';
+    filters = {};
+  }
 
   function setMode(next: 'add' | 'remove') {
     mode = next;
     text = '';
   }
+
+  // Duplicates are reachable: `upsertBlocklist` dedupes only on its update branch, so the first save
+  // of a type persists whatever was submitted. They would collide as `{#each}` keys, and each chip
+  // now carries a remove control identified by that same string.
+  const sortedItems = $derived(
+    [...new Set(data.blocklist.data)].sort((a, b) => a.localeCompare(b))
+  );
+  const shown = $derived(visibleBlocklistItems(sortedItems, filters.q ?? '', CHIP_LIMIT));
 
   const submit: SubmitFunction = () => async ({ result, update }) => {
     if (result.type === 'success') text = '';
@@ -56,17 +59,35 @@
   };
 
   // Deliberately does NOT clear `text`: a chip is its own form, so wiping the textarea would throw
-  // away a bulk edit the moderator is part-way through typing.
-  const submitChip: SubmitFunction = () => async ({ update }) => {
-    await update();
-  };
+  // away a bulk edit the moderator is part-way through typing. `removing` disables every chip for
+  // the duration, because two overlapping removals read-modify-write the same array and the later
+  // write restores what the earlier one dropped.
+  const submitChip =
+    (item: string): SubmitFunction =>
+    () => {
+      removing = item;
+      return async ({ update }) => {
+        await update();
+        removing = null;
+      };
+    };
 </script>
 
 <header class="page-header">
   <h1>Blocklists</h1>
 </header>
 
-<Tabs value={data.type} onValueChange={(v) => v && goto(`?type=${v}`)} class="mb-4">
+<Tabs
+  value={data.type}
+  onValueChange={(v) => {
+    if (!v) return;
+    // Reset here as well as in the effect: the effect runs after the DOM is written, so on a tab
+    // change the new type's entries would render against the old tab's filter for a frame.
+    resetForTab();
+    goto(`?type=${v}`);
+  }}
+  class="mb-4"
+>
   <TabsList>
     {#each BLOCKLIST_TYPES as t (t)}
       <TabsTrigger value={t}>{humanizeBlocklistType(t)}</TabsTrigger>
@@ -75,7 +96,7 @@
 </Tabs>
 
 {#if BLOCKLIST_DESCRIPTIONS[data.type]}
-  <p class="mb-4 max-w-xl text-sm text-muted-foreground">{BLOCKLIST_DESCRIPTIONS[data.type]}</p>
+  <p class="mb-4 max-w-xl text-sm text-dark-2">{BLOCKLIST_DESCRIPTIONS[data.type]}</p>
 {/if}
 
 {#if form?.error}
@@ -125,39 +146,48 @@
   </div>
 
   {#if sortedItems.length === 0}
-    <p class="text-sm text-muted-foreground">No items in this blocklist.</p>
+    <p class="text-sm text-dark-2">No items in this blocklist.</p>
   {:else}
     <div class="flex flex-col gap-2">
-      <span class="text-sm font-medium">{humanizeBlocklistType(data.type)} ({sortedItems.length})</span>
-      <Input bind:value={filter} placeholder="Filter entries" />
-      {#if matches.length === 0}
-        <p class="text-sm text-muted-foreground">No entry contains "{filter.trim()}".</p>
+      <span class="text-sm font-medium">{humanizeBlocklistType(data.type)}</span>
+      <ListFilterBar
+        fields={[{ kind: 'search', key: 'q', label: 'Filter entries' }]}
+        bind:values={filters}
+        matched={shown.matches.length}
+        total={sortedItems.length}
+      />
+      {#if shown.matches.length === 0}
+        <p class="text-sm text-dark-2">Nothing on this list matches "{(filters.q ?? '').trim()}".</p>
       {:else}
         <div class="flex flex-wrap gap-2">
-          {#each visibleItems as item (item)}
-            <span
-              class="flex items-center gap-1 rounded-md bg-muted py-1 pl-3 pr-1 text-xs font-medium text-muted-foreground ring-1 ring-inset ring-border"
+          {#each shown.visible as item (item)}
+            <form
+              method="POST"
+              action="?/remove"
+              use:enhance={submitChip(item)}
+              class="{badgeVariants({ variant: 'secondary' })} gap-1 py-1 pl-3 pr-1"
             >
+              <input type="hidden" name="id" value={data.blocklist.id} />
+              <input type="hidden" name="blocklist" value={item} />
               {item}
-              <form method="POST" action="?/remove" use:enhance={submitChip} class="flex">
-                <input type="hidden" name="id" value={data.blocklist.id} />
-                <input type="hidden" name="blocklist" value={item} />
-                <button
-                  type="submit"
-                  aria-label="Remove {item}"
-                  title="Remove {item}"
-                  class="rounded px-1 leading-none text-muted-foreground hover:bg-red-500/15 hover:text-red-300"
-                >
-                  &times;
-                </button>
-              </form>
-            </span>
+              <Button
+                type="submit"
+                variant="ghost"
+                size="icon"
+                class="size-4"
+                disabled={removing !== null}
+                aria-label="Remove {item}"
+                title="Remove {item}"
+              >
+                &times;
+              </Button>
+            </form>
           {/each}
         </div>
-        {#if matches.length > visibleItems.length}
-          <p class="text-xs text-muted-foreground">
-            Showing {visibleItems.length} of {matches.length} matches. Narrow the filter to reach the
-            rest.
+        {#if shown.matches.length > shown.visible.length}
+          <p class="text-xs text-dark-2">
+            Showing {shown.visible.length} of {shown.matches.length} matches. Narrow the filter to
+            reach the rest.
           </p>
         {/if}
       {/if}

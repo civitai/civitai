@@ -24,6 +24,11 @@ const PHRASE_GAP_RULE =
   ' happens the flag you see may name the phrase itself.';
 
 export const BLOCKLIST_DESCRIPTIONS: Partial<Record<BlocklistType, string>> = {
+  EmailDomain:
+    'Disposable-email domains blocked at signup. 🔴 A weekly job re-syncs this list from the' +
+    ' upstream disposable-email-domains project, and it re-adds anything it still carries. So' +
+    ' removing a domain that is on the upstream list holds until the next Sunday run and then' +
+    ' silently comes back. Removing one the upstream list does not carry is permanent.',
   PromptBenignPhrase:
     'Whole phrases in the positive prompt that innocently contain a minor/POI detection word (proper nouns, technical terms). Each phrase is blanked from the prompt before the scan audit runs, so it never false-flags an image for review. Enter the full phrase — e.g. "teen titans", "minor barrel distortion".' + PHRASE_GAP_RULE,
   NegativeBenignPhrase:
@@ -31,18 +36,3 @@ export const BLOCKLIST_DESCRIPTIONS: Partial<Record<BlocklistType, string>> = {
   ProfanityBenignWord:
     'Single words that innocently contain a profanity token — "spreadsheet" contains "spread", "cockpit" contains "cock". The whole word is exempted from the profanity filter. One word per entry, not a phrase. This list REPLACES the one shipped with the site (it was seeded from it), so removing an entry here really does remove it. Applies to search; the generation gate still uses the shipped list.',
 };
-
-/**
- * The visible slice of a blocklist, filtered then capped.
- *
- * 🔴 Order matters: `EmailDomain` is 8295 entries in production, so the cap exists to keep the
- * page renderable — but capping BEFORE the filter would search only the first `limit` entries
- * alphabetically, and a moderator searching for anything past that would be told it is not on
- * the list. The cap bounds what is drawn, never what is searched.
- */
-export function visibleBlocklistItems(items: string[], filter: string, limit: number) {
-  const needle = filter.trim().toLowerCase();
-  const matches =
-    needle.length === 0 ? items : items.filter((item) => item.toLowerCase().includes(needle));
-  return { matches, visible: matches.slice(0, limit) };
-}
