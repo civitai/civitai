@@ -65,8 +65,9 @@ vi.mock('~/env/server', () => ({
     WEBHOOK_TOKEN: 'wh-token',
     // Required because the delivery-worker mock above spreads the REAL module,
     // which transitively imports s3-utils — and s3-utils does `new URL(...)` on
-    // these at module load. Without them the whole suite fails to IMPORT, which
-    // vitest reports as "0 test" rather than as a failure.
+    // these at module load. Without them the whole suite fails to import
+    // (vitest reports `1 failed` and `Tests no tests` — loud, but the TEST count
+    // is zero, so read the count and not just the pass/fail line).
     S3_UPLOAD_ENDPOINT: 'https://abcd1234.r2.cloudflarestorage.com',
     S3_UPLOAD_B2_ENDPOINT: 'https://s3.us-west-004.backblazeb2.com',
     DELIVERY_WORKER_ENDPOINT: 'https://delivery.example.com/',
@@ -448,6 +449,9 @@ describe('createModelFileScanRequest', () => {
       expect(err).toBeInstanceOf(ModelFileScanSubmissionError);
       expect(err.code).toBe('transient');
       expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      // NB: this function never writes the tombstone itself — the CALLER does,
+      // keyed off `code`. So `code === 'transient'` above is the load-bearing
+      // assertion; this one only pins that no write leaked into this path.
       expect(mockDbWrite.modelFile.update).not.toHaveBeenCalled();
       expect(mockLogToAxiom).toHaveBeenCalledWith(
         expect.objectContaining({

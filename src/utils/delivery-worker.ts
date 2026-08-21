@@ -26,6 +26,18 @@ export type DownloadInfo = {
  */
 export class DeliveryWorkerError extends Error {
   readonly statusCode: number;
+  /**
+   * Set by `resolveDownloadUrl` when the storage resolver was consulted FIRST and
+   * also failed, so this delivery-worker error is the second of two answers.
+   *
+   * 🔴 Load-bearing for `isDefiniteNotFound`. The delivery worker is the legacy
+   * path keyed off `ModelFile.url`; a file whose bytes are registered only in
+   * `file_locations` is resolvable ONLY through the storage resolver. So when the
+   * resolver could not answer, a delivery-worker 404 does not mean the object is
+   * absent — it can equally mean "the only component that could have found it was
+   * down". Keeping the resolver's error here is what lets the two be told apart.
+   */
+  resolverError?: unknown;
   constructor(statusCode: number, statusText: string) {
     // Keep the historical "Delivery worker error: …" message so existing
     // callers/log-matchers that key off it are unaffected.
@@ -128,6 +140,14 @@ export async function getDownloadUrlByFileId(
 }
 
 /**
+ * Statuses that positively assert the object is not there. 410 is included for
+ * consistency with the download endpoint, which has always treated `404 || 410`
+ * as "the key doesn't resolve to a stored file" (`src/pages/api/download/[...key].ts`),
+ * and the delivery worker does return 410 in practice.
+ */
+const ABSENCE_STATUSES = new Set([404, 410]);
+
+/**
  * Did this resolution failure prove the file is not there, as opposed to proving
  * only that we could not ask?
  *
@@ -144,9 +164,24 @@ export async function getDownloadUrlByFileId(
  * likewise not proof of absence.
  */
 export function isDefiniteNotFound(err: unknown): boolean {
-  if (err instanceof DeliveryWorkerError || err instanceof StorageResolverError) {
-    return err.statusCode === 404;
+  if (err instanceof StorageResolverError) return ABSENCE_STATUSES.has(err.statusCode);
+
+  if (err instanceof DeliveryWorkerError) {
+    if (!ABSENCE_STATUSES.has(err.statusCode)) return false;
+    // The resolver was consulted first and also failed. Its answer decides: only
+    // the resolver can locate a file registered in `file_locations`, so unless IT
+    // reported absence, this 404 is "the legacy path can't see it", not "gone".
+    if (err.resolverError !== undefined) {
+      return (
+        err.resolverError instanceof StorageResolverError &&
+        ABSENCE_STATUSES.has(err.resolverError.statusCode)
+      );
+    }
+    // Resolver disabled, or it succeeded and the failure came later: the delivery
+    // worker was the only authority and it said not-there.
+    return true;
   }
+
   return false;
 }
 
@@ -167,13 +202,26 @@ export async function resolveDownloadUrl(
   fileName?: string
 ): Promise<DownloadInfo> {
   if (isStorageResolverEnabled()) {
+    let resolverError: unknown;
     try {
       return await getDownloadUrlByFileId(fileId, fileName);
-    } catch {
+    } catch (err) {
       // Fall back to delivery worker when the storage resolver doesn't have
       // this file (e.g. File table records like BountyEntry attachments that
-      // aren't synced to file_locations).
-      return getDownloadUrl(fileUrl, fileName);
+      // aren't synced to file_locations). The fallback must still happen on a
+      // resolver 404 — that is its whole purpose — so we cannot short-circuit
+      // here. But we must not DISCARD the resolver's answer either: keep it and
+      // attach it below, so a caller can tell "both said absent" from "the
+      // resolver was down and the legacy path simply can't see this file".
+      resolverError = err;
+    }
+    try {
+      return await getDownloadUrl(fileUrl, fileName);
+    } catch (deliveryWorkerError) {
+      if (deliveryWorkerError instanceof DeliveryWorkerError) {
+        deliveryWorkerError.resolverError = resolverError;
+      }
+      throw deliveryWorkerError;
     }
   }
   return getDownloadUrl(fileUrl, fileName);
