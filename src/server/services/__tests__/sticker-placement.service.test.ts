@@ -248,6 +248,7 @@ describe('every guard refuses the mutation rather than filtering a listing', () 
 
     await createStickerPlacement(placeInput);
 
+    expect(assertCanPlace).toHaveBeenCalledTimes(1);
     expect(assertCanPlace).toHaveBeenCalledWith({ ownerId: OWNER, placerId: PLACER });
   });
 

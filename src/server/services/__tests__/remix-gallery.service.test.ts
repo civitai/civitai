@@ -683,6 +683,7 @@ describe('submission refusals', () => {
   it('asks about the placer’s suspension, not the owner’s', async () => {
     await submit();
 
+    expect(assertCanPlace).toHaveBeenCalledTimes(1);
     expect(assertCanPlace).toHaveBeenCalledWith({ ownerId: OWNER, placerId: PLACER });
   });
 });

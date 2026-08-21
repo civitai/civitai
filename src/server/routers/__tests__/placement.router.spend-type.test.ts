@@ -29,39 +29,13 @@ vi.mock('~/server/services/remix-gallery.service', async (importOriginal) => ({
   createRemixGallerySubmission,
 }));
 
-import { placementRouter } from '~/server/routers/placement.router';
-import { OnboardingSteps } from '~/server/common/enums';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
-import { STICKER_PLACEMENT_MIN_SCALE } from '~/shared/utils/sticker-placement';
+import {
+  PLACER,
+  STICKER_DATA,
+  placementCaller,
+} from '~/server/routers/__tests__/placement.router.test-utils';
 
-const PLACER = 42;
-
-// Sized off the schema's own bound rather than a literal, so a future change to
-// the allowed range moves this with it instead of failing validation here.
-const STICKER_DATA = {
-  cosmeticId: 7,
-  x: 0.1,
-  y: 0.1,
-  scale: STICKER_PLACEMENT_MIN_SCALE,
-  rotation: 0,
-};
-
-const callerOn = (isGreen: boolean) =>
-  placementRouter.createCaller({
-    // `createSticker` / `submitToRemixGallery` are `guardedProcedure`, so the
-    // account state has to be present or every call here refuses before it
-    // reaches the currency this file is about.
-    user: {
-      id: PLACER,
-      isModerator: false,
-      muted: false,
-      bannedAt: null,
-      onboarding: OnboardingSteps.Buzz,
-    },
-    acceptableOrigin: true,
-    tokenScope: TokenScope.Full,
-    features: { isGreen, stickers: true, stickerPlacement: true, remixGallery: true },
-  } as never);
+const callerOn = (isGreen: boolean) => placementCaller({ features: { isGreen } });
 
 beforeEach(() => vi.clearAllMocks());
 

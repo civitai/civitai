@@ -22,6 +22,8 @@ const { createStickerPlacement, createRemixGallerySubmission } = vi.hoisted(() =
   createRemixGallerySubmission: vi.fn(async () => ({ id: 2 })),
 }));
 
+// Spread the real modules and override only the two writers: a hand-listed mock
+// would couple this test to every export the router happens to import today.
 vi.mock('~/server/services/sticker-placement.service', async (importOriginal) => ({
   ...(await importOriginal<typeof StickerPlacementService>()),
   createStickerPlacement,
@@ -32,27 +34,22 @@ vi.mock('~/server/services/remix-gallery.service', async (importOriginal) => ({
 }));
 
 import { placementRouter } from '~/server/routers/placement.router';
-import { OnboardingSteps } from '~/server/common/enums';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
-import { STICKER_PLACEMENT_MIN_SCALE } from '~/shared/utils/sticker-placement';
-
-const PLACER = 42;
-
-const STICKER_DATA = {
-  cosmeticId: 7,
-  x: 0.1,
-  y: 0.1,
-  scale: STICKER_PLACEMENT_MIN_SCALE,
-  rotation: 0,
-};
+import { guardedProcedure } from '~/server/trpc';
+import {
+  PLACER,
+  STICKER_DATA,
+  placementCaller,
+} from '~/server/routers/__tests__/placement.router.test-utils';
 
 /**
  * The two procedures that write a placement, each in both offers.
  *
- * `free` is its own case rather than a variant of the paid one because it
- * reaches a different service — `createFreePlacement` — so a guard applied to
- * the paid write alone would leave the free tier open with every paid case here
- * still green.
+ * The `free` cases are NOT a claim about the free service: both create services
+ * are replaced above, so `free: true` travels only as far as a mock argument and
+ * `createFreePlacement` is never entered. What they pin is that the guard sits
+ * above the paid/free branch rather than inside it — a refusal added to the paid
+ * write alone would leave these green. The free service's own guard is covered
+ * in `free-placement.service.test.ts`.
  */
 const CREATE_CALLS = [
   {
@@ -81,97 +78,58 @@ const CREATE_CALLS = [
   },
 ] as const;
 
-/**
- * Every other procedure on the router, listed so that ADDING one fails here.
- *
- * The point is not the names. A second placement-writing mutation added later
- * would be absent from `CREATE_CALLS`, exercised by nothing, and this file would
- * still report green about the two procedures it already knew — which is how a
- * hand-enumerated test misses a hand-enumeration bug. Whoever adds a procedure
- * has to say which side of the line it is on.
- */
-const NON_CREATE_PROCEDURES = [
-  'getSpace',
-  'getSpaceRow',
-  'clearSpace',
-  'getMySpaces',
-  'getPriceRange',
-  'setSpace',
-  'getFreeStanding',
-  'getStickerPlacements',
-  'getStickerPlacementDetail',
-  'getStickerPlacementCounts',
-  'getSettlementStates',
-  'actOnStickers',
-  'setStickerCommentHidden',
-  'isSuspended',
-  'suspendPlacer',
-  'removePlacement',
-  'restorePlacer',
-  'getPending',
-  'getMyStickerPlacements',
-  'countPendingFrom',
-  'getRemixGallery',
-  'getRemixGalleryVisibility',
-  'getRemixGalleryFreeEligibility',
-  'getPendingRemixGallerySubmissions',
-  'getMyRemixGallerySubmissions',
-  'retractRemixGallerySubmission',
-  'setRemixGalleryPins',
-  'actOnRemixGallerySubmission',
-  'declineOutOfBandRemixGallerySubmissions',
-];
+type ProcedureDef = { _def: { type: string; middlewares: unknown[] } };
 
-const procedureNames = Object.keys(
-  (placementRouter as unknown as { _def: { procedures: Record<string, unknown> } })._def.procedures
-);
+const procedures = (placementRouter as unknown as { _def: { procedures: Record<string, unknown> } })
+  ._def.procedures as Record<string, ProcedureDef>;
 
-type UserOverrides = {
-  muted?: boolean;
-  bannedAt?: Date | null;
-  onboarding?: number;
-};
+const guardedMiddlewares = (guardedProcedure as unknown as ProcedureDef)._def.middlewares;
 
-const callerAs = (overrides: UserOverrides = {}) =>
-  placementRouter.createCaller({
-    user: {
-      id: PLACER,
-      isModerator: false,
-      muted: false,
-      bannedAt: null,
-      // The finished wizard. `guardedProcedure` is `verifiedProcedure` plus the
-      // mute check, so an unset bit would refuse every call below for the wrong
-      // reason and the mute cases would pass with the mute doing nothing.
-      onboarding: OnboardingSteps.Buzz,
-      ...overrides,
-    },
-    acceptableOrigin: true,
-    tokenScope: TokenScope.Full,
-    features: { isGreen: false, stickers: true, stickerPlacement: true, remixGallery: true },
-  } as never) as unknown as Record<string, (input?: unknown) => Promise<unknown>>;
+/** Whether a procedure is built from `guardedProcedure` — its chain, not its name. */
+const isGuarded = (procedure: ProcedureDef) =>
+  guardedMiddlewares.every((middleware, index) => procedure._def.middlewares[index] === middleware);
 
+const mutationNames = Object.entries(procedures)
+  .filter(([, procedure]) => procedure._def.type === 'mutation')
+  .map(([name]) => name);
+
+// Each state names the middleware that refuses it. All three throw FORBIDDEN, so
+// the code alone cannot say which gate fired — and a call refused for the wrong
+// reason (an unset onboarding bit, say) would otherwise read as a working mute.
 const REFUSED_STATES = [
-  { state: 'muted', overrides: { muted: true } },
-  { state: 'banned', overrides: { bannedAt: new Date('2026-01-01') } },
+  { state: 'muted', user: { muted: true }, message: /restricted/i },
+  { state: 'banned', user: { bannedAt: new Date('2026-01-01') }, message: /banned/i },
 ] as const;
 
 beforeEach(() => vi.clearAllMocks());
 
 describe('placement router — account state refuses a placement', () => {
-  it('classifies every procedure the router exposes', () => {
-    expect(procedureNames.length).toBeGreaterThan(0);
+  /**
+   * The load-bearing case, and the one that does not lean on the caller tests
+   * below: exactly the two placement-writing mutations are built from
+   * `guardedProcedure`, read off each procedure's middleware chain.
+   *
+   * A list of names would have been silenced by pasting the new name into it,
+   * and would have churned on every unrelated query added to the router. This
+   * fails on what matters — a third create mutation added without the guard, or
+   * either of these two quietly reverted.
+   */
+  it('guards exactly the placement-writing mutations', () => {
+    expect(guardedMiddlewares.length).toBeGreaterThan(0);
+    expect(mutationNames.length).toBeGreaterThan(CREATE_CALLS.length);
 
-    const classified = [
-      ...new Set(CREATE_CALLS.map((call) => call.name)),
-      ...NON_CREATE_PROCEDURES,
-    ];
-    expect(procedureNames.slice().sort()).toEqual(classified.slice().sort());
+    const guarded = mutationNames.filter((name) => isGuarded(procedures[name]));
+
+    expect(guarded.sort()).toEqual([...new Set(CREATE_CALLS.map((call) => call.name))].sort());
   });
 
   for (const { label, name, writer, input } of CREATE_CALLS) {
-    for (const { state, overrides } of REFUSED_STATES) {
+    for (const { state, user, message } of REFUSED_STATES) {
       it(`refuses a ${state} user on ${label}`, async () => {
-        await expect(callerAs(overrides)[name](input)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+        await expect(placementCaller({ user })[name](input)).rejects.toMatchObject({
+          code: 'FORBIDDEN',
+          message: expect.stringMatching(message),
+        });
 
         // The half that matters. A refusal thrown after the service already ran
         // would be a message rather than a guard, and on the paid path the
@@ -184,8 +142,9 @@ describe('placement router — account state refuses a placement', () => {
     // for an account in none of those states — a broken input shape refuses
     // everywhere and reads as a working guard.
     it(`lets an ordinary user through on ${label}`, async () => {
-      await expect(callerAs()[name](input)).resolves.toBeDefined();
+      await expect(placementCaller()[name](input)).resolves.toBeDefined();
       expect(writer).toHaveBeenCalledTimes(1);
+      expect(writer).toHaveBeenCalledWith(expect.objectContaining({ placerId: PLACER }));
     });
   }
 
@@ -201,8 +160,11 @@ describe('placement router — account state refuses a placement', () => {
    */
   it('refuses a user who has not finished onboarding', async () => {
     await expect(
-      callerAs({ onboarding: 0 }).createSticker({ imageId: 99, data: STICKER_DATA })
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      placementCaller({ user: { onboarding: 0 } }).createSticker({
+        imageId: 99,
+        data: STICKER_DATA,
+      })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', message: expect.stringMatching(/onboarding/i) });
 
     expect(createStickerPlacement).not.toHaveBeenCalled();
   });
