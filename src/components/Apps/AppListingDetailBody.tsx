@@ -844,7 +844,13 @@ export function AppListingDetailBody({
   // nothing rendered, while this — the live path — mounted the modal with no
   // `onReported` and kept its menu item live. Spread BOTH bags; do not hand-roll
   // either half.
-  const canReview = useCanReviewListing({ ownerUserId: detail.creator?.id ?? null });
+  // `detail.kind` is threaded in so the affordance obeys the SAME store-scope kind
+  // rule the write gate applies — an external-only viewer is not offered a review
+  // control on an onsite listing the server would NOT_FOUND.
+  const canReview = useCanReviewListing({
+    ownerUserId: detail.creator?.id ?? null,
+    listingKind: detail.kind,
+  });
   const canReport = useCanReportListing();
   const report = useReportListingAffordance();
   const [reviewOpened, reviewModal] = useDisclosure(false);
@@ -974,9 +980,11 @@ export function AppListingDetailBody({
                       Edit
                     </Menu.Item>
                   )}
-                  {/* Review affordance (thumbs/recommend) — hidden for the owner + signed-out
-                      viewers by `useCanReviewListing`; the write proc is protected +
-                      flag-gated + self-review-blocked server-side. */}
+                  {/* Review affordance (thumbs/recommend) — hidden for the owner, signed-out
+                      viewers, AND viewers whose resolved store scope does not admit this
+                      listing's kind, all by `useCanReviewListing`. The write proc is
+                      protected + STORE-SCOPE-gated (not flag-gated — that spelling was the
+                      defect) + self-review-blocked server-side. */}
                   {canReview && (
                     <Menu.Item
                       leftSection={<IconThumbUp size={14} stroke={1.5} />}
