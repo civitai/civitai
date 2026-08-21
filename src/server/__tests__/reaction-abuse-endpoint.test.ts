@@ -2,11 +2,16 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as ModeratorService from '~/server/services/moderator.service';
 // The canonical mocks, installed globally by src/__tests__/setup.ts. `loggingMock.logToAxiom` is
-// asserted on directly — do NOT add a local `vi.mock('~/server/logging/client', …)`: that module has
-// 7 exports and a one-key replacement kills any path reaching a second one. `endpoint-helpers.ts`
-// (in this endpoint's own import graph) statically imports two of them; it is latent only because
-// WebhookEndpoint does not currently route through `handleEndpointError`. The same wholesale mock
-// broke nine route tests once already — see the 🔴 note in setup.ts.
+// asserted on directly — do NOT add a local mock of the logging client here. That module has 7
+// exports and a one-key replacement kills any path reaching a second one: `endpoint-helpers.ts`,
+// inside this endpoint's own import graph, statically imports two of them, latent only because
+// WebhookEndpoint does not currently route through `handleEndpointError`. It broke nine route tests
+// once already — see the 🔴 note in setup.ts.
+//
+// 🔴 That prohibition is written WITHOUT the literal call syntax on purpose. The guard enforcing it
+// (`no-direct-shared-module-mock.test.ts`, via the textual `mockPattern()` in
+// mocks/guarded-specifiers.ts) is a REGEX over the file, so it cannot tell a comment from code —
+// spelling the pattern out, even to forbid it, turns the guard red with no visible cause.
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import '~/__tests__/mocks/db.mock';
 

@@ -149,12 +149,17 @@ const schema = z
     // cross-app mod-action registry uses. Omitted by the scheduled poller, which is genuinely not a
     // person; supply it when a human runs `unexclude` so the reversal names them.
     //
-    // 🔴 `.nullish()`, not `.optional()`. `null` is the natural JSON for "no acting moderator", and
-    // under `.optional()` it is a ZodError — so the request 400s and THE EXCLUSION NEVER HAPPENS.
-    // An optional audit-attribution field must never be able to fail the write it annotates; an
-    // absent actor is exactly the sentinel case. `''` is folded in for the same reason (a shell
-    // recipe interpolating an unset variable), while a genuinely malformed value still 400s rather
-    // than silently landing a wrong id on a moderation record.
+    // 🔴 Preprocessed, not bare `.optional()`. `null` is the natural JSON for "no acting moderator",
+    // and under `.optional()` it is a ZodError — so the request 400s and THE EXCLUSION NEVER
+    // HAPPENS. An optional audit-attribution field must never be able to fail the write it
+    // annotates; an absent actor is exactly the sentinel case. `''` is folded in for the same reason
+    // (a shell recipe interpolating an unset variable) — and `.nullish()` alone would NOT have
+    // covered that one, which is why this is a preprocess rather than a looser modifier.
+    //
+    // What this does NOT do is make the field type-safe: `z.coerce` still turns `true` into 1 and
+    // `[7]` into 7, so a malformed actor can land a wrong-but-plausible id on a moderation row.
+    // Tolerated because the caller is trusted and token-gated; `0`, negatives and fractions are
+    // rejected outright.
     actorUserId: z.preprocess(
       (v) => (v === null || v === '' ? undefined : v),
       z.coerce.number().int().positive().optional()
