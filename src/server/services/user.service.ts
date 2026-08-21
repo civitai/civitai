@@ -89,7 +89,9 @@ import {
   BlockedByUsers,
   BlockedUsers,
   HiddenModels,
+  HiddenUsers,
 } from '~/server/services/user-preferences.service';
+import { clearUserEngagement, setUserEngagement } from '~/server/services/user-engagement';
 import { createCachedObject, fetchThroughCache } from '~/server/utils/cache-helpers';
 import { bustRatingTotalsCache } from '~/server/services/resourceReview.cache';
 import { getResourceReviewsByUserId } from '~/server/services/resourceReview.service';
@@ -913,9 +915,7 @@ export const toggleFollowUser = async ({
   // reporting success.
   if (engagement) {
     if (engagement.type === 'Follow') {
-      await dbWrite.userEngagement.deleteMany({
-        where: { userId, targetUserId, type: UserEngagementType.Follow },
-      });
+      await clearUserEngagement({ userId, targetUserId, type: UserEngagementType.Follow });
       await userFollowsCache.refresh(userId);
       return false;
     } else if (engagement.type === 'Hide') {
@@ -924,6 +924,10 @@ export const toggleFollowUser = async ({
         data: { type: UserEngagementType.Follow },
       });
       await userFollowsCache.refresh(userId);
+      // This branch REMOVES a Hide, and `HiddenUsers` is keyed on `type = 'Hide'`.
+      // Without this the target stays hidden from the feed of the user who just
+      // followed them, until the hash TTL expires.
+      await HiddenUsers.refreshCache({ userId });
       // Zero rows means the Hide is gone — replaced by a Block, most likely — so
       // no follow was established and saying otherwise would be a lie the caller
       // acts on (reward, notification, tracking event).
@@ -939,17 +943,27 @@ export const toggleFollowUser = async ({
       select: { user: { select: { username: true } } },
     })
     .catch((error) => {
-      // Toggle racing itself: the loser hits the (userId, targetUserId) unique
-      // constraint (P2002). The follow already exists — idempotent, so return
-      // null and fall through to the cache refresh. The racing winner already
-      // created the follow-notification (deduped by `key`), so we skip it here
-      // rather than bubble a 500.
+      // Something took the (userId, targetUserId) PK between the read and the
+      // insert. Which type it is decides the answer, so read it back below rather
+      // than bubble a 500.
       if (!isPrismaUniqueViolation(error)) throw error;
       return null;
     });
   await userFollowsCache.refresh(userId);
 
-  if (ret) {
+  if (!ret) {
+    const winner = await dbWrite.userEngagement.findUnique({
+      where: { userId_targetUserId: { userId, targetUserId } },
+      select: { type: true },
+    });
+    // Usually the toggle racing itself, and the winner already sent the
+    // follow-notification (deduped by `key`) — but the row can equally be a Block,
+    // which outranks a Follow. Returning true there tells the user they follow
+    // someone they do not, and pays a follow reward for it.
+    return winner?.type === UserEngagementType.Follow;
+  }
+
+  {
     const details: NotifDetailsFollowedBy = {
       username: ret.user.username,
       userId,
@@ -989,27 +1003,17 @@ export const toggleHideUser = async ({
   // Scoped by `type`, never by the PK alone: the row read above may already be a
   // Block, and an unqualified `delete`/`update` would destroy it while reporting
   // success.
-  if (hiding) {
-    const { count } = await dbWrite.userEngagement.updateMany({
-      where: { userId, targetUserId, type: { not: UserEngagementType.Block } },
-      data: { type: UserEngagementType.Hide },
+  if (hiding)
+    await setUserEngagement({
+      userId,
+      targetUserId,
+      type: UserEngagementType.Hide,
+      outrankedBy: [UserEngagementType.Block],
     });
-    if (!count)
-      await dbWrite.userEngagement
-        .create({ data: { type: UserEngagementType.Hide, targetUserId, userId } })
-        // Nothing to update: either no row (create it) or a Block arrived in
-        // between (P2002, and keeping it is the intended end state). Both leave
-        // the target hidden, so fall through to the cache refresh.
-        .catch((error) => {
-          if (!isPrismaUniqueViolation(error)) throw error;
-        });
-  } else {
-    await dbWrite.userEngagement.deleteMany({
-      where: { userId, targetUserId, type: UserEngagementType.Hide },
-    });
-  }
+  else await clearUserEngagement({ userId, targetUserId, type: UserEngagementType.Hide });
 
   await userFollowsCache.refresh(userId);
+  await HiddenUsers.refreshCache({ userId });
   return hiding;
 };
 

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { toggleHidden } from '~/server/services/user-preferences.service';
+import { HiddenUsers, toggleHidden } from '~/server/services/user-preferences.service';
 import { toggleFollowUser, toggleHideUser } from '~/server/services/user.service';
 
 const { Prisma } = await import('@prisma/client');
@@ -46,34 +46,49 @@ beforeEach(() => {
 describe('UserEngagement writers are all scoped by type', () => {
   const unqualified = () => [...engagement.delete.mock.calls, ...engagement.update.mock.calls];
 
-  it('toggleHidden kind=user never issues a PK-addressed delete or update', async () => {
-    for (const [type, hidden] of [
-      ['Block', true],
-      ['Block', false],
-      ['Follow', true],
-      ['Follow', false],
-      ['Hide', undefined],
-    ] as const) {
-      vi.clearAllMocks();
+  // `it.each` rather than a loop inside one `it`: a loop aborts on the first bad
+  // row and leaves the rest of the matrix unmeasured, and its failure names no
+  // fixture — you get an argument dump and have to work out which case produced it.
+  it.each([
+    ['Block', true],
+    ['Block', false],
+    ['Follow', true],
+    ['Follow', false],
+    ['Hide', true],
+    ['Hide', false],
+    ['Hide', undefined],
+  ] as const)(
+    'toggleHidden kind=user issues no PK-addressed write over a %s row (hidden=%s)',
+    async (type, hidden) => {
       engagement.findUnique.mockResolvedValue({ type });
 
       await hide(hidden);
 
       expect(unqualified()).toEqual([]);
     }
-  });
+  );
 
-  it('toggleHideUser and toggleFollowUser never issue one either', async () => {
-    for (const type of ['Block', 'Follow', 'Hide'] as const) {
-      vi.clearAllMocks();
+  it.each(['Block', 'Follow', 'Hide'] as const)(
+    'toggleHideUser issues no PK-addressed write over a %s row',
+    async (type) => {
       engagement.findUnique.mockResolvedValue({ type });
 
       await toggleHideUser({ userId, targetUserId });
+
+      expect(unqualified()).toEqual([]);
+    }
+  );
+
+  it.each(['Block', 'Follow', 'Hide'] as const)(
+    'toggleFollowUser issues no PK-addressed write over a %s row',
+    async (type) => {
+      engagement.findUnique.mockResolvedValue({ type });
+
       await toggleFollowUser({ userId, targetUserId });
 
       expect(unqualified()).toEqual([]);
     }
-  });
+  );
 });
 
 // 868kun67j. The unconditional `else` here updated the row to `Hide` whatever it
@@ -90,7 +105,7 @@ describe('toggleHidden kind=user — a Block outranks a Hide', () => {
     // unscoped updateMany passes a bare "was it called" check and still eats the
     // block.
     expect(engagement.updateMany).toHaveBeenCalledWith({
-      where: { ...scoped, type: { not: 'Block' } },
+      where: { ...scoped, type: { notIn: ['Block'] } },
       data: { type: 'Hide' },
     });
     expect(engagement.deleteMany).not.toHaveBeenCalled();
@@ -165,9 +180,12 @@ describe('toggleHidden kind=user — honours the caller intent', () => {
 
     expect(engagement.deleteMany).not.toHaveBeenCalled();
     expect(engagement.updateMany).toHaveBeenCalledWith({
-      where: { ...scoped, type: { not: 'Block' } },
+      where: { ...scoped, type: { notIn: ['Block'] } },
       data: { type: 'Hide' },
     });
+    // Paired with the positive above, so this is not a free-pass negative: making
+    // the create unconditional would insert over a row the update just matched.
+    expect(engagement.create).not.toHaveBeenCalled();
   });
 
   it('hidden omitted still flips a Hide off, so intent-less callers are unchanged', async () => {
@@ -215,7 +233,7 @@ describe('toggleHideUser (user.service) — reports what it did', () => {
     await expect(toggleHideUser({ userId, targetUserId })).resolves.toBe(true);
 
     expect(engagement.updateMany).toHaveBeenCalledWith({
-      where: { ...scoped, type: { not: 'Block' } },
+      where: { ...scoped, type: { notIn: ['Block'] } },
       data: { type: 'Hide' },
     });
   });
@@ -226,6 +244,35 @@ describe('toggleHideUser (user.service) — reports what it did', () => {
     await expect(toggleHideUser({ userId, targetUserId })).resolves.toBe(false);
 
     expect(engagement.deleteMany).toHaveBeenCalledWith({ where: { ...scoped, type: 'Hide' } });
+  });
+
+  // The dominant real path — hiding someone you have no engagement with — and the
+  // one every other test in this describe routes past, because they all supply a
+  // row and leave `updateMany` matching it.
+  it('hiding a user with no engagement creates the row', async () => {
+    engagement.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(toggleHideUser({ userId, targetUserId })).resolves.toBe(true);
+
+    expect(engagement.create).toHaveBeenCalledWith({
+      data: { type: 'Hide', targetUserId, userId },
+    });
+  });
+
+  it('survives the create losing to a Block that arrived in between', async () => {
+    engagement.updateMany.mockResolvedValue({ count: 0 });
+    engagement.create.mockRejectedValue(p2002());
+
+    await expect(toggleHideUser({ userId, targetUserId })).resolves.toBe(true);
+  });
+
+  it('still surfaces a create failure that is not the conflict', async () => {
+    engagement.updateMany.mockResolvedValue({ count: 0 });
+    engagement.create.mockRejectedValue(new Error('connection terminated'));
+
+    // Control for the test above: `catch(() => {})` passes that one and swallows
+    // every real write failure with it, reporting a hide that never happened.
+    await expect(toggleHideUser({ userId, targetUserId })).rejects.toThrow('connection terminated');
   });
 });
 
@@ -266,5 +313,79 @@ describe('toggleFollowUser — scoped writes', () => {
     expect(engagement.updateMany).not.toHaveBeenCalled();
     expect(engagement.deleteMany).not.toHaveBeenCalled();
     expect(engagement.create).not.toHaveBeenCalled();
+  });
+
+  // The create path's P2002 used to mean "the toggle raced itself, the follow
+  // exists". Once every writer is scoped it means only "something holds the PK",
+  // and `toggleFollowUserHandler` pays a Buzz reward and fires a notification on
+  // the strength of the return value.
+  it('reports NO follow when a Block won the insert race', async () => {
+    engagement.create.mockRejectedValue(p2002());
+    engagement.findUnique
+      .mockResolvedValueOnce(null) // the read that chose the create path
+      .mockResolvedValueOnce({ type: 'Block' }); // what actually holds the pair
+
+    await expect(toggleFollowUser({ userId, targetUserId })).resolves.toBe(false);
+  });
+
+  it('still reports a follow when the toggle merely raced ITSELF', async () => {
+    engagement.create.mockRejectedValue(p2002());
+    engagement.findUnique.mockResolvedValueOnce(null).mockResolvedValueOnce({ type: 'Follow' });
+
+    // Control for the test above: returning a blanket `false` on P2002 would make
+    // a duplicate follow report failure, and the button flip back.
+    await expect(toggleFollowUser({ userId, targetUserId })).resolves.toBe(true);
+  });
+});
+
+// `HiddenUsers` is keyed on `type = 'Hide'` and its TTL is set NX on first
+// population, so a write that changes the Hide set without refreshing it stays
+// invisible until the whole per-user hash ages out.
+describe('cache invalidation on the Hide set', () => {
+  it('refreshes HiddenUsers when a follow converts a Hide away', async () => {
+    engagement.findUnique.mockResolvedValue({ type: 'Hide' });
+    const hidden = vi.spyOn(HiddenUsers, 'refreshCache').mockResolvedValue(undefined);
+
+    await toggleFollowUser({ userId, targetUserId });
+
+    // Without this the user follows someone who stays filtered out of their feed.
+    expect(hidden).toHaveBeenCalledWith({ userId });
+  });
+
+  it('refreshes HiddenUsers when toggleHideUser writes the Hide', async () => {
+    const hidden = vi.spyOn(HiddenUsers, 'refreshCache').mockResolvedValue(undefined);
+
+    await toggleHideUser({ userId, targetUserId });
+
+    expect(hidden).toHaveBeenCalledWith({ userId });
+  });
+});
+
+// The write sequence is two passes, never more. Pass two exists for one schedule:
+// the pair was empty at the update, a CLAIMABLE row was inserted before ours, so
+// the update matched nothing and the create hit the PK. Stopping after one pass
+// drops the write while reporting it applied.
+describe('setUserEngagement — the second pass, and its ceiling', () => {
+  it('retries the scoped update when a claimable row won the insert race', async () => {
+    engagement.updateMany.mockResolvedValueOnce({ count: 0 }).mockResolvedValueOnce({ count: 1 });
+    engagement.create.mockRejectedValueOnce(p2002());
+
+    await hide(true);
+
+    expect(engagement.updateMany).toHaveBeenCalledTimes(2);
+    expect(engagement.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('gives up after the second pass rather than spinning', async () => {
+    engagement.updateMany.mockResolvedValue({ count: 0 });
+    engagement.create.mockRejectedValue(p2002());
+
+    await hide(true);
+
+    // A `while` here would loop forever against a standing Block — and a pure
+    // microtask loop starves the macrotask queue, so vitest's setTimeout-based
+    // testTimeout never fires and the run hangs with nothing to read.
+    expect(engagement.updateMany).toHaveBeenCalledTimes(2);
+    expect(engagement.create).toHaveBeenCalledTimes(2);
   });
 });

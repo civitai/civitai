@@ -11,6 +11,7 @@ import { isPrismaUniqueViolation } from '~/server/utils/errorHandling';
 import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { logToAxiom } from '~/server/logging/client';
+import { clearUserEngagement, setUserEngagement } from '~/server/services/user-engagement';
 import { TagEngagementType, UserEngagementType } from '~/shared/utils/prisma/enums';
 
 const HIDDEN_CACHE_EXPIRY_BASE = 60 * 60 * 4; // 4 hours
@@ -723,34 +724,18 @@ async function toggleHideUser({
   // Follow or Block a sibling writer had just established.
   const hiding = setTo ?? engagement?.type !== UserEngagementType.Hide;
 
-  if (hiding) {
-    // A Block already hides the target and is strictly stronger, so it is the one
-    // type a hide must never overwrite. Excluding it in the WHERE makes that
-    // structural instead of a branch on a stale read: if the row is (or becomes)
-    // a Block, nothing matches, the create loses to the PK, and the block stands.
-    const { count } = await dbWrite.userEngagement.updateMany({
-      where: { userId, targetUserId, type: { not: UserEngagementType.Block } },
-      data: { type: UserEngagementType.Hide },
+  // A Block already hides the target and is strictly stronger, so it is the one
+  // type a hide must never overwrite. Un-hiding removes a Hide and only a Hide:
+  // unqualified, it deleted whatever Follow or Block held the pair, and unfiltered
+  // on intent it created a Hide row when asked to un-hide a pair that had none.
+  if (hiding)
+    await setUserEngagement({
+      userId,
+      targetUserId,
+      type: UserEngagementType.Hide,
+      outrankedBy: [UserEngagementType.Block],
     });
-    if (!count)
-      await dbWrite.userEngagement
-        .create({
-          data: { userId, targetUserId, type: UserEngagementType.Hide },
-        })
-        // No row to update: either there is none (create it) or it is a Block
-        // (P2002, and the block is what we wanted to keep). Both are the intended
-        // end state, so fall through to the cache refreshes, which read DB truth.
-        .catch((error) => {
-          if (!isPrismaUniqueViolation(error)) throw error;
-        });
-  } else {
-    // Un-hiding removes a Hide and only a Hide. Unqualified, this deleted the
-    // Follow or Block that happened to occupy the pair; unfiltered on intent, it
-    // also created a Hide row when asked to un-hide a pair that had none.
-    await dbWrite.userEngagement.deleteMany({
-      where: { userId, targetUserId, type: UserEngagementType.Hide },
-    });
-  }
+  else await clearUserEngagement({ userId, targetUserId, type: UserEngagementType.Hide });
 
   await userFollowsCache.refresh(userId);
   await HiddenUsers.refreshCache({ userId });
