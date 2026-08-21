@@ -285,6 +285,10 @@ export async function createTipaltiPayee({ userId }: { userId: number }) {
   }
 }
 
+// Two spellings of the same terminal state, so a move between them is not a new rejection.
+const isBlockedTipaltiStatus = (status: string) =>
+  status === TipaltiStatus.Blocked || status === TipaltiStatus.BlockedByProvider;
+
 export async function updateByTipaltiAccount({
   tipaltiAccountId,
   tipaltiAccountStatus,
@@ -321,8 +325,11 @@ export async function updateByTipaltiAccount({
     },
   });
 
+  // Tipalti re-sends payeeDetailsChanged for any payee edit, at an unchanged status — so each of
+  // these has to compare the stored row against this event and fire only on the move. Nothing
+  // downstream will collapse a repeat: the notification key carries a fresh uuid.
   if (tipaltiPaymentsEnabled) {
-    if (userPaymentConfig.tipaltiAccountStatus !== TipaltiStatus.Active) {
+    if (!userPaymentConfig.tipaltiPaymentsEnabled) {
       await createNotification({
         userId: userPaymentConfig.userId,
         type: 'creators-program-payments-enabled',
@@ -331,19 +338,18 @@ export async function updateByTipaltiAccount({
         details: {},
       }).catch();
     }
-  } else if (
-    tipaltiAccountStatus === TipaltiStatus.BlockedByProvider ||
-    tipaltiAccountStatus === TipaltiStatus.Blocked
-  ) {
-    await createNotification({
-      userId: userPaymentConfig.userId,
-      type: 'creators-program-rejected-tipalti',
-      category: NotificationCategory.System,
-      key: `creators-program-rejected-tipalti:${uuid()}`,
-      details: {},
-    }).catch(() => {
-      log({ method: 'createNotification', userId: userPaymentConfig.userId });
-    });
+  } else if (isBlockedTipaltiStatus(tipaltiAccountStatus)) {
+    if (!isBlockedTipaltiStatus(userPaymentConfig.tipaltiAccountStatus)) {
+      await createNotification({
+        userId: userPaymentConfig.userId,
+        type: 'creators-program-rejected-tipalti',
+        category: NotificationCategory.System,
+        key: `creators-program-rejected-tipalti:${uuid()}`,
+        details: {},
+      }).catch(() => {
+        log({ method: 'createNotification', userId: userPaymentConfig.userId });
+      });
+    }
   }
 
   // If the user just transitioned from payable -> not payable because of a Tax issue,
