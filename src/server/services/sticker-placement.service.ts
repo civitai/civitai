@@ -1217,32 +1217,3 @@ export async function actOnStickerPlacements({
 
   return { considered: placementIds.length, settled, failed };
 }
-
-/**
- * How many placements are waiting on this owner, for the user menu badge.
- *
- * A count rather than `getPendingStickerPlacements().items.length`: that one
- * pages at 50 and joins every image, so using it for a number would both
- * under-report a large queue and pay for artwork nobody is looking at.
- *
- * Deliberately unfiltered by browsing level, matching the queue page: a
- * placement outside the viewer's band still expires, and expiry pays the placer
- * back and costs the owner their fee. A badge that hid those would count down to
- * zero while the queue still had rows in it.
- *
- * `[ownerId, surface, status, createdAt, id]` covers this exactly — verified on
- * prod, not inferred: the planner takes it as an Index Only Scan with all three
- * equality columns in the Index Cond.
- *
- * One divergence from the queue page it counts for, which is deliberate but is
- * NOT "the same number": the page drops rows whose `data` will not parse, after
- * fetching them. So this count can read higher than the rows the page renders.
- * An unparseable row is still pending, still holds a slot and still expires, so
- * counting it is the honest answer — but do not read the two as guaranteed
- * equal.
- */
-export async function getPendingStickerPlacementCount({ ownerId }: { ownerId: number }) {
-  return dbRead.placement.count({
-    where: { surface: SURFACE, ownerId, status: 'pending' },
-  });
-}

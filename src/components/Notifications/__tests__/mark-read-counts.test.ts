@@ -20,6 +20,8 @@ const counts = () => ({
   comment: 4,
   buzz: 3,
   pendingPlacements: 12,
+  pendingStickerPlacements: 9,
+  pendingRemixSubmissions: 3,
 });
 
 describe('mark all as read', () => {
@@ -31,10 +33,17 @@ describe('mark all as read', () => {
     expect(next.buzz).toBe(0);
   });
 
-  it('leaves pendingPlacements alone — it is not a notification', () => {
+  it('leaves every placement count alone — none of them is a notification', () => {
     // The regression. Reading someone's notifications does not review their
     // pending placements, and nothing refetches this query to correct it.
-    expect(applyMarkReadToCounts(counts(), {}).pendingPlacements).toBe(12);
+    // All three keys, not just the total: the segmented control on the
+    // placements page reads the per-surface pair, so wiping those empties the
+    // control's badges while the total survives — a half-fix that looks whole.
+    const next = applyMarkReadToCounts(counts(), {});
+
+    expect(next.pendingPlacements).toBe(12);
+    expect(next.pendingStickerPlacements).toBe(9);
+    expect(next.pendingRemixSubmissions).toBe(3);
   });
 });
 
@@ -87,6 +96,8 @@ describe('the guard set', () => {
     // the whole fix — this asserts the set is the mechanism rather than a
     // stray constant.
     expect(NON_CATEGORY_COUNT_KEYS.has('pendingPlacements')).toBe(true);
+    expect(NON_CATEGORY_COUNT_KEYS.has('pendingStickerPlacements')).toBe(true);
+    expect(NON_CATEGORY_COUNT_KEYS.has('pendingRemixSubmissions')).toBe(true);
     expect(NON_CATEGORY_COUNT_KEYS.has('comment')).toBe(false);
   });
 });

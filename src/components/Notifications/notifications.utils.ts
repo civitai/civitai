@@ -102,6 +102,8 @@ export const useQueryNotificationsCount = () => {
         // this query rather than its own, and kept out of `all` — `all` is the
         // bell, and a pending placement is not an unread notification.
         pendingPlacements: 0,
+        pendingStickerPlacements: 0,
+        pendingRemixSubmissions: 0,
       }
     : { ...data, all: data.all + announcements.length, announcements: announcements.length };
 };
@@ -126,7 +128,11 @@ export const useQueryNotificationsCount = () => {
  * `stickerPlacement` flag, whose menu entry is gated on a nonzero count, the
  * wipe did not just clear the badge, it removed the entry.
  */
-export const NON_CATEGORY_COUNT_KEYS: ReadonlySet<string> = new Set(['pendingPlacements']);
+export const NON_CATEGORY_COUNT_KEYS: ReadonlySet<string> = new Set([
+  'pendingPlacements',
+  'pendingStickerPlacements',
+  'pendingRemixSubmissions',
+]);
 
 type NotificationCounts = Record<string, number>;
 

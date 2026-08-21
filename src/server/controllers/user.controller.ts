@@ -57,7 +57,7 @@ import type {
 } from '~/server/selectors/cosmetic.selector';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { getUserNotificationCount } from '~/server/services/notification.service';
-import { getPendingStickerPlacementCount } from '~/server/services/sticker-placement.service';
+import { getPendingPlacementCounts } from '~/server/services/placement.service';
 import { queueModelMetricPrivacyReindex } from '~/server/services/model.service';
 import { getUserResourceReview } from '~/server/services/resourceReview.service';
 import {
@@ -264,12 +264,12 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: ProtectedCon
     // Postgres replica — with no data dependency between them. Awaiting them in
     // sequence tacked a full DB round trip onto a request already waiting on a
     // retrying HTTP call.
-    const [unreadCount, pendingPlacements] = await Promise.all([
+    const [unreadCount, placementCounts] = await Promise.all([
       getUserNotificationCount({ userId: id, unread: true }),
-      // Degrades to 0 rather than failing the request, matching
+      // Degrades to zeroes rather than failing the request, matching
       // getUserNotificationCount: an under-reported badge for one session beats
       // taking the notification bell down with it.
-      getPendingStickerPlacementCount({ ownerId: id }).catch(() => 0),
+      getPendingPlacementCounts({ ownerId: id }).catch(() => ({ sticker: 0, remix: 0 })),
     ]);
 
     const reduced = unreadCount.reduce(
@@ -294,7 +294,15 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: ProtectedCon
     // clear. It is also excluded by name from the client's mark-all-read wipe —
     // see NON_CATEGORY_COUNT_KEYS in notifications.utils.ts, which is where the
     // invariant for adding another non-category key to this payload lives.
-    return { ...reduced, pendingPlacements };
+    return {
+      ...reduced,
+      // One number for the menu entry, and the split for the segmented control
+      // on the placements page — the entry points at both queues now, so a
+      // sticker-only count would under-report the thing it links to.
+      pendingPlacements: placementCounts.sticker + placementCounts.remix,
+      pendingStickerPlacements: placementCounts.sticker,
+      pendingRemixSubmissions: placementCounts.remix,
+    };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

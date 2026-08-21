@@ -127,7 +127,7 @@ describe('the free notification reaches the creator, about the right image', () 
         details: { imageId: 74, placerId: 52, placerUsername: 'somebody', amount: 100 },
       } as Parameters<Def['prepareMessage']>[0])!;
 
-      expect(message.url).toBe('/user/sticker-placements?tab=received');
+      expect(message.url).toBe('/user/placements?type=sticker&tab=received');
       // Named explicitly: the failure this guards is a revert to the old
       // per-image link, which would still be a valid-looking URL.
       expect(message.url).not.toContain('/images/');

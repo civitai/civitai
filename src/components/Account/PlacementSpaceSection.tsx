@@ -25,8 +25,8 @@ import {
 import { QueueCountBadge } from '~/components/Placement/QueueCountBadge';
 import { useQueryNotificationsCount } from '~/components/Notifications/notifications.utils';
 import {
-  PLACEMENT_QUEUE_RECEIVED_URL,
-  PLACEMENT_QUEUE_SENT_URL,
+  STICKER_QUEUE_RECEIVED_URL,
+  STICKER_QUEUE_SENT_URL,
 } from '~/components/Placement/queue-routes';
 import { PlacementFreeSlotSlider } from '~/components/Placement/PlacementFreeSlotSlider';
 import { PlacementPriceSlider } from '~/components/Placement/PlacementPriceSlider';
@@ -309,7 +309,7 @@ export function PlacementSpaceSection() {
       <Group gap="xs" wrap="nowrap">
         <Button
           component="a"
-          href={PLACEMENT_QUEUE_RECEIVED_URL}
+          href={STICKER_QUEUE_RECEIVED_URL}
           variant={waiting > 0 ? 'light' : 'default'}
           size="sm"
           rightSection={<QueueCountBadge count={waiting} />}
@@ -318,7 +318,7 @@ export function PlacementSpaceSection() {
         </Button>
         <Button
           component="a"
-          href={PLACEMENT_QUEUE_SENT_URL}
+          href={STICKER_QUEUE_SENT_URL}
           variant="default"
           size="sm"
           rightSection={

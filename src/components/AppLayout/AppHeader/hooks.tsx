@@ -39,7 +39,7 @@ import { appsNavVisibility } from '~/components/AppLayout/AppHeader/appsNavVisib
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useQueryNotificationsCount } from '~/components/Notifications/notifications.utils';
-import { PLACEMENT_QUEUE_RECEIVED_URL } from '~/components/Placement/queue-routes';
+import { PLACEMENT_QUEUE_URL } from '~/components/Placement/queue-routes';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { OnboardingSteps } from '~/server/common/enums';
 import { Flags } from '~/shared/utils/flags';
@@ -124,12 +124,14 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           label: 'My Shop',
         },
         {
-          // The owner's own review queue. Its only other routes are four levels
-          // deep in account settings and the approve/decline drawn on a single
-          // image, so a creator with placements waiting had nowhere to go and
-          // find them — which is most of why 96 sat pending against 251
-          // approved while the feature was selling.
-          href: PLACEMENT_QUEUE_RECEIVED_URL,
+          // The creator's own review queues — stickers AND remixes, one page.
+          // Their only other routes are four levels deep in account settings
+          // and the approve/decline drawn on a single image, so a creator with
+          // anything waiting had nowhere to go and find it — which is most of
+          // why 96 placements sat pending against 251 approved while the
+          // feature was selling. The count is both surfaces, because the entry
+          // now points at both.
+          href: PLACEMENT_QUEUE_URL,
           // `stickerPlacement` gates PLACING a sticker, not receiving one, and
           // the page itself asks only for a signed-in unbanned user. Gating the
           // entry on the flag alone would hide it from exactly the owners
@@ -138,7 +140,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           visible: !!currentUser && (features.stickerPlacement || pendingPlacements > 0),
           icon: IconSticker,
           color: theme.colors.pink[getPrimaryShade(theme, colorScheme ?? 'dark')],
-          label: 'Sticker Placements',
+          label: 'Placements',
           badge: pendingPlacements,
           newUntil: new Date('2026-09-20'),
         },

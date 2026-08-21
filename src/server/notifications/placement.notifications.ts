@@ -1,6 +1,9 @@
 import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
-import { PLACEMENT_QUEUE_RECEIVED_URL } from '~/components/Placement/queue-routes';
+import {
+  REMIX_QUEUE_RECEIVED_URL,
+  STICKER_QUEUE_RECEIVED_URL,
+} from '~/components/Placement/queue-routes';
 
 /**
  * A pending placement is invisible to the creator until something tells them.
@@ -21,9 +24,12 @@ import { PLACEMENT_QUEUE_RECEIVED_URL } from '~/components/Placement/queue-route
  * artwork per row and links each one to its image, so the in-situ view is one
  * click away rather than absent, and the owner sees the other fifteen.
  *
- * `remix-gallery-pending` deliberately still links to its image: it has the same
- * shape and was not part of what this change was scoped to. If the same fix is
- * wanted there it should be its own decision, not a side effect of this one.
+ * The remix ones go the same way, to the same page's remix surface. They were
+ * left alone the first time round, correctly — one surface's fix should not
+ * silently become another's. That stopped being a widening the moment the two
+ * queues became one page: a remix notification landing on an image, when the
+ * queue it belongs to is a tab away from the sticker queue, is the same trap
+ * this change exists to close.
  */
 export const placementNotifications = createNotificationProcessor({
   'sticker-placement-pending': {
@@ -34,7 +40,7 @@ export const placementNotifications = createNotificationProcessor({
       // The queue, not `/images/${details.imageId}` — see the note at the top of
       // this file. Static, because the whole point is the rows this owner has
       // not seen; a per-placement URL would land them back on one image.
-      url: PLACEMENT_QUEUE_RECEIVED_URL,
+      url: STICKER_QUEUE_RECEIVED_URL,
     }),
     prepareQuery: async ({ lastSent }) => `
       WITH data AS (
@@ -114,7 +120,7 @@ export const placementNotifications = createNotificationProcessor({
       // Same queue as the paid one: a free placement holds a slot and expires
       // the same way, and splitting the two destinations would teach an owner
       // two different routes for one job.
-      url: PLACEMENT_QUEUE_RECEIVED_URL,
+      url: STICKER_QUEUE_RECEIVED_URL,
     }),
     prepareQuery: async ({ lastSent }) => `
       WITH data AS (
@@ -164,7 +170,7 @@ export const placementNotifications = createNotificationProcessor({
     category: NotificationCategory.Creator,
     prepareMessage: ({ details }) => ({
       message: `${details.placerUsername} wants to add a remix to your gallery for ${details.amount} Buzz`,
-      url: `/images/${details.imageId}`,
+      url: REMIX_QUEUE_RECEIVED_URL,
     }),
     prepareQuery: async ({ lastSent }) => `
       WITH data AS (
@@ -230,7 +236,7 @@ export const placementNotifications = createNotificationProcessor({
     category: NotificationCategory.Creator,
     prepareMessage: ({ details }) => ({
       message: `${details.placerUsername} submitted a free remix to your gallery`,
-      url: `/images/${details.imageId}`,
+      url: REMIX_QUEUE_RECEIVED_URL,
     }),
     prepareQuery: async ({ lastSent }) => `
       WITH data AS (
