@@ -30,8 +30,10 @@
  *                   (count, distinct IPs, share from farm IPs) — for drill-in.
  *   exclude       - {userIds: number[], reason}
  *                   Add users to metricExcludedUsers (active=1). Idempotent.
+ *                   Also writes a `ModActivity` row per user so the action is visible to a
+ *                   moderator — see `recordAutomatedAction`. Response carries `auditRecorded`.
  *   unexclude     - {userIds: number[]}
- *                   Reverse an exclusion (insert active=0; latest row wins).
+ *                   Reverse an exclusion (insert active=0; latest row wins). Audited the same way.
  *   list          - {limit?=500}
  *                   Currently-excluded users (active=1), newest first.
  *
@@ -46,7 +48,38 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { clickhouse } from '~/server/clickhouse/client';
+import { trackModActivity } from '~/server/services/moderator.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
+
+/**
+ * The moderator-visible audit trail for an action this endpoint just committed.
+ *
+ * `-1` is the automated-writer sentinel the main app already uses for `autoMuteScam`
+ * (`~/server/jobs/entity-moderation.ts`); the moderator app's board filters `userId > 0` so these
+ * rows can never be mistaken for a person working a queue.
+ *
+ * 🔴 The ClickHouse write is what actually excludes; this is only its record. So a failure here is
+ * REPORTED, never thrown: throwing would 500 a request whose exclusion had already applied, telling
+ * the poller nothing happened when it did — and its retry would then double-write the audit row,
+ * since ModActivity's (activity, entityType, entityId) unique index is being dropped and
+ * `ON CONFLICT DO NOTHING` names no target. Swallowing it silently is the opposite failure and is
+ * the very gap this trail exists to close, so the outcome rides back in the response body as
+ * `auditRecorded` and the caller can say so in its digest.
+ *
+ * `entityId` takes the whole batch: `trackModActivity` UNNESTs an array into one row per user.
+ */
+async function recordAutomatedAction(
+  activity: 'autoExcludeReactionAbuse' | 'autoUnexcludeReactionAbuse',
+  userIds: number[]
+): Promise<boolean> {
+  try {
+    await trackModActivity(-1, { entityType: 'user', entityId: userIds, activity });
+    return true;
+  } catch (e) {
+    console.error('reaction-abuse audit write failed:', (e as Error).message);
+    return false;
+  }
+}
 
 const actionSchema = z.enum(['candidates', 'inspect-owner', 'exclude', 'unexclude', 'list']);
 
@@ -197,7 +230,13 @@ export default WebhookEndpoint(async function handler(req: NextApiRequest, res: 
           active: 1,
         }));
         await clickhouse.insert({ table: 'metricExcludedUsers', values, format: 'JSONEachRow' });
-        return res.status(200).json({ excluded: values.length, userIds: input.userIds });
+        const auditRecorded = await recordAutomatedAction(
+          'autoExcludeReactionAbuse',
+          input.userIds!
+        );
+        return res
+          .status(200)
+          .json({ excluded: values.length, userIds: input.userIds, auditRecorded });
       }
 
       case 'unexclude': {
@@ -207,7 +246,13 @@ export default WebhookEndpoint(async function handler(req: NextApiRequest, res: 
           active: 0,
         }));
         await clickhouse.insert({ table: 'metricExcludedUsers', values, format: 'JSONEachRow' });
-        return res.status(200).json({ unexcluded: values.length, userIds: input.userIds });
+        const auditRecorded = await recordAutomatedAction(
+          'autoUnexcludeReactionAbuse',
+          input.userIds!
+        );
+        return res
+          .status(200)
+          .json({ unexcluded: values.length, userIds: input.userIds, auditRecorded });
       }
 
       case 'list': {
