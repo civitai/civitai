@@ -19,7 +19,7 @@ import produce from 'immer';
 import React from 'react';
 import type { ChatSettingsScope } from '~/components/Chat/ChatProvider';
 import { useChatStore } from '~/components/Chat/ChatProvider';
-import { useChatTheme } from '~/components/Chat/useChatTheme';
+import { useChatLayout, useChatTheme } from '~/components/Chat/useChatTheme';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -27,6 +27,8 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import type { ChatDmPolicy, UserSettingsChat } from '~/server/schema/chat.schema';
 import { DEFAULT_CHAT_SETTINGS } from '~/server/schema/chat.schema';
+import type { ChatLayoutSlug } from '~/shared/constants/chat-layout';
+import { chatLayouts } from '~/shared/constants/chat-layout';
 import type { ChatThemeSlug } from '~/shared/constants/chat-theme';
 import { chatThemes } from '~/shared/constants/chat-theme';
 import { ChatNotifyLevel } from '~/shared/utils/prisma/enums';
@@ -312,6 +314,8 @@ function GlobalChatSettings({
       </SettingsGroup>
 
       <SettingsGroup title="Appearance">
+        <ChatLayoutPicker onChange={(layout) => update({ layout })} />
+        <Divider />
         <ChatThemePicker onChange={(theme) => update({ theme })} />
       </SettingsGroup>
 
@@ -329,6 +333,26 @@ function GlobalChatSettings({
         />
       </SettingsGroup>
     </>
+  );
+}
+
+function ChatLayoutPicker({ onChange }: { onChange: (slug: ChatLayoutSlug) => void }) {
+  const layout = useChatLayout();
+
+  return (
+    <Radio.Group value={layout} onChange={(value) => onChange(value as ChatLayoutSlug)}>
+      <Stack gap={4}>
+        {chatLayouts.map((option) => (
+          <Radio
+            key={option.slug}
+            value={option.slug}
+            label={option.name}
+            description={option.description}
+            className={clsx(classes.option, { [classes.selected]: option.slug === layout })}
+          />
+        ))}
+      </Stack>
+    </Radio.Group>
   );
 }
 
@@ -377,14 +401,14 @@ function ChatThemePicker({ onChange }: { onChange: (slug: ChatThemeSlug) => void
           </>
         ) : (
           <>
-            Citron, Bubblegum and Terminal come with any{' '}
+            Every theme past Civitai comes with any{' '}
             <Anchor
               component={Link}
               href={`/pricing?returnUrl=${encodeURIComponent(router.asPath)}`}
             >
               membership
             </Anchor>
-            .
+            . Layout is free either way.
           </>
         )}
       </Text>

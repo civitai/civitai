@@ -30,9 +30,11 @@
   }
 
   /* Padding rather than margin so the hover band covers the gap too — a margin
-     here would leave an unlit strip above the row it belongs to. */
+     here would leave an unlit strip above the row it belongs to. Big enough to
+     read as a turn change at a glance: against .grouped's 1px, this is the only
+     thing separating one person's run from the next. */
   &.newSender {
-    padding-top: 12px;
+    padding-top: 20px;
   }
 }
 
@@ -65,9 +67,9 @@
   font-size: var(--chat-msg-size);
   color: var(--chat-text);
   line-height: 1.5;
-  background-color: var(--chat-bubble);
-  padding: var(--chat-bubble-pad);
-  border-radius: var(--chat-bubble-radius);
+  background-color: var(--chat-bubble, transparent);
+  padding: var(--chat-bubble-pad, 0);
+  border-radius: var(--chat-bubble-radius, 0);
 
   /* ChatMessageContent wraps every run in a Mantine <Text>, which writes its own
      font-size onto the span — so sizing this container alone changes nothing. */
@@ -121,7 +123,7 @@
 }
 
 .mine {
-  background-color: var(--chat-bubble-me);
+  background-color: var(--chat-bubble-me, transparent);
 }
 
 /* A sticker or a lone jumbo emoji IS the message. A themed bubble around it
@@ -131,6 +133,69 @@
 .standalone.standalone {
   background-color: transparent;
   padding: 0;
+}
+
+/* The Bubbles layout: the reader's own messages on the right, everyone else's on
+   the left. The layout IS the bubble, so where a theme paints none it supplies
+   one through var()'s fallback rather than by setting --chat-bubble itself — a
+   real declaration here would outrank every theme and flatten them all to grey.
+   `:not(.standalone)` keeps a sticker or a jumbo emoji unframed, which no
+   specificity juggling between these two rules would survive. */
+.bubbles {
+  .messageBody {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    padding-left: 0;
+  }
+
+  /* Short of the full pane: a bubble that spans the column stops reading as a
+     side and the layout collapses back to stacked. */
+  .messageText {
+    max-width: 78%;
+  }
+
+  .messageText:not(.standalone) {
+    background-color: var(
+      --chat-bubble,
+      light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-5))
+    );
+    padding: var(--chat-bubble-pad, 6px 11px);
+    border-radius: var(--chat-bubble-radius, 14px);
+  }
+
+  &.mineRow {
+    .messageHead {
+      flex-direction: row-reverse;
+    }
+
+    .messageBody {
+      align-items: flex-end;
+    }
+
+    .messageText:not(.standalone) {
+      background-color: var(
+        --chat-bubble-me,
+        light-dark(var(--mantine-color-blue-2), var(--mantine-color-blue-9))
+      );
+    }
+
+    /* Follows the message to the right, where it would sit on top of the bubble. */
+    .messageActions {
+      right: auto;
+      left: 14px;
+    }
+
+    .embedRow {
+      margin-left: auto;
+      margin-right: 14px;
+    }
+  }
+
+  /* .messageBody no longer indents, so neither does the unfurl beneath it. */
+  .embedRow {
+    margin-left: 14px;
+  }
 }
 
 /* An embed is the unfurl of a link in the message above it, not a message of its

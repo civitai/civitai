@@ -44,6 +44,7 @@ import { div } from 'motion/react-m';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChatActions } from '~/components/Chat/ChatActions';
 import { useChatStore } from '~/components/Chat/ChatProvider';
+import { useChatLayout } from '~/components/Chat/useChatTheme';
 import { getMessageRowFlags, isSameDay } from '~/components/Chat/message-grouping';
 import { getLinkHref, linkifyOptions, loadMotion } from '~/components/Chat/util';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
@@ -1255,6 +1256,7 @@ function DisplayMessages({
   const blur = replaceBadWords || domainColor === 'green';
 
   const rowFlags = useMemo(() => getMessageRowFlags(chats), [chats]);
+  const bubbles = useChatLayout() === 'bubbles';
 
   return (
     <StickerProvider ids={stickerIds}>
@@ -1266,6 +1268,10 @@ function DisplayMessages({
           const cachedUser = tChat?.chatMembers?.find((cm) => cm.userId === c.userId)?.user;
           const isMe = c.userId === currentUser?.id;
           const isSystemChat = c.userId === -1;
+          // An unfurl is written by the system but belongs to whoever posted the
+          // link, so in Bubbles it takes that person's side rather than always
+          // the left — which would strand your own link previews opposite you.
+          const isMySide = isEmbed ? c.referenceMessage?.userId === currentUser?.id : isMe;
 
           const quotedUser = !!c.referenceMessage
             ? tChat?.chatMembers?.find((cm) => cm.userId === c.referenceMessage?.userId)?.user
@@ -1279,6 +1285,10 @@ function DisplayMessages({
               <PStack
                 component={div}
                 gap={0}
+                className={clsx({
+                  [classes.bubbles]: bubbles,
+                  [classes.mineRow]: bubbles && isMySide,
+                })}
                 style={idx === chats.length - 1 ? { paddingBottom: 12 } : {}}
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}

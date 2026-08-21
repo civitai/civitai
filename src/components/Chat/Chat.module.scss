@@ -41,12 +41,12 @@
   --chat-msg-size: 13.5px;
   --chat-radius: 19px;
 
-  /* Off by default: the stock surface is flat rows, and a bubble is a thing a
-     theme opts into. Transparent with no padding leaves the row untouched. */
-  --chat-bubble: transparent;
-  --chat-bubble-me: transparent;
-  --chat-bubble-pad: 0;
-  --chat-bubble-radius: 0;
+  /* Left UNDEFINED rather than set to transparent: the stock surface is flat
+     rows, and a bubble is a thing a theme opts into — but the Bubbles layout has
+     to draw one whatever theme is on, and var()'s fallback is the only way to
+     say "unless someone already answered this". Defining them here as
+     transparent would answer it, and every theme would flatten to one palette.
+     See .messageText / .bubbles in ExistingChat.module.scss. */
 
   /* Derived so a theme only has to name its accent — the quote and reply tints
      follow it instead of each carrying a hand-mixed colour. */
