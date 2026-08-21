@@ -487,7 +487,13 @@ git -C <repos-root>/<primary-checkout> submodule sync --recursive
 git -C <repos-root>/worktrees/<name> submodule update --init event-engine-common
 printf 'use flake\n' > <repos-root>/worktrees/<name>/.envrc && direnv allow   # from inside the worktree
 pnpm install
+git -C <repos-root>/worktrees/<name> status -sb | head -1   # must print `## <branch>` and nothing else
 ```
+
+**Check that last line before you start working.** A branch destined for a new PR has *no upstream* —
+`## <branch>` alone. Anything after the `...` means the branch is already tracking something, and when
+that something is `origin/main` the worktree is in the broken state described below. Verifying costs a
+second here; not verifying stays invisible until the first `git pull` or `git status` on the branch.
 
 **Always `-b <branch> --no-track origin/main`. Never the shorthand.** All three parts are
 load-bearing and none is optional:
@@ -509,6 +515,13 @@ Tell with `git status -sb`: a healthy feature branch prints `## <branch>` alone,
 once pushed. `## <branch>...origin/main` is the broken state. Fix an existing one with
 `git branch --unset-upstream`, then `git push -u origin <branch>` when you first push, which sets the
 upstream that should have been there.
+
+🔴 **Do not create worktrees with the `EnterWorktree` tool.** It puts the tree in `.claude/worktrees/`
+— outside the Defender-excluded repos root, so it silently runs slow — and under the default
+`worktree.baseRef: fresh` it branches from `origin/<default-branch>` the shorthand way, so the new
+branch comes out tracking `origin/main` instead of clean for a new PR. Use the `git worktree add`
+recipe above. Entering an existing worktree with `EnterWorktree` `path:` is fine — that only switches
+the session's directory and creates nothing.
 
 🔴 **`git worktree add <path>` with no branch and no base is the other trap**, because it looks like it worked: git
 silently invents a branch named after the directory's basename and forks it from local `HEAD`. You
