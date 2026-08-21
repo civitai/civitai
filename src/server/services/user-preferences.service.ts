@@ -11,6 +11,7 @@ import { isPrismaUniqueViolation } from '~/server/utils/errorHandling';
 import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { logToAxiom } from '~/server/logging/client';
+import { clearUserEngagement, setUserEngagement } from '~/server/services/user-engagement';
 import { TagEngagementType, UserEngagementType } from '~/shared/utils/prisma/enums';
 
 const HIDDEN_CACHE_EXPIRY_BASE = 60 * 60 * 4; // 4 hours
@@ -716,34 +717,19 @@ async function toggleHideUser({
     where: { userId_targetUserId: { userId, targetUserId } },
     select: { type: true },
   });
-  if (!engagement)
-    await dbWrite.userEngagement
-      .create({
-        data: { userId, targetUserId, type: 'Hide' },
-      })
-      // Toggle racing itself → P2002 on the (userId, targetUserId) PK. The row
-      // already exists — idempotent, so fall through to the cache refreshes
-      // (which read DB truth) instead of bubbling a 500.
-      .catch((error) => {
-        if (!isPrismaUniqueViolation(error)) throw error;
-      });
-  else if (engagement.type === 'Hide' && setTo !== true)
-    await dbWrite.userEngagement.delete({
-      where: { userId_targetUserId: { userId, targetUserId } },
-    });
-  else
-    await dbWrite.userEngagement.update({
-      where: { userId_targetUserId: { userId, targetUserId } },
-      data: { type: 'Hide' },
-    });
+  // `setTo` carries the caller's INTENT; fall back to flipping only when none was
+  // supplied. The row this reads may be gone or a different type by the time the
+  // write lands, so every statement below is scoped by `type` rather than by the
+  // PK alone — an unqualified `update`/`delete` here would overwrite whatever
+  // Follow or Block a sibling writer had just established.
+  const hiding = setTo ?? engagement?.type !== UserEngagementType.Hide;
 
-  // const addedOrUpdated = !engagement || engagement.type !== 'Hide';
-  // const user = await dbRead.user.findUnique({
-  //   where: { id: targetUserId },
-  //   select: { id: true, username: true },
-  // });
-
-  // const toReturn = user ? ({ ...user, kind: 'user' } as HiddenPreferencesKind) : undefined;
+  // A Block already hides the target and is strictly stronger, so it is the one
+  // type a hide must never overwrite. Un-hiding removes a Hide and only a Hide:
+  // unqualified, it deleted whatever Follow or Block held the pair, and unfiltered
+  // on intent it created a Hide row when asked to un-hide a pair that had none.
+  if (hiding) await setUserEngagement({ userId, targetUserId, type: UserEngagementType.Hide });
+  else await clearUserEngagement({ userId, targetUserId, type: UserEngagementType.Hide });
 
   await userFollowsCache.refresh(userId);
   await HiddenUsers.refreshCache({ userId });
@@ -863,10 +849,7 @@ async function toggleBlockUser({
       .catch((error) => {
         if (!isPrismaUniqueViolation(error)) throw error;
       });
-  else
-    await dbWrite.userEngagement.deleteMany({
-      where: { userId, targetUserId, type: UserEngagementType.Block },
-    });
+  else await clearUserEngagement({ userId, targetUserId, type: UserEngagementType.Block });
 
   await userFollowsCache.refresh(userId);
   await BlockedUsers.refreshCache({ userId });

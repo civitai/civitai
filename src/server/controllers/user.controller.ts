@@ -881,6 +881,10 @@ export const getUserHiddenListHandler = async ({ ctx }: { ctx: ProtectedContext 
   }
 };
 
+// Registered on no router: every hide in the product goes through
+// `toggleHidden({ kind: 'user' })`. Kept and fixed rather than deleted, but the
+// second writer on that table is a hazard in itself — 868kurrfj weighs removing
+// this and `toggleHideUser` in user.service together.
 export const toggleHideUserHandler = async ({
   input,
   ctx,
