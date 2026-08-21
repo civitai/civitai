@@ -171,6 +171,11 @@ describe('CategoryTags', () => {
 
     expect(backgroundOf(container, 'style')).toBe('var(--mantine-color-blue-filled)');
     expect(backgroundOf(container, 'character')).toBe('var(--mantine-color-gray-filled)');
+
+    // The All chip carries the same two ternaries and is inactive here; without this the
+    // dark arm can be deleted from it alone and every other assertion stays green.
+    expect(variantOf(container, 'All')).toBe('filled');
+    expect(backgroundOf(container, 'All')).toBe('var(--mantine-color-gray-filled)');
   });
 
   it('fills the All chip when no category is active', () => {
@@ -178,6 +183,9 @@ describe('CategoryTags', () => {
 
     expect(variantOf(container, 'All')).toBe('filled');
     expect(variantOf(container, 'style')).toBe('light');
+
+    // All is the active chip on a bare /models, so its blue is the page's default state.
+    expect(backgroundOf(container, 'All')).toBe('var(--mantine-color-blue-filled)');
   });
 
   it('prefers selected over ?tag= when controlled, and leaves the URL alone', () => {
@@ -252,19 +260,16 @@ describe('models surfaces mount the category bar', () => {
 
     // Commented-out JSX still contains the string, and commenting it out is the likelier
     // way the bar disappears than deletion. `124e256a44` on main was this same bug in this
-    // same shape of test: a commented-out INSERT counted as a writer. Verified against
-    // deletion, a `{/* */}` wrap and a moved file; a deliberate `{false && ...}` guard
-    // still counts, which is the known limit of scanning source rather than rendering.
-    const mounted = source
+    // same shape of test: a commented-out INSERT counted as a writer. Block comments are
+    // stripped first because wrapping a multi-line selection is what an editor's
+    // comment command produces. A deliberate `{false && ...}` guard still counts — that is
+    // the known limit of scanning source rather than rendering, and it is a change a
+    // reviewer sees in a diff, unlike a mount vanishing in a conflict resolution.
+    const code = source.replace(/\{\/\*[\s\S]*?\*\/\}/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+    const mounted = code
       .split('\n')
       .map((line) => line.trim())
-      .filter(
-        (line) =>
-          line.includes('<CategoryTags') &&
-          !line.startsWith('//') &&
-          !line.startsWith('{/*') &&
-          !line.startsWith('*')
-      );
+      .filter((line) => line.includes('<CategoryTags') && !line.startsWith('//'));
 
     expect(source).toContain("from '~/components/CategoryTags/CategoryTags'");
     expect(mounted).toHaveLength(expected);

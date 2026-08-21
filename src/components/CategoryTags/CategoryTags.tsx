@@ -7,6 +7,8 @@ import { TagTarget } from '~/shared/utils/prisma/enums';
 
 // `selected` without `setSelected` would be silently discarded — the bar reads the URL
 // and writes it, ignoring the prop. Pairing them in the type makes that uncompilable.
+// The controlled branch admits an explicit `selected={undefined}` only because
+// `exactOptionalPropertyTypes` is off; turning it on breaks the resource-select modal here.
 type CategoryTagsProps = {
   filter?: (tag: string) => boolean;
   includeAll?: boolean;
