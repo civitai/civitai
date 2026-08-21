@@ -4,15 +4,30 @@ import { NsfwLevel } from '@civitai/shared';
 
 export const SWEEP_ORDERS = ['newest', 'reactions'] as const;
 export const SWEEP_MEDIA = ['image', 'video'] as const;
+export type SweepMediaParam = (typeof SWEEP_MEDIA)[number];
+
+/** The route segment is user input; this is the guard that turns it into the union. */
+export const isSweepMedia = (value: string | undefined): value is SweepMediaParam =>
+  (SWEEP_MEDIA as readonly string[]).includes(value ?? '');
 
 export const ORDER_LABELS: Record<(typeof SWEEP_ORDERS)[number], string> = {
   newest: 'Newest first',
   reactions: 'Most reacted this week',
 };
 
-export const MEDIA_LABELS: Record<(typeof SWEEP_MEDIA)[number], string> = {
+export const MEDIA_LABELS: Record<SweepMediaParam, string> = {
   image: 'Images',
   video: 'Videos',
+};
+
+/**
+ * PG and PG-13 on both tabs — the two ratings things slip through as, and the sweep the mod team
+ * actually runs (ClickUp 868kn82bf). Per media type rather than one constant because the two tabs are
+ * separate sweeps with separate resume points, so this is where they would diverge if they ever did.
+ */
+export const DEFAULT_LEVELS: Record<SweepMediaParam, number[]> = {
+  image: [NsfwLevel.PG, NsfwLevel.PG13],
+  video: [NsfwLevel.PG, NsfwLevel.PG13],
 };
 
 /**

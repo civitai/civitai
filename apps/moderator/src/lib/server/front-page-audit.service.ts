@@ -73,7 +73,8 @@ const extras = [
  * disagreed about what "X" meant. Both orderings here take the same filter.
  */
 export async function getSweep(input: {
-  nsfwLevel: number;
+  /** One or more. The limit is over the UNION, so a wider selection is a shorter view of each. */
+  nsfwLevels: number[];
   order: SweepOrder;
   media: SweepMedia;
   since: Date;
@@ -83,7 +84,7 @@ export async function getSweep(input: {
   let q = dbRead
     .selectFrom('Image as i')
     .select([...columns, ...extras])
-    .where('i.nsfwLevel', '=', input.nsfwLevel)
+    .where('i.nsfwLevel', 'in', input.nsfwLevels)
     .where('i.ingestion', '=', 'Scanned')
     .where('i.nsfwLevelLocked', '=', false)
     .where('i.type', '=', input.media)
