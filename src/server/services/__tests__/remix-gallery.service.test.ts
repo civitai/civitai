@@ -675,6 +675,16 @@ describe('submission refusals', () => {
     await expect(submit()).rejects.toThrow('blocked');
     expect(placementCreate).not.toHaveBeenCalled();
   });
+
+  // The arguments are not symmetric: the block half is bidirectional and
+  // survives a swap, but the suspension half reads `placerId` alone, so a flip
+  // asks whether the OWNER is suspended and lets a suspended placer through with
+  // the refusal test above still green.
+  it('asks about the placer’s suspension, not the owner’s', async () => {
+    await submit();
+
+    expect(assertCanPlace).toHaveBeenCalledWith({ ownerId: OWNER, placerId: PLACER });
+  });
 });
 
 describe('escrow ordering', () => {

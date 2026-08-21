@@ -69,7 +69,13 @@ import {
   retractRemixGallerySubmission,
   setRemixGalleryPins,
 } from '~/server/services/remix-gallery.service';
-import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
+import {
+  guardedProcedure,
+  moderatorProcedure,
+  protectedProcedure,
+  publicProcedure,
+  router,
+} from '~/server/trpc';
 import { domainSpendType } from '~/server/utils/buzz-helpers';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import {
@@ -231,7 +237,13 @@ export const placementRouter = router({
     .input(getPlacementSettlementStatesSchema)
     .query(({ input, ctx }) => getPlacementSettlementStates(input.placementIds, ctx.user.id)),
 
-  createSticker: protectedProcedure
+  /**
+   * `guardedProcedure`, not `protectedProcedure`: placing a sticker publishes
+   * content onto someone else's image, so a muted account has to be refused the
+   * same way it is refused a comment. Account state lives here; placement state
+   * — the moderator suspension and the block pair — lives in `assertCanPlace`.
+   */
+  createSticker: guardedProcedure
     .input(createStickerPlacementSchema)
     .mutation(({ input, ctx }) => {
       assertPlacementEnabled(ctx);
@@ -414,7 +426,8 @@ export const placementRouter = router({
       })
     ),
 
-  submitToRemixGallery: protectedProcedure
+  /** `guardedProcedure` for the same reason `createSticker` is. */
+  submitToRemixGallery: guardedProcedure
     .input(submitToRemixGallerySchema)
     .mutation(({ input, ctx }) => {
       assertRemixGalleryEnabled(ctx);

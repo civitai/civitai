@@ -239,6 +239,18 @@ describe('every guard refuses the mutation rather than filtering a listing', () 
     expect(placementCreate).not.toHaveBeenCalled();
   });
 
+  // Which id goes in which slot, because the two arguments are not symmetric.
+  // The block half is bidirectional and survives a swap; the suspension half is
+  // read on `placerId` alone, so a flip checks the OWNER's suspension and lets a
+  // suspended placer straight through with every refusal test above still green.
+  it('asks about the placer’s suspension, not the owner’s', async () => {
+    givenStickerAndBalance();
+
+    await createStickerPlacement(placeInput);
+
+    expect(assertCanPlace).toHaveBeenCalledWith({ ownerId: OWNER, placerId: PLACER });
+  });
+
   it('refuses past the pending cap for one owner', async () => {
     placementCount.mockResolvedValue(10);
 

@@ -30,6 +30,7 @@ vi.mock('~/server/services/remix-gallery.service', async (importOriginal) => ({
 }));
 
 import { placementRouter } from '~/server/routers/placement.router';
+import { OnboardingSteps } from '~/server/common/enums';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { STICKER_PLACEMENT_MIN_SCALE } from '~/shared/utils/sticker-placement';
 
@@ -47,7 +48,16 @@ const STICKER_DATA = {
 
 const callerOn = (isGreen: boolean) =>
   placementRouter.createCaller({
-    user: { id: PLACER, isModerator: false },
+    // `createSticker` / `submitToRemixGallery` are `guardedProcedure`, so the
+    // account state has to be present or every call here refuses before it
+    // reaches the currency this file is about.
+    user: {
+      id: PLACER,
+      isModerator: false,
+      muted: false,
+      bannedAt: null,
+      onboarding: OnboardingSteps.Buzz,
+    },
     acceptableOrigin: true,
     tokenScope: TokenScope.Full,
     features: { isGreen, stickers: true, stickerPlacement: true, remixGallery: true },
