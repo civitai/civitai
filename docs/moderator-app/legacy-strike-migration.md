@@ -108,5 +108,13 @@ Until then they cost one indexed query and are what makes an un-migrated environ
 ## Status
 
 - [ ] Applied to **preview**
-- [ ] Applied to **production**
-- [ ] Legacy read retired (after both of the above)
+- [x] Applied to **production** — 2026-08-21. 12,902 rows across 10,690 accounts, matching `UserStrikes`
+      exactly, no marker twice. Checked against the main database rather than trusting the script's own
+      `verify()`: 0 non-Expired, 0 with points, 0 with `expiresAt <> createdAt`, 0 countable by
+      escalation (`Active AND expiresAt > NOW()`).
+- [ ] Legacy read retired — **now the outstanding half.** `getLiveStrikes` has no status filter, so the
+      imported rows already show in the strike list, while `AccountHistory` still adds "Plus N from the
+      Retool era … not part of the counts above" and User Lookup still shows an `N legacy` badge. Both
+      now double-report the same rows on all 10,690 accounts. Not urgent — the largest account holds 10
+      strikes against a 50-row cap, so nothing is hidden and no enforcement reads the count — but the
+      line is false as written.

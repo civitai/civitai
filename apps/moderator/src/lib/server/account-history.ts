@@ -1,4 +1,4 @@
-import { getUserNotes, getUserStrikes } from './moderation-memory.service';
+import { getUserNotes } from './moderation-memory.service';
 import { getLiveStrikes } from './user-lookup.service';
 import { getModActivity, getRetoolActivity } from './user-account.service';
 import { getReportsOnUser } from './user-reports.service';
@@ -12,13 +12,12 @@ import { DEFAULT_REPORT_REASONS } from '$lib/reports';
 export type AccountHistoryData = Awaited<ReturnType<typeof loadAccountHistory>>;
 
 export async function loadAccountHistory(userId: number, viewerUsername: string | null) {
-  const [strikes, legacyStrikes, notes, modActivity, ratingActivity, retoolActivity, reportsOnUser] =
+  const [strikes, notes, modActivity, ratingActivity, retoolActivity, reportsOnUser] =
     await Promise.all([
       // The MAIN APP's strikes, not the moderator database's Retool-era table — that one is written by
       // nothing, so this panel read 0 on an account carrying ten live strikes, which is the worst
       // possible number to be wrong about on the screen where the next one is issued.
       getLiveStrikes(userId),
-      getUserStrikes(userId),
       // Deciding on a strike without the prior note is the thing notes exist to stop, and "it is in
       // User Lookup" is a different screen.
       getUserNotes(userId, viewerUsername),
@@ -38,7 +37,6 @@ export async function loadAccountHistory(userId: number, viewerUsername: string 
 
   return {
     strikes,
-    legacyStrikeCount: legacyStrikes.length,
     notes,
     modActivity,
     ratingActivity,

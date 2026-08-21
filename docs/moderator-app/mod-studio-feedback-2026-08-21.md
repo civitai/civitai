@@ -102,10 +102,13 @@ this repo is public (CLAUDE.md → Security). The private triage keeps attributi
       widened from `/retool/user-lookup` alone to also accept the two report queues, which render the
       same panel.
 
-- [ ] **Legacy strikes migrated into the main database.** ⚠️ **The script is written; the migration has not
-      been run anywhere.** The decision is settled and the write side was already correct — this
-      app has written only `UserStrike` since `d0820283c0`. What was outstanding is the ~12.9k Retool-era
-      rows, and there is now one typed script for them:
+- [x] **Legacy strikes migrated into the main database.** ✅ **Run against production 2026-08-21:
+      12,902 rows imported across 10,690 accounts** — exactly the `UserStrikes` row count, so nothing was
+      skipped, and no marker appears twice. Verified independently of the script's own `verify()`: zero
+      rows are non-Expired, zero carry points, zero have `expiresAt <> createdAt`, and zero are
+      `Active AND expiresAt > NOW()` — so nothing an escalation can count. The write side was already
+      correct — this app has written only `UserStrike` since `d0820283c0`. The ~12.9k Retool-era rows
+      were what remained, and the script that moved them is:
       `apps/moderator/moderator-db/migrate-legacy-strikes.ts` (dry run by default), with the reasoning in
       [`legacy-strike-migration.md`](legacy-strike-migration.md).
 
@@ -113,6 +116,12 @@ this repo is public (CLAUDE.md → Security). The private triage keeps attributi
       production database, raw SQL over untypechecked identifiers. That shape existed only because the
       moderator database had no schema and no generated types. It has both now, so the migration is one
       script over two Kysely connections, checked by `pnpm run typecheck:scripts`.
+
+      ⚠️ **The panel has not caught up.** `AccountHistory` still prints "Plus N from the Retool era …
+      not part of the counts above", and `getLiveStrikes` has no status filter — so on all 10,690
+      accounts those rows now appear in the strike list AND are counted again by that line, which is
+      now false. Nothing is truncated (the largest account has 10 strikes against a 50-row cap) and no
+      enforcement is affected, but the footnote and User Lookup's `N legacy` badge both need retiring.
 
       🔴 **Imported rows land Expired and zero-point so escalation cannot count them**, and the
       verification pass after `--apply` fails the run if any is countable. There is no ordering

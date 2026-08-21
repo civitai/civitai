@@ -27,13 +27,6 @@ export type UserNote = {
   isMine: boolean;
 };
 
-export type UserStrike = {
-  id: number;
-  reason: string | null;
-  createdAt: Date | null;
-  createdBy: string | null;
-};
-
 export async function getUserNotes(userId: number, viewer: string | null): Promise<UserNote[]> {
   const rows = await getModeratorDb()
     .selectFrom('UserNotes')
@@ -64,10 +57,9 @@ export async function getModerationFlags(userId: number): Promise<ModerationFlag
 /**
  * Legacy ids that have ALREADY been copied into the main store by `migrate-legacy-strikes.ts`.
  *
- * Both legacy readers below subtract these, which is what lets the import run at any time without a
- * second deploy behind it: before it, history comes from here; after it, from `UserStrike`; part-way
- * through, each row is counted on exactly one side. Without this the two stores would both report the
- * same strike and the panel would say "plus N from the Retool era" about rows sitting directly above it.
+ * `strikeCountsByUserIds` subtracts these so a strike is counted on exactly one side: it spans both
+ * stores, and the import moved every row across on 2026-08-21 without a deploy behind it. Kept rather
+ * than assumed-empty because the migration doc documents a rollback, which would put rows back.
  */
 async function importedLegacyIds(userIds: number[]): Promise<Set<number>> {
   if (!userIds.length) return new Set();
@@ -84,24 +76,6 @@ async function importedLegacyIds(userIds: number[]): Promise<Set<number>> {
       return id === null ? [] : [id];
     })
   );
-}
-
-// READ ONLY, deliberately. `UserStrikes` in the moderator database is Retool-era history; strikes are
-// issued against the main app's system (`issueStrike`), which has escalation, points, expiry, the typed
-// notification and a void path. Nothing here writes this table.
-//
-// Returns only what the main store does NOT already hold — see `importedLegacyIds`.
-export async function getUserStrikes(userId: number): Promise<UserStrike[]> {
-  const [rows, imported] = await Promise.all([
-    getModeratorDb()
-      .selectFrom('UserStrikes')
-      .select(['id', 'reason', 'createdAt', 'createdBy'])
-      .where('userId', '=', userId)
-      .orderBy('createdAt', 'desc')
-      .execute(),
-    importedLegacyIds([userId]),
-  ]);
-  return rows.filter((r) => !imported.has(r.id));
 }
 
 /**
