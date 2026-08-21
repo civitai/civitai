@@ -75,6 +75,10 @@ export const trainingResultsV2Schema = z.object({
   ),
   sampleImagesPrompts: z.array(z.string()),
 
+  // `epochs[].epochNumber` are stored with this ALREADY added, so a continuation continues the
+  // source run's numbering instead of restarting at 1.
+  epochOffset: z.number().int().nonnegative().optional(),
+
   // Added to v2 in case we parse an old file. Might be useful.
   jobId: z.string().optional(),
 });

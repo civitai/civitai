@@ -6,6 +6,7 @@ import { env } from '~/env/server';
 import { dbRead } from '~/server/db/client';
 import { pickBestTrainingFile } from '~/server/schema/model-file.schema';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
+import { trainingEpochModelFileName } from '~/shared/utils/training-file-names';
 
 // Disable body parser size limit and response size limit for large epoch files
 export const config = {
@@ -33,6 +34,7 @@ export default AuthedEndpoint(
       where: { id: modelVersionId },
       select: {
         id: true,
+        name: true,
         model: { select: { id: true, userId: true, name: true } },
         files: {
           select: { metadata: true },
@@ -112,8 +114,12 @@ export default AuthedEndpoint(
         .json({ error: 'Failed to fetch epoch from storage' });
     }
 
-    const modelName = modelVersion.model.name.replace(/[^a-zA-Z0-9_-]/g, '_');
-    const fileName = `${modelName}_epoch_${epochNumber}.safetensors`;
+    const fileName = trainingEpochModelFileName({
+      modelName: modelVersion.model.name,
+      versionName: modelVersion.name,
+      versionId: modelVersion.id,
+      epochNumber,
+    });
 
     // Stream the response to the client
     res.setHeader('Content-Type', 'application/octet-stream');

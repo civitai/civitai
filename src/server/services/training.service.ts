@@ -633,8 +633,14 @@ export async function updateTrainingWorkflowRecords(
     });
   }
 
+  // Read, never derived: createTrainingWorkflow stamps this at submit, and this runs again on any
+  // re-sync of a finished run. Deriving it here would renumber one — and generation binds an epoch
+  // by value, where getTrainingFileEpochNumberDetails answers a miss with the newest epoch rather
+  // than an error, so those bindings would silently move to other weights.
+  const epochOffset = trainingResults.epochOffset ?? 0;
+
   const epochData: TrainingResultsV2['epochs'] = epochs.map((e) => ({
-    epochNumber: e.epochNumber ?? -1,
+    epochNumber: e.epochNumber != null && e.epochNumber >= 0 ? e.epochNumber + epochOffset : -1,
     modelUrl: e.blobUrl ?? '',
     modelSize: e.blobSize ?? 0,
     sampleImages: e.sampleImages ?? [],
@@ -674,6 +680,9 @@ export async function updateTrainingWorkflowRecords(
     startedAt: resolvedStartedAt,
     completedAt: completedAt ? new Date(completedAt).toISOString() : null,
     epochs: epochData,
+    // Preserved, not defaulted: writing 0 onto a run that predates the offset would mark it as
+    // deliberately unshifted, so a later resubmit could no longer stamp one.
+    epochOffset: trainingResults.epochOffset,
     history,
     sampleImagesPrompts,
     transactionData: transactions?.list ?? trainingResults.transactionData ?? [],

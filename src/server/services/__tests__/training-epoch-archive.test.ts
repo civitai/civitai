@@ -53,16 +53,18 @@ describe('buildEpochArchiveEntries', () => {
     const { entries, unresolvedCount, cappedCount } = buildEpochArchiveEntries({
       trainingResults: v2Results,
       modelName: 'My Cool Model!',
+      versionName: 'V1',
+      versionId: 77,
     });
 
     expect(unresolvedCount).toBe(0);
     expect(cappedCount).toBe(0);
     expect(entries).toEqual([
-      { blobId: 'MODEL1.safetensors', fileName: 'My_Cool_Model__epoch_1.safetensors' },
-      { blobId: 'MODEL2.safetensors', fileName: 'My_Cool_Model__epoch_2.safetensors' },
-      { blobId: 'E1S1.jpeg', fileName: 'My_Cool_Model__epoch_1_sample_1.jpeg' },
-      { blobId: 'E2S1.jpeg', fileName: 'My_Cool_Model__epoch_2_sample_1.jpeg' },
-      { blobId: 'E2S2.mp4', fileName: 'My_Cool_Model__epoch_2_sample_2.mp4' },
+      { blobId: 'MODEL1.safetensors', fileName: 'My_Cool_Model__V1-77_epoch_1.safetensors' },
+      { blobId: 'MODEL2.safetensors', fileName: 'My_Cool_Model__V1-77_epoch_2.safetensors' },
+      { blobId: 'E1S1.jpeg', fileName: 'My_Cool_Model__V1-77_epoch_1_sample_1.jpeg' },
+      { blobId: 'E2S1.jpeg', fileName: 'My_Cool_Model__V1-77_epoch_2_sample_1.jpeg' },
+      { blobId: 'E2S2.mp4', fileName: 'My_Cool_Model__V1-77_epoch_2_sample_2.mp4' },
     ]);
   });
 
@@ -84,11 +86,13 @@ describe('buildEpochArchiveEntries', () => {
         ],
       },
       modelName: 'legacy',
+      versionName: 'V1',
+      versionId: 77,
     });
 
     expect(entries).toEqual([
-      { blobId: 'LEGACY.safetensors', fileName: 'legacy_epoch_1.safetensors' },
-      { blobId: 'LEGACYS1.jpeg', fileName: 'legacy_epoch_1_sample_1.jpeg' },
+      { blobId: 'LEGACY.safetensors', fileName: 'legacy_V1-77_epoch_1.safetensors' },
+      { blobId: 'LEGACYS1.jpeg', fileName: 'legacy_V1-77_epoch_1_sample_1.jpeg' },
     ]);
   });
 
@@ -106,9 +110,13 @@ describe('buildEpochArchiveEntries', () => {
         ],
       },
       modelName: 'legacy',
+      versionName: 'V1',
+      versionId: 77,
     });
 
-    expect(entries).toEqual([{ blobId: 'OK.jpeg', fileName: 'legacy_epoch_1_sample_1.jpeg' }]);
+    expect(entries).toEqual([
+      { blobId: 'OK.jpeg', fileName: 'legacy_V1-77_epoch_1_sample_1.jpeg' },
+    ]);
     expect(unresolvedCount).toBe(2);
     expect(cappedCount).toBe(0);
   });
@@ -117,6 +125,8 @@ describe('buildEpochArchiveEntries', () => {
     const { entries, unresolvedCount, cappedCount } = buildEpochArchiveEntries({
       trainingResults: v2Results,
       modelName: 'capped',
+      versionName: 'V1',
+      versionId: 77,
       maxEntries: 3,
     });
 
@@ -143,6 +153,7 @@ describe('getTrainingEpochArchive', () => {
 
   const modelVersion = {
     id: 1,
+    name: 'V2 (from epoch 5)',
     model: { userId: 10, name: 'My Cool Model!' },
     files: [{ metadata: { trainingResults: v2Results } }],
   };
@@ -154,10 +165,13 @@ describe('getTrainingEpochArchive', () => {
 
     expect(createBlobArchive).toHaveBeenCalledWith({
       entries: expect.arrayContaining([
-        { blobId: 'MODEL1.safetensors', fileName: 'My_Cool_Model__epoch_1.safetensors' },
-        { blobId: 'E2S2.mp4', fileName: 'My_Cool_Model__epoch_2_sample_2.mp4' },
+        {
+          blobId: 'MODEL1.safetensors',
+          fileName: 'My_Cool_Model__V2__from_epoch_5-1_epoch_1.safetensors',
+        },
+        { blobId: 'E2S2.mp4', fileName: 'My_Cool_Model__V2__from_epoch_5-1_epoch_2_sample_2.mp4' },
       ]),
-      archiveName: 'My_Cool_Model__training.zip',
+      archiveName: 'My_Cool_Model__V2__from_epoch_5-1_training.zip',
     });
     expect(createBlobArchive.mock.calls[0][0].entries).toHaveLength(5);
     expect(result.url).toContain('/archive/token');

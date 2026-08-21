@@ -263,7 +263,9 @@ export const trainingDetailsObj = z.object({
   continueFromEpoch: z
     .object({
       air: z.string(),
-      epochNumber: z.number(),
+      // Not `.nonnegative()`: an epoch the orchestrator never numbered is stored as -1, and
+      // "Train Further" sends that value straight back. The service clamps it instead.
+      epochNumber: z.number().int(),
       sourceModelVersionId: z.number(),
       sourceVersionName: z.string().optional(),
     })
