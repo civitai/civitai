@@ -69,6 +69,10 @@ const SYSTEM_ACTOR_ID = -1;
  * retries; a wedged `dbWrite` with no bound here would burn that budget, turn a SUCCESSFUL exclusion
  * into a client-side timeout, and have each retry re-insert into ClickHouse and write another audit
  * row. Well under the caller's own timeout so this fails first, visibly, and the response still lands.
+ *
+ * Because the slow write is abandoned rather than cancelled, `auditRecorded: false` means "not
+ * confirmed within the bound", NOT "no row" — a write landing at 6s produces both a row and a
+ * failure log. Reporting a row that exists is the safe direction of that trade.
  */
 const AUDIT_WRITE_TIMEOUT_MS = 5_000;
 
@@ -144,7 +148,17 @@ const schema = z
     // the token is the only gate here and there is no user behind it, the same trust model the
     // cross-app mod-action registry uses. Omitted by the scheduled poller, which is genuinely not a
     // person; supply it when a human runs `unexclude` so the reversal names them.
-    actorUserId: z.coerce.number().int().positive().optional(),
+    //
+    // 🔴 `.nullish()`, not `.optional()`. `null` is the natural JSON for "no acting moderator", and
+    // under `.optional()` it is a ZodError — so the request 400s and THE EXCLUSION NEVER HAPPENS.
+    // An optional audit-attribution field must never be able to fail the write it annotates; an
+    // absent actor is exactly the sentinel case. `''` is folded in for the same reason (a shell
+    // recipe interpolating an unset variable), while a genuinely malformed value still 400s rather
+    // than silently landing a wrong id on a moderation record.
+    actorUserId: z.preprocess(
+      (v) => (v === null || v === '' ? undefined : v),
+      z.coerce.number().int().positive().optional()
+    ),
   })
   .superRefine((data, ctx) => {
     if (data.action === 'inspect-owner' && !data.ownerId)
