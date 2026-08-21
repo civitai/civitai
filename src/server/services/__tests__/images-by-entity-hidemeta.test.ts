@@ -8,6 +8,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  * The gate is therefore only observable as query text. A fixture-driven test
  * would prove nothing — feed it a row carrying `meta` and the row leaks, which
  * is a statement about the fixture rather than about the query.
+ *
+ * The subject is the STATIC template text, so a select list moved into an
+ * interpolated `Prisma.sql` fragment arrives here as `?` and this file stops
+ * guarding anything. Keep the columns spelled out in the literal.
  */
 
 vi.mock('../../../../event-engine-common/services/metrics', () => ({
@@ -108,6 +112,13 @@ describe('getImagesByEntity withholds meta the creator chose to hide', () => {
       withoutDerivations,
       'getImagesByEntity selects the meta column, which ships to the client'
     ).not.toMatch(/\bmeta\b/);
+
+    // A wildcard names no column, so the assertion above passes over `i.*` while
+    // every column including meta ships.
+    expect(
+      withoutDerivations,
+      'getImagesByEntity selects whole rows, which carries meta past the check above'
+    ).not.toMatch(/\bi\.\*/);
   });
 
   it('derives hasMeta from hideMeta, matching the other read paths', async () => {

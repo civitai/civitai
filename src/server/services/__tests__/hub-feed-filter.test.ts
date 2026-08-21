@@ -218,27 +218,33 @@ describe('the post-filter builder has the same guard', () => {
 });
 
 describe('builders that cannot serve a hub refuse it', () => {
-  // A bare `Error` here reaches the client as raw 500 text through throwDbError,
-  // so the code matters as much as the message.
-  const expectBadRequest = async (promise: Promise<unknown>) => {
+  // The dispatcher sends every hubId down the index path, so reaching either of
+  // these is a server routing bug and not something a caller can provoke: it
+  // stays 5xx, where the alerting is, and the REST layer genericizes the message
+  // rather than handing an anonymous caller the function name. A bare `Error`
+  // gets re-wrapped by throwDbError; the TRPCError propagates intact.
+  const expectInternalError = async (promise: Promise<unknown>) => {
     const error = await promise.then(
       () => undefined,
       (e) => e
     );
 
-    expect(error, 'the builder resolved instead of refusing the hub').toBeInstanceOf(TRPCError);
-    expect((error as TRPCError).code).toBe('BAD_REQUEST');
+    expect(
+      error,
+      'the builder refused with the wrong error type, or did not refuse at all'
+    ).toBeInstanceOf(TRPCError);
+    expect((error as TRPCError).code).toBe('INTERNAL_SERVER_ERROR');
     expect((error as TRPCError).message).toMatch(/cannot serve a hub/i);
   };
 
   it('getAllImages throws rather than returning an unfiltered page', async () => {
     // The backstop for the controller routing change: this path has no way to
     // express a hub, so arriving here means the dispatcher sent it wrongly.
-    await expectBadRequest(getAllImages(input(1)));
+    await expectInternalError(getAllImages(input(1)));
   });
 
   it('getImagesFromFeedSearch throws rather than returning an unfiltered page', async () => {
-    await expectBadRequest(getImagesFromFeedSearch(input(1)));
+    await expectInternalError(getImagesFromFeedSearch(input(1)));
   });
 });
 
