@@ -32,7 +32,7 @@ export function StickerBookGrid({ items, side }: { items: BookItems; side: Stick
 
   return (
     <ImagesProvider images={images}>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+      <div className="grid grid-cols-2 items-start gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
         {items.map((item) => (
           <div key={item.imageId} className="relative">
             <ImagesCard data={item.image} height={CARD_HEIGHT} />
