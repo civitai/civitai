@@ -894,9 +894,6 @@ export const toggleModelEngagement = async ({
 export const toggleModelNotify = async ({ userId, modelId }: { userId: number; modelId: number }) =>
   toggleModelEngagement({ userId, modelId, type: 'Notify' });
 
-export const toggleModelHide = async ({ userId, modelId }: { userId: number; modelId: number }) =>
-  toggleModelEngagement({ userId, modelId, type: 'Hide' });
-
 export const toggleFollowUser = async ({
   userId,
   targetUserId,
