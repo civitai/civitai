@@ -119,10 +119,13 @@ describe('getEntityCoverImage withholds meta the creator chose to hide', () => {
     expect(sql).toMatch(/AND NOT i\."hideMeta"[\s\S]{0,160}?AS "hasPositivePrompt"/);
   });
 
-  it('returns the derived booleans and no meta', async () => {
+  // Pairs with the query assertions above: the gate is in SQL, but it is worth
+  // nothing if the return map stops spreading the derived columns through.
+  // Deliberately no `meta` absence check here — the fixture decides that, so it
+  // passes just as happily against the leaking query.
+  it('spreads the derived booleans through the return map', async () => {
     const { row } = await captureQuery();
 
     expect(row).toMatchObject({ hideMeta: true, hasMeta: false, hasPositivePrompt: false });
-    expect(Object.keys(row)).not.toContain('meta');
   });
 });
