@@ -19,6 +19,12 @@ export const load: PageServerLoad = async ({ params }) => {
     // as a database outage. Anything else genuinely is one.
     if (typeof (e as { status?: number }).status === 'number') throw e;
     console.error('[abuse-detection] run load failed', e);
-    throw error(503, 'Could not read the abuse-detection tables.');
+    // Same discrimination as the list page. A flat "could not read the tables" here sends an
+    // operator hunting a database outage when the tables have simply never been created.
+    if ((e as { code?: unknown }).code === '42P01')
+      throw error(503, 'The abuse-detection tables do not exist yet — apply schema.sql.');
+    if (e instanceof Error && e.message.includes('MODERATOR_DATABASE_URL'))
+      throw error(503, 'MODERATOR_DATABASE_URL is not configured for this environment.');
+    throw error(503, 'Could not reach the abuse-detection database.');
   }
 };

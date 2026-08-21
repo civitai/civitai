@@ -4,6 +4,7 @@ import {
   PostgresAdapter,
   PostgresIntrospector,
   PostgresQueryCompiler,
+  type DatabaseConnection,
 } from 'kysely';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AbuseDetectionDB } from '../abuse-detection-db';
@@ -27,11 +28,35 @@ import type { AbuseDetectionDB } from '../abuse-detection-db';
 const sql: string[] = [];
 const params: readonly unknown[][] = [];
 
+/**
+ * 🔴 `DummyDriver` alone returns NO rows, which stops a chain at its first `executeTakeFirstOrThrow`
+ * (or its first `if (!row) return null`) — so the statements AFTER that one are never compiled and
+ * are invisible to this tier. That is not a cosmetic gap: it left the `DELETE FROM
+ * abuse_detection_finding` unreachable, and a mutant widening its `WHERE` to every run in the table
+ * passed the entire suite.
+ *
+ * Returning one canned row lets every statement compile. The row's shape is irrelevant — nothing
+ * here asserts on results, only on the SQL that was built to fetch them.
+ */
+class OneRowDriver extends DummyDriver {
+  async acquireConnection(): Promise<DatabaseConnection> {
+    return {
+      // Generic in `R`, matching `DatabaseConnection` — a concrete row type here does not satisfy it
+      // and svelte-check rejects the whole dialect. The row's contents are irrelevant; only its
+      // EXISTENCE matters, because that is what lets a chain continue past its first read.
+      executeQuery: async <R>() => ({ rows: [{ id: 1 } as unknown as R] }),
+      streamQuery: async function* () {
+        yield { rows: [] };
+      },
+    };
+  }
+}
+
 function compileOnlyDb() {
   return new Kysely<AbuseDetectionDB>({
     dialect: {
       createAdapter: () => new PostgresAdapter(),
-      createDriver: () => new DummyDriver(),
+      createDriver: () => new OneRowDriver(),
       createIntrospector: (k) => new PostgresIntrospector(k),
       createQueryCompiler: () => new PostgresQueryCompiler(),
     },
@@ -73,6 +98,10 @@ describe('compiled SQL — column names and shape', () => {
     // A conditional COUNT, never SUM over a boolean: through the LEFT JOIN `actioned` is nullable,
     // and SUM of all-NULLs is NULL, which `Number(null)` would render as a confident 0.
     expect(q).toMatch(/count\(case when "f"\."actioned" = \$\d+ then "f"\."id" end\)/);
+    // 🔴 The bound VALUE, not just the placeholder. `$1` matches whatever was bound, so a regex over
+    // the SQL text alone cannot see the predicate inverted to `false` — which would report the
+    // NOT-actioned count under the "acted on" column, the one number this board exists to separate.
+    expect(params[params.length - 1]).toContain(true);
   });
 
   it('getAbuseRuns filters by detector only when one is given', async () => {
@@ -100,6 +129,26 @@ describe('compiled SQL — column names and shape', () => {
     expect(params[params.length - 1]).toContain(11);
   });
 
+  // The SQL tier can only see that `limit + 1` reached the driver. What the function DOES with the
+  // extra row is behaviour, and it was unasserted: `>` → `>=` (a full page falsely reporting
+  // "showing the first N of N") and dropping the `.slice` (rendering N+1 rows while claiming N) both
+  // survived. The row-returning driver yields one row, so these are driven by the limit instead.
+  describe('truncation', () => {
+    it('reports truncated when the query came back over the limit', async () => {
+      // limit 0 → over-fetch of 1 → the driver's single row exceeds it.
+      const { findings, truncated } = await service.getAbuseFindings(7, 0);
+      expect(truncated).toBe(true);
+      expect(findings).toHaveLength(0); // the probe row is dropped, never rendered
+    });
+
+    it('does not report truncated when the row count merely reaches the limit', async () => {
+      // limit 1 → over-fetch of 2 → one row back, which is exactly the limit, not beyond it.
+      const { findings, truncated } = await service.getAbuseFindings(7, 1);
+      expect(truncated).toBe(false);
+      expect(findings).toHaveLength(1);
+    });
+  });
+
   it('getAbuseFindingsForUser is ordered newest-first and NOT filtered on actioned', async () => {
     await service.getAbuseFindingsForUser(99);
     const q = lastSql();
@@ -110,29 +159,64 @@ describe('compiled SQL — column names and shape', () => {
     expect(q).not.toContain('"actioned"');
   });
 
-  it('recordAbuseRun upserts on the idempotency key and clears findings before re-inserting', async () => {
-    // `DummyDriver` compiles without returning rows, so the run insert's
-    // `executeTakeFirstOrThrow()` throws "no result" — AFTER Kysely has logged the compiled query,
-    // which is the whole subject here. Swallowed deliberately; the assertions below are on the SQL,
-    // and an empty `sql` would fail them rather than pass vacuously.
-    await service
-      .recordAbuseRun({
-        detector: 'reaction-abuse',
-        startedAt: '2026-08-21T11:00:00.000Z',
-        finishedAt: '2026-08-21T11:04:00.000Z',
-        findings: [{ userId: 7, confidence: 0.9, reason: 'r', actioned: true, action: 'exclude' }],
-      })
-      .catch(() => undefined);
+  it('recordAbuseRun upserts on the idempotency key, refreshing the receipt time', async () => {
+    await service.recordAbuseRun({
+      detector: 'reaction-abuse',
+      startedAt: '2026-08-21T11:00:00.000Z',
+      finishedAt: '2026-08-21T11:04:00.000Z',
+      summary: 'daily',
+      counters: { candidates: 9 },
+      findings: [{ userId: 7, confidence: 0.9, reason: 'r', actioned: true, action: 'exclude' }],
+    });
 
     const all = sql.map((s) => s.replace(/\s+/g, ' '));
-    expect(all.length).toBeGreaterThan(0);
     const insertRun = all.find((s) => s.includes('insert into "abuse_detection_run"'));
-    // The conflict target must be exactly the pair the unique index is on, or the upsert throws at
-    // runtime: "no unique or exclusion constraint matching the ON CONFLICT specification".
+    // The conflict target must be EXACTLY the pair the unique index is on, or every write fails at
+    // runtime with 42P10 "no unique or exclusion constraint matching the ON CONFLICT specification".
     expect(insertRun).toContain('on conflict ("detector", "started_at") do update set');
+    // A replay must refresh what it re-reports, or the page shows new data under an old timestamp.
+    for (const col of ['"finished_at"', '"summary"', '"counters"', '"received_at"'])
+      expect(insertRun?.slice(insertRun.indexOf('do update set'))).toContain(col);
+  });
 
-    // The statements AFTER this one cannot be compiled here — the run insert's
-    // `executeTakeFirstOrThrow` aborts the transaction under DummyDriver before they are reached.
-    // Their order is asserted in `abuse-detection.test.ts`, against the recorded builder chain.
+  // 🔴 The one destructive statement in the write path. A mutant widening this WHERE to `run_id > 0`
+  // — every report wiping every finding of every run — passed the whole suite before this existed.
+  it('clears ONLY the findings of the run being written, and does so before re-inserting', async () => {
+    await service.recordAbuseRun({
+      detector: 'reaction-abuse',
+      startedAt: '2026-08-21T11:00:00.000Z',
+      finishedAt: '2026-08-21T11:04:00.000Z',
+      findings: [{ userId: 7, confidence: 0.9, reason: 'r', actioned: true, action: 'exclude' }],
+    });
+
+    const all = sql.map((s) => s.replace(/\s+/g, ' '));
+    const del = all.find((s) => s.startsWith('delete from "abuse_detection_finding"'));
+    expect(del).toBeDefined();
+    expect(del).toContain('where "run_id" = $1');
+
+    const delAt = all.findIndex((s) => s.startsWith('delete from "abuse_detection_finding"'));
+    const insAt = all.findIndex((s) => s.startsWith('insert into "abuse_detection_finding"'));
+    expect(delAt).toBeGreaterThanOrEqual(0);
+    expect(insAt).toBeGreaterThan(delAt);
+  });
+
+  // The header read short-circuits on a missing row, so without a row-returning driver this second
+  // statement never compiled — three wrong versions of it shipped green.
+  it('getAbuseRun scopes its counts to the run, and counts actioned separately', async () => {
+    await service.getAbuseRun(42);
+
+    const counts = sql.map((s) => s.replace(/\s+/g, ' ')).find((s) => s.includes('count('));
+    expect(counts).toBeDefined();
+    expect(counts).toContain('from "abuse_detection_finding"');
+    // Table-wide counts on every run's page is the mutant this kills.
+    expect(counts).toContain('where "run_id" = $');
+    expect(counts).toMatch(/count\("id"\) as "finding_count"/);
+    expect(counts).toMatch(
+      /count\(case when "actioned" = \$\d+ then "id" end\) as "actioned_count"/
+    );
+    // Same reason as above: the placeholder matches an inverted predicate just as well.
+    const countsParams = params[sql.findIndex((s2) => s2.includes('count('))];
+    expect(countsParams).toContain(true);
+    expect(countsParams).toContain(42);
   });
 });

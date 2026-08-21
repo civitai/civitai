@@ -45,6 +45,19 @@ export type ImageModerateInput = z.infer<typeof imageModerateInput>;
 const MAX_INT4 = 2_147_483_647;
 
 /**
+ * Findings one report may carry.
+ *
+ * EXPORTED because the reader's page limit must equal it. Two independent caps — one here, one in
+ * the moderator app — cannot be pinned equal by any test that lives in only one of the two packages,
+ * and if the reader's is the lower of the pair it silently drops rows the writer accepted. Sharing
+ * the constant makes them equal by construction instead.
+ */
+export const MAX_FINDINGS_PER_REPORT = 1_000;
+
+/** Declared once and used by both timestamp fields, so neither can regress without the other. */
+const isoWithOffset = z.iso.datetime({ offset: true });
+
+/**
  * 🔴 Every cross-field rule below exists because the receiving table has a CHECK constraint, and a
  * CHECK violation aborts the transaction and loses the whole run. Rejecting at the edge costs ONE
  * report; letting it through costs all of them. A downstream normalisation cannot substitute: it can
@@ -67,16 +80,24 @@ const abuseFinding = z
     // What it did, when it did something (`exclude`, `unexclude`, …). Absent when `actioned` is
     // false — there is no action to name. `.min(1)`: an empty string renders as a blank "Acted"
     // cell, which reads as missing data rather than as a recorded action.
-    action: z.string().min(1).max(64).optional(),
+    //
+    // `.nullish()` for the same reason `summary` has it, and it matters MORE here: `actioned: false`
+    // is most of what the detectors produce, `action IS NULL` is the database's own spelling of it,
+    // and a producer serialising a nullable field emits `null`. Refusing that would lose every run
+    // from the commonest possible payload.
+    action: z.string().min(1).max(64).nullish(),
   })
   .superRefine((f, ctx) => {
-    if (f.actioned && f.action === undefined)
+    // 🔴 `!= null`, NOT `!== undefined`. Loose equality is deliberate: it treats `null` and
+    // `undefined` alike, which is the whole point of accepting both above. With `!== undefined`,
+    // `action: null` on a non-actioned finding — the commonest payload there is — would be refused.
+    if (f.actioned && f.action == null)
       ctx.addIssue({
         code: 'custom',
         message: 'action is required when actioned is true',
         path: ['action'],
       });
-    if (!f.actioned && f.action !== undefined)
+    if (!f.actioned && f.action != null)
       ctx.addIssue({
         code: 'custom',
         message: 'action must be absent when actioned is false',
@@ -95,9 +116,10 @@ export const abuseReportInput = z
     //
     // 🔴 `offset: true`, not the default. Bare `.datetime()` accepts ONLY `Z` and rejects
     // `+00:00` — which is what Python's `datetime.isoformat()` emits, so a perfectly correct
-    // ISO-8601 producer would 400 and lose every run.
-    startedAt: z.iso.datetime({ offset: true }),
-    finishedAt: z.iso.datetime({ offset: true }),
+    // ISO-8601 producer would 400 and lose every run. BOTH fields, not just the first: they are
+    // independent schemas and a guard that only varies one of them cannot see the other regress.
+    startedAt: isoWithOffset,
+    finishedAt: isoWithOffset,
     // `.nullish()`, not `.optional()`: most JSON serialisers emit `null` for an absent string or an
     // empty map, and refusing a whole report over that is losing data to a formatting choice.
     summary: z.string().max(2_000).nullish(),
@@ -105,11 +127,20 @@ export const abuseReportInput = z
     // detector counts different things (candidates/plausible/prefiltered/rings/…), and pinning a
     // union here would make adding a counter a cross-repo change.
     counters: z.record(z.string().max(64), z.number()).nullish(),
-    findings: z.array(abuseFinding).max(1_000),
+    findings: z.array(abuseFinding).max(MAX_FINDINGS_PER_REPORT),
   })
   .superRefine((r, ctx) => {
     // A transposed pair renders as a negative duration on a board whose entire claim is when things
-    // happened. Compared as instants so the offsets above cannot make this a string comparison.
+    // happened. `Date.parse` on an offset-bearing string compares INSTANTS, which is why the fields
+    // above insist on an offset.
+    //
+    // 🔴 Bail when either field already failed its OWN validation. This refinement still runs in
+    // that case, and `Date.parse` does not fail on a string the field schema rejected — it GUESSES.
+    // A naive `2026-08-21T11:00:00.123456` parses as LOCAL time, so west of UTC it compares as later
+    // than a `Z` finish and adds a false "finishedAt is before startedAt" beside the real error. A
+    // NaN check does not catch that, because the guess succeeded; re-checking the field schema does.
+    if (!isoWithOffset.safeParse(r.startedAt).success) return;
+    if (!isoWithOffset.safeParse(r.finishedAt).success) return;
     if (Date.parse(r.finishedAt) < Date.parse(r.startedAt))
       ctx.addIssue({
         code: 'custom',

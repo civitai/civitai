@@ -234,6 +234,23 @@ describe('recordAbuseRun', () => {
     expect(values.finished_at.toISOString()).toBe('2026-08-21T11:04:00.000Z');
   });
 
+  // Found by a negative control that was SUPPOSED to be caught and wasn't: hardcoding `detector` in
+  // the insert left the whole suite green. A wrong detector files every run under another producer,
+  // where the board groups by exactly that column.
+  it('writes the reported detector and summary, not a substitute', async () => {
+    await recordAbuseRun({ ...baseRun, summary: 'daily digest line', findings: [] });
+
+    const values = valuesFor('abuse_detection_run') as { detector: string; summary: string | null };
+    expect(values.detector).toBe('reaction-abuse');
+    expect(values.summary).toBe('daily digest line');
+  });
+
+  it('stores an absent summary as NULL rather than the string "undefined"', async () => {
+    await recordAbuseRun({ ...baseRun, findings: [] });
+    const values = valuesFor('abuse_detection_run') as { summary: string | null };
+    expect(values.summary).toBeNull();
+  });
+
   it('drops an action name on a finding that was NOT actioned', async () => {
     // The table CHECK forbids the pair, and a CHECK violation aborts the transaction and loses the
     // whole run — so this is normalised rather than trusted.

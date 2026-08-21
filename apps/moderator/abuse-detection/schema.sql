@@ -36,9 +36,16 @@ CREATE TABLE IF NOT EXISTS abuse_detection_run (
 --
 -- ⚠️ On an existing deployment, de-duplicate before adding it:
 --   DELETE FROM abuse_detection_run a USING abuse_detection_run b
---    WHERE a.detector = b.detector AND a.started_at = b.started_at AND a.id > b.id;
+--    WHERE a.detector = b.detector AND a.started_at = b.started_at AND a.id < b.id;
+-- Keeps the HIGHEST id — last writer wins, matching what the runtime upsert does. Keeping the
+-- lowest would make the migration and the running code disagree about which duplicate is current.
 CREATE UNIQUE INDEX IF NOT EXISTS abuse_detection_run_detector_started_key
   ON abuse_detection_run (detector, started_at);
+-- Superseded by the unique index above, which covers the same leading column. Dropped rather than
+-- left behind: an environment that ran an earlier copy of this file still carries it, and a
+-- redundant index is pure write cost on every insert.
+DROP INDEX IF EXISTS abuse_detection_run_detector_started_idx;
+
 CREATE INDEX IF NOT EXISTS abuse_detection_run_started_idx
   ON abuse_detection_run (started_at DESC);
 

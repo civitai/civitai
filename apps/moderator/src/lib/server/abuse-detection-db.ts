@@ -63,7 +63,8 @@ let client: Kysely<AbuseDetectionDB> | undefined;
 /**
  * One instance, and the write path must read its own writes — so `singleClient`, not the read/write
  * pair. Passing the same URL as a "replica" (which is what `xguard-lab.ts` does) builds a SECOND
- * pool that is then discarded, doubling this app's connections to that database for nothing.
+ * `pg.Pool` that is then discarded. It opens no connections — a pool is lazy — so this leaks an
+ * object and its `error` listener rather than doubling the connection count; still pointless.
  */
 export function getAbuseDetectionDb(): Kysely<AbuseDetectionDB> {
   if (!client) {

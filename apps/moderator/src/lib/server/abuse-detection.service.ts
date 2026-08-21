@@ -1,4 +1,4 @@
-import type { AbuseReportInput } from '@civitai/moderation';
+import { MAX_FINDINGS_PER_REPORT, type AbuseReportInput } from '@civitai/moderation';
 import { getAbuseDetectionDb } from './abuse-detection-db';
 
 /**
@@ -38,6 +38,17 @@ export type AbuseFinding = {
 };
 
 /**
+ * Postgres `undefined_object`, raised when `ON CONFLICT (…)` names columns no unique index covers.
+ *
+ * 🔴 This is the failure mode of a HALF-APPLIED schema, and it is otherwise undiagnosable from the
+ * producer's side: it presents as a 500 on every POST forever, and the job retries into it. The
+ * upsert requires the UNIQUE index; an environment still carrying the earlier non-unique index of a
+ * different name satisfies neither `IF NOT EXISTS` nor the conflict target. The read path already
+ * says "run schema.sql" when the tables are missing; the write path has to say it too.
+ */
+const PG_NO_MATCHING_CONFLICT_TARGET = '42P10';
+
+/**
  * Store one run and its findings.
  *
  * One transaction: a run header whose findings failed to land would render as "0 findings", which is
@@ -46,6 +57,23 @@ export type AbuseFinding = {
  */
 export async function recordAbuseRun(input: AbuseReportInput): Promise<{ runId: number }> {
   const db = getAbuseDetectionDb();
+  try {
+    return await writeRun(db, input);
+  } catch (e) {
+    if ((e as { code?: unknown }).code === PG_NO_MATCHING_CONFLICT_TARGET)
+      throw new Error(
+        'abuse_detection_run is missing its (detector, started_at) UNIQUE index — apply ' +
+          'apps/moderator/abuse-detection/schema.sql to MODERATOR_DATABASE_URL',
+        { cause: e }
+      );
+    throw e;
+  }
+}
+
+function writeRun(
+  db: ReturnType<typeof getAbuseDetectionDb>,
+  input: AbuseReportInput
+): Promise<{ runId: number }> {
   return db.transaction().execute(async (trx) => {
     const run = await trx
       .insertInto('abuse_detection_run')
@@ -66,6 +94,10 @@ export async function recordAbuseRun(input: AbuseReportInput): Promise<{ runId: 
           finished_at: new Date(input.finishedAt),
           summary: input.summary ?? null,
           counters: JSON.stringify(input.counters ?? {}),
+          // Refreshed, not left at the first attempt's value. The detail page renders this as
+          // "reported <when>", and it is the only record of when a detector was last heard from —
+          // stale here, a re-reported run shows new data under an old receipt time.
+          received_at: new Date(),
         })
       )
       .returning('id')
@@ -85,10 +117,11 @@ export async function recordAbuseRun(input: AbuseReportInput): Promise<{ runId: 
             confidence: f.confidence,
             reason: f.reason,
             actioned: f.actioned,
-            // Mirrors the table's CHECK in BOTH directions. The contract already refuses either
-            // mismatch, so this is defence in depth — but only the total form is defence: an
-            // `actioned: true` with no action used to normalise to NULL here, which the CHECK then
-            // rejected, aborting the transaction and losing the whole run.
+            // Mirrors the table's CHECK for the `actioned: false` direction. It CANNOT repair the
+            // other one — an `actioned: true` carrying no action still normalises to NULL here, and
+            // the CHECK would reject it, aborting the transaction and losing the whole run. That
+            // shape is unreachable only because the CONTRACT now refuses it at the edge, which is
+            // where a missing value has to be caught: this line has nothing to substitute for it.
             action: f.actioned ? f.action ?? null : null,
           }))
         )
@@ -189,17 +222,18 @@ export async function getAbuseRuns(
 /**
  * The findings of one run, most-confident first.
  *
- * 🔴 The cap matches the contract's own `.max(1_000)` per run, so a conforming report is never
- * truncated — and the caller is told when one is anyway. A silent cap BELOW the count the list page
- * shows is the worst version of this: the two screens disagree about the same run, and the rows a
- * moderator cannot see are the ones the sort pushed to the bottom. `truncated` exists so the page
- * can say so rather than quietly showing fewer.
+ * 🔴 The cap IS the contract's, imported rather than re-typed. Two independent literals could not be
+ * pinned equal by any test living in one package, and if the reader's were the lower it would
+ * silently drop rows the writer accepted — the two screens then disagree about one run, and the
+ * missing rows are the ones the sort pushed to the bottom.
+ *
+ * Because they are equal, `truncated` cannot fire for a conforming report; it is the guard for the
+ * case where they stop being equal, and the over-fetch is what makes that observable instead of
+ * silent.
  */
-export const MAX_FINDINGS_PER_RUN = 1_000;
-
 export async function getAbuseFindings(
   runId: number,
-  limit = MAX_FINDINGS_PER_RUN
+  limit = MAX_FINDINGS_PER_REPORT
 ): Promise<{ findings: AbuseFinding[]; truncated: boolean }> {
   // One more than asked for, purely to detect the cap — the extra row is dropped below.
   const rows = await getAbuseDetectionDb()
