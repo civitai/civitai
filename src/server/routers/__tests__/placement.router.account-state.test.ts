@@ -161,7 +161,10 @@ describe('placement router — account state refuses a placement', () => {
   it('classifies every procedure the router exposes', () => {
     expect(procedureNames.length).toBeGreaterThan(0);
 
-    const classified = [...new Set(CREATE_CALLS.map((call) => call.name)), ...NON_CREATE_PROCEDURES];
+    const classified = [
+      ...new Set(CREATE_CALLS.map((call) => call.name)),
+      ...NON_CREATE_PROCEDURES,
+    ];
     expect(procedureNames.slice().sort()).toEqual(classified.slice().sort());
   });
 

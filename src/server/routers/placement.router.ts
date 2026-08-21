@@ -243,23 +243,21 @@ export const placementRouter = router({
    * same way it is refused a comment. Account state lives here; placement state
    * — the moderator suspension and the block pair — lives in `assertCanPlace`.
    */
-  createSticker: guardedProcedure
-    .input(createStickerPlacementSchema)
-    .mutation(({ input, ctx }) => {
-      assertPlacementEnabled(ctx);
-      return createStickerPlacement({
-        ...input,
-        // After the spread, and the schema has no `placerId` to strip anyway —
-        // both, because this is the id the whole free tier is scoped by and
-        // every check downstream is a statement about it rather than a check of
-        // it. Read off the payload it would spend someone else's daily
-        // allowance and place under their name with nothing raising.
-        placerId: ctx.user.id,
-        // From the request's own domain, never the input: `...input` spreads
-        // first, so a client-sent `spendType` cannot survive this line.
-        spendType: domainSpendType(ctx.features),
-      });
-    }),
+  createSticker: guardedProcedure.input(createStickerPlacementSchema).mutation(({ input, ctx }) => {
+    assertPlacementEnabled(ctx);
+    return createStickerPlacement({
+      ...input,
+      // After the spread, and the schema has no `placerId` to strip anyway —
+      // both, because this is the id the whole free tier is scoped by and
+      // every check downstream is a statement about it rather than a check of
+      // it. Read off the payload it would spend someone else's daily
+      // allowance and place under their name with nothing raising.
+      placerId: ctx.user.id,
+      // From the request's own domain, never the input: `...input` spreads
+      // first, so a client-sent `spendType` cannot survive this line.
+      spendType: domainSpendType(ctx.features),
+    });
+  }),
 
   /**
    * The one mutation here that is deliberately NOT flag-gated: turning the flag
