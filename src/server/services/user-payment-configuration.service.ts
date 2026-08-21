@@ -1,6 +1,11 @@
 import type Stripe from 'stripe';
 import { v4 as uuid } from 'uuid';
-import { NotificationCategory, StripeConnectStatus, TipaltiStatus } from '~/server/common/enums';
+import {
+  NotificationCategory,
+  parseTipaltiStatus,
+  StripeConnectStatus,
+  TipaltiStatus,
+} from '~/server/common/enums';
 import { env } from '../../env/server';
 import { dbRead, dbWrite } from '../db/client';
 import { logToAxiom } from '../logging/client';
@@ -294,7 +299,8 @@ export async function updateByTipaltiAccount({
   userId,
 }: {
   tipaltiAccountId?: string;
-  tipaltiAccountStatus: TipaltiStatus;
+  // Tipalti's raw string, not a TipaltiStatus: the webhook forwards `eventData.status` unvalidated.
+  tipaltiAccountStatus: string;
   tipaltiPaymentsEnabled: boolean;
   tipaltiWithdrawalMethod?: CashWithdrawalMethod;
   unpayableReasons?: string[];
@@ -321,25 +327,31 @@ export async function updateByTipaltiAccount({
     },
   });
 
+  const parsedStatus = parseTipaltiStatus(tipaltiAccountStatus);
+
+  // Only on the false -> true edge of payable. Tipalti re-sends payeeDetailsChanged for every payee
+  // edit, so any predicate that is merely "currently payable" notifies all of them on every webhook.
   if (tipaltiPaymentsEnabled) {
-    if (userPaymentConfig.tipaltiAccountStatus !== TipaltiStatus.Active) {
+    if (!userPaymentConfig.tipaltiPaymentsEnabled) {
       await createNotification({
         userId: userPaymentConfig.userId,
         type: 'creators-program-payments-enabled',
         category: NotificationCategory.System,
-        key: `creators-program-payments-enabled:${uuid()}`,
+        key: `creators-program-payments-enabled:${userPaymentConfig.userId}`,
         details: {},
-      }).catch();
+      }).catch(() => {
+        log({ method: 'createNotification', userId: userPaymentConfig.userId });
+      });
     }
   } else if (
-    tipaltiAccountStatus === TipaltiStatus.BlockedByTipalti ||
-    tipaltiAccountStatus === TipaltiStatus.Blocked
+    parsedStatus === TipaltiStatus.BlockedByProvider ||
+    parsedStatus === TipaltiStatus.Blocked
   ) {
     await createNotification({
       userId: userPaymentConfig.userId,
       type: 'creators-program-rejected-tipalti',
       category: NotificationCategory.System,
-      key: `creators-program-rejected-tipalti:${uuid()}`,
+      key: `creators-program-rejected-tipalti:${userPaymentConfig.userId}`,
       details: {},
     }).catch(() => {
       log({ method: 'createNotification', userId: userPaymentConfig.userId });

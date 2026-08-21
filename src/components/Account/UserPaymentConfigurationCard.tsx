@@ -22,11 +22,8 @@ import { useState } from 'react';
 import { showErrorNotification } from '~/utils/notifications';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { StripeConnectStatus, TipaltiStatus } from '~/server/common/enums';
-import {
-  useTipaltiConfigurationUrl,
-  useUserPaymentConfiguration,
-} from '~/components/UserPaymentConfiguration/util';
+import { parseTipaltiStatus, StripeConnectStatus, TipaltiStatus } from '~/server/common/enums';
+import { useUserPaymentConfiguration } from '~/components/UserPaymentConfiguration/util';
 import dynamic from 'next/dynamic';
 import { useMutateUserSettings } from '~/components/UserSettings/hooks';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
@@ -293,6 +290,12 @@ const TipaltiConfigurationCard = () => {
     );
   }
 
+  const status = parseTipaltiStatus(userPaymentConfiguration.tipaltiAccountStatus);
+  const isUnusable =
+    status === TipaltiStatus.Blocked ||
+    status === TipaltiStatus.BlockedByProvider ||
+    status === TipaltiStatus.Suspended;
+
   return (
     <>
       <Stack>
@@ -303,19 +306,12 @@ const TipaltiConfigurationCard = () => {
 
       <Divider my="xs" />
 
-      {userPaymentConfiguration?.tipaltiAccountStatus.toUpperCase() ===
-        TipaltiStatus.PendingOnboarding ||
-      userPaymentConfiguration?.tipaltiAccountStatus.toUpperCase() ===
-        TipaltiStatus.InternalValue ? (
-        <>
-          <Stack>
-            <Text>
-              Your account requires setup. Click the button below to start/continue your setup
-              process.
-            </Text>
-          </Stack>
-        </>
-      ) : userPaymentConfiguration?.tipaltiAccountStatus.toUpperCase() === TipaltiStatus.Active ? (
+      {isUnusable ? (
+        <Text>
+          We are unable to setup your account so that you can withdraw funds. You may contact
+          support if you think this is a mistake to get a better understanding of the issue.
+        </Text>
+      ) : status === TipaltiStatus.Active ? (
         <>
           {userPaymentConfiguration?.tipaltiPaymentsEnabled ? (
             <Text>
@@ -339,17 +335,19 @@ const TipaltiConfigurationCard = () => {
           )}
         </>
       ) : (
-        <Text>
-          We are unable to setup your account so that you can withdraw funds. You may contact
-          support if you think this is a mistake to get a better understanding of the issue.
-        </Text>
+        // PendingOnboarding, InternalValue, and any status we don't model. Pointing someone at setup is
+        // recoverable if we guessed wrong; telling them their account is unusable is not.
+        <Stack>
+          <Text>
+            Your account requires setup. Click the button below to start/continue your setup
+            process.
+          </Text>
+        </Stack>
       )}
 
       <Divider my="xs" />
 
-      {![TipaltiStatus.Blocked, TipaltiStatus.BlockedByTipalti].some(
-        (s) => s === userPaymentConfiguration?.tipaltiAccountStatus
-      ) && (
+      {!isUnusable && (
         <Button
           component="a"
           href="/tipalti/setup"
@@ -383,7 +381,7 @@ export function UserPaymentConfigurationCard() {
       {userPaymentConfiguration?.tipaltiAccountId && userPaymentConfiguration?.stripeAccountId && (
         <Divider my="xl" />
       )}
-      {!userPaymentConfiguration?.tipaltiAccountId && <TipaltiConfigurationCard />}
+      <TipaltiConfigurationCard />
     </Card>
   );
 }

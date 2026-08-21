@@ -344,13 +344,27 @@ export enum StripeConnectStatus {
   Rejected = 'Rejected',
 }
 
+// Values must be Tipalti's own spelling: the payeeDetailsChanged webhook stores `status` verbatim into a
+// plain text column, so a member that differs by a single character can never equal a stored value.
+// `InternalValue` is ours, not Tipalti's — it is the column default from the original create-table.
 export enum TipaltiStatus {
   PendingOnboarding = 'PendingOnboarding',
-  Active = 'ACTIVE',
-  Suspended = 'SUSPENDED',
-  Blocked = 'BLOCKED',
-  BlockedByTipalti = 'BLOCKED_BY_TIPALTI',
+  Active = 'Active',
+  Suspended = 'Suspended',
+  Blocked = 'Blocked',
+  BlockedByProvider = 'BlockedByProvider',
   InternalValue = 'INTERNAL_VALUE',
+}
+
+const tipaltiStatusByValue = new Map(
+  Object.values(TipaltiStatus).map((value) => [value.toLowerCase(), value])
+);
+
+// Returns null rather than a fallback member so callers have to decide what an unmodeled status means —
+// bucketing one into "blocked" would tell a creator their account is unusable on a status we never saw.
+export function parseTipaltiStatus(status: string | null | undefined): TipaltiStatus | null {
+  if (!status) return null;
+  return tipaltiStatusByValue.get(status.toLowerCase()) ?? null;
 }
 
 export enum OrchPriorityTypes {
@@ -438,7 +452,6 @@ export enum NewOrderSignalActions {
 export enum ExternalModerationType {
   Clavata = 'Clavata',
 }
-
 
 export enum MarketplacePaymentMethod {
   CashApp = 'CashApp',

@@ -1,5 +1,4 @@
 import * as z from 'zod';
-import { TipaltiStatus } from '~/server/common/enums';
 
 export namespace Tipalti {
   const paymentStatus = [
@@ -53,7 +52,9 @@ export namespace Tipalti {
   export const createPayeeResponseSchema = z.object({
     id: z.string(),
     refCode: z.string().optional(),
-    status: z.enum(TipaltiStatus),
+    // Deliberately not z.enum(TipaltiStatus): this schema gates createPayee, so a status we haven't
+    // modeled yet would throw here and fail onboarding. Read it with parseTipaltiStatus.
+    status: z.string(),
     statusChangeDateTimeUTC: z.string().nullish(),
     statusReason: z.string().nullish(),
     isAccountClosed: z.boolean().optional(),
