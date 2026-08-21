@@ -264,6 +264,7 @@ describe('OnsiteReviewModal — store-visible copy is surfaced INLINE for the mo
         ...ONSITE_PENDING.manifest,
         tagline: 'The fastest way to remix a model',
         category: 'generation',
+        contentRating: 'pg13',
       },
     };
     renderWithProviders(
@@ -273,7 +274,22 @@ describe('OnsiteReviewModal — store-visible copy is surfaced INLINE for the mo
     await expect
       .element(page.getByText('The fastest way to remix a model'))
       .toBeInTheDocument();
-    await expect.element(page.getByText('generation')).toBeInTheDocument();
+    /**
+     * 🔴 CALL-SITE ASSERTION — and a REPAIR of one that could not fail.
+     *
+     * This line was `getByText('generation')`. Without `exact`, Playwright matches
+     * a case-insensitive SUBSTRING, so it resolved happily against both the raw
+     * `generation` this modal used to render AND the `Generation` it renders now —
+     * it named the value without ever being able to discriminate it. The audit
+     * counted this site as uncovered, and it was right: the assertion was inert
+     * for the property that matters.
+     */
+    await expect.element(page.getByText('Generation', { exact: true })).toBeInTheDocument();
+    expect(page.getByText('generation', { exact: true }).query()).toBeNull();
+    // 🔴 The rating badge beside it, on the rung that separates the shared map from
+    // every mechanical transformation of the key (`PG13`, `Pg13`, `pg13`).
+    await expect.element(page.getByText('PG-13', { exact: true })).toBeInTheDocument();
+    expect(page.getByText('pg13', { exact: true }).query()).toBeNull();
     // They are HANDLED keys, so the "Other manifest fields" count is unchanged
     // (still just the one novel key from the base fixture) — i.e. they did not
     // fall through to the raw-JSON dump.
@@ -289,7 +305,9 @@ describe('OnsiteReviewModal — store-visible copy is surfaced INLINE for the mo
     );
     await expect.element(page.getByText('My Onsite Block')).toBeInTheDocument();
     expect(page.getByText('The fastest way to remix a model').elements()).toHaveLength(0);
-    expect(page.getByText('generation').elements()).toHaveLength(0);
+    // Neither spelling renders when the manifest declares no category.
+    expect(page.getByText('generation', { exact: true }).elements()).toHaveLength(0);
+    expect(page.getByText('Generation', { exact: true }).elements()).toHaveLength(0);
   });
 });
 

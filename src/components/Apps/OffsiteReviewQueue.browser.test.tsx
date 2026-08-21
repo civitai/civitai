@@ -486,7 +486,18 @@ describe('OffsiteReviewModal — content-rating derive + mod override', () => {
     // The Select is present (defaulting to the derived rating), and confirming approve
     // forwards the chosen rating to the mutation.
     await expect.element(page.getByTestId('apps-offsite-approve-rating')).toBeInTheDocument();
+    // 🔴 CALL-SITE ASSERTION for the option list's LABEL half. Mantine renders the
+    // selected option's label in the input, so this reads what the moderator reads.
+    // Was `label: r`, i.e. the raw key.
+    const ratingInput = page
+      .getByTestId('apps-offsite-approve-rating')
+      .element() as HTMLInputElement;
+    expect(ratingInput.value).toBe('R');
+    expect(ratingInput.value).not.toBe('r');
     await page.getByTestId('apps-offsite-approve-confirm').click();
+    // 🔴 …and the VALUE half is unchanged: the mutation still receives the stored
+    // key. The pair is the point — a mutant that mapped the value instead of the
+    // label would satisfy the assertion above and break this one.
     expect(mocks.approveMutate).toHaveBeenCalledWith(
       expect.objectContaining({ publishRequestId: 'req-1', contentRating: 'r' })
     );

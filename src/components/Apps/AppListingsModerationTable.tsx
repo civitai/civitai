@@ -316,7 +316,10 @@ export function AppListingsModerationTable({
                   </Table.Td>
                   <Table.Td>
                     {row.category ? (
-                      <Badge size="sm" variant="light">
+                      // testid so the display-label assertion can select this badge
+                      // STRUCTURALLY — a text search for a category word would also
+                      // match the app's name or a status chip.
+                      <Badge size="sm" variant="light" data-testid="apps-listing-mod-category">
                         {marketplaceCategoryLabel(row.category)}
                       </Badge>
                     ) : (

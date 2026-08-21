@@ -3,6 +3,7 @@ import {
   isRelatedRailLoading,
   needsPopularTopUp,
   RELATED_LISTINGS_LIMIT,
+  relatedRailHeading,
   selectRelatedListings,
 } from '~/components/Apps/related-listings';
 import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
@@ -186,5 +187,44 @@ describe('isRelatedRailLoading — no "2 cards → loader → 6 cards" flash', (
         popularPending: false,
       })
     ).toBe(false);
+  });
+});
+
+/**
+ * 🔴 CALL-SITE COVERAGE — the rail heading (and its `aria-label`, the same string).
+ *
+ * This is the one place the rail shows a reader a category, and until the string
+ * moved into this pure module it was the only `marketplaceCategoryLabel` call
+ * site with no reachable assertion anywhere in the repo.
+ *
+ * These assertions guard the WIRING, not the label map: they fail if this
+ * function stops calling the shared helper (renders `utility`), if it calls the
+ * wrong one, or if the surrounding sentence is reworded — none of which any test
+ * of `marketplaceCategoryLabel` itself can see.
+ */
+describe('🔴 relatedRailHeading — the rail names the category by its LABEL', () => {
+  it('a known category is named by its display label, inside the full sentence', () => {
+    // Whole normalised string, not a substring: a check for "Utility" alone would
+    // be satisfied by a heading that had lost the "More in" half.
+    expect(relatedRailHeading('utility')).toBe('More in Utility');
+    // A second rung, so a mutant hardcoding one label has to move an assertion.
+    expect(relatedRailHeading('generation')).toBe('More in Generation');
+  });
+
+  it('🔴 never renders the raw stored key', () => {
+    expect(relatedRailHeading('utility')).not.toContain('utility');
+    expect(relatedRailHeading('analytics')).not.toContain('analytics');
+  });
+
+  it('an unknown category still names itself, via the shared raw fallback', () => {
+    // The rail below really is filtered by this value, so naming it is honest —
+    // and a blank/`More in ` heading would be the visible bug.
+    expect(relatedRailHeading('workflow-tools')).toBe('More in workflow-tools');
+  });
+
+  it('no category at all falls back to the generic heading, not a hole', () => {
+    expect(relatedRailHeading(null)).toBe('More apps');
+    expect(relatedRailHeading(undefined)).toBe('More apps');
+    expect(relatedRailHeading('')).toBe('More apps');
   });
 });
