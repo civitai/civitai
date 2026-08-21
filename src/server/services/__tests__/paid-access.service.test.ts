@@ -669,6 +669,28 @@ describe('getViewerMonetization — what the UI is told about a sale', () => {
     expect(out[1].sale).toBeNull();
   });
 
+  it('reports a sale on a GENERATION-ONLY gate, which has no download price at all', async () => {
+    // Every other fixture here has a download tier. A review found that both branches decided "is there
+    // a sale" from the download price alone, so a gen-only gate reported NO sale to anyone while the
+    // charge discounted it — and the card badged it, promising what the page then denied.
+    drive({ 1: row({ terms: { generation: { price: 1000, trialLimit: 5 } }, sales: [sale()] }) });
+
+    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: 2 } });
+
+    expect(out[1].paidAccess?.terms).toEqual({ generation: { price: 800, trialLimit: 5 } });
+    expect(out[1].sale?.discountAmount).toBe(20);
+    expect(out[1].sale?.buyerTerms).toEqual({ generation: { price: 800, trialLimit: 5 } });
+  });
+
+  it('still reports nothing on a gen-only gate when no sale is running', async () => {
+    drive({ 1: row({ terms: { generation: { price: 1000, trialLimit: 5 } } }) });
+
+    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: 2 } });
+
+    expect(out[1].sale).toBeNull();
+    expect(out[1].paidAccess?.terms).toEqual({ generation: { price: 1000, trialLimit: 5 } });
+  });
+
   it('reports no sale when the discount rounds away to nothing', async () => {
     // 1% of 50 floors to 0. Drawing a strikethrough over an unchanged number would read as a broken page.
     drive({ 1: row({ terms: { download: { price: 50 } }, sales: [sale({ discountAmount: 1 })] }) });
