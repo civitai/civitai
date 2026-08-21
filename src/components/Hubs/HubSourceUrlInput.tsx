@@ -13,13 +13,9 @@ const sourceLabels: Record<UserHubSourceType, string> = {
 };
 
 /**
- * Paste a Civitai link and get the source it names. The type is detected from the
- * URL rather than picked, and resolution happens server-side so the parser sees
- * the real domain list instead of whatever the browser is on.
- *
- * The link is resolved as you type and what it resolved to is shown before you
- * commit: a URL is opaque, and a model link with a version in its query resolves
- * to the version rather than the model, which nobody would guess from the text.
+ * The resolved source is shown before you commit: a model link with a version in
+ * its query resolves to the version rather than the model, which nobody would
+ * guess from the URL text.
  */
 export function HubSourceUrlInput({
   onResolved,

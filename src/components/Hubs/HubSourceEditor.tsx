@@ -16,11 +16,6 @@ export type HubSourceValue = {
   index: number;
 };
 
-/**
- * The source list plus the affordance that adds to it. Controlled, so the same
- * editor serves the create modal — where there is no hub row to write to yet —
- * and the rail, where every change is a save.
- */
 export function HubSourceEditor({
   value,
   onChange,

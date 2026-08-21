@@ -129,9 +129,9 @@ export default Page(
                   hubId: hub.id,
                   sort,
                   period: hub.period,
-                  // Named key by key rather than spread: `hubId` may only be
-                  // combined with filters the search index can serve, and a
-                  // spread of stored JSON is how a DB-forcing key gets back in.
+                  // Enumerated so a key added to `hubFeedFiltersSchema` is a
+                  // deliberate addition here too — `hubId` may only be combined
+                  // with filters the index can serve (`requiresImageDbPath`).
                   baseModels: hub.filters.baseModels,
                   tools: hub.filters.tools,
                   techniques: hub.filters.techniques,
@@ -141,8 +141,8 @@ export default Page(
                   nonRemixesOnly: hub.filters.nonRemixesOnly,
                   hideChallenges: hub.filters.hideChallenges,
                   includePG13: hub.filters.includePG13,
-                  // Stored on the hub and empty by default; an empty list means
-                  // "every type", which is what omitting the filter does.
+                  // Omitted rather than sent empty: the hub stores [] to mean
+                  // "no restriction", and the feed's filter does not.
                   types: hub.mediaTypes.length ? hub.mediaTypes : undefined,
                 }}
               />

@@ -4,14 +4,13 @@ export type CivitaiEntityRef =
   | { type: 'modelVersion'; modelVersionId: number }
   | { type: 'collection'; collectionId: number };
 
-// Hosts we recognise without being told. Callers should also pass the runtime
-// domain list (useAppContext().serverDomains, primaries AND aliases) — the env
-// vars behind it are optional, so a bare dev environment supplies nothing and
-// this backstop is what keeps the parser working there.
+// Hosts we recognise without being told. The domain env vars are optional, so a
+// bare dev environment supplies no runtime host list and this backstop is what
+// keeps the parser working there.
 const STATIC_HOST_PATTERN = /(^|\.)civitai\.(com|red|green|blue)$/;
 
-// `new URL` needs an origin for relative input. Anything that comes back with
-// this host was host-relative, which is unambiguous and always accepted.
+// `new URL` needs an origin for relative input. Anything coming back with this
+// host was host-relative, so the host check is skipped.
 const RELATIVE_ORIGIN = 'https://url-had-no-host.invalid';
 
 const INT = /^\d+$/;

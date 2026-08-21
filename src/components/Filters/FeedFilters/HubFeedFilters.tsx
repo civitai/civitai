@@ -35,13 +35,12 @@ const HubSourcePanel = dynamic(
  * store-backed: these belong to the hub and persist with it, so they must not be
  * shared with whatever the user last picked on /images.
  *
- * Sources appear both here and in the rail on purpose — which one people reach
- * for is the open question, so both are live until there is an answer.
+ * Sources appear both here and in the rail on purpose, until we learn which one
+ * people use.
  */
 export function HubFeedFilters({ ...groupProps }: GroupProps) {
   const router = useRouter();
   const hubId = Number(router.query.id);
-  // Mantine's Popover.Target does not toggle on click by itself.
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const utils = trpc.useUtils();
 
@@ -82,6 +81,7 @@ export function HubFeedFilters({ ...groupProps }: GroupProps) {
           <FilterButton
             icon={IconWorld}
             active={sourcesOpen}
+            // Controlled Popover, so the target does not toggle itself.
             onClick={() => setSourcesOpen((open) => !open)}
           >
             {sourceCount} {sourceCount === 1 ? 'source' : 'sources'}
@@ -120,9 +120,6 @@ export function HubFeedFilters({ ...groupProps }: GroupProps) {
           period: hub.period,
           types: hub.mediaTypes,
         }}
-        // Only the keys a hub can persist survive; the dropdown renders a few
-        // more (hidden, scheduled, the moderation toggles) that are per-session
-        // states rather than settings this hub carries.
         onChange={(next) =>
           upsert.mutate({
             id: hub.id,

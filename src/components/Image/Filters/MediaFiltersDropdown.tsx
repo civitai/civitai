@@ -64,9 +64,7 @@ export function MediaFiltersDropdown({
   // PG-13 access to opt in/out of.
   const showPG13Toggle = isGreen && !!currentUser;
   const showChallengeToggle = filterType !== 'modelImages';
-  // The three `hide*` booleans predate `exclude` and gate the same controls. They
-  // fold into one list here so the component has a single gate — two would drift
-  // the moment a chip is added to one and not the other.
+  // The legacy hide* booleans fold into `excluded` so there is one gate, not two.
   const excluded = useMemo<MediaFilterKey[]>(
     () => [
       ...(exclude ?? []),

@@ -335,9 +335,8 @@ async function assertHubSourcesUsable({
 
 // What the viewer is allowed to see the name of. This is an id-to-name lookup over
 // a dense id space, so an unfiltered arm is a sweepable oracle for the names of
-// drafts, unpublished models and private collections — the entity pages themselves
-// 404 for exactly that reason. A source they cannot see is a not-found, never a
-// name plus a refusal.
+// drafts, unpublished models and private collections. A source they cannot see is
+// a not-found, never a name plus a refusal.
 const visibleModel = (userId: number, isModerator?: boolean) =>
   isModerator
     ? { deletedAt: null }
@@ -349,9 +348,6 @@ const visibleModel = (userId: number, isModerator?: boolean) =>
         ],
       };
 
-// Resolves a pasted link to the source it names. Server-side so the parser gets
-// the real domain list and the lookup is one round trip instead of four client
-// queries against four different routers.
 export async function resolveHubSourceFromUrl({
   url,
   userId,
@@ -361,10 +357,9 @@ export async function resolveHubSourceFromUrl({
   if (!ref) return null;
 
   if (ref.type === 'user') {
-    // `User.username` is citext, so a plain equals is already case-insensitive
-    // AND index-served. Asking Prisma for `mode: 'insensitive'` emits ILIKE, which
-    // no btree serves: measured on the prod replica at 4.7s and a full read of the
-    // 4.7GB table, against 0.14ms for the equality.
+    // `User.username` is citext, so a plain equals is case-insensitive AND
+    // index-served. `mode: 'insensitive'` emits ILIKE, which no btree serves —
+    // 4.7s full table read vs 0.14ms, measured on the prod replica.
     const user = await dbRead.user.findFirst({
       where: { username: { equals: ref.username }, deletedAt: null },
       select: { id: true, username: true },
@@ -417,8 +412,7 @@ export async function resolveHubSourceFromUrl({
   }
 
   // Same gate the write path enforces, and in the same order: refusing after
-  // showing the name is not a refusal. `getUserCollectionPermissionsByIds` is what
-  // the rest of the app reads a collection by id through.
+  // showing the name is not a refusal.
   if (!HUB_COLLECTION_SOURCES_ENABLED) return null;
 
   const [collection] = await dbRead.collection.findMany({
@@ -445,8 +439,7 @@ const SUGGESTIONS_LIMIT = 25;
 // type-ahead worth having.
 //
 // So the relationship list drives, bounded, and the name filter runs over the ids
-// it returns. That makes this a search of your most recent relationships rather
-// than of all of them, which is the tradeoff worth taking here.
+// it returns — a search of your most recent relationships, not all of them.
 const SUGGESTIONS_WINDOW = 500;
 
 /**
@@ -525,9 +518,8 @@ export async function getHubSourceSuggestions({
     }));
   }
 
-  // Models come from three relationships that overlap — the "favourite" button
-  // writes a Notify engagement AND a bookmark row for the same model — so the ids
-  // are gathered first and the name filter runs once over the union.
+  // The three relationships overlap, so the ids are gathered first and the name
+  // filter runs once over the union.
   const bookmarkCollection = await dbRead.collection.findFirst({
     where: { userId, type: CollectionType.Model, mode: CollectionMode.Bookmark },
     select: { id: true },

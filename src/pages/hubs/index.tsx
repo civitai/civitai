@@ -15,8 +15,8 @@ export const getServerSideProps = createServerSideProps({
     if (!features?.userHubs) return { notFound: true };
     if (!session?.user) return { redirect: { destination: '/login', permanent: false } };
 
-    // `/hubs` is an entry point, not a page: it lands on a hub the way /collections
-    // does. Only someone with no hubs at all sees anything rendered here.
+    // An entry point, not a page: it lands on a hub. Only someone with no hubs
+    // sees this.
     const hubs = await getUserHubs({ userId: session.user.id });
     if (hubs.length) return { redirect: { destination: `/hubs/${hubs[0].id}`, permanent: false } };
   },

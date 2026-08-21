@@ -33,8 +33,6 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import HubUpsertModal from '~/components/Hubs/HubUpsertModal';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { hubLimits } from '~/server/schema/user-hub.schema';
-// Loaded on demand: a feed route has no use for the source editor until you open
-// it, and `dynamic` keeps it out of the page's first chunk.
 const HubSourcePanel = dynamic(
   () => import('~/components/Hubs/HubSourcePanel').then((m) => m.HubSourcePanel),
   { ssr: false }

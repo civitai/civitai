@@ -11,7 +11,7 @@ import { trpc } from '~/utils/trpc';
 export default function HubUpsertModal({
   hub,
 }: {
-  /** Omitted to create. Editing only ever touches name and description. */
+  /** Omitted to create. */
   hub?: { id: number; name: string; description?: string | null };
 }) {
   const dialog = useDialogContext();

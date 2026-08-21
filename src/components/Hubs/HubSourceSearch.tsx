@@ -33,14 +33,8 @@ const tabs = [
 ];
 
 /**
- * Scoped to what the viewer already has a relationship with — creators they
- * follow, models they own or have notifications on or bookmarked, collections
- * they follow — rather than searching the whole site. Anything outside that set
- * is added by pasting its link.
- *
- * One type at a time, and searched over a bounded window of the viewer's most
- * recent relationships rather than all of them — see SUGGESTIONS_WINDOW in
- * user-hub.service.ts for why the unbounded version was not viable.
+ * One type at a time, over a bounded window of the viewer's own relationships —
+ * see SUGGESTIONS_WINDOW in user-hub.service.ts.
  */
 export function HubSourceSearch({
   onSelect,

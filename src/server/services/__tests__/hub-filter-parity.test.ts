@@ -8,11 +8,6 @@ import {
 import { hubFeedFiltersSchema } from '~/server/schema/user-hub.schema';
 
 /**
- * A hub's filters live on its row, so every control the dropdown offers inside a
- * hub has to have somewhere to be stored. A control with no home is not a visible
- * failure — it applies for the session, then silently forgets itself on reload,
- * which reads as a bug in the hub rather than a missing field.
- *
  * `mediaFilterKeys` is hand-maintained, so a list-vs-list check cannot catch a
  * chip added to the JSX and to nothing else — a hand-enumerated test cannot catch
  * a hand-enumeration bug. The source scan below is what closes that direction.
@@ -68,8 +63,7 @@ describe('the key list matches what the dropdown actually renders', () => {
       dropdownSource.indexOf('const {', dropdownSource.indexOf('const reset = {'))
     );
     const cleared = new Set([...reset.matchAll(/(\w+): undefined/g)].map((m) => m[1]));
-    // `period` is cleared on its own line below the object, for the reason the
-    // comment there gives.
+    // `period` is cleared on its own line below the object (see handleClear).
     const uncleared = [...new Set(rendered)].filter((key) => key !== 'period' && !cleared.has(key));
 
     expect(uncleared).toEqual([]);

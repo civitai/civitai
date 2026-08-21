@@ -58,13 +58,14 @@ export const userHubSourceSchema = z.object({
   index: z.number().int().min(0).default(0),
 });
 
+const capList = <T>(value: T[]) => value.slice(0, hubLimits.filterListLength);
+
 /**
  * The subset of the images-feed filter menu a hub remembers. Named key by key
  * rather than stored as a blob: `hubId` may only be combined with filters the
  * search index can serve (see `requiresImageDbPath`), and the feed input refuses
  * the rest. Anything not listed here is a session-only choice, not a hub setting.
  */
-const capList = <T>(value: T[]) => value.slice(0, hubLimits.filterListLength);
 
 export const hubFeedFiltersSchema = z.object({
   // Truncated, not rejected, like `alias` and `description`: these are parsed in a
@@ -92,10 +93,9 @@ export const upsertUserHubSchema = z.object({
   // cached copy of a field it did not change can revert another's edit. Required on
   // CREATE, enforced in the service where the create branch is explicit.
   name: z.string().trim().min(1).max(hubLimits.nameLength).optional(),
-  // Stored on `metadata.description` — `UserHub` has no column for it, and adding
-  // one means a migration against a table that is already live. Named here rather
-  // than accepting a `metadata` object, so the client can never write the rest of
-  // it. Truncated, not rejected, for the same reason as `alias`.
+  // Stored on `metadata.description`; named here rather than accepting a
+  // `metadata` object so the client can never write the rest of it. Truncated,
+  // not rejected, for the same reason as `alias`.
   description: z
     .string()
     .trim()
@@ -132,9 +132,9 @@ export const resolveHubSourceSchema = z.object({
 
 export type ResolveHubSourceInput = z.infer<typeof resolveHubSourceSchema>;
 
-// One type per request. Searching all three at once meant every keystroke fanned
-// out to five queries against sets that scale with how much the viewer follows —
-// the switcher in the UI is what keeps it to one.
+// One type per request: each arm is a multi-query fan-out over sets that scale
+// with how much the viewer follows, so searching all three per keystroke does not
+// pay for itself.
 export const hubSuggestionTypeSchema = z.enum([
   UserHubSourceType.User,
   UserHubSourceType.Model,
