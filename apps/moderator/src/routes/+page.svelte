@@ -14,7 +14,7 @@
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { userLookupUrl } from '$lib/entity-url';
-  import { getReportItemUrl, reportEntityLabels } from '$lib/reports';
+  import { getReportItemUrl, reportEntityLabels, ReportEntity } from '$lib/reports';
   import type { Jsonified } from '$lib/format';
   import type { MostReportedRow } from '$lib/server/reports.service';
   import type { BoardPayload } from './api/moderation-board/types';
@@ -97,6 +97,32 @@
     row.entity === 'other'
       ? null
       : getReportItemUrl(data.civitaiUrl, row.entity, row.entityId, row.contextUrl);
+
+  // Every page this moderator can open. `data.nav` is already pruned by `navForUser`, so this is the
+  // authority — a deep link into a queue they cannot reach is worse than the site link it replaces.
+  const reachable = $derived(
+    new Set(
+      data.nav
+        .flatMap((l) => [l.path, ...(l.children ?? []).map((c) => c.path)])
+        .filter((p): p is string => !!p)
+    )
+  );
+
+  /**
+   * A reported ACCOUNT or POST opens the queue that rules on it, not the thing on the site — the
+   * moderator's next action is a verdict, and the site page has no verdict on it. Everything else keeps
+   * the site link, because that is where the content is judged.
+   */
+  const queueUrl = (row: Reported): string | null => {
+    if (row.entityId === null) return null;
+    // `ReportEntity.User` is the string `reportedUser`, not `user` — the enum key and its value differ
+    // for exactly this one entity.
+    if (row.entity === ReportEntity.User && reachable.has('/retool/user-reports'))
+      return `/retool/user-reports?user=${row.entityId}`;
+    if (row.entity === ReportEntity.Post && reachable.has('/retool/post-reports'))
+      return `/retool/post-reports?post=${row.entityId}`;
+    return null;
+  };
 
   const age = (iso: string) => {
     const hours = Math.floor((Date.now() - new Date(iso).getTime()) / 3_600_000);
@@ -255,7 +281,11 @@
               </Badge>
             </TableCell>
             <TableCell>
-              {#if contentUrl(row)}
+              {#if queueUrl(row)}
+                <a href={queueUrl(row)} class="text-blue-4 hover:underline">
+                  {entityLabel(row)} {row.entityId}
+                </a>
+              {:else if contentUrl(row)}
                 <a
                   href={contentUrl(row)}
                   target="_blank"

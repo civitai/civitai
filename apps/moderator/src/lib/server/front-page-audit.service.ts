@@ -1,5 +1,6 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead, dbWrite } from './db';
+import { getModeratorDb } from './moderator-db';
 import { voteOnImageTags } from './user-actions.service';
 import type { MediaType } from '$lib/media/edge-url';
 
@@ -182,5 +183,58 @@ export async function recordResearchRating(input: {
     `.execute(dbWrite);
   } catch (e) {
     console.error('[front-page-audit] research rating not recorded', e);
+  }
+}
+
+/**
+ * The rating this sweep is about to replace. Read BEFORE the update, because it is the whole value of
+ * the audit row — `recordModActivity` stores no before/after, so without this "who changed this image
+ * from X to XXX" stays answerable for the Retool era and not for ours.
+ */
+export async function getImageRating(imageId: number): Promise<number | null> {
+  const row = await dbRead
+    .selectFrom('Image')
+    .select('nsfwLevel')
+    .where('id', '=', imageId)
+    .executeTakeFirst();
+  return row?.nsfwLevel ?? null;
+}
+
+/**
+ * Retool's `LogNsfwLevel`: the rating audit trail in the moderator database's `RatingChanges`.
+ *
+ * `rating` is the level set, `originalRating` the level swept — the pair is the point, and it is why the
+ * caller has to read the old level before committing the new one.
+ *
+ * `updatedBy` is a NAME, not an id: the column is text and every historical row holds a Retool display
+ * name. New rows write the Civitai username, which is at least resolvable — see
+ * `docs/moderator-app/moderator-db-backfill-tasks.md`.
+ *
+ * Best-effort, like `recordResearchRating` beside it: an audit row must not fail the moderation action
+ * it describes, which has already committed by the time this runs.
+ *
+ * ⚠️ Retool's OTHER write to this table, `LogNsfwLevel2` (on a tag vote), is still unported. It is
+ * described as an update-or-insert keyed on `imageId`, additions only, taking its level from the tag —
+ * but `originalRating` is NOT NULL and that description does not say what it holds on that path, so
+ * building it would mean guessing at the audit data. It needs the Retool changeset, not more reasoning.
+ */
+export async function recordRatingChange(input: {
+  imageId: number;
+  originalRating: number;
+  rating: number;
+  updatedBy: string | null;
+}): Promise<void> {
+  try {
+    await getModeratorDb()
+      .insertInto('RatingChanges')
+      .values({
+        imageId: input.imageId,
+        originalRating: input.originalRating,
+        rating: input.rating,
+        updatedBy: input.updatedBy,
+      })
+      .execute();
+  } catch (e) {
+    console.error('[front-page-audit] rating change not logged', e);
   }
 }

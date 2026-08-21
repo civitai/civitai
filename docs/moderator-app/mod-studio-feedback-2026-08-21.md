@@ -140,9 +140,10 @@ The **legacy strike migration is written but unapplied**. Everything else in thi
 deploy; that one needs a human to run the script — once dry, once with `--apply` — per environment, at
 whatever point suits.
 
-Verified by `typecheck`, the new `typecheck:scripts`, and the app's own suite (81 tests) — which, as this app's
-`CLAUDE.md` says, means the report queue still passes and nothing else was covered by a test. The new
-Post Reports queue reuses `getReports`, which those tests do cover.
+Verified by `typecheck`, the new `typecheck:scripts`, and the app's own suite (86 tests). Three of this
+round's items carry tests: the Post Reports queue reuses `getReports`, the workflow reader has its own
+file, and the legacy-strike marker protocol is tested on both sides. Everything else in this round was
+verified by typecheck and by reading the code.
 
 ---
 
@@ -180,7 +181,13 @@ it was first raised.
       confirm which they meant rather than anything needing building.
 - [ ] **`ReToolActions` vs `ModActivity`** *(08-17)* — two mod-action logs that nothing reconciles.
 - [ ] **`aiNsfwLevel` / `aiModel` exist in production but not in `schema.full.prisma`** *(08-17)*.
-- [ ] **`RatingChanges`** *(08-17)* — the one Front Page Audit write still unported.
+- [ ] **`RatingChanges`** *(08-17)* — **half ported 2026-08-21.** `LogNsfwLevel` is built: setting a
+      rating on Front Page Audit now writes the before/after pair to `RatingChanges`, which is the trail
+      `recordModActivity` does not keep. `LogNsfwLevel2` (on a tag vote) is still open and is no longer
+      blocked on the table shape — it is blocked on the Retool changeset: the description says
+      update-or-insert by `imageId`, additions only, level from the tag, and does not say what the
+      NOT NULL `originalRating` holds on that path. **Unexercised** — written with both database tunnels
+      down, so it has never run.
 - [ ] **How queue sweeps get tracked** *(08-17)* — a new table, or an extension of `ModActivity`.
 
 The "two strike systems" P2 from 08-19 is **closed by this round** — see the strike item above. What is

@@ -9,6 +9,8 @@ import {
   getSweep,
   voteOnTag,
   recordResearchRating,
+  recordRatingChange,
+  getImageRating,
   SWEEP_LIMITS,
 } from '$lib/server/front-page-audit.service';
 import { getSweepCheckpoint, markSweepChecked } from '$lib/server/front-page-timers';
@@ -75,6 +77,9 @@ export const actions: Actions = {
     if (typeof input === 'string') return actionFail(input);
     if (!validNsfwLevels.has(input.nsfwLevel)) return actionFail('Not a rating a sweep can set.');
 
+    // BEFORE the update: this is the level being swept, and it is half of the audit row below.
+    const originalRating = await getImageRating(input.imageId);
+
     // `updateImageNsfwLevel` throws bare Errors (missing image, Redis down). Uncaught, a form action
     // error replaces the whole sweep with an error page — losing 200 rows of in-progress work, and
     // sometimes AFTER the rating already committed.
@@ -96,6 +101,16 @@ export const actions: Actions = {
       imageId: input.imageId,
       nsfwLevel: input.nsfwLevel,
     });
+
+    // Retool's LogNsfwLevel, the before/after trail `recordModActivity` does not keep. Skipped when the
+    // old level could not be read: a row whose `originalRating` is a guess is worse than no row.
+    if (originalRating !== null)
+      await recordRatingChange({
+        imageId: input.imageId,
+        originalRating,
+        rating: input.nsfwLevel,
+        updatedBy: locals.user.username ?? null,
+      });
 
     return { success: true, rated: input.imageId, nsfwLevel: input.nsfwLevel };
   },

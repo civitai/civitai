@@ -19,12 +19,13 @@ improvement gets moved down here rather than copied.
 
 ## From "Misc Mod Asks" (`868kn8aa0`) — a subtask the tracker never listed
 
-- [ ] **Every link to Civitai should use the `.red` domain, not `.com`.** *"Every single link on
-      moderator.civitai.com to civitai should go to the .red domain instead of .com."* One env var
-      (`CIVITAI_APP_URL`) decides this for `$lib/entity-url` and `$lib/media/edge-url`, so it is close
-      to a config change — but `.env.example` currently documents `.com`, and a code comment in
-      `bulk-image.service.ts` used to call `.red` "the wrong site" (corrected 2026-08-09). **Do not
-      "fix" a `.red` link back to `.com`.**
+- [x] **Every link to Civitai should use the `.red` domain, not `.com`.** *"Every single link on
+      moderator.civitai.com to civitai should go to the .red domain instead of .com."* **Done** — and it
+      needed a second variable rather than a config change. `CIVITAI_LINK_URL` defaults to
+      `https://civitai.red` and backs `data.civitaiUrl`; `CIVITAI_APP_URL` stays `.com` because it is the
+      API base and the session cookie those calls relay is issued for `.civitai.com`. It deliberately
+      does NOT fall back to `CIVITAI_APP_URL` — when it did, every moderator link went to `.com`.
+      **Do not "fix" a `.red` link back to `.com`.**
 - [ ] **Model Notes on civitai.com**: they were exported from Retool; show them on `/models/`, and let
       mods add notes and edit their own. The table is `ModelNotes` in the Retool database.
 - [ ] **Per-mod app permissions**: *"Allow admin to give access to apps to individual mods instead of
@@ -33,6 +34,42 @@ improvement gets moved down here rather than copied.
 - [ ] **Light mode toggle.** The app is dark-only by design, so this is a real piece of work.
 - [ ] **Three more apps Seb wants to add** (not migrations — new): reaction-cheater, collection-cheater,
       Knights of New.
+
+### Dashboard and Urgent Reports (same ticket, never tracked until 2026-08-21)
+
+Re-read off the live ticket 2026-08-21; the section above had captured the middle of it and not these.
+
+- [x] **A reported account or post opens the queue that rules on it.** *"In the urgent reports, user
+      should link to the User Report page and highlight/pick that User Report"*, and *"when we have the
+      post reports page, same as above"* — which became possible the day Post Reports shipped. The Most
+      reported table now sends `reportedUser` rows to `/retool/user-reports?user=` and `post` rows to
+      `/retool/post-reports?post=`, falling back to the site link for anyone whose `data.nav` says they
+      cannot open that queue. Every other entity keeps the site link — that is where it gets judged.
+- [ ] **Image reports are listed twice on the dashboard** — once under Reports and once under Images.
+      *"No reason to show image reports here, they're listed under images."* Both are real queues
+      (`/reports/image` is the report; `/images/reported` is the triage grid), so this is a decision
+      about which one the dashboard should carry, not a removal anyone should make unilaterally.
+- [ ] **Move the user-reports count next to the User Reports app.** *"We have a user reports app, move
+      the number to be next to that instead."* Same shape as above and the same open question: the count
+      currently hangs off `/reports/reportedUser`, and `/retool/user-reports` has no `countKey`.
+- [ ] **"Fix" / "unknown" on the urgent rows is not self-explanatory** — *"what does it mean?"*.
+      `unknown` is `entityLabel`'s output when a report has no row in ANY of the fifteen report tables
+      (`entity: 'other'`). Needs a label that says that, and someone to say what "Fix" was.
+
+### Not in any checklist before 2026-08-21, and not buildable here
+
+- [ ] **CommentV2 has no ToS field**, so moderators cannot ToS article comments etc. on the site. Main-app
+      schema change.
+- [ ] **Unpublishing toggle**: when unpublishing a model for a real person or a minor, offer a toggle
+      that marks the model poi/minor in the same gesture. Main app.
+- [ ] **When are users notified that their model was marked as a minor?** — automated marks vs manual.
+      A question to answer, not work to do.
+- [ ] **Data collection: the REASON for a rating change.** Distinct from the before/after pair
+      `RatingChanges` now records (2026-08-21) — this asks for why, which needs a reason on the rating
+      control itself.
+- [ ] **Creator Shop: cosmetics created by a user**, with status, created date, history, icon and current
+      cost — plus who purchased each. *(From the ticket's comment thread, 08-13.)* Currently unanswerable
+      without going to a person.
 
 ### Low priority, "to discuss" (same ticket)
 

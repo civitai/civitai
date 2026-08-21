@@ -70,6 +70,10 @@ Two shapes on the `/admin` page tree, and they behave differently:
 
 - [ ] `/retool/user-lookup` for the **staff** role. This is the whole of the open P1 "User Lookup
       unavailable for the staff role" — nothing to build.
+- [ ] **`/retool/post-reports`** — shipped 2026-08-21 and reachable by `moderator:admin` alone until
+      ticked. It is NOT covered by the `/reports` `sharedAccess` grant: that one covers the generic
+      `/reports/*` queues, and this is a separate page under the `Retool` group. Whoever holds
+      `/retool/user-reports` is the group to match.
 - [ ] Walk the rest of `NAVIGATION` and confirm every page a role is expected to open has a row. Newer
       pages are the likely gaps, since a new page ships ungranted by design.
 
