@@ -173,6 +173,16 @@ interface StickerPlacementDraftStore {
    */
   packPurchaseKey: (cosmeticId: number) => string;
   /**
+   * Forget the key for one sticker, so the next attempt is a NEW intent.
+   *
+   * Called when a purchase fails outright. An idempotency key exists to make a
+   * retry of the SAME attempt safe; reusing it after a definitive failure is a
+   * different thing — if the server has recorded that key, the placer is locked
+   * out of buying this sticker for the rest of the session with no way back
+   * except reloading the page.
+   */
+  clearPackPurchaseKey: (cosmeticId: number) => void;
+  /**
    * A second copy of a draft, ready to be placed on its own.
    *
    * Deliberately NOT a second route into the charge path: it makes another
@@ -186,7 +196,7 @@ interface StickerPlacementDraftStore {
    * inventory at the moment the copy is made — not a property of the draft — and
    * the caller is what can see the balance.
    */
-  duplicateDraft: (id: string, purchase?: DraftPurchase) => void;
+  duplicateDraft: (id: string, purchase?: DraftPurchase) => string | null;
   /**
    * Moves one draft by id rather than "the current one". A gesture outlives the
    * selection — a press selects and then drags — so resolving the target at
@@ -383,11 +393,22 @@ export const useStickerPlacementDraftStore = create<StickerPlacementDraftStore>(
     return key;
   },
 
-  duplicateDraft: (id, purchase) =>
+  clearPackPurchaseKey: (cosmeticId) =>
     set((state) => {
-      const source = state.drafts.find((draft) => draft.id === id);
-      if (!source) return state;
+      const { [cosmeticId]: _gone, ...rest } = state.packKeys;
+      return { packKeys: rest };
+    }),
 
+  duplicateDraft: (id, purchase) => {
+    const source = get().drafts.find((draft) => draft.id === id);
+    if (!source) return null;
+
+    // The id is minted here rather than inside the updater so it can be handed
+    // back: an alt-drag has to continue against the COPY, and the caller cannot
+    // ask "which one is new" from outside without racing its own update.
+    const copyId = nextDraftId();
+
+    set((state) => {
       const copy: StickerDraft = {
         ...source,
         // One mechanism, not two: the caller's answer wins outright, including
@@ -395,7 +416,7 @@ export const useStickerPlacementDraftStore = create<StickerPlacementDraftStore>(
         // undefined `purchase` elsewhere in this store, so an own key holding
         // undefined is the shape the rest of the code already reads.
         purchase,
-        id: nextDraftId(),
+        id: copyId,
         // Offset so the copy is visibly its own sticker rather than an exact
         // overlap the placer has to discover by dragging the top one off.
         //
@@ -411,7 +432,10 @@ export const useStickerPlacementDraftStore = create<StickerPlacementDraftStore>(
       // Appended and selected, the same as a fresh pickup: the copy is the one
       // being positioned now, and the handles belong to it.
       return { drafts: [...state.drafts, copy], selectedDraftId: copy.id };
-    }),
+    });
+
+    return copyId;
+  },
 
   move: (id, next) =>
     set((state) => {

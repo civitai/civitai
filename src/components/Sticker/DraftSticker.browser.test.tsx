@@ -9,6 +9,7 @@ import { renderWithProviders } from '../../../test/component-setup';
 import { resolveTreatment } from '~/components/Sticker/treatments/sticker-treatments';
 import { stickerArtworkStyle } from '~/components/Sticker/placement-appearance';
 import type { StickerDraft } from '~/store/sticker-placement-draft.store';
+import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.store';
 
 /**
  * What the buttons on a draft actually SEND.
@@ -385,6 +386,26 @@ describe('the flip control draws the axis it mirrors across', () => {
  * is asserted is both halves of that — the handler is called with this draft's
  * id, AND nothing reached the placement mutation.
  */
+/**
+ * Which of the two control containers rendered.
+ *
+ * Asserting the button EXISTS cannot tell the branches apart — both render an
+ * identically named control — so a test meaning to cover the pill would pass on
+ * the cluster and the uncovered branch would stay uncovered. The shape differs
+ * and is stable: in the pill, remove lives in its own container; in the buy
+ * cluster, remove is a sibling of duplicate.
+ */
+const removeIsSiblingOfDuplicate = async () => {
+  const duplicate = (await page
+    .getByRole('button', { name: 'Duplicate this sticker' })
+    .element()) as HTMLElement;
+  const remove = (await page
+    .getByRole('button', { name: 'Remove this sticker' })
+    .element()) as HTMLElement;
+
+  return duplicate.parentElement?.contains(remove) ?? false;
+};
+
 describe('the duplicate control', () => {
   /**
    * ⚠️ THE NARROW FIXTURE PUTS THE CONTROL IN THE BUY CLUSTER, NOT THE PILL.
@@ -413,6 +434,7 @@ describe('the duplicate control', () => {
           onGesture={() => true}
           onDuplicate={(id) => {
             duplicated.push(id);
+            return 'copy-of-the-draft';
           }}
         />
       </div>
@@ -423,6 +445,9 @@ describe('the duplicate control', () => {
     ((await locator.element()) as HTMLElement).click();
 
     expect(duplicated).toEqual([draft.id]);
+    // Pins WHICH branch this covers: at 95px the controls are in the buy
+    // cluster, where remove sits beside duplicate.
+    expect(await removeIsSiblingOfDuplicate()).toBe(true);
     // 🔴 The half that matters for money: duplicating must not reach the
     // placement mutation.
     expect(placed).toHaveLength(0);
@@ -461,7 +486,7 @@ describe('the duplicate control', () => {
           ownerShare={undefined}
           ownerUsername="creator"
           onGesture={() => true}
-          onDuplicate={() => undefined}
+          onDuplicate={() => null}
         />
       </div>
     );
@@ -469,6 +494,12 @@ describe('the duplicate control', () => {
     await expect
       .element(page.getByRole('button', { name: 'Duplicate this sticker' }))
       .toBeInTheDocument();
+
+    // 🔴 The assertion that makes this a DIFFERENT test rather than a second
+    // copy of the one above. Both branches render a button of the same name, so
+    // presence alone is satisfied by the cluster; the pill keeps remove in its
+    // own container.
+    expect(await removeIsSiblingOfDuplicate()).toBe(false);
   });
 
   /**
@@ -479,5 +510,112 @@ describe('the duplicate control', () => {
     await renderDraft(null);
 
     expect(page.getByRole('button', { name: 'Duplicate this sticker' }).elements()).toHaveLength(0);
+  });
+});
+
+/**
+ * Alt-drag: leave a copy behind and drag the new one, the way a photo editor
+ * does it. Justin asked for it alongside the button.
+ *
+ * The property that matters is WHICH sticker the drag then moves. Dragging the
+ * original would leave the copy stranded under the pointer and move the thing
+ * the placer was trying to keep in place — a duplicate that appears to do the
+ * opposite of what it says.
+ */
+describe('alt-dragging a draft', () => {
+  const dragBody = (options: PointerEventInit = {}) => {
+    // The move handler is on the positioned wrapper — the element carrying the
+    // draft's own left/top — rather than on the artwork inside it.
+    const artwork = document.querySelector('img[alt=":star:"], img[alt="Star"]');
+    const body = artwork?.closest('[style*="touch-action"]') as HTMLElement | null;
+
+    body?.dispatchEvent(
+      new PointerEvent('pointerdown', {
+        bubbles: true,
+        cancelable: true,
+        pointerId: 1,
+        clientX: 100,
+        clientY: 100,
+        ...options,
+      })
+    );
+
+    return body;
+  };
+
+  const renderForDrag = async (onDuplicate: (id: string) => string | null) => {
+    const gestures: { draftId: string }[] = [];
+
+    renderWithProviders(
+      <div data-drag-host style={{ position: 'relative', width: 380, height: 600 }}>
+        <DraftSticker
+          draft={draft}
+          art={art}
+          selected
+          dressed={resolveTreatment({ treatment: 'none', surface: 'detail', isPending: false })}
+          price={PRICE}
+          freeOffer={null}
+          ownerShare={undefined}
+          ownerUsername="creator"
+          onGesture={(gesture) => {
+            gestures.push(gesture);
+            return true;
+          }}
+          onDuplicate={onDuplicate}
+        />
+      </div>
+    );
+
+    await expect.element(page.getByRole('button').first()).toBeInTheDocument();
+
+    // 🔴 WITHOUT THIS THE HANDLER RETURNS AT ITS FIRST LINE. A press is
+    // translated into a fraction of the surface the placement session
+    // registered, and with no surface there is no fraction and no gesture — so
+    // every assertion below would pass or fail for the wrong reason. The app
+    // registers it from `ImageStickerOverlay`; here the host stands in for it.
+    const store = useStickerPlacementDraftStore.getState();
+    store.open(IMAGE_ID);
+    store.setSurface(document.querySelector('[data-drag-host]') as HTMLElement);
+
+    return gestures;
+  };
+
+  test('duplicates first, then drags the COPY', async () => {
+    const duplicated: string[] = [];
+    const gestures = await renderForDrag((id) => {
+      duplicated.push(id);
+      return 'the-copy';
+    });
+
+    expect(dragBody({ altKey: true })).not.toBeNull();
+
+    expect(duplicated).toEqual([draft.id]);
+    expect(gestures.at(-1)?.draftId).toBe('the-copy');
+  });
+
+  test('an ordinary drag duplicates nothing and moves the original', async () => {
+    const duplicated: string[] = [];
+    const gestures = await renderForDrag((id) => {
+      duplicated.push(id);
+      return 'the-copy';
+    });
+
+    dragBody();
+
+    expect(duplicated).toEqual([]);
+    expect(gestures.at(-1)?.draftId).toBe(draft.id);
+  });
+
+  /**
+   * The host may refuse — there is no handler on a surface that does not offer
+   * duplication. Alt then has to fall back to an ordinary drag rather than
+   * dropping the gesture on the floor.
+   */
+  test('falls back to moving the original when the copy is refused', async () => {
+    const gestures = await renderForDrag(() => null);
+
+    dragBody({ altKey: true });
+
+    expect(gestures.at(-1)?.draftId).toBe(draft.id);
   });
 });

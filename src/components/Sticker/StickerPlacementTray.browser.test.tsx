@@ -74,6 +74,10 @@ vi.mock('~/store/sticker-placement-draft.store', () => ({
 // offer, which is the only thing this file asserts.
 vi.mock('~/components/Sticker/sticker.util', () => ({
   useOwnedSticker: () => ({ sticker: [], isLoading: false }),
+  // The tray asks this for a top-up offer when a spent sticker is dragged out.
+  // Owning nothing, nothing here is ever spent — but the hook still has to
+  // exist, or the module fails to load and this file collects zero tests.
+  useStickerRefill: () => () => ({ refill: true }),
 }));
 vi.mock('~/components/Sticker/StickerShopPanel', () => ({ StickerShopPanel: () => null }));
 vi.mock('~/components/Sticker/StickerShopTile', () => ({ StickerShopTile: () => null }));

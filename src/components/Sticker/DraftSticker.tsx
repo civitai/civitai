@@ -141,7 +141,7 @@ export function DraftSticker({
    * depends on the viewer's remaining uses — which the layer can see and this
    * component cannot.
    */
-  onDuplicate?: (id: string) => void;
+  onDuplicate?: (id: string) => string | null;
 }) {
   const markPurchased = useStickerPlacementDraftStore((state) => state.markPurchased);
   const { purchaseShopItem, purchasingShopItem } = useMutateCosmeticShop();
@@ -154,6 +154,7 @@ export function DraftSticker({
   // apart. The per-use path below is unaffected: each use genuinely is another
   // purchase.
   const packPurchaseKey = useStickerPlacementDraftStore((state) => state.packPurchaseKey);
+  const clearPackPurchaseKey = useStickerPlacementDraftStore((state) => state.clearPackPurchaseKey);
   const buyUses = useBuyStickerUses();
 
   const buySticker = async () => {
@@ -182,6 +183,10 @@ export function DraftSticker({
         message: 'Place it whenever you like — it stays where you put it.',
       });
     } catch (error) {
+      // The attempt is over, so the next press is a new intent rather than a
+      // retry of this one. Holding the key would have a server that records
+      // failed keys refuse every later attempt this session.
+      clearPackPurchaseKey(draft.cosmeticId);
       showErrorNotification({
         title: 'Could not buy that sticker',
         error: error instanceof Error ? error : new Error('Purchase failed'),
@@ -441,7 +446,7 @@ export function DraftSticker({
       const target = event.currentTarget;
       const take = (gesture: Gesture) => {
         if (!onGesture(gesture)) return;
-        select(draft.id);
+        select(gesture.draftId);
         try {
           target.setPointerCapture(gesture.pointerId);
         } catch {
@@ -450,10 +455,27 @@ export function DraftSticker({
       };
 
       if (mode === 'move') {
+        /**
+         * Alt-drag leaves a copy behind and drags the new one, the way every
+         * photo editor does it.
+         *
+         * The gesture continues against the COPY rather than the original, which
+         * is why `onDuplicate` hands back an id: dragging the original instead
+         * would leave the duplicate stranded under the pointer and move the
+         * thing the placer was trying to keep in place.
+         *
+         * The copy lands at the original's position for this path — the button's
+         * nudge exists so a click produces something visible, but an alt-drag is
+         * about to be positioned by the pointer, and offsetting it first makes
+         * the sticker jump out from under the cursor at the start of the drag.
+         */
+        const altCopyId = event.altKey ? onDuplicate?.(draft.id) : null;
+        if (altCopyId) move(altCopyId, { x: draft.x, y: draft.y });
+
         // Keep the sticker where it was relative to the grab, instead of
         // snapping its centre to the cursor.
         take({
-          draftId: draft.id,
+          draftId: altCopyId ?? draft.id,
           pointerId: event.pointerId,
           mode: 'move',
           offsetX: draft.x - point.x,

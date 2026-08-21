@@ -205,30 +205,62 @@ export function useStickerRefill() {
   return useMemo(() => {
     const byCosmetic = new Map(offers?.map((offer) => [offer.cosmeticId, offer]));
 
-    return (cosmeticId: number, ownedPricePerUse?: number): DraftPurchase => {
-      const offer = byCosmetic.get(cosmeticId);
-      const listing = offer?.listing;
-
-      return {
-        refill: true,
-        perUse: offer?.pricePerUse ?? ownedPricePerUse,
-        ...(listing
-          ? {
-              pack: {
-                shopItemId: listing.shopItemId,
-                unitAmount: listing.unitAmount,
-                acceptsBlue: listing.acceptsBlue,
-                uses: listing.uses,
-                viaShopUserId: listing.viaShopUserId ?? undefined,
-              },
-            }
-          : {}),
-        // `undefined` until the offers land, which shows no attribution rather
-        // than crediting the wrong party while it is unknown.
-        creatorUsername: offer ? offer.creatorUsername : undefined,
-      };
-    };
+    return (cosmeticId: number, ownedPricePerUse?: number) =>
+      refillFromOffer(byCosmetic.get(cosmeticId), ownedPricePerUse);
   }, [offers]);
+}
+
+/** One offer turned into the gate a draft carries. Pure, so it can be asserted. */
+export type StickerOfferLike = {
+  pricePerUse: number | null;
+  creatorUsername: string | null;
+  listing: {
+    shopItemId: number;
+    unitAmount: number;
+    acceptsBlue: boolean;
+    uses?: number | null;
+    viaShopUserId?: number | null;
+  } | null;
+};
+
+/**
+ * The top-up gate for one sticker.
+ *
+ * 🔴 THE FALLBACK IS THE POINT. `purchase` is snapshotted onto a draft when the
+ * draft is created and never recomputed, so a gate built before the offers query
+ * resolves is what that draft keeps. Without the owned payload's price standing
+ * in, that gate has no price and no pack — which renders as "this sticker sells
+ * no extra uses, and it is not on sale right now", a false sentence the placer
+ * cannot get out of except by deleting the sticker and starting again.
+ *
+ * A gate with neither price nor pack is still a real state, not a bug: a sticker
+ * sold before per-use pricing existed and since delisted genuinely cannot be
+ * topped up. The draft says so instead of offering a button that fails.
+ */
+export function refillFromOffer(
+  offer: StickerOfferLike | undefined,
+  ownedPricePerUse?: number
+): DraftPurchase {
+  const listing = offer?.listing;
+
+  return {
+    refill: true,
+    perUse: offer?.pricePerUse ?? ownedPricePerUse,
+    ...(listing
+      ? {
+          pack: {
+            shopItemId: listing.shopItemId,
+            unitAmount: listing.unitAmount,
+            acceptsBlue: listing.acceptsBlue,
+            uses: listing.uses,
+            viaShopUserId: listing.viaShopUserId ?? undefined,
+          },
+        }
+      : {}),
+    // `undefined` until the offers land, which shows no attribution rather than
+    // crediting the wrong party while it is unknown.
+    creatorUsername: offer ? offer.creatorUsername : undefined,
+  };
 }
 
 /**

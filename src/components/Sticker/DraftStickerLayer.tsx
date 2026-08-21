@@ -92,9 +92,9 @@ export function DraftStickerLayer() {
     (id: string) => {
       const current = useStickerPlacementDraftStore.getState().drafts;
       const source = current.find((draft) => draft.id === id);
-      if (!source) return;
+      if (!source) return null;
 
-      duplicateDraft(
+      return duplicateDraft(
         id,
         duplicateGateFor({
           source,
