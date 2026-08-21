@@ -57,26 +57,31 @@ export const isPlacingFree = (chosen: 'free' | 'paid' | null, offer: { instant: 
   (chosen ?? (offer ? 'free' : 'paid')) === 'free' && !!offer;
 
 /**
- * The free option's own label, which carries the mode.
+ * The free option's own label.
  *
- * The mode goes here rather than on the sticker button because this is the last
- * moment the placer can change their mind, and it makes auto-accept and review
- * read as two different offers rather than one setting they cannot see. The
- * button upstream stays a single number.
+ * 🔴 **Deliberately does NOT carry the mode any more.** It read `Free · needs
+ * review` beside a plain `100 Buzz`, which says the paid one does not — and on
+ * this surface both go to the creator for review, always. Justin's words on
+ * seeing it: "it makes it seem like the other one's not going to need review".
+ *
+ * The mode is still said, once, under the button that spends the placement,
+ * where it applies to whichever option is selected rather than to one of them.
  */
-export const freeOptionLabel = (instant: boolean) =>
-  instant ? 'Free · instant' : 'Free · needs review';
+export const freeOptionLabel = () => 'Free';
 
 /**
- * The one line under a review-mode free option.
+ * The one line under the button that spends the placement.
  *
- * Said before the press, not after, because it is the whole asymmetry of the
- * free tier: the image's slot comes back when a creator declines and the
- * placer's day does not. Somebody who would rather spend Buzz on a creator who
- * reviews needs that fact while both options are still on screen.
+ * Shrunk to the only fact that has to land: pressing this spends your free
+ * placement, and a decline does not give it back. It used to be two sentences
+ * explaining the asymmetry between the creator's slot and the placer's day —
+ * true, but nobody standing over a Place button is reading a paragraph about
+ * accounting.
+ *
+ * Under the button rather than above it, with an alert triangle, so it reads as
+ * a consequence of pressing rather than as a description of the option.
  */
-export const FREE_REVIEW_CAVEAT =
-  "Your free placement for today is spent even if they decline. The creator's slot comes back; your allowance does not.";
+export const FREE_REVIEW_CAVEAT = 'Spends your free placement, even if they decline it';
 
 /**
  * What went wrong when a free claim was refused, from state re-read after the
@@ -261,50 +266,27 @@ export function barFreeLabel(space?: FreeCapacity, standing?: FreeStanding) {
 }
 
 /**
- * The bar's tooltip: the price always, and the reason free is off the table when
- * it is.
+ * The line on the free hint, or `null` when there is no hint to show.
  *
- * The price stays in every branch. That rule predates this change — it is what
- * kept the old label from being an outright lie about cost — and the reason is
- * an addition to it, never a replacement.
+ * 🔴 **Replaces the bar's tooltip, and the difference is who gets to see it.** A
+ * tooltip is hover-only, so on a phone the whole free tier was invisible until
+ * you opened the tray — the state that matters most, "you have one and it is
+ * free", was told only to people with a mouse. A popover is on screen for
+ * everyone and dismissable by anyone.
  *
- * 🔴 **One ladder, not two.** An earlier version restated two of
- * `freeRefusalMessage`'s rungs in its own words, so the bar and the tray could
- * describe the same state differently — on the one fact this change exists to
- * stop drifting. The bar now reads the same per-image standing the tray does, so
- * it can defer to `preCommitFreeReason` outright and own only the price.
- *
- * ⚠️ An ERRORED standing query is `undefined` too, and renders exactly like a
- * loading one: the bare price, no free label. Deliberate and fail-closed —
- * nobody is promised something they cannot have — but it does mean a 401 makes
- * the free tier invisible rather than noisy.
+ * Said only where free is genuinely on offer. The states where it is not —
+ * spent, held, already used here, no capacity — get nothing at the bar at all
+ * and are explained in the tray, at the point the choice is actually made. A
+ * notice that pops up to tell you what you CANNOT have is an interruption
+ * charging rent on somebody else's image.
  */
-export function barTooltip({
-  price,
-  space,
-  standing,
-}: {
-  price: number;
-  space?: FreeCapacity;
-  standing?: FreeStanding;
-}) {
-  const base = `Place a sticker · ${price} Buzz`;
+export function freeHintText(space?: FreeCapacity, standing?: FreeStanding) {
+  const label = barFreeLabel(space, standing);
+  if (!label) return null;
 
-  // Nothing free is on offer here for anyone, so there is nothing to explain —
-  // and nothing to wait for either, which is why this outranks the loading gate.
-  if (!space || space.freeSlots <= 0) return base;
+  const count = Math.min(space?.freeSlotsRemaining ?? 0, standing?.remaining ?? 0);
 
-  // Still loading. Say the price and claim nothing about the offer.
-  if (!standing) return base;
-
-  if (barFreeLabel(space, standing))
-    return `Place a sticker · free, or ${price} Buzz. Your free one is ${SHARED_ALLOWANCE_NOTE}.`;
-
-  // `false` for `freeAvailable`, because the line above already established
-  // there is no offer. Everything after that is the tray's ladder, verbatim.
-  const reason = preCommitFreeReason(false, standing, space);
-
-  return reason ? `${base}. ${reason}` : base;
+  return count === 1 ? 'You have a free sticker today' : `You have ${count} free stickers today`;
 }
 
 /**

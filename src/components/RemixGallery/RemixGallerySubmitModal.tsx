@@ -501,11 +501,13 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
                 data={[
                   {
                     value: 'free',
-                    // Always "needs review" on this surface: a gallery places
-                    // arbitrary media on someone else's page, so `auto` is
-                    // refused for it in three places. Written out rather than
-                    // branched on the mode, which cannot be anything else here.
-                    label: 'Free · needs review',
+                    // 🔴 Just "Free". It read `Free · needs review` beside a
+                    // plain `N Buzz`, which says the paid one does not — and on
+                    // this surface EVERY submission goes to the creator, free or
+                    // paid, because a gallery places arbitrary media on someone
+                    // else's page and `auto` is refused for it in three places.
+                    // The review is said once, below, where it applies to both.
+                    label: 'Free',
                     disabled: !freeAvailable,
                   },
                   {

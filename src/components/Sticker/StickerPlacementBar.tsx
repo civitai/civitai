@@ -1,21 +1,42 @@
-import { Button, Text, Tooltip } from '@mantine/core';
+import { Button, CloseButton, Popover, Text } from '@mantine/core';
 import { IconPlus } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useReactionSettingsContext } from '~/components/Reaction/ReactionSettingsProvider';
 import { StickerCountChip, useStickerInviteStyle } from '~/components/Sticker/StickerCountChip';
 import { StickerHistoryButton } from '~/components/Sticker/StickerHistoryPanel';
 import { StickerPlacementTray } from '~/components/Sticker/StickerPlacementTray';
-import { barFreeLabel, barTooltip } from '~/components/Sticker/free-offer';
+import { barFreeLabel, freeHintText } from '~/components/Sticker/free-offer';
 import {
   useFreePlacementStanding,
   useImagePlacementSpace,
   useStickerPlacementCounts,
   useStickerPlacements,
 } from '~/components/Sticker/placement.util';
+import { useCallback, useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.store';
 import { useStickerRevealStore } from '~/store/sticker-reveal.store';
+
+/** Where a dismissed free hint is remembered. Per browser, not per session. */
+const HINT_DISMISSED_KEY = 'sticker-free-hint-dismissed';
+
+/**
+ * The UTC day, as the server means it.
+ *
+ * Matches `freePlacementDayStart` — the allowance resets at midnight UTC, so a
+ * hint dismissed "today" has to mean the same today the allowance does, or it
+ * comes back mid-afternoon for anyone west of Greenwich.
+ */
+const utcDay = () => new Date().toISOString().slice(0, 10);
+
+const readDismissedDay = () => {
+  try {
+    return localStorage.getItem(HINT_DISMISSED_KEY);
+  } catch {
+    return null;
+  }
+};
 
 /**
  * The reaction-bar entry: whether stickers exist here, how many, and the way in
@@ -108,6 +129,26 @@ export function StickerPlacementBar({
   // price that turns into "free".
   const freeLabel = canPlace ? barFreeLabel(space ?? undefined, standing) : null;
 
+  const hint = canPlace ? freeHintText(space ?? undefined, standing) : null;
+  const [dismissedDay, setDismissedDay] = useState(readDismissedDay);
+  const dismissHint = useCallback(() => {
+    const day = utcDay();
+    setDismissedDay(day);
+    try {
+      localStorage.setItem(HINT_DISMISSED_KEY, day);
+    } catch {
+      // Private mode, or storage full. The hint simply comes back next load —
+      // the dismissal is a courtesy, not state anything depends on.
+    }
+  }, []);
+
+  // Shown only where there is genuinely a free placement to take, and only until
+  // it is waved away for the day. Keyed on the UTC day rather than forever
+  // because the thing it announces is itself daily: tomorrow's allowance is news
+  // again, and a permanent dismissal would mean the feature announces itself
+  // exactly once per person, ever.
+  const showHint = !!hint && dismissedDay !== utcDay();
+
   // The invitation needs a zero that is KNOWN to be zero. `total` is fed by two
   // separate queries and a failure of either reads as empty, so an image with
   // stickers would otherwise show the invitation — and a press there opens a
@@ -145,15 +186,6 @@ export function StickerPlacementBar({
           <StickerCountChip
             count={0}
             revealed={revealed}
-            // The same sentence the plus beside it gets. They open the same
-            // tray with the same action, so a hand-written price line here
-            // would let the two disagree the moment the plus started saying
-            // "free, or N Buzz" — which is exactly what this change made it do.
-            tooltip={barTooltip({
-              price: space?.price ?? 0,
-              space: space ?? undefined,
-              standing,
-            })}
             // Distinct from the plus beside it, which is also "Place a sticker".
             // They share a Button.Group and an action, so identical names read
             // to a screen reader as the same control announced twice.
@@ -171,76 +203,80 @@ export function StickerPlacementBar({
         )}
 
         {canPlace && (
-          <Tooltip
-            /**
-             * 🔴 The price, always — plus the reason free is unavailable, when
-             * it is.
-             *
-             * `freeSlotsRemaining` alone is the CREATOR's capacity and says
-             * nothing about this viewer, which is how the old label promised
-             * free to somebody who had spent their day and then charged them a
-             * number they were never shown. Both facts are now in hand, so the
-             * tooltip can say which of the two ran out instead of leaving the
-             * reader to find out by pressing.
-             *
-             * ⚠️ `freeSlotsRemaining === 0` covers two different facts and only
-             * `freeSlots` tells them apart: the resolver short-circuits the
-             * reservation count when there is no capacity, so zero is both "this
-             * creator takes no free placements" — nothing to say — and "their
-             * slots are all currently held", which is worth saying because a
-             * decline gives one back. `barTooltip` branches on both.
-             *
-             * All three rules are in hand here now, so this ladder and the
-             * tray's are the same one: `barTooltip` defers to
-             * `preCommitFreeReason` and owns only the price.
-             */
-            label={barTooltip({
-              price: space?.price ?? 0,
-              space: space ?? undefined,
-              standing,
-            })}
+          /* 🔴 No tooltip. The bar used to explain itself on hover — the price,
+             and which scarcity had run out — which meant a phone was told
+             nothing at all, in the states where knowing matters most. What is
+             left here is the label; the reasons are said in the tray, at the
+             point the choice is made, and the one piece of good news gets the
+             popover below, which everyone can see and anyone can dismiss. */
+          <Popover
+            opened={showHint}
+            position="top"
             withArrow
-            multiline
-            w={260}
+            arrowSize={10}
+            shadow="md"
+            radius="md"
+            // Dismissed by its own control only. A click-outside dismissal on a
+            // hint anchored to a button people are about to press would count
+            // pressing the button as "I have read this".
+            trapFocus={false}
+            closeOnClickOutside={false}
+            closeOnEscape
+            onClose={dismissHint}
           >
-            <Button
-              size="compact-sm"
-              radius="xl"
-              variant="light"
-              color="yellow"
-              onClick={() => openTray(imageId)}
-              aria-label={freeLabel ? `Place a sticker · ${freeLabel}` : 'Place a sticker'}
-              // A plus rather than a second sticker glyph: beside a count of
-              // stickers it reads as "add one" without a word, which is what
-              // keeps the fused control narrow enough to belong in this row.
-              {...buttonStyling?.('BuzzTip')}
-              // Last, and merged over whatever the row's styling set: at zero
-              // the plus is half the invitation, so it has to carry the same
-              // tint the chip does or the pair reads as two unrelated controls.
-              //
-              // A free slot borrows the same tint for the same reason it exists:
-              // it is the row's own "there is something for you here" language,
-              // and inventing a second one for the free tier would make the two
-              // states compete rather than agree.
-              style={{
-                ...buttonStyling?.('BuzzTip')?.style,
-                ...(inviting || freeLabel ? inviteStyle : null),
-              }}
+            <Popover.Target>
+              <Button
+                size="compact-sm"
+                radius="xl"
+                variant="light"
+                color="yellow"
+                onClick={() => openTray(imageId)}
+                aria-label={freeLabel ? `Place a sticker · ${freeLabel}` : 'Place a sticker'}
+                // A plus rather than a second sticker glyph: beside a count of
+                // stickers it reads as "add one" without a word, which is what
+                // keeps the fused control narrow enough to belong in this row.
+                {...buttonStyling?.('BuzzTip')}
+                // Last, and merged over whatever the row's styling set: at zero
+                // the plus is half the invitation, so it has to carry the same
+                // tint the chip does or the pair reads as two unrelated controls.
+                //
+                // A free slot borrows the same tint for the same reason it exists:
+                // it is the row's own "there is something for you here" language,
+                // and inventing a second one for the free tier would make the two
+                // states compete rather than agree.
+                style={{
+                  ...buttonStyling?.('BuzzTip')?.style,
+                  ...(inviting || freeLabel ? inviteStyle : null),
+                }}
+              >
+                <IconPlus size={16} stroke={2.5} />
+                {/* Only where the viewer can actually take it. The old label
+                counted the creator's slots and said nothing about the reader,
+                so a spent allowance still read as "1 of 1 free" on every image.
+                The states worth knowing but not offering — a full space, a
+                spent day, one already used here — say nothing at all here and
+                are explained in the tray, where the choice is made. */}
+                {freeLabel && (
+                  <Text size="xs" fw={600} className="ml-1">
+                    {freeLabel}
+                  </Text>
+                )}
+              </Button>
+            </Popover.Target>
+            <Popover.Dropdown
+              // The button's own yellow, because it is about that button and
+              // nothing else. A neutral card floating over the image reads as a
+              // site notice; this reads as the button talking.
+              className="border-none bg-yellow-4 px-3 py-2 dark:bg-yellow-6"
             >
-              <IconPlus size={16} stroke={2.5} />
-              {/* Only where the viewer can actually take it. The old label
-                  counted the creator's slots and said nothing about the reader,
-                  so a spent allowance still read as "1 of 1 free" on every image
-                  in the feed. A state worth knowing but not offering — a full
-                  space, a spent day — is now said in the tooltip instead, where
-                  it can give the reason and the price together. */}
-              {freeLabel && (
-                <Text size="xs" fw={600} className="ml-1">
-                  {freeLabel}
+              <div className="flex items-center gap-2">
+                <Text size="xs" fw={600} c="dark.8">
+                  {hint}
                 </Text>
-              )}
-            </Button>
-          </Tooltip>
+                <CloseButton size="xs" c="dark.8" aria-label="Dismiss" onClick={dismissHint} />
+              </div>
+            </Popover.Dropdown>
+          </Popover>
         )}
       </Button.Group>
 

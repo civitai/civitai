@@ -243,7 +243,6 @@ describe('StickerPlacementBar — free slots', () => {
     signedIn: true,
   };
 
-  const placeButton = () => page.getByRole('button', { name: /^Place a sticker/ });
   // By exact name, because the comparison below renders twice in one test and
   // both buttons stay mounted — a pattern locator resolves to two elements there
   // and fails on strict mode rather than on the property being tested.
@@ -377,98 +376,83 @@ describe('StickerPlacementBar — free slots', () => {
    * "explains which scarcity ran out" fail independently — a tooltip that quotes
    * the price and explains nothing is exactly what shipped.
    */
-  test('explains a spent allowance, and names what it is shared with', async () => {
+  /**
+   * 🔴 The hint replaced a tooltip, and the difference is who can see it.
+   *
+   * The bar used to explain itself on hover — which meant a phone was told
+   * nothing, in the states where knowing matters most. What is left is a
+   * popover: on screen without a pointer, dismissable by anyone, and shown ONLY
+   * where there is a free placement to take. The reasons free is unavailable
+   * moved to the tray, at the point the choice is made.
+   */
+  test('announces a free sticker without needing a pointer', async () => {
+    localStorage.removeItem('sticker-free-hint-dismissed');
     Object.assign(queryState, settled, {
       freeSlots: 4,
       freeSlotsRemaining: 2,
-      allowanceRemaining: 0,
-    });
-    await renderBar();
-
-    await placeButton().hover();
-    // The sharing is the fact readers were getting wrong: spend it on a remix
-    // gallery and the sticker surface had no explanation for where it went.
-    await expect
-      .element(page.getByText(/shared between stickers and remix galleries/))
-      .toBeInTheDocument();
-    await expect.element(page.getByText(/100 Buzz/)).toBeInTheDocument();
-  });
-
-  test('distinguishes a held slot from a creator who takes none', async () => {
-    Object.assign(queryState, settled, {
-      freeSlots: 4,
-      freeSlotsRemaining: 0,
       allowanceRemaining: 1,
     });
     await renderBar();
 
-    await placeButton().hover();
-    // Worth saying precisely because it lifts by itself: a decline returns the
-    // slot, so this reader has a reason to come back to THIS image.
-    await expect.element(page.getByText(/comes back if the creator declines/)).toBeInTheDocument();
+    // No hover anywhere in this test. That is the point of it.
+    await expect.element(page.getByText('You have a free sticker today')).toBeInTheDocument();
   });
 
-  test('quotes the price and promises nothing while the allowance is unknown', async () => {
+  test.each([
+    ['the allowance is spent', { freeSlots: 4, freeSlotsRemaining: 2, allowanceRemaining: 0 }],
+    ['the slot here is held', { freeSlots: 4, freeSlotsRemaining: 0, allowanceRemaining: 1 }],
+    ['the creator takes none', { freeSlots: 0, freeSlotsRemaining: 0, allowanceRemaining: 1 }],
+    [
+      'a free one was already used here',
+      { freeSlots: 4, freeSlotsRemaining: 2, allowanceRemaining: 1, usedHere: true },
+    ],
+  ])('says nothing at all when %s', async (_name, state) => {
+    localStorage.removeItem('sticker-free-hint-dismissed');
+    Object.assign(queryState, settled, state);
+    await renderBar();
+
+    // A popover that appears to tell you what you cannot have is an
+    // interruption on somebody else's image.
+    expect(page.getByText(/You have/).elements()).toHaveLength(0);
+    // The button is still there and still opens the tray, which is where the
+    // reason lives now.
+    expect(page.getByRole('button', { name: /^Place a sticker/ }).elements()).toHaveLength(1);
+  });
+
+  test('stays dismissed for the day it is about', async () => {
+    localStorage.removeItem('sticker-free-hint-dismissed');
     Object.assign(queryState, settled, {
       freeSlots: 4,
       freeSlotsRemaining: 2,
-      allowanceRemaining: undefined,
+      allowanceRemaining: 1,
     });
     await renderBar();
 
-    await placeButton().hover();
-    await expect.element(page.getByText('Place a sticker · 100 Buzz')).toBeInTheDocument();
-    expect(page.getByText(/\bfree\b/i).elements()).toHaveLength(0);
+    await page.getByRole('button', { name: 'Dismiss' }).click();
+    await expect.element(page.getByText('You have a free sticker today')).not.toBeInTheDocument();
+
+    // And it does not come back on the next render, which is what "dismiss"
+    // means to the person who pressed it.
+    await renderBar();
+    expect(page.getByText('You have a free sticker today').elements()).toHaveLength(0);
   });
 
   /**
-   * The cost control, asserted rather than assumed.
-   *
-   * The whole design rests on the allowance being ONE query for a page — it is a
-   * property of the person, not of the image. The bar passes an `enabled` flag
-   * so a surface where the answer cannot matter never asks; this pins that the
-   * flag is actually passed, and passed true where it should be, so the negative
-   * is not a test that cannot fail.
+   * Keyed on the UTC day rather than forever, because what it announces is
+   * itself daily. A permanent dismissal would mean the free tier introduces
+   * itself exactly once per person, ever — and tomorrow's allowance is news
+   * again.
    */
-  /**
-   * 🔴 The rule the bar could not see until it took the per-image query.
-   *
-   * Free is once EVER per image, and the sticker decline path makes the gap
-   * permanent rather than a day long: free-place, the creator declines, the
-   * image's slot returns and the allowance resets — so a chip reading the
-   * allowance alone advertises "1 free" on that image every day afterwards, to
-   * the one person who can never take it.
-   */
-  test('says nothing about free on an image the viewer has already used one on', async () => {
+  test("comes back once yesterday's dismissal is stale", async () => {
+    localStorage.setItem('sticker-free-hint-dismissed', '2020-01-01');
     Object.assign(queryState, settled, {
       freeSlots: 4,
       freeSlotsRemaining: 2,
       allowanceRemaining: 1,
-      usedHere: true,
     });
     await renderBar();
 
-    // `\d+ free` is the label's shape, not the whole word: unanchored `/free/i`
-    // also matches wrapper elements whose subtree text contains it, and `/free$/`
-    // would let a regression to "1 free left" through.
-    expect(page.getByText(/\d+ free/).elements()).toHaveLength(0);
-  });
-
-  test('explains that one, rather than only withholding the label', async () => {
-    Object.assign(queryState, settled, {
-      freeSlots: 4,
-      freeSlotsRemaining: 2,
-      allowanceRemaining: 1,
-      usedHere: true,
-    });
-    await renderBar();
-
-    await placeButton().hover();
-    // The tray's own sentence, because the bar now defers to the same ladder —
-    // one wording per fact, which is what the tooltip used to break.
-    await expect
-      .element(page.getByText(/already used a free sticker on this image/))
-      .toBeInTheDocument();
+    await expect.element(page.getByText('You have a free sticker today')).toBeInTheDocument();
   });
 
   test('asks for the standing exactly once where the viewer can place', async () => {

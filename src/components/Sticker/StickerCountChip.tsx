@@ -50,7 +50,8 @@ export function StickerCountChip({
   revealed: boolean;
   /** Spell out "3 stickers" rather than "3", where the row has room for it. */
   showLabel?: boolean;
-  tooltip: string;
+  /** Omit for no tooltip at all — see the bar, which now says nothing on hover. */
+  tooltip?: string;
   ariaLabel?: string;
   onClick: (event: React.MouseEvent) => void;
   // Whatever the surface's `ReactionSettingsProvider` hands its reaction
@@ -70,28 +71,37 @@ export function StickerCountChip({
     ...restButtonProps
   } = buttonProps ?? {};
 
-  return (
+  const chip = (
+    <Button
+      size="compact-sm"
+      radius="xl"
+      variant={empty || revealed ? 'light' : 'subtle'}
+      color={empty ? 'yellow' : 'gray'}
+      onClick={onClick}
+      aria-label={ariaLabel}
+      leftSection={<IconSticker size={16} />}
+      {...restButtonProps}
+      style={{ ...providedStyle, ...(empty ? inviteStyle : null) }}
+      className={clsx(providedClassName, className)}
+    >
+      <Text size="xs" fw={600}>
+        {empty
+          ? 'stickers'
+          : showLabel
+          ? `${count} ${count === 1 ? 'sticker' : 'stickers'}`
+          : count}
+      </Text>
+    </Button>
+  );
+
+  // No tooltip, no wrapper. The bar deliberately says nothing on hover now — the
+  // free hint is a popover everyone can see, and a hover-only price line was
+  // telling a phone nothing at all.
+  return tooltip ? (
     <Tooltip label={tooltip} withArrow>
-      <Button
-        size="compact-sm"
-        radius="xl"
-        variant={empty || revealed ? 'light' : 'subtle'}
-        color={empty ? 'yellow' : 'gray'}
-        onClick={onClick}
-        aria-label={ariaLabel}
-        leftSection={<IconSticker size={16} />}
-        {...restButtonProps}
-        style={{ ...providedStyle, ...(empty ? inviteStyle : null) }}
-        className={clsx(providedClassName, className)}
-      >
-        <Text size="xs" fw={600}>
-          {empty
-            ? 'stickers'
-            : showLabel
-            ? `${count} ${count === 1 ? 'sticker' : 'stickers'}`
-            : count}
-        </Text>
-      </Button>
+      {chip}
     </Tooltip>
+  ) : (
+    chip
   );
 }

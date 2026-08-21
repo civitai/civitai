@@ -7,9 +7,9 @@ import {
 } from '~/shared/utils/placement';
 import {
   barFreeLabel,
-  barTooltip,
   FREE_REVIEW_CAVEAT,
   freeOfferFor,
+  freeHintText,
   freeOptionLabel,
   freeRefusalMessage,
   freeRefusalOutcome,
@@ -19,27 +19,33 @@ import {
   trayReviewLine,
 } from '~/components/Sticker/free-offer';
 
-describe('the free option carries the mode', () => {
-  it('says instant on an auto-accept space and needs review otherwise', () => {
-    expect(freeOptionLabel(true)).toBe('Free · instant');
-    expect(freeOptionLabel(false)).toBe('Free · needs review');
-  });
-
+describe('the free option is a price, not a process', () => {
   /**
-   * The distinction is the whole reason the mode is on this option rather than on
-   * the sticker button: a placer choosing between two offers needs to know which
-   * one goes live now. A label that read the same either way would leave the mode
-   * a hidden setting again.
+   * 🔴 It used to read `Free · instant` / `Free · needs review` beside a plain
+   * `100 Buzz`. Justin, on seeing it: "it makes it seem like the other one's not
+   * going to need review". Both options go to the creator on a review space and
+   * both are live at once on an auto one — the mode was never a property of the
+   * FREE option, it is a property of the space, and putting it on one of two
+   * segments made it read as the difference between them.
    */
-  it('reads differently in the two modes', () => {
-    expect(freeOptionLabel(true)).not.toBe(freeOptionLabel(false));
+  it('says nothing about review, on either kind of space', () => {
+    expect(freeOptionLabel()).toBe('Free');
   });
+});
 
-  it('states the asymmetry a decline creates', () => {
-    // The image's slot comes back and the placer's day does not, which is the
-    // one fact somebody might choose to pay to avoid.
-    expect(FREE_REVIEW_CAVEAT).toMatch(/spent even if they decline/);
-    expect(FREE_REVIEW_CAVEAT).toMatch(/allowance does not/);
+/**
+ * What a decline costs the placer, which is the one line under the button.
+ */
+describe('the caveat says what pressing spends', () => {
+  it('names the spend and the decline in one clause', () => {
+    // Shrunk from two sentences about the asymmetry between the creator's slot
+    // and the placer's day. The fact that has to land is that pressing spends
+    // it, and that a decline does not give it back.
+    expect(FREE_REVIEW_CAVEAT).toMatch(/Spends your free placement/);
+    expect(FREE_REVIEW_CAVEAT).toMatch(/even if they decline/);
+    // Short enough to sit in a chip under the button rather than as a paragraph
+    // above it — the shape Justin asked for.
+    expect(FREE_REVIEW_CAVEAT.length).toBeLessThan(70);
   });
 });
 
@@ -438,7 +444,7 @@ describe('the bar offers free only where the reader can take it', () => {
   });
 });
 
-describe('the bar tooltip names the price, and the reason when there is one', () => {
+describe('the free hint is shown only where there is something to take', () => {
   const SLOTS_OPEN = { freeSlots: 4, freeSlotsRemaining: 2 };
   const SLOTS_HELD = { freeSlots: 4, freeSlotsRemaining: 0 };
   const NO_FREE = { freeSlots: 0, freeSlotsRemaining: 0 };
@@ -447,96 +453,38 @@ describe('the bar tooltip names the price, and the reason when there is one', ()
   const SPENT = { remaining: 0, usedHere: false, resetsAt: RESETS };
   const USED_HERE = { remaining: 1, usedHere: true, resetsAt: RESETS };
 
-  /**
-   * The price in every branch. That rule predates this change — it is what kept
-   * the old label from being an outright lie about cost — and the reason is an
-   * addition to it, never a replacement.
-   */
-  it.each([
-    ['free on offer', SLOTS_OPEN, READY],
-    ['a spent allowance', SLOTS_OPEN, SPENT],
-    ['a free one already used here', SLOTS_OPEN, USED_HERE],
-    ['slots all held', SLOTS_HELD, READY],
-    ['a creator who takes none', NO_FREE, READY],
-  ])('quotes the price with %s', (_name, space, standing) => {
-    expect(barTooltip({ price: 100, space, standing })).toMatch(/100 Buzz/);
+  it('announces a free sticker when the reader actually has one', () => {
+    expect(freeHintText(SLOTS_OPEN, READY)).toBe('You have a free sticker today');
   });
 
-  it('explains a spent allowance and names what it is shared with', () => {
-    const tip = barTooltip({ price: 100, space: SLOTS_OPEN, standing: SPENT });
-
-    expect(tip).toMatch(/used today's free placement/);
-    // The second ticket, in the sentence that needs it most: this reader's
-    // allowance may well have gone on a remix gallery, and without this the
-    // sticker surface has no explanation for where it went.
-    expect(tip).toMatch(new RegExp(SHARED_ALLOWANCE_NOTE));
-    // Read off the server's own reset rather than restating the boundary.
-    expect(tip).toMatch(/00:00 UTC/);
+  it('counts, when the reader can take more than one', () => {
+    // Bounded by the smaller of the two, like the label — the hint must not
+    // promise more than the image can accept.
+    expect(
+      freeHintText({ freeSlots: 4, freeSlotsRemaining: 3 }, { remaining: 2, usedHere: false })
+    ).toBe('You have 2 free stickers today');
   });
 
   /**
-   * 🔴 One ladder, asserted as one.
+   * 🔴 The silences, which are the whole reason this replaced a tooltip rather
+   * than being added beside one.
    *
-   * An earlier version of this tooltip wrote its own wording for two of these
-   * states, so the bar and the tray could describe the same fact differently.
-   * Now it defers, and this pins that: the sentence after the price IS the
-   * tray's, character for character.
+   * A popover that appears to tell you what you CANNOT have is an interruption
+   * on somebody else's image. Every unavailable state says nothing at the bar
+   * and is explained in the tray, at the point the choice is made.
    */
   it.each([
-    ['already used here', SLOTS_OPEN, USED_HERE],
-    ['slots all held', SLOTS_HELD, READY],
-    ['allowance spent', SLOTS_OPEN, SPENT],
-  ])('says exactly what the tray says — %s', (_name, space, standing) => {
-    const reason = preCommitFreeReason(false, standing, space);
-
-    expect(reason).not.toBeNull();
-    expect(barTooltip({ price: 100, space, standing })).toBe(
-      `Place a sticker · 100 Buzz. ${reason}`
-    );
+    ['the allowance is spent', SLOTS_OPEN, SPENT],
+    ['a free one was already used here', SLOTS_OPEN, USED_HERE],
+    ['the slot on this image is held', SLOTS_HELD, READY],
+    ['the creator takes no free placements', NO_FREE, READY],
+  ])('stays silent when %s', (_name, space, standing) => {
+    expect(freeHintText(space, standing)).toBeNull();
   });
 
-  /**
-   * The two zeroes that look alike. `freeSlotsRemaining === 0` is both "takes no
-   * free placements" and "all currently held", and only `freeSlots` separates
-   * them — the first has nothing to say, the second says something worth acting
-   * on, because a decline returns the slot.
-   */
-  it('tells a held slot apart from a creator who takes none', () => {
-    expect(barTooltip({ price: 100, space: SLOTS_HELD, standing: READY })).toMatch(
-      /comes back if the creator declines/
-    );
-    expect(barTooltip({ price: 100, space: NO_FREE, standing: READY })).toBe(
-      'Place a sticker · 100 Buzz'
-    );
-  });
-
-  it('offers both prices when free is genuinely available', () => {
-    const tip = barTooltip({ price: 100, space: SLOTS_OPEN, standing: READY });
-
-    expect(tip).toMatch(/free, or 100 Buzz/);
-    expect(tip).toMatch(new RegExp(SHARED_ALLOWANCE_NOTE));
-  });
-
-  /**
-   * Loading is not "spent". A tooltip asserting a reset time from a defaulted
-   * zero tells a reader with a free placement in hand that they have none — for
-   * as long as the query takes.
-   */
-  it('promises and refuses nothing while the standing is unknown', () => {
-    expect(barTooltip({ price: 100, space: SLOTS_OPEN, standing: undefined })).toBe(
-      'Place a sticker · 100 Buzz'
-    );
-  });
-
-  /**
-   * The space query is in flight too, and the bar passes `space ?? undefined`
-   * while it is. Its own case: dropping the `!space ||` guard is a TypeError on
-   * `space.freeSlots`, not a copy bug, and nothing else here would catch it.
-   */
-  it('survives having no space at all', () => {
-    expect(barTooltip({ price: 100, space: undefined, standing: READY })).toBe(
-      'Place a sticker · 100 Buzz'
-    );
+  it('claims nothing while either query is still loading', () => {
+    expect(freeHintText(SLOTS_OPEN, undefined)).toBeNull();
+    expect(freeHintText(undefined, READY)).toBeNull();
   });
 });
 
@@ -589,9 +537,9 @@ describe('the tray says why free is unavailable before anything is committed', (
    * `freeRefusalMessage`'s version is "Someone took the last free slot on this
    * image FIRST" — written for a placer who pressed and lost a race. Before the
    * press the reader has pressed nothing, so "first" is false, and the bar's own
-   * tooltip says something different for the identical state. Both now take
-   * `FREE_SLOT_TAKEN_NOTE`, and this pins that the pre-commit path does not fall
-   * through to the post-race wording.
+   * bar said something different for the identical state, back when the bar
+   * spoke at all. `FREE_SLOT_TAKEN_NOTE` is what survived, and this pins that
+   * the pre-commit path does not fall through to the post-race wording.
    */
   it('does not tell someone who has pressed nothing that they lost a race', () => {
     const held = { freeSlots: 4, freeSlotsRemaining: 0 };
@@ -599,11 +547,10 @@ describe('the tray says why free is unavailable before anything is committed', (
 
     expect(reason).toBe(FREE_SLOT_TAKEN_NOTE);
     expect(reason).not.toMatch(/first/i);
-    // And the bar says the same sentence for the same state, which is the point
-    // of it being a constant rather than two hand-written lines.
-    expect(barTooltip({ price: 100, space: held, standing: READY })).toContain(
-      FREE_SLOT_TAKEN_NOTE
-    );
+    // The bar says nothing at all in this state now — no tooltip, and the hint
+    // is only for a free placement the reader can actually take — so the tray is
+    // the only place this sentence appears.
+    expect(freeHintText(held, READY)).toBeNull();
   });
 
   /**
