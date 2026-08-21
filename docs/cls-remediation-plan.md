@@ -112,7 +112,8 @@ but more plumbing) for being surgical and zero-risk.
 > `/user/[username]/models`, via `CategoryTags`, which never used `TagScroller` and so
 > never carried the reservation this section describes. It carries its own `min-h-[26px]`
 > now, in both the empty and populated states. So the shift cannot occur on any surface:
-> removed everywhere else, reserved on the two that render it.
+> removed from every other feed, and reserved on all three surfaces that still render
+> `CategoryTags` — those two pages and the generation resource-select modal.
 
 **Verified (local dev build, same `layout-shift` harness):**
 

@@ -5,26 +5,33 @@ import { useCategoryTags } from '~/components/Tags/tag.utils';
 import { TwScrollX } from '~/components/TwScrollX/TwScrollX';
 import { TagTarget } from '~/shared/utils/prisma/enums';
 
+// `selected` without `setSelected` would be silently discarded — the bar reads the URL
+// and writes it, ignoring the prop. Pairing them in the type makes that uncompilable.
+type CategoryTagsProps = {
+  filter?: (tag: string) => boolean;
+  includeAll?: boolean;
+} & (
+  | { selected?: undefined; setSelected?: undefined }
+  | { selected?: string; setSelected: (tag?: string) => void }
+);
+
 export function CategoryTags({
   selected,
   setSelected,
   filter,
   includeAll = true,
-}: {
-  selected?: string;
-  setSelected?: (tag?: string) => void;
-  filter?: (tag: string) => boolean;
-  includeAll?: boolean;
-}) {
+}: CategoryTagsProps) {
   const colorScheme = useComputedColorScheme('dark');
   const { set, tag: tagQuery } = useModelQueryParams();
 
   const { data: categories } = useCategoryTags({ entityType: TagTarget.Model });
 
   // Reserve the row height while the client-side `useCategoryTags` query and the hidden
-  // preferences resolve. Returning null lets the 26px chip row pop in and shove the feed
-  // down — the shift `docs/cls-remediation-plan.md` measured at 0.65 on /images. That fix
-  // landed in TagScroller, which these surfaces never used.
+  // preferences resolve. Returning null lets the chip row pop in and shove the feed down —
+  // the shift `docs/cls-remediation-plan.md` measured at 0.65 on /images. That fix landed
+  // in TagScroller, which these surfaces never used. 26px is Mantine's
+  // `--button-height-compact-sm`; both states must carry it or the row shifts one way or
+  // the other.
   if (!categories.length) return <div className="min-h-[26px]" />;
 
   const handleSetTag = (tag: string | undefined) => set({ tag });
