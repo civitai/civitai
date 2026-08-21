@@ -185,7 +185,12 @@ async function createQuestion(opts) {
   // query at all, and such a card renders blank — indistinguishable from a permissions problem, which is
   // how it was read the first time. The server rewrites the legacy `dataset_query.native.query` we post
   // into a `stages[0].native` string, so both shapes are accepted here.
-  const stored = await api('GET', `/card/${card.id}`);
+  const stored = await readCard(card.id);
+  if (stored === null) {
+    console.error(`Card ${card.id} was created but could not be read back, so it is unverified.`);
+    console.error(`  Check it: ${METABASE_URL}/question/${card.id}`);
+    process.exit(1);
+  }
   const storedQuery = storedNativeQuery(stored);
   if (storedQuery !== query) {
     console.error(`Card ${card.id} was created but does not carry the SQL that was sent.`);
@@ -204,6 +209,19 @@ async function createQuestion(opts) {
     console.log(`  Variables: ${Object.keys(templateTags).join(', ')}`);
   }
   return card;
+}
+
+// Read a card without `api()`'s exit-on-failure: a GET that fails must not be reported as a create that
+// failed, since the card exists either way and the difference decides what the operator does next.
+async function readCard(id) {
+  try {
+    const res = await fetch(`${METABASE_URL}/api/card/${id}`, {
+      headers: { 'x-api-key': METABASE_API_KEY },
+    });
+    return res.ok ? await res.json() : null;
+  } catch {
+    return null;
+  }
 }
 
 // The SQL a saved card actually carries, in either shape the API returns. Anything that is not a string —

@@ -51,6 +51,11 @@ describe.each(PARSERS)('%s flag values', (name, parse) => {
     expect(parse(['--database', '3'])).toMatchObject({ database: '3' });
   });
 
+  // The `=` form is where the error message sends people, so a hole in it is the worst place to have one.
+  it('rejects an empty value in the --key=value form too', () => {
+    expect(() => parse(['--query='])).toThrowError(/empty value/);
+  });
+
   it('never yields a non-string value for a value-taking flag', () => {
     const parsed = parse(['--database', '3', '--query=SELECT 1']);
     for (const [key, value] of Object.entries(parsed)) {
@@ -79,5 +84,22 @@ describe('boolean flags keep working', () => {
   it('cloudflare keeps positional arguments', () => {
     const { positional } = cloudflare.parseFlags(['top-paths', '--limit', '5', 'extra']);
     expect(positional).toEqual(['top-paths', 'extra']);
+  });
+
+  // `--apply true` parsed as apply='true' before this change. Left unconsumed, the `true` becomes a
+  // positional and shifts positional[1] on every command that takes one.
+  it('cloudflare consumes an explicitly spelled boolean', () => {
+    const { flags, positional } = cloudflare.parseFlags(['ip', '--apply', 'true', '1.2.3.4']);
+    expect(flags).toMatchObject({ apply: 'true' });
+    expect(positional).toEqual(['ip', '1.2.3.4']);
+  });
+
+  // metabase's own usage text advertises --json, so making the documented form exit 1 would be a
+  // regression introduced by this fix rather than by the bug it repairs.
+  it('metabase --json is advertised, so it must parse', () => {
+    expect(metabase.parseOpts(['list', '--collection', '232', '--json'])).toMatchObject({
+      collection: '232',
+      json: true,
+    });
   });
 });

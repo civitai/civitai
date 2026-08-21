@@ -13,9 +13,9 @@ Create questions, dashboards, and public links on Civitai's Metabase instance.
 node .claude/skills/metabase/metabase.mjs <command> [options]
 ```
 
-**A value that starts with `--` needs `--flag=value`.** Every flag except `--required` takes a value, and
-a bare `--flag` (or one whose value begins with `--`) is an error rather than a silent `true`. This bites
-most often with SQL opening on a `--` comment line:
+**A value that starts with `--` needs `--flag=value`.** Every flag except `--required` and `--json` takes a
+value, and a bare `--flag` (or one whose value begins with `--`) is an error rather than a silent `true`.
+This bites most often with SQL opening on a `--` comment line:
 
 ```bash
 --query="-- daily totals
