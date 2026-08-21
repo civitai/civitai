@@ -6361,7 +6361,7 @@ export type ImagesForModelVersions = {
   height: number;
   hash: string;
   modelVersionId: number;
-  // meta: ImageMetaProps | null;
+  meta?: ImageMetaProps | null;
   type: MediaType;
   metadata: ImageMetadata | VideoMetadata | null;
   tags?: number[];
@@ -6489,7 +6489,11 @@ export const getImagesForModelVersion = async ({
       i.minor,
       i.poi,
       t."modelVersionId",
-      ${Prisma.raw(include.includes('meta') ? 'i.meta,' : '')}
+      ${Prisma.raw(
+        include.includes('meta')
+          ? 'CASE WHEN i."hideMeta" THEN NULL ELSE i.meta END AS meta,'
+          : ''
+      )}
       p."availability",
       (
         CASE
@@ -6592,6 +6596,8 @@ export const imagesForModelVersionsCache = createCachedObject<CachedImagesForMod
     // the lag-aware helper so a cache miss right after image upload doesn't
     // poison the entry with `images: []` for a full TTL cycle.
     const db = fromWrite ? dbWrite : await getDbWithoutLagBatch('modelVersion', ids);
+    // No `include: ['meta']`: these rows reach the Meilisearch model document and
+    // the model.getAll wire, and GETALL_DROPPED_IMAGE_FIELDS does not drop meta.
     const images = await getImagesForModelVersion({
       modelVersionIds: ids,
       imagesPerVersion: 20,
