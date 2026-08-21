@@ -1,22 +1,26 @@
-import {
-  ActionIcon,
-  Badge,
-  Button,
-  Card,
-  Collapse,
-  Group,
-  Stack,
-  Switch,
-  Text,
-  Tooltip,
-} from '@mantine/core';
-import { IconPlus, IconTrash, IconX } from '@tabler/icons-react';
-import { useState } from 'react';
+import { Button, Card, Collapse, Group, SegmentedControl, Stack, Text } from '@mantine/core';
+import { IconPlus, IconX } from '@tabler/icons-react';
+import { useEffect, useState } from 'react';
+import { HubSourceCardA } from '~/components/Hubs/HubSourceCardA';
+import { HubSourceCardB } from '~/components/Hubs/HubSourceCardB';
+import { HubSourceCardC } from '~/components/Hubs/HubSourceCardC';
 import { HubSourceSearch } from '~/components/Hubs/HubSourceSearch';
 import { HubSourceUrlInput } from '~/components/Hubs/HubSourceUrlInput';
 import { hubLimits } from '~/server/schema/user-hub.schema';
-import { UserHubSourceType } from '~/shared/utils/prisma/enums';
+import type { UserHubSourceType } from '~/shared/utils/prisma/enums';
 import { showErrorNotification } from '~/utils/notifications';
+
+// Three candidate designs for the source row, switchable in place so they can be
+// compared against real data. Collapse to the winner and delete the other two.
+const cardVariants = [
+  { value: 'A' as const, Card: HubSourceCardA },
+  { value: 'B' as const, Card: HubSourceCardB },
+  { value: 'C' as const, Card: HubSourceCardC },
+];
+
+type CardVariant = (typeof cardVariants)[number]['value'];
+
+const VARIANT_KEY = 'hub-source-card-variant';
 
 export type HubSourceValue = {
   type: UserHubSourceType;
@@ -24,13 +28,6 @@ export type HubSourceValue = {
   alias?: string | null;
   enabled: boolean;
   index: number;
-};
-
-const sourceLabels: Record<UserHubSourceType, string> = {
-  [UserHubSourceType.User]: 'Creator',
-  [UserHubSourceType.Model]: 'Model',
-  [UserHubSourceType.ModelVersion]: 'Version',
-  [UserHubSourceType.Collection]: 'Collection',
 };
 
 /**
@@ -52,6 +49,26 @@ export function HubSourceEditor({
   emptyMessage?: string;
 }) {
   const [adding, setAdding] = useState(false);
+  // Read after mount rather than during render: the server has no localStorage, so
+  // seeding state from it directly is a hydration mismatch.
+  const [variant, setVariant] = useState<CardVariant>('A');
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(VARIANT_KEY);
+      if (stored === 'A' || stored === 'B' || stored === 'C') setVariant(stored);
+    } catch {
+      // Private windows and blocked site data throw on access.
+    }
+  }, []);
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(VARIANT_KEY, variant);
+    } catch {
+      // As above — a preference that cannot be saved is not worth an error.
+    }
+  }, [variant]);
+
+  const SourceCard = (cardVariants.find((v) => v.value === variant) ?? cardVariants[0]).Card;
 
   const addSource = (type: UserHubSourceType, targetId: number, rawAlias: string) => {
     // Match what the server stores, so the optimistic row is not a different
@@ -105,54 +122,42 @@ export function HubSourceEditor({
           {emptyMessage}
         </Text>
       ) : (
-        <Stack gap={4}>
-          {value.map((source) => (
-            <Group key={`${source.type}-${source.targetId}`} justify="space-between" wrap="nowrap">
-              <Group gap="xs" wrap="nowrap" className="min-w-0">
-                <Badge size="sm" variant="light">
-                  {sourceLabels[source.type]}
-                </Badge>
-                <Text size="sm" lineClamp={1}>
-                  {source.alias ?? `#${source.targetId}`}
-                </Text>
-              </Group>
-              <Group gap="xs" wrap="nowrap">
-                <Tooltip label={source.enabled ? 'Showing in this hub' : 'Hidden from this hub'}>
-                  <Switch
-                    size="xs"
-                    checked={source.enabled}
-                    disabled={disabled}
-                    aria-label={`Toggle ${source.alias ?? source.targetId}`}
-                    onChange={(event) =>
-                      onChange(
-                        value.map((s) =>
-                          s.type === source.type && s.targetId === source.targetId
-                            ? { ...s, enabled: event.currentTarget.checked }
-                            : s
-                        )
-                      )
-                    }
-                  />
-                </Tooltip>
-                <ActionIcon
-                  size="sm"
-                  variant="subtle"
-                  color="red"
-                  disabled={disabled}
-                  aria-label={`Remove ${source.alias ?? source.targetId}`}
-                  onClick={() =>
-                    onChange(
-                      value.filter(
-                        (s) => !(s.type === source.type && s.targetId === source.targetId)
-                      )
+        <Stack gap={6}>
+          <Group gap={6} wrap="nowrap" justify="space-between">
+            <Text size="10px" tt="uppercase" fw={700} c="dimmed">
+              Card style
+            </Text>
+            <SegmentedControl
+              size="xs"
+              value={variant}
+              data={cardVariants.map(({ value: v }) => ({ value: v, label: v }))}
+              onChange={(next) => setVariant(next as CardVariant)}
+            />
+          </Group>
+
+          <Stack gap={4}>
+            {value.map((source) => (
+              <SourceCard
+                key={`${source.type}-${source.targetId}`}
+                source={source}
+                disabled={disabled}
+                onToggle={(enabled) =>
+                  onChange(
+                    value.map((s) =>
+                      s.type === source.type && s.targetId === source.targetId
+                        ? { ...s, enabled }
+                        : s
                     )
-                  }
-                >
-                  <IconTrash size={16} />
-                </ActionIcon>
-              </Group>
-            </Group>
-          ))}
+                  )
+                }
+                onRemove={() =>
+                  onChange(
+                    value.filter((s) => !(s.type === source.type && s.targetId === source.targetId))
+                  )
+                }
+              />
+            ))}
+          </Stack>
         </Stack>
       )}
     </Stack>

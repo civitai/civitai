@@ -18,18 +18,18 @@ import { trpc } from '~/utils/trpc';
 
 type Suggestion = { type: UserHubSourceType; targetId: number; alias: string };
 
+// Collections are listed but not selectable until the index attribute they are
+// served by is live — `HUB_COLLECTION_SOURCES_ENABLED` gates the write path too,
+// so an enabled tab would offer sources the server refuses.
 const tabs = [
-  { value: UserHubSourceType.User, label: 'Creators', empty: 'creators you follow' },
-  { value: UserHubSourceType.Model, label: 'Models', empty: 'models you own or bookmarked' },
-  ...(HUB_COLLECTION_SOURCES_ENABLED
-    ? [
-        {
-          value: UserHubSourceType.Collection,
-          label: 'Collections',
-          empty: 'collections you follow',
-        },
-      ]
-    : []),
+  { value: UserHubSourceType.User, label: 'Creators', scope: 'creators you follow' },
+  { value: UserHubSourceType.Model, label: 'Models', scope: 'models you own or bookmarked' },
+  {
+    value: UserHubSourceType.Collection,
+    label: 'Collections',
+    scope: 'collections you follow',
+    disabled: !HUB_COLLECTION_SOURCES_ENABLED,
+  },
 ];
 
 /**
@@ -64,22 +64,24 @@ export function HubSourceSearch({
 
   return (
     <Stack gap="xs">
-      {tabs.length > 1 && (
-        <SegmentedControl
-          fullWidth
-          size="xs"
-          value={type}
-          disabled={disabled}
-          data={tabs.map(({ value, label }) => ({ value, label }))}
-          onChange={(value) => setType(value as HubSuggestionType)}
-        />
-      )}
+      <SegmentedControl
+        fullWidth
+        size="xs"
+        value={type}
+        disabled={disabled}
+        data={tabs.map(({ value, label, disabled: itemDisabled }) => ({
+          value,
+          label,
+          disabled: itemDisabled,
+        }))}
+        onChange={(value) => setType(value as HubSuggestionType)}
+      />
 
       <TextInput
         size="xs"
         leftSection={<IconSearch size={14} />}
         rightSection={isFetching ? <Loader size={14} /> : undefined}
-        placeholder={`Search ${active?.empty ?? 'your library'}`}
+        placeholder={`Search ${active?.scope ?? 'your library'}`}
         value={query}
         disabled={disabled}
         onChange={(event) => setQuery(event.currentTarget.value)}
@@ -90,8 +92,8 @@ export function HubSourceSearch({
           {isFetching
             ? 'Looking…'
             : query
-            ? `No ${active?.empty ?? 'matches'} match that. You can paste a link below instead.`
-            : `Nothing in ${active?.empty ?? 'your library'} yet. Paste a link below instead.`}
+            ? `No ${active?.scope ?? 'matches'} match that. You can paste a link below instead.`
+            : `Nothing in ${active?.scope ?? 'your library'} yet. Paste a link below instead.`}
         </Text>
       ) : (
         <Stack gap={2} mah={220} className="overflow-y-auto">

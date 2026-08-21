@@ -16,6 +16,7 @@ vi.mock('~/server/services/collection.service', () => ({
 
 import {
   getUserHubById,
+  resolveHubSourceFromUrl,
   resolveHubSources,
   upsertUserHub,
 } from '~/server/services/user-hub.service';
@@ -392,5 +393,45 @@ describe('description and filters on metadata', () => {
 
     expect(hub.filters).toEqual({});
     expect(hub.description).toBeNull();
+  });
+});
+
+// A model page carrying `?modelVersionId=` is a version's gallery. Resolving it to
+// the whole model is a silent widening — the hub fills with images from versions
+// the user never linked, and nothing about the row they added says so.
+describe('resolving a pasted link', () => {
+  it('resolves a versioned model link to the version, not the model', async () => {
+    dbMock.dbRead.modelVersion.findFirst.mockResolvedValue({
+      id: 456,
+      name: 'v2',
+      model: { name: 'Nova', deletedAt: null },
+    });
+
+    const source = await resolveHubSourceFromUrl({
+      url: 'https://civitai.com/models/123?modelVersionId=456',
+    });
+
+    expect(source).toEqual({
+      type: UserHubSourceType.ModelVersion,
+      targetId: 456,
+      alias: 'Nova - v2',
+    });
+    // The negative control: widening to the model would have read the Model table.
+    expect(dbMock.dbRead.model.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('still resolves a bare model link to the model', async () => {
+    dbMock.dbRead.model.findFirst.mockResolvedValue({ id: 123, name: 'Nova' });
+
+    const source = await resolveHubSourceFromUrl({ url: 'https://civitai.com/models/123' });
+
+    expect(source).toEqual({ type: UserHubSourceType.Model, targetId: 123, alias: 'Nova' });
+  });
+
+  it('returns null for a link on another host', async () => {
+    const source = await resolveHubSourceFromUrl({ url: 'https://example.com/models/123' });
+
+    expect(source).toBeNull();
+    expect(dbMock.dbRead.model.findFirst).not.toHaveBeenCalled();
   });
 });

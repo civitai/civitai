@@ -345,6 +345,12 @@ export async function resolveHubSourceFromUrl({ url }: ResolveHubSourceInput) {
   }
 
   if (ref.type === 'model') {
+    // A link carrying `?modelVersionId=` is someone looking at one version's
+    // gallery, which is what they mean to follow — the whole model is a broader
+    // ask than the link they copied.
+    if (ref.modelVersionId)
+      return resolveHubSourceFromUrl({ url: `/model-versions/${ref.modelVersionId}` });
+
     const model = await dbRead.model.findFirst({
       where: { id: ref.modelId, deletedAt: null },
       select: { id: true, name: true },
