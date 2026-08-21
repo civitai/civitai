@@ -26,7 +26,7 @@
   // TEMPORARY DIAGNOSTIC — remove before merge. Justin and I could not establish whether we were
   // looking at the same build. `hydrated` only ever becomes true from an effect, which does not run
   // during SSR, so "idle" means the client JS never took over.
-  const BUILD_MARKER = 'BLK-5';
+  const BUILD_MARKER = 'BLK-7';
   let hydrated = $state(false);
   let lastEvent = $state('none');
   $effect(() => {
@@ -203,33 +203,42 @@
               method="POST"
               action="?/remove"
               use:enhance={submitChip(item)}
-              class="{badgeVariants({ variant: 'secondary' })} relative gap-1 py-1 pl-3 pr-1"
+              class="relative"
             >
               <input type="hidden" name="id" value={data.blocklist.id} />
               <input type="hidden" name="blocklist" value={item} />
-              {item}
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                class="size-4"
-                disabled={removing !== null}
-                aria-label="Remove {item}"
-                title="Remove {item}"
-                onclick={() => {
-                  lastEvent = 'x:' + item;
-                  confirming = item;
-                }}
-              >
-                &times;
-              </Button>
+              <!-- The badge styling stays on this span, NOT on the form. `badgeVariants` carries
+                   `overflow-hidden` and a fixed `h-5`, so a confirm rendered inside a badge-styled
+                   element is clipped away to nothing: present in the DOM, invisible on screen, and
+                   the X reads as a dead control. That cost several review rounds. -->
+              <span class="{badgeVariants({ variant: 'secondary' })} gap-1 py-1 pl-3 pr-1">
+                {item}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  class="size-4"
+                  disabled={removing !== null}
+                  aria-label="Remove {item}"
+                  title="Remove {item}"
+                  onclick={() => {
+                    lastEvent = 'x:' + item;
+                    confirming = item;
+                  }}
+                >
+                  &times;
+                </Button>
+              </span>
 
               <!-- Anchored inside the form rather than portalled: a portalled confirm is outside the
                    <form> in the DOM, so its submit button loses the implicit association and posts
-                   nothing. Absolute so opening it cannot reflow a 200-chip wrapped list. -->
+                   nothing. Absolute so opening it cannot reflow a 200-chip wrapped list.
+                   🔴 Opens DOWNWARD. Upward put it underneath the filter bar's input, which paints
+                   over it — the confirm was there and invisible, so the X read as a dead control.
+                   z-50 for the same reason: it has to clear the chips it overlaps. -->
               {#if confirming === item}
                 <div
-                  class="absolute bottom-full left-0 z-10 mb-1 flex w-max items-center gap-2 rounded-md border bg-popover p-2 text-popover-foreground shadow-md"
+                  class="absolute left-0 top-full z-50 mt-1 flex w-max items-center gap-2 rounded-md border bg-popover p-2 text-popover-foreground shadow-md"
                 >
                   <span class="text-xs">Remove <strong>{item}</strong>?</span>
                   <Button type="submit" size="sm" variant="destructive" disabled={removing !== null}>
