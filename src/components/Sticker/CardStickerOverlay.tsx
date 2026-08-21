@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { mediaContentRectOf } from '~/components/Sticker/media-content-rect';
 import { StickerPlacementOverlay } from '~/components/Sticker/StickerPlacementOverlay';
 import { useStickerPlacementBatch } from '~/components/Sticker/StickerPlacementBatchProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -118,11 +119,17 @@ export function CardStickerOverlay({
       const self = offsetWithin(node, stop);
       if (!at || !self) return;
 
+      // The rectangle the ARTWORK occupies, which under `object-fit: cover` is
+      // larger than the element and offset inside it. Positions are fractions of
+      // the artwork, so the overlay has to be that rectangle; the wrapper's
+      // `overflow-hidden` then crops it exactly as the card crops the picture.
+      const drawn = mediaContentRectOf(element);
+
       const next = {
-        width: element.offsetWidth,
-        height: element.offsetHeight,
-        left: at.x - self.x,
-        top: at.y - self.y,
+        width: drawn.width,
+        height: drawn.height,
+        left: at.x - self.x + drawn.left,
+        top: at.y - self.y + drawn.top,
       };
       // A ResizeObserver fires on every layout pass, so setting state
       // unconditionally would re-render the overlay continuously on a page that
@@ -134,7 +141,20 @@ export function CardStickerOverlay({
     const observer = new ResizeObserver(measure);
     observer.observe(node);
     observer.observe(media);
-    return () => observer.disconnect();
+
+    // The natural size arrives with the file, not with the element, and a
+    // `ResizeObserver` does not fire for it: the box is already its final size
+    // while the picture inside it is still unknown. Without this the overlay
+    // keeps the uncropped geometry it measured before the image loaded — which
+    // is the bug, one frame late.
+    media.addEventListener('load', measure);
+    media.addEventListener('loadedmetadata', measure);
+
+    return () => {
+      observer.disconnect();
+      media.removeEventListener('load', measure);
+      media.removeEventListener('loadedmetadata', measure);
+    };
   }, [hasPlacements]);
 
   // Narrows `batch` as well: `placements` is empty without one, so reaching
