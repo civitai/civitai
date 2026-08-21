@@ -42,39 +42,31 @@ import {
 } from '~/server/routers/__tests__/placement.router.test-utils';
 
 /**
- * The two procedures that write a placement, each in both offers.
+ * The two procedures that write a placement — one case each, and deliberately no
+ * `free: true` twin.
  *
- * The `free` cases are NOT a claim about the free service: both create services
- * are replaced above, so `free: true` travels only as far as a mock argument and
- * `createFreePlacement` is never entered. What they pin is that the guard sits
- * above the paid/free branch rather than inside it — a refusal added to the paid
- * write alone would leave these green. The free service's own guard is covered
- * in `free-placement.service.test.ts`.
+ * The free tier is covered, but not by a second call here: the guard is
+ * middleware, so it refuses before the payload is looked at and cannot behave
+ * differently for an offer it never sees. A free twin would run the identical
+ * path — both create services are replaced above, so `free: true` reaches a mock
+ * argument and `createFreePlacement` is never entered — and no mutation of the
+ * guard distinguishes the two. What covers the free tier is that both offers go
+ * through these procedures and nothing else, which `guards exactly the
+ * placement-writing mutations` below asserts against the router itself;
+ * `free-placement.service.test.ts` covers the free service's own guard.
  */
 const CREATE_CALLS = [
   {
     name: 'createSticker',
-    label: 'sticker (paid)',
+    label: 'sticker',
     writer: createStickerPlacement,
     input: { imageId: 99, data: STICKER_DATA },
   },
   {
-    name: 'createSticker',
-    label: 'sticker (free)',
-    writer: createStickerPlacement,
-    input: { imageId: 99, data: STICKER_DATA, free: true },
-  },
-  {
     name: 'submitToRemixGallery',
-    label: 'remix gallery (paid)',
+    label: 'remix gallery',
     writer: createRemixGallerySubmission,
     input: { hostImageId: 11, imageId: 12, expectedPrice: 100 },
-  },
-  {
-    name: 'submitToRemixGallery',
-    label: 'remix gallery (free)',
-    writer: createRemixGallerySubmission,
-    input: { hostImageId: 11, imageId: 12, free: true },
   },
 ] as const;
 
@@ -138,8 +130,8 @@ describe('placement router — account state refuses a placement', () => {
       });
     }
 
-    // The control. Eight refusals prove nothing unless the same call succeeds
-    // for an account in none of those states — a broken input shape refuses
+    // The control. The refusals prove nothing unless the same call succeeds for
+    // an account in none of those states — a broken input shape refuses
     // everywhere and reads as a working guard.
     it(`lets an ordinary user through on ${label}`, async () => {
       await expect(placementCaller()[name](input)).resolves.toBeDefined();
