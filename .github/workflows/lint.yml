@@ -480,6 +480,36 @@ jobs:
       - name: Next SVG loader patch applied
         run: node scripts/ci/assert-next-svg-patch-applied.mjs
 
+      # Parked here for the same two reasons as the step above: it needs a completed
+      # `pnpm install` and a job that FAILS the build, and this is the cheapest one that is
+      # both. `postinstall` has already run `db:generate`, so the re-run inside the script is
+      # idempotent and costs ~1s.
+      #
+      # What it guards: `packages/civitai-db-schema/src/*` is GENERATED but TRACKED, so a
+      # commit whose author's editor reformatted it lands a file that disagrees with its own
+      # generator, and every developer then gets a spurious dirty tree after `pnpm install`.
+      # `db:check-generated` has existed for exactly this and was wired to NOTHING — measured
+      # 2026-08-21, it appeared in no workflow. `enums.ts` flipped between the wrapped and
+      # unwrapped forms FOUR times in four days (470f0fd993 0, 4214ecb10b 30, 15c1408d3d 31,
+      # a5ed2dc83e 0, d0327f55ef 31), and TWICE AFTER `15c1408d3d` made the generator emit
+      # Prettier-formatted bytes specifically to end it. That fix is correct; it was a
+      # convention with nothing enforcing it, which is why it did not hold.
+      #
+      # 🔴 The `test -f` is not decoration. `git diff --exit-code -- <path>` exits 0 when the
+      # path exists on NEITHER side, so if these files are ever moved, renamed or untracked
+      # this gate goes silently and permanently GREEN instead of failing. Verified: an
+      # `--exit-code` diff against a nonexistent sibling path exits 0 here today.
+      #
+      # 🔴 Note for anyone re-testing this: a working-tree edit CANNOT exercise it. The script
+      # regenerates before it diffs, so it overwrites your mutation and passes. The regression
+      # being caught is a COMMITTED file that disagrees with the generator, so the mutant has
+      # to be committed too. Measured both ways: uncommitted edit -> exit 0 (proves nothing),
+      # same edit committed -> exit 1 with 62 changed alias lines (= 2 x 31 aliases).
+      - name: Generated DB schema files match their generator
+        run: |
+          test -f packages/civitai-db-schema/src/enums.ts
+          pnpm run db:check-generated
+
       - name: Package unit tests
         run: pnpm run test:packages:run --reporter=default --reporter=json --outputFile=packages-report.json
 
