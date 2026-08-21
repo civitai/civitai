@@ -184,6 +184,29 @@ describe('toggleHidden kind=blockedUser — cache invalidation', () => {
     expect(refresh).toHaveBeenCalledWith(userId);
   });
 
+  it('re-derives the follow set when the upsert lost to a unique violation', async () => {
+    // If that catch ever fires the Block did NOT land, so the pair can still hold a
+    // Follow. The comment on the catch says it is almost certainly dead — it exists
+    // so that nothing DEPENDS on that inference, and a `following: false` assertion
+    // here would be exactly such a dependency.
+    const { Prisma } = await import('@prisma/client');
+    engagement.upsert.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+        code: 'P2002',
+        clientVersion: 'test',
+      })
+    );
+    vi.spyOn(BlockedUsers, 'refreshCache').mockResolvedValue(undefined);
+    vi.spyOn(BlockedByUsers, 'refreshCache').mockResolvedValue(undefined);
+    const update = vi.spyOn(userFollowsCache, 'update').mockResolvedValue(true);
+    const refresh = vi.spyOn(userFollowsCache, 'refresh').mockResolvedValue(undefined);
+
+    await block(true);
+
+    expect(update).not.toHaveBeenCalled();
+    expect(refresh).toHaveBeenCalledWith(userId);
+  });
+
   it('re-derives the follow set when an unblock matched no row', async () => {
     engagement.findUnique.mockResolvedValue({ type: 'Block' });
     // `deleteMany` matching nothing means the pair is not the Block this call read —
