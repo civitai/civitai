@@ -69,8 +69,17 @@ describe('what a refused free claim says', () => {
     );
   });
 
-  it('names the reset when the day is spent', () => {
-    expect(freeRefusalMessage({ remaining: 0, usedHere: false }, HAS_SLOT)).toMatch(/midnight UTC/);
+  /**
+   * The sentence no longer names WHEN. The reset is a live countdown beside it
+   * now — a phrase like "comes back at midnight UTC" is still sitting there at
+   * 23:59 saying nothing useful, and Justin asked for the time remaining
+   * instead. What this still has to say is WHICH refusal it is.
+   */
+  it('says the day is spent, without dating it', () => {
+    const message = freeRefusalMessage({ remaining: 0, usedHere: false }, HAS_SLOT);
+
+    expect(message).toMatch(/used today's free placement/);
+    expect(message).not.toMatch(/UTC|comes back/);
   });
 
   it('names the race when the last slot went to somebody else', () => {
@@ -222,7 +231,7 @@ describe('the refusal ladder is ordered, not merely complete', () => {
       BOTH_SPENT,
       /already used a free sticker on this image/,
     ],
-    ['a spent day outranks a full space', FULL, SPENT, /midnight UTC/],
+    ['a spent day outranks a full space', FULL, SPENT, /used today's free placement/],
   ])('%s', (_name, space, standing, expected) => {
     expect(freeRefusalMessage(standing, space)).toMatch(expected);
   });
@@ -417,38 +426,6 @@ describe('the tray says its piece in short lines', () => {
   it('keeps each line separate and short', () => {
     for (const note of trayNotes({ freeAvailable: true, price: 700, review: true }))
       expect(note.text.length).toBeLessThan(60);
-  });
-});
-
-/**
- * When the allowance comes back, taken from the value the server computed rather
- * than from a boundary written down twice.
- */
-describe('the reset the refusal names', () => {
-  const spent = { remaining: 0, usedHere: false };
-  const open = { freeSlots: 4, freeSlotsRemaining: 2 };
-
-  it('uses the reset the server shipped', () => {
-    expect(
-      freeRefusalMessage({ ...spent, resetsAt: new Date('2026-08-18T00:00:00Z') }, open)
-    ).toMatch(/comes back at 00:00 UTC/);
-  });
-
-  /**
-   * The point of deriving it: the day boundary is the server's rule, so a
-   * different one has to change this sentence rather than leave it wrong.
-   */
-  it('follows a reset that is not midnight', () => {
-    expect(
-      freeRefusalMessage({ ...spent, resetsAt: new Date('2026-08-18T06:30:00Z') }, open)
-    ).toMatch(/comes back at 06:30 UTC/);
-  });
-
-  it('still says when it lifts if the reset never arrived', () => {
-    expect(freeRefusalMessage(spent, open)).toMatch(/comes back at midnight UTC/);
-    expect(freeRefusalMessage({ ...spent, resetsAt: 'not a date' }, open)).toMatch(
-      /comes back at midnight UTC/
-    );
   });
 });
 
@@ -667,5 +644,41 @@ describe('the shared-allowance note tracks the rules it describes', () => {
    */
   it('fails if a surface is added to the shared budget without updating the copy', () => {
     expect(Object.keys(PLACEMENT_SURFACES).sort()).toEqual(['remixGallery', 'sticker']);
+  });
+});
+
+/**
+ * The decline caveat names the amount.
+ *
+ * Justin, using it: "we should tell them the exact amount... they keep X amount
+ * of buzz, whatever that value is." A placer cannot work it out themselves —
+ * the rate is operator-tunable and floors at 1⚡ — and it is the number that
+ * actually leaves their wallet.
+ */
+describe('what the decline caveat says', () => {
+  const paid = { freeAvailable: false, price: 500, review: true };
+
+  it('names the amount the creator keeps', () => {
+    const note = trayNotes({ ...paid, declineFee: 25 }).find((entry) => entry.id === 'decline');
+
+    expect(note?.text).toBe('If they decline, they keep 25 Buzz');
+  });
+
+  /**
+   * Not known yet is not zero. Before the space loads there is no fee to name,
+   * and "they keep 0 Buzz" would be a false statement rather than a vague one.
+   */
+  it('stays vague while the fee is unknown', () => {
+    const note = trayNotes(paid).find((entry) => entry.id === 'decline');
+
+    expect(note?.text).toBe('If they decline, part of what you paid stays with them');
+  });
+
+  it('says nothing about money on a free placement', () => {
+    const note = trayNotes({ ...paid, freeAvailable: true, declineFee: 25 }).find(
+      (entry) => entry.id === 'decline'
+    );
+
+    expect(note?.text).not.toMatch(/Buzz/);
   });
 });

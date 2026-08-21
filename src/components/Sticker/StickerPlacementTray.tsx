@@ -3,6 +3,7 @@ import { IconAlertTriangle, IconInfoCircle, IconPlus, IconSticker } from '@table
 import clsx from 'clsx';
 import { useEffect, useRef, useState } from 'react';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
+import { Countdown } from '~/components/Countdown/Countdown';
 import { freeOfferFor, preCommitFreeReason, trayNotes } from '~/components/Sticker/free-offer';
 import { StickerShopPanel } from '~/components/Sticker/StickerShopPanel';
 import { StickerShopTile } from '~/components/Sticker/StickerShopTile';
@@ -105,12 +106,15 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
    * appearing on ordinary paid images are two `&&`s nothing can observe.
    */
   const freeUnavailableReason = preCommitFreeReason(freeAvailable, standing, space);
+  // `Countdown` needs a Date; the query hands back whatever JSON carried.
+  const resetsAt = standing?.resetsAt ? new Date(standing.resetsAt) : null;
 
   const notes = trayNotes({
     freeAvailable,
     price,
     review: space?.mode === 'review',
     reason: freeUnavailableReason,
+    declineFee: space?.declineFee,
   });
   // Says the panel can be got out of the way, and that more than one is allowed,
   // only once there is something that would survive it. Before that both are
@@ -156,6 +160,18 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
                     )}
                     <Text size="xs" c={note.tone === 'warn' ? 'yellow.6' : 'dimmed'}>
                       {note.text}
+                      {/* The spent-allowance line is the one note whose answer
+                          keeps changing while the panel is open, so it says WHEN
+                          rather than a phrase that ages: a live countdown to the
+                          reset instead of "it comes back tomorrow" still sitting
+                          there at 11:59. Only on that note, and only when the
+                          server told us when. */}
+                      {note.id === 'reason' && standing && standing.remaining <= 0 && resetsAt && (
+                        <>
+                          {' Next free placement: '}
+                          <Countdown endTime={resetsAt} format="short" />
+                        </>
+                      )}
                     </Text>
                   </div>
                 ))}

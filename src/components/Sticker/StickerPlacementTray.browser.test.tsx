@@ -5,6 +5,7 @@ import type * as StickerUtil from '~/components/Sticker/sticker.util';
 import type * as Trpc from '~/utils/trpc';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { IsClientProvider } from '~/providers/IsClientProvider';
 import { StickerPlacementTray } from '~/components/Sticker/StickerPlacementTray';
 
 /**
@@ -111,27 +112,45 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 }));
 
 const renderTray = async () => {
-  renderWithProviders(<StickerPlacementTray imageId={IMAGE_ID} />);
+  // 🔴 SCOPED HERE, NOT ADDED TO THE SHARED HARNESS. The tray renders a live
+  // countdown, and `useIsClient` THROWS rather than defaulting — but putting the
+  // provider in `renderWithProviders` breaks five other files on purpose:
+  // several `/apps` tests assert what the FIRST client paint looks like, and
+  // that is exactly the flag this provider flips.
+  renderWithProviders(
+    <IsClientProvider>
+      <StickerPlacementTray imageId={IMAGE_ID} />
+    </IsClientProvider>
+  );
   await expect.element(page.getByText(/Drag a sticker onto the image/)).toBeInTheDocument();
 };
 
 describe('StickerPlacementTray — the reason free is unavailable', () => {
-  test('says the allowance is spent, and what it is shared with, before anything is placed', async () => {
+  /**
+   * Justin, using it: the sentence had a summary after it — what the allowance is
+   * shared with, and when it comes back — and he asked for both to go. What
+   * replaces the "comes back" half is a live countdown, because a phrase like
+   * "comes back at midnight UTC" is still sitting there at 23:59 saying nothing
+   * useful.
+   */
+  test('says the allowance is spent, and counts down to the next one', async () => {
     Object.assign(queryState, {
       freeSlots: 1,
       freeSlotsRemaining: 1,
       remaining: 0,
       usedHere: false,
+      resetsAt: new Date(Date.now() + 3 * 60 * 60 * 1000),
     });
     await renderTray();
 
     await expect.element(page.getByText(/used today's free placement/)).toBeInTheDocument();
-    // The second ticket: this reader may well have spent it on a remix gallery,
-    // and without this clause the sticker surface cannot account for where it
-    // went.
-    await expect
-      .element(page.getByText(/shared between stickers and remix galleries/))
-      .toBeInTheDocument();
+    await expect.element(page.getByText(/Next free placement/)).toBeInTheDocument();
+
+    // The summary that used to follow it, both halves.
+    expect(page.getByText(/shared between stickers and remix galleries/).elements()).toHaveLength(
+      0
+    );
+    expect(page.getByText(/comes back at/).elements()).toHaveLength(0);
   });
 
   test('says a free sticker was already used on this image', async () => {

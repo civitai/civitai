@@ -1,4 +1,5 @@
 import { FREE_SLOT_TAKEN_NOTE, SHARED_ALLOWANCE_NOTE } from '~/shared/utils/placement';
+import { numberWithCommas } from '~/utils/number-helpers';
 
 /**
  * Whether the free offer is on the table, and what it says.
@@ -119,10 +120,7 @@ export const FREE_REVIEW_CAVEAT = 'Spends your free placement, even if they decl
  * both name the shared budget — two wordings of the one fact this change exists
  * to stop drifting. One function, so a reword lands everywhere or nowhere.
  */
-export const spentAllowanceNote = (resetsAt?: Date | string) =>
-  `You have used today's free placement — ${SHARED_ALLOWANCE_NOTE}. It comes back ${allowanceResetLabel(
-    resetsAt
-  )}.`;
+export const spentAllowanceNote = () => "You have used today's free placement.";
 
 export function freeRefusalMessage(standing?: FreeStanding, space?: FreeCapacity) {
   // Permanent for this image, and true of everybody — so it outranks the two
@@ -133,7 +131,7 @@ export function freeRefusalMessage(standing?: FreeStanding, space?: FreeCapacity
   if (standing?.usedHere) return 'You have already used a free sticker on this image.';
   // Transient, and it says when it lifts — derived from the reset the server
   // computed rather than restating the boundary here.
-  if (standing && standing.remaining <= 0) return spentAllowanceNote(standing.resetsAt);
+  if (standing && standing.remaining <= 0) return spentAllowanceNote();
   // The most transient of all — a declined placement releases its slot at once.
   //
   // ⚠️ Two readers, two truths, so the wording is chosen by the caller. Someone
@@ -223,22 +221,6 @@ type FreeStanding = {
 type FreeCapacity = { freeSlots: number; freeSlotsRemaining: number };
 
 /**
- * When the daily allowance comes back, in words.
- *
- * Falls back to the boundary the server currently uses rather than saying nothing,
- * because a refusal that cannot say when it lifts is worse than one that names a
- * default — but the value is preferred, so changing the day boundary changes this
- * sentence instead of making it wrong.
- */
-function allowanceResetLabel(resetsAt?: Date | string) {
-  if (!resetsAt) return 'at midnight UTC';
-  const at = new Date(resetsAt);
-  if (Number.isNaN(at.getTime())) return 'at midnight UTC';
-
-  return `at ${at.toISOString().slice(11, 16)} UTC`;
-}
-
-/**
  * The free label on the reaction bar, or `null` for no label at all.
  *
  * 🔴 **This is the fix for the whole ticket.** The bar used to print the
@@ -318,9 +300,17 @@ export function trayNotes({
   price,
   review,
   reason,
+  declineFee,
 }: {
   freeAvailable: boolean;
   price: number;
+  /**
+   * What the creator keeps if they decline, in Buzz. Absent while the space is
+   * still loading, which is why the vaguer sentence survives as a fallback
+   * rather than being deleted — a number that is not known yet must not render
+   * as "they keep 0 Buzz".
+   */
+  declineFee?: number;
   /** The space reviews placements, so nothing goes live until the owner says so. */
   review: boolean;
   /** From `preCommitFreeReason` — `null` whenever free is genuinely on offer. */
@@ -364,6 +354,14 @@ export function trayNotes({
       tone: 'warn',
       text: freeAvailable
         ? FREE_REVIEW_CAVEAT
+        : declineFee
+        ? // The exact number, because "part of what you paid" is the one thing a
+          // placer cannot check for themselves and the amount is what actually
+          // leaves their wallet. It comes from the server already computed: the
+          // rate is operator-tunable and floors at 1⚡, so a percentage worked
+          // out here would be wrong on precisely the cheap placements the floor
+          // exists for.
+          `If they decline, they keep ${numberWithCommas(declineFee)} Buzz`
         : 'If they decline, part of what you paid stays with them',
     });
 
