@@ -80,8 +80,16 @@ describe('comics analytics excludes soft-deleted chapter reads', () => {
     expect(sql).toMatch(/LEFT JOIN "ComicChapterRead"/i);
 
     // From the FROM clause on, so the aggregate's own `FILTER (WHERE ...)` — which sits in the select list,
-    // above it — is not mistaken for the statement's WHERE.
-    const fromOnwards = sql.slice(sql.search(/FROM "ComicProject"/i));
-    expect(fromOnwards.slice(fromOnwards.search(/\bWHERE\b/i))).not.toMatch(/unread/i);
+    // above it — is not mistaken for the statement's WHERE. Both offsets are asserted before slicing:
+    // `search` returns -1 on a miss and `slice(-1)` is the last CHARACTER, which no assertion can fail
+    // against. A refactor scoping the creator through a CTE would land there and stop this guarding.
+    const fromIndex = sql.search(/FROM "ComicProject"/i);
+    expect(fromIndex, 'the comics query no longer selects FROM ComicProject').toBeGreaterThanOrEqual(0);
+
+    const fromOnwards = sql.slice(fromIndex);
+    const whereIndex = fromOnwards.search(/\bWHERE\b/i);
+    expect(whereIndex, 'the comics query no longer has a statement WHERE').toBeGreaterThanOrEqual(0);
+
+    expect(fromOnwards.slice(whereIndex)).not.toMatch(/unread/i);
   });
 });
