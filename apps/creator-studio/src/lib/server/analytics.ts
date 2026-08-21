@@ -882,7 +882,9 @@ async function fetchComics(userId: number, from: string, to: string): Promise<Co
            )                                           AS "newReaders"
     FROM "ComicProject" p
     LEFT JOIN "ComicChapter" c ON c."projectId" = p.id
-    LEFT JOIN "ComicChapterRead" r ON r."chapterId" = c.id
+    -- unread is ComicChapterRead's soft delete, and the platform metrics count a read as unread = false.
+    -- On the join rather than in WHERE, or a comic nobody has read drops off the list entirely.
+    LEFT JOIN "ComicChapterRead" r ON r."chapterId" = c.id AND r."unread" = false
     LEFT JOIN "Image" i ON i.id = p."coverImageId"
     WHERE p."userId" = ${uid}
       -- Comic deletion is soft and lives in status, not in a deletedAt column like the sibling entities.
