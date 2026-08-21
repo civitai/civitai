@@ -123,8 +123,20 @@ export const resolveHubSourceSchema = z.object({
 
 export type ResolveHubSourceInput = z.infer<typeof resolveHubSourceSchema>;
 
+// One type per request. Searching all three at once meant every keystroke fanned
+// out to five queries against sets that scale with how much the viewer follows —
+// the switcher in the UI is what keeps it to one.
+export const hubSuggestionTypeSchema = z.enum([
+  UserHubSourceType.User,
+  UserHubSourceType.Model,
+  UserHubSourceType.Collection,
+]);
+
 export const getHubSourceSuggestionsSchema = z.object({
+  type: hubSuggestionTypeSchema.default(UserHubSourceType.User),
   query: z.string().trim().max(100).optional(),
 });
+
+export type HubSuggestionType = z.infer<typeof hubSuggestionTypeSchema>;
 
 export type GetHubSourceSuggestionsInput = z.infer<typeof getHubSourceSuggestionsSchema>;

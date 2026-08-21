@@ -374,110 +374,122 @@ export async function resolveHubSourceFromUrl({ url }: ResolveHubSourceInput) {
   return { type: UserHubSourceType.Collection, targetId: collection.id, alias: collection.name };
 }
 
-const SUGGESTIONS_PER_ARM = 25;
+const SUGGESTIONS_LIMIT = 25;
 
 /**
- * What the source picker searches. Scoped to the viewer's own relationships
- * rather than the whole site: creators they follow, models they own or asked to
- * be notified about or bookmarked, and collections they follow. Anything outside
- * that is still reachable by pasting its link.
+ * What the source picker searches, one type at a time. Scoped to the viewer's own
+ * relationships rather than the whole site: creators they follow, models they own
+ * or asked to be notified about or bookmarked, and collections they follow.
+ * Anything outside that is still reachable by pasting its link.
  *
  * `ModelEngagementType.Notify` is the bell — the "favourite" button sets it and
  * adds the model to the viewer's bookmark collection at the same time, which is
  * why both are read here.
+ *
+ * Every arm is capped at `SUGGESTIONS_LIMIT`, so the cost does not grow with how
+ * much the viewer follows. The result is a type-ahead, not a list of everything.
  */
 export async function getHubSourceSuggestions({
   userId,
+  type,
   query,
 }: GetHubSourceSuggestionsInput & { userId: number }) {
   const term = query?.trim();
   const contains = term ? { contains: term, mode: 'insensitive' as const } : undefined;
 
-  const [follows, ownModels, engagedModels, bookmarkCollection, followedCollections] =
-    await Promise.all([
-      dbRead.userEngagement.findMany({
-        where: {
-          userId,
-          type: UserEngagementType.Follow,
-          targetUser: { deletedAt: null, ...(contains ? { username: contains } : {}) },
-        },
-        select: { targetUser: { select: { id: true, username: true } } },
-        orderBy: { createdAt: 'desc' },
-        take: SUGGESTIONS_PER_ARM,
-      }),
-      dbRead.model.findMany({
-        where: { userId, deletedAt: null, ...(contains ? { name: contains } : {}) },
-        select: { id: true, name: true },
-        orderBy: { id: 'desc' },
-        take: SUGGESTIONS_PER_ARM,
-      }),
-      dbRead.modelEngagement.findMany({
-        where: {
-          userId,
-          type: ModelEngagementType.Notify,
-          model: { deletedAt: null, ...(contains ? { name: contains } : {}) },
-        },
-        select: { model: { select: { id: true, name: true } } },
-        orderBy: { createdAt: 'desc' },
-        take: SUGGESTIONS_PER_ARM,
-      }),
-      dbRead.collection.findFirst({
-        where: { userId, type: CollectionType.Model, mode: CollectionMode.Bookmark },
-        select: { id: true },
-      }),
-      dbRead.collectionContributor.findMany({
-        where: {
-          userId,
-          permissions: { has: CollectionContributorPermission.VIEW },
-          ...(contains ? { collection: { name: contains } } : {}),
-        },
-        select: { collection: { select: { id: true, name: true } } },
-        take: SUGGESTIONS_PER_ARM,
-      }),
-    ]);
+  if (type === UserHubSourceType.User) {
+    const follows = await dbRead.userEngagement.findMany({
+      where: {
+        userId,
+        type: UserEngagementType.Follow,
+        targetUser: { deletedAt: null, ...(contains ? { username: contains } : {}) },
+      },
+      select: { targetUser: { select: { id: true, username: true } } },
+      orderBy: { createdAt: 'desc' },
+      take: SUGGESTIONS_LIMIT,
+    });
 
-  const bookmarked = bookmarkCollection
-    ? await dbRead.collectionItem.findMany({
-        where: {
-          collectionId: bookmarkCollection.id,
-          model: { deletedAt: null, ...(contains ? { name: contains } : {}) },
-        },
-        select: { model: { select: { id: true, name: true } } },
-        orderBy: { id: 'desc' },
-        take: SUGGESTIONS_PER_ARM,
-      })
-    : [];
-
-  const models = new Map<number, string>();
-  for (const model of ownModels) models.set(model.id, model.name);
-  for (const { model } of engagedModels) if (model) models.set(model.id, model.name);
-  for (const { model } of bookmarked) if (model) models.set(model.id, model.name);
-
-  return {
-    users: follows
+    return follows
       .map(({ targetUser }) => targetUser)
       .filter((user): user is { id: number; username: string } => !!user?.username)
       .map((user) => ({
         type: UserHubSourceType.User,
         targetId: user.id,
         alias: user.username,
-      })),
-    models: [...models].slice(0, SUGGESTIONS_PER_ARM).map(([id, name]) => ({
-      type: UserHubSourceType.Model,
-      targetId: id,
-      alias: name,
-    })),
+      }));
+  }
+
+  if (type === UserHubSourceType.Collection) {
     // Kept behind the same switch the write path enforces: offering a collection
     // the server would refuse is worse than not listing it.
-    collections: HUB_COLLECTION_SOURCES_ENABLED
-      ? followedCollections
-          .map(({ collection }) => collection)
-          .filter((collection): collection is { id: number; name: string } => !!collection)
-          .map((collection) => ({
-            type: UserHubSourceType.Collection,
-            targetId: collection.id,
-            alias: collection.name,
-          }))
-      : [],
-  };
+    if (!HUB_COLLECTION_SOURCES_ENABLED) return [];
+
+    const followed = await dbRead.collectionContributor.findMany({
+      where: {
+        userId,
+        permissions: { has: CollectionContributorPermission.VIEW },
+        ...(contains ? { collection: { name: contains } } : {}),
+      },
+      select: { collection: { select: { id: true, name: true } } },
+      take: SUGGESTIONS_LIMIT,
+    });
+
+    return followed
+      .map(({ collection }) => collection)
+      .filter((collection): collection is { id: number; name: string } => !!collection)
+      .map((collection) => ({
+        type: UserHubSourceType.Collection,
+        targetId: collection.id,
+        alias: collection.name,
+      }));
+  }
+
+  // Models come from three relationships that overlap — the "favourite" button
+  // writes a Notify engagement AND a bookmark row for the same model — so they are
+  // merged by id and only then capped.
+  const bookmarkCollection = await dbRead.collection.findFirst({
+    where: { userId, type: CollectionType.Model, mode: CollectionMode.Bookmark },
+    select: { id: true },
+  });
+
+  const [ownModels, engagedModels, bookmarked] = await Promise.all([
+    dbRead.model.findMany({
+      where: { userId, deletedAt: null, ...(contains ? { name: contains } : {}) },
+      select: { id: true, name: true },
+      orderBy: { id: 'desc' },
+      take: SUGGESTIONS_LIMIT,
+    }),
+    dbRead.modelEngagement.findMany({
+      where: {
+        userId,
+        type: ModelEngagementType.Notify,
+        model: { deletedAt: null, ...(contains ? { name: contains } : {}) },
+      },
+      select: { model: { select: { id: true, name: true } } },
+      orderBy: { createdAt: 'desc' },
+      take: SUGGESTIONS_LIMIT,
+    }),
+    bookmarkCollection
+      ? dbRead.collectionItem.findMany({
+          where: {
+            collectionId: bookmarkCollection.id,
+            model: { deletedAt: null, ...(contains ? { name: contains } : {}) },
+          },
+          select: { model: { select: { id: true, name: true } } },
+          orderBy: { id: 'desc' },
+          take: SUGGESTIONS_LIMIT,
+        })
+      : Promise.resolve([]),
+  ]);
+
+  const models = new Map<number, string>();
+  for (const model of ownModels) models.set(model.id, model.name);
+  for (const { model } of engagedModels) if (model) models.set(model.id, model.name);
+  for (const { model } of bookmarked) if (model) models.set(model.id, model.name);
+
+  return [...models].slice(0, SUGGESTIONS_LIMIT).map(([id, name]) => ({
+    type: UserHubSourceType.Model,
+    targetId: id,
+    alias: name,
+  }));
 }
