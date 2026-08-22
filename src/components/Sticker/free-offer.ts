@@ -1,4 +1,4 @@
-import { FREE_SLOT_TAKEN_NOTE, SHARED_ALLOWANCE_NOTE } from '~/shared/utils/placement';
+import { FREE_SLOT_TAKEN_NOTE } from '~/shared/utils/placement';
 import { numberWithCommas } from '~/utils/number-helpers';
 
 /**
@@ -320,24 +320,12 @@ export function trayNotes({
     {
       id: 'price',
       tone: 'info',
-      text: freeAvailable
-        ? `Free, or ${price} Buzz · one use either way`
-        : `${price} Buzz + one use`,
+      // The price of the NEXT placement, not a menu. The free one is taken
+      // automatically by the first draft that can use it, so naming both prices
+      // read as a choice the placer does not get to make.
+      text: freeAvailable ? 'Free · one use' : `${price} Buzz + one use`,
     },
   ];
-
-  // Only where free is on the table. Naming the shared budget to somebody who
-  // has no free placement to spend explains a limit they did not ask about.
-  if (freeAvailable)
-    notes.push({
-      id: 'shared',
-      tone: 'info',
-      // The clause itself, capitalised — not "Your free one is …" in front of
-      // it. On a line of its own the preamble is four words the reader has to
-      // get past to reach the fact, and the line has to stay short enough to
-      // read at a glance beside an icon.
-      text: `${SHARED_ALLOWANCE_NOTE.charAt(0).toUpperCase()}${SHARED_ALLOWANCE_NOTE.slice(1)}`,
-    });
 
   if (review)
     notes.push({

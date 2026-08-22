@@ -9,21 +9,26 @@ import { IsClientProvider } from '~/providers/IsClientProvider';
 import { StickerPlacementTray } from '~/components/Sticker/StickerPlacementTray';
 
 /**
- * The tray's sticker row must scroll through ONE plain overflow container.
+ * The tray's stickers wrap into rows, and the rows scroll VERTICALLY through one
+ * plain overflow container capped at two rows.
  *
- * 🔴 THIS FILE ASSERTS STRUCTURE, NOT LAYOUT, AND THAT IS NOT A SHORTCUT. The
- * browser project loads no stylesheet — not Mantine's, not Tailwind's — so every
- * width measured here is a lie: a probe on the broken build reported the row as
- * 400px wide while a real browser had it at 954. The numbers behind this fix
- * (panel 474 vs viewport 555, the 81px of track outside the clip) came from a dev
- * server and live in the commit message; they cannot be re-derived here.
+ * 🔴 STRUCTURE, NOT LAYOUT, AND THAT IS FORCED. Neither vitest project loads a
+ * stylesheet — not Mantine's, not Tailwind's — so every width measured in a test
+ * here is a lie: a probe on the broken build reported the row as 400px wide while
+ * a real browser had it at 954. Every number below came from a dev server on the
+ * production database and lives in the commit messages.
  *
- * What CAN be checked is the shape of the fix, and it is the shape that broke:
- * `ScrollArea.Autosize` wraps its child in a `display:flex; overflow:auto` box
- * whose `flex:1` inner box keeps `min-width: auto`, so a nowrap row makes it a
- * SECOND scroll container measuring a width the panel does not have. Any Mantine
- * ScrollArea back in this tray reintroduces that, so its markup is what this
- * asserts against.
+ * What broke: the row was one `wrap="nowrap"` line inside `ScrollArea.Autosize`.
+ * Autosize wraps its child in a `display:flex; overflow:auto` box whose `flex:1`
+ * inner box keeps `min-width: auto`, so the inner box refuses to shrink to the
+ * panel and becomes a SECOND scroll container measuring a width nothing shows —
+ * 3463px of viewport inside a 1254px panel for an account owning 83 stickers. The
+ * same wrapper left the scrollbar absent on first open, because `type="auto"`
+ * reveals it only once its ResizeObserver produces a measurement.
+ *
+ * So the shape is the thing to guard: stickers wrap, exactly one `overflow-y-auto`
+ * ancestor, nothing else scrolling between it and the panel, and no Mantine
+ * ScrollArea anywhere in the tray.
  */
 const IMAGE_ID = 1;
 
@@ -101,14 +106,14 @@ describe('sticker placement tray overflow', () => {
     expect(document.querySelectorAll('img[alt^=":"]')).toHaveLength(owned.length);
   });
 
-  test('the row scrolls through exactly one plain overflow container', async () => {
+  test('the row scrolls through exactly one plain vertical overflow container', async () => {
     await renderTray();
 
     const sticker = document.querySelector('img[alt^=":"]');
-    const scroller = sticker?.closest('.overflow-x-auto');
+    const scroller = sticker?.closest('.overflow-y-auto');
     expect(
       scroller,
-      'the sticker row has no `overflow-x-auto` ancestor — whatever replaced it owns the ' +
+      'the sticker row has no `overflow-y-auto` ancestor — whatever replaced it owns the ' +
         'overflow now, and the panel-width and first-open behaviour need re-measuring in a ' +
         'real browser (see the file header)'
     ).not.toBeNull();
@@ -138,5 +143,16 @@ describe('sticker placement tray overflow', () => {
       'a Mantine ScrollArea is back around the sticker row. `ScrollArea.Autosize` is what ' +
         'produced the 81px-too-wide viewport and the bar that never appeared on first open'
     ).toBeNull();
+  });
+
+  test('the sticker row wraps rather than running off in one line', async () => {
+    await renderTray();
+
+    const row = document.querySelector('img[alt^=":"]')?.closest('button')?.parentElement;
+    expect(
+      (row as HTMLElement | null)?.style.getPropertyValue('--group-wrap'),
+      'the row is back to `wrap="nowrap"`, which is the one-long-line layout the tray was ' +
+        'moved off — 83 stickers then run 6452px wide instead of wrapping into rows'
+    ).not.toBe('nowrap');
   });
 });
