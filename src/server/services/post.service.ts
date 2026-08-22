@@ -943,22 +943,26 @@ export const deletePost = async ({ id, isModerator }: GetByIdInput & { isModerat
 
       return { post, deletedImages };
     },
-    // TEMPORARY (2026-08-21): raised 10s -> 30s to stop user-visible failures while the
-    // underlying slowness is investigated. Post deletion has been failing with Prisma
-    // P2028 "Transaction already closed" — the DELETE below routinely outlives the
-    // transaction's own budget, so the whole delete is rolled back and the user sees an
-    // error. Measured over a 14.28h window: 767 executions of that DELETE, mean 6.6s,
-    // 218 (28.4%) over 10s, and ZERO over 30s — so 30s covers every execution observed
-    // while 10s misses more than a quarter of them.
+    // Back to 10s (2026-08-22). This was temporarily raised to 30s in #4276 while post
+    // deletion was failing with Prisma P2028 "Transaction already closed"; that comment
+    // said to revert once the slowness was root-caused, and it now has been.
     //
-    // 🔴 THIS IS A MITIGATION, NOT A FIX. It converts "the deletion failed" into "the
-    // deletion was slow"; it does nothing about why a delete of one post's images takes
-    // seconds. Do not treat a quiet error rate as the problem being solved.
+    // The cause was NOT this budget. `UserProfile.sfwCoverImageId` is a foreign key to
+    // `Image` with ON DELETE SET NULL and no index, on a ~1.5 GB / 3.44M row table, so
+    // Postgres's referential-integrity trigger full-scanned it ONCE PER DELETED IMAGE:
+    // 1.74M calls at a 634 ms mean, ~290 hours of scan time, to null 12 rows. That made
+    // this DELETE cost ~634 ms per image, which is why ~100 images took ~63 s and why
+    // the failure was deterministic by post size rather than random.
     //
-    // REVERT THIS once the slowness is root-caused — the number is derived from a
-    // 14.28h sample and is not a budget anyone designed. A larger post, or a further
-    // regression, walks straight through 30s the same way it walked through 10s.
-    { timeout: 30000 }
+    // Fixed by the index in #4284, applied 2026-08-22 21:01:26Z. Measured after, on
+    // production traffic: the RI trigger went 634 ms -> 0.003 ms over 2,613 calls, and
+    // the plan went from ~193,719 buffers to 3. Slow (>5s) executions of this statement:
+    // 11 in the six minutes before the index, ZERO in the fifteen minutes after.
+    //
+    // So 10s is no longer a tight budget — at 0.003 ms/image even a 1000-image post
+    // spends ~3 ms in that trigger. Keeping 30s would only mean a genuinely stuck delete
+    // takes three times as long to surface.
+    { timeout: 10000 }
   );
 
   // Phase 2: Side effects after successful transaction
