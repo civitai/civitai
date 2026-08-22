@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // Verifies the by-hash edge-cache purge hook: on delete AND unpublish, the
 // service purges the `GET /api/v1/model-versions/by-hash/[hash]` PublicEndpoint
@@ -6,39 +7,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // resolving by-hash before the cache TTL expires. The purge is best-effort — a
 // purge failure must NOT fail the (already-committed) mutation.
 
-const { mockDb } = vi.hoisted(() => {
-  const mk = () => ({
-    findFirst: vi.fn(),
-    findFirstOrThrow: vi.fn(),
-    findUnique: vi.fn(),
-    findUniqueOrThrow: vi.fn(),
-    findMany: vi.fn(),
-    create: vi.fn(),
-    update: vi.fn(),
-    updateMany: vi.fn(),
-    delete: vi.fn(),
-    deleteMany: vi.fn(),
-    groupBy: vi.fn(),
-    count: vi.fn(),
-  });
-  const db = {
-    modelVersion: mk(),
-    modelFile: mk(),
-    modelFileHash: mk(),
-    entityAccess: mk(),
-    paidAccess: mk(),
-    post: mk(),
-    image: mk(),
-    $queryRaw: vi.fn(),
-    $executeRaw: vi.fn(),
-    $transaction: vi.fn(),
-  };
-  return { mockDb: db };
-});
-
 const { mockPurgeCache } = vi.hoisted(() => ({ mockPurgeCache: vi.fn() }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDb, dbWrite: mockDb }));
 vi.mock('~/server/cloudflare/client', () => ({ purgeCache: mockPurgeCache }));
 vi.mock('~/server/utils/url-helpers', () => ({
   getBaseUrl: () => 'https://civitai.com',
@@ -61,9 +31,8 @@ vi.mock('~/server/redis/caches', () => ({
   modelVersionResourceCache: {},
 }));
 vi.mock('~/server/redis/client', async () => {
-  const actual = await vi.importActual<typeof import('@civitai/redis/client')>(
-    '@civitai/redis/client'
-  );
+  const actual =
+    await vi.importActual<typeof import('@civitai/redis/client')>('@civitai/redis/client');
   return {
     ...actual,
     redis: { get: vi.fn(), set: vi.fn(), del: vi.fn() },
@@ -124,29 +93,20 @@ import {
   unpublishModelVersionById,
 } from '~/server/services/model-version.service';
 
-// Drive the interactive transaction: invoke the callback with a `tx` that maps
-// to our mocked db delegates.
-function wireTransaction() {
-  mockDb.$transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) =>
-    cb(mockDb)
-  );
-}
-
 const VERSION_ID = 4242;
 const MODEL_ID = 7;
 const USER_ID = 99;
 
 beforeEach(() => {
   vi.clearAllMocks();
-  wireTransaction();
   mockPurgeCache.mockResolvedValue(undefined);
 });
 
 function stubDeleteRows(files: { url: string; hashes: string[] }[]) {
-  mockDb.modelFile.findMany.mockResolvedValue(
+  dbMock.dbWrite.modelFile.findMany.mockResolvedValue(
     files.map((f) => ({ url: f.url, hashes: f.hashes.map((hash) => ({ hash })) }))
   );
-  mockDb.modelVersion.findFirstOrThrow.mockResolvedValue({
+  dbMock.dbWrite.modelVersion.findFirstOrThrow.mockResolvedValue({
     id: VERSION_ID,
     modelId: MODEL_ID,
     status: 'Published',
@@ -154,8 +114,8 @@ function stubDeleteRows(files: { url: string; hashes: string[] }[]) {
     earlyAccessEndsAt: null,
     meta: {},
   });
-  mockDb.entityAccess.deleteMany.mockResolvedValue({ count: 0 });
-  mockDb.modelVersion.delete.mockResolvedValue({ id: VERSION_ID, modelId: MODEL_ID });
+  dbMock.dbWrite.entityAccess.deleteMany.mockResolvedValue({ count: 0 });
+  dbMock.dbWrite.modelVersion.delete.mockResolvedValue({ id: VERSION_ID, modelId: MODEL_ID });
 }
 
 describe('deleteVersionById — by-hash edge-cache purge', () => {
@@ -222,20 +182,21 @@ describe('deleteVersionById — by-hash edge-cache purge', () => {
 
 describe('unpublishModelVersionById — by-hash edge-cache purge', () => {
   function stubUnpublish() {
-    mockDb.modelVersion.update.mockResolvedValue({
+    dbMock.dbWrite.modelVersion.update.mockResolvedValue({
       id: VERSION_ID,
       model: { id: MODEL_ID, userId: USER_ID, nsfw: false },
     });
-    mockDb.$executeRaw.mockResolvedValue(0);
-    mockDb.post.findMany.mockResolvedValue([]);
-    mockDb.image.findMany.mockResolvedValue([]);
+    dbMock.dbWrite.$executeRaw.mockResolvedValue(0);
+    dbMock.dbWrite.post.findMany.mockResolvedValue([]);
+    dbMock.dbWrite.image.findMany.mockResolvedValue([]);
     // Rows still exist on unpublish — resolved by-hash via modelFileHash.findMany.
-    mockDb.modelFileHash.findMany.mockResolvedValue([{ hash: 'DEADBEEF' }]);
+    // purgeModelVersionByHashCacheById uses dbRead (not dbWrite), so stub there.
+    dbMock.dbRead.modelFileHash.findMany.mockResolvedValue([{ hash: 'DEADBEEF' }]);
     // Nothing was ever bought here, so the refund gate finds no obligation and lets the
     // unpublish through — this file is about the cache purge, not the gate.
-    mockDb.modelVersion.findMany.mockResolvedValue([{ id: VERSION_ID, meta: null }]);
+    dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([{ id: VERSION_ID, meta: null }]);
     // An ordinary published version, so the moderator-status guard does not preserve anything.
-    mockDb.modelVersion.findUniqueOrThrow.mockResolvedValue({ status: 'Published' });
+    dbMock.dbWrite.modelVersion.findUniqueOrThrow.mockResolvedValue({ status: 'Published' });
   }
 
   it('resolves the version hashes and purges the by-hash URL(s)', async () => {
@@ -243,7 +204,7 @@ describe('unpublishModelVersionById — by-hash edge-cache purge', () => {
 
     await unpublishModelVersionById({ id: VERSION_ID, user: { id: USER_ID } as never });
 
-    expect(mockDb.modelFileHash.findMany).toHaveBeenCalledWith({
+    expect(dbMock.dbRead.modelFileHash.findMany).toHaveBeenCalledWith({
       where: { file: { modelVersionId: VERSION_ID } },
       select: { hash: true },
     });
@@ -280,7 +241,8 @@ describe('publishModelVersionById — by-hash edge-cache purge', () => {
   // on publish, so hashes are resolved via modelFileHash.findMany.
   function stubPublish() {
     // currentVersion read (findUniqueOrThrow, then post-tx reads use dbWrite).
-    mockDb.modelVersion.findUniqueOrThrow.mockResolvedValue({
+    // publishModelVersionById tries dbRead first, falls back to dbWrite on failure.
+    dbMock.dbRead.modelVersion.findUniqueOrThrow.mockResolvedValue({
       id: VERSION_ID,
       name: 'v1',
       baseModel: 'SD 1.5',
@@ -295,17 +257,18 @@ describe('publishModelVersionById — by-hash edge-cache purge', () => {
       },
     });
     // In-transaction update returns the shape the post-commit code reads.
-    mockDb.modelVersion.update.mockResolvedValue({
+    dbMock.dbWrite.modelVersion.update.mockResolvedValue({
       id: VERSION_ID,
       modelId: MODEL_ID,
       baseModel: 'SD 1.5',
       model: { userId: USER_ID, id: MODEL_ID, type: 'Checkpoint', nsfw: false },
     });
-    mockDb.$executeRaw.mockResolvedValue(0);
-    mockDb.post.findMany.mockResolvedValue([]);
-    mockDb.image.findMany.mockResolvedValue([]);
+    dbMock.dbWrite.$executeRaw.mockResolvedValue(0);
+    dbMock.dbWrite.post.findMany.mockResolvedValue([]);
+    dbMock.dbWrite.image.findMany.mockResolvedValue([]);
     // Rows still exist on publish — resolved by-hash via modelFileHash.findMany.
-    mockDb.modelFileHash.findMany.mockResolvedValue([{ hash: 'CAFED00D' }]);
+    // purgeModelVersionByHashCacheById uses dbRead (not dbWrite), so stub there.
+    dbMock.dbRead.modelFileHash.findMany.mockResolvedValue([{ hash: 'CAFED00D' }]);
   }
 
   it('resolves the version hashes and purges the by-hash URL(s) on publish', async () => {
@@ -313,7 +276,7 @@ describe('publishModelVersionById — by-hash edge-cache purge', () => {
 
     await publishModelVersionById({ id: VERSION_ID });
 
-    expect(mockDb.modelFileHash.findMany).toHaveBeenCalledWith({
+    expect(dbMock.dbRead.modelFileHash.findMany).toHaveBeenCalledWith({
       where: { file: { modelVersionId: VERSION_ID } },
       select: { hash: true },
     });
