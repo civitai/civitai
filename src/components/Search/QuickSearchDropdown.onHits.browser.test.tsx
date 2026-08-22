@@ -59,11 +59,11 @@ vi.mock('~/components/Search/search.utils2', async (importOriginal) => {
 // dropdown can render its list at all.
 vi.mock('~/components/AutocompleteSearch/renderItems/users', async () => {
   const React = await import('react');
-  return {
-    UserSearchItem: React.forwardRef((props: any, ref: any) =>
-      React.createElement('div', { ref, 'data-testid': `option-${props.value}` })
-    ),
-  };
+  const UserSearchItem = React.forwardRef((props: any, ref: any) =>
+    React.createElement('div', { ref, 'data-testid': `option-${props.value}` })
+  );
+  UserSearchItem.displayName = 'UserSearchItemStub';
+  return { UserSearchItem };
 });
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
