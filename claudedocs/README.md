@@ -40,7 +40,8 @@ followed by the evidence:
 
 When a status has changed since the doc was written, state the correction **in place**
 rather than silently editing out the old claim. Use the pattern from
-`runner-scouting-2026-08-15.md`:
+`typecheck-tests-gap-2026-08-12.md` or `turbopack-chunk-hash-collision-2026-08-18.md`,
+which carry a real `(corrected …)` status line:
 
 ```markdown
 **Status (corrected YYYY-MM-DD):** <new status>. <evidence>.
