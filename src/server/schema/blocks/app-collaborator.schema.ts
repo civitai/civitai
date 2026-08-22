@@ -41,9 +41,7 @@ export type InviteAppCollaboratorInput = z.infer<typeof inviteAppCollaboratorSch
 export const screenAppCollaboratorTargetsSchema = z.object({
   userIds: z.array(userId).min(1).max(100),
 });
-export type ScreenAppCollaboratorTargetsInput = z.infer<
-  typeof screenAppCollaboratorTargetsSchema
->;
+export type ScreenAppCollaboratorTargetsInput = z.infer<typeof screenAppCollaboratorTargetsSchema>;
 
 export const respondToAppInviteSchema = z.object({
   appListingId,

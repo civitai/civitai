@@ -85,9 +85,9 @@ describe('getIneligibleCollaboratorTargets', () => {
   });
 
   it('returns nothing when every candidate is fine', async () => {
-    await expect(
-      getIneligibleCollaboratorTargets({ userIds: [FINE, ALSO_FINE] })
-    ).resolves.toEqual([]);
+    await expect(getIneligibleCollaboratorTargets({ userIds: [FINE, ALSO_FINE] })).resolves.toEqual(
+      []
+    );
   });
 
   it('does not query at all for an empty candidate list', async () => {

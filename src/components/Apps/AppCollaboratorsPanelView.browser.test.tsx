@@ -411,10 +411,7 @@ describe('inviteBlockedReason / pickerExcludedUserIds', () => {
 describe('inviteBlockedReason / pickerExcludedUserIds — server-screened candidates', () => {
   const INELIGIBLE = 4242;
   const FINE = 4343;
-  const rows = [
-    seat({ userId: 1, status: 'accepted' }),
-    seat({ userId: 3, status: 'rejected' }),
-  ];
+  const rows = [seat({ userId: 1, status: 'accepted' }), seat({ userId: 3, status: 'rejected' })];
 
   test('an ineligible candidate is blocked, and an eligible one is still offerable', () => {
     const blocked = inviteBlockedReason(rows, INELIGIBLE, [INELIGIBLE]);

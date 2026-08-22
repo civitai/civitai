@@ -595,7 +595,9 @@ export async function forceUpdateUserIdentity({
     // indefinitely, which is exactly how a renamed account keeps being found (and acted on by
     // id) under the name it was renamed away from. The self-serve profile save has always
     // enqueued this; the moderator path did not.
-    await usersSearchIndex.queueUpdate([{ id: userId, action: SearchIndexUpdateQueueAction.Update }]);
+    await usersSearchIndex.queueUpdate([
+      { id: userId, action: SearchIndexUpdateQueueAction.Update },
+    ]);
   }
 
   const { invalidateSession } = await import('~/server/auth/session-invalidation');

@@ -118,9 +118,7 @@ describe('toggleBan -> user search index', () => {
     await call();
 
     expect(mockRemoveContent).toHaveBeenCalledTimes(1);
-    expect(mockRemoveContent).toHaveBeenCalledWith(
-      expect.objectContaining({ userId: USER_ID })
-    );
+    expect(mockRemoveContent).toHaveBeenCalledWith(expect.objectContaining({ userId: USER_ID }));
     expect(mockQueueUpdate).not.toHaveBeenCalled();
   });
 });
