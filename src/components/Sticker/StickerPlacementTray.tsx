@@ -1,4 +1,4 @@
-import { Button, CloseButton, Group, ScrollArea, Text, ThemeIcon } from '@mantine/core';
+import { Button, CloseButton, Group, Text, ThemeIcon } from '@mantine/core';
 import { IconAlertTriangle, IconInfoCircle, IconPlus, IconSticker } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useEffect, useRef, useState } from 'react';
@@ -183,7 +183,12 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
             />
           </div>
 
-          <ScrollArea.Autosize mah={120} type="auto" scrollbarSize={6}>
+          {/* Native overflow, not `ScrollArea.Autosize`. Autosize wraps its child in a
+              `display:flex; overflow:auto` box whose `flex:1` inner box keeps the default
+              `min-width:auto`, so with a nowrap row it refuses to shrink to the panel: the
+              scroll viewport came out 81px wider than the visible panel, putting the track's
+              right end and the last sticker outside the clip. */}
+          <div className="overflow-x-auto" style={{ scrollbarWidth: 'thin' }}>
             <Group gap="xs" wrap="nowrap" p="xs">
               {isLoading && <Text size="sm">Loading your stickers…</Text>}
 
@@ -253,7 +258,7 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
                 );
               })}
             </Group>
-          </ScrollArea.Autosize>
+          </div>
         </div>
       </div>
     </div>
