@@ -20,23 +20,26 @@ export const CREATOR_PROGRAM_PERKS = [
     body: 'Bank the Buzz your models earn and withdraw it as real money each month.',
   },
   {
-    title: 'Set licensing fees',
-    body: 'Charge a fee when others generate with your models.',
+    title: 'Charge more',
+    body: 'Higher ceilings on licensing fees, access prices and permanent sales.',
   },
-  { title: 'Sell access indefinitely', body: 'Offer your versions for sale with no time limit.' },
   {
     title: 'Earnings & analytics',
     body: 'See what your models earn and the usage that drives it.',
   },
 ];
 
-// What the Studio actually gates on Creator Program membership vs. what any owner can do. Early/paid access
-// (timed) is intentionally NOT member-gated — only the fee + indefinite-sale write actions are.
+// What the Studio actually gates on Creator Program membership vs. what any owner can do. Every
+// monetization control is open to everyone — the tier decides the ceiling, not the access (CU 868kj4q49)
+// — so what joining buys is the pool share and higher caps. /join/welcome renders the rows where the two
+// columns differ, so a row that is true for everyone must not claim to be a perk.
 export const CREATOR_PROGRAM_CAPABILITIES = [
   { label: 'Browse your models & versions', everyone: true, member: true },
   { label: 'Set up timed early / paid access', everyone: true, member: true },
-  { label: 'Set per-generation licensing fees', everyone: false, member: true },
-  { label: 'Sell access to versions indefinitely', everyone: false, member: true },
+  { label: 'Set per-generation licensing fees', everyone: true, member: true },
+  { label: 'Sell access to versions indefinitely', everyone: true, member: true },
+  { label: 'Higher caps on fees, prices and permanent sales', everyone: false, member: true },
+  { label: 'Bank Buzz to claim a share of the Compensation Pool', everyone: false, member: true },
 ];
 
 // Actionable ways to raise the creator score, ordered by impact. Mirrors the main app's scoring job
