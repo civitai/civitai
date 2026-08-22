@@ -2,7 +2,7 @@ import type { SessionUser } from '@civitai/auth';
 
 // See https://svelte.dev/docs/kit/types#app.d.ts
 declare global {
-  /** The app's package version, substituted at build time (vite.config.ts). */
+  /** Injected by vite.config.ts's `define`. */
   const __APP_VERSION__: string;
 
   namespace App {

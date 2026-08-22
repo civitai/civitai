@@ -1,6 +1,6 @@
 // Shared Creator Program copy + constants so the /join page and the inline upsell speak with one voice.
-// The gate (B1) is full Creator Program membership — an active Civitai membership AND a creator score of
-// MIN_CREATOR_SCORE+ — not just a subscription tier. The CTA links out to the main-app CP page (we don't
+// Enrolment in the Creator Program needs an active Civitai membership AND a creator score of
+// MIN_CREATOR_SCORE+, not just a subscription tier. The CTA links out to the main-app CP page (we don't
 // rebuild enrollment here).
 export const CREATOR_PROGRAM_URL = 'https://civitai.com/creator-program';
 
@@ -29,10 +29,8 @@ export const CREATOR_PROGRAM_PERKS = [
   },
 ];
 
-// What the Studio actually gates on Creator Program membership vs. what any owner can do. Every
-// monetization control is open to everyone — the tier decides the ceiling, not the access (CU 868kj4q49)
-// — so what joining buys is the pool share and higher caps. /join/welcome renders the rows where the two
-// columns differ, so a row that is true for everyone must not claim to be a perk.
+// Membership raises ceilings; it never unlocks a control (CU 868kj4q49). /join/welcome lists only
+// `member && !everyone` rows, so don't word an `everyone: true` row as a perk.
 export const CREATOR_PROGRAM_CAPABILITIES = [
   { label: 'Browse your models & versions', everyone: true, member: true },
   { label: 'Set up timed early / paid access', everyone: true, member: true },

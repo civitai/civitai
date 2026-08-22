@@ -380,8 +380,8 @@
   function openEditor(version: CreatorModelVersion, modelType: string) {
     editingType = modelType;
     feeAffirmed = false;
-    // An unset fee opens on the per-type suggestion's denominator (1 generation for a checkpoint, 10
-    // otherwise) with the amount left empty, so nothing is priced until the creator types.
+    // Seed the denominator from the suggestion but leave the amount empty, so nothing is priced until
+    // the creator types.
     const r = seedFeeRatio({
       licensingFee: version.licensingFee,
       modelType,

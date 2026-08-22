@@ -18,8 +18,7 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [tailwindcss(), sveltekit()],
-    // Which build a pod (or a tab) is running is otherwise unanswerable from the outside — it cost an
-    // afternoon of "is this deployed yet?" during the scheduled-sales rollout.
+    // Identifies the running build from view-source and the sidebar footer.
     define: { __APP_VERSION__: JSON.stringify(version) },
     // @civitai/* packages ship raw TS (main: ./src/index.ts) — let Vite transpile them.
     // (Their deps like pg/kysely/jose stay external/node_modules.)

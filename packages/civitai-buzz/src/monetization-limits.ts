@@ -52,8 +52,7 @@ export function suggestedFee({
 }
 
 /**
- * What a fee editor opens on. An existing fee always wins; an unset one falls to the per-type suggestion,
- * so a checkpoint opens on 1 ⚡ / 1 generation and everything else on 1 ⚡ / 10. The flat
+ * What a fee editor opens on: an existing fee wins, otherwise the per-type suggestion. The flat
  * `DEFAULT_FEE_IMAGES` denominator is only for an editor with no version in hand (a bulk selection
  * spanning model types).
  */

@@ -70,8 +70,6 @@
   const affirmable = $derived(action === 'fee' || action === 'paidAccess');
 
   let buzz = $state<number | undefined>();
-  // Re-seeded by the open effect below, for the same reason `ea` is: a prop read in a $state
-  // initializer captures only its first value.
   let images = $state(String(DEFAULT_FEE_IMAGES));
   let usageControl = $state<CreatorUsageControl>('Download');
   // Seeded by the open effect below rather than here: reading a prop in a $state initializer captures
@@ -133,9 +131,15 @@
       confirmText = '';
       submitting = false;
       buzz = undefined;
-      // A bulk selection can span model types, so there is no single suggestion to open on unless the
-      // page passed one — it does only when the list is filtered to one type.
-      images = String(suggestedFee != null ? feeToRatio(suggestedFee).images : DEFAULT_FEE_IMAGES);
+      // A bulk selection can span model types, so there may be no single suggestion to open on — and the
+      // suggestion comes from the type FILTER while the caps come from the SELECTION, which can disagree.
+      // Seeding a denominator the cap list doesn't offer renders a cap of 0 against an unlisted option.
+      const suggestedImages = suggestedFee != null ? feeToRatio(suggestedFee).images : undefined;
+      images = String(
+        suggestedImages != null && limits.fee.denominators.includes(suggestedImages)
+          ? suggestedImages
+          : DEFAULT_FEE_IMAGES
+      );
       usageControl = 'Download';
       genMode = 'bundled';
       ea = {

@@ -5,7 +5,6 @@ import { getLogger } from '$lib/server/logger';
 
 const FALLBACK_REDIRECT = env.CIVITAI_APP_URL || 'https://civitai.com';
 
-// Printed once per process so `kubectl logs` answers "which build is this pod running?".
 console.info(`[creator-studio] version ${__APP_VERSION__}`);
 
 // Prerendered at build (no cookie), so it must resolve before the gate.
@@ -14,7 +13,7 @@ const PUBLIC_PATHS = new Set(['/favicon.svg']);
 // signed-in visitors to the dashboard).
 const OPTIONAL_AUTH_PATHS = new Set(['/']);
 
-// Fills the %app.version% meta tag in app.html, so the running build is readable from view-source.
+// Every resolve() must pass this, or the literal %app.version% ships in app.html's meta tag.
 const withVersion = {
   transformPageChunk: ({ html }: { html: string }) =>
     html.replace('%app.version%', __APP_VERSION__),

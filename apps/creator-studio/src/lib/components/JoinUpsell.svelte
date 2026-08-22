@@ -2,8 +2,7 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
 
   // Compact upsell for tier-capped controls. Links to /join, the Studio's acquisition surface, which
-  // carries the full pitch + the external Creator Program CTA. `title` is optional: a one-line box reads
-  // better without a heading over a single sentence.
+  // carries the full pitch + the external Creator Program CTA.
   let {
     title,
     body = 'Fees and paid access are open to everyone. A membership raises your caps.',
