@@ -1,4 +1,4 @@
-import { Button, CloseButton, Group, ScrollArea, Text, ThemeIcon } from '@mantine/core';
+import { Button, CloseButton, Group, Text, ThemeIcon } from '@mantine/core';
 import { IconAlertTriangle, IconInfoCircle, IconPlus, IconSticker } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useEffect, useRef, useState } from 'react';
@@ -31,6 +31,19 @@ import { trpc } from '~/utils/trpc';
  * three stickers sit in a field of empty panel, and pushed the instructions so
  * far from them that they read as unrelated.
  */
+/**
+ * A tile is the 48px sticker image plus its uses label and padding. Named because
+ * the tray's height cap is derived from it — a tile that grows without this
+ * changing would silently show a fraction of the second row.
+ */
+const STICKER_TILE_HEIGHT = 78;
+/** Mantine `xs`, used as both the gap between tiles and the row's padding. */
+const STICKER_TILE_GAP = 10;
+
+/** The height that shows exactly `rows` rows of tiles and clips the rest. */
+const trayRowsHeight = (rows: number) =>
+  rows * STICKER_TILE_HEIGHT + (rows - 1) * STICKER_TILE_GAP + 2 * STICKER_TILE_GAP;
+
 export function StickerPlacementTray({ imageId }: { imageId: number }) {
   const currentUser = useCurrentUser();
   const { sticker, isLoading } = useOwnedSticker();
@@ -116,11 +129,10 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
     reason: freeUnavailableReason,
     declineFee: space?.declineFee,
   });
-  // Says the panel can be got out of the way, and that more than one is allowed,
-  // only once there is something that would survive it. Before that both are
-  // instructions about nothing.
+  // Says more than one is allowed only once there is a draft to say it about.
+  // Before that it is an instruction about nothing.
   const instruction = drafts.length
-    ? 'Drag out as many as you like, then buy the ones you want. Closing this panel leaves them on the image.'
+    ? 'Drag out as many as you like, then pay to place the ones you want.'
     : 'Drag a sticker onto the image.';
 
   return (
@@ -183,8 +195,16 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
             />
           </div>
 
-          <ScrollArea.Autosize mah={120} type="auto" scrollbarSize={6}>
-            <Group gap="xs" wrap="nowrap" p="xs">
+          {/* Native overflow, not `ScrollArea.Autosize`. Autosize wraps its child in a
+              `display:flex; overflow:auto` box whose `flex:1` inner box keeps the default
+              `min-width:auto`, so it refuses to shrink to the panel: the scroll viewport
+              came out wider than the visible panel, putting the track's end and the last
+              sticker outside the clip. */}
+          <div
+            className="overflow-y-auto"
+            style={{ maxHeight: trayRowsHeight(2), scrollbarWidth: 'thin' }}
+          >
+            <Group gap={STICKER_TILE_GAP} p={STICKER_TILE_GAP}>
               {isLoading && <Text size="sm">Loading your stickers…</Text>}
 
               {/* Ahead of the stickers, so it stays put as the row grows. */}
@@ -253,7 +273,7 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
                 );
               })}
             </Group>
-          </ScrollArea.Autosize>
+          </div>
         </div>
       </div>
     </div>
