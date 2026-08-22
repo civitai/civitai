@@ -617,15 +617,23 @@ function buildGateVersion(gate: {
 // the page body model — for a non-Checkpoint page body those differ.
 //
 // Returns the per-LoRA gate bags so the caller can pass checkpoint + every LoRA
-// through the entitlement gate in ONE call. Throws BAD_REQUEST (non-LoRA /
-// not platform-compatible incl. unknown baseModel), NOT_FOUND
+// through the entitlement gate in ONE call, AND the resolved `modelVersionId →
+// ModelType` map. The map is not a second lookup: it is the `model.type` this
+// function has already read off each version, handed to `buildTextToImageInput`
+// so the graph input satisfies the resources node's OUTPUT schema
+// (`resourceSchema` requires `model:{type}` — issue #4159). Throws BAD_REQUEST
+// (non-LoRA / not platform-compatible incl. unknown baseModel), NOT_FOUND
 // (missing/unpublished version) — all BEFORE any cost/spend.
 async function resolvePageLoraGates(opts: {
   additionalResources: { modelVersionId: number; strength: number }[] | undefined;
   checkpointBaseModel: string;
-}): Promise<ReturnType<typeof buildGateVersion>[]> {
+}): Promise<{
+  gates: ReturnType<typeof buildGateVersion>[];
+  resourceTypes: ReadonlyMap<number, string>;
+}> {
   const { additionalResources, checkpointBaseModel } = opts;
-  if (!additionalResources?.length) return [];
+  const resourceTypes = new Map<number, string>();
+  if (!additionalResources?.length) return { gates: [], resourceTypes };
   // FAIL-CLOSED on the 'Other' ecosystem group. getResourceGenerationSupport's
   // null check does NOT catch the platform's recognized 'Other' baseModel
   // record (it resolves to a real ECO.Other ecosystem and short-circuits to
@@ -680,8 +688,13 @@ async function resolvePageLoraGates(opts: {
       });
     }
     gates.push(buildGateVersion(lora.gate));
+    // ORDERING, not a guard — do not read this as one. Every reject above
+    // THROWS, so the builder never runs on a refused resource whatever order
+    // this line sits in (moving it above the rejects survives the suite). It is
+    // placed here because that is where the value is unambiguously final.
+    resourceTypes.set(lora.modelVersionId, lora.modelType);
   }
-  return gates;
+  return { gates, resourceTypes };
 }
 
 // ---- Cumulative Buzz-spend cap (audit A7 / design-gaps H1) -----------------
@@ -4017,14 +4030,20 @@ export const blocksRouter = router({
       // the domain currency, derived from the SAME authoritative ceiling as the
       // output clamp. SFW → blue/green; mature → blue/yellow.
       const currencies = resolveBlockCurrencies(isGreen);
+      // #4159: the resolved `modelVersionId → ModelType` for the LoRA stack.
+      // Declared out here because `buildTextToImageInput` below needs it to emit
+      // graph-valid `resources` entries; on the MODEL path `additionalResources`
+      // is rejected outright, so an empty map is the correct value there.
+      let additionalResourceTypes: ReadonlyMap<number, string> = new Map();
       if (isPage) {
         // Resolve + validate the LoRA stack first (LoRA-only + family-match)
         // so a bad resource fails BEFORE the entitlement gate / any cost.
         // Family-match anchors on the RESOLVED checkpoint's baseModel.
-        const loraGates = await resolvePageLoraGates({
+        const { gates: loraGates, resourceTypes } = await resolvePageLoraGates({
           additionalResources: input.body.additionalResources,
           checkpointBaseModel: checkpoint.baseModel,
         });
+        additionalResourceTypes = resourceTypes;
         await assertViewerCanGeneratePageResources({
           gates: [buildGateVersion(resolved.gate), ...loraGates],
           viewer: { id: userId, isModerator: !!user.isModerator },
@@ -4040,6 +4059,7 @@ export const blocksRouter = router({
         ...resolved,
         checkpointVersionId: checkpoint.versionId,
         checkpointBaseModel: checkpoint.baseModel,
+        additionalResourceTypes,
       });
       // whatIf: no `metadata` on the body — matches the normal path
       // (`generateFromGraph` builds workflowMetadata only for real submits) and
@@ -4268,11 +4288,16 @@ export const blocksRouter = router({
       // rejected; absent → Auto (unchanged). See resolveBlockCurrenciesForAccount.
       const currencies = resolveBlockCurrenciesForAccount(isGreen, input.body.accountType);
 
+      // #4159 — see estimateWorkflow above. submitWorkflow builds the SAME graph
+      // input through the SAME builder, so it carried the identical defect and
+      // takes the identical fix; keeping the two in step is the point.
+      let additionalResourceTypes: ReadonlyMap<number, string> = new Map();
       if (isPage) {
-        const loraGates = await resolvePageLoraGates({
+        const { gates: loraGates, resourceTypes } = await resolvePageLoraGates({
           additionalResources: input.body.additionalResources,
           checkpointBaseModel: checkpoint.baseModel,
         });
+        additionalResourceTypes = resourceTypes;
         await assertViewerCanGeneratePageResources({
           gates: [buildGateVersion(resolved.gate), ...loraGates],
           viewer: { id: userId, isModerator: !!user.isModerator },
@@ -4301,6 +4326,7 @@ export const blocksRouter = router({
         ...resolved,
         checkpointVersionId: checkpoint.versionId,
         checkpointBaseModel: checkpoint.baseModel,
+        additionalResourceTypes,
       });
 
       // Cost preflight. Build a whatIf step for the cost estimate, then a
