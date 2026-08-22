@@ -32,6 +32,19 @@ export const inviteAppCollaboratorSchema = z.object({
 });
 export type InviteAppCollaboratorInput = z.infer<typeof inviteAppCollaboratorSchema>;
 
+/**
+ * The ids currently on offer in the invite picker, asked about in one round trip.
+ *
+ * Capped at the picker's own page size with headroom — this is a screening call for what is
+ * on screen, not a bulk user-state export, and the cap is what keeps it from becoming one.
+ */
+export const screenAppCollaboratorTargetsSchema = z.object({
+  userIds: z.array(userId).min(1).max(100),
+});
+export type ScreenAppCollaboratorTargetsInput = z.infer<
+  typeof screenAppCollaboratorTargetsSchema
+>;
+
 export const respondToAppInviteSchema = z.object({
   appListingId,
   accept: z.boolean(),

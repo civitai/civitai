@@ -5,6 +5,7 @@ import { updateDocs } from '~/server/meilisearch/client';
 
 import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
+import { USER_SEARCH_INDEX_ELIGIBILITY } from '~/server/search-index/user-index-eligibility';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 
 import { isDefined } from '~/utils/type-guards';
@@ -98,7 +99,9 @@ type UserRank = {
   leaderboardCosmetic: string;
 };
 
-const WHERE = [Prisma.sql`u.id != -1`, Prisma.sql`u."deletedAt" IS NULL`];
+// Shared with the nightly reconciler in `~/server/meilisearch/cleanup.ts` — see that module's
+// header for why the write-side filter and the reconciler-side filter have to be the same list.
+const WHERE = [...USER_SEARCH_INDEX_ELIGIBILITY];
 
 const transformData = async ({
   users,

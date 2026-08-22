@@ -350,6 +350,45 @@ export type InviteCollaboratorResult = {
  * re-checks `bannedAt` at the proc, so a banned editor can hold an inert row and do
  * nothing with it.
  */
+/**
+ * Of the supplied ids, the ones that CANNOT hold a collaborator seat right now.
+ *
+ * 🔴 THE POINT OF THIS FUNCTION IS THAT IT DOES NOT READ THE SEARCH INDEX. The invite picker's
+ * candidate list comes from user search, and a search document is a CACHE of an account's state
+ * at the moment it was last written — it can be stale, and the account's own name is part of
+ * what can be stale. So the picker must not be allowed to conclude "this account is fine"
+ * from the fact that search returned it. This reads the account rows themselves and hands back
+ * the ids the invite mutation is going to refuse, so the picker can stop offering them.
+ *
+ * It is DEFENCE IN DEPTH, never the enforcement point: `inviteCollaborator` re-checks
+ * `bannedAt` on the actual invite and is what makes the grant impossible. This exists so the
+ * user is not offered a choice the server will reject, and so a stale search document cannot
+ * put an ineligible account in front of an owner as a plausible one.
+ *
+ * Deliberately returns ONLY ids, never a reason and never anything about accounts that are
+ * fine. An id the caller already had is not new information; a ban reason would be.
+ */
+export async function getIneligibleCollaboratorTargets(opts: {
+  userIds: number[];
+}): Promise<number[]> {
+  const userIds = [...new Set(opts.userIds)];
+  if (!userIds.length) return [];
+
+  const rows = await dbRead.user.findMany({
+    where: { id: { in: userIds } },
+    select: { id: true, bannedAt: true, deletedAt: true },
+  });
+
+  const eligible = new Set(
+    rows.filter((r) => r.bannedAt == null && r.deletedAt == null).map((r) => r.id)
+  );
+
+  // Anything we did not positively confirm eligible comes back as ineligible — including an id
+  // with no row at all. A search hit whose account no longer exists is exactly the shape this
+  // is here to catch, and treating "not found" as fine would fail open on it.
+  return userIds.filter((id) => !eligible.has(id));
+}
+
 export async function inviteCollaborator(opts: {
   appListingId: string;
   targetUserId: number;

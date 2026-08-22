@@ -588,6 +588,14 @@ export async function forceUpdateUserIdentity({
 
   if (data.username !== undefined || data.name !== undefined) {
     await deleteBasicDataForUser(userId);
+    // 🔴 A moderator-forced rename has to reach the search index, and NOTHING else will take
+    // it there. The incremental user-index sync scans on `createdAt`, so it never revisits an
+    // existing row, and the nightly reconciler only checks whether an id still qualifies — it
+    // never refreshes a field. Without this enqueue the index serves the OLD username
+    // indefinitely, which is exactly how a renamed account keeps being found (and acted on by
+    // id) under the name it was renamed away from. The self-serve profile save has always
+    // enqueued this; the moderator path did not.
+    await usersSearchIndex.queueUpdate([{ id: userId, action: SearchIndexUpdateQueueAction.Update }]);
   }
 
   const { invalidateSession } = await import('~/server/auth/session-invalidation');
@@ -1973,6 +1981,12 @@ export const toggleBan = async ({
     await reinstateSubscription({ userId: id }).catch((error) =>
       logToAxiom({ name: 'reinstate-stripe-subscription', type: 'error', message: error.message })
     );
+
+    // 🔴 Put the account BACK in user search. Ban removes the document, and nothing else ever
+    // re-adds it: the incremental sync's range scan keys on `createdAt`, so an existing row is
+    // never re-pulled, and the reconciler only deletes. Without this, a lifted ban leaves the
+    // account permanently unfindable — a one-way door.
+    await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
   }
 
   // Notify the user by email of the ban/unban decision. Skip the admin

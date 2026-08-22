@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 
 import { QuickSearchDropdown } from '~/components/Search/QuickSearchDropdown';
 import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
@@ -18,6 +18,13 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { AppRole, ListingCapability } from '~/shared/constants/app-capabilities.constants';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+
+/**
+ * How many candidate ids the panel keeps screened at once. Must not exceed the `max()` on
+ * `screenAppCollaboratorTargetsSchema`, or the screening query starts 400ing and every
+ * candidate reads as eligible.
+ */
+const SCREENED_USER_ID_LIMIT = 100;
 
 /**
  * Data container. Owns the `appCollaborators.*` calls this surface wires: `list`,
@@ -119,6 +126,32 @@ export function AppCollaboratorsPanel({
     onError: (error) => setTransferErrorMessage(error.message ?? 'Something went wrong.'),
   });
 
+  /**
+   * 🔴 SCREEN THE CANDIDATES THE PICKER IS OFFERING, AGAINST THE SERVER.
+   *
+   * The picker's candidates come out of user search, and a search hit is a cached document —
+   * it can be out of date about the account it describes, including about its NAME. So the
+   * picker cannot conclude anything about an account from the fact that search returned it,
+   * and an owner choosing the top result must not be able to act on a document that is wrong.
+   *
+   * The ids are accumulated rather than replaced so an id already found ineligible stays
+   * excluded as the query text changes — dropping it would put it back in the Meili filter,
+   * back into the hits, and back on offer. Bounded by the screening call's own cap.
+   */
+  const [screenedUserIds, setScreenedUserIds] = useState<number[]>([]);
+  const handlePickerHits = useCallback((ids: number[]) => {
+    setScreenedUserIds((prev) => {
+      const added = ids.filter((id) => !prev.includes(id));
+      if (!added.length) return prev; // identical set -> same array, so the query does not re-issue
+      return [...prev, ...added].slice(-SCREENED_USER_ID_LIMIT);
+    });
+  }, []);
+  const screenQuery = trpc.appCollaborators.ineligibleTargets.useQuery(
+    { userIds: screenedUserIds },
+    { enabled: screenedUserIds.length > 0, staleTime: 60_000, retry: false }
+  );
+  const ineligibleUserIds = screenQuery.data ?? [];
+
   const rows = (listQuery.data ?? []) as CollaboratorRosterRow[];
   const busy = invite.isPending || remove.isPending || setDisplayed.isPending || leave.isPending;
   const transferBusy = initiateTransfer.isPending || cancelTransfer.isPending;
@@ -146,7 +179,7 @@ export function AppCollaboratorsPanel({
             const selected = item as SearchIndexDataMap['users'][number];
             // Both the guard and the picker filter read the SAME two pure helpers, so they
             // cannot disagree about who is offerable — and a REJECTED seat is offerable.
-            const blocked = inviteBlockedReason(rows, selected.id);
+            const blocked = inviteBlockedReason(rows, selected.id, ineligibleUserIds);
             if (blocked) {
               showErrorNotification({
                 title: blocked.title,
@@ -156,7 +189,8 @@ export function AppCollaboratorsPanel({
             }
             invite.mutate({ appListingId, targetUserId: selected.id });
           }}
-          filters={[currentUser?.id, ...pickerExcludedUserIds(rows)]
+          onHits={handlePickerHits}
+          filters={[currentUser?.id, ...pickerExcludedUserIds(rows, ineligibleUserIds)]
             .filter((id): id is number => !!id)
             .map((id) => `AND NOT id=${id}`)
             .join(' ')
