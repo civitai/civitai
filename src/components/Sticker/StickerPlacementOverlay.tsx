@@ -5,6 +5,7 @@ import { useStickerCosmetics } from '~/components/Sticker/sticker.util';
 import type { PlacedSticker } from '~/components/Sticker/placement.util';
 import { orderPlacements, placementRevealDelays } from '~/components/Sticker/placement-order';
 import { stickerArtworkStyle } from '~/components/Sticker/placement-appearance';
+import { placementControlPosition } from '~/components/Sticker/placement-control-position';
 import { StickerPlacementActions } from '~/components/Sticker/StickerPlacementActions';
 import { StickerPlacementHoverCard } from '~/components/Sticker/StickerPlacementHoverCard';
 import { PlacementFreeBadge } from '~/components/Placement/PlacementFreeBadge';
@@ -198,6 +199,52 @@ export function StickerPlacementOverlay({
   // Only pending placements are measured; nothing else is positioned relative to
   // a sticker's edge.
   const [stickerHeights, setStickerHeights] = useState<Record<number, number>>({});
+  /**
+   * The box the controls have to stay inside, and how big each control is.
+   *
+   * Both are needed before the position can be clamped, and neither is knowable
+   * from CSS: the control's width depends on which buttons the owner gets, and
+   * the box is the media rectangle this overlay was drawn over. Until they land,
+   * `placementControlPosition` returns null and the unclamped position stands.
+   */
+  const [controlBox, setControlBox] = useState({ width: 0, height: 0 });
+  const [controlSizes, setControlSizes] = useState<
+    Record<number, { width: number; height: number }>
+  >({});
+
+  const measureBox = useCallback((node: HTMLDivElement | null) => {
+    if (!node) return;
+    const read = () =>
+      setControlBox((current) =>
+        current.width === node.offsetWidth && current.height === node.offsetHeight
+          ? current
+          : { width: node.offsetWidth, height: node.offsetHeight }
+      );
+    read();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(read);
+    observer.observe(node);
+    boxObserver.current?.disconnect();
+    boxObserver.current = observer;
+  }, []);
+  const boxObserver = useRef<ResizeObserver | null>(null);
+  useEffect(() => () => boxObserver.current?.disconnect(), []);
+
+  const measureControl = useCallback(
+    (placementId: number) => (node: HTMLDivElement | null) => {
+      if (!node) return;
+      // `offsetWidth`/`offsetHeight` for the same reason the sticker is measured
+      // that way: they are layout numbers and ignore the reveal animation's
+      // transform.
+      const size = { width: node.offsetWidth, height: node.offsetHeight };
+      setControlSizes((current) =>
+        current[placementId]?.width === size.width && current[placementId]?.height === size.height
+          ? current
+          : { ...current, [placementId]: size }
+      );
+    },
+    []
+  );
   // Disposers rather than observers, because the no-`ResizeObserver` path has
   // its own thing to unhook.
   const disposers = useRef(new Map<number, () => void>());
@@ -470,6 +517,18 @@ export function StickerPlacementOverlay({
           // number that says nothing about where the sticker's edge is. Treating
           // it as valid put the controls 14px below the sticker's CENTRE, on top
           // of the artwork, until the image landed and moved them.
+          // Clamped into the media box, once both it and the control have been
+          // measured. Null until then, and the unclamped position below stands —
+          // see `placementControlPosition` for why this exists at all.
+          const clamped = placementControlPosition({
+            x: placement.data.x,
+            y: placement.data.y,
+            stickerHeight: stickerHeights[placement.id],
+            gap: CONTROL_GAP_PX,
+            control: controlSizes[placement.id] ?? { width: 0, height: 0 },
+            box: controlBox,
+          });
+
           if (stickerHeights[placement.id] > 0)
             pendingControls.push(
               <div key={placement.id}>
@@ -508,17 +567,28 @@ export function StickerPlacementOverlay({
                   fighting over the same property. Absent beats hidden here:
                   there is nothing to interact with either. */}
                 <div
-                  className={clsx('pointer-events-auto absolute -translate-x-1/2', revealClassName)}
+                  ref={measureControl(placement.id)}
+                  className={clsx(
+                    'pointer-events-auto absolute',
+                    // The translate goes with the clamp: a clamped `left` is the
+                    // control's own left edge, stated against the box, so
+                    // shifting it by half its width afterwards would put it back
+                    // outside on the very edges this fixes.
+                    !clamped && '-translate-x-1/2',
+                    revealClassName
+                  )}
                   style={{
-                    left: `${placement.data.x * 100}%`,
+                    left: clamped ? clamped.left : `${placement.data.x * 100}%`,
                     // Measured half-height plus a gap, in pixels. No percentage
                     // arithmetic: a percentage in `top` resolves against the box's
                     // height while the sticker is sized from its width, and every
                     // attempt to reconcile the two by calculation has been wrong on
                     // some aspect ratio.
-                    top: `calc(${placement.data.y * 100}% + ${
-                      stickerHeights[placement.id] / 2 + CONTROL_GAP_PX
-                    }px)`,
+                    top: clamped
+                      ? clamped.top
+                      : `calc(${placement.data.y * 100}% + ${
+                          stickerHeights[placement.id] / 2 + CONTROL_GAP_PX
+                        }px)`,
                     // Above every sticker, not just above the one it belongs to:
                     // the layer order means anything placed later covers this
                     // sticker, and it would cover the owner's only way to answer.
@@ -563,6 +633,7 @@ export function StickerPlacementOverlay({
           these under the draft along with everything else. */}
       {pendingControls.length > 0 && (
         <div
+          ref={measureBox}
           className="pointer-events-none absolute inset-0 overflow-hidden"
           style={{ zIndex: PENDING_CONTROL_Z }}
         >
