@@ -92,7 +92,13 @@ function PlacedBy({
         {side === 'owner' ? 'Placed by' : 'Placed on'}
       </span>
       <div className="pointer-events-auto flex items-center gap-1 rounded bg-dark-9/70 px-1.5 py-0.5">
-        <UserAvatar userId={first.id} withUsername size="xs" textSize="xs" linkToProfile />
+        {/* `Username` sets no colour, so it takes the theme's body text — a grey
+            that reads as disabled next to the white label and the white "+N".
+            Mantine's `Text` resolves its own colour rather than inheriting, so a
+            colour on this wrapper would not reach it. */}
+        <div className="[&_p]:!text-white">
+          <UserAvatar userId={first.id} withUsername size="xs" textSize="xs" linkToProfile />
+        </div>
         {rest.length > 0 && (
           <Text size="xs" c="white">
             +{rest.length}
@@ -100,7 +106,7 @@ function PlacedBy({
         )}
         {latestAt && (
           <Text size="xs" c="white" className="opacity-70">
-            <DaysFromNow date={new Date(latestAt)} withoutSuffix />
+            <DaysFromNow date={new Date(latestAt)} />
           </Text>
         )}
       </div>
