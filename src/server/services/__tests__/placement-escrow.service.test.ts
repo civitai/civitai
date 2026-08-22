@@ -6,6 +6,9 @@ import { PLACEMENT_HOLD_KINDS } from '~/shared/utils/placement';
 import { logToAxiom } from '~/server/logging/client';
 // Stubbed globally in src/__tests__/setup.ts.
 import { placementUnfundedSettlementsGauge } from '~/server/prom/client';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const dbWriteMock = dbMock.dbWrite;
 
 const createMultiAccountBuzzTransaction = vi.fn();
 const refundMultiAccountTransaction = vi.fn();
@@ -16,7 +19,7 @@ vi.mock('~/server/services/buzz.service', () => ({
   refundMultiAccountTransaction,
   createBuzzTransaction,
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn().mockResolvedValue(undefined) }));
+
 
 // Wholesale on purpose: the real module loads `base.reward`, which builds a
 // ClickHouse client, redis handles and prom collectors at import time. The
@@ -89,12 +92,9 @@ type LedgerQuery = {
 
 const legKey = (placementId: number, kind: string) => `${placementId}:${kind}`;
 
-const dbWriteMock: Record<string, unknown> = {};
 const queryRaw = vi.fn(async () => [] as { id: number }[]);
 const txCommits: string[][] = [];
-vi.mock('~/server/db/client', () => ({
-  dbWrite: dbWriteMock,
-}));
+
 
 Object.assign(dbWriteMock, {
   // Interactive transaction: the callback gets the same client. Good enough to
