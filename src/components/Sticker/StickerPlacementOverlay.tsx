@@ -6,10 +6,10 @@ import type { PlacedSticker } from '~/components/Sticker/placement.util';
 import { orderPlacements, placementRevealDelays } from '~/components/Sticker/placement-order';
 import { stickerArtworkStyle } from '~/components/Sticker/placement-appearance';
 import { placementControlPosition } from '~/components/Sticker/placement-control-position';
+import { placementMarkLayout } from '~/components/Sticker/placement-mark-layout';
 import { PENDING_CONTROL_Z } from '~/components/Sticker/placement-layers';
 import { StickerPlacementActions } from '~/components/Sticker/StickerPlacementActions';
 import { StickerPlacementHoverCard } from '~/components/Sticker/StickerPlacementHoverCard';
-import { PlacementFreeBadge } from '~/components/Placement/PlacementFreeBadge';
 import { freeMarkerVisible } from '~/components/Sticker/free-marker';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
@@ -38,6 +38,20 @@ import {
  * so a gap measured to the pixel is a gap the sticker moves into.
  */
 const CONTROL_GAP_PX = 14;
+
+/** Shared so the two in-box marks cannot drift apart in size or weight. */
+const PLACEMENT_MARK_CLASS =
+  'truncate rounded px-1.5 py-0.5 text-[10px] font-semibold leading-tight';
+
+/**
+ * Follow from `PLACEMENT_MARK_CLASS` and the `top-1`/`bottom-1`/`gap-0.5` below
+ * — change those and change these. They only feed `placementMarkLayout`, whose
+ * questions (is a mark entirely outside, is there room for two) a pixel either
+ * way does not answer differently.
+ */
+const PLACEMENT_MARK_HEIGHT_PX = 17;
+const PLACEMENT_MARK_INSET_PX = 4;
+const PLACEMENT_MARK_GAP_PX = 2;
 
 /**
  * Placed stickers, drawn over the content they were placed on.
@@ -190,9 +204,15 @@ export function StickerPlacementOverlay({
   //
   // Only pending placements are measured; nothing else is positioned relative to
   // a sticker's edge.
-  const [stickerHeights, setStickerHeights] = useState<Record<number, number>>({});
+  const [stickerBoxes, setStickerBoxes] = useState<
+    Record<number, { height: number; width: number }>
+  >({});
   /**
-   * The box the controls have to stay inside, and how big each control is.
+   * The media box everything here stays inside, and how big each control is.
+   *
+   * Read off the sticker layer, not the owner's control layer — that one mounts
+   * only when there is a control to draw, and the marks need the box whether or
+   * not the viewer is the owner.
    *
    * Both are needed before the position can be clamped, and neither is knowable
    * from CSS: the control's width depends on which buttons the owner gets, and
@@ -251,7 +271,6 @@ export function StickerPlacementOverlay({
   const measureSticker = useCallback(
     (placement: PlacedSticker) => (node: HTMLDivElement | null) => {
       const placementId = placement.id;
-      const radians = (placement.data.rotation * Math.PI) / 180;
       const existing = disposers.current.get(placementId);
       if (existing) {
         existing();
@@ -259,7 +278,7 @@ export function StickerPlacementOverlay({
       }
       if (!node) return;
 
-      const read = () =>
+      const record = () => {
         // `offsetHeight`/`offsetWidth`, deliberately: they are LAYOUT numbers and
         // ignore transforms. A bounding rect would be simpler and is wrong here,
         // because the artwork animates — it pops from 0.72 to 1.06 on arrival and
@@ -267,19 +286,17 @@ export function StickerPlacementOverlay({
         // frame that landed on, and a sticker measured mid-pop reports too small
         // and the controls sit on top of it.
         //
-        // The rotation is then added back by hand: a tilted rectangle's visual
-        // height is h·|cos r| + w·|sin r|, and ignoring the second term is what
-        // put the buttons over the artwork on anything more than slightly
-        // turned.
-        node.offsetHeight * Math.abs(Math.cos(radians)) +
-        node.offsetWidth * Math.abs(Math.sin(radians));
-
-      const record = () => {
-        const height = read();
+        // Stored unrotated. The two consumers want different things from it: the
+        // controls sit outside the sticker and need the rotated extent, the marks
+        // sit on the box's own edges and need the box. Deriving the first from
+        // this is arithmetic; recovering this from the first is not.
+        const box = { height: node.offsetHeight, width: node.offsetWidth };
         // Guarded, because writing state from a ResizeObserver that the write
         // then resizes is how a resize loop starts.
-        setStickerHeights((current) =>
-          current[placementId] === height ? current : { ...current, [placementId]: height }
+        setStickerBoxes((current) =>
+          current[placementId]?.height === box.height && current[placementId]?.width === box.width
+            ? current
+            : { ...current, [placementId]: box }
         );
       };
 
@@ -334,6 +351,7 @@ export function StickerPlacementOverlay({
           the z-index it had before this change, and the ordering inside it is
           purely internal. */}
       <div
+        ref={measureBox}
         className={clsx('pointer-events-none absolute inset-0 isolate overflow-hidden', className)}
       >
         {visible.map((placement, index) => {
@@ -383,6 +401,51 @@ export function StickerPlacementOverlay({
           // at full strength once approved, which is exactly what the floor
           // exists to prevent. The dashed outline carries "awaiting review" now.
           const appearance = stickerArtworkStyle(placement.data);
+
+          // The owner gets approve/decline instead of "Pending": it says the
+          // same thing and can be acted on.
+          // What the controls need, and only they: a tilted rectangle's visual
+          // height is h·|cos r| + w·|sin r|, and dropping the second term is what
+          // put the buttons over the artwork on anything more than slightly
+          // turned.
+          const radians = (placement.data.rotation * Math.PI) / 180;
+          const measured = stickerBoxes[placement.id];
+          const stickerExtent = measured
+            ? measured.height * Math.abs(Math.cos(radians)) +
+              measured.width * Math.abs(Math.sin(radians))
+            : 0;
+
+          const hasPending = placement.isPending && interactive && !isOwner;
+          const side = placementMarkLayout({
+            y: placement.data.y,
+            stickerHeight: stickerBoxes[placement.id]?.height ?? 0,
+            rotation: placement.data.rotation,
+            markHeight: PLACEMENT_MARK_HEIGHT_PX,
+            inset: PLACEMENT_MARK_INSET_PX,
+            gap: PLACEMENT_MARK_GAP_PX,
+            box: controlBox,
+            hasFree: showsFree,
+            hasPending,
+          });
+          // Free first, pending second: within either stack this puts the mark
+          // that flipped inboard of the one already on that edge.
+          const marks = [
+            side.free && {
+              key: 'free',
+              side: side.free,
+              label: 'Free placement',
+              className: 'bg-blue-6 text-white',
+            },
+            side.pending && {
+              // "Pending", not the queues' "Awaiting review" — the longer
+              // wording truncates inside a sticker at its default size, and the
+              // hover card carries the detail.
+              key: 'pending',
+              side: side.pending,
+              label: 'Pending',
+              className: 'bg-yellow-6 text-dark-9',
+            },
+          ].filter((mark) => !!mark);
 
           const artworkImage = (
             <EdgeImage
@@ -460,51 +523,40 @@ export function StickerPlacementOverlay({
                 />
               )}
 
-              {/* A label, not a control — the placer cannot act on it — so it
-                  needs neither the pending-controls layer nor an escape from the
-                  box's transform. Counter-rotated because rotation runs to ±180
-                  and a label riding it reads upside down.
+              {/* Marks, not controls — nobody can act on either — so they need
+                  neither the pending-controls layer nor an escape from the box's
+                  transform. Which edge each sits on, and whether there is room
+                  at all, is `placementMarkLayout`.
 
-                  🔴 `max-w-full` + `truncate` is the containment, and it is the
-                  point of the whole block. `whitespace-nowrap` alone makes
-                  min-content equal max-content, so the box's width constrains
-                  nothing and an ~85px label hangs over both edges of a sticker
-                  placed below about scale 0.10 — which is the collision this was
-                  moved to avoid, just sideways. Truncated it degrades to
-                  "Awaiting…" and the dashed ring carries the rest. */}
-              {placement.isPending && interactive && !isOwner && (
-                <div
-                  className="pointer-events-none absolute bottom-1 left-1/2 flex max-w-full items-center gap-1"
-                  style={{ transform: `translateX(-50%) rotate(${-placement.data.rotation}deg)` }}
-                >
-                  {/* "Pending", not the "Awaiting review" the queues use: the
-                      longer wording truncates inside a sticker at its default
-                      size, and the hover card carries the detail. */}
-                  <span className="truncate rounded bg-yellow-6 px-1.5 py-0.5 text-[10px] font-semibold leading-tight text-dark-9">
-                    Pending
-                  </span>
-                  {/* Stated, not explained: the popover on `PlacementFreeBadge`
-                      answers "why is this free and how do I stop it", which is
-                      the owner's question. `shrink-0` so the shorter, more
-                      surprising fact is the one that survives a small sticker. */}
-                  {showsFree && (
-                    <span className="shrink-0 rounded bg-blue-6 px-1.5 py-0.5 text-[10px] font-semibold leading-tight text-white">
-                      Free
-                    </span>
-                  )}
-                </div>
-              )}
-
-              {/* Card only. A card draws no controls and no label, so this is
-                  the whole pending signal there, and it goes inside the box for
-                  the same reason the ring does — a card clips anything outset.
-                  On the detail view the fact is carried beside whichever of the
-                  two the viewer gets. */}
-              {showsFree && !interactive && (
-                <div className="absolute bottom-0 left-1/2 -translate-x-1/2 whitespace-nowrap">
-                  <PlacementFreeBadge noun="placement" solid />
-                </div>
-              )}
+                  🔴 `inset-x-0` + `truncate` is the containment. Anchored
+                  `left-1/2` instead, a mark's shrink-to-fit width is measured
+                  against the half of the box to its right, so `Free placement`
+                  truncated at sizes where it would have fitted; with
+                  `whitespace-nowrap` and no cap at all it hung over both edges
+                  of a small sticker — the collision these were moved inside to
+                  avoid, sideways. */}
+              {(['top', 'bottom'] as const).map((edge) => {
+                const stack = marks.filter((mark) => mark.side === edge);
+                if (!stack.length) return null;
+                return (
+                  <div
+                    key={edge}
+                    className={clsx(
+                      'pointer-events-none absolute inset-x-0 flex flex-col items-center gap-0.5',
+                      edge === 'top' ? 'top-1' : 'bottom-1'
+                    )}
+                    // Counter-rotated: rotation runs to ±180 and a mark riding
+                    // the sticker's own transform reads upside down.
+                    style={{ transform: `rotate(${-placement.data.rotation}deg)` }}
+                  >
+                    {stack.map((mark) => (
+                      <span key={mark.key} className={clsx(PLACEMENT_MARK_CLASS, mark.className)}>
+                        {mark.label}
+                      </span>
+                    ))}
+                  </div>
+                );
+              })}
             </div>
           );
 
@@ -539,13 +591,13 @@ export function StickerPlacementOverlay({
           const clamped = placementControlPosition({
             x: placement.data.x,
             y: placement.data.y,
-            stickerHeight: stickerHeights[placement.id],
+            stickerHeight: stickerExtent,
             gap: CONTROL_GAP_PX,
             control: controlSizes[placement.id] ?? { width: 0, height: 0 },
             box: controlBox,
           });
 
-          if (isOwner && stickerHeights[placement.id] > 0)
+          if (isOwner && stickerExtent > 0)
             pendingControls.push(
               <div key={placement.id}>
                 {/* ⚠️ Known wrong, and left wrong deliberately.
@@ -560,15 +612,14 @@ export function StickerPlacementOverlay({
 
                 Anchoring inside the sticker's own box fixes the arithmetic and
                 costs three worse things:
-                  - the badge lands inside the hover-card trigger, whose 400px
-                    dropdown opens over the owner's approve/decline — fixed by
-                    having the hover card wrap only the artwork;
+                  - it lands inside the hover-card trigger, whose 400px dropdown
+                    opens over it. The marks live there and are fine — nobody can
+                    act on them, so a dropdown covering them costs nothing;
                   - anchoring BELOW the box (`top-full`) rides the rotation: at
                     180° the local bottom edge is the screen top, at 90° it is
                     off to the side. Counter-rotation keeps it upright but does
-                    not move it back below. An anchor inside the box — the
-                    placer's label above — avoids this; a control has to sit
-                    outside;
+                    not move it back below. An anchor inside the box — the two
+                    marks above — avoids this; a control has to sit outside;
                   - `body`'s transform makes it a stacking context, so a z-index
                     inside it stops out-ranking other placements — a sticker
                     placed later then covers the owner's buttons. Nothing done
@@ -611,7 +662,7 @@ export function StickerPlacementOverlay({
                     top: clamped
                       ? clamped.top
                       : `calc(${placement.data.y * 100}% + ${
-                          stickerHeights[placement.id] / 2 + CONTROL_GAP_PX
+                          stickerExtent / 2 + CONTROL_GAP_PX
                         }px)`,
                     // Above every sticker, not just above the one it belongs to:
                     // the layer order means anything placed later covers this
@@ -620,13 +671,7 @@ export function StickerPlacementOverlay({
                     ...delayStyle,
                   }}
                 >
-                  {/* In the control row rather than on the sticker. Anchored to
-                      the artwork it was clipped by the same edge that clipped
-                      the buttons — and it landed on top of them, since both were
-                      measured off the sticker's bottom. Here it inherits the
-                      clamp `placementControlPosition` already applies. */}
-                  <div className="flex items-center gap-1">
-                    {showsFree && <PlacementFreeBadge noun="placement" solid />}
+                  <div>
                     <StickerPlacementActions
                       placementIds={[placement.id]}
                       hasComment={placement.hasComment}
@@ -656,7 +701,6 @@ export function StickerPlacementOverlay({
           (DRAFT_STICKER_Z > PENDING_CONTROL_Z): whatever is under the cursor wins. */}
       {pendingControls.length > 0 && (
         <div
-          ref={measureBox}
           className="pointer-events-none absolute inset-0 overflow-hidden"
           style={{ zIndex: PENDING_CONTROL_Z }}
         >
