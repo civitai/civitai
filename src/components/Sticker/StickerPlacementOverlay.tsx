@@ -6,6 +6,7 @@ import type { PlacedSticker } from '~/components/Sticker/placement.util';
 import { orderPlacements, placementRevealDelays } from '~/components/Sticker/placement-order';
 import { stickerArtworkStyle } from '~/components/Sticker/placement-appearance';
 import { placementControlPosition } from '~/components/Sticker/placement-control-position';
+import { PENDING_CONTROL_Z } from '~/components/Sticker/placement-layers';
 import { StickerPlacementActions } from '~/components/Sticker/StickerPlacementActions';
 import { StickerPlacementHoverCard } from '~/components/Sticker/StickerPlacementHoverCard';
 import { PlacementFreeBadge } from '~/components/Placement/PlacementFreeBadge';
@@ -28,15 +29,6 @@ import {
   type CSSProperties,
   type ReactElement,
 } from 'react';
-
-/**
- * The pending controls' layer, above the stickers and above the draft.
- *
- * Only has to clear the draft sticker's own z-index, which is 1 — the number is
- * this far clear of it so a later hand-written z-index nearby does not silently
- * bury the owner's only way to answer a pending placement.
- */
-const PENDING_CONTROL_Z = 1000;
 
 /**
  * Clear air between the bottom of a pending sticker and the owner's controls.
@@ -472,6 +464,27 @@ export function StickerPlacementOverlay({
                 />
               )}
 
+              {/* Inside the sticker's own box, never outside it. This is a
+                  label, not a control — the placer cannot act on it — so unlike
+                  the owner's approve/decline it does not need to out-rank a
+                  draft or escape the transform. Anchored outside the box it
+                  claimed area the sticker did not occupy, and that area is what
+                  collided with the sticker being placed beside it.
+
+                  Counter-rotated because the box is rotated with the artwork and
+                  rotation runs to ±180, so a label that rode it would read
+                  upside down. */}
+              {placement.isPending && !isOwner && (
+                <div
+                  className="pointer-events-none absolute bottom-1 left-1/2 whitespace-nowrap"
+                  style={{ transform: `translateX(-50%) rotate(${-placement.data.rotation}deg)` }}
+                >
+                  <span className="rounded bg-yellow-6 px-2 py-0.5 text-[10px] font-semibold text-dark-9">
+                    Awaiting review
+                  </span>
+                </div>
+              )}
+
               {/* Centred under the sticker, directly above the owner's approve
                   and decline controls — those are positioned off the sticker's
                   measured height, so this rides the same edge they start from.
@@ -529,7 +542,11 @@ export function StickerPlacementOverlay({
             box: controlBox,
           });
 
-          if (stickerHeights[placement.id] > 0)
+          // Owner only. The placer's "Awaiting review" label used to be pushed
+          // here too, which put a non-interactive label in the layer that exists
+          // to keep a control reachable — outside the sticker's box, and above
+          // the draft.
+          if (isOwner && stickerHeights[placement.id] > 0)
             pendingControls.push(
               <div key={placement.id}>
                 {/* ⚠️ Known wrong, and left wrong deliberately.
@@ -597,18 +614,12 @@ export function StickerPlacementOverlay({
                   }}
                 >
                   <div>
-                    {isOwner ? (
-                      <StickerPlacementActions
-                        placementIds={[placement.id]}
-                        hasComment={placement.hasComment}
-                        free={placement.free}
-                        compact
-                      />
-                    ) : (
-                      <span className="whitespace-nowrap rounded bg-yellow-6 px-2 py-0.5 text-[10px] font-semibold text-dark-9">
-                        Awaiting review
-                      </span>
-                    )}
+                    <StickerPlacementActions
+                      placementIds={[placement.id]}
+                      hasComment={placement.hasComment}
+                      free={placement.free}
+                      compact
+                    />
                   </div>
                 </div>
               </div>
