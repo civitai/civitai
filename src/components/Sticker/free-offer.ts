@@ -323,7 +323,7 @@ export function trayNotes({
       // The price of the NEXT placement, not a menu. The free one is taken
       // automatically by the first draft that can use it, so naming both prices
       // read as a choice the placer does not get to make.
-      text: freeAvailable ? 'Free · one use' : `${price} Buzz + one use`,
+      text: freeAvailable ? 'Free placement + one sticker use' : `${price} Buzz + one sticker use`,
     },
   ];
 

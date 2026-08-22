@@ -343,14 +343,14 @@ describe('the tray says its piece in short lines', () => {
     // The free placement is taken automatically by the first draft that can use
     // it, so the price is not a menu — naming 700 Buzz beside "free" read as a
     // choice the placer does not get to make.
-    expect(texts(notes)).toBe('Free · one use');
+    expect(texts(notes)).toBe('Free placement + one sticker use');
     expect(texts(notes)).not.toMatch(/700/);
   });
 
   it('names only the price when free is not on offer', () => {
     const notes = trayNotes({ freeAvailable: false, price: 700, review: false });
 
-    expect(texts(notes)).toBe('700 Buzz + one use');
+    expect(texts(notes)).toBe('700 Buzz + one sticker use');
     expect(texts(notes)).not.toMatch(/[Ff]ree/);
   });
 
