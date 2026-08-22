@@ -575,6 +575,7 @@ describe('source suggestions stay inside the viewer', () => {
     // "a". Bounded by the id list above, so it is not the scan that ILIKE was on
     // the unbounded query.
     expect(names.where.username).toEqual({ contains: 'some', mode: 'insensitive' });
+    expect(names.orderBy).toEqual({ username: 'asc' });
   });
 
   it('scopes every models arm to the viewer, and filters names once over the union', async () => {
@@ -601,6 +602,7 @@ describe('source suggestions stay inside the viewer', () => {
     const names = dbMock.dbRead.model.findMany.mock.calls[1][0];
     expect(names.where.id).toEqual({ in: [1, 2, 3] });
     expect(names.where.name).toEqual({ contains: 'nova', mode: 'insensitive' });
+    expect(names.orderBy).toEqual({ name: 'asc' });
   });
 
   it('offers no collections while the write path refuses them', async () => {

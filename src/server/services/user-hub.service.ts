@@ -478,6 +478,9 @@ export async function getHubSourceSuggestions({
         ...(term ? { username: { contains: term, mode: 'insensitive' as const } } : {}),
       },
       select: { id: true, username: true },
+      // A name list, so it reads as one. Which names are eligible is still decided
+      // by relationship recency, up the `SUGGESTIONS_WINDOW` above.
+      orderBy: { username: 'asc' },
       take: SUGGESTIONS_LIMIT,
     });
 
@@ -508,6 +511,7 @@ export async function getHubSourceSuggestions({
         ...(term ? { name: { contains: term, mode: 'insensitive' as const } } : {}),
       },
       select: { id: true, name: true },
+      orderBy: { name: 'asc' },
       take: SUGGESTIONS_LIMIT,
     });
 
@@ -564,7 +568,7 @@ export async function getHubSourceSuggestions({
       ...(term ? { name: { contains: term, mode: 'insensitive' as const } } : {}),
     },
     select: { id: true, name: true },
-    orderBy: { id: 'desc' },
+    orderBy: { name: 'asc' },
     take: SUGGESTIONS_LIMIT,
   });
 
