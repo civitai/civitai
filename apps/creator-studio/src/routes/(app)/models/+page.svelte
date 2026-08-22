@@ -432,10 +432,7 @@
 {/if}
 
 {#if data.caps.capTier === 'free'}
-  <JoinUpsell
-    class="mb-6"
-    body="You can set licensing fees and paid access on the free tier. Joining the Creator Program raises how much you can charge."
-  />
+  <JoinUpsell class="mb-6" />
 {/if}
 
 {#if !pickingForSale}
