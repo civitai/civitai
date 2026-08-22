@@ -450,7 +450,14 @@ export const completeOnboardingHandler = async ({
     // main app READS the cached SessionUser, it no longer recomputes it per request. Bust that cache so the
     // client's next session read reflects the advanced step — without this the stale cached `onboarding` makes a
     // NEW user repeat the same step forever ("can't get through account creation"). Mirrors updateUserHandler.
-    if (changed) await refreshSession(id, { caller: 'profile' });
+    //
+    // 🔴 Gating on `changed` ALONE is narrower than what this handler WRITES. The Profile step writes
+    // `username`/`email` unconditionally (see the switch above), and both are carried on the session shape — so a
+    // re-submit of a step whose bit is already set advanced nothing, skipped the bust, and left the new username
+    // in the database with the old one in the session for the rest of its 4h TTL. Bust on either condition.
+    const wroteSessionIdentity =
+      input.step === OnboardingSteps.Profile && (!!input.username || !!input.email);
+    if (changed || wroteSessionIdentity) await refreshSession(id, { caller: 'profile' });
 
     const isComplete = onboarding === OnboardingComplete;
     if (isComplete && changed && onboardingCompletedCounter) onboardingCompletedCounter.inc();
@@ -1409,6 +1416,16 @@ export const getUserSettingsHandler = async ({ ctx }: { ctx: ProtectedContext })
   }
 };
 
+/**
+ * Settings keys that `setUserSettingsInput` can write AND that the auth hub folds into the cached
+ * SessionUser (`apps/auth/src/lib/server/auth/session-shape.ts` — its `settingsSchema` reads
+ * `allowAds`, `redBrowsingLevel`, `isEarlyAdopter`). Writing one of these without busting
+ * `session:data2:{id}` leaves the session serving the old value for the rest of its 4h TTL.
+ * Keep this in sync with that schema; `redBrowsingLevel` is intentionally excluded because this
+ * endpoint cannot write it (see the gate below).
+ */
+const SESSION_PROJECTED_SETTING_KEYS = ['allowAds', 'isEarlyAdopter'] as const;
+
 export const setUserSettingHandler = async ({
   input,
   ctx,
@@ -1442,14 +1459,23 @@ export const setUserSettingHandler = async ({
     );
     if (metricPrivacyChanged) await queueModelMetricPrivacyReindex(id);
 
-    // `isEarlyAdopter` is the one settings key PROJECTED ONTO THE SESSION (auth hub
-    // `shapeSessionUser` → `SessionUser.isEarlyAdopter` → `buildFliptContext`), and the
-    // hub caches that projection in `session:data2:{id}` for 4h. Without this the toggle
-    // reads as instantly applied client-side (the `getSettings` cache is patched
-    // optimistically) while every Flipt evaluation keeps the OLD value until the cache
-    // expires — the toggle appears to do nothing. `refreshSession` busts that cache and
-    // signals the browser to re-pull. Awaited so the bust lands before the mutation
-    // returns; same reason `updateContentSettings` awaits its own call.
+    // Some settings keys are PROJECTED ONTO THE SESSION by the auth hub — `shapeSessionUser`
+    // reads `allowAds`, `redBrowsingLevel` and `isEarlyAdopter` out of `User.settings` and
+    // folds them into the SessionUser — and the hub caches that projection in
+    // `session:data2:{id}` for 4h. Without a bust the toggle reads as instantly applied
+    // client-side (the `getSettings` cache is patched optimistically) while every session
+    // read — and every Flipt evaluation built from it — keeps the OLD value until the entry
+    // expires: the toggle appears to do nothing. `refreshSession` busts that cache and
+    // signals the browser to re-pull. Awaited so the bust lands before the mutation returns;
+    // same reason `updateContentSettings` awaits its own call.
+    //
+    // 🔴 This used to name `isEarlyAdopter` as "the one settings key projected onto the
+    // session". It was not: `allowAds` is projected too and is writable through THIS
+    // endpoint's schema, so turning ads off left the session serving `allowAds: true` for up
+    // to 4h. The gate is a set now, so adding a projected key is one edit here rather than a
+    // silent re-introduction of the same bug (#4298's defect class).
+    // `redBrowsingLevel` is deliberately absent — it is not part of `setUserSettingsInput`;
+    // it is written by `updateContentSettings`, which performs its own bust.
     //
     // Gated on a CHANGE, not on key presence, and compared against `restInput` — the keys
     // THIS request sent — rather than against the stored blob. Mirrors the
@@ -1457,9 +1483,10 @@ export const setUserSettingHandler = async ({
     // whole blob, so a presence check on it would no longer fire on unrelated toggles the
     // way it did when this handler rewrote everything; the change comparison is still the
     // right test, because re-sending the value a user already holds is not a change.)
-    const earlyAdopterChanged =
-      'isEarlyAdopter' in restInput && restSettings.isEarlyAdopter !== restInput.isEarlyAdopter;
-    if (earlyAdopterChanged) await refreshSession(id, { caller: 'profile' });
+    const sessionProjectedSettingChanged = SESSION_PROJECTED_SETTING_KEYS.some(
+      (key) => key in restInput && restSettings[key] !== restInput[key]
+    );
+    if (sessionProjectedSettingChanged) await refreshSession(id, { caller: 'profile' });
 
     return newSettings;
   } catch (error) {
