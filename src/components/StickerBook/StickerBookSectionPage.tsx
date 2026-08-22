@@ -70,16 +70,20 @@ export function StickerBookSectionPage({
         </Title>
       </div>
 
-      <StickerBookGrid items={data.items} side={side} />
+      <StickerBookGrid items={data.items} side={side} emptyMessage={copy.empty} />
 
       {/* Two different empty states, because `hasMore` is decided before the
           image filter runs: page 3 of a walk whose images were all unpublished
           is legitimately empty with a working Next button, and the
           nothing-here-yet copy would tell a creator with hundreds that they have
           none. */}
-      {!data.items.length && (
+      {/* Page 2 and beyond only. The first page's empty states belong to the
+          grid, which is the one that knows whether the viewer's own hides
+          emptied it — this page counts the server's rows and would contradict
+          it. */}
+      {!data.items.length && page > 1 && (
         <Text size="sm" c="dimmed">
-          {page > 1 ? 'Nothing on this page. Try the next one.' : copy.empty}
+          Nothing on this page. Try the next one.
         </Text>
       )}
 

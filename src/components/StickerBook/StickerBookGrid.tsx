@@ -61,11 +61,15 @@ export function StickerBookGrid({
   }, [items, visible]);
 
   if (!shown.length)
-    return emptyMessage ? (
+    return (
       <Text size="sm" c="dimmed">
-        {emptyMessage}
+        {/* Two different truths, and the section cannot tell them apart: it
+            counts the SERVER's rows, which do not know what this viewer hid. An
+            empty section says "nothing yet"; a section emptied by your own hides
+            has plenty and none of it is for you. */}
+        {items.length ? 'Everything here is from creators you have hidden.' : emptyMessage ?? null}
       </Text>
-    ) : null;
+    );
 
   return (
     // 🔴 `hideStickerBadge`: the chip shares the reaction row, and at a 280px

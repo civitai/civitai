@@ -19,7 +19,8 @@ type ImagesContextProps = {
    *
    * For hosts that draw cards narrower than the feed does: the chip shares that
    * row, and at a 280px card it squeezes the reaction counts until they clip.
-   * A host that sets this owns putting a reveal control somewhere else.
+   * A host that sets this owns the reveal itself — either a control of its own,
+   * or `revealStickers` below, which is what the sticker book does.
    */
   hideStickerBadge?: boolean;
   /**
