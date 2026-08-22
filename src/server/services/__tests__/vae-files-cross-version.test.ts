@@ -5,7 +5,6 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 // phase, which no `testTimeout` bounds. `vi.mock` calls below are hoisted above
 // it by Vitest's transform, so the stubs still apply.
 import { getVaeFiles } from '~/server/services/model.service';
-import type * as RedisClient from '~/server/redis/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 const modelFileFindMany = dbMock.dbRead.modelFile.findMany;
 
@@ -34,14 +33,12 @@ vi.mock('~/server/services/image.service', () => ({
   queueImageSearchIndexUpdate: vi.fn(),
 }));
 vi.mock('~/server/flipt/client', () => ({ isFlipt: vi.fn().mockResolvedValue(false) }));
-vi.mock('~/server/redis/client', async (importOriginal) => {
-  const actual = await importOriginal<typeof RedisClient>();
-  return {
-    ...actual,
-    redis: { packed: { get: async () => null, set: async () => undefined } },
-    sysRedis: {},
-  };
-});
+// `~/server/redis/client` is covered by the canonical mock registered in src/__tests__/setup.ts.
+// That is strictly safer than the `importOriginal` spread this replaces: `~/server/redis/client` is
+// the app SHIM, which constructs real clients at module scope, so importing the original evaluated
+// it. The canonical registration spreads the @civitai/redis PACKAGE instead — same re-exported key
+// tables, no client construction. `redis.packed.get` still answers a cache miss (null), which is the
+// behaviour the local stub was providing.
 
 const HOST_VERSION_ID = 4242;
 const LINKED_VAE_VERSION_ID = 9999;

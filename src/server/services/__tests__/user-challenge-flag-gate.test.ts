@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
  * User-created challenges are still behind the `userChallenges` flag, but entries are written
@@ -17,39 +18,20 @@ const COLLECTION_ID = 100;
 const USER_ID = 5;
 const IMAGE_ID = 9001;
 
-const { mockChargeEntryFees, mockChallengeFindFirst, mockDbRead } = vi.hoisted(() => {
-  const mockChargeEntryFees = vi.fn();
-  const mockChallengeFindFirst = vi.fn();
-  const mockDbRead = {
-    user: { findUnique: vi.fn() },
-    challenge: { findFirst: mockChallengeFindFirst },
-    collectionItem: { count: vi.fn(), findFirst: vi.fn() },
-    collection: { findMany: vi.fn() },
-    image: { findMany: vi.fn() },
-    article: { findMany: vi.fn() },
-    model: { findMany: vi.fn() },
-    post: { findMany: vi.fn() },
-    imageResourceNew: { findMany: vi.fn() },
-    $queryRaw: vi.fn(),
-  };
-  return { mockChargeEntryFees, mockChallengeFindFirst, mockDbRead };
-});
+const { mockChargeEntryFees } = vi.hoisted(() => ({ mockChargeEntryFees: vi.fn() }));
 
-vi.mock('~/server/redis/client', () => {
-  const make = (): any => new Proxy(() => 'k', { get: () => make() });
-  const keyProxy = make();
-  return {
-    redis: { get: vi.fn(), set: vi.fn(), packed: { get: vi.fn(), set: vi.fn() } },
-    sysRedis: { get: vi.fn(), set: vi.fn() },
-    REDIS_KEYS: keyProxy,
-    REDIS_SYS_KEYS: keyProxy,
-    REDIS_SUB_KEYS: keyProxy,
-    withSysReadDeadline: vi.fn((p) => p),
-  };
-});
+// `validateContestCollectionEntry` reads only — every Prisma call it makes is on dbRead
+// (collection.service.ts). The mock this replaces bound dbWrite to `{}`, i.e. any write would have
+// thrown; the canonical dbWrite answers instead, so a stray write would no longer be loud. Nothing
+// on this path writes, and the entry-fee charge (the one side effect) is stubbed below.
+const mockDbRead = dbMock.dbRead;
+const mockChallengeFindFirst = mockDbRead.challenge.findFirst;
+
+// `~/server/redis/client` is covered by the canonical mock registered in src/__tests__/setup.ts,
+// which also supplies the REAL REDIS_*_KEYS tables in place of the placeholder proxy that used to
+// answer every key lookup here. Nothing in this file asserts a key.
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
 vi.mock('@civitai/db', () => ({ createLagTracker: vi.fn(() => ({})), loadDbEnv: vi.fn(() => ({})) }));
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: {} }));
 vi.mock('~/server/db/pgDb', () => ({ pgDbReadLong: {},  pgDbRead: {}, pgDbWrite: {} }));
 vi.mock('~/server/db/db-lag-helpers', () => ({
   getDbWithoutLag: vi.fn(),

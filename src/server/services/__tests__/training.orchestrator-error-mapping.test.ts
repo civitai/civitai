@@ -47,11 +47,10 @@ vi.mock('@aws-sdk/lib-storage', () => {
 });
 vi.mock('~/server/db/db-lag-helpers', () => ({ preventModelVersionLag: vi.fn() }));
 vi.mock('~/server/redis/caches', () => ({ dataForModelsCache: {} }));
-vi.mock('~/server/redis/client', () => ({
-  REDIS_SYS_KEYS: { SYSTEM: { FEATURES: 'system:features' } },
-  sysRedis: { hGet: vi.fn() },
-  withSysReadDeadline: vi.fn((p: Promise<unknown>) => p),
-}));
+// `~/server/redis/client` is covered by the canonical mock registered in src/__tests__/setup.ts.
+// It was only ever import-graph scaffolding here — `toOrchestratorError` is a pure mapper and
+// touches no client — so the local stub bought nothing and hid the real REDIS_SYS_KEYS table
+// behind a one-entry copy of it.
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
 vi.mock('~/server/schema/training.schema', () => ({ trainingServiceStatusSchema: {} }));
 vi.mock('~/server/services/orchestrator/client', () => ({ internalOrchestratorClient: {} }));

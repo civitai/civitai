@@ -31,18 +31,10 @@ const { mockBustImageDeliveryMetadataCache } = vi.hoisted(
 );
 
 // --- infra scaffold (mirrors contest-entry-resource-gate.test.ts) ---------------------
-vi.mock('~/server/redis/client', () => {
-  const make = (): any => new Proxy(() => 'k', { get: () => make() });
-  const keyProxy = make();
-  return {
-    redis: { get: vi.fn(), set: vi.fn(), del: vi.fn(), packed: { get: vi.fn(), set: vi.fn() } },
-    sysRedis: { get: vi.fn(), set: vi.fn() },
-    REDIS_KEYS: keyProxy,
-    REDIS_SYS_KEYS: keyProxy,
-    REDIS_SUB_KEYS: keyProxy,
-    withSysReadDeadline: vi.fn((p) => p),
-  };
-});
+// `~/server/redis/client` is covered by the canonical mock registered in src/__tests__/setup.ts,
+// which supplies redis/sysRedis plus the REAL key tables. The local stub this replaces returned a
+// self-vivifying proxy for every REDIS_*_KEYS lookup, so any key the code composed came back as the
+// same placeholder — nothing here asserts a key, so the swap changes no assertion.
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
 vi.mock('@civitai/db', () => ({
   createLagTracker: vi.fn(() => ({})),
