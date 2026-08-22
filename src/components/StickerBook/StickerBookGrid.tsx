@@ -64,11 +64,12 @@ export function StickerBookGrid({ items, side }: { items: BookItems; side: Stick
 }
 
 /**
- * Who put the sticker there, over the bottom of the card.
+ * Who the other end of the placement was, over the bottom of the card.
  *
- * Only on the received side. On the placed side the person on the other end is
- * the image's own creator, which the card already names — a second attribution
- * saying the same thing reads as a claim about the sticker.
+ * Both sections carry it, and only the verb changes: on the received side it is
+ * who put a sticker on your work, on the placed side it is whose work you put
+ * one on. Same shape either way — Justin's call on review, for visual
+ * consistency between two rows that are the same act from opposite ends.
  */
 function PlacedBy({
   counterparts,
@@ -80,7 +81,7 @@ function PlacedBy({
   /** When the most recent sticker landed — Ellie's mock carried a time. */
   latestAt: Date | string | null;
 }) {
-  if (side !== 'owner' || !counterparts.length) return null;
+  if (!counterparts.length) return null;
 
   const [first, ...rest] = counterparts;
 
@@ -88,7 +89,7 @@ function PlacedBy({
     <div className="pointer-events-none absolute inset-x-2 bottom-12 flex flex-col items-start gap-1">
       <span className="flex items-center gap-1 rounded bg-dark-9/70 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
         <IconSticker size={12} />
-        Placed by
+        {side === 'owner' ? 'Placed by' : 'Placed on'}
       </span>
       <div className="pointer-events-auto flex items-center gap-1 rounded bg-dark-9/70 px-1.5 py-0.5">
         <UserAvatar userId={first.id} withUsername size="xs" textSize="xs" linkToProfile />
