@@ -49,6 +49,7 @@ vi.mock('~/server/services/system-cache', () => ({
   getSystemTags,
   getReplacedTagIds,
   getCategoryTags,
+  clearFeedTagBarTagsCache: vi.fn(),
 }));
 
 vi.mock('~/server/redis/caches', () => ({

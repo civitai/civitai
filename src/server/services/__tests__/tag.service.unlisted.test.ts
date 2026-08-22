@@ -340,7 +340,12 @@ describe('getVotableTags — model votable-tags cache invalidation contract', ()
     await deleteTags({ tags: [304, 305] });
     expect(redisDel).toHaveBeenCalledWith('packed:caches:tag-with-model-count:anime');
     expect(redisDel).toHaveBeenCalledWith('packed:caches:tag-with-model-count:nude');
-    expect(redisDel).toHaveBeenCalledTimes(2);
+    // Plus the feed tag bar's chip list, which `deleteTags` also busts — a deleted tag
+    // must not keep serving as a chip. The count stays exact rather than becoming a
+    // `>=`: it is what catches a bust being dropped, and naming the third key here is
+    // what tells the next reader which one arrived.
+    expect(redisDel).toHaveBeenCalledWith('system:feed-tag-bar-tags');
+    expect(redisDel).toHaveBeenCalledTimes(3);
   });
 
   it('a vote on an IMAGE does not bust the model cache', async () => {
