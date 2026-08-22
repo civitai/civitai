@@ -25,6 +25,13 @@ import { describe, expect, it, vi } from 'vitest';
  * So: whole strings, and observed at the boundary. A cosmetic rewording of a predicate will
  * fail these — that is the price of a machine-readable claim, and it is worth paying here.
  * (Only the WHERE is pinned, not the whole statement, so adding a SELECT column stays free.)
+ *
+ * 🔴 AND THEY ARE A LEDGER OVER EVERY QUERY, NOT A SPOT-CHECK ON THE FIRST ONE. Each assertion
+ * pins the COUNT of statements issued as well as their predicates, because a third walk of the
+ * same class is "add a second, unfiltered `$queryRaw` beside the guarded one": every existing
+ * predicate stays correct, the new writer is simply not looked at, and a description promising
+ * "the SQL that reaches `$queryRaw`" reads as coverage it does not provide. A new query here is
+ * meant to break these — check its WHERE and add it to the expected list.
  */
 
 // The reconciler module reaches for the search client at import time; it is not needed to read
@@ -71,7 +78,7 @@ const whereClausesOf = (statement: string) =>
     (m) => m[1]
   );
 
-/** Drives the real query builders and hands back the SQL they issued. */
+/** Drives the real query builders and hands back EVERY statement they issued, in order. */
 async function captureQueries(
   run: (ctx: { db: unknown; logger: () => void }) => Promise<unknown>
 ): Promise<string[]> {
@@ -103,33 +110,39 @@ describe('user search index eligibility', () => {
    */
   describe('the queries the indexer actually issues', () => {
     it('a TARGETED update — the shape the metrics refresh enqueues — filters banned accounts', async () => {
-      const [statement] = await captureQueries((ctx) =>
+      const statements = await captureQueries((ctx) =>
         pullUsersData(ctx as never, { type: 'update', ids: [11, 22] }, 0)
       );
-      expect(whereClausesOf(statement)).toEqual([`${ELIGIBILITY} AND u.id IN (?,?)`]);
+      expect(statements).toHaveLength(1);
+      expect(statements.flatMap(whereClausesOf)).toEqual([`${ELIGIBILITY} AND u.id IN (?,?)`]);
     });
 
     it('a full RANGE scan filters banned accounts', async () => {
-      const [statement] = await captureQueries((ctx) =>
+      const statements = await captureQueries((ctx) =>
         pullUsersData(ctx as never, { type: 'new', startId: 5, endId: 9 }, 0)
       );
-      expect(whereClausesOf(statement)).toEqual([`${ELIGIBILITY} AND u.id >= ? AND u.id <= ?`]);
+      expect(statements).toHaveLength(1);
+      expect(statements.flatMap(whereClausesOf)).toEqual([
+        `${ELIGIBILITY} AND u.id >= ? AND u.id <= ?`,
+      ]);
     });
 
     it('BOTH bounds queries that size an incremental batch filter banned accounts', async () => {
-      const [statement] = await captureQueries((ctx) =>
+      const statements = await captureQueries((ctx) =>
         prepareUsersBatches(ctx as never, new Date('2026-01-01T00:00:00.000Z'))
       );
+      expect(statements).toHaveLength(1);
       // Two sub-selects, and a fix applied to only one of them is the obvious half-fix.
-      expect(whereClausesOf(statement)).toEqual([
+      expect(statements.flatMap(whereClausesOf)).toEqual([
         `${ELIGIBILITY} AND u."createdAt" >= ?`,
         `${ELIGIBILITY} AND u."createdAt" >= ?`,
       ]);
     });
 
     it('…and so does a full rebuild, which passes no narrowing clause at all', async () => {
-      const [statement] = await captureQueries((ctx) => prepareUsersBatches(ctx as never));
-      expect(whereClausesOf(statement)).toEqual([ELIGIBILITY, ELIGIBILITY]);
+      const statements = await captureQueries((ctx) => prepareUsersBatches(ctx as never));
+      expect(statements).toHaveLength(1);
+      expect(statements.flatMap(whereClausesOf)).toEqual([ELIGIBILITY, ELIGIBILITY]);
     });
 
     /**
