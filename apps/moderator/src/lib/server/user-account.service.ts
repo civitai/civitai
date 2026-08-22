@@ -534,6 +534,7 @@ export type ResourceGeneration = {
   modelVersionId: number;
   modelId: number;
   modelName: string;
+  versionName: string | null;
   count: number;
 };
 
@@ -545,7 +546,12 @@ export async function getResourceGenerations(
   const versions = await dbRead
     .selectFrom('ModelVersion as mv')
     .innerJoin('Model as m', 'm.id', 'mv.modelId')
-    .select(['mv.id as modelVersionId', 'm.id as modelId', 'm.name as modelName'])
+    .select([
+      'mv.id as modelVersionId',
+      'm.id as modelId',
+      'm.name as modelName',
+      'mv.name as versionName',
+    ])
     .where('m.userId', '=', userId)
     // Bounded because the id list is interpolated into ClickHouse unescaped and a prolific creator has
     // thousands of versions. Newest first — those are the ones a farming check is about.
@@ -719,6 +725,7 @@ export async function getRetoolActivity(userId: number, limit = 25): Promise<Ret
 export type TrainingRun = {
   modelVersionId: number;
   modelId: number;
+  modelName: string | null;
   name: string | null;
   baseModel: string | null;
   trainingType: string | null;
@@ -729,15 +736,19 @@ export type TrainingRun = {
   maxEpochs: number | null;
   buzzCost: number | null;
   startedAt: string | null;
+  submittedAt: string | null;
   completedAt: string | null;
   engine: string | null;
   params: Record<string, unknown> | null;
+  /** Submissions against this ONE version. A retrain reuses the row, so a version is not a run. */
+  submitCount: number | null;
+  history: { time: string; status: string }[] | null;
 };
 
 export async function getTrainingRuns(
   userId: number,
   limit = 25
-): Promise<{ runs: TrainingRun[]; truncated: boolean }> {
+): Promise<{ runs: TrainingRun[]; truncated: boolean; charges: TrainingCharges | null }> {
   const rows = await dbRead
     .selectFrom('Model as m')
     .innerJoin('ModelVersion as mv', 'mv.modelId', 'm.id')
@@ -755,6 +766,7 @@ export async function getTrainingRuns(
     .select([
       'mv.id as modelVersionId',
       'm.id as modelId',
+      'm.name as modelName',
       'mv.name',
       'mv.trainingStatus',
       sql<string | null>`mv."trainingDetails"::json ->> 'baseModel'`.as('baseModel'),
@@ -782,10 +794,26 @@ export async function getTrainingRuns(
         mf.metadata::json -> 'trainingResults' ->> 'startedAt',
         mf.metadata::json -> 'trainingResults' ->> 'start_time'
       )`.as('startedAt'),
+      sql<string | null>`mf.metadata::json -> 'trainingResults' ->> 'submittedAt'`.as(
+        'submittedAt'
+      ),
       sql<string | null>`coalesce(
         mf.metadata::json -> 'trainingResults' ->> 'completedAt',
         mf.metadata::json -> 'trainingResults' ->> 'end_time'
       )`.as('completedAt'),
+      // Guarded on the type rather than run bare: `jsonb_array_elements` raises on a non-array, which
+      // would take down the whole /api/user-account payload, not just this panel.
+      sql<{ time: string; status: string }[] | null>`
+        CASE WHEN jsonb_typeof(mf.metadata::jsonb -> 'trainingResults' -> 'history') = 'array'
+             THEN mf.metadata::jsonb -> 'trainingResults' -> 'history' END
+      `.as('history'),
+      sql<number | null>`
+        CASE WHEN jsonb_typeof(mf.metadata::jsonb -> 'trainingResults' -> 'history') = 'array' THEN (
+          SELECT count(*)::int
+          FROM jsonb_array_elements(mf.metadata::jsonb -> 'trainingResults' -> 'history') AS h(val)
+          WHERE h.val ->> 'status' = 'Submitted'
+        ) END
+      `.as('submitCount'),
     ])
     .where('mv.uploadType', '=', 'Trained')
     .where('m.userId', '=', userId)
@@ -801,6 +829,7 @@ export async function getTrainingRuns(
   const runs = rows.slice(0, limit).map((r) => ({
     modelVersionId: r.modelVersionId,
     modelId: r.modelId,
+    modelName: r.modelName,
     name: r.name,
     baseModel: r.baseModel,
     trainingType: r.trainingType,
@@ -811,12 +840,130 @@ export async function getTrainingRuns(
     maxEpochs: r.maxEpochs,
     buzzCost: r.buzzCost === null ? null : Number(r.buzzCost),
     startedAt: r.startedAt,
+    submittedAt: r.submittedAt,
     completedAt: r.completedAt,
     engine: r.engine,
+    submitCount: r.submitCount === null ? null : Number(r.submitCount),
+    history: r.history,
     params: r.params,
   }));
 
-  return { runs, truncated };
+  return { runs, truncated, charges: await getTrainingCharges(userId, runs) };
+}
+
+export type TrainingChargeRow = {
+  id: string;
+  date: string;
+  buzz: number;
+  /** The run's own id in the orchestrator, `<userId>-<timestamp>`. Carried on every charge since
+   *  2024-10; older ones have none. It is all the identity a deleted run has left. */
+  workflowId: string | null;
+};
+
+export type TrainingCharges = {
+  count: number;
+  buzz: number;
+  first: string | null;
+  last: string | null;
+  /** Charges with no surviving run — the deleted ones, newest first. Capped; `truncated` says so. */
+  unmatched: TrainingChargeRow[];
+  truncated: boolean;
+};
+
+/** Widest gap seen between a charge and the run's own `submittedAt` is under a second; a minute of slack
+ *  absorbs clock skew without being wide enough to swallow a genuinely separate submission. */
+const CHARGE_MATCH_MS = 60_000;
+
+const MAX_UNMATCHED = 200;
+
+/**
+ * Charges this account was billed that no surviving run accounts for — the deleted runs.
+ *
+ * 🔴 ClickHouse hands back `YYYY-MM-DD HH:MM:SS` with no zone, and it is UTC. `Date.parse` reads that
+ * shape as LOCAL time, so without the `Z` every charge shifts by the box's offset and nothing matches —
+ * which fails as "all runs deleted" on a correct account, silently. Pinned by a test.
+ */
+export function unaccountedCharges(
+  charges: TrainingChargeRow[],
+  submitTimes: (string | null)[]
+): TrainingChargeRow[] {
+  const submitted = submitTimes.flatMap((time) => {
+    const ms = time ? Date.parse(time) : NaN;
+    return Number.isNaN(ms) ? [] : [ms];
+  });
+  return charges.filter((charge) => {
+    const ms = Date.parse(`${charge.date.replace(' ', 'T')}Z`);
+    if (Number.isNaN(ms)) return true;
+    return !submitted.some((t) => Math.abs(t - ms) <= CHARGE_MATCH_MS);
+  });
+}
+
+/**
+ * Every training this account has PAID for, from the Buzz ledger, minus the ones a surviving run
+ * already accounts for.
+ *
+ * The rows above cannot answer "how many trainings has this account run": `remove-old-drafts` issues a
+ * raw `DELETE FROM "Model"` for any Draft model untouched for 30 days, so a run that was never published
+ * takes its version, its training file and its whole record with it. One ledger entry is written per
+ * submission (verified: an account holding 24 charges and one surviving version, with the survivor's
+ * `submittedAt` matching its charge to the second), and ClickHouse keeps them back to 2023 unpruned.
+ *
+ * So the ledger is the run LIST, not just a count: every charge is a submission, and the ones that match
+ * no surviving run are exactly the runs whose record was deleted.
+ *
+ * Fails soft. This is a footnote on one panel, and the endpoint that calls it is a single `Promise.all`
+ * over twelve queries — a ClickHouse blip must not take the other eleven panels down with it.
+ */
+async function getTrainingCharges(
+  userId: number,
+  runs: TrainingRun[]
+): Promise<TrainingCharges | null> {
+  try {
+    const rows = await getClickhouse().$query<{
+      id: string;
+      date: string;
+      buzz: string;
+      workflowId: string;
+    }>(`
+      SELECT
+        transactionId AS id,
+        date,
+        amount AS buzz,
+        JSONExtractString(details, 'workflowId') AS workflowId
+      FROM buzzTransactions
+      WHERE type = 'training' AND fromAccountId = ${Math.trunc(userId)}
+      ORDER BY date DESC
+    `);
+    if (!rows.length) return null;
+
+    // A retrain reuses the version, so one run can account for several charges — every `Submitted` in
+    // its history is one. `submittedAt` covers the ~8% of files with no history array.
+    const submitTimes = runs.flatMap((run) => [
+      ...(run.history ?? []).filter((h) => h.status === 'Submitted').map((h) => h.time),
+      run.submittedAt,
+    ]);
+
+    const unmatched = unaccountedCharges(
+      rows.map((r) => ({
+        id: r.id,
+        date: r.date,
+        buzz: Number(r.buzz),
+        workflowId: r.workflowId || null,
+      })),
+      submitTimes
+    );
+
+    return {
+      count: rows.length,
+      buzz: rows.reduce((sum, r) => sum + Number(r.buzz), 0),
+      first: rows[rows.length - 1]?.date ?? null,
+      last: rows[0]?.date ?? null,
+      unmatched: unmatched.slice(0, MAX_UNMATCHED),
+      truncated: unmatched.length > MAX_UNMATCHED,
+    };
+  } catch {
+    return null;
+  }
 }
 
 // BUZZ HISTORY (Retool's Receipts + Payments, which were two queries and two tables on the page).

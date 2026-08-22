@@ -171,6 +171,104 @@ Reported after the items above shipped.
       way to cancel any `component="a"` item inside it — reduced to the `stopPropagation` that was
       doing the actual work of keeping clicks off the card.
 
+- [x] **User Lookup's Training runs panel "isn't saving all of them".** It was showing every run it
+      had. Each row was labelled with the **version** name, and the training flow names a first version
+      `V1` — so a run on a model called "Vash the Stampede" rendered as a bare `V1`, with the model
+      name nowhere on the panel. The reporter's own run was on screen the whole time and unrecognisable.
+      Rows now lead with the model name and carry the version name beside it.
+
+      Worth writing down because the first two hours of this went the wrong way. The reported account
+      held exactly two trained versions and the panel showed two, so the query looked correct and the
+      missing runs looked deleted — deleting a training does hard-delete the `ModelVersion` (the list
+      calls `modelVersion.delete` whenever the model has more than one version), which is a real
+      mechanism and left no trace to contradict. That was inference dressed as a finding. A second
+      report naming one version id is what broke it: that row satisfied every predicate, and the query
+      returned it — verified against the replica AND by compiling the query onto a Kysely dummy driver
+      to rule out the `LEFT JOIN` condition leaking into the `WHERE`. Both facts were true and neither
+      was the answer, because nobody had asked what the row looks like once it renders.
+
+      Swept for the same shape: **Image Generation** had the mirror of it — every row labelled with the
+      MODEL name and no version, so a creator with several versions of one model got a column of
+      identical labels distinguished only by their counts. It carries the version name now too.
+
+      🔴 **Where the missing runs go: `remove-old-drafts` hard-deletes them.** That job runs nightly
+      (`43 2 * * *`) and issues `DELETE FROM "Model"` for every model in status `Draft` or `Deleted`
+      that has not been updated in 30 days and has under 10 downloads. A training that is submitted and
+      never published leaves its model in `Draft` — so 30 days later the model, its version, its
+      Training Data file and the whole run record are gone, by FK cascade, with nothing soft-deleted to
+      find afterwards.
+
+      This was observed live rather than inferred. The reported account held a second trained version —
+      a `Pending` run from 2026-07-22 on a Draft model — which was present in queries run early on
+      2026-08-21 evening and **absent from the same queries after that night's 02:43 UTC pass**. Both
+      the `ModelVersion` and the `Model` row are simply not there now.
+
+      Scale, measured the following morning: **139 models carrying 145 trained versions** were sitting
+      in the reaper's own predicate, i.e. roughly one night's worth. That is the ordinary rate at which
+      training history is destroyed, and it fully accounts for "I did ten trainings and see two" without
+      the user having deleted anything: what survives is what they published or touched inside 30 days.
+
+      It also explains why the orchestrator is no help — its own window is about 30 days, so both copies
+      of the record expire on roughly the same schedule.
+
+      **This corrects two earlier readings in this item.** The user-initiated hard delete
+      (`modelVersion.delete`) and the client's cleanup of failed runs #2+ are both real paths, but
+      neither is what happened here; the nightly reaper is, and it needs no user action at all.
+
+      ✅ **The count survives in ClickHouse, and the panel now shows it.** `buzzTransactions` keeps one
+      `training` row per submission — verified on the reported account, whose surviving run's
+      `submittedAt` matches its charge to the second. That account has **24 paid training runs between
+      2026-04-01 and 2026-06-18, 12,950 Buzz, no refunds**, against **one** version still in Postgres. So
+      the reporter's "about ten" was an understatement, and their expectation was correct: the runs
+      happened, and the platform deleted the evidence.
+
+      So the ledger is a run **list**, not a count. The panel renders it as one: the surviving runs as
+      before, then **"Runs with no surviving record"** — a row per charge, with its date and cost, for
+      every submission no surviving run accounts for. On the reported account that is 1 detailed row and
+      23 listed ones, which is the shape the reporter expected to see.
+
+      Matching is by timestamp: a run accounts for a charge within a minute of any of its `Submitted`
+      history entries or its `submittedAt` (a retrain reuses the version, so one run legitimately
+      answers for several charges). Verified against the reported account — 24 charges, 1 matched,
+      23 listed — and the pure part is covered by six tests.
+
+      ⚠️ **The names are gone, and that is what the mod team most wanted.** The ask after seeing this is
+      the title each training was given — "tee hee" and the like — because a run's *name* is the
+      behavioural signal when reading a training-data investigation. It is not recoverable: the name
+      lives only on the `Model`/`ModelVersion` rows the cascade removed. Checked and ruled out —
+      `model_names` in ClickHouse is a Postgres-backed dictionary, so it drops with the row;
+      `modelEvents`/`modelVersionEvents` carry ids and no names, and cover only 8 of this account's 24
+      runs anyway; the completion email carries the name but is not a queryable store; the orchestrator
+      has ~30 days.
+
+      What each deleted run does keep is its **workflow id** — `buzzTransactions.details` holds
+      `{"workflowId": "<userId>-<timestamp>"}` on 1,382,396 of 1,681,688 training charges, i.e. every one
+      since 2024-10. That is now on the row beside the date and cost. It is the run's only surviving
+      identity, and it is enough to confirm the account uses the trainer and how often, which the
+      reporters said is itself worth having.
+
+      **If names matter, that is the durable-record decision below, not a query.** Capturing the model
+      and version name at submit time into a table the cascade cannot reach is the only thing that makes
+      this answerable — for future runs only.
+
+      🔴 One trap, pinned by those tests: ClickHouse returns `YYYY-MM-DD HH:MM:SS` with **no zone**, and
+      it is UTC. `Date.parse` reads that shape as **local** time, so dropping the `Z` shifts every
+      charge by the box's offset, matches nothing, and reports a correct account as having lost every
+      run. Note the limit of the test: it fails on any non-UTC machine (verified — the revert reddens
+      two of the six) and **cannot** fail on CI's UTC runner.
+
+      It fails soft — the endpoint that calls it is a single `Promise.all` over twelve queries, and a
+      ClickHouse blip must not take the other eleven panels down.
+
+      (The moderator database does **not** hold this. Its only training-shaped table is
+      `Temp_FailedLoRATrain`, a six-column one-off snapshot, and it has no Buzz ledger at all.)
+
+      **The decision this leaves.** The bytes are not the issue — the training dataset is already purged
+      separately at 30 days, and a metadata row costs nothing. So the options are to exempt
+      `uploadType = 'Trained'` models from the reaper, to have it soft-delete them instead of issuing a
+      raw `DELETE`, or to record a training run in a table the cascade cannot reach. All three are
+      product calls with a storage argument attached, so none was made here.
+
 ### Contests
 
 Nothing below is built yet; each box carries what the code actually does today, because three of the

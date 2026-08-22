@@ -63,6 +63,8 @@ export type Reactions = {
 export type TrainingRun = {
   modelVersionId: number;
   modelId: number;
+  modelName: string | null;
+  /** The VERSION's name — "V1" on most runs, which is why the model name is carried beside it. */
   name: string | null;
   baseModel: string | null;
   trainingType: string | null;
@@ -73,11 +75,25 @@ export type TrainingRun = {
   maxEpochs: number | null;
   buzzCost: number | null;
   startedAt: string | null;
+  submittedAt: string | null;
   completedAt: string | null;
   engine: string | null;
   /** `trainingDetails.params` verbatim. Untyped on purpose — the key set differs per engine, so a
    *  declared shape would be wrong for whichever one ships next. */
   params: Record<string, unknown> | null;
+  submitCount: number | null;
+  history: { time: string; status: string }[] | null;
+};
+
+/** Trainings this account paid for. Larger than the row count whenever a run's model has been reaped. */
+export type TrainingCharges = {
+  count: number;
+  buzz: number;
+  first: string | null;
+  last: string | null;
+  /** Charges no surviving run accounts for — i.e. the runs whose record was deleted. */
+  unmatched: { id: string; date: string; buzz: number; workflowId: string | null }[];
+  truncated: boolean;
 };
 
 export type Notification = {
@@ -93,6 +109,7 @@ export type ResourceGeneration = {
   modelVersionId: number;
   modelId: number;
   modelName: string;
+  versionName: string | null;
   count: number;
 };
 
@@ -127,7 +144,7 @@ export type Account = {
   commentsV2: Capped<CommentV2>;
   cosmetics: Capped<Cosmetic>;
   reactions: Reactions;
-  trainings: { runs: TrainingRun[]; truncated: boolean };
+  trainings: { runs: TrainingRun[]; truncated: boolean; charges: TrainingCharges | null };
   bounties: Capped<Bounty>;
   bountyEntries: Capped<BountyEntry>;
   shopPurchases: Capped<ShopPurchase>;
