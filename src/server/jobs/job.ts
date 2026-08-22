@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { jobDurationHistogram, jobErrorsCounter } from '~/server/prom/client';
+import { jobDurationHistogram, jobErrorsCounter, seedJobMetrics } from '~/server/prom/client';
 import { longTaskLabelsArmed, runWithLongTaskLabel } from '~/server/eventloop-longtask';
 import { applySourceMaps } from '~/server/utils/errorHandling';
 
@@ -59,6 +59,20 @@ export function createJob(
   fn: (e: JobContext) => Promise<MixedObject | void>,
   options: Partial<JobOptions> = {}
 ) {
+  // Publish this job's series at zero NOW, rather than leaving it absent until the job
+  // first completes (or first throws). See seedJobMetrics for why an absent series and a
+  // healthy zero must be distinguishable here.
+  //
+  // Guarded because this runs at the MODULE scope of every job file, which the run-jobs
+  // route imports eagerly: an exception escaping here would fail that import and take
+  // EVERY cron job down. Losing a seeded zero is a legibility regression; losing the
+  // route is an outage, so the telemetry must never be able to cause one.
+  try {
+    seedJobMetrics(name);
+  } catch {
+    // Intentionally swallowed — see above.
+  }
+
   return {
     name,
     cron,
