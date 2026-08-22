@@ -148,8 +148,10 @@ const getVotedHideImages = async ({
     Instead of returning every image the user has voted on that matches their hidden preferences, only return the images the user has voted on where the tag hasn't been applied to the image yet (due to scoring, moderator controls)
     tagsOnImageDetails.disabled indicates that the tag isn't applied
   */
-  const hidden = votedHideImages.filter((x) => hiddenTagIds.includes(x.tagId));
-  const moderated = votedHideImages.filter((x) => moderatedTagIds.includes(x.tagId));
+  const hiddenSet = new Set(hiddenTagIds);
+  const moderatedSet = new Set(moderatedTagIds);
+  const hidden = votedHideImages.filter((x) => hiddenSet.has(x.tagId));
+  const moderated = votedHideImages.filter((x) => moderatedSet.has(x.tagId));
   const combined = [...hidden, ...moderated].map((x) => ({ id: x.imageId, tagId: x.tagId }));
   return combined as HiddenImage[];
 };

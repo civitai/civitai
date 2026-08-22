@@ -33,9 +33,12 @@ export const applyUserPreferences = middleware(async ({ input, ctx, next }) => {
       });
 
       const tagsToHide = hiddenTags.filter((x) => !disableHidden && x.hidden).map((x) => x.id);
+      // Membership set, not a scan: this runs ahead of `cacheIt`, so it is paid on
+      // cache hits too, and both inputs are unbounded per user.
+      const tagsToHideSet = new Set(tagsToHide);
 
       const imagesToHide = hiddenImages
-        .filter((x) => !x.tagId || tagsToHide.findIndex((tagId) => tagId === x.tagId) > -1)
+        .filter((x) => !x.tagId || tagsToHideSet.has(x.tagId))
         .map((x) => x.id);
 
       _input.excludedTagIds = [...(_input.excludedTagIds ?? []), ...tagsToHide];
