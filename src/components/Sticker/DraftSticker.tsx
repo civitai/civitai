@@ -39,6 +39,7 @@ import {
 } from '~/components/Sticker/free-offer';
 import { payoutCopy, stickerPurchaseCopy } from '~/components/Sticker/payout-copy';
 import { stickerArtworkStyle } from '~/components/Sticker/placement-appearance';
+import { DRAFT_STICKER_Z } from '~/components/Sticker/placement-layers';
 import { useCreateStickerPlacement } from '~/components/Sticker/placement.util';
 import { purchaseCanBeRetriedFresh, useBuyStickerUses } from '~/components/Sticker/sticker.util';
 import type { ResolvedSticker } from '~/components/Sticker/sticker.util';
@@ -696,10 +697,11 @@ export function DraftSticker({
         width: `${draft.scale * 100}%`,
         transform: `translate(-50%, -50%) rotate(${draft.rotation}deg)`,
         touchAction: 'none',
-        // The one thing selection still decides. Two drafts close together have
+        // Above the owner's pending controls (see placement-layers.ts).
+        // Selection still decides between two drafts — close together they have
         // overlapping buy buttons, and the one just touched should be the one
         // the next click reaches.
-        zIndex: selected ? 1 : undefined,
+        zIndex: selected ? DRAFT_STICKER_Z + 1 : DRAFT_STICKER_Z,
       }}
       onPointerDown={begin('move')}
     >

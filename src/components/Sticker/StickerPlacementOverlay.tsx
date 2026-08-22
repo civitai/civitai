@@ -6,6 +6,7 @@ import type { PlacedSticker } from '~/components/Sticker/placement.util';
 import { orderPlacements, placementRevealDelays } from '~/components/Sticker/placement-order';
 import { stickerArtworkStyle } from '~/components/Sticker/placement-appearance';
 import { placementControlPosition } from '~/components/Sticker/placement-control-position';
+import { PENDING_CONTROL_Z } from '~/components/Sticker/placement-layers';
 import { StickerPlacementActions } from '~/components/Sticker/StickerPlacementActions';
 import { StickerPlacementHoverCard } from '~/components/Sticker/StickerPlacementHoverCard';
 import { PlacementFreeBadge } from '~/components/Placement/PlacementFreeBadge';
@@ -28,15 +29,6 @@ import {
   type CSSProperties,
   type ReactElement,
 } from 'react';
-
-/**
- * The pending controls' layer, above the stickers and above the draft.
- *
- * Only has to clear the draft sticker's own z-index, which is 1 — the number is
- * this far clear of it so a later hand-written z-index nearby does not silently
- * bury the owner's only way to answer a pending placement.
- */
-const PENDING_CONTROL_Z = 1000;
 
 /**
  * Clear air between the bottom of a pending sticker and the owner's controls.
@@ -327,21 +319,17 @@ export function StickerPlacementOverlay({
 
   const visible = step == null ? ordered : ordered.slice(0, step + 1);
 
-  // The owner's approve/decline for each pending placement, collected here and
-  // drawn in their own layer below. They cannot live in the isolated layer: they
-  // have to out-rank the draft sticker as well as every placed one, and the
-  // isolation that keeps the layer order from leaking would trap them under it.
+  // The owner's approve/decline, drawn in their own layer below so they out-rank
+  // every placed sticker and not just the one they belong to; isolation would cap
+  // them at the layer's own z-index.
   const pendingControls: ReactElement[] = [];
 
   return (
     <>
       {/* `isolate` is load-bearing. Without it these z-indexes are hoisted into
           whatever context the surface provides and compete with everything else
-          in it: on the detail view the draft being dragged (which is a sibling
-          with z-index 1 at most, so every sticker above the first would cover
-          it, along with its buy button and its hit area), and on a feed card the
-          header and footer, which are absolutely positioned with no z-index of
-          their own and rely on DOM order — AspectRatioImageCard states "under
+          in it: on a feed card the header and footer, which are absolutely
+          positioned with no z-index of their own and rely on DOM order — AspectRatioImageCard states "under
           the header and footer" as a contract. Contained, the whole layer keeps
           the z-index it had before this change, and the ordering inside it is
           purely internal. */}
@@ -472,20 +460,48 @@ export function StickerPlacementOverlay({
                 />
               )}
 
-              {/* Centred under the sticker, directly above the owner's approve
-                  and decline controls — those are positioned off the sticker's
-                  measured height, so this rides the same edge they start from.
+              {/* A label, not a control — the placer cannot act on it — so it
+                  needs neither the pending-controls layer nor an escape from the
+                  box's transform. Counter-rotated because rotation runs to ±180
+                  and a label riding it reads upside down.
 
-                  Inside the artwork's box on a card for the same reason the
-                  pending ring is: a card clips anything outset. */}
-              {showsFree && (
+                  🔴 `max-w-full` + `truncate` is the containment, and it is the
+                  point of the whole block. `whitespace-nowrap` alone makes
+                  min-content equal max-content, so the box's width constrains
+                  nothing and an ~85px label hangs over both edges of a sticker
+                  placed below about scale 0.10 — which is the collision this was
+                  moved to avoid, just sideways. Truncated it degrades to
+                  "Awaiting…" and the dashed ring carries the rest. */}
+              {placement.isPending && interactive && !isOwner && (
                 <div
-                  className={clsx(
-                    'absolute left-1/2 -translate-x-1/2 whitespace-nowrap',
-                    interactive && 'pointer-events-auto',
-                    surface === 'card' ? 'bottom-0' : '-bottom-3'
-                  )}
+                  className="pointer-events-none absolute bottom-1 left-1/2 flex max-w-full items-center gap-1"
+                  style={{ transform: `translateX(-50%) rotate(${-placement.data.rotation}deg)` }}
                 >
+                  {/* "Pending", not the "Awaiting review" the queues use: the
+                      longer wording truncates inside a sticker at its default
+                      size, and the hover card carries the detail. */}
+                  <span className="truncate rounded bg-yellow-6 px-1.5 py-0.5 text-[10px] font-semibold leading-tight text-dark-9">
+                    Pending
+                  </span>
+                  {/* Stated, not explained: the popover on `PlacementFreeBadge`
+                      answers "why is this free and how do I stop it", which is
+                      the owner's question. `shrink-0` so the shorter, more
+                      surprising fact is the one that survives a small sticker. */}
+                  {showsFree && (
+                    <span className="shrink-0 rounded bg-blue-6 px-1.5 py-0.5 text-[10px] font-semibold leading-tight text-white">
+                      Free
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {/* Card only. A card draws no controls and no label, so this is
+                  the whole pending signal there, and it goes inside the box for
+                  the same reason the ring does — a card clips anything outset.
+                  On the detail view the fact is carried beside whichever of the
+                  two the viewer gets. */}
+              {showsFree && !interactive && (
+                <div className="absolute bottom-0 left-1/2 -translate-x-1/2 whitespace-nowrap">
                   <PlacementFreeBadge noun="placement" solid />
                 </div>
               )}
@@ -529,7 +545,7 @@ export function StickerPlacementOverlay({
             box: controlBox,
           });
 
-          if (stickerHeights[placement.id] > 0)
+          if (isOwner && stickerHeights[placement.id] > 0)
             pendingControls.push(
               <div key={placement.id}>
                 {/* ⚠️ Known wrong, and left wrong deliberately.
@@ -543,22 +559,23 @@ export function StickerPlacementOverlay({
                 square media box clears the sticker by half its height again.
 
                 Anchoring inside the sticker's own box fixes the arithmetic and
-                costs three worse things, and the third is why the obvious
-                restructure is not enough on its own:
+                costs three worse things:
                   - the badge lands inside the hover-card trigger, whose 400px
                     dropdown opens over the owner's approve/decline — fixed by
                     having the hover card wrap only the artwork;
-                  - rotation is clamped to ±180, so the badge goes upside down
-                    AND ends up above the sticker. Counter-rotating fixes only
-                    the first half; `top-full` is the local bottom edge, which
-                    at 180° is the screen top and at 90° is off to the side.
-                    Staying upright and staying below are two separate fixes;
+                  - anchoring BELOW the box (`top-full`) rides the rotation: at
+                    180° the local bottom edge is the screen top, at 90° it is
+                    off to the side. Counter-rotation keeps it upright but does
+                    not move it back below. An anchor inside the box — the
+                    placer's label above — avoids this; a control has to sit
+                    outside;
                   - `body`'s transform makes it a stacking context, so a z-index
-                    inside it stops out-ranking other placements — a draft
-                    dragged over a pending one then swallows the owner's
-                    buttons. Nothing done INSIDE the box can fix that; it needs
-                    the badge kept outside the transform (what this does) or a
-                    z-index on the pending wrapper itself. */}
+                    inside it stops out-ranking other placements — a sticker
+                    placed later then covers the owner's buttons. Nothing done
+                    INSIDE the box can fix that; it needs the controls kept
+                    outside the transform (what this does) or a z-index on the
+                    pending wrapper itself. A draft covers them either way now,
+                    which is DRAFT_STICKER_Z doing what it says. */}
                 {/* Not rendered at all until the sticker has been measured.
                   Rendering it early would put it at the sticker's centre — on
                   top of the artwork — and then jump when the measurement lands.
@@ -569,7 +586,14 @@ export function StickerPlacementOverlay({
                 <div
                   ref={measureControl(placement.id)}
                   className={clsx(
-                    'pointer-events-auto absolute',
+                    // `w-max` is load-bearing, not tidying. Absolutely positioned
+                    // with no width, this shrink-to-fits against the space left
+                    // between its `left` and the container's right edge — so near
+                    // that edge it comes back NARROWER than its content, the
+                    // measurement feeding the clamp is that squeezed width, and
+                    // the clamp concludes it fits while the buttons are cut off.
+                    // The wider the row, the further in it starts happening.
+                    'pointer-events-auto absolute w-max',
                     // The translate goes with the clamp: a clamped `left` is the
                     // control's own left edge, stated against the box, so
                     // shifting it by half its width afterwards would put it back
@@ -596,19 +620,19 @@ export function StickerPlacementOverlay({
                     ...delayStyle,
                   }}
                 >
-                  <div>
-                    {isOwner ? (
-                      <StickerPlacementActions
-                        placementIds={[placement.id]}
-                        hasComment={placement.hasComment}
-                        free={placement.free}
-                        compact
-                      />
-                    ) : (
-                      <span className="whitespace-nowrap rounded bg-yellow-6 px-2 py-0.5 text-[10px] font-semibold text-dark-9">
-                        Awaiting review
-                      </span>
-                    )}
+                  {/* In the control row rather than on the sticker. Anchored to
+                      the artwork it was clipped by the same edge that clipped
+                      the buttons — and it landed on top of them, since both were
+                      measured off the sticker's bottom. Here it inherits the
+                      clamp `placementControlPosition` already applies. */}
+                  <div className="flex items-center gap-1">
+                    {showsFree && <PlacementFreeBadge noun="placement" solid />}
+                    <StickerPlacementActions
+                      placementIds={[placement.id]}
+                      hasComment={placement.hasComment}
+                      free={placement.free}
+                      compact
+                    />
                   </div>
                 </div>
               </div>
@@ -627,10 +651,9 @@ export function StickerPlacementOverlay({
         })}
       </div>
 
-      {/* Outside the isolated layer, and above the draft: an owner arranging
-          their own sticker must not lose the buttons that answer someone
-          else's. Deliberately NOT inside the layer above — isolation would trap
-          these under the draft along with everything else. */}
+      {/* Outside the isolated layer so these out-rank every placed sticker, not
+          just the one they belong to. Below the draft on purpose
+          (DRAFT_STICKER_Z > PENDING_CONTROL_Z): whatever is under the cursor wins. */}
       {pendingControls.length > 0 && (
         <div
           ref={measureBox}
