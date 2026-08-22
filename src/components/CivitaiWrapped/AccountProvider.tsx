@@ -151,21 +151,45 @@ export const AccountProvider = ({ children }: { children: ReactNode }) => {
           changed = true;
         }
       };
-      // NB: skip the current user while IMPERSONATING — the "current user" is then the impersonated target, not
-      // a real account linked on this device, so it must never enter the switcher roster (impersonation also
-      // never touches the hub device set, so deviceAccounts below won't reintroduce it).
-      if (currentUserId && hasSessionUser && !isImpersonating) {
-        upsert(String(currentUserId), {
+      // Which id the SESSION branch owns, if any — computed ONCE, from the hoisted session primitives,
+      // because the deviceAccounts loop below has to skip it. NB: `null` while IMPERSONATING — the "current
+      // user" is then the impersonated target, not a real account linked on this device, so it must never
+      // enter the switcher roster (impersonation also never touches the hub device set, so the loop below
+      // won't reintroduce it either way).
+      const sessionOwnedId =
+        currentUserId && hasSessionUser && !isImpersonating ? String(currentUserId) : null;
+      // The `currentUserId` re-test is only there to narrow `number | undefined` for the `id` field below;
+      // `sessionOwnedId` is already the authority on whether this branch runs.
+      if (sessionOwnedId && currentUserId) {
+        upsert(sessionOwnedId, {
           id: currentUserId,
-          username: sessionUsername ?? prev[String(currentUserId)]?.username ?? '',
-          // NO `?? prev` fallback for the avatar here (unlike the deviceAccounts loop below). In THIS branch
-          // the session user is known-present, so its `image` is authoritative: `undefined` means "this user
-          // has no profile picture", not "no data". Falling back to the remembered value made removing a
-          // profile picture impossible to reflect — the switcher kept rendering the deleted avatar forever.
+          // Session first; the device set and the remembered roster are only consulted when the session
+          // carries no username (`SessionUser.username` is optional). `||` past the first term because the
+          // device set stores `''` for an unknown username, and '' is not a username.
+          username:
+            sessionUsername ??
+            (deviceAccounts[sessionOwnedId]?.username || prev[sessionOwnedId]?.username || ''),
+          // NO fallback of ANY kind for the avatar here (unlike the username above and the deviceAccounts
+          // loop below) — not the remembered roster value, not the device set. In THIS branch the session
+          // user is known-present, so its `image` is authoritative: `undefined` means "this user has no
+          // profile picture", not "no data". Falling back made removing a profile picture impossible to
+          // reflect (the switcher kept rendering the deleted avatar forever), and the device set is a 30-day
+          // cache that would happily hand back the deleted url in the read-after-write window.
           avatarUrl: sessionAvatarUrl,
         });
       }
       for (const [id, a] of Object.entries(deviceAccounts)) {
+        // 🔴 The signed-in user's own entry belongs to the session branch above — never let the device set
+        // overwrite it. `upsert` compares each candidate against `prev` (the state this effect started from),
+        // NOT against the `next` it is accumulating, so when both branches touch one id the LAST writer wins
+        // regardless of which value is fresher. The hub device set is a cache (30-day rolling, 60s client
+        // staleTime) and can still be serving the PREVIOUS avatar url in the read-after-write window right
+        // after a profile-picture change — and changing a picture hard-deletes the old image, so the loser of
+        // that race is a url that 404s. The session is the copy the rest of the app already renders from.
+        // Skipping the id also means every id is written at most ONCE, which is what keeps comparing against
+        // `prev` correct — and keeps `changed` exact, so a no-op pass still returns the SAME object and
+        // setRoster bails (no re-render / no localStorage churn / no render loop).
+        if (id === sessionOwnedId) continue;
         upsert(id, {
           id: a.id,
           username: a.username || prev[id]?.username || '',
