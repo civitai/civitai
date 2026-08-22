@@ -47,6 +47,7 @@ import {
 import {
   dataForModelsCache,
   modelTagCache,
+  modelVersionPublicDonationGoalsCache,
   modelVotableTagsCache,
   userBasicCache,
   userModelCountCache,
@@ -174,6 +175,7 @@ import {
 import { decreaseDate } from '~/utils/date-helpers';
 import { isPaidAccessActive } from '@civitai/buzz';
 import {
+  bustPaidAccessCache,
   getPaidAccess,
   getPublicPaidAccessForModelVersions,
 } from '~/server/services/paid-access.service';
@@ -4767,6 +4769,51 @@ export async function transferModelOwnership({
       where: { id: { in: modelIds } },
       data: { userId: targetUserId },
     }),
+    // PaidAccess.ownerId is a denormalised copy of the model owner, and it is what decides who
+    // generates free from a gated version and whose scheduled sales may reprice it. Left behind, the
+    // previous owner keeps both over a model they no longer hold. Joined against ModelVersion rather
+    // than a pre-read id list so a version created between the read and this statement is still moved.
+    //
+    // ModelVersionSale.userId deliberately does NOT move: a sale is the previous owner's pricing
+    // decision. getSalesFor re-checks it against the owner resolved here, so their running sale stops
+    // applying to a transferred version — the version reprices to full at the transfer, and that is the
+    // intended outcome, not an oversight.
+    dbWrite.$executeRaw`
+      UPDATE "PaidAccess" pa
+      SET "ownerId" = ${targetUserId}, "updatedAt" = NOW()
+      FROM "ModelVersion" mv
+      WHERE pa."entityType" = 'ModelVersion'::"PaidAccessEntityType"
+        AND pa."entityId" = mv.id
+        AND mv."modelId" = ANY(${modelIds}::int[])
+        AND pa."ownerId" <> ${targetUserId}
+    `,
+    // DonationGoal.userId is the other owner copy the transfer used to miss, and this one routes
+    // money: a donation pays goal.userId, so a donation on a transferred model paid the previous
+    // owner. The target is dual-written (legacy modelVersionId + polymorphic entityType/entityId), so
+    // both spellings have to move — as two statements, not one OR, because an OR across them makes the
+    // planner drive from DonationGoal and seq-scan the whole table on every transfer regardless of how
+    // many models it names (measured on prod: 176ms/155k buffers as an OR, ~20ms/3k buffers split).
+    // The `userId <> target` guard also makes the two disjoint, so their counts sum without
+    // double-counting a dual-written row — which holds only because these run in ONE transaction, in
+    // THIS order, with that guard: leg 1 writes the target, so leg 2 no longer matches the row. Move
+    // either statement out of the array or reorder them and the sum silently double-counts.
+    dbWrite.$executeRaw`
+      UPDATE "DonationGoal" dg
+      SET "userId" = ${targetUserId}
+      FROM "ModelVersion" mv
+      WHERE mv."modelId" = ANY(${modelIds}::int[])
+        AND dg."modelVersionId" = mv.id
+        AND dg."userId" <> ${targetUserId}
+    `,
+    dbWrite.$executeRaw`
+      UPDATE "DonationGoal" dg
+      SET "userId" = ${targetUserId}
+      FROM "ModelVersion" mv
+      WHERE mv."modelId" = ANY(${modelIds}::int[])
+        AND dg."entityType" = 'ModelVersion'::"PaidAccessEntityType"
+        AND dg."entityId" = mv.id
+        AND dg."userId" <> ${targetUserId}
+    `,
     dbWrite.modelMetric.updateMany({
       where: { modelId: { in: modelIds } },
       data: { userId: targetUserId },
@@ -4788,15 +4835,57 @@ export async function transferModelOwnership({
     await tracker.modelEvent({ type: 'Transfer', modelId: m.id, nsfw: m.nsfw });
   }
 
+  const affectedVersionIds = (
+    await dbWrite.modelVersion.findMany({
+      where: { modelId: { in: modelIds } },
+      select: { id: true },
+    })
+  ).map((v) => v.id);
+
+  // Fail-open, individually. These run AFTER the commit, so a throw here reports failure for a
+  // transfer that already happened — and the retry is refused by the pre-flight guard above, leaving
+  // the operator with no in-product way to finish the invalidation. A logged stale cache expires on
+  // its own; nothing here can misroute money, because both payout paths read the primary fresh.
+  const invalidation = (name: string, work: Promise<unknown>) =>
+    work.catch((error) =>
+      logToAxiom({
+        type: 'error',
+        name: 'model-ownership-transfer-invalidation',
+        message: `${name} failed after a committed transfer`,
+        error: { name, modelIds, targetUserId, error: String(error) },
+      }).catch(() => null)
+    );
+
   await Promise.all([
-    modelsSearchIndex.queueUpdate(
-      modelIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+    // Everything keyed off the owner. modelVersionAccessCache is the one that matters most here: it
+    // holds Model.userId for a DAY, and hasEntityAccess grants "owners always have access" from it, so
+    // without this the previous owner keeps reaching a gated version the UPDATE above just moved.
+    // Also queues the model search-index update these transferred models need.
+    invalidation('bustMvCache', bustMvCache(affectedVersionIds, modelIds)),
+    // Deliberately duplicated with the queueUpdate inside bustMvCache. That one sits behind four
+    // awaits that can throw, and it is the only leg here whose loss is permanent — every cache
+    // self-heals on a TTL, while the Meilisearch document keeps the previous owner until something
+    // else touches the model. A duplicate enqueue is free: processQueues dedupes with a Set.
+    invalidation(
+      'modelsSearchIndex.queueUpdate',
+      modelsSearchIndex.queueUpdate(
+        modelIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+      )
+    ),
+    // Not covered by bustMvCache: the gate row carries ownerId, the public donation goal carries userId.
+    invalidation('bustPaidAccessCache', bustPaidAccessCache('ModelVersion', affectedVersionIds)),
+    invalidation(
+      'bustPublicDonationGoals',
+      modelVersionPublicDonationGoalsCache.bust(affectedVersionIds)
     ),
     affectedImageIds.length
-      ? queueImageSearchIndexUpdate({
-          ids: affectedImageIds,
-          action: SearchIndexUpdateQueueAction.Update,
-        })
+      ? invalidation(
+          'queueImageSearchIndexUpdate',
+          queueImageSearchIndexUpdate({
+            ids: affectedImageIds,
+            action: SearchIndexUpdateQueueAction.Update,
+          })
+        )
       : Promise.resolve(),
   ]);
 
@@ -4810,9 +4899,11 @@ export async function transferModelOwnership({
       sourceUserIds,
       modUserId,
       modelsUpdated: result[0].count,
-      metricsUpdated: result[1].count,
-      postsUpdated: Number(result[2]),
-      imagesUpdated: Number(result[3]),
+      paidAccessUpdated: Number(result[1]),
+      donationGoalsUpdated: Number(result[2]) + Number(result[3]),
+      metricsUpdated: result[4].count,
+      postsUpdated: Number(result[5]),
+      imagesUpdated: Number(result[6]),
     },
   }).catch(() => null);
 
@@ -4820,8 +4911,10 @@ export async function transferModelOwnership({
 
   return {
     modelsUpdated: result[0].count,
-    metricsUpdated: result[1].count,
-    postsUpdated: Number(result[2]),
-    imagesUpdated: Number(result[3]),
+    paidAccessUpdated: Number(result[1]),
+    donationGoalsUpdated: Number(result[2]) + Number(result[3]),
+    metricsUpdated: result[4].count,
+    postsUpdated: Number(result[5]),
+    imagesUpdated: Number(result[6]),
   };
 }
