@@ -124,27 +124,36 @@ export function useBuyStickerUses({
 }
 
 /**
+ * Ids split into request-sized chunks, deduped, **in insertion order**.
+ *
+ * Sorting would make the key independent of the order ids arrive in, which is
+ * worth a little when two components ask for the same set differently ordered —
+ * and costs a lot to any consumer whose list GROWS. A feed appends older, lower
+ * cosmetic ids as it pages; sorted, each one lands mid-list, shifts every chunk
+ * boundary after it, changes every chunk key, and refetches the whole surface.
+ *
+ * Every id lands in exactly one chunk: this is what stops a large collection
+ * being silently truncated to the first chunk, which is what the offers query
+ * used to do past `STICKER_OFFER_LIMIT`.
+ */
+export function chunkStickerIds(ids: number[], size: number): number[][] {
+  const unique = [...new Set(ids)];
+  const result: number[][] = [];
+  for (let i = 0; i < unique.length; i += size) result.push(unique.slice(i, i + size));
+  return result;
+}
+
+/**
  * One request per 100 distinct ids for a whole surface, rather than one per
  * rendered sticker — tRPC request batching sits behind a feature flag that is off
  * by default, so per-component queries would be per-component HTTP requests.
  */
 export function useStickerCosmetics(ids: number[]) {
-  const chunks = useMemo(() => {
-    // **Insertion order, not sorted.** Sorting makes a key independent of the
-    // order ids arrive in, which is worth a little when two components ask for
-    // the same set differently ordered — and costs a lot to the one consumer
-    // whose list GROWS. A feed appends older, lower cosmetic ids as it pages;
-    // sorted, each one lands mid-list, shifts every chunk boundary after it,
-    // changes every chunk key, and refetches the whole surface's artwork. Below
-    // 100 distinct stickers there is one chunk and no boundary to shift, so this
-    // only bites the case that matters: a long scroll once stickers are popular.
-    const unique = [...new Set(ids)];
-    const result: number[][] = [];
-    for (let i = 0; i < unique.length; i += STICKER_FETCH_CHUNK)
-      result.push(unique.slice(i, i + STICKER_FETCH_CHUNK));
-    return result;
+  const chunks = useMemo(
+    () => chunkStickerIds(ids, STICKER_FETCH_CHUNK),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ids.join(',')]);
+    [ids.join(',')]
+  );
 
   const queries = trpc.useQueries((t) =>
     chunks.map((chunk) =>
@@ -169,45 +178,49 @@ export function useStickerCosmetics(ids: number[]) {
 }
 
 /**
- * What a sticker's top-up costs, for whoever needs to offer one.
+ * What a top-up costs, for the stickers actually being asked about.
  *
- * 🔴 SHARED BECAUSE THE KEY HAS TO BE. Two surfaces ask this — the tray, when a
- * spent sticker is dragged out, and the draft layer, when a spent sticker is
- * duplicated — and the second one keyed its query on the DRAFTED ids while the
- * tray keys on the OWNED ids. Different arrays are different cache entries, so
- * what looked like a shared read was a second request that refetched every time
- * a draft was laid down. The tray's own comment warns against exactly that
- * derivation; the fix is for both callers to ask the same question.
+ * 🔴 TAKES THE IDS IT NEEDS, AND THAT IS THE FIX. This used to fetch an offer
+ * for every sticker the placer OWNS, capped at `STICKER_OFFER_LIMIT`, so anyone
+ * past that cap got no offer at all for the rest — which renders as "this
+ * sticker sells no extra uses", permanently, on the stickers they bought last.
+ * The cap existed to keep one query key stable across two callers; there is only
+ * one caller now, and it knows the handful of ids it has drafted. Chunked in
+ * insertion order for the same reason `useStickerCosmetics` is: a growing list
+ * must not reshuffle the keys it already has. The chunk is the endpoint's own
+ * maximum, so no collection can outgrow the request.
  *
  * The owned payload's `pricePerUse` is the fallback rather than an afterthought:
  * `purchase` is snapshotted onto a draft when it is created and never
  * recomputed, so a copy made before this query resolves would be stuck
  * permanently on "this sticker sells no extra uses" — a false statement, frozen.
  */
-export function useStickerRefill() {
+export function useStickerRefill(cosmeticIds: number[]) {
   const currentUser = useCurrentUser();
-  const { sticker } = useOwnedSticker();
 
-  // The same ids the tray asks for, in the same order: every owned sticker,
-  // newest first, capped where the schema caps. Past the cap the whole query
-  // fails zod validation and `offers` stays undefined — silently, for anyone
-  // with a large collection.
-  const ownedIds = useMemo(
-    () => sticker.slice(0, STICKER_OFFER_LIMIT).map((option) => option.id),
-    [sticker]
+  // Chunked by the endpoint's OWN maximum, so the request can never be the thing
+  // that fails: `getStickerOffers` rejects more ids than this.
+  const chunks = useMemo(
+    () => chunkStickerIds(cosmeticIds, STICKER_OFFER_LIMIT),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [cosmeticIds.join(',')]
   );
 
-  const { data: offers } = trpc.cosmetic.getStickerOffers.useQuery(
-    { ids: ownedIds },
-    { enabled: !!currentUser && !!ownedIds.length, staleTime: 60_000 }
+  const queries = trpc.useQueries((t) =>
+    chunks.map((chunk) =>
+      t.cosmetic.getStickerOffers({ ids: chunk }, { enabled: !!currentUser, staleTime: 60_000 })
+    )
   );
 
   return useMemo(() => {
-    const byCosmetic = new Map(offers?.map((offer) => [offer.cosmeticId, offer]));
+    const byCosmetic = new Map<number, StickerOfferLike>();
+    for (const query of queries)
+      for (const offer of query.data ?? []) byCosmetic.set(offer.cosmeticId, offer);
 
     return (cosmeticId: number, ownedPricePerUse?: number) =>
       refillFromOffer(byCosmetic.get(cosmeticId), ownedPricePerUse);
-  }, [offers]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queries.map((q) => q.dataUpdatedAt).join(',')]);
 }
 
 /** One offer turned into the gate a draft carries. Pure, so it can be asserted. */
