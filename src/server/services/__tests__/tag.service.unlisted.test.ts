@@ -1,48 +1,64 @@
 import { vi, describe, it, expect, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 const {
   imageTagsFetch,
   imageTagsBust,
   tagCacheFetch,
   imageVotes,
-  modelTagFindMany,
   modelVotes,
-  prismaImageVotes,
-  prismaModelVotes,
   modelVotableTagsFetch,
   modelVotableTagsBust,
-  executeRaw,
-  dbWriteQueryRaw,
-  dbReadQueryRaw,
-  modelFindFirst,
-  redisDel,
-  redisPackedGet,
-  redisPackedSet,
   bustCacheTagSpy,
 } = vi.hoisted(() => ({
   imageTagsFetch: vi.fn(),
   imageTagsBust: vi.fn(),
   tagCacheFetch: vi.fn(),
   imageVotes: vi.fn().mockResolvedValue([]),
-  modelTagFindMany: vi.fn(),
   modelVotes: vi.fn().mockResolvedValue([]),
-  prismaImageVotes: vi.fn(async () => {
-    throw new Error('tagsOnImageVote.findMany must not be called — ported to Kysely');
-  }),
-  prismaModelVotes: vi.fn(async () => {
-    throw new Error('tagsOnModelsVote.findMany must not be called — ported to Kysely');
-  }),
   modelVotableTagsFetch: vi.fn(),
   modelVotableTagsBust: vi.fn(),
-  executeRaw: vi.fn().mockResolvedValue(undefined),
-  dbWriteQueryRaw: vi.fn().mockResolvedValue([]),
-  dbReadQueryRaw: vi.fn().mockResolvedValue([{ count: 0 }]),
-  modelFindFirst: vi.fn().mockResolvedValue({ userId: 999 }),
-  redisDel: vi.fn().mockResolvedValue(1),
-  redisPackedGet: vi.fn().mockResolvedValue(null),
-  redisPackedSet: vi.fn().mockResolvedValue(undefined),
   bustCacheTagSpy: vi.fn().mockResolvedValue(undefined),
 }));
+
+// The db and redis clients come from the canonical shared mocks. The read/write
+// split the old direct mock declared is preserved node for node — `deleteTags`
+// reads on `dbWrite.$queryRaw` (tag.service.ts:919/:930/:942) while the
+// moderation-count check in `addTagVotes` reads on `dbRead.$queryRaw` (:711),
+// so the two must NOT collapse onto one spy.
+const executeRaw = dbMock.dbWrite.$executeRaw;
+const dbWriteQueryRaw = dbMock.dbWrite.$queryRaw;
+const dbReadQueryRaw = dbMock.dbRead.$queryRaw;
+const modelFindFirst = dbMock.dbRead.model.findFirst;
+// Kept only to prove the vote reads NO LONGER go through the Prisma engine.
+const prismaImageVotes = dbMock.dbRead.tagsOnImageVote.findMany;
+const prismaModelVotes = dbMock.dbRead.tagsOnModelsVote.findMany;
+// Kept only to prove the model path no longer reads the ModelTag view directly.
+const modelTagFindMany = dbMock.dbRead.modelTag.findMany;
+const redisDel = redisMock.redis.del;
+const redisPackedGet = redisMock.redis.packed.get;
+const redisPackedSet = redisMock.redis.packed.set;
+
+// Behaviour the old fixtures supplied, restated on the canonical nodes. These
+// are set once, at module scope, so they survive the `vi.clearAllMocks()` in
+// each `beforeEach` exactly as the hoisted spies' own defaults did.
+executeRaw.mockResolvedValue(undefined);
+dbWriteQueryRaw.mockResolvedValue([]);
+dbReadQueryRaw.mockResolvedValue([{ count: 0 }]);
+modelFindFirst.mockResolvedValue({ userId: 999 });
+// `image.findFirst` shared the same spy — `addTagVotes` reads `creator?.userId`
+// from whichever of the two the entity type selects.
+dbMock.dbRead.image.findFirst.mockResolvedValue({ userId: 999 });
+redisDel.mockResolvedValue(1);
+redisPackedGet.mockResolvedValue(null);
+redisPackedSet.mockResolvedValue(undefined);
+prismaImageVotes.mockImplementation(async () => {
+  throw new Error('tagsOnImageVote.findMany must not be called — ported to Kysely');
+});
+prismaModelVotes.mockImplementation(async () => {
+  throw new Error('tagsOnModelsVote.findMany must not be called — ported to Kysely');
+});
 
 // deleteTags now also busts the static getTags listing cache via bustCacheTag('getTags').
 // Spy only that helper; keep the rest of cache-helpers real so no other read-through breaks.
@@ -58,19 +74,6 @@ vi.mock('~/server/redis/caches', () => ({
   modelVotableTagsCache: { fetch: modelVotableTagsFetch, bust: modelVotableTagsBust },
   tagCache: { fetch: tagCacheFetch },
 }));
-// deleteTags now busts the per-name getTagWithModelCount cache via redis.del; stub the
-// redis client so the mutation never reaches a real connection. Keep the real REDIS_KEYS
-// so the key assertions verify the actual constant.
-vi.mock('~/server/redis/client', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('~/server/redis/client')>();
-  return {
-    ...actual,
-    redis: {
-      del: redisDel,
-      packed: { get: redisPackedGet, set: redisPackedSet },
-    },
-  };
-});
 // The per-user vote reads run through @civitai/db-queries (Kysely over the app's own pg pool),
 // bypassing the Prisma query engine. Mocked at that seam; the Prisma spies below are kept only to
 // prove those reads no longer go through it.
@@ -78,21 +81,6 @@ vi.mock('@civitai/db-queries/tag', () => ({
   listImageTagVotes: imageVotes,
   listImageTagVotesMany: imageVotes,
   listModelTagVotes: modelVotes,
-}));
-vi.mock('~/server/db/client', () => ({
-  dbRead: {
-    tagsOnImageVote: { findMany: prismaImageVotes },
-    tagsOnModelsVote: { findMany: prismaModelVotes },
-    // Kept only to prove the model path NO LONGER reads the ModelTag view directly.
-    modelTag: { findMany: modelTagFindMany },
-    model: { findFirst: modelFindFirst },
-    image: { findFirst: modelFindFirst },
-    $queryRaw: dbReadQueryRaw,
-  },
-  dbWrite: {
-    $executeRaw: executeRaw,
-    $queryRaw: dbWriteQueryRaw,
-  },
 }));
 // clearCache() fans out to the hidden-preferences caches — stub them so the vote
 // mutations don't reach real Redis/DB.

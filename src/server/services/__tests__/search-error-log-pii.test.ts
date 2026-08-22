@@ -16,18 +16,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Mock preamble mirrors image-metrics-timeout.test.ts: the smallest set of
 // stubs that lets image.service import without booting real infra.
 
-import type * as LoggingClient from '~/server/logging/client';
 import type * as MeilisearchClient from '~/server/meilisearch/client';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
-const { logToAxiomMock, fetchDocumentsAbortableMock } = vi.hoisted(() => ({
-  logToAxiomMock: vi.fn(() => Promise.resolve()),
+// `logToAxiom` comes from the canonical shared mock (registered globally in
+// src/__tests__/setup.ts, which spreads the real module and overrides that one
+// export) — the same shape this file used to declare for itself.
+const logToAxiomMock = loggingMock.logToAxiom;
+
+const { fetchDocumentsAbortableMock } = vi.hoisted(() => ({
   fetchDocumentsAbortableMock: vi.fn(),
 }));
-
-vi.mock('~/server/logging/client', async (importOriginal) => {
-  const actual = await importOriginal<typeof LoggingClient>();
-  return { ...actual, logToAxiom: logToAxiomMock };
-});
 
 // metricsSearchClient must be TRUTHY or both functions early-return before the
 // try/catch we are testing. fetchDocumentsAbortable is the throw seam.
@@ -58,16 +57,10 @@ vi.mock('~/env/server', () => ({
 }));
 
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
-vi.mock('~/server/redis/client', () => {
-  const make = (): any => new Proxy(() => 'k', { get: () => make() });
-  const keyProxy = make();
-  return {
-    redis: { packed: { get: vi.fn(), set: vi.fn() } },
-    sysRedis: {},
-    REDIS_KEYS: keyProxy,
-    REDIS_SYS_KEYS: keyProxy,
-  };
-});
+// The redis client comes from the canonical shared mock. It replaces the local
+// key Proxy this file used to stand in for REDIS_KEYS / REDIS_SYS_KEYS: the
+// canonical registration keeps the REAL key tables and mocks only the clients,
+// so nothing here reads a made-up key any more.
 vi.mock('../../../../event-engine-common/services/metrics', () => ({
   MetricService: class {
     fetch = vi.fn();

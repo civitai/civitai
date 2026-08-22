@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
 import {
   allBrowsingLevelsFlag,
@@ -69,7 +70,8 @@ const createFreePlacement = vi.fn<PrismaStub<{ id: number }>>(async () => {
 });
 vi.mock('~/server/services/free-placement.service', () => ({ createFreePlacement }));
 
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn().mockResolvedValue(undefined) }));
+// `logToAxiom` is silenced by the canonical shared mock registered in
+// src/__tests__/setup.ts; nothing here asserts on it.
 
 /**
  * The order operations happen in is the whole design of the mutation, and it
@@ -87,50 +89,51 @@ const calls: string[] = [];
  */
 type PrismaStub<T> = (args: unknown) => Promise<T>;
 
-const queryRaw = vi.fn();
-const placementCreate = vi.fn<PrismaStub<{ id: number }>>(async () => {
+/**
+ * The db client comes from the canonical shared mock. Each local below is bound
+ * to the hybrid node for the exact `<client>.<model>.<method>` path the old
+ * direct mock declared, so the read/write split this file already made stays
+ * intact — a call landing on the wrong client now names that client in the
+ * failure rather than finding a spy that was aliased onto both.
+ */
+const queryRaw = dbMock.dbWrite.$queryRaw;
+const placementCreate = dbMock.dbWrite.placement.create;
+const placementCount = dbMock.dbWrite.placement.count;
+const placementFindUnique = dbMock.dbWrite.placement.findUnique;
+const placementUpdate = dbMock.dbWrite.placement.update;
+const placementUpdateMany = dbMock.dbWrite.placement.updateMany;
+const placementDeleteMany = dbMock.dbWrite.placement.deleteMany;
+
+const placementFindMany = dbMock.dbRead.placement.findMany;
+const placementGroupBy = dbMock.dbRead.placement.groupBy;
+const placementFindFirst = dbMock.dbRead.placement.findFirst;
+const imageFindMany = dbMock.dbRead.image.findMany;
+const transactionFindMany = dbMock.dbRead.placementTransaction.findMany;
+const cosmeticFindUnique = dbMock.dbRead.cosmetic.findUnique;
+
+// Behaviour the old fixtures supplied, restated on the canonical nodes. Set once
+// at module scope so it survives the `vi.clearAllMocks()` in `beforeEach` — the
+// same lifetime the hand-declared spies' own defaults had. Only the two that
+// append to `calls` and the `count` fixtures are re-armed per test in
+// `beforeEach` below; the rest are file-wide.
+placementCreate.mockImplementation(async () => {
   calls.push('create');
   return { id: PLACEMENT };
 });
-const placementCount = vi.fn<PrismaStub<number>>(async () => 0);
-const placementFindMany = vi.fn<PrismaStub<unknown[]>>(async () => []);
-const placementGroupBy = vi.fn<PrismaStub<unknown[]>>(async () => []);
-const transactionFindMany = vi.fn<PrismaStub<unknown[]>>(async () => []);
-const placementFindFirst = vi.fn<PrismaStub<unknown>>(async () => null);
-const cosmeticFindUnique = vi.fn<PrismaStub<unknown>>(async () => null);
-
-const imageFindMany = vi.fn<PrismaStub<unknown[]>>(async () => []);
-const placementFindUnique = vi.fn<PrismaStub<unknown>>(async () => null);
-const placementUpdate = vi.fn<PrismaStub<object>>(async () => ({}));
-const placementUpdateMany = vi.fn<PrismaStub<{ count: number }>>(async () => ({ count: 1 }));
-const placementDeleteMany = vi.fn<PrismaStub<{ count: number }>>(async () => {
+placementCount.mockImplementation(async () => 0);
+placementFindUnique.mockImplementation(async () => null);
+placementUpdate.mockImplementation(async () => ({}));
+placementUpdateMany.mockImplementation(async () => ({ count: 1 }));
+placementDeleteMany.mockImplementation(async () => {
   calls.push('discard');
   return { count: 1 };
 });
-
-vi.mock('~/server/db/client', () => ({
-  dbWrite: {
-    $queryRaw: (...args: unknown[]) => queryRaw(...args),
-    placement: {
-      create: placementCreate,
-      count: placementCount,
-      findUnique: placementFindUnique,
-      update: placementUpdate,
-      updateMany: placementUpdateMany,
-      deleteMany: placementDeleteMany,
-    },
-  },
-  dbRead: {
-    placement: {
-      findMany: placementFindMany,
-      groupBy: placementGroupBy,
-      findFirst: placementFindFirst,
-    },
-    image: { findMany: imageFindMany },
-    placementTransaction: { findMany: transactionFindMany },
-    cosmetic: { findUnique: cosmeticFindUnique },
-  },
-}));
+placementFindMany.mockImplementation(async () => []);
+placementGroupBy.mockImplementation(async () => []);
+placementFindFirst.mockImplementation(async () => null);
+imageFindMany.mockImplementation(async () => []);
+transactionFindMany.mockImplementation(async () => []);
+cosmeticFindUnique.mockImplementation(async () => null);
 
 const updateEntityMetricDetached = vi.fn(async () => undefined);
 vi.mock('~/server/utils/metric-helpers', async (importOriginal) => ({

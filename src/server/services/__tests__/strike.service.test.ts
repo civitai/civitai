@@ -1,59 +1,39 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 // Use vi.hoisted to define mocks that will be available in vi.mock factories
 const {
-  mockDbRead,
-  mockDbWrite,
   mockCreateNotification,
   mockUpdateUserById,
   mockInvalidateSession,
   mockRefreshSession,
   mockStrikeIssuedEmailSend,
-  mockLogToAxiom,
-} = vi.hoisted(() => {
-  const mockUserStrikeRead = {
-    findMany: vi.fn(),
-    findUnique: vi.fn(),
-    findUniqueOrThrow: vi.fn(),
-    count: vi.fn(),
-    aggregate: vi.fn(),
-  };
-
-  const mockUserStrikeWrite = {
-    create: vi.fn(),
-    updateMany: vi.fn(),
-  };
-
-  const mockUserRead = {
-    findFirst: vi.fn(),
-    findUnique: vi.fn(),
-    findMany: vi.fn(),
-  };
-
-  return {
-    mockDbRead: {
-      userStrike: mockUserStrikeRead,
-      user: mockUserRead,
-      $queryRaw: vi.fn(),
-    },
-    mockDbWrite: {
-      userStrike: mockUserStrikeWrite,
-      $transaction: vi.fn(),
-    },
-    mockCreateNotification: vi.fn().mockResolvedValue(undefined),
-    mockUpdateUserById: vi.fn().mockResolvedValue(undefined),
-    mockInvalidateSession: vi.fn().mockResolvedValue(undefined),
-    mockRefreshSession: vi.fn().mockResolvedValue(undefined),
-    mockStrikeIssuedEmailSend: vi.fn().mockResolvedValue(undefined),
-    mockLogToAxiom: vi.fn(),
-  };
-});
-
-// Mock modules
-vi.mock('~/server/db/client', () => ({
-  dbRead: mockDbRead,
-  dbWrite: mockDbWrite,
+} = vi.hoisted(() => ({
+  mockCreateNotification: vi.fn().mockResolvedValue(undefined),
+  mockUpdateUserById: vi.fn().mockResolvedValue(undefined),
+  mockInvalidateSession: vi.fn().mockResolvedValue(undefined),
+  mockRefreshSession: vi.fn().mockResolvedValue(undefined),
+  mockStrikeIssuedEmailSend: vi.fn().mockResolvedValue(undefined),
 }));
+
+// The db and logging clients come from the canonical shared mocks. Property
+// access on a hybrid node vivifies, so `mockDbRead.userStrike.aggregate` and the
+// rest resolve to the same stable spies the hand-written object declared — while
+// `dbRead` and `dbWrite` stay DISTINCT, which is what the old two-object mock
+// already had and must keep.
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
+const mockLogToAxiom = loggingMock.logToAxiom;
+
+// 🔴 Deliberately NOT inheriting the canonical `$transaction` default, which runs
+// the callback with `dbWrite` itself. Every assertion about a write here means
+// "this happened INSIDE the transaction", and it is checked against the spies on
+// the SEPARATE tx client `mockTransactionForEscalation` builds below — collapsing
+// the two would let a write made outside the lock satisfy those assertions. The
+// old hand-written `$transaction: vi.fn()` resolved to `undefined` until a test
+// installed its own implementation; this restores that starting state.
+mockDbWrite.$transaction.mockResolvedValue(undefined);
 
 vi.mock('~/server/services/notification.service', () => ({
   createNotification: mockCreateNotification,
@@ -70,10 +50,6 @@ vi.mock('~/server/auth/session-invalidation', () => ({
 
 vi.mock('~/server/email/templates', () => ({
   strikeIssuedEmail: { send: mockStrikeIssuedEmailSend },
-}));
-
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: mockLogToAxiom,
 }));
 
 vi.mock('~/server/utils/pagination-helpers', () => ({
