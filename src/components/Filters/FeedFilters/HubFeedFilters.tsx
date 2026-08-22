@@ -7,9 +7,9 @@ import { useState } from 'react';
 import { FilterButton } from '~/components/Buttons/FilterButton';
 import classes from '~/components/Filters/FeedFilters/FeedFilters.module.scss';
 import { SortFilter } from '~/components/Filters/SortFilter';
+import { useHubSort } from '~/components/Hubs/useHubSort';
 import { hubExcludedFilterKeys } from '~/components/Image/Filters/media-filter-keys';
 import { MediaFiltersDropdown } from '~/components/Image/Filters/MediaFiltersDropdown';
-import { ImageSort } from '~/server/common/enums';
 import type { HubSort } from '~/server/schema/user-hub.schema';
 import { hubFeedFiltersSchema, hubLimits, hubSortSchema } from '~/server/schema/user-hub.schema';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
@@ -48,6 +48,7 @@ export function HubFeedFilters({ ...groupProps }: GroupProps) {
     { id: hubId },
     { enabled: Number.isInteger(hubId) }
   );
+  const sort = useHubSort(hub?.sort);
 
   const upsert = trpc.userHub.upsert.useMutation({
     onSuccess: async () => {
@@ -62,7 +63,6 @@ export function HubFeedFilters({ ...groupProps }: GroupProps) {
 
   if (!hub) return null;
 
-  const sort = hubSortSchema.catch(ImageSort.Newest).parse(hub.sort);
   const sourceCount = hub.sources.length;
 
   return (
@@ -123,7 +123,6 @@ export function HubFeedFilters({ ...groupProps }: GroupProps) {
         onChange={(next) =>
           upsert.mutate({
             id: hub.id,
-            sort,
             // Clear omits `period` to mean "back to the default"; falling back to
             // the hub's current value would leave the one filter Clear names.
             period: (next.period ?? MetricTimeframe.AllTime) as MetricTimeframe,
