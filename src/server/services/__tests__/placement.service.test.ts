@@ -9,14 +9,13 @@ import {
   PLACEMENT_SURFACES,
   placementSurfaces,
 } from '~/shared/utils/placement';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const findUnique = dbMock.dbRead.keyValue.findUnique;
+const queryRaw = dbMock.dbRead.$queryRaw;
 
-const findUnique = vi.fn();
-const queryRaw = vi.fn();
 const getCapTier = vi.fn();
 
-vi.mock('~/server/db/client', () => ({
-  dbRead: { keyValue: { findUnique }, $queryRaw: queryRaw },
-}));
+
 
 vi.mock('~/server/services/subscriptions.service', async (importOriginal) => ({
   ...(await importOriginal<typeof SubscriptionsService>()),
