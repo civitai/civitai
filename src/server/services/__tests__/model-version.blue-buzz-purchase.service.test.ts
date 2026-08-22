@@ -1,6 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type * as RedisClient from '@civitai/redis/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+
+// `~/server/redis/client` and `~/server/logging/client` are covered by the canonical
+// shared mocks (`redisMock` / `loggingMock`) that `src/__tests__/setup.ts` registers for
+// every suite, so this file declares neither. Nothing here reads or asserts on a redis
+// command or on the Axiom logger; a test that needs to would import the canonical mock
+// (`import { redisMock } from '~/__tests__/mocks/redis.mock'`) and drive it, rather than
+// re-declaring a local factory.
 
 // Blue Buzz for paid access. A blue purchase must credit the owner blue, or it turns non-withdrawable
 // credit into withdrawable currency. `toAccountType` defaults to yellow in buzz.service.
@@ -35,14 +41,6 @@ vi.mock('~/server/redis/caches', () => ({
   dataForModelsCache: { refresh: vi.fn() },
   modelVersionAccessCache: { refresh: vi.fn() },
 }));
-vi.mock('~/server/redis/client', async () => {
-  const actual = await vi.importActual<typeof RedisClient>('@civitai/redis/client');
-  return {
-    ...actual,
-    redis: { get: vi.fn(), set: vi.fn(), del: vi.fn().mockResolvedValue(undefined) },
-    sysRedis: { get: vi.fn() },
-  };
-});
 vi.mock('~/server/redis/resource-data.redis', () => ({ resourceDataCache: { bust: vi.fn() } }));
 vi.mock('~/server/search-index', () => ({
   modelsSearchIndex: { queueUpdate: vi.fn() },
@@ -88,7 +86,6 @@ vi.mock('~/server/services/model-file.service', () => ({
 vi.mock('~/server/services/monetization-rights.service', () => ({
   resolveRightsAffirmation: vi.fn(),
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
 
 import { earlyAccessPurchase } from '~/server/services/model-version.service';
 
