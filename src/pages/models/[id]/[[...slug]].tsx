@@ -60,6 +60,7 @@ import {
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { Collection } from '~/components/Collection/Collection';
 import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
+import { openAddToHubModal } from '~/components/Dialog/triggers/add-to-hub';
 import { openBlockModelTagsModal } from '~/components/Dialog/triggers/block-model-tags';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { openUnpublishModal } from '~/components/Dialog/triggers/unpublish';
@@ -88,6 +89,7 @@ import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 // import { ImageFiltersDropdown } from '~/components/Image/Infinite/ImageFiltersDropdown';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
+import { AddToHubMenuItem } from '~/components/MenuItems/AddToHubMenuItem';
 import { ToggleSearchableMenuItem } from '~/components/MenuItems/ToggleSearchableMenuItem';
 import { Gated } from '~/components/Gated/Gated';
 import { ReorderVersionsModal } from '~/components/Modals/ReorderVersionsModal';
@@ -134,7 +136,13 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { ModelModifier } from '~/shared/utils/prisma/enums';
-import { Availability, CollectionType, ModelStatus, ModelType } from '~/shared/utils/prisma/enums';
+import {
+  Availability,
+  CollectionType,
+  ModelStatus,
+  ModelType,
+  UserHubSourceType,
+} from '~/shared/utils/prisma/enums';
 import { formatDate, isFutureDate } from '~/utils/date-helpers';
 import {
   showErrorNotification,
@@ -1111,6 +1119,19 @@ export default function ModelDetailsV2({
                             }
                           />
                         )}
+                        <AddToHubMenuItem
+                          onClick={() =>
+                            openAddToHubModal({
+                              props: {
+                                source: {
+                                  type: UserHubSourceType.Model,
+                                  targetId: model.id,
+                                  alias: model.name,
+                                },
+                              },
+                            })
+                          }
+                        />
                         {isOwner && (
                           <AddToShowcaseMenuItem
                             key="add-to-showcase"

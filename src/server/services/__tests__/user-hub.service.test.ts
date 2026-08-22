@@ -15,7 +15,9 @@ vi.mock('~/server/services/collection.service', () => ({
 }));
 
 import {
+  addUserHubSource,
   getHubSourceSuggestions,
+  removeUserHubSource,
   getUserHubById,
   resolveHubSourceFromUrl,
   resolveHubSources,
@@ -36,6 +38,9 @@ import {
 import { ImageSort } from '~/server/common/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 const findFirstHub = dbMock.dbRead.userHub.findFirst;
+// The source mutations read the hub through the WRITER — the duplicate check, the cap
+// and the next index all come off that row.
+const writerHub = dbMock.dbWrite.userHub.findFirst;
 const findManyCollections = dbMock.dbRead.collection.findMany;
 const queryRaw = dbMock.dbRead.$queryRaw;
 
@@ -669,5 +674,153 @@ describe('taken-down models', () => {
     expect(source).toBeNull();
     const where = dbMock.dbRead.modelVersion.findFirst.mock.calls[0][0].where;
     expect(where.model.deletedAt).toBeNull();
+  });
+});
+
+describe('addUserHubSource', () => {
+  const source = { type: UserHubSourceType.User, targetId: 42, alias: 'someone' };
+
+  it('refuses a hub the viewer does not own', async () => {
+    writerHub.mockResolvedValue(null);
+
+    await expect(addUserHubSource({ userId: 999, hubId: 1, ...source })).rejects.toThrow();
+    expect(dbMock.dbWrite.userHubSource.create).not.toHaveBeenCalled();
+    expect(writerHub).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 1, userId: 999 } })
+    );
+  });
+
+  it('is a no-op when the hub already has that source', async () => {
+    writerHub.mockResolvedValue({
+      id: 1,
+      sources: [{ id: 9, type: UserHubSourceType.User, targetId: 42, enabled: true, index: 0 }],
+    });
+
+    const result = await addUserHubSource({ userId: 5, hubId: 1, ...source });
+
+    expect(result).toEqual({ hubId: 1, added: false });
+    expect(dbMock.dbWrite.userHubSource.create).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.userHubSource.update).not.toHaveBeenCalled();
+  });
+
+  it('re-enables a source the owner had switched off, rather than reporting a no-op', async () => {
+    // A disabled source is invisible to the feed, so "already there" would be a success
+    // message for a hub that still shows the viewer nothing from that creator.
+    writerHub.mockResolvedValue({
+      id: 1,
+      sources: [{ id: 9, type: UserHubSourceType.User, targetId: 42, enabled: false, index: 0 }],
+    });
+
+    const result = await addUserHubSource({ userId: 5, hubId: 1, ...source });
+
+    expect(result).toEqual({ hubId: 1, added: true });
+    expect(dbMock.dbWrite.userHubSource.update).toHaveBeenCalledWith({
+      where: { id: 9 },
+      data: { enabled: true },
+    });
+    expect(dbMock.dbWrite.userHubSource.create).not.toHaveBeenCalled();
+  });
+
+  it('tells two sources apart by type as well as target', async () => {
+    // Matching on targetId alone would report Model 42 as already present in a hub that
+    // holds User 42, and the checkbox would never tick with nothing to explain it.
+    writerHub.mockResolvedValue({
+      id: 1,
+      sources: [{ id: 9, type: UserHubSourceType.Model, targetId: 42, enabled: true, index: 3 }],
+    });
+
+    const result = await addUserHubSource({ userId: 5, hubId: 1, ...source });
+
+    expect(result).toEqual({ hubId: 1, added: true });
+    expect(dbMock.dbWrite.userHubSource.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ type: UserHubSourceType.User, targetId: 42, index: 4 }),
+    });
+  });
+
+  it('refuses a Collection source while collection sources are switched off', async () => {
+    // The router accepts the whole enum, so this is reachable even though the modal
+    // never sends it. `assertHubSourcesUsable` is the only thing that refuses it, and
+    // deleting that call from the add path is otherwise invisible.
+    writerHub.mockResolvedValue({ id: 1, sources: [] });
+
+    await expect(
+      addUserHubSource({
+        userId: 5,
+        hubId: 1,
+        type: UserHubSourceType.Collection,
+        targetId: 7,
+        alias: null,
+      })
+    ).rejects.toThrow();
+    expect(dbMock.dbWrite.userHubSource.create).not.toHaveBeenCalled();
+  });
+
+  it('adds past the highest existing index, not past the count', async () => {
+    // Indexes are not dense — removing a source leaves a gap — so appending at
+    // `length` collides with a row that is still there.
+    writerHub.mockResolvedValue({
+      id: 1,
+      sources: [
+        { id: 1, type: UserHubSourceType.Model, targetId: 1, enabled: true, index: 0 },
+        { id: 2, type: UserHubSourceType.Model, targetId: 2, enabled: true, index: 7 },
+      ],
+    });
+
+    await addUserHubSource({ userId: 5, hubId: 1, ...source });
+
+    expect(dbMock.dbWrite.userHubSource.create).toHaveBeenCalledWith({
+      data: { hubId: 1, type: UserHubSourceType.User, targetId: 42, alias: 'someone', index: 8 },
+    });
+  });
+
+  it('refuses to go past the per-hub source cap', async () => {
+    writerHub.mockResolvedValue({
+      id: 1,
+      sources: Array.from({ length: hubLimits.sourcesPerHub }, (_, i) => ({
+        id: i + 1,
+        type: UserHubSourceType.Model,
+        targetId: i + 100,
+        enabled: true,
+        index: i,
+      })),
+    });
+
+    await expect(addUserHubSource({ userId: 5, hubId: 1, ...source })).rejects.toThrow();
+    expect(dbMock.dbWrite.userHubSource.create).not.toHaveBeenCalled();
+  });
+});
+
+describe('removeUserHubSource', () => {
+  it('refuses a hub the viewer does not own', async () => {
+    writerHub.mockResolvedValue(null);
+
+    await expect(
+      removeUserHubSource({ userId: 999, hubId: 1, type: UserHubSourceType.User, targetId: 42 })
+    ).rejects.toThrow();
+    expect(dbMock.dbWrite.userHubSource.deleteMany).not.toHaveBeenCalled();
+    // The scope has to be IN the lookup. Asserting only that a null hub throws passes
+    // just as well when the lookup stops asking whose hub it is.
+    expect(writerHub).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 1, userId: 999 } })
+    );
+  });
+
+  it('deletes only the named source in that hub', async () => {
+    writerHub.mockResolvedValue({ id: 1 });
+    dbMock.dbWrite.userHubSource.deleteMany.mockResolvedValue({ count: 1 });
+
+    const result = await removeUserHubSource({
+      userId: 5,
+      hubId: 1,
+      type: UserHubSourceType.User,
+      targetId: 42,
+    });
+
+    expect(result).toEqual({ hubId: 1, removed: true });
+    // Owner-scoped on the DELETE too, not only in the lookup above it — dropping it
+    // there is a cross-owner delete the moment `UserHub.userId` can move.
+    expect(dbMock.dbWrite.userHubSource.deleteMany).toHaveBeenCalledWith({
+      where: { hubId: 1, type: UserHubSourceType.User, targetId: 42, hub: { userId: 5 } },
+    });
   });
 });

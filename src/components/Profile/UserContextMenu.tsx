@@ -20,6 +20,7 @@ import {
 } from '@tabler/icons-react';
 import React from 'react';
 import { useAccountContext } from '~/components/CivitaiWrapped/AccountProvider';
+import { openAddToHubModal } from '~/components/Dialog/triggers/add-to-hub';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
@@ -37,7 +38,9 @@ import { showErrorNotification } from '~/utils/notifications';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { AddToHubMenuItem } from '~/components/MenuItems/AddToHubMenuItem';
 import { ModeratorLookupMenuItem } from '~/components/Moderation/ModeratorLookupMenuItem';
+import { UserHubSourceType } from '~/shared/utils/prisma/enums';
 
 export const UserContextMenu = ({ username }: { username: string }) => {
   const queryUtils = trpc.useUtils();
@@ -372,6 +375,19 @@ export const UserContextMenu = ({ username }: { username: string }) => {
               Gift a membership
             </Menu.Item>
           )}
+          <AddToHubMenuItem
+            onClick={() =>
+              openAddToHubModal({
+                props: {
+                  source: {
+                    type: UserHubSourceType.User,
+                    targetId: user.id,
+                    alias: user.username,
+                  },
+                },
+              })
+            }
+          />
           {!isSameUser && <BlockUserButton userId={user.id} as="menu-item" />}
           {isSameUser && (
             <Menu.Item component={Link} href={`/user/${username}/manage-categories`}>

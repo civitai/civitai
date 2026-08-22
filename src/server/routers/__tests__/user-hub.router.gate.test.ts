@@ -28,6 +28,8 @@ vi.mock('~/server/services/user-hub.service', () => ({
   setUserHubOrder: vi.fn().mockResolvedValue(undefined),
   getHubSourceSuggestions: vi.fn().mockResolvedValue([]),
   resolveHubSourceFromUrl: vi.fn().mockResolvedValue(null),
+  addUserHubSource: vi.fn().mockResolvedValue({ hubId: 1, added: true }),
+  removeUserHubSource: vi.fn().mockResolvedValue({ hubId: 1, removed: true }),
 }));
 
 import { userHubRouter } from '~/server/routers/user-hub.router';
@@ -44,6 +46,8 @@ const inputs: Record<string, unknown> = {
   setOrder: { ids: [] },
   sourceSuggestions: { type: 'User', query: 'a' },
   resolveSource: { url: 'https://civitai.com/user/someone' },
+  addSource: { hubId: 1, type: 'User', targetId: 2 },
+  removeSource: { hubId: 1, type: 'User', targetId: 2 },
 };
 
 const procedureNames = Object.keys(
