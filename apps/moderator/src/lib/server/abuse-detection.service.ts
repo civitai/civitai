@@ -1,5 +1,23 @@
 import { MAX_FINDINGS_PER_REPORT, type AbuseReportInput } from '@civitai/moderation';
-import { getAbuseDetectionDb } from './abuse-detection-db';
+import { getModeratorDb } from './moderator-db';
+import type { AbuseDetectionTables } from './abuse-detection-tables';
+
+/** The shared client, typed to include the two tables this module owns. */
+const abuseDb = () => getModeratorDb().withTables<AbuseDetectionTables>();
+
+/**
+ * One client, shared with the rest of the app's moderation data — `withTables` adds these two tables
+ * to its TYPE without opening a second connection.
+ *
+ * 🔴 An earlier version stood up its own pool on `MODERATOR_DATABASE_URL`, reasoning from a comment
+ * that said that key and `RETOOL_DATABASE_URL` "name different instances". They do not, and by now
+ * there is only one name: the Retool cutover landed 2026-08-18 (deployment repo `ee835acaf`),
+ * repointing `RETOOL_DATABASE_URL` at the same `internal_tools` database and retiring it, and
+ * `moderator-db.ts` now reads `MODERATOR_DATABASE_URL` alone. Verified against the running pod:
+ * both keys resolve to `internal-tools-db-rw.cnpg-database.svc.cluster.local:5432/internal_tools`,
+ * whose `public` schema holds the live tables while the pre-cutover snapshot sits in a `cutover`
+ * schema. One database, therefore one pool.
+ */
 
 /**
  * Automated abuse-detection reports: the write the detectors POST, and the reads the board renders.
@@ -60,7 +78,7 @@ const PG_NO_MATCHING_CONFLICT_TARGET = '42P10';
  * meant to remove. Either both land or neither does.
  */
 export async function recordAbuseRun(input: AbuseReportInput): Promise<{ runId: number }> {
-  const db = getAbuseDetectionDb();
+  const db = abuseDb();
   try {
     return await writeRun(db, input);
   } catch (e) {
@@ -75,7 +93,7 @@ export async function recordAbuseRun(input: AbuseReportInput): Promise<{ runId: 
 }
 
 function writeRun(
-  db: ReturnType<typeof getAbuseDetectionDb>,
+  db: ReturnType<typeof abuseDb>,
   input: AbuseReportInput
 ): Promise<{ runId: number }> {
   return db.transaction().execute(async (trx) => {
@@ -145,7 +163,7 @@ function writeRun(
  * reachable. The list page would then link to a page that denies the run exists.
  */
 export async function getAbuseRun(runId: number): Promise<AbuseRun | null> {
-  const db = getAbuseDetectionDb();
+  const db = abuseDb();
   const row = await db
     .selectFrom('abuse_detection_run')
     .selectAll()
@@ -181,7 +199,7 @@ export async function getAbuseRun(runId: number): Promise<AbuseRun | null> {
 export async function getAbuseRuns(
   opts: { detector?: string; limit?: number } = {}
 ): Promise<AbuseRun[]> {
-  const db = getAbuseDetectionDb();
+  const db = abuseDb();
   let q = db
     .selectFrom('abuse_detection_run as r')
     .leftJoin('abuse_detection_finding as f', 'f.run_id', 'r.id')
@@ -240,7 +258,7 @@ export async function getAbuseFindings(
   limit = MAX_FINDINGS_PER_REPORT
 ): Promise<{ findings: AbuseFinding[]; truncated: boolean }> {
   // One more than asked for, purely to detect the cap — the extra row is dropped below.
-  const rows = await getAbuseDetectionDb()
+  const rows = await abuseDb()
     .selectFrom('abuse_detection_finding')
     .selectAll()
     .where('run_id', '=', runId)
@@ -258,7 +276,7 @@ export async function getAbuseFindings(
  * nothing" is a real answer to "why is this creator complaining", and the most common one.
  */
 export async function getAbuseFindingsForUser(userId: number, limit = 50): Promise<AbuseFinding[]> {
-  const rows = await getAbuseDetectionDb()
+  const rows = await abuseDb()
     .selectFrom('abuse_detection_finding')
     .selectAll()
     .where('user_id', '=', userId)
@@ -270,7 +288,7 @@ export async function getAbuseFindingsForUser(userId: number, limit = 50): Promi
 
 /** The distinct detectors that have ever reported, for the board's filter. */
 export async function getAbuseDetectors(): Promise<string[]> {
-  const rows = await getAbuseDetectionDb()
+  const rows = await abuseDb()
     .selectFrom('abuse_detection_run')
     .select('detector')
     .distinct()

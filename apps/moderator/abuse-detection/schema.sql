@@ -11,6 +11,18 @@
 --
 --   psql "$MODERATOR_DATABASE_URL" -f apps/moderator/abuse-detection/schema.sql
 --
+-- 🔴 AS THE APPLICATION ROLE (`internal_tools`), which is what that URL connects as. Running this
+-- as `postgres` — the natural `kubectl exec … psql -U postgres` shortcut — creates postgres-owned
+-- tables the app cannot read, and the page then reports a permission error it cannot distinguish
+-- from an outage without the 42501 branch it now carries. If you already did that, either re-run as
+-- the app role or:
+--   GRANT SELECT, INSERT, UPDATE, DELETE ON abuse_detection_run, abuse_detection_finding TO internal_tools;
+--   GRANT USAGE, SELECT ON SEQUENCE abuse_detection_run_id_seq, abuse_detection_finding_id_seq TO internal_tools;
+--
+-- 🔴 `MODERATOR_DATABASE_URL` and `RETOOL_DATABASE_URL` currently resolve to the SAME instance
+-- (`internal-tools-db-rw…/internal_tools`, measured 2026-08-21, post-Retool-cutover). Either works
+-- today; this names the one whose purpose is new moderator data.
+--
 -- Idempotent: safe to re-run.
 
 -- 🔴 REQUIRED. Without it psql continues past a failed statement, and the one environment the DROP

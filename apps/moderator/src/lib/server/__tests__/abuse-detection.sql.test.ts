@@ -8,7 +8,7 @@ import {
 } from 'kysely';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MAX_FINDINGS_PER_REPORT } from '@civitai/moderation';
-import type { AbuseDetectionDB } from '../abuse-detection-db';
+import type { AbuseDetectionTables } from '../abuse-detection-tables';
 
 /**
  * The SQL these queries actually compile to, asserted without a database.
@@ -62,7 +62,7 @@ class CannedRowDriver extends DummyDriver {
 }
 
 function compileOnlyDb() {
-  return new Kysely<AbuseDetectionDB>({
+  return new Kysely<AbuseDetectionTables>({
     dialect: {
       createAdapter: () => new PostgresAdapter(),
       createDriver: () => new CannedRowDriver(),
@@ -78,9 +78,13 @@ function compileOnlyDb() {
   });
 }
 
-vi.mock('../abuse-detection-db', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../abuse-detection-db')>()),
-  getAbuseDetectionDb: () => compileOnlyDb(),
+// `withTables` is a TYPE-level operation that returns the same client, so the mock returns an
+// object carrying it — the service calls `getModeratorDb().withTables<…>()`.
+vi.mock('../moderator-db', () => ({
+  getModeratorDb: () => {
+    const db = compileOnlyDb();
+    return Object.assign(db, { withTables: () => db });
+  },
 }));
 
 const service = await import('../abuse-detection.service');

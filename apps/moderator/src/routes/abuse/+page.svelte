@@ -40,9 +40,19 @@
     <code>apps/moderator/abuse-detection/schema.sql</code> against
     <code>MODERATOR_DATABASE_URL</code>.
   </p>
-{:else if data.status === 'not-configured'}
+{:else if data.status === 'no-grant'}
   <p class="text-dark-2 mb-4">
-    <code>MODERATOR_DATABASE_URL</code> is not configured for this environment.
+    The abuse-detection tables exist but this app's database role cannot read them. They were most
+    likely created by a different role — re-run
+    <code>apps/moderator/abuse-detection/schema.sql</code> as the application role, or grant it
+    <code>SELECT, INSERT, UPDATE, DELETE</code> on both tables and their sequences.
+  </p>
+{:else if data.status === 'not-configured'}
+  <!-- Names the variable the CLIENT reads (`getModeratorDb()` → RETOOL_DATABASE_URL), not the one
+       the DDL comment names. They resolve to the same instance today, so an operator told to check
+       the wrong one would find it set and conclude the message was lying. -->
+  <p class="text-dark-2 mb-4">
+    <code>RETOOL_DATABASE_URL</code> is not configured for this environment.
   </p>
 {:else if data.status === 'unreachable'}
   <p class="text-dark-2 mb-4">

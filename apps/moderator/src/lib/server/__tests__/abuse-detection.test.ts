@@ -38,11 +38,12 @@ const { calls, insertInto, transactionExecute } = vi.hoisted(() => {
   };
 });
 
-vi.mock('../abuse-detection-db', () => ({
-  getAbuseDetectionDb: () => ({
-    transaction: () => ({ execute: transactionExecute }),
-  }),
-}));
+vi.mock('../moderator-db', () => {
+  // `withTables` is type-only at runtime and returns the same client.
+  const db: Record<string, unknown> = { transaction: () => ({ execute: transactionExecute }) };
+  db.withTables = () => db;
+  return { getModeratorDb: () => db };
+});
 
 const { recordAbuseRun, asCounters } = await import('../abuse-detection.service');
 
