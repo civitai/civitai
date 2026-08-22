@@ -4,7 +4,8 @@ import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import type { HubSourceValue } from '~/components/Hubs/HubSourceEditor';
 import { HubSourceEditor } from '~/components/Hubs/HubSourceEditor';
-import { useDefaultHubSort } from '~/components/Hubs/useHubSort';
+import { useSortAvailability } from '~/components/Filters/useSortAvailability';
+import { defaultHubSort } from '~/components/Hubs/hub-sort';
 import { hubLimits } from '~/server/schema/user-hub.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -19,7 +20,7 @@ export default function HubUpsertModal({
   const router = useRouter();
   const utils = trpc.useUtils();
   const editing = !!hub;
-  const defaultSort = useDefaultHubSort();
+  const defaultSort = defaultHubSort(useSortAvailability());
 
   const [name, setName] = useState(hub?.name ?? '');
   const [description, setDescription] = useState(hub?.description ?? '');

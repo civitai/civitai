@@ -77,8 +77,8 @@ function DumbSortFilter({ type, value, onChange, ignoreNsfwLevel, options, ...pr
       label={value}
       onClick={onChange}
       value={value}
-      options={(options ?? sortOptions[type].map((x) => ({ label: x, value: x }))).filter(
-        (x) => ignoreNsfwLevel || isSortAvailable({ type, value: x.value }, availability)
+      options={(options ?? sortOptions[type].map((x) => ({ label: x, value: x }))).filter((x) =>
+        isSortAvailable({ type, value: x.value }, { ...availability, ignoreNsfwLevel })
       )}
       {...props}
     />

@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { isSortAvailable } from '~/components/Filters/sort-availability';
+import { buildHubFilterSave } from '~/components/Hubs/hub-filter-save';
 import { defaultHubSort, resolveHubSort } from '~/components/Hubs/hub-sort';
 import { ImageSort } from '~/server/common/enums';
+import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 
 const green = { isModerator: false, canViewNsfw: false, showNsfw: false };
 const sfwByChoice = { isModerator: false, canViewNsfw: true, showNsfw: false };
@@ -62,5 +64,33 @@ describe('defaultHubSort', () => {
       expect(sort).toBe(ImageSort.MostReactions);
       expect(isSortAvailable({ type: 'images', value: sort }, availability)).toBe(true);
     }
+  });
+});
+
+describe('the assumption the fallback rests on', () => {
+  it('offers Most Reactions to every viewer', () => {
+    // `resolveHubSort` returns it unconditionally, so if this ever stops holding the
+    // fallback starts handing back a sort the menu will not show.
+    for (const availability of [green, sfwByChoice, nsfw, moderator])
+      expect(
+        isSortAvailable({ type: 'images', value: ImageSort.MostReactions }, availability)
+      ).toBe(true);
+  });
+});
+
+describe('buildHubFilterSave', () => {
+  it('leaves the sort out, so a filter change cannot persist the resolved one', () => {
+    // What this component has to hand is the RESOLVED sort. Sending it would write a
+    // clamped Most Reactions over the owner's stored Newest, permanently, the first
+    // time a viewer without NSFW touched any filter.
+    const payload = buildHubFilterSave(3, { period: MetricTimeframe.Week, withMeta: true });
+
+    expect('sort' in payload).toBe(false);
+    expect(payload.id).toBe(3);
+    expect(payload.period).toBe(MetricTimeframe.Week);
+  });
+
+  it('sends the default period when Clear drops it, not the value the hub had', () => {
+    expect(buildHubFilterSave(3, {}).period).toBe(MetricTimeframe.AllTime);
   });
 });

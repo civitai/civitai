@@ -9,23 +9,22 @@ import { hubSortSchema } from '~/server/schema/user-hub.schema';
  * because a freshly posted image may not be rated yet. A hub stored as Newest handed
  * those viewers a sort they were never offered again.
  *
- * Falls back to Most Reactions rather than to the next sort in the list. Oldest is
- * withheld wherever Newest is, and for the same reason, so reaching for it would put
- * the viewer back in front of what this rule exists to keep away.
+ * Most Reactions rather than the next sort in the list: Oldest is withheld wherever
+ * Newest is and for the same reason, so reaching for it would put the viewer back in
+ * front of what the rule exists to keep away. Most Reactions is never itself withheld,
+ * which the tests pin — if that changes, this hands back a sort the menu will not show.
  *
  * Resolved on read and never written back, so regaining NSFW browsing returns the hub
  * to the sort its owner chose.
  */
 export function resolveHubSort(stored: unknown, availability: SortAvailability): HubSort {
   const sort = hubSortSchema.catch(ImageSort.Newest).parse(stored);
-  const offered = (value: HubSort) => isSortAvailable({ type: 'images', value }, availability);
+  if (isSortAvailable({ type: 'images', value: sort }, availability)) return sort;
 
-  if (offered(sort)) return sort;
-  if (offered(ImageSort.MostReactions)) return ImageSort.MostReactions;
-  return hubSortSchema.options.find(offered) ?? sort;
+  return ImageSort.MostReactions;
 }
 
-/** What a hub this viewer creates should be sorted by, so it is never stored as one they cannot pick. */
+/** What a hub this viewer creates is sorted by, so it is never stored on one they cannot pick. */
 export function defaultHubSort(availability: SortAvailability): HubSort {
   return resolveHubSort(ImageSort.Newest, availability);
 }

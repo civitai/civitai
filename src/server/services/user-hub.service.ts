@@ -111,7 +111,9 @@ export async function upsertUserHub({ userId, ...input }: UpsertUserHubInput & {
       data: {
         ...data,
         name: data.name,
-        sort: data.sort ?? ImageSort.Newest,
+        // Not Newest: a client that omits the field cannot have decided the viewer
+        // is offered Newest, and Most Reactions is the one sort nothing withholds.
+        sort: data.sort ?? ImageSort.MostReactions,
         period: data.period ?? MetricTimeframe.AllTime,
         mediaTypes: data.mediaTypes ?? [],
         metadata: {
@@ -442,6 +444,32 @@ const SUGGESTIONS_LIMIT = 25;
 // it returns — a search of your most recent relationships, not all of them.
 const SUGGESTIONS_WINDOW = 500;
 
+// A margin over the page size, because the name queries filter deleted rows AFTER the
+// id restriction: slicing to exactly `SUGGESTIONS_LIMIT` returns a short page whenever
+// one of the ids has since been deleted (measured on prod: 2 of 500 on one account).
+const SUGGESTIONS_SLICE = SUGGESTIONS_LIMIT * 2;
+
+// The relationship queries above return their ids most-recent-first. With no search
+// term that IS the answer, so the window is cut before the names query rather than
+// ordered after it — ordering above a `take` decides WHICH rows come back.
+function scopeSuggestionIds(ids: number[], term: string | undefined) {
+  return term ? ids : ids.slice(0, SUGGESTIONS_SLICE);
+}
+
+// `IN (...)` does not preserve the order it was given, so recency is restored here and
+// the margin above is trimmed off.
+function bySuggestionOrder<T extends { id: number }>(
+  rows: T[],
+  ids: number[],
+  term: string | undefined
+) {
+  if (term) return rows;
+  const position = new Map(ids.map((id, index) => [id, index]));
+  return [...rows]
+    .sort((a, b) => (position.get(a.id) ?? 0) - (position.get(b.id) ?? 0))
+    .slice(0, SUGGESTIONS_LIMIT);
+}
+
 /**
  * What the source picker searches, one type at a time. Scoped to the viewer's own
  * relationships rather than the whole site: creators they follow, models they own
@@ -468,9 +496,18 @@ export async function getHubSourceSuggestions({
     });
     if (!follows.length) return [];
 
+    // Ordering sits ABOVE the `take`, so it decides which rows come back and not
+    // merely their order. A search wants the whole window ranked by name; a bare
+    // suggestion list wants the most recent relationships, so it is cut to size
+    // here and the names query is left unordered.
+    const followed = scopeSuggestionIds(
+      follows.map((f) => f.targetUserId),
+      term
+    );
+
     const users = await dbRead.user.findMany({
       where: {
-        id: { in: follows.map((f) => f.targetUserId) },
+        id: { in: followed },
         deletedAt: null,
         // citext overloads equality, NOT `LIKE` — a plain `contains` here is
         // case-SENSITIVE. Safe to ask for ILIKE now only because the id list
@@ -478,13 +515,11 @@ export async function getHubSourceSuggestions({
         ...(term ? { username: { contains: term, mode: 'insensitive' as const } } : {}),
       },
       select: { id: true, username: true },
-      // A name list, so it reads as one. Which names are eligible is still decided
-      // by relationship recency, up the `SUGGESTIONS_WINDOW` above.
-      orderBy: { username: 'asc' },
-      take: SUGGESTIONS_LIMIT,
+      ...(term ? { orderBy: { username: 'asc' as const } } : {}),
+      take: term ? SUGGESTIONS_LIMIT : SUGGESTIONS_SLICE,
     });
 
-    return users
+    return bySuggestionOrder(users, followed, term)
       .filter((user): user is { id: number; username: string } => !!user.username)
       .map((user) => ({
         type: UserHubSourceType.User,
@@ -505,17 +540,22 @@ export async function getHubSourceSuggestions({
     });
     if (!followed.length) return [];
 
+    const collectionIds = scopeSuggestionIds(
+      followed.map((f) => f.collectionId),
+      term
+    );
+
     const collections = await dbRead.collection.findMany({
       where: {
-        id: { in: followed.map((f) => f.collectionId) },
+        id: { in: collectionIds },
         ...(term ? { name: { contains: term, mode: 'insensitive' as const } } : {}),
       },
       select: { id: true, name: true },
-      orderBy: { name: 'asc' },
-      take: SUGGESTIONS_LIMIT,
+      ...(term ? { orderBy: { name: 'asc' as const } } : {}),
+      take: term ? SUGGESTIONS_LIMIT : SUGGESTIONS_SLICE,
     });
 
-    return collections.map((collection) => ({
+    return bySuggestionOrder(collections, collectionIds, term).map((collection) => ({
       type: UserHubSourceType.Collection,
       targetId: collection.id,
       alias: collection.name,
@@ -561,18 +601,20 @@ export async function getHubSourceSuggestions({
   ];
   if (!candidateIds.length) return [];
 
+  const scopedIds = scopeSuggestionIds(candidateIds, term);
+
   const models = await dbRead.model.findMany({
     where: {
-      id: { in: candidateIds },
+      id: { in: scopedIds },
       deletedAt: null,
       ...(term ? { name: { contains: term, mode: 'insensitive' as const } } : {}),
     },
     select: { id: true, name: true },
-    orderBy: { name: 'asc' },
-    take: SUGGESTIONS_LIMIT,
+    ...(term ? { orderBy: { name: 'asc' as const } } : {}),
+    take: term ? SUGGESTIONS_LIMIT : SUGGESTIONS_SLICE,
   });
 
-  return models.map((model) => ({
+  return bySuggestionOrder(models, scopedIds, term).map((model) => ({
     type: UserHubSourceType.Model,
     targetId: model.id,
     alias: model.name,
