@@ -241,7 +241,10 @@ type CachedModelSale = {
 // the price this is only a label — the charge never reads it.
 function createModelSaleCache() {
   return createCachedObject<CachedModelSale>({
-    key: `${REDIS_KEYS.CACHES.PAID_ACCESS}:ModelSales`,
+    // v2: the value shape changed from one window to a list of them. An entry written by the previous
+    // build is a cache HIT that reads as no sales, so the key moves with the shape rather than serving a
+    // minute of missing badges after a deploy.
+    key: `${REDIS_KEYS.CACHES.PAID_ACCESS}:ModelSales:v2`,
     idKey: 'modelId',
     ttl: CacheTTL.xs,
     staleWhileRevalidate: false,
@@ -258,31 +261,38 @@ function modelSaleCache() {
   return (modelSaleCacheInstance ??= createModelSaleCache());
 }
 
+/** The price a sale is resolved against: whichever chargeable tier this gate actually has. */
+const saleAnchorPrice = (terms: ModelVersionTerms | undefined): number => {
+  const { download, generation } = gatePrices(terms);
+  return Math.max(download, generation);
+};
+
 async function querySalesForModels(modelIds: number[]): Promise<CachedModelSale[]> {
   if (!modelIds.length) return [];
   const now = new Date();
-  // One row per (model, sale), not per model: overlapping sales are legal and the deepest of them wins,
-  // which is a decision the cached window cannot make for itself because "deepest" moves with the price.
-  // The anchor mirrors saleAnchorPrice — the dearer of the two gate prices — taken across the versions
-  // this sale covers on this model.
+  // One row per (model, sale, covered version), not per model: overlapping sales are legal and the
+  // deepest of them wins, which is a decision the cached window cannot make for itself because "deepest"
+  // moves with the price. Prices come back as raw terms and are read in JS — `gatePrices` owns the shape,
+  // and a jsonb `::int` in SQL would hard-error the whole batch on a fractional price the write path
+  // never rejected.
   const rows = await dbRead.$queryRaw<
     {
       modelId: number;
       saleId: number;
+      ownerId: number;
+      baseModel: string | null;
+      terms: unknown;
       startsAt: Date;
       endsAt: Date;
       discountType: SaleDiscountKind;
       discountAmount: number;
-      anchorPrice: number;
     }[]
   >`
     SELECT
-      mv."modelId" AS "modelId", s.id AS "saleId", s."startsAt" AS "startsAt", s."endsAt" AS "endsAt",
-      s."discountType" AS "discountType", s."discountAmount" AS "discountAmount",
-      MAX(GREATEST(
-        COALESCE((pa.terms->'download'->>'price')::int, 0),
-        COALESCE((pa.terms->'generation'->>'price')::int, 0)
-      )) AS "anchorPrice"
+      mv."modelId" AS "modelId", s.id AS "saleId", m."userId" AS "ownerId",
+      mv."baseModel" AS "baseModel", pa.terms AS "terms",
+      s."startsAt" AS "startsAt", s."endsAt" AS "endsAt",
+      s."discountType" AS "discountType", s."discountAmount" AS "discountAmount"
     FROM "ModelVersionSaleItem" si
     JOIN "ModelVersionSale" s ON s.id = si."saleId"
     JOIN "ModelVersion" mv ON mv.id = si."modelVersionId"
@@ -294,21 +304,40 @@ async function querySalesForModels(modelIds: number[]): Promise<CachedModelSale[
       AND s."userId" = m."userId"
       AND s."endsAt" > ${now}
       AND (s."canceledAt" IS NULL OR s."canceledAt" > ${now})
-    GROUP BY mv."modelId", s.id, s."startsAt", s."endsAt", s."discountType", s."discountAmount"
     ORDER BY mv."modelId", s."endsAt"
   `;
+  // The CAPPED price, not the stored one — the same anchor getViewerMonetization resolves against. A
+  // lapsed creator's stored price can be many times what a buyer is charged, and anchoring on it lets the
+  // card name one sale while the page charges another.
+  const capTiers = await getCapTiers(rows.map((r) => Number(r.ownerId)));
   const byModel = new Map<number, CachedModelSale>();
   for (const r of rows) {
     const modelId = Number(r.modelId);
+    const saleId = Number(r.saleId);
+    const terms = (r.terms ?? undefined) as ModelVersionTerms | undefined;
+    const anchorPrice = terms
+      ? saleAnchorPrice(
+          cappedTerms(terms, capTiers.get(Number(r.ownerId)) ?? null, {
+            permanent: true,
+            mediaType: capMediaType(r.baseModel),
+          })
+        )
+      : 0;
     const entry = byModel.get(modelId) ?? { modelId, sales: [] };
-    entry.sales.push({
-      saleId: Number(r.saleId),
-      startsAtMs: r.startsAt.getTime(),
-      endsAtMs: r.endsAt.getTime(),
-      discountType: r.discountType,
-      discountAmount: r.discountAmount,
-      anchorPrice: Number(r.anchorPrice ?? 0),
-    });
+    const existing = entry.sales.find((sale) => sale.saleId === saleId);
+    if (existing) {
+      // A sale covers many versions of one model; it is worth whatever its dearest covered version is.
+      existing.anchorPrice = Math.max(existing.anchorPrice, anchorPrice);
+    } else {
+      entry.sales.push({
+        saleId,
+        startsAtMs: r.startsAt.getTime(),
+        endsAtMs: r.endsAt.getTime(),
+        discountType: r.discountType,
+        discountAmount: r.discountAmount,
+        anchorPrice,
+      });
+    }
     byModel.set(modelId, entry);
   }
   return [...byModel.values()];
@@ -344,7 +373,10 @@ export async function getActiveSalesForModels(
         discountType: sale.discountType,
         discountAmount: sale.discountAmount,
       });
-      if (!best || off > bestOff) {
+      // `off > bestOff` with bestOff starting at 0, exactly as bestSaleFor does it: a sale that takes
+      // nothing off (a gate carrying no price) badges nothing, rather than the card advertising a
+      // discount the page does not apply.
+      if (off > bestOff) {
         best = sale;
         bestOff = off;
       }
@@ -492,12 +524,6 @@ const isOwnerOrModView = (viewer: PaidAccessViewer, ownerId: number) =>
 const hasChargeablePrice = (terms: PaidAccessTerms | undefined) => {
   const { download, generation } = gatePrices(terms as ModelVersionTerms | undefined);
   return download > 0 || generation > 0;
-};
-
-/** The price a sale is resolved against: whichever chargeable tier this gate actually has. */
-const saleAnchorPrice = (terms: ModelVersionTerms | undefined): number => {
-  const { download, generation } = gatePrices(terms);
-  return Math.max(download, generation);
 };
 
 export type ViewerMonetization = {

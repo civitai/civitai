@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as SubscriptionsService from '~/server/services/subscriptions.service';
+import { getCapTier } from '~/server/services/subscriptions.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // The card badge runs on a raw $queryRaw that no other suite reaches: the sales-query suite drives the
@@ -8,6 +10,11 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 // constants and redis/client have canonical mocks registered globally, so this file must not mock them
 // itself — a per-file mock of a shared module leaks into other files under --no-isolate. cache-helpers
 // is mocked deliberately: running lookupFn is the whole point here, and the canonical fake never calls it.
+vi.mock('~/server/services/subscriptions.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof SubscriptionsService>()),
+  getCapTier: vi.fn(async () => 'gold'),
+}));
+
 vi.mock('~/server/utils/cache-helpers', () => ({
   createCachedObject: ({
     lookupFn,
@@ -21,17 +28,23 @@ vi.mock('~/server/utils/cache-helpers', () => ({
 
 import { getActiveSalesForModels } from '~/server/services/paid-access.service';
 
+// The anchor is the capped price, so the owner's tier is an input. Gold is uncapped, which keeps the
+// fixtures below about the picker; the free-tier case gets its own test.
+const capTier = vi.mocked(getCapTier);
+
 const queryRaw = dbMock.dbRead.$queryRaw;
 
 let nextSaleId = 1;
 const row = (over: Record<string, unknown> = {}) => ({
   modelId: 7,
   saleId: nextSaleId++,
+  ownerId: 42,
+  baseModel: 'SDXL 1.0',
+  terms: { download: { price: 1000 } },
   startsAt: new Date('2026-03-01T00:00:00.000Z'),
   endsAt: new Date('2026-03-08T00:00:00.000Z'),
   discountType: 'Percent',
   discountAmount: 25,
-  anchorPrice: 1000,
   ...over,
 });
 
@@ -43,6 +56,8 @@ const sqlText = () => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  nextSaleId = 1;
+  capTier.mockResolvedValue('gold');
   queryRaw.mockResolvedValue([]);
 });
 
@@ -91,12 +106,14 @@ describe('getActiveSalesForModels — the card badge', () => {
     expect(sql).toContain('s."canceledAt" IS NULL');
   });
 
+  // Every fixture below puts the expected winner FIRST. The cache kept the last row per model before
+  // this change, so a winner in last position is answered correctly by "keep whatever came last" too.
   it('badges the DEEPEST overlapping sale, not the one ending soonest', async () => {
     // Overlapping sales are legal (a sale crossing a month boundary meets the next month's) and the page
-    // charges the deepest. A card advertising the shallower one under-promises against its own model page.
+    // charges the deepest. A card advertising the shallower one under-promises against its own page.
     queryRaw.mockResolvedValue([
-      row({ endsAt: new Date('2026-03-04T00:00:00.000Z'), discountAmount: 10 }),
       row({ endsAt: new Date('2026-03-20T00:00:00.000Z'), discountAmount: 40 }),
+      row({ endsAt: new Date('2026-03-04T00:00:00.000Z'), discountAmount: 10 }),
     ]);
 
     const out = await getActiveSalesForModels([7], now);
@@ -109,13 +126,64 @@ describe('getActiveSalesForModels — the card badge', () => {
   });
 
   it('compares a percent against a fixed amount at the price, not against each other', async () => {
-    // 20% of 1000 is 200, so the 300 ⚡ sale is deeper despite the smaller-looking number.
+    // 50% of 1000 is 500, so the percent is the deeper of the two while carrying the SMALLER number.
+    // Comparing discountAmount alone picks the 300 Buzz sale and is wrong.
     queryRaw.mockResolvedValue([
-      row({ discountType: 'Percent', discountAmount: 20 }),
+      row({ discountType: 'Percent', discountAmount: 50 }),
       row({
         endsAt: new Date('2026-03-09T00:00:00.000Z'),
         discountType: 'Fixed',
         discountAmount: 300,
+      }),
+    ]);
+
+    const out = await getActiveSalesForModels([7], now);
+
+    expect(out[7]).toEqual({
+      endsAt: new Date('2026-03-08T00:00:00.000Z'),
+      discountType: 'Percent',
+      discountAmount: 50,
+    });
+  });
+
+  it('measures each sale against the price of the versions IT covers', async () => {
+    // Same discount type, so only the anchor separates them: 20% of 1000 is 200 and beats 40% of 100.
+    // Dropping anchorPrice from the comparison picks the 40.
+    queryRaw.mockResolvedValue([
+      row({ endsAt: new Date('2026-03-11T00:00:00.000Z'), discountAmount: 20 }),
+      row({ discountAmount: 40, terms: { download: { price: 100 } } }),
+    ]);
+
+    const out = await getActiveSalesForModels([7], now);
+
+    expect(out[7]).toEqual({
+      endsAt: new Date('2026-03-11T00:00:00.000Z'),
+      discountType: 'Percent',
+      discountAmount: 20,
+    });
+  });
+
+  it('badges nothing when the deepest active sale takes nothing off', async () => {
+    // A gate carrying no price: the page applies no discount, so the card must not claim one.
+    queryRaw.mockResolvedValue([row({ terms: { download: { price: 0 } } })]);
+
+    const out = await getActiveSalesForModels([7], now);
+
+    expect(out[7]).toBeUndefined();
+  });
+
+  it('anchors on the price a BUYER pays, not the price the creator stored', async () => {
+    // A lapsed creator's permanent gate is clamped to the free ceiling for buyers. Anchored on the
+    // stored 5000 the percent looks deeper (1000 vs 300); at the 500 a buyer actually pays it is 100,
+    // and the page charges the fixed sale. The card must name the same one.
+    capTier.mockResolvedValue(null);
+    queryRaw.mockResolvedValue([
+      row({ discountType: 'Percent', discountAmount: 20, terms: { download: { price: 5000 } } }),
+      row({
+        endsAt: new Date('2026-03-09T00:00:00.000Z'),
+        discountType: 'Fixed',
+        discountAmount: 300,
+        terms: { download: { price: 5000 } },
       }),
     ]);
 
@@ -128,10 +196,23 @@ describe('getActiveSalesForModels — the card badge', () => {
     });
   });
 
-  it('badges a running sale even when an unstarted one would sort ahead of it', async () => {
-    // The query bounds endsAt only, so a scheduled sale can be the soonest-ending row for the model.
-    // Collapsing to it in SQL and then dropping it on the start check left the card with no badge at
-    // all while a sale was genuinely running.
+  it('takes a sale at its dearest covered version, across the rows it spans', async () => {
+    // One sale, two covered versions: the 1000 one decides what the sale is worth, not the 100 one.
+    queryRaw.mockResolvedValue([
+      row({ saleId: 1, discountAmount: 30, terms: { download: { price: 100 } } }),
+      row({ saleId: 1, discountAmount: 30, terms: { download: { price: 1000 } } }),
+      row({ saleId: 2, endsAt: new Date('2026-03-14T00:00:00.000Z'), discountAmount: 25 }),
+    ]);
+
+    const out = await getActiveSalesForModels([7], now);
+
+    // 30% of 1000 beats 25% of 1000; anchoring sale 1 on its cheapest version would flip it.
+    expect(out[7]?.discountAmount).toBe(30);
+  });
+
+  it('badges a running sale even when an unstarted one is deeper', async () => {
+    // Lead time is up to 14 days and the query bounds endsAt only, so a scheduled sale reaches this
+    // function. It must lose to a running one however deep it is, and must not blank the badge.
     queryRaw.mockResolvedValue([
       row({
         startsAt: new Date('2026-03-05T00:00:00.000Z'),
@@ -150,14 +231,29 @@ describe('getActiveSalesForModels — the card badge', () => {
     });
   });
 
-  it('asks the database for the anchor price the deepest-wins pick needs', async () => {
+  it('keeps each model to its own sales when several are batched', async () => {
+    queryRaw.mockResolvedValue([
+      row({ discountAmount: 15 }),
+      row({ modelId: 9, endsAt: new Date('2026-03-12T00:00:00.000Z'), discountAmount: 35 }),
+    ]);
+
+    const out = await getActiveSalesForModels([7, 9], now);
+
+    expect(out[7]?.discountAmount).toBe(15);
+    expect(out[9]?.discountAmount).toBe(35);
+  });
+
+  it('asks the database for the raw terms the anchor is computed from', async () => {
     await getActiveSalesForModels([7], now);
 
     const sql = sqlText();
-    expect(sql).toContain(`terms->'download'->>'price'`);
-    expect(sql).toContain(`terms->'generation'->>'price'`);
-    // One row per (model, sale): collapsing in SQL would decide "deepest" before the price is known.
-    expect(sql).toContain('GROUP BY mv."modelId", s.id');
+    // Prices come back as raw terms and are read in JS: a jsonb `::int` hard-errors the whole batch on
+    // a fractional price, which nothing at the write boundary rejects.
+    expect(sql).toContain('pa.terms AS "terms"');
+    expect(sql).toContain('m."userId" AS "ownerId"');
+    expect(sql).not.toContain('::int');
+    // Collapsing per model in SQL decides "deepest" before the price is known - the bug this replaced.
+    expect(sql).not.toContain('DISTINCT ON');
   });
 
   it('never queries at all for an empty id list', async () => {
