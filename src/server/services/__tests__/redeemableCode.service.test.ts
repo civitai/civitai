@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc';
 import type {
@@ -10,70 +11,24 @@ import type {
 dayjs.extend(utc);
 
 // Use vi.hoisted to define mocks that will be available in vi.mock factories
-const {
-  mockDbWrite,
-  mockDbRead,
-  mockCreateBuzzTransaction,
-  mockDeliverMonthlyCosmetics,
-  mockSupersedeBuzzMembership,
-} = vi.hoisted(() => {
-  const mockRedeemableCode = {
-    findUnique: vi.fn(),
-    update: vi.fn(),
-    createMany: vi.fn(),
-    delete: vi.fn(),
-  };
-
-  const mockCustomerSubscription = {
-    findFirst: vi.fn(),
-    findMany: vi.fn(),
-    create: vi.fn(),
-    update: vi.fn(),
-    delete: vi.fn(),
-    updateManyAndReturn: vi.fn(),
-  };
-
-  const mockPrice = {
-    findUnique: vi.fn(),
-  };
-
-  const mockProduct = {
-    findMany: vi.fn(),
-  };
-
-  const mockKeyValue = {
-    findUnique: vi.fn(),
-  };
-
-  return {
-    mockDbWrite: {
-      redeemableCode: mockRedeemableCode,
-      customerSubscription: mockCustomerSubscription,
-      price: mockPrice,
-      product: mockProduct,
-      keyValue: mockKeyValue,
-      $transaction: vi.fn(async (callback: (tx: any) => Promise<any>) => {
-        return callback({
-          redeemableCode: mockRedeemableCode,
-          customerSubscription: mockCustomerSubscription,
-          price: mockPrice,
-          product: mockProduct,
-          keyValue: mockKeyValue,
-        });
-      }),
-      $queryRaw: vi.fn(),
-      $executeRaw: vi.fn(),
-    },
-    mockDbRead: {
-      keyValue: {
-        findUnique: vi.fn(),
-      },
-    },
+const { mockCreateBuzzTransaction, mockDeliverMonthlyCosmetics, mockSupersedeBuzzMembership } =
+  vi.hoisted(() => ({
     mockCreateBuzzTransaction: vi.fn().mockResolvedValue({ success: true }),
     mockDeliverMonthlyCosmetics: vi.fn().mockResolvedValue(undefined),
     mockSupersedeBuzzMembership: vi.fn().mockResolvedValue({ superseded: 0 }),
-  };
-});
+  }));
+
+// The clients stay split, as the fixture they replace had them.
+//
+// `$transaction` inherits the canonical default, which runs the callback against `dbWrite`.
+// The old fixture handed it an object whose five members were the write client's own model
+// objects, so the default reaches the same nodes — and every `consumeRedeemableCode` case
+// below replaces the implementation with its own `tx` anyway, which is where the interesting
+// behaviour lives. Note that those replacements OUTLIVE their test: `vi.clearAllMocks()`
+// clears call history, not implementations. That was true of the fixture too, and is left
+// alone here so the conversion changes no ordering.
+const mockDbWrite = dbMock.dbWrite;
+const mockDbRead = dbMock.dbRead;
 
 // Mock modules
 vi.mock('~/env/server', () => ({
@@ -81,10 +36,6 @@ vi.mock('~/env/server', () => ({
     TIER_METADATA_KEY: 'tier',
     BUZZ_ENDPOINT: 'http://mock-buzz-endpoint',
   },
-}));
-
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('~/server/auth/session-invalidation', () => ({
@@ -116,11 +67,6 @@ vi.mock('~/server/utils/subscription.utils', () => {
     },
   };
 });
-
-vi.mock('~/server/db/client', () => ({
-  dbWrite: mockDbWrite,
-  dbRead: mockDbRead,
-}));
 
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransaction: mockCreateBuzzTransaction,
