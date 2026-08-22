@@ -1119,21 +1119,19 @@ export default function ModelDetailsV2({
                             }
                           />
                         )}
-                        {features.userHubs && (
-                          <AddToHubMenuItem
-                            onClick={() =>
-                              openAddToHubModal({
-                                props: {
-                                  source: {
-                                    type: UserHubSourceType.Model,
-                                    targetId: model.id,
-                                    alias: model.name,
-                                  },
+                        <AddToHubMenuItem
+                          onClick={() =>
+                            openAddToHubModal({
+                              props: {
+                                source: {
+                                  type: UserHubSourceType.Model,
+                                  targetId: model.id,
+                                  alias: model.name,
                                 },
-                              })
-                            }
-                          />
-                        )}
+                              },
+                            })
+                          }
+                        />
                         {isOwner && (
                           <AddToShowcaseMenuItem
                             key="add-to-showcase"

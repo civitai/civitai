@@ -375,21 +375,19 @@ export const UserContextMenu = ({ username }: { username: string }) => {
               Gift a membership
             </Menu.Item>
           )}
-          {features.userHubs && (
-            <AddToHubMenuItem
-              onClick={() =>
-                openAddToHubModal({
-                  props: {
-                    source: {
-                      type: UserHubSourceType.User,
-                      targetId: user.id,
-                      alias: user.username,
-                    },
+          <AddToHubMenuItem
+            onClick={() =>
+              openAddToHubModal({
+                props: {
+                  source: {
+                    type: UserHubSourceType.User,
+                    targetId: user.id,
+                    alias: user.username,
                   },
-                })
-              }
-            />
-          )}
+                },
+              })
+            }
+          />
           {!isSameUser && <BlockUserButton userId={user.id} as="menu-item" />}
           {isSameUser && (
             <Menu.Item component={Link} href={`/user/${username}/manage-categories`}>

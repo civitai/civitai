@@ -183,33 +183,64 @@ export async function addUserHubSource({
   hubId,
   ...source
 }: AddUserHubSourceInput & { userId: number }) {
-  const hub = await dbRead.userHub.findFirst({
+  // Read through the WRITER, like `upsertUserHub` above and for the same reason: the
+  // duplicate check, the cap and the next index all come off this row, and a modal of
+  // checkboxes invites a second write inside the replica's lag window.
+  const hub = await dbWrite.userHub.findFirst({
     where: { id: hubId, userId },
-    select: { id: true, sources: { select: { type: true, targetId: true, index: true } } },
+    select: {
+      id: true,
+      sources: { select: { id: true, type: true, targetId: true, enabled: true, index: true } },
+    },
   });
   if (!hub) throw throwNotFoundError('Hub not found');
 
   const existing = hub.sources.find(
     (s) => s.type === source.type && s.targetId === source.targetId
   );
-  if (existing) return { hubId, added: false };
+  if (existing) {
+    // A source the owner switched off is invisible to the feed — `resolveHubSources`
+    // selects enabled rows only — so reporting "already there" and leaving it off is a
+    // success message for nothing happening.
+    if (existing.enabled) return { hubId, added: false };
+
+    await dbWrite.userHubSource.update({ where: { id: existing.id }, data: { enabled: true } });
+    return { hubId, added: true };
+  }
 
   if (hub.sources.length >= hubLimits.sourcesPerHub)
     throw throwBadRequestError(`A hub can hold at most ${hubLimits.sourcesPerHub} sources`);
 
   await assertHubSourcesUsable({ sources: [{ ...source, enabled: true, index: 0 }], userId });
 
-  await dbWrite.userHubSource.create({
-    data: {
-      hubId,
-      type: source.type,
-      targetId: source.targetId,
-      alias: source.alias ?? null,
-      index: hub.sources.reduce((max, s) => Math.max(max, s.index + 1), 0),
-    },
-  });
+  try {
+    await dbWrite.userHubSource.create({
+      data: {
+        hubId,
+        type: source.type,
+        targetId: source.targetId,
+        alias: source.alias ?? null,
+        index: hub.sources.reduce((max, s) => Math.max(max, s.index + 1), 0),
+      },
+    });
+  } catch (error) {
+    // Two writes genuinely in flight. NOT `isPrismaUniqueViolation`, whose own doc
+    // restricts it to sites where P2002 can only mean the row we wanted: `id` is a
+    // unique key here too, so a sequence behind the table collides while saying nothing
+    // about this source, and swallowing that would report a write that never happened.
+    if (!isDuplicateSourceError(error)) throw error;
+    return { hubId, added: false };
+  }
 
   return { hubId, added: true };
+}
+
+function isDuplicateSourceError(error: unknown) {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002')
+    return false;
+
+  const target = error.meta?.target;
+  return Array.isArray(target) && target.includes('targetId');
 }
 
 export async function removeUserHubSource({
@@ -218,13 +249,18 @@ export async function removeUserHubSource({
   type,
   targetId,
 }: UserHubSourceRefInput & { userId: number }) {
-  const hub = await dbRead.userHub.findFirst({
+  const hub = await dbWrite.userHub.findFirst({
     where: { id: hubId, userId },
     select: { id: true },
   });
   if (!hub) throw throwNotFoundError('Hub not found');
 
-  const { count } = await dbWrite.userHubSource.deleteMany({ where: { hubId, type, targetId } });
+  // Owner-scoped on the DELETE as well as in the read above, per the argument this file
+  // already makes for `upsert`: a check in a prior SELECT is a check that can disagree
+  // with the write the moment `UserHub.userId` can move.
+  const { count } = await dbWrite.userHubSource.deleteMany({
+    where: { hubId, type, targetId, hub: { userId } },
+  });
   return { hubId, removed: count > 0 };
 }
 

@@ -5,6 +5,9 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export function AddToHubMenuItem({ onClick }: { onClick: VoidFunction }) {
   const features = useFeatureFlags();
+  // Gated here rather than at each call site: the flag is tester-only, and a call site
+  // added without the check would ship the action to everyone.
+  if (!features.userHubs) return null;
 
   return (
     <LoginRedirect reason="add-to-hub">

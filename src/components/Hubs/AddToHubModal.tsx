@@ -76,8 +76,11 @@ export default function AddToHubModal({ source }: { source: HubSourceTarget }) {
           ) : (
             <Stack gap="xs">
               {hubs.map((hub) => {
+                // Membership here means "this hub shows me that source", so a row the
+                // owner switched off in the rail reads as unticked: the hub is not
+                // showing it, and ticking is what turns it back on.
                 const checked = hub.sources.some(
-                  (s) => s.type === source.type && s.targetId === source.targetId
+                  (s) => s.type === source.type && s.targetId === source.targetId && s.enabled
                 );
                 const full = hub.sources.length >= hubLimits.sourcesPerHub;
                 return (
