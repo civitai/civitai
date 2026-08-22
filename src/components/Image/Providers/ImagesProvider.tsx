@@ -14,6 +14,14 @@ type ImagesContextProps = {
   images?: ImageGetInfinite;
   hideReactionCount?: boolean;
   hideReactions?: boolean;
+  /**
+   * Drop the sticker count/reveal chip from the reaction row.
+   *
+   * For hosts that draw cards narrower than the feed does: the chip shares that
+   * row, and at a 280px card it squeezes the reaction counts until they clip.
+   * A host that sets this owns putting a reveal control somewhere else.
+   */
+  hideStickerBadge?: boolean;
   collectionId?: number;
   judgeInfo?: JudgeInfo;
   judgingCategories?: JudgingCategory[] | null;
@@ -23,6 +31,7 @@ export type ImagesContextState = {
   getImages: () => ImageGetInfinite | undefined;
   hideReactionCount?: boolean;
   hideReactions?: boolean;
+  hideStickerBadge?: boolean;
   collectionId?: number;
   judgeInfo?: JudgeInfo;
   judgingCategories?: JudgingCategory[] | null;
@@ -40,6 +49,7 @@ export function ImagesProvider({
   images,
   hideReactionCount,
   hideReactions,
+  hideStickerBadge,
   collectionId,
   judgeInfo,
   judgingCategories,
@@ -52,12 +62,13 @@ export function ImagesProvider({
     () => ({
       hideReactionCount,
       hideReactions,
+      hideStickerBadge,
       collectionId,
       judgeInfo,
       judgingCategories,
       getImages: () => imagesRef.current,
     }),
-    [hideReactionCount, hideReactions, collectionId, judgeInfo, judgingCategories]
+    [hideReactionCount, hideReactions, hideStickerBadge, collectionId, judgeInfo, judgingCategories]
   );
 
   // Not from `imagesRef`: the ref exists to keep `getImages` stable across

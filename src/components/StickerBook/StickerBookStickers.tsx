@@ -4,6 +4,11 @@ import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useStickerAttribution } from '~/components/Sticker/sticker-attribution.util';
 import { useStickerCosmetics } from '~/components/Sticker/sticker.util';
+import {
+  CreatorHoverDropdown,
+  HOVER_CARD_WIDTH,
+  HoverCreatorCard,
+} from '~/components/UserAvatar/UserHoverCard';
 
 export type StickerBookSticker = { cosmeticId: number; remaining?: number | null };
 
@@ -78,7 +83,7 @@ function StickerTile({
 
   return (
     <HoverCard
-      width={260}
+      width={HOVER_CARD_WIDTH}
       shadow="sm"
       withArrow
       // The grid sits inside a bordered card, and the app theme turns portalling
@@ -107,9 +112,11 @@ function StickerTile({
           )}
         </div>
       </HoverCard.Target>
-      <HoverCard.Dropdown p="xs">
-        <StickerIdentity cosmeticId={art.id} fallbackName={art.name} slug={art.slug} />
-      </HoverCard.Dropdown>
+      {/* The comment hover's dropdown, so a sticker's card looks the same
+          wherever it is hovered. */}
+      <CreatorHoverDropdown component={HoverCard.Dropdown}>
+        <StickerIdentity cosmeticId={art.id} fallbackName={art.name} />
+      </CreatorHoverDropdown>
     </HoverCard>
   );
 }
@@ -125,40 +132,37 @@ function StickerTile({
 function StickerIdentity({
   cosmeticId,
   fallbackName,
-  slug,
 }: {
   cosmeticId: number;
   fallbackName: string;
-  slug: string;
 }) {
-  const { sticker, isLoading } = useStickerAttribution(cosmeticId);
+  const { sticker, blocked, isLoading } = useStickerAttribution(cosmeticId);
 
   return (
-    <div className="flex flex-col gap-1">
-      <Group gap={6} wrap="nowrap">
+    <div className="flex flex-col">
+      {/* Name and maker on ONE line, and no `:shortcode:`. The shortcode is a
+          typing aid for comments and says nothing to someone looking at a
+          collection; the maker is the thing worth reading, so it goes next to
+          the name rather than under it. */}
+      <Group gap={6} wrap="nowrap" px="sm" py={6} className="min-w-0">
         <IconSticker size={14} className="shrink-0 text-yellow-6" />
-        <Text size="sm" fw={600} className="min-w-0 truncate">
-          {sticker?.name ?? fallbackName}
+        <Text size="sm" className="min-w-0 truncate">
+          {sticker?.shopHref ? (
+            <Anchor component={Link} href={sticker.shopHref} underline="always" fw={600} inherit>
+              {sticker.name ?? fallbackName}
+            </Anchor>
+          ) : (
+            <Text span fw={600} inherit>
+              {sticker?.name ?? fallbackName}
+            </Text>
+          )}
+          {isLoading ? null : sticker?.creatorName ? <> by {sticker.creatorName}</> : null}
         </Text>
       </Group>
-      <Text size="xs" c="dimmed">
-        :{slug}:
-      </Text>
-      {isLoading ? (
-        <Skeleton height={10} width={120} />
-      ) : (
-        sticker?.creatorName && (
-          <Text size="xs" c="dimmed">
-            by{' '}
-            {sticker.shopHref ? (
-              <Anchor component={Link} href={sticker.shopHref} inherit>
-                {sticker.creatorName}
-              </Anchor>
-            ) : (
-              sticker.creatorName
-            )}
-          </Text>
-        )
+      {/* The maker's own card, the same one the comment hover shows. A creator
+          named with no way to reach them was the gap Justin called out. */}
+      {sticker?.creatorName && !blocked && (
+        <HoverCreatorCard userId={sticker.creatorId} username={sticker.creatorName} />
       )}
     </div>
   );

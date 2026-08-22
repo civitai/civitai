@@ -4,6 +4,7 @@ import { useMemo } from 'react';
 import { ImagesCard } from '~/components/Image/Infinite/ImagesCard';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import type { StickerBookSide } from '~/components/StickerBook/sticker-book.util';
 import type { RouterOutput } from '~/types/router';
 
@@ -40,7 +41,11 @@ export function StickerBookGrid({ items, side }: { items: BookItems; side: Stick
   if (!items.length) return null;
 
   return (
-    <ImagesProvider images={images}>
+    // 🔴 `hideStickerBadge`: the chip shares the reaction row, and at a 280px
+    // card it squeezes the reaction counts until they clip. This page is about
+    // stickers, so the count it was carrying says nothing new here — but the
+    // chip is also the reveal control, which is why the page header carries one.
+    <ImagesProvider images={images} hideStickerBadge>
       <div
         className="grid items-start gap-3"
         style={{ gridTemplateColumns: `repeat(auto-fill, ${CARD_WIDTH}px)` }}
@@ -50,7 +55,7 @@ export function StickerBookGrid({ items, side }: { items: BookItems; side: Stick
             <div style={{ width: CARD_WIDTH }}>
               <ImagesCard data={item.image} height={CARD_HEIGHT} />
             </div>
-            <PlacedBy counterparts={item.counterparts} side={side} />
+            <PlacedBy counterparts={item.counterparts} side={side} latestAt={item.latestAt} />
           </div>
         ))}
       </div>
@@ -68,9 +73,12 @@ export function StickerBookGrid({ items, side }: { items: BookItems; side: Stick
 function PlacedBy({
   counterparts,
   side,
+  latestAt,
 }: {
   counterparts: BookItems[number]['counterparts'];
   side: StickerBookSide;
+  /** When the most recent sticker landed — Ellie's mock carried a time. */
+  latestAt: Date | string | null;
 }) {
   if (side !== 'owner' || !counterparts.length) return null;
 
@@ -87,6 +95,11 @@ function PlacedBy({
         {rest.length > 0 && (
           <Text size="xs" c="white">
             +{rest.length}
+          </Text>
+        )}
+        {latestAt && (
+          <Text size="xs" c="white" className="opacity-70">
+            <DaysFromNow date={new Date(latestAt)} withoutSuffix />
           </Text>
         )}
       </div>

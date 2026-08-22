@@ -1,6 +1,7 @@
 import {
   ActionIcon,
   Alert,
+  Button,
   Card,
   Group,
   Loader,
@@ -11,6 +12,9 @@ import {
   Tooltip,
 } from '@mantine/core';
 import {
+  IconArrowRight,
+  IconEye,
+  IconEyeOff,
   IconLock,
   IconPhoto,
   IconSettings,
@@ -26,6 +30,7 @@ import { StickerBookStickers } from '~/components/StickerBook/StickerBookSticker
 import { stickerBookSectionCopy } from '~/components/StickerBook/sticker-book.util';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { numberWithCommas } from '~/utils/number-helpers';
+import { useStickerRevealStore } from '~/store/sticker-reveal.store';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -41,6 +46,8 @@ import { trpc } from '~/utils/trpc';
  */
 export function StickerBookView({ username }: { username: string }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const revealed = useStickerRevealStore((state) => state.revealed);
+  const toggleReveal = useStickerRevealStore((state) => state.toggle);
   const { data, isLoading, isError } = trpc.stickerBook.get.useQuery({ username });
 
   if (isLoading)
@@ -114,18 +121,37 @@ export function StickerBookView({ username }: { username: string }) {
           </Stack>
         </Group>
 
-        {isOwner && (
-          <Tooltip label="Sticker settings">
+        <Group gap="xs" wrap="nowrap">
+          {/* The page's reveal control. The cards' own chips are hidden here —
+              they were squeezing the reaction counts at this card width — and the
+              reveal preference is sticky and site-wide, so without one control
+              somewhere a book of stickered images draws no stickers and offers
+              no way to turn them on. */}
+          <Tooltip label={revealed ? 'Hide stickers on all images' : 'Show stickers on all images'}>
             <ActionIcon
-              variant="default"
+              variant={revealed ? 'light' : 'default'}
+              color={revealed ? 'yellow' : undefined}
               size="lg"
-              onClick={() => setSettingsOpen(true)}
-              aria-label="Manage sticker placement settings"
+              onClick={toggleReveal}
+              aria-label={revealed ? 'Hide stickers' : 'Show stickers'}
             >
-              <IconSettings size={18} />
+              {revealed ? <IconEye size={18} /> : <IconEyeOff size={18} />}
             </ActionIcon>
           </Tooltip>
-        )}
+
+          {isOwner && (
+            <Tooltip label="Sticker settings">
+              <ActionIcon
+                variant="default"
+                size="lg"
+                onClick={() => setSettingsOpen(true)}
+                aria-label="Manage sticker placement settings"
+              >
+                <IconSettings size={18} />
+              </ActionIcon>
+            </Tooltip>
+          )}
+        </Group>
       </Group>
 
       {access.canViewStickers && !!data.stickers.length && (
@@ -133,6 +159,22 @@ export function StickerBookView({ username }: { username: string }) {
           title={isOwner ? 'Your stickers' : `${username}'s stickers`}
           icon={<IconSticker size={24} />}
           shaded
+          action={
+            isOwner && (
+              // Same slot as the sections' "View all", and the same button, so
+              // the two bands' actions line up rather than one sitting under its
+              // own content.
+              <Button
+                component={Link}
+                href="/shop"
+                h={34}
+                variant="subtle"
+                rightSection={<IconArrowRight size={16} />}
+              >
+                <Text inherit>Get more in the shop</Text>
+              </Button>
+            )
+          }
         >
           {/* In a panel rather than loose on the page: a wrapping row of small
               artwork with nothing containing it reads as debris between two
@@ -142,11 +184,6 @@ export function StickerBookView({ username }: { username: string }) {
               stickers={data.stickers}
               showQuantities={access.canViewQuantities}
             />
-            {isOwner && (
-              <Text size="sm" component={Link} href="/shop" c="blue.4" mt="sm">
-                Get more in the shop
-              </Text>
-            )}
           </Card>
         </StickerBookBand>
       )}

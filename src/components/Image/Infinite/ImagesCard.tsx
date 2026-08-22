@@ -305,7 +305,7 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                 // would still change this card's layout for everyone while
                 // adding nothing — a visual regression with no feature behind
                 // it, on the surface the flag exists to keep clear of.
-                (features.stickerPlacement ? (
+                (features.stickerPlacement && !contextProps.hideStickerBadge ? (
                   <div className="flex items-center">
                     <div className="min-w-0 flex-1">
                       <ImageReactions image={image} readonly={!safe || (isScanned && isBlocked)} />
