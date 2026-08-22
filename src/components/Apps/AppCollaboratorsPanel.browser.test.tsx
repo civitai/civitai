@@ -40,6 +40,8 @@ const state = vi.hoisted(() => ({
   reportHits: null as ((ids: number[]) => void) | null,
   /** Whether the screening query was enabled on the last render. */
   screenEnabled: false,
+  /** How many times the screening hook ran — the positive control for the assertion below. */
+  screenCalls: 0,
 }));
 
 /**
@@ -91,6 +93,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
             state.screenedInput = input.userIds;
             state.screenedListing = input.appListingId;
             state.screenEnabled = opts?.enabled !== false;
+            state.screenCalls += 1;
             return { data: state.ineligible, isLoading: false, error: null };
           },
         },
@@ -122,6 +125,7 @@ beforeEach(() => {
   state.screenedInput = [];
   state.screenedListing = null;
   state.screenEnabled = false;
+  state.screenCalls = 0;
   state.inviteCalls = [];
   state.pickerFilters = null;
   state.select = null;
@@ -151,7 +155,14 @@ describe('AppCollaboratorsPanel — candidate screening reaches the picker', () 
    */
   test('an EDITOR does not issue the screening query at all', async () => {
     render('editor');
-    await vi.waitFor(() => expect(state.screenEnabled).toBe(false));
+
+    // 🔴 ANCHOR ON THE RENDER FIRST. `screenEnabled` starts false, so waiting for it to BE
+    // false passes before the component has mounted — a poll that cannot tell "not yet" from
+    // "settled". Wait for the panel, prove the hook actually ran, THEN read the flag.
+    await expect.element(page.getByTestId('apps-collaborators-panel')).toBeInTheDocument();
+    await vi.waitFor(() => expect(state.screenCalls).toBeGreaterThan(0));
+
+    expect(state.screenEnabled).toBe(false);
     // The editor is not shown the invite picker, so there is nothing to screen.
     expect(state.reportHits).toBeNull();
   });
@@ -160,6 +171,9 @@ describe('AppCollaboratorsPanel — candidate screening reaches the picker', () 
   test('an OWNER does issue the screening query', async () => {
     render();
     await expect.element(page.getByTestId('stub-invite-picker')).toBeInTheDocument();
+    // Before any hits are reported the owner's query is idle too — the interesting transition is
+    // that reporting hits ENABLES it, which is the opposite of the editor arm above.
+    expect(state.screenEnabled).toBe(false);
     state.reportHits!([FINE_ID]);
     await vi.waitFor(() => expect(state.screenEnabled).toBe(true));
   });
