@@ -1,29 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { increaseDate } from '~/utils/date-helpers';
 
-const { mockDbWrite, mockBust, mockCacheFetch } = vi.hoisted(() => ({
+const { mockBust, mockCacheFetch } = vi.hoisted(() => ({
   // Keyed by the cache's redis key so one stub can drive both the PaidAccess and cap-tier caches.
   mockCacheFetch: vi.fn(async (_key: string, _ids: number[]) => ({} as Record<string, unknown>)),
-  mockDbWrite: {
-    paidAccess: {
-      deleteMany: vi.fn(),
-      upsert: vi.fn(),
-      findUnique: vi.fn(),
-      update: vi.fn(),
-    },
-    modelVersion: { findUnique: vi.fn() },
-    $executeRaw: vi.fn(),
-  },
   mockBust: vi.fn(),
 }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: mockDbWrite }));
 vi.mock('~/server/common/constants', () => ({ CacheTTL: { hour: 3600, xs: 60 } }));
-vi.mock('~/server/redis/client', () => ({
-  REDIS_KEYS: {
-    CACHES: { PAID_ACCESS: 'test:paid-access', PAID_ACCESS_CAP_TIER: 'test:cap-tier' },
-  },
-}));
 vi.mock('~/server/utils/cache-helpers', () => ({
   createCachedObject: ({ key }: { key: string }) => ({
     fetch: (ids: number[]) => mockCacheFetch(key, ids),
@@ -40,6 +24,21 @@ import {
   toPublicPaidAccessDto,
   writePaidAccessForModelVersion,
 } from '~/server/services/paid-access.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { REDIS_KEYS } from '~/server/redis/client';
+
+// 🔴 SAME BLIND SPOT as user-challenge-flag-gate, disclosed here too. The mock this replaces
+// bound dbRead to `{}`, so any replica access threw. `paid-access.service.ts` really does use the
+// replica (`:165` fromWrite ? dbWrite : dbRead, `:252`, `:370`), and the canonical dbRead now
+// answers those silently. No current case reaches them — the measured kill-power is unchanged —
+// but the latent surface is wider than it was.
+const mockDbWrite = dbMock.dbWrite;
+
+// The cache stub above is keyed by the redis key the service asks for, so the tests below
+// have to name the same key. They used to compare against a hand-written stand-in supplied
+// by a per-file mock of `~/server/redis/client`; with that mock gone the service builds its
+// caches from the REAL table, so the assertions name the real constant instead of a copy.
+const CAP_TIER_KEY = REDIS_KEYS.CACHES.PAID_ACCESS_CAP_TIER;
 
 const TERMS = { download: { price: 500 }, generation: { trialLimit: 5 } };
 const PUBLISHED = new Date('2026-07-01T00:00:00.000Z');
@@ -247,7 +246,7 @@ describe('getViewerMonetization — gate price and licensing fee capped as one',
     tiers: Record<number, string | null> = { [OWNER]: null }
   ) =>
     mockCacheFetch.mockImplementation(async (key: string) =>
-      key === 'test:cap-tier'
+      key === CAP_TIER_KEY
         ? Object.fromEntries(
             Object.entries(tiers).map(([id, tier]) => [id, { userId: Number(id), tier }])
           )
@@ -385,7 +384,7 @@ describe('getViewerMonetization — gate price and licensing fee capped as one',
       viewer: { id: 2 },
     });
 
-    const tierCalls = mockCacheFetch.mock.calls.filter(([key]) => key === 'test:cap-tier');
+    const tierCalls = mockCacheFetch.mock.calls.filter(([key]) => key === CAP_TIER_KEY);
     expect(tierCalls).toHaveLength(1);
     expect(tierCalls[0][1]).toEqual([8, 9]);
   });
@@ -395,14 +394,14 @@ describe('getViewerMonetization — gate price and licensing fee capped as one',
 
     await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: 2 } });
 
-    expect(mockCacheFetch.mock.calls.filter(([key]) => key === 'test:cap-tier')).toHaveLength(0);
+    expect(mockCacheFetch.mock.calls.filter(([key]) => key === CAP_TIER_KEY)).toHaveLength(0);
   });
 });
 
 describe('getViewerMonetization — an unset gate/fee is never invented', () => {
   const drive = () =>
     mockCacheFetch.mockImplementation(async (key: string) =>
-      key === 'test:cap-tier' ? { 7: { userId: 7, tier: null } } : {}
+      key === CAP_TIER_KEY ? { 7: { userId: 7, tier: null } } : {}
     );
 
   it('no gate and no fee: nothing charged, and no cap tier is even resolved', async () => {
@@ -419,7 +418,7 @@ describe('getViewerMonetization — an unset gate/fee is never invented', () => 
       licensingFee: null,
       effectiveLicensingFee: null,
     });
-    expect(mockCacheFetch.mock.calls.filter(([key]) => key === 'test:cap-tier')).toHaveLength(0);
+    expect(mockCacheFetch.mock.calls.filter(([key]) => key === CAP_TIER_KEY)).toHaveLength(0);
   });
 
   it('a null fee stays null rather than falling back to the free-tier cap', async () => {
@@ -438,7 +437,7 @@ describe('getViewerMonetization — the price ceiling is permanent-only', () => 
   const OWNER = 7;
   const drive = (gates: Record<string, unknown>) =>
     mockCacheFetch.mockImplementation(async (key: string) =>
-      key === 'test:cap-tier' ? { [OWNER]: { userId: OWNER, tier: null } } : gates
+      key === CAP_TIER_KEY ? { [OWNER]: { userId: OWNER, tier: null } } : gates
     );
   const row = (over: Record<string, unknown>) => ({
     entityId: 1,
@@ -551,7 +550,7 @@ describe('getViewerMonetization — a scheduled sale on top of the gate price', 
     tiers: Record<number, string | null> = { [OWNER]: 'gold' }
   ) =>
     mockCacheFetch.mockImplementation(async (key: string) =>
-      key === 'test:cap-tier'
+      key === CAP_TIER_KEY
         ? Object.fromEntries(
             Object.entries(tiers).map(([id, tier]) => [id, { userId: Number(id), tier }])
           )
@@ -628,7 +627,7 @@ describe('getViewerMonetization — what the UI is told about a sale', () => {
 
   const drive = (gates: Record<string, unknown>, tier: string | null = 'gold') =>
     mockCacheFetch.mockImplementation(async (key: string) =>
-      key === 'test:cap-tier' ? { [OWNER]: { userId: OWNER, tier } } : gates
+      key === CAP_TIER_KEY ? { [OWNER]: { userId: OWNER, tier } } : gates
     );
 
   it('reports the pre-sale price and the end date, so the UI never recomputes the discount', async () => {

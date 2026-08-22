@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // Regression guard for the "unblock leaves nsfwLevel stuck at Blocked" bug
 // (ClickUp 868kfwdzq). Blocking force-sets nsfwLevel=Blocked(32) and leaves the
@@ -20,17 +21,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // that, dbRead/dbWrite are permissive proxies that capture the raw SQL, and the
 // few fan-out helpers that actually run are overridden to no-ops.
 
-const { mockFindMany, mockAppealFindMany } = vi.hoisted(() => ({
-  mockFindMany: vi.fn(),
-  mockAppealFindMany: vi.fn(),
-}));
-
-// --- permissive DB proxy: any method resolves empty; specific seams captured ----------
 const capturedQueryRaw: string[] = [];
 const capturedExecRaw: string[] = [];
 const capturedExecUnsafe: string[] = [];
 const capturedClickhouse: string[] = [];
 
+// A permissive proxy is still needed for the clickhouse client, which has no canonical mock.
 function makePermissive(overrides: Record<string, unknown> = {}): any {
   const handler: ProxyHandler<any> = {
     get(target, prop) {
@@ -47,34 +43,47 @@ function makePermissive(overrides: Record<string, unknown> = {}): any {
   return new Proxy(function () {}, handler);
 }
 
-const dbWrite = makePermissive({
-  // handleUnblockImages emits the unblock UPDATE via a $queryRaw tagged template.
-  $queryRaw: (strings: TemplateStringsArray, ..._values: unknown[]) => {
-    capturedQueryRaw.push(Array.isArray(strings) ? strings.join(' ? ') : String(strings));
-    return Promise.resolve([]);
-  },
-  // updateNsfwLevel() runs the recompute via $executeRawUnsafe.
-  $executeRawUnsafe: (sql: string) => {
-    capturedExecUnsafe.push(String(sql));
-    return Promise.resolve(0);
-  },
-  // resetBlockedNsfwLevel() emits its reset+unlock UPDATE via a $executeRaw tagged template.
-  $executeRaw: (strings: TemplateStringsArray, ..._values: unknown[]) => {
-    capturedExecRaw.push(Array.isArray(strings) ? strings.join(' ? ') : String(strings));
-    return Promise.resolve(0);
-  },
-  // resolveEntityAppeal reads postId+pHash off the appeal image; seed a pHash so the
-  // approved-path phash unblock (bulkRemoveBlockedImages) has something to remove.
-  image: makePermissive({ update: async () => ({ postId: null, pHash: 999n }) }),
-});
+// dbRead/dbWrite come from the canonical mock (src/__tests__/setup.ts). It vivifies on property
+// access exactly like the hand-rolled proxy this replaces, so nothing has to enumerate Prisma's
+// surface — but it keeps the two clients DISTINCT, which the local pair also did. Every routing
+// claim below is a line in the service, not an inference from the old fixture:
+//
+//   dbRead.image.findMany       image.service.ts:668   (handleUnblockImages)
+//   dbWrite.$queryRaw           image.service.ts:692   (the unblock UPDATE)
+//   dbWrite.$executeRaw         image.service.ts:894   (resetBlockedNsfwLevel)
+//   dbWrite.$executeRawUnsafe   image.service.ts:878   (updateNsfwLevel, the recompute)
+//   dbRead.appeal.findMany      report.service.ts:719  (resolveEntityAppeal)
+//   dbRead.user.findMany        report.service.ts:743
+//   dbWrite.image.update        report.service.ts:753
+const dbWrite = dbMock.dbWrite;
+const dbRead = dbMock.dbRead;
+const mockFindMany = dbRead.image.findMany;
+const mockAppealFindMany = dbRead.appeal.findMany;
 
-const dbRead = makePermissive({
-  image: makePermissive({ findMany: mockFindMany, findUnique: async () => null }),
-  appeal: makePermissive({ findMany: mockAppealFindMany }),
-  user: makePermissive({ findMany: async () => [] }),
+// The three raw-SQL seams every assertion in this file reads. Declared at module scope because
+// they are the file's instrument rather than per-case behaviour; `vi.clearAllMocks()` in the
+// beforeEach blocks clears call history without dropping an implementation.
+dbWrite.$queryRaw.mockImplementation((strings: TemplateStringsArray, ..._values: unknown[]) => {
+  capturedQueryRaw.push(Array.isArray(strings) ? strings.join(' ? ') : String(strings));
+  return Promise.resolve([]);
 });
-
-vi.mock('~/server/db/client', () => ({ dbRead, dbWrite }));
+dbWrite.$executeRawUnsafe.mockImplementation((sql: string) => {
+  capturedExecUnsafe.push(String(sql));
+  return Promise.resolve(0);
+});
+dbWrite.$executeRaw.mockImplementation((strings: TemplateStringsArray, ..._values: unknown[]) => {
+  capturedExecRaw.push(Array.isArray(strings) ? strings.join(' ? ') : String(strings));
+  return Promise.resolve(0);
+});
+// resolveEntityAppeal reads postId+pHash off the appeal image; seed a pHash so the
+// approved-path phash unblock (bulkRemoveBlockedImages) has something to remove. Restated
+// rather than inherited: the canonical mock has no default for `update`, so it would return
+// undefined and the destructure would throw.
+dbWrite.image.update.mockResolvedValue({ postId: null, pHash: 999n });
+// Canonical `findUnique` already answers null and `findMany` already answers []; pinned anyway so
+// what this file hands the service is readable here rather than in the shared defaults table.
+dbRead.image.findUnique.mockResolvedValue(null);
+dbRead.user.findMany.mockResolvedValue([]);
 
 // event-engine-common is a git submodule, not checked out by default.
 vi.mock('../../../../event-engine-common/services/metrics', () => ({
@@ -115,19 +124,11 @@ vi.mock('~/server/clickhouse/client', () => ({
   }),
 }));
 
-// redis/sysRedis are deeply path-accessed at module load and used by the caches the
-// fan-out touches (thumbnailCache.refresh). Permissive proxies keep every access safe.
-vi.mock('~/server/redis/client', () => {
-  const make = (): any => new Proxy(() => 'k', { get: () => make() });
-  const keyProxy = make();
-  return {
-    redis: makePermissive({ packed: makePermissive() }),
-    sysRedis: makePermissive(),
-    REDIS_KEYS: keyProxy,
-    REDIS_SYS_KEYS: keyProxy,
-    REDIS_SUB_KEYS: keyProxy,
-  };
-});
+// redis/sysRedis are deeply path-accessed at module load and used by the caches the fan-out
+// touches (thumbnailCache.refresh). The canonical mock (src/__tests__/setup.ts) vivifies to any
+// depth the same way the local proxies did, and additionally supplies the REAL REDIS_*_KEYS
+// tables — the local ones answered every lookup with the same placeholder. Nothing here asserts
+// a key.
 
 // Fan-out helpers that actually execute in the reduced unblock path (postId/pHash null,
 // no appeal, no moderatorId) — overridden to no-ops so only the SQL wiring is exercised.

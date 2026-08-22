@@ -2,6 +2,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { UserEngagementType } from '~/shared/utils/prisma/enums';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // Booting PGlite (WASM Postgres) can exceed the default 10s hook timeout on a
 // contended runner. Relaxing it can only help a slow box, never mask a failure.
@@ -23,26 +24,29 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
  * asserts on the answer.
  */
 
-// The mock factory below is hoisted above the imports, so it closes over this
-// holder rather than over an instance that does not exist yet.
-const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
+// `beforeAll` builds the instance, so everything below reaches it through this
+// holder rather than capturing a value that does not exist yet.
+const holder = { db: null as unknown as PGlite };
 
-vi.mock('~/server/db/client', () => ({
-  dbWrite: {
-    // Prisma's `$queryRaw` is a tagged template. Stitch the fragments back into
-    // a parameterized statement and run it, so the service's SQL reaches
-    // Postgres exactly as written.
-    $queryRaw: (strings: TemplateStringsArray, ...values: unknown[]) => {
-      let sql = '';
-      for (let i = 0; i < strings.length; i++) {
-        sql += strings[i];
-        if (i < values.length) sql += `$${i + 1}`;
-      }
-      return holder.db.query(sql, values as unknown[]).then((r) => r.rows);
-    },
-    placementSuspension: { findUnique: async () => null },
-  },
-}));
+// Prisma's `$queryRaw` is a tagged template. Stitch the fragments back into a
+// parameterized statement and run it, so the service's SQL reaches Postgres
+// exactly as written. Declared on the canonical node rather than in a per-file
+// `vi.mock` factory — see docs/testing/shared-module-mocks.md.
+//
+// `placementSuspension.findUnique` is deliberately NOT restated: the canonical
+// default already resolves `findUnique` to null, which is what the old factory
+// spelled out by hand.
+dbMock.dbWrite.$queryRaw.mockImplementation(
+  (strings: TemplateStringsArray, ...values: unknown[]) => {
+    let sql = '';
+    for (let i = 0; i < strings.length; i++) {
+      sql += strings[i];
+      if (i < values.length) sql += `$${i + 1}`;
+    }
+    return holder.db.query(sql, values as unknown[]).then((r) => r.rows);
+  }
+);
+
 vi.mock('~/server/services/placement-escrow.service', () => ({ settlePlacement: vi.fn() }));
 
 const { isPlacementBlocked } = await import('~/server/services/placement-moderation.service');
