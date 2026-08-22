@@ -840,6 +840,13 @@ export function buildImageWorkflowInput(
     modelType: string;
     checkpointVersionId: number;
     checkpointBaseModel: string;
+    /**
+     * `modelVersionId → ModelType` for every entry in `body.additionalResources`,
+     * resolved by the caller (`resolvePageLoraGates` already reads each version).
+     * REQUIRED whenever `additionalResources` is non-empty — see the fail-closed
+     * branch in the resource assembly below.
+     */
+    additionalResourceTypes?: ReadonlyMap<number, string>;
   },
   workflowTypeOverride?: string
 ): Record<string, unknown> {
@@ -913,24 +920,59 @@ export function buildImageWorkflowInput(
   const height = body.params.height ?? dims.height;
 
   // LoRAs only — the checkpoint is the `model` anchor, not a `resources` entry.
-  const resources: Array<{ id: number; strength: number }> = [];
+  //
+  // 🔴 `model.type` IS REQUIRED, NOT DECORATIVE (issue #4159). The generation
+  // graph's `resources` node validates its OUTPUT against `resourceSchema`,
+  // which requires `model: { type: string }` — the loose `{ id }` INPUT schema
+  // is not what the parse is graded on. Emitting `{ id, strength }` therefore
+  // failed EVERY workflow carrying an additional resource with
+  // `Validation failed: resources: Invalid input: expected object, received
+  // undefined`, i.e. a 400 for every LoRA that survived the compatibility gate.
+  // (The `model` anchor escaped this because the checkpoint node's own input
+  // schema fills `model: { type: 'Checkpoint' }` in a transform; the resources
+  // node has no such transform.) The on-site generator form never hit it either
+  // — its state already holds fully-shaped resource objects.
+  //
+  // The type is the resolved Prisma `ModelType`, NOT a guess: the bound model's
+  // comes from the caller's own `resolveBlockVersionContext`, and each
+  // additional resource's from the per-item version read the router already
+  // performs in `resolvePageLoraGates`. No second enrichment is introduced.
+  const resources: Array<{ id: number; strength: number; model: { type: string } }> = [];
   // The bound model is itself a LoRA (LoRA install) — push it as a network.
   // A Checkpoint-bound install has no additional network here.
   if (resolved.modelType !== 'Checkpoint') {
-    resources.push({ id: body.modelVersionId, strength: 1 });
+    resources.push({
+      id: body.modelVersionId,
+      strength: 1,
+      model: { type: resolved.modelType },
+    });
   }
 
   // Page-LoRA (Increment 1): fan each caller-supplied additional resource into
-  // `resources` as { id, strength }. DEDUPE against the checkpoint anchor AND
-  // the bound-model network already present so a LoRA that coincides with the
-  // anchor isn't double-billed / double-counted in strength. A LoRA that
+  // `resources` as { id, strength, model:{type} }. DEDUPE against the checkpoint
+  // anchor AND the bound-model network already present so a LoRA that coincides
+  // with the anchor isn't double-billed / double-counted in strength. A LoRA that
   // duplicates another LoRA keeps its first occurrence (first-wins).
   if (body.additionalResources?.length) {
     const seen = new Set<number>([resolved.checkpointVersionId, ...resources.map((r) => r.id)]);
     for (const r of body.additionalResources) {
       if (seen.has(r.modelVersionId)) continue;
       seen.add(r.modelVersionId);
-      resources.push({ id: r.modelVersionId, strength: r.strength });
+      // FAIL-CLOSED rather than defaulting to 'LORA'. Today every accepted
+      // additional resource is in the LoRA family and all three types share the
+      // graph's catch-all `resources` slot, so a default would be invisible —
+      // but the deferred VAE/embedding increment slots by `model.type`
+      // (`SINGLETON_SLOT_BY_MODEL_TYPE`), where a wrong type silently routes a
+      // resource to the wrong node and bills for it. A missing entry is a
+      // server-side wiring bug, never anything a caller can provoke.
+      const modelType = resolved.additionalResourceTypes?.get(r.modelVersionId);
+      if (!modelType) {
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: 'additional resource type was not resolved',
+        });
+      }
+      resources.push({ id: r.modelVersionId, strength: r.strength, model: { type: modelType } });
     }
   }
 

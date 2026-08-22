@@ -856,7 +856,20 @@ describe('buildTextToImageInput', () => {
     // fixture); the host doesn't second-guess what the resolver returned. The
     // bound LoRA (body model 99) is the only additional network.
     expect(out.model).toEqual({ id: 691639 });
-    expect(out.resources).toEqual([{ id: 99, strength: 1 }]);
+    // #4159 — `model.type` is the RESOLVED type, carried from
+    // `resolveBlockVersionContext`, not a literal. `resourceSchema` (the
+    // resources node's OUTPUT schema) requires it.
+    expect(out.resources).toEqual([{ id: 99, strength: 1, model: { type: 'LORA' } }]);
+  });
+
+  // #4159 — the resolved type is THREADED, not hardcoded. A LoCon-bound install
+  // must emit `LoCon`, so a mutant that pins the literal `'LORA'` dies here.
+  it('carries the bound model’s own resolved type (LoCon, not a hardcoded LORA)', () => {
+    const out = buildTextToImageInput(baseBody as never, {
+      ...fluxLoraResolved,
+      modelType: 'LoCon',
+    });
+    expect(out.resources).toEqual([{ id: 99, strength: 1, model: { type: 'LoCon' } }]);
   });
 
   it('forwards block-supplied sampler/steps/seed overrides', () => {
@@ -871,6 +884,14 @@ describe('buildTextToImageInput', () => {
   });
 
   // ── Page-LoRA (Increment 1): fan additionalResources into `resources` ──────
+  //
+  // #4159 — every entry now carries `model: { type }`, taken from the caller's
+  // resolved `additionalResourceTypes` map (the types `resolvePageLoraGates`
+  // already read). Types are deliberately MIXED across the fixtures below so a
+  // hardcoded literal cannot satisfy them.
+  const types = (m: Record<number, string>) =>
+    new Map<number, string>(Object.entries(m).map(([k, v]) => [Number(k), v]));
+
   it('fans N additional LoRAs into the resources array (checkpoint stays on `model`)', () => {
     const body = {
       ...baseBody,
@@ -880,13 +901,32 @@ describe('buildTextToImageInput', () => {
         { modelVersionId: 203, strength: -0.5 },
       ],
     };
-    const out = buildTextToImageInput(body as never, checkpointResolved);
+    const out = buildTextToImageInput(body as never, {
+      ...checkpointResolved,
+      additionalResourceTypes: types({ 201: 'LORA', 202: 'LoCon', 203: 'DoRA' }),
+    });
     expect(out.model).toEqual({ id: 99 });
     expect(out.resources).toEqual([
-      { id: 201, strength: 0.8 },
-      { id: 202, strength: 1.2 },
-      { id: 203, strength: -0.5 },
+      { id: 201, strength: 0.8, model: { type: 'LORA' } },
+      { id: 202, strength: 1.2, model: { type: 'LoCon' } },
+      { id: 203, strength: -0.5, model: { type: 'DoRA' } },
     ]);
+  });
+
+  // #4159 fail-closed: a resource whose type the caller did not resolve is a
+  // server wiring bug, not something to paper over with a default that would
+  // mis-slot a non-LoRA once the deferred VAE/embedding increment lands.
+  it('throws rather than guessing when an additionalResource has no resolved type', () => {
+    const body = {
+      ...baseBody,
+      additionalResources: [{ modelVersionId: 201, strength: 0.8 }],
+    };
+    expect(() =>
+      buildTextToImageInput(body as never, {
+        ...checkpointResolved,
+        additionalResourceTypes: types({ 999: 'LORA' }),
+      })
+    ).toThrow(/additional resource type was not resolved/);
   });
 
   it('does NOT duplicate the checkpoint when an additionalResource repeats it', () => {
@@ -897,11 +937,14 @@ describe('buildTextToImageInput', () => {
         { modelVersionId: 201, strength: 1 },
       ],
     };
-    const out = buildTextToImageInput(body as never, checkpointResolved);
+    const out = buildTextToImageInput(body as never, {
+      ...checkpointResolved,
+      additionalResourceTypes: types({ 99: 'LORA', 201: 'LORA' }),
+    });
     // The checkpoint stays as the `model` anchor (no double-bill); only the
     // genuinely-new LoRA lands in resources.
     expect(out.model).toEqual({ id: 99 });
-    expect(out.resources).toEqual([{ id: 201, strength: 1 }]);
+    expect(out.resources).toEqual([{ id: 201, strength: 1, model: { type: 'LORA' } }]);
   });
 
   it('does NOT duplicate the bound-model network when the body model is a LoRA', () => {
@@ -916,11 +959,14 @@ describe('buildTextToImageInput', () => {
         { modelVersionId: 300, strength: 0.9 }, // genuinely new
       ],
     };
-    const out = buildTextToImageInput(body as never, fluxLoraResolved);
+    const out = buildTextToImageInput(body as never, {
+      ...fluxLoraResolved,
+      additionalResourceTypes: types({ 691639: 'LORA', 99: 'LORA', 300: 'DoRA' }),
+    });
     expect(out.model).toEqual({ id: 691639 });
     expect(out.resources).toEqual([
-      { id: 99, strength: 1 },
-      { id: 300, strength: 0.9 },
+      { id: 99, strength: 1, model: { type: 'LORA' } },
+      { id: 300, strength: 0.9, model: { type: 'DoRA' } },
     ]);
   });
 
@@ -932,8 +978,12 @@ describe('buildTextToImageInput', () => {
         { modelVersionId: 201, strength: 0.9 }, // duplicate id
       ],
     };
-    const out = buildTextToImageInput(body as never, checkpointResolved);
-    expect(out.resources).toEqual([{ id: 201, strength: 0.3 }]); // first occurrence kept
+    const out = buildTextToImageInput(body as never, {
+      ...checkpointResolved,
+      additionalResourceTypes: types({ 201: 'LoCon' }),
+    });
+    // first occurrence kept
+    expect(out.resources).toEqual([{ id: 201, strength: 0.3, model: { type: 'LoCon' } }]);
   });
 
   it('emits no additional resources when additionalResources is absent', () => {
@@ -1408,12 +1458,18 @@ describe('buildImageWorkflowInput (generalized image-workflow bridge)', () => {
         { modelVersionId: 202, strength: 1.2 },
       ],
     };
-    const out = buildImageWorkflowInput(body as never, checkpointResolved);
+    const out = buildImageWorkflowInput(body as never, {
+      ...checkpointResolved,
+      additionalResourceTypes: new Map([
+        [201, 'LORA'],
+        [202, 'DoRA'],
+      ]),
+    });
     expect(out.workflow).toBe('img2img');
     expect(out.model).toEqual({ id: 99 });
     expect(out.resources).toEqual([
-      { id: 201, strength: 0.8 },
-      { id: 202, strength: 1.2 },
+      { id: 201, strength: 0.8, model: { type: 'LORA' } },
+      { id: 202, strength: 1.2, model: { type: 'DoRA' } },
     ]);
     // The init image rides alongside the resources — both are present.
     expect(out.images).toHaveLength(1);
