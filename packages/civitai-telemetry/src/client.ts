@@ -563,5 +563,39 @@ export const jobErrorsCounter = registerCounterWithLabels({
   labelNames: ['job'] as const,
 });
 
+// Job names already seeded in THIS module instance. `Histogram.zero()` overwrites the
+// series rather than merging into it, so a second call for a name that has since been
+// observed would silently wipe that job's buckets. Seeding is once-per-name by
+// construction today (createJob runs at each job module's top level), but the failure
+// mode is invisible in the data, so it is closed here rather than assumed away.
+const seededJobs = new Set<string>();
+
+/**
+ * Seed both cron metrics' series for `job` at zero.
+ *
+ * 🔴 WHY THIS EXISTS: a prom-client metric declared with `labelNames` emits NO series at
+ * all for a label value it has never observed. So before a job's first completed run —
+ * and, for the error counter, before its first FAILURE — neither series appears in the
+ * /metrics response, and the two metrics above cannot answer the question they were added
+ * to answer. Their own help text promises that a dead cron shows up as a flatlined
+ * duration histogram next to a live `job_errors_total`; without seeding, a cron that is
+ * dead, a cron that has not run since this pod started, and a cron that was deleted from
+ * the codebase are all the SAME observation — an absent series. `absent()` and `rate()`
+ * alerts written against them are unreliable for the same reason, and a healthy zero is
+ * indistinguishable from an instrument that was never wired up.
+ *
+ * Seeding at job-construction time makes every `createJob` job an observable zero from the
+ * moment its module is loaded, so absence once again means "no such job".
+ *
+ * This mirrors the seeding the /metrics route already does for its own counters, and the
+ * same reasoning is written out at each of those call sites.
+ */
+export function seedJobMetrics(job: string) {
+  if (seededJobs.has(job)) return;
+  seededJobs.add(job);
+  jobDurationHistogram.zero({ job });
+  jobErrorsCounter.inc({ job }, 0);
+}
+
 // NOTE: the DB pool-depth gauges live in the app (src/server/prom/client.ts) — they
 // compose the db pools + these prom helpers, which is app-level glue, not infra.
