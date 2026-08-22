@@ -17,6 +17,7 @@ export {
   resolveCapTier,
   feeMaxFor,
   suggestedFee,
+  seedFeeRatio,
 } from '@civitai/buzz';
 export type { MonetizationLimits } from '@civitai/buzz';
 export type { FeeRatio } from '@civitai/buzz';

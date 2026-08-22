@@ -1,5 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte';
+  import GenerationOnlyHint from '$lib/components/monetization/GenerationOnlyHint.svelte';
   import { enhance } from '$app/forms';
   import { invalidateAll } from '$app/navigation';
   import { toast } from '@civitai/ui/components/ui/sonner/index.js';
@@ -19,7 +20,6 @@
   import {
     MIN_ACCESS_PRICE,
     DEFAULT_GENERATION_TRIAL_LIMIT,
-    GENERATION_ONLY_HINT,
     monetizationLimits,
     type CreatorUsageControl,
   } from '$lib/monetization/paid-access';
@@ -223,7 +223,7 @@
         allowGenerationOnly={caps.canSetGenerationOnly}
       />
       {#if !caps.canSetGenerationOnly}
-        <p class="mt-2 text-xs text-dark-2">{GENERATION_ONLY_HINT}</p>
+        <GenerationOnlyHint class="mt-2" />
       {/if}
       {#if usageControl !== storedUsageControl}
         <div class="mt-3 flex items-center gap-3">

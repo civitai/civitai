@@ -1,10 +1,12 @@
 import {
   feeImageOptionsForCap,
+  feeToRatio,
   finiteOrNull,
   maxLicensingFee,
   maxLicensingFeeCeiling,
   suggestedFeePerImage,
   type CapMediaType,
+  type FeeRatio,
 } from './licensing-fee';
 import { capMediaType } from './media-type';
 import {
@@ -47,6 +49,25 @@ export function suggestedFee({
   baseModel?: string | null;
 }): number {
   return suggestedFeePerImage(modelType, capMediaType(baseModel));
+}
+
+/**
+ * What a fee editor opens on. An existing fee always wins; an unset one falls to the per-type suggestion,
+ * so a checkpoint opens on 1 ⚡ / 1 generation and everything else on 1 ⚡ / 10. The flat
+ * `DEFAULT_FEE_IMAGES` denominator is only for an editor with no version in hand (a bulk selection
+ * spanning model types).
+ */
+export function seedFeeRatio({
+  licensingFee,
+  modelType,
+  baseModel,
+}: {
+  licensingFee?: number | null;
+  modelType?: string | null;
+  baseModel?: string | null;
+}): FeeRatio {
+  if (licensingFee != null && licensingFee > 0) return feeToRatio(licensingFee);
+  return feeToRatio(suggestedFee({ modelType, baseModel }));
 }
 
 /** Every ceiling an editor needs for ONE version. Plain data — no methods, nothing derived twice. */

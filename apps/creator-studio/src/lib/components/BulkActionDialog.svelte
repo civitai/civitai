@@ -1,5 +1,6 @@
 <script lang="ts">
   import { enhance, deserialize } from '$app/forms';
+  import GenerationOnlyHint from '$lib/components/monetization/GenerationOnlyHint.svelte';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Label } from '@civitai/ui/components/ui/label/index.js';
@@ -12,7 +13,6 @@
   import { DEFAULT_FEE_IMAGES, feeToRatio, type MonetizationLimits } from '$lib/monetization/fee';
   import {
     DEFAULT_GENERATION_TRIAL_LIMIT,
-    GENERATION_ONLY_HINT,
     MIN_ACCESS_PRICE,
     type CreatorUsageControl,
   } from '$lib/monetization/paid-access';
@@ -70,6 +70,8 @@
   const affirmable = $derived(action === 'fee' || action === 'paidAccess');
 
   let buzz = $state<number | undefined>();
+  // Re-seeded by the open effect below, for the same reason `ea` is: a prop read in a $state
+  // initializer captures only its first value.
   let images = $state(String(DEFAULT_FEE_IMAGES));
   let usageControl = $state<CreatorUsageControl>('Download');
   // Seeded by the open effect below rather than here: reading a prop in a $state initializer captures
@@ -131,7 +133,9 @@
       confirmText = '';
       submitting = false;
       buzz = undefined;
-      images = String(DEFAULT_FEE_IMAGES);
+      // A bulk selection can span model types, so there is no single suggestion to open on unless the
+      // page passed one — it does only when the list is filtered to one type.
+      images = String(suggestedFee != null ? feeToRatio(suggestedFee).images : DEFAULT_FEE_IMAGES);
       usageControl = 'Download';
       genMode = 'bundled';
       ea = {
@@ -439,7 +443,7 @@
               allowGenerationOnly={caps.canSetGenerationOnly}
             />
             {#if !caps.canSetGenerationOnly}
-              <p class="text-xs text-dark-2">{GENERATION_ONLY_HINT}</p>
+              <GenerationOnlyHint />
             {/if}
             <p class="text-xs text-dark-2">
               A gated version's price moves to whichever tier survives — no version is left gated

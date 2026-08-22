@@ -5,20 +5,29 @@ import { getLogger } from '$lib/server/logger';
 
 const FALLBACK_REDIRECT = env.CIVITAI_APP_URL || 'https://civitai.com';
 
+// Printed once per process so `kubectl logs` answers "which build is this pod running?".
+console.info(`[creator-studio] version ${__APP_VERSION__}`);
+
 // Prerendered at build (no cookie), so it must resolve before the gate.
 const PUBLIC_PATHS = new Set(['/favicon.svg']);
 // Public landing: no forced login redirect, but still attach the user if there is one (so it can bounce
 // signed-in visitors to the dashboard).
 const OPTIONAL_AUTH_PATHS = new Set(['/']);
 
+// Fills the %app.version% meta tag in app.html, so the running build is readable from view-source.
+const withVersion = {
+  transformPageChunk: ({ html }: { html: string }) =>
+    html.replace('%app.version%', __APP_VERSION__),
+};
+
 export const handle: Handle = async ({ event, resolve }) => {
   const { pathname } = event.url;
-  if (PUBLIC_PATHS.has(pathname)) return resolve(event);
+  if (PUBLIC_PATHS.has(pathname)) return resolve(event, withVersion);
 
   const result = await guard.check(event.request.headers.get('cookie') ?? '', event.url.href);
 
   if (result.status === 'login' || result.status === 'forbidden') {
-    if (OPTIONAL_AUTH_PATHS.has(pathname)) return resolve(event);
+    if (OPTIONAL_AUTH_PATHS.has(pathname)) return resolve(event, withVersion);
     if (result.status === 'login') {
       return new Response(null, { status: 302, headers: { location: result.redirect } });
     }
@@ -26,7 +35,7 @@ export const handle: Handle = async ({ event, resolve }) => {
   }
 
   event.locals.user = result.user;
-  return resolve(event);
+  return resolve(event, withVersion);
 };
 
 // Unexpected server errors (thrown loads/actions) — log to Axiom; SvelteKit already returns the 500.

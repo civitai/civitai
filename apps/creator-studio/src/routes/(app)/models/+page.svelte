@@ -31,6 +31,7 @@
     feeMaxFor,
     monetizationLimits,
     suggestedFee,
+    seedFeeRatio,
     DEFAULT_FEE_IMAGES,
     type MonetizationLimits,
   } from '$lib/monetization/fee';
@@ -379,8 +380,14 @@
   function openEditor(version: CreatorModelVersion, modelType: string) {
     editingType = modelType;
     feeAffirmed = false;
-    const r = feeToRatio(version.licensingFee);
-    feeBuzz = r.buzz || undefined;
+    // An unset fee opens on the per-type suggestion's denominator (1 generation for a checkpoint, 10
+    // otherwise) with the amount left empty, so nothing is priced until the creator types.
+    const r = seedFeeRatio({
+      licensingFee: version.licensingFee,
+      modelType,
+      baseModel: version.baseModel,
+    });
+    feeBuzz = version.licensingFee ? r.buzz : undefined;
     feeImages = String(r.images);
     editing = version;
   }

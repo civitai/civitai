@@ -1,6 +1,12 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { sveltekit } from '@sveltejs/kit/vite';
 import tailwindcss from '@tailwindcss/vite';
 import { defineConfig, loadEnv } from 'vite';
+
+const { version } = JSON.parse(
+  readFileSync(fileURLToPath(new URL('./package.json', import.meta.url)), 'utf8')
+) as { version: string };
 
 export default defineConfig(({ mode }) => {
   // SvelteKit/Vite load .env into $env/dynamic/private, NOT into process.env — but the @civitai/*
@@ -12,6 +18,9 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [tailwindcss(), sveltekit()],
+    // Which build a pod (or a tab) is running is otherwise unanswerable from the outside — it cost an
+    // afternoon of "is this deployed yet?" during the scheduled-sales rollout.
+    define: { __APP_VERSION__: JSON.stringify(version) },
     // @civitai/* packages ship raw TS (main: ./src/index.ts) — let Vite transpile them.
     // (Their deps like pg/kysely/jose stay external/node_modules.)
     ssr: {

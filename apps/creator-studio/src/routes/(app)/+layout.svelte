@@ -221,6 +221,7 @@
           </Select.Root>
         </div>
       {/if}
+      <p class="px-2 pb-1 text-[10px] tabular-nums text-dark-3">v{__APP_VERSION__}</p>
       <div class="px-1 py-1">
         <AccountSwitcher
           name={who}
