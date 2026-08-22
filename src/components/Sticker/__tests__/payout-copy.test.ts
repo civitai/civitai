@@ -132,6 +132,7 @@ describe('the removal copy', () => {
   });
 
   it('says nobody is notified either way, which is true of both', () => {
+    // Still true here, and only here: an OWNER removing their own sticker stays silent.
     for (const free of [true, false])
       expect(removalConsequence(free)).toMatch(/nobody is notified/);
   });
@@ -201,6 +202,27 @@ describe('moderatorTakedownConsequence', () => {
     expect(moderatorTakedownConsequence({ pending: false, free: false })).toMatch(/No Buzz moves/);
   });
 
+  it.each([
+    [true, true],
+    [true, false],
+    [false, true],
+    [false, false],
+  ])('tells the moderator the placer hears about it — pending %s, free %s', (pending, free) => {
+    // Both directions: a copy edit that adds the new clause and leaves the old
+    // one contradicts itself and still reads fine in a diff.
+    const copy = moderatorTakedownConsequence({ pending, free });
+
+    expect(copy).toMatch(/placer is told|they are told/);
+    expect(copy).not.toMatch(/nobody is notified/);
+  });
+
+  it('promises no refund only where there was something to refund', () => {
+    for (const pending of [true, false]) {
+      expect(moderatorTakedownConsequence({ pending, free: false })).toMatch(/no refund/);
+      expect(moderatorTakedownConsequence({ pending, free: true })).not.toMatch(/refund/);
+    }
+  });
+
   /**
    * There is no escrow on a free row in either state, so the pending branch's
    * forfeit is a claim about money that does not exist — asserted at an
@@ -211,7 +233,9 @@ describe('moderatorTakedownConsequence', () => {
 
     expect(free).not.toMatch(/forfeit|already paid|gets? nothing back/);
     expect(free).toMatch(/[Nn]othing was paid for it/);
-    expect(free).toMatch(/nobody is notified/);
+    // And says nothing about a refund, which is the money claim a free row
+    // cannot make in either direction.
+    expect(free).not.toMatch(/refund/);
   });
 
   it('separates the two states on a free row too', () => {

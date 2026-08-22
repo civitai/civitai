@@ -115,12 +115,13 @@ export function OwnerRemove({
  * Same mutation either way, so the two cannot drift into different rules about
  * what removal means.
  *
- * On a live placement nothing else happens: no refund, and nobody is notified
- * (Justin, 2026-08-08). The escrow was paid to a content owner who did not
- * choose the sticker, and clawing it back would charge them for someone else's
- * problem. **A pending PAID one is not that**: it settles as `removeByModerator`,
- * whose payout is a forfeit of the whole escrow, fee and principal — so the
- * confirmation has to say a different thing about the money.
+ * On a live placement no money moves (Justin, 2026-08-08): the escrow was paid
+ * to a content owner who did not choose the sticker, and clawing it back would
+ * charge them for someone else's problem. **A pending PAID one is not that**: it
+ * settles as `removeByModerator`, whose payout is a forfeit of the whole escrow,
+ * fee and principal — so the confirmation has to say a different thing about the
+ * money.
+
  *
  * A free row has no escrow at all, in either state, so both of those sentences are
  * false of one and the confirmation branches on `free` as well as on `pending`.

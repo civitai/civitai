@@ -94,7 +94,7 @@ export const placementAmountLine = (free: boolean, amount: number) =>
 export const placedSpendLabel = (free: boolean, amount: number) => (free ? null : `${amount} Buzz`);
 
 /**
- * What a moderator take-down does to the money.
+ * What a moderator take-down does to the money, and what the placer is told.
  *
  * Two axes, and free breaks the pending one specifically: a pending PAID row
  * settles as a forfeit of the whole escrow, and a pending free row has no escrow
@@ -111,12 +111,12 @@ export function moderatorTakedownConsequence({
 }) {
   if (free)
     return pending
-      ? 'This one is still awaiting the owner. Nothing was paid for it, so no Buzz moves, and nobody is notified.'
-      : 'The sticker comes off this content for everyone, recorded as a moderator takedown. Nothing was paid for it, so no Buzz moves, and nobody is notified.';
+      ? 'This one is still awaiting the owner. Nothing was paid for it, so no Buzz moves. The placer is told a moderator removed it.'
+      : 'The sticker comes off this content for everyone, recorded as a moderator takedown. Nothing was paid for it, so no Buzz moves. The placer is told a moderator removed it.';
 
   return pending
-    ? 'This one is still awaiting the owner. Taking it down forfeits everything the placer paid — they get nothing back, and nobody is notified.'
-    : 'The sticker comes off this content for everyone, recorded as a moderator takedown. No Buzz moves and nobody is notified.';
+    ? 'This one is still awaiting the owner. Taking it down forfeits everything the placer paid — they get nothing back, and they are told a moderator removed it with no refund.'
+    : 'The sticker comes off this content for everyone, recorded as a moderator takedown. No Buzz moves, and the placer is told a moderator removed it with no refund.';
 }
 
 /**

@@ -31,6 +31,49 @@ import {
  * queue it belongs to is a tab away from the sticker queue, is the same trap
  * this change exists to close.
  */
+
+/**
+ * Shared by both surfaces; only the nouns differ.
+ *
+ * `wasLive` is `takenDownAt IS NOT NULL`, not a status -- a live takedown and a
+ * pending removal both land on `removed`. It decides the money half: a pending
+ * cosmetic takedown is the one mode that returns the escrow, so "not refunded"
+ * there would be a false statement about someone's Buzz.
+ */
+function moderatorRemovalMessage({
+  noun,
+  pendingNoun,
+  location,
+  details,
+}: {
+  noun: string;
+  /** What the thing is called before it went live — a sticker is placed, a remix is submitted. */
+  pendingNoun: string;
+  location: string;
+  details: Record<string, unknown>;
+}) {
+  const cosmetic = details.removedBy === 'cosmeticTakedown';
+  const wasLive = !!details.wasLive;
+  const paid = Number(details.amount ?? 0) > 0;
+
+  // Saying "a moderator removed your sticker" on a cosmetic takedown tells
+  // someone their own placement was the problem when the artwork's maker's was.
+  const what = cosmetic
+    ? wasLive
+      ? `Your ${noun} was removed from ${location} because a moderator took its artwork down.`
+      : `Your ${pendingNoun} was cancelled because a moderator took its artwork down.`
+    : wasLive
+    ? `A moderator removed your ${noun} from ${location}.`
+    : `A moderator removed your ${pendingNoun} before it was reviewed.`;
+
+  // A free row is amount 0 by DB constraint; neither money sentence is true of it.
+  if (!paid) return what;
+
+  return cosmetic && !wasLive
+    ? `${what} Your Buzz has been refunded.`
+    : `${what} The Buzz you paid is not refunded.`;
+}
+
 export const placementNotifications = createNotificationProcessor({
   'sticker-placement-pending': {
     displayName: 'Sticker awaiting your review',
@@ -275,8 +318,10 @@ export const placementNotifications = createNotificationProcessor({
    * without this the only signal that anything happened is their Buzz balance.
    *
    * Announces an outcome the submitter benefits from hearing and stays silent on
-   * the ones they don't: approval, and an owner removing an entry that was
-   * already live in their gallery. A decline is deliberately not announced —
+   * the ones they don't: approval, an owner removing an entry that was already
+   * live in their gallery, and every way a moderator can end one — live takedown,
+   * pending removal, cosmetic takedown (Justin, 2026-08-21). A decline is
+   * deliberately not announced —
    * Justin's call, 2026-08-18 — on the grounds that "X declined you" mostly buys
    * the placer a grudge against a creator who is entitled to say no. The
    * placements page still shows it.
@@ -292,13 +337,23 @@ export const placementNotifications = createNotificationProcessor({
       const url = `/images/${details.imageId}`;
       if (details.status === 'approved')
         return { message: `${details.ownerUsername} added your remix to their gallery`, url };
-      // Removal is not a decline — it happened after the entry was live, and
-      // approval had already paid the owner, so nothing is refunded. Saying
-      // "declined" would imply a fee they never paid; promising a refund would
-      // be worse.
+      // An OWNER removal is not a decline — it happened after the entry was live,
+      // and approval had already paid the owner, so nothing is refunded. Saying
+      // "declined" would imply a fee they never paid; promising a refund would be
+      // worse. The moderator modes reach rows that never went live, and a pending
+      // cosmetic takedown IS refunded, so their money sentence is
+      // `moderatorRemovalMessage`'s call rather than this rule's.
       if (details.status === 'removed')
         return {
-          message: `${details.ownerUsername} removed your remix from their gallery`,
+          message:
+            details.removedBy === 'owner'
+              ? `${details.ownerUsername} removed your remix from their gallery`
+              : moderatorRemovalMessage({
+                  noun: 'remix',
+                  pendingNoun: 'remix submission',
+                  location: `${details.ownerUsername}'s gallery`,
+                  details,
+                }),
           url,
         };
       // Unreachable for anything sent from now on -- the query stopped selecting
@@ -320,6 +375,7 @@ export const placementNotifications = createNotificationProcessor({
             'ownerUsername', u.username,
             'status', p.status,
             'removedBy', p."removedBy",
+            'wasLive', p."takenDownAt" IS NOT NULL,
             'amount', p.amount
           ) as "details"
         FROM "Placement" p
@@ -342,20 +398,31 @@ export const placementNotifications = createNotificationProcessor({
             )
             OR (
               p.status = 'removed'
-              -- removedBy is the MODE the remover acted in, not their role:
-              -- 'owner' for a creator and for a moderator in manage-as-creator
-              -- mode, 'moderator' for moderate mode or someone else's gallery.
-              -- So this reads "not acting as a moderator", which is the rule.
-              --
-              -- Read as a role it looks wrong once a moderator can act as one on
-              -- their own gallery, and keying on the actor instead
-              -- (takenDownById = ownerId) looks like the fix. It is not: that
-              -- announces a moderator-mode removal as a creator's, and does the
-              -- same to every moderation-tool removal on the actor's own
-              -- gallery. Tried in #4148 and reverted.
-              AND p."removedBy" = 'owner'
+              -- Keying on the actor instead (takenDownById = ownerId) looks like
+              -- the same test and is not: it reads a moderator-mode removal on
+              -- their own gallery as a creator's. Tried in #4148 and reverted.
+              AND p."removedBy" IN ('owner', 'moderator', 'cosmeticTakedown')
               AND p."takenDownAt" IS NOT NULL
               AND p."takenDownAt" > '${lastSent}'
+            )
+            OR (
+              -- A moderator ending a PENDING submission. It never went live, so
+              -- there is no takedown to record and settlePlacement stamps
+              -- resolvedAt like every other settled outcome -- which is why this
+              -- cannot share the branch above, and why it excludes rows that DO
+              -- carry a takedown rather than leaving them to match both.
+              --
+              -- A pending removeByModerator forfeits the whole escrow, fee and
+              -- principal; a pending removeByCosmeticTakedown refunds it in full.
+              --
+              -- No 'owner' here. An owner ending a pending submission is a
+              -- decline, which is deliberately silent, and the remove path only
+              -- ever touches rows that are already approved.
+              p.status = 'removed'
+              AND p."removedBy" IN ('moderator', 'cosmeticTakedown')
+              AND p."takenDownAt" IS NULL
+              AND p."resolvedAt" IS NOT NULL
+              AND p."resolvedAt" > '${lastSent}'
             )
           )
       )
@@ -382,14 +449,16 @@ export const placementNotifications = createNotificationProcessor({
    * The sticker placer's side, and the gap Ellie reported: a placement could be
    * accepted and the only signal was the placer's Buzz balance moving.
    *
-   * Approval only — Justin's call, 2026-08-18. No decline, no expiry, no
-   * removal of any kind. The asymmetry with the remix type, which also announces
-   * an owner removal, is deliberate: a remix that is removed was already live in
-   * someone's gallery, where a declined sticker never appeared anywhere.
+   * Approval, and the moderator removal modes. No decline and no expiry (Justin,
+   * 2026-08-18): a declined sticker never appeared anywhere. An OWNER removal is
+   * still silent here and is not on the remix type -- that asymmetry is
+   * deliberate (Justin, 2026-08-21).
    *
    * Covers free placements as well as paid, unlike the pending pair, which split
-   * because their messages quote an amount and a free row's is 0. This one names
-   * no amount, so one type serves both and a creator muting it mutes both.
+   * because their messages quote an amount and a free row's is 0. This one quotes
+   * none -- `amount` reaches the message only to decide whether there is a
+   * sentence about the money at all -- so one type serves both and a creator
+   * muting it mutes both.
    *
    * An `auto` space approves at the call site, so its placer gets this seconds
    * after placing, confirming something they watched happen. Left that way on
@@ -398,12 +467,22 @@ export const placementNotifications = createNotificationProcessor({
    * `resolvedAt` -- would be a rule we invented and would have to keep true.
    */
   'sticker-placement-resolved': {
-    displayName: 'Your sticker placement was accepted',
+    displayName: 'Your sticker placement was answered',
     category: NotificationCategory.Creator,
-    prepareMessage: ({ details }) => ({
-      message: `${details.ownerUsername} accepted your sticker`,
-      url: `/images/${details.imageId}`,
-    }),
+    prepareMessage: ({ details }) => {
+      const url = `/images/${details.imageId}`;
+      if (details.status === 'removed')
+        return {
+          message: moderatorRemovalMessage({
+            noun: 'sticker',
+            pendingNoun: 'sticker placement',
+            location: `${details.ownerUsername}'s image`,
+            details,
+          }),
+          url,
+        };
+      return { message: `${details.ownerUsername} accepted your sticker`, url };
+    },
     prepareQuery: async ({ lastSent }) => `
       WITH data AS (
         SELECT
@@ -415,23 +494,59 @@ export const placementNotifications = createNotificationProcessor({
             'imageId', p."targetId",
             'ownerId', p."ownerId",
             'ownerUsername', u.username,
-            'status', p.status
+            'status', p.status,
+            'removedBy', p."removedBy",
+            'wasLive', p."takenDownAt" IS NOT NULL,
+            'amount', p.amount
           ) as "details"
         FROM "Placement" p
         JOIN "User" u ON u.id = p."ownerId"
         WHERE p.surface = 'sticker'
           AND p."targetType" = 'image'
-          AND p.status = 'approved'
-          -- Keyed off when the owner acted, never off createdAt: a placement
-          -- made before the last run and accepted after it would be missed
-          -- entirely by a createdAt window.
-          AND p."resolvedAt" IS NOT NULL
-          AND p."resolvedAt" > '${lastSent}'
+          -- Each branch keys off the moment its own actor acted, never off
+          -- createdAt: a placement made before the last run and answered after
+          -- it would be missed entirely by a createdAt window.
+          AND (
+            (
+              p.status = 'approved'
+              AND p."resolvedAt" IS NOT NULL
+              AND p."resolvedAt" > '${lastSent}'
+            )
+            OR (
+              -- The MODE the remover acted in, not their role. An OWNER removal
+              -- stays silent -- taking a sticker off your own image is your
+              -- choice to make -- so only the two moderator modes are here.
+              --
+              -- takenDownAt is its own column, and the reason this is a separate
+              -- branch: taking a live placement down does not touch resolvedAt,
+              -- which records who approved it.
+              p.status = 'removed'
+              AND p."removedBy" IN ('moderator', 'cosmeticTakedown')
+              AND p."takenDownAt" IS NOT NULL
+              AND p."takenDownAt" > '${lastSent}'
+            )
+            OR (
+              -- A moderator ending a PENDING placement. It never went live, so
+              -- there is no takedown to record and settlePlacement stamps
+              -- resolvedAt like every other settled outcome -- which is why this
+              -- cannot share the branch above, and why it excludes rows that DO
+              -- carry a takedown rather than leaving them to match both.
+              --
+              -- A pending removeByModerator forfeits the whole escrow, fee and
+              -- principal; a pending removeByCosmeticTakedown refunds it in full.
+              p.status = 'removed'
+              AND p."removedBy" IN ('moderator', 'cosmeticTakedown')
+              AND p."takenDownAt" IS NULL
+              AND p."resolvedAt" IS NOT NULL
+              AND p."resolvedAt" > '${lastSent}'
+            )
+          )
       )
       SELECT
-        -- The status is in the key even though only one status can reach here.
-        -- It costs nothing now and is what stops a later branch -- a removal,
-        -- say -- from being deduped away silently against the approval's key.
+        -- The status is part of the key because one placement legitimately
+        -- produces two of these: accepted, then taken down later. Keying on the
+        -- id alone means the acceptance burns the key and the takedown is
+        -- deduped away silently.
         CONCAT('sticker-placement-resolved:',"status",':',"placementId") "key",
         "userId",
         'sticker-placement-resolved' "type",
