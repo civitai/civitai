@@ -1,3 +1,4 @@
+import { keepPreviousData } from '@tanstack/react-query';
 import { useCallback, useState } from 'react';
 
 import { QuickSearchDropdown } from '~/components/Search/QuickSearchDropdown';
@@ -17,14 +18,8 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { AppRole, ListingCapability } from '~/shared/constants/app-capabilities.constants';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { SCREENED_USER_ID_LIMIT } from '~/server/schema/blocks/app-collaborator.schema';
 import { trpc } from '~/utils/trpc';
-
-/**
- * How many candidate ids the panel keeps screened at once. Must not exceed the `max()` on
- * `screenAppCollaboratorTargetsSchema`, or the screening query starts 400ing and every
- * candidate reads as eligible.
- */
-const SCREENED_USER_ID_LIMIT = 100;
 
 /**
  * Data container. Owns the `appCollaborators.*` calls this surface wires: `list`,
@@ -147,8 +142,19 @@ export function AppCollaboratorsPanel({
     });
   }, []);
   const screenQuery = trpc.appCollaborators.ineligibleTargets.useQuery(
-    { userIds: screenedUserIds },
-    { enabled: screenedUserIds.length > 0, staleTime: 60_000, retry: false }
+    { appListingId, userIds: screenedUserIds },
+    {
+      // Owner-only: the proc asserts ownership of the listing, and only an owner is shown the
+      // invite picker at all, so an editor must not issue this at all rather than 403 on every
+      // render of a tab they are allowed to see.
+      enabled: role === 'owner' && screenedUserIds.length > 0,
+      staleTime: 60_000,
+      retry: false,
+      // 🔴 Without this, `data` snaps back to undefined on every key change, so an id already
+      // known ineligible briefly returns to the picker and is selectable until the new round
+      // trip lands. The server still refuses it, but the picker should not offer it at all.
+      placeholderData: keepPreviousData,
+    }
   );
   const ineligibleUserIds = screenQuery.data ?? [];
 

@@ -324,33 +324,6 @@ export type InviteCollaboratorResult = {
 };
 
 /**
- * OWNER: invite a user to an editor seat.
- *
- * Idempotent. A repeat invite for a standing `pending` row does NOT reset the row; it
- * only (throttled) re-notifies. A repeat invite for an `accepted` row is
- * ALREADY_SEATED. A repeat invite for a `rejected` row RE-OPENS it as `pending` —
- * declining is not permanent, and the invitee must consent again.
- *
- * 🔴 A SHADOW REVISION IS REFUSED OUTRIGHT — the seat-creation half of the
- * parent-only invariant. Silently hopping to the parent here would be *safe* but
- * *wrong to teach*: an owner who thinks they are seating "the revision" would be
- * seating the live listing, and the UI would have to explain a hop the product does
- * not have. Refusing names the truth: collaborators are a property of the LISTING.
- * The other direction — a seat that landed on a shadow being destroyed by
- * `applyApprovedRevision`'s CASCADE delete — is what makes this a safety guard and not
- * a nicety.
- *
- * 🔴 BAN POLICY (decided, and applied consistently across this feature): a BANNED user
- * may neither be invited nor accept. Rationale: on an on-site listing a seat grants
- * Forgejo `write` on the app repo plus visibility of the app's earnings, and
- * `getMyAppRepo` already refuses to issue a push credential to a banned account
- * (`blocks.router.ts:5579`). Seating a banned user would mint exactly the credential
- * that gate exists to withhold. An EXISTING seat is NOT auto-revoked on ban (that
- * would need a ban-hook this PR does not add) — but every capability the seat unlocks
- * re-checks `bannedAt` at the proc, so a banned editor can hold an inert row and do
- * nothing with it.
- */
-/**
  * Of the supplied ids, the ones that CANNOT hold a collaborator seat right now.
  *
  * 🔴 THE POINT OF THIS FUNCTION IS THAT IT DOES NOT READ THE SEARCH INDEX. The invite picker's
@@ -360,17 +333,32 @@ export type InviteCollaboratorResult = {
  * from the fact that search returned it. This reads the account rows themselves and hands back
  * the ids the invite mutation is going to refuse, so the picker can stop offering them.
  *
- * It is DEFENCE IN DEPTH, never the enforcement point: `inviteCollaborator` re-checks
- * `bannedAt` on the actual invite and is what makes the grant impossible. This exists so the
- * user is not offered a choice the server will reject, and so a stale search document cannot
- * put an ineligible account in front of an owner as a plausible one.
+ * It is DEFENCE IN DEPTH, never the enforcement point: `inviteCollaborator` re-checks the same
+ * state on the actual invite and is what makes the grant impossible. This exists so the user is
+ * not offered a choice the server will reject, and so a stale search document cannot put an
+ * ineligible account in front of an owner as a plausible one.
+ *
+ * 🔴 THE TWO SIDES REFUSE THE SAME SET — banned, soft-deleted, and an id with no account row.
+ * They did NOT at first: the screen rejected all three while `inviteCollaborator` selected only
+ * `{ id, bannedAt }` and let a soft-deleted account through. Narrowing the screen to match would
+ * have been the smaller diff and would have REMOVED a protection, so the enforcement point was
+ * widened instead. Keep them aligned; a comment claiming they mirror each other is not a check.
+ *
+ * 🔴 OWNER-KEYED. It takes the listing and asserts ownership rather than answering about
+ * arbitrary ids, so it cannot be used to enumerate account state. That coupling is the point:
+ * without it, the only thing standing between this and an enumeration endpoint is who happens
+ * to hold the authoring flag today.
  *
  * Deliberately returns ONLY ids, never a reason and never anything about accounts that are
  * fine. An id the caller already had is not new information; a ban reason would be.
  */
 export async function getIneligibleCollaboratorTargets(opts: {
+  appListingId: string;
+  actorUserId: number;
   userIds: number[];
 }): Promise<number[]> {
+  await assertOwner(opts.appListingId, opts.actorUserId);
+
   const userIds = [...new Set(opts.userIds)];
   if (!userIds.length) return [];
 
@@ -389,6 +377,35 @@ export async function getIneligibleCollaboratorTargets(opts: {
   return userIds.filter((id) => !eligible.has(id));
 }
 
+/**
+ * OWNER: invite a user to an editor seat.
+ *
+ * Idempotent. A repeat invite for a standing `pending` row does NOT reset the row; it
+ * only (throttled) re-notifies. A repeat invite for an `accepted` row is
+ * ALREADY_SEATED. A repeat invite for a `rejected` row RE-OPENS it as `pending` —
+ * declining is not permanent, and the invitee must consent again.
+ *
+ * 🔴 A SHADOW REVISION IS REFUSED OUTRIGHT — the seat-creation half of the
+ * parent-only invariant. Silently hopping to the parent here would be *safe* but
+ * *wrong to teach*: an owner who thinks they are seating "the revision" would be
+ * seating the live listing, and the UI would have to explain a hop the product does
+ * not have. Refusing names the truth: collaborators are a property of the LISTING.
+ * The other direction — a seat that landed on a shadow being destroyed by
+ * `applyApprovedRevision`'s CASCADE delete — is what makes this a safety guard and not
+ * a nicety.
+ *
+ * 🔴 BAN POLICY (decided, and applied consistently across this feature): a BANNED user
+ * may neither be invited nor accept — and neither may a SOFT-DELETED one, refused as
+ * not-found so the refusal does not disclose that the account exists. Rationale: on an
+ * on-site listing a seat grants
+ * Forgejo `write` on the app repo plus visibility of the app's earnings, and
+ * `getMyAppRepo` already refuses to issue a push credential to a banned account
+ * (`blocks.router.ts:5579`). Seating a banned user would mint exactly the credential
+ * that gate exists to withhold. An EXISTING seat is NOT auto-revoked on ban (that
+ * would need a ban-hook this PR does not add) — but every capability the seat unlocks
+ * re-checks `bannedAt` at the proc, so a banned editor can hold an inert row and do
+ * nothing with it.
+ */
 export async function inviteCollaborator(opts: {
   appListingId: string;
   targetUserId: number;
@@ -421,9 +438,11 @@ export async function inviteCollaborator(opts: {
   }
   const target = await dbRead.user.findUnique({
     where: { id: opts.targetUserId },
-    select: { id: true, bannedAt: true },
+    select: { id: true, bannedAt: true, deletedAt: true },
   });
-  if (!target) {
+  // A soft-deleted account is refused as NOT FOUND rather than as a ban: to everyone outside
+  // moderation the account is gone, and saying anything else would leak that it exists.
+  if (!target || target.deletedAt) {
     throw new AppCollaboratorError('INVALID_TARGET', 'That user could not be found');
   }
   if (target.bannedAt) {

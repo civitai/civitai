@@ -429,6 +429,45 @@ describe('inviteCollaborator', () => {
     expect(mockDb.appCollaborator.upsert).not.toHaveBeenCalled();
   });
 
+  /**
+   * 🔴 The enforcement point and the picker's screening call must refuse the SAME set. The
+   * screen rejected banned, soft-deleted and missing while this selected only `{id, bannedAt}`
+   * and let a soft-deleted account through — so the two disagreed and a comment claimed they
+   * did not. Refused as NOT FOUND, not as a ban: to anyone outside moderation the account is
+   * gone, and a distinct refusal would disclose that it exists.
+   */
+  it('🔴 a SOFT-DELETED target cannot be seated either, and reads as not-found', async () => {
+    mockDb.user.findUnique.mockResolvedValue({
+      id: TARGET,
+      bannedAt: null,
+      deletedAt: new Date(),
+    });
+    await expect(
+      inviteCollaborator({
+        appListingId: LISTING,
+        targetUserId: TARGET,
+        actorUserId: OWNER,
+        now: NOW,
+      })
+    ).rejects.toMatchObject({ code: 'INVALID_TARGET' });
+    expect(mockDb.appCollaborator.upsert).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The presence half of both refusals: a live account with neither flag IS seatable. Without
+   * it, a mutant refusing every target passes the ban and soft-delete cases above.
+   */
+  it('…while a live target with neither flag is seated', async () => {
+    mockDb.user.findUnique.mockResolvedValue({ id: TARGET, bannedAt: null, deletedAt: null });
+    await inviteCollaborator({
+      appListingId: LISTING,
+      targetUserId: TARGET,
+      actorUserId: OWNER,
+      now: NOW,
+    });
+    expect(mockDb.appCollaborator.upsert).toHaveBeenCalledTimes(1);
+  });
+
   it('re-inviting an ALREADY ACCEPTED collaborator is ALREADY_SEATED', async () => {
     mockDb.appCollaborator.findUnique.mockResolvedValue({
       status: 'accepted',

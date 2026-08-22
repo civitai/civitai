@@ -33,13 +33,28 @@ export const inviteAppCollaboratorSchema = z.object({
 export type InviteAppCollaboratorInput = z.infer<typeof inviteAppCollaboratorSchema>;
 
 /**
+ * How many candidate ids may be screened in one call.
+ *
+ * 🔴 ONE DEFINITION, IMPORTED BY THE CLIENT. The panel caps the set it accumulates and this
+ * schema caps what it will accept; when those were two independent literals, a divergence was a
+ * FAIL-OPEN — the panel would send more than the schema allows, every call would 400, and the
+ * picker would read every candidate as eligible.
+ */
+export const SCREENED_USER_ID_LIMIT = 100;
+
+/**
  * The ids currently on offer in the invite picker, asked about in one round trip.
+ *
+ * Keyed on the LISTING, which the service asserts the caller owns. Without that, this would
+ * answer questions about arbitrary account ids for anyone holding the authoring flag — an
+ * enumeration surface waiting for that audience to widen.
  *
  * Capped at the picker's own page size with headroom — this is a screening call for what is
  * on screen, not a bulk user-state export, and the cap is what keeps it from becoming one.
  */
 export const screenAppCollaboratorTargetsSchema = z.object({
-  userIds: z.array(userId).min(1).max(100),
+  appListingId,
+  userIds: z.array(userId).min(1).max(SCREENED_USER_ID_LIMIT),
 });
 export type ScreenAppCollaboratorTargetsInput = z.infer<typeof screenAppCollaboratorTargetsSchema>;
 

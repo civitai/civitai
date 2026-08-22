@@ -595,9 +595,20 @@ export async function forceUpdateUserIdentity({
     // indefinitely, which is exactly how a renamed account keeps being found (and acted on by
     // id) under the name it was renamed away from. The self-serve profile save has always
     // enqueued this; the moderator path did not.
-    await usersSearchIndex.queueUpdate([
-      { id: userId, action: SearchIndexUpdateQueueAction.Update },
-    ]);
+    // 🔴 NEVER LET THE ENQUEUE BREAK THE RENAME. It is a Redis write, and the rename has
+    // already committed by the time it runs — a blip would throw here, BEFORE
+    // `invalidateSession` below, leaving the account renamed with its old session still live
+    // while the moderator sees a 500. Every other side effect in this file is isolated the
+    // same way; a stale search document is the smallest of the failures available here.
+    await usersSearchIndex
+      .queueUpdate([{ id: userId, action: SearchIndexUpdateQueueAction.Update }])
+      .catch((error) =>
+        logToAxiom({
+          type: 'error',
+          name: 'force-update-identity-search-index',
+          message: (error as Error).message,
+        })
+      );
   }
 
   const { invalidateSession } = await import('~/server/auth/session-invalidation');
@@ -1988,7 +1999,18 @@ export const toggleBan = async ({
     // re-adds it: the incremental sync's range scan keys on `createdAt`, so an existing row is
     // never re-pulled, and the reconciler only deletes. Without this, a lifted ban leaves the
     // account permanently unfindable — a one-way door.
-    await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+    // Isolated for the same reason as the rename path: the unban has already committed, and an
+    // unguarded throw here would skip the `account-unbanned` email below and hand the moderator
+    // a 500 for an action that succeeded.
+    await usersSearchIndex
+      .queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }])
+      .catch((error) =>
+        logToAxiom({
+          type: 'error',
+          name: 'unban-user-search-index',
+          message: (error as Error).message,
+        })
+      );
   }
 
   // Notify the user by email of the ban/unban decision. Skip the admin

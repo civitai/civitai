@@ -71,6 +71,23 @@ describe('forceUpdateUserIdentity -> user search index', () => {
     expect(mockQueueUpdate).not.toHaveBeenCalled();
   });
 
+  /**
+   * 🔴 A REDIS BLIP MUST NOT BREAK THE RENAME. `queueUpdate` is a Redis write and the rename has
+   * already committed by the time it runs; unguarded, its rejection propagates BEFORE
+   * `invalidateSession`, so the account is renamed and its old session stays live while the
+   * moderator sees a 500. A stale search document is by far the smaller failure.
+   */
+  it('survives a failing search-index enqueue and still invalidates the session', async () => {
+    mockQueueUpdate.mockRejectedValueOnce(new Error('redis is down'));
+
+    await expect(
+      forceUpdateUserIdentity({ userId: USER_ID, username: 'renamed-anyway' })
+    ).resolves.toEqual({ updated: true, user: { id: USER_ID } });
+
+    // The step that used to be skipped by the unguarded throw.
+    expect(mockInvalidateSession).toHaveBeenCalledWith(USER_ID, 'moderation');
+  });
+
   it('does nothing at all when there is nothing to change', async () => {
     await expect(forceUpdateUserIdentity({ userId: USER_ID })).resolves.toEqual({
       updated: false,

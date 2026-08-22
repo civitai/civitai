@@ -16,13 +16,20 @@ const {
   mockInvalidateSession,
   mockCacheRefresh,
   mockSettingsBust,
+  mockSendModerationEmail,
 } = vi.hoisted(() => ({
   mockQueueUpdate: vi.fn(async () => undefined),
   mockRemoveContent: vi.fn(async () => undefined),
   mockInvalidateSession: vi.fn(async () => undefined),
   mockCacheRefresh: vi.fn(async () => undefined),
   mockSettingsBust: vi.fn(async () => undefined),
+  mockSendModerationEmail: vi.fn(async (..._a: unknown[]) => undefined),
 }));
+
+vi.mock('~/server/email/templates', async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>;
+  return { ...actual, moderationActionEmail: { send: mockSendModerationEmail } };
+});
 
 vi.mock('~/server/search-index', async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
@@ -102,6 +109,30 @@ describe('toggleBan -> user search index', () => {
       Array<{ id: number; action: string }>
     ];
     expect(items).toEqual([{ id: USER_ID, action: 'Update' }]);
+  });
+
+  /**
+   * 🔴 A REDIS BLIP MUST NOT BREAK THE UNBAN. `queueUpdate` is a Redis write placed AFTER the
+   * unban has committed and BEFORE the `account-unbanned` email; unguarded, its rejection
+   * propagates and the user is never told their ban was lifted, while the moderator sees a 500
+   * for an action that in fact succeeded.
+   */
+  it('survives a failing search-index enqueue and still sends the unban email', async () => {
+    userFindUnique.mockResolvedValue({
+      bannedAt: ALREADY_BANNED_AT,
+      meta: {},
+      username: 'someone',
+      email: 'someone@example.com',
+    });
+    mockQueueUpdate.mockRejectedValueOnce(new Error('redis is down'));
+
+    await expect(call()).resolves.toEqual({ id: USER_ID, paddleCustomerId: null });
+
+    expect(mockSendModerationEmail).toHaveBeenCalledTimes(1);
+    expect(mockSendModerationEmail.mock.calls[0]?.[0]).toMatchObject({
+      kind: 'account-unbanned',
+      to: 'someone@example.com',
+    });
   });
 
   /**

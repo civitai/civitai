@@ -4,6 +4,10 @@ import { usersFilterableAttributes } from '~/server/search-index/filterable-attr
 import { updateDocs } from '~/server/meilisearch/client';
 
 import { getOrCreateIndex } from '~/server/meilisearch/util';
+import type {
+  SearchIndexContext,
+  SearchIndexPullBatch,
+} from '~/server/search-index/base.search-index';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import { USER_SEARCH_INDEX_ELIGIBILITY } from '~/server/search-index/user-index-eligibility';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
@@ -100,17 +104,19 @@ type UserRank = {
 };
 
 /**
- * Who this index is allowed to hold. Shared with the nightly reconciler in
- * `~/server/meilisearch/cleanup.ts` — see that module's header for why the write-side filter
- * and the reconciler-side filter have to be the same list.
+ * The WHERE every read in this index is built from: the eligibility predicate shared with the
+ * nightly reconciler (`~/server/meilisearch/cleanup.ts`), plus whatever clause narrows this
+ * particular batch. Narrowing clauses come AFTER, so eligibility can never be dropped by one.
  *
- * Exported so a test can hold the two sides against each other. Both `prepareBatches` and
- * `pullData` build their WHERE from it, so a targeted update drained from the queue is filtered
- * exactly like a full rebuild — which matters, because the metrics refresh enqueues an update
- * for every account whose counters moved.
+ * 🔴 A FUNCTION, AND THE ONLY NAME FOR THIS. It was previously an exported constant with a local
+ * alias beside it, and the alias — not the constant — was what the queries consumed. A test
+ * pinning the constant therefore said nothing about the queries: re-binding the alias to a
+ * two-element copy dropped `bannedAt IS NULL` from every write-side query with the whole suite
+ * green. One name removes the gap, and the tests now pin the SQL that reaches `$queryRaw`
+ * rather than anything declared here.
  */
-export const USERS_INDEX_WHERE = [...USER_SEARCH_INDEX_ELIGIBILITY];
-const WHERE = USERS_INDEX_WHERE;
+export const buildUsersIndexWhere = (...narrowing: (Prisma.Sql | undefined)[]) =>
+  [...USER_SEARCH_INDEX_ELIGIBILITY, ...narrowing].filter(isDefined);
 
 const transformData = async ({
   users,
@@ -140,17 +146,21 @@ const transformData = async ({
 
 export type UserSearchIndexRecord = Awaited<ReturnType<typeof transformData>>[number];
 
-export const usersSearchIndex = createSearchIndexUpdateProcessor({
-  indexName: INDEX_ID,
-  setup: onIndexSetup,
-  workerCount: 25,
-  prepareBatches: async ({ db, logger }, lastUpdatedAt) => {
-    const where = [
-      ...WHERE,
-      lastUpdatedAt ? Prisma.sql`u."createdAt" >= ${lastUpdatedAt}` : undefined,
-    ].filter(isDefined);
+/**
+ * Hoisted out of the processor config and exported so a test can drive it and read the SQL it
+ * actually issues. Pinning a constant these functions are *supposed* to use is one indirection
+ * short of pinning what they do — and that indirection is exactly what an adversarial round
+ * walked through.
+ */
+export const prepareUsersBatches = async (
+  { db, logger }: SearchIndexContext,
+  lastUpdatedAt?: Date
+) => {
+  const where = buildUsersIndexWhere(
+    lastUpdatedAt ? Prisma.sql`u."createdAt" >= ${lastUpdatedAt}` : undefined
+  );
 
-    const data = await db.$queryRaw<{ startId: number; endId: number }[]>`
+  const data = await db.$queryRaw<{ startId: number; endId: number }[]>`
       SELECT
         (
           SELECT u.id
@@ -168,31 +178,37 @@ export const usersSearchIndex = createSearchIndexUpdateProcessor({
         ) as "endId"
     `;
 
-    const { startId, endId } = data[0];
+  const { startId, endId } = data[0];
 
-    logger(
-      `PrepareBatches :: Prepared batch: ${startId} - ${endId} ... Last updated: ${lastUpdatedAt}`
-    );
+  logger(
+    `PrepareBatches :: Prepared batch: ${startId} - ${endId} ... Last updated: ${lastUpdatedAt}`
+  );
 
-    return {
-      batchSize: READ_BATCH_SIZE,
-      startId,
-      endId,
-    };
-  },
-  pullSteps: 4,
-  pullData: async ({ db, logger }, batch, step, prevData) => {
+  return {
+    batchSize: READ_BATCH_SIZE,
+    startId,
+    endId,
+  };
+};
+
+/** Hoisted and exported for the same reason as {@link prepareUsersBatches}. */
+export const pullUsersData = async (
+  { db, logger }: SearchIndexContext,
+  batch: SearchIndexPullBatch,
+  step?: number,
+  prevData?: any
+) => {
+  {
     logger(
       `PullData :: Pulling data for batch`,
       batch.type === 'new' ? `${batch.startId} - ${batch.endId}` : batch.ids.length
     );
-    const where = [
-      ...WHERE,
+    const where = buildUsersIndexWhere(
       batch.type === 'update' ? Prisma.sql`u.id IN (${Prisma.join(batch.ids)})` : undefined,
       batch.type === 'new'
         ? Prisma.sql`u.id >= ${batch.startId} AND u.id <= ${batch.endId}`
-        : undefined,
-    ].filter(isDefined);
+        : undefined
+    );
 
     const userIds = prevData ? (prevData as { users: BaseUser[] }).users.map((u) => u.id) : [];
 
@@ -288,7 +304,16 @@ export const usersSearchIndex = createSearchIndexUpdateProcessor({
     }
 
     return prevData;
-  },
+  }
+};
+
+export const usersSearchIndex = createSearchIndexUpdateProcessor({
+  indexName: INDEX_ID,
+  setup: onIndexSetup,
+  workerCount: 25,
+  prepareBatches: prepareUsersBatches,
+  pullSteps: 4,
+  pullData: pullUsersData,
   transformData,
   pushData: async ({ indexName, jobContext }, records) => {
     await updateDocs({

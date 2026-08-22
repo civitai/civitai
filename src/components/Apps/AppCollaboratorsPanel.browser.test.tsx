@@ -28,6 +28,8 @@ const state = vi.hoisted(() => ({
   ineligible: [] as number[],
   /** Ids the picker reported as being on offer. */
   screenedInput: [] as number[],
+  /** The listing the screening query was keyed to. */
+  screenedListing: null as string | null,
   /** Every `invite` mutation actually fired. */
   inviteCalls: [] as unknown[],
   /** The last `filters` string handed to the picker. */
@@ -36,6 +38,8 @@ const state = vi.hoisted(() => ({
   select: null as ((item: unknown, data: unknown) => void) | null,
   /** The picker's `onHits`, so a test can drive what is on offer. */
   reportHits: null as ((ids: number[]) => void) | null,
+  /** Whether the screening query was enabled on the last render. */
+  screenEnabled: false,
 }));
 
 /**
@@ -83,8 +87,10 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         list: { useQuery: () => ({ data: [], isLoading: false, error: null }) },
         getPendingTransfer: { useQuery: () => ({ data: null, isLoading: false, error: null }) },
         ineligibleTargets: {
-          useQuery: (input: { userIds: number[] }) => {
+          useQuery: (input: { appListingId: string; userIds: number[] }, opts?: any) => {
             state.screenedInput = input.userIds;
+            state.screenedListing = input.appListingId;
+            state.screenEnabled = opts?.enabled !== false;
             return { data: state.ineligible, isLoading: false, error: null };
           },
         },
@@ -101,11 +107,11 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
 
 const { AppCollaboratorsPanel } = await import('~/components/Apps/AppCollaboratorsPanel');
 
-const render = () =>
+const render = (role: 'owner' | 'editor' = 'owner') =>
   renderWithProviders(
     <AppCollaboratorsPanel
       appListingId="apl_seam"
-      role="owner"
+      role={role}
       capabilities={capabilitiesForKind('onsite')}
       listing={{ kind: 'onsite', connectClientId: null }}
     />
@@ -114,6 +120,8 @@ const render = () =>
 beforeEach(() => {
   state.ineligible = [];
   state.screenedInput = [];
+  state.screenedListing = null;
+  state.screenEnabled = false;
   state.inviteCalls = [];
   state.pickerFilters = null;
   state.select = null;
@@ -132,6 +140,28 @@ describe('AppCollaboratorsPanel — candidate screening reaches the picker', () 
     await vi.waitFor(() => {
       expect(state.screenedInput).toEqual([FINE_ID, INELIGIBLE_ID]);
     });
+    // Keyed to the listing the proc asserts ownership of — without it the call 400s on the
+    // schema and every candidate reads as eligible.
+    expect(state.screenedListing).toBe('apl_seam');
+  });
+
+  /**
+   * 🔴 The proc asserts the caller OWNS the listing, and only an owner is shown the invite
+   * picker. An editor issuing it would 403 on every render of a tab they are allowed to see.
+   */
+  test('an EDITOR does not issue the screening query at all', async () => {
+    render('editor');
+    await vi.waitFor(() => expect(state.screenEnabled).toBe(false));
+    // The editor is not shown the invite picker, so there is nothing to screen.
+    expect(state.reportHits).toBeNull();
+  });
+
+  /** The control arm for the test above — an OWNER does issue it. */
+  test('an OWNER does issue the screening query', async () => {
+    render();
+    await expect.element(page.getByTestId('stub-invite-picker')).toBeInTheDocument();
+    state.reportHits!([FINE_ID]);
+    await vi.waitFor(() => expect(state.screenEnabled).toBe(true));
   });
 
   test('an id the server calls ineligible is filtered OUT of the picker', async () => {
