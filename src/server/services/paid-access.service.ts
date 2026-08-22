@@ -6,6 +6,7 @@ import {
   effectiveLicensingFee,
   gatePrices,
   bestSaleFor,
+  saleDiscountFor,
   discountedTerms,
   type ModelVersionSaleWindow,
   type SaleDiscountKind,
@@ -205,7 +206,7 @@ function paidAccessCache(entityType: PaidAccessEntityType) {
 }
 
 /**
- * Which of these models currently have a sale running, and when the soonest one ends.
+ * Which of these models currently have a sale running, and the deepest one.
  *
  * Fetched separately from the models themselves. The feed query has several FROM variants and is a hot
  * path, and a sale is time-varying data that would have to be re-indexed at every window edge to ride
@@ -215,12 +216,23 @@ function paidAccessCache(entityType: PaidAccessEntityType) {
  * Same predicate as the resolver, for the same reasons: permanent gates only (a timed early-access
  * window is never discounted), and the sale's author must own the model.
  */
-type CachedModelSale = {
-  modelId: number;
+type CachedModelSaleWindow = {
+  saleId: number;
   startsAtMs: number;
   endsAtMs: number;
   discountType: SaleDiscountKind;
   discountAmount: number;
+  /**
+   * The dearest covered price on this model, which is what the discount is measured against. A percent
+   * and a fixed amount have no order until you know the price they apply to, so the deepest-wins pick
+   * cannot be made without it.
+   */
+  anchorPrice: number;
+};
+
+type CachedModelSale = {
+  modelId: number;
+  sales: CachedModelSaleWindow[];
 };
 
 // Same bucket-per-entity pattern as the other model-side caches, and the same rule as the gate cache:
@@ -249,18 +261,28 @@ function modelSaleCache() {
 async function querySalesForModels(modelIds: number[]): Promise<CachedModelSale[]> {
   if (!modelIds.length) return [];
   const now = new Date();
+  // One row per (model, sale), not per model: overlapping sales are legal and the deepest of them wins,
+  // which is a decision the cached window cannot make for itself because "deepest" moves with the price.
+  // The anchor mirrors saleAnchorPrice — the dearer of the two gate prices — taken across the versions
+  // this sale covers on this model.
   const rows = await dbRead.$queryRaw<
     {
       modelId: number;
+      saleId: number;
       startsAt: Date;
       endsAt: Date;
       discountType: SaleDiscountKind;
       discountAmount: number;
+      anchorPrice: number;
     }[]
   >`
-    SELECT DISTINCT ON (mv."modelId")
-      mv."modelId" AS "modelId", s."startsAt" AS "startsAt", s."endsAt" AS "endsAt",
-      s."discountType" AS "discountType", s."discountAmount" AS "discountAmount"
+    SELECT
+      mv."modelId" AS "modelId", s.id AS "saleId", s."startsAt" AS "startsAt", s."endsAt" AS "endsAt",
+      s."discountType" AS "discountType", s."discountAmount" AS "discountAmount",
+      MAX(GREATEST(
+        COALESCE((pa.terms->'download'->>'price')::int, 0),
+        COALESCE((pa.terms->'generation'->>'price')::int, 0)
+      )) AS "anchorPrice"
     FROM "ModelVersionSaleItem" si
     JOIN "ModelVersionSale" s ON s.id = si."saleId"
     JOIN "ModelVersion" mv ON mv.id = si."modelVersionId"
@@ -272,15 +294,24 @@ async function querySalesForModels(modelIds: number[]): Promise<CachedModelSale[
       AND s."userId" = m."userId"
       AND s."endsAt" > ${now}
       AND (s."canceledAt" IS NULL OR s."canceledAt" > ${now})
+    GROUP BY mv."modelId", s.id, s."startsAt", s."endsAt", s."discountType", s."discountAmount"
     ORDER BY mv."modelId", s."endsAt"
   `;
-  return rows.map((r) => ({
-    modelId: Number(r.modelId),
-    startsAtMs: r.startsAt.getTime(),
-    endsAtMs: r.endsAt.getTime(),
-    discountType: r.discountType,
-    discountAmount: r.discountAmount,
-  }));
+  const byModel = new Map<number, CachedModelSale>();
+  for (const r of rows) {
+    const modelId = Number(r.modelId);
+    const entry = byModel.get(modelId) ?? { modelId, sales: [] };
+    entry.sales.push({
+      saleId: Number(r.saleId),
+      startsAtMs: r.startsAt.getTime(),
+      endsAtMs: r.endsAt.getTime(),
+      discountType: r.discountType,
+      discountAmount: r.discountAmount,
+      anchorPrice: Number(r.anchorPrice ?? 0),
+    });
+    byModel.set(modelId, entry);
+  }
+  return [...byModel.values()];
 }
 
 export async function getActiveSalesForModels(
@@ -297,14 +328,32 @@ export async function getActiveSalesForModels(
   > = {};
   for (const row of Object.values(cached)) {
     if (!row) continue;
-    // BOTH edges, evaluated per request against the cached window. Without the start bound a sale
-    // scheduled up to MAX_SALE_LEAD_DAYS out was badged from the moment it was saved, while the model
-    // page and the charge correctly showed full price — the one thing the spec says must never happen.
-    if (row.startsAtMs > now.getTime() || row.endsAtMs <= now.getTime()) continue;
+    let best: CachedModelSaleWindow | undefined;
+    let bestOff = 0;
+    for (const sale of row.sales ?? []) {
+      // BOTH edges, evaluated per request against the cached window. Without the start bound a sale
+      // scheduled up to MAX_SALE_LEAD_DAYS out was badged from the moment it was saved, while the model
+      // page and the charge correctly showed full price — the one thing the spec says must never happen.
+      if (sale.startsAtMs > now.getTime() || sale.endsAtMs <= now.getTime()) continue;
+      // Deepest wins, the same rule bestSaleFor applies on the page. Per sale rather than once for the
+      // model, because each carries the anchor of the versions it covers.
+      const off = saleDiscountFor(sale.anchorPrice, {
+        id: sale.saleId,
+        startsAt: new Date(sale.startsAtMs),
+        endsAt: new Date(sale.endsAtMs),
+        discountType: sale.discountType,
+        discountAmount: sale.discountAmount,
+      });
+      if (!best || off > bestOff) {
+        best = sale;
+        bestOff = off;
+      }
+    }
+    if (!best) continue;
     out[row.modelId] = {
-      endsAt: new Date(row.endsAtMs),
-      discountType: row.discountType,
-      discountAmount: row.discountAmount,
+      endsAt: new Date(best.endsAtMs),
+      discountType: best.discountType,
+      discountAmount: best.discountAmount,
     };
   }
   return out;

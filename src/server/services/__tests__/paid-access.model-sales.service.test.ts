@@ -23,12 +23,15 @@ import { getActiveSalesForModels } from '~/server/services/paid-access.service';
 
 const queryRaw = dbMock.dbRead.$queryRaw;
 
+let nextSaleId = 1;
 const row = (over: Record<string, unknown> = {}) => ({
   modelId: 7,
+  saleId: nextSaleId++,
   startsAt: new Date('2026-03-01T00:00:00.000Z'),
   endsAt: new Date('2026-03-08T00:00:00.000Z'),
   discountType: 'Percent',
   discountAmount: 25,
+  anchorPrice: 1000,
   ...over,
 });
 
@@ -86,6 +89,75 @@ describe('getActiveSalesForModels — the card badge', () => {
     expect(sql).toContain('pa."timeframeDays" IS NULL');
     expect(sql).toContain(`mv.status = 'Published'`);
     expect(sql).toContain('s."canceledAt" IS NULL');
+  });
+
+  it('badges the DEEPEST overlapping sale, not the one ending soonest', async () => {
+    // Overlapping sales are legal (a sale crossing a month boundary meets the next month's) and the page
+    // charges the deepest. A card advertising the shallower one under-promises against its own model page.
+    queryRaw.mockResolvedValue([
+      row({ endsAt: new Date('2026-03-04T00:00:00.000Z'), discountAmount: 10 }),
+      row({ endsAt: new Date('2026-03-20T00:00:00.000Z'), discountAmount: 40 }),
+    ]);
+
+    const out = await getActiveSalesForModels([7], now);
+
+    expect(out[7]).toEqual({
+      endsAt: new Date('2026-03-20T00:00:00.000Z'),
+      discountType: 'Percent',
+      discountAmount: 40,
+    });
+  });
+
+  it('compares a percent against a fixed amount at the price, not against each other', async () => {
+    // 20% of 1000 is 200, so the 300 ⚡ sale is deeper despite the smaller-looking number.
+    queryRaw.mockResolvedValue([
+      row({ discountType: 'Percent', discountAmount: 20 }),
+      row({
+        endsAt: new Date('2026-03-09T00:00:00.000Z'),
+        discountType: 'Fixed',
+        discountAmount: 300,
+      }),
+    ]);
+
+    const out = await getActiveSalesForModels([7], now);
+
+    expect(out[7]).toEqual({
+      endsAt: new Date('2026-03-09T00:00:00.000Z'),
+      discountType: 'Fixed',
+      discountAmount: 300,
+    });
+  });
+
+  it('badges a running sale even when an unstarted one would sort ahead of it', async () => {
+    // The query bounds endsAt only, so a scheduled sale can be the soonest-ending row for the model.
+    // Collapsing to it in SQL and then dropping it on the start check left the card with no badge at
+    // all while a sale was genuinely running.
+    queryRaw.mockResolvedValue([
+      row({
+        startsAt: new Date('2026-03-05T00:00:00.000Z'),
+        endsAt: new Date('2026-03-06T00:00:00.000Z'),
+        discountAmount: 50,
+      }),
+      row({ discountAmount: 15 }),
+    ]);
+
+    const out = await getActiveSalesForModels([7], now);
+
+    expect(out[7]).toEqual({
+      endsAt: new Date('2026-03-08T00:00:00.000Z'),
+      discountType: 'Percent',
+      discountAmount: 15,
+    });
+  });
+
+  it('asks the database for the anchor price the deepest-wins pick needs', async () => {
+    await getActiveSalesForModels([7], now);
+
+    const sql = sqlText();
+    expect(sql).toContain(`terms->'download'->>'price'`);
+    expect(sql).toContain(`terms->'generation'->>'price'`);
+    // One row per (model, sale): collapsing in SQL would decide "deepest" before the price is known.
+    expect(sql).toContain('GROUP BY mv."modelId", s.id');
   });
 
   it('never queries at all for an empty id list', async () => {
