@@ -129,11 +129,10 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
     reason: freeUnavailableReason,
     declineFee: space?.declineFee,
   });
-  // Says the panel can be got out of the way, and that more than one is allowed,
-  // only once there is something that would survive it. Before that both are
-  // instructions about nothing.
+  // Says more than one is allowed only once there is a draft to say it about.
+  // Before that it is an instruction about nothing.
   const instruction = drafts.length
-    ? 'Drag out as many as you like, then buy the ones you want. Closing this panel leaves them on the image.'
+    ? 'Drag out as many as you like, then pay to place the ones you want.'
     : 'Drag a sticker onto the image.';
 
   return (
