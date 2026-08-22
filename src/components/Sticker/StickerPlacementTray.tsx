@@ -87,8 +87,10 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
   useEffect(() => {
     if (!showing) {
       // The panel is state, not markup: without this it survives the tray being
-      // put away and is still open on the next image opened.
+      // put away and is still open on the next image opened. The typed filter is
+      // worse — it comes back showing 2 of 83 with nothing on screen saying why.
       setShopping(false);
+      setSearch('');
       return;
     }
     setTray(trayRef.current);
@@ -103,8 +105,11 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
   const { data: balances } = trpc.cosmetic.getStickerBalances.useQuery(undefined, {
     enabled: !!currentUser && targetImageId != null,
   });
+  // 97.6% of sticker owners hold 12 or fewer and never see the sort control;
+  // 73.4% hold one, where an order is a no-op. tRPC batching is off, so this is
+  // its own round trip on the tray-open path — not worth taking for them.
   const { data: recentUse } = trpc.cosmetic.getStickerRecentUse.useQuery(undefined, {
-    enabled: !!currentUser && targetImageId != null,
+    enabled: !!currentUser && targetImageId != null && sticker.length > 1,
     staleTime: 60_000,
   });
   // The creator's ceiling, not just the global one. Read before the early return
