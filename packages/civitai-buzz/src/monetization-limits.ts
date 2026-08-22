@@ -1,4 +1,5 @@
 import {
+  DEFAULT_FEE_IMAGES,
   feeImageOptionsForCap,
   feeToRatio,
   finiteOrNull,
@@ -52,21 +53,43 @@ export function suggestedFee({
 }
 
 /**
- * What a fee editor opens on: an existing fee wins, otherwise the per-type suggestion. The flat
- * `DEFAULT_FEE_IMAGES` denominator is only for an editor with no version in hand (a bulk selection
- * spanning model types).
+ * The suggestion a fee editor may open on, as a ratio. `denominators` is the list that editor actually
+ * offers: a suggestion outside it (a checkpoint's 1-generation denominator against a selection capped at
+ * 0.1/gen) would seed an option the select has no item for and a ceiling of 0, so it falls back to the
+ * flat denominator with no amount.
+ */
+export function suggestedFeeRatio(
+  suggested: number | undefined | null,
+  denominators?: number[]
+): FeeRatio {
+  if (suggested == null) return { buzz: 0, images: DEFAULT_FEE_IMAGES };
+  const ratio = feeToRatio(suggested);
+  if (denominators && !denominators.includes(ratio.images)) {
+    return { buzz: 0, images: DEFAULT_FEE_IMAGES };
+  }
+  return ratio;
+}
+
+/**
+ * What a fee editor opens on: an existing fee wins, otherwise the per-type suggestion.
+ *
+ * Only the suggestion is clamped to `denominators`. An existing fee never is — a creator whose tier
+ * lapsed keeps the denominator they were grandfathered on, and seeing it against a real ceiling of 0 is
+ * the point (see `maxFeeBuzzForRatio`), not a bug to seed away.
  */
 export function seedFeeRatio({
   licensingFee,
   modelType,
   baseModel,
+  denominators,
 }: {
   licensingFee?: number | null;
   modelType?: string | null;
   baseModel?: string | null;
+  denominators?: number[];
 }): FeeRatio {
   if (licensingFee != null && licensingFee > 0) return feeToRatio(licensingFee);
-  return feeToRatio(suggestedFee({ modelType, baseModel }));
+  return suggestedFeeRatio(suggestedFee({ modelType, baseModel }), denominators);
 }
 
 /** Every ceiling an editor needs for ONE version. Plain data — no methods, nothing derived twice. */

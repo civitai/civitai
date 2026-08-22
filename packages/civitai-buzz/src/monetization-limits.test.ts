@@ -6,7 +6,9 @@ import {
   resolveCapTier,
   seedFeeRatio,
   suggestedFee,
+  suggestedFeeRatio,
 } from './monetization-limits';
+import { maxLicensingFee, SUGGESTED_FEE_PER_IMAGE } from './licensing-fee';
 
 describe('resolveCapTier — the one tier rule, shared by both apps', () => {
   it('a member gets their own tier', () => {
@@ -135,6 +137,43 @@ describe('seedFeeRatio — what a fee editor opens on', () => {
       buzz: 5,
       images: 10,
     });
+  });
+});
+
+describe('a suggestion is dropped when the editor cannot offer its denominator', () => {
+  it('keeps a suggestion the editor offers', () => {
+    expect(suggestedFeeRatio(1, [1, 10, 20, 50, 100])).toEqual({ buzz: 1, images: 1 });
+  });
+
+  it('falls back to the flat denominator with no amount when it does not', () => {
+    // A checkpoint filter over a free-capped selection: 1 ⚡ / 1 generation, against a list that starts
+    // at 10. Seeding it renders a select with no matching item and a ceiling of 0.
+    expect(suggestedFeeRatio(1, [10, 20, 50, 100])).toEqual({ buzz: 0, images: 10 });
+  });
+
+  it('clamps the suggestion branch of seedFeeRatio but never an existing fee', () => {
+    expect(seedFeeRatio({ modelType: 'Checkpoint', denominators: [10, 20, 50, 100] })).toEqual({
+      buzz: 0,
+      images: 10,
+    });
+    // A lapsed creator keeps the denominator they were grandfathered on, ceiling of 0 and all.
+    expect(
+      seedFeeRatio({ licensingFee: 1, modelType: 'Checkpoint', denominators: [10, 20, 50, 100] })
+    ).toEqual({ buzz: 1, images: 1 });
+  });
+});
+
+describe('every seeded suggestion is saveable on the free tier', () => {
+  // The suggestion and the free cap are separate tables. Raise one or lower the other and a fresh editor
+  // opens on a value the server rejects at submit — a failure with no ceiling in the UI to explain it.
+  const types = [...Object.keys(SUGGESTED_FEE_PER_IMAGE), 'LORA'];
+
+  it.each(types)('%s stays within the free-tier cap for image and video', (modelType) => {
+    for (const baseModel of ['SDXL 1.0', 'Hunyuan Video']) {
+      expect(suggestedFee({ modelType, baseModel })).toBeLessThanOrEqual(
+        maxLicensingFee('free', modelType, baseModel === 'Hunyuan Video' ? 'video' : 'image')
+      );
+    }
   });
 });
 

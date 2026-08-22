@@ -380,15 +380,13 @@
   function openEditor(version: CreatorModelVersion, modelType: string) {
     editingType = modelType;
     feeAffirmed = false;
-    // Seed the denominator from the suggestion but leave the amount empty, so nothing is priced until
-    // the creator types.
-    const r = seedFeeRatio({
-      licensingFee: version.licensingFee,
-      modelType,
-      baseModel: version.baseModel,
-    });
-    feeBuzz = version.licensingFee ? r.buzz : undefined;
-    feeImages = String(r.images);
+    // Denominator from the seed rule, amount from the version alone: an unset fee opens on the
+    // suggestion's denominator with nothing priced until the creator types.
+    feeBuzz = feeToRatio(version.licensingFee).buzz || undefined;
+    feeImages = String(
+      seedFeeRatio({ licensingFee: version.licensingFee, modelType, baseModel: version.baseModel })
+        .images
+    );
     editing = version;
   }
 </script>

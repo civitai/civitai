@@ -1,14 +1,12 @@
 <script lang="ts">
-  // Link form of GENERATION_ONLY_HINT — keep the wording in sync. The constant stays plain text: it is
-  // also a 403 body and a `title` attribute.
+  import { cn } from '@civitai/ui/utils.js';
   import { CIVITAI_MEMBERSHIP_URL } from '$lib/creator-program';
+  import { GENERATION_ONLY_HINT_LEAD, GENERATION_ONLY_HINT_LINK } from '$lib/monetization/paid-access';
 
   let { class: className = '' }: { class?: string } = $props();
 </script>
 
-<p class={`text-xs text-dark-2 ${className}`}>
-  On-site-generation-only resources require a
-  <a href={CIVITAI_MEMBERSHIP_URL} target="_blank" rel="noreferrer" class="underline"
-    >Gold membership</a
-  >.
+<p class={cn('text-xs text-dark-2', className)}>
+  {GENERATION_ONLY_HINT_LEAD}
+  <a href={CIVITAI_MEMBERSHIP_URL} class="underline">{GENERATION_ONLY_HINT_LINK}</a>.
 </p>
