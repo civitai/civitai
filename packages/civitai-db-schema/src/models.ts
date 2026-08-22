@@ -178,7 +178,7 @@ export type PurchasableRewardUsage = "SingleUse" | "MultiUse";
 
 export type EntityType = "Image" | "Post" | "Article" | "Bounty" | "BountyEntry" | "ModelVersion" | "Model" | "Collection" | "Comment" | "CommentV2" | "User" | "UserProfile" | "ResourceReview" | "ChatMessage" | "Model3D";
 
-export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest" | "BlockedImageDelete" | "ImageScan";
+export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest" | "BlockedImageDelete" | "ImageScan" | "ReplacedImageDelete";
 
 export type VaultItemStatus = "Pending" | "Stored" | "Failed";
 

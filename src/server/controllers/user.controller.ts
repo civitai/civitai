@@ -138,7 +138,11 @@ import {
   computeUserFeatureFlagsOverlay,
   defaultToggleableFeatures,
 } from '../services/feature-flags.service';
-import { deleteImageById, getEntityCoverImage, ingestImage } from '../services/image.service';
+import {
+  getEntityCoverImage,
+  ingestImage,
+  queueReplacedImageDeletion,
+} from '../services/image.service';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 
 export const getAllUsersHandler = async ({
@@ -566,9 +570,17 @@ export const updateUserHandler = async ({
     // Post-update operations â€” parallelize independent work
     const postUpdatePromises: Promise<unknown>[] = [];
 
-    // Delete old profilePic and ingest new one
+    // Queue the old profilePic for a DEFERRED reap, and ingest the new one.
+    //
+    // This used to be an inline `deleteImageById`, which destroyed the row and the stored
+    // object the instant the new picture saved. The write is instant; the references are
+    // not — the image CDN caches its redirect for 24h, the account-switcher roster in
+    // localStorage is durable by design, and other surfaces hold rendered avatar urls. None
+    // of those are bugs on their own; they only became user-visible breakage because the
+    // target was *gone* rather than merely *stale*. Queuing instead keeps the old picture
+    // fetchable for the retention window, so every one of those caches self-corrects.
     if (user.profilePictureId && profilePicture && user.profilePictureId !== profilePicture.id) {
-      postUpdatePromises.push(deleteImageById({ id: user.profilePictureId }));
+      postUpdatePromises.push(queueReplacedImageDeletion([user.profilePictureId]));
     }
 
     if (
