@@ -88,8 +88,12 @@ vi.mock('~/server/services/user.service', () => ({
   getProfilePicturesForUsers: vi.fn().mockResolvedValue({}),
 }));
 vi.mock('~/server/services/cosmetic.service', () => ({ getCosmeticsForEntity: vi.fn() }));
+// This list must track model.service's own import list from this module. A missing name is not a
+// test failure — vitest throws it during module evaluation, so the file collects ZERO tests and the
+// run stays green with this guard silently absent.
 vi.mock('~/server/redis/caches', () => ({
   dataForModelsCache: { fetch: vi.fn() },
+  modelVersionPublicDonationGoalsCache: { fetch: vi.fn(), bust: vi.fn() },
   modelTagCache: { fetch: vi.fn(), bust: vi.fn() },
   modelVotableTagsCache: { fetch: vi.fn(), bust: vi.fn() },
   userBasicCache: { fetch: vi.fn().mockResolvedValue({}), bust: vi.fn() },

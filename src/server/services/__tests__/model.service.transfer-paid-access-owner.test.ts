@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as ModelVersionService from '~/server/services/model-version.service';
 
 /**
  * `PaidAccess.ownerId` is a denormalised copy of the model owner. It decides who generates free from a
@@ -27,12 +28,14 @@ const PARAM = ' ?? ';
 
 const {
   mockBustPaidAccessCache,
-  mockBustModelSaleCache,
+  mockBustMvCache,
+  mockQueueModelsIndex,
   mockBustDonationGoals,
   mockDeleteBasicDataForUser,
 } = vi.hoisted(() => ({
   mockBustPaidAccessCache: vi.fn(),
-  mockBustModelSaleCache: vi.fn(),
+  mockBustMvCache: vi.fn(),
+  mockQueueModelsIndex: vi.fn(),
   mockBustDonationGoals: vi.fn(),
   mockDeleteBasicDataForUser: vi.fn(),
 }));
@@ -49,7 +52,8 @@ vi.mock('~/server/services/model-file.service', () => ({
 vi.mock('~/server/services/image.service', () => ({
   getImagesForModelVersion: vi.fn(),
   getImagesForModelVersionCache: vi.fn().mockResolvedValue({}),
-  queueImageSearchIndexUpdate: vi.fn(),
+  // Returns a promise for real, and the transfer now attaches a .catch to it.
+  queueImageSearchIndexUpdate: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock('~/server/flipt/client', () => ({ isFlipt: vi.fn().mockResolvedValue(false) }));
 vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
@@ -59,7 +63,10 @@ vi.mock('~/server/services/paid-access.service', () => ({
   getPaidAccess: vi.fn(),
   getPublicPaidAccessForModelVersions: vi.fn().mockResolvedValue({}),
   bustPaidAccessCache: mockBustPaidAccessCache,
-  bustModelSaleCache: mockBustModelSaleCache,
+}));
+vi.mock('~/server/services/model-version.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModelVersionService>()),
+  bustMvCache: mockBustMvCache,
 }));
 vi.mock('~/server/services/creator-program.service', () => ({
   getValidCreatorMembershipMap: vi.fn().mockResolvedValue(new Map()),
@@ -89,24 +96,72 @@ vi.mock('~/server/search-index', () => ({
   collectionsSearchIndex: { queueUpdate: vi.fn() },
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
   imagesSearchIndex: { queueUpdate: vi.fn() },
-  modelsSearchIndex: { queueUpdate: vi.fn() },
+  modelsSearchIndex: { queueUpdate: mockQueueModelsIndex },
 }));
 
 import { transferModelOwnership } from '~/server/services/model.service';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 
 /** The operations handed to the ONE $transaction call, in order. */
 let transactionOps: unknown[] = [];
 
-function statementFor(table: string): RawCall | undefined {
+function statementsFor(table: string): RawCall[] {
   const ops = transactionOps as { __raw?: RawCall }[];
-  return ops.map((op) => op?.__raw).find((raw) => raw?.sql.includes(`"${table}"`));
+  return ops
+    .map((op) => op?.__raw)
+    .filter((raw): raw is RawCall => !!raw?.sql.includes(`"${table}"`));
 }
 
-const paidAccessStatement = () => statementFor('PaidAccess');
-const donationGoalStatement = () => statementFor('DonationGoal');
+const paidAccessStatement = () => statementsFor('PaidAccess')[0];
+/** Two, one per dual-written target spelling. */
+const donationGoalStatements = () => statementsFor('DonationGoal');
+
+/** Ticks on the transaction and on each bust, so the busts can be pinned AFTER the commit. */
+let clock = 0;
+let transactionAt = 0;
+const bustAt: number[] = [];
+
+/** Every value interpolated after a fragment matching `pattern`, in statement order. */
+function valuesAfter(statement: RawCall, pattern: RegExp) {
+  const fragments = statement.sql.split(PARAM);
+  return fragments
+    .map((fragment, i) => (pattern.test(fragment) ? statement.values[i] : undefined))
+    .filter((v) => v !== undefined);
+}
+
+function valueAfter(statement: RawCall, pattern: RegExp) {
+  const found = valuesAfter(statement, pattern);
+  expect(found, `no interpolated value follows ${pattern}`).toHaveLength(1);
+  return found[0];
+}
+
+/** Both statements are scoped to the transferred models and skip rows already on the target. */
+function expectScopedToTransfer(statement: RawCall) {
+  expect(valueAfter(statement, /"modelId"\s*=\s*ANY\($/)).toEqual(MODEL_IDS);
+  expect((statement as RawCall).sql).toMatch(/mv\."modelId"\s*=\s*ANY\(/);
+  // The guard is `<>`. Flipped to `=`, the statement matches only rows that are already correct —
+  // a permanent no-op that leaves every value, position and fragment in this test unchanged.
+  expect(valueAfter(statement, /"userId"\s*<>\s*$|"ownerId"\s*<>\s*$/)).toBe(TARGET_USER_ID);
+}
 
 beforeEach(() => {
+  // The hoisted spies live for the whole file — without this their call counts accumulate across
+  // tests, and toHaveBeenCalledExactlyOnceWith is the assertion that notices.
+  vi.clearAllMocks();
   transactionOps = [];
+  clock = 0;
+  transactionAt = 0;
+  bustAt.length = 0;
+  for (const bust of [
+    mockBustPaidAccessCache,
+    mockBustMvCache,
+    mockBustDonationGoals,
+    mockQueueModelsIndex,
+  ])
+    bust.mockImplementation(() => {
+      bustAt.push(++clock);
+      return Promise.resolve();
+    });
 
   dbMock.dbWrite.user.findFirst.mockResolvedValue({ id: TARGET_USER_ID });
   dbMock.dbWrite.model.findMany.mockResolvedValue(
@@ -119,8 +174,11 @@ beforeEach(() => {
     args,
   }));
   // Posts, then images.
+  // mockReset drops the canonical default too, so a third read on this path would return undefined
+  // and die on .map far from its cause — hence the trailing default.
   dbMock.dbWrite.$queryRaw
     .mockReset()
+    .mockResolvedValue([])
     .mockResolvedValueOnce([{ id: 501 }])
     .mockResolvedValueOnce([{ id: 601 }]);
   // A tagged-template stand-in for Prisma's $executeRaw. The marker it returns is what lands in the
@@ -133,6 +191,7 @@ beforeEach(() => {
   );
   dbMock.dbWrite.$transaction.mockImplementation(async (ops: unknown[]) => {
     transactionOps = ops;
+    transactionAt = ++clock;
     // One result per operation, distinguishable so an index shift in the caller is visible.
     // Raw statements resolve to a row count, Prisma ops to { count } — as they do for real.
     return ops.map((op, i) =>
@@ -159,7 +218,7 @@ describe('transferModelOwnership moves the PaidAccess owner', () => {
     expect((transactionOps as { __op?: string }[]).some((op) => op?.__op === 'model')).toBe(true);
   });
 
-  it('sets ownerId to the target user for every version of the transferred models', async () => {
+  it('sets ownerId to the target user, scoped to the transferred models', async () => {
     await transferModelOwnership({
       modelIds: MODEL_IDS,
       targetUserId: TARGET_USER_ID,
@@ -171,19 +230,17 @@ describe('transferModelOwnership moves the PaidAccess owner', () => {
     // Values are matched to the fragment they follow, not merely to the value list: the id being
     // written and the ids being matched are both in that list, so a statement that assigned the wrong
     // one of them would still contain every value this test expects.
-    const fragments = (statement as RawCall).sql.split(PARAM);
-    const valueAfter = (pattern: RegExp) => {
-      const i = fragments.findIndex((fragment) => pattern.test(fragment));
-      expect(i, `no interpolated value follows ${pattern}`).toBeGreaterThanOrEqual(0);
-      return (statement as RawCall).values[i];
-    };
-    expect(valueAfter(/SET\s+"ownerId"\s*=\s*$/)).toBe(TARGET_USER_ID);
-    // Scoped through ModelVersion to the models being transferred, not to a user or a version list.
-    expect((statement as RawCall).sql).toMatch(/FROM\s+"ModelVersion"/);
-    expect(valueAfter(/mv\."modelId"\s*=\s*ANY\($/)).toEqual(MODEL_IDS);
-    expect((statement as RawCall).values).not.toContain(SOURCE_USER_ID);
+    expect(valueAfter(statement, /SET\s+"ownerId"\s*=\s*$/)).toBe(TARGET_USER_ID);
+    // 🔴 The join predicate, not just the FROM. Without `pa."entityId" = mv.id` this is a cross join
+    // and EVERY ModelVersion gate on the site moves to the target user — and `FROM "ModelVersion"`
+    // alone still matches, so the FROM is the half that cannot be wrong.
+    expect(statement.sql).toMatch(/FROM\s+"ModelVersion"/);
+    expect(statement.sql).toMatch(/pa\."entityId"\s*=\s*mv\.id/);
+    // The enum literal is load-bearing: a ComicChapter gate has no transfer path and must not move.
+    expect(statement.sql).toMatch(/pa\."entityType"\s*=\s*'ModelVersion'::"PaidAccessEntityType"/);
+    expectScopedToTransfer(statement);
     // updatedAt is @updatedAt in Prisma, which a raw UPDATE does not apply.
-    expect((statement as RawCall).sql).toMatch(/"updatedAt"\s*=\s*NOW\(\)/);
+    expect(statement.sql).toMatch(/"updatedAt"\s*=\s*NOW\(\)/);
   });
 
   it('busts every owner-derived cache for the transferred versions', async () => {
@@ -193,9 +250,27 @@ describe('transferModelOwnership moves the PaidAccess owner', () => {
       modUserId: MOD_USER_ID,
     });
 
-    expect(mockBustPaidAccessCache).toHaveBeenCalledWith('ModelVersion', VERSION_IDS);
-    expect(mockBustModelSaleCache).toHaveBeenCalledWith(VERSION_IDS);
-    expect(mockBustDonationGoals).toHaveBeenCalledWith(VERSION_IDS);
+    expect(mockBustPaidAccessCache).toHaveBeenCalledExactlyOnceWith('ModelVersion', VERSION_IDS);
+    expect(mockBustDonationGoals).toHaveBeenCalledExactlyOnceWith(VERSION_IDS);
+    // modelVersionAccessCache holds Model.userId for a day and hasEntityAccess grants owner access
+    // from it; bustMvCache is what reaches it, and it carries the model search-index update too.
+    expect(mockBustMvCache).toHaveBeenCalledExactlyOnceWith(VERSION_IDS, MODEL_IDS);
+    // The ids come from this read, so a narrowed query (say, published versions only) would leave the
+    // rest holding a stale owner for the full hour while every assertion above still passed.
+    expect(dbMock.dbWrite.modelVersion.findMany).toHaveBeenCalledWith({
+      where: { modelId: { in: MODEL_IDS } },
+      select: { id: true },
+    });
+    // 🔴 AFTER the commit. Busting first lets a concurrent read repopulate from pre-transfer rows,
+    // which is the whole failure the busts exist to prevent — and the arguments are identical either
+    // way, so nothing else here can tell the difference.
+    expect(transactionAt).toBeGreaterThan(0);
+    expect(Math.min(...bustAt)).toBeGreaterThan(transactionAt);
+    // Enqueued here rather than only inside bustMvCache, where four throwable awaits sit in front of
+    // it — and it is the one leg whose loss is permanent, since Meilisearch has no TTL to heal on.
+    expect(mockQueueModelsIndex).toHaveBeenCalledWith(
+      MODEL_IDS.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+    );
   });
 
   it('moves DonationGoal.userId in the same transaction, on both target spellings', async () => {
@@ -205,19 +280,44 @@ describe('transferModelOwnership moves the PaidAccess owner', () => {
       modUserId: MOD_USER_ID,
     });
 
-    const statement = donationGoalStatement();
+    const statements = donationGoalStatements();
     expect(
-      statement,
-      'no UPDATE "DonationGoal" statement in the transfer transaction — a donation on the transferred model still pays the previous owner'
+      statements.length,
+      'the DonationGoal target is dual-written; one statement covers one spelling and leaves the other half of the goals paying the previous owner'
+    ).toBe(2);
+    const legacy = statements.find((st) => /dg\."modelVersionId"\s*=\s*mv\.id/.test(st.sql));
+    const polymorphic = statements.find((st) => /dg\."entityId"\s*=\s*mv\.id/.test(st.sql));
+    expect(legacy, 'no statement matches the legacy modelVersionId target').toBeDefined();
+    expect(
+      polymorphic,
+      'no statement matches the polymorphic entityType/entityId target'
     ).toBeDefined();
-    const fragments = (statement as RawCall).sql.split(PARAM);
-    const i = fragments.findIndex((fragment) => /SET\s+"userId"\s*=\s*$/.test(fragment));
-    expect(i).toBeGreaterThanOrEqual(0);
-    expect((statement as RawCall).values[i]).toBe(TARGET_USER_ID);
-    // The goal's target is dual-written; matching only one spelling leaves the other half behind.
-    expect((statement as RawCall).sql).toMatch(/dg\."modelVersionId"\s*=\s*mv\.id/);
-    expect((statement as RawCall).sql).toMatch(/dg\."entityId"\s*=\s*mv\.id/);
-    expect((statement as RawCall).values).not.toContain(SOURCE_USER_ID);
+    expect((polymorphic as RawCall).sql).toMatch(
+      /dg\."entityType"\s*=\s*'ModelVersion'::"PaidAccessEntityType"/
+    );
+
+    for (const statement of statements) {
+      expect(valueAfter(statement, /SET\s+"userId"\s*=\s*$/)).toBe(TARGET_USER_ID);
+      // 🔴 Without this the statement retargets every donation goal on the site to the transferee,
+      // and every other assertion here still passes.
+      expectScopedToTransfer(statement);
+    }
+  });
+
+  it('does not fail a COMMITTED transfer when an invalidation throws', async () => {
+    mockBustPaidAccessCache.mockRejectedValue(new Error('redis down'));
+
+    const result = await transferModelOwnership({
+      modelIds: MODEL_IDS,
+      targetUserId: TARGET_USER_ID,
+      modUserId: MOD_USER_ID,
+    });
+
+    // The transaction already committed, and the pre-flight guard refuses a retry once the models
+    // belong to the target — so a throw here strands the operator with a transfer that succeeded and
+    // an error saying it did not. A stale cache expires on its own.
+    expect(result.modelsUpdated).toBeDefined();
+    expect(mockBustMvCache).toHaveBeenCalledTimes(1);
   });
 
   it('reports each count from its own operation', async () => {
@@ -231,11 +331,25 @@ describe('transferModelOwnership moves the PaidAccess owner', () => {
     const positionOf = (predicate: (op: unknown) => boolean) => transactionOps.findIndex(predicate);
     const modelPos = positionOf((op) => (op as { __op?: string })?.__op === 'model');
     const metricPos = positionOf((op) => (op as { __op?: string })?.__op === 'modelMetric');
-    const rawPos = (table: string) =>
-      positionOf((op) => !!(op as { __raw?: RawCall })?.__raw?.sql.includes(`"${table}"`));
+    const rawPositions = (table: string) =>
+      transactionOps
+        .map((op, i) => ((op as { __raw?: RawCall })?.__raw?.sql.includes(`"${table}"`) ? i : -1))
+        .filter((i) => i >= 0);
+    const postsPos = positionOf(
+      (op) => !!(op as { __raw?: RawCall })?.__raw?.sql.includes('UPDATE "Post"')
+    );
+    const imagesPos = positionOf(
+      (op) => !!(op as { __raw?: RawCall })?.__raw?.sql.includes('UPDATE "Image"')
+    );
     expect(result.modelsUpdated).toBe(1000 + modelPos);
     expect(result.metricsUpdated).toBe(1000 + metricPos);
-    expect(result.paidAccessUpdated).toBe(1000 + rawPos('PaidAccess'));
-    expect(result.donationGoalsUpdated).toBe(1000 + rawPos('DonationGoal'));
+    expect(result.paidAccessUpdated).toBe(1000 + rawPositions('PaidAccess')[0]);
+    // Both legs, summed — the `userId <> target` guard makes them disjoint, so a dual-written goal
+    // is counted once.
+    expect(result.donationGoalsUpdated).toBe(
+      rawPositions('DonationGoal').reduce((sum, i) => sum + 1000 + i, 0)
+    );
+    expect(result.postsUpdated).toBe(1000 + postsPos);
+    expect(result.imagesUpdated).toBe(1000 + imagesPos);
   });
 });
