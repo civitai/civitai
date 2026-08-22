@@ -572,7 +572,8 @@ export async function getHubSourceSuggestions({
   userId,
   type,
   query,
-}: GetHubSourceSuggestionsInput & { userId: number }) {
+  isModerator,
+}: GetHubSourceSuggestionsInput & { userId: number; isModerator?: boolean }) {
   const term = query?.trim();
 
   if (type === UserHubSourceType.User) {
@@ -694,7 +695,10 @@ export async function getHubSourceSuggestions({
   const models = await dbRead.model.findMany({
     where: {
       id: { in: scopedIds },
-      deletedAt: null,
+      // The same visibility the paste-a-link path applies. A bookmark or a bell
+      // outlives the model going private or back to draft, so without this the
+      // picker offers by name what `resolveSource` refuses by link.
+      ...visibleModel(userId, isModerator),
       ...(term ? { name: { contains: term, mode: 'insensitive' as const } } : {}),
     },
     select: { id: true, name: true },

@@ -650,6 +650,48 @@ describe('source suggestions stay inside the viewer', () => {
     expect(names.orderBy).toEqual({ name: 'asc' });
   });
 
+  it('offers only the models the paste-a-link path would resolve', async () => {
+    dbMock.dbRead.collection.findFirst.mockResolvedValue(null);
+    dbMock.dbRead.model.findMany.mockResolvedValue([{ id: 1 }]);
+    dbMock.dbRead.modelEngagement.findMany.mockResolvedValue([{ modelId: 2 }]);
+    dbMock.dbRead.collectionItem.findMany.mockResolvedValue([]);
+
+    await getHubSourceSuggestions({ userId: 5, type: UserHubSourceType.Model });
+    const suggested = dbMock.dbRead.model.findMany.mock.calls[1][0].where;
+
+    dbMock.dbRead.model.findFirst.mockResolvedValue(null);
+    await resolveHubSourceFromUrl({ url: 'https://civitai.com/models/2', userId: 5 });
+    const resolved = dbMock.dbRead.model.findFirst.mock.calls[0][0].where;
+
+    // Read off the resolve path rather than written out here, so the two cannot
+    // drift apart again: a bookmark or a bell outlives the model going private or
+    // back to draft, and the picker was offering by name what the link refuses.
+    expect(suggested.deletedAt).toEqual(resolved.deletedAt);
+    expect(suggested.OR).toEqual(resolved.OR);
+    // The control: two undefined visibility clauses would satisfy the pair above.
+    expect(resolved.OR).toEqual([
+      { userId: 5 },
+      { status: ModelStatus.Published, availability: { not: Availability.Private } },
+    ]);
+  });
+
+  it('lifts the visibility filter for a moderator, as the link path does', async () => {
+    dbMock.dbRead.collection.findFirst.mockResolvedValue(null);
+    dbMock.dbRead.model.findMany.mockResolvedValue([{ id: 1 }]);
+    dbMock.dbRead.modelEngagement.findMany.mockResolvedValue([]);
+    dbMock.dbRead.collectionItem.findMany.mockResolvedValue([]);
+
+    await getHubSourceSuggestions({
+      userId: 5,
+      type: UserHubSourceType.Model,
+      isModerator: true,
+    });
+
+    const suggested = dbMock.dbRead.model.findMany.mock.calls[1][0].where;
+    expect(suggested.OR).toBeUndefined();
+    expect(suggested.deletedAt).toBeNull();
+  });
+
   it('offers no collections while the write path refuses them', async () => {
     expect(HUB_COLLECTION_SOURCES_ENABLED).toBe(false);
 
