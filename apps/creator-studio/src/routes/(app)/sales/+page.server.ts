@@ -17,7 +17,8 @@ import {
 } from '$lib/server/monetization/sales';
 import { resolveCreatorScore, TEST_CREATOR_SCORE_COOKIE } from '$lib/server/creator-score';
 import { minCreatorScoreForSale } from '@civitai/buzz';
-import { getFlipt } from '$lib/server/flipt';
+import type { SessionUser } from '@civitai/auth';
+import { getFlipt, fliptContext } from '$lib/server/flipt';
 
 // Managing scheduled sales. Starting one lives on the models page, where the selection is — this page is
 // where they are listed and changed, and clicking one opens a side panel (the same interaction the models
@@ -64,8 +65,8 @@ const firstError = (e: z.ZodError) => e.issues[0]?.message ?? 'Invalid input.';
 
 // Gates every action, not just the reads: with the flag off as a kill switch, editing an existing sale has
 // to stop too, or the switch only stops new ones.
-const salesOff = async (userId: number) =>
-  !(await getFlipt().isEnabled('scheduled-model-sales', String(userId)));
+const salesOff = async (user: SessionUser) =>
+  !(await getFlipt().isEnabled('scheduled-model-sales', String(user.id), fliptContext(user)));
 
 // 🔴 THIS is the gate. Hiding the nav link is cosmetics: the model-page banner links straight here for
 // every owner with a live sale, and those owners may not be in the flag's segment — so a bookmark, that
@@ -73,7 +74,11 @@ const salesOff = async (userId: number) =>
 // page. Every action re-checks for the same reason.
 export const load: PageServerLoad = async ({ locals, parent, cookies }) => {
   const { membership } = await parent();
-  const salesEnabled = await getFlipt().isEnabled('scheduled-model-sales', String(locals.user.id));
+  const salesEnabled = await getFlipt().isEnabled(
+    'scheduled-model-sales',
+    String(locals.user.id),
+    fliptContext(locals.user)
+  );
 
   // Read only when the feature is on: migrations here are applied by hand, so an unconditional read
   // throws for every creator on an environment where the tables do not exist yet.
@@ -114,7 +119,7 @@ export const actions: Actions = {
   // What the sale form needs about a selection it can't see: how much of it is early access (a sale
   // can't cover that) and the cheapest price among the rest (a fixed discount must stay under it).
   salePreview: async ({ request, locals, cookies }) => {
-    if (await salesOff(locals.user.id))
+    if (await salesOff(locals.user))
       return fail(403, { error: 'Scheduled sales are not available yet.' });
     const form = await request.formData();
     const parsed = versionIdsSchema.safeParse(form.get('versionIds'));
@@ -131,7 +136,7 @@ export const actions: Actions = {
   },
 
   scheduleSale: async ({ request, locals, cookies }) => {
-    if (await salesOff(locals.user.id))
+    if (await salesOff(locals.user))
       return fail(403, { error: 'Scheduled sales are not available yet.' });
 
     const form = await request.formData();
@@ -182,7 +187,7 @@ export const actions: Actions = {
   },
 
   cancelSale: async ({ request, locals }) => {
-    if (await salesOff(locals.user.id))
+    if (await salesOff(locals.user))
       return fail(403, { error: 'Scheduled sales are not available yet.' });
     const form = await request.formData();
     const parsed = saleIdSchema.safeParse(form.get('saleId'));
@@ -195,7 +200,7 @@ export const actions: Actions = {
   },
 
   shortenSale: async ({ request, locals }) => {
-    if (await salesOff(locals.user.id))
+    if (await salesOff(locals.user))
       return fail(403, { error: 'Scheduled sales are not available yet.' });
     const form = await request.formData();
     const parsed = shortenSaleSchema.safeParse(Object.fromEntries(form));
@@ -212,7 +217,7 @@ export const actions: Actions = {
   },
 
   deepenSale: async ({ request, locals, cookies }) => {
-    if (await salesOff(locals.user.id))
+    if (await salesOff(locals.user))
       return fail(403, { error: 'Scheduled sales are not available yet.' });
     const form = await request.formData();
     const parsed = deepenSaleSchema.safeParse(Object.fromEntries(form));

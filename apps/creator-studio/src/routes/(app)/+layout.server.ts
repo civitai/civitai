@@ -1,9 +1,8 @@
-import { redirect } from '@sveltejs/kit';
 import { hubLogoutUrl } from '@civitai/auth';
 import { env } from '$env/dynamic/private';
 import type { LayoutServerLoad } from './$types';
 import { resolveMembership, TEST_MEMBERSHIP_COOKIE } from '$lib/server/membership';
-import { getFlipt } from '$lib/server/flipt';
+import { getFlipt, fliptContext } from '$lib/server/flipt';
 import { TEST_MODELS_SCORE_COOKIE } from '$lib/server/creator-score';
 import { ANNOUNCEMENTS_FLAG, announcementsEnabled } from '$lib/server/announcements';
 import { SALES_FLAG } from '$lib/nav';
@@ -20,16 +19,12 @@ export const load: LayoutServerLoad = async ({ locals, url, cookies }) => {
   // Resolved here rather than per page: the nav has to know, and flag reads are cached in-process.
   const [announcements, sales] = await Promise.all([
     announcementsEnabled(user),
-    getFlipt().isEnabled(SALES_FLAG, String(user.id)),
+    getFlipt().isEnabled(SALES_FLAG, String(user.id), fliptContext(user)),
   ]);
   const enabledFlags = [
     ...(announcements ? [ANNOUNCEMENTS_FLAG] : []),
     ...(sales ? [SALES_FLAG] : []),
   ];
-
-  // Read here rather than per page: the nav has to know, and a link to a page that answers "not
-  // available on your account" is a worse gate than no link at all. Flag reads are cached in-process.
-  const salesEnabled = await getFlipt().isEnabled('scheduled-model-sales', String(user.id));
 
   return {
     enabledFlags,

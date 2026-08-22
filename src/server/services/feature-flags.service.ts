@@ -1,4 +1,5 @@
 import type { IncomingMessage } from 'http';
+import { buildFliptContext as buildSharedFliptContext } from '@civitai/flipt/context';
 import type * as FliptClient from '~/server/flipt/client';
 import { camelCase } from 'lodash-es';
 import type { NextApiRequest } from 'next';
@@ -715,27 +716,18 @@ if (typeof window === 'undefined') {
 }
 
 export function buildFliptContext(user?: SessionUser): Record<string, string> {
-  const ctx: Record<string, string> = {};
-  if (user) {
-    ctx.userId = String(user.id);
-    ctx.isModerator = String(!!user.isModerator);
-    ctx.tier = user.tier ?? 'free';
-    ctx.isLoggedIn = 'true';
-    ctx.isMember = String(!!user.tier && user.tier !== 'free');
-    // Creator Program membership is recorded as an onboarding-step bit
-    // (set on join in creator-program.service, cleared on leave).
-    ctx.isInCreatorProgram = String(Flags.hasFlag(user.onboarding, OnboardingSteps.CreatorProgram));
-    // Early-adopter opt-in, stored in `User.settings` and projected onto the session by
-    // the auth hub. Always emitted for a logged-in user (never opted in ⇒ 'false'), so a
-    // Flipt segment can match on the string EQUALLY rather than on key presence — same
-    // shape as `isModerator` above. Absent entirely for an anonymous request.
-    ctx.isEarlyAdopter = String(!!user.isEarlyAdopter);
-  } else {
-    ctx.isLoggedIn = 'false';
-  }
-  const deploymentId = process.env.FLIPT_DEPLOYMENT_ID;
-  if (deploymentId) ctx.deploymentId = deploymentId;
-  return ctx;
+  return buildSharedFliptContext(
+    user,
+    user
+      ? {
+          // Creator Program membership is recorded as an onboarding-step bit (set on join in
+          // creator-program.service, cleared on leave) — the bit lives in the app, not the package.
+          isInCreatorProgram: String(
+            Flags.hasFlag(user.onboarding, OnboardingSteps.CreatorProgram)
+          ),
+        }
+      : undefined
+  );
 }
 
 const hasFeature = (

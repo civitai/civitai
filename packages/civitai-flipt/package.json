@@ -3,6 +3,10 @@
   "version": "0.0.0",
   "private": true,
   "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./context": "./src/context.ts"
+  },
   "types": "./src/index.ts",
   "scripts": {
     "test": "vitest run",
