@@ -7,6 +7,13 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 // resolving by-hash before the cache TTL expires. The purge is best-effort — a
 // purge failure must NOT fail the (already-committed) mutation.
 
+// `~/server/redis/client` and `~/server/logging/client` are covered by the canonical
+// shared mocks (`redisMock` / `loggingMock`) that `src/__tests__/setup.ts` registers for
+// every suite, so this file declares neither. Nothing here reads or asserts on a redis
+// command or on the Axiom logger; a test that needs to would import the canonical mock
+// (`import { redisMock } from '~/__tests__/mocks/redis.mock'`) and drive it, rather than
+// re-declaring a local factory.
+
 const { mockPurgeCache } = vi.hoisted(() => ({ mockPurgeCache: vi.fn() }));
 
 vi.mock('~/server/cloudflare/client', () => ({ purgeCache: mockPurgeCache }));
@@ -30,15 +37,6 @@ vi.mock('~/server/redis/caches', () => ({
   modelVersionPublicDonationGoalsCache: {},
   modelVersionResourceCache: {},
 }));
-vi.mock('~/server/redis/client', async () => {
-  const actual =
-    await vi.importActual<typeof import('@civitai/redis/client')>('@civitai/redis/client');
-  return {
-    ...actual,
-    redis: { get: vi.fn(), set: vi.fn(), del: vi.fn() },
-    sysRedis: { get: vi.fn() },
-  };
-});
 vi.mock('~/server/redis/resource-data.redis', () => ({ resourceDataCache: { bust: vi.fn() } }));
 vi.mock('~/server/search-index', () => ({
   modelsSearchIndex: { queueUpdate: vi.fn() },
@@ -76,7 +74,6 @@ vi.mock('~/server/services/paid-access.service', () => ({
   earlyAccessConfigFromPaidAccess: vi.fn(),
   bustModelSaleCache: vi.fn(),
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
 vi.mock('~/server/db/db-lag-helpers', async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
   return { ...actual, preventModelVersionLag: vi.fn() };
