@@ -1,21 +1,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+
 // Hoisted mocks shared between vi.mock factories and the test bodies.
-const { mockLogToAxiom, mockWithSignals } = vi.hoisted(() => ({
-  mockLogToAxiom: vi.fn().mockResolvedValue(undefined),
+const { mockWithSignals } = vi.hoisted(() => ({
   mockWithSignals: vi.fn(),
 }));
+
+// `logToAxiom` comes from the canonical shared mock. The local stand-in for
+// `safeError` goes with it: the canonical registration spreads the real module,
+// so the service now runs the REAL `safeError` rather than a re-implementation
+// of it that could drift.
+const mockLogToAxiom = loggingMock.logToAxiom;
 
 vi.mock('~/env/server', () => ({
   env: {
     SIGNALS_ENDPOINT: 'http://signals.test',
   },
-}));
-
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: mockLogToAxiom,
-  safeError: (e: unknown) =>
-    e instanceof Error ? { name: e.name, message: e.message } : e == null ? undefined : { message: String(e) },
 }));
 
 // SignalsCallTimeoutError must be the REAL class so `instanceof` in the service

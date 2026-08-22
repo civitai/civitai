@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Stripe } from 'stripe';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
  * W3 flow C — manageInvoicePaid attribution-gating coverage (🟡-1 + 🟡-2).
@@ -26,9 +27,6 @@ import type { Stripe } from 'stripe';
  */
 
 const {
-  mockDbRead,
-  mockDbWrite,
-  mockLog,
   mockCreateBuzzTransaction,
   mockGetServerStripe,
   mockRecordSubscriptionAttribution,
@@ -36,14 +34,6 @@ const {
   mockBindReferralCodeForUser,
   mockInvalidateSubscriptionCaches,
 } = vi.hoisted(() => ({
-  mockDbRead: {
-    product: { findMany: vi.fn() },
-  },
-  mockDbWrite: {
-    user: { findUniqueOrThrow: vi.fn(), update: vi.fn() },
-    purchase: { createMany: vi.fn() },
-  },
-  mockLog: vi.fn(),
   mockCreateBuzzTransaction: vi.fn(),
   mockGetServerStripe: vi.fn(),
   mockRecordSubscriptionAttribution: vi.fn(),
@@ -52,16 +42,16 @@ const {
   mockInvalidateSubscriptionCaches: vi.fn(),
 }));
 
-vi.mock('~/server/db/client', () => ({
-  dbRead: mockDbRead,
-  dbWrite: mockDbWrite,
-}));
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: (...args: unknown[]) => {
-    mockLog(...args);
-    return Promise.resolve(null);
-  },
-}));
+// The db and logging clients come from the canonical shared mocks. `dbRead` and
+// `dbWrite` stay distinct, as the two-object mock this replaces already had, so
+// the product read and the user/purchase writes keep naming their own tier.
+//
+// The direct logging mock is gone with no local to replace it: nothing here
+// asserts on `logToAxiom`, it was mocked only to keep the I/O out, and the
+// canonical registration in src/__tests__/setup.ts already does that.
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
+
 vi.mock('~/server/utils/errorHandling', async (importOriginal) => {
   const actual = await importOriginal<typeof import('~/server/utils/errorHandling')>();
   return {
