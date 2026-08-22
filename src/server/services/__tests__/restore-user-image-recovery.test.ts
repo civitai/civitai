@@ -8,29 +8,16 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  * gallery reversal now sits behind: the account is restored once the transaction commits, and the
  * images come back on `restore-user-images` rather than inside the moderator's request.
  */
-const {
-  mockDbWrite,
-  mockDisarm,
-  mockUnblock,
-  mockRecord,
-  mockCount,
-  mockCacheRefresh,
-  mockQueueUpdate,
-} = vi.hoisted(() => ({
-  mockDbWrite: {
-    user: { findFirst: vi.fn(), update: vi.fn() },
-    model: { findMany: vi.fn(), updateMany: vi.fn() },
-    $transaction: vi.fn(async (ops: unknown[]) => ops),
-  },
-  mockDisarm: vi.fn(() => 'disarm-statement'),
-  mockUnblock: vi.fn(async () => ({ unblocked: 3, stillBlocked: 1, skipped: 0, drained: true })),
-  mockRecord: vi.fn(async () => true),
-  mockCount: vi.fn(async () => 0),
-  mockCacheRefresh: vi.fn(async () => undefined),
-  mockQueueUpdate: vi.fn(async () => undefined),
-}));
+const { mockDisarm, mockUnblock, mockRecord, mockCount, mockCacheRefresh, mockQueueUpdate } =
+  vi.hoisted(() => ({
+    mockDisarm: vi.fn(() => 'disarm-statement'),
+    mockUnblock: vi.fn(async () => ({ unblocked: 3, stillBlocked: 1, skipped: 0, drained: true })),
+    mockRecord: vi.fn(async () => true),
+    mockCount: vi.fn(async () => 0),
+    mockCacheRefresh: vi.fn(async () => undefined),
+    mockQueueUpdate: vi.fn(async () => undefined),
+  }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbWrite, dbWrite: mockDbWrite }));
 vi.mock('~/server/services/account-deletion-images', () => ({
   disarmAccountDeletionImagePurge: mockDisarm,
   unblockAccountDeletionImages: mockUnblock,
@@ -47,6 +34,18 @@ vi.mock('~/server/search-index', async (importOriginal) => {
 });
 
 import { restoreUser } from '~/server/services/user.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+
+// `restoreUser` reaches only `dbWrite` on the path these tests drive — both `user.findFirst`
+// calls, `user.update` and the `$transaction`. The old fixture aliased `dbRead` to the same
+// object, so the read half was never exercised; naming `dbWrite` alone keeps the routing the
+// tests already had, and a call that drifted onto the replica would now show up as a missing
+// call rather than being absorbed by the alias.
+//
+// `$transaction` inherits the canonical default. The old fixture returned its argument array
+// unchanged where the default resolves it with `Promise.all`; nothing here reads the return
+// value, and the assertions below are on the argument the service passed in.
+const mockDbWrite = dbMock.dbWrite;
 
 const USER_ID = 7;
 

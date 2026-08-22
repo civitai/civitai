@@ -1,61 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { resetHybridNodes } from '~/__tests__/mocks/hybrid';
 
-// --- Hoisted mocks ---
-const { mockDbWrite, mockDbRead } = vi.hoisted(() => {
-  const mk = () => ({
-    findUnique: vi.fn(),
-    findFirst: vi.fn(),
-    findMany: vi.fn(),
-    create: vi.fn(),
-    update: vi.fn(),
-    updateMany: vi.fn(),
-    delete: vi.fn(),
-    aggregate: vi.fn(),
-    groupBy: vi.fn(),
-    count: vi.fn(),
-  });
-  const writeClient = {
-    referralReward: mk(),
-    referralMilestone: mk(),
-    referralRedemption: mk(),
-    referralAttribution: mk(),
-    userReferral: mk(),
-    userReferralCode: mk(),
-    customerSubscription: mk(),
-    product: mk(),
-    cosmetic: mk(),
-    $transaction: vi.fn(async (cb: (tx: any) => Promise<any>) =>
-      cb({
-        referralReward: writeClientRef.referralReward,
-        referralMilestone: writeClientRef.referralMilestone,
-        referralRedemption: writeClientRef.referralRedemption,
-        userReferral: writeClientRef.userReferral,
-        customerSubscription: writeClientRef.customerSubscription,
-        $queryRaw: writeClientRef.$queryRaw,
-      })
-    ),
-    $queryRaw: vi.fn(),
-  };
-  const writeClientRef = writeClient;
-  const readClient = {
-    referralReward: mk(),
-    referralMilestone: mk(),
-    userReferral: mk(),
-    userReferralCode: mk(),
-    customerSubscription: mk(),
-    product: mk(),
-    cosmetic: mk(),
-  };
-  return { mockDbWrite: writeClient, mockDbRead: readClient };
-});
+// The clients stay split, as the fixture they replace had them. `$transaction` inherits the
+// canonical default: the old fixture handed the callback an object whose every member came
+// from the write client itself, so the default — which passes `dbWrite` — reaches the same
+// nodes the assertions name. The only difference is that the default does not NARROW the
+// surface, so a call the old fixture would have killed with a missing method now resolves.
+const mockDbWrite = dbMock.dbWrite;
+const mockDbRead = dbMock.dbRead;
 
 vi.mock('~/env/server', () => ({ env: {} }));
-vi.mock('~/server/db/client', () => ({ dbWrite: mockDbWrite, dbRead: mockDbRead }));
 vi.mock('~/utils/signal-client', () => ({
   signalClient: { send: vi.fn().mockResolvedValue(undefined) },
-}));
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransaction: vi.fn().mockResolvedValue({ transactionId: 't1' }),
@@ -96,34 +53,12 @@ import { ReferralRewardKind, ReferralRewardStatus } from '~/shared/utils/prisma/
 import { TransactionType } from '~/shared/constants/buzz.constants';
 
 const resetAllMocks = () => {
-  for (const [key, v] of Object.entries(mockDbWrite)) {
-    if (typeof v === 'function') {
-      (v as any).mockReset?.();
-      continue;
-    }
-    if (!v) continue;
-    if (key === '$transaction' || key === '$queryRaw') continue;
-    for (const fn of Object.values(v as Record<string, any>)) {
-      if (typeof fn?.mockReset === 'function') fn.mockReset();
-    }
-  }
-  for (const v of Object.values(mockDbRead)) {
-    for (const fn of Object.values(v as Record<string, any>)) {
-      if (typeof fn?.mockReset === 'function') fn.mockReset();
-    }
-  }
-  (mockDbWrite.$transaction as any).mockReset();
-  (mockDbWrite.$transaction as any).mockImplementation(async (cb: (tx: any) => Promise<any>) =>
-    cb({
-      referralReward: mockDbWrite.referralReward,
-      referralMilestone: mockDbWrite.referralMilestone,
-      referralRedemption: mockDbWrite.referralRedemption,
-      userReferral: mockDbWrite.userReferral,
-      customerSubscription: mockDbWrite.customerSubscription,
-      $queryRaw: mockDbWrite.$queryRaw,
-    })
-  );
-  (mockDbWrite.$queryRaw as any).mockReset();
+  // `resetSharedMocks()` runs per FILE, not per test, and the tests below arm the same nodes
+  // with different values. This clears every canonical node's implementation AND call history
+  // and re-applies its registered default — the same thing the hand-rolled walk over the old
+  // fixture's leaves did, minus the enumeration that has to be kept in step with the models
+  // the service touches.
+  resetHybridNodes();
   (createBuzzTransaction as any).mockReset();
   (createBuzzTransaction as any).mockResolvedValue({ transactionId: 't1' });
   (bustCreatorMembershipValidCache as any).mockClear();
@@ -928,8 +863,7 @@ describe('buzz account routing (central bank 0)', () => {
     // back to Pending. Pre-fix, a real bank would have thrown insufficient-funds
     // from account -1 and triggered exactly this revert path.
     const reverted = (mockDbWrite.referralReward.update as any).mock.calls.some(
-      (c: any) =>
-        c[0]?.data?.status === ReferralRewardStatus.Pending && c[0]?.data?.revokedReason
+      (c: any) => c[0]?.data?.status === ReferralRewardStatus.Pending && c[0]?.data?.revokedReason
     );
     expect(reverted).toBe(false);
   });

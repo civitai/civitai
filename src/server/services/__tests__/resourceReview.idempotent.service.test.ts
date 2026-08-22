@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // Regression test for the prod 500-floor bug:
 //   Invalid `prisma.resourceReview.create()` — Unique constraint failed
@@ -9,30 +10,39 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { Prisma } from '@prisma/client';
 
-const { mockDb, amIBlockedByUser } = vi.hoisted(() => ({
+const { amIBlockedByUser } = vi.hoisted(() => ({
   amIBlockedByUser: vi.fn(async (..._a: unknown[]): Promise<boolean> => false),
-  mockDb: {
-    user: { findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    // createResourceReviewNotification (fired best-effort after the create
-    // resolves) reads modelVersion; a null result makes it log+return cleanly.
-    modelVersion: { findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    // upsertResourceReview now runs a block check that resolves the model owner.
-    model: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({ userId: 1 })) },
-    imageResourceNew: { count: vi.fn(async (..._a: unknown[]): Promise<number> => 0) },
-    resourceReview: {
-      // The edit branch resolves the review's stored model before the block check.
-      findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
-      create: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({})),
-      update: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({})),
-      findUniqueOrThrow: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({})),
-      findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
-      findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
-    },
-  },
 }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDb, dbWrite: mockDb }));
-vi.mock('~/server/db/db-lag-helpers', () => ({ getDbWithoutLag: vi.fn(async () => mockDb) }));
+/**
+ * The two clients, split — the old fixture aliased them to one object, so every routing claim
+ * below was unobservable. Resolved against the entry points this file imports:
+ *
+ *   dbRead   model.findUnique          block-check.service.ts:283, via getBlockCheckOwnerIds
+ *            modelVersion.findFirst    resourceReview.service.ts:267
+ *            imageResourceNew.count    resourceReview.service.ts:291
+ *            user.findFirst            resourceReview.service.ts:298
+ *   dbWrite  resourceReview.findUnique resourceReview.service.ts:327, via storedReviewModelId
+ *            resourceReview.create     resourceReview.service.ts:368, :464
+ *            resourceReview.update     resourceReview.service.ts:392, :500
+ *            resourceReview.findUniqueOrThrow  resourceReview.service.ts:378, :471
+ *
+ * ⚠️ `resourceReview.findUnique` is ALSO spelled on dbRead, at block-check.service.ts:291 — but
+ * only for entityType 'resourceReview', and these paths always ask for 'model'. A whole-module
+ * grep finds that line and gets the routing wrong.
+ *
+ * The unlisted models the service touches (none, on these paths) need no fixture: the canonical
+ * mock vivifies any method and answers reads with a plausible empty value.
+ */
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
+
+// `getUserResourceReview` is the only caller of this helper and this file does not import it, so
+// which client it hands back is off every path here. Replaced rather than spread so the real
+// lag logic is not consulted at all.
+vi.mock('~/server/db/db-lag-helpers', () => ({
+  getDbWithoutLag: vi.fn(async () => dbMock.dbRead),
+}));
 vi.mock('~/server/services/blocklist.service', () => ({
   throwOnBlockedLinkDomain: vi.fn(async () => undefined),
 }));
@@ -43,7 +53,6 @@ vi.mock('~/server/services/resourceReview.cache', () => ({
   bustRatingTotalsCache: vi.fn(async () => undefined),
   bustRatingTotalsForRows: vi.fn(async () => undefined),
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(async () => undefined) }));
 // createResourceReviewNotification reaches for modelVersion data; stub the
 // notification side-channel inputs so it no-ops cleanly.
 vi.mock('~/server/services/user-preferences.service', () => ({
@@ -81,22 +90,29 @@ const baseInput = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockDb.user.findFirst.mockResolvedValue({ username: 'tester' });
+  mockDbRead.user.findFirst.mockResolvedValue({ username: 'tester' });
   amIBlockedByUser.mockResolvedValue(false);
-  mockDb.model.findUnique.mockResolvedValue({ userId: 1 });
-  mockDb.resourceReview.findUnique.mockResolvedValue(null);
+  mockDbRead.model.findUnique.mockResolvedValue({ userId: 1 });
+  mockDbWrite.resourceReview.findUnique.mockResolvedValue(null);
+  // The canonical mock has no default for a write, and callers read what these return —
+  // `update`'s result feeds the cache bust, so `undefined` throws in the service rather than
+  // in a test. `findUnique` above and `modelVersion.findFirst` / `imageResourceNew.count`
+  // already default to null / null / 0, so those stay unstated.
+  mockDbWrite.resourceReview.create.mockResolvedValue({});
+  mockDbWrite.resourceReview.update.mockResolvedValue({});
+  mockDbWrite.resourceReview.findUniqueOrThrow.mockResolvedValue({});
 });
 
 describe('createResourceReview — idempotent on P2002 race', () => {
   it('returns the existing review when the unique constraint trips', async () => {
     const existing = { id: 7, modelId: 10, modelVersionId: 20, recommended: true };
-    mockDb.resourceReview.create.mockRejectedValueOnce(p2002());
-    mockDb.resourceReview.findUniqueOrThrow.mockResolvedValueOnce(existing);
+    mockDbWrite.resourceReview.create.mockRejectedValueOnce(p2002());
+    mockDbWrite.resourceReview.findUniqueOrThrow.mockResolvedValueOnce(existing);
 
     const result = await createResourceReview({ ...baseInput, userId: 42 });
 
     expect(result).toBe(existing);
-    expect(mockDb.resourceReview.findUniqueOrThrow).toHaveBeenCalledWith(
+    expect(mockDbWrite.resourceReview.findUniqueOrThrow).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { modelVersionId_userId: { modelVersionId: 20, userId: 42 } },
       })
@@ -104,22 +120,22 @@ describe('createResourceReview — idempotent on P2002 race', () => {
   });
 
   it('rethrows non-P2002 errors', async () => {
-    mockDb.resourceReview.create.mockRejectedValueOnce(new Error('boom'));
+    mockDbWrite.resourceReview.create.mockRejectedValueOnce(new Error('boom'));
     await expect(createResourceReview({ ...baseInput, userId: 42 })).rejects.toThrow('boom');
-    expect(mockDb.resourceReview.findUniqueOrThrow).not.toHaveBeenCalled();
+    expect(mockDbWrite.resourceReview.findUniqueOrThrow).not.toHaveBeenCalled();
   });
 });
 
 describe('upsertResourceReview (create branch) — idempotent on P2002 race', () => {
   it('returns the existing review when the unique constraint trips', async () => {
     const existing = { id: 7, modelId: 10, modelVersionId: 20, recommended: true };
-    mockDb.resourceReview.create.mockRejectedValueOnce(p2002());
-    mockDb.resourceReview.findUniqueOrThrow.mockResolvedValueOnce(existing);
+    mockDbWrite.resourceReview.create.mockRejectedValueOnce(p2002());
+    mockDbWrite.resourceReview.findUniqueOrThrow.mockResolvedValueOnce(existing);
 
     const result = await upsertResourceReview({ ...baseInput, userId: 42 });
 
     expect(result).toBe(existing);
-    expect(mockDb.resourceReview.findUniqueOrThrow).toHaveBeenCalledWith(
+    expect(mockDbWrite.resourceReview.findUniqueOrThrow).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { modelVersionId_userId: { modelVersionId: 20, userId: 42 } },
       })
@@ -141,11 +157,12 @@ describe('resource review writes — block enforcement', () => {
 
   // Keyed on the model asked for, so an assertion about the stored model cannot be satisfied by a
   // lookup of the requested one.
-  // This file aliases dbRead and dbWrite to one object, so nothing here can tell which client the
-  // stored-review lookup uses. It reads through the writer on purpose — see the comment there — and
-  // that choice is untested.
+  // The two clients are distinct now, so the stored-review lookup's choice of client IS pinned:
+  // it reads through the WRITER on purpose (see the comment at resourceReview.service.ts:324),
+  // and the tests below arm `mockDbWrite.resourceReview.findUnique`. Route that read to the
+  // replica and the guard resolves no stored model, so every refusal below stops firing.
   const owners = (byModelId: Record<number, number>) =>
-    mockDb.model.findUnique.mockImplementation(async (args: unknown) => {
+    mockDbRead.model.findUnique.mockImplementation(async (args: unknown) => {
       const id = (args as { where: { id: number } }).where.id;
       return byModelId[id] ? { userId: byModelId[id] } : null;
     });
@@ -161,35 +178,39 @@ describe('resource review writes — block enforcement', () => {
 
   it('refuses an upsert edit when the review is stored on a model whose owner blocks', async () => {
     // Only the STORED model's owner blocks — this passes if the edit trusts the request's modelId.
-    mockDb.resourceReview.findUnique.mockResolvedValue({ modelId: STORED_MODEL });
+    mockDbWrite.resourceReview.findUnique.mockResolvedValue({ modelId: STORED_MODEL });
     blockedBy(STORED_OWNER);
 
     await expect(
       upsertResourceReview({ ...baseInput, id: 7, modelId: REQUEST_MODEL, userId: AUTHOR })
     ).rejects.toThrow();
     expect(amIBlockedByUser).toHaveBeenCalledWith({ userId: AUTHOR, targetUserId: STORED_OWNER });
-    expect(mockDb.resourceReview.update).not.toHaveBeenCalled();
+    expect(mockDbWrite.resourceReview.update).not.toHaveBeenCalled();
   });
 
   it('refuses an upsert edit re-homing onto a model whose owner blocks', async () => {
-    mockDb.resourceReview.findUnique.mockResolvedValue({ modelId: STORED_MODEL });
+    mockDbWrite.resourceReview.findUnique.mockResolvedValue({ modelId: STORED_MODEL });
     blockedBy(REQUEST_OWNER);
 
     await expect(
       upsertResourceReview({ ...baseInput, id: 7, modelId: REQUEST_MODEL, userId: AUTHOR })
     ).rejects.toThrow();
     expect(amIBlockedByUser).toHaveBeenCalledWith({ userId: AUTHOR, targetUserId: REQUEST_OWNER });
-    expect(mockDb.resourceReview.update).not.toHaveBeenCalled();
+    expect(mockDbWrite.resourceReview.update).not.toHaveBeenCalled();
   });
 
   it('lets a non-blocked author edit', async () => {
-    mockDb.resourceReview.findUnique.mockResolvedValue({ modelId: STORED_MODEL });
-    mockDb.resourceReview.update.mockResolvedValueOnce({ id: 7, modelId: 10, modelVersionId: 20 });
+    mockDbWrite.resourceReview.findUnique.mockResolvedValue({ modelId: STORED_MODEL });
+    mockDbWrite.resourceReview.update.mockResolvedValueOnce({
+      id: 7,
+      modelId: 10,
+      modelVersionId: 20,
+    });
 
     await upsertResourceReview({ ...baseInput, id: 7, modelId: REQUEST_MODEL, userId: AUTHOR });
 
     expect(amIBlockedByUser).toHaveBeenCalledWith({ userId: AUTHOR, targetUserId: STORED_OWNER });
-    expect(mockDb.resourceReview.update).toHaveBeenCalledTimes(1);
+    expect(mockDbWrite.resourceReview.update).toHaveBeenCalledTimes(1);
   });
 
   // `resourceReview.create` / `.update` are the procedures the review UI calls; `upsert` is only
@@ -201,38 +222,42 @@ describe('resource review writes — block enforcement', () => {
       createResourceReview({ ...baseInput, modelId: REQUEST_MODEL, userId: AUTHOR })
     ).rejects.toThrow();
     expect(amIBlockedByUser).toHaveBeenCalledWith({ userId: AUTHOR, targetUserId: REQUEST_OWNER });
-    expect(mockDb.resourceReview.create).not.toHaveBeenCalled();
+    expect(mockDbWrite.resourceReview.create).not.toHaveBeenCalled();
   });
 
   it('allows a create when nobody blocks', async () => {
     await createResourceReview({ ...baseInput, modelId: REQUEST_MODEL, userId: AUTHOR });
-    expect(mockDb.resourceReview.create).toHaveBeenCalledTimes(1);
+    expect(mockDbWrite.resourceReview.create).toHaveBeenCalledTimes(1);
   });
 
   it('refuses an update, resolving the model from the stored review', async () => {
     // `update` carries no modelId at all, so the stored review is the only place the target can
     // come from.
-    mockDb.resourceReview.findUnique.mockResolvedValue({ modelId: STORED_MODEL });
+    mockDbWrite.resourceReview.findUnique.mockResolvedValue({ modelId: STORED_MODEL });
     blockedBy(STORED_OWNER);
 
     await expect(
       updateResourceReview({ id: 7, rating: 5, details: null, userId: AUTHOR })
     ).rejects.toThrow();
     expect(amIBlockedByUser).toHaveBeenCalledWith({ userId: AUTHOR, targetUserId: STORED_OWNER });
-    expect(mockDb.resourceReview.update).not.toHaveBeenCalled();
+    expect(mockDbWrite.resourceReview.update).not.toHaveBeenCalled();
   });
 
   it('allows an update when nobody blocks', async () => {
-    mockDb.resourceReview.findUnique.mockResolvedValue({ modelId: STORED_MODEL });
-    mockDb.resourceReview.update.mockResolvedValueOnce({ id: 7, modelId: 11, modelVersionId: 20 });
+    mockDbWrite.resourceReview.findUnique.mockResolvedValue({ modelId: STORED_MODEL });
+    mockDbWrite.resourceReview.update.mockResolvedValueOnce({
+      id: 7,
+      modelId: 11,
+      modelVersionId: 20,
+    });
 
     await updateResourceReview({ id: 7, rating: 5, details: null, userId: AUTHOR });
-    expect(mockDb.resourceReview.update).toHaveBeenCalledTimes(1);
+    expect(mockDbWrite.resourceReview.update).toHaveBeenCalledTimes(1);
   });
 
   it('exempts moderators on every branch', async () => {
-    mockDb.resourceReview.findUnique.mockResolvedValue({ modelId: STORED_MODEL });
-    mockDb.resourceReview.update.mockResolvedValue({ id: 7, modelId: 11, modelVersionId: 20 });
+    mockDbWrite.resourceReview.findUnique.mockResolvedValue({ modelId: STORED_MODEL });
+    mockDbWrite.resourceReview.update.mockResolvedValue({ id: 7, modelId: 11, modelVersionId: 20 });
     blockedBy(STORED_OWNER, REQUEST_OWNER);
 
     await updateResourceReview({
@@ -265,11 +290,11 @@ describe('resource review writes — block enforcement', () => {
   // on `update` that rewrites the review's author, since the row is scoped by id alone and a
   // moderator may edit someone else's review.
   it('keeps the guard inputs out of the Prisma payload', async () => {
-    mockDb.resourceReview.findUnique.mockResolvedValue({ modelId: STORED_MODEL });
-    mockDb.resourceReview.update.mockResolvedValue({ id: 7, modelId: 11, modelVersionId: 20 });
+    mockDbWrite.resourceReview.findUnique.mockResolvedValue({ modelId: STORED_MODEL });
+    mockDbWrite.resourceReview.update.mockResolvedValue({ id: 7, modelId: 11, modelVersionId: 20 });
 
     await updateResourceReview({ id: 7, rating: 5, details: null, userId: AUTHOR });
-    const updateArgs = mockDb.resourceReview.update.mock.calls[0][0] as { data: object };
+    const updateArgs = mockDbWrite.resourceReview.update.mock.calls[0][0] as { data: object };
     expect(updateArgs.data).not.toHaveProperty('userId');
     expect(updateArgs.data).not.toHaveProperty('isModerator');
 
@@ -279,7 +304,7 @@ describe('resource review writes — block enforcement', () => {
       userId: AUTHOR,
       isModerator: true,
     });
-    const createArgs = mockDb.resourceReview.create.mock.calls[0][0] as { data: object };
+    const createArgs = mockDbWrite.resourceReview.create.mock.calls[0][0] as { data: object };
     // `userId` IS a column on create — the review's author. `isModerator` never is.
     expect(createArgs.data).toHaveProperty('userId', AUTHOR);
     expect(createArgs.data).not.toHaveProperty('isModerator');
