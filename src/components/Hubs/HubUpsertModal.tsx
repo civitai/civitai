@@ -4,6 +4,8 @@ import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import type { HubSourceValue } from '~/components/Hubs/HubSourceEditor';
 import { HubSourceEditor } from '~/components/Hubs/HubSourceEditor';
+import { useSortAvailability } from '~/components/Filters/useSortAvailability';
+import { defaultHubSort } from '~/components/Hubs/hub-sort';
 import { hubLimits } from '~/server/schema/user-hub.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -18,6 +20,7 @@ export default function HubUpsertModal({
   const router = useRouter();
   const utils = trpc.useUtils();
   const editing = !!hub;
+  const defaultSort = defaultHubSort(useSortAvailability());
 
   const [name, setName] = useState(hub?.name ?? '');
   const [description, setDescription] = useState(hub?.description ?? '');
@@ -48,8 +51,12 @@ export default function HubUpsertModal({
       name: trimmed,
       description: description.trim(),
       // Editing leaves the source list alone: the rail owns it, and resending an
-      // empty array here would wipe it.
-      ...(editing ? {} : { sources: sources.map((s, index) => ({ ...s, index })) }),
+      // empty array here would wipe it. The sort goes with creation for the same
+      // reason it is resolved on read — storing one this viewer cannot pick would
+      // strand them on it.
+      ...(editing
+        ? {}
+        : { sort: defaultSort, sources: sources.map((s, index) => ({ ...s, index })) }),
     });
   };
 

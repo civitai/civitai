@@ -207,7 +207,9 @@ describe('upsertUserHub', () => {
     await upsertUserHub({ name: 'defaults', sources: [], userId: 5 });
 
     const arg = dbMock.dbWrite.userHub.create.mock.calls[0][0];
-    expect(arg.data.sort).toBe(ImageSort.Newest);
+    // NOT Newest: a caller that omitted the field cannot have decided this viewer is
+    // offered Newest, and the sort menu withholds it from anyone who cannot view NSFW.
+    expect(arg.data.sort).toBe(ImageSort.MostReactions);
     expect(arg.data.period).toBe(MetricTimeframe.AllTime);
 
     // The half the title used to claim and never exercised: the same call shape
@@ -575,6 +577,45 @@ describe('source suggestions stay inside the viewer', () => {
     // "a". Bounded by the id list above, so it is not the scan that ILIKE was on
     // the unbounded query.
     expect(names.where.username).toEqual({ contains: 'some', mode: 'insensitive' });
+    expect(names.orderBy).toEqual({ username: 'asc' });
+  });
+
+  it('keeps the most recent relationships when there is nothing to search', async () => {
+    // Ordering by name sits above `take`, so with no term it would decide WHICH
+    // suggestions survive: a viewer following more than a page of creators would
+    // get the alphabetically first ones and never their most recent follows.
+    const followed = Array.from({ length: 60 }, (_, i) => ({ targetUserId: 100 + i }));
+    dbMock.dbRead.userEngagement.findMany.mockResolvedValue(followed);
+    dbMock.dbRead.user.findMany.mockResolvedValue([
+      { id: 101, username: 'zoe' },
+      { id: 100, username: 'aaron' },
+    ]);
+
+    const result = await getHubSourceSuggestions({ userId: 5, type: UserHubSourceType.User });
+
+    const names = dbMock.dbRead.user.findMany.mock.calls[0][0];
+    expect(names.orderBy).toBeUndefined();
+    // A margin over the page size, because deleted rows are filtered after the id
+    // restriction — asking for exactly 25 returns a short page when one has gone.
+    expect(names.where.id.in).toEqual(followed.slice(0, 50).map((f) => f.targetUserId));
+    expect(names.where.id.in.length).toBeGreaterThan(25);
+    expect(result.map((r) => r.targetId)).toEqual([100, 101]);
+  });
+
+  it('trims the deleted-row margin back to one page, keeping the most recent', async () => {
+    const followed = Array.from({ length: 60 }, (_, i) => ({ targetUserId: 100 + i }));
+    dbMock.dbRead.userEngagement.findMany.mockResolvedValue(followed);
+    // 40 survive the `deletedAt` filter, in whatever order the PK scan produced.
+    dbMock.dbRead.user.findMany.mockResolvedValue(
+      Array.from({ length: 40 }, (_, i) => ({ id: 139 - i, username: `user${139 - i}` }))
+    );
+
+    const result = await getHubSourceSuggestions({ userId: 5, type: UserHubSourceType.User });
+
+    expect(result).toHaveLength(25);
+    // The 25 earliest positions in the follow list, not the 25 the query happened to
+    // return first — a page short of 25, or ordered by id, both fail here.
+    expect(result.map((r) => r.targetId)).toEqual(Array.from({ length: 25 }, (_, i) => 100 + i));
   });
 
   it('scopes every models arm to the viewer, and filters names once over the union', async () => {
@@ -601,6 +642,7 @@ describe('source suggestions stay inside the viewer', () => {
     const names = dbMock.dbRead.model.findMany.mock.calls[1][0];
     expect(names.where.id).toEqual({ in: [1, 2, 3] });
     expect(names.where.name).toEqual({ contains: 'nova', mode: 'insensitive' });
+    expect(names.orderBy).toEqual({ name: 'asc' });
   });
 
   it('offers no collections while the write path refuses them', async () => {

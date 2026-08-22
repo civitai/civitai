@@ -1,9 +1,8 @@
 import type { ButtonProps } from '@mantine/core';
 import { useRouter } from 'next/router';
+import { isSortAvailable } from '~/components/Filters/sort-availability';
+import { useSortAvailability } from '~/components/Filters/useSortAvailability';
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { FilterSubTypes } from '~/providers/FiltersProvider';
 import { useFiltersContext, useSetFilters } from '~/providers/FiltersProvider';
 import {
@@ -71,24 +70,16 @@ type DumbProps = {
 } & SortFilterComponentProps;
 
 function DumbSortFilter({ type, value, onChange, ignoreNsfwLevel, options, ...props }: DumbProps) {
-  const showNsfw = useBrowsingSettings((x) => x.showNsfw);
-  const features = useFeatureFlags();
-  const isModerator = useCurrentUser()?.isModerator ?? false;
+  const availability = useSortAvailability();
 
   return (
     <SelectMenuV2
       label={value}
       onClick={onChange}
       value={value}
-      options={(options ?? sortOptions[type].map((x) => ({ label: x, value: x }))).filter((x) => {
-        if (ignoreNsfwLevel || isModerator) return true;
-        if (!features.canViewNsfw && (x.value === 'Newest' || x.value === 'Oldest')) return false;
-        if (type === 'images') {
-          if (!showNsfw && x.value === 'Newest') return false;
-          return true;
-        }
-        return true;
-      })}
+      options={(options ?? sortOptions[type].map((x) => ({ label: x, value: x }))).filter((x) =>
+        isSortAvailable({ type, value: x.value }, { ...availability, ignoreNsfwLevel })
+      )}
       {...props}
     />
   );
