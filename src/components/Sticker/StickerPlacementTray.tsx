@@ -1,7 +1,13 @@
-import { Button, CloseButton, Group, Text, ThemeIcon } from '@mantine/core';
-import { IconAlertTriangle, IconInfoCircle, IconPlus, IconSticker } from '@tabler/icons-react';
+import { Button, CloseButton, Group, Select, Text, TextInput, ThemeIcon } from '@mantine/core';
+import {
+  IconAlertTriangle,
+  IconInfoCircle,
+  IconPlus,
+  IconSearch,
+  IconSticker,
+} from '@tabler/icons-react';
 import clsx from 'clsx';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import { Countdown } from '~/components/Countdown/Countdown';
 import { freeOfferFor, preCommitFreeReason, trayNotes } from '~/components/Sticker/free-offer';
@@ -32,13 +38,21 @@ import { trpc } from '~/utils/trpc';
  * far from them that they read as unrelated.
  */
 /**
- * A tile is the 48px sticker image plus its uses label and padding. Named because
- * the tray's height cap is derived from it — a tile that grows without this
- * changing would silently show a fraction of the second row.
+ * The height of one tile, SET on the tile rather than measured from it. The
+ * tray's two-row cap is derived from this number, so a tile free to grow past it
+ * would leave the second row showing a sliver with nothing to catch it.
  */
 const STICKER_TILE_HEIGHT = 78;
 /** Mantine `xs`, used as both the gap between tiles and the row's padding. */
 const STICKER_TILE_GAP = 10;
+
+type StickerTraySort = 'used' | 'obtained';
+
+/**
+ * A collection worth searching. Below this the controls are two widgets above
+ * three stickers, which is the clutter the tray's notes were just trimmed of.
+ */
+const STICKER_SEARCH_THRESHOLD = 12;
 
 /** The height that shows exactly `rows` rows of tiles and clips the rest. */
 const trayRowsHeight = (rows: number) =>
@@ -48,6 +62,8 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
   const currentUser = useCurrentUser();
   const { sticker, isLoading } = useOwnedSticker();
   const [shopping, setShopping] = useState(false);
+  const [search, setSearch] = useState('');
+  const [sortBy, setSortBy] = useState<StickerTraySort>('used');
   const trayRef = useRef<HTMLDivElement>(null);
 
   const targetImageId = useStickerPlacementDraftStore((state) => state.targetImageId);
@@ -87,10 +103,48 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
   const { data: balances } = trpc.cosmetic.getStickerBalances.useQuery(undefined, {
     enabled: !!currentUser && targetImageId != null,
   });
+  const { data: recentUse } = trpc.cosmetic.getStickerRecentUse.useQuery(undefined, {
+    enabled: !!currentUser && targetImageId != null,
+    staleTime: 60_000,
+  });
   // The creator's ceiling, not just the global one. Read before the early return
   // below, because the pickup gesture is a hook and cannot be conditional.
   const maxScale = stickerMaxScale(space?.settings as Record<string, unknown> | undefined);
   const { grab, dragging } = useStickerDragOut(maxScale);
+
+  /**
+   * What the tray actually draws: the collection filtered by what was typed, in
+   * the chosen order.
+   *
+   * 🔴 THE SECONDARY SORT IS THE STABILITY, NOT A COMPARATOR BRANCH. `sticker`
+   * arrives newest-obtained first, and `Array.prototype.sort` is stable, so two
+   * stickers the placer has never used keep that order for free. Writing the
+   * tie-break by hand would be a second copy of a rule already applied upstream.
+   */
+  const lastUsedAt = useMemo(
+    () => new Map((recentUse ?? []).map((row) => [row.cosmeticId, row.lastUsedAt])),
+    [recentUse]
+  );
+  const visible = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    const matched = term
+      ? sticker.filter((option) =>
+          `${option.name ?? ''} ${option.slug ?? ''}`.toLowerCase().includes(term)
+        )
+      : sticker;
+
+    if (sortBy === 'obtained') return matched;
+
+    return [...matched].sort((a, b) => {
+      const left = lastUsedAt.get(a.id);
+      const right = lastUsedAt.get(b.id);
+      if (left && right) return left < right ? 1 : left > right ? -1 : 0;
+      // Used beats never-used; two never-used keep the obtained order they came in.
+      if (left) return -1;
+      if (right) return 1;
+      return 0;
+    });
+  }, [sticker, search, sortBy, lastUsedAt]);
 
   if (!showing) return null;
 
@@ -145,8 +199,8 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
             thing you are shopping to add to, so it stays visible while you buy. */}
         {shopping && <StickerShopPanel maxScale={maxScale} onClose={() => setShopping(false)} />}
         <div className="overflow-hidden rounded-lg border border-gray-3 bg-white shadow-lg dark:border-dark-4 dark:bg-dark-7">
-          <div className="flex items-start gap-2 border-b border-gray-3 px-3 py-2 dark:border-dark-4">
-            <div className="flex-1">
+          <div className="flex flex-wrap items-start gap-2 border-b border-gray-3 px-3 py-2 dark:border-dark-4">
+            <div className="order-1 min-w-0 flex-1">
               <Text size="sm" fw={600}>
                 {instruction}
               </Text>
@@ -189,7 +243,36 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
                 ))}
               </div>
             </div>
+            {!isLoading && sticker.length > STICKER_SEARCH_THRESHOLD && (
+              <div className="order-3 flex w-full shrink-0 items-center gap-2 sm:order-2 sm:w-auto">
+                <TextInput
+                  size="xs"
+                  className="min-w-0 flex-1 sm:w-36 sm:flex-none"
+                  value={search}
+                  onChange={(event) => setSearch(event.currentTarget.value)}
+                  placeholder="Search"
+                  aria-label="Search your stickers"
+                  leftSection={<IconSearch size={14} />}
+                />
+                <Select
+                  size="xs"
+                  className="w-36 shrink-0 sm:w-40"
+                  value={sortBy}
+                  onChange={(value) => setSortBy(value === 'obtained' ? 'obtained' : 'used')}
+                  data={[
+                    { value: 'used', label: 'Recently used' },
+                    { value: 'obtained', label: 'Recently acquired' },
+                  ]}
+                  aria-label="Sort your stickers"
+                  allowDeselect={false}
+                  // The panel clips its overflow, and this app defaults Popover to
+                  // `withinPortal: false`, so the menu would open inside the clip.
+                  comboboxProps={{ withinPortal: true }}
+                />
+              </div>
+            )}
             <CloseButton
+              className="order-2 sm:order-3"
               onClick={closeTray}
               aria-label={drafts.length ? 'Close the sticker panel' : 'Stop placing a sticker'}
             />
@@ -237,7 +320,7 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
                   </div>
                 </div>
               )}
-              {sticker.map((option) => {
+              {visible.map((option) => {
                 const remaining = balanceFor(option.id);
                 const exhausted = remaining === 0;
                 return (
@@ -251,15 +334,15 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
                     // draft is what left a sticker asking to be bought for a use
                     // another draft had just handed back.
                     onPointerDown={grab(option.id)}
+                    style={{ touchAction: 'none', height: STICKER_TILE_HEIGHT }}
                     className={clsx(
-                      'flex shrink-0 cursor-grab flex-col items-center gap-1 rounded border p-2',
+                      'flex shrink-0 cursor-grab flex-col items-center justify-center gap-1 rounded border p-2',
                       drafts.some((draft) => draft.cosmeticId === option.id) ||
                         dragging === option.id
                         ? 'border-blue-5'
                         : 'border-transparent',
                       exhausted && 'opacity-40'
                     )}
-                    style={{ touchAction: 'none' }}
                   >
                     <EdgeImage
                       src={option.url}
@@ -272,6 +355,11 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
                   </button>
                 );
               })}
+              {!isLoading && !!sticker.length && !visible.length && (
+                <Text size="sm" c="dimmed" px="xs">
+                  No stickers match “{search.trim()}”.
+                </Text>
+              )}
             </Group>
           </div>
         </div>

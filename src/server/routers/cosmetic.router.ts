@@ -16,6 +16,7 @@ import {
 import {
   getStickerBalances,
   getStickerOffers,
+  getStickerRecentUse,
   purchaseStickerUses,
 } from '~/server/services/sticker.service';
 import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
@@ -55,6 +56,11 @@ export const cosmeticRouter = router({
   getStickerBalances: protectedProcedure
     .meta({ requiredScope: TokenScope.CollectionsRead })
     .query(({ ctx }) => getStickerBalances(ctx.user.id)),
+  // When the placer last reached for each of their stickers, which is what the
+  // tray sorts by before it falls back to what they bought most recently.
+  getStickerRecentUse: protectedProcedure
+    .meta({ requiredScope: TokenScope.CollectionsRead })
+    .query(({ ctx }) => getStickerRecentUse(ctx.user.id)),
   // What refilling a sticker costs, both ways: one more use, or another batch
   // through its listing where one is still on sale.
   getStickerOffers: protectedProcedure

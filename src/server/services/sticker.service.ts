@@ -589,6 +589,47 @@ export async function purchaseStickerUses({
   return { cosmeticId, quantity, pricePerUse, amount, remaining };
 }
 
+/** The tray's recency window, and the cap on how many rows deciding it may read. */
+const STICKER_RECENT_USE_DAYS = 30;
+const STICKER_RECENT_USE_SCAN = 500;
+
+/**
+ * How recently the viewer last placed each of their stickers, for the tray's
+ * default order.
+ *
+ * The window is 30 days for MEANING, not for cost — "recently used" that
+ * surfaces a sticker last placed in March is not recency. Cost is handled by the
+ * `LIMIT`: `placerId` is indexed, `cosmeticId` is not (it lives in the `data`
+ * jsonb with no expression index), so the scan is bounded by the row cap rather
+ * than by how large the table becomes. Placement was 1,419 rows and the heaviest
+ * placer on the site had 80 when this was written.
+ *
+ * Every placement counts, whatever its status: a placement awaiting review is
+ * still a sticker the placer reached for.
+ */
+export async function getStickerRecentUse(userId: number) {
+  const recencyWindow = `${STICKER_RECENT_USE_DAYS} days`;
+  const rows = await dbRead.$queryRaw<{ cosmeticId: number; lastUsedAt: Date }[]>`
+    SELECT (p.data->>'cosmeticId')::int AS "cosmeticId", MAX(p."createdAt") AS "lastUsedAt"
+    FROM (
+      SELECT data, "createdAt"
+      FROM "Placement"
+      WHERE "placerId" = ${userId}
+        AND surface = 'sticker'
+        AND "createdAt" > now() - ${recencyWindow}::interval
+      ORDER BY "createdAt" DESC
+      LIMIT ${STICKER_RECENT_USE_SCAN}
+    ) p
+    WHERE p.data->>'cosmeticId' IS NOT NULL
+    GROUP BY 1
+  `;
+
+  return rows.map(({ cosmeticId, lastUsedAt }) => ({
+    cosmeticId,
+    lastUsedAt: lastUsedAt.toISOString(),
+  }));
+}
+
 /** Remaining balance per owned sticker; NULL entries are unlimited. */
 export async function getStickerBalances(userId: number) {
   // SUM, not MAX: spending drains across holdings, so the spendable balance is
