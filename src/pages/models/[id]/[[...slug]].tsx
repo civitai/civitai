@@ -33,7 +33,6 @@ import {
   IconEdit,
   IconExclamationMark,
   IconFlag,
-  IconInfoCircle,
   IconLock,
   IconLockOff,
   IconPlus,
@@ -161,6 +160,7 @@ import { ModelGallery } from '~/components/Model/Gallery/ModelGallery';
 import { getBaseModelSeoName } from '~/shared/constants/basemodel.constants';
 import { AdUnitSide_1, AdUnitTop } from '~/components/Ads/AdUnit';
 import { Meta } from '~/components/Meta/Meta';
+import { ModeratorLookupMenuItem } from '~/components/Moderation/ModeratorLookupMenuItem';
 
 // Keep in sync with $rail-activate in [[...slug]].module.scss.
 const RAIL_ACTIVATE_WIDTH = 1440;
@@ -1152,16 +1152,11 @@ export default function ModelDetailsV2({
                                 {/* The moderator app has no model page of its own; Bulk Image Manager
                                     keyed to the model is every image across every version, which is
                                     what a report about a model is about. */}
-                                <Menu.Item
-                                  component="a"
-                                  target="_blank"
-                                  leftSection={<IconInfoCircle size={14} stroke={1.5} />}
-                                  href={`${
-                                    env.NEXT_PUBLIC_MODERATOR_APP_URL
-                                  }${moderatorBulkImageManagerPath('model', model.id)}`}
+                                <ModeratorLookupMenuItem
+                                  path={moderatorBulkImageManagerPath('model', model.id)}
                                 >
                                   Lookup Model
-                                </Menu.Item>
+                                </ModeratorLookupMenuItem>
                                 {published && (
                                   <Menu.Item
                                     color="yellow"

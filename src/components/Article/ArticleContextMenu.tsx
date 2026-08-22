@@ -6,7 +6,6 @@ import {
   IconBan,
   IconDotsVertical,
   IconFlag,
-  IconInfoCircle,
   IconPencil,
   IconRadar2,
   IconTrash,
@@ -34,8 +33,8 @@ import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-co
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { createDialogTrigger } from '~/components/Dialog/dialogStore';
-import { env } from '~/env/client';
 import { moderatorArticleLookupPath } from '~/shared/constants/moderator-app';
+import { ModeratorLookupMenuItem } from '~/components/Moderation/ModeratorLookupMenuItem';
 
 const ArticleUnpublishModal = dynamic(() => import('~/components/Modals/ArticleUnpublishModal'), {
   ssr: false,
@@ -271,14 +270,9 @@ export function ArticleContextMenu({ article, ...props }: Props) {
         {isModerator && (
           <>
             <Menu.Label>Moderator</Menu.Label>
-            <Menu.Item
-              component="a"
-              target="_blank"
-              leftSection={<IconInfoCircle size={14} stroke={1.5} />}
-              href={`${env.NEXT_PUBLIC_MODERATOR_APP_URL}${moderatorArticleLookupPath(article.id)}`}
-            >
+            <ModeratorLookupMenuItem path={moderatorArticleLookupPath(article.id)}>
               Lookup Article
-            </Menu.Item>
+            </ModeratorLookupMenuItem>
           </>
         )}
       </Menu.Dropdown>

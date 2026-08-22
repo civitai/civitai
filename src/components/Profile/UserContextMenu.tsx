@@ -11,7 +11,6 @@ import {
   IconDotsVertical,
   IconFlag,
   IconGift,
-  IconInfoCircle,
   IconGraphOff,
   IconGraph,
   IconMicrophone,
@@ -30,7 +29,6 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 // import { ProfileHeader } from '~/components/Profile/ProfileHeader';
 // import ProfileLayout from '~/components/Profile/ProfileLayout';
 import UserBanModal from '~/components/Profile/UserBanModal';
-import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
@@ -39,6 +37,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { ModeratorLookupMenuItem } from '~/components/Moderation/ModeratorLookupMenuItem';
 
 export const UserContextMenu = ({ username }: { username: string }) => {
   const queryUtils = trpc.useUtils();
@@ -277,14 +276,9 @@ export const UserContextMenu = ({ username }: { username: string }) => {
         <>
           {isMod && (
             <>
-              <Menu.Item
-                component="a"
-                target="_blank"
-                leftSection={<IconInfoCircle size={14} stroke={1.5} />}
-                href={`${env.NEXT_PUBLIC_MODERATOR_APP_URL}${moderatorUserLookupPath(user.id)}`}
-              >
+              <ModeratorLookupMenuItem path={moderatorUserLookupPath(user.id)}>
                 Lookup User
-              </Menu.Item>
+              </ModeratorLookupMenuItem>
               {features.impersonation && user.id !== currentUser.id && (
                 <Menu.Item
                   color="yellow"

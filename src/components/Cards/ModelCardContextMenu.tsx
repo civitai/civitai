@@ -1,5 +1,5 @@
 import { Menu } from '@mantine/core';
-import { IconBabyCarriage, IconInfoCircle, IconTagOff } from '@tabler/icons-react';
+import { IconBabyCarriage, IconTagOff } from '@tabler/icons-react';
 import { ActionIconDotsVertical } from '~/components/Cards/components/ActionIconDotsVertical';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
 import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
@@ -20,8 +20,8 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { CollectionType, CosmeticEntity } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
-import { env } from '~/env/client';
 import { moderatorBulkImageManagerPath } from '~/shared/constants/moderator-app';
+import { ModeratorLookupMenuItem } from '~/components/Moderation/ModeratorLookupMenuItem';
 
 export function ModelCardContextMenu({ data }: { data: UseQueryModelReturn[number] }) {
   const currentUser = useCurrentUser();
@@ -155,18 +155,12 @@ export function ModelCardContextMenu({ data }: { data: UseQueryModelReturn[numbe
     contextMenuItems.unshift({
       key: 'lookup-model',
       component: (
-        <Menu.Item
+        <ModeratorLookupMenuItem
           key="lookup-model"
-          component="a"
-          target="_blank"
-          leftSection={<IconInfoCircle size={14} stroke={1.5} />}
-          href={`${env.NEXT_PUBLIC_MODERATOR_APP_URL}${moderatorBulkImageManagerPath(
-            'model',
-            data.id
-          )}`}
+          path={moderatorBulkImageManagerPath('model', data.id)}
         >
           Lookup Model
-        </Menu.Item>
+        </ModeratorLookupMenuItem>
       ),
     });
     contextMenuItems.push({

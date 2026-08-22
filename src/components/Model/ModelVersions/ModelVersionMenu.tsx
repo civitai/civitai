@@ -11,7 +11,6 @@ import {
   IconAi,
   IconShieldHalf,
   IconPlaylistX,
-  IconInfoCircle,
 } from '@tabler/icons-react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -26,8 +25,8 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { openUnpublishModal } from '~/components/Dialog/triggers/unpublish';
 import { getModelUrl } from '~/utils/string-helpers';
 import { PAID_ACCESS_REFUND_WINDOW_DAYS } from '~/server/utils/early-access-helpers';
-import { env } from '~/env/client';
 import { moderatorBulkImageManagerPath } from '~/shared/constants/moderator-app';
+import { ModeratorLookupMenuItem } from '~/components/Moderation/ModeratorLookupMenuItem';
 
 export function ModelVersionMenu({
   modelVersionId,
@@ -345,20 +344,11 @@ export function ModelVersionMenu({
         {currentUser?.isModerator && (
           <>
             <Menu.Label>Moderation</Menu.Label>
-            {/* stopPropagation only — the sibling moderator items also preventDefault, which would
-                stop this anchor navigating. The version pill underneath is what needs the stop. */}
-            <Menu.Item
-              component="a"
-              target="_blank"
-              onClick={(e: React.MouseEvent) => e.stopPropagation()}
-              leftSection={<IconInfoCircle size={14} stroke={1.5} />}
-              href={`${env.NEXT_PUBLIC_MODERATOR_APP_URL}${moderatorBulkImageManagerPath(
-                'modelVersion',
-                modelVersionId
-              )}`}
+            <ModeratorLookupMenuItem
+              path={moderatorBulkImageManagerPath('modelVersion', modelVersionId)}
             >
               Lookup Version
-            </Menu.Item>
+            </ModeratorLookupMenuItem>
             {published && (
               <Menu.Item
                 color="yellow"

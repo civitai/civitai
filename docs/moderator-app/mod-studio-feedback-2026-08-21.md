@@ -154,6 +154,86 @@ round's items carry tests: the Post Reports queue reuses `getReports`, the workf
 file, the legacy-strike marker protocol is tested on both sides, and `getReports`' raw SQL is now
 guarded without a database. Everything else in this round was verified by typecheck and by reading the code.
 
+## Also raised 2026-08-21
+
+Reported after the items above shipped.
+
+- [x] **The new entity-menu lookup links only worked via "open in new tab".** Every one of them —
+      image, post, model, model version, article, user — sits in a menu that opens from inside a
+      `NextLink` card. Mantine portals the dropdown out of the card, but React still propagates the
+      click through the *React* tree, so next/link's handler took it, called `preventDefault()` and
+      routed to the card instead. It looked like the links were fine because next/link ignores
+      modified clicks, so ctrl-click and right-click → new tab reached the moderator app normally.
+
+      `stopPropagation` on the item is the fix, and there is now one place holding it:
+      `ModeratorLookupMenuItem` takes a path from `moderator-paths` and owns the anchor, the target,
+      the icon and the stop. The image menu also had a `preventDefault()` on the *dropdown* — a second
+      way to cancel any `component="a"` item inside it — reduced to the `stopPropagation` that was
+      doing the actual work of keeping clicks off the card.
+
+### Contests
+
+Nothing below is built yet; each box carries what the code actually does today, because three of the
+four have a root cause that is not what the symptom suggests.
+
+- [ ] **`/moderator/contests` is a bare list and should be part of the suite.** It renders every
+      `CollectionMode.Contest` collection newest-first with name, created-at, type and the submission
+      window — and nothing that says whether a row is an official contest, a daily challenge or a
+      user-made one. It predates user challenges entirely.
+
+      The distinction is already in the data and needs no new field: a contest collection may have a
+      `Challenge` row pointing at it (`Challenge.collectionId`), and `Challenge.source` is `System`
+      (the auto-generated dailies), `Mod` or `User`. A contest collection with no `Challenge` row is a
+      plain contest. So "kind" is a left join plus a case, and it is the column the page is missing.
+
+      Port target: `/contests` in this app via
+      [`moderator-page-migration`](../../.claude/skills/moderator-page-migration/SKILL.md) — a
+      `NAVIGATION` entry, a Kysely load, filters on kind / status / window, and links out to both the
+      collection and the challenge. **Unreachable until granted on `/admin`**, like every new page here.
+
+- [ ] **Contest bans list caps at 20, and a new ban appears to do nothing.** Both symptoms are one bug.
+      `/moderator/contests/bans` calls `user.getAll({ contestBanned: true })`, whose input extends
+      `getAllQuerySchema` → `paginationSchema`, where `limit` is `.default(20)`. The page never passes a
+      limit, so the query lands `LIMIT 20` and there is no total in the response to say what was cut.
+
+      The "it didn't take" half follows from the same query: `getUsers` emits **no `ORDER BY`** unless a
+      search term is present, so which twenty rows come back is whatever Postgres returns. A ban that
+      succeeded lands somewhere arbitrary in a set larger than the window. The write is fine — the list
+      cannot show it.
+
+      Fix belongs in the port, not in a bigger `limit`: its own load, ordered by `bannedAt` desc, paged
+      with a count, searchable, and with unban and edit-reason on the row.
+
+      ⚠️ Latent while we are here: in `getUsers` the `ORDER BY` is spliced **into the middle of the
+      `WHERE` clause**, before the `contestBanned` predicate. It is unreachable only because the
+      contest-banned path never passes `query`; passing both would emit invalid SQL.
+
+- [ ] **User Lookup shows no contest-ban flag.** `getUserLookup` already selects
+      `u.meta #>> '{banDetails,reasonCode}'` and `{banDetails,detailsInternal}` off the same row, so
+      adding `{contestBanDetails,bannedAt}` costs nothing extra. Render it as a badge in the pinned
+      account-state column beside banned / muted — the column that exists precisely so a flag is not
+      buried behind a long username.
+
+- [ ] **Split contest bans: daily challenges vs everything else.** Most contest-banned accounts were
+      farming Buzz on the daily challenge and may still compete fairly elsewhere, and today the ban is
+      one flag with one meaning.
+
+      `contestBanDetails` is JSON on `User.meta`, so this is a new optional `scope` on that object with
+      absent meaning "everything" — existing bans keep today's behaviour, no backfill, and none of the
+      additive-enum deploy ordering applies.
+
+      There are exactly two enforcement points, and both need to read it:
+      - `upsertCollectionEntry` (`collection.service.ts`) refuses any account carrying
+        `contestBanDetails`. It would resolve the collection's kind first — the same `Challenge` join the
+        list page needs — and refuse only within scope.
+      - `loadBaseGates` (`contest-score.queries.ts`) folds every contest-banned id into
+        `baseDisqualifiedIds`. That is the community-contest scorer, so it takes only the ids whose scope
+        reaches contests.
+
+      Open question for the reporters before this is built: is the axis two-valued (challenges /
+      contests), or does an explicit "everything" state need to stay selectable in the UI rather than
+      only being the legacy default?
+
 ---
 
 # Carried forward from earlier rounds
