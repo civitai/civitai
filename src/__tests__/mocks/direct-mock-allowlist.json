@@ -20,10 +20,10 @@
   ],
   "totals": {
     "canonicalFiles": 211,
-    "pendingFiles": 450,
-    "allFiles": 536,
+    "pendingFiles": 452,
+    "allFiles": 538,
     "canonicalSites": 276,
-    "pendingSites": 993
+    "pendingSites": 996
   },
   "bySpecifier": {
     "~/server/db/client": 131,
@@ -32,15 +32,15 @@
     "~/env/server": 120,
     "~/server/services/buzz.service": 109,
     "~/server/services/image.service": 96,
-    "~/server/clickhouse/client": 102,
+    "~/server/clickhouse/client": 103,
     "~/server/services/notification.service": 86,
     "~/server/services/user.service": 83,
     "~/server/search-index": 73,
     "~/server/flipt/client": 88,
-    "~/server/redis/fail-open-log": 56,
+    "~/server/redis/fail-open-log": 57,
     "~/server/utils/endpoint-helpers": 60,
     "~/server/redis/caches": 65,
-    "~/server/prom/client": 55
+    "~/server/prom/client": 56
   },
   "files": [
     "src/__tests__/pages/api/download/download-quota-seam.test.ts",
@@ -290,6 +290,7 @@
     "src/server/__tests__/owned-sticker-cache-choice.test.ts",
     "src/server/__tests__/pack-detail-agreement.test.ts",
     "src/server/__tests__/pending-review-mute.test.ts",
+    "src/server/__tests__/reaction-abuse-endpoint.test.ts",
     "src/server/__tests__/settings-endpoint-deadlines.test.ts",
     "src/server/__tests__/sticker-topup.test.ts",
     "src/server/__tests__/upload-backend.test.ts",
@@ -635,6 +636,7 @@
     "src/server/utils/__tests__/cache-helpers-l1.test.ts",
     "src/server/utils/__tests__/cache-helpers-malformed-entry.test.ts",
     "src/server/utils/__tests__/cache-helpers-refresh-dontcache.test.ts",
+    "src/server/utils/__tests__/cache-helpers-update.test.ts",
     "src/server/utils/__tests__/download-count.test.ts",
     "src/server/utils/__tests__/moderator-endpoint.test.ts",
     "src/server/utils/__tests__/origin-helpers.test.ts",
