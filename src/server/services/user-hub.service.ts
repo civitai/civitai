@@ -1,11 +1,13 @@
 import { dbRead, dbWrite } from '~/server/db/client';
 import { Prisma } from '@prisma/client';
 import type {
+  AddUserHubSourceInput,
   GetHubSourceSuggestionsInput,
   ResolveHubSourceInput,
   SetUserHubOrderInput,
   UpsertUserHubInput,
   UserHubSourceInput,
+  UserHubSourceRefInput,
 } from '~/server/schema/user-hub.schema';
 import {
   HUB_COLLECTION_SOURCES_ENABLED,
@@ -174,6 +176,56 @@ export async function upsertUserHub({ userId, ...input }: UpsertUserHubInput & {
     });
   });
   return toHubDetail(updated);
+}
+
+export async function addUserHubSource({
+  userId,
+  hubId,
+  ...source
+}: AddUserHubSourceInput & { userId: number }) {
+  const hub = await dbRead.userHub.findFirst({
+    where: { id: hubId, userId },
+    select: { id: true, sources: { select: { type: true, targetId: true, index: true } } },
+  });
+  if (!hub) throw throwNotFoundError('Hub not found');
+
+  const existing = hub.sources.find(
+    (s) => s.type === source.type && s.targetId === source.targetId
+  );
+  if (existing) return { hubId, added: false };
+
+  if (hub.sources.length >= hubLimits.sourcesPerHub)
+    throw throwBadRequestError(`A hub can hold at most ${hubLimits.sourcesPerHub} sources`);
+
+  await assertHubSourcesUsable({ sources: [{ ...source, enabled: true, index: 0 }], userId });
+
+  await dbWrite.userHubSource.create({
+    data: {
+      hubId,
+      type: source.type,
+      targetId: source.targetId,
+      alias: source.alias ?? null,
+      index: hub.sources.reduce((max, s) => Math.max(max, s.index + 1), 0),
+    },
+  });
+
+  return { hubId, added: true };
+}
+
+export async function removeUserHubSource({
+  userId,
+  hubId,
+  type,
+  targetId,
+}: UserHubSourceRefInput & { userId: number }) {
+  const hub = await dbRead.userHub.findFirst({
+    where: { id: hubId, userId },
+    select: { id: true },
+  });
+  if (!hub) throw throwNotFoundError('Hub not found');
+
+  const { count } = await dbWrite.userHubSource.deleteMany({ where: { hubId, type, targetId } });
+  return { hubId, removed: count > 0 };
 }
 
 export async function deleteUserHub({ id, userId }: { id: number; userId: number }) {

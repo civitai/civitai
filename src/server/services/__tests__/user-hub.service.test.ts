@@ -15,7 +15,9 @@ vi.mock('~/server/services/collection.service', () => ({
 }));
 
 import {
+  addUserHubSource,
   getHubSourceSuggestions,
+  removeUserHubSource,
   getUserHubById,
   resolveHubSourceFromUrl,
   resolveHubSources,
@@ -627,5 +629,91 @@ describe('taken-down models', () => {
     expect(source).toBeNull();
     const where = dbMock.dbRead.modelVersion.findFirst.mock.calls[0][0].where;
     expect(where.model.deletedAt).toBeNull();
+  });
+});
+
+describe('addUserHubSource', () => {
+  const source = { type: UserHubSourceType.User, targetId: 42, alias: 'someone' };
+
+  it('refuses a hub the viewer does not own', async () => {
+    findFirstHub.mockResolvedValue(null);
+
+    await expect(addUserHubSource({ userId: 999, hubId: 1, ...source })).rejects.toThrow();
+    expect(dbMock.dbWrite.userHubSource.create).not.toHaveBeenCalled();
+    expect(findFirstHub).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 1, userId: 999 } })
+    );
+  });
+
+  it('is a no-op when the hub already has that source', async () => {
+    findFirstHub.mockResolvedValue({
+      id: 1,
+      sources: [{ type: UserHubSourceType.User, targetId: 42, index: 0 }],
+    });
+
+    const result = await addUserHubSource({ userId: 5, hubId: 1, ...source });
+
+    expect(result).toEqual({ hubId: 1, added: false });
+    expect(dbMock.dbWrite.userHubSource.create).not.toHaveBeenCalled();
+  });
+
+  it('adds past the highest existing index, not past the count', async () => {
+    // Indexes are not dense — removing a source leaves a gap — so appending at
+    // `length` collides with a row that is still there.
+    findFirstHub.mockResolvedValue({
+      id: 1,
+      sources: [
+        { type: UserHubSourceType.Model, targetId: 1, index: 0 },
+        { type: UserHubSourceType.Model, targetId: 2, index: 7 },
+      ],
+    });
+
+    await addUserHubSource({ userId: 5, hubId: 1, ...source });
+
+    expect(dbMock.dbWrite.userHubSource.create).toHaveBeenCalledWith({
+      data: { hubId: 1, type: UserHubSourceType.User, targetId: 42, alias: 'someone', index: 8 },
+    });
+  });
+
+  it('refuses to go past the per-hub source cap', async () => {
+    findFirstHub.mockResolvedValue({
+      id: 1,
+      sources: Array.from({ length: hubLimits.sourcesPerHub }, (_, i) => ({
+        type: UserHubSourceType.Model,
+        targetId: i + 1,
+        index: i,
+      })),
+    });
+
+    await expect(addUserHubSource({ userId: 5, hubId: 1, ...source })).rejects.toThrow();
+    expect(dbMock.dbWrite.userHubSource.create).not.toHaveBeenCalled();
+  });
+});
+
+describe('removeUserHubSource', () => {
+  it('refuses a hub the viewer does not own', async () => {
+    findFirstHub.mockResolvedValue(null);
+
+    await expect(
+      removeUserHubSource({ userId: 999, hubId: 1, type: UserHubSourceType.User, targetId: 42 })
+    ).rejects.toThrow();
+    expect(dbMock.dbWrite.userHubSource.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('deletes only the named source in that hub', async () => {
+    findFirstHub.mockResolvedValue({ id: 1 });
+    dbMock.dbWrite.userHubSource.deleteMany.mockResolvedValue({ count: 1 });
+
+    const result = await removeUserHubSource({
+      userId: 5,
+      hubId: 1,
+      type: UserHubSourceType.User,
+      targetId: 42,
+    });
+
+    expect(result).toEqual({ hubId: 1, removed: true });
+    expect(dbMock.dbWrite.userHubSource.deleteMany).toHaveBeenCalledWith({
+      where: { hubId: 1, type: UserHubSourceType.User, targetId: 42 },
+    });
   });
 });
