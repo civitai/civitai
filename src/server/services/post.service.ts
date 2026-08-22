@@ -943,7 +943,22 @@ export const deletePost = async ({ id, isModerator }: GetByIdInput & { isModerat
 
       return { post, deletedImages };
     },
-    { timeout: 10000 }
+    // TEMPORARY (2026-08-21): raised 10s -> 30s to stop user-visible failures while the
+    // underlying slowness is investigated. Post deletion has been failing with Prisma
+    // P2028 "Transaction already closed" — the DELETE below routinely outlives the
+    // transaction's own budget, so the whole delete is rolled back and the user sees an
+    // error. Measured over a 14.28h window: 767 executions of that DELETE, mean 6.6s,
+    // 218 (28.4%) over 10s, and ZERO over 30s — so 30s covers every execution observed
+    // while 10s misses more than a quarter of them.
+    //
+    // 🔴 THIS IS A MITIGATION, NOT A FIX. It converts "the deletion failed" into "the
+    // deletion was slow"; it does nothing about why a delete of one post's images takes
+    // seconds. Do not treat a quiet error rate as the problem being solved.
+    //
+    // REVERT THIS once the slowness is root-caused — the number is derived from a
+    // 14.28h sample and is not a budget anyone designed. A larger post, or a further
+    // regression, walks straight through 30s the same way it walked through 10s.
+    { timeout: 30000 }
   );
 
   // Phase 2: Side effects after successful transaction
