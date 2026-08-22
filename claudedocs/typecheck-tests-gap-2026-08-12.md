@@ -196,10 +196,18 @@ src/server/db/__tests__/kysely-prisma-parity.test.ts(5,29):
 ```
 
 `kysely` is not a dependency of this repository (only `prisma-kysely` is) and is not installed.
-That import cannot resolve at runtime either, so this suite contributes zero tests — the exact
+~~That import cannot resolve at runtime either, so this suite contributes zero tests~~ — the exact
 failure class already documented in the repo's own notes about suites that fail to _collect_
 and therefore report "no tests" rather than a failure. The typecheck would have named it on the
 day it landed.
+
+📌 **CORRECTED 2026-08-22 — the runtime half of that is wrong.** At this document's own measurement
+commit `f19574a9cb` the import was already `import type { Kysely } from 'kysely'` — type-only, so it
+is erased at transpile and cannot fail at runtime. The TS2307 is real; the runtime consequence does
+not follow from it. The suite does contribute zero _executed_ tests, but for an unrelated and
+deliberate reason: `describe.skipIf(!parityUrl)`, gated on `KYSELY_PARITY_DATABASE_URL`. Both facts
+are unchanged on current `main`. The section's headline finding — that the typecheck cannot see
+these files — is untouched.
 
 ### By area
 

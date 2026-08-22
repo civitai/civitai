@@ -1,6 +1,13 @@
 # Notifications App — Test Coverage Audit (2026-07-03)
 
-**Status (added 2026-08-21):** Historical snapshot. Coverage numbers measured at the stated commit; NOT VERIFIED against current `main`.
+**Status (corrected 2026-08-22):** Superseded — the top three gaps this audit ranked have all
+been closed. G1 (`poll-loop`, "0%") by `apps/notifications/src/worker/poll-loop.behavioral.test.ts`;
+G2 (`create.ts`, "0%") by `create.behavioral.test.ts`; G3 (`markNotificationsRead`) by
+`operations.markNotificationsRead.test.ts`; G4/G6 partly by the `countNotifications` and
+`createNotificationsBulk` suites. **Kept for the METHOD, not the status** — gaps ranked by blast
+radius, the fake-`PoolClient` recorder, and the "assert on behaviour, never on the emitted string"
+critique, which is what produced those suites. The original percentages are a point-in-time
+measurement and were NOT re-run.
 
 **Scope:** `apps/notifications` (`@civitai/notifications-app`) — the Fastify + raw-pg fan-out/producer service.
 **Method:** ran `corepack pnpm exec vitest run --coverage` (v8 provider, worked) + static analysis of every source module and test. Read-only; no source or tests changed.
