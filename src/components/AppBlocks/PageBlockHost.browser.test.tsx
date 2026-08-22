@@ -350,7 +350,7 @@ async function advance(ms: number) {
  *
  * Two budgets, deliberately decoupled: at most 500ms of VIRTUAL time (well inside the
  * shortest recovery window, the 2s backoff, so a poll can never silently trip the very
- * behaviour a test is about to assert) and up to 5s of REAL time for the browser to
+ * behaviour a test is about to assert) and a bounded slice of REAL time for the browser to
  * actually do the work. Advancing virtual time alone would give the page only
  * microtasks — the failure mode that makes a fake-timer poll report "iframe never
  * mounted" on a saturated runner.
@@ -359,9 +359,27 @@ async function advance(ms: number) {
  * `vi.waitFor` ADVANCES the fake clock while polling, spending virtual time against the
  * very backoff the test needs to stay pending.
  */
+/**
+ * 🔴 THE ITERATION COUNT IS SIZED AGAINST TWO CEILINGS, NOT PICKED.
+ *
+ * Each fake-clock iteration costs ~30ms REAL (the flush loop's macrotasks plus the
+ * 10ms sleep) and 1ms VIRTUAL. So the budget is ~4.5s real / 150ms virtual.
+ *
+ * REAL ceiling: browser mode forces `testTimeout` to 15s and the root config's 60s
+ * does NOT reach the `component` project. At 500 iterations this loop ran ~15s and
+ * LOST THE RACE to that timeout — measured: the tests below without an explicit
+ * timeout died as `Test timed out in 15000ms` instead of naming what they waited
+ * for, and the one with `20_000` cleared it by 93ms. Staying well under 15s is what
+ * keeps a failure legible.
+ *
+ * VIRTUAL ceiling: every millisecond spent here is spent against
+ * `AUTO_RETRY_BACKOFF_MS[0]` (2000ms), which these tests need to stay PENDING.
+ * 150ms is ~13x inside it. Measured actual spend between terminal and click is
+ * 1-10ms, so this is headroom, not a working budget.
+ */
 async function pollFor(what: string, ready: () => boolean) {
   const fake = vi.isFakeTimers();
-  for (let i = 0; i < 500; i++) {
+  for (let i = 0; i < 150; i++) {
     if (ready()) return;
     if (fake) {
       await advance(1);
