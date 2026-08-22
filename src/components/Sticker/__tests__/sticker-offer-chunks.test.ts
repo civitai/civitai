@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chunkStickerIds } from '~/components/Sticker/sticker.util';
+import { chunkStickerIds, draftedCosmeticIds } from '~/components/Sticker/sticker.util';
 import { STICKER_OFFER_LIMIT } from '~/server/schema/cosmetic.schema';
 
 /**
@@ -26,18 +26,25 @@ describe('chunkStickerIds', () => {
   });
 
   it('never hands the endpoint more ids than it accepts', () => {
-    for (const chunk of chunkStickerIds(ids, STICKER_OFFER_LIMIT))
-      expect(chunk.length).toBeLessThanOrEqual(STICKER_OFFER_LIMIT);
+    const chunks = chunkStickerIds(ids, STICKER_OFFER_LIMIT);
+
+    // Asserted before the loop: a `for … expect` over an empty array makes no
+    // assertions at all and still reports green.
+    expect(chunks).toHaveLength(3);
+    for (const chunk of chunks) expect(chunk.length).toBeLessThanOrEqual(STICKER_OFFER_LIMIT);
   });
 
   it('keeps insertion order, so a growing list does not reshuffle the keys it has', () => {
-    const first = chunkStickerIds([5, 4, 3], 2);
-    const grown = chunkStickerIds([5, 4, 3, 2, 1], 2);
+    // 🔴 DELIBERATELY NOT MONOTONIC. Every id here is out of numeric order, so a
+    // sorted derivation cannot coincide with the expected result — with a
+    // descending fixture, `sort((a, b) => b - a)` passes this test unchanged.
+    const first = chunkStickerIds([5, 9, 3, 7, 1], 2);
+    const grown = chunkStickerIds([5, 9, 3, 7, 1, 8, 2], 2);
 
-    // The chunks already fetched are still the same chunks — a sorted derivation
-    // would slide 2 and 1 into the front and change every key after them.
-    expect(grown[0]).toEqual(first[0]);
-    expect(grown.slice(0, first.length - 1)).toEqual(first.slice(0, first.length - 1));
+    expect(first).toEqual([[5, 9], [3, 7], [1]]);
+    // Two COMPLETE chunks compared, not one: the claim is that boundaries
+    // already fetched do not move when the list grows.
+    expect(grown.slice(0, 2)).toEqual(first.slice(0, 2));
   });
 
   it('dedupes, because two drafts of one sticker are one question', () => {
@@ -46,5 +53,24 @@ describe('chunkStickerIds', () => {
 
   it('asks nothing when nothing is drafted', () => {
     expect(chunkStickerIds([], STICKER_OFFER_LIMIT)).toEqual([]);
+  });
+});
+
+/**
+ * `draft.id` and `draft.cosmeticId` are both numbers on the same object, so
+ * swapping them typechecks — and every draft then reads "this sticker sells no
+ * extra uses" forever, which is the shipped bug's own symptom one layer up.
+ */
+describe('draftedCosmeticIds', () => {
+  it('reads the cosmetic, not the draft', () => {
+    expect(draftedCosmeticIds([{ id: 11, cosmeticId: 7 } as never])).toEqual([7]);
+  });
+
+  it('keeps one entry per draft, in the order they were laid down', () => {
+    const drafts = [{ cosmeticId: 7 }, { cosmeticId: 9 }, { cosmeticId: 7 }];
+
+    // Deduping is the query hook's job, not this one's: two drafts of one sticker
+    // are two drafts, and the layer indexes gates by draft.
+    expect(draftedCosmeticIds(drafts)).toEqual([7, 9, 7]);
   });
 });

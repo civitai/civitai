@@ -12,6 +12,7 @@ import {
   unownedGateFor,
   useOwnedSticker,
   useStickerCosmetics,
+  draftedCosmeticIds,
   useStickerRefill,
 } from '~/components/Sticker/sticker.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -72,29 +73,18 @@ export function DraftStickerLayer() {
   const { standing } = useFreePlacementStanding(targetImageId ?? undefined);
   const freeOffer = freeOfferFor(space, standing);
 
-  /** What the placer has left of each sticker, and what a top-up costs. */
   const currentUser = useCurrentUser();
   const { data: balances } = trpc.cosmetic.getStickerBalances.useQuery(undefined, {
     enabled: !!currentUser && targetImageId != null,
   });
-  // Only what has been dragged out — an offer for a sticker nobody has drafted
-  // is an answer to a question not yet asked. Insertion order, so laying down a
-  // second draft appends rather than reshuffling the keys already fetched.
-  const draftedCosmeticIds = useMemo(() => drafts.map((draft) => draft.cosmeticId), [drafts]);
-  const refillFor = useStickerRefill(draftedCosmeticIds);
+  // Only what has been dragged out — an offer for a sticker nobody has drafted is
+  // an answer to a question not yet asked.
+  const draftedIds = useMemo(() => draftedCosmeticIds(drafts), [drafts]);
+  const refillFor = useStickerRefill(draftedIds);
 
   const paidDraftIds = useStickerPlacementDraftStore((state) => state.paidDraftIds);
   const duplicateDraft = useStickerPlacementDraftStore((state) => state.duplicateDraft);
 
-  /**
-   * Who is covered and who is buying, recomputed from the whole set every time
-   * it changes.
-   *
-   * 🔴 THIS REPLACES A SNAPSHOT, AND THAT IS THE POINT. The gate used to be
-   * decided when a draft was created and written onto it — so with one use left,
-   * deleting the covered draft left the other one still asking to be bought for
-   * a use that had just been handed back. Entitlement belongs to the set.
-   */
   const entitlements = useMemo(
     () => allocateDraftEntitlements({ drafts, balances, freeAvailable: !!freeOffer, paidDraftIds }),
     [drafts, balances, freeOffer, paidDraftIds]

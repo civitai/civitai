@@ -5,16 +5,13 @@ import {
   stickerPricePerUseFromCosmeticData,
   stickerUsesFromCosmeticData,
 } from '~/shared/utils/sticker-token';
+import { STICKER_OFFER_LIMIT } from '~/server/schema/cosmetic.schema';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { STICKER_OFFER_LIMIT } from '~/server/schema/cosmetic.schema';
 import type { DraftPurchase } from '~/store/sticker-placement-draft.store';
 
 /**
- * What buying a sticker gets you, as shop copy: the balance included and what a
- * further use costs after that.
- *
  * A sticker with no `uses` really is unlimited — the purchase grant sets
  * `remaining` from that same field — so it gets a statement rather than a blank.
  * A missing `pricePerUse` is different: the sticker sells no top-ups at all, and
@@ -48,8 +45,7 @@ export type ResolvedSticker = {
   pricePerUse?: number;
 };
 
-/** Matches the `ids` cap on `getStickerCosmeticsSchema`. */
-const STICKER_FETCH_CHUNK = 100;
+const STICKER_FETCH_CHUNK = STICKER_OFFER_LIMIT;
 
 const obtainedTime = (value?: Date) => {
   const time = value ? new Date(value).getTime() : NaN;
@@ -58,8 +54,8 @@ const obtainedTime = (value?: Date) => {
 
 /**
  * Owned sticker, most-recently-obtained first — newest purchases surface at the
- * top of the picker. Slugs are unique per cosmetic, so `bySlug` can't collide;
- * first-wins is just how the map is built, not a tie-break rule.
+ * top of the picker. Slugs are unique across stickers (enforced on write), so
+ * `bySlug` can't collide; first-wins is just how the map is built.
  */
 export function useOwnedSticker() {
   const { data, isLoading } = useQueryUserCosmetics();
@@ -124,6 +120,17 @@ export function useBuyStickerUses({
 }
 
 /**
+ * The cosmetic behind each draft — the ids an offer is actually wanted for.
+ *
+ * Named rather than inlined at the call site because `draft.id` and
+ * `draft.cosmeticId` are both numbers on the same object: swapping them
+ * typechecks, and the result is every draft reading "this sticker sells no extra
+ * uses" forever. That is the bug this hook was just fixed for, one layer up.
+ */
+export const draftedCosmeticIds = (drafts: { cosmeticId: number }[]) =>
+  drafts.map((draft) => draft.cosmeticId);
+
+/**
  * Ids split into request-sized chunks, deduped, **in insertion order**.
  *
  * Sorting would make the key independent of the order ids arrive in, which is
@@ -132,9 +139,8 @@ export function useBuyStickerUses({
  * cosmetic ids as it pages; sorted, each one lands mid-list, shifts every chunk
  * boundary after it, changes every chunk key, and refetches the whole surface.
  *
- * Every id lands in exactly one chunk: this is what stops a large collection
- * being silently truncated to the first chunk, which is what the offers query
- * used to do past `STICKER_OFFER_LIMIT`.
+ * Every id lands in exactly one chunk, so no collection is silently truncated to
+ * the first.
  */
 export function chunkStickerIds(ids: number[], size: number): number[][] {
   const unique = [...new Set(ids)];
@@ -179,36 +185,22 @@ export function useStickerCosmetics(ids: number[]) {
 
 /**
  * What a top-up costs, for the stickers actually being asked about.
- *
- * 🔴 TAKES THE IDS IT NEEDS, AND THAT IS THE FIX. This used to fetch an offer
- * for every sticker the placer OWNS, capped at `STICKER_OFFER_LIMIT`, so anyone
- * past that cap got no offer at all for the rest — which renders as "this
- * sticker sells no extra uses", permanently, on the stickers they bought last.
- * The cap existed to keep one query key stable across two callers; there is only
- * one caller now, and it knows the handful of ids it has drafted. Chunked in
- * insertion order for the same reason `useStickerCosmetics` is: a growing list
- * must not reshuffle the keys it already has. The chunk is the endpoint's own
- * maximum, so no collection can outgrow the request.
- *
- * The owned payload's `pricePerUse` is the fallback rather than an afterthought:
- * `purchase` is snapshotted onto a draft when it is created and never
- * recomputed, so a copy made before this query resolves would be stuck
- * permanently on "this sticker sells no extra uses" — a false statement, frozen.
  */
 export function useStickerRefill(cosmeticIds: number[]) {
   const currentUser = useCurrentUser();
 
-  // Chunked by the endpoint's OWN maximum, so the request can never be the thing
-  // that fails: `getStickerOffers` rejects more ids than this.
-  const chunks = useMemo(
-    () => chunkStickerIds(cosmeticIds, STICKER_OFFER_LIMIT),
+  // 🔴 ONE QUERY PER ID, NOT ONE PER BATCH. A batched key holds the whole drafted
+  // list, so dragging out a second sticker blanks the FIRST one's offer until the
+  // refetch lands — its pack button vanishing mid-session, on a money surface.
+  const ids = useMemo(
+    () => [...new Set(cosmeticIds)],
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [cosmeticIds.join(',')]
   );
 
   const queries = trpc.useQueries((t) =>
-    chunks.map((chunk) =>
-      t.cosmetic.getStickerOffers({ ids: chunk }, { enabled: !!currentUser, staleTime: 60_000 })
+    ids.map((id) =>
+      t.cosmetic.getStickerOffers({ ids: [id] }, { enabled: !!currentUser, staleTime: 60_000 })
     )
   );
 
@@ -223,7 +215,7 @@ export function useStickerRefill(cosmeticIds: number[]) {
   }, [queries.map((q) => q.dataUpdatedAt).join(',')]);
 }
 
-/** One offer turned into the gate a draft carries. Pure, so it can be asserted. */
+/** The fields of a `getStickerOffers` row that `refillFromOffer` reads. */
 export type StickerOfferLike = {
   pricePerUse: number | null;
   creatorUsername: string | null;
