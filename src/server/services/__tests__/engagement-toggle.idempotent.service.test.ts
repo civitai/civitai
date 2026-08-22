@@ -320,7 +320,7 @@ describe('toggleModelEngagement — the update branch refreshes the hidden-model
       setTo: true,
     });
 
-    expect(mockDbWrite.modelEngagement.update).toHaveBeenCalledTimes(1);
+    expect(mockDbWrite.modelEngagement.updateMany).toHaveBeenCalledTimes(1);
     expect(refreshCache).toHaveBeenCalledWith({ userId: 42 });
     expect(result).toBe(true);
   });
@@ -335,7 +335,7 @@ describe('toggleModelEngagement — the update branch refreshes the hidden-model
       setTo: true,
     });
 
-    expect(mockDbWrite.modelEngagement.update).toHaveBeenCalledTimes(1);
+    expect(mockDbWrite.modelEngagement.updateMany).toHaveBeenCalledTimes(1);
     // The new type is not Hide — only the OLD one is, which is why the guard has to
     // read both sides.
     expect(refreshCache).toHaveBeenCalledWith({ userId: 42 });
@@ -349,7 +349,7 @@ describe('toggleModelEngagement — the update branch refreshes the hidden-model
 
     await toggleModelEngagement({ userId: 42, modelId: 10, type: 'Notify', setTo: true });
 
-    expect(mockDbWrite.modelEngagement.update).toHaveBeenCalledTimes(1);
+    expect(mockDbWrite.modelEngagement.updateMany).toHaveBeenCalledTimes(1);
     expect(refreshCache).not.toHaveBeenCalled();
   });
 });
