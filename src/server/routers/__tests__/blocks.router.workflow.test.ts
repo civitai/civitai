@@ -4514,6 +4514,83 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
         ]);
       });
 
+      // 🔴 MUTANT-KILLER for the ROUTER's half of the thread. Every other
+      // fixture in this file is LORA-typed (`sdxlLora`), so replacing
+      // `resourceTypes.set(id, lora.modelType)` with the literal `'LORA'`
+      // SURVIVED a 4168-test sweep — the builder-side LoCon test pins only the
+      // BOUND model, not the additional-resource map. Without this, the
+      // fail-closed throw guards nothing: a hardcoded `'LORA'` would be
+      // indistinguishable from a resolved one. Two DISTINCT non-LORA types, so
+      // no single literal can satisfy the assertion.
+      it('the resolved type is THREADED per-resource — a LoCon + DoRA stack is not flattened to LORA', async () => {
+        mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+        versionRows({
+          202: sdxlLora(202, { model: { id: 302, type: 'LoCon', userId: 2 } }),
+          203: sdxlLora(203, { model: { id: 303, type: 'DoRA', userId: 2 } }),
+        });
+        happyUser();
+        const parses = withRealGraphValidation();
+        mockSubmitWorkflow.mockResolvedValueOnce({
+          id: '',
+          status: 'succeeded',
+          cost: { total: 11 },
+          steps: [],
+        });
+        const caller = blocksRouter.createCaller(fakeCtx() as never);
+        const result = await caller.estimateWorkflow({
+          blockToken: 'tok',
+          body: bodyWithLoras([
+            { modelVersionId: 202, strength: 0.6 },
+            { modelVersionId: 203, strength: 0.4 },
+          ]),
+        });
+        expect(result.snapshot.cost?.total).toBe(11);
+        expect(parses[0].success).toBe(true);
+        const stepArg = mockCreateStepsFromGraph.mock.calls[0][0];
+        expect(stepArg.input.resources).toEqual([
+          { id: 202, strength: 0.6, model: { type: 'LoCon' } },
+          { id: 203, strength: 0.4, model: { type: 'DoRA' } },
+        ]);
+      });
+
+      // The bound-model push is now type-bounded: a type the graph routes to its
+      // OWN singleton node (Upscaler/VAE) must be refused, not billed as an
+      // additional network. Reviving the push without this would have widened
+      // the surface well past what the fix describes.
+      it('a bound model whose type belongs in a SINGLETON graph slot is refused, not billed as a network', async () => {
+        mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+        versionRows({
+          99: {
+            id: 99,
+            baseModel: 'SDXL 1.0',
+            modelId: 7,
+            status: 'Published',
+            availability: 'Public',
+            usageControl: 'Download',
+            meta: null,
+            generationCoverage: { covered: true },
+            model: { id: 7, type: 'VAE', userId: 1 },
+          },
+        });
+        happyUser();
+        clearCheckpointOverrides();
+        mockDbRead.modelMetric.findFirst.mockResolvedValue({
+          modelId: 300,
+          model: {
+            id: 300,
+            name: 'Popular SDXL',
+            modelVersions: [{ id: 500, name: 'v1', baseModel: 'SDXL 1.0' }],
+          },
+        });
+        withRealGraphValidation();
+        const caller = blocksRouter.createCaller(fakeCtx() as never);
+        await expect(
+          caller.estimateWorkflow({ blockToken: 'tok', body: validBody() })
+        ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: /bound to a VAE model/ });
+        // Refused before the orchestrator is reached — no whatIf, no spend.
+        expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      });
+
       it('submit: the SAME builder feeds submitWorkflow, so it must pass the SAME validation', async () => {
         mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
         versionRows({ 201: sdxlLora(201) });

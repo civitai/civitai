@@ -779,18 +779,21 @@ describe('buildTextToImageInput', () => {
     modelType: 'Checkpoint',
     checkpointVersionId: 99,
     checkpointBaseModel: 'SDXL 1.0',
+    additionalResourceTypes: new Map<number, string>(),
   };
   const sd1CheckpointResolved = {
     baseModel: 'SD 1.5',
     modelType: 'Checkpoint',
     checkpointVersionId: 99,
     checkpointBaseModel: 'SD 1.5',
+    additionalResourceTypes: new Map<number, string>(),
   };
   const fluxLoraResolved = {
     baseModel: 'Flux.1 D',
     modelType: 'LORA',
     checkpointVersionId: 691639,
     checkpointBaseModel: 'Flux.1 D',
+    additionalResourceTypes: new Map<number, string>(),
   };
 
   // New shape: the function now emits the flat generation-graph `input`
@@ -871,6 +874,29 @@ describe('buildTextToImageInput', () => {
     });
     expect(out.resources).toEqual([{ id: 99, strength: 1, model: { type: 'LoCon' } }]);
   });
+
+  // #4159 scope bound. Reviving the bound-model push must not let a type the
+  // graph routes to its OWN singleton node be submitted as an additional
+  // network. Both singleton types are covered — one is not evidence about the
+  // other, and a mutant naming only one would otherwise survive.
+  it.each([['VAE'], ['Upscaler']])(
+    'refuses a bound model of singleton-slot type %s rather than billing it as a network',
+    (modelType) => {
+      expect(() =>
+        buildTextToImageInput(baseBody as never, { ...fluxLoraResolved, modelType })
+      ).toThrow(new RegExp(`bound to a ${modelType} model`));
+    }
+  );
+
+  // …and the LoRA family is NOT caught by that guard — otherwise the guard
+  // would pass by rejecting everything, including the case the fix exists for.
+  it.each([['LORA'], ['LoCon'], ['DoRA'], ['TextualInversion']])(
+    'still admits an additional-network bound type (%s)',
+    (modelType) => {
+      const out = buildTextToImageInput(baseBody as never, { ...fluxLoraResolved, modelType });
+      expect(out.resources).toEqual([{ id: 99, strength: 1, model: { type: modelType } }]);
+    }
+  );
 
   it('forwards block-supplied sampler/steps/seed overrides', () => {
     const body = {
@@ -1199,6 +1225,7 @@ describe('block input yields populated workflow metadata params (real graph path
       modelType: 'Checkpoint',
       checkpointVersionId: 99,
       checkpointBaseModel: 'SDXL 1.0',
+      additionalResourceTypes: new Map<number, string>(),
     };
 
     // REAL translator → REAL graph validation → REAL param snapshot.
@@ -1241,6 +1268,7 @@ describe('block input yields populated workflow metadata params (real graph path
       modelType: 'Checkpoint',
       checkpointVersionId: 99,
       checkpointBaseModel: 'SD 1.5',
+      additionalResourceTypes: new Map<number, string>(),
     };
     const input = buildTextToImageInput(body as never, resolved);
     const { params } = paramsFromRealGraph(input);
@@ -1272,6 +1300,7 @@ describe('block input yields populated workflow metadata params (real graph path
       modelType: 'Checkpoint',
       checkpointVersionId: 99,
       checkpointBaseModel: 'SDXL 1.0',
+      additionalResourceTypes: new Map<number, string>(),
     };
     const input = buildImageWorkflowInput(body as never, resolved);
     const result = generationGraph.safeParse(input, externalCtx);
@@ -1357,6 +1386,7 @@ describe('buildImageWorkflowInput (generalized image-workflow bridge)', () => {
     modelType: 'Checkpoint',
     checkpointVersionId: 99,
     checkpointBaseModel: 'SDXL 1.0',
+    additionalResourceTypes: new Map<number, string>(),
   };
   const validSourceImage = {
     url: 'https://image.civitai.com/abc/def.jpeg',

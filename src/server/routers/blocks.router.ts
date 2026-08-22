@@ -688,8 +688,10 @@ async function resolvePageLoraGates(opts: {
       });
     }
     gates.push(buildGateVersion(lora.gate));
-    // Recorded only after every reject above has passed, so the map can never
-    // describe a resource this gate refused.
+    // ORDERING, not a guard — do not read this as one. Every reject above
+    // THROWS, so the builder never runs on a refused resource whatever order
+    // this line sits in (moving it above the rejects survives the suite). It is
+    // placed here because that is where the value is unambiguously final.
     resourceTypes.set(lora.modelVersionId, lora.modelType);
   }
   return { gates, resourceTypes };
