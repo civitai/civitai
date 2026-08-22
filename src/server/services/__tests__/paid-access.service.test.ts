@@ -27,6 +27,11 @@ import {
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { REDIS_KEYS } from '~/server/redis/client';
 
+// 🔴 SAME BLIND SPOT as user-challenge-flag-gate, disclosed here too. The mock this replaces
+// bound dbRead to `{}`, so any replica access threw. `paid-access.service.ts` really does use the
+// replica (`:165` fromWrite ? dbWrite : dbRead, `:252`, `:370`), and the canonical dbRead now
+// answers those silently. No current case reaches them — the measured kill-power is unchanged —
+// but the latent surface is wider than it was.
 const mockDbWrite = dbMock.dbWrite;
 
 // The cache stub above is keyed by the redis key the service asks for, so the tests below

@@ -21,9 +21,15 @@ const IMAGE_ID = 9001;
 const { mockChargeEntryFees } = vi.hoisted(() => ({ mockChargeEntryFees: vi.fn() }));
 
 // `validateContestCollectionEntry` reads only — every Prisma call it makes is on dbRead
-// (collection.service.ts). The mock this replaces bound dbWrite to `{}`, i.e. any write would have
-// thrown; the canonical dbWrite answers instead, so a stray write would no longer be loud. Nothing
-// on this path writes, and the entry-fee charge (the one side effect) is stubbed below.
+// (collection.service.ts). Nothing on this path writes, and the entry-fee charge (the one side
+// effect) is stubbed below.
+//
+// 🔴 KNOWN BLIND SPOT, measured. The mock this replaces bound dbWrite to `{}`, so ANY dbWrite
+// access threw. The canonical dbWrite answers silently instead, and that covers more than stray
+// writes: it hides a MISROUTED READ too. Mutating `collection.service.ts` `dbRead.challenge
+// .findFirst` to dbWrite kills 3 of the 6 cases here against the pre-conversion file and is
+// caught by NONE of them now. If you are relying on this file to pin which client that lookup
+// uses, it no longer does.
 const mockDbRead = dbMock.dbRead;
 const mockChallengeFindFirst = mockDbRead.challenge.findFirst;
 
