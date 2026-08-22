@@ -10,8 +10,14 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
-  resolver: async ({ ctx, ssg }) => {
+  resolver: async ({ ctx, features, ssg }) => {
     const username = ctx.query.username as string;
+
+    // The nav hides the tab; this closes the URL. A gate that only removes the
+    // link is not a gate — the route is guessable and the page would render for
+    // anyone who typed it.
+    if (!features?.stickerBook)
+      return { redirect: { destination: `/user/${username}`, permanent: false } };
     const user = await dbRead.user.findUnique({ where: { username }, select: { bannedAt: true } });
 
     if (user?.bannedAt)

@@ -108,7 +108,7 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
       // shop is — the owner and moderators keep the tab. The book's own payload
       // withholds the content independently; this only decides the nav item.
       disabled:
-        !features.stickers ||
+        !features.stickerBook ||
         !!user?.bannedAt ||
         (!isProfileOwner && !isModerator && !!user?.stickerBookHidden),
     },
