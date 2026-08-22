@@ -637,6 +637,11 @@ export async function getHubSourceSuggestions({
     const collections = await dbRead.collection.findMany({
       where: {
         id: { in: collectionIds },
+        // Unreachable while the switch above is off, and here so that flipping it
+        // does not reopen the models divergence on this arm: a VIEW contributor on
+        // a private collection is someone both the link path and the write path
+        // refuse.
+        read: { not: CollectionReadConfiguration.Private },
         ...(term ? { name: { contains: term, mode: 'insensitive' as const } } : {}),
       },
       select: { id: true, name: true },
@@ -695,9 +700,8 @@ export async function getHubSourceSuggestions({
   const models = await dbRead.model.findMany({
     where: {
       id: { in: scopedIds },
-      // The same visibility the paste-a-link path applies. A bookmark or a bell
-      // outlives the model going private or back to draft, so without this the
-      // picker offers by name what `resolveSource` refuses by link.
+      // A bookmark or a bell outlives the model going private or back to draft, so
+      // without this the picker offers by name what `resolveSource` refuses by link.
       ...visibleModel(userId, isModerator),
       ...(term ? { name: { contains: term, mode: 'insensitive' as const } } : {}),
     },

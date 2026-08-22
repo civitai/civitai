@@ -135,6 +135,10 @@ describe('every hub procedure declares the scope it needs', () => {
     const scope = requiredScopes[name];
 
     it(`${name} accepts a token scoped to exactly what it declares`, async () => {
+      // Without this, a procedure missing from the map calls `caller` with
+      // undefined, which defaults to Full and passes both of these for free.
+      expect(scope).toBeDefined();
+
       await expect(caller(scope, 999)[name](inputs[name])).resolves.not.toThrow();
     });
 

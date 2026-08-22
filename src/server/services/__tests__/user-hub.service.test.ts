@@ -663,9 +663,7 @@ describe('source suggestions stay inside the viewer', () => {
     await resolveHubSourceFromUrl({ url: 'https://civitai.com/models/2', userId: 5 });
     const resolved = dbMock.dbRead.model.findFirst.mock.calls[0][0].where;
 
-    // Read off the resolve path rather than written out here, so the two cannot
-    // drift apart again: a bookmark or a bell outlives the model going private or
-    // back to draft, and the picker was offering by name what the link refuses.
+    // Read off the resolve path rather than written out here, so the two cannot drift.
     expect(suggested.deletedAt).toEqual(resolved.deletedAt);
     expect(suggested.OR).toEqual(resolved.OR);
     // The control: two undefined visibility clauses would satisfy the pair above.

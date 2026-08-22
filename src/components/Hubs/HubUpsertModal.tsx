@@ -29,8 +29,10 @@ export default function HubUpsertModal({
 
   const upsert = trpc.userHub.upsert.useMutation({
     onSuccess: async (saved) => {
-      await invalidateHub(saved.id);
+      // Closed first: invalidating the feed waits on its refetch, and nothing this
+      // modal saves is something the feed reads.
       dialog.onClose();
+      await invalidateHub(saved.id);
       if (!editing) await router.push(`/hubs/${saved.id}`);
     },
     onError: (error) =>
