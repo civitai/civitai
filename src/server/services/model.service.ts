@@ -47,6 +47,7 @@ import {
 import {
   dataForModelsCache,
   modelTagCache,
+  modelVersionPublicDonationGoalsCache,
   modelVotableTagsCache,
   userBasicCache,
   userModelCountCache,
@@ -174,6 +175,8 @@ import {
 import { decreaseDate } from '~/utils/date-helpers';
 import { isPaidAccessActive } from '@civitai/buzz';
 import {
+  bustModelSaleCache,
+  bustPaidAccessCache,
   getPaidAccess,
   getPublicPaidAccessForModelVersions,
 } from '~/server/services/paid-access.service';
@@ -4767,6 +4770,34 @@ export async function transferModelOwnership({
       where: { id: { in: modelIds } },
       data: { userId: targetUserId },
     }),
+    // PaidAccess.ownerId is a denormalised copy of the model owner, and it is what decides who
+    // generates free from a gated version and whose scheduled sales may reprice it. Left behind, the
+    // previous owner keeps both over a model they no longer hold. Joined against ModelVersion rather
+    // than a pre-read id list so a version created between the read and this statement is still moved.
+    dbWrite.$executeRaw`
+      UPDATE "PaidAccess" pa
+      SET "ownerId" = ${targetUserId}, "updatedAt" = NOW()
+      FROM "ModelVersion" mv
+      WHERE pa."entityType" = 'ModelVersion'::"PaidAccessEntityType"
+        AND pa."entityId" = mv.id
+        AND mv."modelId" = ANY(${modelIds}::int[])
+        AND pa."ownerId" <> ${targetUserId}
+    `,
+    // DonationGoal.userId is the other owner copy the transfer used to miss, and this one routes
+    // money: a donation pays goal.userId, so a donation on a transferred model paid the previous
+    // owner. The target is dual-written (legacy modelVersionId + polymorphic entityType/entityId), so
+    // both spellings are matched.
+    dbWrite.$executeRaw`
+      UPDATE "DonationGoal" dg
+      SET "userId" = ${targetUserId}
+      FROM "ModelVersion" mv
+      WHERE mv."modelId" = ANY(${modelIds}::int[])
+        AND (
+          dg."modelVersionId" = mv.id
+          OR (dg."entityType" = 'ModelVersion'::"PaidAccessEntityType" AND dg."entityId" = mv.id)
+        )
+        AND dg."userId" <> ${targetUserId}
+    `,
     dbWrite.modelMetric.updateMany({
       where: { modelId: { in: modelIds } },
       data: { userId: targetUserId },
@@ -4788,10 +4819,23 @@ export async function transferModelOwnership({
     await tracker.modelEvent({ type: 'Transfer', modelId: m.id, nsfw: m.nsfw });
   }
 
+  const affectedVersionIds = (
+    await dbWrite.modelVersion.findMany({
+      where: { modelId: { in: modelIds } },
+      select: { id: true },
+    })
+  ).map((v) => v.id);
+
   await Promise.all([
     modelsSearchIndex.queueUpdate(
       modelIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
     ),
+    // Every one of these holds an owner-derived value for an hour with SWR off: the gate row carries
+    // ownerId itself, the public donation goal carries userId, and the model sale badge is resolved
+    // through Model.userId.
+    bustPaidAccessCache('ModelVersion', affectedVersionIds),
+    bustModelSaleCache(affectedVersionIds),
+    modelVersionPublicDonationGoalsCache.bust(affectedVersionIds),
     affectedImageIds.length
       ? queueImageSearchIndexUpdate({
           ids: affectedImageIds,
@@ -4810,9 +4854,11 @@ export async function transferModelOwnership({
       sourceUserIds,
       modUserId,
       modelsUpdated: result[0].count,
-      metricsUpdated: result[1].count,
-      postsUpdated: Number(result[2]),
-      imagesUpdated: Number(result[3]),
+      paidAccessUpdated: Number(result[1]),
+      donationGoalsUpdated: Number(result[2]),
+      metricsUpdated: result[3].count,
+      postsUpdated: Number(result[4]),
+      imagesUpdated: Number(result[5]),
     },
   }).catch(() => null);
 
@@ -4820,8 +4866,10 @@ export async function transferModelOwnership({
 
   return {
     modelsUpdated: result[0].count,
-    metricsUpdated: result[1].count,
-    postsUpdated: Number(result[2]),
-    imagesUpdated: Number(result[3]),
+    paidAccessUpdated: Number(result[1]),
+    donationGoalsUpdated: Number(result[2]),
+    metricsUpdated: result[3].count,
+    postsUpdated: Number(result[4]),
+    imagesUpdated: Number(result[5]),
   };
 }
