@@ -9,3 +9,4 @@ export {
   type FliptTuning,
 } from './env';
 export { TtlCache, fliptCacheKey, type TtlCacheStats } from './cache';
+export { buildFliptContext, type FliptTargetUser } from './context';
