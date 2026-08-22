@@ -121,12 +121,15 @@ interface CustomRedisClient<K extends RedisKeyTemplates>
     // tagged; reads decode both compressed and legacy-uncompressed values transparently).
     // Only safe for callers that store wrapper objects, never bare scalars — see the
     // SENTINEL SAFETY note in the packed implementation.
+    // Returns the server's reply, not void: `SET … XX` answers null when the key was
+    // absent, and a caller that means to CORRECT an existing entry — never create one —
+    // cannot tell that from a successful write otherwise.
     set<T>(
       key: K,
       value: T,
       setOptions?: SetOptions,
       packedOptions?: { compress?: boolean }
-    ): Promise<void>;
+    ): Promise<unknown>;
     // mSet still disabled - sets are more complex with different argument formats
     // mSet(records: Record<K, unknown>, setOptions?: SetOptions): Promise<void>;
     setNX<T>(key: K, value: T): Promise<void>;
@@ -1340,17 +1343,20 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
       );
     },
 
+    // Returns the server's reply rather than void: `SET ... XX` answers null when the
+    // key was absent, and a caller that only wants to CORRECT an existing entry —
+    // never create one — cannot tell that from a successful write otherwise.
     async set<T>(
       key: K,
       value: T,
       options?: SetOptions,
       packedOptions?: { compress?: boolean }
-    ): Promise<void> {
+    ): Promise<unknown> {
       const packed = pack(value);
       // Opt-in brotli (sentinel-tagged), async so the codec runs on the libuv threadpool
       // and never blocks the event loop. The symmetric read is get(key, { compress: true }).
       const payload = packedOptions?.compress ? await compressPacked(packed) : packed;
-      await client.set(key, payload, options);
+      return client.set(key, payload, options);
     },
 
     async setNX<T>(key: K, value: T): Promise<void> {

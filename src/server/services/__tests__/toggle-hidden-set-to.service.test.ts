@@ -17,6 +17,10 @@ import {
  * Every in-app caller omits `hidden` (HideModelButton, HideImageButton,
  * HideModel3DButton), so the flip is the path the product actually uses and the
  * compatibility cases below are the ones that would break real behaviour.
+ *
+ * Every write is addressed by (user, entity, type) rather than by the PK, so the
+ * assertions name the `type` filter: it is the only thing standing between a hide
+ * and a Favorite or Mute a sibling writer established after this call's read.
  */
 
 const userId = 42;
@@ -27,21 +31,21 @@ const KINDS = [
     kind: 'model' as const,
     delegate: dbMock.dbWrite.modelEngagement,
     cache: HiddenModels,
-    pk: { userId_modelId: { userId, modelId: id } },
+    scoped: { userId, modelId: id },
     created: { userId, modelId: id, type: 'Hide' },
   },
   {
     kind: 'image' as const,
     delegate: dbMock.dbWrite.imageEngagement,
     cache: HiddenImages,
-    pk: { userId_imageId: { userId, imageId: id } },
+    scoped: { userId, imageId: id },
     created: { userId, imageId: id, type: 'Hide' },
   },
   {
     kind: 'model3d' as const,
     delegate: dbMock.dbWrite.model3DEngagement,
     cache: HiddenModel3Ds,
-    pk: { userId_model3dId: { userId, model3dId: id } },
+    scoped: { userId, model3dId: id },
     created: { userId, model3dId: id, type: 'Hide' },
   },
 ];
@@ -55,19 +59,30 @@ describe.each(KINDS)('toggleHidden kind=$kind — honours the caller intent', (k
     vi.restoreAllMocks();
     k.delegate.findUnique.mockResolvedValue(null);
     k.delegate.create.mockResolvedValue({});
-    k.delegate.update.mockResolvedValue({});
-    k.delegate.delete.mockResolvedValue({});
+    k.delegate.updateMany.mockResolvedValue({ count: 1 });
+    k.delegate.deleteMany.mockResolvedValue({ count: 1 });
     vi.spyOn(k.cache, 'refreshCache').mockResolvedValue(undefined);
   });
 
-  const noWrites = () => {
+  // An un-hide issues its `type: 'Hide'` delete unconditionally — the row read may
+  // already be gone or replaced, and the filter is what keeps that from mattering.
+  // What it must never do is establish a Hide, so that is what these assert.
+  const nothingHidden = () => {
     expect(k.delegate.create).not.toHaveBeenCalled();
+    expect(k.delegate.updateMany).not.toHaveBeenCalled();
     expect(k.delegate.update).not.toHaveBeenCalled();
     expect(k.delegate.delete).not.toHaveBeenCalled();
+    for (const [args] of k.delegate.deleteMany.mock.calls)
+      expect(args).toEqual({ where: { ...k.scoped, type: 'Hide' } });
+  };
+
+  const noWrites = () => {
+    nothingHidden();
+    expect(k.delegate.deleteMany).not.toHaveBeenCalled();
   };
 
   // The three compatibility cases: every in-app caller omits `hidden`, so these are
-  // the paths the product uses today and they must be byte-identical to before.
+  // the paths the product uses today and they must behave as they did before.
   it('omitted hidden on an unengaged entity still creates the Hide', async () => {
     await toggle(k.kind);
 
@@ -79,7 +94,9 @@ describe.each(KINDS)('toggleHidden kind=$kind — honours the caller intent', (k
 
     await toggle(k.kind);
 
-    expect(k.delegate.delete).toHaveBeenCalledWith({ where: k.pk });
+    expect(k.delegate.deleteMany).toHaveBeenCalledWith({
+      where: { ...k.scoped, type: 'Hide' },
+    });
   });
 
   it('omitted hidden on a non-Hide row still converts it to Hide', async () => {
@@ -87,21 +104,26 @@ describe.each(KINDS)('toggleHidden kind=$kind — honours the caller intent', (k
 
     await toggle(k.kind);
 
-    expect(k.delegate.update).toHaveBeenCalledWith({ where: k.pk, data: { type: 'Hide' } });
+    // Scoped to the type this call READ: an unqualified update passes a bare "was it
+    // called" check and eats whatever type occupies the row by the time it lands.
+    expect(k.delegate.updateMany).toHaveBeenCalledWith({
+      where: { ...k.scoped, type: 'Favorite' },
+      data: { type: 'Hide' },
+    });
   });
 
-  it('hidden=false on an unengaged entity writes NOTHING and reports not hidden', async () => {
+  it('hidden=false on an unengaged entity establishes nothing and reports not hidden', async () => {
     await expect(toggle(k.kind, false)).resolves.toMatchObject({ hidden: false });
 
-    noWrites();
+    nothingHidden();
   });
 
-  it('hidden=false on a non-Hide row writes nothing — an un-hide must not hide', async () => {
+  it('hidden=false on a non-Hide row leaves that row alone — an un-hide must not hide', async () => {
     k.delegate.findUnique.mockResolvedValue({ type: 'Favorite' });
 
     await expect(toggle(k.kind, false)).resolves.toMatchObject({ hidden: false });
 
-    noWrites();
+    nothingHidden();
   });
 
   it('hidden=true on an already-hidden entity leaves it hidden', async () => {
@@ -119,7 +141,9 @@ describe.each(KINDS)('toggleHidden kind=$kind — honours the caller intent', (k
 
     await expect(toggle(k.kind, false)).resolves.toMatchObject({ hidden: false });
 
-    expect(k.delegate.delete).toHaveBeenCalledWith({ where: k.pk });
+    expect(k.delegate.deleteMany).toHaveBeenCalledWith({
+      where: { ...k.scoped, type: 'Hide' },
+    });
   });
 
   it('refreshes the hidden cache even on the no-write path', async () => {

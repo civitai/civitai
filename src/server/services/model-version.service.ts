@@ -268,14 +268,18 @@ export const toggleModelVersionEngagement = async ({
     select: { type: true },
   });
 
+  // Scoped by the `type` the row was READ as, never by the PK alone.
+  // `ModelVersionEngagementType` has exactly one member today, so a PK-addressed
+  // write here is not yet a bug — it becomes one silently the day a second value is
+  // added, which is the only reason this reads as belt-and-braces.
   if (engagement) {
     if (engagement.type === type)
-      await dbWrite.modelVersionEngagement.delete({
-        where: { userId_modelVersionId: { userId, modelVersionId: versionId } },
+      await dbWrite.modelVersionEngagement.deleteMany({
+        where: { userId, modelVersionId: versionId, type },
       });
-    else if (engagement.type !== type)
-      await dbWrite.modelVersionEngagement.update({
-        where: { userId_modelVersionId: { userId, modelVersionId: versionId } },
+    else
+      await dbWrite.modelVersionEngagement.updateMany({
+        where: { userId, modelVersionId: versionId, type: engagement.type },
         data: { type },
       });
 

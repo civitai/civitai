@@ -3407,9 +3407,9 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
   // BitDex-served Following feed) pay nothing here.
   //
   // ⚠️ THE STALENESS WINDOW IS REPLICA LAG, NOT CACHE TTL — and the cache is the
-  // FRESHER of the two. `userFollowsCache.refresh()` re-reads through `lookupFn(…,
-  // true)`, i.e. dbWrite, and `toggleFollowUser` calls it on both follow and
-  // unfollow; the pre-filter reads the REPLICA. So the reachable disagreement is a
+  // FRESHER of the two. `toggleFollowUser` maintains it from the delta it committed,
+  // falling back to `userFollowsCache.refresh()`, which re-reads via `lookupFn(…,
+  // true)`, i.e. dbWrite; the pre-filter reads the REPLICA. So the disagreement is a
   // caller who has just self-followed: for the replica-lag window this guard says
   // "in scope" and runs the own pass while the replica-derived filter still
   // excludes them. It needs a self-follow to reach at all, is self-healing, and

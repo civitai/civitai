@@ -59,7 +59,7 @@ type PackedClient = {
     set<T>(
       key: RedisKeyTemplateCache,
       value: T,
-      options?: { EX?: number; NX?: boolean }
+      options?: { EX?: number; NX?: boolean; XX?: boolean }
     ): Promise<unknown>;
   };
   del(key: RedisKeyTemplateCache | RedisKeyTemplateCache[]): Promise<unknown>;
@@ -121,6 +121,9 @@ export function resolveCacheExpiry(
  * with the same `key` but different `lookupFn`s would otherwise hand each other's rows back during a
  * degraded fetch.
  */
+/** Seconds a write-through `update` holds its per-entry lock. Bounds one GET + one SET. */
+const UPDATE_LOCK_TTL = 5;
+
 export function createCacheBuilders(deps: CacheBuilderDeps) {
   const { redis, metrics, logFailOpen, logRefreshError, log, clearByPattern } = deps;
   const degradedIdInFlight = new Map<string, Promise<unknown>>();
@@ -545,12 +548,99 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
       }
     }
 
+    /**
+     * Write-through: rewrite ONE cached entry from the delta the caller already
+     * knows, instead of re-deriving it from the origin. For a cache whose entry is a
+     * large per-user collection, `refresh` costs a full unbounded primary query per
+     * mutation; this costs a GET and a SET.
+     *
+     * Returns whether the entry was rewritten. FALSE means there was nothing here to
+     * correct — absent, a debounce or notFound marker, past its expiry, or another
+     * writer holds the entry — and the caller decides what that means. A caller that
+     * needs the entry to be right afterwards must fall back to `refresh`, since a
+     * missing entry would otherwise be repopulated by the next reader from the
+     * REPLICA, which is the one thing a just-written value cannot tolerate.
+     *
+     * `cachedAt` is carried over rather than reset, and the write re-derives the
+     * REMAINDER of the original expiry: an entry maintained by deltas must still age
+     * out on its own schedule, or a drifted one never self-heals.
+     *
+     * 🔴 NOT `KEEPTTL`, which is the obvious way to write that and is wrong here.
+     * `SET key value KEEPTTL` on a key that has GONE — expired or evicted in the few
+     * ms since the GET — creates it with NO TTL at all: KEEPTTL preserves an existing
+     * expiry, it does not invent one. For a cache whose readers do not consult
+     * `cachedAt`, that entry is then served forever with no self-heal, which is the
+     * exact property this comment claims to protect. `XX` closes the same hole from
+     * the other side and is kept as well: Redis refuses to create the key, the reply
+     * is null, and this reports false so the caller re-derives.
+     *
+     * ⚠️ ONE caller today — `userFollowsCache`, which is non-SWR. Two things a second
+     * caller has to weigh. A plain cache-MISS refill takes no lock, so this serialises
+     * `update` against `update` only; a refill that started before a delta can still
+     * land on top of it. And the DB write happens outside the lock, so two mutations
+     * of the same entry can reach Redis in the opposite order to their commits and
+     * leave the entry WRONG rather than stale — where `refresh` re-read the origin and
+     * therefore converged. Both are bounded by the entry's TTL, neither self-heals
+     * sooner.
+     */
+    async function update(id: number, updater: (current: T) => T): Promise<boolean> {
+      const entryKey = `${key}:${id}` as RedisKeyTemplateCache;
+      // Two concurrent read-modify-writes on one entry lose one of the deltas, and a
+      // lost delta persists for the rest of the TTL. The loser reports false and
+      // takes the caller's fallback, which re-derives from the origin.
+      const lockKey = `${REDIS_KEYS.CACHE_LOCKS}:${key}:${id}:update` as RedisKeyTemplateCache;
+
+      try {
+        if (!(await redis.setNxKeepTtlWithEx(lockKey, '1', UPDATE_LOCK_TTL))) return false;
+      } catch (err) {
+        logFailOpen('write-degraded', `createCachedArray update lock [${key}]`, err, { key, id });
+        return false;
+      }
+
+      try {
+        const [current] = await redis.packed.mGet<T>([entryKey]);
+        const marker = current as AnyRecord | null;
+        if (!current || marker?.notFound || marker?.debounce || !marker?.cachedAt) return false;
+
+        // The remainder of the original expiry. ⚠️ This assumes the entry was written
+        // with a full expiry AT `cachedAt`, which `invalidate` deliberately breaks by
+        // backdating it — so on a cache that reaches `invalidate` (SWR only; no caller
+        // does today) this shortens a live entry rather than lengthening it. That is
+        // the safe direction to be wrong in, which KEEPTTL is not.
+        const EX =
+          resolveCacheExpiry(ttl, staleWhileRevalidate, staleWhileRevalidateTtl) -
+          Math.floor((Date.now() - new Date(marker.cachedAt).getTime()) / 1000);
+        if (EX <= 0) return false;
+
+        const next = updater(current);
+        if (dontCacheFn?.(next)) return false;
+        // XX: correct an entry, never create one. If it vanished between the GET and
+        // here, the reply is null and the caller must re-derive rather than have a
+        // whole collection materialised from one delta.
+        const written = await redis.packed.set(
+          entryKey,
+          { ...next, cachedAt: marker.cachedAt },
+          { EX, XX: true }
+        );
+        if (written === null) return false;
+        // After the write, not before: a concurrent fetch between the two would
+        // otherwise refill L1 with the pre-update value and pin it for localTtl.
+        dropLocal([id]);
+        return true;
+      } catch (err) {
+        logFailOpen('write-degraded', `createCachedArray update [${key}]`, err, { key, id });
+        return false;
+      } finally {
+        await redis.del(lockKey).catch(() => undefined);
+      }
+    }
+
     async function flush() {
       localCache?.clear();
       await clearByPattern(`${key}:*`);
     }
 
-    return { fetch, bust: staleWhileRevalidate ? invalidate : bust, refresh, flush };
+    return { fetch, bust: staleWhileRevalidate ? invalidate : bust, refresh, update, flush };
   }
 
   function createCachedObject<T extends object>(lookupOptions: CachedLookupOptions<T>) {
@@ -578,6 +668,7 @@ export type CachedArray<T extends object> = {
   fetch(ids: number[]): Promise<T[]>;
   bust(id: number | number[], options?: { debounceTime?: number }): Promise<void>;
   refresh(id: number | number[]): Promise<void>;
+  update(id: number, updater: (current: T) => T): Promise<boolean>;
   flush(): Promise<void>;
 };
 export type CachedObject<T extends object> = Omit<CachedArray<T>, 'fetch'> & {
