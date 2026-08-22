@@ -77,6 +77,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
   trpc: {
     cosmetic: {
       getStickerBalances: { useQuery: () => ({ data: [] }) },
+      getStickerRecentUse: { useQuery: () => ({ data: [] }) },
       getStickerOffers: { useQuery: () => ({ data: [] }) },
     },
   },
