@@ -16,7 +16,11 @@ import { describe, expect, it, vi } from 'vitest';
 
 // The reconciler module reaches for the search client and the db client at import time; neither
 // is needed to read its predicate.
-vi.mock('~/server/meilisearch/client', () => ({ searchClient: null }));
+vi.mock('~/server/meilisearch/client', () => ({
+  searchClient: null,
+  metricsSearchClient: null,
+  updateDocs: vi.fn(async () => undefined),
+}));
 vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 
 const { USER_SEARCH_INDEX_ELIGIBILITY, userSearchIndexEligibilitySql } = await import(
@@ -63,6 +67,23 @@ describe('user search index eligibility', () => {
       expect(sql).toContain('u."bannedAt" IS NULL');
       expect(sql).toContain('u."deletedAt" IS NULL');
       expect(sql).toContain('u.id != -1');
+    });
+
+    /**
+     * The OTHER half of the seam. `M1c`: an indexer that keeps its own copy of the predicate,
+     * ban clause dropped, is invisible to every assertion above — the shared module is still
+     * correct and the reconciler still uses it, so nothing else goes red while every write
+     * re-inserts the accounts the reconciler just removed.
+     */
+    it('the INDEXER writes on the same predicate it is reconciled against', async () => {
+      const { USERS_INDEX_WHERE } = await import('~/server/search-index/users.search-index');
+      expect(norm(Prisma.join(USERS_INDEX_WHERE, ' AND ').sql)).toBe(
+        norm(userSearchIndexEligibilitySql().sql)
+      );
+      // Pinned literally as well, so the two sides agreeing on the WRONG predicate is not a pass.
+      expect(norm(Prisma.join(USERS_INDEX_WHERE, ' AND ').sql)).toBe(
+        'u.id != -1 AND u."deletedAt" IS NULL AND u."bannedAt" IS NULL'
+      );
     });
 
     /**

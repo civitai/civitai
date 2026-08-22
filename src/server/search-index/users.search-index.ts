@@ -99,9 +99,18 @@ type UserRank = {
   leaderboardCosmetic: string;
 };
 
-// Shared with the nightly reconciler in `~/server/meilisearch/cleanup.ts` — see that module's
-// header for why the write-side filter and the reconciler-side filter have to be the same list.
-const WHERE = [...USER_SEARCH_INDEX_ELIGIBILITY];
+/**
+ * Who this index is allowed to hold. Shared with the nightly reconciler in
+ * `~/server/meilisearch/cleanup.ts` — see that module's header for why the write-side filter
+ * and the reconciler-side filter have to be the same list.
+ *
+ * Exported so a test can hold the two sides against each other. Both `prepareBatches` and
+ * `pullData` build their WHERE from it, so a targeted update drained from the queue is filtered
+ * exactly like a full rebuild — which matters, because the metrics refresh enqueues an update
+ * for every account whose counters moved.
+ */
+export const USERS_INDEX_WHERE = [...USER_SEARCH_INDEX_ELIGIBILITY];
+const WHERE = USERS_INDEX_WHERE;
 
 const transformData = async ({
   users,
