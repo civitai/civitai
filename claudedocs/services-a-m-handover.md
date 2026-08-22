@@ -1,5 +1,7 @@
 # Handover — `src/server/services/__tests__` a–m shared-mock migration
 
+**Status (added 2026-08-21):** Historical handover log. 127 of 129 files migrated at time of handover; 2 hold-outs remained. The branch `perf/test-mock-migration-services-a-m` is the reference.
+
 josh, 2026-08-15, continued and closed out by liz through batches 6–9 (her sections are marked).
 Kept as a LOG rather than rewritten to current state: which claims were superseded, and by what, is
 the thing a successor most needs — josh's _"the three easiest remaining files"_ with the ✅ beneath

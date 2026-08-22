@@ -1,5 +1,7 @@
 # The `dbRead`/`dbWrite` alias split where the service picks its client at runtime
 
+**Status (added 2026-08-21):** Historical analysis. Bucket classifications were verified at branch base `17f994221e`; the 6 files and their routing defaults are documented per-case.
+
 Written by josh, 2026-08-15, for the `src/server/services/__tests__` a–m slice of the shared-mock
 migration (branch `perf/test-mock-migration-services-a-m`). These are the buckets in that slice
 where the routing decision is **not** readable off the production source in the usual way, so it is
