@@ -1,13 +1,14 @@
 /**
  * The stacking order of the layers drawn over one image's media box.
  *
- * Shared because the two files that set these numbers are the two that must not
- * be read separately: `StickerPlacementOverlay` raised the owner's controls
- * above everything so a placement could always be answered, and that silently
- * put them above the sticker someone is currently dragging.
+ * Shared because the two files that set these numbers only make sense read
+ * together. Both are page-context numbers on paper: what actually keeps them
+ * off the app's own ladder (`shared/constants/app-layout.constants.ts`) is the
+ * centring transform on `ImageStickerOverlay`'s surface div, which makes that
+ * div a stacking context. Restyle it to flex centring and these escape.
  */
 
-/** The owner's approve/decline, above the placed stickers and the draft. */
+/** The owner's approve/decline, above every placed sticker; below the draft. */
 export const PENDING_CONTROL_Z = 1000;
 
 /**

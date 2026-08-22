@@ -697,10 +697,7 @@ export function DraftSticker({
         width: `${draft.scale * 100}%`,
         transform: `translate(-50%, -50%) rotate(${draft.rotation}deg)`,
         touchAction: 'none',
-        // Above the owner's pending controls, not merely above the placed
-        // stickers: those controls sit in their own layer at PENDING_CONTROL_Z
-        // and were covering the sticker being dragged past them.
-        //
+        // Above the owner's pending controls (see placement-layers.ts).
         // Selection still decides between two drafts — close together they have
         // overlapping buy buttons, and the one just touched should be the one
         // the next click reaches.
