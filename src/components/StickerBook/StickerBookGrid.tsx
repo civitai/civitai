@@ -3,6 +3,7 @@ import { IconSticker } from '@tabler/icons-react';
 import { useMemo } from 'react';
 import { ImagesCard } from '~/components/Image/Infinite/ImagesCard';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
+import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import type { StickerBookSide } from '~/components/StickerBook/sticker-book.util';
@@ -37,20 +38,27 @@ const CARD_HEIGHT = Math.round((CARD_WIDTH * 9) / 7);
  */
 export function StickerBookGrid({ items, side }: { items: BookItems; side: StickerBookSide }) {
   const images = useMemo(() => items.map((item) => item.image), [items]);
+  // The viewer's own hides, the same way every other grid applies them. Blocks
+  // are enforced on the server; hides are a preference and live here.
+  const { items: visible } = useApplyHiddenPreferences({ type: 'images', data: images });
+  const shown = useMemo(() => {
+    const ids = new Set(visible.map((image) => image.id));
+    return items.filter((item) => ids.has(item.imageId));
+  }, [items, visible]);
 
-  if (!items.length) return null;
+  if (!shown.length) return null;
 
   return (
     // 🔴 `hideStickerBadge`: the chip shares the reaction row, and at a 280px
     // card it squeezes the reaction counts until they clip. This page is about
     // stickers, so the count it was carrying says nothing new here — but the
     // chip is also the reveal control, which is why the page header carries one.
-    <ImagesProvider images={images} hideStickerBadge>
+    <ImagesProvider images={visible} hideStickerBadge revealStickers>
       <div
         className="grid items-start gap-3"
         style={{ gridTemplateColumns: `repeat(auto-fill, ${CARD_WIDTH}px)` }}
       >
-        {items.map((item) => (
+        {shown.map((item) => (
           <div key={item.imageId} className="relative">
             <div style={{ width: CARD_WIDTH }}>
               <ImagesCard data={item.image} height={CARD_HEIGHT} />

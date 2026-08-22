@@ -1,7 +1,6 @@
-import { Alert, Anchor, Button, Group, Loader, Text, Title } from '@mantine/core';
-import { IconArrowLeft } from '@tabler/icons-react';
+import { Alert, Button, Group, Loader, Text, Title } from '@mantine/core';
+import { BackButton } from '~/components/BackButton/BackButton';
 import { useState } from 'react';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { StickerBookGrid } from '~/components/StickerBook/StickerBookGrid';
 import type { StickerBookSide } from '~/components/StickerBook/sticker-book.util';
 import { stickerBookSectionCopy } from '~/components/StickerBook/sticker-book.util';
@@ -56,13 +55,13 @@ export function StickerBookSectionPage({
 
   return (
     <div className="flex flex-col gap-4">
+      {/* The shared back button rather than a link with an arrow glyph in it:
+          it also goes back through history when there is history, so arriving
+          from the tab returns to the scroll position it was left at. */}
       <div>
-        <Anchor component={Link} href={`/user/${username}/sticker-book`} size="sm">
-          <span className="inline-flex items-center gap-1">
-            <IconArrowLeft size={14} />
-            Back to the sticker book
-          </span>
-        </Anchor>
+        <BackButton url={`/user/${username}/sticker-book`}>
+          <Text size="sm">Back to the sticker book</Text>
+        </BackButton>
         <Title order={2} mt={4}>
           {copy.title}
         </Title>

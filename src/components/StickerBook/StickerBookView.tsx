@@ -13,8 +13,6 @@ import {
 } from '@mantine/core';
 import {
   IconArrowRight,
-  IconEye,
-  IconEyeOff,
   IconLock,
   IconPhoto,
   IconSettings,
@@ -30,7 +28,6 @@ import { StickerBookStickers } from '~/components/StickerBook/StickerBookSticker
 import { stickerBookSectionCopy } from '~/components/StickerBook/sticker-book.util';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { numberWithCommas } from '~/utils/number-helpers';
-import { useStickerRevealStore } from '~/store/sticker-reveal.store';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -46,8 +43,6 @@ import { trpc } from '~/utils/trpc';
  */
 export function StickerBookView({ username }: { username: string }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const revealed = useStickerRevealStore((state) => state.revealed);
-  const toggleReveal = useStickerRevealStore((state) => state.toggle);
   const { data, isLoading, isError } = trpc.stickerBook.get.useQuery({ username });
 
   if (isLoading)
@@ -122,23 +117,6 @@ export function StickerBookView({ username }: { username: string }) {
         </Group>
 
         <Group gap="xs" wrap="nowrap">
-          {/* The page's reveal control. The cards' own chips are hidden here —
-              they were squeezing the reaction counts at this card width — and the
-              reveal preference is sticky and site-wide, so without one control
-              somewhere a book of stickered images draws no stickers and offers
-              no way to turn them on. */}
-          <Tooltip label={revealed ? 'Hide stickers on all images' : 'Show stickers on all images'}>
-            <ActionIcon
-              variant={revealed ? 'light' : 'default'}
-              color={revealed ? 'yellow' : undefined}
-              size="lg"
-              onClick={toggleReveal}
-              aria-label={revealed ? 'Hide stickers' : 'Show stickers'}
-            >
-              {revealed ? <IconEye size={18} /> : <IconEyeOff size={18} />}
-            </ActionIcon>
-          </Tooltip>
-
           {isOwner && (
             <Tooltip label="Sticker settings">
               <ActionIcon

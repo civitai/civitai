@@ -22,6 +22,16 @@ type ImagesContextProps = {
    * A host that sets this owns putting a reveal control somewhere else.
    */
   hideStickerBadge?: boolean;
+  /**
+   * Draw placed stickers whatever the viewer's site-wide reveal preference says.
+   *
+   * For a host whose whole subject is the stickers — the sticker book. The
+   * preference is a feed default ("a creator's work is the thing on the page");
+   * it is not a statement about a page you opened to look at stickers. Deliberately
+   * does NOT write to the store, so it overrides for this page and leaves the
+   * viewer's own setting alone everywhere else.
+   */
+  revealStickers?: boolean;
   collectionId?: number;
   judgeInfo?: JudgeInfo;
   judgingCategories?: JudgingCategory[] | null;
@@ -32,6 +42,7 @@ export type ImagesContextState = {
   hideReactionCount?: boolean;
   hideReactions?: boolean;
   hideStickerBadge?: boolean;
+  revealStickers?: boolean;
   collectionId?: number;
   judgeInfo?: JudgeInfo;
   judgingCategories?: JudgingCategory[] | null;
@@ -50,6 +61,7 @@ export function ImagesProvider({
   hideReactionCount,
   hideReactions,
   hideStickerBadge,
+  revealStickers,
   collectionId,
   judgeInfo,
   judgingCategories,
@@ -63,12 +75,21 @@ export function ImagesProvider({
       hideReactionCount,
       hideReactions,
       hideStickerBadge,
+      revealStickers,
       collectionId,
       judgeInfo,
       judgingCategories,
       getImages: () => imagesRef.current,
     }),
-    [hideReactionCount, hideReactions, hideStickerBadge, collectionId, judgeInfo, judgingCategories]
+    [
+      hideReactionCount,
+      hideReactions,
+      hideStickerBadge,
+      revealStickers,
+      collectionId,
+      judgeInfo,
+      judgingCategories,
+    ]
   );
 
   // Not from `imagesRef`: the ref exists to keep `getImages` stable across
