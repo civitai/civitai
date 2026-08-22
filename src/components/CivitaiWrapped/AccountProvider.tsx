@@ -79,6 +79,14 @@ export const AccountProvider = ({ children }: { children: ReactNode }) => {
   const router = useRouter();
   const queryClient = useQueryClient();
   const currentUserId = userData?.user?.id;
+  // The session-derived values the roster effect below reads, hoisted out as PRIMITIVES on purpose.
+  // `userData` itself is a fresh object on every session refetch, so depending on the OBJECT would re-run a
+  // state-writing effect on every poll (the `EMPTY_ROSTER` note above is the same hazard, one store over).
+  // Depending on the VALUES gets the effect re-run exactly when the data it copies actually changed.
+  const hasSessionUser = !!userData?.user;
+  const isImpersonating = !!userData?.impersonatedBy;
+  const sessionUsername = userData?.user?.username;
+  const sessionAvatarUrl = userData?.user?.image;
 
   // The seamlessly-switchable set (hub device set, 30d rolling). Empty until authenticated. `?? EMPTY_ROSTER`
   // (not a `= {}` default) keeps the reference STABLE across renders so the effects below don't loop.
@@ -89,7 +97,10 @@ export const AccountProvider = ({ children }: { children: ReactNode }) => {
     queryFn: async () => {
       const rows = await authProxy.listAccounts();
       return Object.fromEntries(
-        rows.map((a) => [String(a.userId), { id: a.userId, username: a.username ?? '', avatarUrl: a.image }])
+        rows.map((a) => [
+          String(a.userId),
+          { id: a.userId, username: a.username ?? '', avatarUrl: a.image },
+        ])
       );
     },
   });
@@ -130,7 +141,12 @@ export const AccountProvider = ({ children }: { children: ReactNode }) => {
       let changed = false;
       const upsert = (id: string, entry: RosterEntry) => {
         const cur = prev[id];
-        if (!cur || cur.id !== entry.id || cur.username !== entry.username || cur.avatarUrl !== entry.avatarUrl) {
+        if (
+          !cur ||
+          cur.id !== entry.id ||
+          cur.username !== entry.username ||
+          cur.avatarUrl !== entry.avatarUrl
+        ) {
           next[id] = entry;
           changed = true;
         }
@@ -138,11 +154,15 @@ export const AccountProvider = ({ children }: { children: ReactNode }) => {
       // NB: skip the current user while IMPERSONATING — the "current user" is then the impersonated target, not
       // a real account linked on this device, so it must never enter the switcher roster (impersonation also
       // never touches the hub device set, so deviceAccounts below won't reintroduce it).
-      if (currentUserId && userData?.user && !userData.impersonatedBy) {
+      if (currentUserId && hasSessionUser && !isImpersonating) {
         upsert(String(currentUserId), {
           id: currentUserId,
-          username: userData.user.username ?? prev[String(currentUserId)]?.username ?? '',
-          avatarUrl: userData.user.image ?? prev[String(currentUserId)]?.avatarUrl,
+          username: sessionUsername ?? prev[String(currentUserId)]?.username ?? '',
+          // NO `?? prev` fallback for the avatar here (unlike the deviceAccounts loop below). In THIS branch
+          // the session user is known-present, so its `image` is authoritative: `undefined` means "this user
+          // has no profile picture", not "no data". Falling back to the remembered value made removing a
+          // profile picture impossible to reflect — the switcher kept rendering the deleted avatar forever.
+          avatarUrl: sessionAvatarUrl,
         });
       }
       for (const [id, a] of Object.entries(deviceAccounts)) {
@@ -154,8 +174,22 @@ export const AccountProvider = ({ children }: { children: ReactNode }) => {
       }
       return changed ? next : prev;
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentUserId, deviceAccounts]);
+    // Every value this effect reads is listed — no `exhaustive-deps` suppression, deliberately. The
+    // suppression that used to sit here hid a real defect: the deps were `[currentUserId, deviceAccounts]`,
+    // and NEITHER changes when a user updates their profile picture, so the roster went on serving the
+    // previous avatar url until the device-account query happened to refetch (60s staleTime). Changing a
+    // profile picture HARD-DELETES the previous image, so that url 404s for the whole window — and the CDN
+    // caches the failure well beyond it. `setRoster` is stable (useLocalStorage memoizes it on `key`), and
+    // the rest are primitives, so a complete dep list cannot loop.
+  }, [
+    currentUserId,
+    deviceAccounts,
+    hasSessionUser,
+    isImpersonating,
+    sessionUsername,
+    sessionAvatarUrl,
+    setRoster,
+  ]);
 
   // Drop legacy tokens once that account is in the device set (migrated). The roster keeps the account.
   useEffect(() => {
