@@ -21,7 +21,6 @@ vi.mock('~/server/meilisearch/client', () => ({
   metricsSearchClient: null,
   updateDocs: vi.fn(async () => undefined),
 }));
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 
 const { USER_SEARCH_INDEX_ELIGIBILITY, userSearchIndexEligibilitySql } = await import(
   '~/server/search-index/user-index-eligibility'

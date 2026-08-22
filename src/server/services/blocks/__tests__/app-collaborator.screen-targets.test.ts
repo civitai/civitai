@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
  * SCREENING THE INVITE PICKER'S CANDIDATES.
@@ -9,15 +10,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * that can be wrong.
  */
 
-const { mockDb } = vi.hoisted(() => ({
-  mockDb: {
-    user: {
-      findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
-    },
-  },
-}));
-
-vi.mock('~/server/db/client', () => ({ dbRead: mockDb, dbWrite: mockDb }));
 vi.mock('~/server/services/blocks/app-repo-access', () => ({
   grantAppRepoWrite: vi.fn(async () => undefined),
   revokeAppRepoWrite: vi.fn(async () => undefined),
@@ -40,9 +32,12 @@ const ALSO_FINE = 4105;
 const BAN_DATE = new Date('2026-03-04T05:06:07.000Z');
 const DELETE_DATE = new Date('2026-05-06T07:08:09.000Z');
 
+/** `getIneligibleCollaboratorTargets` must read the REPLICA — naming it here proves which. */
+const findMany = dbMock.dbRead.user.findMany;
+
 beforeEach(() => {
   vi.clearAllMocks();
-  mockDb.user.findMany.mockImplementation(async (args: any) => {
+  findMany.mockImplementation(async (args: any) => {
     const asked: number[] = args?.where?.id?.in ?? [];
     const rows = [
       { id: FINE, bannedAt: null, deletedAt: null },
@@ -92,12 +87,12 @@ describe('getIneligibleCollaboratorTargets', () => {
 
   it('does not query at all for an empty candidate list', async () => {
     await expect(getIneligibleCollaboratorTargets({ userIds: [] })).resolves.toEqual([]);
-    expect(mockDb.user.findMany).not.toHaveBeenCalled();
+    expect(findMany).not.toHaveBeenCalled();
   });
 
   it('asks about each id once even when the picker repeats one', async () => {
     await getIneligibleCollaboratorTargets({ userIds: [FINE, FINE, BANNED, BANNED] });
-    const asked = (mockDb.user.findMany.mock.calls[0]?.[0] as any)?.where?.id?.in;
+    const asked = (findMany.mock.calls[0]?.[0] as any)?.where?.id?.in;
     expect(asked).toEqual([FINE, BANNED]);
   });
 
@@ -107,8 +102,8 @@ describe('getIneligibleCollaboratorTargets', () => {
    */
   it('reads the account rows themselves', async () => {
     await getIneligibleCollaboratorTargets({ userIds: [BANNED] });
-    expect(mockDb.user.findMany).toHaveBeenCalledTimes(1);
-    const args = mockDb.user.findMany.mock.calls[0]?.[0] as any;
+    expect(findMany).toHaveBeenCalledTimes(1);
+    const args = findMany.mock.calls[0]?.[0] as any;
     expect(args.select).toMatchObject({ bannedAt: true, deletedAt: true });
   });
 });

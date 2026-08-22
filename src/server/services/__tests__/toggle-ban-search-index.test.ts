@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
  * BANNING REMOVES AN ACCOUNT FROM USER SEARCH — SO LIFTING A BAN HAS TO PUT IT BACK.
@@ -10,22 +11,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  */
 
 const {
-  mockDb,
   mockQueueUpdate,
   mockRemoveContent,
   mockInvalidateSession,
   mockCacheRefresh,
   mockSettingsBust,
 } = vi.hoisted(() => ({
-  mockDb: {
-    user: {
-      findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
-      findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
-      update: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({ id: 0 })),
-    },
-    userLink: { deleteMany: vi.fn(async () => ({ count: 0 })) },
-    image: { updateMany: vi.fn(async () => ({ count: 0 })) },
-  },
   mockQueueUpdate: vi.fn(async () => undefined),
   mockRemoveContent: vi.fn(async () => undefined),
   mockInvalidateSession: vi.fn(async () => undefined),
@@ -33,7 +24,6 @@ const {
   mockSettingsBust: vi.fn(async () => undefined),
 }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDb, dbWrite: mockDb }));
 vi.mock('~/server/search-index', async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
   return { ...actual, usersSearchIndex: { queueUpdate: mockQueueUpdate } };
@@ -69,6 +59,16 @@ const USER_ID = 5501;
 const ACTOR_ID = 5502;
 const ALREADY_BANNED_AT = new Date('2026-01-02T03:04:05.000Z');
 
+// `getUserById` reads the REPLICA; `updateUserById` writes the PRIMARY. Named separately so a
+// write cannot satisfy a read assertion.
+const userFindUnique = dbMock.dbRead.user.findUnique;
+const userUpdate = dbMock.dbWrite.user.update;
+const userFindFirst = dbMock.dbWrite.user.findFirst;
+// The ban branch fans out to these and chains `.catch` on each; the canonical mock has no
+// default for a write verb, so an undeclared one returns `undefined` and the fan-out throws.
+const userLinkDeleteMany = dbMock.dbWrite.userLink.deleteMany;
+const imageUpdateMany = dbMock.dbWrite.image.updateMany;
+
 const call = () =>
   toggleBan({
     id: USER_ID,
@@ -79,14 +79,16 @@ const call = () =>
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockDb.user.update.mockResolvedValue({ id: USER_ID, paddleCustomerId: null });
-  mockDb.user.findFirst.mockResolvedValue(null);
+  userUpdate.mockResolvedValue({ id: USER_ID, paddleCustomerId: null });
+  userFindFirst.mockResolvedValue(null);
+  userLinkDeleteMany.mockResolvedValue({ count: 0 });
+  imageUpdateMany.mockResolvedValue({ count: 0 });
 });
 
 describe('toggleBan -> user search index', () => {
   it('UNBANNING puts the account back in user search', async () => {
     // An account that is currently banned — so this call is the LIFT.
-    mockDb.user.findUnique.mockResolvedValue({
+    userFindUnique.mockResolvedValue({
       bannedAt: ALREADY_BANNED_AT,
       meta: {},
       username: 'someone',
@@ -108,7 +110,7 @@ describe('toggleBan -> user search index', () => {
    * is asserted here so "nothing happened" cannot pass for "the right thing happened".
    */
   it('BANNING removes instead — no refresh enqueued', async () => {
-    mockDb.user.findUnique.mockResolvedValue({
+    userFindUnique.mockResolvedValue({
       bannedAt: null,
       meta: {},
       username: 'someone',

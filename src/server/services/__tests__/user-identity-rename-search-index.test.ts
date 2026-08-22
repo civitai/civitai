@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
  * A MODERATOR-FORCED RENAME HAS TO REACH USER SEARCH.
@@ -12,16 +13,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * The self-serve profile save has always enqueued this. This is the moderator path.
  */
 
-const { mockDbWrite, mockCacheRefresh, mockQueueUpdate, mockInvalidateSession } = vi.hoisted(
-  () => ({
-    mockDbWrite: { user: { update: vi.fn() } },
-    mockCacheRefresh: vi.fn(async () => undefined),
-    mockQueueUpdate: vi.fn(async () => undefined),
-    mockInvalidateSession: vi.fn(async () => undefined),
-  })
-);
+const { mockCacheRefresh, mockQueueUpdate, mockInvalidateSession } = vi.hoisted(() => ({
+  mockCacheRefresh: vi.fn(async () => undefined),
+  mockQueueUpdate: vi.fn(async () => undefined),
+  mockInvalidateSession: vi.fn(async () => undefined),
+}));
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbWrite, dbWrite: mockDbWrite }));
 vi.mock('~/server/redis/caches', async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
   return { ...actual, userBasicCache: { refresh: mockCacheRefresh } };
@@ -38,9 +35,12 @@ const { forceUpdateUserIdentity } = await import('~/server/services/user.service
 
 const USER_ID = 8317;
 
+/** The moderator write goes to the PRIMARY. */
+const userUpdate = dbMock.dbWrite.user.update;
+
 beforeEach(() => {
   vi.clearAllMocks();
-  mockDbWrite.user.update.mockResolvedValue({ id: USER_ID });
+  userUpdate.mockResolvedValue({ id: USER_ID });
 });
 
 describe('forceUpdateUserIdentity -> user search index', () => {
@@ -67,7 +67,7 @@ describe('forceUpdateUserIdentity -> user search index', () => {
   it('does NOT enqueue when only the email changes — no searchable field moved', async () => {
     await forceUpdateUserIdentity({ userId: USER_ID, email: 'new@example.com' });
 
-    expect(mockDbWrite.user.update).toHaveBeenCalledTimes(1);
+    expect(userUpdate).toHaveBeenCalledTimes(1);
     expect(mockQueueUpdate).not.toHaveBeenCalled();
   });
 
@@ -75,7 +75,7 @@ describe('forceUpdateUserIdentity -> user search index', () => {
     await expect(forceUpdateUserIdentity({ userId: USER_ID })).resolves.toEqual({
       updated: false,
     });
-    expect(mockDbWrite.user.update).not.toHaveBeenCalled();
+    expect(userUpdate).not.toHaveBeenCalled();
     expect(mockQueueUpdate).not.toHaveBeenCalled();
   });
 });
