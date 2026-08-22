@@ -89,7 +89,7 @@ export function StickerBookSection({
       }
     >
       {items.length ? (
-        <StickerBookGrid items={items} side={side} />
+        <StickerBookGrid items={items} side={side} emptyMessage={emptyMessage} />
       ) : (
         <Text size="sm" c="dimmed">
           {emptyMessage}

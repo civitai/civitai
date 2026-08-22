@@ -36,7 +36,21 @@ const CARD_HEIGHT = Math.round((CARD_WIDTH * 9) / 7);
  * gallery, so paging through an image opens the next one in the book rather
  * than the global feed.
  */
-export function StickerBookGrid({ items, side }: { items: BookItems; side: StickerBookSide }) {
+export function StickerBookGrid({
+  items,
+  side,
+  emptyMessage,
+}: {
+  items: BookItems;
+  side: StickerBookSide;
+  /**
+   * Drawn when the viewer's own hides empty the section. The band's own check is
+   * on the SERVER's row count, which does not know what this viewer hid — so
+   * without this a viewer who hid every creator in a row gets a heading over
+   * blank space.
+   */
+  emptyMessage?: string;
+}) {
   const images = useMemo(() => items.map((item) => item.image), [items]);
   // The viewer's own hides, the same way every other grid applies them. Blocks
   // are enforced on the server; hides are a preference and live here.
@@ -46,13 +60,19 @@ export function StickerBookGrid({ items, side }: { items: BookItems; side: Stick
     return items.filter((item) => ids.has(item.imageId));
   }, [items, visible]);
 
-  if (!shown.length) return null;
+  if (!shown.length)
+    return emptyMessage ? (
+      <Text size="sm" c="dimmed">
+        {emptyMessage}
+      </Text>
+    ) : null;
 
   return (
     // 🔴 `hideStickerBadge`: the chip shares the reaction row, and at a 280px
     // card it squeezes the reaction counts until they clip. This page is about
-    // stickers, so the count it was carrying says nothing new here — but the
-    // chip is also the reveal control, which is why the page header carries one.
+    // stickers, so the count it was carrying says nothing new here — and
+    // `revealStickers` is what draws them, so removing the chip removes no
+    // control.
     <ImagesProvider images={visible} hideStickerBadge revealStickers>
       <div
         className="grid items-start gap-3"

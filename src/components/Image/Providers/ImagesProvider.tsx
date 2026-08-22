@@ -99,7 +99,9 @@ export function ImagesProvider({
 
   return (
     <ImagesContext.Provider value={state}>
-      <StickerPlacementBatchProvider imageIds={imageIds}>{children}</StickerPlacementBatchProvider>
+      <StickerPlacementBatchProvider imageIds={imageIds} alwaysFetch={revealStickers}>
+        {children}
+      </StickerPlacementBatchProvider>
     </ImagesContext.Provider>
   );
 }

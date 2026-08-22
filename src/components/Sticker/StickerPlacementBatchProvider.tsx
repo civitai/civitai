@@ -40,9 +40,19 @@ const StickerPlacementBatchContext = createContext<StickerPlacementBatch | null>
 export function StickerPlacementBatchProvider({
   imageIds,
   children,
+  alwaysFetch,
 }: {
   imageIds: number[];
   children: React.ReactNode;
+  /**
+   * Fetch even when the viewer has stickers hidden and is logged out.
+   *
+   * 🔴 THE FETCH GATE IS SEPARATE FROM THE DRAW GATE, and a host that overrides
+   * only the second one gets nothing. A surface whose subject IS the stickers
+   * has to say so here too, or an anonymous visitor renders a page of images
+   * with no stickers on them and no error anywhere.
+   */
+  alwaysFetch?: boolean;
 }) {
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
@@ -69,7 +79,7 @@ export function StickerPlacementBatchProvider({
   // Same rule as the detail view: a signed-in viewer always fetches, because a
   // pending placement is one they either paid for or are being asked to answer,
   // and neither is discoverable from the count (which is approved-only).
-  const wantPlacements = enabled && (revealed || !!currentUser);
+  const wantPlacements = enabled && (revealed || !!currentUser || !!alwaysFetch);
   const placementQueries = trpc.useQueries((t) =>
     chunks.map((chunk) =>
       t.placement.getStickerPlacements(

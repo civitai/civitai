@@ -20,6 +20,7 @@ import {
   IconSticker,
 } from '@tabler/icons-react';
 import { useState } from 'react';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { StickerBookBand, StickerBookSection } from '~/components/StickerBook/StickerBookSection';
@@ -43,7 +44,13 @@ import { trpc } from '~/utils/trpc';
  */
 export function StickerBookView({ username }: { username: string }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const { data, isLoading, isError } = trpc.stickerBook.get.useQuery({ username });
+  // 🔴 The viewer's own level, sent explicitly. The schema defaults it to every
+  // level, and the tRPC middleware then caps by DOMAIN and AUTH — not by what
+  // this viewer chose. Omitting it ships rows the viewer set their level to
+  // avoid and leaves the client to hide them, which is presentation, not a
+  // filter.
+  const browsingLevel = useBrowsingLevelDebounced();
+  const { data, isLoading, isError } = trpc.stickerBook.get.useQuery({ username, browsingLevel });
 
   if (isLoading)
     return (

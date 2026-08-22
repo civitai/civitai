@@ -1,5 +1,6 @@
 import { Alert, Button, Group, Loader, Text, Title } from '@mantine/core';
 import { BackButton } from '~/components/BackButton/BackButton';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useState } from 'react';
 import { StickerBookGrid } from '~/components/StickerBook/StickerBookGrid';
 import type { StickerBookSide } from '~/components/StickerBook/sticker-book.util';
@@ -22,9 +23,11 @@ export function StickerBookSectionPage({
   username: string;
   side: StickerBookSide;
 }) {
+  // Sent for the same reason the tab sends it — see `StickerBookView`.
+  const browsingLevel = useBrowsingLevelDebounced();
   const [page, setPage] = useState(1);
   const { data, isLoading, isError, isFetching } = trpc.stickerBook.getSection.useQuery(
-    { username, side, page },
+    { username, side, page, browsingLevel },
     // The accumulated pages are what is on screen, so a page that is refetching
     // must keep showing the one before it rather than blanking the feed.
     { placeholderData: (previous) => previous }
