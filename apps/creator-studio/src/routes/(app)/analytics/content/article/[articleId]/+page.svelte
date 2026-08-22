@@ -9,6 +9,7 @@
   import ChartTypeToggle from '$lib/components/ChartTypeToggle.svelte';
   import DeltaChip from '$lib/components/DeltaChip.svelte';
   import AnalyticsHeader from '$lib/components/AnalyticsHeader.svelte';
+  import ImpressionsNotice from '$lib/components/ImpressionsNotice.svelte';
   import { chartType } from '$lib/stores/chart-type';
   import { formatRange, dayDiff, shiftIso } from '$lib/date-range';
   import { IconArrowLeft, IconExternalLink } from '@tabler/icons-svelte';
@@ -120,6 +121,8 @@
     {article.publishedAt ? `Published ${article.publishedAt.slice(0, 10)}` : 'Not published'}
   </p>
 </div>
+
+<ImpressionsNotice />
 
 <div class="mb-4 flex flex-wrap gap-4">
   {#if article.coverUrl}

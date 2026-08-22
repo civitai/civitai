@@ -458,15 +458,6 @@ const impressionArms = () =>
     .map((e) => `'${e}'`)
     .join(', ');
 
-// Impressions land in their own table rather than `daily_views`, so this cannot reuse `viewTrackingLive`.
-// Deliberately uncached, and deliberately NOT part of the cached ContentAnalytics payload — see below.
-export async function impressionTrackingLive(): Promise<boolean> {
-  const rows = await getClickhouse().$query<{ one: number }>(
-    `SELECT 1 AS one FROM impressions_daily_by_owner WHERE entityType IN (${impressionArms()}) LIMIT 1`
-  );
-  return rows.length > 0;
-}
-
 function netReactionsDailySql(uid: number, from: string, to: string): string {
   return `SELECT toDate(time) AS date, ${netReactions} AS value FROM reactions WHERE ownerId = ${uid} AND toDate(time) >= toDate('${from}') AND toDate(time) <= toDate('${to}') GROUP BY date`;
 }
