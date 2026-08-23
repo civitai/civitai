@@ -90,73 +90,84 @@ const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
 
   return (
     <Container fluid className={classes.container}>
-      <MyCollections>
-        {({ FilterBox, Filters, ListMenu, Collections, InviteList, isLoading }) => (
-          <Card
-            className={classes.sidebar}
-            w={300}
-            mr="xs"
-            p={0}
-            style={{
-              overflow: 'hidden',
-              marginLeft: showSidebar ? 0 : 'calc(-300px - var(--mantine-spacing-xs))',
-              maxHeight: 'calc(100dvh - var(--header-height) - var(--footer-height) - 68px)',
-            }}
-            withBorder
-          >
-            <Tooltip label="Toggle Sidebar" position="right" openDelay={500}>
-              <LegacyActionIcon
-                onClick={() => setShowSidebar((val) => !val)}
-                className={classes.sidebarToggle}
-              >
-                {!showSidebar ? <IconLayoutSidebarLeftExpand /> : <IconLayoutSidebarLeftCollapse />}
-              </LegacyActionIcon>
-            </Tooltip>
-            <Card.Section p="xs" mx={0} className="border-t-0" withBorder>
-              <Group justify="space-between" wrap="nowrap">
-                <Text fw={500}>My Collections</Text>
-                <Group gap={4} wrap="nowrap">
-                  <CollectionInvitesButton />
-                  <Button
-                    onClick={() => {
-                      dialogStore.trigger({
-                        component: CollectionEditModal,
-                      });
-                    }}
-                    variant="subtle"
-                    size="compact-sm"
-                    rightSection={<IconPlus size={14} />}
-                  >
-                    Create
-                  </Button>
+      {/* The mobile drawer has always checked this; the desktop card never did,
+          so a signed-out visitor got an empty "My Collections" panel. */}
+      {!!currentUser && (
+        <MyCollections>
+          {({ FilterBox, Filters, ListMenu, Collections, InviteList, isLoading }) => (
+            <Card
+              className={classes.sidebar}
+              w={300}
+              mr="xs"
+              p={0}
+              style={{
+                // No overflow here: the toggle below is positioned in the gutter
+                // (right: -32px) and an inline `overflow: hidden` would out-rank the
+                // `overflow: visible` on .sidebar and clip it out of existence. The
+                // list scrolls in its own ScrollArea, so the Card does not need to.
+                marginLeft: showSidebar ? 0 : 'calc(-300px - var(--mantine-spacing-xs))',
+                maxHeight: 'calc(100dvh - var(--header-height) - var(--footer-height) - 68px)',
+              }}
+              withBorder
+            >
+              <Tooltip label="Toggle Sidebar" position="right" openDelay={500}>
+                <LegacyActionIcon
+                  onClick={() => setShowSidebar((val) => !val)}
+                  className={classes.sidebarToggle}
+                >
+                  {!showSidebar ? (
+                    <IconLayoutSidebarLeftExpand />
+                  ) : (
+                    <IconLayoutSidebarLeftCollapse />
+                  )}
+                </LegacyActionIcon>
+              </Tooltip>
+              <Card.Section p="xs" mx={0} className="border-t-0" withBorder>
+                <Group justify="space-between" wrap="nowrap">
+                  <Text fw={500}>My Collections</Text>
+                  <Group gap={4} wrap="nowrap">
+                    <CollectionInvitesButton />
+                    <Button
+                      onClick={() => {
+                        dialogStore.trigger({
+                          component: CollectionEditModal,
+                        });
+                      }}
+                      variant="subtle"
+                      size="compact-sm"
+                      rightSection={<IconPlus size={14} />}
+                    >
+                      Create
+                    </Button>
+                  </Group>
                 </Group>
-              </Group>
-            </Card.Section>
+              </Card.Section>
 
-            {InviteList}
+              {InviteList}
 
-            <Card.Section p="xs" mx={0} withBorder>
-              <Stack gap="xs">
-                <Group gap="xs" wrap="nowrap">
-                  <div style={{ flex: 1 }}>{FilterBox}</div>
-                  {ListMenu}
-                </Group>
-                {Filters}
-              </Stack>
-            </Card.Section>
-            {isLoading && (
-              <Center py="md">
-                <Loader type="bars" />
-              </Center>
-            )}
-            <Card.Section className="relative h-full" mx={0}>
-              <ScrollArea.Autosize mah="calc(68vh - var(--header-height,0))" pb="md">
-                {Collections}
-              </ScrollArea.Autosize>
-            </Card.Section>
-          </Card>
-        )}
-      </MyCollections>
+              <Card.Section p="xs" mx={0} withBorder>
+                <Stack gap="xs">
+                  <Group gap="xs" wrap="nowrap">
+                    <div style={{ flex: 1 }}>{FilterBox}</div>
+                    {ListMenu}
+                  </Group>
+                  {Filters}
+                </Stack>
+              </Card.Section>
+              {isLoading && (
+                <Center py="md">
+                  <Loader type="bars" />
+                </Center>
+              )}
+              <Card.Section className="relative h-full" mx={0}>
+                <ScrollArea.Autosize mah="calc(68vh - var(--header-height,0))" pb="md">
+                  {Collections}
+                </ScrollArea.Autosize>
+              </Card.Section>
+            </Card>
+          )}
+        </MyCollections>
+      )}
       <div className={classes.content}>
         {!!currentUser && isMobile && <MyCollectionsDrawer />}
         {children}
