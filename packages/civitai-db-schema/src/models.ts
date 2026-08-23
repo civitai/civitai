@@ -2025,6 +2025,7 @@ export interface AppListing {
   status: string;
   contentRating: string | null;
   externalUrl: string | null;
+  sourceRepoUrl: string | null;
   connectClientId: string | null;
   connectClient?: OauthClient | null;
   connectRequestedScopes: number | null;

@@ -473,3 +473,96 @@ describe('🔴 buildListingDetailRows — the `preview` posture', () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// The SOURCE row (public source-repository link)
+// ---------------------------------------------------------------------------
+
+const REPO = 'https://github.com/civitai/cool-app';
+
+describe('buildListingDetailRows — the SOURCE row', () => {
+  it('renders after `rating` and before `reviews`, with the scheme stripped from the label', () => {
+    const rows = buildListingDetailRows(detail({ sourceRepoUrl: REPO }), { formatDate: fmt });
+    expect(keys(rows)).toEqual([
+      'kind',
+      'category',
+      'rating',
+      'source',
+      'reviews',
+      'installs',
+      'updated',
+    ]);
+    const row = rows.find((r) => r.key === 'source')!;
+    expect(row.label).toBe('Source');
+    // The rail is narrow and every accepted value is https by construction, so the
+    // scheme is eight columns of no information.
+    expect(row.value).toBe('github.com/civitai/cool-app');
+  });
+
+  it('🔴 the `href` keeps the ABSOLUTE url — stripping it there would link to civitai.com', () => {
+    const row = buildListingDetailRows(detail({ sourceRepoUrl: REPO }), { formatDate: fmt }).find(
+      (r) => r.key === 'source'
+    )!;
+    expect(row.href).toBe(REPO);
+    expect(row.href).toMatch(/^https:\/\//);
+    // The display value and the href are DIFFERENT strings — a renderer that used the
+    // value as the href would produce a relative link.
+    expect(row.value).not.toBe(row.href);
+  });
+
+  it('works for every accepted host (not just github)', () => {
+    for (const [url, label] of [
+      ['https://gitlab.com/o/r', 'gitlab.com/o/r'],
+      ['https://codeberg.org/o/r', 'codeberg.org/o/r'],
+    ] as const) {
+      const row = buildListingDetailRows(detail({ sourceRepoUrl: url }), { formatDate: fmt }).find(
+        (r) => r.key === 'source'
+      )!;
+      expect(row.value).toBe(label);
+      expect(row.href).toBe(url);
+    }
+  });
+
+  it('a NULL / absent / blank / non-string value OMITS the row (never "Source: —")', () => {
+    // Rule 1 of this module. The runtime guard matters because not every producer of a
+    // `ListingDetail`-shaped object goes through `projectListingDetail` — the moderator
+    // combined-review surface builds one through a cast, and that is how a required
+    // field arrived `undefined` and crashed this panel before.
+    expect(
+      keys(buildListingDetailRows(detail({ sourceRepoUrl: null }), { formatDate: fmt }))
+    ).not.toContain('source');
+    expect(keys(buildListingDetailRows(detail(), { formatDate: fmt }))).not.toContain('source');
+    expect(
+      keys(buildListingDetailRows(detail({ sourceRepoUrl: '' }), { formatDate: fmt }))
+    ).not.toContain('source');
+    const cast = { ...detail(), sourceRepoUrl: 12345 } as unknown as Input;
+    expect(() => buildListingDetailRows(cast, { formatDate: fmt })).not.toThrow();
+    expect(keys(buildListingDetailRows(cast, { formatDate: fmt }))).not.toContain('source');
+  });
+
+  it('🔴 SURVIVES the `preview` posture — unlike reviews / installs / updated', () => {
+    // Rule 2 omits a row when the PREVIEW POSTURE cannot supply it honestly (a shadow
+    // has no reviews or installs; its "updated" date is really a submission time). None
+    // of that applies to a link the shadow carries verbatim and that approving PUBLISHES
+    // — hiding it from the moderator would hide the thing under review.
+    const rows = buildListingDetailRows(detail({ sourceRepoUrl: REPO }), {
+      preview: true,
+      formatDate: fmt,
+    });
+    expect(keys(rows)).toEqual(['kind', 'category', 'rating', 'source']);
+    const row = rows.find((r) => r.key === 'source')!;
+    // Identical content in both postures — not a degraded preview variant.
+    const live = buildListingDetailRows(detail({ sourceRepoUrl: REPO }), { formatDate: fmt }).find(
+      (r) => r.key === 'source'
+    )!;
+    expect(row).toEqual(live);
+  });
+
+  it('the SOURCE row is the ONLY row that carries an href', () => {
+    // Pins the renderer contract: `href` selects the anchor branch (with
+    // target=_blank + rel=noopener noreferrer), so any other row acquiring one would
+    // silently become an outbound link.
+    const rows = buildListingDetailRows(detail({ sourceRepoUrl: REPO }), { formatDate: fmt });
+    expect(rows.filter((r) => r.href != null).map((r) => r.key)).toEqual(['source']);
+  });
+});

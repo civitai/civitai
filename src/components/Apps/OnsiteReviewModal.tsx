@@ -931,6 +931,10 @@ const HANDLED_MANIFEST_KEYS = new Set([
   // description — not buried in the "Other manifest fields" raw-JSON disclosure.
   // The mod is the only gate on store-visible copy changing.
   'tagline',
+  // Store-visible OUTBOUND LINK, manifest-governed, published on approve — so it must
+  // be visible INLINE to the reviewer, not folded into the raw-JSON disclosure. A link
+  // the mod never actually looked at is the one thing this whole surface exists to stop.
+  'repository',
   'category',
   'type',
   'minApiVersion',
@@ -1010,6 +1014,7 @@ function ManifestIdentity({ manifest }: { manifest: Record<string, unknown> }) {
   const description =
     typeof manifest.description === 'string' ? manifest.description : null;
   const tagline = typeof manifest.tagline === 'string' ? manifest.tagline : null;
+  const repository = typeof manifest.repository === 'string' ? manifest.repository : null;
   const category = typeof manifest.category === 'string' ? manifest.category : null;
   const blockId = typeof manifest.blockId === 'string' ? manifest.blockId : null;
   const version = typeof manifest.version === 'string' ? manifest.version : null;
@@ -1074,6 +1079,16 @@ function ManifestIdentity({ manifest }: { manifest: Record<string, unknown> }) {
             )}
           </Group>
         </Group>
+        {/* Store-visible source-repository link (manifest-governed — goes live on
+            approve). PLAIN TEXT, deliberately NOT an anchor: a reviewer must be able to
+            READ the destination before deciding, and a one-click link out of a review
+            modal is exactly the affordance a hostile submission would want. Shown
+            VERBATIM (not normalised) so the mod sees what the author actually wrote. */}
+        {repository && (
+          <Text size="xs" c="dimmed" data-testid="apps-onsite-review-source-repo">
+            Source: <Code>{repository}</Code>
+          </Text>
+        )}
         {description && (
           <Text size="sm" c="dimmed" style={{ whiteSpace: 'pre-wrap' }}>
             {description}

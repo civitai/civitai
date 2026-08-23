@@ -90,6 +90,15 @@ export async function backfillAppListings(
     ...(typeof limit === 'number' ? { take: limit } : {}),
   })) as SourceAppBlock[];
 
+  // Probe the manual-apply `app_listings.source_repo_url` column ONCE for the whole
+  // run (see app-listing-source-repo.service). `false` simply omits the field from
+  // every minted row — the next moderator approve re-syncs it from the manifest — while
+  // naming a missing column would fail EVERY create in the batch.
+  const { isSourceRepoColumnAvailable } = await import(
+    '~/server/services/blocks/app-listing-source-repo.service'
+  );
+  const sourceRepoAvailable = await isSourceRepoColumnAvailable(dbRead);
+
   const result: BackfillAppListingsResult = {
     scanned: appBlocks.length,
     created: 0,
@@ -121,7 +130,7 @@ export async function backfillAppListings(
       continue;
     }
 
-    const data = mapAppBlockToListing(ab);
+    const data = mapAppBlockToListing(ab, { sourceRepoAvailable });
 
     // 🔴 GO-LIVE ACTIONABILITY gate. `mapAppBlockToListing` hardcodes
     // `status: 'approved'`, so every row this loop writes is minted DIRECTLY LIVE —

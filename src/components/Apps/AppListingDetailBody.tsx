@@ -763,9 +763,34 @@ function DetailsPanel({ detail, preview }: { detail: ListingDetail; preview: boo
                 data-listing-detail-row={row.key}
               >
                 <Text className={detailClasses.detailLabel}>{row.label}</Text>
-                <Text size="sm" c={row.color} tt={row.key === 'reviews' ? 'capitalize' : undefined}>
-                  {row.value}
-                </Text>
+                {row.href ? (
+                  // 🔴 `rel="noopener noreferrer"` is NOT optional on a `target="_blank"`
+                  // link to a third-party page. Without `noopener` the opened tab holds a
+                  // live `window.opener` and can navigate THIS tab to anywhere it likes —
+                  // reverse tabnabbing, i.e. swapping the store page behind the user for a
+                  // look-alike. The href is already host-allowlisted and normalised
+                  // server-side (`validateRepositoryUrl`); this is the second control, and
+                  // `appListingDetailRows.ts` documents the contract on `href`.
+                  <Text
+                    size="sm"
+                    component="a"
+                    href={row.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    data-listing-detail-link={row.key}
+                    style={{ wordBreak: 'break-all' }}
+                  >
+                    {row.value}
+                  </Text>
+                ) : (
+                  <Text
+                    size="sm"
+                    c={row.color}
+                    tt={row.key === 'reviews' ? 'capitalize' : undefined}
+                  >
+                    {row.value}
+                  </Text>
+                )}
               </div>
             ))}
           </Stack>

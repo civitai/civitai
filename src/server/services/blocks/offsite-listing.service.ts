@@ -12,7 +12,13 @@ import {
 import {
   assertNoOnPlatformSurface,
   validateExternalUrl,
+  validateRepositoryUrl,
 } from '~/server/schema/blocks/external-app.schema';
+import {
+  readListingSourceRepoUrl,
+  sourceRepoWriteFragment,
+  type ListingSourceRepoRead,
+} from '~/server/services/blocks/app-listing-source-repo.service';
 import {
   OFFSITE_CONTENT_RATINGS,
   OFFSITE_REJECTION_REASON_MAX,
@@ -180,6 +186,15 @@ export async function submitExternalListing(opts: {
   // is exported + unit-tested directly, not only reached through the schema.
   const url = input.externalUrl != null ? validateExternalUrl(input.externalUrl) : null;
   if (url && !url.ok) throw new TRPCError({ code: 'BAD_REQUEST', message: url.error });
+  // Same posture for the OPTIONAL public source-repository link: re-run the shared
+  // validator (this fn is exported + unit-tested directly, not only reached through the
+  // schema) and STORE THE NORMALISED FORM, so a later material-change comparison is
+  // against a canonical value rather than whatever the author happened to paste.
+  const sourceRepo =
+    input.sourceRepoUrl != null ? validateRepositoryUrl(input.sourceRepoUrl) : null;
+  if (sourceRepo && !sourceRepo.ok) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: sourceRepo.error });
+  }
   const surface = assertNoOnPlatformSurface({
     page: input.page,
     targets: input.targets,
@@ -277,6 +292,15 @@ export async function submitExternalListing(opts: {
           contentRating,
           // OPTIONAL homepage / Visit link — canonicalized when provided, else null.
           externalUrl: url && url.ok ? url.url : null,
+          // OPTIONAL public source-repository link, canonicalized.
+          //
+          // 🔴 THE KEY IS OMITTED ENTIRELY when the author supplied none, rather than
+          // written as `null`. `app_listings.source_repo_url` is a MANUAL-APPLY column,
+          // so until a human runs the migration, naming it here would make EVERY
+          // off-site submission fail — a brand-new feature breaking a pre-existing flow
+          // for every author, including the ones not using it. Omitted, the column is
+          // simply never mentioned and the submit is byte-identical to today.
+          ...(sourceRepo && sourceRepo.ok ? { sourceRepoUrl: sourceRepo.url } : {}),
           // REQUIRED OAuth client link + the disclosed (review-only) scope set
           // (SERVER-DERIVED from the client's allowedScopes) + per-scope justifications.
           connectClientId: input.connectClientId,
@@ -672,8 +696,16 @@ async function closeTerminalListing(
  * listing to SFW users. `externalUrl`/`name` are the listing's identity/destination.
  * `tagline`/`description`/`category` stay trivial — quick copy edits are intended
  * and are delistable if abused.
+ *
+ * `sourceRepoUrl` is MATERIAL for the same reason `externalUrl` is: it is an OUTBOUND
+ * LINK rendered on a public store page, and the moderator approved a specific
+ * destination. The host allowlist bounds where it can point but not what is THERE —
+ * a repo can be replaced, renamed or transferred — so a change re-enters review
+ * rather than going live silently. Like `externalUrl` it compares against the
+ * validator's CANONICAL form, so re-saving `…/a/b` as `…/a/b.git` is correctly seen
+ * as no change and does not cost a pointless mod re-review.
  */
-const MATERIAL_PATCH_FIELDS = ['externalUrl', 'name', 'contentRating'] as const;
+const MATERIAL_PATCH_FIELDS = ['externalUrl', 'name', 'contentRating', 'sourceRepoUrl'] as const;
 
 /**
  * Validate + normalize an update patch (shared by the in-place + shadow paths).
@@ -701,6 +733,19 @@ export function buildListingPatchData(
     const url = validateExternalUrl(patch.externalUrl);
     if (!url.ok) throw new TRPCError({ code: 'BAD_REQUEST', message: url.error });
     data.externalUrl = url.url;
+  }
+  // Public source-repository link. Follows this builder's established convention
+  // exactly: an OMITTED key leaves the column untouched, an explicit `null` CLEARS it,
+  // and a provided value is validated + stored NORMALISED (so the material-change
+  // comparison below is against a canonical value).
+  if (patch.sourceRepoUrl !== undefined) {
+    if (patch.sourceRepoUrl === null) {
+      data.sourceRepoUrl = null;
+    } else {
+      const repo = validateRepositoryUrl(patch.sourceRepoUrl);
+      if (!repo.ok) throw new TRPCError({ code: 'BAD_REQUEST', message: repo.error });
+      data.sourceRepoUrl = repo.url;
+    }
   }
   if (patch.name !== undefined) data.name = patch.name;
   if (patch.tagline !== undefined) data.tagline = patch.tagline;
@@ -761,6 +806,7 @@ function patchHasMaterialChange(
     externalUrl: string | null;
     name: string;
     contentRating: string | null;
+    sourceRepoUrl: string | null;
     connectRequestedScopes: number | null;
   }
 ): boolean {
@@ -772,6 +818,25 @@ function patchHasMaterialChange(
       // An invalid URL is a material change (it will be rejected downstream, but
       // it is not "unchanged").
       if (!url.ok || url.url !== live.externalUrl) return true;
+      continue;
+    }
+    if (field === 'sourceRepoUrl') {
+      // 🔴 COMPARED IN CANONICAL FORM, not as a raw string — the same treatment
+      // `externalUrl` gets one branch up, and for a sharper reason. The author edits
+      // this in a text box, so `https://github.com/a/b`, `…/a/b/` and `…/a/b.git` all
+      // arrive from an author who changed NOTHING. Plain inequality would route each of
+      // those onto a shadow revision and back into the moderator queue, which is both
+      // noise for the mod and a needless "pending re-review" banner for the author.
+      if (patched === null) {
+        // An explicit CLEAR is material iff there was something to clear.
+        if (live.sourceRepoUrl !== null) return true;
+        continue;
+      }
+      const repo = validateRepositoryUrl(patched);
+      // An invalid value is material (rejected downstream, but not "unchanged") —
+      // mirrors the externalUrl branch, so an author cannot slip an unreviewed value
+      // through the trivial in-place path by making it malformed.
+      if (!repo.ok || repo.url !== live.sourceRepoUrl) return true;
       continue;
     }
     // name / contentRating: plain scalar inequality vs the live value.
@@ -821,6 +886,18 @@ type EditableListing = {
   connectScopeJustifications: Prisma.JsonValue | null;
   iconId: number | null;
   coverId: number | null;
+  /**
+   * The public source-repository link, resolved SEPARATELY from the select below.
+   *
+   * 🔴 IT IS DELIBERATELY NOT IN `editableListingSelect`. `source_repo_url` is a
+   * MANUAL-APPLY column, so naming it in that select would make every author edit and
+   * every `beginListingRevision` throw P2022 until a human runs the migration —
+   * breaking two pre-existing flows for an additive field. `loadOwnedEditableListing`
+   * fills it via the guarded `readListingSourceRepoUrl` instead.
+   */
+  sourceRepoUrl: string | null;
+  /** See {@link ListingSourceRepoRead.available} — `false` ⇒ never write the column. */
+  sourceRepoAvailable: boolean;
 };
 
 const editableListingSelect = {
@@ -917,14 +994,23 @@ async function loadOwnedEditableListing(
   const listing = (await dbRead.appListing.findUnique({
     where: { id: listingId },
     select: editableListingSelect,
-  })) as EditableListing | null;
+  })) as Omit<EditableListing, 'sourceRepoUrl' | 'sourceRepoAvailable'> | null;
   if (!listing) {
     throw new OffsiteRequestError('NOT_FOUND', `listing ${listingId} not found`);
   }
   if ((await resolveListingRole(listingId, userId)) === null) {
     throw new OffsiteRequestError('NOT_OWNED', 'you can only edit your own listings');
   }
-  return listing;
+  // Guarded second read for the MANUAL-APPLY `source_repo_url` column — see the
+  // `sourceRepoUrl` field note on `EditableListing`. Costs one extra round trip on an
+  // author edit path (a handful of calls per editing session, not a hot read); the
+  // alternative is a select that 500s the whole edit flow until a human runs SQL.
+  const sourceRepo: ListingSourceRepoRead = await readListingSourceRepoUrl(listingId, dbRead);
+  return {
+    ...listing,
+    sourceRepoUrl: sourceRepo.value,
+    sourceRepoAvailable: sourceRepo.available,
+  };
 }
 
 /**
@@ -995,6 +1081,7 @@ export async function updateListing(opts: {
         externalUrl: listing.externalUrl,
         name: listing.name,
         contentRating: listing.contentRating,
+        sourceRepoUrl: listing.sourceRepoUrl,
         connectRequestedScopes: listing.connectRequestedScopes,
       });
       if (!material) {
@@ -1085,6 +1172,16 @@ export async function beginListingRevision(opts: {
           category: parent.category,
           contentRating: parent.contentRating,
           externalUrl: parent.externalUrl,
+          // 🔴 CARRIED ONTO THE SHADOW, or a revision that does NOT touch the source
+          // link would silently CLEAR it on approve — `applyApprovedRevision` copies the
+          // shadow's value onto the parent unconditionally, so an uncopied column here
+          // becomes a deletion there. Same reasoning as `connectRequestedScopes` below.
+          // Omitted entirely (not null) when the manual-apply column is unreadable, so
+          // opening a revision keeps working before the migration lands.
+          ...sourceRepoWriteFragment({
+            available: parent.sourceRepoAvailable,
+            value: parent.sourceRepoUrl,
+          }),
           connectClientId: parent.connectClientId,
           // Carry the disclosed OAuth scope subset + justifications onto the shadow so
           // a revision that DOESN'T touch scopes preserves them (and one that does
@@ -1302,6 +1399,13 @@ export type ListingEditScalars = {
   category: string | null;
   contentRating: string | null;
   externalUrl: string | null;
+  /**
+   * The public source-repository link. `null` for "not set" AND (indistinguishably, on
+   * purpose) while the manual-apply column is absent: to the FORM those are the same
+   * state — an empty input — and the form's diff only emits the field when the author
+   * types into it, so an unreadable column cannot cause a spurious write.
+   */
+  sourceRepoUrl: string | null;
 };
 
 export type ListingEditAsset = { imageId: number | null; url: string | null };
@@ -1394,6 +1498,10 @@ async function loadListingEditView(
   connectScopeJustifications: Record<string, string> | null;
 }> {
   const { getEdgeUrl } = await import('~/client-utils/edge-url');
+  // Guarded, SEPARATE read of the manual-apply `source_repo_url` column — never added
+  // to the select below, which would 500 the whole author edit-prefill page until a
+  // human runs the migration. Degrades to null; see app-listing-source-repo.service.
+  const sourceRepo = await readListingSourceRepoUrl(listingId, db);
   const row = (await db.appListing.findUnique({
     where: { id: listingId },
     select: {
@@ -1452,6 +1560,7 @@ async function loadListingEditView(
       category: row.category,
       contentRating: row.contentRating,
       externalUrl: row.externalUrl,
+      sourceRepoUrl: sourceRepo.value,
     },
     connectRequestedScopes: row.connectRequestedScopes ?? null,
     connectScopeJustifications:
@@ -2504,6 +2613,17 @@ async function applyApprovedRevision(opts: {
         'cannot approve — the revision draft is no longer available'
       );
     }
+    // The shadow's public source-repository link, read through the MANUAL-APPLY guard
+    // rather than added to the select above — a missing column there would abort this
+    // whole transaction and make every off-site revision unapprovable until a human
+    // runs the migration. Read on `tx` (the PRIMARY, inside the transaction) for the
+    // same row-consistency reason the select is.
+    //
+    // 🔴 `available` — NOT `value != null` — decides whether the copy below writes the
+    // column at all. Conflating them would mean an unreadable column looked exactly
+    // like "the author removed the link", and the copy would need to distinguish
+    // "clear it" from "don't touch it". It can, because it asks the right question.
+    const shadowSourceRepo = await readListingSourceRepoUrl(shadowId, tx);
     const shadowScreenshotRows = await tx.appListingScreenshot.findMany({
       where: { appListingId: shadowId, imageId: { not: null } },
       select: { imageId: true },
@@ -2645,6 +2765,13 @@ async function applyApprovedRevision(opts: {
           category: shadow.category,
           contentRating: finalRating,
           externalUrl: shadow.externalUrl,
+          // The reviewed source-repository link. UNCONDITIONAL in both directions, like
+          // every other scalar here: a revision that cleared it clears it on the parent.
+          // That is exactly why `beginListingRevision` copies it onto the shadow — and
+          // why `OFFSITE_UNCOMPARED_APPLY_FIELDS` names it, so the drift panel cannot
+          // tell a moderator this apply "changes nothing" while it rewrites a public
+          // outbound link. Omitted (not null) while the manual-apply column is absent.
+          ...sourceRepoWriteFragment(shadowSourceRepo),
           connectClientId: shadow.connectClientId,
           // Apply the revision's disclosed OAuth scopes + justifications onto the live
           // parent (a scope change is material, so the shadow carries the reviewed set).

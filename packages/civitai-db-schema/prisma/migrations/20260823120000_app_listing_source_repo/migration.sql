@@ -1,0 +1,21 @@
+-- App Store Listings — optional public SOURCE REPOSITORY link.
+--
+-- NOT AUTO-APPLIED. Migrations in this repo are run by hand — see CLAUDE.md → Database.
+-- There is no `prisma migrate deploy` path and `_prisma_migrations` is not the source
+-- of truth; a human applies this to the CNPG nvme0 primary, per environment.
+--
+-- Additive, nullable, no backfill, no index, no constraint. `ALTER TABLE … ADD COLUMN
+-- <nullable, no default>` takes an ACCESS EXCLUSIVE lock for a catalog-only update on
+-- PG 11+ — it does not rewrite the table, so it is O(1) regardless of row count. Run it
+-- outside a long-running transaction so it cannot queue behind (or in front of) reads.
+--
+-- The deployed code is written to survive this being UNAPPLIED: every read of the
+-- column goes through `readListingSourceRepoUrl`
+-- (src/server/services/blocks/app-listing-source-repo.service.ts), which swallows the
+-- missing-column error (Prisma P2022 / Postgres 42703) and reports
+-- `{ available: false, value: null }`. The public store detail then renders no Source
+-- row instead of 500ing, and every write path omits the column entirely. So the
+-- ordering of the deploy and this statement is free; until it runs, the feature is
+-- simply inert.
+
+ALTER TABLE "app_listings" ADD COLUMN "source_repo_url" text;

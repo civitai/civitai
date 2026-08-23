@@ -235,6 +235,8 @@ function base(over: Partial<ListingDetail>): ListingDetail {
     // file and from any constant an assertion names, so a chip that hardcoded a value
     // could not accidentally match it.
     installCount: 4213,
+    // Default: no public source repo → the Details rail renders no `Source` row.
+    sourceRepoUrl: null,
     updatedAt: '2026-03-04T05:06:07.000Z',
     screenshots: [],
     kindData: {
@@ -721,6 +723,62 @@ describe('AppListingDetailBody', () => {
       r.getAttribute('data-listing-detail-row')
     );
     expect(rows).toEqual(['kind', 'reviews', 'installs', 'updated']);
+  });
+
+  // ── the SOURCE row (public source-repository link) ─────────────────────────
+
+  test('🔴 the SOURCE row renders as an anchor with target=_blank + rel=noopener noreferrer', async () => {
+    const REPO = 'https://github.com/civitai/cool-app';
+    const { container, within } = await renderScoped(
+      <AppListingDetailBody detail={base({ sourceRepoUrl: REPO })} />
+    );
+    await expect.element(within.getByTestId('apps-listing-details-accordion')).toBeInTheDocument();
+
+    const row = container.querySelector('[data-listing-detail-row="source"]') as HTMLElement;
+    expect(row).not.toBeNull();
+    // Displayed without the scheme; the href keeps the absolute URL.
+    expect(row.textContent).toContain('github.com/civitai/cool-app');
+
+    const anchor = row.querySelector('a[data-listing-detail-link="source"]') as HTMLAnchorElement;
+    expect(anchor).not.toBeNull();
+    expect(anchor.getAttribute('href')).toBe(REPO);
+    expect(anchor.getAttribute('target')).toBe('_blank');
+    // 🔴 `noopener` is the load-bearing token: without it the opened page holds a live
+    // `window.opener` and can navigate THIS tab (reverse tabnabbing). Asserted as a
+    // token SET, not a substring, so `rel="noopenerfoo"` cannot satisfy it.
+    const rel = (anchor.getAttribute('rel') ?? '').split(/\s+/).filter(Boolean);
+    expect(rel).toContain('noopener');
+    expect(rel).toContain('noreferrer');
+  });
+
+  test('🔴 the SOURCE row is ABSENT from the DOM when there is no link (never "Source: —")', async () => {
+    const { container, within } = await renderScoped(
+      <AppListingDetailBody detail={base({ sourceRepoUrl: null })} />
+    );
+    await expect.element(within.getByTestId('apps-listing-details-accordion')).toBeInTheDocument();
+    expect(container.querySelector('[data-listing-detail-row="source"]')).toBeNull();
+    // …and no stray anchor leaked into another row.
+    expect(container.querySelector('a[data-listing-detail-link]')).toBeNull();
+    // Positive control paired: the neighbouring rows still render, so the absence is
+    // about THIS field and not about the accordion failing to mount.
+    const rows = Array.from(container.querySelectorAll('[data-listing-detail-row]')).map((r) =>
+      r.getAttribute('data-listing-detail-row')
+    );
+    expect(rows).toEqual(['kind', 'category', 'rating', 'reviews', 'installs', 'updated']);
+  });
+
+  test('the SOURCE row survives the read-only PREVIEW posture (the mod must see what approving publishes)', async () => {
+    const REPO = 'https://codeberg.org/o/r';
+    const { container } = await renderScoped(
+      <AppListingDetailBody detail={base({ sourceRepoUrl: REPO })} preview />
+    );
+    const row = container.querySelector('[data-listing-detail-row="source"]') as HTMLElement;
+    expect(row).not.toBeNull();
+    expect(row.textContent).toContain('codeberg.org/o/r');
+    // The preview-omitted rows really are omitted here — so this is a claim about the
+    // SOURCE row specifically, not about `preview` being ignored.
+    expect(container.querySelector('[data-listing-detail-row="installs"]')).toBeNull();
+    expect(container.querySelector('[data-listing-detail-row="updated"]')).toBeNull();
   });
 
   test('🔴 the reviews row shows the SHARED ladder word label, not a percentage', async () => {

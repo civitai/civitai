@@ -2,8 +2,10 @@ import * as z from 'zod';
 
 import {
   MAX_EXTERNAL_URL_LENGTH,
+  MAX_REPOSITORY_URL_LENGTH,
   assertNoOnPlatformSurface,
   validateExternalUrl,
+  validateRepositoryUrl,
 } from '~/server/schema/blocks/external-app.schema';
 import { SLUG_REGEX } from '~/server/schema/blocks/publish-request.schema';
 import {
@@ -117,6 +119,12 @@ export const submitExternalListingSchema = z
     // OPTIONAL homepage / Visit link. Validated for the https-only shape only when present.
     externalUrl: z.string().min(1).max(MAX_EXTERNAL_URL_LENGTH).optional(),
     tagline: z.string().max(OFFSITE_TAGLINE_MAX).optional(),
+    // OPTIONAL public SOURCE-REPOSITORY link ("this app is open source"). Bound loose
+    // here (length only) and validated for the https / host-allowlist / repo-root shape
+    // by the shared `validateRepositoryUrl` in the superRefine below — the SAME function
+    // the on-site manifest path uses, so the two store kinds cannot disagree about what
+    // a valid source link is. Omitted ⇒ no Source row on the detail page.
+    sourceRepoUrl: z.string().min(1).max(MAX_REPOSITORY_URL_LENGTH).optional(),
     description: z.string().max(OFFSITE_DESCRIPTION_MAX).optional(),
     // Validated against the shared taxonomy const so adding a category needs no
     // schema change (mirrors the read-path `listAppListingsSchema.category`).
@@ -137,6 +145,13 @@ export const submitExternalListingSchema = z
       const url = validateExternalUrl(val.externalUrl);
       if (!url.ok) {
         ctx.addIssue({ code: 'custom', message: url.error, path: ['externalUrl'] });
+      }
+    }
+    // sourceRepoUrl is OPTIONAL — validate the repo-root shape only when provided.
+    if (val.sourceRepoUrl != null) {
+      const repo = validateRepositoryUrl(val.sourceRepoUrl);
+      if (!repo.ok) {
+        ctx.addIssue({ code: 'custom', message: repo.error, path: ['sourceRepoUrl'] });
       }
     }
     const surface = assertNoOnPlatformSurface({
@@ -177,6 +192,15 @@ export const updateListingPatchSchema = z
     externalUrl: z.string().min(1).max(MAX_EXTERNAL_URL_LENGTH).optional(),
     name: z.string().min(1).max(OFFSITE_NAME_MAX).optional(),
     tagline: z.string().max(OFFSITE_TAGLINE_MAX).nullable().optional(),
+    // Public source-repository link. NULLABLE-optional, following this schema's
+    // established convention: OMITTED leaves it untouched, an explicit `null` CLEARS
+    // it. Re-validated (and normalised) by `buildListingPatchData` in the service —
+    // this bound is only a coarse request-size guard, exactly as for `externalUrl`.
+    //
+    // 🔴 A CHANGE TO THIS FIELD IS MATERIAL (see MATERIAL_PATCH_FIELDS): on an approved
+    // listing it routes through a shadow revision and re-enters moderator review,
+    // because it is an outbound link on a public store page.
+    sourceRepoUrl: z.string().min(1).max(MAX_REPOSITORY_URL_LENGTH).nullable().optional(),
     description: z.string().max(OFFSITE_DESCRIPTION_MAX).nullable().optional(),
     category: z.enum(MARKETPLACE_CATEGORIES).nullable().optional(),
     contentRating: z.enum(OFFSITE_CONTENT_RATINGS).optional(),

@@ -2239,11 +2239,14 @@ describe('approveRequest', () => {
       });
       // Never a second listing for the same app.
       expect(mockDbWrite.appListing.create).not.toHaveBeenCalled();
-      // The approve DOES update the existing listing — but ONLY the four
+      // The approve DOES update the existing listing — but ONLY the
       // manifest-governed scalars. Curated / mod-owned columns
       // (iconId/coverId/featured/featuredOrder/contentRating/status/slug) must
       // never appear in the payload; asserting the exact key set is what stops a
       // future edit from widening this write into a clobber.
+      // `sourceRepoUrl` joined the set with the source-repository feature: it is
+      // manifest-governed on exactly the same terms, so it MUST re-sync (this
+      // fixture's manifest declares none, so it re-syncs as null).
       const syncCalls = mockDbWrite.appListing.updateMany.mock.calls.filter(
         (c: [{ data?: Record<string, unknown> }]) =>
           c[0]?.data != null && !('status' in c[0].data) // exclude the (3b-reset) status flip
@@ -2253,6 +2256,7 @@ describe('approveRequest', () => {
         'category',
         'description',
         'name',
+        'sourceRepoUrl',
         'tagline',
       ]);
       // The approve itself still completes (build triggered, request finalised).

@@ -1,6 +1,9 @@
 import {
   MAX_EXTERNAL_URL_LENGTH,
+  MAX_REPOSITORY_URL_LENGTH,
+  REPOSITORY_HOST_ALLOWLIST,
   validateExternalUrl,
+  validateRepositoryUrl,
 } from '~/server/schema/blocks/external-app.schema';
 import {
   OFFSITE_CHANGELOG_MAX,
@@ -53,14 +56,27 @@ export const OFFSITE_SUBMIT_LIMITS = {
   descriptionMax: OFFSITE_DESCRIPTION_MAX,
   changelogMax: OFFSITE_CHANGELOG_MAX,
   urlMax: MAX_EXTERNAL_URL_LENGTH,
+  sourceRepoUrlMax: MAX_REPOSITORY_URL_LENGTH,
   justificationMax: SCOPE_JUSTIFICATION_MAX_LENGTH,
 } as const;
+
+/**
+ * The accepted source-repository hosts, as the form's help text spells them.
+ *
+ * 🔴 DERIVED from the server allowlist, never re-typed. A hard-coded copy here is how a
+ * form ends up promising a host the validator rejects (or, worse, omitting one it
+ * accepts) — the same single-sourcing the category/rating option lists above already
+ * do, for the same reason.
+ */
+export const SOURCE_REPO_HOSTS_LABEL = REPOSITORY_HOST_ALLOWLIST.join(', ');
 
 export type OffsiteSubmitFormValues = {
   slug: string;
   name: string;
   /** OPTIONAL homepage / Visit link (may be blank in the merged model). */
   externalUrl: string;
+  /** OPTIONAL public source-repository link ('' = none). */
+  sourceRepoUrl: string;
   tagline: string;
   description: string;
   category: MarketplaceCategory | null;
@@ -114,6 +130,7 @@ export function emptyOffsiteSubmitForm(): OffsiteSubmitFormValues {
     slug: '',
     name: '',
     externalUrl: '',
+    sourceRepoUrl: '',
     tagline: '',
     description: '',
     category: null,
@@ -150,6 +167,9 @@ export function isOffsiteSubmitFormDirty(values: OffsiteSubmitFormValues): boole
     'slug',
     'name',
     'externalUrl',
+    // A typed-but-unsaved source link IS work worth a confirmation before Cancel
+    // discards it — the same claim every other text field here makes.
+    'sourceRepoUrl',
     'tagline',
     'description',
     'changelog',
@@ -197,6 +217,14 @@ export function validateOffsiteSubmitForm(
   if (values.externalUrl.trim().length > 0) {
     const url = validateExternalUrl(values.externalUrl);
     if (!url.ok) errors.externalUrl = url.error;
+  }
+
+  // sourceRepoUrl is OPTIONAL — only validate the repo-root shape when one is provided.
+  // Delegates to the SAME `validateRepositoryUrl` the server runs, so an inline error
+  // here says exactly what a submit would say, in the same words.
+  if (values.sourceRepoUrl.trim().length > 0) {
+    const repo = validateRepositoryUrl(values.sourceRepoUrl);
+    if (!repo.ok) errors.sourceRepoUrl = repo.error;
   }
 
   if (values.tagline.length > OFFSITE_TAGLINE_MAX) {
@@ -570,6 +598,7 @@ export function toSubmitExternalInput(values: OffsiteSubmitFormValues): {
   requestedScopes: number;
   scopeJustifications: Record<string, string>;
   externalUrl?: string;
+  sourceRepoUrl?: string;
   tagline?: string;
   description?: string;
   category?: MarketplaceCategory;
@@ -589,6 +618,7 @@ export function toSubmitExternalInput(values: OffsiteSubmitFormValues): {
     requestedScopes: values.requestedScopes,
     scopeJustifications,
     externalUrl: values.externalUrl.trim() || undefined,
+    sourceRepoUrl: values.sourceRepoUrl.trim() || undefined,
     tagline: values.tagline.trim() || undefined,
     description: values.description.trim() || undefined,
     category: values.category ?? undefined,
