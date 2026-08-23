@@ -211,12 +211,10 @@ export async function createImageIngestionRequest({
     // that calls the retry wrapper directly instead of going through `submitWorkflow`, so without this
     // label its submits would be indistinguishable from the generate leg on the shared histogram — and
     // that histogram exists specifically to be compared against generateFromGraph's own wall time.
-    wait
-      ? { source: 'imageIngest' as const }
-      : {
-          perAttemptTimeoutMs: IMAGE_INGEST_SUBMIT_ATTEMPT_TIMEOUT_MS,
-          source: 'imageIngest' as const,
-        }
+    {
+      ...(wait ? {} : { perAttemptTimeoutMs: IMAGE_INGEST_SUBMIT_ATTEMPT_TIMEOUT_MS }),
+      source: 'imageIngest' as const,
+    }
   );
   const { data, response, attempts } = result;
   // `error` isn't present on every member of the result union — narrow with `in`.

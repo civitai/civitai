@@ -20,7 +20,9 @@
 // around 95 s, whereas both reads are hard-capped at 20 s by the #2883 backstop. Carrying it on the read
 // family would have meant:
 //   - prom-client applies ONE bucket array family-wide, so the >30 s boundaries the submit needs would also
-//     be minted for `getWorkflow`/`queryWorkflows`, where they can never be anything but a copy of `le=30`;
+//     be minted for `getWorkflow`/`queryWorkflows`, which the backstop cuts at 20 s — above `le=30` those
+//     extra boundaries carry no information the existing ones do not (a mid-body abort landing just past
+//     the cap is already served by the family's deliberate `+Inf` overflow);
 //   - every honest read query would have to remember to filter `op!="submit"` forever — a footgun that has
 //     to be documented rather than designed away;
 //   - during a rollout, pods on the old and new bucket sets make `sum by (le)` non-monotonic, so quantiles
@@ -28,29 +30,86 @@
 // A separate family costs one more metric name and removes all three. Nothing about the read family
 // changes, so no existing query, dashboard or alert can change meaning.
 import { registerCounterWithLabels, registerHistogram } from '~/server/prom/client';
+import type { GenerationSurface } from '~/shared/data-graph/generation/model-substitution';
 
 /**
  * WHICH submit population an observation belongs to. Bounded and closed — never derived from anything the
  * callee or a user controls.
  *
- * 🔴 This label is load-bearing, not decoration. `submitWorkflowWithRetry` is the single funnel for EVERY
- * orchestrator submit in the app: the generate leg, cost-estimate whatIfs, image ingestion (which calls the
- * wrapper directly), training, App Blocks, comics chat, prompt enhancement and product badges. Those
- * populations have wildly different latency distributions — whatIf is per-attempt-capped at 8 s, image
- * ingestion at its own cap, generate is uncapped — so an UNLABELLED submit histogram could not be compared
- * against `orchestrator.generateFromGraph`'s own wall time at all, which is the single comparison this
- * metric exists to support. Filter on `source` for any figure you intend to attribute.
+ * 🔴 This label is load-bearing, not decoration. `submitWorkflowWithRetry` is the funnel for every submit
+ * that goes through the RETRY WRAPPER: the generate leg, cost-estimate whatIfs, image ingestion (which
+ * calls the wrapper directly), preset/comics generation, training's `training.orch` submits, App Blocks,
+ * comics chat and prompt enhancement. Those populations have wildly different latency distributions —
+ * whatIf is per-attempt-capped at 8 s, image ingestion at its own cap, generate is uncapped — so an
+ * UNLABELLED submit histogram could not be compared against `orchestrator.generateFromGraph`'s own wall
+ * time at all, which is the single comparison this metric exists to support. Filter on `source` for any
+ * figure you intend to attribute.
  *
- * - `generate`    — the `generateFromGraph` submit (`orchestration-new.service.ts`), the population this PR
- *                   exists to size.
+ * - `generate`    — the `generateFromGraph` submit reached from the tRPC `orchestrator.generateFromGraph`
+ *                   procedure (surface `onsite`/`api`), the population this metric exists to size.
+ * - `preset`      — the SAME `generateFromGraph` code reached through `preset-image-gen.service`
+ *                   (surface `preset`): the preset/comics submits, INCLUDING the
+ *                   `process-enqueued-comic-panels` cron job, which runs outside the tRPC request path.
+ *                   Split out precisely so `generate` can be divided against that procedure's wall time.
  * - `whatIf`      — any submit carrying `query.whatif === true`: a side-effect-free cost estimate, bounded
  *                   by `WHATIF_SUBMIT_ATTEMPT_TIMEOUT_MS` per attempt.
  * - `imageIngest` — the image-ingestion submit, which calls `submitWorkflowWithRetry` DIRECTLY rather than
  *                   through `submitWorkflow`.
- * - `other`       — every other submit funnel (training, App Blocks, comics chat, prompt enhancement,
- *                   product badge). The default, so a new caller can never silently land in `generate`.
+ * - `other`       — every other submit funnel through the wrapper (training's `training.orch` submits, App
+ *                   Blocks, comics chat, prompt enhancement). The default, so a new caller can never
+ *                   silently land in `generate`.
+ *
+ * 🔴 NOT COVERED AT ALL, and you must know this before writing a query: five call sites reach
+ * `POST /v2/consumer/workflows` by calling the generated SDK's `submitWorkflow` DIRECTLY, bypassing the
+ * retry wrapper and therefore every instrument here — the perceptual-hash (`mediaHash`), xGuard-moderation
+ * and model-scan submits in `orchestrator.service.ts`, the badge-resize submit in
+ * `product-badge.service.ts`, and the auto-label submit in `training.service.ts`. Three of those are
+ * per-image paths and may well be a LARGER population than the instrumented one. So
+ * `sum(rate(orchestrator_submit_duration_seconds_count))` is the wrapper's submit rate, NOT the app's.
+ * Extending coverage to them means giving them the retry wrapper, which is a behaviour change and
+ * deliberately out of scope here.
  */
-export type OrchestratorSubmitSource = 'generate' | 'whatIf' | 'imageIngest' | 'other';
+export type OrchestratorSubmitSource = 'generate' | 'preset' | 'whatIf' | 'imageIngest' | 'other';
+
+/**
+ * Runtime narrowing for the `source` label. The TYPE above is a compile-time guarantee only, and excess-
+ * property checking does NOT apply to spread properties — so the first call site that writes
+ * `submitWorkflow({ ...opts, token })` where `opts` carries a stray `source` string would mint an
+ * unbounded label on a hot-path histogram, silently and with a green suite. Its sibling
+ * `classifySubmitRetryOutcome` already clamps at runtime; this closes the same hole on the other label.
+ */
+const SUBMIT_SOURCES: ReadonlySet<string> = new Set<OrchestratorSubmitSource>([
+  'generate',
+  'preset',
+  'whatIf',
+  'imageIngest',
+  'other',
+]);
+
+export function clampSubmitSource(source: unknown): OrchestratorSubmitSource {
+  return typeof source === 'string' && SUBMIT_SOURCES.has(source)
+    ? (source as OrchestratorSubmitSource)
+    : 'other';
+}
+
+/**
+ * Map a request's `GenerationSurface` onto the submit `source`, for the two entry points that share
+ * `generateFromGraph`. Reusing the existing surface enum rather than inventing a parallel vocabulary is
+ * what keeps the two from drifting apart — `GENERATION_SURFACES` is already bounded, already tested, and
+ * already fixed at context construction by the caller that knows which surface it is.
+ *
+ * `preset` is split out because the preset/comics path includes a CRON JOB
+ * (`process-enqueued-comic-panels`) that runs outside the tRPC request path; leaving it in `generate`
+ * would blend a background job into the number that gets divided against
+ * `orchestrator.generateFromGraph`'s wall time. An ABSENT surface falls to `other`, never to `generate`:
+ * an unknown caller inflating the headline population is the failure nobody would notice.
+ */
+export function submitSourceForSurface(
+  surface: GenerationSurface | undefined
+): OrchestratorSubmitSource {
+  if (surface == null) return 'other';
+  return surface === 'preset' ? 'preset' : 'generate';
+}
 
 /**
  * `ok` = the final attempt returned data. `timeout` = the final attempt's per-attempt
@@ -75,12 +134,15 @@ const submitDurationHistogram = registerHistogram({
   name: 'orchestrator_submit_duration_seconds',
   help:
     'Duration (seconds) of an orchestrator workflow submit (POST /v2/consumer/workflows) as the CALLER ' +
-    'experiences it: the whole retry-wrapped call, all attempts plus their backoff. Recorded in ' +
-    'submitWorkflowWithRetry, so it covers EVERY submit funnel in the app. Labeled by source ' +
-    '(generate|whatIf|imageIngest|other) + outcome (ok|error|timeout). Filter on source before ' +
+    'experiences it: the whole retry-wrapped call, all attempts plus their backoff. Labeled by source ' +
+    '(generate|preset|whatIf|imageIngest|other) + outcome (ok|error|timeout). Filter on source before ' +
     'attributing a figure to a procedure — these populations have different caps and different latency ' +
-    'distributions. Per-attempt resolution lives in the orchestrator:submit:attempt spans and in ' +
-    'orchestrator_submit_retries_total, not in this histogram.',
+    'distributions; source=generate is exactly the tRPC orchestrator.generateFromGraph submit leg. ' +
+    'COVERAGE: recorded in submitWorkflowWithRetry, so it covers every submit that goes through the ' +
+    'retry wrapper and NOT the five that call the generated client directly (mediaHash / ' +
+    'xGuardModeration / modelClamScan / badge-resize / training auto-label) — an unfiltered rate here ' +
+    'is the WRAPPER submit rate, not the application total. Per-attempt resolution lives in the ' +
+    'orchestrator:submit:attempt spans and in orchestrator_submit_retries_total, not in this histogram.',
   labelNames: ['source', 'outcome'] as const,
   buckets: [...ORCHESTRATOR_SUBMIT_BUCKETS],
 });
@@ -88,11 +150,14 @@ const submitDurationHistogram = registerHistogram({
 const submitTimeoutsCounter = registerCounterWithLabels({
   name: 'orchestrator_submit_timeouts_total',
   help:
-    'Count of orchestrator submits whose FINAL attempt was cut by its per-attempt AbortSignal.timeout. ' +
-    'Labeled by source (generate|whatIf|imageIngest|other). NOTE the generate path sets NO per-attempt ' +
-    'timeout, so source="generate" can never appear here by construction — a parked generate submit is ' +
-    'visible only as a large observation on orchestrator_submit_duration_seconds. This is the leading ' +
-    'indicator for the capped funnels (whatIf, image ingestion) parking against the orchestrator.',
+    'Count of orchestrator submits whose FINAL attempt ended in a fired abort deadline (a TimeoutError / ' +
+    'AbortError). Labeled by source (generate|preset|whatIf|imageIngest|other). NOTE the generate path ' +
+    'sets no per-attempt timeout AND passes no signal of its own today, so source="generate" is not ' +
+    'expected here — a parked generate submit is visible only as a large observation on ' +
+    'orchestrator_submit_duration_seconds. Both halves of that matter: a caller-supplied options.signal ' +
+    'is composed with the per-attempt deadline, so adding one to the generate path WOULD make this ' +
+    'series appear. This is the leading indicator for the capped funnels (whatIf, image ingestion) ' +
+    'parking against the orchestrator.',
   labelNames: ['source'] as const,
 });
 
@@ -107,7 +172,8 @@ const submitRetriesCounter = registerCounterWithLabels({
   help:
     'Count of orchestrator submit RETRIES actually fired by submitWorkflowWithRetry — one increment per ' +
     'backoff, so a submit that succeeded first try contributes nothing and a fully-exhausted 3-attempt ' +
-    'submit contributes 2. Labeled by source (generate|whatIf|imageIngest|other) + attempt (the 1-based ' +
+    'submit contributes 2. Labeled by source (generate|preset|whatIf|imageIngest|other) + attempt (the ' +
+    '1-based ' +
     'index of the attempt that FAILED, so attempt=1 means the first try failed and a second is about to ' +
     'run) + outcome (network | a 5xx status | other). This settles whether the recurring ~95s ' +
     'generate-submit ceiling is a 3x retry multiplier or a single long attempt: before this counter the ' +
@@ -129,8 +195,9 @@ export function observeOrchestratorSubmit(
   durationSeconds: number
 ): void {
   try {
-    submitDurationHistogram.observe({ source, outcome }, durationSeconds);
-    if (outcome === 'timeout') submitTimeoutsCounter.inc({ source });
+    const safeSource = clampSubmitSource(source);
+    submitDurationHistogram.observe({ source: safeSource, outcome }, durationSeconds);
+    if (outcome === 'timeout') submitTimeoutsCounter.inc({ source: safeSource });
   } catch {
     // Observability must never break the submit path. Swallow any prom-client error.
   }
@@ -170,7 +237,11 @@ export function observeOrchestratorSubmitRetry(
   outcome: OrchestratorSubmitRetryOutcome
 ): void {
   try {
-    submitRetriesCounter.inc({ source, attempt: String(attempt), outcome });
+    submitRetriesCounter.inc({
+      source: clampSubmitSource(source),
+      attempt: String(attempt),
+      outcome,
+    });
   } catch {
     // Observability must never break the submit path. Swallow any prom-client error.
   }

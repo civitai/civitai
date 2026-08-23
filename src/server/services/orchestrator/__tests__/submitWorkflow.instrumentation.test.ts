@@ -17,10 +17,13 @@
  *   4. W3C trace-context propagation on the outbound call, so the (already-instrumented) orchestrator
  *      can join the trace.
  *
- * 🔴 EVERY instrument is recorded in `submitWorkflowWithRetry`, not in `submitWorkflow`. That is the
- * single funnel all submits pass through; `submitWorkflow` is NOT (image ingestion calls the wrapper
- * directly). Tests below pin that placement explicitly, because instrumenting a level up silently puts
- * the spans and the histogram on DIFFERENT populations and contaminates the attempts↔duration join.
+ * 🔴 EVERY instrument is recorded in `submitWorkflowWithRetry`, not in `submitWorkflow`. Every caller of
+ * `submitWorkflow` reaches the wrapper but not the reverse — image ingestion calls the wrapper directly —
+ * so the wrapper is the lower of the two funnels. Tests below pin that placement explicitly, because
+ * instrumenting a level up silently puts the spans and the histogram on DIFFERENT populations and
+ * contaminates the attempts↔duration join. (The wrapper is NOT the app's only route to the submit
+ * endpoint: five call sites use the generated client directly. That limit is documented on the metric
+ * help strings rather than tested here, because closing it would be a behaviour change.)
  *
  * 🔴 SCOPE OF WHAT THESE TESTS PROVE. They prove the CODE emits: a real (SDK-registered) span, a real
  * prom-client observation on the shared registry with a PLAUSIBLE value in the right unit, a real
@@ -77,7 +80,12 @@ import {
   withTraceHeaders,
 } from '~/server/services/orchestrator/workflows';
 import { observeOrchestratorRead } from '~/server/services/orchestrator/orchestrator-read-metrics';
-import { classifySubmitRetryOutcome } from '~/server/services/orchestrator/orchestrator-submit-metrics';
+import {
+  clampSubmitSource,
+  classifySubmitRetryOutcome,
+  submitSourceForSurface,
+} from '~/server/services/orchestrator/orchestrator-submit-metrics';
+import { GENERATION_SURFACES } from '~/shared/data-graph/generation/model-substitution';
 import { withSpan } from '~/server/utils/otel-helpers';
 
 const DURATION = 'civitai_app_orchestrator_submit_duration_seconds';
@@ -407,6 +415,22 @@ describe('the instruments live on the ONE funnel every submit passes through', (
     );
   });
 
+  // 🔴 The span's `attempts` attribute is claimed to settle "is a ~95s park 3x30s or one long attempt?".
+  // It was set only on the RESOLVE path, so the throw-shaped park — a network failure that exhausts every
+  // attempt — produced a span with NO attempt count, which is one of the exactly two shapes the attribute
+  // exists to tell apart. The fired-AbortSignal park resolves instead, which is why this read as covered.
+  it('stamps `attempts` on the parent span even when the submit exhausts its attempts by THROWING', async () => {
+    mockSubmitWorkflow.mockRejectedValue(new TypeError('socket hang up'));
+
+    await runWithFakeTimers(() =>
+      submitWorkflowWithRetry({ client: {} as never, body: {} as never }).catch((e) => e)
+    );
+
+    const parent = spansNamed('orchestrator:submit');
+    expect(parent).toHaveLength(1);
+    expect(parent[0].attributes['orchestrator.submit.attempts']).toBe(3);
+  });
+
   it('an unlabelled caller lands in `other`, never silently in `generate`', async () => {
     mockSubmitWorkflow.mockResolvedValue(okResult());
     const beforeOther = await histCount('other', 'ok');
@@ -434,6 +458,44 @@ describe('the instruments live on the ONE funnel every submit passes through', (
 
     expect(await histCount('whatIf', 'ok')).toBe(beforeWhatIf + 1);
     expect(await histCount('generate', 'ok')).toBe(beforeGenerate);
+  });
+
+  // The coercion lives in the WRAPPER, not in `submitWorkflow`, so it applies to a direct caller too.
+  // Pinning this is the difference between the label's docstring ("any submit carrying
+  // query.whatif === true") being true and being true-only-for-callers-who-took-the-long-way.
+  it('classifies a DIRECT wrapper call carrying query.whatif as whatIf, not as its declared source', async () => {
+    mockSubmitWorkflow.mockResolvedValue(okResult());
+    const beforeWhatIf = await histCount('whatIf', 'ok');
+    const beforeIngest = await histCount('imageIngest', 'ok');
+
+    await submitWorkflowWithRetry(
+      { client: {} as never, body: {} as never, query: { whatif: true } as never },
+      { source: 'imageIngest' }
+    );
+
+    expect(await histCount('whatIf', 'ok')).toBe(beforeWhatIf + 1);
+    expect(await histCount('imageIngest', 'ok')).toBe(beforeIngest);
+  });
+
+  // 🔴 The TYPE on `source` is a compile-time guarantee only, and excess-property checking does not
+  // apply to spread properties — so a call site doing `submitWorkflow({ ...opts, token })` where `opts`
+  // carries a stray `source` string would mint an unbounded label on a hot-path histogram with a fully
+  // green suite. The runtime clamp is what actually bounds it; this is the test that the clamp exists.
+  it('clamps an out-of-enum source to `other` rather than minting an unbounded label', async () => {
+    mockSubmitWorkflow.mockResolvedValue(okResult());
+    const beforeOther = await histCount('other', 'ok');
+
+    await submitWorkflowWithRetry(
+      { client: {} as never, body: {} as never },
+      { source: 'definitely-not-a-source' as never }
+    );
+
+    expect(await histCount('other', 'ok')).toBe(beforeOther + 1);
+    expect(await histCount('definitely-not-a-source', 'ok')).toBe(0);
+    // …and the retries counter shares the clamp, not just the histogram.
+    expect(clampSubmitSource('definitely-not-a-source')).toBe('other');
+    expect(clampSubmitSource(undefined)).toBe('other');
+    expect(clampSubmitSource('preset')).toBe('preset');
   });
 });
 
@@ -504,13 +566,13 @@ describe('onRetry → civitai_app_orchestrator_submit_retries_total (the 3x mult
     expect(await retryCount('other', '1', '504')).toBe(before + 1);
   });
 
-  it('counts the retry even when the caller-supplied onRetry THROWS (our count is not hostage to it)', async () => {
+  it('counts the retry even when the caller-supplied onRetry THROWS, and still surfaces that throw', async () => {
     mockSubmitWorkflow
       .mockResolvedValueOnce(serverErrorResult(502))
       .mockResolvedValueOnce(okResult());
     const before = await retryCount('other', '1', '502');
 
-    await runWithFakeTimers(() =>
+    const thrown = await runWithFakeTimers(() =>
       submitWorkflowWithRetry(
         { client: {} as never, body: {} as never },
         {
@@ -519,10 +581,46 @@ describe('onRetry → civitai_app_orchestrator_submit_retries_total (the 3x mult
             throw new Error('caller hook exploded');
           },
         }
-      ).catch((e) => e)
+      ).catch((e: unknown) => e)
     );
 
     expect(await retryCount('other', '1', '502')).toBe(before + 1);
+    // 🔴 BOTH halves. Asserting only the counter leaves the caller-visible behaviour unpinned, and the
+    // most natural future "hardening" — wrapping `onRetry?.(info)` in a try/catch — would swallow the
+    // throw and change what callers see while this test stayed green.
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toBe('caller hook exploded');
+  });
+});
+
+describe('submitSourceForSurface — keeping a CRON JOB out of the headline population', () => {
+  // 🔴 `generateFromGraph` has two entry points and only one is the tRPC procedure: the preset/comics
+  // path reaches the same code, and one of ITS callers is the `process-enqueued-comic-panels` cron job,
+  // which runs outside the request path entirely. If `source` were stamped flat as `generate` there, the
+  // number that gets divided against `orchestrator.generateFromGraph`'s wall time would include a
+  // background job — the same contamination the label exists to remove, one level further up.
+  it('splits `preset` out of `generate`, so `generate` is the tRPC procedure and nothing else', () => {
+    expect(submitSourceForSurface('preset')).toBe('preset');
+    expect(submitSourceForSurface('onsite')).toBe('generate');
+    expect(submitSourceForSurface('api')).toBe('generate');
+  });
+
+  it('falls to `other` on an absent surface — an unknown caller must never inflate `generate`', () => {
+    expect(submitSourceForSurface(undefined)).toBe('other');
+  });
+
+  // Pins the mapping to the WHOLE surface enum rather than the three values spelled above, so a surface
+  // added later cannot silently default into `generate` without this test being looked at.
+  it('maps every declared GenerationSurface, and only `preset` leaves the generate population', () => {
+    const mapped = Object.fromEntries(
+      GENERATION_SURFACES.map((x) => [x, submitSourceForSurface(x)])
+    );
+    expect(mapped).toEqual({
+      api: 'generate',
+      block: 'generate',
+      onsite: 'generate',
+      preset: 'preset',
+    });
   });
 });
 
