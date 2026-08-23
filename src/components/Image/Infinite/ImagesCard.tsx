@@ -129,7 +129,12 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                     <MediaHash {...image} />
                   )}
                 </RoutedDialogLink>
-                {safe && features.stickerPlacement && <CardStickerOverlay imageId={image.id} />}
+                {safe && features.stickerPlacement && (
+                  <CardStickerOverlay
+                    imageId={image.id}
+                    revealStickers={contextProps.revealStickers}
+                  />
+                )}
                 <div className="absolute left-2 top-2">
                   <div className="flex flex-nowrap items-center gap-1">
                     <ImageGuard2.BlurToggle radius="xl" h={26} style={{ pointerEvents: 'auto' }} />

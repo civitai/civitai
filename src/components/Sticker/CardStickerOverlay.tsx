@@ -3,7 +3,6 @@ import { mediaContentRectOf } from '~/components/Sticker/media-content-rect';
 import { StickerPlacementOverlay } from '~/components/Sticker/StickerPlacementOverlay';
 import { useStickerPlacementBatch } from '~/components/Sticker/StickerPlacementBatchProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useImagesContext } from '~/components/Image/Providers/ImagesProvider';
 import { useStickerRevealStore } from '~/store/sticker-reveal.store';
 
 type Box = { width: number; height: number; left: number; top: number };
@@ -85,8 +84,18 @@ export const offsetWithin = (el: HTMLElement, stop: Element | null) => {
 export function CardStickerOverlay({
   imageId,
   artworkWidth = CARD_ARTWORK_WIDTH,
+  revealStickers,
 }: {
   imageId: number;
+  /**
+   * Draw the placements whatever the viewer's site-wide reveal preference says.
+   *
+   * A prop rather than a read of `ImagesContext`: this component is mounted by
+   * hosts that have no images provider at all, and reaching for one here would
+   * pull the provider's module — and everything it imports — into every one of
+   * them. A widener, so defaulting off is the correct absent value.
+   */
+  revealStickers?: boolean;
   /**
    * What the CDN is asked for, when the host draws the media wider than a card.
    * A sticker's drawn size is a fraction of the measured box, so a host with a
@@ -96,10 +105,6 @@ export function CardStickerOverlay({
   artworkWidth?: number;
 }) {
   const currentUser = useCurrentUser();
-  // The host may insist — a page whose subject is the stickers does not make
-  // sense with them hidden. It does not write the preference, so this is an
-  // override for that page and nothing else.
-  const { revealStickers } = useImagesContext();
   const revealed = useStickerRevealStore((state) => state.revealed) || !!revealStickers;
   const batch = useStickerPlacementBatch(imageId);
   const ref = useRef<HTMLDivElement>(null);
