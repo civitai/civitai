@@ -1,6 +1,6 @@
 import type { ButtonProps } from '@mantine/core';
 import { useRouter } from 'next/router';
-import { isSortAvailable } from '~/components/Filters/sort-availability';
+import { isSortAvailable, resolveFeedSort } from '~/components/Filters/sort-availability';
 import { useSortAvailability } from '~/components/Filters/useSortAvailability';
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 import type { FilterSubTypes } from '~/providers/FiltersProvider';
@@ -71,12 +71,15 @@ type DumbProps = {
 
 function DumbSortFilter({ type, value, onChange, ignoreNsfwLevel, options, ...props }: DumbProps) {
   const availability = useSortAvailability();
+  // The menu below drops what this viewer may not sort by, so a value outside it
+  // would label the control with a sort its own menu will not offer.
+  const resolved = resolveFeedSort({ type, value }, { ...availability, ignoreNsfwLevel });
 
   return (
     <SelectMenuV2
-      label={value}
+      label={resolved}
       onClick={onChange}
-      value={value}
+      value={resolved}
       options={(options ?? sortOptions[type].map((x) => ({ label: x, value: x }))).filter((x) =>
         isSortAvailable({ type, value: x.value }, { ...availability, ignoreNsfwLevel })
       )}

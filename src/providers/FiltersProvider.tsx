@@ -103,7 +103,9 @@ const imageFilterSchema = z.object({
 
 type ModelImageFilterSchema = z.infer<typeof modelImageFilterSchema>;
 const modelImageFilterSchema = imageFilterSchema.extend({
-  sort: z.enum(ImageSort).default(ImageSort.Newest), // Default sort for model images should be newest
+  // Most Reactions, not Newest: a model gallery opening on Newest fronts images
+  // that may not be rated yet, which is the sort SFW viewers are not offered.
+  sort: z.enum(ImageSort).default(ImageSort.MostReactions),
   period: z.enum(MetricTimeframe).default(MetricTimeframe.AllTime), //Default period for model details should be all time
   types: z.array(z.enum(MediaType)).default([]),
 });
