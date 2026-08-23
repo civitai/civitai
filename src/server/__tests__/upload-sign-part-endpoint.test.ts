@@ -192,7 +192,7 @@ describe('/api/upload/sign-part — telemetry cannot gate or fail the response',
 });
 
 /**
- * The route's two authorization guards. They PRE-DATE this PR and are not part of it — but
+ * The route's three authorization guards. They PRE-DATE this PR and are not part of it — but
  * this PR creates the only test file for the route, which makes it their natural home, and a
  * mutation sweep found both silently removable. `getUploadPartUrl` hands back a presigned
  * WRITE url, so a missing guard is an arbitrary-object write for any signed-in user, not a
@@ -222,6 +222,10 @@ describe('/api/upload/sign-part — authorization guards', () => {
     expect(mockGetUploadPartUrl).not.toHaveBeenCalled();
   });
 
+  // 0/-1 exercise `partNumber < 1`; 1.5/'three'/undefined exercise `!Number.isInteger`.
+  // Measured as a clean partition rather than assumed: removing only the lower bound fails
+  // exactly 2 of these, removing only the integer check fails exactly 3 — so neither clause is
+  // vacuous and no value is absorbed by an earlier check.
   it.each([0, -1, 1.5, 'three', undefined])(
     'rejects partNumber %p as a 400',
     async (partNumber) => {
@@ -235,4 +239,17 @@ describe('/api/upload/sign-part — authorization guards', () => {
       expect(mockGetUploadPartUrl).not.toHaveBeenCalled();
     }
   );
+
+  // The same 400 guard has three `typeof … !== 'string'` disjuncts that had NO case at all, so
+  // any one of them could be deleted silently. One field per case, the others left valid.
+  it.each(['bucket', 'key', 'uploadId'])('rejects a non-string %s as a 400', async (field) => {
+    const res = makeRes();
+    const req = makeReq() as unknown as { body: Record<string, unknown> };
+    req.body[field] = 12345;
+
+    await handler(req as never, res);
+
+    expect(res.statusCode).toBe(400);
+    expect(mockGetUploadPartUrl).not.toHaveBeenCalled();
+  });
 });

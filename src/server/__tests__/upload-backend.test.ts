@@ -256,9 +256,9 @@ describe('/api/upload — telemetry cannot gate or fail the response', () => {
    * the success and error paths". It was the claim that was wrong, not the code, but a guard
    * described more widely than it is written is worse than no guard: it stops anyone looking.
    *
-   * The test below this one is status-only, and that is exactly the weakness that let the
-   * sign-part reorder mutant survive round 1 — the same 500 still gets sent, so only the
-   * telemetry stall in front of the client returns.
+   * The weakness this closes is the one that let the sign-part reorder mutant survive an
+   * earlier round: a status-only assertion cannot see it, because the same 500 still gets
+   * sent and only the telemetry stall in front of the client returns.
    */
   it('ORDERING (error path): the 500 is committed before the error event is logged', async () => {
     getMultipartPutUrl.mockRejectedValueOnce(new Error('B2 said no'));

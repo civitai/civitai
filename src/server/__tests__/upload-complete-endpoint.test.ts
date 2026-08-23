@@ -76,6 +76,10 @@ function makeRes() {
     },
     json(payload: unknown) {
       this.body = payload;
+      // A real `res.json()` ENDS the response. The double must too, or a `sent` predicate
+      // built on `body !== undefined || ended` is really measuring the payload: a handler
+      // answering `json(undefined)` reads as "not committed" and fails a correct route.
+      this.ended = true;
       return this;
     },
     end() {

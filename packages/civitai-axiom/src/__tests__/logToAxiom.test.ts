@@ -170,17 +170,16 @@ describe('logToAxiom structured-stderr sink (always-on for Loki)', () => {
  * bare `await axiom.ingestEvents(datastream, sendData)`:
  *   - CONTAINMENT → the awaited call rejected into the caller.
  *   - BUDGET      → the caller was held for as long as the SDK held the socket.
- *   - NO UNHANDLED REJECTION → once the budget can win the race, the ingest promise is left
- *     with nobody awaiting it, so a rejection arriving later needs a handler that was
- *     attached SYNCHRONOUSLY at creation. Without one that is the exact
- *     `unhandledRejection` that killed the jobs pods.
  *
- * ⚠️ An earlier version of this docstring said a trailing `.then(onOk).catch(onErr)` would
- * leave the rejection unhandled. That was WRONG — `.catch` attaches to the derived promise
- * synchronously and handles the original's rejection through it, so that form is equally
- * safe (a mutant using it survives this suite, correctly). The shape that genuinely leaks,
- * and the one the NO UNHANDLED REJECTION case kills, is a fulfilment handler with NO
- * rejection handler at all.
+ * ⚠️ NO UNHANDLED REJECTION is an INVARIANT GUARD, not regression coverage — labelled so
+ * nobody counts it as proof of a bug that existed. Two earlier versions of this docstring got
+ * this wrong in two different ways (first: a trailing `.catch()` leaks; then: a fulfilment
+ * handler alone leaks and this test kills it). Both are refuted by mutants that SURVIVE 29/29,
+ * and by a node probe with a positive control: `Promise.race` subscribes to its inputs
+ * synchronously, so the ingest promise always has a subscriber and NO reachable mutation of
+ * this function that keeps the race can produce an unhandled rejection. The case is kept
+ * because it pins the property at the seam where it would break if the race were ever removed
+ * — but it is a guard against a future shape, not evidence about a past one.
  */
 describe('logToAxiom Axiom dual-write containment', () => {
   let errorSpy: ReturnType<typeof vi.spyOn>;

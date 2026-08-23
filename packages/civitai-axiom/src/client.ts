@@ -155,16 +155,21 @@ export function createAxiomLogger(
    * Deliberately NOT routed through `logToAxiom` itself — that would try to ship the report
    * of an Axiom outage to Axiom, and recurse.
    *
-   * 🔴 `type` is load-bearing, not decoration, and `type` is the field — NOT `level`.
+   * 🔴 BOTH `type` AND `level` are load-bearing, for DIFFERENT query surfaces. Two earlier
+   * versions of this comment each named one of them as the only one that matters, and each was
+   * wrong in the opposite direction — so this is stated from measurement against live Loki,
+   * with controls, not from reading either config:
    *
-   * Alloy's pipeline for these namespaces JSON-parses the stderr line and promotes `type` to
-   * **structured metadata named `type`**, so the query that finds these is `| type="error"`.
-   * (`level` → `detected_level` is the separate OTLP path, which a bare `console.error` line
-   * never takes; the deployed Alloy config says in as many words that the severity field here
-   * is `type`, not `level`. `level` is emitted alongside only for consistency with the rest of
-   * the codebase's log shape — nothing reads it.) Without `type: 'error'` these lines are
-   * unfindable by severity, and the alert on "Axiom ingest is failing" — the whole reason this
-   * event exists — could not be built on them.
+   *   - `| type="error"`      → 735 hits/h, negative control `type="zzz-none"` → 0.
+   *     Alloy JSON-parses the stderr line and promotes `type` to structured metadata.
+   *   - `| detected_level="error"` → 18,148 hits/h, and it is derived from the `level` KEY,
+   *     not from a substring scan of the line. The discriminator: lines carrying
+   *     `"level":"info"` that ALSO contain the word "error" resolve to `detected_level="info"`
+   *     (74) and never to `"error"` (0). So `level` is read, and dropping it would silently
+   *     demote these lines to Loki's substring heuristic.
+   *
+   * Emit both. Without them the "Axiom ingest is failing" alert — the whole reason this event
+   * exists — cannot be written against either surface.
    *
    * `pod` is carried for parity with every other line this logger emits, so a reader who has
    * the line in hand can attribute it without joining. It is ALSO already a Loki stream label
@@ -301,19 +306,19 @@ export function createAxiomLogger(
        * indistinguishable from an outage. Nothing here cancels the request; we stop
        * WAITING for it.
        *
-       * 🔴 A REJECTION HANDLER MUST BE ATTACHED HERE, SYNCHRONOUSLY, AT CREATION. When the
-       * budget below wins the race this promise is left running with nobody awaiting it, so a
-       * rejection arriving later has nowhere to go — that is an `unhandledRejection`, i.e. the
-       * bug this fix exists for, re-created by the fix. Attaching one after an `await`
-       * boundary, or only in the race arm, does not count.
+       * The rejection handler is paired with the success handler so the two cannot drift apart,
+       * and so `outcome` is a plain union rather than something the race has to interpret.
        *
-       * ⚠️ A trailing `.then(onOk).catch(onErr)` would be EQUALLY safe — `.catch` attaches to
-       * the derived promise synchronously and handles the original's rejection through it.
-       * An earlier version of this comment claimed otherwise and was wrong (verified in node:
-       * only the fulfilment-handler-ONLY form, `.then(onOk)` with no rejection handler, goes
-       * unhandled). The paired form is kept because it is one expression and cannot drift
-       * apart, not because the alternative leaks. What the test suite actually pins is the
-       * dangerous shape — a fulfilment handler with no rejection handler at all.
+       * ⚠️ IT IS NOT WHAT PREVENTS AN UNHANDLED REJECTION, and two earlier versions of this
+       * comment claimed it was. `Promise.race` subscribes to every input SYNCHRONOUSLY, so the
+       * ingest promise always has a subscriber from the moment the race is constructed —
+       * including after the budget has won and nothing is awaiting it any more. Measured in
+       * node against a positive control (a promise nobody ever subscribes to, which DOES leak):
+       * paired handlers, a trailing `.catch`, a fulfilment handler alone, and a completely bare
+       * promise ALL produce zero unhandled rejections once raced.
+       *
+       * So the invariant that actually matters here is "the ingest promise is raced", not "the
+       * handler is paired". Do not delete the race and keep the pairing expecting safety.
        */
       const ingest = axiom.ingestEvents(datastream, sendData).then(
         () => 'ok' as const,

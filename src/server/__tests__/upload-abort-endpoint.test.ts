@@ -56,6 +56,10 @@ function makeRes() {
     },
     json(payload: unknown) {
       this.body = payload;
+      // A real `res.json()` ENDS the response. The double must too, or a `sent` predicate
+      // built on `body !== undefined || ended` is really measuring the payload: a handler
+      // answering `json(undefined)` reads as "not committed" and fails a correct route.
+      this.ended = true;
       return this;
     },
     end() {
@@ -110,11 +114,15 @@ beforeEach(() => {
 });
 
 describe('/api/upload/abort — error classification', () => {
-  it('happy path: abortMultipartUpload resolves → 200', async () => {
-    mockAbortMultipartUpload.mockResolvedValue(undefined);
+  it('happy path: abortMultipartUpload resolves → 200 with the backend result', async () => {
+    // The BODY is asserted, not just the status: a mutation sweep found `res.json(result)` →
+    // `res.json({})` survived the whole 64-test suite, because every assertion on this route
+    // was a status or a boolean "did something get sent".
+    mockAbortMultipartUpload.mockResolvedValue({ ok: true, uploadId: 'test-upload-id' });
     const res = makeRes();
     await handler(makeReq(), res);
     expect(res.statusCode).toBe(200);
+    expect(res.body).toEqual({ ok: true, uploadId: 'test-upload-id' });
   });
 
   it('NoSuchUpload (already gone) → 204 idempotent success, not 500', async () => {
