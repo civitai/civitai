@@ -68,6 +68,27 @@ describe('requestCarriesCallerCredentials — recognises a credential', () => {
     ).toBe(true);
   });
 
+  // 🔴 ANY non-empty Authorization value, not just `Bearer `. `getServerAuthSession`
+  // resolves the key with `req.headers.authorization.split(' ')[1]`, which never
+  // inspects the scheme — so `bearer <key>` (lowercase), `Basic <key>` and
+  // `token <key>` all authenticate, and a bare `<key>` with no scheme reaches the
+  // same code path. Narrowing this predicate to a `Bearer ` prefix would put every
+  // one of those callers on the PUBLIC arm: a credentialed body, marked publicly
+  // cacheable, on a shared cache key. That is the exposure this whole change closes.
+  //
+  // The shipped predicate has no prefix check, so this is a REGRESSION PIN rather
+  // than a bug fix. It exists because every other positive fixture here uses the
+  // literal 'Bearer abc', which made two narrowing mutants — `.startsWith('Bearer ')`
+  // and `.toLowerCase().startsWith('bearer ')` — survive the full suite.
+  it.each([
+    ['a lowercase bearer scheme', 'bearer abc'],
+    ['a Basic scheme', 'Basic dXNlcjpwYXNz'],
+    ['a token scheme', 'token abc'],
+    ['a bare value with no scheme', 'abc'],
+  ])('is true for %s in Authorization', (_label, authorization) => {
+    expect(requestCarriesCallerCredentials({ headers: { authorization } } as never)).toBe(true);
+  });
+
   it('is true for a ?token= api key in req.query', () => {
     expect(
       requestCarriesCallerCredentials({
