@@ -6,6 +6,7 @@ import type { HubSourceValue } from '~/components/Hubs/HubSourceEditor';
 import { HubSourceEditor } from '~/components/Hubs/HubSourceEditor';
 import { useSortAvailability } from '~/components/Filters/useSortAvailability';
 import { defaultHubSort } from '~/components/Hubs/hub-sort';
+import { useInvalidateHub } from '~/components/Hubs/hub.utils';
 import { hubLimits } from '~/server/schema/user-hub.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -18,7 +19,7 @@ export default function HubUpsertModal({
 }) {
   const dialog = useDialogContext();
   const router = useRouter();
-  const utils = trpc.useUtils();
+  const invalidateHub = useInvalidateHub();
   const editing = !!hub;
   const defaultSort = defaultHubSort(useSortAvailability());
 
@@ -28,11 +29,10 @@ export default function HubUpsertModal({
 
   const upsert = trpc.userHub.upsert.useMutation({
     onSuccess: async (saved) => {
-      await Promise.all([
-        utils.userHub.getAll.invalidate(),
-        utils.userHub.getById.invalidate({ id: saved.id }),
-      ]);
+      // Closed first: invalidating the feed waits on its refetch, and nothing this
+      // modal saves is something the feed reads.
       dialog.onClose();
+      await invalidateHub(saved.id);
       if (!editing) await router.push(`/hubs/${saved.id}`);
     },
     onError: (error) =>

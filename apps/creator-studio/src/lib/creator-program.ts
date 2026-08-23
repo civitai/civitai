@@ -1,6 +1,6 @@
 // Shared Creator Program copy + constants so the /join page and the inline upsell speak with one voice.
-// The gate (B1) is full Creator Program membership — an active Civitai membership AND a creator score of
-// MIN_CREATOR_SCORE+ — not just a subscription tier. The CTA links out to the main-app CP page (we don't
+// Enrolment in the Creator Program needs an active Civitai membership AND a creator score of
+// MIN_CREATOR_SCORE+, not just a subscription tier. The CTA links out to the main-app CP page (we don't
 // rebuild enrollment here).
 export const CREATOR_PROGRAM_URL = 'https://civitai.com/creator-program';
 
@@ -20,23 +20,24 @@ export const CREATOR_PROGRAM_PERKS = [
     body: 'Bank the Buzz your models earn and withdraw it as real money each month.',
   },
   {
-    title: 'Set licensing fees',
-    body: 'Charge a fee when others generate with your models.',
+    title: 'Charge more',
+    body: 'Higher ceilings on licensing fees, access prices and permanent sales.',
   },
-  { title: 'Sell access indefinitely', body: 'Offer your versions for sale with no time limit.' },
   {
     title: 'Earnings & analytics',
     body: 'See what your models earn and the usage that drives it.',
   },
 ];
 
-// What the Studio actually gates on Creator Program membership vs. what any owner can do. Early/paid access
-// (timed) is intentionally NOT member-gated — only the fee + indefinite-sale write actions are.
+// Membership raises ceilings; it never unlocks a control (CU 868kj4q49). /join/welcome lists only
+// `member && !everyone` rows, so don't word an `everyone: true` row as a perk.
 export const CREATOR_PROGRAM_CAPABILITIES = [
   { label: 'Browse your models & versions', everyone: true, member: true },
   { label: 'Set up timed early / paid access', everyone: true, member: true },
-  { label: 'Set per-generation licensing fees', everyone: false, member: true },
-  { label: 'Sell access to versions indefinitely', everyone: false, member: true },
+  { label: 'Set per-generation licensing fees', everyone: true, member: true },
+  { label: 'Sell access to versions indefinitely', everyone: true, member: true },
+  { label: 'Higher caps on fees, prices and permanent sales', everyone: false, member: true },
+  { label: 'Bank Buzz to claim a share of the Compensation Pool', everyone: false, member: true },
 ];
 
 // Actionable ways to raise the creator score, ordered by impact. Mirrors the main app's scoring job

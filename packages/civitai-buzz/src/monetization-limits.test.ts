@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { maxFeeBuzzForRatio } from './licensing-fee';
-import { feeMaxFor, monetizationLimits, resolveCapTier, suggestedFee } from './monetization-limits';
+import {
+  feeMaxFor,
+  monetizationLimits,
+  resolveCapTier,
+  seedFeeRatio,
+  suggestedFee,
+  suggestedFeeRatio,
+} from './monetization-limits';
+import { maxLicensingFee, SUGGESTED_FEE_PER_IMAGE } from './licensing-fee';
 
 describe('resolveCapTier — the one tier rule, shared by both apps', () => {
   it('a member gets their own tier', () => {
@@ -104,6 +112,68 @@ describe('suggestedFee — seeded default, independent of tier', () => {
       suggestedFee({ modelType: 'LORA', baseModel: 'SDXL 1.0' }) * 5,
       5
     );
+  });
+});
+
+describe('seedFeeRatio — what a fee editor opens on', () => {
+  it('opens a checkpoint on 1 per generation and a LoRA on 1 per 10', () => {
+    expect(seedFeeRatio({ modelType: 'Checkpoint' })).toEqual({ buzz: 1, images: 1 });
+    expect(seedFeeRatio({ modelType: 'LORA' })).toEqual({ buzz: 1, images: 10 });
+  });
+
+  it('an existing fee wins over the suggestion', () => {
+    expect(seedFeeRatio({ licensingFee: 0.05, modelType: 'Checkpoint' })).toEqual({
+      buzz: 1,
+      images: 20,
+    });
+  });
+
+  it('a cleared fee falls back to the suggestion rather than to the flat denominator', () => {
+    expect(seedFeeRatio({ licensingFee: 0, modelType: 'Checkpoint' }).images).toBe(1);
+  });
+
+  it('carries the video multiplier', () => {
+    expect(seedFeeRatio({ modelType: 'LORA', baseModel: 'Hunyuan Video' })).toEqual({
+      buzz: 5,
+      images: 10,
+    });
+  });
+});
+
+describe('a suggestion is dropped when the editor cannot offer its denominator', () => {
+  it('keeps a suggestion the editor offers', () => {
+    expect(suggestedFeeRatio(1, [1, 10, 20, 50, 100])).toEqual({ buzz: 1, images: 1 });
+  });
+
+  it('falls back to the flat denominator with no amount when it does not', () => {
+    // A checkpoint filter over a free-capped selection: 1 ⚡ / 1 generation, against a list that starts
+    // at 10. Seeding it renders a select with no matching item and a ceiling of 0.
+    expect(suggestedFeeRatio(1, [10, 20, 50, 100])).toEqual({ buzz: 0, images: 10 });
+  });
+
+  it('clamps the suggestion branch of seedFeeRatio but never an existing fee', () => {
+    expect(seedFeeRatio({ modelType: 'Checkpoint', denominators: [10, 20, 50, 100] })).toEqual({
+      buzz: 0,
+      images: 10,
+    });
+    // A lapsed creator keeps the denominator they were grandfathered on, ceiling of 0 and all.
+    expect(
+      seedFeeRatio({ licensingFee: 1, modelType: 'Checkpoint', denominators: [10, 20, 50, 100] })
+    ).toEqual({ buzz: 1, images: 1 });
+  });
+});
+
+describe('every seeded suggestion is saveable on the free tier', () => {
+  // The suggestion and the free cap are separate tables. Raise one or lower the other and a fresh editor
+  // opens on a value the server rejects at submit — a failure with no ceiling in the UI to explain it.
+  const types = [...Object.keys(SUGGESTED_FEE_PER_IMAGE), 'LORA'];
+
+  it.each(types)('%s stays within the free-tier cap for image and video', (modelType) => {
+    for (const baseModel of ['SDXL 1.0', 'Hunyuan Video']) {
+      expect(suggestedFee({ modelType, baseModel })).toBeLessThanOrEqual(
+        maxLicensingFee('free', modelType, baseModel === 'Hunyuan Video' ? 'video' : 'image')
+      );
+    }
   });
 });
 

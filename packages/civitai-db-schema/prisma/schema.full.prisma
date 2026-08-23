@@ -5482,6 +5482,7 @@ enum JobQueueType {
   ModerationRequest
   BlockedImageDelete
   ImageScan
+  ReplacedImageDelete
 }
 
 model JobQueue {

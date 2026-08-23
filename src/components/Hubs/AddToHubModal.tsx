@@ -12,47 +12,38 @@ import {
 } from '@mantine/core';
 import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useInvalidateHub } from '~/components/Hubs/hub.utils';
+import type { AddUserHubSourceInput } from '~/server/schema/user-hub.schema';
 import { hubLimits } from '~/server/schema/user-hub.schema';
-import type { UserHubSourceType } from '~/shared/utils/prisma/enums';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-type HubSourceTarget = {
-  type: UserHubSourceType;
-  targetId: number;
-  alias?: string | null;
-};
-
-export default function AddToHubModal({ source }: { source: HubSourceTarget }) {
+export default function AddToHubModal({
+  source,
+}: {
+  source: Omit<AddUserHubSourceInput, 'hubId'>;
+}) {
   const dialog = useDialogContext();
-  const utils = trpc.useUtils();
+  const invalidateHub = useInvalidateHub();
   const [name, setName] = useState('');
 
   const { data: hubs, isLoading } = trpc.userHub.getAll.useQuery();
-
-  const invalidate = async (hubId: number) => {
-    await Promise.all([
-      utils.userHub.getAll.invalidate(),
-      utils.userHub.getById.invalidate({ id: hubId }),
-    ]);
-    await utils.image.getInfinite.invalidate({ hubId });
-  };
 
   const onError = (title: string) => (error: { message: string }) =>
     showErrorNotification({ title, error: new Error(error.message) });
 
   const addSource = trpc.userHub.addSource.useMutation({
-    onSuccess: (_, variables) => invalidate(variables.hubId),
+    onSuccess: (_, variables) => invalidateHub(variables.hubId),
     onError: onError('Could not add to hub'),
   });
   const removeSource = trpc.userHub.removeSource.useMutation({
-    onSuccess: (_, variables) => invalidate(variables.hubId),
+    onSuccess: (_, variables) => invalidateHub(variables.hubId),
     onError: onError('Could not remove from hub'),
   });
   const createHub = trpc.userHub.upsert.useMutation({
     onSuccess: async (hub) => {
       setName('');
-      await invalidate(hub.id);
+      await invalidateHub(hub.id);
     },
     onError: onError('Could not create hub'),
   });

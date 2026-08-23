@@ -19,7 +19,7 @@
   import SaleFields from '$lib/components/monetization/SaleFields.svelte';
   import { resolveSaleDraft, type SaleDraftInput } from '$lib/monetization/sales';
   import { isSaleActive, remainingSaleDays, type ModelVersionSaleWindow } from '@civitai/buzz';
-  import { budgetMonthOf, shortenBounds } from '$lib/monetization/sales';
+  import { budgetMonthOf, minCreatorScoreForSale, shortenBounds } from '$lib/monetization/sales';
   import type { PageData } from './$types';
 
   // Scheduled sales, listed and managed. Starting one lives on the Models tab, where the selection is;
@@ -168,6 +168,10 @@
       });
   });
 
+  // Three states share this page and read as one another otherwise: not switched on, switched on but
+  // under the score floor, and eligible with nothing scheduled. A tester read the first as the third.
+  const minScore = $derived(minCreatorScoreForSale(data.saleLimits));
+
   const draft = $derived(
     resolveSaleDraft(
       sale,
@@ -218,8 +222,18 @@
 
   {#if !data.salesEnabled}
     <p class="rounded-lg border border-dark-4 p-4 text-sm text-dark-2">
-      Scheduled sales aren't available on your account yet.
+      Scheduled sales aren't switched on for your account yet.
     </p>
+  {:else if data.creatorScore < minScore}
+    <div class="flex flex-col items-start gap-2 rounded-lg border border-dark-4 p-6">
+      <span class="text-sm font-medium text-white">
+        Scheduling a sale needs a creator score of {minScore.toLocaleString()}
+      </span>
+      <p class="text-sm text-dark-2">
+        You're at {data.creatorScore.toLocaleString()}. Score comes from followers, model usage and
+        engagement, so it climbs as people use what you publish.
+      </p>
+    </div>
   {:else if data.manageableSales.length === 0}
     <div class="flex flex-col items-start gap-2 rounded-lg border border-dark-4 p-6">
       <span class="text-sm font-medium text-white">No sales running or scheduled</span>
