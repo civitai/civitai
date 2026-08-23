@@ -39,6 +39,8 @@ vi.mock('~/server/auth/get-server-auth-session', () => ({
 }));
 
 import handler from '~/pages/api/upload/abort';
+// Mocked in ~/__tests__/setup as vi.fn(); imported here so it can be made to REJECT.
+import { logToAxiom } from '~/server/logging/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 function makeRes() {
@@ -135,7 +137,7 @@ describe('/api/upload/abort — error classification', () => {
       s3Error({
         name: 'InvalidPart',
         message:
-          'One or more of the specified parts could not be found. The part may not have been uploaded, or the specified entity tag may not match the part\'s entity tag.',
+          "One or more of the specified parts could not be found. The part may not have been uploaded, or the specified entity tag may not match the part's entity tag.",
         $metadata: { httpStatusCode: 400 },
       })
     );
@@ -180,5 +182,44 @@ describe('/api/upload/abort — error classification', () => {
     const res = makeRes();
     await handler(makeReq(), res);
     expect(res.statusCode).toBe(500);
+  });
+
+  /**
+   * 🔴 THE RESPONSE MUST NOT DEPEND ON TELEMETRY. Every case above runs with a resolving
+   * `logToAxiom` (a `vi.fn()` from `~/__tests__/setup`), so none of them could see the
+   * 2026-08-23 failure: with Axiom's ingest host unreachable, the awaited log call above
+   * the classifier threw and this entire taxonomy became unreachable — 92 sampled 500s on
+   * a route whose normal 500 rate is zero. Mirrors the block in
+   * ./upload-complete-endpoint.test.ts, which carries the full mechanism.
+   *
+   * Asserts the handler settles cleanly AND the client's status — see the note in
+   * ./upload-complete-endpoint.test.ts on why `resolves` is load-bearing. Pre-fix, both
+   * cases observe `statusCode` 0.
+   */
+  describe('telemetry failure cannot change the client response', () => {
+    const withFailingLogger = async (res: ReturnType<typeof makeRes>) => {
+      vi.mocked(logToAxiom).mockRejectedValue(new Error('timeout of 30000ms exceeded'));
+      try {
+        await expect(handler(makeReq(), res)).resolves.toBeUndefined();
+      } finally {
+        vi.mocked(logToAxiom).mockReset();
+      }
+    };
+
+    it('NoSuchUpload still classifies to 204 — the branch is reachable', async () => {
+      mockAbortMultipartUpload.mockRejectedValue(
+        s3Error({ name: 'NoSuchUpload', $metadata: { httpStatusCode: 404 } })
+      );
+      const res = makeRes();
+      await withFailingLogger(res);
+      expect(res.statusCode).toBe(204);
+    });
+
+    it('a successful abort still returns 200', async () => {
+      mockAbortMultipartUpload.mockResolvedValue({ ok: true });
+      const res = makeRes();
+      await withFailingLogger(res);
+      expect(res.statusCode).toBe(200);
+    });
   });
 });

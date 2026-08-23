@@ -92,11 +92,12 @@ describe('logToAxiom structured-stderr sink (always-on for Loki)', () => {
     h.ingestEvents.mockRejectedValue(new Error('axiom down'));
     const { logToAxiom } = createAxiomLogger(PROD_CONFIGURED);
 
-    // The stderr line is written synchronously before the await, so it lands even though the rejection
-    // propagates out of logToAxiom.
-    await expect(logToAxiom(ERR)).rejects.toThrow('axiom down');
+    // 🔴 This assertion USED TO BE `rejects.toThrow('axiom down')` — the rejection propagating out of
+    // logToAxiom was the documented behaviour, and it is what turned the 2026-08-23 Axiom outage into
+    // ~5,300 upload 500s and three crashed jobs pods. The dual-write is now contained.
+    await expect(logToAxiom(ERR)).resolves.toBeUndefined();
 
-    expect(errorSpy).toHaveBeenCalledTimes(1);
+    // The event line still lands (written before the await), plus ONE outage report.
     const parsed = JSON.parse(errorSpy.mock.calls[0][0] as string);
     expect(parsed).toMatchObject({ message: ERR.message, code: ERR.code });
     expect(h.ingestEvents).toHaveBeenCalledTimes(1);
@@ -142,6 +143,151 @@ describe('logToAxiom structured-stderr sink (always-on for Loki)', () => {
       'civitai-errors',
       expect.objectContaining({ message: ERR.message, code: ERR.code, pod: 'pod-test' })
     );
+  });
+});
+
+/**
+ * The Axiom dual-write must be CONTAINED (cannot throw to the caller) and BOUNDED (cannot
+ * hold the caller for the SDK's 30 s axios timeout).
+ *
+ * Every case here fails on the pre-2026-08-23 implementation, whose last statement was a
+ * bare `await axiom.ingestEvents(datastream, sendData)`:
+ *   - CONTAINMENT → the awaited call rejected into the caller.
+ *   - BUDGET      → the caller was held for as long as the SDK held the socket.
+ *   - NO UNHANDLED REJECTION → after a budget-based fix that used a trailing `.catch()`
+ *     instead of a paired rejection handler, the abandoned promise's later rejection is
+ *     unhandled, which is the exact `unhandledRejection` that killed the jobs pods.
+ */
+describe('logToAxiom Axiom dual-write containment', () => {
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    h.ingestEvents.mockReset().mockResolvedValue(undefined);
+    errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    errorSpy.mockRestore();
+    vi.useRealTimers();
+  });
+
+  const reports = (spy: ReturnType<typeof vi.spyOn>): Record<string, unknown>[] => {
+    const parsed: Record<string, unknown>[] = [];
+    for (const call of spy.mock.calls as unknown[][]) {
+      let line: Record<string, unknown>;
+      try {
+        line = JSON.parse(call[0] as string);
+      } catch {
+        continue;
+      }
+      if (typeof line.name === 'string' && line.name.startsWith('axiom-ingest-')) parsed.push(line);
+    }
+    return parsed;
+  };
+
+  it('CONTAINMENT: a rejecting ingest resolves the caller and reports the failure once', async () => {
+    h.ingestEvents.mockRejectedValue(new Error('ECONNREFUSED'));
+    const { logToAxiom } = createAxiomLogger(PROD_CONFIGURED);
+
+    await expect(logToAxiom(ERR)).resolves.toBeUndefined();
+
+    const r = reports(errorSpy);
+    expect(r).toHaveLength(1);
+    expect(r[0]).toMatchObject({
+      name: 'axiom-ingest-failed',
+      reason: 'error',
+      consecutiveFailures: 1,
+    });
+  });
+
+  it('BUDGET: a hanging ingest does not hold the caller past AXIOM_INGEST_TIMEOUT_MS', async () => {
+    vi.useFakeTimers();
+    // Never settles — the black-holed-endpoint case. Attach a sink so the abandoned promise
+    // cannot register as unhandled if the implementation regresses to leaving it bare.
+    h.ingestEvents.mockReturnValue(new Promise(() => {}));
+    const { logToAxiom } = createAxiomLogger(PROD_CONFIGURED);
+
+    let settled = false;
+    const call = logToAxiom(ERR).then(() => {
+      settled = true;
+    });
+
+    // Advance to just under the budget: still waiting.
+    await vi.advanceTimersByTimeAsync(1_999);
+    expect(settled).toBe(false);
+
+    // Cross it: the caller is released even though the ingest never resolves.
+    await vi.advanceTimersByTimeAsync(2);
+    await call;
+    expect(settled).toBe(true);
+
+    expect(reports(errorSpy)[0]).toMatchObject({ name: 'axiom-ingest-failed', reason: 'timeout' });
+  });
+
+  it('NO UNHANDLED REJECTION: an ingest that rejects AFTER the budget expired is still handled', async () => {
+    vi.useFakeTimers();
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      // Rejects long after the caller has stopped waiting — the shape that crashed the
+      // background pods when nothing was attached to the promise.
+      h.ingestEvents.mockReturnValue(
+        new Promise((_resolve, reject) => setTimeout(() => reject(new Error('late')), 10_000))
+      );
+      const { logToAxiom } = createAxiomLogger(PROD_CONFIGURED);
+
+      const call = logToAxiom(ERR);
+      await vi.advanceTimersByTimeAsync(2_001);
+      await expect(call).resolves.toBeUndefined();
+
+      await vi.advanceTimersByTimeAsync(10_000);
+      // Let any unhandled-rejection detection run.
+      vi.useRealTimers();
+      await new Promise((r) => setTimeout(r, 20));
+
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+
+  it('THROTTLE: an outage reports on the 1st and every 500th failure, not once per event', async () => {
+    h.ingestEvents.mockRejectedValue(new Error('down'));
+    const { logToAxiom } = createAxiomLogger(PROD_CONFIGURED);
+
+    for (let i = 0; i < 501; i++) await logToAxiom(ERR);
+
+    const r = reports(errorSpy);
+    expect(r.map((x) => x.consecutiveFailures)).toEqual([1, 500]);
+  });
+
+  it('RECOVERY: the next success reports the outage total and resets the counter', async () => {
+    const { logToAxiom } = createAxiomLogger(PROD_CONFIGURED);
+
+    h.ingestEvents.mockRejectedValue(new Error('down'));
+    await logToAxiom(ERR);
+    await logToAxiom(ERR);
+
+    h.ingestEvents.mockResolvedValue(undefined);
+    await logToAxiom(ERR);
+
+    expect(reports(errorSpy).at(-1)).toMatchObject({
+      name: 'axiom-ingest-recovered',
+      failedSince: 2,
+    });
+
+    // Counter reset: a later single failure reports as the FIRST of a new outage.
+    errorSpy.mockClear();
+    h.ingestEvents.mockRejectedValue(new Error('down again'));
+    await logToAxiom(ERR);
+    expect(reports(errorSpy)[0]).toMatchObject({ consecutiveFailures: 1 });
+  });
+
+  it('HEALTHY PATH IS SILENT: a successful ingest emits no outage report', async () => {
+    const { logToAxiom } = createAxiomLogger(PROD_CONFIGURED);
+    await logToAxiom(ERR);
+    expect(reports(errorSpy)).toEqual([]);
   });
 });
 

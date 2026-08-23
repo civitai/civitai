@@ -66,6 +66,35 @@ export type AxiomDeps = {
 };
 
 /**
+ * How long the Axiom dual-write may hold the CALLER before we stop waiting for it.
+ *
+ * 🔴 This is a CEILING ON THE CALLER, not a request timeout — nothing here cancels the
+ * in-flight POST. The underlying SDK (`@axiomhq/axiom-node`) drives axios with its own
+ * hardcoded `timeout: 30000`, which is not reachable through `new Client({token, orgId})`,
+ * so 30 s is what a request against a black-holed endpoint actually costs. That number is
+ * fine for a background flush and catastrophic on a request path: on 2026-08-23 Axiom's
+ * ingest host became unreachable for 44 minutes and every awaited `logToAxiom` on
+ * `/api/upload/{complete,abort,index}` stalled 30 s and then threw, turning uploads that
+ * had ALREADY SUCCEEDED into 500s for 350 users. See the containment note at the
+ * `ingestEvents` call below.
+ *
+ * 2 s is chosen to be longer than a healthy ingest (single-digit ms) by a wide margin and
+ * short enough to be invisible next to the work these hot paths already did.
+ */
+const AXIOM_INGEST_TIMEOUT_MS = 2_000;
+
+/**
+ * Report every Nth consecutive dual-write failure, not every one.
+ *
+ * A multi-minute Axiom outage produces one failure per logged event — 6,444 of them in
+ * 44 minutes during the incident above. One line each would be its own noise incident in
+ * Loki; zero lines would make the outage invisible from inside the app. Report the FIRST
+ * failure (so the start is timestamped), then every Nth (so the scale is legible), then the
+ * recovery with the total.
+ */
+const AXIOM_INGEST_FAILURE_REPORT_EVERY = 500;
+
+/**
  * Build an Axiom logger. Config defaults come from the package's own env schema
  * (./env); pass a `Partial<AxiomConfig>` to override any value per call (tests,
  * multi-instance, alternate config sources). `deps` injects optional app behavior —
@@ -80,6 +109,40 @@ export function createAxiomLogger(
 
   const axiom =
     config.token && config.orgId ? new Client({ token: config.token, orgId: config.orgId }) : null;
+
+  // Consecutive-failure count for the Axiom dual-write. Per-logger, not global: a second
+  // logger instance is a second transport and gets its own outage.
+  let ingestFailures = 0;
+
+  /**
+   * Record the outcome of one dual-write and, on a transition or every Nth failure, say so
+   * on the stderr/Loki path that is still working. `'timeout'` is counted as a failure: we
+   * stopped waiting, so from the caller's side the event is not known to have landed.
+   *
+   * Deliberately NOT routed through `logToAxiom` itself — that would try to ship the report
+   * of an Axiom outage to Axiom, and recurse.
+   */
+  function recordIngestOutcome(outcome: 'ok' | 'error' | 'timeout') {
+    if (outcome === 'ok') {
+      if (ingestFailures > 0) {
+        console.error(
+          JSON.stringify({ name: 'axiom-ingest-recovered', failedSince: ingestFailures })
+        );
+        ingestFailures = 0;
+      }
+      return;
+    }
+    ingestFailures += 1;
+    if (ingestFailures === 1 || ingestFailures % AXIOM_INGEST_FAILURE_REPORT_EVERY === 0) {
+      console.error(
+        JSON.stringify({
+          name: 'axiom-ingest-failed',
+          reason: outcome,
+          consecutiveFailures: ingestFailures,
+        })
+      );
+    }
+  }
 
   async function logToAxiom(data: MixedObject, datastream?: string) {
     const sendData = { pod: config.podName, ...data };
@@ -149,7 +212,59 @@ export function createAxiomLogger(
 
       if (!axiom) return;
       if (!datastream) return;
-      await axiom.ingestEvents(datastream, sendData);
+
+      /**
+       * 🔴 CONTAINED AND BOUNDED — the same contract the injected sink above already has,
+       * and for the same reason stated there: a telemetry sink must never be able to fail
+       * the code path it is observing. Until 2026-08-23 this one line was the sole
+       * uncontained sink in this function, and the exception proved expensive.
+       *
+       * WHAT IT COST. Axiom's ingest host went unreachable 01:08–01:52Z on 2026-08-23.
+       * `logToAxiom` is awaited on hot paths (this file's own header says so), so the
+       * rejection propagated into the callers:
+       *   - `/api/upload/complete` — the multipart completion had ALREADY SUCCEEDED; the
+       *     throw happened on the log line after it, so a stored object was reported to the
+       *     browser as a 500. ~5,300 failed requests, 350 distinct users, 44 minutes.
+       *   - the same handlers' CATCH blocks awaited this before classifying the error, so
+       *     the 409/422/503 taxonomy was structurally unreachable and every fault — 1,009
+       *     of them a terminal `NoSuchUpload` — went out as a retryable 500. Clients
+       *     retried; the retries re-failed. (The handlers have since been reordered too;
+       *     this containment is the half that does not depend on remembering to.)
+       *   - the background `jobs` pods call it WITHOUT awaiting, so there the rejection was
+       *     an `unhandledRejection` and Node exited. All three pods died at 01:06:45Z.
+       *
+       * WHY A RACE AND NOT JUST A TRY/CATCH. try/catch alone fixes the throw but not the
+       * 30 s stall (see AXIOM_INGEST_TIMEOUT_MS) — the caller would still be held for 30 s
+       * per logged event against a black-holed endpoint, which on the upload path is
+       * indistinguishable from an outage. Nothing here cancels the request; we stop
+       * WAITING for it.
+       *
+       * 🔴 The rejection handler is attached in the same `.then(onOk, onErr)` as the success
+       * handler — NOT as a later `.catch()` and not inside the race. When the budget wins,
+       * this promise is left running with nobody awaiting it; an unhandled rejection at
+       * that point is precisely the `unhandledRejection` that killed the jobs pods, i.e.
+       * the bug re-created by the fix for it.
+       */
+      const ingest = axiom.ingestEvents(datastream, sendData).then(
+        () => 'ok' as const,
+        () => 'error' as const
+      );
+
+      let onBudgetExpired!: (outcome: 'timeout') => void;
+      const budget = new Promise<'timeout'>((resolve) => {
+        onBudgetExpired = resolve;
+      });
+      const timer = setTimeout(() => onBudgetExpired('timeout'), AXIOM_INGEST_TIMEOUT_MS);
+      // Never let a pending telemetry budget hold a process open at shutdown.
+      if (typeof (timer as { unref?: () => void }).unref === 'function') {
+        (timer as unknown as { unref: () => void }).unref();
+      }
+
+      try {
+        recordIngestOutcome(await Promise.race([ingest, budget]));
+      } finally {
+        clearTimeout(timer);
+      }
     } else {
       console.log('logToAxiom', sendData);
     }
