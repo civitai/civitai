@@ -541,6 +541,33 @@ async function getImageTagsForImages(
   );
 }
 
+/**
+ * Associates already-fetched tags to their images in O(N + M).
+ *
+ * `getImageTagsForImages` returns the tags for EVERY image in the batch, so a
+ * per-image `tags.filter(x => x.imageId === i.id)` rescans the whole array once
+ * per image — O(N x M), and M grows with N. CPU profiles of the production API
+ * showed that construct dominating multi-second event-loop stalls.
+ *
+ * 🔴 The empty case must stay `[]`, NOT `undefined`. `.filter()` returned `[]`
+ * for an image with no tags and `Map.get()` returns `undefined`; those are
+ * different values in the API response, and images with no tags are common.
+ * That is what the `?? []` is for — do not "simplify" it away.
+ */
+export function attachTagsToImages<TImage extends { id: number }, TTag extends { imageId: number }>(
+  images: TImage[],
+  tags: TTag[] | undefined
+): (TImage & { tags: TTag[] })[] {
+  const tagsByImageId = tags?.reduce((acc, tag) => {
+    const arr = acc.get(tag.imageId);
+    if (arr) arr.push(tag);
+    else acc.set(tag.imageId, [tag]);
+    return acc;
+  }, new Map<number, TTag[]>());
+
+  return images.map((i) => ({ ...i, tags: tagsByImageId?.get(i.id) ?? [] }));
+}
+
 export const deleteImageById = async ({
   id,
   updatePost,
@@ -7080,10 +7107,7 @@ export const getImagesByEntity = async ({
     tagsVar = await getImageTagsForImages(imageIds);
   }
 
-  return images.map((i) => ({
-    ...i,
-    tags: tagsVar?.filter((x) => x.imageId === i.id),
-  }));
+  return attachTagsToImages(images, tagsVar);
 };
 
 export async function createImage({
@@ -7440,9 +7464,8 @@ export const getEntityCoverImage = async ({
 
   const cosmetics = await getCosmeticsForEntity({ ids: images.map((i) => i.id), entity: 'Image' });
 
-  return images.map((i) => ({
+  return attachTagsToImages(images, tagsVar).map((i) => ({
     ...i,
-    tags: tagsVar?.filter((x) => x.imageId === i.id),
     cosmetic: cosmetics[i.id],
   }));
 };
