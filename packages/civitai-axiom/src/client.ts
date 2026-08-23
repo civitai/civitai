@@ -155,21 +155,29 @@ export function createAxiomLogger(
    * Deliberately NOT routed through `logToAxiom` itself — that would try to ship the report
    * of an Axiom outage to Axiom, and recurse.
    *
-   * 🔴 BOTH `type` AND `level` are load-bearing, for DIFFERENT query surfaces. Two earlier
-   * versions of this comment each named one of them as the only one that matters, and each was
-   * wrong in the opposite direction — so this is stated from measurement against live Loki,
-   * with controls, not from reading either config:
+   * 🔴 `type: 'error'` is what makes this event findable. **Query it as `| type="error"`.**
    *
-   *   - `| type="error"`      → 735 hits/h, negative control `type="zzz-none"` → 0.
-   *     Alloy JSON-parses the stderr line and promotes `type` to structured metadata.
-   *   - `| detected_level="error"` → 18,148 hits/h, and it is derived from the `level` KEY,
-   *     not from a substring scan of the line. The discriminator: lines carrying
-   *     `"level":"info"` that ALSO contain the word "error" resolve to `detected_level="info"`
-   *     (74) and never to `"error"` (0). So `level` is read, and dropping it would silently
-   *     demote these lines to Loki's substring heuristic.
+   * That much is measured: Alloy JSON-parses this stderr line and promotes `type` to structured
+   * metadata, `| type="error"` returns rows, and the negative control `| type="zzz-none"`
+   * returns none.
    *
-   * Emit both. Without them the "Axiom ingest is failing" alert — the whole reason this event
-   * exists — cannot be written against either surface.
+   * ⚠️ DO NOT ADD A FOURTH THEORY ABOUT `detected_level` TO THIS COMMENT. Three successive
+   * rewrites each asserted a different mechanism for it and each was refuted by the next
+   * round's measurement — "`type` → `detected_level`", then "nothing reads `level`", then
+   * "`detected_level` is derived from the `level` key". The last was refuted by the control
+   * that version failed to run: lines carrying `"type":"error"` and NO `level` key resolve to
+   * `detected_level="error"` **100% of the time**, so `level` is not what drives it; and the
+   * discriminator that version cited could never have separated the two, because no line in
+   * this namespace carries `level` without also carrying `type`. `| level=` matches nothing at
+   * all — `level` has no structured-metadata surface here.
+   *
+   * So: `level` is emitted for SHAPE CONSISTENCY with the rest of the codebase's log records,
+   * NOT because anything here is known to read it. It is harmless and cheap; it is not the
+   * reason these lines are findable. If you need to know how `detected_level` is really
+   * derived, measure it — do not trust this comment, and do not extend it with a guess.
+   *
+   * Figures are deliberately not quoted here: an undated hit count in a source comment is
+   * unfalsifiable and decays. Re-measure against Loki with a negative control when it matters.
    *
    * `pod` is carried for parity with every other line this logger emits, so a reader who has
    * the line in hand can attribute it without joining. It is ALSO already a Loki stream label
@@ -306,19 +314,25 @@ export function createAxiomLogger(
        * indistinguishable from an outage. Nothing here cancels the request; we stop
        * WAITING for it.
        *
-       * The rejection handler is paired with the success handler so the two cannot drift apart,
-       * and so `outcome` is a plain union rather than something the race has to interpret.
+       * 🔴 THE PAIRING AND THE RACE ARE BOTH LOAD-BEARING, FOR DIFFERENT FAILURE MODES. Keep
+       * both. Three earlier versions of this comment each named one of them as the only one
+       * that mattered; all three were wrong, so these are stated from a node probe with a
+       * positive control (a promise nobody subscribes to, which does leak):
        *
-       * ⚠️ IT IS NOT WHAT PREVENTS AN UNHANDLED REJECTION, and two earlier versions of this
-       * comment claimed it was. `Promise.race` subscribes to every input SYNCHRONOUSLY, so the
-       * ingest promise always has a subscriber from the moment the race is constructed —
-       * including after the budget has won and nothing is awaiting it any more. Measured in
-       * node against a positive control (a promise nobody ever subscribes to, which DOES leak):
-       * paired handlers, a trailing `.catch`, a fulfilment handler alone, and a completely bare
-       * promise ALL produce zero unhandled rejections once raced.
+       *   - THE PAIRING handles an ingest that rejects EARLY, before the budget. It converts
+       *     the rejection into the value `'error'`, so the awaited race resolves. Without it
+       *     the race REJECTS and throws into the caller — measured: a bare or
+       *     fulfilment-handler-only ingest gives `THREW`, the paired one gives `'error'`. That
+       *     throw is the original 2026-08-23 bug, so deleting the pairing re-creates it.
+       *   - THE RACE handles an ingest that rejects LATE, after the budget has won and nothing
+       *     awaits the promise any more. `Promise.race` subscribes to its inputs synchronously,
+       *     so a subscriber is always attached. Measured: once raced, paired handlers, a
+       *     trailing `.catch`, a fulfilment handler alone and a bare promise ALL produce zero
+       *     unhandled rejections.
        *
-       * So the invariant that actually matters here is "the ingest promise is raced", not "the
-       * handler is paired". Do not delete the race and keep the pairing expecting safety.
+       * Neither substitutes for the other. `.then(onOk).catch(onErr)` would be equivalent to
+       * the paired form; what is NOT equivalent is dropping either the rejection handler or
+       * the race.
        */
       const ingest = axiom.ingestEvents(datastream, sendData).then(
         () => 'ok' as const,

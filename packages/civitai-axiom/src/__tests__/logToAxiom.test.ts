@@ -172,14 +172,20 @@ describe('logToAxiom structured-stderr sink (always-on for Loki)', () => {
  *   - BUDGET      → the caller was held for as long as the SDK held the socket.
  *
  * ⚠️ NO UNHANDLED REJECTION is an INVARIANT GUARD, not regression coverage — labelled so
- * nobody counts it as proof of a bug that existed. Two earlier versions of this docstring got
- * this wrong in two different ways (first: a trailing `.catch()` leaks; then: a fulfilment
- * handler alone leaks and this test kills it). Both are refuted by mutants that SURVIVE 29/29,
- * and by a node probe with a positive control: `Promise.race` subscribes to its inputs
- * synchronously, so the ingest promise always has a subscriber and NO reachable mutation of
- * this function that keeps the race can produce an unhandled rejection. The case is kept
- * because it pins the property at the seam where it would break if the race were ever removed
- * — but it is a guard against a future shape, not evidence about a past one.
+ * nobody counts it as proof of a bug that existed. Once the ingest promise is raced it always
+ * has a synchronous subscriber, so no reachable mutation of that function produces an
+ * unhandled rejection: verified by a node probe with a positive control, and by a trailing
+ * `.then().catch()` mutant that SURVIVES 29/29.
+ *
+ * Two precise corrections, because earlier versions of this docstring were wrong in both
+ * directions and the second correction was also wrong:
+ *   - a trailing `.catch()` does NOT leak (that mutant survives — correctly);
+ *   - a fulfilment-handler-ONLY ingest does not leak either, but it is NOT harmless: it makes
+ *     an EARLY rejection reject the race and throw into the caller. That mutant fails 8 of 29,
+ *     killed by the CONTAINMENT cases — not by this one. So it dies for a real reason, just
+ *     not this test's reason.
+ *   - removing the race while keeping the pairing fails this case by TIMEOUT, i.e. as a
+ *     duplicate of BUDGET, not by observing a rejection.
  */
 describe('logToAxiom Axiom dual-write containment', () => {
   let errorSpy: ReturnType<typeof vi.spyOn>;
@@ -314,10 +320,10 @@ describe('logToAxiom Axiom dual-write containment', () => {
   });
 
   /**
-   * 🔴 `type` — NOT `level` — is the severity field Alloy promotes to structured metadata for
-   * these lines, so `| type="error"` is the query that finds them. Without it the event is
-   * unfindable by severity and the "Axiom ingest is failing" alert it exists to support
-   * cannot be built on it.
+   * 🔴 `type: 'error'` is what makes this event findable — query it as `| type="error"`.
+   * Measured, with a negative control; see the note at `recordIngestOutcome`, which also
+   * records why no claim is made here about `detected_level` (three rewrites, three refuted
+   * mechanisms) and that `level` is emitted for shape consistency only.
    *
    * Both `type` and `pod` were missing from the first version of this feature and an audit
    * caught it. Pinned here because the failure mode is silence: the event still gets written,

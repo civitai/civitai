@@ -194,7 +194,7 @@ describe('/api/upload/sign-part — telemetry cannot gate or fail the response',
 /**
  * The route's three authorization guards. They PRE-DATE this PR and are not part of it — but
  * this PR creates the only test file for the route, which makes it their natural home, and a
- * mutation sweep found both silently removable. `getUploadPartUrl` hands back a presigned
+ * mutation sweep found all three silently removable. `getUploadPartUrl` hands back a presigned
  * WRITE url, so a missing guard is an arbitrary-object write for any signed-in user, not a
  * cosmetic defect.
  */
@@ -226,8 +226,10 @@ describe('/api/upload/sign-part — authorization guards', () => {
   // Measured as a clean partition rather than assumed: removing only the lower bound fails
   // exactly 2 of these, removing only the integer check fails exactly 3 — so neither clause is
   // vacuous and no value is absorbed by an earlier check.
+  // Title uses String(value), not `%p` — vitest does not interpolate `%p`, so all five cases
+  // would otherwise report under one identical name and a failure could not be attributed.
   it.each([0, -1, 1.5, 'three', undefined])(
-    'rejects partNumber %p as a 400',
+    'rejects partNumber $0 as a 400',
     async (partNumber) => {
       const res = makeRes();
       const req = makeReq() as unknown as { body: Record<string, unknown> };

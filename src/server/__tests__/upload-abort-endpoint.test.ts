@@ -114,15 +114,21 @@ beforeEach(() => {
 });
 
 describe('/api/upload/abort — error classification', () => {
-  it('happy path: abortMultipartUpload resolves → 200 with the backend result', async () => {
+  it('happy path: abortMultipartUpload resolves → 200, passing the backend result through', async () => {
+    // 🔴 The fixture is `undefined` because that is what the real collaborator returns —
+    // `abortMultipartUpload` is `Promise<void>` (see ~/utils/s3-utils). An earlier version used
+    // `{ ok: true, … }`, a shape it can never produce, which made this the only route whose
+    // happy-path test could not have caught a body defect the production value would hit.
+    //
     // The BODY is asserted, not just the status: a mutation sweep found `res.json(result)` →
-    // `res.json({})` survived the whole 64-test suite, because every assertion on this route
-    // was a status or a boolean "did something get sent".
-    mockAbortMultipartUpload.mockResolvedValue({ ok: true, uploadId: 'test-upload-id' });
+    // `res.json({})` survived the whole suite, because every other assertion on this route was
+    // a status or a boolean "did something get sent". `toBeUndefined` still kills that mutant.
+    mockAbortMultipartUpload.mockResolvedValue(undefined);
     const res = makeRes();
     await handler(makeReq(), res);
     expect(res.statusCode).toBe(200);
-    expect(res.body).toEqual({ ok: true, uploadId: 'test-upload-id' });
+    expect(res.body).toBeUndefined();
+    expect(res.ended).toBe(true);
   });
 
   it('NoSuchUpload (already gone) → 204 idempotent success, not 500', async () => {
@@ -138,6 +144,11 @@ describe('/api/upload/abort — error classification', () => {
     await handler(makeReq(), res);
     expect(res.statusCode).toBe(204);
     expect(res.ended).toBe(true);
+    // 🔴 A 204 MUST CARRY NO BODY, and `ended` alone no longer says that. Round 4 made the
+    // double's `json()` set `ended` (so a `sent` predicate would stop measuring the payload),
+    // which silently turned the assertion above into a tautology: `res.status(204).json({})`
+    // passed the whole suite. This is the assertion that distinguishes `.end()` from `.json()`.
+    expect(res.body).toBeUndefined();
   });
 
   it('InvalidPart (name + $metadata 400) → 422 + no-store, not 500', async () => {
