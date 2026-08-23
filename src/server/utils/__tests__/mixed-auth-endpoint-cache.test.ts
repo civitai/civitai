@@ -17,7 +17,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  *   2. **The credentialed arm states a header.** It previously stated nothing and
  *      relied on `apiCacheMiddleware`, whose matcher is `/api/trpc/*` and
  *      `/api/v1/*` only. Two of this wrapper's twelve routes sit outside that:
- *      `/api/auth/freshdesk` (a 302 whose `Location` carries a per-user JWT),
+ *      `/api/auth/freshdesk`, a redirect whose target is caller-specific and
  *      which had no `Cache-Control` at all, and the 404 arms of
  *      `/api/blocks/screenshot/[appBlockId]/[file]` — whose 200 arm sets its own
  *      header and still wins, as the override test below pins.
