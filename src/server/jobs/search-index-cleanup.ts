@@ -1,5 +1,5 @@
 import { createJob } from './job';
-import { cleanupAllIndexes } from '~/server/meilisearch/cleanup';
+import { CLEANUP_INDEXES, cleanupAllIndexes } from '~/server/meilisearch/cleanup';
 import { logToAxiom } from '~/server/logging/client';
 
 // Page size REQUESTED per keyset scan. `cleanupIndex` clamps this down to each
@@ -136,6 +136,31 @@ export const searchIndexCleanupJob = createJob(
         skipped: r.idsSkipped,
         rescuedByPrimary: r.rescuedByPrimary,
         indexingAtStart: r.indexingAtStart,
+      }).catch(() => undefined);
+    }
+
+    // An index the run never REACHED emits no per-index line at all, because
+    // `cleanupAllIndexes` stops iterating on cancellation and this loop only
+    // sees what came back. "We stopped at index 4 of 7" would otherwise be
+    // visible only by noticing four payloads instead of seven — and it is the
+    // one truncation mode in exactly the class this job's reporting exists for
+    // that `stoppedEarly` structurally CANNOT see, since a per-index flag
+    // cannot be set for an index that was never opened.
+    //
+    // It also got likelier with the fixes around it: full coverage plus a
+    // primary re-check per delete chunk makes every index strictly slower.
+    const attempted = new Set(results.map((r) => r.key));
+    const missed = CLEANUP_INDEXES.filter((c) => !attempted.has(c.key)).map((c) => c.key);
+    if (missed.length > 0) {
+      logToAxiom({
+        type: 'error',
+        name: 'search-index-cleanup',
+        message:
+          `run ENDED BEFORE ${missed.length} of ${CLEANUP_INDEXES.length} configured index(es) ` +
+          `were attempted: ${missed.join(', ')}`,
+        indexesConfigured: CLEANUP_INDEXES.length,
+        indexesAttempted: results.length,
+        indexesMissed: missed,
       }).catch(() => undefined);
     }
 

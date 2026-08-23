@@ -325,6 +325,12 @@ export async function cleanupIndex(
   // until after the scan made the job all-or-nothing — a cancellation (the
   // request socket closing) broke the scan, then broke the delete loop at
   // chunk 0, and the index got ZERO deletions for the run.
+  //
+  // Nothing is pushed here under `apply: false`, or the sentence above would be
+  // false in that mode: `flushDeletions` returns immediately without applying,
+  // so the list would never drain and would grow to hold every stale id in the
+  // index — exactly the accumulator this replaced. `staleFound` is counted
+  // independently, so the dry-run figures are unaffected.
   const pendingStaleIds: number[] = [];
 
   // Retry helper: run `fn` up to MAX_ATTEMPTS times with linear backoff.
@@ -532,7 +538,7 @@ export async function cleanupIndex(
       stats.staleFound += staleIds.length;
       consecutivePgFailures = 0;
 
-      if (staleIds.length > 0) pendingStaleIds.push(...staleIds);
+      if (opts.apply && staleIds.length > 0) pendingStaleIds.push(...staleIds);
 
       // `offset` in the callback reports the cursor (last id seen before this batch).
       opts.onBatch?.({

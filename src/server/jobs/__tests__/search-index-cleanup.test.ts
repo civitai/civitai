@@ -26,7 +26,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { cleanupAllIndexes } = vi.hoisted(() => ({ cleanupAllIndexes: vi.fn() }));
 
-vi.mock('~/server/meilisearch/cleanup', () => ({ cleanupAllIndexes }));
+// Spreads the original so `CLEANUP_INDEXES` is the REAL configured list — the
+// never-attempted check below compares against it, and a hand-written stand-in
+// would make that assertion a statement about the fixture instead.
+vi.mock('~/server/meilisearch/cleanup', async (importOriginal) => ({
+  ...(await importOriginal<typeof CleanupModule>()),
+  cleanupAllIndexes,
+}));
+
+import type * as CleanupModule from '~/server/meilisearch/cleanup';
+import { CLEANUP_INDEXES } from '~/server/meilisearch/cleanup';
 
 // `~/server/logging/client` is a CANONICAL shared-module mock: src/__tests__/setup.ts
 // registers it once, globally, spreading the real module and overriding only
@@ -309,6 +318,128 @@ describe('search-index-cleanup: a truncated scan is loud and says so precisely',
         'scanned 700, stale 21, deleted 13'
     );
     expect(String(payload?.message)).not.toContain('STOPPED EARLY');
+  });
+});
+
+describe('search-index-cleanup: the coverage band is calibrated, not incidental', () => {
+  // The backstop is `shortfall > FLOOR && shortfall > total * RATIO`. In a
+  // fixture where both clauses agree, either constant can be mutated freely
+  // and the suite stays green — they shadow each other. These three cases are
+  // chosen so exactly ONE clause is decisive in each, which is what makes each
+  // constant independently observable.
+
+  it('does not flag a shortfall that clears the RATIO but not the absolute FLOOR', async () => {
+    // total 2000, scanned 1200 -> shortfall 800.
+    //   ratio: 800 > 500   TRUE   (would flag)
+    //   floor: 800 > 1000  FALSE  (blocks)
+    // So the floor is the only thing keeping this quiet: lowering or deleting
+    // it turns this into an error. A small index must not go loud over a few
+    // hundred documents.
+    cleanupAllIndexes.mockResolvedValue([
+      stats({
+        key: 'tools',
+        idsScanned: 1200,
+        staleFound: 17,
+        deleted: 9,
+        totalInIndex: 2000,
+        stoppedEarly: false,
+      }),
+    ]);
+
+    await searchIndexCleanupJob.run({}).result;
+
+    expect(payloadFor('tools')?.type).toBe('info');
+    expect(payloadFor('tools')?.incomplete).toBe(false);
+  });
+
+  it('does not flag a large absolute shortfall that is a small PROPORTION', async () => {
+    // total 100000, scanned 90000 -> shortfall 10000.
+    //   floor: 10000 > 1000   TRUE  (would flag, and stays true however the
+    //                                floor is lowered)
+    //   ratio: 10000 > 25000  FALSE (blocks)
+    // The ratio is the only thing keeping this quiet: loosening it to 0.05, or
+    // deleting the clause, turns a 90%-covered run into a nightly error.
+    cleanupAllIndexes.mockResolvedValue([
+      stats({
+        key: 'bounties',
+        idsScanned: 90000,
+        staleFound: 31,
+        deleted: 12,
+        totalInIndex: 100000,
+        stoppedEarly: false,
+      }),
+    ]);
+
+    await searchIndexCleanupJob.run({}).result;
+
+    expect(payloadFor('bounties')?.type).toBe('info');
+    expect(payloadFor('bounties')?.incomplete).toBe(false);
+  });
+
+  it('DOES flag a shortfall that clears the ratio band', async () => {
+    // total 100000, scanned 60000 -> shortfall 40000.
+    //   floor: 40000 > 1000   TRUE
+    //   ratio: 40000 > 25000  TRUE  -> flagged
+    // Pins the band from the other side: widening the ratio to 0.95 (or
+    // raising the floor above 40000) silences a run that missed 40% of the
+    // index. Together with the two cases above, each constant is now
+    // independently observable in both directions.
+    cleanupAllIndexes.mockResolvedValue([
+      stats({
+        key: 'comics',
+        idsScanned: 60000,
+        staleFound: 23,
+        deleted: 8,
+        totalInIndex: 100000,
+        stoppedEarly: false,
+      }),
+    ]);
+
+    await searchIndexCleanupJob.run({}).result;
+
+    expect(payloadFor('comics')?.type).toBe('error');
+    expect(payloadFor('comics')?.incomplete).toBe(true);
+    expect(payloadFor('comics')?.message).toBe(
+      'comics: scan reached the end of the index but covered only 60000 of 100000 document(s) — ' +
+        'scanned 60000, stale 23, deleted 8'
+    );
+  });
+});
+
+describe('search-index-cleanup: an index the run never reached is reported', () => {
+  it('names every configured index that was never attempted', async () => {
+    // `cleanupAllIndexes` stops iterating on cancellation, so the indexes it
+    // never opened produce no per-index line. A per-index `stoppedEarly` flag
+    // cannot cover this: there is no result object to carry it.
+    const [first, second, ...rest] = CLEANUP_INDEXES;
+    cleanupAllIndexes.mockResolvedValue([
+      stats({ key: first.key, idsScanned: 40, staleFound: 3, deleted: 1, totalInIndex: 40 }),
+      stats({ key: second.key, idsScanned: 22, staleFound: 5, deleted: 2, totalInIndex: 22 }),
+    ]);
+
+    await searchIndexCleanupJob.run({}).result;
+
+    const missedLine = logged().find((p) => p.indexesMissed !== undefined);
+    expect(missedLine?.type).toBe('error');
+    expect(missedLine?.indexesConfigured).toBe(CLEANUP_INDEXES.length);
+    expect(missedLine?.indexesAttempted).toBe(2);
+    expect(missedLine?.indexesMissed).toEqual(rest.map((c) => c.key));
+    expect(missedLine?.message).toBe(
+      `run ENDED BEFORE ${rest.length} of ${CLEANUP_INDEXES.length} configured index(es) ` +
+        `were attempted: ${rest.map((c) => c.key).join(', ')}`
+    );
+  });
+
+  it('says nothing when every configured index was attempted', async () => {
+    cleanupAllIndexes.mockResolvedValue(
+      CLEANUP_INDEXES.map((c, i) =>
+        stats({ key: c.key, idsScanned: 10 + i, staleFound: 2, deleted: 1, totalInIndex: 10 + i })
+      )
+    );
+
+    await searchIndexCleanupJob.run({}).result;
+
+    expect(logged().find((p) => p.indexesMissed !== undefined)).toBeUndefined();
   });
 });
 
