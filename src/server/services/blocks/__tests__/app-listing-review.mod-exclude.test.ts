@@ -7,6 +7,8 @@ import {
   setAppListingReviewExclude,
   upsertAppListingReview,
 } from '~/server/services/blocks/app-listing-review.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { resetHybridNodes } from '~/__tests__/mocks/hybrid';
 
 /**
  * W13 — the MODERATOR hide/un-hide control for an AppListing review
@@ -22,56 +24,37 @@ import {
  *   3. the flag flip and the counter move happen in ONE transaction, off the
  *      PRIMARY (a replica-lag read of `exclude` would decide the delta wrongly).
  *
- * All DB deps are mocked — no real Prisma. `dbWrite.$transaction` runs its callback
- * against the SAME `dbWrite` mock (the tx client) so a test asserts the exact writes
- * made inside the tx, and `dbRead`/`dbWrite` are DISTINCT mocks so a test can prove
- * which client a read went to.
+ * All DB deps come from the CANONICAL `dbMock` (registered globally in
+ * `src/__tests__/setup.ts`) — no real Prisma, and no per-file `vi.mock` of
+ * `~/server/db/client`, which `no-direct-shared-module-mock` forbids. Its
+ * `dbWrite.$transaction` default runs the callback with `dbMock.dbWrite`, so a test
+ * asserts the exact writes made inside the tx; `dbRead` and `dbWrite` are DISTINCT
+ * nodes, so a test can prove which client a read went to.
  */
 
-type WriteMock = {
-  $transaction: ReturnType<typeof vi.fn>;
-  appListingReview: {
-    findUnique: ReturnType<typeof vi.fn>;
-    update: ReturnType<typeof vi.fn>;
-    upsert: ReturnType<typeof vi.fn>;
-  };
-  appListingMetric: { upsert: ReturnType<typeof vi.fn>; updateMany: ReturnType<typeof vi.fn> };
-};
-type ReadMock = {
-  appListing: { findUnique: ReturnType<typeof vi.fn> };
-  appListingReview: {
-    findUnique: ReturnType<typeof vi.fn>;
-    findFirst: ReturnType<typeof vi.fn>;
-    findMany: ReturnType<typeof vi.fn>;
-  };
-};
-
-const { mockRead, mockWrite, mockBust } = vi.hoisted(() => {
-  const write: WriteMock = {
-    $transaction: vi.fn(),
-    appListingReview: {
-      findUnique: vi.fn(async () => null),
-      update: vi.fn(async () => ({})),
-      upsert: vi.fn(async () => ({})),
-    },
-    appListingMetric: {
-      upsert: vi.fn(async () => ({})),
-      updateMany: vi.fn(async () => ({ count: 0 })),
-    },
-  };
-  const read: ReadMock = {
-    appListing: { findUnique: vi.fn(async () => null) },
-    appListingReview: {
-      findUnique: vi.fn(async () => null),
-      findFirst: vi.fn(async () => null),
-      findMany: vi.fn(async () => []),
-    },
-  };
-  return { mockRead: read, mockWrite: write, mockBust: vi.fn(async () => undefined) };
-});
-
-vi.mock('~/server/db/client', () => ({ dbRead: mockRead, dbWrite: mockWrite }));
+const { mockBust } = vi.hoisted(() => ({ mockBust: vi.fn(async () => undefined) }));
 vi.mock('~/server/utils/cache-helpers', () => ({ bustCacheTag: mockBust }));
+
+const mockWrite = {
+  $transaction: dbMock.dbWrite.$transaction,
+  appListingReview: {
+    findUnique: dbMock.dbWrite.appListingReview.findUnique,
+    update: dbMock.dbWrite.appListingReview.update,
+    upsert: dbMock.dbWrite.appListingReview.upsert,
+  },
+  appListingMetric: {
+    upsert: dbMock.dbWrite.appListingMetric.upsert,
+    updateMany: dbMock.dbWrite.appListingMetric.updateMany,
+  },
+};
+const mockRead = {
+  appListing: { findUnique: dbMock.dbRead.appListing.findUnique },
+  appListingReview: {
+    findUnique: dbMock.dbRead.appListingReview.findUnique,
+    findFirst: dbMock.dbRead.appListingReview.findFirst,
+    findMany: dbMock.dbRead.appListingReview.findMany,
+  },
+};
 
 const REVIEW_ID = 7;
 const APP_ID = 'apl_target';
@@ -88,26 +71,22 @@ function reviewRow(over: Partial<{ recommended: boolean; exclude: boolean }> = {
 }
 
 beforeEach(() => {
-  // 🔴 resetAllMocks, NOT clearAllMocks. `mockClear` leaves the `mockResolvedValueOnce`
+  // 🔴 A full RESET, not `mockClear`. `mockClear` leaves the `mockResolvedValueOnce`
   // QUEUE intact, so a test that throws before consuming its queued values leaks them
-  // into the NEXT test — which then runs against a row it never configured and can
-  // pass or fail for a reason that has nothing to do with the code. (Observed for
-  // real while measuring this file against the base branch.) Every implementation is
-  // re-established immediately below, so the reset costs nothing.
-  vi.resetAllMocks();
+  // into the NEXT test — which then runs against a row it never configured and can pass
+  // or fail for a reason that has nothing to do with the code. (Observed for real while
+  // measuring this file against the base branch.) `resetSharedMocks()` runs per FILE,
+  // not per test, so the per-test reset has to be explicit — `resetHybridNodes()` clears
+  // every canonical node's implementation AND call history and re-applies its registered
+  // default, which is what restores the `$transaction` callback runner below.
+  resetHybridNodes();
+  mockBust.mockReset();
   mockBust.mockResolvedValue(undefined);
-  mockWrite.$transaction.mockImplementation(async (cb: (tx: WriteMock) => Promise<unknown>) =>
-    cb(mockWrite)
-  );
   mockWrite.appListingReview.findUnique.mockResolvedValue(reviewRow());
   mockWrite.appListingReview.update.mockResolvedValue({});
   mockWrite.appListingReview.upsert.mockResolvedValue({});
   mockWrite.appListingMetric.upsert.mockResolvedValue({});
   mockWrite.appListingMetric.updateMany.mockResolvedValue({ count: 0 });
-  mockRead.appListing.findUnique.mockResolvedValue(null);
-  mockRead.appListingReview.findUnique.mockResolvedValue(null);
-  mockRead.appListingReview.findFirst.mockResolvedValue(null);
-  mockRead.appListingReview.findMany.mockResolvedValue([]);
 });
 
 function metricUpdateArgs() {
