@@ -346,6 +346,36 @@ describe('nothing outside daemon-port.mjs decides the daemon port', () => {
     expect(holders).toEqual([owner]);
   });
 
+  /**
+   * The widened import pattern, checked against inputs it must and must not match.
+   *
+   * Relaxing a guard is a change to the guard, so it gets its own controls rather than being
+   * trusted because the file it was relaxed for went green. The single-line form was widened to
+   * allow a multi-line clause; everything it used to reject it must still reject.
+   */
+  it('recognises an import without being satisfied by a mention', () => {
+    const pattern = /^import\s+(?:[^;'"]|\n)*?from '[^']*daemon-port\.mjs';$/m;
+
+    expect(pattern.test(`import { resolveDaemonUrl } from './scripts/daemon-port.mjs';`)).toBe(
+      true
+    );
+    expect(
+      pattern.test(
+        `import {\n  removeStalePidFile,\n  resolveDaemonUrl,\n} from './scripts/daemon-port.mjs';`
+      )
+    ).toBe(true);
+
+    // A prose mention, which is the thing the assertion exists to be unsatisfied by.
+    expect(pattern.test(`// see ./scripts/daemon-port.mjs for the rule`)).toBe(false);
+    expect(pattern.test(`const m = './scripts/daemon-port.mjs';`)).toBe(false);
+    // An unrelated import must not act as the start of a match that reaches a later mention.
+    expect(
+      pattern.test(`import { spawn } from 'child_process';\n// ./scripts/daemon-port.mjs\n`)
+    ).toBe(false);
+    // Nothing at all.
+    expect(pattern.test(`const DAEMON_URL = 'http://127.0.0.1:9444';`)).toBe(false);
+  });
+
   it('has every daemon client take its address from that module', () => {
     const clients = [cliScript, resolve(skillDir, 'console.mjs')];
     for (const file of clients) {
@@ -353,9 +383,15 @@ describe('nothing outside daemon-port.mjs decides the daemon port', () => {
       const name = relative(repoRoot, file);
       // An IMPORT, not a mention: `includes('daemon-port.mjs')` alone is satisfied by a comment,
       // and this file's prose names the module in several of them.
-      expect(`${name}: ${/^import .*from '.*daemon-port\.mjs';$/m.test(source)}`).toBe(
-        `${name}: true`
-      );
+      //
+      // The clause may span lines — prettier breaks one past 100 columns, and a client that needs
+      // several names from the module gets there — so the single-line form this used to require
+      // was a rule about formatting, not about importing. `[^;'"]` is what keeps it honest: it
+      // cannot start at an EARLIER import statement, because that statement's own quotes and
+      // semicolon are excluded from the span, and it still cannot match prose.
+      expect(
+        `${name}: ${/^import\s+(?:[^;'"]|\n)*?from '[^']*daemon-port\.mjs';$/m.test(source)}`
+      ).toBe(`${name}: true`);
       // The client takes the whole URL. Resolving a PORT and then doing arithmetic on it is the
       // shape that let a wrong-but-non-literal value through: `resolveDaemonPort() + 1` used to
       // satisfy every assertion here.

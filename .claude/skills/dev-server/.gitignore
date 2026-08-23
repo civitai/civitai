@@ -1,3 +1,6 @@
 daemon.pid
+# A daemon on a non-default port writes daemon-<port>.pid — same file, scoped so two daemons
+# cannot overwrite each other's. See scripts/daemon-port.mjs.
+daemon-*.pid
 .env
 env-modes.local

@@ -83,7 +83,13 @@ of them can disagree about where it is. Until 2026-08-19 the daemon did not read
 and setting it pointed the client at a port nothing was serving.
 
 The variable is only a default for the daemon; an explicit `node scripts/daemon.mjs --port <port>` still
-wins. Each daemon owns the shared `daemon.pid`, so the last one started is the one that file names.
+wins.
+
+**Each daemon has its own pid file, named for its port.** The one on the default port keeps plain
+`daemon.pid` — so the `readlink` check above is unchanged — and every other daemon writes
+`daemon-<port>.pid` beside it. Until 2026-08-21 they shared one file, so standing a probe daemon up
+overwrote the record of the shared one and stopping the probe **deleted** it, leaving
+`cat daemon.pid` with nothing to read while the daemon it had named was still serving.
 
 ## Never curl a dev port — `probe` instead
 
@@ -323,11 +329,22 @@ Things worth knowing before you rely on it:
   nonzero telling you to re-request — it will not poll forever against a daemon that has forgotten
   you.
 - **Position is exact**, not an estimate: it is the index in one ordered list.
-- **The log window holds the last 2000 lines, and says when it clipped.** A run that emits
+- **The log window holds the last 12,000 lines, and says when it clipped.** A run that emits
   more than that loses its oldest lines, so a late `test wait` or a `test logs` read can be a
   fragment. Both waiters print `WARNING: this log is INCOMPLETE …` naming how many lines went,
   and `logsDropped` is on the run view — a non-zero value means do not quote what you see as
   the whole run. A live waiter that has been streaming from the start is unaffected.
+  A fully passing full-suite run measured 4,793 lines, so a clip on a green run means the suite
+  has grown a lot; on a run with failures it is ordinary, and it is the case the warning is for.
+- **Only the 8 most recent finished runs keep their lines.** Older ones keep their record —
+  status, exit code, the counts `test list` shows, up to 50 of them — and their lines are
+  released and counted into `logsDropped`, so an aged-out run reads as INCOMPLETE rather than
+  as an empty log that looks whole. Fetch a run's logs while it is recent.
+- **A daemon sweeps orphaned capture files at start.** A run's output goes to
+  `/tmp/civitai-test-run-<pid>-<uuid>.log`, released when the run ends — but a daemon killed with
+  `-9`, or a crash mid-run, leaves one behind (~675 KB for a full suite). The sweep removes only
+  those whose `<pid>` names a process that is **gone**; a live owner's file is another running
+  capture, possibly another developer's, and is left alone.
 - **The exit code is `exitCodeFor`'s, in both waiters.** `test wait` and `pnpm run test:unit:run`
   read the same rule, so a run killed by a signal reports 1 from either, never a shell 255.
 

@@ -17,14 +17,19 @@
 
 import http from 'http';
 import { spawn, execSync } from 'child_process';
-import { existsSync, readFileSync, writeFileSync, unlinkSync, statSync, readdirSync, rmSync, realpathSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, statSync, readdirSync, rmSync, realpathSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { randomBytes, createHash } from 'crypto';
 import { access } from 'fs/promises';
 import { isPortFree } from './port-probe.mjs';
-import { parsePort, resolveDaemonPort } from './daemon-port.mjs';
-import { TestQueue } from './test-queue.mjs';
+import {
+  parsePort,
+  pidFileFor,
+  removePidFileIfOwned,
+  resolveDaemonPort,
+} from './daemon-port.mjs';
+import { TestQueue, sweepStaleCaptures } from './test-queue.mjs';
 import {
   loadModeDefinitions,
   resolveSessionModes,
@@ -37,7 +42,10 @@ import {
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const skillDir = resolve(__dirname, '..');
 const projectRoot = resolve(skillDir, '../../..');
-const pidFile = resolve(skillDir, 'daemon.pid');
+// Assigned in main(), from the port this daemon actually bound — `--port` beats DEV_DAEMON_PORT,
+// so a value read from the environment at module load would name the wrong file. Scoped by port
+// because the file names ONE process: see pidFileFor in daemon-port.mjs for the measurement.
+let pidFile = null;
 
 // Configuration
 const DEFAULT_BASE_DEV_PORT = 3000;
@@ -1880,8 +1888,23 @@ function readBody(req) {
 async function main() {
   const config = parseArgs();
 
-  // Write PID file
+  // Write PID file. Named for the port this daemon is about to bind, so standing a second daemon
+  // beside the shared one no longer overwrites the record of the shared one.
+  pidFile = pidFileFor(skillDir, config.port);
   writeFileSync(pidFile, String(process.pid));
+
+  // Capture files outlive a daemon that is killed rather than stopped (`kill -9`, a crash between
+  // create and release), and nothing else sweeps them. The pid in the name is what makes this
+  // safe to do at start: a file whose owner is still running belongs to a live run — another
+  // daemon's, or another developer's — and is left alone.
+  const sweptCaptures = sweepStaleCaptures();
+  if (sweptCaptures.removed.length || sweptCaptures.errors.length) {
+    console.error(
+      `  Stale test captures: removed ${sweptCaptures.removed.length}, ` +
+        `kept ${sweptCaptures.kept.length} (owner alive), ` +
+        `failed ${sweptCaptures.errors.length}`
+    );
+  }
 
   baseDevPort = config.baseDevPort;
 
@@ -2542,7 +2565,7 @@ async function main() {
         res.end(JSON.stringify({ success: true }));
 
         setTimeout(() => {
-          try { unlinkSync(pidFile); } catch (e) {}
+          removePidFileIfOwned(pidFile, process.pid);
           process.exit(0);
         }, 100);
         return;
@@ -2610,7 +2633,9 @@ async function main() {
     await rgbProxy.stop();
     await authHub.stop();
     await stopSpokeApps();
-    try { unlinkSync(pidFile); } catch (e) {}
+    // Only if it still names US. Same rule as the /shutdown branch — a signal handler is not a
+    // different kind of exit.
+    removePidFileIfOwned(pidFile, process.pid);
     server.close();
     process.exit(0);
   });
@@ -2624,7 +2649,7 @@ async function main() {
     await rgbProxy.stop();
     await authHub.stop();
     await stopSpokeApps();
-    try { unlinkSync(pidFile); } catch (e) {}
+    removePidFileIfOwned(pidFile, process.pid);
     server.close();
     process.exit(0);
   });

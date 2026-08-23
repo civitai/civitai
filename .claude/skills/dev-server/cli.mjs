@@ -7,9 +7,13 @@
 import { spawn, execSync } from 'child_process';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'fs';
+import { existsSync, writeFileSync } from 'fs';
 import { exitCodeFor, isTerminal as isTerminalStatus } from './scripts/test-queue.mjs';
-import { resolveDaemonUrl } from './scripts/daemon-port.mjs';
+import {
+  removeStalePidFile,
+  resolveDaemonPidFile,
+  resolveDaemonUrl,
+} from './scripts/daemon-port.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -26,7 +30,9 @@ function findProjectRoot(startDir) {
 }
 
 const projectRoot = findProjectRoot(__dirname);
-const pidFile = resolve(__dirname, 'daemon.pid');
+// Scoped to the port this invocation targets: the shared daemon and a daemon on some probe port
+// are two processes and no longer share one file. See pidFileFor in scripts/daemon-port.mjs.
+const pidFile = resolveDaemonPidFile(__dirname);
 const serverScript = resolve(__dirname, 'scripts/daemon.mjs');
 
 // Overridable via DEV_DAEMON_PORT, so a second daemon can be exercised without touching the
@@ -518,9 +524,11 @@ async function cmdShutdown() {
     process.exit(1);
   }
   console.log('Daemon shutdown');
-  if (existsSync(pidFile)) {
-    unlinkSync(pidFile);
-  }
+  // The daemon removes its own pid file on the way out; this is the leftover case — a pid file
+  // with nothing behind it — so it removes one only once the process it names is gone. A daemon
+  // that accepted the shutdown and then hung in `stopSpokeApps()` is still serving, and deleting
+  // the record of a running process is the damage this whole change is about.
+  removeStalePidFile(pidFile);
 }
 
 function samePath(a, b) {
