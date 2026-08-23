@@ -7,8 +7,9 @@
 // `refreshBlobUrlsInBody`, and the submit POST — and the first two were excluded by measurement, so the
 // submit POST carries essentially the whole endpoint. Until this metric existed the only bound on it was
 // subtraction. Four instruments were blind to it by construction: there is no app-side timer on the submit
-// leg, the call bypasses the edge (in-cluster service address), the api pool emits no client-kind spans so
-// trace context never reached the callee, and continuous profiling has no per-request label.
+// leg, the call bypasses the public edge (it uses an internal service address), the api pool emits no
+// client-kind spans so trace context never reached the callee, and continuous profiling has no
+// per-request label.
 //
 // The callee's own route metric cannot substitute: `POST /v2/consumer/workflows` also serves App Blocks,
 // external API consumers (which can pass an uncapped `wait=N`), the -next deployment and training. Its 202
