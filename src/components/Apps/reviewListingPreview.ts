@@ -122,6 +122,17 @@ export function buildListingDetailPreview(
     // serialId only feeds the comments thread, which the preview omits → 0.
     serialId: 0,
     tagline: null,
+    // 🔴 ALWAYS NULL HERE, and that is a limitation this builder OWNS rather than
+    // hides. This is the FALLBACK preview, built from the publish-request row —
+    // `OffsitePendingRow` carries no `sourceRepoUrl`, so there is nothing honest to
+    // put here. The REAL preview a moderator sees comes from
+    // `getListingPreviewForReview`, which projects the actual listing row through
+    // `projectListingDetail` and DOES carry it (guarded against the manual-apply
+    // column). Widening this fallback would mean widening the review-row query, which
+    // is a bigger change than the placeholder-art path warrants — but it does mean a
+    // mod who only ever saw THIS builder's output would not see the source link, so:
+    // if the fallback ever becomes the primary path, this must be revisited.
+    sourceRepoUrl: null,
     description: null,
     // The mod REVIEW preview intentionally shows no collaborator byline: this row is
     // built from an in-review publish request, not from a live listing, so there is no

@@ -5877,13 +5877,19 @@ export const blocksRouter = router({
             // surface — the /apps/[appBlockId]/edit Listing tab is media-only),
             // so the editor writes them here and they flow to the store listing
             // on approve. The BlockManifestValidator re-checks both below
-            // (tagline ≤140 trimmed, category ∈ MARKETPLACE_CATEGORIES); these
+            // (tagline ≤140 trimmed, repository host-allowlisted + repo-root,
+            // category ∈ MARKETPLACE_CATEGORIES); these
             // bounds are just coarse request-size guards. `.nullable()` so the
             // client can explicitly CLEAR a previously-set value (an `undefined`
             // may be dropped in transit, and the server merge is
             // `{...stored, ...patch}` — so a dropped key would retain the old
             // value; see the same reasoning for scopeJustifications).
             tagline: z.string().max(500).nullable().optional(),
+            // Public source-repository link — same manifest-governed / nullable-clear
+            // contract as `tagline`. The BlockManifestValidator re-checks the real rule
+            // (https, host allowlist, `/<owner>/<repo>` root, ≤200 chars) below; this
+            // bound is only a coarse request-size guard.
+            repository: z.string().max(2048).nullable().optional(),
             category: z.string().max(64).nullable().optional(),
             scopes: z.array(z.string().min(1).max(128)).max(64).optional(),
             // Optional per-scope justification map (scope-id → rationale). The
@@ -5997,7 +6003,7 @@ export const blocksRouter = router({
       // then retain the stored value. Both fields are OPTIONAL in the manifest,
       // and the validator rejects a non-string/blank value, so "cleared" must
       // mean the KEY IS ABSENT — not `null`.
-      for (const key of ['tagline', 'category'] as const) {
+      for (const key of ['tagline', 'repository', 'category'] as const) {
         if (patch[key] === null) delete merged[key];
       }
 

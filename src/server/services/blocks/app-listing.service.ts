@@ -23,6 +23,9 @@ import type {
   ListingSort,
 } from '~/server/schema/blocks/app-listing-read.schema';
 import { listingCoverUrl, listingIconUrl } from '~/server/services/blocks/listing-media-url';
+// The MANUAL-APPLY `source_repo_url` column is read ONLY through this guard — never via
+// `listingHydrateSelect`, which the public `/apps` GRID shares. See its module header.
+import { readListingSourceRepoUrl } from '~/server/services/blocks/app-listing-source-repo.service';
 import { queryCache } from '~/server/utils/cache-helpers';
 
 /**
@@ -373,7 +376,15 @@ export async function getListingPreviewForReview(args: {
     select: listingHydrateSelect,
   });
   if (!row) return null;
-  return { card: projectListingCard(row), detail: projectListingDetail(row) };
+  // Same manual-apply guard as the public read — a moderator previewing a shadow must
+  // see the source link the apply will publish, and the preview must not 500 while the
+  // migration is outstanding. `args.listingId` is the row this preview projects (a
+  // shadow id here, deliberately), not its parent.
+  const sourceRepo = await readListingSourceRepoUrl(args.listingId, dbRead);
+  return {
+    card: projectListingCard(row),
+    detail: projectListingDetail(row, [], sourceRepo.value),
+  };
 }
 
 /**
@@ -393,10 +404,21 @@ export async function getListingPreviewForReview(args: {
  * `app-collaborator.public-projection.test.ts` asserts the projected key set is exactly
  * those three even when the input user row carries extra fields (email, bannedAt, …), so
  * a wider `select` upstream cannot leak through this seam.
+ *
+ * 🔴 `sourceRepoUrl` is passed IN for EXACTLY reason (1) above, and it is worth being
+ * explicit that this is the same trap a second time, not a copied habit.
+ * `app_listings.source_repo_url` is a MANUAL-APPLY COLUMN. Putting `sourceRepoUrl: true`
+ * into `listingHydrateSelect` — the obvious implementation — makes every public store
+ * read that shares that select (the `/apps` GRID as well as this detail page) throw
+ * P2022 from the moment this deploys until a human runs the SQL. The caller resolves it
+ * through `readListingSourceRepoUrl`, which degrades to null, and the row is not even
+ * consulted for it here. It defaults to `null` so the several test fixtures and the
+ * moderator preview path that call this with two arguments keep working unchanged.
  */
 export function projectListingDetail(
   row: HydratedListing,
-  collaborators: Array<{ id: number; username: string | null; image: string | null }> = []
+  collaborators: Array<{ id: number; username: string | null; image: string | null }> = [],
+  sourceRepoUrl: string | null = null
 ): ListingDetail {
   const recommend = recommendRollup(row.metric);
   return {
@@ -423,6 +445,11 @@ export function projectListingDetail(
     // `COALESCE(install_count, 0)` in projection form: a listing with no metric row
     // has had no installs, exactly as the ranking SQL reads it.
     installCount: row.metric?.installCount ?? 0,
+    // Public source-repo link — resolved by the caller through the manual-apply guard,
+    // never selected on `row`. See this function's docstring. Normalised at every write
+    // (`validateRepositoryUrl`), so what reaches the wire is always
+    // `https://<allowlisted-host>/<owner>/<repo>`.
+    sourceRepoUrl: sourceRepoUrl ?? null,
     screenshots: galleryScreenshots(row),
     kindData: detailKindData(row),
   };
@@ -704,7 +731,16 @@ export async function getListingDetail(
   // a missing one (mirrors the AppBlock detail's red-only 404).
   if (!redCapable && isMatureContentRating(row.contentRating)) return null;
 
-  return projectListingDetail(row, await loadDisplayedCollaboratorChips(row.id));
+  // Both extras run in PARALLEL with each other, so the public detail read costs one
+  // round trip more than before, not two. Each is separately guarded against its own
+  // manual-apply migration being outstanding — the collaborator TABLE
+  // (`safeCollaboratorQuery` → `[]`) and the source-repo COLUMN
+  // (`readListingSourceRepoUrl` → `{available:false, value:null}`).
+  const [collaborators, sourceRepo] = await Promise.all([
+    loadDisplayedCollaboratorChips(row.id),
+    readListingSourceRepoUrl(row.id, dbRead),
+  ]);
+  return projectListingDetail(row, collaborators, sourceRepo.value);
 }
 
 /**

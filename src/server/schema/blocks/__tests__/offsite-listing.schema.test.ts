@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
-import { MAX_EXTERNAL_URL_LENGTH } from '~/server/schema/blocks/external-app.schema';
+import {
+  MAX_EXTERNAL_URL_LENGTH,
+  MAX_REPOSITORY_URL_LENGTH,
+} from '~/server/schema/blocks/external-app.schema';
 import {
   OFFSITE_DESCRIPTION_MAX,
   approveExternalRequestSchema,
   rejectExternalRequestSchema,
   submitExternalListingSchema,
+  updateListingPatchSchema,
 } from '~/server/schema/blocks/offsite-listing.schema';
 
 /**
@@ -238,5 +242,91 @@ describe('rejectExternalRequestSchema', () => {
         rejectionReason: 'x'.repeat(1001),
       }).success
     ).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SOURCE REPOSITORY — the submit + patch schema boundaries
+// ---------------------------------------------------------------------------
+
+describe('sourceRepoUrl at the schema boundary', () => {
+  it('is OPTIONAL — omitting it parses (positive control for every reject below)', () => {
+    const parsed = submitExternalListingSchema.safeParse(base);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.sourceRepoUrl).toBeUndefined();
+  });
+
+  it('accepts a repository root on each allowlisted host', () => {
+    for (const sourceRepoUrl of [
+      'https://github.com/o/r',
+      'https://gitlab.com/o/r',
+      'https://codeberg.org/o/r',
+      'https://github.com/o/r.git',
+    ]) {
+      const parsed = submitExternalListingSchema.safeParse({ ...base, sourceRepoUrl });
+      expect(parsed.success, sourceRepoUrl).toBe(true);
+    }
+  });
+
+  it.each([
+    ['http', 'http://github.com/o/r'],
+    ['a non-allowlisted host', 'https://gist.github.com/o/deadbeef'],
+    ['raw.githubusercontent.com', 'https://raw.githubusercontent.com/o/r/main/x.sh'],
+    ['www.', 'https://www.github.com/o/r'],
+    ['the host root', 'https://github.com'],
+    ['a deep path', 'https://github.com/o/r/tree/main'],
+    ['credentials', 'https://u:p@github.com/o/r'],
+  ])('REJECTS %s at the submit boundary, on the sourceRepoUrl path', (_label, sourceRepoUrl) => {
+    const parsed = submitExternalListingSchema.safeParse({ ...base, sourceRepoUrl });
+    expect(parsed.success).toBe(false);
+    if (parsed.success) return;
+    // The issue must be attributed to THIS field — a generic form-level error would
+    // leave the wizard unable to point at the input that is wrong.
+    expect(parsed.error.issues.some((i) => i.path.join('.') === 'sourceRepoUrl')).toBe(true);
+  });
+
+  it('rejects an over-length value (the repository bound, not the external-URL one)', () => {
+    const long = 'https://github.com/o/' + 'r'.repeat(MAX_REPOSITORY_URL_LENGTH);
+    expect(long.length).toBeGreaterThan(MAX_REPOSITORY_URL_LENGTH);
+    expect(long.length).toBeLessThan(MAX_EXTERNAL_URL_LENGTH);
+    const parsed = submitExternalListingSchema.safeParse({ ...base, sourceRepoUrl: long });
+    expect(parsed.success).toBe(false);
+  });
+});
+
+describe('updateListingPatchSchema — sourceRepoUrl is NULLABLE-optional', () => {
+  it('OMITTED is allowed (as long as some other field is present)', () => {
+    const parsed = updateListingPatchSchema.safeParse({ name: 'Renamed' });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect('sourceRepoUrl' in parsed.data).toBe(false);
+  });
+
+  it('an explicit NULL is allowed — and on its own satisfies the at-least-one-field refine', () => {
+    // This is how the field is CLEARED. If `null` were not accepted, the only way to
+    // remove a published link would be to also change something else.
+    const parsed = updateListingPatchSchema.safeParse({ sourceRepoUrl: null });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.sourceRepoUrl).toBeNull();
+  });
+
+  it('a value is accepted here and re-validated in the SERVICE (this bound is coarse)', () => {
+    // The patch schema deliberately bounds only the SHAPE — `buildListingPatchData`
+    // runs the real rule, so an invalid-but-short value parses here and is rejected
+    // there. Pinning that division stops someone "fixing" it in one place only.
+    expect(
+      updateListingPatchSchema.safeParse({ sourceRepoUrl: 'https://github.com/o/r' }).success
+    ).toBe(true);
+    expect(
+      updateListingPatchSchema.safeParse({ sourceRepoUrl: 'http://evil.example/x' }).success
+    ).toBe(true);
+  });
+
+  it('rejects an over-length value and an empty string', () => {
+    expect(
+      updateListingPatchSchema.safeParse({
+        sourceRepoUrl: 'https://github.com/o/' + 'r'.repeat(MAX_REPOSITORY_URL_LENGTH),
+      }).success
+    ).toBe(false);
+    expect(updateListingPatchSchema.safeParse({ sourceRepoUrl: '' }).success).toBe(false);
   });
 });

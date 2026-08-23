@@ -14,6 +14,15 @@ import {
 // imported by `ManifestEditForm.tsx`). `safe-fetch.ts` imports the same helpers,
 // so the manifest validator and the fetch-time guard share ONE source of truth.
 import { isPublicHttpsUrl } from '~/server/utils/ssrf-hostname';
+// The manifest `repository` rule. `external-app.schema` is dependency-free (plain TS
+// over the WHATWG `URL`), so importing it keeps this module client-bundle-safe while
+// giving the manifest path and the off-site listing path ONE validator. See the
+// re-export block below MANIFEST_TAGLINE_MAX_LENGTH.
+import {
+  MAX_REPOSITORY_URL_LENGTH,
+  REPOSITORY_HOST_ALLOWLIST,
+  validateRepositoryUrl,
+} from '~/server/schema/blocks/external-app.schema';
 // Single source for the per-scope justification length bound — shared with the
 // OAuth-connect scope-review validator in @civitai/auth so the two can't drift.
 import { SCOPE_JUSTIFICATION_MAX_LENGTH } from '@civitai/auth/token-scope';
@@ -67,6 +76,21 @@ interface RawManifest {
    * is fine (the store simply shows no tagline).
    */
   tagline?: unknown;
+  /**
+   * OPTIONAL public source-repository link ("this app is open source"), shown as a
+   * `Source` row on the app's `/apps` store DETAIL page. Manifest-governed for the
+   * same reason `tagline` is — an onsite listing has no other author surface — so it
+   * flows to the listing on approve and is re-synced on every subsequent approved
+   * version. When present it must pass {@link validateRepositoryUrl}: https, no
+   * credentials, no port, an exact-host match against
+   * {@link REPOSITORY_HOST_ALLOWLIST}, and a `/<owner>/<repo>` repository-root path.
+   * Absent is fine (the store simply shows no Source row).
+   *
+   * 🔴 NOT `AppBlock.repoUrl`. That column is the app's INTERNAL Forgejo repository
+   * and is platform-owned; this is an author-declared PUBLIC link, and the two must
+   * never be conflated in either direction.
+   */
+  repository?: unknown;
   iframe?: {
     src?: unknown;
     minHeight?: unknown;
@@ -174,6 +198,27 @@ const VERSION_RE = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
  * so the duplication can never silently diverge.
  */
 export const MANIFEST_TAGLINE_MAX_LENGTH = 140;
+
+/**
+ * The manifest `repository` rule is IMPORTED, not re-declared.
+ *
+ * Unlike the tagline bound above (which is re-declared because
+ * `offsite-listing.schema` would drag zod into this client-bundle-safe module),
+ * `external-app.schema` has NO imports at all — it is plain TypeScript over the WHATWG
+ * `URL` — so importing it here costs the browser bundle nothing and buys ONE
+ * implementation of the rule instead of two plus a drift guard. The off-site listing
+ * path (`buildListingPatchData`, `submitExternalListing`) calls the same function, so
+ * an on-site manifest and an off-site listing form cannot disagree about what a valid
+ * repository link is.
+ *
+ * Re-exported so `ManifestEditForm.tsx` can import the bound + the host list from the
+ * validator it already imports, rather than reaching into the schema module directly.
+ */
+export {
+  MAX_REPOSITORY_URL_LENGTH,
+  REPOSITORY_HOST_ALLOWLIST,
+  validateRepositoryUrl,
+};
 
 // Config-as-code `buildCommand` shape allowlist (defense-in-depth — see the
 // field comment in RawManifest). The build sandbox is already isolated; this
@@ -412,6 +457,22 @@ export class BlockManifestValidator {
           errors.push(`tagline must be ≤${MANIFEST_TAGLINE_MAX_LENGTH} chars`);
         }
       }
+    }
+
+    // Optional `repository` (the public source-repo link). Absent is fine. When
+    // present it goes through the SHARED `validateRepositoryUrl` — the same function
+    // the off-site listing form uses — rather than a second copy of the host allowlist
+    // and path rule here. The error is re-labelled to the MANIFEST key name, because
+    // an on-site author who typed this into `block.manifest.json` never saw a field
+    // called `sourceRepoUrl` and would have nothing to go on.
+    //
+    // 🔴 TRIMMED, matching the tagline convention above: the validator measures the
+    // trimmed value while the published JSON Schema's `maxLength` counts the raw
+    // string, so the schema stays no MORE permissive than the server. `validateRepositoryUrl`
+    // trims internally; passing the raw value keeps that single-sourced.
+    if (m.repository !== undefined) {
+      const repo = validateRepositoryUrl(m.repository);
+      if (!repo.ok) errors.push(repo.error.replace('sourceRepoUrl', 'repository'));
     }
 
     if (!Array.isArray(m.scopes)) {

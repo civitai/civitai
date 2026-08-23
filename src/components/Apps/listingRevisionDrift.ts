@@ -23,8 +23,9 @@
  * 🔴 IT COMPARES ASSETS, AND SAYS SO. `applyApprovedRevision` is KIND-AWARE: the
  * onsite branch copies icon/cover (+ the screenshot reparent) and nothing else, so an
  * asset comparison covers its whole apply set. The OFFSITE branch ALSO copies
- * `name`/`tagline`/`description`/`category`/`externalUrl`/`connectClientId`/
- * `connectRequestedScopes`/`connectScopeJustifications`. Reporting "identical —
+ * `name`/`tagline`/`description`/`category`/`externalUrl`/`sourceRepoUrl`/
+ * `connectClientId`/`connectRequestedScopes`/`connectScopeJustifications`.
+ * Reporting "identical —
  * approving changes nothing" off an asset comparison alone therefore told a moderator
  * that a SCOPE-CHANGING off-site revision was a no-op — a false statement in the exact
  * safety surface this panel exists to provide, worse than showing nothing. Hence
@@ -46,9 +47,9 @@ export type AssetSlotDrift = 'same' | 'changed' | 'added' | 'removed';
  *     reparent). Every manifest-governed scalar is deliberately left alone, so the
  *     asset comparison below covers the WHOLE apply set.
  *   - `'assets-and-scalars'` — OFFSITE. ALSO copies `name`, `tagline`, `description`,
- *     `category`, `externalUrl`, `connectClientId`, **`connectRequestedScopes`** and
- *     `connectScopeJustifications`. The asset comparison covers only PART of the
- *     apply set.
+ *     `category`, `externalUrl`, **`sourceRepoUrl`**, `connectClientId`,
+ *     **`connectRequestedScopes`** and `connectScopeJustifications`. The asset
+ *     comparison covers only PART of the apply set.
  */
 export type RevisionApplyScope = 'assets-only' | 'assets-and-scalars';
 
@@ -74,6 +75,14 @@ export const OFFSITE_UNCOMPARED_APPLY_FIELDS = [
   'description',
   'category',
   'link',
+  // 🔴 `applyApprovedRevision`'s off-site branch copies `sourceRepoUrl` onto the live
+  // parent, in BOTH directions — a revision that cleared it clears it on the parent.
+  // That is an OUTBOUND LINK on a public store page changing (or disappearing) with no
+  // other signal, so leaving it out of this list would recreate, verbatim, the defect
+  // this list exists for: a moderator told "approving changes nothing" while the apply
+  // rewrites something they never saw. Adding a field to the apply set WITHOUT adding
+  // it here is the mistake to look for.
+  'source repository',
   'requested OAuth scopes',
   'scope justifications',
 ] as const;

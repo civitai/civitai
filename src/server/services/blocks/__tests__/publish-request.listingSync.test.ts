@@ -124,8 +124,16 @@ const NEW_MANIFEST = {
   name: 'Cool App v2',
   description: 'Now with more cool.',
   tagline: '  The coolest app  ',
+  // Deliberately NON-canonical (trailing `.git`) so every assertion below pins the
+  // NORMALISED value — a mapper that passed the manifest string through verbatim
+  // would fail here rather than quietly storing a spelling the material-change
+  // comparison cannot match.
+  repository: 'https://github.com/civitai/cool-app.git',
   scopes: [],
 };
+
+/** What `resolveListingSourceRepo` must normalise `NEW_MANIFEST.repository` to. */
+const NEW_MANIFEST_REPO_CANONICAL = 'https://github.com/civitai/cool-app';
 
 /** A pending, SUBSEQUENT-version request row (an AppBlock already exists). */
 function pendingRow() {
@@ -227,6 +235,8 @@ describe('approveRequest (3b) — FIRST approve creates the listing (path unchan
       name: 'Cool App v2',
       description: 'Now with more cool.',
       tagline: 'The coolest app',
+      // Normalised at the create path too (the manifest spells it with a `.git`).
+      sourceRepoUrl: NEW_MANIFEST_REPO_CANONICAL,
       iconId: null,
       coverId: null,
       category: 'utility',
@@ -272,6 +282,7 @@ describe('approveRequest (3b-sync) — SUBSEQUENT approve re-syncs manifest-gove
       name: 'Cool App v2',
       description: 'Now with more cool.',
       tagline: 'The coolest app',
+      sourceRepoUrl: NEW_MANIFEST_REPO_CANONICAL,
       category: 'utility',
     });
   });
@@ -280,7 +291,13 @@ describe('approveRequest (3b-sync) — SUBSEQUENT approve re-syncs manifest-gove
     await approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 });
 
     const arg = scalarSyncCalls()[0][0] as { data: Record<string, unknown> };
-    expect(Object.keys(arg.data).sort()).toEqual(['category', 'description', 'name', 'tagline']);
+    expect(Object.keys(arg.data).sort()).toEqual([
+      'category',
+      'description',
+      'name',
+      'sourceRepoUrl',
+      'tagline',
+    ]);
     for (const curated of [
       'iconId',
       'coverId',
@@ -333,8 +350,93 @@ describe('approveRequest (3b-sync) — SUBSEQUENT approve re-syncs manifest-gove
       name: 'Cool App v2',
       description: null,
       tagline: null,
+      // 🔴 CLEARED, not left alone. `stripped` carries no `repository` key, and
+      // manifest-governed means the manifest is the whole truth — an author who
+      // removes the key must see the Source row disappear from the store.
+      sourceRepoUrl: null,
       category: null,
     });
+  });
+
+  it('🔴 RE-SYNCS the source repo on version N+1 — SETS a link the new manifest added', async () => {
+    // THE BUG THIS EXISTS FOR: wiring `sourceRepoUrl` into `mapAppBlockToListing` (the
+    // FIRST-approve create) but not into `buildListingScalarSync` (the re-sync) would
+    // set it once, at the first approve, and never look again — so an author who added
+    // `repository` in v1.1.0 would never see it, and one who removed it would keep
+    // serving a dead link forever. Both directions asserted, on the RE-SYNC path.
+    //
+    // The two manifests differ from each other AND from NEW_MANIFEST's value, so a
+    // resolver hardcoded to any single constant fails.
+    const added = {
+      name: 'Cool App v2',
+      scopes: [],
+      repository: 'https://gitlab.com/other-org/other-app/',
+    };
+    db.read.appBlockPublishRequest.findUnique.mockResolvedValue({
+      ...pendingRow(),
+      manifest: added,
+    });
+    db.write.appBlock.findUnique.mockResolvedValue(
+      appBlockRow({ manifest: added, category: null })
+    );
+
+    await approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 });
+
+    const setArg = scalarSyncCalls()[0][0] as { data: Record<string, unknown> };
+    // Normalised: the trailing slash is stripped, and the host is the one the manifest
+    // named — not github, which every OTHER fixture in this file uses. A resolver
+    // hardcoded to any single constant fails on this value.
+    expect(setArg.data.sourceRepoUrl).toBe('https://gitlab.com/other-org/other-app');
+  });
+
+  it('🔴 RE-SYNCS the source repo on version N+1 — CLEARS a link the new manifest dropped', async () => {
+    // The other half of the re-sync guard (split into its own case so each gets a clean
+    // `beforeEach` arm of the db fakes rather than sharing one test's consumed state).
+    // A link that is set once and never re-read leaves the store serving a repo the
+    // author deliberately removed.
+    {
+      const removed = { name: 'Cool App v2', scopes: [] };
+      db.read.appBlockPublishRequest.findUnique.mockResolvedValue({
+        ...pendingRow(),
+        manifest: removed,
+      });
+      db.write.appBlock.findUnique.mockResolvedValue(
+        appBlockRow({ manifest: removed, category: null })
+      );
+
+      await approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 });
+
+      const clearArg = scalarSyncCalls()[0][0] as { data: Record<string, unknown> };
+      // PRESENT-and-null, never absent: absent would leave the stale link in place.
+      expect(clearArg.data).toHaveProperty('sourceRepoUrl');
+      expect(clearArg.data.sourceRepoUrl).toBeNull();
+    }
+  });
+
+  it('🔴 OMITS the column entirely when the manual-apply migration has NOT been applied', async () => {
+    // `app_listings.source_repo_url` is manual-apply. Between this deploy and a human
+    // running the SQL, naming the column in this payload raises P2022 — and this whole
+    // block is log-and-continue, so the store copy would silently stop re-syncing with
+    // nothing but a warn line. The probe must therefore OMIT the key, not write null.
+    //
+    // The probe is `appListing.findUnique` with `select: { sourceRepoUrl: true }`; make
+    // exactly that call throw the Prisma missing-column error.
+    db.write.appListing.findUnique.mockImplementationOnce(async () => {
+      const err = new Error('The column `source_repo_url` does not exist') as Error & {
+        code?: string;
+      };
+      err.code = 'P2022';
+      throw err;
+    });
+
+    await approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 });
+
+    const arg = scalarSyncCalls()[0][0] as { data: Record<string, unknown> };
+    // ABSENT, not null — a `null` here would be the P2022 this guard exists to avoid.
+    expect(arg.data).not.toHaveProperty('sourceRepoUrl');
+    // …and every pre-existing manifest-governed column is still written, so the guard
+    // degrades ONE field rather than disabling the re-sync.
+    expect(Object.keys(arg.data).sort()).toEqual(['category', 'description', 'name', 'tagline']);
   });
 
   it('is BEST-EFFORT: a failing re-sync write does not fail the approve/deploy', async () => {
@@ -450,6 +552,7 @@ describe('approveRequest (3b-transition) — draft-at-submit transitions the pen
       name: 'Cool App v2',
       description: 'Now with more cool.',
       tagline: 'The coolest app',
+      sourceRepoUrl: NEW_MANIFEST_REPO_CANONICAL,
       category: 'utility',
     });
     // 🔴 Media columns are NEVER in the transition payload — icon/cover survive approval.

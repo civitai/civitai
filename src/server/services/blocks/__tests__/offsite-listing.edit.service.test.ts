@@ -731,7 +731,17 @@ describe('approveExternalRequest (revision apply)', () => {
       // declared 'pg' — the never-under-rate safety applies on the revision path too.
       contentRating: 'r',
       externalUrl: 'https://cool.example.com/edited',
+      // 🔴 THE SOURCE-REPO LINK IS PART OF THE APPLY SET. It is copied onto the parent
+      // UNCONDITIONALLY (both directions), which is why `beginListingRevision` carries
+      // it onto the shadow and why `OFFSITE_UNCOMPARED_APPLY_FIELDS` names it. This
+      // fixture's shadow has none, so `null` — the CLEARING direction, i.e. the one
+      // that would silently drop a live link if the copy were ever made conditional.
+      sourceRepoUrl: null,
       connectClientId: null,
+      // Pre-existing in the fake's payload (the mock's shadow row has no scope
+      // columns); asserted here only because this is an exact-shape `toEqual`.
+      connectRequestedScopes: undefined,
+      connectScopeJustifications: undefined,
       iconId: 5,
       coverId: 6,
     });

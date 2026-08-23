@@ -1,0 +1,49 @@
+-- App Store Listings — optional public SOURCE REPOSITORY link.
+--
+-- NOT AUTO-APPLIED. Migrations in this repo are run by hand — see CLAUDE.md → Database.
+-- There is no `prisma migrate deploy` path and `_prisma_migrations` is not the source
+-- of truth; a human applies this to the CNPG nvme0 primary, per environment.
+--
+-- Additive, nullable, no backfill, no index, no constraint. `ALTER TABLE … ADD COLUMN
+-- <nullable, no default>` takes an ACCESS EXCLUSIVE lock for a catalog-only update on
+-- PG 11+ — it does not rewrite the table, so it is O(1) regardless of row count. Run it
+-- outside a long-running transaction so it cannot queue behind (or in front of) reads.
+--
+-- 🔴 APPLY THIS **BEFORE** DEPLOYING THE CODE. THERE IS A HARD ORDERING CONSTRAINT.
+--
+-- An earlier version of this header claimed the opposite — that omitting the column from
+-- every write payload made the deploy order free and the feature merely "inert" until
+-- this ran. That was FALSE, and the preview environment proved it end to end: off-site
+-- submit returned
+--
+--     HTTP 500 — Invalid `prisma.appListing.create()` invocation:
+--     The column `app_listings.source_repo_url` does not exist in the current database.
+--
+-- on five smoke specs (submit / approve / reject / delist / purge), for authors who
+-- supplied NO source link at all.
+--
+-- WHY OMITTING THE KEY DOES NOT HELP. Prisma returns the created/updated row, so it
+-- emits `INSERT … RETURNING <every scalar the MODEL declares>`. This migration's field
+-- is declared on the `AppListing` model, so the generated SQL names `source_repo_url`
+-- whether or not the key appears in `data`. The same is true of any `findUnique` /
+-- `findFirst` / `update` on this model that does not pass an explicit `select`, and
+-- roughly half the ~92 `appListing.*` query sites do not.
+--
+-- 🔴 THE UNIT TESTS CANNOT SEE THIS. They mock Prisma, so no test in the suite ever
+-- generates SQL. The guards below, their mutation battery, and two adversarial audit
+-- rounds were all self-consistent and all blind to it. Only a real database shows it.
+--
+-- The in-code guards are RETAINED, but as defence in depth, not as the guarantee:
+--   * reads go through `readListingSourceRepoUrl`
+--     (src/server/services/blocks/app-listing-source-repo.service.ts), which uses an
+--     explicit narrow `select` and swallows P2022 / 42703 → `{available:false, value:null}`;
+--   * system-originated writes omit the key (`sourceRepoWriteFragment`);
+--   * author-originated writes that name `sourceRepoUrl` are refused with
+--     `PRECONDITION_FAILED` before any side effect.
+-- Those hold. What does NOT hold is any claim that a pre-existing flow is unaffected —
+-- default-selection queries break regardless.
+--
+-- Once this statement has run, everything above is moot and the feature is live with no
+-- restart or redeploy (the availability probe is not memoised).
+
+ALTER TABLE "app_listings" ADD COLUMN "source_repo_url" text;
