@@ -28,7 +28,16 @@ import type {
   workflowUpdateSchema,
 } from '~/server/schema/orchestrator/workflows.schema';
 import { createOrchestratorClient } from '~/server/services/orchestrator/client';
-import { observeOrchestratorRead } from '~/server/services/orchestrator/orchestrator-read-metrics';
+import {
+  classifySubmitRetryOutcome,
+  observeOrchestratorRead,
+  observeOrchestratorSubmitRetry,
+} from '~/server/services/orchestrator/orchestrator-read-metrics';
+import {
+  setActiveSpanAttributes,
+  traceContextHeaders,
+  withSpan,
+} from '~/server/utils/otel-helpers';
 import { refreshableBlobId } from '~/shared/orchestrator/blob-url';
 import {
   isUpstreamNetworkError,
@@ -304,20 +313,61 @@ export async function submitWorkflow({
   // generation submit is never false-aborted (same marker used by the closed #2807).
   const isWhatif = (query as { whatif?: boolean } | undefined)?.whatif === true;
 
+  // 🔴 THE instrument this module was missing. `orchestrator.generateFromGraph` spends 82–98% of its
+  // latency in one contiguous interval that contained no span and no metric, and that interval is
+  // structurally three things: pure-CPU metadata assembly, refreshBlobUrlsInBody (measured at 0.008
+  // req/s against 4.44 submits/s — excluded), and THIS call. Four instruments were blind to it by
+  // construction: no app-side timer here, the call bypasses Traefik (in-cluster Service DNS), the api
+  // pool emits no client-kind spans so trace context never reached the orchestrator, and Pyroscope has
+  // no per-request label. The span makes the interval visible in a trace; the histogram observation
+  // below makes it a server-seconds-per-second figure directly comparable against the procedure's own
+  // wall time. Observability only — no control flow, no error mapping, and no timing behavior changes.
+  const submitStart = performance.now();
   let result: ClientSubmitResult & { attempts: number };
   try {
-    result = await submitWorkflowWithRetry(
-      {
-        client,
-        body: { ...body, tags: ['civitai', ...(body.tags ?? [])] },
-        query,
-      },
-      // KEEP the default 3 retries on BOTH paths (transient orchestrator blips still
-      // recover). For whatIf, additionally bound each attempt so a stuck img2img
-      // source-download can't park ~30s × 3 (~90s) and head-of-line-block the api pool.
-      isWhatif ? { perAttemptTimeoutMs: WHATIF_SUBMIT_ATTEMPT_TIMEOUT_MS } : undefined
+    result = await withSpan(
+      'gen:submit:orchestrator',
+      { 'orchestrator.submit.whatif': isWhatif },
+      async () => {
+        const r = await submitWorkflowWithRetry(
+          {
+            client,
+            body: { ...body, tags: ['civitai', ...(body.tags ?? [])] },
+            query,
+          },
+          {
+            // KEEP the default 3 retries on BOTH paths (transient orchestrator blips still
+            // recover). For whatIf, additionally bound each attempt so a stuck img2img
+            // source-download can't park ~30s × 3 (~90s) and head-of-line-block the api pool.
+            ...(isWhatif ? { perAttemptTimeoutMs: WHATIF_SUBMIT_ATTEMPT_TIMEOUT_MS } : {}),
+            // Wire the wrapper's `onRetry` hook, which shipped with the wrapper and has had ZERO call
+            // sites ever since — so a 3x latency multiplier on the most expensive tRPC procedure on the
+            // platform has been completely unobservable. Counting it settles, outright, whether the
+            // recurring ~95s ceiling is `3 x 30s + 0.5 + 1.5` (arithmetically consistent with the
+            // Orleans 30s default response timeout, for which no override exists anywhere in
+            // civitai-orchestration) or a single long attempt.
+            onRetry: ({ attempt, status }) =>
+              observeOrchestratorSubmitRetry(attempt, classifySubmitRetryOutcome(status)),
+          }
+        );
+        // Stamp the attempts count the wrapper has always returned and every caller has always
+        // discarded. Set INSIDE the callback, where `gen:submit:orchestrator` is the active span —
+        // outside it the active span is the caller's, and the attribute would land on the wrong span.
+        // On this span it correlates directly with the span's own duration, which is what
+        // distinguishes a ~95s park that is `3 x 30s` from one that is a single 95s attempt; a
+        // counter alone cannot make that join. Cardinality-free (a span attribute, not a label).
+        setActiveSpanAttributes({ 'orchestrator.submit.attempts': r.attempts });
+        return r;
+      }
     );
   } catch (e) {
+    // Exactly one histogram observation per submit — here on the throw path, XOR on the resolve path
+    // below. A throw out of the wrapper is the FINAL attempt's network/timeout/abort failure.
+    observeOrchestratorRead(
+      'submit',
+      isOrchestratorReadTimeout(e) ? 'timeout' : 'error',
+      (performance.now() - submitStart) / 1000
+    );
     // The retry wrapper throws (rather than returning a `{ data:undefined }` result)
     // only on a network/timeout/abort failure of the FINAL attempt — there is no HTTP
     // status to map in the switch below. A recognized transient upstream failure
@@ -330,6 +380,22 @@ export async function submitWorkflow({
       throw throwServiceUnavailableError(ORCHESTRATOR_UNAVAILABLE_MESSAGE, e);
     throw e;
   }
+
+  // Resolve path (the `catch` above did NOT run). Exactly one observation per submit is recorded (here
+  // XOR in the catch). `data` ⇒ ok; a `!data` result is either the status-less resolve shape a fired
+  // per-attempt `AbortSignal.timeout` produces (`{ error: TimeoutError, response: undefined }` →
+  // timeout) or an upstream error. This is a WHOLE-CALL timing: all attempts plus their backoff, i.e.
+  // exactly the interval the caller parks on and the only figure comparable against the procedure's
+  // own wall time. Per-attempt resolution lives in the child spans and the retries counter.
+  observeOrchestratorRead(
+    'submit',
+    result.data
+      ? 'ok'
+      : isOrchestratorReadTimeout('error' in result ? result.error : undefined)
+      ? 'timeout'
+      : 'error',
+    (performance.now() - submitStart) / 1000
+  );
 
   // Narrow on `result.data` (not a destructured copy) so this always-throwing
   // guard both exposes `error`/`response` on the failure member here AND narrows
@@ -441,6 +507,30 @@ export async function submitWorkflow({
 type SubmitOptions = Options<SubmitWorkflowData, false>;
 type ClientSubmitResult = Awaited<ReturnType<typeof clientSubmitWorkflow>>;
 
+/**
+ * Merge the ambient W3C trace context into an outbound submit's headers WITHOUT clobbering anything the
+ * caller set (caller-supplied values always win, per-key).
+ *
+ * Why this is not a one-line spread: `@civitai/client`'s `headers` is a UNION — a plain record, a
+ * `Headers` instance, or a `[name, value][]` array. Spreading a `Headers` instance yields `{}`, which
+ * would silently DROP every header the caller set; spreading an array yields index keys. So the plain
+ * record (the only shape any caller in this repo actually uses today) is spread, and the other two are
+ * normalized through `new Headers()` and only filled in where a key is absent. When tracing is disabled
+ * the propagator is the API no-op, `traceContextHeaders()` is empty, and this returns the caller's value
+ * by reference — byte-identical behavior to before.
+ */
+export function withTraceHeaders(existing: SubmitOptions['headers']): SubmitOptions['headers'] {
+  const traceHeaders = traceContextHeaders();
+  if (Object.keys(traceHeaders).length === 0) return existing;
+  if (existing == null) return traceHeaders;
+  if (typeof existing === 'object' && !Array.isArray(existing) && !(existing instanceof Headers))
+    return { ...traceHeaders, ...(existing as Record<string, unknown>) };
+  const merged = new Headers(existing as HeadersInit);
+  for (const [key, value] of Object.entries(traceHeaders))
+    if (!merged.has(key)) merged.set(key, value);
+  return merged;
+}
+
 export type SubmitWorkflowRetryOptions = {
   /** Max total submit attempts (initial + retries). Default 3. */
   maxAttempts?: number;
@@ -485,19 +575,38 @@ export async function submitWorkflowWithRetry(
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     let result: ClientSubmitResult | undefined;
     try {
-      // Bound this attempt with a FRESH timeout signal (created inside the loop) so a
-      // fired deadline aborts only this attempt — the loop still retries with a new
-      // budget. If the caller already passed a signal, compose so either source aborts.
-      const attemptOptions =
-        perAttemptTimeoutMs == null
-          ? options
-          : {
-              ...options,
-              signal: options.signal
-                ? AbortSignal.any([options.signal, AbortSignal.timeout(perAttemptTimeoutMs)])
-                : AbortSignal.timeout(perAttemptTimeoutMs),
-            };
-      result = await clientSubmitWorkflow(attemptOptions);
+      // PER-ATTEMPT span. Without it a retried submit and a single slow submit are the same
+      // observation: one long parent interval. With it a ~95s park resolves into either three
+      // ~30s children (the Orleans-default retry multiplier) or one ~95s child, which is the
+      // difference between "cap the attempt" and "the callee hangs" as the correct fix.
+      result = await withSpan(
+        'gen:submit:orchestrator:attempt',
+        { 'orchestrator.submit.attempt': attempt, 'orchestrator.submit.maxAttempts': maxAttempts },
+        async () => {
+          // Bound this attempt with a FRESH timeout signal (created inside the loop) so a
+          // fired deadline aborts only this attempt — the loop still retries with a new
+          // budget. If the caller already passed a signal, compose so either source aborts.
+          const attemptOptions = {
+            ...options,
+            // Propagate W3C trace context ACROSS the service boundary. The api pool emits no
+            // client-kind spans at all (HttpInstrumentation is narrowed to inbound-only, and the
+            // orchestrator client is fetch/undici which was never auto-instrumented), so nothing
+            // outbound has ever carried a traceparent and the orchestrator — which IS instrumented —
+            // could never join the trace. Injected per ATTEMPT, inside the attempt span, so the
+            // orchestrator's spans parent onto the attempt that actually made the call rather than
+            // all three collapsing onto one id. Caller-supplied headers always win, per-key.
+            headers: withTraceHeaders(options.headers),
+            ...(perAttemptTimeoutMs == null
+              ? {}
+              : {
+                  signal: options.signal
+                    ? AbortSignal.any([options.signal, AbortSignal.timeout(perAttemptTimeoutMs)])
+                    : AbortSignal.timeout(perAttemptTimeoutMs),
+                }),
+          };
+          return clientSubmitWorkflow(attemptOptions);
+        }
+      );
     } catch (e) {
       // Network failure / no response. Out of retries → surface it like a direct call would.
       lastError = e;
