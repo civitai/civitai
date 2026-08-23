@@ -228,12 +228,15 @@ describe('/api/upload/abort — error classification', () => {
      * sibling sign-part route. This reads the response state AT LOG TIME.
      */
     it('ORDERING: the response is committed before either event is logged', async () => {
-      const seen: Array<{ name: string; statusAtLogTime: number }> = [];
+      // `sent` proves COMMITMENT — the 204 arm uses `.end()` and never sets a body, so this
+      // must accept either. `res.status()` on its own writes nothing.
+      const seen: Array<{ name: string; statusAtLogTime: number; sent: boolean }> = [];
       const res = makeRes();
       vi.mocked(logToAxiom).mockImplementation(async (d: Record<string, unknown>) => {
         seen.push({
           name: String((d as { name?: unknown }).name),
           statusAtLogTime: res.statusCode,
+          sent: res.body !== undefined || res.ended,
         });
       });
       mockAbortMultipartUpload.mockResolvedValue({ ok: true });
@@ -244,6 +247,7 @@ describe('/api/upload/abort — error classification', () => {
         seen.push({
           name: String((d as { name?: unknown }).name),
           statusAtLogTime: res2.statusCode,
+          sent: res2.body !== undefined || res2.ended,
         });
       });
       mockAbortMultipartUpload.mockRejectedValue(
@@ -253,8 +257,8 @@ describe('/api/upload/abort — error classification', () => {
       vi.mocked(logToAxiom).mockReset();
 
       expect(seen).toEqual([
-        { name: 's3-upload-abort', statusAtLogTime: 200 },
-        { name: 's3-upload-abort-error', statusAtLogTime: 204 },
+        { name: 's3-upload-abort', statusAtLogTime: 200, sent: true },
+        { name: 's3-upload-abort-error', statusAtLogTime: 204, sent: true },
       ]);
     });
   });

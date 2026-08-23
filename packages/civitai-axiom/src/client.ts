@@ -155,12 +155,20 @@ export function createAxiomLogger(
    * Deliberately NOT routed through `logToAxiom` itself — that would try to ship the report
    * of an Axiom outage to Axiom, and recurse.
    *
-   * 🔴 `type` and `pod` are load-bearing, not decoration. Alloy extracts `type` into Loki's
-   * `detected_level` (the consuming app's `buildCentralErrorLog` calls that out explicitly and
-   * notes `level` is NOT read), so without `type: 'error'` these lines never appear in the
-   * error stream — and an alert on "Axiom ingest is failing", which is the whole reason this
-   * event exists, could not be built on them. `pod` is what separates one sick pod from a
-   * fleet-wide outage; every other line this logger emits carries it.
+   * 🔴 `type` is load-bearing, not decoration, and `type` is the field — NOT `level`.
+   *
+   * Alloy's pipeline for these namespaces JSON-parses the stderr line and promotes `type` to
+   * **structured metadata named `type`**, so the query that finds these is `| type="error"`.
+   * (`level` → `detected_level` is the separate OTLP path, which a bare `console.error` line
+   * never takes; the deployed Alloy config says in as many words that the severity field here
+   * is `type`, not `level`. `level` is emitted alongside only for consistency with the rest of
+   * the codebase's log shape — nothing reads it.) Without `type: 'error'` these lines are
+   * unfindable by severity, and the alert on "Axiom ingest is failing" — the whole reason this
+   * event exists — could not be built on them.
+   *
+   * `pod` is carried for parity with every other line this logger emits, so a reader who has
+   * the line in hand can attribute it without joining. It is ALSO already a Loki stream label
+   * from k8s service discovery, so this is redundancy rather than the only source.
    */
   function recordIngestOutcome(outcome: 'ok' | 'error' | 'timeout', datastream: string) {
     const failures = ingestFailuresByDatastream.get(datastream) ?? 0;

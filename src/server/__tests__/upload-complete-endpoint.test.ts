@@ -637,12 +637,15 @@ describe('/api/upload/complete — a successful completion is VERIFIED against t
      * response state AT LOG TIME, so they fail on reordering alone.
      */
     it('ORDERING: the response is committed before either event is logged', async () => {
-      const seen: Array<{ name: string; statusAtLogTime: number }> = [];
+      // `sent` is what proves the response was COMMITTED — `res.status()` alone writes
+      // nothing, so a mutant splitting status from json/end passes a status-only assertion.
+      const seen: Array<{ name: string; statusAtLogTime: number; sent: boolean }> = [];
       const res = makeRes();
       vi.mocked(logToAxiom).mockImplementation(async (d: Record<string, unknown>) => {
         seen.push({
           name: String((d as { name?: unknown }).name),
           statusAtLogTime: res.statusCode,
+          sent: res.body !== undefined || res.ended,
         });
       });
 
@@ -656,6 +659,7 @@ describe('/api/upload/complete — a successful completion is VERIFIED against t
         seen.push({
           name: String((d as { name?: unknown }).name),
           statusAtLogTime: res2.statusCode,
+          sent: res2.body !== undefined || res2.ended,
         });
       });
       mockCompleteMultipartUpload.mockRejectedValue(
@@ -666,8 +670,8 @@ describe('/api/upload/complete — a successful completion is VERIFIED against t
       vi.mocked(logToAxiom).mockReset();
 
       expect(seen).toEqual([
-        { name: 's3-upload-complete', statusAtLogTime: 200 },
-        { name: 's3-upload-complete-error', statusAtLogTime: 409 },
+        { name: 's3-upload-complete', statusAtLogTime: 200, sent: true },
+        { name: 's3-upload-complete-error', statusAtLogTime: 409, sent: true },
       ]);
     });
   });

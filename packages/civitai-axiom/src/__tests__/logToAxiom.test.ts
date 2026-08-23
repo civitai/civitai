@@ -170,9 +170,17 @@ describe('logToAxiom structured-stderr sink (always-on for Loki)', () => {
  * bare `await axiom.ingestEvents(datastream, sendData)`:
  *   - CONTAINMENT → the awaited call rejected into the caller.
  *   - BUDGET      → the caller was held for as long as the SDK held the socket.
- *   - NO UNHANDLED REJECTION → after a budget-based fix that used a trailing `.catch()`
- *     instead of a paired rejection handler, the abandoned promise's later rejection is
- *     unhandled, which is the exact `unhandledRejection` that killed the jobs pods.
+ *   - NO UNHANDLED REJECTION → once the budget can win the race, the ingest promise is left
+ *     with nobody awaiting it, so a rejection arriving later needs a handler that was
+ *     attached SYNCHRONOUSLY at creation. Without one that is the exact
+ *     `unhandledRejection` that killed the jobs pods.
+ *
+ * ⚠️ An earlier version of this docstring said a trailing `.then(onOk).catch(onErr)` would
+ * leave the rejection unhandled. That was WRONG — `.catch` attaches to the derived promise
+ * synchronously and handles the original's rejection through it, so that form is equally
+ * safe (a mutant using it survives this suite, correctly). The shape that genuinely leaks,
+ * and the one the NO UNHANDLED REJECTION case kills, is a fulfilment handler with NO
+ * rejection handler at all.
  */
 describe('logToAxiom Axiom dual-write containment', () => {
   let errorSpy: ReturnType<typeof vi.spyOn>;
@@ -307,15 +315,14 @@ describe('logToAxiom Axiom dual-write containment', () => {
   });
 
   /**
-   * 🔴 `type` is what Alloy extracts into Loki's `detected_level` — the consuming app's
-   * `buildCentralErrorLog` says so explicitly and notes that `level` is NOT read. Without
-   * `type: 'error'` these lines never reach the error stream, so the "Axiom ingest is failing"
-   * alert this event exists to support cannot be built on it. `pod` is what distinguishes one
-   * sick pod from a fleet-wide outage.
+   * 🔴 `type` — NOT `level` — is the severity field Alloy promotes to structured metadata for
+   * these lines, so `| type="error"` is the query that finds them. Without it the event is
+   * unfindable by severity and the "Axiom ingest is failing" alert it exists to support
+   * cannot be built on it.
    *
-   * Both were missing from the first version of this feature and an audit caught it. Pinned
-   * here because the failure mode is silence: the event still gets written, it just never
-   * shows up where anyone is looking.
+   * Both `type` and `pod` were missing from the first version of this feature and an audit
+   * caught it. Pinned here because the failure mode is silence: the event still gets written,
+   * it just never shows up where anyone is looking.
    */
   it('the failure report is queryable as an ERROR and attributable to a pod', async () => {
     h.ingestEvents.mockRejectedValue(new Error('down'));
@@ -342,6 +349,9 @@ describe('logToAxiom Axiom dual-write containment', () => {
       name: 'axiom-ingest-recovered',
       type: 'info',
       pod: 'pod-test',
+      // Asserted on BOTH lines, not just the failure one: on a multi-datastream recovery this
+      // is the only field saying WHICH transport came back.
+      datastream: 'civitai-errors',
     });
   });
 

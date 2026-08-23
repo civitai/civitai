@@ -225,20 +225,57 @@ describe('/api/upload — telemetry cannot gate or fail the response', () => {
     mockEnv.S3_UPLOAD_B2_ENDPOINT = 'https://b2.example.com';
   });
 
+  /**
+   * 🔴 "Committed" means the BODY was written, not merely that `res.status()` ran. Splitting
+   * them (`res.status(200); await log; res.json(...)`) leaves the client waiting exactly as
+   * long as the pre-fix code did, and a status-only assertion cannot see it.
+   */
   it('ORDERING: the 200 is already committed by the time the event is logged', async () => {
     const res = makeRes();
     // Reads the response state AT LOG TIME. With the log ahead of the response — the
-    // pre-2026-08-23 shape — this observes 0, because nothing has been sent yet.
+    // pre-2026-08-23 shape — this observes 0/undefined, because nothing has been sent yet.
     let statusAtLogTime: number | undefined;
+    let bodyAtLogTime: unknown;
     vi.mocked(logToAxiom).mockImplementation(async () => {
       statusAtLogTime = res.statusCode;
+      bodyAtLogTime = res.body;
     });
 
     await handler(makeReq(UploadType.Model), res);
 
     expect(statusAtLogTime).toBe(200);
+    expect(bodyAtLogTime).toMatchObject({ uploadId: 'test-upload-id', backend: 'b2' });
     expect(vi.mocked(logToAxiom)).toHaveBeenCalledWith(
       expect.objectContaining({ name: 's3-upload' })
+    );
+  });
+
+  /**
+   * 🔴 THE ERROR PATH NEEDS THE SAME GUARD, and a delta re-audit caught that it did not have
+   * one — while the commit message and PR body both asserted every route was covered "on both
+   * the success and error paths". It was the claim that was wrong, not the code, but a guard
+   * described more widely than it is written is worse than no guard: it stops anyone looking.
+   *
+   * The test below this one is status-only, and that is exactly the weakness that let the
+   * sign-part reorder mutant survive round 1 — the same 500 still gets sent, so only the
+   * telemetry stall in front of the client returns.
+   */
+  it('ORDERING (error path): the 500 is committed before the error event is logged', async () => {
+    getMultipartPutUrl.mockRejectedValueOnce(new Error('B2 said no'));
+    const res = makeRes();
+    let statusAtLogTime: number | undefined;
+    let bodyAtLogTime: unknown;
+    vi.mocked(logToAxiom).mockImplementation(async () => {
+      statusAtLogTime = res.statusCode;
+      bodyAtLogTime = res.body;
+    });
+
+    await handler(makeReq(UploadType.Model), res);
+
+    expect(statusAtLogTime).toBe(500);
+    expect(bodyAtLogTime).toEqual({ error: 'Failed to start upload' });
+    expect(vi.mocked(logToAxiom)).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 's3-upload-create-error' })
     );
   });
 

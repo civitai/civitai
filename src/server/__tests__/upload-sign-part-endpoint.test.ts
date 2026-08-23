@@ -111,17 +111,27 @@ describe('/api/upload/sign-part — telemetry cannot gate or fail the response',
     expect((res.body as { url?: string })?.url).toBe('https://b2.example.com/signed');
   });
 
+  /**
+   * 🔴 "Committed" means the BODY was written, not just that `res.status()` was called.
+   * `res.status(200)` alone sends nothing — a mutant that splits the two
+   * (`res.status(200); await log; res.json(result)`) leaves the client waiting exactly as
+   * long as the pre-fix code did, and a status-only assertion passes it. So capture the body
+   * too; `undefined` there is the tell.
+   */
   it('ORDERING: the 200 is already committed by the time the event is logged', async () => {
     const res = makeRes();
     let statusAtLogTime: number | undefined;
+    let bodyAtLogTime: unknown;
     vi.mocked(logToAxiom).mockImplementation(async () => {
       statusAtLogTime = res.statusCode;
+      bodyAtLogTime = res.body;
     });
 
     await handler(makeReq(), res);
 
-    // With the log ahead of the response — the pre-fix shape — this observes 0.
+    // With the log ahead of the response — the pre-fix shape — this observes 0/undefined.
     expect(statusAtLogTime).toBe(200);
+    expect(bodyAtLogTime).toEqual({ url: 'https://b2.example.com/signed', partNumber: 3 });
     expect(vi.mocked(logToAxiom)).toHaveBeenCalledWith(
       expect.objectContaining({ name: 's3-upload-sign-part' })
     );
@@ -165,15 +175,64 @@ describe('/api/upload/sign-part — telemetry cannot gate or fail the response',
     mockGetUploadPartUrl.mockRejectedValueOnce(new Error('B2 unavailable'));
     const res = makeRes();
     let statusAtLogTime: number | undefined;
+    let bodyAtLogTime: unknown;
     vi.mocked(logToAxiom).mockImplementation(async () => {
       statusAtLogTime = res.statusCode;
+      bodyAtLogTime = res.body;
     });
 
     await handler(makeReq(), res);
 
     expect(statusAtLogTime).toBe(500);
+    expect(bodyAtLogTime).toEqual({ error: 'B2 unavailable' });
     expect(vi.mocked(logToAxiom)).toHaveBeenCalledWith(
       expect.objectContaining({ name: 's3-upload-sign-part-error' })
     );
   });
+});
+
+/**
+ * The route's two authorization guards. They PRE-DATE this PR and are not part of it — but
+ * this PR creates the only test file for the route, which makes it their natural home, and a
+ * mutation sweep found both silently removable. `getUploadPartUrl` hands back a presigned
+ * WRITE url, so a missing guard is an arbitrary-object write for any signed-in user, not a
+ * cosmetic defect.
+ */
+describe('/api/upload/sign-part — authorization guards', () => {
+  it('refuses a bucket outside the upload allowlist', async () => {
+    const res = makeRes();
+    const req = makeReq() as unknown as { body: Record<string, unknown> };
+    req.body.bucket = 'some-other-bucket';
+
+    await handler(req as never, res);
+
+    expect(res.statusCode).toBe(403);
+    expect(mockGetUploadPartUrl).not.toHaveBeenCalled();
+  });
+
+  it("refuses a key outside the caller's own prefix", async () => {
+    const res = makeRes();
+    const req = makeReq() as unknown as { body: Record<string, unknown> };
+    // Session user is 42; this key belongs to 99.
+    req.body.key = 'model/99/someone-elses.safetensors';
+
+    await handler(req as never, res);
+
+    expect(res.statusCode).toBe(403);
+    expect(mockGetUploadPartUrl).not.toHaveBeenCalled();
+  });
+
+  it.each([0, -1, 1.5, 'three', undefined])(
+    'rejects partNumber %p as a 400',
+    async (partNumber) => {
+      const res = makeRes();
+      const req = makeReq() as unknown as { body: Record<string, unknown> };
+      req.body.partNumber = partNumber;
+
+      await handler(req as never, res);
+
+      expect(res.statusCode).toBe(400);
+      expect(mockGetUploadPartUrl).not.toHaveBeenCalled();
+    }
+  );
 });
