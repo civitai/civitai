@@ -12,15 +12,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * buried in a success line.
  */
 
-const { cleanupAllIndexes, logToAxiom } = vi.hoisted(() => ({
-  cleanupAllIndexes: vi.fn(),
-  // Declare the payload parameter so `logToAxiom.mock.calls[n][0]` is typed as
-  // the payload rather than as an element of an empty tuple.
-  logToAxiom: vi.fn<(payload: Record<string, unknown>) => Promise<void>>(() => Promise.resolve()),
-}));
+const { cleanupAllIndexes } = vi.hoisted(() => ({ cleanupAllIndexes: vi.fn() }));
 
 vi.mock('~/server/meilisearch/cleanup', () => ({ cleanupAllIndexes }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom }));
+
+// `~/server/logging/client` is a CANONICAL shared-module mock: src/__tests__/setup.ts
+// registers it once, globally, spreading the real module and overriding only
+// `logToAxiom` with this stable spy. This file must NOT mock it itself — a per-file
+// spy pools its call counts across every file sharing a worker under `isolate: false`,
+// and a per-file factory freezes the module's export shape for the whole worker.
+// See docs/testing/shared-module-mocks.md.
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+
+const logToAxiom = loggingMock.logToAxiom;
 
 // ./job pulls in the Prisma client + prom registry at module load. Only the
 // invoke contract matters here.
@@ -64,12 +68,16 @@ function stats(over: Partial<Stats> & { key: string }): Stats {
 
 /** Every logToAxiom payload from the run, as plain objects. */
 function logged() {
-  return logToAxiom.mock.calls.map((c) => c[0]);
+  return logToAxiom.mock.calls.map((c) => c[0] as Record<string, unknown>);
 }
 
 beforeEach(() => {
-  vi.clearAllMocks();
-  logToAxiom.mockImplementation(() => Promise.resolve());
+  cleanupAllIndexes.mockReset();
+  // MUTATE the canonical node, never replace it. `mockClear` and not `mockReset`:
+  // the canonical mock's registered default is what makes `logToAxiom(...)` return
+  // a promise, and the job calls `.catch()` on it — a reset here would strip that
+  // default and every case would die on `.catch of undefined`.
+  logToAxiom.mockClear();
 });
 
 describe('search-index-cleanup: per-index stats are logged', () => {

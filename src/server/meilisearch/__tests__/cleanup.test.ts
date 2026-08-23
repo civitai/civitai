@@ -23,24 +23,33 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // ─── Mocks ──────────────────────────────────────────────────────────────────
 
+// The index handle the scan drives. Swapped per test via `setFakeIndex`.
+// Spreads the original so every other export of the client module stays real —
+// only the `searchClient` seam is replaced.
+const { indexHolder } = vi.hoisted(() => ({ indexHolder: { current: null as unknown } }));
+vi.mock('~/server/meilisearch/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof MeiliClient>()),
+  searchClient: { index: () => indexHolder.current },
+}));
+
+import type * as MeiliClient from '~/server/meilisearch/client';
+// `~/server/db/client` is a CANONICAL shared-module mock: it is registered once,
+// globally, in src/__tests__/setup.ts and reset per test file. This file must not
+// mock it itself — a per-file mock object freezes that file's shape for every
+// later file that shares the worker. See docs/testing/shared-module-mocks.md.
+import { dbMock } from '~/__tests__/mocks/db.mock';
+
+import { CLEANUP_INDEXES, cleanupIndex } from '~/server/meilisearch/cleanup';
+
 // `$queryRaw` answers "which of these ids are still valid?". Returning an
 // empty row set means every scanned id counts as stale, which makes
 // `staleFound` equal `idsScanned` and gives the tests a second, independent
 // witness of how far the scan actually got.
-const { queryRaw } = vi.hoisted(() => ({ queryRaw: vi.fn(async () => [] as { id: number }[]) }));
-vi.mock('~/server/db/client', () => ({
-  dbRead: { $queryRaw: queryRaw },
-  dbWrite: { $queryRaw: queryRaw },
-}));
-
-// The index handle the scan drives. Swapped per test via `setFakeIndex`.
-const { indexHolder } = vi.hoisted(() => ({ indexHolder: { current: null as unknown } }));
-vi.mock('~/server/meilisearch/client', () => ({
-  searchClient: { index: () => indexHolder.current },
-  metricsSearchClient: { index: () => indexHolder.current },
-}));
-
-import { CLEANUP_INDEXES, cleanupIndex } from '~/server/meilisearch/cleanup';
+//
+// The scan reads through `dbRead` only. `dbRead` and `dbWrite` are DISTINCT
+// nodes in the canonical mock, so naming the wrong one here would silently
+// assert nothing.
+const queryRaw = dbMock.dbRead.$queryRaw;
 
 // ─── Fake index ─────────────────────────────────────────────────────────────
 
@@ -115,8 +124,12 @@ const modelsCfg = CLEANUP_INDEXES.find((c) => c.key === 'models');
 if (!modelsCfg) throw new Error('models cleanup config missing');
 
 beforeEach(() => {
-  vi.clearAllMocks();
-  queryRaw.mockImplementation(async () => []);
+  // MUTATE the canonical node, never replace it: consumer modules captured this
+  // exact function identity when they were first evaluated and will not re-read
+  // it. `mockClear` drops call history but keeps the implementation, which is
+  // why it is used here in place of `mockReset`.
+  queryRaw.mockClear();
+  queryRaw.mockResolvedValue([]);
 });
 
 // ─── (b) a short page is not the end of the index ───────────────────────────
