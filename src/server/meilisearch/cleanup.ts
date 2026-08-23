@@ -207,7 +207,10 @@ export async function cleanupIndex(
   if (!searchClient) throw new Error('searchClient not configured');
   const index = searchClient.index(cfg.indexName);
 
-  const batch = opts.batch ?? 1000;
+  // The requested page size is only a ceiling REQUEST. The engine caps a
+  // search `limit` at the index's `pagination.maxTotalHits`, so the effective
+  // page size is clamped to that in the preflight below.
+  let batch = opts.batch ?? 1000;
   const maxBatches = opts.maxBatches ?? Infinity;
   const deleteChunkSize = opts.deleteChunkSize ?? 10000;
 
@@ -233,10 +236,21 @@ export async function cleanupIndex(
   // sortable on the index. If either is missing, the scan would 4xx every
   // batch — bail out early with a logged error so the cron doesn't waste
   // retries and the missing-setting cause is surfaced clearly.
+  //
+  // The same call is where we learn the index's real page ceiling: a search
+  // `limit` above `pagination.maxTotalHits` is silently truncated to it, and
+  // that ceiling is PER-INDEX (an index left at the default is far lower than
+  // one that has been raised). Clamping here means a large requested batch is
+  // safe to ask for everywhere — indexes that can serve it do, and the ones
+  // that cannot fall back to their own ceiling instead of being truncated.
   try {
     const indexSettings = await index.getSettings();
     const filt = indexSettings.filterableAttributes ?? [];
     const sort = indexSettings.sortableAttributes ?? [];
+    const maxTotalHits = indexSettings.pagination?.maxTotalHits;
+    if (typeof maxTotalHits === 'number' && Number.isFinite(maxTotalHits) && maxTotalHits > 0) {
+      batch = Math.min(batch, maxTotalHits);
+    }
     if (!filt.includes('id') || !sort.includes('id')) {
       stats.errors += 1;
       opts.onError?.({
@@ -300,6 +314,23 @@ export async function cleanupIndex(
   const MAX_CONSECUTIVE_PG_FAILURES = 10;
   let consecutivePgFailures = 0;
 
+  // One keyset page, already reduced to the numeric ids it carried.
+  const fetchPage = async (cursor: number): Promise<number[]> => {
+    const page = await withRetries(() =>
+      index.search<{ id: number }>('', {
+        filter: `id > ${cursor}`,
+        sort: ['id:asc'],
+        limit: batch,
+        attributesToRetrieve: ['id'],
+      })
+    );
+    return page.hits.map((r) => r.id).filter((n): n is number => Number.isFinite(n));
+  };
+
+  // How long to wait before re-asking the same cursor after an empty page.
+  // See the confirmation below for why an empty page is not trusted first time.
+  const EMPTY_PAGE_CONFIRM_DELAY_MS = 500;
+
   while (stats.batchesProcessed < maxBatches) {
     if (opts.jobContext?.status === 'canceled') break;
 
@@ -307,22 +338,21 @@ export async function cleanupIndex(
     // the whole index. The original concurrent-offset code naturally
     // tolerated a single bad batch (other concurrent batches still made
     // progress); sequential keyset has no such redundancy.
-    //
-    // Note: `limit` is capped at the Meilisearch index `maxTotalHits`
-    // setting (default 1000). Bumping `batch` past 1000 without also
-    // raising `maxTotalHits` would silently truncate the page. Keyset
-    // would still advance correctly on the last returned id, so we
-    // wouldn't miss docs — just halve throughput.
-    let page: Awaited<ReturnType<typeof index.search<{ id: number }>>>;
+    let docIds: number[];
     try {
-      page = await withRetries(() =>
-        index.search<{ id: number }>('', {
-          filter: `id > ${lastId}`,
-          sort: ['id:asc'],
-          limit: batch,
-          attributesToRetrieve: ['id'],
-        })
-      );
+      docIds = await fetchPage(lastId);
+
+      // An empty page is the ONLY terminator, and it is not trusted on its
+      // first appearance. The engine can be concurrently applying document
+      // additions and deletions while we scan, and a transient empty reply
+      // at a cursor that still has documents past it would otherwise end the
+      // scan early — silently, and reported as success. Re-ask the SAME
+      // cursor once after a short pause; only a second empty reply ends the
+      // scan. Costs one extra query per index per run.
+      if (docIds.length === 0) {
+        await new Promise((r) => setTimeout(r, EMPTY_PAGE_CONFIRM_DELAY_MS));
+        docIds = await fetchPage(lastId);
+      }
     } catch (err) {
       // Cancellation surfaced from withRetries is a clean stop, not a failure.
       if (opts.jobContext && opts.jobContext.status !== 'running') break;
@@ -331,10 +361,6 @@ export async function cleanupIndex(
       // Out of retries — without advancing the cursor we'd loop on the same page.
       break;
     }
-
-    const docIds = page.hits
-      .map((r) => r.id)
-      .filter((n): n is number => Number.isFinite(n));
 
     if (docIds.length === 0) break;
 
@@ -383,9 +409,15 @@ export async function cleanupIndex(
 
     // ids come back sorted asc; advance cursor. Length is guaranteed > 0
     // by the empty-check above, so the access is safe.
+    //
+    // A SHORT page is deliberately NOT a terminator. "Fewer hits than I asked
+    // for" and "no more documents" are different statements: the engine caps a
+    // page at the index's own ceiling, and can return fewer for reasons of its
+    // own. Treating short as done ended a scan at whatever page happened to
+    // come back small and reported the run as complete. The cursor advances
+    // correctly either way, so the only cost of dropping that shortcut is one
+    // additional (empty, then confirmed-empty) query per index.
     lastId = docIds[docIds.length - 1];
-
-    if (docIds.length < batch) break;
   }
 
   if (opts.apply && allStaleIds.length > 0) {
