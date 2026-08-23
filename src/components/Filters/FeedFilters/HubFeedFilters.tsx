@@ -8,6 +8,7 @@ import { FilterButton } from '~/components/Buttons/FilterButton';
 import classes from '~/components/Filters/FeedFilters/FeedFilters.module.scss';
 import { SortFilter } from '~/components/Filters/SortFilter';
 import { buildHubFilterSave } from '~/components/Hubs/hub-filter-save';
+import { useInvalidateHub } from '~/components/Hubs/hub.utils';
 import { useHubSort } from '~/components/Hubs/useHubSort';
 import { hubExcludedFilterKeys } from '~/components/Image/Filters/media-filter-keys';
 import { MediaFiltersDropdown } from '~/components/Image/Filters/MediaFiltersDropdown';
@@ -41,7 +42,7 @@ export function HubFeedFilters({ ...groupProps }: GroupProps) {
   const router = useRouter();
   const hubId = Number(router.query.id);
   const [sourcesOpen, setSourcesOpen] = useState(false);
-  const utils = trpc.useUtils();
+  const invalidateHub = useInvalidateHub();
 
   const { data: hub } = trpc.userHub.getById.useQuery(
     { id: hubId },
@@ -50,12 +51,7 @@ export function HubFeedFilters({ ...groupProps }: GroupProps) {
   const sort = useHubSort(hub?.sort);
 
   const upsert = trpc.userHub.upsert.useMutation({
-    onSuccess: async () => {
-      await utils.userHub.getById.invalidate({ id: hubId });
-      // Scoped to this hub: an unkeyed invalidate refetches every mounted
-      // image.getInfinite query, not only the feed behind this filter.
-      await utils.image.getInfinite.invalidate({ hubId });
-    },
+    onSuccess: () => invalidateHub(hubId),
     onError: (error) =>
       showErrorNotification({ title: 'Could not save hub', error: new Error(error.message) }),
   });

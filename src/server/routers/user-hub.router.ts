@@ -48,7 +48,13 @@ export const userHubRouter = router({
   sourceSuggestions: userHubProcedure
     .meta({ requiredScope: TokenScope.UserRead })
     .input(getHubSourceSuggestionsSchema)
-    .query(({ input, ctx }) => getHubSourceSuggestions({ ...input, userId: ctx.user.id })),
+    .query(({ input, ctx }) =>
+      getHubSourceSuggestions({
+        ...input,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      })
+    ),
   resolveSource: userHubProcedure
     .meta({ requiredScope: TokenScope.UserRead })
     .input(resolveHubSourceSchema)

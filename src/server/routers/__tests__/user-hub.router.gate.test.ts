@@ -54,13 +54,13 @@ const procedureNames = Object.keys(
   (userHubRouter as unknown as { _def: { procedures: Record<string, unknown> } })._def.procedures
 );
 
-const caller = () =>
+const caller = (tokenScope: number = TokenScope.Full, apiKeyId: number | null = null) =>
   userHubRouter.createCaller({
     user: { id: 7, isModerator: false },
     ip: '1.2.3.4',
     acceptableOrigin: true,
-    tokenScope: TokenScope.Full,
-    apiKeyId: null,
+    tokenScope,
+    apiKeyId,
     features: {},
   } as never) as unknown as Record<string, (input?: unknown) => Promise<unknown>>;
 
@@ -90,6 +90,62 @@ describe('every hub procedure is behind the userHubs flag', () => {
       getFeatureFlagsMock.mockReturnValue({ userHubs: true });
 
       await expect(caller()[name](inputs[name])).resolves.not.toThrow();
+    });
+  }
+});
+
+/**
+ * The scope gate, which the suite above cannot see: its caller carries
+ * `TokenScope.Full`, and `enforceTokenScope` skips the check outright for Full. So
+ * deleting `.meta({ requiredScope })` from a hub procedure — which downgrades it to
+ * the implicit Full requirement, locking every scoped token out — passes every test
+ * above, and so does swapping a write procedure's scope for the read one.
+ *
+ * Hubs have no scope of their own; they ride on `UserRead` / `UserWrite`. The map is
+ * written out by hand rather than read off the router, because a map derived from
+ * `.meta()` asserts the router against itself and passes whatever it says.
+ */
+const requiredScopes: Record<string, number> = {
+  getAll: TokenScope.UserRead,
+  getById: TokenScope.UserRead,
+  sourceSuggestions: TokenScope.UserRead,
+  resolveSource: TokenScope.UserRead,
+  upsert: TokenScope.UserWrite,
+  addSource: TokenScope.UserWrite,
+  removeSource: TokenScope.UserWrite,
+  delete: TokenScope.UserWrite,
+  setOrder: TokenScope.UserWrite,
+};
+
+// `UserRead` and `UserWrite` are independent bits, so each is the other's negative
+// control: a read-scoped token must be refused every write procedure and vice versa.
+const otherScope = (scope: number) =>
+  scope === TokenScope.UserRead ? TokenScope.UserWrite : TokenScope.UserRead;
+
+describe('every hub procedure declares the scope it needs', () => {
+  beforeEach(() => {
+    getFeatureFlagsMock.mockReturnValue({ userHubs: true });
+  });
+
+  it('covers every procedure the router actually exposes', () => {
+    expect(procedureNames.slice().sort()).toEqual(Object.keys(requiredScopes).sort());
+  });
+
+  for (const name of procedureNames) {
+    const scope = requiredScopes[name];
+
+    it(`${name} accepts a token scoped to exactly what it declares`, async () => {
+      // Without this, a procedure missing from the map calls `caller` with
+      // undefined, which defaults to Full and passes both of these for free.
+      expect(scope).toBeDefined();
+
+      await expect(caller(scope, 999)[name](inputs[name])).resolves.not.toThrow();
+    });
+
+    it(`${name} refuses a token carrying only the other user scope`, async () => {
+      await expect(caller(otherScope(scope), 999)[name](inputs[name])).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+      });
     });
   }
 });
