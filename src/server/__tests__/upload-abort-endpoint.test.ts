@@ -114,15 +114,16 @@ beforeEach(() => {
 });
 
 describe('/api/upload/abort — error classification', () => {
-  it('happy path: abortMultipartUpload resolves → 200, passing the backend result through', async () => {
+  it('happy path: abortMultipartUpload resolves → 200 with an empty body', async () => {
     // 🔴 The fixture is `undefined` because that is what the real collaborator returns —
     // `abortMultipartUpload` is `Promise<void>` (see ~/utils/s3-utils). An earlier version used
-    // `{ ok: true, … }`, a shape it can never produce, which made this the only route whose
-    // happy-path test could not have caught a body defect the production value would hit.
+    // `{ ok: true, … }`, a shape it can never produce.
     //
-    // The BODY is asserted, not just the status: a mutation sweep found `res.json(result)` →
-    // `res.json({})` survived the whole suite, because every other assertion on this route was
-    // a status or a boolean "did something get sent". `toBeUndefined` still kills that mutant.
+    // ⚠️ WHAT THIS DOES AND DOES NOT PIN. `toBeUndefined()` kills `res.json({})`, but it is
+    // satisfied by sending NOTHING, so `json(result)` → `end()` and → `json(undefined)` both
+    // survive. Those two are production-inert — the handler's result really is `void` and the
+    // sole caller fire-and-forgets without reading the body (~/store/s3-upload.store.ts) — but
+    // do not read this case as pinning a pass-through. It pins "200, and no body content".
     mockAbortMultipartUpload.mockResolvedValue(undefined);
     const res = makeRes();
     await handler(makeReq(), res);

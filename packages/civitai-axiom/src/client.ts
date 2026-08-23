@@ -166,9 +166,10 @@ export function createAxiomLogger(
    * round's measurement — "`type` → `detected_level`", then "nothing reads `level`", then
    * "`detected_level` is derived from the `level` key". The last was refuted by the control
    * that version failed to run: lines carrying `"type":"error"` and NO `level` key resolve to
-   * `detected_level="error"` **100% of the time**, so `level` is not what drives it; and the
-   * discriminator that version cited could never have separated the two, because no line in
-   * this namespace carries `level` without also carrying `type`. `| level=` matches nothing at
+   * `detected_level="error"` **100% of the time**, so `level` is not NECESSARY for it (that is
+   * what the data shows — not that nothing ever reads `level`, which stays unresolvable here);
+   * and the discriminator that version cited could never have separated the two, because no
+   * line in this namespace carries `level` without also carrying `type`. `| level=` matches nothing at
    * all — `level` has no structured-metadata surface here.
    *
    * So: `level` is emitted for SHAPE CONSISTENCY with the rest of the codebase's log records,
@@ -319,16 +320,20 @@ export function createAxiomLogger(
        * that mattered; all three were wrong, so these are stated from a node probe with a
        * positive control (a promise nobody subscribes to, which does leak):
        *
-       *   - THE PAIRING handles an ingest that rejects EARLY, before the budget. It converts
-       *     the rejection into the value `'error'`, so the awaited race resolves. Without it
-       *     the race REJECTS and throws into the caller — measured: a bare or
-       *     fulfilment-handler-only ingest gives `THREW`, the paired one gives `'error'`. That
-       *     throw is the original 2026-08-23 bug, so deleting the pairing re-creates it.
-       *   - THE RACE handles an ingest that rejects LATE, after the budget has won and nothing
-       *     awaits the promise any more. `Promise.race` subscribes to its inputs synchronously,
-       *     so a subscriber is always attached. Measured: once raced, paired handlers, a
-       *     trailing `.catch`, a fulfilment handler alone and a bare promise ALL produce zero
-       *     unhandled rejections.
+       *   - THE PAIRING converts a rejection into the value `'error'`, so the awaited race
+       *     RESOLVES instead of rejecting into the caller. Measured: for an ingest that
+       *     rejects INSIDE the budget, a bare or fulfilment-handler-only promise gives `THREW`
+       *     while the paired one gives `'error'`. Precisely scoped: it re-creates a
+       *     caller-side throw for rejections inside the budget (an ECONNREFUSED shape), NOT
+       *     for the 30 s axios timeout the incident above describes — that one is already
+       *     outside the 2 s budget and resolves as `'timeout'` either way.
+       *   - THE RACE is what bounds the CALLER (see "WHY A RACE AND NOT JUST A TRY/CATCH"
+       *     above). ⚠️ It is NOT here to prevent unhandled rejections: with no race there is no
+       *     budget, nothing is ever abandoned, and that hazard does not arise. Measured, once
+       *     raced, paired handlers / trailing `.catch` / fulfilment-only / bare ALL produce
+       *     zero unhandled rejections — which is why the test that appears to cover this is
+       *     labelled an invariant guard, and why "the race prevents the leak" is a theory this
+       *     comment has already retracted once. Do not re-derive it.
        *
        * Neither substitutes for the other. `.then(onOk).catch(onErr)` would be equivalent to
        * the paired form; what is NOT equivalent is dropping either the rejection handler or

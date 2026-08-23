@@ -22,10 +22,10 @@ import type { NextApiRequest, NextApiResponse } from 'next';
  */
 
 const { mockGetUploadPartUrl, mockGetUploadBucket, mockGetUploadS3Client } = vi.hoisted(() => ({
-  mockGetUploadPartUrl: vi.fn(async () => ({
-    url: 'https://b2.example.com/signed',
-    partNumber: 3,
-  })),
+  // Shape matches production exactly: `getUploadPartUrl` returns `{ url }` and nothing else
+  // (~/utils/s3-utils). An earlier version added a `partNumber` the real helper never emits —
+  // the same fixture-fidelity defect this suite's sibling was fixed for.
+  mockGetUploadPartUrl: vi.fn(async () => ({ url: 'https://b2.example.com/signed' })),
   // The handler builds its allowlist from these, so they must return the bucket the request
   // names or every case 403s before reaching the code under test.
   mockGetUploadBucket: vi.fn((backend: string) =>
@@ -131,7 +131,7 @@ describe('/api/upload/sign-part — telemetry cannot gate or fail the response',
 
     // With the log ahead of the response — the pre-fix shape — this observes 0/undefined.
     expect(statusAtLogTime).toBe(200);
-    expect(bodyAtLogTime).toEqual({ url: 'https://b2.example.com/signed', partNumber: 3 });
+    expect(bodyAtLogTime).toEqual({ url: 'https://b2.example.com/signed' });
     expect(vi.mocked(logToAxiom)).toHaveBeenCalledWith(
       expect.objectContaining({ name: 's3-upload-sign-part' })
     );
@@ -226,8 +226,9 @@ describe('/api/upload/sign-part — authorization guards', () => {
   // Measured as a clean partition rather than assumed: removing only the lower bound fails
   // exactly 2 of these, removing only the integer check fails exactly 3 — so neither clause is
   // vacuous and no value is absorbed by an earlier check.
-  // Title uses String(value), not `%p` — vitest does not interpolate `%p`, so all five cases
-  // would otherwise report under one identical name and a failure could not be attributed.
+  // Title uses vitest's `$0` (pretty-format: `+0`, `'three'`, `undefined`), not `%p` — vitest
+  // does not interpolate `%p`, so all five cases would otherwise report under one identical
+  // name and a failure could not be attributed to a value.
   it.each([0, -1, 1.5, 'three', undefined])(
     'rejects partNumber $0 as a 400',
     async (partNumber) => {
