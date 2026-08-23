@@ -27,7 +27,12 @@ vi.mock('~/server/search-index', () => ({
   usersSearchIndex: { queueUpdate: vi.fn() },
 }));
 vi.mock('~/server/cloudflare/client', () => ({ purgeCache: vi.fn(() => ({ catch: vi.fn() })) }));
-vi.mock('~/server/auth/session-invalidation', () => ({ refreshSession: vi.fn() }));
+// `refreshSession` is `async`, so the stub has to return a PROMISE — a bare `vi.fn()` returns
+// undefined, which type-checks past the mock boundary and then explodes on any `.then`/`.catch`
+// the caller attaches. Matches the global stub in `src/__tests__/setup.ts`.
+vi.mock('~/server/auth/session-invalidation', () => ({
+  refreshSession: vi.fn().mockResolvedValue(undefined),
+}));
 
 import { updateUserHandler } from '~/server/controllers/user.controller';
 

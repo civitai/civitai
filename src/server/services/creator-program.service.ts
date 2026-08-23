@@ -44,7 +44,7 @@ import {
   getWithdrawalFee,
   getWithdrawalRefCode,
 } from '~/server/utils/creator-program.utils';
-import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { handleLogError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { refreshSession } from '~/server/auth/session-invalidation';
 import type { CapDefinition } from '~/shared/constants/creator-program.constants';
 import {
@@ -311,7 +311,11 @@ export async function joinCreatorsProgram(userId: number) {
 
   userUpdateCounter?.inc({ location: 'creator-program.service:completeOnboarding' });
 
-  await refreshSession(userId, { caller: 'membership' });
+  // Best-effort — the `onboarding` bitmask write above has already committed, and it is the SAME
+  // column `completeOnboardingHandler` writes, so an unguarded bust here fails a joined-and-recorded
+  // membership with a 500 and invites the client to re-join. Staleness is bounded by the session
+  // entry's own TTL. Logged, never swallowed silently.
+  await refreshSession(userId, { caller: 'membership' }).catch(handleLogError);
 }
 
 async function getPoolValue(month?: Date) {

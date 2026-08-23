@@ -461,7 +461,13 @@ export const completeOnboardingHandler = async ({
     // in the database with the old one in the session for the rest of its 4h TTL. Bust on either condition.
     const wroteSessionIdentity =
       input.step === OnboardingSteps.Profile && (!!input.username || !!input.email);
-    if (changed || wroteSessionIdentity) await refreshSession(id, { caller: 'profile' });
+    // Best-effort, like the sibling call in `user.service.ts:updateUserContentSettings`. The onboarding
+    // step above is already COMMITTED by the time we get here, so letting an invalidation failure reach
+    // the `catch` below would `throwDbError` a mutation that succeeded — the client is told the step
+    // failed and re-submits an already-applied write. A failed bust degrades to staleness bounded by the
+    // entry's own 4h TTL, which is strictly better than that. Logged, never swallowed silently.
+    if (changed || wroteSessionIdentity)
+      await refreshSession(id, { caller: 'profile' }).catch(handleLogError);
 
     const isComplete = onboarding === OnboardingComplete;
     if (isComplete && changed && onboardingCompletedCounter) onboardingCompletedCounter.inc();
@@ -631,7 +637,11 @@ export const updateUserHandler = async ({
 
     purgeCache({ tags: [`user-creator-${id}`] }).catch();
 
-    postUpdatePromises.push(refreshSession(id, { caller: 'profile' }));
+    // The `.catch` is attached BEFORE the push, not around the `Promise.all` below: this batch runs after
+    // the user row is already written, and `Promise.all` rejects on the FIRST rejection, so an unguarded
+    // cache bust here both `throwDbError`s a committed write and masks whatever the other members did.
+    // Guarding this one member keeps the rest of the batch reporting its own failures normally.
+    postUpdatePromises.push(refreshSession(id, { caller: 'profile' }).catch(handleLogError));
 
     await Promise.all(postUpdatePromises);
 
@@ -1498,7 +1508,11 @@ export const setUserSettingHandler = async ({
     const sessionProjectedSettingChanged = SESSION_PROJECTED_SETTING_KEYS.some(
       (key) => key in restInput && restSettings[key] !== restInput[key]
     );
-    if (sessionProjectedSettingChanged) await refreshSession(id, { caller: 'profile' });
+    // Best-effort — the settings write above has already committed, so an invalidation failure must not
+    // reach the `throwDbError` below and report a succeeded mutation as a 500. Staleness is bounded by
+    // the cached entry's own TTL; a misreported write is not bounded by anything.
+    if (sessionProjectedSettingChanged)
+      await refreshSession(id, { caller: 'profile' }).catch(handleLogError);
 
     return newSettings;
   } catch (error) {
