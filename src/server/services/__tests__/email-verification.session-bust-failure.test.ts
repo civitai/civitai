@@ -97,6 +97,18 @@ describe('requestEmailChange', () => {
     expect(mockSend).toHaveBeenCalledTimes(1);
   });
 
+  it('logs the failed bust rather than swallowing it', async () => {
+    // The sibling of the `confirmEmailChange` assertion below. Without it, `.catch(handleLogError)`
+    // here is indistinguishable from `.catch(() => undefined)` — degrading to TTL-bounded staleness
+    // is only acceptable because the degradation is VISIBLE.
+    refreshSessionMock.mockRejectedValue(new Error(REDIS_DOWN));
+
+    await requestEmailChange(USER_ID, NEW_EMAIL);
+
+    expect(mockHandleLogError).toHaveBeenCalledTimes(1);
+    expect((mockHandleLogError.mock.calls[0][0] as Error).message).toBe(REDIS_DOWN);
+  });
+
   it('still FAILS when sending the verification email fails', async () => {
     mockSend.mockRejectedValue(new Error('smtp down'));
 

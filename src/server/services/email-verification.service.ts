@@ -112,7 +112,12 @@ export async function requestEmailChange(userId: number, newEmail: string) {
   // Send verification email
   await sendVerificationEmail(newEmail, user.username || 'User', token);
 
-  // Invalidate the user's session to ensure they re-authenticate after email change.
+  // Refresh the cached session shape. 🔴 This does NOT log the user out or force a re-authentication
+  // — `refreshSession` marks the user's tokens `refresh` and busts the shaped session-user entry;
+  // only `invalidateSession` marks them `invalid`. (The comment here used to claim re-authentication,
+  // which would make the `.catch` below read as downgrading a security control. There is no such
+  // control on this path, and nothing on the user row has changed yet at this point.)
+  //
   // Best-effort: the verification email has already been SENT and the token issued, so a failed
   // cache bust must not 500 this call — the user would see "failed", re-request, and receive a
   // second email for work that already succeeded. Logged rather than swallowed.
@@ -134,7 +139,8 @@ export async function confirmEmailChange(token: string) {
 
   userUpdateCounter?.inc({ location: 'email-verification.service:confirmEmailChange' });
 
-  // Invalidate the user's session after successful email change.
+  // Refresh the cached session shape so the new email is served rather than the old one. As above,
+  // this is a REFRESH, not a logout — see the note in `requestEmailChange`.
   // 🔴 Best-effort is load-bearing here: the email column is already written AND the one-time token
   // has been consumed, so a throw would report a permanent failure for a change that succeeded and
   // that the user can no longer retry (the link is spent). Staleness is bounded by the session

@@ -55,7 +55,12 @@ vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() })
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
 vi.mock('~/server/services/user.service', () => ({ updateUserById: mockUpdateUserById }));
-vi.mock('~/server/auth/session-invalidation', () => ({ refreshSession: vi.fn() }));
+// `refreshSession` is `async`, so the stub must return a PROMISE — a bare `vi.fn()` returns
+// undefined and explodes on any `.then`/`.catch` a caller attaches. Latent here today; the same
+// stub in user.controller.leaderboard-showcase.test.ts broke the moment a `.catch` was added.
+vi.mock('~/server/auth/session-invalidation', () => ({
+  refreshSession: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock('~/server/utils/cache-helpers', () => ({
   fetchThroughCache: vi.fn(),
   bustFetchThroughCache: vi.fn(),
