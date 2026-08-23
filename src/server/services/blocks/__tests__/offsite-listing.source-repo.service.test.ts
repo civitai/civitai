@@ -70,12 +70,28 @@ const {
   buildListingPatchData,
   submitExternalListing,
   updateListing,
+  updateRevisionDraft,
 } = await import('~/server/services/blocks/offsite-listing.service');
 
 const OWNER = 42;
 const MOD = 7;
 
 const LIVE_REPO = 'https://github.com/civitai/cool-app';
+
+/**
+ * The refusal message, written out HERE rather than imported.
+ *
+ * 🔴 THIS SPELLING IS THE ASSERTION, and it is deliberately not
+ * `SOURCE_REPO_UNAVAILABLE_MESSAGE`. An expectation imported from the module under test
+ * moves with the module: a mutant that rewrote that constant once took every assertion in
+ * this file with it and scored SURVIVED against a fully green run. A literal cannot be
+ * moved by the implementation, which is the only property that makes it evidence.
+ */
+const REFUSAL_MESSAGE =
+  'The source repository link is not available on this environment yet. Leave the field empty and try again later.';
+
+/** Database vocabulary an author must never be shown in place of the P2022 this replaced. */
+const DB_LEAKS = ['sourceRepoUrl', 'source_repo_url', 'column', 'Prisma', 'P2022'] as const;
 
 function approvedParent(overrides: Partial<Row> = {}): Row {
   return {
@@ -874,5 +890,124 @@ describe('🔴 applyApprovedRevision asks about the column BEFORE opening its tr
     expect('sourceRepoUrl' in (parentUpdate![0] as { data: Record<string, unknown> }).data).toBe(
       false
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 8. updateRevisionDraft — the SECOND author edit entry point
+//
+// 🔴 WHY THIS SECTION EXISTS, stated as a measurement rather than a worry: with the
+// column gate at the top of `updateRevisionDraft` DELETED and its `buildListingPatchData`
+// call site handed a hardcoded `sourceRepoAvailable: true`, this file was still fully
+// green. Every sibling write path — submit, the in-place edit, the approved-listing
+// edit, the shadow clone, the revision apply — had a case that went red for that
+// mutation; this one had none, so the guard was asserted nowhere.
+//
+// It is not a hypothetical path. `updateRevisionDraft` is a live `appDeveloperProcedure`
+// whose input schema carries `sourceRepoUrl`, and it is what the edit form calls to
+// change an APPROVED listing's revision — i.e. exactly the flow an author reaches when
+// they add a source-repo link to an app that is already in the store.
+// ---------------------------------------------------------------------------
+
+/** The `editableListingSelect` shape for a DRAFT SHADOW the owner may edit. */
+function draftShadow(overrides: Partial<Row> = {}): Row {
+  return approvedParent({
+    id: 'apl_shadow',
+    slug: 'rev-ULID0',
+    status: 'draft',
+    revisionOfId: 'apl_parent',
+    ...overrides,
+  });
+}
+
+/**
+ * The healthy environment: every guarded probe answers, so `sourceRepoAvailable` is
+ * `true`. Routed by `select` shape for the same reason `armColumnMissing` is — the
+ * ownership read and the column read hit the same `findUnique` and must not be conflated.
+ */
+function armShadowColumnPresent(shadow: Row = draftShadow(), stored: string | null = null) {
+  mockRead.appListing.findUnique.mockImplementation(
+    async (args: { where: { id: string }; select?: Record<string, unknown> }) =>
+      isSourceRepoProbe(args) ? { sourceRepoUrl: stored } : shadow
+  );
+}
+
+describe('🔴 updateRevisionDraft and the unapplied migration', () => {
+  it('a shadow edit that SUPPLIES a repo gets PRECONDITION_FAILED — and NOTHING is written', async () => {
+    // Reachability, spelled out because a guard nothing reaches is a guard nothing tests:
+    // the shadow is a DRAFT (`status` gate passes), it has a `revisionOfId` (the
+    // not-a-shadow gate passes), it is owned by the caller (the access gate passes), and
+    // the patch names no scope field (`deriveScopePatch` is a pass-through). The column
+    // gate is therefore the first thing in this function that can refuse, and the value
+    // supplied is a perfectly valid repo URL, so the URL validator cannot refuse it
+    // either. Nothing else can be producing this failure.
+    armColumnMissing(draftShadow());
+
+    let thrown: TRPCError | undefined;
+    try {
+      await updateRevisionDraft({
+        shadowId: 'apl_shadow',
+        userId: OWNER,
+        patch: { sourceRepoUrl: LIVE_REPO },
+      });
+    } catch (e) {
+      thrown = e as TRPCError;
+    }
+    // The MESSAGE first, and as a literal — it is what distinguishes this guard from the
+    // three other refusals reachable on this path (NOT_OWNED, INVALID_REVISION, and the
+    // validator's BAD_REQUEST), any of which would otherwise satisfy a bare "it threw".
+    expect(thrown?.message).toBe(REFUSAL_MESSAGE);
+    expect(thrown).toBeInstanceOf(TRPCError);
+    expect(thrown?.code).toBe('PRECONDITION_FAILED');
+    for (const leak of DB_LEAKS) {
+      expect(thrown?.message ?? '').not.toContain(leak);
+    }
+    // 🔴 THE CALL COUNT, not `not.toHaveBeenCalledWith(...)`. A partial write — the
+    // rest of the patch applied and the repo link quietly dropped — would satisfy a
+    // narrower assertion while leaving the author looking at a saved form with their
+    // link missing, which is the exact failure the refusal exists to replace.
+    expect(mockWrite.appListing.update).toHaveBeenCalledTimes(0);
+    expect(mockWrite.appListing.create).toHaveBeenCalledTimes(0);
+  });
+
+  it('POSITIVE CONTROL: with the column present the same edit STORES the canonical value', async () => {
+    // 🔴 Without this the case above is equally satisfied by a `throw` at the top of the
+    // function — a feature that refuses every source-repo revision edit forever would
+    // read exactly as green. It also pins the NORMALISATION: what lands in the column is
+    // the canonical form, because that is what the material-change comparison reads.
+    armShadowColumnPresent(draftShadow(), null);
+
+    const res = await updateRevisionDraft({
+      shadowId: 'apl_shadow',
+      userId: OWNER,
+      patch: { sourceRepoUrl: 'https://GITHUB.com/civitai/cool-app.git/' },
+    });
+
+    expect(res).toEqual({ shadowId: 'apl_shadow' });
+    expect(mockWrite.appListing.update).toHaveBeenCalledTimes(1);
+    expect(mockWrite.appListing.update).toHaveBeenCalledWith({
+      where: { id: 'apl_shadow' },
+      data: { sourceRepoUrl: LIVE_REPO },
+    });
+  });
+
+  it('🔴 a revision patch that does NOT name the field still saves — the guard does not widen', async () => {
+    // The bound. An unapplied migration must not break every unrelated revision edit;
+    // a blanket refusal would be indistinguishable from the guard on the case above and
+    // would take the whole approved-listing edit flow down with it.
+    armColumnMissing(draftShadow());
+
+    const res = await updateRevisionDraft({
+      shadowId: 'apl_shadow',
+      userId: OWNER,
+      patch: { name: 'Renamed on the revision', tagline: 'a quick copy edit' },
+    });
+
+    expect(res).toEqual({ shadowId: 'apl_shadow' });
+    expect(mockWrite.appListing.update).toHaveBeenCalledTimes(1);
+    expect(mockWrite.appListing.update).toHaveBeenCalledWith({
+      where: { id: 'apl_shadow' },
+      data: { name: 'Renamed on the revision', tagline: 'a quick copy edit' },
+    });
   });
 });
