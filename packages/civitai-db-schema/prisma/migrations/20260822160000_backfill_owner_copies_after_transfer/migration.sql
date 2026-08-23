@@ -9,13 +9,16 @@
 -- Both statements are idempotent and no-ops once the transfer fix is deployed. Safe to run before or
 -- after that deploy: each only ever moves a row to the owner the model already has.
 --
--- Expected size, measured on the prod replica 2026-08-22:
---   PaidAccess    0 rows out of step, against 4773 ModelVersion gates in step and 0 orphans (so the
---                 query could see one, and there were none)
---   DonationGoal  92 rows out of step (68 active), against 21996 in step. Counted with the same
---                 predicate the statements below use — 0 rows are polymorphic-only today, so both
---                 spellings give the same number, but only the wider one stays true once phase 2
---                 drops modelVersionId.
+-- Expected size, measured on the prod PRIMARY 2026-08-23: 0 rows, both tables. This has never had
+-- anything to remediate, and it is kept only for a transfer that lands before the fix deploys.
+--
+-- 🔴 An earlier revision of this file reported 92 DonationGoal rows (68 active) as transfer drift.
+-- That was wrong, and running it would have been harmful. All 92 resolve to Model.userId = -1 (the
+-- `civitai` system account) with a DELETED account still named on the goal: they are account-deletion
+-- residue, where deletion reassigns the model and leaves the goal behind. Resyncing them would have
+-- moved 68 ACTIVE goals onto the system account, and donateToGoal pays goal.userId. Hence the
+-- `m."userId" <> -1` guard below — this statement fixes transfer drift and nothing else.
+-- The deleted-account goals are being handled separately (Justin's call: delete them, not re-own them).
 
 -- Counts, before changing anything:
 --   SELECT COUNT(*) FROM "PaidAccess" pa
@@ -28,7 +31,10 @@
 --     JOIN "ModelVersion" mv ON (dg."modelVersionId" = mv.id
 --                            OR (dg."entityType" = 'ModelVersion' AND dg."entityId" = mv.id))
 --     JOIN "Model" m ON m.id = mv."modelId"
---    WHERE dg."userId" <> m."userId";
+--    WHERE m."userId" <> -1 AND dg."userId" <> m."userId";
+--
+-- Drop the `m."userId" <> -1` from that count and it reports the deleted-account rows too — which is
+-- how the wrong number above was produced. Group by m."userId" before believing a nonzero result.
 
 UPDATE "PaidAccess" pa
 SET "ownerId" = m."userId", "updatedAt" = NOW()
@@ -51,6 +57,7 @@ SET "userId" = m."userId"
 FROM "ModelVersion" mv
 JOIN "Model" m ON m.id = mv."modelId"
 WHERE dg."modelVersionId" = mv.id
+  AND m."userId" <> -1
   AND dg."userId" <> m."userId";
 
 UPDATE "DonationGoal" dg
@@ -59,6 +66,7 @@ FROM "ModelVersion" mv
 JOIN "Model" m ON m.id = mv."modelId"
 WHERE dg."entityType" = 'ModelVersion'
   AND dg."entityId" = mv.id
+  AND m."userId" <> -1
   AND dg."userId" <> m."userId";
 
 -- After running: purge the caches that carry an owner, or they serve the old one until they expire.
