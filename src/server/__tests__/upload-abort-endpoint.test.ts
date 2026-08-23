@@ -221,5 +221,41 @@ describe('/api/upload/abort — error classification', () => {
       await withFailingLogger(res);
       expect(res.statusCode).toBe(200);
     });
+
+    /**
+     * 🔴 ORDERING, read directly. A status-only assertion cannot see the log being moved back
+     * ahead of the response once the log is contained — a mutation sweep proved that on the
+     * sibling sign-part route. This reads the response state AT LOG TIME.
+     */
+    it('ORDERING: the response is committed before either event is logged', async () => {
+      const seen: Array<{ name: string; statusAtLogTime: number }> = [];
+      const res = makeRes();
+      vi.mocked(logToAxiom).mockImplementation(async (d: Record<string, unknown>) => {
+        seen.push({
+          name: String((d as { name?: unknown }).name),
+          statusAtLogTime: res.statusCode,
+        });
+      });
+      mockAbortMultipartUpload.mockResolvedValue({ ok: true });
+      await handler(makeReq(), res);
+
+      const res2 = makeRes();
+      vi.mocked(logToAxiom).mockImplementation(async (d: Record<string, unknown>) => {
+        seen.push({
+          name: String((d as { name?: unknown }).name),
+          statusAtLogTime: res2.statusCode,
+        });
+      });
+      mockAbortMultipartUpload.mockRejectedValue(
+        s3Error({ name: 'NoSuchUpload', $metadata: { httpStatusCode: 404 } })
+      );
+      await handler(makeReq(), res2);
+      vi.mocked(logToAxiom).mockReset();
+
+      expect(seen).toEqual([
+        { name: 's3-upload-abort', statusAtLogTime: 200 },
+        { name: 's3-upload-abort-error', statusAtLogTime: 204 },
+      ]);
+    });
   });
 });

@@ -315,13 +315,15 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
         // must not be reported as a failure, or the bytes are stranded in the bucket with
         // no DB row. Only a genuine miss is terminal.
         //
-        // 🔴 The probe's own throw is folded into its `null` (indeterminate) case rather
-        // than escaping. `objectExists` already returns `null` when the bucket could not
-        // be consulted, and `null` already means 409 here — but a THROWN failure used to
-        // escape the handler as a 500 instead, which is the same not-found fault reported
-        // as a server bug. That fires exactly when the backend is degraded, i.e. when this
-        // path is busiest. Only a definite `true` still yields 200, so nothing is masked
-        // in the direction that could strand bytes.
+        // ⚠️ DEFENSIVE, AND INERT TODAY — not a bug fix, despite how it reads. `objectExists`
+        // delegates to `headObject`, whose entire body is inside a try that returns
+        // `{status:'unknown'}` on any error (`~/utils/s3-utils`), so it CANNOT reject: a
+        // degraded bucket already lands on `null`, which already means 409 below. An earlier
+        // version of this comment claimed a throw here used to escape as a 500; that was
+        // wrong. The `.catch` is kept only so that a future change to `headObject`'s
+        // swallow-everything contract cannot silently turn a degraded bucket into a 500, and
+        // it costs nothing. Only a definite `true` yields 200, so nothing is masked in the
+        // direction that could strand bytes.
         const exists = await objectExists(bucket, key, s3).catch(() => null);
         if (exists === true) {
           res.status(200).json(null);

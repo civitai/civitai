@@ -628,13 +628,58 @@ describe('/api/upload/complete — a successful completion is VERIFIED against t
       expect(res.statusCode).toBe(503);
       expect(res.headers['Retry-After']).toBe('2');
     });
+
+    /**
+     * 🔴 ORDERING, read directly — the assertions above are status-only, and a mutation sweep
+     * showed that is the weaker guard: once the log is contained, moving it back ahead of the
+     * response still produces the same status, so only the 2 s telemetry stall in front of the
+     * client's answer is reintroduced and a status assertion cannot see it. These read the
+     * response state AT LOG TIME, so they fail on reordering alone.
+     */
+    it('ORDERING: the response is committed before either event is logged', async () => {
+      const seen: Array<{ name: string; statusAtLogTime: number }> = [];
+      const res = makeRes();
+      vi.mocked(logToAxiom).mockImplementation(async (d: Record<string, unknown>) => {
+        seen.push({
+          name: String((d as { name?: unknown }).name),
+          statusAtLogTime: res.statusCode,
+        });
+      });
+
+      // Happy path first.
+      mockCompleteMultipartUpload.mockResolvedValue({ Location: 'https://cdn/x' });
+      await handler(makeReq(), res);
+
+      // Then the classified-error path.
+      const res2 = makeRes();
+      vi.mocked(logToAxiom).mockImplementation(async (d: Record<string, unknown>) => {
+        seen.push({
+          name: String((d as { name?: unknown }).name),
+          statusAtLogTime: res2.statusCode,
+        });
+      });
+      mockCompleteMultipartUpload.mockRejectedValue(
+        s3Error({ name: 'NoSuchUpload', $metadata: { httpStatusCode: 404 } })
+      );
+      mockObjectExists.mockResolvedValue(false);
+      await handler(makeReq(), res2);
+      vi.mocked(logToAxiom).mockReset();
+
+      expect(seen).toEqual([
+        { name: 's3-upload-complete', statusAtLogTime: 200 },
+        { name: 's3-upload-complete-error', statusAtLogTime: 409 },
+      ]);
+    });
   });
 
   /**
-   * The other half of the same seam: the not-found branch consults the bucket, and that
-   * probe is a network call against the very backend that is misbehaving. A THROW there
-   * used to escape as a 500 — the same terminal fault reported as a server bug, at
-   * exactly the moment the path is busiest.
+   * ⚠️ INVARIANT GUARD, NOT A REGRESSION TEST — labelled so nobody counts it as coverage of a
+   * bug that existed. The real `objectExists` cannot reject (`headObject` wraps its whole body
+   * in a try returning `{status:'unknown'}`), so `mockObjectExists.mockRejectedValue` here
+   * simulates a state the current dependency cannot produce. It pins the handler's side of the
+   * contract — "an unavailable probe is a 409, never a 500" — against a future change to
+   * `headObject`'s swallow-everything behaviour. It was RED at base only because the awaited
+   * telemetry ran first; it is not evidence that a throwing probe ever escaped in production.
    */
   it('a THROWING objectExists probe yields 409, not an escaped 500', async () => {
     mockCompleteMultipartUpload.mockRejectedValue(

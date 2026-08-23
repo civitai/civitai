@@ -37,6 +37,22 @@ const PROD_CONFIGURED = {
   podName: 'pod-test',
 } as const;
 
+/**
+ * The dual-write's consecutive-failure count is pinned to `globalThis`, keyed by datastream,
+ * so that the many emitted copies of this module share one counter in a real build (see the
+ * comment at `getSharedIngestFailureCounts`). That is deliberate in production and is exactly
+ * why it must be cleared between tests: otherwise a logger built in one test inherits the
+ * failure count of the previous one, and the throttle/recovery assertions read state they did
+ * not create. Reaching the map by its `Symbol.for` key keeps this out of the package's public
+ * surface — a test-only reset export would be API nobody else should have.
+ */
+const INGEST_FAILURES_KEY = Symbol.for('@civitai/axiom.ingestFailuresByDatastream');
+function resetIngestFailureCounts() {
+  (globalThis as Record<symbol, unknown>)[INGEST_FAILURES_KEY] = new Map<string, number>();
+}
+
+beforeEach(resetIngestFailureCounts);
+
 describe('logToAxiom structured-stderr sink (always-on for Loki)', () => {
   let errorSpy: ReturnType<typeof vi.spyOn>;
 
@@ -288,6 +304,103 @@ describe('logToAxiom Axiom dual-write containment', () => {
     const { logToAxiom } = createAxiomLogger(PROD_CONFIGURED);
     await logToAxiom(ERR);
     expect(reports(errorSpy)).toEqual([]);
+  });
+
+  /**
+   * 🔴 `type` is what Alloy extracts into Loki's `detected_level` — the consuming app's
+   * `buildCentralErrorLog` says so explicitly and notes that `level` is NOT read. Without
+   * `type: 'error'` these lines never reach the error stream, so the "Axiom ingest is failing"
+   * alert this event exists to support cannot be built on it. `pod` is what distinguishes one
+   * sick pod from a fleet-wide outage.
+   *
+   * Both were missing from the first version of this feature and an audit caught it. Pinned
+   * here because the failure mode is silence: the event still gets written, it just never
+   * shows up where anyone is looking.
+   */
+  it('the failure report is queryable as an ERROR and attributable to a pod', async () => {
+    h.ingestEvents.mockRejectedValue(new Error('down'));
+    const { logToAxiom } = createAxiomLogger(PROD_CONFIGURED);
+
+    await logToAxiom(ERR);
+
+    expect(reports(errorSpy)[0]).toMatchObject({
+      name: 'axiom-ingest-failed',
+      type: 'error',
+      pod: 'pod-test',
+      datastream: 'civitai-errors',
+    });
+  });
+
+  it('the recovery report is INFO — good news must not page as an error', async () => {
+    const { logToAxiom } = createAxiomLogger(PROD_CONFIGURED);
+    h.ingestEvents.mockRejectedValue(new Error('down'));
+    await logToAxiom(ERR);
+    h.ingestEvents.mockResolvedValue(undefined);
+    await logToAxiom(ERR);
+
+    expect(reports(errorSpy).at(-1)).toMatchObject({
+      name: 'axiom-ingest-recovered',
+      type: 'info',
+      pod: 'pod-test',
+    });
+  });
+
+  /**
+   * 🔴 The counter is shared across module copies on purpose. The consuming app measures that
+   * the bundler emits its logging module 14 times into one server build; with a private
+   * counter per copy each sees ~1/14th of the traffic, so the first-failure line fires up to
+   * 14 times, the every-500th threshold may never be reached, and a 6,000-event outage reports
+   * as a few `consecutiveFailures: 1` lines. Two loggers here stand in for two emitted copies.
+   */
+  it('SHARED COUNTER: separate loggers on one datastream continue the same outage', async () => {
+    h.ingestEvents.mockRejectedValue(new Error('down'));
+    const a = createAxiomLogger(PROD_CONFIGURED);
+    const b = createAxiomLogger(PROD_CONFIGURED);
+
+    await a.logToAxiom(ERR);
+    await b.logToAxiom(ERR);
+    await a.logToAxiom(ERR);
+
+    // One "first failure" line total, not one per logger — and the count kept climbing across
+    // them. A per-instance counter yields two `consecutiveFailures: 1` reports instead.
+    const r = reports(errorSpy);
+    expect(r).toHaveLength(1);
+    expect(r[0]).toMatchObject({ consecutiveFailures: 1 });
+
+    // Prove the shared count really advanced to 3 rather than sitting at 1 per logger: the
+    // recovery line reports the total across both.
+    h.ingestEvents.mockResolvedValue(undefined);
+    await b.logToAxiom(ERR);
+    expect(reports(errorSpy).at(-1)).toMatchObject({
+      name: 'axiom-ingest-recovered',
+      failedSince: 3,
+    });
+  });
+
+  it('a DIFFERENT datastream is a different transport with its own count', async () => {
+    h.ingestEvents.mockRejectedValue(new Error('down'));
+    const { logToAxiom } = createAxiomLogger(PROD_CONFIGURED);
+
+    await logToAxiom(ERR);
+    await logToAxiom(ERR, 'some-other-stream');
+
+    // Two independent outages → two first-failure lines, each at 1.
+    const r = reports(errorSpy);
+    expect(r.map((x) => x.datastream)).toEqual(['civitai-errors', 'some-other-stream']);
+    expect(r.map((x) => x.consecutiveFailures)).toEqual([1, 1]);
+  });
+
+  /**
+   * The budget timer must be cleared when the ingest wins the race, or every logged event
+   * leaves a 2 s timer pending — at this logger's rate that is thousands of live timers.
+   */
+  it('clears the budget timer when the ingest wins', async () => {
+    vi.useFakeTimers();
+    const { logToAxiom } = createAxiomLogger(PROD_CONFIGURED);
+
+    await logToAxiom(ERR);
+
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
 

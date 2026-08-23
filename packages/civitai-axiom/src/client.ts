@@ -95,6 +95,24 @@ const AXIOM_INGEST_TIMEOUT_MS = 2_000;
 const AXIOM_INGEST_FAILURE_REPORT_EVERY = 500;
 
 /**
+ * globalThis-pinned consecutive-failure counts, keyed by datastream.
+ *
+ * Pinned for the reason documented at the use site: the bundler emits this module many times
+ * into one build, and a module-scope `const` is therefore N independent objects rather than
+ * one. The consuming app solves the identical problem the identical way for its log sink; this
+ * mirrors it so the counter cannot be defeated by duplication.
+ *
+ * A `Symbol.for` key rather than a plain property so two copies agree without colliding with
+ * anything else on the global.
+ */
+const INGEST_FAILURES_KEY = Symbol.for('@civitai/axiom.ingestFailuresByDatastream');
+
+function getSharedIngestFailureCounts(): Map<string, number> {
+  const g = globalThis as typeof globalThis & { [INGEST_FAILURES_KEY]?: Map<string, number> };
+  return (g[INGEST_FAILURES_KEY] ??= new Map<string, number>());
+}
+
+/**
  * Build an Axiom logger. Config defaults come from the package's own env schema
  * (./env); pass a `Partial<AxiomConfig>` to override any value per call (tests,
  * multi-instance, alternate config sources). `deps` injects optional app behavior —
@@ -110,9 +128,24 @@ export function createAxiomLogger(
   const axiom =
     config.token && config.orgId ? new Client({ token: config.token, orgId: config.orgId }) : null;
 
-  // Consecutive-failure count for the Axiom dual-write. Per-logger, not global: a second
-  // logger instance is a second transport and gets its own outage.
-  let ingestFailures = 0;
+  /**
+   * Consecutive-failure count for the Axiom dual-write, SHARED across every emitted copy of
+   * this module that targets the same datastream.
+   *
+   * 🔴 A plain `let` here would be per-module-copy, and that is not the same as per-logger.
+   * The consuming app's `structured-log-sink` records — measured — that the bundler emits its
+   * logging module **14 distinct times into one server build**; that duplication is exactly
+   * what once made an OTel bridge deliver 1.3% of records. With 14 private counters, each sees
+   * ~1/14th of the traffic: the "first failure" line fires up to 14 times and no copy need ever
+   * reach the every-Nth threshold, so a 6,444-event outage could report as a handful of
+   * `consecutiveFailures: 1` lines and nothing else. That is the throttle failing in the one
+   * direction that matters.
+   *
+   * Keyed by datastream rather than globally, because two loggers pointing at DIFFERENT
+   * datastreams really are different transports with independent outages — while N copies of
+   * one module pointing at the SAME datastream are one transport that happens to be duplicated.
+   */
+  const ingestFailuresByDatastream = getSharedIngestFailureCounts();
 
   /**
    * Record the outcome of one dual-write and, on a transition or every Nth failure, say so
@@ -121,24 +154,45 @@ export function createAxiomLogger(
    *
    * Deliberately NOT routed through `logToAxiom` itself — that would try to ship the report
    * of an Axiom outage to Axiom, and recurse.
+   *
+   * 🔴 `type` and `pod` are load-bearing, not decoration. Alloy extracts `type` into Loki's
+   * `detected_level` (the consuming app's `buildCentralErrorLog` calls that out explicitly and
+   * notes `level` is NOT read), so without `type: 'error'` these lines never appear in the
+   * error stream — and an alert on "Axiom ingest is failing", which is the whole reason this
+   * event exists, could not be built on them. `pod` is what separates one sick pod from a
+   * fleet-wide outage; every other line this logger emits carries it.
    */
-  function recordIngestOutcome(outcome: 'ok' | 'error' | 'timeout') {
+  function recordIngestOutcome(outcome: 'ok' | 'error' | 'timeout', datastream: string) {
+    const failures = ingestFailuresByDatastream.get(datastream) ?? 0;
     if (outcome === 'ok') {
-      if (ingestFailures > 0) {
+      if (failures > 0) {
         console.error(
-          JSON.stringify({ name: 'axiom-ingest-recovered', failedSince: ingestFailures })
+          JSON.stringify({
+            name: 'axiom-ingest-recovered',
+            // Recovery is good news: INFO, so it does not page as an error itself.
+            type: 'info',
+            level: 'info',
+            pod: config.podName,
+            datastream,
+            failedSince: failures,
+          })
         );
-        ingestFailures = 0;
+        ingestFailuresByDatastream.set(datastream, 0);
       }
       return;
     }
-    ingestFailures += 1;
-    if (ingestFailures === 1 || ingestFailures % AXIOM_INGEST_FAILURE_REPORT_EVERY === 0) {
+    const next = failures + 1;
+    ingestFailuresByDatastream.set(datastream, next);
+    if (next === 1 || next % AXIOM_INGEST_FAILURE_REPORT_EVERY === 0) {
       console.error(
         JSON.stringify({
           name: 'axiom-ingest-failed',
+          type: 'error',
+          level: 'error',
+          pod: config.podName,
+          datastream,
           reason: outcome,
-          consecutiveFailures: ingestFailures,
+          consecutiveFailures: next,
         })
       );
     }
@@ -239,11 +293,19 @@ export function createAxiomLogger(
        * indistinguishable from an outage. Nothing here cancels the request; we stop
        * WAITING for it.
        *
-       * 🔴 The rejection handler is attached in the same `.then(onOk, onErr)` as the success
-       * handler — NOT as a later `.catch()` and not inside the race. When the budget wins,
-       * this promise is left running with nobody awaiting it; an unhandled rejection at
-       * that point is precisely the `unhandledRejection` that killed the jobs pods, i.e.
-       * the bug re-created by the fix for it.
+       * 🔴 A REJECTION HANDLER MUST BE ATTACHED HERE, SYNCHRONOUSLY, AT CREATION. When the
+       * budget below wins the race this promise is left running with nobody awaiting it, so a
+       * rejection arriving later has nowhere to go — that is an `unhandledRejection`, i.e. the
+       * bug this fix exists for, re-created by the fix. Attaching one after an `await`
+       * boundary, or only in the race arm, does not count.
+       *
+       * ⚠️ A trailing `.then(onOk).catch(onErr)` would be EQUALLY safe — `.catch` attaches to
+       * the derived promise synchronously and handles the original's rejection through it.
+       * An earlier version of this comment claimed otherwise and was wrong (verified in node:
+       * only the fulfilment-handler-ONLY form, `.then(onOk)` with no rejection handler, goes
+       * unhandled). The paired form is kept because it is one expression and cannot drift
+       * apart, not because the alternative leaks. What the test suite actually pins is the
+       * dangerous shape — a fulfilment handler with no rejection handler at all.
        */
       const ingest = axiom.ingestEvents(datastream, sendData).then(
         () => 'ok' as const,
@@ -261,7 +323,7 @@ export function createAxiomLogger(
       }
 
       try {
-        recordIngestOutcome(await Promise.race([ingest, budget]));
+        recordIngestOutcome(await Promise.race([ingest, budget]), datastream);
       } finally {
         clearTimeout(timer);
       }
