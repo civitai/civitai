@@ -1,5 +1,6 @@
 import type { Logger } from '@civitai/next-axiom';
 import { withAxiom } from '@civitai/next-axiom';
+import { legacySessionCookieName, sessionCookieName } from '@civitai/auth';
 import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import dayjs from '~/shared/utils/dayjs';
@@ -17,6 +18,7 @@ import type { Partner } from '~/shared/utils/prisma/models';
 import { instrumentApiResponse } from '~/server/prom/http-errors';
 import { isClientAbortError, isDriverAuthoredMessage } from '~/server/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
+import { PRIVATE_CACHE_CONTROL } from '~/shared/constants/cache-control.constants';
 import { logToAxiom, buildCentralErrorLog, wasServerFaultLogged } from '~/server/logging/client';
 import {
   GENERIC_CLIENT_ERROR_BY_STATUS,
@@ -284,6 +286,75 @@ const addPublicCacheHeaders = (
   );
 };
 
+/**
+ * The request dimensions a `PublicEndpoint` body can legitimately depend on.
+ *
+ * `Cookie` and `Authorization` are the two the wrapper itself branches on below,
+ * so they are the two it must declare. A response that can differ by credential
+ * and does not say so is, per RFC 9111 §4.1, indistinguishable to a shared cache
+ * from one that cannot — the cache has no way to know a second dimension exists.
+ */
+const CALLER_DEPENDENT_VARY = 'Cookie, Authorization';
+
+/**
+ * Cookie names that can carry a session, hence make a response caller-dependent.
+ *
+ * 🔴 DERIVED, never spelled out. `@civitai/auth` owns the naming, and it varies
+ * along two axes: the current thin-session cookie vs the legacy next-auth one
+ * (both are still honoured by `getServerAuthSession`), and the `__Secure-`
+ * prefix, which is applied when serving over https and dropped for http dev. All
+ * four spellings are enumerated by calling the helpers with an explicit boolean,
+ * rather than letting the env-derived default pick one — the guard must hold in
+ * dev and prod alike, and it must not silently narrow if a deploy's env changes.
+ *
+ * A hardcoded literal here is the precise failure mode this list exists to avoid:
+ * it keeps matching, keeps looking correct, and stops meaning anything the moment
+ * the cookie is renamed. `packages/civitai-auth/src/__tests__/cookies.test.ts`
+ * pins the values on the other side.
+ */
+const SESSION_COOKIE_NAMES = Array.from(
+  new Set([
+    sessionCookieName(true),
+    sessionCookieName(false),
+    legacySessionCookieName(true),
+    legacySessionCookieName(false),
+  ])
+);
+
+/**
+ * Does this request carry a credential that can change the response body?
+ *
+ * Intentionally CHEAP and PESSIMISTIC: it inspects headers only — no session
+ * decode, no db/redis hop — and answers "yes" for a credential that turns out to
+ * be expired or bogus. The cost of a false positive is one uncached response;
+ * the cost of a false negative is a caller-specific body marked publicly
+ * cacheable. Those are not symmetric, so the cheap over-approximation is the
+ * right one.
+ *
+ * `req.cookies` is what Next populates for an API route and is the primary read.
+ * The raw `Cookie` header is parsed as a fallback so the check cannot quietly
+ * degrade to "no credentials" in any context that skips that parsing.
+ */
+export function requestCarriesCallerCredentials(req: NextApiRequest): boolean {
+  if (req.headers?.authorization) return true;
+
+  const parsed = req.cookies as Record<string, string | undefined> | undefined;
+  if (parsed) {
+    for (const name of SESSION_COOKIE_NAMES) if (parsed[name]) return true;
+  }
+
+  const raw = req.headers?.cookie;
+  if (raw) {
+    for (const pair of raw.split(';')) {
+      const eq = pair.indexOf('=');
+      const name = (eq === -1 ? pair : pair.slice(0, eq)).trim();
+      if (name && SESSION_COOKIE_NAMES.includes(name)) return true;
+    }
+  }
+
+  return false;
+}
+
 export function PublicEndpoint(
   handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void | NextApiResponse>,
   allowedMethods: string[] = ['GET'],
@@ -293,8 +364,36 @@ export function PublicEndpoint(
   { maxAge }: { maxAge?: number } = {}
 ) {
   return withApiMetrics(async (req: AxiomAPIRequest, res: NextApiResponse) => {
+    // Set FIRST: `addCorsHeaders` can end an OPTIONS preflight, after which no
+    // further header write lands. Every response out of this wrapper declares the
+    // same dimensions, cacheable or not — a `Vary` that appears only on the
+    // cacheable arm would itself be a caller-dependent header.
+    res.setHeader('Vary', CALLER_DEPENDENT_VARY);
+
     const shouldStop = addCorsHeaders(req, res, allowedMethods);
-    addPublicCacheHeaders(req, res, maxAge);
+
+    // 🔴 `public, s-maxage` is a claim that ANY caller may be served this exact
+    // body. Several routes on this wrapper resolve the session themselves and
+    // shape their response around it (`user/settings`, `user/getHiddenPreferences`,
+    // `v1/images`, `download/models/[modelVersionId]`, …), so that claim is only
+    // true for a request that presented no credential. Make the header follow the
+    // claim instead of asserting it unconditionally.
+    //
+    // The fallback is the platform default rather than nothing. `apiCacheMiddleware`
+    // already sets exactly this string, but its matcher covers only `/api/trpc/*`,
+    // `/api/v1/*` and `/api/testing/*` (verified in `src/proxy.ts`) — and this
+    // wrapper is used well outside those prefixes (`/api/user/*`, `/api/generation/*`,
+    // `/api/track/*`, `/api/download/*`, `/api/internal/*`). Relying on the proxy
+    // would leave those with no `Cache-Control` at all, which is a weaker
+    // statement than the one they need, so state it here too.
+    //
+    // A handler that sets its own `Cache-Control` still wins either way: headers
+    // are not flushed until it responds, and last write wins. That is what keeps
+    // the `no-store` error arms (`handleEndpointError`, and the 503 sheds in
+    // `v1/images`/`v1/users`) authoritative.
+    if (requestCarriesCallerCredentials(req)) res.setHeader('Cache-Control', PRIVATE_CACHE_CONTROL);
+    else addPublicCacheHeaders(req, res, maxAge);
+
     if (shouldStop) return;
     await handler(req, res);
   });
