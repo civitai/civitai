@@ -753,7 +753,7 @@ describe('AppListingDetailBody', () => {
 
   test('🔴 the SOURCE row is ABSENT from the DOM when there is no link (never "Source: —")', async () => {
     const { container, within } = await renderScoped(
-      <AppListingDetailBody detail={base({ sourceRepoUrl: null })} />
+      <AppListingDetailBody detail={base({ contentRating: 'PG', sourceRepoUrl: null })} />
     );
     await expect.element(within.getByTestId('apps-listing-details-accordion')).toBeInTheDocument();
     expect(container.querySelector('[data-listing-detail-row="source"]')).toBeNull();
