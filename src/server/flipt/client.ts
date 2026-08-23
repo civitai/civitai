@@ -151,7 +151,43 @@ const FLIPT_EVAL_CACHE_BYPASS = new Set<string>([
   FLIPT_FEATURE_FLAGS.PLACEMENT_METRIC_SWEEP,
 ]);
 
-const flipt = createFliptClient({
+// 🔴 SHARED_STATE — this module is emitted TWICE in the production server build.
+// Measured, not assumed: `[flipt] eval cache TTL:` appears exactly 2x on every pod
+// (488 lines across 244 pod streams), against ONE `[instrumentation] Running in
+// nodejs runtime`.
+//
+// Without the globalThis pin below, each emitted copy owned a PRIVATE wasm client,
+// a private config poller and a private pair of eval caches. Two consequences, and
+// the second is why this is pinned rather than documented:
+//
+//   1. Duplicated work per pod — two wasm engines and two 60s config polls.
+//   2. Any reader that closes over "the" client sees ONE of the two. That is
+//      exactly how `civitai_app_heavy_bulkhead_active`/`_rejects` emitted zero
+//      series for 74 days while looking registered, deployed and healthy (#4173),
+//      and it is why `src/server/utils/request-bulkhead.ts` is enrolled in
+//      scripts/server-graph-watchlist.mjs. `getFliptCacheStats` below is precisely
+//      such a reader, so an unpinned client would make the eval-cache metrics a
+//      confident half-measurement — worse than their absence, because the number
+//      they exist to arbitrate (TTL-bound vs capacity-bound) is biased by the
+//      split: one key space divided across two caches at the same ceiling rotates
+//      far less than one cache holding all of it, which reads as "TTL-bound" and
+//      sends you to the knob that changes nothing.
+//
+// Enrolled as SHARED_STATE on `__civitaiFliptClient` in server-graph-watchlist.mjs,
+// so a future refactor that drops this pin fails that gate. Vitest cannot see this
+// (it loads each module once).
+// `scripts/__tests__/check-server-graph-singletons.test.ts` asserts this EXACT shape
+// against comment-stripped source, so an aliased handle
+// (`const g = globalThis as …; g.__civitaiFliptClient ??= …`) does NOT satisfy it —
+// the gate must be able to recognise the pin inside a bundled chunk. `??=`
+// specifically, not `=`: `=` makes the second copy REPLACE the first's client
+// instead of adopting it, which is the original bug in one character.
+declare global {
+  // eslint-disable-next-line no-var
+  var __civitaiFliptClient: ReturnType<typeof createFliptClient> | undefined;
+}
+
+const flipt = (globalThis.__civitaiFliptClient ??= createFliptClient({
   url: env.FLIPT_URL,
   clientToken: env.FLIPT_FETCHER_SECRET,
   cacheBypass: FLIPT_EVAL_CACHE_BYPASS,
@@ -166,7 +202,7 @@ const flipt = createFliptClient({
       'temp-search'
     ).catch();
   },
-});
+}));
 
 // 🔴 THE ENTITY-ID TRAP. All four evaluators below take `(flag, entityId?,
 // context?)`, and the two arguments are NOT interchangeable. A Flipt segment
@@ -187,6 +223,9 @@ export const getFliptVariant = flipt.getVariant;
 export const getFliptBoolean = flipt.getBoolean;
 export const isFliptSync = flipt.isEnabledSync;
 export const ensureFliptInitialized = flipt.ensureInitialized;
+// Eval-cache counters for ~/server/metrics/flipt-eval-cache.metrics. Closes over the
+// caches (no `this`), so unbinding here is safe — same as the accessors above.
+export const getFliptCacheStats = flipt.getCacheStats;
 
 // Build the inner `(entityId, metricType, day, total)` subquery the direct CH
 // read sites (search-index / comic populate / metric-helpers) sum over. `where`

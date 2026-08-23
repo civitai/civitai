@@ -458,15 +458,6 @@ const impressionArms = () =>
     .map((e) => `'${e}'`)
     .join(', ');
 
-// Impressions land in their own table rather than `daily_views`, so this cannot reuse `viewTrackingLive`.
-// Deliberately uncached, and deliberately NOT part of the cached ContentAnalytics payload — see below.
-export async function impressionTrackingLive(): Promise<boolean> {
-  const rows = await getClickhouse().$query<{ one: number }>(
-    `SELECT 1 AS one FROM impressions_daily_by_owner WHERE entityType IN (${impressionArms()}) LIMIT 1`
-  );
-  return rows.length > 0;
-}
-
 function netReactionsDailySql(uid: number, from: string, to: string): string {
   return `SELECT toDate(time) AS date, ${netReactions} AS value FROM reactions WHERE ownerId = ${uid} AND toDate(time) >= toDate('${from}') AND toDate(time) <= toDate('${to}') GROUP BY date`;
 }
@@ -882,7 +873,9 @@ async function fetchComics(userId: number, from: string, to: string): Promise<Co
            )                                           AS "newReaders"
     FROM "ComicProject" p
     LEFT JOIN "ComicChapter" c ON c."projectId" = p.id
-    LEFT JOIN "ComicChapterRead" r ON r."chapterId" = c.id
+    -- unread is ComicChapterRead's soft delete, and the platform metrics count a read as unread = false.
+    -- On the join rather than in WHERE, or a comic nobody has read drops off the list entirely.
+    LEFT JOIN "ComicChapterRead" r ON r."chapterId" = c.id AND r."unread" = false
     LEFT JOIN "Image" i ON i.id = p."coverImageId"
     WHERE p."userId" = ${uid}
       -- Comic deletion is soft and lives in status, not in a deletedAt column like the sibling entities.

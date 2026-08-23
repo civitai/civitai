@@ -3,7 +3,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { UserEngagementType } from '~/shared/utils/prisma/enums';
 import { HiddenUsers, toggleHidden } from '~/server/services/user-preferences.service';
 import { userFollowsCache } from '~/server/redis/caches';
-import { toggleFollowUser, toggleHideUser } from '~/server/services/user.service';
+import { toggleFollowUser } from '~/server/services/user.service';
 import { clearUserEngagement, setUserEngagement } from '~/server/services/user-engagement';
 
 const { Prisma } = await import('@prisma/client');
@@ -98,17 +98,6 @@ describe('UserEngagement writers are all scoped by type', () => {
   );
 
   it.each(['Block', 'Follow', 'Hide'] as const)(
-    'toggleHideUser issues no PK-addressed write over a %s row',
-    async (type) => {
-      engagement.findUnique.mockResolvedValue({ type });
-
-      await toggleHideUser({ userId, targetUserId });
-
-      expect(unqualified()).toEqual([]);
-    }
-  );
-
-  it.each(['Block', 'Follow', 'Hide'] as const)(
     'toggleFollowUser issues no PK-addressed write over a %s row',
     async (type) => {
       engagement.findUnique.mockResolvedValue({ type });
@@ -147,7 +136,7 @@ describe('toggleHidden kind=user — a Block outranks a Hide', () => {
     // Nothing matched the update and the insert conflicts with the block — the
     // intended end state either way, so the toggle must not 500 on a safety
     // control.
-    await expect(hide(true)).resolves.toEqual({ added: [], removed: [] });
+    await expect(hide(true)).resolves.toEqual({ added: [], removed: [], hidden: false });
   });
 
   it('still surfaces a create failure that is not the conflict', async () => {
@@ -201,6 +190,20 @@ describe('toggleHidden kind=user — honours the caller intent', () => {
     });
   });
 
+  it('hiding a FOLLOWED user converts that Follow and nothing else', async () => {
+    engagement.findUnique.mockResolvedValue({ type: 'Follow' });
+
+    await hide(true);
+
+    // The filter is the protection: unscoped, this same statement is what takes a
+    // Block with it.
+    expect(engagement.updateMany).toHaveBeenCalledWith({
+      where: { ...scoped, type: { notIn: ['Block'] } },
+      data: { type: 'Hide' },
+    });
+    expect(engagement.deleteMany).not.toHaveBeenCalled();
+  });
+
   it('hidden=true on an ALREADY hidden user is a no-op that keeps the row', async () => {
     engagement.findUnique.mockResolvedValue({ type: 'Hide' });
 
@@ -239,69 +242,50 @@ describe('toggleHidden kind=user — honours the caller intent', () => {
   });
 });
 
-// 868kumcfc. The OTHER `toggleHideUser` — same name, different file, opposite
-// failure: over a Block it matched no branch, wrote nothing, and returned falsy, so
-// the caller logged the hide as a removal.
-describe('toggleHideUser (user.service) — reports what it did', () => {
-  it('reports a blocked user as hidden without touching the row', async () => {
+// 868kurj0y. The client marks the target hidden optimistically on click, and the
+// `added`/`removed` diff cannot correct it: five of the six kinds return both empty
+// on every call, so an empty diff is indistinguishable from a refusal. Both
+// polarities, or a hardcoded `hidden: false` passes the refusal case alone.
+describe('toggleHidden kind=user — reports the outcome the client must trust', () => {
+  it('reports hidden=false when a Block refuses the hide', async () => {
     engagement.findUnique.mockResolvedValue({ type: 'Block' });
-
-    await expect(toggleHideUser({ userId, targetUserId })).resolves.toBe(true);
-
-    expect(engagement.updateMany).not.toHaveBeenCalled();
-    expect(engagement.deleteMany).not.toHaveBeenCalled();
-    expect(engagement.create).not.toHaveBeenCalled();
-  });
-
-  it('hiding a followed user reports HIDDEN, not removed', async () => {
-    engagement.findUnique.mockResolvedValue({ type: 'Follow' });
-
-    // The old branch converted the row and returned false, so the tracking event
-    // recorded a `Delete` for a write that established a Hide.
-    await expect(toggleHideUser({ userId, targetUserId })).resolves.toBe(true);
-
-    expect(engagement.updateMany).toHaveBeenCalledWith({
-      where: { ...scoped, type: { notIn: ['Block'] } },
-      data: { type: 'Hide' },
-    });
-  });
-
-  it('un-hiding removes a Hide and only a Hide', async () => {
-    engagement.findUnique.mockResolvedValue({ type: 'Hide' });
-
-    await expect(toggleHideUser({ userId, targetUserId })).resolves.toBe(false);
-
-    expect(engagement.deleteMany).toHaveBeenCalledWith({ where: { ...scoped, type: 'Hide' } });
-  });
-
-  // The dominant real path — hiding someone you have no engagement with — and the
-  // one every other test in this describe routes past, because they all supply a
-  // row and leave `updateMany` matching it.
-  it('hiding a user with no engagement creates the row', async () => {
-    engagement.updateMany.mockResolvedValue({ count: 0 });
-
-    await expect(toggleHideUser({ userId, targetUserId })).resolves.toBe(true);
-
-    expect(engagement.create).toHaveBeenCalledWith({
-      data: { type: 'Hide', targetUserId, userId },
-    });
-  });
-
-  it('survives the create losing to a Block that arrived in between', async () => {
     everyPassFails();
 
-    await expect(toggleHideUser({ userId, targetUserId })).resolves.toBe(true);
+    await expect(hide(true)).resolves.toMatchObject({ hidden: false });
   });
 
-  it('still surfaces a create failure that is not the conflict', async () => {
-    engagement.updateMany.mockResolvedValue({ count: 0 });
-    engagement.create.mockRejectedValue(new Error('connection terminated'));
+  it('reports hidden=true when the hide lands', async () => {
+    await expect(hide(true)).resolves.toMatchObject({ hidden: true });
+  });
 
-    // Control for the test above: `catch(() => {})` passes that one and swallows
-    // every real write failure with it, reporting a hide that never happened.
-    await expect(toggleHideUser({ userId, targetUserId })).rejects.toThrow('connection terminated');
+  // The distinguishing case for the whole field: `findUnique` saw NOTHING, so a
+  // `hidden` re-derived from that read reports true. Only the write's own answer
+  // reports false. Without this, `hidden = hiding && engagement?.type !== 'Block'`
+  // passes every other test in this file.
+  it('reports hidden=false when a Block arrives AFTER the read', async () => {
+    everyPassFails();
+
+    await expect(hide(true)).resolves.toMatchObject({ hidden: false });
+  });
+
+  it('reports hidden=false on an un-hide', async () => {
+    engagement.findUnique.mockResolvedValue({ type: 'Hide' });
+
+    await expect(hide(false)).resolves.toMatchObject({ hidden: false });
   });
 });
+
+// 868kurrfj. There used to be a SECOND `toggleHideUser`, in user.service, reachable
+// only from a controller handler registered on no router. It is gone: a second live
+// writer on this table is the defect family PR #4230 exists to close, and the
+// divergence it accumulated (a missing HiddenUsers invalidation) accumulated
+// precisely because no call path exercised it.
+//
+// Every WRITE-SHAPE case its describe pinned is asserted above against
+// `toggleHidden({ kind: 'user' })`, the writer the product actually reaches. What went
+// with it is the REPORT-honesty half — three cases asserting the boolean it returned —
+// because the only thing that read that boolean was the deleted handler's Hide/Delete
+// tracking split. Dead behaviour leaving with its consumer, not coverage dropped.
 
 describe('toggleFollowUser — scoped writes', () => {
   it('unfollowing deletes the Follow row, not whatever occupies the pair', async () => {
@@ -391,12 +375,14 @@ describe('cache invalidation on the Hide set', () => {
     expect(hidden).toHaveBeenCalledWith({ userId });
   });
 
-  it('refreshes HiddenUsers when toggleHideUser writes the Hide', async () => {
-    const hidden = vi.spyOn(HiddenUsers, 'refreshCache').mockResolvedValue(undefined);
+  it.each([true, false])('refreshes HiddenUsers on the hide path (hidden=%s)', async (hidden) => {
+    const spy = vi.spyOn(HiddenUsers, 'refreshCache').mockResolvedValue(undefined);
 
-    await toggleHideUser({ userId, targetUserId });
+    await hide(hidden);
 
-    expect(hidden).toHaveBeenCalledWith({ userId });
+    // Both directions: gating this on `hiding` would leave an un-hidden user
+    // filtered out of their own feed until the per-user hash aged out.
+    expect(spy).toHaveBeenCalledWith({ userId });
   });
 });
 
@@ -494,38 +480,119 @@ describe('user-engagement helpers — the returned contract', () => {
   });
 });
 
-// Same class as the HiddenUsers pair above, opposite cache: delete any of these
-// refreshes and the user's own follow set stays stale until the hash TTL.
-describe('cache invalidation on the follow set', () => {
-  it.each([
-    ['Follow', 'unfollowing'],
-    ['Hide', 'following someone hidden'],
-    [null, 'following from nothing'],
-  ] as const)('refreshes userFollowsCache when %s (%s)', async (type) => {
-    engagement.findUnique.mockResolvedValue(type === null ? null : { type });
-    const follows = vi.spyOn(userFollowsCache, 'refresh').mockResolvedValue(undefined);
+// 868kurkd0. These toggles used to end in `userFollowsCache.refresh`, which refetches
+// the user's ENTIRE follow set from the primary — 19,224 buffers and ~100 ms for a
+// user with 130k follows, measured on prod, per click. The delta is known here, so
+// the entry is rewritten in place; the refetch stays as the fallback for the cases
+// where it is NOT known, because a missing entry is repopulated by the next reader
+// from the replica, which can be behind the write that just happened.
+//
+// Every assertion below applies the updater to a fixture rather than checking that
+// the cache was touched: an updater with the sign flipped passes a bare call check
+// and leaves the user following someone they just unfollowed.
+describe('the follow set is maintained by delta, not refetched', () => {
+  const spies = () => ({
+    update: vi.spyOn(userFollowsCache, 'update').mockResolvedValue(true),
+    refresh: vi.spyOn(userFollowsCache, 'refresh').mockResolvedValue(undefined),
+  });
+  const applied = (update: ReturnType<typeof spies>['update'], follows: number[]) =>
+    update.mock.calls[0][1]({ userId, follows });
+
+  it('unfollowing removes the target from the cached set', async () => {
+    engagement.findUnique.mockResolvedValue({ type: 'Follow' });
+    const { update, refresh } = spies();
 
     await toggleFollowUser({ userId, targetUserId });
 
-    expect(follows).toHaveBeenCalledWith(userId);
+    expect(applied(update, [targetUserId, 7])).toEqual({ userId, follows: [7] });
+    expect(refresh).not.toHaveBeenCalled();
   });
 
-  it('refreshes it on a hide too', async () => {
-    const follows = vi.spyOn(userFollowsCache, 'refresh').mockResolvedValue(undefined);
+  it('following from nothing adds the target', async () => {
+    const { update, refresh } = spies();
 
-    await toggleHideUser({ userId, targetUserId });
+    await toggleFollowUser({ userId, targetUserId });
 
-    expect(follows).toHaveBeenCalledWith(userId);
+    expect(applied(update, [7])).toEqual({ userId, follows: [7, targetUserId] });
+    expect(refresh).not.toHaveBeenCalled();
   });
 
-  // The live path — `toggleHidden({ kind: 'user' })` is the one 868kun67j is
-  // about, and its own follow-set refresh was the last call site in the diff's
-  // blast radius that nothing asserted.
-  it.each([true, false])('refreshes it on the toggleHidden path (hidden=%s)', async (hidden) => {
-    const follows = vi.spyOn(userFollowsCache, 'refresh').mockResolvedValue(undefined);
+  it('following someone hidden adds the target once the Hide is converted', async () => {
+    engagement.findUnique.mockResolvedValue({ type: 'Hide' });
+    const { update } = spies();
 
-    await hide(hidden);
+    await toggleFollowUser({ userId, targetUserId });
 
-    expect(follows).toHaveBeenCalledWith(userId);
+    expect(applied(update, [])).toEqual({ userId, follows: [targetUserId] });
+  });
+
+  it('a follow whose Hide vanished re-derives instead of guessing', async () => {
+    // `updateMany` matching nothing means the Hide is gone and no follow was
+    // established here — but it does NOT mean "not following": a second concurrent
+    // toggle may have won this same statement and made the pair a Follow. Writing
+    // `false` there is a WRONG entry standing for the day-long TTL, where the
+    // refetch merely costs.
+    engagement.findUnique.mockResolvedValue({ type: 'Hide' });
+    engagement.updateMany.mockResolvedValue({ count: 0 });
+    const { update, refresh } = spies();
+
+    await expect(toggleFollowUser({ userId, targetUserId })).resolves.toBe(false);
+
+    expect(update).not.toHaveBeenCalled();
+    expect(refresh).toHaveBeenCalledWith(userId);
+  });
+
+  it('a create that lost the PK to a Block REMOVES rather than adds', async () => {
+    engagement.create.mockRejectedValue(p2002());
+    engagement.findUnique.mockResolvedValueOnce(null).mockResolvedValueOnce({ type: 'Block' });
+    const { update } = spies();
+
+    await expect(toggleFollowUser({ userId, targetUserId })).resolves.toBe(false);
+
+    expect(applied(update, [targetUserId])).toEqual({ userId, follows: [] });
+  });
+
+  it('hiding drops the target from the follow set', async () => {
+    const { update, refresh } = spies();
+
+    await hide(true);
+
+    expect(applied(update, [targetUserId, 7])).toEqual({ userId, follows: [7] });
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it('un-hiding drops it too when a Hide was actually removed', async () => {
+    engagement.findUnique.mockResolvedValue({ type: 'Hide' });
+    engagement.deleteMany.mockResolvedValue({ count: 1 });
+    const { update, refresh } = spies();
+
+    await hide(false);
+
+    expect(applied(update, [targetUserId])).toEqual({ userId, follows: [] });
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it('un-hiding that matched NO row re-derives instead of guessing', async () => {
+    // The pair is not the Hide this call read. It may hold a Follow, and asserting
+    // `following: false` over one would drop a live follow from the cache for a day.
+    engagement.findUnique.mockResolvedValue({ type: 'Hide' });
+    engagement.deleteMany.mockResolvedValue({ count: 0 });
+    const { update, refresh } = spies();
+
+    await hide(false);
+
+    expect(update).not.toHaveBeenCalled();
+    expect(refresh).toHaveBeenCalledWith(userId);
+  });
+
+  it('falls back to the refetch when there is no cached entry to correct', async () => {
+    const refresh = vi.spyOn(userFollowsCache, 'refresh').mockResolvedValue(undefined);
+    vi.spyOn(userFollowsCache, 'update').mockResolvedValue(false);
+
+    await toggleFollowUser({ userId, targetUserId });
+
+    // Without this the entry stays absent and the next reader rebuilds it from the
+    // REPLICA — the one read that can miss the write this call just made.
+    expect(refresh).toHaveBeenCalledWith(userId);
   });
 });

@@ -252,9 +252,10 @@ Worked examples of both fixes: the two retry tests in `src/components/Apps/AppsS
 pnpm run db:migrate:empty    # Create an empty migration file
 pnpm run db:generate         # Regenerate the slim schema + Prisma client
 pnpm run db:check-generated  # Fail if the committed generated client is stale
+pnpm run db:moderator:pull   # Re-introspect the moderator DB into apps/moderator/prisma/schema.prisma
 ```
 
-**`schema.full.prisma` is the only schema you edit.** `packages/civitai-db-schema/prisma/schema.full.prisma` is the single tracked schema. `pnpm run db:generate` runs `scripts/generate-slim-schema.js`, which strips `@no-type` models/enums to produce `packages/civitai-db-schema/prisma/schema.prisma` (what `package.json`'s `prisma.schema` points at), then runs `prisma generate`. Both `schema.prisma` files — that one **and** the leftover `prisma/schema.prisma` at the repo root — are gitignored build artifacts; editing either is silently overwritten on the next generate. `pnpm run db:check-generated` regenerates and diffs `packages/civitai-db-schema/src`, so a forgotten regen fails there.
+**`schema.full.prisma` is the only schema you edit.** `packages/civitai-db-schema/prisma/schema.full.prisma` is the single tracked schema. `pnpm run db:generate` runs `scripts/generate-slim-schema.js`, which strips `@no-type` models/enums to produce `packages/civitai-db-schema/prisma/schema.prisma` (what `package.json`'s `prisma.schema` points at), then runs `prisma generate`. Both of the *main app’s* `schema.prisma` files — that one **and** the leftover `prisma/schema.prisma` at the repo root — are gitignored build artifacts; editing either is silently overwritten on the next generate. `apps/moderator/prisma/schema.prisma` is a separate, **tracked** schema for the moderator database: introspected, never authored, refreshed with `pnpm run db:moderator:pull` then `pnpm run db:moderator:generate` (see `apps/moderator/CLAUDE.md`). It is not produced by `db:generate`. `pnpm run db:check-generated` regenerates and diffs `packages/civitai-db-schema/src`, so a forgotten regen fails there.
 
 #### Adding an enum value: DEPLOY FIRST, then migrate, then write
 

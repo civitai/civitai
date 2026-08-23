@@ -46,7 +46,7 @@ import {
   TEST_MODELS_SCORE_COOKIE,
 } from '$lib/server/creator-score';
 import { getCreatorSales, getSalesByVersion } from '$lib/server/monetization/sales';
-import { getFlipt } from '$lib/server/flipt';
+import { getFlipt, fliptContext } from '$lib/server/flipt';
 import { getSaleLimitOverrides } from '$lib/server/monetization/sale-limits';
 import { canSetGenerationOnlyFresh } from '$lib/server/generation-only';
 import {
@@ -138,7 +138,11 @@ export const load: PageServerLoad = async ({ locals, parent, url, cookies }) => 
       ),
       // Per-user entityId so the feature can open to a few creators before everyone. `isEnabled` rather
       // than `getBoolean`: only the former honours FLIPT_LOCAL_OVERRIDES, so this is togglable locally.
-      getFlipt().isEnabled('scheduled-model-sales', String(locals.user.id)),
+      getFlipt().isEnabled(
+        'scheduled-model-sales',
+        String(locals.user.id),
+        fliptContext(locals.user)
+      ),
     ]);
 
   // Sales are read ONLY when the feature is on. Migrations here are applied by hand, so on any

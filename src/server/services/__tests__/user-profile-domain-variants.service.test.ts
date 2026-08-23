@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // A creator can store an SFW override for their cover image, announcement and bio.
 // The override is shown ONLY on the green domain (civitai.com); every other host keeps
@@ -13,21 +14,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 //      the payload at all. Only the owner (and moderators), who need both sides to edit
 //      them, get the `default*`/`sfw*` pair.
 
-const { userFindUniqueOrThrow, userProfileUpsert } = vi.hoisted(() => ({
-  userFindUniqueOrThrow: vi.fn(),
-  userProfileUpsert: vi.fn(async () => ({ userId: 1 })),
-}));
-
-vi.mock('~/server/db/client', () => {
-  const db = {
-    user: { findUniqueOrThrow: userFindUniqueOrThrow, findUnique: vi.fn() },
-    userStat: { findFirst: vi.fn(async () => null) },
-    userProfile: { upsert: userProfileUpsert, update: vi.fn() },
-    $transaction: vi.fn(),
-    $executeRaw: vi.fn(),
-  };
-  return { dbRead: db, dbWrite: db };
-});
+// `getUserWithProfile` reads the user through the WRITE client on purpose — it may have to create
+// the profile row, so it must not read a stale replica (`const dbClient = tx ?? dbWrite`,
+// user-profile.service.ts:86, used at :93 and :196). The one read that does go to the replica is
+// the stat lookup at :110. The mock this replaces aliased dbRead and dbWrite to a single object, so
+// it could not have told the two apart; the canonical mock keeps them distinct.
+const userFindUniqueOrThrow = dbMock.dbWrite.user.findUniqueOrThrow;
+const userProfileUpsert = dbMock.dbWrite.userProfile.upsert;
+const userStatFindFirst = dbMock.dbRead.userStat.findFirst;
 // Redis-backed; unused on the read path under test.
 vi.mock('~/server/redis/caches', () => ({
   getUserContentOverview: vi.fn(async () => ({})),
@@ -96,6 +90,12 @@ function setProfile(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Restated rather than inherited. `findFirst` happens to share the canonical null default, but
+  // `upsert` has none — it returns undefined — and the profile-creation branch reads what it
+  // returns. This path does not enter that branch (the fixture already carries a profile row), so
+  // pinning both here keeps the file honest about what it hands the service either way.
+  userStatFindFirst.mockResolvedValue(null);
+  userProfileUpsert.mockResolvedValue({ userId: 1 });
   setProfile();
 });
 

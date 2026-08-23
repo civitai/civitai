@@ -50,7 +50,14 @@ export const actions: Actions = {
     if (!id) return fail(400, { error: 'Nothing to remove from.' });
     if (items.length === 0) return fail(400, { error: 'No items to remove.' });
 
-    await removeBlocklistItems({ id, items });
-    return { success: true, action: 'remove', count: items.length };
+    const count = await removeBlocklistItems({ id, items });
+    // A submitted-but-unmatched removal is a failure, not a quiet "Removed 0 items." The list is
+    // served from a month-long Redis cache, so the likeliest cause is that this page is stale.
+    if (count === 0)
+      return fail(409, {
+        error: 'Nothing was removed — those entries are no longer on this list. Reload the page.',
+      });
+
+    return { success: true, action: 'remove', count };
   },
 };

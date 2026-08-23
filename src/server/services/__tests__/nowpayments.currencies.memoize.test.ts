@@ -1,22 +1,24 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const packedGet = redisMock.redis.packed.get;
+const packedSet = redisMock.redis.packed.set;
 
 // Focused test for the in-proc memoization of getSupportedCurrencies (a GLOBAL,
 // rarely-changing list). Mocks only what nowpayments.service needs to import;
 // the REAL ttl-memoize is used so we exercise the actual memo. Each test
 // re-imports the module after vi.resetModules() for a fresh memo slate. TTL
 // expiry itself is covered deterministically in ttl-memoize.test.ts.
-const { packedGet, packedSet, getMerchantCoins, getFullCurrencies, getMinimumPaymentAmount } =
+const { getMerchantCoins, getFullCurrencies, getMinimumPaymentAmount } =
   vi.hoisted(() => ({
-    packedGet: vi.fn(),
-    packedSet: vi.fn(),
     getMerchantCoins: vi.fn(),
     getFullCurrencies: vi.fn(),
     getMinimumPaymentAmount: vi.fn(),
   }));
 
 vi.mock('~/env/server', () => ({ env: { NEXTAUTH_URL: 'https://example.test' } }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn().mockResolvedValue(undefined) }));
+
 vi.mock('../buzz.service', () => ({
   getMultipliersForUser: vi.fn(),
   getTransactionByExternalId: vi.fn(),
@@ -32,10 +34,7 @@ vi.mock('~/server/common/enums', () => ({
   NotificationCategory: { Buzz: 'buzz' },
 }));
 vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
-vi.mock('~/server/redis/client', () => ({
-  redis: { packed: { get: packedGet, set: packedSet } },
-  REDIS_KEYS: { CACHES: { SUPPORTED_CRYPTO_CURRENCIES: 'packed:caches:supported-crypto' } },
-}));
+
 vi.mock('~/server/common/constants', () => ({ CacheTTL: { hour: 3600 } }));
 vi.mock('~/server/utils/cache-helpers', () => ({ fetchThroughCache: vi.fn() }));
 vi.mock('~/server/common/chain-config', () => ({

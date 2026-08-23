@@ -28,7 +28,7 @@ If you change what is ported, change this block; do not re-describe it elsewhere
 | --- | --- |
 | `FrontPageTimers` (shared resume point) | **Built** 2026-08-20 — read by `getSweepCheckpoint`, advanced by "Mark swept up to here". Unverified in a browser. |
 | `research_ratings` (`InsertRatingGame`) | **Built** 2026-08-20 — Retool's upsert verbatim; unfreezes Queue Stats' "Research ratings" board. Unverified in a browser. |
-| `RatingChanges` (`LogNsfwLevel` + `LogNsfwLevel2`) | **Not ported — and no longer blocked.** Confirmed against the moderator database 2026-08-20: the table exists with `id` (serial), `imageId`, `createdAt` (`timestamptz`, default `now()`), `updatedBy` (text), `rating` (int), `originalRating` (int NOT NULL). That matches Retool's changesets, so both writes can be built. Two distinct writes, not one duplicated: `LogNsfwLevel` INSERTs on a rating (`rating` = level set, `originalRating` = level swept); `LogNsfwLevel2` UPDATE-or-INSERTs by `imageId` on a tag vote, additions only. |
+| `RatingChanges` (`LogNsfwLevel` + `LogNsfwLevel2`) | **PORTED 2026-08-21**, and the description here was wrong twice — both corrections came from the app export (`raw/front-page-audit.json`, plugins → LogNsfwLevel / LogNsfwLevel2), not from more reasoning. (1) **`LogNsfwLevel` is not an INSERT.** Both writes are `UPDATE_OR_INSERT_BY` keyed on `imageId`, so the table holds the LATEST change per image, not a history of every change. (2) **`originalRating` is the sweep's selected rating** (`selectedAge.value`), not a lookup of the image's own previous level — on this page they are the same number, because the sweep query is `where i.nsfwLevel = <selected>`. `LogNsfwLevel2` records the TAG's `nsfwLevel` as the rating and is disabled on a downvote (`vote === -10`), which is the "additions only" rule. Both live in `front-page-audit.service.ts`; `rating-changes.test.ts` pins the upsert and the additions-only rule, both mutation-checked. **Unexercised against a database.** |
 
 Consequence still open: `recordModActivity` stores no before/after, so "who changed this image from X
 to XXX" is answerable for the Retool era and not for ours.
@@ -94,9 +94,10 @@ to XXX" is answerable for the Retool era and not for ours.
       longer shows which accounts have content worth reviewing
 - [x] The suspect's history datasets were "shipped in User Lookup" — true of the datasets, false of
       this page. Strikes and now **notes** render here beside the strike form, which is where they
-      change a decision. ClickHouse activity and received reports stay a deep link (both are heavy and
-      neither is read while filing a strike), and `ReToolActions` has no subject key, so it cannot be
-      shown per-account anywhere.
+      change a decision. Mod activity and received reports were also deep links at first and are now
+      inline too (2026-08-12, widened 2026-08-21) — see the User Reports section of
+      [`retool-parity-checklist.md`](../retool-parity-checklist.md). `ReToolActions` has no subject key,
+      so it cannot be shown per-account anywhere.
 - [x] `ReportHistory` 300 → 100
 - [x] Pagination links drop the `user` param, closing the suspect drill-down
 
@@ -263,11 +264,9 @@ the committed raw export: it is a **Paddle account-linking workflow**, three pan
 paddleCustomerId account` (`textInput14` "Enter User Id" → `button95` "Remove Link"), and
 `3. Link Paddle Account` (`textInput12`).
 
-- [x] **BUILT — corrected 2026-08-20.** All three panes shipped as one `linkPaddle` form action:
-      submitting an id another account holds returns that account rather than moving it, and a second
-      submit does the move explicitly (`findPaddleCustomerOwner` / `setPaddleCustomer`, plus an unlink
-      path). The "needs a decision before the spoke owns a billing write" note was left unticked after
-      the work landed and was still being cited as a blocker months later.
+- [x] **NOT PORTING — removed 2026-08-21.** Built as a `linkPaddle` form action, then removed
+      along with every other Paddle reference on the page: Civitai no longer uses Paddle, so there is
+      no customer id worth linking. Nothing replaces it.
 
 ## Cross-cutting
 
@@ -360,14 +359,17 @@ Every claim below was checked against the code before being recorded; several of
 - [x] **Front Page Audit — `LogTimestamp`'s column list is NOT missing from the export.** The recorded
       reason for leaving three writes unported ("GUI-mode writes whose column lists the export does not
       carry") does not survive reading `raw/front-page-audit.json`, which has all three changesets
-      verbatim. `numberOfImages` is also absent from the typed model in `moderator-db-types.ts`.
+      verbatim. `numberOfImages` is typed as of the schema introspection.
 - [x] **Front Page Audit — `InsertRatingGame` unported, and Queue Stats renders the frozen result.**
       "Research ratings — All time" sits directly beside "Ratings set", which is `ModActivity`-backed and
       still counts. One list grows, the other cannot, with nothing on screen saying why.
-- [ ] **Front Page Audit — `RatingChanges` is two writes, not one.** `LogNsfwLevel` (on rating: records
-      the set level *and* the swept level) and `LogNsfwLevel2` (on tag vote: additions only, level from
-      the tag). The audit called them duplicates of each other. `recordModActivity` stores no
-      before/after, so "who changed this image from X to XXX" is answerable for the Retool era and not ours.
+- [x] **Front Page Audit — `RatingChanges` is two writes, not one.** `LogNsfwLevel` (on rating) and
+      `LogNsfwLevel2` (on tag vote: additions only, level from the tag). The audit called them
+      duplicates of each other. **Both built 2026-08-21** — `recordRatingChange` in
+      `front-page-audit.service.ts`, best-effort like `recordResearchRating` beside it. The blocker
+      recorded here ("what `originalRating` holds on the tag-vote path") was answered from the app
+      export, not from more reasoning: it is the TAG's `nsfwLevel`, and the write is disabled on a
+      downvote. Canonical detail and the two corrected facts: the `RatingChanges` row above.
 - [x] **Front Page Audit — the sweep's coordination mechanic is absent**: no shared checkpoint, no "who
       swept this last". Two moderators sweeping the same rating work the same rows. The page discloses
       this; the Split control above now contradicts the disclosure.
@@ -485,8 +487,8 @@ acted on; two did not survive that check and are corrected rather than fixed.
       (see the canonical block above). This is now ordinary porting work. Until it lands,
       `recordModActivity` stores no before/after, so "who changed this image from X to XXX" stays
       answerable for the Retool era and not for ours.
-- [ ] **`numberOfImages` on `FrontPageTimers`.** **Confirmed to exist** (integer) 2026-08-20, so
-      `markSweepChecked` can write it and `moderator-db-types.ts` should carry it. Not blocked.
+- [ ] **`numberOfImages` on `FrontPageTimers`.** **Confirmed to exist** (integer) 2026-08-20, and typed
+      since the schema introspection, so `markSweepChecked` can write it. Not blocked, and no type work left.
 - [ ] **Scheduled mute start.** Not blocked on a cron — expiry runs hourly (`processTimedUnmutesJob`).
       There is no `muteStartsAt` column, so this is a schema change plus a second job. Confirm anyone
       wants it before building.

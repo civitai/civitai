@@ -52,7 +52,15 @@ type UserModActivity = {
     | 'removeContent'
     | 'autoMuteScam'
     | 'mutePendingReview'
-    | 'overturnPendingReviewMute';
+    | 'overturnPendingReviewMute'
+    // Written from /api/admin/reaction-abuse so the moderator app can show that an account was
+    // dropped from reaction metrics/ranking, and by whom. Named for WHAT happened, not who did it —
+    // `userId` carries the actor (the -1 sentinel for the scheduled poller, a real moderator id when
+    // the caller asserts one), and the reversal is a human action often enough that folding "auto"
+    // into the name would record it as a cron's. The WHY is not here — ModActivity has no free-text
+    // column — it stays in ClickHouse `metricExcludedUsers.reason`, keyed by the same userId.
+    | 'reactionAbuseExclude'
+    | 'reactionAbuseUnexclude';
 };
 
 type ComicProjectModActivity = {

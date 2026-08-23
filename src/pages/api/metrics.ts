@@ -11,6 +11,12 @@ import '~/server/prom/challenge.metrics';
 // the module is loaded — otherwise an absent series looks like a dead code path rather than an unloaded one,
 // which is the exact ambiguity that counter exists to remove.
 import '~/server/auth/session-metrics';
+// Side-effect import: registers the Flipt eval-cache counters (collect()-based), so the
+// series exist from the first scrape rather than only after some other module happens to
+// pull them in. Same reasoning as the neighbours — an absent series here would read as
+// "the cache is idle" when it actually means "nobody loaded the module", and the whole
+// point of these counters is to decide between two config knobs.
+import '~/server/metrics/flipt-eval-cache.metrics';
 // Same reason (#3665): seeds all 12 (reason, surface) series of
 // civitai_generation_model_substitutions_total at 0. Without this call the
 // counter is registered only by the FIRST substitution on this pod, so

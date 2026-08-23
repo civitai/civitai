@@ -1,7 +1,7 @@
 import type { SessionUser } from '@civitai/auth';
 import { dbRead } from '$lib/server/db';
 import { callMainApp, type MainAppResult } from '$lib/server/main-app';
-import { getFlipt } from '$lib/server/flipt';
+import { getFlipt, fliptContext } from '$lib/server/flipt';
 import type { AnnouncementAllowance } from '$lib/announcements';
 import { allowanceSchema, type AnnouncementForm } from './announcements-schema';
 
@@ -26,7 +26,7 @@ export async function announcementsEnabled(user: SessionUser): Promise<boolean> 
   const flipt = getFlipt();
   await flipt.ensureInitialized();
 
-  const evaluated = flipt.isEnabledSync(ANNOUNCEMENTS_FLAG, String(user.id));
+  const evaluated = flipt.isEnabledSync(ANNOUNCEMENTS_FLAG, String(user.id), fliptContext(user));
   return evaluated ?? user.isModerator === true;
 }
 

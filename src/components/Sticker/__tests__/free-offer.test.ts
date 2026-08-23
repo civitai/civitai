@@ -337,33 +337,32 @@ describe('what a refused free claim does next', () => {
 describe('the tray says its piece in short lines', () => {
   const texts = (notes: ReturnType<typeof trayNotes>) => notes.map((note) => note.text).join(' | ');
 
-  it('names free and the price together when both are open', () => {
+  it('says free, and only free, when the next placement is free', () => {
     const notes = trayNotes({ freeAvailable: true, price: 700, review: false });
 
-    expect(texts(notes)).toMatch(/Free, or 700 Buzz/);
-    // Free of the creator's price and of nothing else. Without this the tray and
-    // the Place button disagree about what a sticker costs.
-    expect(texts(notes)).toMatch(/one use either way/);
+    // The free placement is taken automatically by the first draft that can use
+    // it, so the price is not a menu — naming 700 Buzz beside "free" read as a
+    // choice the placer does not get to make.
+    expect(texts(notes)).toBe('Free placement + one sticker use');
+    expect(texts(notes)).not.toMatch(/700/);
   });
 
   it('names only the price when free is not on offer', () => {
     const notes = trayNotes({ freeAvailable: false, price: 700, review: false });
 
-    expect(texts(notes)).toBe('700 Buzz + one use');
+    expect(texts(notes)).toBe('700 Buzz + one sticker use');
     expect(texts(notes)).not.toMatch(/[Ff]ree/);
   });
 
-  it('names the shared budget only where there is a free one to spend', () => {
-    // Case-insensitive: the line capitalises the clause, because on a row of
-    // its own it starts the sentence rather than continuing one.
-    expect(texts(trayNotes({ freeAvailable: true, price: 700, review: false }))).toMatch(
-      new RegExp(SHARED_ALLOWANCE_NOTE, 'i')
-    );
-    // Explaining a limit to somebody who has nothing to spend against it is
-    // noise about a thing they did not ask for.
-    expect(texts(trayNotes({ freeAvailable: false, price: 700, review: false }))).not.toMatch(
-      new RegExp(SHARED_ALLOWANCE_NOTE, 'i')
-    );
+  it('does not explain the shared daily budget in the tray', () => {
+    // It was a second line restating a limit nobody asked about, under a line
+    // that already says whether this placement is free. It still belongs on the
+    // remix-gallery modal and in the spent-allowance reason, where the reader has
+    // asked the question it answers.
+    for (const freeAvailable of [true, false])
+      expect(texts(trayNotes({ freeAvailable, price: 700, review: false }))).not.toMatch(
+        new RegExp(SHARED_ALLOWANCE_NOTE, 'i')
+      );
   });
 
   /**

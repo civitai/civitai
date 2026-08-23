@@ -1,37 +1,32 @@
 import { Radio, Stack } from '@mantine/core';
 import { createReportForm } from '~/components/Report/create-report-form';
 import { InputRadioGroup, InputTextArea } from '~/libs/form';
-import { reportTosViolationDetailsSchema } from '~/server/schema/report.schema';
-
-const violations = [
-  'Depiction of real-person likeness',
-  'Graphic violence',
-  'False impersonation',
-  'Deceptive content',
-  'Sale of illegal substances',
-  'Child abuse and exploitation',
-  'Photorealistic depiction of a minor',
-  'Prohibited concepts',
-];
+import {
+  REAL_PERSON_VIOLATION,
+  TOS_VIOLATIONS,
+  reportTosViolationDetailsSchema,
+} from '~/server/schema/report.schema';
 
 export const TosViolationForm = createReportForm({
   schema: reportTosViolationDetailsSchema,
   Element: ({ context }) => {
     const violation = context.form.watch('violation');
+    const realPerson = violation === REAL_PERSON_VIOLATION;
 
     return (
       <>
         <InputRadioGroup name="violation" label="Violation" withAsterisk>
           <Stack>
-            {violations.map((value, index) => (
-              <Radio key={index} value={value} label={value} />
+            {TOS_VIOLATIONS.map((value) => (
+              <Radio key={value} value={value} label={value} />
             ))}
           </Stack>
         </InputRadioGroup>
-        {violation === violations[0] && (
+        {realPerson && (
           <InputTextArea
             name="comment"
-            label="Comment (optional)"
+            label="Who is this?"
+            withAsterisk
             placeholder="Name of the person or any additional information related to them"
           />
         )}

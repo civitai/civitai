@@ -4,6 +4,9 @@ import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import type { HubSourceValue } from '~/components/Hubs/HubSourceEditor';
 import { HubSourceEditor } from '~/components/Hubs/HubSourceEditor';
+import { useSortAvailability } from '~/components/Filters/useSortAvailability';
+import { defaultHubSort } from '~/components/Hubs/hub-sort';
+import { useInvalidateHub } from '~/components/Hubs/hub.utils';
 import { hubLimits } from '~/server/schema/user-hub.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -16,8 +19,9 @@ export default function HubUpsertModal({
 }) {
   const dialog = useDialogContext();
   const router = useRouter();
-  const utils = trpc.useUtils();
+  const invalidateHub = useInvalidateHub();
   const editing = !!hub;
+  const defaultSort = defaultHubSort(useSortAvailability());
 
   const [name, setName] = useState(hub?.name ?? '');
   const [description, setDescription] = useState(hub?.description ?? '');
@@ -25,11 +29,10 @@ export default function HubUpsertModal({
 
   const upsert = trpc.userHub.upsert.useMutation({
     onSuccess: async (saved) => {
-      await Promise.all([
-        utils.userHub.getAll.invalidate(),
-        utils.userHub.getById.invalidate({ id: saved.id }),
-      ]);
+      // Closed first: invalidating the feed waits on its refetch, and nothing this
+      // modal saves is something the feed reads.
       dialog.onClose();
+      await invalidateHub(saved.id);
       if (!editing) await router.push(`/hubs/${saved.id}`);
     },
     onError: (error) =>
@@ -48,8 +51,12 @@ export default function HubUpsertModal({
       name: trimmed,
       description: description.trim(),
       // Editing leaves the source list alone: the rail owns it, and resending an
-      // empty array here would wipe it.
-      ...(editing ? {} : { sources: sources.map((s, index) => ({ ...s, index })) }),
+      // empty array here would wipe it. The sort goes with creation for the same
+      // reason it is resolved on read — storing one this viewer cannot pick would
+      // strand them on it.
+      ...(editing
+        ? {}
+        : { sort: defaultSort, sources: sources.map((s, index) => ({ ...s, index })) }),
     });
   };
 

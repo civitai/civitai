@@ -40,8 +40,8 @@
   const unblockedSelected = $derived(
     blockedIds ? [...selected].filter((id) => !blockedIds.has(id)).length : 0
   );
-  // A client-side filter can hide an image that is still selected, and the removal posts ids, not what
-  // is on screen. Saying so is the difference between removing 12 images and removing 40.
+  // The removal posts ids, not what is on screen, and a selection outlives the screen two ways:
+  // a client-side filter hides an image, or the moderator pages past it.
   const hiddenSelected = $derived.by(() => {
     const visible = new Set(selectable);
     return [...selected].filter((id) => !visible.has(id)).length;
@@ -111,7 +111,7 @@
           <span class="text-amber-300">· spanning {ownerCount} accounts</span>
         {/if}
         {#if hiddenSelected > 0}
-          <span class="text-amber-300">· {num(hiddenSelected)} not shown by the current filter</span>
+          <span class="text-amber-300">· {num(hiddenSelected)} selected but not on screen</span>
         {/if}
       {/if}
     </p>
@@ -119,7 +119,7 @@
     <div class="flex flex-wrap gap-2">
       {#if selectable.length > 0}
         <Button size="sm" variant="outline" onclick={() => selectAll()}>
-          Select all {num(selectable.length)}
+          Select all {num(selectable.length)} on screen
         </Button>
         {#if selectable.length > 100}
           <Button size="sm" variant="outline" onclick={() => selectAll(100)}>Select 100</Button>

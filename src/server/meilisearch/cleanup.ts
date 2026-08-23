@@ -10,6 +10,7 @@ import {
   USERS_SEARCH_INDEX,
 } from '~/server/common/constants';
 import { searchClient } from '~/server/meilisearch/client';
+import { userSearchIndexEligibilitySql } from '~/server/search-index/user-index-eligibility';
 import type { JobContext } from '~/server/jobs/job';
 import {
   ArticleIngestionStatus,
@@ -67,10 +68,13 @@ export const CLEANUP_INDEXES: IndexConfig[] = [
     indexName: USERS_SEARCH_INDEX,
     tableName: 'User',
     alias: 'u',
+    // Shares its predicate with the write side (`users.search-index.ts`) so the reconciler
+    // and the indexer cannot disagree about who belongs in the index. This is the half that
+    // EVICTS an account that changed state after it was indexed — the incremental sync keys
+    // its range scan on `createdAt`, so it never revisits an existing row.
     where: (ids) => Prisma.sql`
       u.id IN (${Prisma.join(ids)})
-      AND u.id != -1
-      AND u."deletedAt" IS NULL
+      AND ${userSearchIndexEligibilitySql()}
     `,
   },
   {

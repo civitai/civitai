@@ -277,8 +277,7 @@
     >
     {#if !data.membership.isCreatorProgramMember}
       <span>
-        <a href="/join" class="underline">Join the Creator Program</a> to add licensing fees and turn
-        buzz into cash.
+        <a href="/join" class="underline">Join the Creator Program</a> to turn buzz into cash.
       </span>
     {/if}
   </div>

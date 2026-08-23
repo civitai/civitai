@@ -8,6 +8,29 @@ export const dateTime = (value: Date | string | null) =>
 export const num = (value: number) => value.toLocaleString();
 
 /**
+ * "3 hours ago" / "11 months ago". An absolute timestamp is precise and says nothing about whether a
+ * value is fresh: a resume point reading "Sep 8, 2025" is a year stale, and no one reads that off the
+ * date while working. Retool put the same phrasing on its own sweep button.
+ */
+export const relativeTime = (value: Date | string | null): string => {
+  if (!value) return '—';
+  const then = new Date(value).getTime();
+  if (Number.isNaN(then)) return '—';
+  const seconds = Math.round((then - Date.now()) / 1000);
+  const units: [Intl.RelativeTimeFormatUnit, number][] = [
+    ['year', 31_536_000],
+    ['month', 2_592_000],
+    ['day', 86_400],
+    ['hour', 3_600],
+    ['minute', 60],
+  ];
+  const fmt = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
+  for (const [unit, size] of units)
+    if (Math.abs(seconds) >= size) return fmt.format(Math.round(seconds / size), unit);
+  return fmt.format(seconds, 'second');
+};
+
+/**
  * User-authored rich text (review `details`, comment bodies) is stored as HTML. Svelte escapes it, so
  * rendering it raw shows a moderator the markup — and any filter matching on it matches the tags, which
  * made a search for "p" hit every row. Strips tags and decodes the handful of entities that survive.

@@ -401,6 +401,62 @@ describe('inviteBlockedReason / pickerExcludedUserIds', () => {
 });
 
 /**
+ * 🔴 AN ACCOUNT THE SERVER HAS SAID IS INELIGIBLE MUST NOT BE OFFERED.
+ *
+ * The candidates come from user search, which serves cached documents — so an account that has
+ * changed state, INCLUDING ITS NAME, can still be presented under its old identity. The panel
+ * screens the ids on offer against the server and feeds the answer to both readers below; these
+ * pin that the answer is actually honoured, and that it outranks every roster reason.
+ */
+describe('inviteBlockedReason / pickerExcludedUserIds — server-screened candidates', () => {
+  const INELIGIBLE = 4242;
+  const FINE = 4343;
+  const rows = [seat({ userId: 1, status: 'accepted' }), seat({ userId: 3, status: 'rejected' })];
+
+  test('an ineligible candidate is blocked, and an eligible one is still offerable', () => {
+    const blocked = inviteBlockedReason(rows, INELIGIBLE, [INELIGIBLE]);
+    expect(blocked).not.toBeNull();
+    expect(blocked!.message).toMatch(/not eligible/i);
+    // The presence half: without it, a helper that blocks EVERYTHING passes the line above.
+    expect(inviteBlockedReason(rows, FINE, [INELIGIBLE])).toBeNull();
+  });
+
+  test('the picker hides the ineligible id and keeps the eligible one on offer', () => {
+    const excluded = pickerExcludedUserIds(rows, [INELIGIBLE]);
+    expect(excluded).toContain(INELIGIBLE);
+    expect(excluded).not.toContain(FINE);
+    // The re-invitable declined seat is unaffected — this is an ADDITIONAL exclusion, not a
+    // replacement of the roster rule.
+    expect(excluded).not.toContain(3);
+    expect(excluded).toContain(1);
+  });
+
+  /**
+   * 🔴 The precedence case, and the one that would silently fail: a `rejected` seat is
+   * re-invitable BY ROSTER RULE, so a guard that consults the roster first hands an ineligible
+   * account back as offerable.
+   */
+  test('ineligibility beats the re-invitable rejected seat', () => {
+    expect(inviteBlockedReason(rows, 3)).toBeNull();
+    expect(inviteBlockedReason(rows, 3, [3])).not.toBeNull();
+    expect(pickerExcludedUserIds(rows, [3])).toContain(3);
+  });
+
+  test('an empty screening answer changes nothing', () => {
+    expect(inviteBlockedReason(rows, INELIGIBLE, [])).toBeNull();
+    expect(pickerExcludedUserIds(rows, [])).toEqual(pickerExcludedUserIds(rows));
+  });
+
+  test('🔴 the guard and the picker AGREE about a screened-out account', () => {
+    for (const userId of [INELIGIBLE, FINE, 1, 3]) {
+      const blocked = inviteBlockedReason(rows, userId, [INELIGIBLE]) !== null;
+      const hidden = pickerExcludedUserIds(rows, [INELIGIBLE]).includes(userId);
+      expect(blocked, `disagreement on user ${userId}`).toBe(hidden);
+    }
+  });
+});
+
+/**
  * 🔴 OWNERSHIP TRANSFER — THE OWNER HALF of the Collaborators tab.
  *
  * The product rule this pins: a COLLABORATOR cannot transfer the app. The panel says so

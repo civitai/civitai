@@ -1,4 +1,5 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
+// Type-only, so they are erased before the hoisted `vi.mock` factories run.
 import type * as ModelCardContext from '~/components/Cards/ModelCardContext';
 import type * as TrpcModule from '~/utils/trpc';
 

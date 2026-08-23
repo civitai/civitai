@@ -286,7 +286,8 @@ Deliberately deferred; none blocks the three pages above.
   their own blocks there — they have no fields and a different confirmation shape, and folding them in
   would mean a `mode` prop switching off two-thirds of the body.
 - **Shared shapes extracted:** `TrainingAssetViewer` (fetch + progress + abort + revoke, used by both
-  training pages), `Pager` (offset) and `CursorPager` (keyset, one visual language),
+  training pages), `Pager` (offset) and `CursorPager` (keyset) — plus `NumberedPager` (shadcn
+  `Pagination`, for the image grids), added later,
   `HighlightedText`, and a single `ActionResult`. `TrainingDataSheet` moved page-local.
 - **Both feature flags are retired.** `trainingModelsModeration` and `reviewTrainingData` had no reader
   left but a nav `hidden:` clause pointing at a redirect; removed from `feature-flags.service.ts` and

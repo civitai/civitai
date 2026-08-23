@@ -157,7 +157,12 @@ export const modelRouter = router({
   getAllPagedSimple: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getAllModelsSchema.extend({ cursor: z.never().optional() }))
-    .use(cacheIt({ ttl: 60 }))
+    .use(
+      cacheIt({
+        ttl: 60,
+        varyBy: (ctx) => ({ isModerator: ctx.user?.isModerator ?? false }),
+      })
+    )
     .query(getModelsPagedSimpleHandler),
   getAllInfiniteSimple: guardedProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })

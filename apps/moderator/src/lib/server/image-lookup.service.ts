@@ -246,6 +246,51 @@ export async function getPostLookup(postId: number, limit = 200): Promise<PostLo
   };
 }
 
+export type PostSummary = {
+  id: number;
+  title: string | null;
+  userId: number;
+  username: string | null;
+  bannedAt: Date | null;
+  createdAt: Date;
+  tosViolation: boolean;
+  imageCount: number;
+  blockedCount: number;
+};
+
+/**
+ * Post rows for a queue of post reports — the owner, and how much of the post is already gone.
+ *
+ * `blockedCount` is what makes a post report triageable in the list: a report whose post is already
+ * entirely blocked is resolved by the content, and Retool swept exactly those in one action
+ * (`actionResolvedPosts`). Counted here so the queue can say so per row instead of only in bulk.
+ */
+export async function postsByIds(ids: number[]): Promise<Map<number, PostSummary>> {
+  const unique = [...new Set(ids)].filter((id) => Number.isInteger(id) && id > 0);
+  if (!unique.length) return new Map();
+
+  const rows = await dbRead
+    .selectFrom('Post as p')
+    .leftJoin('User as u', 'u.id', 'p.userId')
+    .select([
+      'p.id',
+      'p.title',
+      'p.userId',
+      'p.createdAt',
+      'p.tosViolation',
+      'u.username',
+      'u.bannedAt',
+      sql<number>`(SELECT count(*)::int FROM "Image" i WHERE i."postId" = p."id")`.as('imageCount'),
+      sql<number>`(SELECT count(*)::int FROM "Image" i WHERE i."postId" = p."id" AND i."ingestion" = 'Blocked')`.as(
+        'blockedCount'
+      ),
+    ])
+    .where('p.id', 'in', unique)
+    .execute();
+
+  return new Map(rows.map((r) => [r.id, r]));
+}
+
 async function getImage(imageId: number): Promise<ImageDetail | null> {
   const row = await dbRead
     .selectFrom('Image as i')

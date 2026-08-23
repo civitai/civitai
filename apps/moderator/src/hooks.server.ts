@@ -86,8 +86,6 @@ export const handle: Handle = async ({ event, resolve }) => {
 export const handleError: HandleServerError = ({ error, event, status, message }) => {
   void logAxiomError(error, {
     event: 'unhandled server error',
-    // Not `name` — safeError spreads last and sets that to the error's own class.
-    app: 'moderator',
     route: event.route.id,
     method: event.request.method,
     status,

@@ -27,7 +27,7 @@ import { createLogger } from '~/utils/logging';
 const DEFAULT_UPDATE_INTERVAL = 30 * 1000;
 const logger = createLogger(`search-index-processor`);
 
-type SearchIndexContext = {
+export type SearchIndexContext = {
   db: PrismaClient;
   pg: AugmentedPool;
   ch?: CustomClickHouseClient;
@@ -35,7 +35,7 @@ type SearchIndexContext = {
   jobContext?: JobContext;
   logger: ReturnType<typeof createLogger>;
 };
-type SearchIndexPullBatch =
+export type SearchIndexPullBatch =
   | { type: 'new'; startId: number; endId: number }
   | { type: 'update'; ids: number[] };
 type SearchIndexSetup = (context: { indexName: string }) => Promise<void>;

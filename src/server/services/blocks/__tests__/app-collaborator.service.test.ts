@@ -429,6 +429,69 @@ describe('inviteCollaborator', () => {
     expect(mockDb.appCollaborator.upsert).not.toHaveBeenCalled();
   });
 
+  /**
+   * 🔴 The enforcement point and the picker's screening call must refuse the SAME set. The
+   * screen rejected banned, soft-deleted and missing while this selected only `{id, bannedAt}`
+   * and let a soft-deleted account through — so the two disagreed and a comment claimed they
+   * did not. Refused as NOT FOUND, not as a ban: to anyone outside moderation the account is
+   * gone, and a distinct refusal would disclose that it exists.
+   */
+  it('🔴 a SOFT-DELETED target cannot be seated either, and reads as not-found', async () => {
+    mockDb.user.findUnique.mockResolvedValue({
+      id: TARGET,
+      bannedAt: null,
+      deletedAt: new Date(),
+    });
+    await expect(
+      inviteCollaborator({
+        appListingId: LISTING,
+        targetUserId: TARGET,
+        actorUserId: OWNER,
+        now: NOW,
+      })
+    ).rejects.toMatchObject({ code: 'INVALID_TARGET' });
+    expect(mockDb.appCollaborator.upsert).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 🔴 THE GUARD AND ITS DATA SOURCE, PINNED TOGETHER. Prisma's `select` is EXCLUSIVE: narrow it
+   * back to `{ id, bannedAt }` and `target.deletedAt` is `undefined` in production, so the branch
+   * above is dead — while every test here still passes, because the mock answers the same object
+   * whatever is selected. Guard text present, data source dead, suite green; the same shape that
+   * walked two earlier guards in this change. `app-collaborator.screen-targets.test.ts` pins the
+   * screening side's `select` for the identical reason, so the two sides stay symmetric.
+   */
+  it('🔴 …and it SELECTS the columns those two refusals read', async () => {
+    mockDb.user.findUnique.mockResolvedValue({ id: TARGET, bannedAt: null, deletedAt: null });
+    await inviteCollaborator({
+      appListingId: LISTING,
+      targetUserId: TARGET,
+      actorUserId: OWNER,
+      now: NOW,
+    });
+
+    const call = mockDb.user.findUnique.mock.calls.find(
+      (c: unknown[]) => (c[0] as any)?.where?.id === TARGET
+    );
+    expect(call, 'the invite never looked the target account up').toBeDefined();
+    expect((call![0] as any).select).toMatchObject({ bannedAt: true, deletedAt: true });
+  });
+
+  /**
+   * The presence half of both refusals: a live account with neither flag IS seatable. Without
+   * it, a mutant refusing every target passes the ban and soft-delete cases above.
+   */
+  it('…while a live target with neither flag is seated', async () => {
+    mockDb.user.findUnique.mockResolvedValue({ id: TARGET, bannedAt: null, deletedAt: null });
+    await inviteCollaborator({
+      appListingId: LISTING,
+      targetUserId: TARGET,
+      actorUserId: OWNER,
+      now: NOW,
+    });
+    expect(mockDb.appCollaborator.upsert).toHaveBeenCalledTimes(1);
+  });
+
   it('re-inviting an ALREADY ACCEPTED collaborator is ALREADY_SEATED', async () => {
     mockDb.appCollaborator.findUnique.mockResolvedValue({
       status: 'accepted',

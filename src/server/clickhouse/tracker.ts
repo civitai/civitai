@@ -12,7 +12,12 @@ import type { AllModKeys } from '~/server/jobs/entity-moderation';
 import { logToAxiom } from '~/server/logging/client';
 import { sleep } from '~/utils/errorHandling';
 import type { AddImageRatingInput } from '~/server/schema/games/new-order.schema';
-import type { ImpressionEntityType, ImpressionSurface } from '~/server/schema/track.schema';
+import type {
+  ImpressionEntityType,
+  ImpressionSurface,
+  VIEW_ENTITY_TYPES,
+  VIEW_TYPES,
+} from '~/server/schema/track.schema';
 import type { ProhibitedSources } from '~/server/schema/user.schema';
 import type { NsfwLevelDeprecated } from '~/shared/constants/browsingLevel.constants';
 import dayjs from '~/shared/utils/dayjs';
@@ -49,40 +54,16 @@ export type TrackDelivery = { awaitDelivery?: boolean };
 /** Per attempt, so three of these plus the backoff is the worst case wait. */
 const AWAIT_DELIVERY_TIMEOUT_MS = 5_000;
 
-export type ViewType =
-  | 'ProfileView'
-  | 'ImageView'
-  | 'PostView'
-  | 'ModelView'
-  | 'ModelVersionView'
-  | 'ArticleView'
-  | 'CollectionView'
-  | 'BountyView'
-  | 'BountyEntryView'
-  | 'Model3DView'
-  | 'ComicProjectView'
-  | 'ComicChapterView';
+export type ViewType = (typeof VIEW_TYPES)[number];
 
 /**
  * The `entityType` arm of the ClickHouse `views` Enum8 — deliberately NOT the
  * Prisma `EntityType`, which this used to be typed as. Prisma's enum carries
  * values the ClickHouse column has never had (`Comment`, `CommentV2`,
  * `ResourceReview`, `ChatMessage`, `UserProfile`), so it type-checked rows the
- * insert would reject. Keep this list in lockstep with the column.
+ * insert would reject.
  */
-export type ViewEntityType =
-  | 'User'
-  | 'Image'
-  | 'Post'
-  | 'Model'
-  | 'ModelVersion'
-  | 'Article'
-  | 'Collection'
-  | 'Bounty'
-  | 'BountyEntry'
-  | 'Model3D'
-  | 'ComicProject'
-  | 'ComicChapter';
+export type ViewEntityType = (typeof VIEW_ENTITY_TYPES)[number];
 
 export type UserActivityType =
   | 'Registration'
@@ -183,6 +164,12 @@ export const ActionType = [
   'Model_Create_Click',
   'Image_Remix_Click',
   'Generator_Submit',
+  // Image/video feed tag bar. 🔴 `actions.type` is an Enum16 in ClickHouse: a value
+  // the column does not carry is dropped by the tracker with no error here and no
+  // row there. The widening migration
+  // (src/server/clickhouse/migrations/2026-08-21-feed-tag-bar-action.sql) must be
+  // applied to prod BEFORE this deploys, or the bar ships blind.
+  'Feed_TagBar_Click',
 ] as const;
 export type ActionType = (typeof ActionType)[number];
 

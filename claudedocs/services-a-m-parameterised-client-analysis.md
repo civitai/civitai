@@ -1,5 +1,7 @@
 # The `dbRead`/`dbWrite` alias split where the service picks its client at runtime
 
+**Status (added 2026-08-21):** Historical analysis. Bucket classifications were verified at branch base `17f994221e`; the 6 files and their routing defaults are documented per-case.
+
 Written by josh, 2026-08-15, for the `src/server/services/__tests__` a–m slice of the shared-mock
 migration (branch `perf/test-mock-migration-services-a-m`). These are the buckets in that slice
 where the routing decision is **not** readable off the production source in the usual way, so it is
@@ -108,7 +110,23 @@ population at risk cannot be read off which files converted cleanly.
 
 Drives `BlockRegistry.resolveBlockInstance` and `BlockRegistry.applyPinnedVersion`, no `db` option →
 **`dbWrite`** for `blockUserSubscription.findUnique` and `appBlockPublishRequest.findFirst`.
-`model.findUnique` resolves to `dbRead` in the service source directly.
+~~`model.findUnique` resolves to `dbRead` in the service source directly.~~
+
+📌 **CORRECTED 2026-08-22 — this line was false, and it cost a red batch.** It does not resolve to
+`dbRead` on this path. `resolveBlockInstance` (`block-registry.service:1354`) takes its client as a
+parameter at `:1362` and uses that local for everything downstream, including
+`db.model.findUnique` at `:1451`. The `dbRead.model.findUnique` spelling cited above is at `:2617`,
+in a function these tests never call.
+
+Acting on it routed `model`/`modelVersion` to `dbRead`, so the code read the canonical `null` on a
+client it never touches and `if (!model) return null` fired everywhere — six tests across two files,
+all `expected null not to be null`. Fifteen sites were corrected to `dbWrite`. Full account:
+`services-a-m-handover.md` § "The red, and the routing table that caused it".
+
+🔴 **The lesson the handover draws is about THIS document.** A citation was present, it looked
+checked, and the cited line was not on the path — and the rest of this table is right, which is what
+made trusting it easy. Verify a routing claim against the call path the test actually drives, not
+against a matching spelling elsewhere in the file.
 
 🔴 Negative assertion: `expect(mockDb.appBlockPublishRequest.findFirst).not.toHaveBeenCalled()`
 (×2). Routed to `dbRead` it would pass **whatever the code did**, because the code only ever calls

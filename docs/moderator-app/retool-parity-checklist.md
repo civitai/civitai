@@ -57,20 +57,26 @@ tracker only ever listed nine of the parent's **thirteen** subtasks. Export pull
 `868kne95c` Model Reports · `868kn8aa0` Misc Mod Asks · `868kn67aq` ReTool Database Migration ·
 `868kn87qj` Bulk Ban. Only the last is a page to build; the others are covered below and in the backlog.
 
-- [ ] **Model Reports** (`868kne95c`): *"include the link and display the modelId to reduce the amount
-      of clicking."* 🎥 the walkthrough says *"we don't need this one, actually"* — **the ticket and the
-      video disagree; ask before building or dropping.**
-- [x] **ReTool Database Migration** (`868kn67aq`) — **planned and the SQL is written**; a human still has
-      to run it. Plan: [`retool-db-cutover.md`](retool-db-cutover.md), scripts:
-      `apps/moderator/moderator-db/cutover/`. The tables are already copied into the moderator database;
+- [x] **Model Reports** (`868kne95c`): *"include the link and display the modelId to reduce the amount
+      of clicking."* **Shipped 2026-08-21** (`45a3e7beb8`) — a leading `#<id>` column on
+      `/reports/[slug]`, headed with the queue's entity label and linked through the same
+      `getReportItemUrl` the trailing icon used, plus the id on the detail sheet's "View model". Built
+      generically rather than model-only: one table serves all fifteen entity types, so a special case
+      was more code than the column. 🎥 the walkthrough said *"we don't need this one, actually"*; the
+      ticket won, and the cost was display-only — `entityId` was already selected by `getReports`.
+- [x] **ReTool Database Migration** (`868kn67aq`) — **the SQL is written and has partly been run.** The
+      app was repointed off Retool on 2026-08-21; a 2026-08-21 measurement found the moderator database
+      already carrying a populated `cutover` schema through step 3. **Confirm the environment's actual
+      state before running anything** — canonical: [`retool-db-cutover.md`](retool-db-cutover.md),
+      scripts: `apps/moderator/moderator-db/cutover/`. The tables are already copied into the moderator database;
       what remained was a delta, the sequences, and one collision.
       Two findings that change earlier assumptions: **`Mods_TaskTimers` (+22) and `FrontPageTimers` (+18)
       are drifting too** and were on no list, though the dashboard reads both; and **the id collision has
       already happened** — two `UserNotes` ids were spent locally on 2026-08-07 while Retool spent the
       same two, so id preservation is no longer universal and those two rows are re-idded with the remap
       recorded. Everything else is byte-identical below its watermark (md5-verified, not just counted).
-      `ModelNotes` **is** being migrated (935 rows, wanted by `868kn8aa0`); it still needs a
-      `moderator-db-types.ts` entry when that feature is built.
+      `ModelNotes` **is** being migrated (935 rows, wanted by `868kn8aa0`), and is already typed by the
+      schema introspection.
       🔒 That ticket body contains a **live Postgres connection string with its password** — rotate it.
 
 ## 1. User Lookup — the primary console
@@ -237,22 +243,12 @@ Open, with the evidence each audit produced:
       mute, ban or change the account, so it needs no confirmation.
       Mute / ban / purge stay under Admin deliberately — see the Placement item below, which is about
       those three and is still open.
-- [x] **Paddle account linking** (2026-08-12). Retool's three steps are one form on the Subscription
-      panel: enter a customer id → if another account holds it the submit comes back **refused (409)
-      naming that account**, and only a second, explicitly-labelled submit ("Unlink there and link
-      here") moves it. Taking a customer id off another account is the destructive half, so it is never
-      automatic. Unlink is there too.
-      The holder is re-checked **at submit time**, not trusted from the rendered page — it can change
-      between the two clicks, and the moderator's confirmation was about a specific account. Both sides
-      get their own `ModActivity` row (`paddleUnlink` on the old account, `paddleLink` on the new), and
-      the subscription caches are reset afterwards or the panel keeps rendering the pre-link state and
-      invites a second link.
-      Written directly rather than through a main-app endpoint: the column has no mod endpoint, and it
-      is a plain pointer — Paddle's webhooks resolve the account BY it, which is exactly why a mis-link
-      matters and why this needed fixing.
-      Verified end to end on dev: conflict refused and named (`Maxfield already holds that customer
-      id`), take-over moved it with both audit rows written, panel re-rendered with the new id. Both
-      accounts restored afterwards.
+- [x] **Paddle account linking** — built 2026-08-12, **removed 2026-08-21**. Civitai no longer uses
+      Paddle, so a moderator has no reason to link a customer id. The form, its two service functions
+      and every other Paddle reference on the page are gone; nothing replaces them. Building it at all
+      contradicted a decision already recorded in `retool-exports/user-lookup-audit.md` — this exact
+      workflow, "not ported… Civitai no longer uses Paddle (confirmed 2026-08-07)". The same grounds
+      dropped both `/moderator/paddle/*` pages in `page-migration-checklist.md`.
 - [x] **"Content (click rows!)" is a drill-down, and ours goes somewhere else** (2026-08-11). Rows now
       prefer an in-app destination: Images → Bulk Image Manager, both comment rows → the Comments
       section, Reviews → Reviews, Chat Messages → Chat. Those last four linked **nowhere** before, and
@@ -377,8 +373,8 @@ browser as user 1290051, not by reading the code.
 - [x] Moderator name on each activity row; per-transaction buzz colour; the shared-IP / alt-account
       view (`AddressesPanel`) — all already built. Listed so nobody rebuilds them from a screenshot.
 - [x] **Confirmed built, from the editor capture — do not rebuild any of these:** Account Notes with
-      add/edit (ours is a list plus strikes and flags, ahead of Retool's single textarea), Paddle and
-      Stripe customer deep links, Mute/Unmute, Ban (with reason code and internal details — richer than
+      add/edit (ours is a list plus strikes and flags, ahead of Retool's single textarea), the Stripe
+      customer deep link, Mute/Unmute, Ban (with reason code and internal details — richer than
       Retool's two-button modal), Purge Content, Freshdesk lookup, Refresh Session, Clear Cache,
       Profile link, the alt-account id count, Followers/Following, and Reports Received — where ours
       counts **distinct content items** across all six sources while Retool counted report rows over
@@ -503,10 +499,12 @@ browser as user 1290051, not by reading the code.
       same bar, so it composes with the rating and prompt filters instead of being a mode).
       Filtering client-side, as Retool did: the batch is one query already paid for, and re-fetching per
       filter change would discard the selection being assembled. Two consequences handled: `Select all`
-      counts the **filtered** set, which is the point of filtering to ToS'd before acting; and the action
-      bar now says "**N not shown by the current filter**" when the selection includes images the filter
-      hides — the removal posts ids, not what is on screen, so without it filtering after selecting is a
-      way to remove 40 images while looking at 12.
+      counts the **filtered** set and says so — "**Select all N on screen**" — which is the point of
+      filtering to ToS'd before acting; and the bar says "**N selected but not on screen**" whenever the
+      selection outlives the screen, which it can do two ways: the filter hides an image, or the
+      moderator pages past it (selections deliberately survive paging on the suspect grid — the batch
+      key is the non-paging part of the query string). The removal posts ids, not what is on screen, so
+      without it, filtering or paging after selecting is a way to remove 40 images while looking at 12.
 - [x] **Bulk selection helpers** — Select All / Select 100 / Unselect All (2026-08-09, in the shared
       `ImageActionBar` that Bulk Image Manager and User Reports both use).
 - [x] `negativePrompt` is selected and rendered nowhere (2026-08-12 — on the card under the prompt, and
@@ -558,14 +556,22 @@ in the same screen instead of having to click around a bunch."*
 - [x] **Prompt/negativePrompt dropped** from the cards (2026-08-09 — prompt renders on the card, clamped
       to 3 lines with the full text on hover; `negativePrompt` is selected, awaiting the search filters
       above that are the only thing that reads it).
-- [x] 60-image cap **with no paging wired** (2026-08-09 — cursor paging wired; the whole account is
-      reachable 60 at a time, and the filters narrow it server-side rather than the batch).
+- [x] 60-image cap **with no paging wired** (2026-08-09 — paging wired; the whole account is reachable
+      60 at a time, and the filters narrow it server-side rather than the batch). Now **offset** paging
+      (`imgPage` in the URL, numbered pager), swapped from the original cursor 2026-08-21: `matched` is
+      counted for the heading anyway, so page numbers are free, and a moderator combing a 500-image
+      account has to be able to get back to page 3 — which forward-only paging cannot express.
 - [x] The suspect's history — Retool's three-tab panel **ModActivity / Reports / UserReport History**
       (2026-08-12). Notes were already here; **moderation activity** and **reports received** are now
-      beside them, each with actor, reason and date, capped at 20 with the full history in User Lookup.
-      Both are server-side in this page's own `load` rather than the client-fetched endpoints User
-      Lookup uses: those guard on `/retool/user-lookup`, so a moderator with the reports permission and
-      not that one would have got an empty panel instead of a history.
+      beside them, each with actor, reason and date. Mod activity and ReToolActions load 100 in this
+      page's own `load`, previewed 8 with an expand, and ratings/tagging (`setNsfwLevelKono`,
+      `setNsfwLevel`, `ratingReview`, the tag activities) are filtered behind a toggle — those are
+      Knights-of-New-Order crowd votes and tag cleanups, not enforcement, and they are the bulk of the
+      table. Entity ids link out via `entityUrl`. Reports **on the account** stay server-side (20,
+      human reasons); reports **on their content** are client-fetched from
+      `/api/user-reports/[userId]?only=received&human=1&limit=20`, whose grant list now names all three
+      pages that mount this panel (User Lookup, User Reports, Post Reports) — so the guard reason that
+      originally forced everything server-side no longer applies.
       **Reports received is filtered to human-filed reasons.** `Automated` is ~99.9% of that table —
       one dev account carries **556** of them against **2** human — so the unfiltered list of 20 that
       shipped first was 20 Clavata rows and answered nothing. Filtered, the same account reads
@@ -574,11 +580,12 @@ in the same screen instead of having to click around a bunch."*
       ⚠️ Noted while there: the User Lookup Reports **section** applies no reason filter, so it shows
       the same automated flood. Left alone — it has its own status filter UI and a different job — but
       it is the next place this bites.
-- [ ] 🎥 **Post reports** — *"Same for post reports."* **Unverifiable from what we hold**: the User
-      Reports export has no post-report queue, and there is no separate post-reports export. A generic
-      post-report *queue* is shipped at `/reports/post` with filters and actions; the drill-down half
-      (the post's images inline, actions on them) certainly is not. **Needs the post-reports export or a
-      screenshot of that tab.**
+- [x] 🎥 **Post reports** — *"Same for post reports."* Shipped 2026-08-21 as `/retool/post-reports`,
+      built from the User Reports screen rather than from an export: there is no post-reports export and
+      never was one, and the team re-asked for it as "identical to User Reports, but for post reports",
+      which is a specification. Queue, filters, paging, history, account history, the post's images
+      inline and every action on them. The generic `/reports/post` queue stays as it is — same query, so
+      the two cannot disagree about the backlog.
 
 ## 4. Image Lookup
 
@@ -1059,7 +1066,7 @@ that reporter to that build.
       `IdentityPanel.svelte` rendered the field **only inside the Enable Edits form**, so a moderator
       who never toggled edits on never saw the account's full name.
 - [x] **Subscription details should move out of the Buzz section.** (2026-08-13 — **moved**, not copied.
-      A second instance of a panel that can re-link a Paddle customer is two places to fix a bug in.)
+      A second instance of the subscription panel is two places to fix a bug in.)
       **This was a decision to reverse, not a gap.** `e43a55876b` put membership on Basic User Information and it is there —
       `IdentityPanel.svelte:190` renders the badge, with a comment stating the split deliberately:
       *"the subscription record stays there; this is the one line of it that belongs with identity."*
@@ -1177,7 +1184,7 @@ Filed against the page ported in §0, by the mod who uses it on bot chains.
       - [x] adding or subtracting Buzz → `buzz.send`
       - [x] granting badges in the Cosmetic Shop → `cosmetics.grant`
       - [ ] **the entire Admin section** — only `moderator.toggle`, one button inside it, was carved
-            out. Ban, purge-all-content, force-logout, rewards eligibility, Paddle re-linking and
+            out. Ban, purge-all-content, force-logout, rewards eligibility and
             restriction rulings all still gate on `canAccess(user, '/users')` alone. No live hole
             today — `/users` is `{staff, senior}` and Retool hid the Admin nav from `Volunteer Mod`,
             so the two happen to agree — but nothing holds them together, and adding volunteer to

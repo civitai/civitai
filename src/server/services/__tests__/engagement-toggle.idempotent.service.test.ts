@@ -27,13 +27,16 @@ const mockDbWrite = dbMock.dbWrite;
 // `create`/`update`/`delete` have no canonical default and the service reads what they return.
 for (const fn of [
   mockDbWrite.modelEngagement.create,
-  mockDbWrite.modelEngagement.update,
-  mockDbWrite.modelEngagement.delete,
   mockDbWrite.bountyEngagement.create,
   mockDbWrite.bountyEngagement.delete,
 ]) {
   fn.mockResolvedValue({});
 }
+// `toggleModelEngagement` writes through `deleteMany`/`updateMany` scoped by the type
+// it READ — never the PK alone — and reads the row count back. A row matched by
+// default, so a test that means "a concurrent writer replaced it" has to say so.
+mockDbWrite.modelEngagement.deleteMany.mockResolvedValue({ count: 1 });
+mockDbWrite.modelEngagement.updateMany.mockResolvedValue({ count: 1 });
 // HiddenModels.refreshCache is the side-effect the Hide success path runs and
 // MUST still run on a P2002. Stub the whole user-preferences module surface that
 // user.service reaches for at import time.
@@ -124,7 +127,11 @@ describe('toggleModelEngagement — explicit setTo direction (notify silent-unsu
     const result = await toggleModelEngagement({ userId: 42, modelId: 10, type: 'Notify' });
 
     // Blind toggle: existing type === requested type → setTo resolves to false → delete.
-    expect(mockDbWrite.modelEngagement.delete).toHaveBeenCalledTimes(1);
+    // Scoped to the type being removed, so an un-notify cannot take a Favorite or a
+    // Hide that arrived after the read: assert the FILTER, not that a delete happened.
+    expect(mockDbWrite.modelEngagement.deleteMany).toHaveBeenCalledWith({
+      where: { userId: 42, modelId: 10, type: 'Notify' },
+    });
     expect(result).toBe(false); // "unsubscribed" — exactly the silent-unsubscribe symptom
   });
 
@@ -139,8 +146,8 @@ describe('toggleModelEngagement — explicit setTo direction (notify silent-unsu
     });
 
     // The row already IS Notify and we asked to set it ON → no-op success, never a delete.
-    expect(mockDbWrite.modelEngagement.delete).not.toHaveBeenCalled();
-    expect(mockDbWrite.modelEngagement.update).not.toHaveBeenCalled();
+    expect(mockDbWrite.modelEngagement.deleteMany).not.toHaveBeenCalled();
+    expect(mockDbWrite.modelEngagement.updateMany).not.toHaveBeenCalled();
     expect(result).toBe(true); // still subscribed
   });
 
@@ -154,8 +161,14 @@ describe('toggleModelEngagement — explicit setTo direction (notify silent-unsu
       setTo: true,
     });
 
-    expect(mockDbWrite.modelEngagement.update).toHaveBeenCalledTimes(1);
-    expect(mockDbWrite.modelEngagement.delete).not.toHaveBeenCalled();
+    // The `type: 'Mute'` filter is the whole protection — an unscoped updateMany
+    // passes a bare "was it called" check and still converts a row another writer
+    // established between the read and here.
+    expect(mockDbWrite.modelEngagement.updateMany).toHaveBeenCalledWith({
+      where: { userId: 42, modelId: 10, type: 'Mute' },
+      data: { type: 'Notify', createdAt: expect.any(Date) },
+    });
+    expect(mockDbWrite.modelEngagement.deleteMany).not.toHaveBeenCalled();
     expect(result).toBe(true);
   });
 
@@ -169,9 +182,80 @@ describe('toggleModelEngagement — explicit setTo direction (notify silent-unsu
       setTo: true,
     });
 
-    expect(mockDbWrite.modelEngagement.update).toHaveBeenCalledTimes(1);
-    expect(mockDbWrite.modelEngagement.delete).not.toHaveBeenCalled();
+    expect(mockDbWrite.modelEngagement.updateMany).toHaveBeenCalledWith({
+      where: { userId: 42, modelId: 10, type: 'Notify' },
+      data: { type: 'Mute', createdAt: expect.any(Date) },
+    });
+    expect(mockDbWrite.modelEngagement.deleteMany).not.toHaveBeenCalled();
     expect(result).toBe(true);
+  });
+
+  // 868kurkc7. `ModelEngagement` is one row per (user, model) carrying one of
+  // Favorite | Hide | Mute | Notify. A PK-addressed write lands on whatever occupies
+  // the row — including a type a sibling writer established a millisecond ago — and
+  // reports success. A race cannot be scheduled from a test, but "no writer is
+  // capable of it" can be asserted.
+  it.each(['Favorite', 'Hide', 'Mute', 'Notify'] as const)(
+    'issues no PK-addressed write over a %s row',
+    async (type) => {
+      mockDbWrite.modelEngagement.findUnique.mockResolvedValueOnce({ type });
+
+      await toggleModelEngagement({ userId: 42, modelId: 10, type: 'Hide', setTo: true });
+
+      expect([
+        ...mockDbWrite.modelEngagement.delete.mock.calls,
+        ...mockDbWrite.modelEngagement.update.mock.calls,
+      ]).toEqual([]);
+    }
+  );
+
+  it('reports NO engagement when a concurrent writer replaced the row it read', async () => {
+    mockDbWrite.modelEngagement.findUnique.mockResolvedValueOnce({ type: 'Mute' });
+    // The scoped update matches nothing: the pair holds something other than the Mute
+    // this call saw, so it does not hold Notify either. Returning true here is the
+    // 868kumcfc shape — a claim the caller fires tracking and rewards on.
+    mockDbWrite.modelEngagement.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    const result = await toggleModelEngagement({
+      userId: 42,
+      modelId: 10,
+      type: 'Notify',
+      setTo: true,
+    });
+
+    expect(result).toBe(false);
+  });
+
+  it('refreshes HiddenModels when a conversion changes the hidden set, in EITHER direction', async () => {
+    // `HiddenModels` is keyed on `type = 'Hide'`, and nothing refreshed it on this
+    // branch before: converting a Hide to Notify left the model filtered out of the
+    // user's feed until the whole per-user hash aged out.
+    mockDbWrite.modelEngagement.findUnique.mockResolvedValueOnce({ type: 'Hide' });
+
+    await toggleModelEngagement({ userId: 42, modelId: 10, type: 'Notify', setTo: true });
+
+    expect(refreshCache).toHaveBeenCalledWith({ userId: 42 });
+  });
+
+  it('does NOT refresh HiddenModels when the conversion matched no row', async () => {
+    // The `count &&` guard. Without it a lost race still drops the user's per-user
+    // hash field, on a conversion that did not happen.
+    mockDbWrite.modelEngagement.findUnique.mockResolvedValueOnce({ type: 'Hide' });
+    mockDbWrite.modelEngagement.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    await toggleModelEngagement({ userId: 42, modelId: 10, type: 'Notify', setTo: true });
+
+    expect(refreshCache).not.toHaveBeenCalled();
+  });
+
+  it('does NOT refresh HiddenModels for a conversion that leaves the hidden set alone', async () => {
+    // Control for the test above: refreshing unconditionally would pass it while
+    // dropping a per-user hash field on every unrelated Favorite/Mute/Notify click.
+    mockDbWrite.modelEngagement.findUnique.mockResolvedValueOnce({ type: 'Mute' });
+
+    await toggleModelEngagement({ userId: 42, modelId: 10, type: 'Notify', setTo: true });
+
+    expect(refreshCache).not.toHaveBeenCalled();
   });
 
   it('explicit setTo:true with no existing row → CREATEs the requested type (fresh subscribe)', async () => {
@@ -213,5 +297,59 @@ describe('toggleUserBountyEngagement — idempotent on P2002 race (sibling)', ()
     await expect(
       toggleUserBountyEngagement({ userId: 42, bountyId: 5, type: 'Favorite' as never })
     ).rejects.toThrow('boom');
+  });
+});
+
+/**
+ * The update branch (`setTo && engagement.type !== type`) converts a row in place and
+ * was the only branch that never refreshed the hidden-models cache. Both directions
+ * change hidden-ness, and the delete/create branches' `type === 'Hide'` test only sees
+ * the NEW type — so copying it here would have fixed one direction and left the other.
+ *
+ * Reachable from the live `user.toggleNotifyModel`: `toggleModelEngagementInput`
+ * declares `type` as the full `ModelEngagementType` enum, Hide included, plus `setTo`.
+ */
+describe('toggleModelEngagement — the update branch refreshes the hidden-models cache', () => {
+  it('Notify -> Hide refreshes it, or the model keeps showing in the feed', async () => {
+    mockDbWrite.modelEngagement.findUnique.mockResolvedValueOnce({ type: 'Notify' });
+
+    const result = await toggleModelEngagement({
+      userId: 42,
+      modelId: 10,
+      type: 'Hide',
+      setTo: true,
+    });
+
+    expect(mockDbWrite.modelEngagement.updateMany).toHaveBeenCalledTimes(1);
+    expect(refreshCache).toHaveBeenCalledWith({ userId: 42 });
+    expect(result).toBe(true);
+  });
+
+  it('Hide -> Notify refreshes it, or the model stays filtered out', async () => {
+    mockDbWrite.modelEngagement.findUnique.mockResolvedValueOnce({ type: 'Hide' });
+
+    const result = await toggleModelEngagement({
+      userId: 42,
+      modelId: 10,
+      type: 'Notify',
+      setTo: true,
+    });
+
+    expect(mockDbWrite.modelEngagement.updateMany).toHaveBeenCalledTimes(1);
+    // The new type is not Hide — only the OLD one is, which is why the guard has to
+    // read both sides.
+    expect(refreshCache).toHaveBeenCalledWith({ userId: 42 });
+    expect(result).toBe(true);
+  });
+
+  // Negative control: refreshing unconditionally would pass both cases above and
+  // spend a Redis round-trip on every favourite/notify conversion.
+  it('Favorite -> Notify does NOT refresh it — neither side is Hide', async () => {
+    mockDbWrite.modelEngagement.findUnique.mockResolvedValueOnce({ type: 'Favorite' });
+
+    await toggleModelEngagement({ userId: 42, modelId: 10, type: 'Notify', setTo: true });
+
+    expect(mockDbWrite.modelEngagement.updateMany).toHaveBeenCalledTimes(1);
+    expect(refreshCache).not.toHaveBeenCalled();
   });
 });

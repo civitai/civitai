@@ -30,7 +30,12 @@ import type {
   GetVotableTagsSchema,
   GetVotableTagsSchema2,
 } from '~/server/schema/tag.schema';
-import { getCategoryTags, getReplacedTagIds, getSystemTags } from '~/server/services/system-cache';
+import {
+  clearFeedTagBarTagsCache,
+  getCategoryTags,
+  getReplacedTagIds,
+  getSystemTags,
+} from '~/server/services/system-cache';
 import { upsertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
 import {
   HiddenImages,
@@ -218,6 +223,24 @@ export async function getTagPageSeoData({ name }: { name: string }): Promise<Tag
     },
     { ttl: CacheTTL.day }
   );
+}
+
+// The edge-cache handle for `tag.getFeedTagBar`. Without it the chip list — including the
+// nsfwLevel the client gates chips on — is unpurgeable for an hour.
+export const FEED_TAG_BAR_EDGE_TAG = 'feed-tag-bar';
+
+/**
+ * Drops the chip list everywhere it is held: the per-pod memo, the redis blob, and the
+ * edge response. Called alongside `bustGetTagsCache` on every taxonomy change, because a
+ * `TagsOnTags` edge is what moves a chip's effective nsfwLevel.
+ */
+export async function bustFeedTagBarTagsCache() {
+  await clearFeedTagBarTagsCache();
+
+  // Deferred, not a top-level import: `~/server/cloudflare/client` pulls the `cloudflare`
+  // SDK at module load, and `tag.service` is imported widely. Only the bust path needs it.
+  const { purgeCache } = await import('~/server/cloudflare/client');
+  await purgeCache({ tags: [FEED_TAG_BAR_EDGE_TAG] });
 }
 
 export const getTag = ({ id }: { id: number }) => {
@@ -790,6 +813,7 @@ export const addTags = async ({ tags, entityIds, entityType, relationship }: Adj
     // Adding a TagsOnTags edge changes category membership + the nsfwLevel rollup
     // that the cached `getTags` listings compute — bust the listing cache.
     await bustGetTagsCache();
+    await bustFeedTagBarTagsCache();
   }
 };
 
@@ -879,6 +903,7 @@ export const disableTags = async ({ tags, entityIds, entityType }: AdjustTagsSch
     // Removing a TagsOnTags edge changes category membership + the nsfwLevel rollup
     // that the cached `getTags` listings compute — bust the listing cache.
     await bustGetTagsCache();
+    await bustFeedTagBarTagsCache();
   }
 };
 
@@ -946,6 +971,7 @@ export const deleteTags = async ({ tags }: DeleteTagsSchema) => {
   // Deleting a Tag removes it from the cached `getTags` listings (and cascades its
   // TagsOnTags edges, changing category membership / nsfwLevel rollup) — bust.
   await bustGetTagsCache();
+  await bustFeedTagBarTagsCache();
 };
 
 // unused
@@ -968,4 +994,3 @@ export const getTypeCategories = async ({
 
   return categories;
 };
-

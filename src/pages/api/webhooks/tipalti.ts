@@ -5,7 +5,9 @@ import { env } from '~/env/server';
 import { trackWebhookEvent } from '~/server/clickhouse/client';
 import { dbWrite } from '~/server/db/client';
 import tipaltiCaller from '~/server/http/tipalti/tipalti.caller';
-import type { Tipalti } from '~/server/http/tipalti/tipalti.schema';
+import { Tipalti } from '~/server/http/tipalti/tipalti.schema';
+import { TipaltiStatus } from '~/server/common/enums';
+import { logToAxiom } from '~/server/logging/client';
 import { updateBuzzWithdrawalRequest } from '~/server/services/buzz-withdrawal-request.service';
 import { updateCashWithdrawal, userCashCache } from '~/server/services/creator-program.service';
 import { updateByTipaltiAccount } from '~/server/services/user-payment-configuration.service';
@@ -28,6 +30,24 @@ type TipaltiWebhookEventData = {
   traceId: string;
   eventData: Record<string, any>;
 };
+
+// `eventData` is Record<string, any>, so an unlisted status would otherwise satisfy the
+// TipaltiStatus parameter type and land in the plain-text column unchallenged.
+function parsePayeeStatus(status: unknown) {
+  const parsed = Tipalti.payeeStatusSchema.parse(status);
+  if (parsed === TipaltiStatus.InternalValue && status !== TipaltiStatus.InternalValue) {
+    logToAxiom(
+      {
+        type: 'warning',
+        name: 'Unrecognized Tipalti payee status',
+        details: { status },
+      },
+      'webhooks'
+    ).catch(() => null);
+  }
+
+  return parsed;
+}
 
 async function buffer(readable: Readable) {
   const chunks = [];
@@ -89,7 +109,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           await updateByTipaltiAccount({
             // In this webhook, the payeeId is the refCode which is our userId, not the actual payeeId.
             userId: Number.parseInt(event.eventData.payeeId),
-            tipaltiAccountStatus: event.eventData.status,
+            tipaltiAccountStatus: parsePayeeStatus(event.eventData.status),
             tipaltiPaymentsEnabled: event.eventData.isPayable,
             tipaltiWithdrawalMethod: (event.eventData.paymentMethod ??
               event.eventData.paymentMethodType) as CashWithdrawalMethod,

@@ -723,6 +723,7 @@ export const JobQueueType = {
   ModerationRequest: 'ModerationRequest',
   BlockedImageDelete: 'BlockedImageDelete',
   ImageScan: 'ImageScan',
+  ReplacedImageDelete: 'ReplacedImageDelete',
 } as const;
 export type JobQueueType = (typeof JobQueueType)[keyof typeof JobQueueType];
 export const VaultItemStatus = {

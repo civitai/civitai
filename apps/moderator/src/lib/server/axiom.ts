@@ -14,8 +14,11 @@ import { createAxiomLogger, safeError } from '@civitai/axiom';
 
 const logger = createAxiomLogger();
 
+// `app` is stamped here rather than at the call sites because it is the only thing separating this app's
+// events from the main app's and the hub's — all three default to the `civitai-prod` datastream, and
+// @civitai/axiom prepends only `pod`. Spread first so a caller can still override it.
 export function logToAxiom(data: Record<string, unknown>, datastream = 'civitai-prod') {
-  return logger.logToAxiom(data, datastream);
+  return logger.logToAxiom({ app: 'moderator', ...data }, datastream);
 }
 
 // Fire-and-forget, and swallows its own failure — logging must never be the thing that breaks a request.

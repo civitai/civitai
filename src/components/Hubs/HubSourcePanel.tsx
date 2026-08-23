@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { HubSourceValue } from '~/components/Hubs/HubSourceEditor';
 import { HubSourceEditor } from '~/components/Hubs/HubSourceEditor';
+import { useInvalidateHub } from '~/components/Hubs/hub.utils';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -15,19 +16,13 @@ export function HubSourcePanel({
   maxSources: number;
   hideAdd?: boolean;
 }) {
-  const utils = trpc.useUtils();
+  const invalidateHub = useInvalidateHub();
   const [pending, setPending] = useState<HubSourceValue[] | null>(null);
   const current = pending ?? sources;
 
   const upsert = trpc.userHub.upsert.useMutation({
     onSuccess: async () => {
-      await Promise.all([
-        utils.userHub.getById.invalidate({ id: hubId }),
-        utils.userHub.getAll.invalidate(),
-      ]);
-      // The feed is keyed on hubId, not on the source list, so it will not refetch
-      // on its own when the sources behind it change.
-      await utils.image.getInfinite.invalidate({ hubId });
+      await invalidateHub(hubId);
       setPending(null);
     },
     onError: (error) => {

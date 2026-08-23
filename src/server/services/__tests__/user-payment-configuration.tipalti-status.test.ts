@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { TipaltiStatus } from '~/server/common/enums';
+import { isBlockedTipaltiStatus, TipaltiStatus } from '~/server/common/enums';
+import { Tipalti } from '~/server/http/tipalti/tipalti.schema';
 import type * as NotificationService from '~/server/services/notification.service';
 
 const { mockCreateNotification } = vi.hoisted(() => ({
@@ -13,8 +14,8 @@ vi.mock('~/server/services/notification.service', async (importOriginal) => ({
 }));
 
 // Spelled out rather than referenced through TipaltiStatus on purpose: these are the strings the
-// Tipalti webhook sends and stores verbatim. Reaching for the enum here would move both sides of
-// every comparison together, so a mis-cased enum would still pass.
+// Tipalti webhook sends and the ones already stored. Reaching for the enum here would move both
+// sides of every comparison together, so a mis-cased enum would still pass.
 const WEBHOOK_STATUS = {
   pendingOnboarding: 'PendingOnboarding',
   active: 'Active',
@@ -64,9 +65,9 @@ describe('updateByTipaltiAccount notifications', () => {
     mockCreateNotification.mockClear();
   });
 
-  // 🔴 The regression this guards: TipaltiStatus.Active used to be 'ACTIVE' while Tipalti stores
-  // 'Active', so this comparison could never be true and the notification fired on EVERY payable
-  // webhook for the creators who were already payable.
+  // 🔴 The incident: this branch compared the stored status against TipaltiStatus.Active, which was
+  // spelled 'ACTIVE' while Tipalti stores 'Active'. Never true, so every payable webhook re-notified
+  // all 291 payable creators. The enum casing is pinned below; this asserts the branch itself.
   it('does not re-notify an account that was already active and payable', async () => {
     await update({
       storedStatus: WEBHOOK_STATUS.active,
@@ -89,6 +90,56 @@ describe('updateByTipaltiAccount notifications', () => {
     expect(notificationTypes()).toContain('creators-program-payments-enabled');
   });
 
+  // A failed payment makes Tipalti mark an otherwise-Active payee unpayable; the account stays
+  // 'Active' throughout, so a guard reading status alone never sees the recovery.
+  it('notifies when an already-active account becomes payable again', async () => {
+    await update({
+      storedStatus: WEBHOOK_STATUS.active,
+      storedPayable: false,
+      incomingStatus: WEBHOOK_STATUS.active,
+      incomingPayable: true,
+    });
+
+    expect(notificationTypes()).toContain('creators-program-payments-enabled');
+  });
+
+  it('does not re-notify a payable account whose status is not Active', async () => {
+    await update({
+      storedStatus: WEBHOOK_STATUS.pendingOnboarding,
+      storedPayable: true,
+      incomingStatus: WEBHOOK_STATUS.pendingOnboarding,
+      incomingPayable: true,
+    });
+
+    expect(notificationTypes()).not.toContain('creators-program-payments-enabled');
+  });
+
+  // Tipalti sends payeeDetailsChanged for edits that move nothing (a new address, a new payment
+  // method), so "already payable, still payable" is the ordinary repeat delivery, not an edge case.
+  it('does not re-notify a payable account whose status is not literally Active', async () => {
+    await update({
+      storedStatus: WEBHOOK_STATUS.pendingOnboarding,
+      storedPayable: true,
+      incomingStatus: WEBHOOK_STATUS.pendingOnboarding,
+      incomingPayable: true,
+    });
+
+    expect(notificationTypes()).not.toContain('creators-program-payments-enabled');
+  });
+
+  // The tax-form path below this branch takes payable -> unpayable at an unchanged Active status;
+  // resolving the form is the same move back, and a status comparison cannot see either one.
+  it('notifies when payability is restored without the status changing', async () => {
+    await update({
+      storedStatus: WEBHOOK_STATUS.active,
+      storedPayable: false,
+      incomingStatus: WEBHOOK_STATUS.active,
+      incomingPayable: true,
+    });
+
+    expect(notificationTypes()).toContain('creators-program-payments-enabled');
+  });
+
   it.each([WEBHOOK_STATUS.blocked, WEBHOOK_STATUS.blockedByProvider])(
     'notifies rejection for %s',
     async (incomingStatus) => {
@@ -102,11 +153,26 @@ describe('updateByTipaltiAccount notifications', () => {
       expect(notificationTypes()).toContain('creators-program-rejected-tipalti');
     }
   );
+
+  it.each([
+    [WEBHOOK_STATUS.blocked, WEBHOOK_STATUS.blocked],
+    [WEBHOOK_STATUS.blocked, WEBHOOK_STATUS.blockedByProvider],
+    [WEBHOOK_STATUS.blockedByProvider, WEBHOOK_STATUS.blocked],
+  ])('does not re-notify rejection for %s -> %s', async (storedStatus, incomingStatus) => {
+    await update({
+      storedStatus,
+      storedPayable: false,
+      incomingStatus,
+      incomingPayable: false,
+    });
+
+    expect(notificationTypes()).not.toContain('creators-program-rejected-tipalti');
+  });
 });
 
-// The webhook writes Tipalti's `eventData.status` verbatim, so the enum is a contract with an
-// external system rather than a naming choice. Pinning the strings makes a "tidy up the casing"
-// edit fail here instead of silently disabling every comparison against them.
+// The enum is a contract with an external system rather than a naming choice: it is what incoming
+// statuses are parsed against, and what 379 already-stored rows hold. Pinning the strings makes a
+// "tidy up the casing" edit fail here instead of silently disabling every comparison against them.
 describe('TipaltiStatus', () => {
   it('matches the values Tipalti sends', () => {
     expect({ ...TipaltiStatus }).toEqual({
@@ -117,5 +183,38 @@ describe('TipaltiStatus', () => {
       BlockedByProvider: 'BlockedByProvider',
       InternalValue: 'INTERNAL_VALUE',
     });
+  });
+});
+
+describe('payeeStatusSchema', () => {
+  it.each(Object.values(TipaltiStatus))('passes %s through unchanged', (status) => {
+    expect(Tipalti.payeeStatusSchema.parse(status)).toBe(status);
+  });
+
+  // The uppercased spellings the enum used to carry. Coercing them rather than storing them keeps
+  // a value that no comparison can match out of the column.
+  it.each(['ACTIVE', 'BLOCKED_BY_TIPALTI', 'SomethingTipaltiAddedLater', null, undefined])(
+    'coerces the unlisted %s to INTERNAL_VALUE',
+    (status) => {
+      expect(Tipalti.payeeStatusSchema.parse(status)).toBe(TipaltiStatus.InternalValue);
+    }
+  );
+});
+
+describe('isBlockedTipaltiStatus', () => {
+  it.each([TipaltiStatus.Blocked, TipaltiStatus.BlockedByProvider])('is true for %s', (status) => {
+    expect(isBlockedTipaltiStatus(status)).toBe(true);
+  });
+
+  it.each([
+    TipaltiStatus.Active,
+    TipaltiStatus.PendingOnboarding,
+    TipaltiStatus.Suspended,
+    TipaltiStatus.InternalValue,
+    'BLOCKED',
+    null,
+    undefined,
+  ])('is false for %s', (status) => {
+    expect(isBlockedTipaltiStatus(status)).toBe(false);
   });
 });

@@ -5473,6 +5473,7 @@ enum JobQueueType {
   ModerationRequest
   BlockedImageDelete
   ImageScan
+  ReplacedImageDelete
 }
 
 model JobQueue {
@@ -6851,6 +6852,10 @@ model UserProfile {
   showcaseItems           Json      @default("[]")
 
   @@id([userId])
+  // Serves the ON DELETE SET NULL referential-integrity trigger for the
+  // sfwCoverImage relation. Without it every Image delete sequentially scans this
+  // whole table. Prisma does not index relation scalars on its own.
+  @@index([sfwCoverImageId])
 }
 
 /// @view

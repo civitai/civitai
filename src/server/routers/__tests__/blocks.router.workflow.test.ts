@@ -475,6 +475,12 @@ import { TransactionType } from '~/shared/constants/buzz.constants';
 // honest about the shape it consumes.
 import { createModelSubstitutionCollector } from '~/shared/data-graph/generation/model-substitution';
 import type { ModelSubstitutionReason } from '~/shared/data-graph/generation/model-substitution';
+// #4159 — the REAL validator. `createWorkflowStepsFromGraphInput` is mocked for
+// this whole file, which is exactly why the LoRA defect was invisible here; the
+// regression suite re-arms `generationGraph.safeParse` inside that mock so the
+// input the router builds is graded by the thing that actually rejected it in
+// production. NOT mocked anywhere, so this is the shipped graph.
+import { generationGraph } from '~/shared/data-graph/generation/generation-graph';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
@@ -4405,6 +4411,325 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
       ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
       expect(mockResolveCanGenerateForVersions).not.toHaveBeenCalled();
       expect(mockSysRedis.incrBy).not.toHaveBeenCalled();
+    });
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // REGRESSION — issue #4159: `additionalResources` was dead for EVERY LoRA
+    // that survived the compatibility gate.
+    //
+    // 🔴 WHY THE REST OF THIS FILE COULD NOT SEE IT. `createWorkflowStepsFromGraphInput`
+    // is mocked at the module boundary for the whole suite, so the generation
+    // graph — the thing that rejected the built input — never ran. Every test
+    // above that submits a compatible LoRA is green on `main` while production
+    // returns HTTP 400. So these tests re-arm the ONE step that was stubbed out:
+    // the mock runs the REAL `generationGraph.safeParse` on the input the router
+    // actually built, and reproduces `validateInput`'s throw on failure (same
+    // `Validation failed: <key>: <message>` shape). Nothing else is unmocked.
+    //
+    // The defect: `buildImageWorkflowInput` emitted `{ id, strength }`, which
+    // satisfies the resources node's loose INPUT schema but not its OUTPUT
+    // schema (`resourceSchema`, which requires `model: { type }`) — the enrichment
+    // that fills `model` runs AFTER validation. Observable as
+    // `Validation failed: resources: Invalid input: expected object, received undefined`.
+    // ─────────────────────────────────────────────────────────────────────────
+    describe('REGRESSION #4159 — a compatible LoRA survives REAL graph validation', () => {
+      // A free viewer's server-shaped generation context — the same fields
+      // `buildGenerationContext` produces, hand-built so this stays off DB/redis.
+      // (Mirrors `baseCtx` in model-substitution.test.ts.)
+      const graphCtx = {
+        limits: { maxQuantity: 4, maxResources: 10, vidQuantity: 1 },
+        user: { isMember: false, tier: 'free' },
+        flags: {},
+        selfHostedDisabledEcosystems: [],
+        selfHostedMode: 'enabled',
+        gateRules: [],
+      };
+
+      /**
+       * Re-arm the step builder with REAL graph validation. Returns the parse
+       * results so a test can assert on them directly as well as through the
+       * procedure's outcome.
+       */
+      function withRealGraphValidation() {
+        const parses: Array<{ success: boolean; errors?: Record<string, { message: string }> }> =
+          [];
+        mockCreateStepsFromGraph.mockImplementation(
+          async ({ input }: { input: Record<string, unknown> }) => {
+            const result = generationGraph.safeParse(input as never, graphCtx as never) as {
+              success: boolean;
+              errors?: Record<string, { message: string }>;
+              data?: Record<string, unknown>;
+            };
+            parses.push({ success: result.success, errors: result.errors });
+            if (!result.success) {
+              // Byte-for-byte the message shape `validateInput` throws, which is
+              // what reached the block as the failure snapshot's `error`.
+              const errorMessages = Object.entries(result.errors ?? {})
+                .map(([key, error]) => `${key}: ${error.message}`)
+                .join(', ');
+              throw new TRPCError({
+                code: 'BAD_REQUEST',
+                message: `Validation failed: ${errorMessages}`,
+              });
+            }
+            return {
+              steps: [{ $type: 'textToImage', name: 's1', input: {} }],
+              workflowMetadata: undefined,
+            };
+          }
+        );
+        return parses;
+      }
+
+      // 🔴 THE ARM THAT WAS RED BEFORE THE FIX. A compatible SDXL LoRA on an
+      // SDXL checkpoint must price. On `main` this rejects with
+      // `Validation failed: resources: Invalid input: expected object, received undefined`.
+      it('estimate: a COMPATIBLE LoRA prices — the graph accepts the built resources', async () => {
+        mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+        versionRows({ 201: sdxlLora(201) });
+        happyUser();
+        const parses = withRealGraphValidation();
+        mockSubmitWorkflow.mockResolvedValueOnce({
+          id: '',
+          status: 'succeeded',
+          cost: { total: 7 },
+          steps: [],
+        });
+        const caller = blocksRouter.createCaller(fakeCtx() as never);
+        const result = await caller.estimateWorkflow({
+          blockToken: 'tok',
+          body: bodyWithLoras([{ modelVersionId: 201, strength: 0.8 }]),
+        });
+        // The block's fail-closed guard is `typeof cost.total === 'number'`.
+        expect(typeof result.snapshot.cost?.total).toBe('number');
+        expect(result.snapshot.cost?.total).toBe(7);
+        // The graph really ran, really succeeded, and really carried the LoRA
+        // (a positive control: a validator wired to nothing would record none).
+        expect(parses).toHaveLength(1);
+        expect(parses[0].success).toBe(true);
+        // …and the input it accepted carries the resolved type, not a placeholder.
+        const stepArg = mockCreateStepsFromGraph.mock.calls[0][0];
+        expect(stepArg.input.resources).toEqual([
+          { id: 201, strength: 0.8, model: { type: 'LORA' } },
+        ]);
+      });
+
+      // 🔴 MUTANT-KILLER for the ROUTER's half of the thread. Every other
+      // fixture in this file is LORA-typed (`sdxlLora`), so replacing
+      // `resourceTypes.set(id, lora.modelType)` with the literal `'LORA'`
+      // SURVIVED a 4168-test sweep — the builder-side LoCon test pins only the
+      // BOUND model, not the additional-resource map. Without this, the
+      // fail-closed throw guards nothing: a hardcoded `'LORA'` would be
+      // indistinguishable from a resolved one. Two DISTINCT non-LORA types, so
+      // no single literal can satisfy the assertion.
+      it('the resolved type is THREADED per-resource — a LoCon + DoRA stack is not flattened to LORA', async () => {
+        mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+        versionRows({
+          202: sdxlLora(202, { model: { id: 302, type: 'LoCon', userId: 2 } }),
+          203: sdxlLora(203, { model: { id: 303, type: 'DoRA', userId: 2 } }),
+        });
+        happyUser();
+        const parses = withRealGraphValidation();
+        mockSubmitWorkflow.mockResolvedValueOnce({
+          id: '',
+          status: 'succeeded',
+          cost: { total: 11 },
+          steps: [],
+        });
+        const caller = blocksRouter.createCaller(fakeCtx() as never);
+        const result = await caller.estimateWorkflow({
+          blockToken: 'tok',
+          body: bodyWithLoras([
+            { modelVersionId: 202, strength: 0.6 },
+            { modelVersionId: 203, strength: 0.4 },
+          ]),
+        });
+        expect(result.snapshot.cost?.total).toBe(11);
+        expect(parses[0].success).toBe(true);
+        const stepArg = mockCreateStepsFromGraph.mock.calls[0][0];
+        expect(stepArg.input.resources).toEqual([
+          { id: 202, strength: 0.6, model: { type: 'LoCon' } },
+          { id: 203, strength: 0.4, model: { type: 'DoRA' } },
+        ]);
+      });
+
+      // The bound-model push is now type-bounded: a type the graph routes to its
+      // OWN singleton node (Upscaler/VAE) must be refused, not billed as an
+      // additional network. Reviving the push without this would have widened
+      // the surface well past what the fix describes.
+      it('a bound model whose type belongs in a SINGLETON graph slot is refused, not billed as a network', async () => {
+        mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+        versionRows({
+          99: {
+            id: 99,
+            baseModel: 'SDXL 1.0',
+            modelId: 7,
+            status: 'Published',
+            availability: 'Public',
+            usageControl: 'Download',
+            meta: null,
+            generationCoverage: { covered: true },
+            model: { id: 7, type: 'VAE', userId: 1 },
+          },
+        });
+        happyUser();
+        clearCheckpointOverrides();
+        mockDbRead.modelMetric.findFirst.mockResolvedValue({
+          modelId: 300,
+          model: {
+            id: 300,
+            name: 'Popular SDXL',
+            modelVersions: [{ id: 500, name: 'v1', baseModel: 'SDXL 1.0' }],
+          },
+        });
+        withRealGraphValidation();
+        const caller = blocksRouter.createCaller(fakeCtx() as never);
+        await expect(
+          caller.estimateWorkflow({ blockToken: 'tok', body: validBody() })
+        ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: /bound to a VAE model/ });
+        // Refused before the orchestrator is reached — no whatIf, no spend.
+        expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      });
+
+      it('submit: the SAME builder feeds submitWorkflow, so it must pass the SAME validation', async () => {
+        mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+        versionRows({ 201: sdxlLora(201) });
+        happyUser();
+        const parses = withRealGraphValidation();
+        mockSysRedis.incrBy.mockResolvedValue(9);
+        mockSubmitWorkflow
+          .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 9 }, steps: [] })
+          .mockResolvedValueOnce({
+            id: 'wf_real',
+            status: 'unassigned',
+            cost: { total: 9 },
+            steps: [],
+          });
+        const caller = blocksRouter.createCaller(fakeCtx() as never);
+        const result = await caller.submitWorkflow({
+          blockToken: 'tok',
+          body: bodyWithLoras([{ modelVersionId: 201, strength: 1.1 }]),
+        });
+        expect(result.snapshot.workflowId).toBe('wf_real');
+        // whatIf preflight + real submit both validated, both succeeded.
+        expect(parses.every((p) => p.success)).toBe(true);
+        expect(parses.length).toBeGreaterThanOrEqual(1);
+      });
+
+      // NEGATIVE CONTROL for the harness above: the same re-armed validator must
+      // be able to go RED. Without this, a green first arm is indistinguishable
+      // from a `safeParse` that cannot fail.
+      it('CONTROL: the re-armed validator DOES reject a genuinely invalid graph input', async () => {
+        const bad = generationGraph.safeParse(
+          {
+            workflow: 'txt2img',
+            ecosystem: 'SDXL',
+            model: { id: 99 },
+            // The pre-fix shape, verbatim.
+            resources: [{ id: 201, strength: 0.8 }],
+            prompt: 'a cat',
+            sampler: 'Euler',
+            steps: 25,
+            quantity: 1,
+            priority: 'low',
+          } as never,
+          graphCtx as never
+        ) as { success: boolean; errors?: Record<string, { message: string }> };
+        expect(bad.success).toBe(false);
+        // The exact string the issue records off the wire.
+        expect(bad.errors?.resources?.message).toMatch(/expected object, received undefined/);
+      });
+
+      // The compatibility gate is upstream of graph validation and must keep its
+      // clean, intentional rejection — the fix must not widen it.
+      it('an INCOMPATIBLE LoRA still gets the existing clean rejection (gate not widened)', async () => {
+        mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+        // SD 1.5 LoRA against the SDXL checkpoint — no SD1→SDXL LORA rule.
+        versionRows({ 201: sdxlLora(201, { baseModel: 'SD 1.5' }) });
+        happyUser();
+        withRealGraphValidation();
+        const caller = blocksRouter.createCaller(fakeCtx() as never);
+        await expect(
+          caller.estimateWorkflow({
+            blockToken: 'tok',
+            body: bodyWithLoras([{ modelVersionId: 201 }]),
+          })
+        ).rejects.toMatchObject({
+          code: 'BAD_REQUEST',
+          message: 'a selected LoRA is not compatible with the checkpoint base model',
+        });
+        expect(mockCreateStepsFromGraph).not.toHaveBeenCalled();
+        expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      });
+
+      // CONTROL: a no-LoRA estimate priced before the fix and must still price —
+      // so a green suite cannot be explained by the LoRA arm having been made
+      // trivially reachable.
+      it('CONTROL: a no-LoRA estimate still prices under the same real validation', async () => {
+        mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+        versionRows({});
+        happyUser();
+        const parses = withRealGraphValidation();
+        mockSubmitWorkflow.mockResolvedValueOnce({
+          id: '',
+          status: 'succeeded',
+          cost: { total: 4 },
+          steps: [],
+        });
+        const caller = blocksRouter.createCaller(fakeCtx() as never);
+        const result = await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
+        expect(result.snapshot.cost?.total).toBe(4);
+        expect(parses[0].success).toBe(true);
+        const stepArg = mockCreateStepsFromGraph.mock.calls[0][0];
+        expect(stepArg.input.resources).toEqual([]);
+      });
+
+      // 🔴 WIDER THAN THE ISSUE TITLE. The bound-model network takes the SAME
+      // `resources.push`, so a block bound to a LoRA (rather than a Checkpoint)
+      // was equally dead — with NO `additionalResources` at all. Also RED on
+      // `main`, with the identical message.
+      it('a LoRA-BOUND body (no additionalResources) also prices — same push, same defect', async () => {
+        mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+        // Body model 99 is itself an SDXL LoRA, so the builder pushes it into
+        // `resources` and resolves a DIFFERENT checkpoint (500) as the anchor.
+        versionRows({
+          99: {
+            id: 99,
+            baseModel: 'SDXL 1.0',
+            modelId: 7,
+            status: 'Published',
+            availability: 'Public',
+            usageControl: 'Download',
+            meta: null,
+            generationCoverage: { covered: true },
+            model: { id: 7, type: 'LORA', userId: 1 },
+          },
+        });
+        happyUser();
+        clearCheckpointOverrides();
+        mockDbRead.modelMetric.findFirst.mockResolvedValue({
+          modelId: 300,
+          model: {
+            id: 300,
+            name: 'Popular SDXL',
+            modelVersions: [{ id: 500, name: 'v1', baseModel: 'SDXL 1.0' }],
+          },
+        });
+        const parses = withRealGraphValidation();
+        mockSubmitWorkflow.mockResolvedValueOnce({
+          id: '',
+          status: 'succeeded',
+          cost: { total: 5 },
+          steps: [],
+        });
+        const caller = blocksRouter.createCaller(fakeCtx() as never);
+        const result = await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
+        expect(result.snapshot.cost?.total).toBe(5);
+        expect(parses[0].success).toBe(true);
+        const stepArg = mockCreateStepsFromGraph.mock.calls[0][0];
+        expect(stepArg.input.model.id).toBe(500);
+        expect(stepArg.input.resources).toEqual([{ id: 99, strength: 1, model: { type: 'LORA' } }]);
+      });
     });
 
     // ── Model-path guard: additionalResources is page-only ─────────────────

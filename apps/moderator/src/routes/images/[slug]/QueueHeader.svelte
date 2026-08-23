@@ -4,6 +4,7 @@
   import type { SvelteSet } from 'svelte/reactivity';
   import * as Popover from '@civitai/ui/components/ui/popover/index.js';
   import { browsingLevels, getBrowsingLevelLabel, NsfwLevel } from '@civitai/shared';
+  import { clearPaging } from '$lib/paging';
 
   let {
     title,
@@ -29,7 +30,7 @@
   const allSelected = $derived(itemKeys.length > 0 && selected.size === itemKeys.length);
 
   const go = (url: URL) => {
-    url.searchParams.delete('cursor');
+    clearPaging(url.searchParams);
     goto(url.pathname + url.search);
   };
 
