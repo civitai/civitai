@@ -312,12 +312,18 @@ export async function submitExternalListing(opts: {
           externalUrl: url && url.ok ? url.url : null,
           // OPTIONAL public source-repository link, canonicalized.
           //
-          // 🔴 THE KEY IS OMITTED ENTIRELY when the author supplied none, rather than
-          // written as `null`. `app_listings.source_repo_url` is a MANUAL-APPLY column,
-          // so until a human runs the migration, naming it here would make EVERY
-          // off-site submission fail — a brand-new feature breaking a pre-existing flow
-          // for every author, including the ones not using it. Omitted, the column is
-          // simply never mentioned and the submit is byte-identical to today.
+          // The key is OMITTED ENTIRELY when the author supplied none, rather than
+          // written as `null`. That keeps the column out of the INSERT's column list.
+          //
+          // 🔴 IT DOES **NOT** MAKE THIS CREATE SAFE AGAINST AN UNAPPLIED MIGRATION, and
+          // an earlier version of this comment claimed it did ("the column is simply
+          // never mentioned"). Prisma returns the created row, so it emits
+          // `INSERT … RETURNING <every scalar the MODEL declares>` — and `sourceRepoUrl`
+          // is on the model. The generated SQL names `source_repo_url` regardless of
+          // `data`, so this create raises P2022 on any database without the column.
+          // Measured on the PR preview env: 5 smoke specs 500'd here, for authors who
+          // supplied no link at all. The migration is therefore a HARD PRE-DEPLOY step —
+          // see the header of 20260823120000_app_listing_source_repo/migration.sql.
           ...(sourceRepo && sourceRepo.ok ? { sourceRepoUrl: sourceRepo.url } : {}),
           // REQUIRED OAuth client link + the disclosed (review-only) scope set
           // (SERVER-DERIVED from the client's allowedScopes) + per-scope justifications.

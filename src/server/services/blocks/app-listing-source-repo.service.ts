@@ -12,10 +12,26 @@
  * turned into an outage on a public page.
  *
  * So the column is read HERE and nowhere else, through one function that swallows
- * exactly the missing-column error and reports the absence honestly. Nothing adds the
- * column to an existing `select`, which is what keeps every pre-existing flow — the
- * store list, the store detail, the author edit prefill, the moderator revision apply —
- * byte-identical to today while the migration is outstanding.
+ * exactly the missing-column error and reports the absence honestly, and nothing adds
+ * the column to an existing `select`.
+ *
+ * 🔴 THAT IS NECESSARY BUT **NOT SUFFICIENT**, and an earlier version of this header
+ * claimed otherwise ("keeps every pre-existing flow byte-identical to today while the
+ * migration is outstanding"). It does not. Controlling explicit `select`s says nothing
+ * about a query that passes NO `select`: Prisma then returns the full model and names
+ * every scalar the MODEL declares — including this one — in the `SELECT` / `RETURNING`
+ * list. Roughly half the ~92 `appListing.*` query sites take that default. Measured on
+ * the PR preview environment: off-site submit 500'd at `prisma.appListing.create()` with
+ * `The column app_listings.source_repo_url does not exist`, for authors who supplied no
+ * link at all.
+ *
+ * 🔴 NO TEST IN THIS REPO CAN SEE THAT. The suites mock Prisma, so none of them ever
+ * generates SQL; this module's own tests, its mutation battery and two adversarial audit
+ * rounds were all green and all blind to it.
+ *
+ * The consequence is operational, not structural: **the migration is a hard PRE-DEPLOY
+ * step**, and this module is defence in depth rather than the guarantee. See the header
+ * of `20260823120000_app_listing_source_repo/migration.sql`.
  *
  * This is the same posture `safeCollaboratorQuery` takes for the manual-apply
  * `app_collaborators` TABLE (`app-access.service`), with one deliberate difference:

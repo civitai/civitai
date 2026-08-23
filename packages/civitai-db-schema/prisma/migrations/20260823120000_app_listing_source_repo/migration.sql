@@ -9,36 +9,41 @@
 -- PG 11+ — it does not rewrite the table, so it is O(1) regardless of row count. Run it
 -- outside a long-running transaction so it cannot queue behind (or in front of) reads.
 --
--- The deployed code is written to survive this being UNAPPLIED. Every read of the column
--- goes through `readListingSourceRepoUrl`
--- (src/server/services/blocks/app-listing-source-repo.service.ts), which swallows the
--- missing-column error (Prisma P2022 / Postgres 42703) and reports
--- `{ available: false, value: null }`, so the public store detail renders no Source row
--- instead of 500ing.
+-- 🔴 APPLY THIS **BEFORE** DEPLOYING THE CODE. THERE IS A HARD ORDERING CONSTRAINT.
 --
--- 🔴 WRITES ARE NOT ONE RULE BUT TWO, AND THE DISTINCTION IS THE GUARANTEE:
+-- An earlier version of this header claimed the opposite — that omitting the column from
+-- every write payload made the deploy order free and the feature merely "inert" until
+-- this ran. That was FALSE, and the preview environment proved it end to end: off-site
+-- submit returned
 --
---   * A write the SYSTEM originates on the author's behalf — the shadow-revision clone,
---     the revision apply, the on-site scalar re-sync at approve — OMITS the column
---     entirely (`sourceRepoWriteFragment`). Never `null`: naming the column at all is
---     what raises P2022, so an omitted key is the difference between a dormant feature
---     and a broken pre-existing flow. These paths are unaffected by this statement.
+--     HTTP 500 — Invalid `prisma.appListing.create()` invocation:
+--     The column `app_listings.source_repo_url` does not exist in the current database.
 --
---   * A write an AUTHOR originates — an off-site submit or listing patch that actually
---     names `sourceRepoUrl` — is REFUSED, with a `PRECONDITION_FAILED` naming the field
---     (`assertSourceRepoWritable`). Not omitted: silently dropping a link the author
---     just typed would report success for a listing whose source link is simply gone.
---     The refusal is raised BEFORE any side effect, so nothing is half-written and no
---     orphan revision draft is left behind.
+-- on five smoke specs (submit / approve / reject / delist / purge), for authors who
+-- supplied NO source link at all.
 --
--- So what is actually guaranteed before this statement runs, precisely:
---   * NO deploy ordering constraint. Nothing in the deploy applies or needs this SQL,
---     and no pre-existing flow — public store list, store detail, author edit prefill,
---     submit without a repo link, revision open, moderator approve — changes behaviour.
---   * The feature itself is INERT rather than broken: nothing displays a source link,
---     and an author who tries to SET one is told why, in a message about the
---     environment rather than a 500 quoting a database column.
--- After it runs, the feature becomes live on its own — the availability probe is not
--- memoised, so no restart or redeploy is required.
+-- WHY OMITTING THE KEY DOES NOT HELP. Prisma returns the created/updated row, so it
+-- emits `INSERT … RETURNING <every scalar the MODEL declares>`. This migration's field
+-- is declared on the `AppListing` model, so the generated SQL names `source_repo_url`
+-- whether or not the key appears in `data`. The same is true of any `findUnique` /
+-- `findFirst` / `update` on this model that does not pass an explicit `select`, and
+-- roughly half the ~92 `appListing.*` query sites do not.
+--
+-- 🔴 THE UNIT TESTS CANNOT SEE THIS. They mock Prisma, so no test in the suite ever
+-- generates SQL. The guards below, their mutation battery, and two adversarial audit
+-- rounds were all self-consistent and all blind to it. Only a real database shows it.
+--
+-- The in-code guards are RETAINED, but as defence in depth, not as the guarantee:
+--   * reads go through `readListingSourceRepoUrl`
+--     (src/server/services/blocks/app-listing-source-repo.service.ts), which uses an
+--     explicit narrow `select` and swallows P2022 / 42703 → `{available:false, value:null}`;
+--   * system-originated writes omit the key (`sourceRepoWriteFragment`);
+--   * author-originated writes that name `sourceRepoUrl` are refused with
+--     `PRECONDITION_FAILED` before any side effect.
+-- Those hold. What does NOT hold is any claim that a pre-existing flow is unaffected —
+-- default-selection queries break regardless.
+--
+-- Once this statement has run, everything above is moot and the feature is live with no
+-- restart or redeploy (the availability probe is not memoised).
 
 ALTER TABLE "app_listings" ADD COLUMN "source_repo_url" text;
