@@ -18,7 +18,7 @@ import type { Partner } from '~/shared/utils/prisma/models';
 import { instrumentApiResponse } from '~/server/prom/http-errors';
 import { isClientAbortError, isDriverAuthoredMessage } from '~/server/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
-import { PRIVATE_CACHE_CONTROL } from '~/shared/constants/cache-control.constants';
+import { PRIVATE_CACHE_CONTROL } from '~/server/middleware/middleware-utils';
 import { logToAxiom, buildCentralErrorLog, wasServerFaultLogged } from '~/server/logging/client';
 import {
   GENERIC_CLIENT_ERROR_BY_STATUS,
@@ -287,14 +287,37 @@ const addPublicCacheHeaders = (
 };
 
 /**
- * The request dimensions a `PublicEndpoint` body can legitimately depend on.
+ * `Vary` for a response that carries the PUBLIC cache header — i.e. one produced
+ * for a request that presented no credential.
  *
- * `Cookie` and `Authorization` are the two the wrapper itself branches on below,
- * so they are the two it must declare. A response that can differ by credential
- * and does not say so is, per RFC 9111 §4.1, indistinguishable to a shared cache
- * from one that cannot — the cache has no way to know a second dimension exists.
+ * 🔴 `Vary` is DOCUMENTATION here, not the control. What keeps a caller-specific
+ * body out of a shared cache is `Cache-Control: private` on the other arm; this
+ * header only describes which request dimension the wrapper branched on. Do not
+ * read it as enforcement, and do not weaken the `Cache-Control` split on the
+ * strength of it.
+ *
+ * `Authorization` only, deliberately. It is stable per caller and has tiny
+ * cardinality (present / absent for practically every caller of these routes), so
+ * declaring it costs nothing. `Cookie` does not belong on this arm: an ordinary
+ * logged-out browser carries analytics and bot-management cookies whose values
+ * change per pageview and rotate on a timer, so keying a shared cache on the
+ * whole `Cookie` header would give roughly one entry per browser per rotation
+ * window — the anonymous hit rate would collapse, and cheap 304 revalidations
+ * would turn into full 200s. The anonymous body is by construction the same for
+ * every caller who presented nothing, so there is nothing to fragment for.
  */
-const CALLER_DEPENDENT_VARY = 'Cookie, Authorization';
+const ANONYMOUS_VARY = 'Authorization';
+
+/**
+ * `Vary` for a response that carries the PRIVATE cache header — i.e. one produced
+ * for a request that presented a credential.
+ *
+ * `Cookie` is added here and only here. This arm is already `private, no-cache`,
+ * so there is no shared-cache entry for the extra dimension to fragment; naming
+ * it is free, and it states honestly that the body was shaped by the cookie the
+ * caller sent.
+ */
+const CREDENTIALED_VARY = 'Authorization, Cookie';
 
 /**
  * Cookie names that can carry a session, hence make a response caller-dependent.
@@ -334,6 +357,15 @@ const SESSION_COOKIE_NAMES = Array.from(
  * `req.cookies` is what Next populates for an API route and is the primary read.
  * The raw `Cookie` header is parsed as a fallback so the check cannot quietly
  * degrade to "no credentials" in any context that skips that parsing.
+ *
+ * 🔴 The `?token=` query parameter is a credential HERE because
+ * `getServerAuthSession` treats it as one — it reads `req.url`'s `token` param
+ * and resolves it through `getSessionFromBearerToken`, exactly as it would an
+ * `Authorization` header. Omitting it would make `MixedAuthEndpoint` call an
+ * api-key request anonymous and hand it the public header, which is the arm it
+ * has never been on. The set of credential spellings this predicate recognises
+ * must stay a superset of the set `getServerAuthSession` accepts; when one grows,
+ * so must the other.
  */
 export function requestCarriesCallerCredentials(req: NextApiRequest): boolean {
   if (req.headers?.authorization) return true;
@@ -352,6 +384,21 @@ export function requestCarriesCallerCredentials(req: NextApiRequest): boolean {
     }
   }
 
+  if (hasNonEmpty((req.query as Record<string, unknown> | undefined)?.token)) return true;
+
+  // Same fallback rationale as the raw `Cookie` header above: `req.query` is
+  // Next's parse, and `getServerAuthSession` reads `req.url` directly, so the two
+  // reads must both be covered or the predicate can silently narrow.
+  const queryString = req.url?.split('?')[1];
+  if (queryString && hasNonEmpty(new URLSearchParams(queryString).get('token'))) return true;
+
+  return false;
+}
+
+/** Truthy for a non-empty string, or an array containing one. */
+function hasNonEmpty(value: unknown): boolean {
+  if (typeof value === 'string') return value.length > 0;
+  if (Array.isArray(value)) return value.some((v) => typeof v === 'string' && v.length > 0);
   return false;
 }
 
@@ -364,13 +411,22 @@ export function PublicEndpoint(
   { maxAge }: { maxAge?: number } = {}
 ) {
   return withApiMetrics(async (req: AxiomAPIRequest, res: NextApiResponse) => {
-    // Set FIRST: `addCorsHeaders` can end an OPTIONS preflight, after which no
-    // further header write lands. Every response out of this wrapper declares the
-    // same dimensions, cacheable or not — a `Vary` that appears only on the
-    // cacheable arm would itself be a caller-dependent header.
-    res.setHeader('Vary', CALLER_DEPENDENT_VARY);
+    const credentialed = requestCarriesCallerCredentials(req);
 
-    const shouldStop = addCorsHeaders(req, res, allowedMethods);
+    // Set BEFORE `addCorsHeaders`: that helper ends an OPTIONS preflight itself,
+    // and once a response is ended `setHeader` throws `ERR_HTTP_HEADERS_SENT`
+    // rather than quietly doing nothing. A preflight therefore has exactly one
+    // window in which a header can be declared, and this is it.
+    res.setHeader('Vary', credentialed ? CREDENTIALED_VARY : ANONYMOUS_VARY);
+
+    // 🔴 The early return belongs HERE, above the `Cache-Control` write — not
+    // below it. `addCorsHeaders` answers an OPTIONS preflight with
+    // `res.status(200).end()`, so every header write placed after it runs against
+    // an already-sent response and throws. That has always been true of whatever
+    // sat in this position (it is not introduced by the cache split below); the
+    // client still got its 200, at the cost of a thrown exception per preflight.
+    // A preflight carries no body, so it needs no cache directive at all.
+    if (addCorsHeaders(req, res, allowedMethods)) return;
 
     // 🔴 `public, s-maxage` is a claim that ANY caller may be served this exact
     // body. Several routes on this wrapper resolve the session themselves and
@@ -391,10 +447,9 @@ export function PublicEndpoint(
     // are not flushed until it responds, and last write wins. That is what keeps
     // the `no-store` error arms (`handleEndpointError`, and the 503 sheds in
     // `v1/images`/`v1/users`) authoritative.
-    if (requestCarriesCallerCredentials(req)) res.setHeader('Cache-Control', PRIVATE_CACHE_CONTROL);
+    if (credentialed) res.setHeader('Cache-Control', PRIVATE_CACHE_CONTROL);
     else addPublicCacheHeaders(req, res, maxAge);
 
-    if (shouldStop) return;
     await handler(req, res);
   });
 }
@@ -432,10 +487,36 @@ export function MixedAuthEndpoint(
     if (!req.method || !allowedMethods.includes(req.method))
       return res.status(405).json({ error: 'Method not allowed' });
 
-    const shouldStop = addCorsHeaders(req, res, allowedMethods);
+    // Same two properties as `PublicEndpoint`, for the same reasons — see the
+    // comments there. Two differences worth naming, because this wrapper used to
+    // decide on a different axis:
+    //
+    //  1. **The branch is on the CREDENTIAL, not on the resolved session.** This
+    //     used to read `if (!session) addPublicCacheHeaders(...)`, which asks
+    //     whether the credential WORKED. Those two questions have different
+    //     answers whenever a credential is presented and does not resolve — an
+    //     expired cookie, a revoked token, a redis miss — and only one of them is
+    //     conservative. `requestCarriesCallerCredentials` is a header-only read,
+    //     so it also runs before any session work.
+    //  2. **The credentialed arm now states a header.** It previously stated
+    //     nothing and left the response to `apiCacheMiddleware`, whose matcher
+    //     covers `/api/v1/*` and `/api/trpc/*` only. Two of the twelve routes on
+    //     this wrapper sit outside that: `/api/auth/freshdesk`, which answered
+    //     with no `Cache-Control` at all, and
+    //     `/api/blocks/screenshot/[appBlockId]/[file]`, whose 200 arm sets its
+    //     own header (and still wins) but whose 404 arms did not.
+    const credentialed = requestCarriesCallerCredentials(req);
+    res.setHeader('Vary', credentialed ? CREDENTIALED_VARY : ANONYMOUS_VARY);
+
+    // Early return above every later header write — see `PublicEndpoint`. This
+    // also stops a preflight doing a pointless session resolve after the 200 has
+    // already gone out.
+    if (addCorsHeaders(req, res, allowedMethods)) return;
+
+    if (credentialed) res.setHeader('Cache-Control', PRIVATE_CACHE_CONTROL);
+    else addPublicCacheHeaders(req, res);
+
     const session = await getServerAuthSession({ req, res });
-    if (!session) addPublicCacheHeaders(req, res);
-    if (shouldStop) return;
 
     if (!!req.query?.etag && req.query.etag !== '') {
       const isNotUpToDate = await checkNotUpToDate(

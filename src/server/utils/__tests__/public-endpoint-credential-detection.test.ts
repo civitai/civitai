@@ -68,6 +68,33 @@ describe('requestCarriesCallerCredentials — recognises a credential', () => {
     ).toBe(true);
   });
 
+  it('is true for a ?token= api key in req.query', () => {
+    expect(
+      requestCarriesCallerCredentials({
+        headers: {},
+        query: { token: 'abc' },
+        url: '/api/v1/users?token=abc',
+      } as never)
+    ).toBe(true);
+  });
+
+  it('is true for a ?token= present only on req.url', () => {
+    // `getServerAuthSession` reads `req.url` rather than Next's parsed `req.query`,
+    // so a context that skips that parsing must not read as anonymous.
+    expect(
+      requestCarriesCallerCredentials({
+        headers: {},
+        url: '/api/v1/users?page=2&token=abc',
+      } as never)
+    ).toBe(true);
+  });
+
+  it('is true for a repeated ?token= arriving as an array', () => {
+    expect(
+      requestCarriesCallerCredentials({ headers: {}, query: { token: ['', 'abc'] } } as never)
+    ).toBe(true);
+  });
+
   it('tolerates a malformed cookie segment with no "=" alongside a real one', () => {
     expect(
       requestCarriesCallerCredentials({
@@ -110,5 +137,33 @@ describe('requestCarriesCallerCredentials — does not over-match', () => {
         cookies: { [sessionCookieName(true)]: '' },
       } as never)
     ).toBe(false);
+  });
+
+  it('is false for query parameters that merely look like a token', () => {
+    // The discriminator must be the `token` parameter, not the presence of a
+    // query string — otherwise every paged public request leaves the cached arm.
+    expect(
+      requestCarriesCallerCredentials({
+        headers: {},
+        query: { page: '2', tokenizer: 'x', access_token_hint: 'y' },
+        url: '/api/v1/users?page=2&tokenizer=x&access_token_hint=y',
+      } as never)
+    ).toBe(false);
+  });
+
+  it('is false for an empty ?token= value', () => {
+    expect(
+      requestCarriesCallerCredentials({
+        headers: {},
+        query: { token: '' },
+        url: '/api/v1/users?token=',
+      } as never)
+    ).toBe(false);
+  });
+
+  it('is false for a url with no query string at all', () => {
+    expect(requestCarriesCallerCredentials({ headers: {}, url: '/api/v1/users' } as never)).toBe(
+      false
+    );
   });
 });

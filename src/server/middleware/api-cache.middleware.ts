@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createMiddleware } from '~/server/middleware/middleware-utils';
-import { PRIVATE_CACHE_CONTROL } from '~/shared/constants/cache-control.constants';
+import { createMiddleware, PRIVATE_CACHE_CONTROL } from '~/server/middleware/middleware-utils';
 
 export const apiCacheMiddleware = createMiddleware({
   matcher: ['/api/trpc/:path*', '/api/v1/:path*'],

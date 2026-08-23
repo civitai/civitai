@@ -12,11 +12,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  *   1. the anonymous arm is UNCHANGED — a change that stopped caching for
  *      everyone would be a regression, and the first tests are what prove it did
  *      not happen;
- *   2. a request carrying a session cookie or an `Authorization` header gets the
- *      platform's private default instead;
- *   3. every response declares `Vary: Cookie, Authorization`, on both arms;
+ *   2. a request carrying a session cookie, an `Authorization` header or a
+ *      `?token=` api key gets the platform's private default instead;
+ *   3. each arm declares its own `Vary`, pinned as an exact string;
  *   4. a handler's own `Cache-Control` still wins, so the `no-store` error arms
- *      stay authoritative.
+ *      stay authoritative;
+ *   5. an OPTIONS preflight, exercised against a REAL `http.ServerResponse`, is
+ *      answered without a post-`end()` header write.
  *
  * Every expected header value below is a LITERAL, never re-derived from the
  * implementation's own constants — so this file is meaningful run against code
@@ -56,11 +58,19 @@ vi.mock('~/server/utils/errorHandling', () => ({ isClientAbortError: vi.fn(() =>
 
 import { legacySessionCookieName, sessionCookieName } from '@civitai/auth';
 import { PublicEndpoint } from '../endpoint-helpers';
+import { createRealApiPair } from './real-api-response';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const PUBLIC_DEFAULT = 'public, s-maxage=300, stale-while-revalidate=150';
 const PRIVATE_DEFAULT = 'max-age=0, private, no-cache';
-const EXPECTED_VARY = 'Cookie, Authorization';
+// Pinned as exact strings, per arm. `Cookie` is deliberately absent from the
+// anonymous arm: a logged-out browser's cookie jar changes per pageview, so
+// keying a shared cache on it would fragment the anonymous population into one
+// entry per browser per cookie-rotation window. It is named on the credentialed
+// arm, where the response is already `private, no-cache` and there is no shared
+// entry left to fragment.
+const ANONYMOUS_VARY = 'Authorization';
+const CREDENTIALED_VARY = 'Authorization, Cookie';
 
 const SECURE_SESSION_COOKIE = sessionCookieName(true);
 const DEV_SESSION_COOKIE = sessionCookieName(false);
@@ -79,11 +89,19 @@ type ReqArgs = {
   method?: string;
   cookies?: Record<string, string>;
   headers?: Record<string, string>;
+  query?: Record<string, string | string[]>;
+  url?: string;
 };
 
-function makeReqRes({ method = 'GET', cookies, headers: reqHeaders = {} }: ReqArgs = {}) {
+function makeReqRes({
+  method = 'GET',
+  cookies,
+  headers: reqHeaders = {},
+  query = {},
+  url = '/api/test',
+}: ReqArgs = {}) {
   const headers: HeaderBag = {};
-  const req = { method, headers: reqHeaders, query: {}, cookies } as never;
+  const req = { method, headers: reqHeaders, query, url, cookies } as never;
   const res = {
     setHeader: vi.fn((k: string, v: string | string[]) => {
       headers[k] = v;
@@ -163,6 +181,32 @@ describe('PublicEndpoint cache headers by caller', () => {
     expect(headers['Cache-Control']).not.toContain('s-maxage');
   });
 
+  it('does NOT mark the response publicly cacheable for a ?token= api key in req.query', async () => {
+    // `getServerAuthSession` accepts `?token=` as a bearer credential, so the
+    // predicate must too — otherwise an api-key caller lands on the anonymous arm.
+    const headers = await runPublicEndpoint({
+      query: { token: 'abc' },
+      url: '/api/v1/users?token=abc',
+    });
+    expect(headers['Cache-Control']).toBe(PRIVATE_DEFAULT);
+    expect(headers['Cache-Control']).not.toContain('s-maxage');
+  });
+
+  it('does NOT mark the response publicly cacheable for a ?token= present only on req.url', async () => {
+    const headers = await runPublicEndpoint({ query: {}, url: '/api/v1/users?page=2&token=abc' });
+    expect(headers['Cache-Control']).toBe(PRIVATE_DEFAULT);
+  });
+
+  it('PRESERVES the public edge cache for an unrelated query parameter', async () => {
+    // Negative control for the pair above: the discriminator must be the `token`
+    // parameter specifically, not "the request has a query string".
+    const headers = await runPublicEndpoint({
+      query: { page: '2', tokenizer: 'x' },
+      url: '/api/v1/users?page=2&tokenizer=x',
+    });
+    expect(headers['Cache-Control']).toBe(PUBLIC_DEFAULT);
+  });
+
   it('does NOT mark the response publicly cacheable when the session cookie arrives only on the raw Cookie header', async () => {
     // `req.cookies` is what Next parses for an API route; the raw header is the
     // fallback read, and it must not quietly degrade to "anonymous".
@@ -187,21 +231,83 @@ describe('PublicEndpoint Vary', () => {
 
   it.each<[string, ReqArgs]>([
     ['anonymous', {}],
-    ['session cookie', { cookies: { [SECURE_SESSION_COOKIE]: 'abc' } }],
-    ['Authorization header', { headers: { authorization: 'Bearer abc' } }],
     ['unrelated cookies', { cookies: { theme: 'dark' } }],
-  ])('declares Vary on the %s arm', async (_label, args) => {
+  ])('declares exactly %s → Vary: Authorization', async (_label, args) => {
     const headers = await runPublicEndpoint(args);
-    expect(headers['Vary']).toBe(EXPECTED_VARY);
+    expect(headers['Vary']).toBe(ANONYMOUS_VARY);
   });
 
-  it('declares Vary on an OPTIONS preflight, which returns before the handler', async () => {
-    const { req, res, headers } = makeReqRes({ method: 'OPTIONS' });
-    const handler = vi.fn(async () => undefined);
-    await PublicEndpoint(handler, ['GET'])(req, res);
+  it.each<[string, ReqArgs]>([
+    ['session cookie', { cookies: { [SECURE_SESSION_COOKIE]: 'abc' } }],
+    ['Authorization header', { headers: { authorization: 'Bearer abc' } }],
+  ])('declares exactly %s → Vary: Authorization, Cookie', async (_label, args) => {
+    const headers = await runPublicEndpoint(args);
+    expect(headers['Vary']).toBe(CREDENTIALED_VARY);
+  });
 
-    expect(headers['Vary']).toBe(EXPECTED_VARY);
+  it('never names Cookie on a publicly cacheable response', async () => {
+    // The property that matters for the shared-cache hit rate, stated directly:
+    // whatever the anonymous `Vary` says, it must not fragment on the cookie jar.
+    const headers = await runPublicEndpoint({ cookies: { _ga_ABC: '1', __cf_bm: 'x' } });
+    expect(headers['Cache-Control']).toBe(PUBLIC_DEFAULT);
+    expect(String(headers['Vary'])).not.toContain('Cookie');
+  });
+});
+
+/**
+ * 🔴 Driven through a REAL `http.ServerResponse`, on purpose.
+ *
+ * `addCorsHeaders` answers an OPTIONS preflight with `res.status(200).end()`.
+ * Against the real class that flushes the header block, so every later
+ * `setHeader` throws `ERR_HTTP_HEADERS_SENT`; against a fake whose `end()` is a
+ * no-op it is invisible, and an ordering guard written on such a fake passes for
+ * every ordering. Both facts were measured (see `real-api-response.ts`).
+ *
+ * So these two cases carry the ordering contract, and the fake-based cases above
+ * carry the value contract.
+ */
+describe('PublicEndpoint against a real http.ServerResponse', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('answers an OPTIONS preflight with no post-end() header write, and Vary already declared', async () => {
+    const { req, res, header } = createRealApiPair({ method: 'OPTIONS' });
+    const handler = vi.fn(async () => undefined);
+
+    // The assertion that kills BOTH mutants this test exists for:
+    //   - moving the `Vary` write below `addCorsHeaders`
+    //   - moving the `Cache-Control` write above the early return
+    // Either one writes a header after `end()`, and the wrapper's promise then
+    // rejects with ERR_HTTP_HEADERS_SENT instead of resolving.
+    await expect(PublicEndpoint(handler, ['GET'])(req, res)).resolves.toBeUndefined();
+
+    expect(res.headersSent, 'the preflight must have been answered').toBe(true);
+    expect(res.statusCode).toBe(200);
+    expect(header('Vary')).toBe(ANONYMOUS_VARY);
     expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('sets both headers on a GET, where nothing has ended the response', async () => {
+    // The other half of the pair. Without it, the preflight case alone cannot
+    // distinguish "the ordering is right" from "the wrapper writes no headers".
+    const { req, res, header } = createRealApiPair({ method: 'GET' });
+
+    await expect(PublicEndpoint(async () => undefined, ['GET'])(req, res)).resolves.toBeUndefined();
+
+    expect(res.headersSent, 'a GET must not have flushed headers').toBe(false);
+    expect(header('Cache-Control')).toBe(PUBLIC_DEFAULT);
+    expect(header('Vary')).toBe(ANONYMOUS_VARY);
+  });
+
+  it('sets the private header on a credentialed GET against a real response', async () => {
+    const { req, res, header } = createRealApiPair({
+      method: 'GET',
+      cookies: { [SECURE_SESSION_COOKIE]: 'abc' },
+    });
+
+    await expect(PublicEndpoint(async () => undefined, ['GET'])(req, res)).resolves.toBeUndefined();
+
+    expect(header('Cache-Control')).toBe(PRIVATE_DEFAULT);
+    expect(header('Vary')).toBe(CREDENTIALED_VARY);
   });
 });
 
