@@ -13,6 +13,17 @@ Create questions, dashboards, and public links on Civitai's Metabase instance.
 node .claude/skills/metabase/metabase.mjs <command> [options]
 ```
 
+**A value that starts with `--` needs `--flag=value`.** Every flag except `--required` and `--json` takes a
+value, and a bare `--flag` (or one whose value begins with `--`) is an error rather than a silent `true`.
+This bites most often with SQL opening on a `--` comment line:
+
+```bash
+--query="-- daily totals
+SELECT ..."
+```
+
+`create-question` reads the card back after creating it and fails if the stored SQL is not what was sent.
+
 ## Commands
 
 ### run-query — Ad-hoc SQL query
