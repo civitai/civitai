@@ -31,6 +31,7 @@
     feeMaxFor,
     monetizationLimits,
     suggestedFee,
+    seedFeeRatio,
     DEFAULT_FEE_IMAGES,
     type MonetizationLimits,
   } from '$lib/monetization/fee';
@@ -379,9 +380,13 @@
   function openEditor(version: CreatorModelVersion, modelType: string) {
     editingType = modelType;
     feeAffirmed = false;
-    const r = feeToRatio(version.licensingFee);
-    feeBuzz = r.buzz || undefined;
-    feeImages = String(r.images);
+    // Denominator from the seed rule, amount from the version alone: an unset fee opens on the
+    // suggestion's denominator with nothing priced until the creator types.
+    feeBuzz = feeToRatio(version.licensingFee).buzz || undefined;
+    feeImages = String(
+      seedFeeRatio({ licensingFee: version.licensingFee, modelType, baseModel: version.baseModel })
+        .images
+    );
     editing = version;
   }
 </script>
@@ -425,10 +430,7 @@
 {/if}
 
 {#if data.caps.capTier === 'free'}
-  <JoinUpsell
-    class="mb-6"
-    body="You can set licensing fees and paid access on the free tier. Joining the Creator Program raises how much you can charge."
-  />
+  <JoinUpsell class="mb-6" />
 {/if}
 
 {#if !pickingForSale}
