@@ -293,7 +293,7 @@ describe('onRetry → civitai_app_orchestrator_submit_retries_total (the 3x mult
 
   // ⚠️ INVARIANT GUARD, not regression coverage: this passes at the pre-change base too (the counter
   // did not exist there, so 0 === 0). It pins that the counter stays quiet on the happy path — worth
-  // having, but it is NOT evidence the wiring works. The two tests above it are.
+  // having, but it is NOT evidence the wiring works. The test above it is.
   it('does NOT increment when the submit succeeds first try', async () => {
     mockSubmitWorkflow.mockResolvedValue(okResult());
     const before = await retryCount('1', '500');
@@ -368,9 +368,11 @@ describe('W3C trace-context propagation on the outbound submit', () => {
     expect(tp1.split('-')[2]).not.toBe(tp2.split('-')[2]); // different span id per attempt
   });
 
-  // 🔴 These MUST run inside an active span. Outside one the propagator injects nothing,
-  // `withTraceHeaders` short-circuits and returns its argument by reference, and every assertion below
-  // would pass while testing nothing at all — the merge branches would never execute.
+  // 🔴 These MUST run inside an active span. Outside one the propagator injects nothing and
+  // `withTraceHeaders` short-circuits, returning its argument BY REFERENCE without entering any merge
+  // branch. The record case would then pass while testing nothing (it gets its own object back); the
+  // Headers and array cases would fail on the `traceparent` assertion rather than exercise the
+  // normalization. Either way the branches under test never run — hence the span.
   it('withTraceHeaders never clobbers a caller-supplied header, in any of the three header shapes', () => {
     withSpan('test:headers', () => {
       // Plain record — the shape every caller in this repo uses.
