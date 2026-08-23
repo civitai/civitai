@@ -1,4 +1,4 @@
-import { globSync, readFileSync } from 'fs';
+import { globSync, readFileSync, statSync } from 'fs';
 import path from 'path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -596,9 +596,22 @@ describe('writer-set ledger — who may move the recommend counters', () => {
    * code flags the very file whose comment promises it does not write them. Measured:
    * without this, the repo-wide scan below returned 3 files, 2 of them comment-only
    * false positives. A guard that cries wolf on its own documentation gets deleted.
+   *
+   * 🔴 LINE-ORIENTED, deliberately — the obvious non-greedy block-comment regex FAILS
+   * OPEN. An open-comment marker inside a STRING or REGEX literal starts a match that
+   * runs to the next genuine close marker, deleting every line between it — including
+   * a real write. Reproduced against a three-line fixture: the `appListingMetric`
+   * call vanished and the scan would have reported "no other writers" with total
+   * confidence. Deciding per LINE cannot run away like that. The trade is that an
+   * INLINE block comment sitting on a code line is not stripped — which fails CLOSED
+   * (a false positive a human reads), the only direction a guard may be wrong in.
+   * Both behaviours are controlled below, and the fail-open fixture is one of them.
    */
   function stripComments(src: string) {
-    return src.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+    return src
+      .split('\n')
+      .map((line) => (/^\s*(\/\/|\/\*|\*)/.test(line) ? '' : line.replace(/(^|[^:])\/\/.*$/, '$1')))
+      .join('\n');
   }
 
   const REPO_ROOT = path.resolve(__dirname, '../../../../..');
@@ -621,12 +634,20 @@ describe('writer-set ledger — who may move the recommend counters', () => {
    * is "nobody is": neither carries information. Controlled both ways below.
    */
   function writesThumbs(src: string) {
-    const prismaWrite = /appListingMetric\.(upsert|update|updateMany|create|createMany)\s*\(/.test(
-      src
-    );
+    // DELETE counts: removing a review row destroys its contribution to the counters
+    // just as surely as an increment moves them.
+    const prismaWrite =
+      /appListingMetric\.(upsert|update|updateMany|create|createMany|delete|deleteMany)\s*\(/.test(
+        src
+      );
+    // Kysely reaches the same table without ever naming the Prisma model.
+    const kyselyWrite =
+      /(insertInto|updateTable|deleteFrom)\s*\(\s*['"`]app_listing_metrics['"`]/.test(src);
     const rawWrite =
-      /(\bINSERT\s+INTO\b|\bUPDATE\s)[\s\S]{0,400}?(thumbs_up_count|thumbs_down_count)/i.test(src);
-    return prismaWrite || rawWrite;
+      /(\bINSERT\s+INTO\b|\bUPDATE\s|\bDELETE\s+FROM\b)[\s\S]{0,400}?(thumbs_up_count|thumbs_down_count)/i.test(
+        src
+      );
+    return prismaWrite || kyselyWrite || rawWrite;
   }
 
   /**
@@ -673,10 +694,18 @@ describe('writer-set ledger — who may move the recommend counters', () => {
     // NEGATIVE CONTROL — it MUST detect each shape a third writer could take.
     expect(writesThumbs('await tx.appListingMetric.upsert({ where: {} })')).toBe(true);
     expect(writesThumbs('await db.appListingMetric.updateMany({ where: {} })')).toBe(true);
+    // A DELETE is a counter write too: removing the row destroys the accumulated value.
+    expect(writesThumbs('await db.appListingMetric.deleteMany({ where: {} })')).toBe(true);
+    // Kysely reaches the table without ever naming the Prisma model.
+    expect(writesThumbs("db.updateTable('app_listing_metrics').set({}).execute()")).toBe(true);
+    expect(writesThumbs("db.deleteFrom('app_listing_metrics').execute()")).toBe(true);
     expect(
       writesThumbs('UPDATE "app_listing_metrics" SET "thumbs_up_count" = 5 WHERE id = $1')
     ).toBe(true);
     expect(writesThumbs('INSERT INTO "app_listing_metrics" ("thumbs_down_count") VALUES (1)')).toBe(
+      true
+    );
+    expect(writesThumbs('DELETE FROM "app_listing_metrics" WHERE "thumbs_up_count" = 0')).toBe(
       true
     );
 
@@ -687,6 +716,30 @@ describe('writer-set ledger — who may move the recommend counters', () => {
       writesThumbs('SELECT m."thumbs_up_count", m."updated_at" FROM app_listing_metrics m')
     ).toBe(false);
     expect(writesThumbs('const n = metric.thumbsUpCount ?? 0;')).toBe(false);
+    expect(writesThumbs("selectFrom('app_listing_metrics').select('thumbs_up_count')")).toBe(false);
+  });
+
+  it('CONTROL: the stripper cannot be walked past by an open-comment marker in a string', () => {
+    // 🔴 THE FAIL-OPEN CASE. A cross-line block-comment regex matches from the marker
+    // inside this string literal to the close marker on the last line and deletes the
+    // write between them — reporting "no other writers" while a writer sits right
+    // there. Assembled from pieces so this file can contain the fixture at all.
+    const OPEN = '/' + '*';
+    const CLOSE = '*' + '/';
+    const tricky = [
+      `const marker = '${OPEN}';`,
+      'await db.appListingMetric.upsert({ where: {} });',
+      `${OPEN} an ordinary trailing comment ${CLOSE}`,
+    ].join('\n');
+
+    expect(writesThumbs(stripComments(tricky))).toBe(true);
+
+    // And the property that motivated stripping at all still holds: PROSE describing a
+    // write is not a write.
+    expect(writesThumbs(stripComments('// await db.appListingMetric.upsert({});'))).toBe(false);
+    expect(
+      writesThumbs(stripComments([' * never writes thumbs_up_count via', ' * UPDATE'].join('\n')))
+    ).toBe(false);
   });
 
   it('the delta writer has EXACTLY the ledgered callers — fails if the set grows OR shrinks', () => {
@@ -704,11 +757,25 @@ describe('writer-set ledger — who may move the recommend counters', () => {
     // processor legitimately touches the TABLE (install_count) and is held to the
     // thumbs half of the contract by its OWN guard, so this scan targets the thumbs
     // columns and the Prisma model — not the table name.
-    const files = globSync('src/server/**/*.ts', { cwd: REPO_ROOT }).filter(
-      (f: string) => !f.includes('__tests__')
-    );
+    // Scope widened past `src/server/**`: an API route, a client-side helper or a
+    // workspace package can all reach this table. The audit enumerated the repo and
+    // found no writer outside `src/server` today, so this is closing a COVERAGE limit
+    // before it becomes a gap, not chasing a live one.
+    const files = [
+      ...globSync('src/**/*.ts', { cwd: REPO_ROOT }),
+      ...globSync('src/**/*.tsx', { cwd: REPO_ROOT }),
+      ...globSync('packages/*/src/**/*.ts', { cwd: REPO_ROOT }),
+    ]
+      .filter((f: string) => !f.includes('__tests__') && !f.includes('node_modules'))
+      // A widened glob can yield a DIRECTORY whose name ends in `.ts` (and a full-suite
+      // run can create one mid-walk), which reaches `readFileSync` as EISDIR and takes
+      // the guard down with an error that looks nothing like its subject. Same skip the
+      // repo's `no-direct-shared-module-mock` walk uses.
+      .filter((f: string) =>
+        statSync(path.join(REPO_ROOT, f), { throwIfNoEntry: false })?.isFile()
+      );
     // POSITIVE CONTROL on the walk itself.
-    expect(files.length).toBeGreaterThan(200);
+    expect(files.length).toBeGreaterThan(2000);
 
     const writers = files.filter((rel: string) => writesThumbs(stripComments(readRel(rel))));
 

@@ -344,21 +344,37 @@ export async function upsertAppListingReview(opts: {
   const review = await dbWrite.$transaction(async (tx) => {
     // Read the prior review (if any) to compute the metric delta — LOCKED.
     //
-    // 🔴 `SELECT … FOR UPDATE`, not `findUnique`. A concurrent first-review by the
-    // SAME user is impossible (they are one user), which is why this used to be an
-    // unlocked read — but that reasoning only covered the OTHER instance of this
-    // path. It does not cover the OTHER WRITER: under READ COMMITTED a moderator's
-    // `setAppListingReviewExclude` committing between this read and the upsert below
-    // makes the delta be computed against an `exclude` value that is already stale,
-    // so the author's ±1 lands on a row that is no longer counted. Taking the row
-    // lock here forces the two writers into a serial order on this row.
+    // 🔴 `SELECT … FOR UPDATE`, not `findUnique`, because of the OTHER WRITER: under
+    // READ COMMITTED a moderator's `setAppListingReviewExclude` committing between
+    // this read and the upsert below would make the delta be computed against an
+    // `exclude` value that is already stale, so the author's ±1 would land on a row
+    // that is no longer counted. Taking the row lock forces the two writers into a
+    // serial order on this row.
+    //
+    // 🟡 THIS SERIALIZES THE UPDATE PATH ONLY — say so plainly, because the obvious
+    // reading ("the row is locked, so this is safe") is wrong on the create branch.
+    // `FOR UPDATE` locks NOTHING when the row does not exist. Two in-flight FIRST
+    // reviews from one user (double-submit, a retry, two tabs) therefore both read
+    // `prior = null` and both compute +1; the DB unique lets exactly one INSERT win,
+    // and the loser either resolves into an update — applying a second +1, a
+    // permanent over-count the ≥0 clamp cannot mask, since it errs high — or fails
+    // the constraint and 500s. That is the same class as the mod-hide race, on the
+    // branch a row lock cannot reach. It is PRE-EXISTING and deliberately NOT fixed
+    // here: closing it means an advisory lock (or an INSERT … ON CONFLICT that
+    // returns the pre-image), i.e. a behavioural change to the author write path.
+    // The wholesale recompute in #4320 retires this drift class along with the
+    // others, which is the better trade than narrowing it twice.
     //
     // Prisma has no `FOR UPDATE` on `findUnique`, hence raw SQL. Identifiers are
     // quoted because `exclude` is a SQL keyword; values are interpolated by the
-    // tagged template, so they are bound parameters, not string-concatenated.
+    // tagged template, so they are bound parameters, not string-concatenated. The
+    // template's TEXT is asserted by test — mocked-away SQL is otherwise invisible to
+    // CI, and dropping `FOR UPDATE` or a selected column reverts this fix silently.
     //
     // LOCK ORDER — review row, then metric row — is the same in BOTH writers, which
-    // is what keeps them deadlock-free against each other.
+    // is what keeps them deadlock-free against each other. Both transactions run on
+    // Prisma's default 5000 ms interactive budget, and these lock waits sit inside
+    // it: under real contention this surfaces as a P2028 timeout rather than a queue.
     const priorRows = await tx.$queryRaw<
       Array<{ id: number; recommended: boolean; exclude: boolean }>
     >`
