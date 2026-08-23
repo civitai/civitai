@@ -20,6 +20,7 @@ import {
 import {
   getMyAppListingReviewSchema,
   listAppListingReviewsSchema,
+  setAppListingReviewExcludeSchema,
   upsertAppListingReviewSchema,
 } from '~/server/schema/blocks/app-listing-review.schema';
 import {
@@ -1511,9 +1512,10 @@ export const appListingsRouter = router({
   // (`app-listings-public-external`) can now submit the reviews the store already
   // let them see — the gate's own header has the history.
   //
-  // FOLLOW-UP (deferred): a MOD exclude/report path for individual reviews.
-  // `listReviews` ALREADY filters `exclude`/`tosViolation`, so a future mod action
-  // takes effect on the visible list with no read-path change.
+  // MOD control (`setReviewExclude`, below): the deferred per-review exclude path,
+  // now built. `listReviews` ALREADY filters `exclude`/`tosViolation`, so the mod
+  // action takes effect on the visible list with no read-path change. The report
+  // half is still deferred.
   // -------------------------------------------------------------------------
 
   /**
@@ -1582,5 +1584,35 @@ export const appListingsRouter = router({
         '~/server/services/blocks/app-listing-review.service'
       );
       return listAppListingReviews(input, { scope });
+    }),
+
+  /**
+   * MOD: hide / un-hide a single review (`AppListingReview.exclude`) and move the
+   * denormalized recommend counters to match, in one tx.
+   *
+   * Gate: `moderatorProcedure` + the inner `isModerator` recheck — the SAME idiom
+   * as the delist/relist/claim/purge actions above, and the WHOLE trust boundary.
+   * Deliberately NOT `enforceAppListingsWriteFlag`: that flag darkens the store UI
+   * and mods bypass it anyway, so it would be inert here (matching the mod-action
+   * block's own reasoning).
+   *
+   * NOT a delete. A hard delete would leave the denormalized aggregate permanently
+   * wrong, and would let the same user file a fresh FIRST review for the listing —
+   * see `setAppListingReviewExclude`'s header for the full reasoning.
+   *
+   * `exclude` is an explicit target state, so the mutation is IDEMPOTENT: re-hiding
+   * an already-hidden review writes nothing and moves no counter. Returns
+   * `changed:false` in that case rather than erroring.
+   */
+  setReviewExclude: moderatorProcedure
+    .input(setAppListingReviewExcludeSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Moderating app reviews is restricted to civitai team');
+      }
+      const { setAppListingReviewExclude } = await import(
+        '~/server/services/blocks/app-listing-review.service'
+      );
+      return setAppListingReviewExclude(input);
     }),
 });
