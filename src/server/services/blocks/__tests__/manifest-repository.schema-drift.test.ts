@@ -115,6 +115,52 @@ describe('app-block v1 schema ⇄ repository rule drift guard', () => {
       expect(re.test(bad), `schema pattern accepted ${bad}, which submit rejects`).toBe(false);
     }
   });
+
+  /**
+   * 🔴 THE PROSE IS A CLAIM, AND FOR A WHILE IT WAS FALSE.
+   *
+   * The description used to end "the schema is never MORE permissive than the server, so
+   * local validation can't green-light something submit would reject". That is true of
+   * `tagline` (a length bound, one-directional) and NOT true of `repository`: the
+   * published `pattern` is a coarse `/<owner>/<repo>` shape test, while the server
+   * additionally constrains the CHARACTERS of each segment and strips a trailing `.git`
+   * BEFORE checking. The gap is not hypothetical — the corpus below is a set of real
+   * inputs an author's editor calls valid and submit refuses.
+   *
+   * The fix is the PROSE, not the pattern: the CLI and the starter templates byte-mirror
+   * this file, so tightening the regex is a compatibility change for every vendored copy
+   * and a deliberately separate decision.
+   *
+   * This test pins BOTH halves, so neither can rot back: the divergence still exists
+   * (the corpus is the positive control — if a future tightening closes it, this test
+   * says so out loud rather than the docs quietly becoming right by accident), and the
+   * description does not re-assert the claim the corpus refutes.
+   */
+  it('🔴 the description does not claim a strictness the pattern does not have', () => {
+    const description = String(schema.properties?.repository?.description ?? '');
+    const re = new RegExp(String(schema.properties?.repository?.pattern ?? ''));
+
+    // Each of these passes the published pattern and is REJECTED by the server.
+    const patternPassesServerRejects = [
+      'https://github.com/o/.git', // `.git` stripped ⇒ an empty repo segment
+      'https://github.com/-o/r', // a segment may not START with a dash
+      'https://github.com/o/ré', // non-ASCII ⇒ percent-encoded ⇒ refused
+      'https://github.com/o@x/r', // `@` is not a legal segment character
+      'https://github.com/o/..r', // a segment may not start with a dot
+      'https://github.com/o%2Fx/r', // a percent-escape is not a segment
+      'https://gitlab.com/o/_r', // a segment may not start with an underscore
+    ];
+    for (const value of patternPassesServerRejects) {
+      expect(re.test(value), `pattern rejected ${value}; the corpus is stale`).toBe(true);
+      expect(validateRepositoryUrl(value).ok, `validator ACCEPTED ${value}`).toBe(false);
+    }
+
+    // …so the prose must not say the opposite.
+    expect(description).not.toMatch(/never\s+MORE\s+permissive\s+than\s+the\s+server/i);
+    expect(description).not.toMatch(/can'?t\s+green-light/i);
+    // …and must say what is actually true.
+    expect(description).toContain('necessary, not sufficient');
+  });
 });
 
 describe('BlockManifestValidator ⇄ validateRepositoryUrl (one rule, not two)', () => {

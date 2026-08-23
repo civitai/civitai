@@ -9,13 +9,36 @@
 -- PG 11+ — it does not rewrite the table, so it is O(1) regardless of row count. Run it
 -- outside a long-running transaction so it cannot queue behind (or in front of) reads.
 --
--- The deployed code is written to survive this being UNAPPLIED: every read of the
--- column goes through `readListingSourceRepoUrl`
+-- The deployed code is written to survive this being UNAPPLIED. Every read of the column
+-- goes through `readListingSourceRepoUrl`
 -- (src/server/services/blocks/app-listing-source-repo.service.ts), which swallows the
 -- missing-column error (Prisma P2022 / Postgres 42703) and reports
--- `{ available: false, value: null }`. The public store detail then renders no Source
--- row instead of 500ing, and every write path omits the column entirely. So the
--- ordering of the deploy and this statement is free; until it runs, the feature is
--- simply inert.
+-- `{ available: false, value: null }`, so the public store detail renders no Source row
+-- instead of 500ing.
+--
+-- 🔴 WRITES ARE NOT ONE RULE BUT TWO, AND THE DISTINCTION IS THE GUARANTEE:
+--
+--   * A write the SYSTEM originates on the author's behalf — the shadow-revision clone,
+--     the revision apply, the on-site scalar re-sync at approve — OMITS the column
+--     entirely (`sourceRepoWriteFragment`). Never `null`: naming the column at all is
+--     what raises P2022, so an omitted key is the difference between a dormant feature
+--     and a broken pre-existing flow. These paths are unaffected by this statement.
+--
+--   * A write an AUTHOR originates — an off-site submit or listing patch that actually
+--     names `sourceRepoUrl` — is REFUSED, with a `PRECONDITION_FAILED` naming the field
+--     (`assertSourceRepoWritable`). Not omitted: silently dropping a link the author
+--     just typed would report success for a listing whose source link is simply gone.
+--     The refusal is raised BEFORE any side effect, so nothing is half-written and no
+--     orphan revision draft is left behind.
+--
+-- So what is actually guaranteed before this statement runs, precisely:
+--   * NO deploy ordering constraint. Nothing in the deploy applies or needs this SQL,
+--     and no pre-existing flow — public store list, store detail, author edit prefill,
+--     submit without a repo link, revision open, moderator approve — changes behaviour.
+--   * The feature itself is INERT rather than broken: nothing displays a source link,
+--     and an author who tries to SET one is told why, in a message about the
+--     environment rather than a 500 quoting a database column.
+-- After it runs, the feature becomes live on its own — the availability probe is not
+-- memoised, so no restart or redeploy is required.
 
 ALTER TABLE "app_listings" ADD COLUMN "source_repo_url" text;

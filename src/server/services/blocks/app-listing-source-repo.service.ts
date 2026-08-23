@@ -32,7 +32,20 @@
  * must be able to CLEAR it, and it can only tell "the author removed the link" from "I
  * could not see the column" by asking `available`. Every write path in this feature is
  * gated on it.
+ *
+ * 🔴 TWO SHAPES OF WRITE, TWO DIFFERENT ANSWERS, AND THEY ARE NOT INTERCHANGEABLE:
+ *   - a write the SYSTEM originates (the shadow clone, the revision apply, the on-site
+ *     re-sync) carries a value nobody asked for right now, so an absent column means
+ *     OMIT THE KEY and carry on — {@link sourceRepoWriteFragment};
+ *   - a write an AUTHOR originates (an off-site submit or patch that names
+ *     `sourceRepoUrl`) carries a value the author typed and expects to see again, so an
+ *     absent column must be an ERROR — {@link assertSourceRepoWritable}. Silently
+ *     dropping it would show them a saved form with their link missing and no
+ *     explanation, and writing it anyway raises P2022 500 naming a database column.
+ * Using the omit-fragment on an author write is the failure this split exists to stop.
  */
+
+import { TRPCError } from '@trpc/server';
 
 /** What a guarded read of the column yields. See the module header on `available`. */
 export type ListingSourceRepoRead = {
@@ -155,4 +168,38 @@ export function sourceRepoWriteFragment(read: ListingSourceRepoRead): {
   sourceRepoUrl?: string | null;
 } {
   return read.available ? { sourceRepoUrl: read.value } : {};
+}
+
+/**
+ * The message an AUTHOR sees when they supply a source-repository link before the
+ * manual-apply migration has run.
+ *
+ * Exported so the tests assert the exact string rather than a substring of their own
+ * invention, and so a mutant that swaps the guard for a different error is killed by
+ * the message, not merely by "something threw".
+ */
+export const SOURCE_REPO_UNAVAILABLE_MESSAGE =
+  'The source repository link is not available on this environment yet. Leave the field empty and try again later.';
+
+/**
+ * Gate an AUTHOR-ORIGINATED write of `sourceRepoUrl` on the manual-apply column.
+ *
+ * 🔴 THIS IS DELIBERATELY NOT {@link sourceRepoWriteFragment}. Omitting the key is the
+ * right answer for a write the system originates on the author's behalf; it is the
+ * WRONG answer for a value the author just typed, because the request then reports
+ * success while the link vanishes, and the author's only recourse is to type it again.
+ * A refusal that names the field is recoverable; a silent drop is not.
+ *
+ * `PRECONDITION_FAILED`, not `BAD_REQUEST`: the value is not malformed and there is
+ * nothing the author can do to make it acceptable — the environment is not ready. The
+ * distinct code is also what lets a test tell this guard from the validator's rejection
+ * of a bad URL, which is the mutation that would otherwise pass unnoticed.
+ *
+ * Callers must run this BEFORE any side effect. On the approved-listing edit path a
+ * throw after `beginListingRevision` would leave an orphan shadow revision draft
+ * behind — the same reason the scope validation is hoisted up-front in `updateListing`.
+ */
+export function assertSourceRepoWritable(available: boolean): void {
+  if (available === true) return;
+  throw new TRPCError({ code: 'PRECONDITION_FAILED', message: SOURCE_REPO_UNAVAILABLE_MESSAGE });
 }

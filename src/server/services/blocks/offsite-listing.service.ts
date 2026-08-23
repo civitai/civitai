@@ -15,6 +15,8 @@ import {
   validateRepositoryUrl,
 } from '~/server/schema/blocks/external-app.schema';
 import {
+  assertSourceRepoWritable,
+  isSourceRepoColumnAvailable,
   readListingSourceRepoUrl,
   sourceRepoWriteFragment,
   type ListingSourceRepoRead,
@@ -194,6 +196,22 @@ export async function submitExternalListing(opts: {
     input.sourceRepoUrl != null ? validateRepositoryUrl(input.sourceRepoUrl) : null;
   if (sourceRepo && !sourceRepo.ok) {
     throw new TRPCError({ code: 'BAD_REQUEST', message: sourceRepo.error });
+  }
+  // 🔴 THE AUTHOR SUPPLIED A LINK, SO THE COLUMN MUST EXIST BEFORE WE PROMISE TO STORE
+  // IT. `app_listings.source_repo_url` is MANUAL-APPLY; writing it before a human runs
+  // the SQL raises P2022 and the author gets a 500 naming a database column, and
+  // dropping it silently would return "submitted" for a listing whose source link is
+  // simply gone. Neither is acceptable, so refuse with a message that names the field.
+  //
+  // 🔴 PROBED ONLY WHEN THERE IS SOMETHING TO WRITE. An author who leaves the field
+  // empty must be able to submit exactly as before — same query count, same behaviour —
+  // which is also why the create below OMITS the key rather than writing `null`.
+  //
+  // Probed on `dbWrite` (the PRIMARY), because the primary is where the create lands: a
+  // replica probe could answer "absent" for a column DDL that has already committed on
+  // the primary and not yet replicated, refusing a submit that would have worked.
+  if (sourceRepo && sourceRepo.ok) {
+    assertSourceRepoWritable(await isSourceRepoColumnAvailable(dbWrite));
   }
   const surface = assertNoOnPlatformSurface({
     page: input.page,
@@ -717,7 +735,7 @@ const MATERIAL_PATCH_FIELDS = ['externalUrl', 'name', 'contentRating', 'sourceRe
  */
 export function buildListingPatchData(
   patch: UpdateListingPatch,
-  opts?: {
+  opts: {
     /**
      * The connect client's `allowedScopes` ceiling (from the listing's
      * `connectClientId`). REQUIRED when the patch touches `requestedScopes` /
@@ -726,6 +744,21 @@ export function buildListingPatchData(
      * is rejected.
      */
     connectAllowedScopes?: number | null;
+    /**
+     * Whether the MANUAL-APPLY `app_listings.source_repo_url` column actually exists,
+     * from the caller's guarded read (`EditableListing.sourceRepoAvailable`).
+     *
+     * 🔴 REQUIRED, AND `opts` IS NO LONGER OPTIONAL, PRECISELY SO A NEW CALL SITE
+     * CANNOT FORGET IT. This function is the single place every off-site scalar edit
+     * funnels through — `updateListing`'s three branches and `updateRevisionDraft` —
+     * and the first version of this feature took no availability parameter at all, so
+     * every one of those four paths wrote the column unconditionally and 500'd with a
+     * P2022 naming a database column. A defaulted parameter would have re-created that
+     * silently; a required one makes the compiler ask the question at each call site.
+     * At runtime an absent value is read as `false` (fail CLOSED — a refusal the author
+     * can act on beats a 500 they cannot).
+     */
+    sourceRepoAvailable: boolean;
   }
 ): Prisma.AppListingUpdateInput {
   const data: Prisma.AppListingUpdateInput = {};
@@ -739,6 +772,13 @@ export function buildListingPatchData(
   // and a provided value is validated + stored NORMALISED (so the material-change
   // comparison below is against a canonical value).
   if (patch.sourceRepoUrl !== undefined) {
+    // 🔴 THE COLUMN GATE COMES FIRST, before the value is even looked at. An explicit
+    // `null` is as unwritable as a URL while the column is missing — Prisma raises the
+    // same P2022 for `{sourceRepoUrl: null}` as for a value — so BOTH instructions have
+    // to be refused, and refused with a message about the environment rather than about
+    // the author's input. `opts?.` is deliberate belt-and-braces on a REQUIRED field:
+    // absent reads as `false`, which refuses rather than 500s.
+    assertSourceRepoWritable(opts?.sourceRepoAvailable === true);
     if (patch.sourceRepoUrl === null) {
       data.sourceRepoUrl = null;
     } else {
@@ -1053,7 +1093,26 @@ export async function updateListing(opts: {
     userId,
     isModerator,
   });
-  const patchOpts = { connectAllowedScopes };
+  // 🔴 HOISTED ABOVE THE STATE ROUTING, for the same reason the scope validation above
+  // is: the `approved` + material branch opens a SHADOW REVISION before it builds the
+  // patch data, so a refusal raised inside `buildListingPatchData` would land AFTER
+  // `beginListingRevision` has minted one — leaving the author an orphan revision draft
+  // and their listing stuck in "pending re-review" for an edit that never applied.
+  // Checked here, nothing has been written when it throws.
+  //
+  // `listing.sourceRepoAvailable` comes from the guarded read on the REPLICA. That is
+  // the safe direction for a REFUSAL: DDL reaches the primary first, so a replica that
+  // can see the column proves the primary can, and the only error this can make is a
+  // transient false refusal during the seconds a freshly-applied `ALTER TABLE` takes to
+  // replicate. The opposite mistake — believing a column the primary lacks — is the one
+  // that 500s, and it is not reachable from this direction.
+  if (effectivePatch.sourceRepoUrl !== undefined) {
+    assertSourceRepoWritable(listing.sourceRepoAvailable);
+  }
+  const patchOpts = {
+    connectAllowedScopes,
+    sourceRepoAvailable: listing.sourceRepoAvailable,
+  };
 
   switch (listing.status) {
     case 'removed':
@@ -1146,6 +1205,21 @@ export async function beginListingRevision(opts: {
   });
   if (existing) return { shadowId: existing.id, created: false };
 
+  // 🔴 RE-READ THE SOURCE REPO ON THE **PRIMARY**, not from `parent` (which came off the
+  // REPLICA via `loadOwnedEditableListing`). The two clients can disagree about this
+  // column for a few seconds after the manual `ALTER TABLE`, and the disagreement DELETES
+  // DATA in exactly one direction: clone-time reads the replica and sees "unavailable",
+  // so the shadow is created WITHOUT the column; apply-time reads the primary
+  // (`applyApprovedRevision`, inside its own tx) and sees "available", so the fragment
+  // emits `{sourceRepoUrl: null}` and the approve wipes the parent's live public link —
+  // no error, no moderator-visible diff, the link simply gone.
+  //
+  // Reading on the primary makes both ends of the round trip ask the SAME database, so
+  // the pair is consistent by construction rather than by luck of replication timing.
+  // It costs one query on a path that already runs a transaction, and only when a shadow
+  // is actually being minted (the idempotent-reuse return above is ahead of it).
+  const parentSourceRepo = await readListingSourceRepoUrl(listingId, dbWrite);
+
   const shadowId = newAppListingId();
   // Synthetic, globally-unique slug: the shadow is never public, but slug is
   // @unique, so it must not collide with the parent or any other listing.
@@ -1178,10 +1252,11 @@ export async function beginListingRevision(opts: {
           // becomes a deletion there. Same reasoning as `connectRequestedScopes` below.
           // Omitted entirely (not null) when the manual-apply column is unreadable, so
           // opening a revision keeps working before the migration lands.
-          ...sourceRepoWriteFragment({
-            available: parent.sourceRepoAvailable,
-            value: parent.sourceRepoUrl,
-          }),
+          //
+          // 🔴 FROM THE PRIMARY READ ABOVE, NOT FROM `parent` — see that comment. A
+          // replica-sourced `available: false` paired with a primary-sourced
+          // `available: true` at apply time is what silently clears a live link.
+          ...sourceRepoWriteFragment(parentSourceRepo),
           connectClientId: parent.connectClientId,
           // Carry the disclosed OAuth scope subset + justifications onto the shadow so
           // a revision that DOESN'T touch scopes preserves them (and one that does
@@ -2011,7 +2086,17 @@ export async function updateRevisionDraft(opts: {
     userId,
     isModerator,
   });
-  const data = buildListingPatchData(effectivePatch, { connectAllowedScopes });
+  // Same up-front column gate as `updateListing` — a shadow edit writes the same column
+  // through the same builder, so an unapplied migration must refuse here too rather than
+  // reach Prisma. (No shadow is opened on this path, so there is nothing to orphan; the
+  // check is hoisted anyway to keep the two edit entry points reading identically.)
+  if (effectivePatch.sourceRepoUrl !== undefined) {
+    assertSourceRepoWritable(shadow.sourceRepoAvailable);
+  }
+  const data = buildListingPatchData(effectivePatch, {
+    connectAllowedScopes,
+    sourceRepoAvailable: shadow.sourceRepoAvailable,
+  });
   await dbWrite.appListing.update({ where: { id: shadowId }, data });
   return { shadowId };
 }
@@ -2580,6 +2665,19 @@ async function applyApprovedRevision(opts: {
     );
   }
 
+  // Does the MANUAL-APPLY column exist? Asked HERE, OUTSIDE the transaction, and on the
+  // same primary the transaction will run against.
+  //
+  // 🔴 THE POINT IS TO NEVER ISSUE A FAILING STATEMENT INSIDE THE TRANSACTION. The
+  // guarded read below swallows P2022 at the application level, but PostgreSQL puts a
+  // transaction into the aborted state on ANY statement error, and Prisma's interactive
+  // transactions issue no savepoints — so a caught-and-ignored missing-column error can
+  // still leave every following statement failing with 25P02 and take the whole revision
+  // apply down. Probing first means that when the column is absent the transaction never
+  // names it at all, which is what makes "until the SQL runs, the feature is inert" true
+  // of this path rather than merely intended.
+  const sourceRepoColumnAvailable = await isSourceRepoColumnAvailable(dbWrite);
+
   await dbWrite.$transaction(async (tx) => {
     // (1) AUTHORITATIVE re-read of the shadow on the PRIMARY (row-consistent with
     // the copy). The sibling asset mutators write to dbWrite, so a pre-tx replica
@@ -2623,7 +2721,9 @@ async function applyApprovedRevision(opts: {
     // column at all. Conflating them would mean an unreadable column looked exactly
     // like "the author removed the link", and the copy would need to distinguish
     // "clear it" from "don't touch it". It can, because it asks the right question.
-    const shadowSourceRepo = await readListingSourceRepoUrl(shadowId, tx);
+    const shadowSourceRepo: ListingSourceRepoRead = sourceRepoColumnAvailable
+      ? await readListingSourceRepoUrl(shadowId, tx)
+      : { available: false, value: null };
     const shadowScreenshotRows = await tx.appListingScreenshot.findMany({
       where: { appListingId: shadowId, imageId: { not: null } },
       select: { imageId: true },
