@@ -318,6 +318,13 @@ const featureFlags = createFeatureFlags({
   // testers while stickers themselves open up. Required *in addition to*
   // `stickers`, so placement cannot outlive the feature it belongs to.
   stickerPlacement: { availability: ['mod'], fliptKey: 'sticker-placement' },
+  // The sticker book profile tab. Its own flag rather than riding `stickers`:
+  // the tab publishes what a creator owns and what their work has collected on a
+  // PUBLIC profile, which is a disclosure decision separate from whether
+  // stickers can be bought or placed at all. Gates the tab only — the book's own
+  // endpoints stay open so a creator paid for a placement does not lose the
+  // record of it if the flag goes back to testers.
+  stickerBook: { availability: ['mod'], fliptKey: 'sticker-book' },
   // Paying to put your own image in someone else's gallery. Its own flag rather
   // than riding `stickerPlacement`: the two surfaces open to testers on
   // different schedules, and unlike stickers this one places arbitrary

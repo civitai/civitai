@@ -10,6 +10,10 @@ import { createFreePlacement } from '~/server/services/free-placement.service';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
 import { resolvePlacementSpaceFor } from '~/server/services/placement-space.service';
 import { spendStickerUsesFor } from '~/server/services/sticker.service';
+import {
+  placementImageSelect,
+  publishedPlacementImageWhere,
+} from '~/server/selectors/placement-image.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import {
   throwAuthorizationError,
@@ -1129,22 +1133,9 @@ export async function getMyStickerPlacements({
     ? await dbRead.image.findMany({
         where: {
           id: { in: [...new Set(rows.map((row) => row.targetId))] },
-          post: { publishedAt: { not: null } },
-          ingestion: 'Scanned',
-          tosViolation: false,
-          minor: false,
-          poi: false,
+          ...publishedPlacementImageWhere(),
         },
-        select: {
-          id: true,
-          url: true,
-          name: true,
-          width: true,
-          height: true,
-          type: true,
-          metadata: true,
-          nsfwLevel: true,
-        },
+        select: placementImageSelect,
       })
     : [];
   const byId = new Map(images.map((image) => [image.id, image]));

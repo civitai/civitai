@@ -1774,13 +1774,20 @@ describe('getMyStickerPlacements', () => {
     await getMyStickerPlacements({ placerId: PLACER, ...LEVELS });
 
     const { where } = imageFindMany.mock.calls.at(-1)?.[0] as { where: Record<string, unknown> };
+    // Every field literal, and ADDED to rather than loosened when the filter
+    // grows. `lte` is the one that cannot be compared against a Date this test
+    // constructs microseconds later — widening the whole `post` object to an
+    // `objectContaining` to absorb it would quietly give up the
+    // `publishedAt: { not: null }` check that has been here all along.
     expect(where).toEqual({
       id: { in: [IMAGE] },
-      post: { publishedAt: { not: null } },
+      post: { publishedAt: { not: null, lte: expect.any(Date) } },
       ingestion: 'Scanned',
       tosViolation: false,
       minor: false,
       poi: false,
+      needsReview: null,
+      acceptableMinor: false,
     });
   });
 

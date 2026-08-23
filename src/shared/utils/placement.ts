@@ -73,6 +73,19 @@ export const PLACEMENT_HOLD_KINDS = [
 ] as const satisfies readonly PlacementTransactionKind[];
 
 /**
+ * The legs that pay the content owner: the approval split, and the fee a decline
+ * leaves with them.
+ *
+ * Beside the kinds themselves rather than beside the one reader that sums them,
+ * so adding an owner-directed leg is a change made where the leg is declared. A
+ * hand-typed list at the reader is how an earnings total goes quietly low.
+ */
+export const PLACEMENT_OWNER_PAYOUT_KINDS = [
+  'toOwner',
+  'feeToOwner',
+] as const satisfies readonly PlacementTransactionKind[];
+
+/**
  * Derived from the row, never from the clock.
  *
  * Both existing escrow precedents build `…-${Date.now()}` prefixes, so a retry
