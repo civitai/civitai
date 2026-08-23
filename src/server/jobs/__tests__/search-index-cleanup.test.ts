@@ -16,9 +16,7 @@ const { cleanupAllIndexes, logToAxiom } = vi.hoisted(() => ({
   cleanupAllIndexes: vi.fn(),
   // Declare the payload parameter so `logToAxiom.mock.calls[n][0]` is typed as
   // the payload rather than as an element of an empty tuple.
-  logToAxiom: vi.fn<(payload: Record<string, unknown>) => Promise<void>>(() =>
-    Promise.resolve()
-  ),
+  logToAxiom: vi.fn<(payload: Record<string, unknown>) => Promise<void>>(() => Promise.resolve()),
 }));
 
 vi.mock('~/server/meilisearch/cleanup', () => ({ cleanupAllIndexes }));

@@ -378,7 +378,12 @@ export async function cleanupIndex(
       if (staleIds.length > 0) allStaleIds.push(...staleIds);
 
       // `offset` in the callback reports the cursor (last id seen before this batch).
-      opts.onBatch?.({ key: cfg.key, offset: lastId, scanned: docIds.length, stale: staleIds.length });
+      opts.onBatch?.({
+        key: cfg.key,
+        offset: lastId,
+        scanned: docIds.length,
+        stale: staleIds.length,
+      });
     } catch (err) {
       // Cancellation surfaced from withRetries is a clean stop, not a
       // Postgres failure — don't pollute the consecutivePgFailures counter
@@ -457,9 +462,7 @@ export async function cleanupAllIndexes(
   keys: CleanupIndexKey[] | null,
   opts: CleanupOptions
 ): Promise<CleanupIndexStats[]> {
-  const selected = keys
-    ? CLEANUP_INDEXES.filter((i) => keys.includes(i.key))
-    : CLEANUP_INDEXES;
+  const selected = keys ? CLEANUP_INDEXES.filter((i) => keys.includes(i.key)) : CLEANUP_INDEXES;
   const results: CleanupIndexStats[] = [];
   for (const cfg of selected) {
     if (opts.jobContext?.status === 'canceled') break;
