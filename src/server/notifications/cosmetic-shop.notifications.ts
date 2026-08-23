@@ -157,6 +157,8 @@ export const cosmeticShopNotifications = createNotificationProcessor({
         'cosmetic-shop-item-sold' "type",
         details
       FROM sold_items
+      -- One line: the polarity guard matches this clause as a literal.
+      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = sold_items."ownerId" AND type = 'cosmetic-shop-item-sold')
     `,
   },
 });

@@ -10,7 +10,7 @@ work, and "which of the three owns this?" is the first question to answer for an
 
 | Location | Owns |
 |---|---|
-| `apps/notifications/` | The notification database (sole owner), the settings opt-out filter on create, the fan-out poll worker, the read/count/mark queries, the per-user unread cache, and signal emission |
+| `apps/notifications/` | The notification database (sole owner), the settings opt-out filter on the single-row create path (the bulk path does not filter — see User settings), the fan-out poll worker, the read/count/mark queries, the per-user unread cache, and signal emission |
 | `packages/civitai-notifications/` | The zod contracts, `NotificationCategory` and the signal constants, and the HTTP client — the single source of truth shared by every producer |
 | `src/server/notifications/` | Only the per-feature **processors** (`prepareQuery`/`prepareMessage`), the `detail-fetchers/` main-DB enrichment, and the configured client instance in `client.ts` |
 
@@ -83,8 +83,23 @@ Realtime delivery is via Signals — the fan-out worker POSTs per affected user,
 ## User settings
 
 `src/components/Account/NotificationsCard.tsx`. Settings are stored in `UserNotificationSettings`
-(the one table still in the main schema) and applied as an opt-out filter inside
-`apps/notifications` on create.
+(the one table still in the main schema); a row means opted **out**, except for `optIn` types — see
+`NotificationProcessor.optIn` in `base.notifications.ts`.
+
+**Only the single-row producer path filters on them.** `createNotification`
+(`apps/notifications/src/lib/server/create.ts`) drops opted-out recipients before queueing.
+`createNotificationsBulk` (`operations.ts`) — the path every `send-notifications` processor takes —
+receives pre-resolved recipients and applies **no** filter. So a job-based processor must write its
+own clause:
+
+```sql
+WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = <recipient> AND type = '<type>')
+```
+
+Omit it and the toggle renders, saves, and does nothing.
+`src/server/notifications/__tests__/notification-settings-polarity.test.ts` is the guard, and it runs
+in `pnpm run test:lint-rules`. Its `KNOWN_INERT` list is empty and pinned, so a new inert type fails
+there rather than shipping unmuteable.
 
 ## Caching
 
