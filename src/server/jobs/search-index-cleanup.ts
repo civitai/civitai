@@ -8,9 +8,33 @@ import { logToAxiom } from '~/server/logging/client';
 //
 // It has to be large: a multi-million-document index at the old 1,000 needs
 // thousands of sequential round trips, and seven indexes' worth of that does
-// not fit in one nightly run. 10,000 matches `deleteChunkSize`, which is the
-// id-list size this code already sends to Postgres and to the engine.
+// not fit in one nightly run.
+//
+// What bounds it from above is that this same number is the length of the
+// `id IN (...)` list handed to Postgres once per page, in `fetchValidIds`.
+// (It is NOT bounded by `deleteChunkSize`, which sizes only the delete calls
+// made against the search engine and applies to the far smaller stale set.)
 const SCAN_BATCH = 10000;
+
+/**
+ * How far `idsScanned` may fall short of the pre-scan document count before the
+ * run is called incomplete on the counts alone.
+ *
+ * A shortfall is NORMAL: `totalInIndex` is a snapshot taken before a scan that
+ * then runs for a long time, and a separate cleanup job issues delete-by-filter
+ * against most of these indexes every five minutes, so documents legitimately
+ * disappear from under the cursor. The authoritative truncation signal is
+ * `stoppedEarly` — a fact about how the loop exited, immune to that drift —
+ * and this band is only the backstop for "the loop claimed to finish but
+ * covered implausibly little".
+ *
+ * The band is a judgement, not a measurement, and it is deliberately loose:
+ * the real incident it has to catch was a 63% shortfall. Every run logs
+ * `scanned`, `total` and `coverage`, so it can be re-derived from data rather
+ * than re-guessed.
+ */
+const COVERAGE_SHORTFALL_RATIO = 0.25;
+const COVERAGE_SHORTFALL_FLOOR = 1000;
 
 export const searchIndexCleanupJob = createJob(
   'search-index-cleanup',
@@ -29,7 +53,10 @@ export const searchIndexCleanupJob = createJob(
           type: 'error',
           name: 'search-index-cleanup',
           message: `error in ${key} (${phase}): ${error.message}`,
-        }).catch();
+          // `.catch(() => undefined)` and NOT a bare `.catch()`: `catch(undefined)` is
+          // `then(undefined, undefined)`, a pass-through that leaves the
+          // rejection unhandled. A bare one swallows nothing.
+        }).catch(() => undefined);
       },
     });
 
@@ -39,27 +66,77 @@ export const searchIndexCleanupJob = createJob(
     // able from a complete one — the shortfall had to be reconstructed from the
     // engine's own task history after the fact.
     for (const r of results) {
-      // `totalInIndex` is null when the stats call failed, in which case we
-      // cannot say whether the pass was complete — do not claim either way.
-      const incomplete = r.totalInIndex !== null && r.idsScanned < r.totalInIndex;
+      // Three INDEPENDENT facts, kept independent because each has a different
+      // cause and a different fix, and because a message that asserts the wrong
+      // one is worse than a message that just reports numbers.
+      //
+      //  - stoppedEarly: the loop exited without reaching a confirmed end of
+      //    the index. Authoritative, and the reason a scanned-vs-total
+      //    comparison is not the primary signal.
+      //  - idsSkipped: ids fetched but never judged, because their eligibility
+      //    lookup failed. The cursor advanced past them, so this can be
+      //    non-zero on a scan that DID reach the end.
+      //  - lowCoverage: the loop finished, but covered implausibly little.
+      const coverage = r.totalInIndex && r.totalInIndex > 0 ? r.idsScanned / r.totalInIndex : null;
+      const shortfall = r.totalInIndex === null ? null : r.totalInIndex - r.idsScanned;
+      const lowCoverage =
+        !r.stoppedEarly &&
+        shortfall !== null &&
+        // A count taken while the engine was mid-ingest is a moving number, so
+        // a shortfall against it is not evidence of anything.
+        r.indexingAtStart !== true &&
+        shortfall > COVERAGE_SHORTFALL_FLOOR &&
+        shortfall > (r.totalInIndex as number) * COVERAGE_SHORTFALL_RATIO;
+
+      const incomplete = r.stoppedEarly || lowCoverage;
+      // `errors > 0` escalates on its own. The case that forces this: an index
+      // the engine cannot serve at all fails BOTH `getStats` and `getSettings`,
+      // so `totalInIndex` stays null and no coverage comparison is possible —
+      // an index that was not cleaned at all would otherwise be filed as a
+      // healthy `info` line.
+      const level = incomplete || r.errors > 0 ? 'error' : 'info';
+
+      const problems: string[] = [];
+      if (r.stoppedEarly) {
+        problems.push(
+          `scan STOPPED EARLY after ${r.idsScanned} id(s)` +
+            (r.totalInIndex === null
+              ? ' (index document count unavailable)'
+              : ` of ${r.totalInIndex} at the start of the run`)
+        );
+      } else if (lowCoverage) {
+        problems.push(
+          `scan reached the end of the index but covered only ${r.idsScanned} of ` +
+            `${r.totalInIndex} document(s)`
+        );
+      }
+      if (r.idsSkipped > 0) {
+        problems.push(`${r.idsSkipped} id(s) SKIPPED — eligibility lookup failed`);
+      }
+      if (r.errors > 0) problems.push(`${r.errors} error(s)`);
+
       logToAxiom({
-        // An incomplete pass is a defect, not a statistic: it must not be
-        // filed under the same level as a healthy run, or it stays invisible.
-        type: incomplete ? 'error' : 'info',
+        type: level,
         name: 'search-index-cleanup',
-        message: incomplete
-          ? `INCOMPLETE SCAN: ${r.key} scanned ${r.idsScanned} of ${r.totalInIndex} documents — ` +
-            `the pass ended before reaching the end of the index, so stale documents past the ` +
-            `stopping point were not deleted`
-          : `${r.key}: scanned ${r.idsScanned}, stale ${r.staleFound}, deleted ${r.deleted}`,
+        message:
+          problems.length > 0
+            ? `${r.key}: ${problems.join('; ')} — scanned ${r.idsScanned}, stale ${
+                r.staleFound
+              }, deleted ${r.deleted}`
+            : `${r.key}: scanned ${r.idsScanned}, stale ${r.staleFound}, deleted ${r.deleted}`,
         key: r.key,
         scanned: r.idsScanned,
         stale: r.staleFound,
         deleted: r.deleted,
         errors: r.errors,
         total: r.totalInIndex,
+        coverage,
         incomplete,
-      }).catch();
+        stoppedEarly: r.stoppedEarly,
+        skipped: r.idsSkipped,
+        rescuedByPrimary: r.rescuedByPrimary,
+        indexingAtStart: r.indexingAtStart,
+      }).catch(() => undefined);
     }
 
     return {

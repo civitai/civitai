@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import {
   ARTICLES_SEARCH_INDEX,
   BOUNTIES_SEARCH_INDEX,
@@ -188,11 +188,47 @@ export type CleanupIndexStats = {
   deleted: number;
   totalInIndex: number | null;
   errors: number;
+  /**
+   * TRUE when the scan ended for any reason other than reaching a confirmed
+   * end of the index. This — not a scanned-vs-total comparison — is the
+   * authoritative "the pass did not cover the index" signal: `totalInIndex` is
+   * a snapshot taken before a scan that then runs for hours against an index
+   * other jobs are concurrently deleting from, so the two numbers legitimately
+   * disagree on a perfectly complete run.
+   */
+  stoppedEarly: boolean;
+  /**
+   * Ids that were fetched from the index but whose eligibility lookup failed,
+   * so they were neither judged nor deleted. The cursor still advanced past
+   * them. Distinct from `stoppedEarly`: a scan can reach the very end of the
+   * index having skipped batches along the way.
+   */
+  idsSkipped: number;
+  /**
+   * Ids the read replica called stale that the PRIMARY then said were still
+   * eligible, so they were NOT deleted. A non-zero value is replication lag
+   * being caught, which is exactly what the primary re-check exists for.
+   */
+  rescuedByPrimary: number;
+  /** `isIndexing` as reported alongside the document count, or null if unread. */
+  indexingAtStart: boolean | null;
 };
 
-async function fetchValidIds(cfg: IndexConfig, ids: number[]): Promise<Set<number>> {
+/**
+ * Which of `ids` still BELONG in the index, according to `client`.
+ *
+ * The client is a parameter because the two call sites ask different
+ * questions. The scan asks the read replica (cheap, and a wrong answer only
+ * costs a document being re-examined tomorrow); the delete path re-asks the
+ * PRIMARY, because there a wrong answer destroys a document.
+ */
+async function fetchValidIds(
+  cfg: IndexConfig,
+  ids: number[],
+  client: typeof dbRead | typeof dbWrite
+): Promise<Set<number>> {
   if (ids.length === 0) return new Set();
-  const rows = await dbRead.$queryRaw<{ id: number }[]>`
+  const rows = await client.$queryRaw<{ id: number }[]>`
     SELECT ${Prisma.raw(`${cfg.alias}.id`)}::int AS id
     FROM ${Prisma.raw(`"${cfg.tableName}"`)} ${Prisma.raw(cfg.alias)}
     WHERE ${cfg.where(ids)}
@@ -223,11 +259,19 @@ export async function cleanupIndex(
     deleted: 0,
     totalInIndex: null,
     errors: 0,
+    stoppedEarly: true,
+    idsSkipped: 0,
+    rescuedByPrimary: 0,
+    indexingAtStart: null,
   };
 
   try {
     const statsRes = await index.getStats();
     stats.totalInIndex = statsRes.numberOfDocuments;
+    // Recorded because it changes how the document count should be read: a
+    // count taken while the engine is mid-ingest is a moving number, so a
+    // shortfall against it is not evidence of a truncated scan.
+    stats.indexingAtStart = statsRes.isIndexing ?? null;
   } catch {
     // non-fatal
   }
@@ -274,7 +318,14 @@ export async function cleanupIndex(
   // Meilisearch regardless of depth — replaces offset pagination where
   // deep pages were saturating LMDB read I/O on the search host.
   let lastId = -1;
-  const allStaleIds: number[] = [];
+
+  // Stale ids awaiting deletion. Deliberately NOT an accumulator for the whole
+  // index: deletions are flushed as the scan runs, so a run that is cancelled
+  // part-way keeps everything it has already deleted. Batching all deletions
+  // until after the scan made the job all-or-nothing — a cancellation (the
+  // request socket closing) broke the scan, then broke the delete loop at
+  // chunk 0, and the index got ZERO deletions for the run.
+  const pendingStaleIds: number[] = [];
 
   // Retry helper: run `fn` up to MAX_ATTEMPTS times with linear backoff.
   // Re-throws immediately if the job is canceled mid-retry — otherwise the
@@ -331,6 +382,82 @@ export async function cleanupIndex(
   // See the confirmation below for why an empty page is not trusted first time.
   const EMPTY_PAGE_CONFIRM_DELAY_MS = 500;
 
+  let chunkIdx = 0;
+
+  /**
+   * Delete whole chunks of `pendingStaleIds`; with `final`, delete the
+   * remainder too.
+   *
+   * 🔴 Every id is re-verified against the PRIMARY immediately before it is
+   * deleted, and only ids the primary ALSO calls ineligible are sent.
+   *
+   * The scan judges eligibility from `dbRead`, a read replica. A document
+   * indexed moments ago whose row has not replicated yet looks like it belongs
+   * to nothing and is classified stale — and the fix that made this scan reach
+   * the end of the index is precisely what makes it reach that freshly-written
+   * high-id tail for the first time. The replica read stays because it is the
+   * cheap filter over millions of ids; this is the expensive check over the
+   * few thousand that filter selects, where being wrong destroys a document
+   * rather than costing a re-examination tomorrow.
+   *
+   * If the primary cannot be reached the chunk is NOT deleted. The safe
+   * failure direction here is to delete nothing: an undeleted stale document
+   * is picked up by the next nightly run, a wrongly deleted live one is not.
+   */
+  const flushDeletions = async (final: boolean) => {
+    if (!opts.apply) return;
+    while (pendingStaleIds.length >= deleteChunkSize || (final && pendingStaleIds.length > 0)) {
+      // Bail before submitting more delete tasks if the job is no longer
+      // running. (`!== 'running'` mirrors what `createJob.checkIfCanceled`
+      // actually throws on: status flipped to either `canceled` or `finished`.)
+      //
+      // ⚠️ REDUNDANT, and deliberately kept: `withRetries` calls
+      // `checkIfCanceled()` before its first attempt, so a cancelled job stops
+      // here either way. Mutation-testing confirms it — removing this line
+      // kills no test, because the throw from `withRetries` reaches the same
+      // early `return`. It is an explicit cheap check in front of an expensive
+      // one, not a correctness guard; do not read its presence as evidence
+      // that the path below is otherwise unprotected.
+      if (opts.jobContext && opts.jobContext.status !== 'running') return;
+
+      const chunk = pendingStaleIds.splice(0, deleteChunkSize);
+
+      let confirmed: number[];
+      try {
+        const stillValid = await withRetries(() => fetchValidIds(cfg, chunk, dbWrite));
+        confirmed = chunk.filter((id) => !stillValid.has(id));
+        stats.rescuedByPrimary += chunk.length - confirmed.length;
+      } catch (err) {
+        if (opts.jobContext && opts.jobContext.status !== 'running') return;
+        stats.errors += 1;
+        opts.onError?.({
+          key: cfg.key,
+          offset: -1,
+          error: new Error(
+            `skipped deleting ${chunk.length} id(s) from ${cfg.indexName}: ` +
+              `primary re-check failed (${(err as Error).message})`
+          ),
+        });
+        continue;
+      }
+
+      if (confirmed.length === 0) continue;
+
+      try {
+        opts.jobContext?.checkIfCanceled();
+        await index.deleteDocuments(confirmed);
+        stats.deleted += confirmed.length;
+        opts.onDelete?.({ key: cfg.key, chunk: chunkIdx, ids: confirmed.length });
+      } catch (err) {
+        // Treat cancellation thrown mid-deleteDocuments as a clean stop.
+        if (opts.jobContext && opts.jobContext.status !== 'running') return;
+        stats.errors += 1;
+        opts.onError?.({ key: cfg.key, offset: -1, error: err as Error });
+      }
+      chunkIdx += 1;
+    }
+  };
+
   while (stats.batchesProcessed < maxBatches) {
     if (opts.jobContext?.status === 'canceled') break;
 
@@ -362,12 +489,42 @@ export async function cleanupIndex(
       break;
     }
 
-    if (docIds.length === 0) break;
+    if (docIds.length === 0) {
+      // The one clean terminator: a confirmed-empty page at the cursor.
+      stats.stoppedEarly = false;
+      break;
+    }
+
+    // 🔴 The cursor MUST strictly advance, and that is asserted rather than
+    // assumed — BEFORE the page is judged, so a non-advancing page is never
+    // examined (or deleted from) twice.
+    //
+    // Termination now rests entirely on the cursor: `maxBatches` is Infinity
+    // from the cron, and dropping the short-page break removed the accidental
+    // bound that used to exist. A page whose last id is not greater than the
+    // cursor would re-issue the identical query forever, holding a Postgres
+    // connection and a Meilisearch reader for the life of the process.
+    //
+    // ids come back sorted asc, so the last one is the highest.
+    const nextId = docIds[docIds.length - 1];
+    if (!(nextId > lastId)) {
+      stats.errors += 1;
+      opts.onError?.({
+        key: cfg.key,
+        offset: lastId,
+        error: new Error(
+          `aborting ${cfg.indexName} scan: cursor did not advance ` +
+            `(last id ${nextId} is not greater than cursor ${lastId}); ` +
+            `the index is not returning ids in ascending order past the filter`
+        ),
+      });
+      break;
+    }
 
     // Same retry envelope on the Postgres side. A connection blip or short
     // replica-lag spike shouldn't drop ~10M docs of users cleanup.
     try {
-      const validIds = await withRetries(() => fetchValidIds(cfg, docIds));
+      const validIds = await withRetries(() => fetchValidIds(cfg, docIds, dbRead));
       const staleIds = docIds.filter((id) => !validIds.has(id));
 
       stats.batchesProcessed += 1;
@@ -375,7 +532,7 @@ export async function cleanupIndex(
       stats.staleFound += staleIds.length;
       consecutivePgFailures = 0;
 
-      if (staleIds.length > 0) allStaleIds.push(...staleIds);
+      if (staleIds.length > 0) pendingStaleIds.push(...staleIds);
 
       // `offset` in the callback reports the cursor (last id seen before this batch).
       opts.onBatch?.({
@@ -384,6 +541,11 @@ export async function cleanupIndex(
         scanned: docIds.length,
         stale: staleIds.length,
       });
+
+      // Flush whole chunks as they accumulate, so progress survives a
+      // cancellation. Only complete chunks here — the remainder goes out in
+      // the final flush after the loop.
+      await flushDeletions(false);
     } catch (err) {
       // Cancellation surfaced from withRetries is a clean stop, not a
       // Postgres failure — don't pollute the consecutivePgFailures counter
@@ -396,6 +558,11 @@ export async function cleanupIndex(
       // failures so a hard outage doesn't grind through millions of ids.
       stats.errors += 1;
       consecutivePgFailures += 1;
+      // These ids were fetched but never judged. The cursor advances past them
+      // regardless, so the scan can still reach the end of the index — which
+      // is why this is counted separately from `stoppedEarly` rather than
+      // folded into one "incomplete" verdict.
+      stats.idsSkipped += docIds.length;
       opts.onError?.({ key: cfg.key, offset: lastId, error: err as Error });
       if (consecutivePgFailures >= MAX_CONSECUTIVE_PG_FAILURES) {
         opts.onError?.({
@@ -405,15 +572,14 @@ export async function cleanupIndex(
             `aborting ${cfg.indexName} scan: ${consecutivePgFailures} consecutive Postgres errors`
           ),
         });
-        // ids come back sorted asc; advance cursor so a possible retry of
-        // the outer cron picks up where we left off.
-        lastId = docIds[docIds.length - 1];
+        // Advance the cursor so a possible retry of the outer cron picks up
+        // where we left off. `nextId` is the guarded, strictly-greater value.
+        lastId = nextId;
         break;
       }
     }
 
-    // ids come back sorted asc; advance cursor. Length is guaranteed > 0
-    // by the empty-check above, so the access is safe.
+    // Advance the cursor, already proven to move forward by the guard above.
     //
     // A SHORT page is deliberately NOT a terminator. "Fewer hits than I asked
     // for" and "no more documents" are different statements: the engine caps a
@@ -422,38 +588,12 @@ export async function cleanupIndex(
     // come back small and reported the run as complete. The cursor advances
     // correctly either way, so the only cost of dropping that shortcut is one
     // additional (empty, then confirmed-empty) query per index.
-    lastId = docIds[docIds.length - 1];
+    lastId = nextId;
   }
 
-  if (opts.apply && allStaleIds.length > 0) {
-    let chunkIdx = 0;
-    for (let i = 0; i < allStaleIds.length; i += deleteChunkSize) {
-      // Bail before submitting more delete tasks if the job is no longer
-      // running. Without this, every remaining chunk logs a separate
-      // "Job has ended" error via the catch below — for a ~10M-doc index
-      // with hundreds of thousands of stale ids that's tens of duplicate
-      // Axiom errors per cancellation. (`!== 'running'` mirrors what
-      // `createJob.checkIfCanceled` actually throws on: status flipped to
-      // either `canceled` or `finished`. Phrased this way to avoid TS's
-      // control-flow narrowing inside the catch below, which would
-      // otherwise reject the equivalent `=== 'canceled'` comparison.)
-      if (opts.jobContext && opts.jobContext.status !== 'running') break;
-      const chunk = allStaleIds.slice(i, i + deleteChunkSize);
-      try {
-        opts.jobContext?.checkIfCanceled();
-        await index.deleteDocuments(chunk);
-        stats.deleted += chunk.length;
-        opts.onDelete?.({ key: cfg.key, chunk: chunkIdx, ids: chunk.length });
-      } catch (err) {
-        // Treat cancellation thrown mid-deleteDocuments as a clean stop,
-        // not an error. See the comment above for the !== 'running' form.
-        if (opts.jobContext && opts.jobContext.status !== 'running') break;
-        stats.errors += 1;
-        opts.onError?.({ key: cfg.key, offset: -1, error: err as Error });
-      }
-      chunkIdx += 1;
-    }
-  }
+  // Whatever is left over after the loop, including the tail of a scan that
+  // stopped early. A cancelled run returns from inside the flush instead.
+  await flushDeletions(true);
 
   return stats;
 }
