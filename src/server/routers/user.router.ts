@@ -106,6 +106,7 @@ import {
 import { CacheTTL } from '~/server/common/constants';
 import { edgeCacheIt, rateLimit } from '~/server/middleware.trpc';
 import { refreshSession } from '~/server/auth/session-invalidation';
+import { handleLogError } from '~/server/utils/errorHandling';
 import { createTipaltiPayee } from '~/server/services/user-payment-configuration.service';
 import { addSystemPermission } from '~/server/services/system-cache';
 import { createNotification } from '~/server/services/notification.service';
@@ -224,7 +225,9 @@ export const userRouter = router({
         data: input,
         updateSource: 'updateBrowsingMode',
       });
-      await refreshSession(ctx.user.id, { caller: 'browsing-mode' });
+      // Same shape as the controller sites: the row is written above, so an unreachable cache redis
+      // must not turn a committed write into a 500 the client retries. Best-effort + logged.
+      await refreshSession(ctx.user.id, { caller: 'browsing-mode' }).catch(handleLogError);
     }),
   delete: protectedProcedure
     .meta({ requiredScope: TokenScope.Full })
