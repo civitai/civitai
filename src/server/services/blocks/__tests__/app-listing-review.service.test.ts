@@ -22,6 +22,10 @@ import { LISTING_REVIEW_DETAILS_MAX } from '~/server/schema/blocks/app-listing-r
 
 type WriteMock = {
   $transaction: ReturnType<typeof vi.fn>;
+  // The prior review is read with `SELECT … FOR UPDATE` (raw — Prisma has no row lock
+  // on `findUnique`), so the delta cannot be computed against a stale `exclude` that a
+  // concurrent moderator hide has already changed. It returns ROWS, not a row.
+  $queryRaw: ReturnType<typeof vi.fn>;
   appListingReview: { findUnique: ReturnType<typeof vi.fn>; upsert: ReturnType<typeof vi.fn> };
   appListingMetric: { upsert: ReturnType<typeof vi.fn>; updateMany: ReturnType<typeof vi.fn> };
 };
@@ -49,6 +53,7 @@ const SAVED_REVIEW = {
 const { mockRead, mockWrite } = vi.hoisted(() => {
   const write: WriteMock = {
     $transaction: vi.fn(),
+    $queryRaw: vi.fn(async () => []),
     appListingReview: {
       findUnique: vi.fn(async () => null),
       upsert: vi.fn(async () => SAVED_REVIEW),
@@ -89,6 +94,7 @@ beforeEach(() => {
   mockWrite.$transaction.mockImplementation(async (cb: (tx: WriteMock) => Promise<unknown>) =>
     cb(mockWrite)
   );
+  mockWrite.$queryRaw.mockResolvedValue([]);
   mockWrite.appListingReview.findUnique.mockResolvedValue(null);
   mockWrite.appListingReview.upsert.mockResolvedValue(SAVED_REVIEW);
   mockWrite.appListingMetric.upsert.mockResolvedValue({});
@@ -153,11 +159,7 @@ describe('upsertAppListingReview — new review (no prior)', () => {
 
 describe('upsertAppListingReview — editing an existing review', () => {
   it('details-only edit (same recommend) does NOT touch the metric (no double-count)', async () => {
-    mockWrite.appListingReview.findUnique.mockResolvedValue({
-      id: 7,
-      recommended: true,
-      exclude: false,
-    });
+    mockWrite.$queryRaw.mockResolvedValue([{ id: 7, recommended: true, exclude: false }]);
     const res = await upsertAppListingReview({
       userId: CALLER,
       input: { appListingId: APP_ID, recommended: true, details: 'nice app' },
@@ -170,11 +172,7 @@ describe('upsertAppListingReview — editing an existing review', () => {
   });
 
   it('flipping recommend true→false moves the count (−1 up, +1 down) and clamps up ≥0', async () => {
-    mockWrite.appListingReview.findUnique.mockResolvedValue({
-      id: 7,
-      recommended: true,
-      exclude: false,
-    });
+    mockWrite.$queryRaw.mockResolvedValue([{ id: 7, recommended: true, exclude: false }]);
     await upsertAppListingReview({
       userId: CALLER,
       input: { appListingId: APP_ID, recommended: false },
@@ -195,11 +193,7 @@ describe('upsertAppListingReview — editing an existing review', () => {
   });
 
   it('a mod-EXCLUDED prior review is treated as un-counted → editing it makes no delta', async () => {
-    mockWrite.appListingReview.findUnique.mockResolvedValue({
-      id: 7,
-      recommended: true,
-      exclude: true,
-    });
+    mockWrite.$queryRaw.mockResolvedValue([{ id: 7, recommended: true, exclude: true }]);
     await upsertAppListingReview({
       userId: CALLER,
       input: { appListingId: APP_ID, recommended: false },

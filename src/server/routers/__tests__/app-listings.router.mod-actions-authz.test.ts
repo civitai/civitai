@@ -354,6 +354,15 @@ describe('setReviewExclude — the per-review mod hide control', () => {
   // a branch where `setReviewExclude` was never added — it would prove the gate
   // without the gate existing. Pinning FORBIDDEN / UNAUTHORIZED is what makes these
   // fail at the base commit.
+  //
+  // 🟡 …but only the TESTER case tests the MOD gate. `moderatorProcedure` is
+  // `protectedProcedure.use(isMod)`, so an ANONYMOUS caller is rejected by `isAuthed`
+  // with UNAUTHORIZED before `isMod` is ever reached — and that is equally true if the
+  // gate is downgraded to `protectedProcedure`. The anonymous case is therefore
+  // STRUCTURALLY incapable of discriminating mod-gated from merely-authenticated, and
+  // is measured to survive that mutation. It is an AUTH guard; the tester case below
+  // is the mod guard. Labelled rather than deleted because "anon cannot reach this"
+  // is still worth pinning — just not as evidence of moderator-only.
   it('a tester is FORBIDDEN and the service is NOT called (a user cannot hide a review)', async () => {
     const caller = appListingsRouter.createCaller(fakeCtx(tester) as never);
     await expect(caller.setReviewExclude({ reviewId: 7, exclude: true })).rejects.toMatchObject({

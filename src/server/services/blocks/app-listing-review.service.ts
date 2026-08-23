@@ -75,13 +75,25 @@ function reviewKey(appListingId: string, userId: number) {
 // ---------------------------------------------------------------------------
 // The ONE recommend-aggregate delta rule, and the ONE write that applies it.
 //
-// `AppListingMetric.thumbsUp/DownCount` is DENORMALIZED and has no rollup job —
-// it is whatever the sum of the ±1 deltas its writers have applied says it is.
-// So every writer MUST agree on (a) which review rows count and (b) how a
-// transition maps to a delta. There are now TWO writers (`upsertAppListingReview`
-// and `setAppListingReviewExclude`) and a second copy of this arithmetic is how
-// the counter silently drifts from the rows — so it is written once, here, and
-// both call it.
+// `AppListingMetric.thumbsUp/DownCount` is DENORMALIZED and has no recompute — it
+// is whatever the sum of the ±1 deltas its writers have applied says it is. So
+// every writer MUST agree on (a) which review rows count and (b) how a transition
+// maps to a delta. There are exactly TWO (`upsertAppListingReview` and
+// `setAppListingReviewExclude`) and a second copy of this arithmetic is how the
+// counter silently drifts from the rows — so it is written once, here, and both
+// call it.
+//
+// 🔴 "No recompute" is a TWO-SIDED contract, not a property of this file. The
+// `app_listing_metrics` row is ALSO written by the metric processor
+// (`src/server/metrics/appListing.metrics.sql.ts`), which deliberately names only
+// `install_count` in its INSERT and ON CONFLICT lists so a row created here
+// survives the rollup untouched. Each side pins the other:
+//   - that side is pinned by `src/server/metrics/__tests__/appListing.metrics.test.ts`
+//     ("NEVER writes thumbs_up_count / thumbs_down_count");
+//   - this side is pinned by the writer-set ledger in
+//     `src/server/services/blocks/__tests__/app-listing-review.mod-exclude.test.ts`,
+//     which fails if the caller set GROWS or SHRINKS.
+// A third writer is only safe if it brings a full recompute with it.
 // ---------------------------------------------------------------------------
 
 /** A review's CONTRIBUTION to the recommend aggregate; `null` = contributes nothing. */
@@ -330,13 +342,32 @@ export async function upsertAppListingReview(opts: {
   }
 
   const review = await dbWrite.$transaction(async (tx) => {
-    // Read the prior review (if any) to compute the metric delta. The DB unique
-    // makes the upsert itself atomic; a concurrent first-review by the SAME user
-    // is impossible (they're one user) so the read-then-upsert is race-safe here.
-    const prior = await tx.appListingReview.findUnique({
-      where: reviewKey(appListingId, userId),
-      select: { id: true, recommended: true, exclude: true },
-    });
+    // Read the prior review (if any) to compute the metric delta — LOCKED.
+    //
+    // 🔴 `SELECT … FOR UPDATE`, not `findUnique`. A concurrent first-review by the
+    // SAME user is impossible (they are one user), which is why this used to be an
+    // unlocked read — but that reasoning only covered the OTHER instance of this
+    // path. It does not cover the OTHER WRITER: under READ COMMITTED a moderator's
+    // `setAppListingReviewExclude` committing between this read and the upsert below
+    // makes the delta be computed against an `exclude` value that is already stale,
+    // so the author's ±1 lands on a row that is no longer counted. Taking the row
+    // lock here forces the two writers into a serial order on this row.
+    //
+    // Prisma has no `FOR UPDATE` on `findUnique`, hence raw SQL. Identifiers are
+    // quoted because `exclude` is a SQL keyword; values are interpolated by the
+    // tagged template, so they are bound parameters, not string-concatenated.
+    //
+    // LOCK ORDER — review row, then metric row — is the same in BOTH writers, which
+    // is what keeps them deadlock-free against each other.
+    const priorRows = await tx.$queryRaw<
+      Array<{ id: number; recommended: boolean; exclude: boolean }>
+    >`
+      SELECT "id", "recommended", "exclude"
+      FROM "app_listing_reviews"
+      WHERE "app_listing_id" = ${appListingId} AND "user_id" = ${userId}
+      FOR UPDATE
+    `;
+    const prior = priorRows[0] ?? null;
 
     // A prior review contributes to a bucket ONLY when it is non-excluded. The
     // freshly written review keeps the prior `exclude` (create → false); this path
@@ -365,9 +396,9 @@ export async function upsertAppListingReview(opts: {
     });
 
     // Feed the metric in the SAME tx, through the ONE shared writer (a details-only
-    // edit computes {0,0} and touches nothing). No rollup job exists — the two
-    // callers of `applyRecommendMetricDelta` are the ONLY writers of
-    // thumbsUp/DownCount, and a future job MUST NOT become a third.
+    // edit computes {0,0} and touches nothing). The two callers of
+    // `applyRecommendMetricDelta` are the ONLY writers of thumbsUp/DownCount — see
+    // the two-sided contract at the top of this file; the ledger test enforces it.
     await applyRecommendMetricDelta(tx, appListingId, { upDelta, downDelta });
 
     return { saved, isNewReview: prior == null };
@@ -414,10 +445,14 @@ export type SetAppListingReviewExcludeResult = {
  *   3. `exclude` preserves the audit trail (the abusive text stays readable to
  *      moderators) and matches the `tosViolation` sibling flag's semantics.
  *
- * IDEMPOTENT: setting `exclude` to the value the row already holds writes NOTHING
- * and applies a ZERO delta. That is what makes a retry, a double-submit, or two
- * moderators working the same report safe — the counters cannot be moved twice.
- * The delta itself is {@link recommendMetricDelta}, the SAME function the user
+ * IDEMPOTENT, AND THE IDEMPOTENCE IS SERIALIZED: the transition is expressed as the
+ * UPDATE's own predicate (`exclude: { not: exclude }`), so the database decides who
+ * transitioned the row, and the delta is applied only by the caller that did. Setting
+ * `exclude` to the value the row already holds writes NOTHING and applies a ZERO
+ * delta — and so does LOSING a race, which is the case a read-then-branch guard gets
+ * wrong. That is what makes a retry, a double-submit, or two moderators working the
+ * same report safe under READ COMMITTED; see the comment on the update itself for the
+ * mechanism. The delta is {@link recommendMetricDelta}, the SAME function the user
  * write path uses; there is no second copy of the arithmetic.
  *
  * NO STORE-SCOPE THREADING, deliberately: this is `moderatorProcedure`-gated at the
@@ -437,32 +472,54 @@ export async function setAppListingReviewExclude(
   const { reviewId, exclude } = input;
 
   const result = await dbWrite.$transaction(async (tx) => {
-    // Read the row INSIDE the tx: the metric delta depends on both its current
-    // `exclude` and its `recommended` bucket, so the decision and the writes must
-    // see one consistent snapshot.
+    // 🔴 THE TRANSITION IS THE UPDATE'S OWN PREDICATE — never a read-then-branch.
+    //
+    // `$transaction` here is Postgres READ COMMITTED (nothing in this codebase sets
+    // an `isolationLevel`), which does NOT serialize a read against a concurrent
+    // committer. A `findUnique` + `if (row.exclude === exclude)` guard is a
+    // read-modify-write: two moderators hiding the same review both read
+    // `exclude=false`, both pass the guard, and both apply −1 — permanent counter
+    // drift, and the ≥0 clamp only masks it at zero. The same window lets a mod hide
+    // race the author's `recommended` flip and decrement the WRONG bucket.
+    //
+    // A conditional UPDATE closes it with no extra locking primitive: the row lock is
+    // taken by the update itself, and under READ COMMITTED Postgres RE-EVALUATES the
+    // WHERE against the newly-committed row version after acquiring that lock
+    // (EvalPlanQual). So of two racers exactly one sees `count === 1` and the loser
+    // sees `count === 0` — the delta is gated on being the winner.
+    const { count } = await tx.appListingReview.updateMany({
+      where: { id: reviewId, exclude: { not: exclude } },
+      data: { exclude },
+    });
+
+    // Read AFTER the conditional update, deliberately. When `count === 1` we now hold
+    // the row lock, so `recommended` cannot be changed underneath the delta by a
+    // concurrent author edit — which is the second half of the race above. (Ordering
+    // is pinned by test; reading first would reintroduce it.)
     const row = await tx.appListingReview.findUnique({
       where: { id: reviewId },
       select: { id: true, appListingId: true, recommended: true, exclude: true },
     });
     if (!row) throw throwNotFoundError('Review not found');
 
-    // The no-op transition. Return BEFORE any write so "already in this state"
-    // provably costs zero delta rather than relying on the arithmetic cancelling.
-    if (row.exclude === exclude) {
-      return { id: row.id, appListingId: row.appListingId, exclude, changed: false };
+    // `count === 0` means WE did not transition the row: it was already in the target
+    // state, or a concurrent racer got there first. Both are the same no-op — nothing
+    // written, zero delta — and reporting the OBSERVED `row.exclude` rather than the
+    // requested target keeps the return honest about what is actually stored.
+    if (count === 0) {
+      return { id: row.id, appListingId: row.appListingId, exclude: row.exclude, changed: false };
     }
 
-    await tx.appListingReview.update({ where: { id: reviewId }, data: { exclude } });
-
-    // BEFORE vs AFTER contribution, through the one shared rule. Hiding a
-    // recommended review is −1 thumbsUp; hiding a not-recommended one is −1
-    // thumbsDown; un-hiding re-adds the same bucket. The `recommended` value is
-    // untouched, so exactly one counter moves by exactly 1.
+    // BEFORE vs AFTER contribution, through the one shared rule. The BEFORE state is
+    // `!exclude` by construction — the conditional matched, so that is what the row
+    // held when we locked it. Hiding a recommended review is −1 thumbsUp; hiding a
+    // not-recommended one is −1 thumbsDown; un-hiding re-adds the same bucket. The
+    // `recommended` value is untouched, so exactly one counter moves by exactly 1.
     await applyRecommendMetricDelta(
       tx,
       row.appListingId,
       recommendMetricDelta(
-        countedContribution(row),
+        countedContribution({ recommended: row.recommended, exclude: !exclude }),
         countedContribution({ recommended: row.recommended, exclude })
       )
     );
