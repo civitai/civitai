@@ -1,3 +1,5 @@
+import type { Prisma } from '@prisma/client';
+
 import { dbRead, dbWrite } from '~/server/db/client';
 import type { StoreVisibilityScope } from '~/server/services/app-blocks-flag';
 import {
@@ -10,6 +12,7 @@ import {
   type AppListingReviewListItem,
   type ListAppListingReviewsInput,
   type MyAppListingReview,
+  type SetAppListingReviewExcludeInput,
   type UpsertAppListingReviewInput,
 } from '~/server/schema/blocks/app-listing-review.schema';
 import { bustCacheTag } from '~/server/utils/cache-helpers';
@@ -39,6 +42,12 @@ import {
  * card/detail goes live the instant a review lands. The metric row is CREATED
  * (zeros) if absent — most listings have no row today (no writer before this).
  *
+ * MODERATOR CONTROL: `setAppListingReviewExclude` sets the `exclude` flag the table
+ * has always carried and moves the same counters by the same shared delta rule — a
+ * SOFT HIDE, never a delete (a delete would strand the denormalized counters and
+ * re-open the once-per-(user, listing) first-review window; see that function's
+ * header). It is `moderatorProcedure`-gated at the router.
+ *
  * DARK: all surfaces are gated at the router (the mod-segmented App Blocks flag);
  * this service does no auth of its own beyond the owner / approved-state gates.
  */
@@ -61,6 +70,119 @@ async function bustRecommendMeanCache(): Promise<void> {
 /** The compound-unique lookup key for `AppListingReview(appListingId, userId)`. */
 function reviewKey(appListingId: string, userId: number) {
   return { appListingId_userId: { appListingId, userId } };
+}
+
+// ---------------------------------------------------------------------------
+// The ONE recommend-aggregate delta rule, and the ONE write that applies it.
+//
+// `AppListingMetric.thumbsUp/DownCount` is DENORMALIZED and has no rollup job —
+// it is whatever the sum of the ±1 deltas its writers have applied says it is.
+// So every writer MUST agree on (a) which review rows count and (b) how a
+// transition maps to a delta. There are now TWO writers (`upsertAppListingReview`
+// and `setAppListingReviewExclude`) and a second copy of this arithmetic is how
+// the counter silently drifts from the rows — so it is written once, here, and
+// both call it.
+// ---------------------------------------------------------------------------
+
+/** A review's CONTRIBUTION to the recommend aggregate; `null` = contributes nothing. */
+type CountedReview = { recommended: boolean } | null;
+
+/** The per-bucket adjustment to apply to `AppListingMetric`. */
+type RecommendMetricDelta = { upDelta: number; downDelta: number };
+
+/**
+ * Does this review row feed the recommend aggregate, and into which bucket?
+ *
+ * 🔴 `exclude` ONLY — deliberately NOT `tosViolation`, even though
+ * {@link listAppListingReviews} hides both. The counters have never tracked
+ * `tosViolation` (nothing writes it today), so folding it in here would make the
+ * live counters disagree with the rows they were accumulated from, with no
+ * recount job to repair the difference. If a `tosViolation` writer ever lands it
+ * must come with a recount, and this predicate is the single place to widen.
+ */
+function countedContribution(
+  row: { recommended: boolean; exclude: boolean } | null | undefined
+): CountedReview {
+  if (row == null || row.exclude) return null;
+  return { recommended: row.recommended };
+}
+
+/**
+ * The delta a single review's transition applies to the recommend counters.
+ *
+ * Exported for direct unit test: it is a pure function of the BEFORE and AFTER
+ * contributions, so every transition either writer can produce — create, edit,
+ * recommend flip, mod hide, mod unhide, and every no-op — is one call here.
+ *
+ * IDEMPOTENCE falls out of the shape rather than being bolted on: identical
+ * `prior` and `next` contributions cancel to `{0,0}`, so a repeated hide (or a
+ * details-only edit) is a zero-delta no-op by construction.
+ */
+export function recommendMetricDelta(
+  prior: CountedReview,
+  next: CountedReview
+): RecommendMetricDelta {
+  let upDelta = 0;
+  let downDelta = 0;
+  if (prior) {
+    if (prior.recommended) upDelta -= 1;
+    else downDelta -= 1;
+  }
+  if (next) {
+    if (next.recommended) upDelta += 1;
+    else downDelta += 1;
+  }
+  return { upDelta, downDelta };
+}
+
+/**
+ * Apply a computed delta to `AppListingMetric` INSIDE the caller's transaction.
+ *
+ * Only touches the row when there is a real delta (a zero-delta transition leaves
+ * the counters and their `updatedAt` alone). The upsert CREATES the row (clamped
+ * ≥0) when absent, else applies the atomic per-counter increments.
+ *
+ * Concurrency note: two users filing the first-ever reviews on a listing with no
+ * metric row both take the create branch; this is safe ONLY because Prisma emits a
+ * native INSERT … ON CONFLICT DO UPDATE for a single-PK upsert (the loser's insert
+ * converts to the increment). If Prisma ever falls back to select-then-insert, the
+ * loser's tx would 500 once (retriable — the row then exists).
+ */
+async function applyRecommendMetricDelta(
+  tx: Pick<Prisma.TransactionClient, 'appListingMetric'>,
+  appListingId: string,
+  { upDelta, downDelta }: RecommendMetricDelta
+): Promise<void> {
+  if (upDelta === 0 && downDelta === 0) return;
+
+  await tx.appListingMetric.upsert({
+    where: { appListingId },
+    create: {
+      appListingId,
+      thumbsUpCount: Math.max(0, upDelta),
+      thumbsDownCount: Math.max(0, downDelta),
+    },
+    update: {
+      ...(upDelta !== 0 ? { thumbsUpCount: { increment: upDelta } } : {}),
+      ...(downDelta !== 0 ? { thumbsDownCount: { increment: downDelta } } : {}),
+    },
+  });
+
+  // Defensive clamp — a counter must NEVER go negative even if the metric row
+  // drifted out of sync with the review rows. Each updateMany is atomic; it's a
+  // no-op in the normal (consistent) case.
+  if (upDelta < 0) {
+    await tx.appListingMetric.updateMany({
+      where: { appListingId, thumbsUpCount: { lt: 0 } },
+      data: { thumbsUpCount: 0 },
+    });
+  }
+  if (downDelta < 0) {
+    await tx.appListingMetric.updateMany({
+      where: { appListingId, thumbsDownCount: { lt: 0 } },
+      data: { thumbsDownCount: 0 },
+    });
+  }
 }
 
 /**
@@ -217,22 +339,15 @@ export async function upsertAppListingReview(opts: {
     });
 
     // A prior review contributes to a bucket ONLY when it is non-excluded. The
-    // freshly written review keeps the prior `exclude` (create → false); we never
-    // flip `exclude` on the write path (that's the deferred mod control), so
-    // "will count" == "prior wasn't excluded" (or a brand-new, non-excluded row).
-    const priorCounted = prior != null && !prior.exclude;
-    const willCount = prior != null ? !prior.exclude : true;
-
-    let upDelta = 0;
-    let downDelta = 0;
-    if (priorCounted) {
-      if (prior!.recommended) upDelta -= 1;
-      else downDelta -= 1;
-    }
-    if (willCount) {
-      if (recommended) upDelta += 1;
-      else downDelta += 1;
-    }
+    // freshly written review keeps the prior `exclude` (create → false); this path
+    // never FLIPS `exclude` (that is `setAppListingReviewExclude`'s job), so the
+    // AFTER contribution is "the new recommend value, at the prior exclude state".
+    // Both sides go through the ONE shared rule so this path and the mod-hide path
+    // cannot drift.
+    const { upDelta, downDelta } = recommendMetricDelta(
+      countedContribution(prior),
+      countedContribution({ recommended, exclude: prior?.exclude ?? false })
+    );
 
     const saved = await tx.appListingReview.upsert({
       where: reviewKey(appListingId, userId),
@@ -249,50 +364,117 @@ export async function upsertAppListingReview(opts: {
       },
     });
 
-    // Feed the metric in the SAME tx. Only touch it when there's a real delta (a
-    // details-only edit leaves the counters untouched). The upsert CREATES the row
-    // (clamped ≥0) when absent, else applies the atomic per-counter increments.
-    // Concurrency note: two users filing the first-ever reviews on a listing with no
-    // metric row both take the create branch; this is safe ONLY because Prisma emits a
-    // native INSERT … ON CONFLICT DO UPDATE for a single-PK upsert (the loser's insert
-    // converts to the increment). If Prisma ever falls back to select-then-insert, the
-    // loser's tx would 500 once (retriable — the row then exists). Single writer today
-    // (no P5 rollup job); a future job MUST NOT also write thumbsUp/DownCount here.
-    if (upDelta !== 0 || downDelta !== 0) {
-      await tx.appListingMetric.upsert({
-        where: { appListingId },
-        create: {
-          appListingId,
-          thumbsUpCount: Math.max(0, upDelta),
-          thumbsDownCount: Math.max(0, downDelta),
-        },
-        update: {
-          ...(upDelta !== 0 ? { thumbsUpCount: { increment: upDelta } } : {}),
-          ...(downDelta !== 0 ? { thumbsDownCount: { increment: downDelta } } : {}),
-        },
-      });
-      // Defensive clamp — a counter must NEVER go negative even if the metric row
-      // drifted out of sync with the review rows (e.g. a future mod re-count). Each
-      // updateMany is atomic; it's a no-op in the normal (consistent) case.
-      if (upDelta < 0) {
-        await tx.appListingMetric.updateMany({
-          where: { appListingId, thumbsUpCount: { lt: 0 } },
-          data: { thumbsUpCount: 0 },
-        });
-      }
-      if (downDelta < 0) {
-        await tx.appListingMetric.updateMany({
-          where: { appListingId, thumbsDownCount: { lt: 0 } },
-          data: { thumbsDownCount: 0 },
-        });
-      }
-    }
+    // Feed the metric in the SAME tx, through the ONE shared writer (a details-only
+    // edit computes {0,0} and touches nothing). No rollup job exists — the two
+    // callers of `applyRecommendMetricDelta` are the ONLY writers of
+    // thumbsUp/DownCount, and a future job MUST NOT become a third.
+    await applyRecommendMetricDelta(tx, appListingId, { upDelta, downDelta });
 
     return { saved, isNewReview: prior == null };
   });
 
   await bustRecommendMeanCache().catch(() => undefined);
   return { review: review.saved, isNewReview: review.isNewReview };
+}
+
+export type SetAppListingReviewExcludeResult = {
+  id: number;
+  appListingId: string;
+  exclude: boolean;
+  /**
+   * False when the row was ALREADY in the requested state — the no-op transition,
+   * in which case nothing at all was written (no row update, no metric delta, no
+   * cache bust). Lets the caller distinguish "I hid it" from "it was already hidden"
+   * without making the second case an error.
+   */
+  changed: boolean;
+};
+
+/**
+ * MODERATOR: hide (or un-hide) a single review — set `AppListingReview.exclude`
+ * and move the denormalized recommend counters to match, in ONE transaction.
+ *
+ * This is the write half of the `exclude` column the schema has carried since the
+ * table was created ("Moderator controls: keep abusive reviews out of the
+ * recommend-% aggregate"), indexed by `app_listing_reviews_listing_agg_idx`.
+ * {@link listAppListingReviews} already filters `exclude`, so hiding takes effect
+ * on the visible list with no read-path change.
+ *
+ * 🔴 SOFT-HIDE, NOT DELETE — three independent reasons, recorded because "just
+ * delete the row" is the obvious alternative:
+ *   1. `AppListingMetric.thumbsUp/DownCount` is DENORMALIZED with no rollup job,
+ *      so a raw delete leaves the displayed "N% recommend (M)" permanently wrong.
+ *      Any correct delete has to do this same delta anyway.
+ *   2. Removing the row would let the same user file a NEW first review for the
+ *      same listing. The sibling app-review reward documents its once-ever
+ *      guarantee as "the DB-unique + isFirstReview belt" (the only other guard is a
+ *      same-day Redis dedup that expires), and this service already returns
+ *      `isNewReview` for exactly that hook — so delete→recreate is a Buzz loop
+ *      waiting for the reward to be wired to listings.
+ *   3. `exclude` preserves the audit trail (the abusive text stays readable to
+ *      moderators) and matches the `tosViolation` sibling flag's semantics.
+ *
+ * IDEMPOTENT: setting `exclude` to the value the row already holds writes NOTHING
+ * and applies a ZERO delta. That is what makes a retry, a double-submit, or two
+ * moderators working the same report safe — the counters cannot be moved twice.
+ * The delta itself is {@link recommendMetricDelta}, the SAME function the user
+ * write path uses; there is no second copy of the arithmetic.
+ *
+ * NO STORE-SCOPE THREADING, deliberately: this is `moderatorProcedure`-gated at the
+ * router and moderators resolve `full` scope, which admits every listing kind — a
+ * scope parameter here could only ever be `full`, and a defaulted one would be an
+ * authorization decision (see the note on `upsertAppListingReview`'s `scope`).
+ * The trust boundary is the mod gate, and it is the whole boundary.
+ *
+ * NO `AppListingModerationEvent` is written: that table's `action` column is
+ * CHECK-constrained in SQL and a new action value would need a manual-apply
+ * migration, which is out of scope here. The `exclude` flag is itself the durable
+ * record; wiring an audit event is a follow-up that needs the DDL first.
+ */
+export async function setAppListingReviewExclude(
+  input: SetAppListingReviewExcludeInput
+): Promise<SetAppListingReviewExcludeResult> {
+  const { reviewId, exclude } = input;
+
+  const result = await dbWrite.$transaction(async (tx) => {
+    // Read the row INSIDE the tx: the metric delta depends on both its current
+    // `exclude` and its `recommended` bucket, so the decision and the writes must
+    // see one consistent snapshot.
+    const row = await tx.appListingReview.findUnique({
+      where: { id: reviewId },
+      select: { id: true, appListingId: true, recommended: true, exclude: true },
+    });
+    if (!row) throw throwNotFoundError('Review not found');
+
+    // The no-op transition. Return BEFORE any write so "already in this state"
+    // provably costs zero delta rather than relying on the arithmetic cancelling.
+    if (row.exclude === exclude) {
+      return { id: row.id, appListingId: row.appListingId, exclude, changed: false };
+    }
+
+    await tx.appListingReview.update({ where: { id: reviewId }, data: { exclude } });
+
+    // BEFORE vs AFTER contribution, through the one shared rule. Hiding a
+    // recommended review is −1 thumbsUp; hiding a not-recommended one is −1
+    // thumbsDown; un-hiding re-adds the same bucket. The `recommended` value is
+    // untouched, so exactly one counter moves by exactly 1.
+    await applyRecommendMetricDelta(
+      tx,
+      row.appListingId,
+      recommendMetricDelta(
+        countedContribution(row),
+        countedContribution({ recommended: row.recommended, exclude })
+      )
+    );
+
+    return { id: row.id, appListingId: row.appListingId, exclude, changed: true };
+  });
+
+  // Only a real transition shifts the aggregate, so only a real transition needs
+  // the store-wide recommend-mean cache busting. Fire-and-forget, as on the write
+  // path (a cache-bus outage must never fail a moderation action).
+  if (result.changed) await bustRecommendMeanCache().catch(() => undefined);
+  return result;
 }
 
 /**
@@ -304,6 +486,13 @@ export async function upsertAppListingReview(opts: {
  * must not read back their own review of a listing their scope hides — the row can
  * predate a scope change, so "they wrote it once" is not evidence they may see it
  * now.
+ *
+ * 🔴 DELIBERATELY DOES NOT FILTER `exclude` — an author still reads back their own
+ * mod-hidden review. This is the prefill for the edit form, so hiding the row here
+ * would present the form as empty and invite them to file a "new" review that the
+ * DB unique turns into an update of the very row they cannot see. Their review is
+ * removed from the PUBLIC list and from the aggregate; it is not removed from them.
+ * (Pinned by test — it is a behaviour, not an oversight.)
  *
  * 🔴 `findFirst`, not `findUnique`: a relation filter cannot be expressed on a
  * unique-key lookup. The (appListingId, userId) pair is still the DB unique, so at

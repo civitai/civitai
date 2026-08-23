@@ -45,6 +45,29 @@ export const upsertAppListingReviewSchema = z.object({
 });
 export type UpsertAppListingReviewInput = z.infer<typeof upsertAppListingReviewSchema>;
 
+/**
+ * MOD set a single review's `exclude` flag (hide / unhide) — the moderator control
+ * the `AppListingReview.exclude` column was added for.
+ *
+ * Keyed on the review's own `id`, NOT (appListingId, userId): the id is what the
+ * public list (`listReviews`) already projects, so a moderator acts on exactly the
+ * row they are looking at with one opaque handle, and cannot mis-pair a listing
+ * with the wrong reviewer. It also matches the existing `resourceReview.toggleExclude`
+ * shape.
+ *
+ * 🔴 `exclude` is an EXPLICIT TARGET STATE, not a toggle — deliberately diverging
+ * from `resourceReview.toggleExclude`. A toggle is not safely re-runnable: a
+ * double-submit, a retry after a timeout, or two moderators acting on the same
+ * report flip the row back and move the aggregate twice. An explicit target makes
+ * the mutation idempotent (a no-op transition applies ZERO metric delta), which is
+ * what makes a retry safe.
+ */
+export const setAppListingReviewExcludeSchema = z.object({
+  reviewId: z.number().int().positive(),
+  exclude: z.boolean(),
+});
+export type SetAppListingReviewExcludeInput = z.infer<typeof setAppListingReviewExcludeSchema>;
+
 /** USER read of their OWN review for a listing (form prefill), or null. */
 export const getMyAppListingReviewSchema = z.object({ appListingId });
 export type GetMyAppListingReviewInput = z.infer<typeof getMyAppListingReviewSchema>;
