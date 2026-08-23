@@ -1635,6 +1635,11 @@ export async function generateFromGraph({
   // Submit workflow to orchestrator
   const workflow = (await submitWorkflow({
     token,
+    // THE population this instrument exists to size: the submit leg of `generateFromGraph`, which
+    // carries 82–98% of that procedure's latency. Every other submit funnel in the app defaults to
+    // `other`, so `orchestrator_submit_duration_seconds{source="generate"}` is the generate leg and
+    // nothing else — which is what makes it comparable against the procedure's own wall time.
+    source: 'generate',
     body: {
       tags,
       steps,

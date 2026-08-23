@@ -28,11 +28,13 @@ import type {
   workflowUpdateSchema,
 } from '~/server/schema/orchestrator/workflows.schema';
 import { createOrchestratorClient } from '~/server/services/orchestrator/client';
+import { observeOrchestratorRead } from '~/server/services/orchestrator/orchestrator-read-metrics';
 import {
   classifySubmitRetryOutcome,
-  observeOrchestratorRead,
+  observeOrchestratorSubmit,
   observeOrchestratorSubmitRetry,
-} from '~/server/services/orchestrator/orchestrator-read-metrics';
+} from '~/server/services/orchestrator/orchestrator-submit-metrics';
+import type { OrchestratorSubmitSource } from '~/server/services/orchestrator/orchestrator-submit-metrics';
 import {
   setActiveSpanAttributes,
   traceContextHeaders,
@@ -284,7 +286,17 @@ export async function submitWorkflow({
   token,
   body,
   query,
-}: Options<SubmitWorkflowData> & { token: string }) {
+  source,
+}: Options<SubmitWorkflowData> & {
+  token: string;
+  /**
+   * Which submit population this call belongs to, for `orchestrator_submit_duration_seconds{source}`.
+   * Defaults to `other`, so a caller that does not opt in can never be silently counted as `generate`.
+   * A `query.whatif === true` call is always recorded as `whatIf` regardless of what is passed here —
+   * a cost estimate is per-attempt-capped and is a different latency population from a real submit.
+   */
+  source?: OrchestratorSubmitSource;
+}) {
   const client = createOrchestratorClient(token);
   if (!body) throw throwBadRequestError();
 
@@ -313,61 +325,32 @@ export async function submitWorkflow({
   // generation submit is never false-aborted (same marker used by the closed #2807).
   const isWhatif = (query as { whatif?: boolean } | undefined)?.whatif === true;
 
-  // 🔴 THE instrument this module was missing. `orchestrator.generateFromGraph` spends 82–98% of its
-  // latency in one contiguous interval that contained no span and no metric, and that interval is
-  // structurally three things: pure-CPU metadata assembly, refreshBlobUrlsInBody (measured at 0.008
-  // req/s against 4.44 submits/s — excluded), and THIS call. Four instruments were blind to it by
-  // construction: no app-side timer here, the call bypasses Traefik (in-cluster Service DNS), the api
-  // pool emits no client-kind spans so trace context never reached the orchestrator, and Pyroscope has
-  // no per-request label. The span makes the interval visible in a trace; the histogram observation
-  // below makes it a server-seconds-per-second figure directly comparable against the procedure's own
-  // wall time. Observability only — no control flow, no error mapping, and no timing behavior changes.
-  const submitStart = performance.now();
+  // 🔴 The span and the histogram that close this gap are recorded ONE LEVEL DOWN, inside
+  // `submitWorkflowWithRetry`, NOT here. That placement is deliberate: image ingestion calls the retry
+  // wrapper directly and bypasses this function entirely, so instrumenting here would have left the
+  // per-attempt spans and the duration histogram covering DIFFERENT populations — and the attempts↔duration
+  // join is the entire point of the instrument. All this function contributes is the `source` label, which
+  // is what makes the generate leg separable from every other submit funnel in the app.
   let result: ClientSubmitResult & { attempts: number };
   try {
-    result = await withSpan(
-      'gen:submit:orchestrator',
-      { 'orchestrator.submit.whatif': isWhatif },
-      async () => {
-        const r = await submitWorkflowWithRetry(
-          {
-            client,
-            body: { ...body, tags: ['civitai', ...(body.tags ?? [])] },
-            query,
-          },
-          {
-            // KEEP the default 3 retries on BOTH paths (transient orchestrator blips still
-            // recover). For whatIf, additionally bound each attempt so a stuck img2img
-            // source-download can't park ~30s × 3 (~90s) and head-of-line-block the api pool.
-            ...(isWhatif ? { perAttemptTimeoutMs: WHATIF_SUBMIT_ATTEMPT_TIMEOUT_MS } : {}),
-            // Wire the wrapper's `onRetry` hook, which shipped with the wrapper and has had ZERO call
-            // sites ever since — so a 3x latency multiplier on the most expensive tRPC procedure on the
-            // platform has been completely unobservable. Counting it settles, outright, whether the
-            // recurring ~95s ceiling is `3 x 30s + 0.5 + 1.5` (arithmetically consistent with the
-            // Orleans 30s default response timeout, for which no override exists anywhere in
-            // civitai-orchestration) or a single long attempt.
-            onRetry: ({ attempt, status }) =>
-              observeOrchestratorSubmitRetry(attempt, classifySubmitRetryOutcome(status)),
-          }
-        );
-        // Stamp the attempts count the wrapper has always returned and every caller has always
-        // discarded. Set INSIDE the callback, where `gen:submit:orchestrator` is the active span —
-        // outside it the active span is the caller's, and the attribute would land on the wrong span.
-        // On this span it correlates directly with the span's own duration, which is what
-        // distinguishes a ~95s park that is `3 x 30s` from one that is a single 95s attempt; a
-        // counter alone cannot make that join. Cardinality-free (a span attribute, not a label).
-        setActiveSpanAttributes({ 'orchestrator.submit.attempts': r.attempts });
-        return r;
+    result = await submitWorkflowWithRetry(
+      {
+        client,
+        body: { ...body, tags: ['civitai', ...(body.tags ?? [])] },
+        query,
+      },
+      {
+        // KEEP the default 3 retries on BOTH paths (transient orchestrator blips still
+        // recover). For whatIf, additionally bound each attempt so a stuck img2img
+        // source-download can't park ~30s × 3 (~90s) and head-of-line-block the api pool.
+        ...(isWhatif ? { perAttemptTimeoutMs: WHATIF_SUBMIT_ATTEMPT_TIMEOUT_MS } : {}),
+        // A whatIf is always its own population regardless of what the caller declared: it is a
+        // side-effect-free cost estimate, per-attempt-capped at 8s, and blending it into `generate`
+        // would drag the very figure this metric exists to produce.
+        source: isWhatif ? 'whatIf' : source ?? 'other',
       }
     );
   } catch (e) {
-    // Exactly one histogram observation per submit — here on the throw path, XOR on the resolve path
-    // below. A throw out of the wrapper is the FINAL attempt's network/timeout/abort failure.
-    observeOrchestratorRead(
-      'submit',
-      isOrchestratorReadTimeout(e) ? 'timeout' : 'error',
-      (performance.now() - submitStart) / 1000
-    );
     // The retry wrapper throws (rather than returning a `{ data:undefined }` result)
     // only on a network/timeout/abort failure of the FINAL attempt — there is no HTTP
     // status to map in the switch below. A recognized transient upstream failure
@@ -380,22 +363,6 @@ export async function submitWorkflow({
       throw throwServiceUnavailableError(ORCHESTRATOR_UNAVAILABLE_MESSAGE, e);
     throw e;
   }
-
-  // Resolve path (the `catch` above did NOT run). Exactly one observation per submit is recorded (here
-  // XOR in the catch). `data` ⇒ ok; a `!data` result is either the status-less resolve shape a fired
-  // per-attempt `AbortSignal.timeout` produces (`{ error: TimeoutError, response: undefined }` →
-  // timeout) or an upstream error. This is a WHOLE-CALL timing: all attempts plus their backoff, i.e.
-  // exactly the interval the caller parks on and the only figure comparable against the procedure's
-  // own wall time. Per-attempt resolution lives in the child spans and the retries counter.
-  observeOrchestratorRead(
-    'submit',
-    result.data
-      ? 'ok'
-      : isOrchestratorReadTimeout('error' in result ? result.error : undefined)
-      ? 'timeout'
-      : 'error',
-    (performance.now() - submitStart) / 1000
-  );
 
   // Narrow on `result.data` (not a destructured copy) so this always-throwing
   // guard both exposes `error`/`response` on the failure member here AND narrows
@@ -545,8 +512,18 @@ export type SubmitWorkflowRetryOptions = {
    * (current behavior; the generate/write path passes nothing and is byte-identical).
    */
   perAttemptTimeoutMs?: number;
-  /** Invoked right before each backoff sleep — useful for logging/metrics. */
+  /**
+   * Invoked right before each backoff sleep — useful for logging/metrics. This is ADDITIONAL to the
+   * built-in `orchestrator_submit_retries_total` increment, which fires first and unconditionally: a
+   * caller that supplies its own hook (or whose hook throws) can never suppress the counter.
+   */
   onRetry?: (info: { attempt: number; status?: number; delayMs: number }) => void;
+  /**
+   * Which submit population this call belongs to, for the `source` label on every submit metric.
+   * Defaults to `other` so a new caller can never be silently counted as `generate`. See
+   * `orchestrator-submit-metrics.ts` for why this label is load-bearing.
+   */
+  source?: OrchestratorSubmitSource;
 };
 
 /**
@@ -560,17 +537,86 @@ export type SubmitWorkflowRetryOptions = {
  * when a 500 actually created it server-side, the CALLER must set `body.externalId`
  * (the orchestrator dedupes on `(userId, externalId)`); the same body — and thus
  * the same key — is reused across every retry here.
+ *
+ * 🔴 This is also where EVERY orchestrator submit is instrumented — the span, the duration histogram
+ * and the retries counter all live here rather than in `submitWorkflow`, because this function is the
+ * single funnel every submit passes through. `submitWorkflow` is NOT: image ingestion calls this
+ * directly. Instrumenting a level up would have left the per-attempt spans covering one population and
+ * the duration histogram covering another, contaminating exactly the attempts↔duration join the
+ * instrument exists to make. Observability only — no control-flow, error-mapping or timing change.
  */
 export async function submitWorkflowWithRetry(
   options: SubmitOptions,
-  {
-    maxAttempts = 3,
-    baseDelayMs = 500,
-    perAttemptTimeoutMs,
-    onRetry,
-  }: SubmitWorkflowRetryOptions = {}
+  retryOptions: SubmitWorkflowRetryOptions = {}
+): Promise<ClientSubmitResult & { attempts: number }> {
+  const source = retryOptions.source ?? 'other';
+  // Whole-call timing: all attempts plus their backoff — the interval the CALLER actually parks on, and
+  // the only figure directly comparable against a procedure's own wall time. Per-attempt resolution is
+  // carried by the child spans and the retries counter, not by splitting this into N observations.
+  const submitStart = performance.now();
+  const elapsedSeconds = () => (performance.now() - submitStart) / 1000;
+
+  return await withSpan(
+    'orchestrator:submit',
+    { 'orchestrator.submit.source': source },
+    async () => {
+      let result: ClientSubmitResult & { attempts: number };
+      try {
+        result = await submitWorkflowRetryLoop(options, retryOptions, source);
+      } catch (e) {
+        // Exactly one observation per submit — here on the throw path, XOR on the resolve path below.
+        // A throw out of the loop is the FINAL attempt's network/timeout/abort failure.
+        observeOrchestratorSubmit(
+          source,
+          isOrchestratorReadTimeout(e) ? 'timeout' : 'error',
+          elapsedSeconds()
+        );
+        throw e;
+      }
+      // Resolve path. `data` ⇒ ok; a `!data` result is either the status-less resolve shape a fired
+      // per-attempt `AbortSignal.timeout` produces (`{ error: TimeoutError, response: undefined }` →
+      // timeout) or an upstream error.
+      observeOrchestratorSubmit(
+        source,
+        result.data
+          ? 'ok'
+          : isOrchestratorReadTimeout('error' in result ? result.error : undefined)
+          ? 'timeout'
+          : 'error',
+        elapsedSeconds()
+      );
+      // Stamp the attempts count the wrapper has always returned and every caller has always
+      // discarded. Set INSIDE the callback, where `orchestrator:submit` is the active span — outside
+      // it the active span is the caller's, and the attribute would land on the wrong span. On this
+      // span it correlates directly with the span's own duration, which is what distinguishes a ~95s
+      // park that is `3 x 30s` from one that is a single 95s attempt; a counter alone cannot make that
+      // join. Cardinality-free (a span attribute, not a label).
+      setActiveSpanAttributes({ 'orchestrator.submit.attempts': result.attempts });
+      return result;
+    }
+  );
+}
+
+/**
+ * The retry loop itself. Split out from `submitWorkflowWithRetry` purely so the whole-call timing and the
+ * parent span can bracket every exit path (return AND throw) without a `finally` that cannot see the
+ * outcome.
+ */
+async function submitWorkflowRetryLoop(
+  options: SubmitOptions,
+  { maxAttempts = 3, baseDelayMs = 500, perAttemptTimeoutMs, onRetry }: SubmitWorkflowRetryOptions,
+  source: OrchestratorSubmitSource
 ): Promise<ClientSubmitResult & { attempts: number }> {
   let lastError: unknown;
+
+  // Count the retry BEFORE handing control to the caller's own hook, so neither a caller that supplies
+  // one nor a caller whose hook throws can suppress the counter. Wiring this at all is the fix for a
+  // three-year blind spot: `onRetry` shipped with the wrapper and had ZERO call sites, so a 3x latency
+  // multiplier on the most expensive tRPC procedure on the platform was entirely unobservable.
+  const instrumentedOnRetry = (info: { attempt: number; status?: number; delayMs: number }) => {
+    observeOrchestratorSubmitRetry(source, info.attempt, classifySubmitRetryOutcome(info.status));
+    onRetry?.(info);
+  };
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     let result: ClientSubmitResult | undefined;
@@ -580,7 +626,7 @@ export async function submitWorkflowWithRetry(
       // ~30s children (the Orleans-default retry multiplier) or one ~95s child, which is the
       // difference between "cap the attempt" and "the callee hangs" as the correct fix.
       result = await withSpan(
-        'gen:submit:orchestrator:attempt',
+        'orchestrator:submit:attempt',
         { 'orchestrator.submit.attempt': attempt, 'orchestrator.submit.maxAttempts': maxAttempts },
         async () => {
           // Bound this attempt with a FRESH timeout signal (created inside the loop) so a
@@ -611,7 +657,12 @@ export async function submitWorkflowWithRetry(
       // Network failure / no response. Out of retries → surface it like a direct call would.
       lastError = e;
       if (attempt >= maxAttempts) throw e;
-      await submitWorkflowBackoff({ attempt, status: undefined, baseDelayMs, onRetry });
+      await submitWorkflowBackoff({
+        attempt,
+        status: undefined,
+        baseDelayMs,
+        onRetry: instrumentedOnRetry,
+      });
       continue;
     }
 
@@ -621,7 +672,7 @@ export async function submitWorkflowWithRetry(
       return Object.assign(result, { attempts: attempt });
     }
 
-    await submitWorkflowBackoff({ attempt, status, baseDelayMs, onRetry });
+    await submitWorkflowBackoff({ attempt, status, baseDelayMs, onRetry: instrumentedOnRetry });
   }
 
   // Only reachable if maxAttempts < 1 or every attempt threw without re-throwing above.
