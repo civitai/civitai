@@ -1,5 +1,5 @@
 import type { ToggleHideCommentInput } from '~/server/schema/commentv2.schema';
-import { showErrorNotification } from '~/utils/notifications';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 /** Where a surface scrolls to when a single thread is opened — the way back has to be on screen. */
@@ -26,6 +26,24 @@ export const useMutateComment = () => {
     },
   });
 
+  const setTosViolationMutation = trpc.commentv2.setTosViolation.useMutation({
+    async onSuccess(result) {
+      await queryUtils.commentv2.getInfinite.invalidate();
+      showSuccessNotification({
+        title: 'Comment removed as a ToS violation',
+        message: result.notified
+          ? 'The author has been notified and any matching reports were actioned.'
+          : 'Any matching reports were actioned.',
+      });
+    },
+    onError(error) {
+      showErrorNotification({
+        title: 'Unable to remove comment',
+        error: new Error(error.message),
+      });
+    },
+  });
+
   const handleToggleHide = (payload: ToggleHideCommentInput) => {
     if (toggleHideCommentMutation.isPending) return;
     return toggleHideCommentMutation.mutateAsync(payload);
@@ -44,5 +62,7 @@ export const useMutateComment = () => {
   return {
     toggleHide: handleToggleHide,
     togglePinned: handleTogglePinned,
+    setTosViolation: setTosViolationMutation.mutateAsync,
+    settingTosViolation: setTosViolationMutation.isPending,
   };
 };

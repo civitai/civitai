@@ -4,6 +4,7 @@ import {
   getCommentCountV2Handler,
   getCommentsThreadDetailsHandler,
   getCommentsInfiniteHandler,
+  setTosViolationHandler,
   toggleLockThreadDetailsHandler,
   upsertCommentV2Handler,
   getCommentHandler,
@@ -78,6 +79,7 @@ export const commentv2Router = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getCommentsInfiniteSchema)
     .query(getCommentsInfiniteHandler),
+  setTosViolation: moderatorProcedure.input(getByIdSchema).mutation(setTosViolationHandler),
   toggleLockThread: moderatorProcedure
     .input(commentConnectorSchema)
     .mutation(toggleLockThreadDetailsHandler),

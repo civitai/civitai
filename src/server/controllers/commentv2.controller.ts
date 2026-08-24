@@ -9,6 +9,7 @@ import {
   BlockedUsers,
   HiddenUsers,
 } from '~/server/services/user-preferences.service';
+import { bulkSetCommentV2TosViolation } from '~/server/services/commentsv2.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import {
   handleLogError,
@@ -319,6 +320,29 @@ export const getCommentsInfiniteHandler = async ({
 
     return await getCommentsInfinite({ ...input, excludedUserIds });
   } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const setTosViolationHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: ProtectedContext;
+}) => {
+  try {
+    // The service is the bulk one the moderator app already calls, so this path picks up the
+    // report actioning, reporter rewards and owner notification rather than re-deriving them.
+    const result = await bulkSetCommentV2TosViolation({
+      ids: [input.id],
+      actor: { id: ctx.user.id, ip: ctx.ip },
+    });
+    if (!result.count) throw throwNotFoundError(`No comment with id ${input.id}`);
+
+    return result;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
   }
 };
