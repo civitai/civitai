@@ -1168,6 +1168,14 @@ export async function advanceReferralSubscriptions(now: Date = new Date()) {
 
     if (result === 'advanced') advanced++;
     else if (result === 'canceled') canceled++;
+
+    // The tier this row confers just changed. `userMultipliersCache` has a 1-day TTL and nothing
+    // else busts it on this path, so a demoted or cancelled grant keeps paying its old multiplier
+    // for up to 24h. That cost nothing while the referral products carried no multipliers; it
+    // costs real Buzz now that they do (ClickUp 868kv5az9).
+    if (result !== 'noop') {
+      await invalidateSubscriptionCaches(sub.userId).catch(() => undefined);
+    }
   }
 
   return { advanced, canceled };

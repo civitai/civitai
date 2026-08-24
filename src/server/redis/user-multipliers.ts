@@ -23,6 +23,10 @@ const BASE_MULTIPLIER = 1;
  *
  * A row with no multiplier counts as 1, but the result is NOT floored at 1 — a product priced
  * below 1 keeps its value, as it did when this was one COALESCE over a single winning row.
+ *
+ * `rewardsIneligible` is taken from the first row seen for a user, which is safe only because the
+ * query computes it off `User`, so every row for a user carries the same value. Move that
+ * expression to a joined table and this needs to fold rather than take the first.
  */
 export function foldUserMultipliers(rows: UserMultiplierRow[]): Record<number, UserMultipliers> {
   const records: Record<number, UserMultipliers> = {};

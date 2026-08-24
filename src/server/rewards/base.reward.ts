@@ -584,7 +584,14 @@ export function toClickhouseBuzzEvent(event: BuzzEventLog): BuzzEventLog {
   const coerced: MixedObject = {};
 
   let forId = event.forId;
-  if (typeof forId !== 'number') {
+  if (typeof forId === 'number') {
+    // A number the column cannot hold is dropped exactly like a string would be, so the range
+    // check belongs on both branches, not only on the parsed one.
+    if (!Number.isInteger(forId) || Math.abs(forId) > INT32_MAX) {
+      coerced.forIdRaw = forId;
+      forId = hashify(String(forId));
+    }
+  } else {
     coerced.forIdRaw = forId;
     // Strict digits only: `Number('')` is 0 and `Number(' 42 ')` is 42, and buzzEvents is ordered
     // by (type, toUserId, forId, byUserId), so two keys collapsing to one id replace each other.
@@ -606,6 +613,20 @@ export function toClickhouseBuzzEvent(event: BuzzEventLog): BuzzEventLog {
   if (multiplier !== undefined && multiplier > CLICKHOUSE_MAX_MULTIPLIER) {
     coerced.multiplierRaw = multiplier;
     multiplier = CLICKHOUSE_MAX_MULTIPLIER;
+    // On the batch path this value is not audit — `process-rewards` reads it back out and
+    // `sendAward` pays `awardAmount * multiplier` from it, so a clamp UNDERPAYS rather than
+    // rounding a record. Gold's 4 x MAX_GLOBAL_BONUS 5 is 20, against a Decimal(3, 2) ceiling
+    // of 9.99.
+    //
+    // 🔴 Keep this even once the column is widened, and do not drop the log with it. The clamp is
+    // the backstop; 2026-08-24-buzz-events-multiplier-width.sql raises the ceiling to 99.99, and
+    // the two are not the same guarantee — that migration is applied by hand, so this code has to
+    // be correct on a database where it has not been applied yet.
+    log(event, {
+      message: 'Buzz event multiplier exceeded the ClickHouse column and was clamped',
+      multiplierRaw: coerced.multiplierRaw,
+      clampedTo: CLICKHOUSE_MAX_MULTIPLIER,
+    });
   }
 
   if (Object.keys(coerced).length === 0) return event;

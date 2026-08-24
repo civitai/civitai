@@ -117,7 +117,9 @@ describe('foldUserMultipliers', () => {
 describe('userMultipliersCache wiring', () => {
   const source = fs.readFileSync(path.join(process.cwd(), 'src/server/redis/caches.ts'), 'utf-8');
   const start = source.indexOf('export const userMultipliersCache');
-  const end = source.indexOf('type UserBasicLookup');
+  // The next declaration, not a named neighbour: anchoring on an unrelated symbol reds this test
+  // when that symbol is renamed, which says nothing about the multiplier lookup.
+  const end = source.indexOf('export const ', start + 1);
   const lookup = source.slice(start, end);
 
   it('reads the source it is meant to read', () => {
@@ -128,8 +130,30 @@ describe('userMultipliersCache wiring', () => {
     expect(lookup).toContain('MULTIPLIERS_FOR_USER');
   });
 
-  it('resolves multipliers through foldUserMultipliers, not a single winning row', () => {
+  // 🔴 A TRIPWIRE, NOT COVERAGE. The bug (ClickUp 868kv4q7t) lives in the SQL: the old query used
+  // ROW_NUMBER() to pick ONE winning subscription row, so a perkless referral grant could shadow a
+  // paid membership. `foldUserMultipliers` only helps if the query hands it EVERY active row, and
+  // no unit test can see that — it would take a database.
+  //
+  // So this lists the ways single-winner selection gets reintroduced. It was written after the
+  // first version, which pinned the literal string 'ROW_NUMBER()', passed a mutation to
+  // `SELECT DISTINCT ON (u.id)` that restored the bug completely: 11 of 11 green, exit 0.
+  // If you add a case, add it because you found another way through, not to be thorough.
+  const singleWinnerIdioms = [
+    /row_number\s*\(/i,
+    /distinct\s+on/i,
+    /\blimit\s+1\b/i,
+    /\blateral\b/i,
+  ];
+
+  it.each(singleWinnerIdioms.map((re) => [re.source, re] as const))(
+    'does not reintroduce single-winner selection via %s',
+    (_label, re) => {
+      expect(re.test(lookup)).toBe(false);
+    }
+  );
+
+  it('resolves multipliers through foldUserMultipliers', () => {
     expect(lookup).toContain('foldUserMultipliers(');
-    expect(lookup).not.toContain('ROW_NUMBER()');
   });
 });

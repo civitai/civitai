@@ -161,6 +161,65 @@ describe('buzzEvents forId must be an Int32 by the time it reaches ClickHouse', 
     expect(padded).not.toBe(insertedRow().forId);
   });
 
+  it('hashes a numeric string past the Int32 ceiling instead of sending it', async () => {
+    // Deleting the range check leaves every fixture in this suite green, because they are all
+    // short. An orchestrator job id or a snowflake is not.
+    await stringKeyReward().apply({ userId: 7, jobId: '9999999999' });
+
+    const row = insertedRow();
+    expect(Math.abs(row.forId)).toBeLessThanOrEqual(2147483647);
+    expect(row.forId).not.toBe(9999999999);
+    expect(JSON.parse(row.transactionDetails)).toMatchObject({ forIdRaw: '9999999999' });
+  });
+
+  it('hashes a NUMBER past the Int32 ceiling, which short-circuited the whole function', async () => {
+    const bigNumericReward = createBuzzEvent<{ userId: number; entityId: number }>({
+      type: 'testOversizeNumericForId',
+      description: 'Test reward keyed on an oversize number',
+      awardAmount: AWARD_AMOUNT,
+      cap: 40,
+      onDemand: true,
+      getKey: async (input) => ({
+        toUserId: input.userId,
+        forId: input.entityId,
+        byUserId: input.userId,
+      }),
+    });
+
+    await bigNumericReward.apply({ userId: 7, entityId: 9999999999 });
+
+    const row = insertedRow();
+    expect(Math.abs(row.forId)).toBeLessThanOrEqual(2147483647);
+    expect(JSON.parse(row.transactionDetails)).toMatchObject({ forIdRaw: 9999999999 });
+  });
+
+  it('preserves the reward payload alongside the coerced value', async () => {
+    // Every other fixture here starts from '{}', so replacing `{ ...details, ...coerced }` with
+    // `coerced` alone stays green. goodContent, collectedContent and imagePostedToModel all define
+    // getTransactionDetails and all reach the coerced path.
+    const detailedReward = createBuzzEvent<{ userId: number; jobId: string }>({
+      type: 'testDetailsReward',
+      description: 'Test reward carrying transaction details',
+      awardAmount: AWARD_AMOUNT,
+      cap: 40,
+      onDemand: true,
+      getKey: async (input) => ({
+        toUserId: input.userId,
+        forId: input.jobId,
+        byUserId: input.userId,
+      }),
+      getTransactionDetails: async () => ({ modelVersionId: 991, note: 'keep me' }),
+    });
+
+    await detailedReward.apply({ userId: 7, jobId: 'job-abc' });
+
+    expect(JSON.parse(insertedRow().transactionDetails)).toMatchObject({
+      modelVersionId: 991,
+      note: 'keep me',
+      forIdRaw: 'job-abc',
+    });
+  });
+
   it('leaves a numeric forId untouched', async () => {
     const numericReward = createBuzzEvent<{ userId: number; entityId: number }>({
       type: 'testNumericForId',

@@ -1,0 +1,38 @@
+-- buzzEvents.multiplier cannot hold the value the app computes.
+--
+-- The column is Decimal(3, 2) — 3 digits total, 2 after the point — so its ceiling is 9.99.
+-- The stored value is the tier multiplier TIMES the global bonus event, and gold's 4 against
+-- MAX_GLOBAL_BONUS of 5 is 20. Inserts run async_insert=1 with wait_for_async_insert=0, so a row
+-- ClickHouse cannot parse is dropped server-side while the app sees success.
+--
+-- This is a payout value, not an audit one: for the four processable rewards
+-- (imagePostedToModel, goodContent, collectedContent, reportAccepted) process-rewards reads the
+-- multiplier back out and sendAward pays awardAmount * multiplier from it.
+--
+-- Not currently reachable — the live bonus event is 2x, so gold members write 8, and the maximum
+-- across 90 days is exactly 8 with no row at or above 9. Any bonus event above 2.5x tips it over.
+--
+-- Widening to Decimal(4, 2) raises the ceiling to 99.99. Both are backed by Decimal32, so the
+-- underlying storage width does not change. Same two decimal places; the extra room is entirely
+-- to the left of the point.
+--
+-- Blast radius measured 2026-08-24: buzzEvents is 1,456,442,533 rows / 13.61 GiB across 63 active
+-- parts, but the multiplier column itself is 22.03 MiB on disk. NOTHING else in the database
+-- references buzzEvents — zero views and zero materialized views — so there is no MODIFY QUERY to
+-- pair with this.
+
+ALTER TABLE buzzEvents MODIFY COLUMN multiplier Decimal(4, 2) DEFAULT 1;
+
+-- Verify the type changed. This must return Decimal(4, 2):
+--
+--   SELECT type FROM system.columns
+--   WHERE database = 'default' AND table = 'buzzEvents' AND name = 'multiplier';
+--
+-- If ClickHouse schedules a mutation rather than treating this as metadata-only, watch it finish
+-- before considering the change applied:
+--
+--   SELECT command, parts_to_do, is_done, latest_fail_reason
+--   FROM system.mutations WHERE table = 'buzzEvents' AND NOT is_done;
+--
+-- The clamp in src/server/rewards/base.reward.ts stays afterwards as a backstop under the new
+-- ceiling, and keeps its log line. Do not remove it with this.
