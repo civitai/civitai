@@ -6,6 +6,15 @@ We use markdown documents to discuss plans. Documentation goes in the `docs/` fo
 ### Inline Comments
 Comments from us are marked with `@dev:` and you can leave comments as well with `@ai:`.
 
+### Filing follow-up work
+🔴 **Never open an issue or ticket you cannot state a CLOSING CONDITION for.** Name what ends it **and** who or what checks it — either a mechanical check (a merged PR, a passing command, a metric back under threshold) **or** a named human judgement over named evidence ("X reviews the diff" — never "someone will decide"). If you can name neither, it is **not a work item**: say so in your reply, with why, instead of opening something nobody can close.
+
+Why: a complete sweep of this org's open GitHub objects found that agent-filed **issues** survive dramatically longer than pull requests. The PRs close; the follow-up issues they spawn do not. Duplication turned out **not** to be the problem — closability was. The dominant pattern is *"merge a PR, then file follow-ups"*, and a follow-up filed at merge time is precisely the object born with no closing condition and no owner. Most such issues were also opened with no labels and no comments, so nothing downstream could triage them either.
+
+**If you are an automated producer** — a bot, a scheduled job, or an agent that opens issues — also label what you create `agent/<producer>` and put a machine-readable marker in the body naming the producer and the closing condition, so the object can be reconciled and closed later instead of accumulating. Apply the label on **create only**; never let an update overwrite labels a human has set.
+
+🔴 **Nothing enforces this.** There is no gate, no hook, and no CI check — it binds only the agents and people who read this file. If you are adding a new issue-creating producer, stamp it at the create site, because nothing will catch you if you don't.
+
 ## Tech Stack Overview
 
 ### Core Technologies
@@ -39,6 +48,9 @@ To add a new app, use the `scaffold-civitai-app` skill and follow `docs/packages
 
 ### Development
 **Always use the `/dev-server` skill** to manage dev servers. Never use `pnpm run dev` directly.
+That covers `moderator` and `creator-studio` too — `cli.mjs start --app <name>` runs them from the
+worktree you are in, on a port the daemon reserves, with the auth hub started for you. The other
+`apps/*` have no dev-server integration; use their own `pnpm dev:<name>`.
 
 ### Build & Deploy
 ```bash
@@ -137,7 +149,7 @@ suite you did not run — the scripts above already use `'unit*'` for this reaso
 
 #### Run the suites that cover your change; run the WHOLE suite once, at the end
 
-The full unit suite is ~19,500 tests and ~75s, and `test:unit:run` is serialised through the dev-server
+The full unit suite is ~21,500 tests and ~75s, and `test:unit:run` is serialised through the dev-server
 queue — so running it between edits blocks everyone else's runs for minutes at a time. Name the covering
 suites before you start editing and run those on each iteration:
 
@@ -199,12 +211,22 @@ Use a top-level `import type * as PromClient` — an inline `typeof import('...'
 **Before widening a mock, check whether the import edge is needed at all.** A failing suite may be telling you the code pulled in a dependency it doesn't want, not that the mock is too narrow, and widening it would hide that. (Bit us twice in one day, Aug 2026, on two branches; one of those three suites was fixed by extracting the helpers into their own module instead.)
 
 #### Convention guards run as tests
-Several repo conventions are enforced by tests, not by eslint — `pnpm run test:lint-rules` runs all of them:
-`no-wholesale-module-mock` (the `importOriginal` rule above), `no-io-in-transaction`, `no-module-scope-cache`,
-`no-server-infra-in-app-graph`, `no-stale-moderator-route-probe`, `no-unbounded-paging-fake`,
-`no-unloadable-image-fixture`. They live in `src/server/services/__tests__/`. If one fails, fix the code — don't
-add an exemption without saying why. **Add a new guard to the `test:lint-rules` script when you write one**, or it
-is discoverable only by reading the directory.
+Several repo conventions are enforced by tests, not by eslint. Fourteen live in
+`src/server/services/__tests__/no-*.test.ts` — `no-agent-ground-truth-write`, `no-coerce-boolean-in-api`,
+`no-direct-shared-module-mock` (the shared-mock ratchet, see `docs/testing/shared-module-mocks.md`),
+`no-io-in-transaction`, `no-module-scope-cache`, `no-pk-addressed-engagement-write`,
+`no-server-infra-in-app-graph`, `no-sharp-outside-native-project`, `no-stale-moderator-route-probe`,
+`no-static-html2canvas-import`, `no-unbounded-paging-fake`, `no-unloadable-image-fixture`,
+`no-unverified-provenance-write`, `no-wholesale-module-mock` (the `importOriginal` rule above) — plus
+`hub-filter-parity` beside them, `src/server/schema/__tests__/track.addView.schema.test.ts` and
+`src/server/notifications/__tests__/notification-settings-polarity.test.ts`. If one fails, fix the code —
+don't add an exemption without saying why.
+
+🔴 **`pnpm run test:lint-rules` is a hand-maintained file list, not a glob**, so a guard missing from it fails
+only in a full-suite run — hours later, in a file you weren't looking at. Five were missing at once when this
+was last audited (2026-08-24; all now wired in, 17 files). **Add a new guard to the script in the same commit
+you write it**, and don't read a green `test:lint-rules` as "all guards passed" without checking the directory
+against the script.
 
 `test:lint-rules` is a convenience selector, not the enforcement point: these files match the `unit` project's
 `include`, so they already run in `pnpm run test:unit:run` and in CI's `Unit tests` job. No workflow invokes
@@ -252,9 +274,10 @@ Worked examples of both fixes: the two retry tests in `src/components/Apps/AppsS
 pnpm run db:migrate:empty    # Create an empty migration file
 pnpm run db:generate         # Regenerate the slim schema + Prisma client
 pnpm run db:check-generated  # Fail if the committed generated client is stale
+pnpm run db:moderator:pull   # Re-introspect the moderator DB into apps/moderator/prisma/schema.prisma
 ```
 
-**`schema.full.prisma` is the only schema you edit.** `packages/civitai-db-schema/prisma/schema.full.prisma` is the single tracked schema. `pnpm run db:generate` runs `scripts/generate-slim-schema.js`, which strips `@no-type` models/enums to produce `packages/civitai-db-schema/prisma/schema.prisma` (what `package.json`'s `prisma.schema` points at), then runs `prisma generate`. Both `schema.prisma` files — that one **and** the leftover `prisma/schema.prisma` at the repo root — are gitignored build artifacts; editing either is silently overwritten on the next generate. `pnpm run db:check-generated` regenerates and diffs `packages/civitai-db-schema/src`, so a forgotten regen fails there.
+**`schema.full.prisma` is the only schema you edit.** `packages/civitai-db-schema/prisma/schema.full.prisma` is the single tracked schema. `pnpm run db:generate` runs `scripts/generate-slim-schema.js`, which strips `@no-type` models/enums to produce `packages/civitai-db-schema/prisma/schema.prisma` (what `package.json`'s `prisma.schema` points at), then runs `prisma generate`. Both of the *main app’s* `schema.prisma` files — that one **and** the leftover `prisma/schema.prisma` at the repo root — are gitignored build artifacts; editing either is silently overwritten on the next generate. `apps/moderator/prisma/schema.prisma` is a separate, **tracked** schema for the moderator database: introspected, never authored, refreshed with `pnpm run db:moderator:pull` then `pnpm run db:moderator:generate` (see `apps/moderator/CLAUDE.md`). It is not produced by `db:generate`. `pnpm run db:check-generated` regenerates and diffs `packages/civitai-db-schema/src`, so a forgotten regen fails there.
 
 #### Adding an enum value: DEPLOY FIRST, then migrate, then write
 
@@ -487,7 +510,13 @@ git -C <repos-root>/<primary-checkout> submodule sync --recursive
 git -C <repos-root>/worktrees/<name> submodule update --init event-engine-common
 printf 'use flake\n' > <repos-root>/worktrees/<name>/.envrc && direnv allow   # from inside the worktree
 pnpm install
+git -C <repos-root>/worktrees/<name> status -sb | head -1   # must print `## <branch>` and nothing else
 ```
+
+**Check that last line before you start working.** A branch destined for a new PR has *no upstream* —
+`## <branch>` alone. Anything after the `...` means the branch is already tracking something, and when
+that something is `origin/main` the worktree is in the broken state described below. Verifying costs a
+second here; not verifying stays invisible until the first `git pull` or `git status` on the branch.
 
 **Always `-b <branch> --no-track origin/main`. Never the shorthand.** All three parts are
 load-bearing and none is optional:
@@ -509,6 +538,13 @@ Tell with `git status -sb`: a healthy feature branch prints `## <branch>` alone,
 once pushed. `## <branch>...origin/main` is the broken state. Fix an existing one with
 `git branch --unset-upstream`, then `git push -u origin <branch>` when you first push, which sets the
 upstream that should have been there.
+
+🔴 **Do not create worktrees with the `EnterWorktree` tool.** It puts the tree in `.claude/worktrees/`
+— outside the Defender-excluded repos root, so it silently runs slow — and under the default
+`worktree.baseRef: fresh` it branches from `origin/<default-branch>` the shorthand way, so the new
+branch comes out tracking `origin/main` instead of clean for a new PR. Use the `git worktree add`
+recipe above. Entering an existing worktree with `EnterWorktree` `path:` is fine — that only switches
+the session's directory and creates nothing.
 
 🔴 **`git worktree add <path>` with no branch and no base is the other trap**, because it looks like it worked: git
 silently invents a branch named after the directory's basename and forks it from local `HEAD`. You

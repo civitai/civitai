@@ -21,6 +21,7 @@ const linkQuery: Record<string, string> = {
   'images-nsfw': '/images',
   'images-new': '/images',
   'images-funny': '/images',
+  'videos-overall': '/videos',
   'images-rater': '/posts',
   'base model': '/models?tag=base+model',
   style: '/models?tag=style',
@@ -119,7 +120,12 @@ export function CreatorCard({
               <ContainerGrid2.Col span={10}>
                 <Stack gap={8}>
                   <UserAvatar user={user} textSize="lg" size="md" withUsername />
-                  <LeaderboardMetrics score={score} metrics={metrics} delta={delta?.score} />
+                  <LeaderboardMetrics
+                    score={score}
+                    metrics={metrics}
+                    delta={delta?.score}
+                    leaderboardId={leaderboardId}
+                  />
                 </Stack>
               </ContainerGrid2.Col>
             </ContainerGrid2>

@@ -1,3 +1,5 @@
+import { serverSchema } from '~/env/server-schema';
+
 /**
  * Canonical mock for `~/env/server`.
  *
@@ -20,6 +22,27 @@
  */
 const defaults: Record<string, unknown> = {};
 const overrides = new Map<string, unknown>();
+
+/**
+ * Extract every schema field's default value by parsing `undefined` through each field.
+ * Fields without a .default() (required fields, optional-without-default) throw on
+ * `parse(undefined)` and are skipped — those need explicit test values below.
+ *
+ * This is the single source of truth: a key gaining a `.default()` in the schema
+ * automatically appears here, so the hand-enumerated list can never silently diverge.
+ */
+function schemaDefaults(): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const [key, field] of Object.entries(serverSchema.shape)) {
+    try {
+      const parsed = field.parse(undefined);
+      if (parsed !== undefined) result[key] = parsed;
+    } catch {
+      // Required fields or optional fields without .default() — need explicit test values
+    }
+  }
+  return result;
+}
 
 /** Worker-level, applied before any test file runs. For values a module reads at import. */
 export function setEnvDefaults(values: Record<string, unknown>) {
@@ -90,56 +113,33 @@ export const env: Record<string, unknown> = new Proxy(
 export const envMock = { set: setEnv, setDefaults: setEnvDefaults, reset: resetEnv };
 
 /**
- * The defaults every test starts from. A Proxy rather than an enumerated object was the
- * original point: production code reads a long tail of URL/endpoint vars at module load, and
- * enumerating all of them is how the previous per-file mocks became partial.
+ * The defaults every test starts from. Derived from the env schema's own .default()
+ * values, with test-specific overrides layered on top for values the schema leaves
+ * required (no default) or where the test needs a different value.
+ *
+ * 🔴 The schema-derived base means a key gaining a `.default()` in the schema
+ * automatically appears here — the hand-enumerated divergence that caused OC-317
+ * (REPLICATION_LAG_DELAY missing, read as undefined under test) cannot recur.
  */
 export const TEST_ENV_DEFAULTS: Record<string, unknown> = {
-  TIER_METADATA_KEY: 'tier',
-  BUZZ_ENDPOINT: 'http://mock-buzz-endpoint',
-  // meilisearch/client.ts feeds this straight into pLimit() at module load — an undefined
-  // value makes p-limit throw "Expected concurrency to be a number". Mirrors the production
-  // default (server-schema.ts: .default(50)).
-  MEILI_CALL_CONCURRENCY: 50,
-  MEILI_RESOURCE_SELECT_CONCURRENCY: 500,
-  SIGNALS_CALL_CONCURRENCY: 30,
-  LOGGING: '',
-  FORGEJO_PUBLIC_URL: 'https://forgejo.civitai.com',
-  APPS_DOMAIN: 'civit.ai',
+  // Schema-derived defaults (every .default() from serverSchema)
+  ...schemaDefaults(),
+
+  // ── Test-specific overrides ──────────────────────────────────────────────
+  // Required fields the schema leaves without defaults — tests need values:
   DATABASE_URL: 'postgres://user:pass@localhost:5432/db',
   NOTIFICATION_DB_URL: 'postgres://user:pass@localhost:5432/notif',
-  DATABASE_SSL: false,
-  DATABASE_POOL_MAX: 10,
-  DATABASE_POOL_IDLE_TIMEOUT: 30000,
-  DATABASE_CONNECTION_TIMEOUT: 5000,
-  DATABASE_WRITE_TIMEOUT: 10000,
-  DATABASE_READ_TIMEOUT: 10000,
   REDIS_URL: 'redis://localhost:6379',
   REDIS_SYS_URL: 'redis://localhost:6379',
-  REDIS_SYS_SOCKET_TIMEOUT_MS: 0,
-  REDIS_SYS_READ_TIMEOUT_MS: 2000,
-  REDIS_SYS_COMMANDS_QUEUE_MAX_LENGTH: 10000,
   NEXTAUTH_URL: 'http://localhost:3000',
   NEXTAUTH_SECRET: 'test-secret',
-  // endpoint-helpers spreads TRPC_ORIGINS at module load, so an undefined value makes
-  // importing ANY api page throw "is not iterable". Non-empty tokens below so a request that
-  // omits `?token=` genuinely fails the check rather than matching `undefined !== undefined`.
-  TRPC_ORIGINS: [] as string[],
   WEBHOOK_TOKEN: 'test-webhook-token',
   JOB_TOKEN: 'test-job-token',
   S3_UPLOAD_ENDPOINT: 'http://localhost:9000',
   S3_IMAGE_UPLOAD_ENDPOINT: 'http://localhost:9000',
   ORCHESTRATOR_ENDPOINT: 'http://localhost:8080',
-  // orchestrator.caller constructs an OrchestratorCaller at MODULE scope and throws
-  // `Missing ORCHESTRATOR_ACCESS_TOKEN env` without this, so any suite whose graph
-  // reaches it (e.g. importing orchestrator.router) fails to collect. Worker-level for
-  // the same reason as the endpoint above — a per-file override arrives too late.
   ORCHESTRATOR_ACCESS_TOKEN: 'test-orchestrator-token',
   SIGNALS_ENDPOINT: 'http://localhost:8081',
-  // Read by clickhouse/client.ts at MODULE scope, so it has to be a worker-level default: a
-  // per-file override arrives after that module was already evaluated for the worker. This
-  // is the class that distinguishes env from the call-surface mocks — see the KNOWN LIMIT
-  // note at the top.
   CLICKHOUSE_TRACKER_URL: 'http://tracker.test',
   FLIPT_URL: 'http://localhost:8082',
   EMAIL_HOST: 'smtp.localhost',
@@ -147,6 +147,15 @@ export const TEST_ENV_DEFAULTS: Record<string, unknown> = {
   S3_UPLOAD_SECRET: 'test-secret',
   S3_IMAGE_UPLOAD_KEY: 'test-key',
   S3_IMAGE_UPLOAD_SECRET: 'test-secret',
+  BUZZ_ENDPOINT: 'http://mock-buzz-endpoint',
+  LOGGING: '',
+
+  // Schema defaults overridden for test speed/behaviour:
+  DATABASE_SSL: false, // schema default: true — tests don't need SSL
+  DATABASE_POOL_MAX: 10, // schema default: 20 — smaller pool for tests
+  DATABASE_CONNECTION_TIMEOUT: 5000, // schema default: 0 — give tests a real timeout
+  DATABASE_WRITE_TIMEOUT: 10000, // schema has no default (optional) — tests need a value
+  DATABASE_READ_TIMEOUT: 10000, // schema has no default (optional) — tests need a value
 };
 
 setEnvDefaults(TEST_ENV_DEFAULTS);

@@ -22,6 +22,7 @@ import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { browseShopItems } from '~/components/Shop/shop-browse';
 import { STICKER_HOVER_CARD_WIDTH } from '~/components/Sticker/StickerPlacementHoverCard';
+import { HOVER_DELAY_MS } from '~/components/UserAvatar/hover-card.constants';
 import { StickerPriceBadge } from '~/components/Sticker/StickerPriceBadge';
 import { useStickerDragOut } from '~/components/Sticker/use-sticker-drag-out';
 import { stickerPurchaseTerms } from '~/components/Sticker/sticker.util';
@@ -244,7 +245,12 @@ export function StickerShopPanel({
                 // scroll area inside it clip the card to the shelf — which on
                 // the top row cut off everything but the title.
                 withinPortal
-                openDelay={200}
+                // The shelf is scanned across, not aimed at: the tiles are 48px
+                // squares in a horizontal scroller, so a pointer on its way to
+                // the one you want crosses several. 200ms opened a card on each
+                // of them. The app's shared delay, same as every other hover
+                // card here.
+                openDelay={HOVER_DELAY_MS}
                 position="top"
                 offset={4}
                 shadow="sm"

@@ -1,9 +1,20 @@
 import { getByIdSchema } from '~/server/schema/base.schema';
-import { setUserHubOrderSchema, upsertUserHubSchema } from '~/server/schema/user-hub.schema';
 import {
+  addUserHubSourceSchema,
+  getHubSourceSuggestionsSchema,
+  resolveHubSourceSchema,
+  setUserHubOrderSchema,
+  upsertUserHubSchema,
+  userHubSourceRefSchema,
+} from '~/server/schema/user-hub.schema';
+import {
+  addUserHubSource,
   deleteUserHub,
   getUserHubById,
+  getHubSourceSuggestions,
   getUserHubs,
+  removeUserHubSource,
+  resolveHubSourceFromUrl,
   setUserHubOrder,
   upsertUserHub,
 } from '~/server/services/user-hub.service';
@@ -22,10 +33,38 @@ export const userHubRouter = router({
     .meta({ requiredScope: TokenScope.UserWrite })
     .input(upsertUserHubSchema)
     .mutation(({ input, ctx }) => upsertUserHub({ ...input, userId: ctx.user.id })),
+  addSource: userHubProcedure
+    .meta({ requiredScope: TokenScope.UserWrite })
+    .input(addUserHubSourceSchema)
+    .mutation(({ input, ctx }) => addUserHubSource({ ...input, userId: ctx.user.id })),
+  removeSource: userHubProcedure
+    .meta({ requiredScope: TokenScope.UserWrite })
+    .input(userHubSourceRefSchema)
+    .mutation(({ input, ctx }) => removeUserHubSource({ ...input, userId: ctx.user.id })),
   delete: userHubProcedure
     .meta({ requiredScope: TokenScope.UserWrite })
     .input(getByIdSchema)
     .mutation(({ input, ctx }) => deleteUserHub({ id: input.id, userId: ctx.user.id })),
+  sourceSuggestions: userHubProcedure
+    .meta({ requiredScope: TokenScope.UserRead })
+    .input(getHubSourceSuggestionsSchema)
+    .query(({ input, ctx }) =>
+      getHubSourceSuggestions({
+        ...input,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      })
+    ),
+  resolveSource: userHubProcedure
+    .meta({ requiredScope: TokenScope.UserRead })
+    .input(resolveHubSourceSchema)
+    .query(({ input, ctx }) =>
+      resolveHubSourceFromUrl({
+        ...input,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      })
+    ),
   setOrder: userHubProcedure
     .meta({ requiredScope: TokenScope.UserWrite })
     .input(setUserHubOrderSchema)

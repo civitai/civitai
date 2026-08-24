@@ -1,0 +1,51 @@
+-- "UserProfile"."sfwCoverImageId" has a foreign key to "Image" with ON DELETE SET
+-- NULL and no index on the referencing column. Postgres has to run the referential
+-- integrity trigger once per deleted Image row, and with nothing to serve
+-- `WHERE $1 = "sfwCoverImageId"` each of those is a sequential scan of the whole
+-- 1673 MB / ~3.44M-row table.
+--
+-- Measured on the primary, over the 11 days since the FK was created:
+--   calls 1,645,243 | mean 634.3 ms | total 289.9 HOURS | ~193,719 buffers/call
+-- ...for which it has set 12 rows to NULL in total. The scan is ~100% shared-buffer
+-- hits, so it burns CPU rather than IO and does not show up as a disk problem.
+--
+-- User-visible as Prisma P2028 "Transaction already closed" on post deletion: the
+-- deletes are batched inside one transaction, so at 634 ms per image the failure is
+-- deterministic by post size. Even with the transaction budget at 30s, a post of
+-- ~48 images or more cannot finish. The bulk `deleteImages()` path is worse -- p50
+-- 62.7s on 100-image batches.
+--
+-- Introduced by be0c4ac83f ("feat(profile): add .com-only cover image, announcement
+-- and bio overrides"). Prisma does not create an index for a relation scalar, so a
+-- @relation with onDelete: SetNull silently ships this shape unless the @@index is
+-- written by hand. The neighbouring "coverImageId" column on this same table shows
+-- both halves of the mistake: it has the index but no foreign key, while
+-- "sfwCoverImageId" has the foreign key but no index.
+--
+-- CONCURRENTLY, so building it cannot lock out profile writes. Three consequences
+-- for whoever applies this by hand:
+--
+--   1. It must NOT be wrapped in a transaction block -- run this statement on its own.
+--
+--   2. Do not apply it under a session with a lock_timeout set. CREATE INDEX
+--      CONCURRENTLY briefly takes a lock at both ends of the build, and a timeout
+--      there fails DIRTY: it leaves an INVALID index behind. `SET lock_timeout = 0`
+--      for this session.
+--
+--   3. IF NOT EXISTS matches on the NAME. If a previous attempt left an invalid
+--      index, this statement reports success and creates nothing. Check for that
+--      before retrying, and drop it first:
+--        SELECT indexrelid::regclass FROM pg_index WHERE NOT indisvalid;
+--        DROP INDEX CONCURRENTLY "UserProfile_sfwCoverImageId_idx";
+--      An invalid index is maintained by every write and used by no query, so
+--      leaving one costs writes and buys nothing.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS "UserProfile_sfwCoverImageId_idx"
+  ON "UserProfile" ("sfwCoverImageId");
+
+-- VERIFY against the primary, by the flag rather than the exit code -- a sibling
+-- migration having been applied is not evidence this one was:
+--   SELECT indisvalid FROM pg_index
+--   WHERE indexrelid = '"UserProfile_sfwCoverImageId_idx"'::regclass;
+--
+-- If that returns false: REINDEX INDEX CONCURRENTLY "UserProfile_sfwCoverImageId_idx";
+-- or DROP INDEX CONCURRENTLY and re-run the statement above.

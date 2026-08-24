@@ -1,14 +1,17 @@
-import { Center, Loader, Text, TextInput } from '@mantine/core';
+import { Center, Group, Loader, Menu, Text, Title } from '@mantine/core';
+import { openConfirmModal } from '@mantine/modals';
+import { IconDotsVertical, IconPencil, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import { useEffect, useRef, useState } from 'react';
-import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Page } from '~/components/AppLayout/Page';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { HubsLayout } from '~/components/Hubs/HubsLayout';
+import HubUpsertModal from '~/components/Hubs/HubUpsertModal';
+import { useHubSort } from '~/components/Hubs/useHubSort';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
-import { ImageSort } from '~/server/common/enums';
-import { hubLimits, hubSortSchema } from '~/server/schema/user-hub.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -32,27 +35,15 @@ export default Page(
       { enabled: Number.isInteger(hubId) }
     );
 
-    const [name, setName] = useState('');
-    // Seed once per hub. Initialising once would keep the previous hub's name
-    // after switching in the rail; re-seeding on every result would overwrite
-    // what the user is typing whenever the query refetches.
-    const seededHubId = useRef<number | null>(null);
-    useEffect(() => {
-      if (hub && seededHubId.current !== hub.id) {
-        seededHubId.current = hub.id;
-        setName(hub.name);
-      }
-    }, [hub]);
+    const sort = useHubSort(hub?.sort);
 
-    const upsert = trpc.userHub.upsert.useMutation({
+    const deleteMutation = trpc.userHub.delete.useMutation({
       onSuccess: async () => {
-        await Promise.all([
-          utils.userHub.getById.invalidate({ id: hubId }),
-          utils.userHub.getAll.invalidate(),
-        ]);
+        const remaining = await utils.userHub.getAll.fetch(undefined, { staleTime: 0 });
+        await router.replace(remaining.length ? `/hubs/${remaining[0].id}` : '/hubs');
       },
       onError: (error) =>
-        showErrorNotification({ title: 'Could not save hub', error: new Error(error.message) }),
+        showErrorNotification({ title: 'Could not delete hub', error: new Error(error.message) }),
     });
 
     if (isLoading)
@@ -63,56 +54,103 @@ export default Page(
       );
     if (!hub) return <NotFound />;
 
-    const sort = hubSortSchema.catch(ImageSort.Newest).parse(hub.sort);
     const hasSources = hub.sources.some((s) => s.enabled);
 
     return (
       <>
         <Meta title={`${hub.name} | Civitai`} deIndex />
-        <div className="flex flex-col gap-3 py-3">
-          <TextInput
-            variant="unstyled"
-            aria-label="Hub name"
-            value={name}
-            maxLength={hubLimits.nameLength}
-            disabled={upsert.isPending}
-            classNames={{ input: 'text-2xl font-bold' }}
-            onChange={(event) => setName(event.currentTarget.value)}
-            onBlur={() => {
-              const trimmed = name.trim();
-              if (!trimmed || trimmed === hub.name) {
-                setName(hub.name);
-                return;
-              }
-              upsert.mutate({ id: hub.id, name: trimmed });
-            }}
-          />
+        {/* Same container the feed itself renders in, so the title lines up with
+            the first card instead of hugging the rail. */}
+        <MasonryContainer className="min-h-full">
+          <div className="flex flex-col gap-3 py-3">
+            <Group justify="space-between" wrap="nowrap" align="flex-start">
+              <div className="min-w-0">
+                <Title order={1} lineClamp={2}>
+                  {hub.name}
+                </Title>
+                {!!hub.description && (
+                  <Text c="dimmed" size="sm">
+                    {hub.description}
+                  </Text>
+                )}
+              </div>
+              <Menu withinPortal position="bottom-end">
+                <Menu.Target>
+                  <LegacyActionIcon variant="subtle" aria-label="Hub options">
+                    <IconDotsVertical size={20} />
+                  </LegacyActionIcon>
+                </Menu.Target>
+                <Menu.Dropdown>
+                  <Menu.Item
+                    leftSection={<IconPencil size={16} />}
+                    onClick={() =>
+                      dialogStore.trigger({ component: HubUpsertModal, props: { hub } })
+                    }
+                  >
+                    Edit hub
+                  </Menu.Item>
+                  <Menu.Item
+                    color="red"
+                    leftSection={<IconTrash size={16} />}
+                    onClick={() =>
+                      openConfirmModal({
+                        title: `Delete "${hub.name}"?`,
+                        children: (
+                          <Text size="sm">
+                            Its sources go with it and this cannot be undone. The images stay where
+                            they are.
+                          </Text>
+                        ),
+                        labels: { cancel: 'Cancel', confirm: 'Delete hub' },
+                        confirmProps: { color: 'red' },
+                        onConfirm: () => deleteMutation.mutate({ id: hub.id }),
+                      })
+                    }
+                  >
+                    Delete hub
+                  </Menu.Item>
+                </Menu.Dropdown>
+              </Menu>
+            </Group>
 
-          {!hasSources ? (
-            <Text c="dimmed">
-              {hub.sources.length === 0
-                ? 'This hub is empty. Add a creator or a model to start filling it.'
-                : 'Every source in this hub is switched off.'}
-            </Text>
-          ) : (
-            // disableStoreFilters keeps the global image-filter store out of a hub:
-            // the hub's own sort and period are what the user configured for it.
-            <ImagesInfinite
-              showEof
-              disableStoreFilters
-              filters={{
-                hubId: hub.id,
-                sort,
-                period: hub.period,
-                // Stored on the hub and empty by default; an empty list means
-                // "every type", which is what omitting the filter does.
-                types: hub.mediaTypes.length ? hub.mediaTypes : undefined,
-              }}
-            />
-          )}
-        </div>
+            {!hasSources ? (
+              <Text c="dimmed">
+                {hub.sources.length === 0
+                  ? 'This hub is empty. Add a creator or a model from the rail to start filling it.'
+                  : 'Every source in this hub is switched off.'}
+              </Text>
+            ) : (
+              // disableStoreFilters keeps the global image-filter store out of a hub:
+              // the hub's own sort and period are what the user configured for it.
+              <ImagesInfinite
+                showEof
+                disableStoreFilters
+                filters={{
+                  hubId: hub.id,
+                  sort,
+                  period: hub.period,
+                  // Enumerated so a key added to `hubFeedFiltersSchema` is a
+                  // deliberate addition here too — `hubId` may only be combined
+                  // with filters the index can serve (`requiresImageDbPath`).
+                  baseModels: hub.filters.baseModels,
+                  tools: hub.filters.tools,
+                  techniques: hub.filters.techniques,
+                  withMeta: hub.filters.withMeta,
+                  fromPlatform: hub.filters.fromPlatform,
+                  remixesOnly: hub.filters.remixesOnly,
+                  nonRemixesOnly: hub.filters.nonRemixesOnly,
+                  hideChallenges: hub.filters.hideChallenges,
+                  includePG13: hub.filters.includePG13,
+                  // Omitted rather than sent empty: the hub stores [] to mean
+                  // "no restriction", and the feed's filter does not.
+                  types: hub.mediaTypes.length ? hub.mediaTypes : undefined,
+                }}
+              />
+            )}
+          </div>
+        </MasonryContainer>
       </>
     );
   },
-  { InnerLayout: ({ children }) => <FeedLayout>{<HubsLayout>{children}</HubsLayout>}</FeedLayout> }
+  { InnerLayout: HubsLayout }
 );

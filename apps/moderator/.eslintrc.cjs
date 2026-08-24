@@ -34,7 +34,15 @@ module.exports = {
     },
   ],
   env: { browser: true, node: true, es2022: true },
-  ignorePatterns: ['.svelte-kit/', 'build/', 'node_modules/', '*.cjs'],
+  // `src/lib/server/moderator-db/` is prisma-kysely output — it carries a type per table in the
+  // moderator database, and the ones with no screen yet read as unused.
+  ignorePatterns: [
+    '.svelte-kit/',
+    'build/',
+    'node_modules/',
+    '*.cjs',
+    'src/lib/server/moderator-db/',
+  ],
   rules: {
     // Matches the root config's posture: `any` is pervasive here and failing on it would hold new
     // files to a stricter bar than anything already merged.

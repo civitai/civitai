@@ -8,6 +8,14 @@ import {
 } from '~/server/services/orchestrator/blobArchive';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { getConsumerBlobId } from '~/shared/orchestrator/blob-url';
+import type { TrainingRunNameParts } from '~/shared/utils/training-file-names';
+import {
+  trainingEpochModelFileName,
+  trainingEpochSampleFileName,
+  trainingRunArchiveName,
+} from '~/shared/utils/training-file-names';
+import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
+import { trainingArchitectureKey } from '~/utils/training/run-summary';
 
 type NormalizedEpoch = { epochNumber: number; modelUrl: string; sampleImages: string[] };
 
@@ -25,10 +33,6 @@ function normalizeEpochs(trainingResults: TrainingResults): NormalizedEpoch[] {
           sampleImages: epoch.sampleImages ?? [],
         }
   );
-}
-
-function sanitize(value: string) {
-  return value.replace(/[^a-zA-Z0-9_-]/g, '_');
 }
 
 /** Blob ids carry the original extension (`ABC123.jpeg`), which is all we know about the media type. */
@@ -53,22 +57,22 @@ export type TrainingEpochArchiveEntries = {
 export function buildEpochArchiveEntries({
   trainingResults,
   modelName,
+  versionId,
+  architecture,
   maxEntries = MAX_BLOB_ARCHIVE_ENTRIES,
-}: {
+}: TrainingRunNameParts & {
   trainingResults: TrainingResults;
-  modelName: string;
   maxEntries?: number;
 }): TrainingEpochArchiveEntries {
   const epochs = [...normalizeEpochs(trainingResults)].sort(
     (a, b) => a.epochNumber - b.epochNumber
   );
-  const prefix = sanitize(modelName);
-
+  const run = { modelName, versionId, architecture };
   const candidates: Array<{ url: string; fileName: (blobId: string) => string }> = [];
   for (const epoch of epochs) {
     candidates.push({
       url: epoch.modelUrl,
-      fileName: () => `${prefix}_epoch_${epoch.epochNumber}.safetensors`,
+      fileName: () => trainingEpochModelFileName({ ...run, epochNumber: epoch.epochNumber }),
     });
   }
   for (const epoch of epochs) {
@@ -76,7 +80,10 @@ export function buildEpochArchiveEntries({
       candidates.push({
         url,
         fileName: (blobId) =>
-          `${prefix}_epoch_${epoch.epochNumber}_sample_${index + 1}${extensionOf(blobId)}`,
+          trainingEpochSampleFileName(
+            { ...run, epochNumber: epoch.epochNumber, sampleNumber: index + 1 },
+            extensionOf(blobId)
+          ),
       });
     });
   }
@@ -120,6 +127,7 @@ export async function getTrainingEpochArchive({
     where: { id: modelVersionId },
     select: {
       id: true,
+      trainingDetails: true,
       model: { select: { userId: true, name: true } },
       files: { select: { metadata: true }, where: { type: 'Training Data' } },
     },
@@ -133,16 +141,22 @@ export async function getTrainingEpochArchive({
   const trainingResults = (trainingFile?.metadata as ModelFileMetadata | null)?.trainingResults;
   if (!trainingResults?.epochs?.length) throw throwNotFoundError('No training epochs found');
 
-  const modelName = modelVersion.model.name;
+  const run = {
+    modelName: modelVersion.model.name,
+    versionId: modelVersion.id,
+    architecture: trainingArchitectureKey(
+      modelVersion.trainingDetails as TrainingDetailsObj | null
+    ),
+  };
   const { entries, unresolvedCount, cappedCount } = buildEpochArchiveEntries({
     trainingResults,
-    modelName,
+    ...run,
   });
   if (!entries.length) throw throwNotFoundError('No downloadable training files found');
 
   const archive = await createBlobArchive({
     entries,
-    archiveName: `${sanitize(modelName)}_training.zip`,
+    archiveName: trainingRunArchiveName(run),
   });
 
   return {

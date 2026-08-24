@@ -401,3 +401,57 @@ describe('GET /api/v1/apps/{slug} (detail)', () => {
     expect(mockDetail).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// REST parity — `sourceRepoUrl` on GET /api/v1/apps/{slug}
+// ---------------------------------------------------------------------------
+
+describe('GET /api/v1/apps/{slug} — sourceRepoUrl parity', () => {
+  /**
+   * 🔴 WHAT THIS PATH CANNOT DO FOR US, and why it is worth saying: this endpoint has
+   * NO tRPC transformer, so whatever the service returns is `JSON.stringify`d straight
+   * onto the wire. A `Date` or a class instance would serialise differently here than
+   * over tRPC. `sourceRepoUrl` is a plain `string | null`, and these cases pin that the
+   * handler passes it through UNCHANGED rather than reshaping or dropping it.
+   *
+   * The DTO's own JSON-safety (and the card/detail asymmetry) is asserted against the
+   * REAL projection in `app-listing.service.test.ts` — this suite's service is a mock,
+   * so it can only ever pin what the HANDLER does with an answer.
+   */
+  it('emits the field verbatim as a JSON-safe scalar', async () => {
+    const REPO = 'https://github.com/civitai/cool-app';
+    mockDetail.mockResolvedValueOnce({ ...detail('my-app'), sourceRepoUrl: REPO });
+    const { req, res } = createMocks({ query: { slug: 'my-app' } });
+    await (detailHandler as unknown as Handler)(req, res, MOD);
+
+    expect(res._status()).toBe(200);
+    // Round-tripped, not merely read off the object the handler was handed.
+    const wire = JSON.parse(JSON.stringify(res._json())) as Record<string, unknown>;
+    expect(wire.sourceRepoUrl).toBe(REPO);
+    expect(typeof wire.sourceRepoUrl).toBe('string');
+  });
+
+  it('emits an explicit null (never drops the key) for a listing with no source repo', async () => {
+    // A client must not have to distinguish "absent" from "null"; the field is declared
+    // non-optional on `ListingDetail`.
+    mockDetail.mockResolvedValueOnce({ ...detail('my-app'), sourceRepoUrl: null });
+    const { req, res } = createMocks({ query: { slug: 'my-app' } });
+    await (detailHandler as unknown as Handler)(req, res, MOD);
+
+    expect(res._status()).toBe(200);
+    const wire = JSON.parse(JSON.stringify(res._json())) as Record<string, unknown>;
+    expect('sourceRepoUrl' in wire).toBe(true);
+    expect(wire.sourceRepoUrl).toBeNull();
+  });
+
+  it('the 404 posture is UNCHANGED — a missing app still yields the error envelope, no field', async () => {
+    mockDetail.mockResolvedValueOnce(null);
+    const { req, res } = createMocks({ query: { slug: 'nope' } });
+    await (detailHandler as unknown as Handler)(req, res, MOD);
+
+    expect(res._status()).toBe(404);
+    const body = res._json() as Record<string, unknown>;
+    expect(body.code).toBe('NOT_FOUND');
+    expect(body).not.toHaveProperty('sourceRepoUrl');
+  });
+});

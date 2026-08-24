@@ -2588,7 +2588,17 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // where an app approved BEFORE this feature (possibly already curated) has its
   // first listing minted now on a subsequent-version approve.
   const { mapAppBlockToListing, buildListingScalarSync } = await import('./app-listing-mapper');
+  // Is the manual-apply `app_listings.source_repo_url` column there yet? Probed ONCE
+  // and threaded into all three write branches below. 🔴 It is deliberately probed
+  // rather than assumed: naming a missing column in any of these payloads throws, and
+  // this whole block is log-and-continue — so the failure would present as store
+  // listings silently not being minted for newly approved apps, with only a warn line
+  // to say so. `false` merely omits the new field. See app-listing-source-repo.service.
   try {
+    // INSIDE the try on purpose: it is a database round trip, and a transient failure
+    // on it must land in this block's log-and-continue rather than abort the approve.
+    const { isSourceRepoColumnAvailable } = await import('./app-listing-source-repo.service');
+    const sourceRepoAvailable = await isSourceRepoColumnAvailable(dbWrite);
     // (3b-transition) W13 draft-at-submit — an app SUBMITTED after this feature
     // shipped has a pre-approval on-site DRAFT AppListing (kind='onsite',
     // appBlockId=NULL, status='draft', slug=request.slug) minted at submit, carrying
@@ -2673,6 +2683,7 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
               manifest: abForTransition.manifest,
               blockId: abForTransition.blockId,
               category: abForTransition.category,
+              sourceRepoAvailable,
             }),
           },
         });
@@ -2723,7 +2734,7 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
       // remains the recovery path for such an anomaly.
       if (ab && ab.app && typeof ab.app.userId === 'number') {
         await dbWrite.appListing.create({
-          data: mapAppBlockToListing(ab as SourceAppBlock),
+          data: mapAppBlockToListing(ab as SourceAppBlock, { sourceRepoAvailable }),
           select: { id: true },
         });
       }
@@ -2782,6 +2793,7 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
               manifest: ab.manifest,
               blockId: ab.blockId,
               category: ab.category,
+              sourceRepoAvailable,
             }),
           });
           if (synced.count === 0) {

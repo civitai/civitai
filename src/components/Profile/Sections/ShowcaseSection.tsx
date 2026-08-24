@@ -3,6 +3,7 @@ import type { ProfileSectionProps } from '~/components/Profile/ProfileSection';
 import { ProfileSection, ProfileSectionPreview } from '~/components/Profile/ProfileSection';
 import { IconHeart } from '@tabler/icons-react';
 import React, { useMemo } from 'react';
+import { MAX_ENTITIES_COVER_IMAGE } from '~/server/schema/image.schema';
 import type { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';
 import { trpc } from '~/utils/trpc';
 import { GenericImageCard } from '~/components/Cards/GenericImageCard';
@@ -15,14 +16,22 @@ import clsx from 'clsx';
 export const ShowcaseSection = ({ user }: ProfileSectionProps) => {
   const [ref, inView] = useInViewDynamic({ id: 'profile-showcase-section' });
   const showcaseItems = user.profile.showcaseItems as ShowcaseItemSchema[];
+  // Clamped to the schema's own bound rather than sent whole. `isNullState` below is
+  // computed from `!coverImages.length`, so a refused query would take the entire
+  // Showcase section off the profile — and it would stay off, since each render sends
+  // the same list. Clamped, a showcase longer than the bound just shows its first
+  // `MAX_ENTITIES_COVER_IMAGE` items. `addEntityToShowcase` truncates to 32, but
+  // `userProfile.update` does not bound `showcaseItems`, so a stored showcase is not
+  // guaranteed to be short.
+  const entities = useMemo(() => showcaseItems.slice(0, MAX_ENTITIES_COVER_IMAGE), [showcaseItems]);
   const {
     data: _coverImages,
     isLoading,
     isRefetching,
   } = trpc.image.getEntitiesCoverImage.useQuery(
-    { entities: showcaseItems },
+    { entities },
     {
-      enabled: showcaseItems.length > 0 && inView,
+      enabled: entities.length > 0 && inView,
       placeholderData: keepPreviousData,
       trpc: { context: { skipBatch: true } },
     }

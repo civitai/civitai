@@ -40,6 +40,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
+import { booleanString } from '~/utils/zod-helpers';
 
 const actionSchema = z.enum(['count', 'enqueue', 'verify']);
 
@@ -48,7 +49,10 @@ const schema = z
     action: actionSchema,
     modelId: z.coerce.number().int().positive().optional(),
     limit: z.coerce.number().int().positive().max(50_000).optional(),
-    dryRun: z.coerce.boolean().optional(),
+    // booleanString, not z.coerce.boolean: this schema is parsed against req.query, where
+    // coerce runs JS Boolean() and makes `?dryRun=false` TRUE — enqueue then writes nothing
+    // and reports a preview, so the backfill looks done without a single row queued.
+    dryRun: booleanString().optional(),
   })
   .superRefine((data, ctx) => {
     if (data.action === 'verify' && data.limit !== undefined) {

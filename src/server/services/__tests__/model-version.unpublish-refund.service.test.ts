@@ -50,6 +50,8 @@ vi.mock('~/server/services/paid-access.service', () => ({
   writePaidAccessForModelVersion: vi.fn(),
   getPaidAccess: vi.fn(),
   assertPaidAccessInput: vi.fn(),
+  getFreshSalesForPermanentGate: vi.fn().mockResolvedValue([]),
+  bustModelSaleCache: vi.fn(),
 }));
 vi.mock('~/server/services/auction.service', () => ({ deleteBidsForModelVersion: vi.fn() }));
 vi.mock('~/server/services/blocklist.service', () => ({ throwOnBlockedLinkDomain: vi.fn() }));
@@ -74,7 +76,6 @@ vi.mock('~/server/services/notification.service', () => ({ createNotification: v
 vi.mock('~/server/services/orchestrator/models', () => ({ bustOrchestratorModelCache: vi.fn() }));
 vi.mock('~/server/services/post.service', () => ({ addPostImage: vi.fn(), createPost: vi.fn() }));
 vi.mock('~/server/services/model.service', () => ({
-  ingestModelById: vi.fn().mockResolvedValue(undefined),
   updateModelLastVersionAt: vi.fn(),
 }));
 vi.mock('~/server/services/model-file.service', () => ({

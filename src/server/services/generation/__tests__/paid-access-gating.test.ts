@@ -11,6 +11,7 @@ const { mockGetPaidAccess, mockHasEntityAccess, mockGetViewerMonetization } = vi
 // rows so these tests stay about the ACCESS decision. Pricing has its own tests in paid-access.service.
 vi.mock('~/server/services/paid-access.service', () => ({
   getViewerMonetization: mockGetViewerMonetization,
+  bustModelSaleCache: vi.fn(),
 }));
 vi.mock('~/server/services/common.service', () => ({ hasEntityAccess: mockHasEntityAccess }));
 

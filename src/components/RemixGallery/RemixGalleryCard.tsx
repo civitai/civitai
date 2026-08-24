@@ -1,3 +1,4 @@
+import { REMIX_QUEUE_SENT_URL } from '~/components/Placement/queue-routes';
 import {
   ActionIcon,
   Anchor,
@@ -377,7 +378,7 @@ export function RemixGalleryCard({ imageId }: { imageId: number }) {
               landed on a tab that does not contain the thing being withdrawn. */}
           <Text size="xs" c="dimmed">
             Waiting on the creator. You can{' '}
-            <Anchor href="/user/remix-submissions?tab=sent" size="xs">
+            <Anchor href={REMIX_QUEUE_SENT_URL} size="xs">
               {viewerPending.length === 1 ? 'withdraw it' : 'withdraw them'}
             </Anchor>{' '}
             until they decide.

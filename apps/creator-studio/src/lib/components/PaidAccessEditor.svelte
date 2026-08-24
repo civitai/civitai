@@ -1,5 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte';
+  import GenerationOnlyHint from '$lib/components/monetization/GenerationOnlyHint.svelte';
   import { enhance } from '$app/forms';
   import { invalidateAll } from '$app/navigation';
   import { toast } from '@civitai/ui/components/ui/sonner/index.js';
@@ -8,12 +9,17 @@
   import UsageControlPicker from '$lib/components/monetization/UsageControlPicker.svelte';
   import PaidAccessFields from '$lib/components/monetization/PaidAccessFields.svelte';
   import RightsAffirmation from '$lib/components/monetization/RightsAffirmation.svelte';
+  import SaleUndercutNotice from '$lib/components/monetization/SaleUndercutNotice.svelte';
+  import {
+    capMediaType,
+    effectivePaidAccessPrice,
+    type ModelVersionSaleWindow,
+  } from '@civitai/buzz';
   import type { PaidAccessContext } from '$lib/monetization/paid-access-form';
   import { resolveGateEligibility } from '$lib/monetization/gate-eligibility';
   import {
     MIN_ACCESS_PRICE,
     DEFAULT_GENERATION_TRIAL_LIMIT,
-    GENERATION_ONLY_HINT,
     monetizationLimits,
     type CreatorUsageControl,
   } from '$lib/monetization/paid-access';
@@ -28,11 +34,30 @@
     version,
     onClose,
     caps,
+    sales,
   }: {
     version: CreatorModelVersion;
     onClose: () => void;
     caps: CreatorCaps;
+    /** Live or upcoming sales covering this version — a base-price edit moves what buyers pay under them. */
+    sales?: ModelVersionSaleWindow[];
   } = $props();
+
+  // What a buyer would actually be charged for a given stored price on THIS version.
+  // 🔴 The STORED gate's permanence, not the form's. `ea.permanent` is whatever the creator currently
+  // has selected, and `effectivePaidAccessPrice` returns the price uncapped for a timed gate — so
+  // flicking the radio to early access made the "currently" figure jump from 500 back to 5000, which is
+  // the exact wrong number this was written to remove. What buyers pay right now depends on the gate on
+  // record, not on a draft.
+  const storedGateIsPermanent = $derived(version.paidAccessConfig?.permanent === true);
+  const cappedPrice = $derived((stored: number | undefined) =>
+    stored == null
+      ? undefined
+      : effectivePaidAccessPrice(stored, caps.capTier, {
+          permanent: storedGateIsPermanent,
+          mediaType: capMediaType(version.baseModel),
+        })
+  );
 
   const permanentCap = $derived(caps.permanentCap);
   const permanentUsed = $derived(caps.permanentUsed);
@@ -198,7 +223,7 @@
         allowGenerationOnly={caps.canSetGenerationOnly}
       />
       {#if !caps.canSetGenerationOnly}
-        <p class="mt-2 text-xs text-dark-2">{GENERATION_ONLY_HINT}</p>
+        <GenerationOnlyHint class="mt-2" />
       {/if}
       {#if usageControl !== storedUsageControl}
         <div class="mt-3 flex items-center gap-3">
@@ -248,6 +273,16 @@
       <input type="hidden" name="usageControl" value={usageControl} />
 
       <PaidAccessFields bind:ea bind:genMode {isGenOnly} ctx={paidAccessCtx} />
+      <!-- Capped, not stored. A sale composes over `cappedTerms`, so a lapsed gold creator storing
+           5000 is billed 500 and a 20% sale takes buyers to 400 — quoting 4000 here would be wrong on
+           the one screen whose whole job is stating a price. The ceiling governs permanent gates only. -->
+      <!-- Only for a permanent gate: a sale cannot cover early access, so quoting a sale price beside a
+           timed gate advertises a discount that will never apply. -->
+      <SaleUndercutNotice
+        sales={storedGateIsPermanent ? sales : []}
+        storedPrice={cappedPrice(version.paidAccessConfig?.accessPrice ?? 0) ?? 0}
+        newPrice={cappedPrice(ea.accessPrice)}
+      />
       {#if mustAffirm}
         <RightsAffirmation bind:checked={rightsAffirmed} />
       {/if}

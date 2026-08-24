@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 /**
  * STEP-4 sysRedis soft-dependency sweep — the SSR/hot-path readers in
@@ -29,25 +30,21 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * demand cross-module-instance reference identity that resetModules precludes).
  */
 
-const { mockGet, mockWithSysReadDeadline, mockLogSysRedisFailOpen } = vi.hoisted(() => ({
-  mockGet: vi.fn(),
-  mockWithSysReadDeadline: vi.fn<(p: Promise<unknown>) => Promise<unknown>>(),
+const { mockLogSysRedisFailOpen } = vi.hoisted(() => ({
   mockLogSysRedisFailOpen: vi.fn(),
 }));
 
-vi.mock('~/server/redis/client', () => ({
-  sysRedis: { get: mockGet },
-  redis: { get: vi.fn(), set: vi.fn(), packed: { get: vi.fn(), set: vi.fn() } },
-  REDIS_KEYS: { SYSTEM: {}, LIVE_NOW: 'live-now' },
-  REDIS_SYS_KEYS: {
-    SYSTEM: {
-      BROWSING_SETTING_ADDONS: 'system:browsing-setting-addons',
-      CREATION_BLOCKED_TAGS: 'system:creation-blocked-tags',
-      LIVE_FEATURE_FLAGS: 'system:live-feature-flags',
-    },
-  },
-  withSysReadDeadline: mockWithSysReadDeadline,
-}));
+// The sysRedis client and the `withSysReadDeadline` seam both come from the
+// canonical shared mock (registered globally in src/__tests__/setup.ts). The
+// seam is a real hybrid node, so the two spellings this file relies on — a
+// transparent pass-through by default and a per-case `mockRejectedValue` for
+// the SLOW leg — keep working exactly as they did.
+//
+// The hand-rolled REDIS_SYS_KEYS table that used to live here is gone: the
+// canonical registration keeps the REAL key constants, and the three values
+// this file declared were byte-identical to them.
+const mockGet = redisMock.sysRedis.get;
+const mockWithSysReadDeadline = redisMock.withSysReadDeadline;
 
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: mockLogSysRedisFailOpen }));
 

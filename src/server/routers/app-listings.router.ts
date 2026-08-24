@@ -20,6 +20,7 @@ import {
 import {
   getMyAppListingReviewSchema,
   listAppListingReviewsSchema,
+  setAppListingReviewExcludeSchema,
   upsertAppListingReviewSchema,
 } from '~/server/schema/blocks/app-listing-review.schema';
 import {
@@ -122,9 +123,18 @@ const enforceAppBlocksAuthorFlag = middleware(async ({ ctx, next }) => {
 });
 
 /**
- * Token-scope gate for the listing-media authoring procs the civitai CLI drives
+ * Token-scope gate for the OWNER-SCOPED listing procs the civitai CLI drives
  * (`civitai app listing set-icon/set-cover/add-screenshot/rm-screenshot/reorder/status`,
- * civitai/cli#186).
+ * civitai/cli#186; and `civitai app doctor` — the listing-problems read + its fixes).
+ *
+ * 🔴 THE SET IS NO LONGER "MEDIA" — the name is kept because it is referenced from the
+ * CLI-side docs, but the membership rule is broader and is stated here so a future
+ * annotation is a decision rather than a copy: a proc may carry this meta iff it is
+ * OWNER-OR-SEAT bound independently of token scope, writes only author-owned state, and
+ * (for an approved listing) routes material change through the shadow-revision model.
+ * `listMine` + `getAssets` (the doctor READS) and `updateListing` +
+ * `updateRevisionDraft` (its FIXES) joined on exactly that test; each states its own
+ * verdict at its own site.
  *
  * The CLI acts as the caller over the SCOPED OAuth access token `civitai login` mints
  * (`UserRead | AppBlocksSubmit | AppBlocksDevTunnel`) — NOT a Full personal API key.
@@ -144,9 +154,42 @@ const enforceAppBlocksAuthorFlag = middleware(async ({ ctx, next }) => {
  * ADDITIVE, never loosening: each proc keeps its `appDeveloperProcedure` /
  * `protectedProcedure + enforceAppBlocksAuthorFlag` author-cohort gate and the
  * service-layer owner checks (`assertOwnerAssetEditable`, owner-bound `userId`). This is
- * one more gate the token must clear, applied only to the owner-scoped listing-media
- * authoring procs — no mod-only or cross-user proc is annotated. Mirrors
- * `blocks.router` `startDevTunnel`/`stopDevTunnel` (`AppBlocksDevTunnel`).
+ * one more gate the token must clear, applied only to owner-scoped procs — no MOD-ONLY
+ * proc is annotated. Mirrors `blocks.router` `startDevTunnel`/`stopDevTunnel`
+ * (`AppBlocksDevTunnel`).
+ *
+ * 🔴 THAT CLAIM NEEDS A QUALIFIER AND THE EARLIER WORDING ("no mod-only or CROSS-USER
+ * proc is annotated") DID NOT CARRY IT: **the gate behind this set is NOT UNIFORM**, so
+ * do not reason about one member from another. Derived by tracing every member (not by
+ * pattern), the three shapes are:
+ *
+ *   1. MOD-BYPASSING, via `app-listing-assets::loadOwnedListing`, which short-circuits
+ *      the ownership check for `user.isModerator` — disagreement D1 in
+ *      `app-access.call-site-ledger.test.ts`, where sibling gates deliberately disagree
+ *      about the bypass. Reached by `setIcon`, `setCover`, `addScreenshot`,
+ *      `reorderScreenshots` (directly / via `resolveOwnerAssetEditTarget`) and by
+ *      `updateScreenshotCaption`, `removeScreenshot` (via `resolveOwnerScreenshotTarget`).
+ *      `getAssetScanStatuses` carries its OWN equivalent (`user.isModerator ? {} :
+ *      { userId: user.id }`). Seven members.
+ *   2. NO LISTING GATE AT ALL, caller-bound: `persistAssetImage`,
+ *      `ingestAssetFromDataUri` create an `Image` owned by the caller and take no
+ *      listing id. No bypass to have.
+ *   3. NO MOD OVERRIDE, via `offsite-listing::loadOwnedEditableListing`:
+ *      `getMyListingForEdit`, `getMyListingForApp`, `beginListingRevision`,
+ *      `submitListingRevision`, `updateListing`, `updateRevisionDraft`.
+ *
+ * For a caller who IS a moderator, the shape-1 members are cross-listing, so this meta
+ * lets a THIRD-PARTY APP the moderator authorised with `AppBlocksSubmit` inherit that
+ * reach — where an un-annotated proc would have 403'd it. That is delegated moderator
+ * authority rather than widened authority, and it is the accepted cost of admitting the
+ * CLI on the media procs; it is written down rather than left to be discovered.
+ *
+ * 🔴 IT IS ALSO WHY `getAssets` IS **NOT** IN THIS SET. It was annotated during the
+ * `civitai app doctor` work and the annotation was withdrawn as a product decision: it is
+ * shape 1, and it is a pure READ whose whole payload was already reachable from procs
+ * already in this set, so it carried the bypass and bought nothing. New annotations are
+ * decided on that basis — what the proc ADDS, weighed against which gate it sits behind —
+ * never by copying a sibling's `.meta(...)`.
  */
 const listingMediaCliScope = { requiredScope: TokenScope.AppBlocksSubmit } as const;
 
@@ -319,7 +362,24 @@ function mapOffsiteError(err: unknown): TRPCError {
 }
 
 export const appListingsRouter = router({
-  /** Owner/mod read of a listing's current assets (creator dashboard). */
+  /**
+   * Owner/mod read of a listing's current assets (creator dashboard).
+   *
+   * 🔴 DELIBERATELY **NOT** `listingMediaCliScope`, and this is the note that keeps it
+   * that way. It was annotated during the `civitai app doctor` work and the annotation
+   * was then withdrawn as a product decision: its service gate
+   * ({@link loadOwnedListing}) SHORT-CIRCUITS for moderators, so admitting a scoped OAuth
+   * token here would let a third-party app a moderator authorised inherit that
+   * cross-listing reach. `app doctor` does not need it — every datum it wanted is already
+   * on annotated procs (`listMine.problems[]` for the advisory + `hasBlockedAsset` /
+   * `hasPendingScan` / completeness equivalents; `getMyListingForEdit` /
+   * `getMyListingForApp` for per-screenshot `{id, imageId, order, caption}`;
+   * `getAssetScanStatuses` for per-image scan state). Re-annotating this proc needs the
+   * mod-bypass question answered first, not a copy of a sibling's `.meta(...)`.
+   *
+   * `app-listings.router.cli-scope.test.ts` asserts a scoped OAuth token is REFUSED here,
+   * so the exclusion is behaviourally pinned rather than left to this comment.
+   */
   getAssets: protectedProcedure
     .use(enforceAppBlocksAuthorFlag)
     .input(listingAssetsQuerySchema)
@@ -585,8 +645,39 @@ export const appListingsRouter = router({
    * shadow-draft revision (`requiresReview:true` + the `shadowId` to edit assets
    * against, then `submitListingRevision`). Owner-bound in the service. Rejected →
    * MUST_RESUBMIT; removed → FORBIDDEN. Typed failures map via `mapOffsiteError`.
+   *
+   * ## CLI-reachable (`listingMediaCliScope`) — a WRITE, so the three checks stated
+   *
+   * `civitai app doctor` reports `empty-description` / `empty-tagline` / `empty-category`;
+   * this is the only proc that can FIX them, so leaving it un-annotated would ship a
+   * read-only diagnosis of problems the CLI cannot act on.
+   *
+   *   (a) AUTHORITY IS INDEPENDENT OF TOKEN SCOPE. `loadOwnedEditableListing` →
+   *       `resolveListingRole` → `resolveListingAccess` admits the listing's OWNER or an
+   *       ACCEPTED collaborator, and NOTHING else — there is not even a moderator
+   *       override on this path. The meta changes which CREDENTIAL may speak for that
+   *       caller, never who the caller may act for.
+   *   (b) IT CANNOT MUTATE ANYTHING A MODERATOR OWNS. Every write funnels through
+   *       `buildListingPatchData`, whose entire output surface is author-owned scalars
+   *       (externalUrl / sourceRepoUrl / name / tagline / description / category /
+   *       contentRating / the derived connect-scope snapshot). No `status`, no
+   *       moderation event, no publish-request row. A `removed` listing is refused
+   *       outright (FORBIDDEN) and a `rejected` one steered to resubmit.
+   *   (c) IT RESPECTS THE SHADOW-REVISION MODEL. `approved` + a MATERIAL change stages
+   *       onto a shadow via `beginListingRevision` and leaves the live parent untouched;
+   *       only trivial edits touch an approved row in place, which is the documented
+   *       design. A shadow passed here is REFUSED (`revisionOfId != null` →
+   *       INVALID_REVISION) — shadows are `updateRevisionDraft`'s job.
+   *
+   * 🔴 The scope-disclosure keys (`requestedScopes`/`scopeJustifications`) are reachable
+   * through this patch, but they are SERVER-DERIVED: `deriveScopePatch` re-resolves the
+   * linked OAuth client's `allowedScopes` ceiling and `assertConnectScopesValid` re-checks
+   * the subset + justifications, so a token cannot request a scope its client does not
+   * already allow. A material scope change also routes to a shadow, i.e. back through mod
+   * review.
    */
   updateListing: appDeveloperProcedure
+    .meta(listingMediaCliScope)
     .use(
       rateLimit({
         limit: 30,
@@ -641,8 +732,23 @@ export const appListingsRouter = router({
    * procs that already mutate an owned shadow). Owner-bound in the service; asserts
    * the target is a draft shadow so it can never edit a live top-level listing.
    * Typed failures map via `mapOffsiteError`.
+   *
+   * ## CLI-reachable (`listingMediaCliScope`) — same three checks as `updateListing`
+   *
+   * The CLI's asset procs (`setIcon`/`setCover`/`addScreenshot`) already take a shadow id
+   * and are already annotated; without this one the SCALAR half of a shadow edit stays
+   * 403 for the same token, so `civitai app doctor --fix` could repair an approved app's
+   * media but not its tagline.
+   *
+   *   (a) Same `loadOwnedEditableListing` owner/seat gate, no moderator override.
+   *   (b) Same `buildListingPatchData` write surface — author-owned scalars only.
+   *   (c) Strictly TIGHTER on the revision model than `updateListing`: it REFUSES a
+   *       top-level listing (`revisionOfId == null` → INVALID_REVISION) and refuses a
+   *       shadow that is not still `draft`, so it can only ever write a not-yet-submitted
+   *       revision draft the caller owns. It cannot touch a live parent at all.
    */
   updateRevisionDraft: appDeveloperProcedure
+    .meta(listingMediaCliScope)
     .use(
       rateLimit({
         limit: 30,
@@ -909,8 +1015,15 @@ export const appListingsRouter = router({
    * `appDeveloperProcedure` = the App Blocks author FLAG (`protectedProcedure.use(
    * hasAppBlocksAuthor)`), NOT an ownership check — which is what makes it correct for a
    * seat-only caller who owns nothing. Same gate the collaborator router composes.
+   *
+   * CLI-reachable (`listingMediaCliScope`): THE read behind `civitai app doctor`. It is
+   * the only surface carrying `problems[]` (the 8-code completeness advisory) plus
+   * `lastModerationAction`, so without the meta the CLI's OAuth token 403s on the one
+   * proc that can tell an author what is wrong with their listing. The set it returns is
+   * resolved from ownership ∪ accepted seats in the service; the meta admits a credential,
+   * it does not widen that set.
    */
-  listMine: appDeveloperProcedure.query(async ({ ctx }) => {
+  listMine: appDeveloperProcedure.meta(listingMediaCliScope).query(async ({ ctx }) => {
     if (!ctx.user) return [];
     const { listMyAppListings } = await import('~/server/services/blocks/app-access.service');
     return listMyAppListings({ userId: ctx.user.id });
@@ -1511,9 +1624,10 @@ export const appListingsRouter = router({
   // (`app-listings-public-external`) can now submit the reviews the store already
   // let them see — the gate's own header has the history.
   //
-  // FOLLOW-UP (deferred): a MOD exclude/report path for individual reviews.
-  // `listReviews` ALREADY filters `exclude`/`tosViolation`, so a future mod action
-  // takes effect on the visible list with no read-path change.
+  // MOD control (`setReviewExclude`, below): the deferred per-review exclude path,
+  // now built. `listReviews` ALREADY filters `exclude`/`tosViolation`, so the mod
+  // action takes effect on the visible list with no read-path change. The report
+  // half is still deferred.
   // -------------------------------------------------------------------------
 
   /**
@@ -1582,5 +1696,35 @@ export const appListingsRouter = router({
         '~/server/services/blocks/app-listing-review.service'
       );
       return listAppListingReviews(input, { scope });
+    }),
+
+  /**
+   * MOD: hide / un-hide a single review (`AppListingReview.exclude`) and move the
+   * denormalized recommend counters to match, in one tx.
+   *
+   * Gate: `moderatorProcedure` + the inner `isModerator` recheck — the SAME idiom
+   * as the delist/relist/claim/purge actions above, and the WHOLE trust boundary.
+   * Deliberately NOT `enforceAppListingsWriteFlag`: that flag darkens the store UI
+   * and mods bypass it anyway, so it would be inert here (matching the mod-action
+   * block's own reasoning).
+   *
+   * NOT a delete. A hard delete would leave the denormalized aggregate permanently
+   * wrong, and would let the same user file a fresh FIRST review for the listing —
+   * see `setAppListingReviewExclude`'s header for the full reasoning.
+   *
+   * `exclude` is an explicit target state, so the mutation is IDEMPOTENT: re-hiding
+   * an already-hidden review writes nothing and moves no counter. Returns
+   * `changed:false` in that case rather than erroring.
+   */
+  setReviewExclude: moderatorProcedure
+    .input(setAppListingReviewExcludeSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Moderating app reviews is restricted to civitai team');
+      }
+      const { setAppListingReviewExclude } = await import(
+        '~/server/services/blocks/app-listing-review.service'
+      );
+      return setAppListingReviewExclude(input);
     }),
 });

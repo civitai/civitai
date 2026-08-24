@@ -15,6 +15,7 @@
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import { userLookupUrl } from '$lib/entity-url';
   import { BAN_REASONS } from '$lib/enforcement';
+  import ErrorAlert from '$lib/components/ErrorAlert.svelte';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -200,9 +201,7 @@
 {/if}
 
 {#if form?.error}
-  <div class="mb-4 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300" role="alert">
-    {form.error}
-  </div>
+  <ErrorAlert class="mb-4" message={form.error} />
 {:else}
   <!-- Success and warning render TOGETHER, not either/or. A partial run sets both, and testing the
        warning first meant "180 banned" was never shown — only "20 could not be banned", on the action

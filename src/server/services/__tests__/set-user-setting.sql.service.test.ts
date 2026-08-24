@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // Statement-shape tests for the ONE place `User.settings` is written.
 //
@@ -29,54 +30,55 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // position is wrong — and an assertion that only reads `values`, or only asserts a
 // negative on the text, cannot see that. So each statement pins its shape too.
 
-const { statements, mockDb } = vi.hoisted(() => {
-  const statements: { text: string; values: unknown[] }[] = [];
+const statements: { text: string; values: unknown[] }[] = [];
 
-  // Three call shapes reach the capture. The tagged template (`$executeRaw`…``) arrives
-  // as `(TemplateStringsArray, ...values)`; a pre-built `Prisma.sql` arrives as an object
-  // exposing `.sql`/`.values`; the interpolating `$queryRawUnsafe` / `$executeRawUnsafe`
-  // arrive as one finished string plus values. All reduce to the same {text, values}
-  // pair, so a statement can never go unrecorded and read as a pass.
-  const record = (first: unknown, rest: unknown[]) => {
-    if (Array.isArray(first) && Array.isArray((first as unknown as TemplateStringsArray).raw)) {
-      const text = (first as string[]).reduce(
-        (acc: string, chunk: string, i: number) => acc + (i ? `$${i}` : '') + chunk,
-        ''
-      );
-      statements.push({ text, values: rest });
-    } else if (
-      first &&
-      typeof first === 'object' &&
-      typeof (first as { sql?: unknown }).sql === 'string'
-    ) {
-      const frag = first as { sql: string; values?: unknown[] };
-      statements.push({ text: frag.sql, values: Array.isArray(frag.values) ? frag.values : [] });
-    } else {
-      statements.push({ text: String(first), values: rest });
-    }
+// Three call shapes reach the capture. The tagged template (`$executeRaw`…``) arrives
+// as `(TemplateStringsArray, ...values)`; a pre-built `Prisma.sql` arrives as an object
+// exposing `.sql`/`.values`; the interpolating `$queryRawUnsafe` / `$executeRawUnsafe`
+// arrive as one finished string plus values. All reduce to the same {text, values}
+// pair, so a statement can never go unrecorded and read as a pass.
+const record = (first: unknown, rest: unknown[]) => {
+  if (Array.isArray(first) && Array.isArray((first as unknown as TemplateStringsArray).raw)) {
+    const text = (first as string[]).reduce(
+      (acc: string, chunk: string, i: number) => acc + (i ? `$${i}` : '') + chunk,
+      ''
+    );
+    statements.push({ text, values: rest });
+  } else if (
+    first &&
+    typeof first === 'object' &&
+    typeof (first as { sql?: unknown }).sql === 'string'
+  ) {
+    const frag = first as { sql: string; values?: unknown[] };
+    statements.push({ text: frag.sql, values: Array.isArray(frag.values) ? frag.values : [] });
+  } else {
+    statements.push({ text: String(first), values: rest });
+  }
+};
+
+// The db client comes from the canonical shared mock.
+//
+// The capture is installed on dbWrite ONLY. The old direct mock handed the SAME
+// object to `dbRead` and `dbWrite`, so a statement moving tiers would still have
+// been recorded and every assertion below would still have passed. All three
+// writers under test run on the writer — `patchUserSettings` takes
+// `tx ?? dbWrite` (user.service.ts:2882) and these tests pass no `tx`, and
+// `setAlertDismissed` names `dbWrite` outright (:3019) — so binding only that
+// client is what makes `statements` evidence about the tier as well as the SQL.
+//
+// `$queryRawUnsafe` returns one row because `patchUserSettings` treats an empty
+// result as "no such user" and throws (:2943); the canonical default is an empty
+// array, so the fixture has to be restated rather than inherited.
+const recordAndReturn = <T>(result: T) =>
+  async function (first: unknown, ...rest: unknown[]) {
+    record(first, rest);
+    return result;
   };
 
-  return {
-    statements,
-    mockDb: {
-      $executeRaw: vi.fn(async (first: unknown, ...rest: unknown[]) => {
-        record(first, rest);
-        return 1;
-      }),
-      $executeRawUnsafe: vi.fn(async (first: unknown, ...rest: unknown[]) => {
-        record(first, rest);
-        return 1;
-      }),
-      $queryRawUnsafe: vi.fn(async (first: unknown, ...rest: unknown[]) => {
-        record(first, rest);
-        return [{ settings: {} }];
-      }),
-      $queryRaw: vi.fn(async () => []),
-    },
-  };
-});
+dbMock.dbWrite.$executeRaw.mockImplementation(recordAndReturn(1));
+dbMock.dbWrite.$executeRawUnsafe.mockImplementation(recordAndReturn(1));
+dbMock.dbWrite.$queryRawUnsafe.mockImplementation(recordAndReturn([{ settings: {} }]));
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDb, dbWrite: mockDb }));
 // The settings writers bust the user-settings cache after writing; keep Redis out of it.
 vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),

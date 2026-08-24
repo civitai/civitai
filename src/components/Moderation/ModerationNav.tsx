@@ -54,6 +54,15 @@ export function ModerationNav() {
           href: '/moderator/creator-shop',
           hidden: !features.creatorShop,
         },
+        {
+          // Same page, pre-narrowed. Its own entry because the pending sticker
+          // queue was reachable only by opening the entry above and knowing to
+          // filter it by hand — "it just gets lost in the all". Someone
+          // scanning this nav for the word sticker now finds it.
+          label: 'Sticker Review',
+          href: '/moderator/creator-shop?type=sticker&status=pendingreview',
+          hidden: !features.creatorShop,
+        },
         { label: 'Grant Cosmetics', href: '/moderator/cosmetics/grant' },
         {
           label: 'Announcements',

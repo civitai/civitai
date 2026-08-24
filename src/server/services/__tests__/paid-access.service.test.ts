@@ -1,29 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { increaseDate } from '~/utils/date-helpers';
 
-const { mockDbWrite, mockBust, mockCacheFetch } = vi.hoisted(() => ({
+const { mockBust, mockCacheFetch } = vi.hoisted(() => ({
   // Keyed by the cache's redis key so one stub can drive both the PaidAccess and cap-tier caches.
   mockCacheFetch: vi.fn(async (_key: string, _ids: number[]) => ({} as Record<string, unknown>)),
-  mockDbWrite: {
-    paidAccess: {
-      deleteMany: vi.fn(),
-      upsert: vi.fn(),
-      findUnique: vi.fn(),
-      update: vi.fn(),
-    },
-    modelVersion: { findUnique: vi.fn() },
-    $executeRaw: vi.fn(),
-  },
   mockBust: vi.fn(),
 }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: mockDbWrite }));
 vi.mock('~/server/common/constants', () => ({ CacheTTL: { hour: 3600, xs: 60 } }));
-vi.mock('~/server/redis/client', () => ({
-  REDIS_KEYS: {
-    CACHES: { PAID_ACCESS: 'test:paid-access', PAID_ACCESS_CAP_TIER: 'test:cap-tier' },
-  },
-}));
 vi.mock('~/server/utils/cache-helpers', () => ({
   createCachedObject: ({ key }: { key: string }) => ({
     fetch: (ids: number[]) => mockCacheFetch(key, ids),
@@ -40,6 +24,21 @@ import {
   toPublicPaidAccessDto,
   writePaidAccessForModelVersion,
 } from '~/server/services/paid-access.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { REDIS_KEYS } from '~/server/redis/client';
+
+// 🔴 SAME BLIND SPOT as user-challenge-flag-gate, disclosed here too. The mock this replaces
+// bound dbRead to `{}`, so any replica access threw. `paid-access.service.ts` really does use the
+// replica (`:165` fromWrite ? dbWrite : dbRead, `:252`, `:370`), and the canonical dbRead now
+// answers those silently. No current case reaches them — the measured kill-power is unchanged —
+// but the latent surface is wider than it was.
+const mockDbWrite = dbMock.dbWrite;
+
+// The cache stub above is keyed by the redis key the service asks for, so the tests below
+// have to name the same key. They used to compare against a hand-written stand-in supplied
+// by a per-file mock of `~/server/redis/client`; with that mock gone the service builds its
+// caches from the REAL table, so the assertions name the real constant instead of a copy.
+const CAP_TIER_KEY = REDIS_KEYS.CACHES.PAID_ACCESS_CAP_TIER;
 
 const TERMS = { download: { price: 500 }, generation: { trialLimit: 5 } };
 const PUBLISHED = new Date('2026-07-01T00:00:00.000Z');
@@ -247,7 +246,7 @@ describe('getViewerMonetization — gate price and licensing fee capped as one',
     tiers: Record<number, string | null> = { [OWNER]: null }
   ) =>
     mockCacheFetch.mockImplementation(async (key: string) =>
-      key === 'test:cap-tier'
+      key === CAP_TIER_KEY
         ? Object.fromEntries(
             Object.entries(tiers).map(([id, tier]) => [id, { userId: Number(id), tier }])
           )
@@ -385,7 +384,7 @@ describe('getViewerMonetization — gate price and licensing fee capped as one',
       viewer: { id: 2 },
     });
 
-    const tierCalls = mockCacheFetch.mock.calls.filter(([key]) => key === 'test:cap-tier');
+    const tierCalls = mockCacheFetch.mock.calls.filter(([key]) => key === CAP_TIER_KEY);
     expect(tierCalls).toHaveLength(1);
     expect(tierCalls[0][1]).toEqual([8, 9]);
   });
@@ -395,14 +394,14 @@ describe('getViewerMonetization — gate price and licensing fee capped as one',
 
     await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: 2 } });
 
-    expect(mockCacheFetch.mock.calls.filter(([key]) => key === 'test:cap-tier')).toHaveLength(0);
+    expect(mockCacheFetch.mock.calls.filter(([key]) => key === CAP_TIER_KEY)).toHaveLength(0);
   });
 });
 
 describe('getViewerMonetization — an unset gate/fee is never invented', () => {
   const drive = () =>
     mockCacheFetch.mockImplementation(async (key: string) =>
-      key === 'test:cap-tier' ? { 7: { userId: 7, tier: null } } : {}
+      key === CAP_TIER_KEY ? { 7: { userId: 7, tier: null } } : {}
     );
 
   it('no gate and no fee: nothing charged, and no cap tier is even resolved', async () => {
@@ -415,10 +414,11 @@ describe('getViewerMonetization — an unset gate/fee is never invented', () => 
 
     expect(out[1]).toEqual({
       paidAccess: undefined,
+      sale: null,
       licensingFee: null,
       effectiveLicensingFee: null,
     });
-    expect(mockCacheFetch.mock.calls.filter(([key]) => key === 'test:cap-tier')).toHaveLength(0);
+    expect(mockCacheFetch.mock.calls.filter(([key]) => key === CAP_TIER_KEY)).toHaveLength(0);
   });
 
   it('a null fee stays null rather than falling back to the free-tier cap', async () => {
@@ -437,7 +437,7 @@ describe('getViewerMonetization — the price ceiling is permanent-only', () => 
   const OWNER = 7;
   const drive = (gates: Record<string, unknown>) =>
     mockCacheFetch.mockImplementation(async (key: string) =>
-      key === 'test:cap-tier' ? { [OWNER]: { userId: OWNER, tier: null } } : gates
+      key === CAP_TIER_KEY ? { [OWNER]: { userId: OWNER, tier: null } } : gates
     );
   const row = (over: Record<string, unknown>) => ({
     entityId: 1,
@@ -517,5 +517,186 @@ describe('assertPaidAccessCaps — the price ceiling is permanent-only', () => {
         tier: 'free',
       })
     ).resolves.toBeUndefined();
+  });
+});
+
+describe('getViewerMonetization — a scheduled sale on top of the gate price', () => {
+  const OWNER = 7;
+  const FUTURE = new Date('2099-01-01T00:00:00.000Z');
+  const PAST = new Date('2020-01-01T00:00:00.000Z');
+
+  const sale = (over: Record<string, unknown> = {}) => ({
+    id: 1,
+    discountType: 'Percent',
+    discountAmount: 20,
+    startsAtMs: PAST.getTime(),
+    endsAtMs: FUTURE.getTime(),
+    canceledAtMs: null,
+    ...over,
+  });
+
+  const row = (over: Record<string, unknown> = {}) => ({
+    entityId: 1,
+    ownerId: OWNER,
+    endsAtMs: FUTURE.getTime(),
+    timeframeDays: null,
+    terms: { download: { price: 1000 } },
+    sales: [],
+    ...over,
+  });
+
+  const drive = (
+    gates: Record<string, unknown>,
+    tiers: Record<number, string | null> = { [OWNER]: 'gold' }
+  ) =>
+    mockCacheFetch.mockImplementation(async (key: string) =>
+      key === CAP_TIER_KEY
+        ? Object.fromEntries(
+            Object.entries(tiers).map(([id, tier]) => [id, { userId: Number(id), tier }])
+          )
+        : gates
+    );
+
+  it('discounts the price a buyer is shown', async () => {
+    drive({ 1: row({ sales: [sale()] }) });
+
+    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: 2 } });
+
+    expect(out[1].paidAccess?.terms).toEqual({ download: { price: 800 } });
+  });
+
+  it('takes the sale off the CAPPED price, not the stored one', async () => {
+    // Lapsed owner: 5000 stored is billed at the free cap of 500, so 20% off must be 400. Discounting
+    // the stored price first would give 4000, which the cap flattens back to 500 and the sale vanishes.
+    drive({ 1: row({ terms: { download: { price: 5000 } }, sales: [sale()] }) }, { [OWNER]: null });
+
+    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: 2 } });
+
+    expect(out[1].paidAccess?.terms).toEqual({ download: { price: 400 } });
+  });
+
+  it('ignores a sale that has been cancelled, even while its window is still open', async () => {
+    drive({ 1: row({ sales: [sale({ canceledAtMs: PAST.getTime() })] }) });
+
+    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: 2 } });
+
+    expect(out[1].paidAccess?.terms).toEqual({ download: { price: 1000 } });
+  });
+
+  it('ignores a sale whose window has not opened yet', async () => {
+    drive({ 1: row({ sales: [sale({ startsAtMs: FUTURE.getTime() })] }) });
+
+    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: 2 } });
+
+    expect(out[1].paidAccess?.terms).toEqual({ download: { price: 1000 } });
+  });
+
+  it('leaves the OWNER the undiscounted stored price, as with the cap', async () => {
+    drive({ 1: row({ sales: [sale()] }) });
+
+    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: OWNER } });
+
+    expect(out[1].paidAccess?.terms).toEqual({ download: { price: 1000 } });
+  });
+});
+
+describe('getViewerMonetization — what the UI is told about a sale', () => {
+  const OWNER = 7;
+  const FUTURE = new Date('2099-01-01T00:00:00.000Z');
+  const PAST = new Date('2020-01-01T00:00:00.000Z');
+
+  const sale = (over: Record<string, unknown> = {}) => ({
+    id: 1,
+    discountType: 'Percent',
+    discountAmount: 20,
+    startsAtMs: PAST.getTime(),
+    endsAtMs: FUTURE.getTime(),
+    canceledAtMs: null,
+    ...over,
+  });
+
+  const row = (over: Record<string, unknown> = {}) => ({
+    entityId: 1,
+    ownerId: OWNER,
+    endsAtMs: FUTURE.getTime(),
+    timeframeDays: null,
+    terms: { download: { price: 1000 } },
+    sales: [],
+    ...over,
+  });
+
+  const drive = (gates: Record<string, unknown>, tier: string | null = 'gold') =>
+    mockCacheFetch.mockImplementation(async (key: string) =>
+      key === CAP_TIER_KEY ? { [OWNER]: { userId: OWNER, tier } } : gates
+    );
+
+  it('reports the pre-sale price and the end date, so the UI never recomputes the discount', async () => {
+    drive({ 1: row({ sales: [sale()] }) });
+
+    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: 2 } });
+
+    expect(out[1].paidAccess?.terms).toEqual({ download: { price: 800 } });
+    expect(out[1].sale?.listTerms).toEqual({ download: { price: 1000 } });
+    expect(out[1].sale?.buyerTerms).toEqual({ download: { price: 800 } });
+    expect(out[1].sale?.endsAt).toEqual(FUTURE);
+    // The discount travels with the sale so a badge can say "20% off" without deriving it client-side.
+    expect(out[1].sale?.discountType).toBe('Percent');
+    expect(out[1].sale?.discountAmount).toBe(20);
+  });
+
+  it('tells the OWNER about their own sale, while still quoting them the stored price', async () => {
+    // Their editors write the stored terms back, so those must not be discounted — but suppressing the
+    // sale entirely made a creator's own model page the one place their live sale was invisible.
+    drive({ 1: row({ sales: [sale()] }) });
+
+    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: OWNER } });
+
+    expect(out[1].paidAccess?.terms).toEqual({ download: { price: 1000 } });
+    expect(out[1].sale?.discountType).toBe('Percent');
+    expect(out[1].sale?.discountAmount).toBe(20);
+    expect(out[1].sale?.endsAt).toEqual(FUTURE);
+    // And the buyer price, or the owner is shown a page of stored prices with a banner claiming a
+    // discount whose actual number appears nowhere.
+    expect(out[1].sale?.buyerTerms).toEqual({ download: { price: 800 } });
+  });
+
+  it('reports no sale when there is none', async () => {
+    drive({ 1: row() });
+
+    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: 2 } });
+
+    expect(out[1].sale).toBeNull();
+  });
+
+  it('reports a sale on a GENERATION-ONLY gate, which has no download price at all', async () => {
+    // Every other fixture here has a download tier. A review found that both branches decided "is there
+    // a sale" from the download price alone, so a gen-only gate reported NO sale to anyone while the
+    // charge discounted it — and the card badged it, promising what the page then denied.
+    drive({ 1: row({ terms: { generation: { price: 1000, trialLimit: 5 } }, sales: [sale()] }) });
+
+    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: 2 } });
+
+    expect(out[1].paidAccess?.terms).toEqual({ generation: { price: 800, trialLimit: 5 } });
+    expect(out[1].sale?.discountAmount).toBe(20);
+    expect(out[1].sale?.buyerTerms).toEqual({ generation: { price: 800, trialLimit: 5 } });
+  });
+
+  it('still reports nothing on a gen-only gate when no sale is running', async () => {
+    drive({ 1: row({ terms: { generation: { price: 1000, trialLimit: 5 } } }) });
+
+    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: 2 } });
+
+    expect(out[1].sale).toBeNull();
+    expect(out[1].paidAccess?.terms).toEqual({ generation: { price: 1000, trialLimit: 5 } });
+  });
+
+  it('reports no sale when the discount rounds away to nothing', async () => {
+    // 1% of 50 floors to 0. Drawing a strikethrough over an unchanged number would read as a broken page.
+    drive({ 1: row({ terms: { download: { price: 50 } }, sales: [sale({ discountAmount: 1 })] }) });
+
+    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: 2 } });
+
+    expect(out[1].paidAccess?.terms).toEqual({ download: { price: 50 } });
+    expect(out[1].sale).toBeNull();
   });
 });

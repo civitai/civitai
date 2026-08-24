@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { getActiveSalesForModels } from '~/server/services/paid-access.service';
 import { env } from '~/env/server';
 import { CacheTTL } from '~/server/common/constants';
 import {
@@ -156,7 +157,12 @@ export const modelRouter = router({
   getAllPagedSimple: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getAllModelsSchema.extend({ cursor: z.never().optional() }))
-    .use(cacheIt({ ttl: 60 }))
+    .use(
+      cacheIt({
+        ttl: 60,
+        varyBy: (ctx) => ({ isModerator: ctx.user?.isModerator ?? false }),
+      })
+    )
     .query(getModelsPagedSimpleHandler),
   getAllInfiniteSimple: guardedProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
@@ -196,6 +202,14 @@ export const modelRouter = router({
   getFeaturedModels: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .query(() => getFeaturedModels()),
+  // Which of the cards on screen are on sale. Kept off the feed query and out of the search document:
+  // a sale turns on and off at a wall-clock moment, so indexing it would mean re-indexing at every edge.
+  getActiveSales: publicProcedure
+    .meta({ requiredScope: TokenScope.ModelsRead })
+    // Bounded on its own schema: this is a public procedure reaching raw SQL, and the shared
+    // getByIdsSchema has no cap.
+    .input(z.object({ ids: z.number().array().max(500) }))
+    .query(({ input }) => getActiveSalesForModels(input.ids)),
   getResourceSelect: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getResourceSelectSchema)

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { NsfwLevel } from '~/server/common/enums';
 import {
   allBrowsingLevelsFlag,
@@ -6,6 +6,8 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import type * as MetricHelpers from '~/server/utils/metric-helpers';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import type { HybridNode } from '~/__tests__/mocks/hybrid';
 
 const updateEntityMetricDetached = vi.fn(async () => undefined);
 vi.mock('~/server/utils/metric-helpers', async (importOriginal) => ({
@@ -91,49 +93,53 @@ vi.mock('~/server/services/placement.service', () => ({
  */
 const calls: string[] = [];
 
-const queryRaw = vi.fn();
-const placementCreate = vi.fn(async () => {
+/**
+ * The service reaches two members on BOTH clients — `$queryRaw` (dbRead ×10, dbWrite ×2) and
+ * `placement.findMany` (dbRead ×4, dbWrite ×1) — and the assertions in this file read ONE
+ * ordered call list per member, including positional reads like `.mock.calls[0][0].where`.
+ * Splitting those into two lists would silently reorder them, so both canonical nodes forward
+ * to a single local spy instead. The fixture this replaces aliased them the same way.
+ *
+ * 🔴 The consequence, stated rather than buried: a `$queryRaw` or `placement.findMany` call
+ * that moved between the replica and the primary is still invisible here. Every OTHER member
+ * below is single-client in the service, so those routes are pinned — bind one to the wrong
+ * client and its tests stop seeing the call.
+ */
+type AnyFn = (...args: any[]) => any;
+const forwardTo = <T extends Mock<AnyFn>>(spy: T, ...nodes: HybridNode[]) => {
+  for (const node of nodes) node.mockImplementation((...args: unknown[]) => spy(...args));
+  return spy;
+};
+
+const queryRaw = forwardTo(vi.fn<AnyFn>(), dbMock.dbRead.$queryRaw, dbMock.dbWrite.$queryRaw);
+const placementFindMany = forwardTo(
+  vi.fn<AnyFn>(async () => [] as unknown[]),
+  dbMock.dbRead.placement.findMany,
+  dbMock.dbWrite.placement.findMany
+);
+
+// Single-client members, bound directly. `$transaction` is left to the canonical default:
+// the service only ever passes it an array, which the default resolves with `Promise.all`,
+// and nothing reads what it returns.
+const placementCreate = dbMock.dbWrite.placement.create;
+placementCreate.mockImplementation(async () => {
   calls.push('create');
   return { id: PLACEMENT };
 });
-const placementCount = vi.fn(async () => 0);
-const placementFindFirst = vi.fn(async () => null as unknown);
-// Typed with its argument because `declineOutOfBand` re-reads each row by id, so
-// one of its fakes has to answer per-placement rather than with a fixed row.
-const placementFindUnique = vi.fn<(args: { where: { id: number } }) => Promise<unknown>>(
-  async () => null
-);
-const placementFindMany = vi.fn(async () => [] as unknown[]);
-const imageFindMany = vi.fn(async () => [] as unknown[]);
-const placementUpdate = vi.fn(async () => ({}));
-const placementUpdateMany = vi.fn(async () => ({ count: 1 }));
-const dbTransaction = vi.fn(async (ops: unknown) => (Array.isArray(ops) ? ops : []));
+const placementCount = dbMock.dbWrite.placement.count;
+const placementFindFirst = dbMock.dbWrite.placement.findFirst;
+// `declineOutOfBand` re-reads each row by id, so one of the cases below answers per-placement
+// rather than with a fixed row.
+const placementFindUnique = dbMock.dbWrite.placement.findUnique;
+const imageFindMany = dbMock.dbRead.image.findMany;
 
-vi.mock('~/server/db/client', () => ({
-  dbWrite: {
-    $queryRaw: (...args: unknown[]) => queryRaw(...args),
-    $transaction: (ops: unknown) => dbTransaction(ops),
-    placement: {
-      create: placementCreate,
-      count: placementCount,
-      findFirst: placementFindFirst,
-      findUnique: placementFindUnique,
-      findMany: placementFindMany,
-      update: placementUpdate,
-      updateMany: placementUpdateMany,
-    },
-  },
-  dbRead: {
-    $queryRaw: (...args: unknown[]) => queryRaw(...args),
-    placement: {
-      findMany: placementFindMany,
-      findUnique: placementFindUnique,
-      count: placementCount,
-    },
-    image: { findMany: imageFindMany },
-    user: { findUnique: async () => ({ username: 'someone' }) },
-  },
-}));
+// Writes have no canonical default and the service reads what these return.
+const placementUpdate = dbMock.dbWrite.placement.update;
+placementUpdate.mockResolvedValue({});
+const placementUpdateMany = dbMock.dbWrite.placement.updateMany;
+placementUpdateMany.mockResolvedValue({ count: 1 });
+
+dbMock.dbRead.user.findUnique.mockResolvedValue({ username: 'someone' });
 
 const {
   createRemixGallerySubmission,
@@ -674,6 +680,17 @@ describe('submission refusals', () => {
     assertCanPlace.mockRejectedValueOnce(new Error('blocked'));
     await expect(submit()).rejects.toThrow('blocked');
     expect(placementCreate).not.toHaveBeenCalled();
+  });
+
+  // The arguments are not symmetric: the block half is bidirectional and
+  // survives a swap, but the suspension half reads `placerId` alone, so a flip
+  // asks whether the OWNER is suspended and lets a suspended placer through with
+  // the refusal test above still green.
+  it('asks about the placer’s suspension, not the owner’s', async () => {
+    await submit();
+
+    expect(assertCanPlace).toHaveBeenCalledTimes(1);
+    expect(assertCanPlace).toHaveBeenCalledWith({ ownerId: OWNER, placerId: PLACER });
   });
 });
 

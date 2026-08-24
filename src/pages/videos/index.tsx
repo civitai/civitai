@@ -1,6 +1,7 @@
 import { Stack, Title } from '@mantine/core';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { Page } from '~/components/AppLayout/Page';
+import { ImageFeedTagBar } from '~/components/Image/Filters/ImageFeedTagBar';
 import { useImageFilters } from '~/components/Image/image.utils';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { IsClient } from '~/components/IsClient/IsClient';
@@ -20,6 +21,7 @@ function VideosPage() {
       <MasonryContainer>
         {hidden && <Title>Your Hidden Videos</Title>}
         <Stack gap="xs">
+          <ImageFeedTagBar feed="videos" />
           <IsClient>
             <ImagesInfinite
               filterType="videos"

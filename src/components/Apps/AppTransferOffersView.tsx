@@ -2,6 +2,7 @@ import { Alert, Badge, Button, Group, List, Paper, Stack, Text, Title } from '@m
 import { IconAlertTriangle, IconArrowsExchange } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
 
+import { listingKindAppLabel } from '~/components/Apps/listingKindLabels';
 import type { IncomingTransferView } from '~/server/services/blocks/app-ownership-transfer.service';
 import type { ListingKind } from '~/shared/constants/app-capabilities.constants';
 import { capabilitiesForKind } from '~/shared/constants/app-capabilities.constants';
@@ -200,7 +201,7 @@ export function AppTransferOffersView({
                     Ownership transfer
                   </Badge>
                   <Badge variant="light" color={transfer.kind === 'onsite' ? 'blue' : 'grape'}>
-                    {transfer.kind === 'onsite' ? 'On-site app' : 'External app'}
+                    {listingKindAppLabel(transfer.kind)}
                   </Badge>
                 </Group>
                 <Group

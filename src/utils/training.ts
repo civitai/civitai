@@ -25,6 +25,7 @@ export const trainingBaseModelTypesImage = [
   'boogu',
   'krea2',
   'mageflow',
+  'ideogram4',
 ] as const;
 export const trainingBaseModelTypesVideo = [
   'hunyuan',
@@ -377,6 +378,21 @@ export const trainingModelInfo: {
     aiToolkit: { ecosystem: 'mageflow' },
   },
   //
+  ideogram4: {
+    label: 'Base',
+    pretty: 'Ideogram 4.0',
+    type: 'ideogram4',
+    description: "Ideogram, Inc.'s text-to-image model with strong typography.",
+    // Placeholder AIR from the licence's upstream repository — swap in the canonical
+    // urn:air:ideogram4:checkpoint:civitai:<modelId>@<versionId> once Ideogram 4 is
+    // uploaded here. Ideogram is AI-Toolkit-only, so this is never sent as the
+    // orchestrator `model`; it's UI display / getModel only.
+    air: 'urn:air:ideogram4:repository:huggingface:ideogram-ai/ideogram-4-nf4@main.tar',
+    baseModel: 'Ideogram 4.0',
+    isNew: true,
+    aiToolkit: { ecosystem: 'ideogram4' },
+  },
+  //
   flux2klein_4b: {
     label: '4B Base',
     pretty: 'Flux.2 Klein 4B Base',
@@ -591,9 +607,21 @@ const baseTypeToEcosystem: Partial<Record<TrainingBaseModelType, string>> = {
   boogu: 'boogu',
   krea2: 'krea2',
   mageflow: 'mageflow',
+  ideogram4: 'ideogram4',
   acestep15: 'ace_step_15',
   acestep15xl: 'ace_step_15_xl',
 };
+
+/**
+ * A base model outside `trainingModelInfo` is a user-supplied AIR, shown as "Custom" on the
+ * submit screen and the model select.
+ */
+export function prettyTrainingBaseModel(baseModel: string | undefined | null): string | null {
+  if (!baseModel) return null;
+  return baseModel in trainingModelInfo
+    ? trainingModelInfo[baseModel as TrainingDetailsBaseModelList].pretty
+    : 'Custom';
+}
 
 /**
  * Get AI Toolkit ecosystem for a training model
@@ -692,6 +720,7 @@ export const isAiToolkitSupported = (baseType: TrainingBaseModelType): boolean =
     'boogu',
     'krea2',
     'mageflow',
+    'ideogram4',
     'acestep15',
     'acestep15xl',
   ];
@@ -714,6 +743,7 @@ export const isAiToolkitMandatory = (baseType: TrainingBaseModelType): boolean =
     'boogu',
     'krea2',
     'mageflow',
+    'ideogram4',
     'acestep15',
     'acestep15xl',
   ];
@@ -745,6 +775,7 @@ export const getDefaultEngine = (
   if (baseType === 'boogu') return 'ai-toolkit'; // Boogu requires AI Toolkit
   if (baseType === 'krea2') return 'ai-toolkit'; // Krea 2 requires AI Toolkit
   if (baseType === 'mageflow') return 'ai-toolkit'; // Mage-Flow requires AI Toolkit
+  if (baseType === 'ideogram4') return 'ai-toolkit'; // Ideogram 4 requires AI Toolkit
   if (baseType === 'acestep15' || baseType === 'acestep15xl') return 'ai-toolkit'; // Audio models require AI Toolkit
   if (baseType === 'wan') return 'ai-toolkit'; // Wan defaults to AI Toolkit
   if (baseType === 'hunyuan') return 'musubi';

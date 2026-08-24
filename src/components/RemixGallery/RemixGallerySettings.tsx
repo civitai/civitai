@@ -1,4 +1,8 @@
 import {
+  REMIX_QUEUE_RECEIVED_URL,
+  REMIX_QUEUE_SENT_URL,
+} from '~/components/Placement/queue-routes';
+import {
   Alert,
   Anchor,
   Badge,
@@ -249,7 +253,7 @@ export function RemixGallerySettings() {
             all. Every other button-as-link in the app uses the plain anchor. */}
         <Button
           component="a"
-          href="/user/remix-submissions?tab=received"
+          href={REMIX_QUEUE_RECEIVED_URL}
           variant="light"
           size="sm"
           rightSection={
@@ -271,7 +275,7 @@ export function RemixGallerySettings() {
         </Button>
         <Button
           component="a"
-          href="/user/remix-submissions?tab=sent"
+          href={REMIX_QUEUE_SENT_URL}
           variant="default"
           size="sm"
           rightSection={

@@ -183,3 +183,44 @@ const MEMBERSHIP_TIERS: MembershipTier[] = ['bronze', 'silver', 'gold'];
 /** Anything unrecognised is treated as free rather than guessed upward. */
 const toPriceCapTier = (tier: string | undefined): 'free' | MembershipTier =>
   MEMBERSHIP_TIERS.find((known) => known === tier) ?? 'free';
+
+/**
+ * How many placements are waiting on this owner, per surface, for the badges on
+ * the unified `/user/placements` page and the user menu entry that points at it.
+ *
+ * One grouped query rather than one per surface: the two queues are one table
+ * and one predicate apart, and this runs for every signed-in user on every
+ * session (it rides on `user.checkNotifications` — see the handler). Two counts
+ * would be two round trips for one badge row.
+ *
+ * A count rather than the queue's own `items.length`: those page at 50 and join
+ * every image, so using them for a number both under-reports a large queue and
+ * pays for artwork nobody is looking at.
+ *
+ * Deliberately unfiltered by browsing level, matching both queues: a row outside
+ * the viewer's band still expires, and expiry pays the placer back and costs the
+ * owner their fee. A badge that hid those would count down to zero over a queue
+ * that still had rows in it.
+ *
+ * `[ownerId, surface, status, createdAt, id]` covers this — verified on prod as
+ * an Index Only Scan with all three equality columns in the Index Cond.
+ *
+ * One divergence from the pages, deliberate but worth knowing: they drop rows
+ * whose `data` will not parse, after fetching. So a count here can read higher
+ * than the rows rendered. An unparseable row is still pending, still holds a
+ * slot and still expires, so counting it is the honest answer.
+ */
+export async function getPendingPlacementCounts({ ownerId }: { ownerId: number }) {
+  const rows = await dbRead.placement.groupBy({
+    by: ['surface'],
+    where: { ownerId, status: 'pending' },
+    _count: { _all: true },
+  });
+
+  const bySurface = new Map(rows.map((row) => [row.surface, row._count._all]));
+
+  return {
+    sticker: bySurface.get('sticker') ?? 0,
+    remix: bySurface.get('remixGallery') ?? 0,
+  };
+}

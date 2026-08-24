@@ -9,7 +9,7 @@
 
 <header class="page-header">
   <h1>Welcome to the Creator Program 🎉</h1>
-  <p>You're in — the Studio's monetization tools are now unlocked.</p>
+  <p>You're in — your caps are raised and your Buzz can become cash.</p>
 </header>
 
 <section class="mb-8 rounded-lg border border-green-9/50 bg-green-9/10 p-5">
@@ -19,8 +19,8 @@
       <p class="text-xs uppercase tracking-wide text-green-4">You've joined</p>
       <p class="mt-1 text-lg font-semibold text-white">Start earning from your models</p>
       <p class="mt-2 text-sm text-green-3">
-        Set per-generation licensing fees, sell paid access, and track your earnings — all from the
-        Studio.
+        Charge more for licensing and access, then bank the Buzz you earn to claim your share of the
+        Compensation Pool.
       </p>
     </div>
   </div>

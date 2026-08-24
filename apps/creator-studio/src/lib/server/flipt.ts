@@ -1,5 +1,7 @@
 import { safeError } from '@civitai/axiom';
 import { createFliptClient, type FliptFeatureFlags } from '@civitai/flipt';
+import { buildFliptContext } from '@civitai/flipt/context';
+import type { SessionUser } from '@civitai/auth';
 import { getLogger } from './logger';
 
 // App shim around `@civitai/flipt`. Reads FLIPT_URL + FLIPT_FETCHER_SECRET from process.env (the
@@ -20,4 +22,13 @@ export function getFlipt(): FliptFeatureFlags {
     });
   }
   return g.flipt;
+}
+
+/**
+ * 🔴 Every evaluation must pass this. Segment constraints match on context properties, not on the
+ * entity id, so a context-less call matches no segment and returns the flag's `enabled` value —
+ * `false` for every segmented flag we ship. Omitting it 404'd the whole feature for everyone.
+ */
+export function fliptContext(user: SessionUser): Record<string, string> {
+  return buildFliptContext(user);
 }

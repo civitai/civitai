@@ -1,5 +1,21 @@
 # `@civitai/mod-utils` — migration candidates
 
+> **Two in-app duplications collapsed 2026-08-21**, neither a `mod-utils` candidate — recorded here
+> because this is where "a second copy was written instead of shared" gets tracked.
+>
+> - **The refusal banner** was hand-rolled at 38 sites across 30 files, identical but for the margin.
+>   Now `$lib/components/ErrorAlert.svelte`; 36 converted. The two left are nested *reason* panels
+>   rather than refusal banners. It reproduces the existing markup EXACTLY rather than adopting
+>   `@civitai/ui`'s `alert` primitive — that has its own padding, structure and palette, so swapping to
+>   it would restyle 38 messages in one pass, a visual change wearing the clothes of a refactor.
+>   Collapsing the copies is what makes that a single edit if someone decides to take it.
+> - **The `/retool/*` path builders** existed twice — `src/shared/constants/moderator-app.ts` and
+>   `$lib/entity-url.ts` — each with a comment telling the reader to keep them in step, and already
+>   diverged on whether user-lookup takes a `section`. Now `@civitai/shared/moderator-paths`, imported
+>   by both. That namespace is documented as transitional, so the copy nobody updated when it moves is
+>   the one that becomes a dead link.
+
+
 A running list of moderation logic that should move into the shared **`@civitai/mod-utils`** package
 (`packages/civitai-mod-utils`) as the moderator-app migration proceeds. When porting a page surfaces a
 pure moderation constant/util that is (or will be) shared between the main app and the spoke, **add a row

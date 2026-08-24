@@ -126,6 +126,19 @@ interface StickerPlacementDraftStore {
    * sticker.
    */
   interactionPointerId: number | null;
+  /** Idempotency keys for pack purchases, one per sticker per session. */
+  packKeys: Record<number, string>;
+  /**
+   * Drafts whose own buy button paid for a use, oldest purchase first.
+   *
+   * 🔴 WITHOUT THIS THE USE GOES TO THE WRONG STICKER. Coverage is otherwise
+   * assigned in creation order, so buying a use from the second of two copies
+   * raised the balance and covered the FIRST — the button that was pressed did
+   * not change, which reads as a purchase that failed.
+   */
+  paidDraftIds: string[];
+  /** Records that this draft's own purchase bought a use. */
+  markPaidForUse: (draftId: string) => void;
 
   open: (imageId: number) => void;
   /** End the session outright — every draft, the panel and the target. */
@@ -158,6 +171,44 @@ interface StickerPlacementDraftStore {
   markPurchased: (cosmeticId: number, draftId?: string) => void;
   setInteraction: (interaction: StickerInteraction | null, pointerId?: number) => void;
   /**
+   * The idempotency key for buying one particular sticker in this session.
+   *
+   * 🔴 PER COSMETIC, NOT PER DRAFT, AND THAT IS THE WHOLE POINT. A pack grants
+   * the STICKER — `markPurchased` then frees every draft of it — so two copies
+   * of one sticker showing two buy buttons are one buying intent wearing two
+   * faces. Minted per draft, pressing both inside the same second is two keys
+   * and two charges for the thing you only get once. Duplicating made that a
+   * click apart rather than two shop drags apart, which is why it is fixed here.
+   *
+   * Cleared with the session, so a later session can legitimately buy again.
+   */
+  packPurchaseKey: (cosmeticId: number) => string;
+  /**
+   * Forget the key for one sticker, so the next attempt is a NEW intent.
+   *
+   * Called when a purchase fails outright. An idempotency key exists to make a
+   * retry of the SAME attempt safe; reusing it after a definitive failure is a
+   * different thing — if the server has recorded that key, the placer is locked
+   * out of buying this sticker for the rest of the session with no way back
+   * except reloading the page.
+   */
+  clearPackPurchaseKey: (cosmeticId: number) => void;
+  /**
+   * A second copy of a draft, ready to be placed on its own.
+   *
+   * Deliberately NOT a second route into the charge path: it makes another
+   * unplaced draft and nothing else, so the copy is bought and committed by the
+   * same button, the same mutation and the same guards as the first one. There
+   * is no way for a copy to be placed without being charged, because copying
+   * places nothing.
+   *
+   * `purchase` is passed in rather than cloned. The gate on the original says
+   * "this sticker has not been bought yet", which is a fact about the viewer's
+   * inventory at the moment the copy is made — not a property of the draft — and
+   * the caller is what can see the balance.
+   */
+  duplicateDraft: (id: string, purchase?: DraftPurchase) => string | null;
+  /**
    * Moves one draft by id rather than "the current one". A gesture outlives the
    * selection — a press selects and then drags — so resolving the target at
    * every pointer move would let a selection change mid-drag redirect it.
@@ -166,6 +217,23 @@ interface StickerPlacementDraftStore {
 }
 
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
+
+/**
+ * How far a duplicate lands from the sticker it was copied from, as a fraction
+ * of the image.
+ *
+ * Big enough to see at the smallest sticker size, small enough that the copy
+ * reads as belonging to the original rather than as a new pickup dropped
+ * somewhere else.
+ */
+const DUPLICATE_OFFSET = 0.04;
+
+/**
+ * One axis of a duplicate's position: away from the original, and never off the
+ * image. Moves back toward the middle when a forward nudge would not fit.
+ */
+const nudge = (value: number) =>
+  clamp(value + DUPLICATE_OFFSET <= 1 ? value + DUPLICATE_OFFSET : value - DUPLICATE_OFFSET, 0, 1);
 
 let draftSequence = 0;
 
@@ -187,6 +255,19 @@ const nextDraftId = () =>
     ? crypto.randomUUID()
     : `draft-${++draftSequence}`;
 
+/**
+ * A purchase's idempotency key, which the server refuses a repeat of.
+ *
+ * Feature-detected for the same reason the draft ids are: `crypto.randomUUID` is
+ * undefined outside a secure context, and throwing here would take down the buy
+ * button on any http origin that is not localhost.
+ */
+let purchaseKeySequence = 0;
+const nextPurchaseKey = () =>
+  typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `00000000-0000-4000-8000-${String(++purchaseKeySequence).padStart(12, '0')}`;
+
 const ENDED = {
   targetImageId: null,
   trayOpen: false,
@@ -194,10 +275,18 @@ const ENDED = {
   selectedDraftId: null,
   interaction: null,
   interactionPointerId: null,
+  // Minted per session: a key reused across sessions would have the server
+  // refuse a purchase someone genuinely wants to make again.
+  packKeys: {} as Record<number, string>,
+  // Cleared with the session for the same reason the keys are: it describes
+  // purchases made against THESE drafts.
+  paidDraftIds: [] as string[],
 };
 
-export const useStickerPlacementDraftStore = create<StickerPlacementDraftStore>((set) => ({
+export const useStickerPlacementDraftStore = create<StickerPlacementDraftStore>((set, get) => ({
   drafts: [],
+  packKeys: {},
+  paidDraftIds: [],
   selectedDraftId: null,
   targetImageId: null,
   trayOpen: false,
@@ -309,6 +398,66 @@ export const useStickerPlacementDraftStore = create<StickerPlacementDraftStore>(
       // and the drag that created it is already in flight against it.
       return { drafts: [...state.drafts, draft], selectedDraftId: draft.id };
     }),
+
+  packPurchaseKey: (cosmeticId) => {
+    const existing = get().packKeys[cosmeticId];
+    if (existing) return existing;
+
+    const key = nextPurchaseKey();
+    set((state) => ({ packKeys: { ...state.packKeys, [cosmeticId]: key } }));
+    return key;
+  },
+
+  markPaidForUse: (draftId) =>
+    set((state) =>
+      state.paidDraftIds.includes(draftId)
+        ? state
+        : { paidDraftIds: [...state.paidDraftIds, draftId] }
+    ),
+
+  clearPackPurchaseKey: (cosmeticId) =>
+    set((state) => {
+      const { [cosmeticId]: _gone, ...rest } = state.packKeys;
+      return { packKeys: rest };
+    }),
+
+  duplicateDraft: (id, purchase) => {
+    const source = get().drafts.find((draft) => draft.id === id);
+    if (!source) return null;
+
+    // The id is minted here rather than inside the updater so it can be handed
+    // back: an alt-drag has to continue against the COPY, and the caller cannot
+    // ask "which one is new" from outside without racing its own update.
+    const copyId = nextDraftId();
+
+    set((state) => {
+      const copy: StickerDraft = {
+        ...source,
+        // One mechanism, not two: the caller's answer wins outright, including
+        // when the answer is "nothing to buy". `markPurchased` already writes an
+        // undefined `purchase` elsewhere in this store, so an own key holding
+        // undefined is the shape the rest of the code already reads.
+        purchase,
+        id: copyId,
+        // Offset so the copy is visibly its own sticker rather than an exact
+        // overlap the placer has to discover by dragging the top one off.
+        //
+        // 🔴 AWAY FROM THE EDGE, NOT CLAMPED TO IT. Clamping ate the whole nudge
+        // at exactly the case the nudge exists for: duplicate a sticker in the
+        // corner and the copy landed at the same point, so the button looked
+        // like it had done nothing. Nudging inward keeps the copy visible and
+        // on the image, which is also what the server requires of the position.
+        x: nudge(source.x),
+        y: nudge(source.y),
+      };
+
+      // Appended and selected, the same as a fresh pickup: the copy is the one
+      // being positioned now, and the handles belong to it.
+      return { drafts: [...state.drafts, copy], selectedDraftId: copy.id };
+    });
+
+    return copyId;
+  },
 
   move: (id, next) =>
     set((state) => {

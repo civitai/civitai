@@ -1,3 +1,5 @@
+import { resolveFeedSort } from '~/components/Filters/sort-availability';
+import { useSortAvailability } from '~/components/Filters/useSortAvailability';
 import { withPlaceholderData } from '~/hooks/trpcHelpers';
 import { closeModal, openConfirmModal } from '@mantine/modals';
 import { hideNotification, showNotification } from '@mantine/notifications';
@@ -121,8 +123,12 @@ export const getDefaultMediaTypes = (
 export const useImageFilters = (type: FilterKeys<'images' | 'videos' | 'modelImages'>) => {
   const storeFilters = useFiltersContext((state) => state[type]);
   const { query } = useImageQueryParams(); // router params are the overrides
+  const availability = useSortAvailability();
 
-  return removeEmpty({ ...storeFilters, ...query });
+  const filters = removeEmpty({ ...storeFilters, ...query });
+  // A sort the menu withholds is still a sort the query runs on, whether it came
+  // from the store, a link or the schema default.
+  return { ...filters, sort: resolveFeedSort({ type, value: filters.sort }, availability) };
 };
 
 export const useDumbImageFilters = (defaultFilters?: Partial<GetInfiniteImagesInput>) => {

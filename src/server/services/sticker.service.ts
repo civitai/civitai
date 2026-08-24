@@ -1,4 +1,4 @@
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { isNonProductionDatabase, warnIfDatabaseEnvironmentUnset } from '~/env/database-target';
@@ -589,8 +589,70 @@ export async function purchaseStickerUses({
   return { cosmeticId, quantity, pricePerUse, amount, remaining };
 }
 
-/** Remaining balance per owned sticker; NULL entries are unlimited. */
-export async function getStickerBalances(userId: number) {
+/** The tray's recency window, and the cap on how many rows deciding it may read. */
+const STICKER_RECENT_USE_DAYS = 30;
+const STICKER_RECENT_USE_SCAN = 500;
+
+/**
+ * How recently the viewer last placed each of their stickers, for the tray's
+ * default order.
+ *
+ * The window is 30 days for MEANING, not for cost — "recently used" that
+ * surfaces a sticker last placed in March is not recency.
+ *
+ * 🔴 THE `LIMIT` DOES NOT BOUND THE READ, whatever it looks like. No index can
+ * supply `createdAt` order under a `placerId` equality here, so the plan bitmap-
+ * scans every row this placer has ever created, applies the window and `surface`
+ * as post-index filters, sorts, and only then discards. The cap bounds the sort
+ * memory and the output, not the input. What the cost IS independent of is table
+ * size: it scales with one placer's own lifetime placements. Measured on prod —
+ * 80 rows: 0.13 ms / 30 buffers; 1,134 rows: 2.6 ms / 104 buffers and the sort
+ * switches to top-N heapsort. The heaviest placer on the site has 80.
+ *
+ * So do not widen the window or drop the cap believing the cap is the guard. The
+ * real bound is an index on `("placerId", surface, "createdAt" DESC)`, which is
+ * not worth a migration at 1,426 rows.
+ *
+ * `cosmeticId` needs no expression index: it is never a search predicate, only a
+ * group key over rows the cap has already materialised.
+ *
+ * Every placement counts, whatever its status: a placement awaiting review is
+ * still a sticker the placer reached for.
+ */
+export async function getStickerRecentUse(userId: number) {
+  const recencyWindow = `${STICKER_RECENT_USE_DAYS} days`;
+  const rows = await dbRead.$queryRaw<{ cosmeticId: number; lastUsedAt: Date }[]>`
+    SELECT (p.data->>'cosmeticId')::int AS "cosmeticId", MAX(p."createdAt") AS "lastUsedAt"
+    FROM (
+      SELECT data, "createdAt"
+      FROM "Placement"
+      WHERE "placerId" = ${userId}
+        AND surface = 'sticker'
+        AND "createdAt" > now() - ${recencyWindow}::interval
+      ORDER BY "createdAt" DESC
+      LIMIT ${STICKER_RECENT_USE_SCAN}
+    ) p
+    WHERE p.data->>'cosmeticId' IS NOT NULL
+    GROUP BY 1
+  `;
+
+  return rows.map(({ cosmeticId, lastUsedAt }) => ({
+    cosmeticId,
+    lastUsedAt: lastUsedAt.toISOString(),
+  }));
+}
+
+/**
+ * Remaining balance per owned sticker; NULL entries are unlimited.
+ *
+ * `newestFirst` orders by the most recent acquisition, which is the order the
+ * placement tray and the sticker book present a collection in. It is an argument
+ * rather than a second query because everything else about the question — the
+ * SUM across holdings, the unlimited rule, the Sticker-only join — is what the
+ * next WHERE clause will be added to, and it must only be possible to add it
+ * once.
+ */
+export async function getStickerBalances(userId: number, { newestFirst = false } = {}) {
   // SUM, not MAX: spending drains across holdings, so the spendable balance is
   // the total. A NULL holding is unlimited and wins outright — bool_or gives
   // that in the same pass rather than a second query.
@@ -605,6 +667,7 @@ export async function getStickerBalances(userId: number) {
     JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
     WHERE uc."userId" = ${userId} AND c.type = 'Sticker'::"CosmeticType"
     GROUP BY uc."cosmeticId"
+    ${newestFirst ? Prisma.sql`ORDER BY MAX(uc."obtainedAt") DESC` : Prisma.empty}
   `;
 
   return rows.map(({ cosmeticId, remaining, unlimited }) => ({

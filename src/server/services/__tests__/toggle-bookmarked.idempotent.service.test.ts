@@ -14,25 +14,18 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // (ON CONFLICT DO NOTHING), #1 catch P2002 + re-fetch (Prisma upsert can't target a partial index).
 
 import { Prisma } from '@prisma/client';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
-const { mockDb, queueUpdate } = vi.hoisted(() => ({
-  mockDb: {
-    collection: {
-      findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
-      create: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({ id: 999 })),
-    },
-    collectionItem: {
-      findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
-      create: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({ id: 1 })),
-      createMany: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({ count: 1 })),
-      delete: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({})),
-      deleteMany: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({ count: 1 })),
-    },
-  },
+// Every Prisma call on the `toggleBookmarked` path goes through dbWrite — including the two
+// `findFirst` reads, which use the write client on purpose so the create-race re-fetch cannot
+// read a stale replica (user.service.ts:2192, :2216, :2230). The previous hand-rolled mock
+// aliased dbRead and dbWrite to one object, which could not have told the two apart.
+const mockDb = dbMock.dbWrite;
+
+const { queueUpdate } = vi.hoisted(() => ({
   queueUpdate: vi.fn(() => undefined),
 }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDb, dbWrite: mockDb }));
 // `toggleBookmarked` calls metricsEngine.queueUpdate on the delete path. Stub the metrics module
 // surface user.service reaches at import time.
 vi.mock('~/server/metrics', () => ({

@@ -4,7 +4,11 @@ import { appRoles } from '@civitai/auth';
 import { APP, canAccess } from '$lib/server/access';
 import { ReportStatus } from '$lib/reports';
 import { setReportStatus } from '$lib/server/reports.service';
-import { SWEEP_TASKS, acknowledgeSweep } from '$lib/server/moderation-board.service';
+import {
+  SWEEP_TASKS,
+  acknowledgeSweep,
+  type SweepTask,
+} from '$lib/server/moderation-board.service';
 
 export const load: PageServerLoad = ({ locals }) => ({
   roles: appRoles(locals.user, APP),
@@ -49,10 +53,12 @@ export const actions: Actions = {
 
     const form = await request.formData();
     const task = String(form.get('task'));
-    if (!(SWEEP_TASKS as readonly string[]).includes(task))
+    // Narrowing, not just validating: `acknowledgeSweep` takes the column's enum, so the guard has to
+    // convince the compiler as well as the operator.
+    if (!SWEEP_TASKS.includes(task as SweepTask))
       return fail(400, { error: 'Unknown queue.' });
 
-    await acknowledgeSweep(task, author);
+    await acknowledgeSweep(task as SweepTask, author);
     return { success: true, swept: task };
   },
 };

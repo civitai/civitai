@@ -4,7 +4,7 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRef } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { ModelCard } from '~/components/Cards/ModelCard';
-import { ModelCardContextProvider } from '~/components/Cards/ModelCardContext';
+import { ModelCardContextProvider, useModelSaleBadges } from '~/components/Cards/ModelCardContext';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { MasonryGridVirtual } from '~/components/MasonryColumns/MasonryGridVirtual';
@@ -49,11 +49,14 @@ export function ModelsInfinite({
     ...filters,
     browsingLevel,
   });
+  const salesByModelId = useModelSaleBadges(models.map((m) => m.id));
 
   return (
     <ModelCardContextProvider
       useModelVersionRedirect={(filters?.baseModels ?? []).length > 0}
       activeBaseModels={filters?.baseModels}
+      salesByModelId={salesByModelId}
+      hasSaleProvider
     >
       {!models.length && isFetching ? (
         <Center p="xl">

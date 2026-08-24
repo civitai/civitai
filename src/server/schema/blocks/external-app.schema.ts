@@ -71,6 +71,128 @@ export function validateExternalUrl(raw: unknown): ExternalUrlValidation {
   return { ok: true, url: parsed.toString() };
 }
 
+// ---------------------------------------------------------------------------
+// SOURCE REPOSITORY URL — the optional "this app is open source, here is the
+// code" link on a store listing (`AppListing.sourceRepoUrl`).
+// ---------------------------------------------------------------------------
+
+/**
+ * Max length of a stored source-repository URL.
+ *
+ * 🔴 DELIBERATELY MUCH TIGHTER than {@link MAX_EXTERNAL_URL_LENGTH} (2048), and the
+ * order of the two checks in {@link validateRepositoryUrl} is load-bearing: this bound
+ * is applied BEFORE delegating, or the looser external bound would decide first and
+ * this constant would never reject anything. A normalised repo URL is
+ * `https://<host>/<owner>/<repo>` — a host from a three-entry allowlist plus two path
+ * segments — so 200 is already far above anything real.
+ */
+export const MAX_REPOSITORY_URL_LENGTH = 200;
+
+/**
+ * The ONLY hosts a source-repository link may point at.
+ *
+ * 🔴 AN EXACT-HOST ALLOWLIST, NOT A SUFFIX MATCH. The link is rendered on a public
+ * store page, so a suffix test (`endsWith('github.com')`) would admit
+ * `raw.githubusercontent.com`, `gist.github.com` and `evil-github.com` alike — the
+ * first two serve attacker-authored content under a trusted-looking name, and the
+ * third is simply a different domain. Compared against `URL.hostname`, which the
+ * WHATWG parser has already lower-cased and punycode-encoded, so `GITHUB.COM`
+ * matches and a homoglyph domain (`gіthub.com`, Cyrillic і → `xn--github-fmc.com`)
+ * does not.
+ */
+export const REPOSITORY_HOST_ALLOWLIST = ['github.com', 'gitlab.com', 'codeberg.org'] as const;
+
+/**
+ * Characters permitted in an `<owner>` / `<repo>` path segment. Deliberately narrow —
+ * all three forges restrict these to ASCII word characters plus `.`/`-`/`_`, and a
+ * segment carrying anything else (a percent-escape, a `@`, a `:`) is not a repo root.
+ */
+const REPO_PATH_SEGMENT_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+/**
+ * Validate + NORMALISE a public source-repository URL.
+ *
+ * Built ON TOP of {@link validateExternalUrl} rather than beside it, so the https-only
+ * / has-a-host / no-embedded-credentials rules have exactly ONE implementation. On top
+ * of those it additionally requires:
+ *   - a length within {@link MAX_REPOSITORY_URL_LENGTH} (checked FIRST — see that
+ *     constant's note),
+ *   - no port,
+ *   - a host that is EXACTLY one of {@link REPOSITORY_HOST_ALLOWLIST},
+ *   - a path of EXACTLY two segments, `/<owner>/<repo>` — so the host root, a
+ *     single-segment path, and a deep link (`/owner/repo/tree/main`) are all rejected.
+ *
+ * 🔴 THE RETURN VALUE IS CANONICAL, and that is not cosmetic: the off-site material-
+ * change check compares a proposed value against the live one to decide whether an edit
+ * must re-enter moderator review. Comparing raw strings would report
+ * `https://github.com/a/b/` → `https://github.com/a/b.git` as a MATERIAL change (a
+ * pointless mod re-review) while any two spellings of a genuinely different repo look
+ * equally different. So a trailing slash, a trailing `.git`, a query string and a
+ * fragment are all dropped, and the host is emitted lower-cased.
+ *
+ * Returns the same `{ok:true,url} | {ok:false,error}` shape as `validateExternalUrl`.
+ */
+export function validateRepositoryUrl(raw: unknown): ExternalUrlValidation {
+  if (typeof raw !== 'string') return { ok: false, error: 'sourceRepoUrl must be a string' };
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return { ok: false, error: 'sourceRepoUrl must not be empty' };
+  // BEFORE delegating — `validateExternalUrl`'s bound is 10x looser, so checking after
+  // would make this constant unreachable. See MAX_REPOSITORY_URL_LENGTH.
+  if (trimmed.length > MAX_REPOSITORY_URL_LENGTH) {
+    return { ok: false, error: `sourceRepoUrl must be ≤ ${MAX_REPOSITORY_URL_LENGTH} chars` };
+  }
+
+  // Inherit https-only / has-a-host / no-credentials from the single source of truth.
+  // Its messages name `externalUrl`; re-label the FIRST occurrence so the author sees
+  // the field they actually filled in.
+  const base = validateExternalUrl(trimmed);
+  if (!base.ok) return { ok: false, error: base.error.replace('externalUrl', 'sourceRepoUrl') };
+
+  let parsed: URL;
+  try {
+    parsed = new URL(base.url);
+  } catch {
+    // Unreachable in practice (`base.url` came out of a successful parse); keeps the
+    // function total rather than relying on that.
+    return { ok: false, error: `sourceRepoUrl "${trimmed}" is not a valid absolute URL` };
+  }
+
+  if (parsed.port) {
+    return { ok: false, error: 'sourceRepoUrl must not specify a port' };
+  }
+
+  const host = parsed.hostname.toLowerCase();
+  if (!(REPOSITORY_HOST_ALLOWLIST as readonly string[]).includes(host)) {
+    return {
+      ok: false,
+      error: `sourceRepoUrl host "${host}" is not an accepted source host (${REPOSITORY_HOST_ALLOWLIST.join(
+        ', '
+      )})`,
+    };
+  }
+
+  const segments = parsed.pathname.split('/').filter((s) => s.length > 0);
+  if (segments.length !== 2) {
+    return {
+      ok: false,
+      error: `sourceRepoUrl must point at a repository root (https://${host}/<owner>/<repo>)`,
+    };
+  }
+  const owner = segments[0];
+  // A trailing `.git` is the clone spelling of the same repo — strip it so the two
+  // spellings normalise to one value. Case-insensitive, and only as a SUFFIX.
+  const repo = segments[1].replace(/\.git$/i, '');
+  if (repo.length === 0 || !REPO_PATH_SEGMENT_RE.test(owner) || !REPO_PATH_SEGMENT_RE.test(repo)) {
+    return {
+      ok: false,
+      error: `sourceRepoUrl must point at a repository root (https://${host}/<owner>/<repo>)`,
+    };
+  }
+
+  // Canonical form — host lower-cased, no trailing slash, no `.git`, no query/fragment.
+  return { ok: true, url: `https://${host}/${owner}/${repo}` };
+}
+
 /**
  * Minimal manifest shape an external-link registration may carry. An external
  * app is a pure listing, so the only honoured fields are display metadata. A

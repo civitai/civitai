@@ -189,6 +189,10 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         getPendingTransfer: {
           useQuery: () => ({ data: state.pendingTransfer, isLoading: false, error: null }),
         },
+        // The invite picker screens the candidates it is offering against the server. Nothing
+        // here exercises that answer — these cases are about transfer — but the panel calls it
+        // on every render, so an absent entry renders the whole tab as an empty <div>.
+        ineligibleTargets: { useQuery: () => ({ data: [], isLoading: false, error: null }) },
         invite: mutation(),
         remove: mutation(),
         setDisplayed: mutation(),

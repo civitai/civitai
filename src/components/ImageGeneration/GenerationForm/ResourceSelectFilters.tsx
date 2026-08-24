@@ -15,6 +15,8 @@ import { useLocalStorage } from '@mantine/hooks';
 import { IconChevronDown, IconChevronUp, IconFilter } from '@tabler/icons-react';
 import { uniq } from 'lodash-es';
 import React, { useState } from 'react';
+import { isSortAvailable } from '~/components/Filters/sort-availability';
+import { useSortAvailability } from '~/components/Filters/useSortAvailability';
 import { useResourceSelectContext } from '~/components/ImageGeneration/GenerationForm/ResourceSelectProvider';
 import type {
   ResourceFilter,
@@ -24,7 +26,6 @@ import { resourceSort } from '~/components/ImageGeneration/GenerationForm/resour
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 import useIsClient from '~/hooks/useIsClient';
 import { useIsMobile } from '~/hooks/useIsMobile';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { activeBaseModels } from '~/shared/constants/basemodel.constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
@@ -226,12 +227,14 @@ export function ResourceSelectFiltersDropdown() {
 }
 
 export function ResourceSelectSort() {
-  const features = useFeatureFlags();
+  const availability = useSortAvailability();
   const { sort, setSort } = useResourceSelectContext();
 
+  // `value: x.label` — the keys here are lowercase (`relevance|popularity|newest`)
+  // and the shared predicate matches on the display label.
   const options = Object.entries(resourceSort)
     .map(([k, v]) => ({ label: v, value: k }))
-    .filter((x) => !(!features.canViewNsfw && x.label === 'Newest'));
+    .filter((x) => isSortAvailable({ type: 'models', value: x.label }, availability));
 
   return (
     <SelectMenuV2

@@ -7,7 +7,9 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { trpc } from '~/utils/trpc';
 
 /**
- * Moderator control over a user's ability to place stickers, sitewide.
+ * Moderator control over a user's ability to make placements, sitewide — both
+ * stickers and remix gallery submissions, because the suspension it writes is
+ * read by `assertCanPlace`, which every create path on both surfaces calls.
  *
  * Suspension is the answer to an abusive *placer*, as distinct from abusive
  * artwork — a fine sticker used maliciously is this; a sticker designed to abuse
@@ -23,9 +25,11 @@ export function SuspendPlacerMenuItem({ userId }: { userId: number }) {
   const utils = trpc.useUtils();
   const removeExisting = useRef(false);
 
+  const placementSurfaceEnabled = features.stickerPlacement || features.remixGallery;
+
   const { data: suspended } = trpc.placement.isSuspended.useQuery(
     { userId },
-    { enabled: !!features.stickerPlacement }
+    { enabled: placementSurfaceEnabled }
   );
 
   const onError = (error: { message: string }) =>
@@ -36,7 +40,7 @@ export function SuspendPlacerMenuItem({ userId }: { userId: number }) {
       const removed = result.removed;
       showSuccessNotification({
         message: !removed
-          ? 'Sticker placement suspended.'
+          ? 'Placement suspended.'
           : [
               `Suspended. Removed ${removed.settled + removed.takenDown} placements.`,
               // Both of these were being dropped, which turned a partial sweep
@@ -54,13 +58,15 @@ export function SuspendPlacerMenuItem({ userId }: { userId: number }) {
 
   const restore = trpc.placement.restorePlacer.useMutation({
     onSuccess: async () => {
-      showSuccessNotification({ message: 'Sticker placement restored.' });
+      showSuccessNotification({ message: 'Placement restored.' });
       await utils.placement.invalidate();
     },
     onError,
   });
 
-  if (!features.stickerPlacement) return null;
+  // Either surface, not stickers alone: the suspension stops remix submissions
+  // too, so gating on the sticker flag hid the only control that stops them.
+  if (!placementSurfaceEnabled) return null;
 
   if (suspended)
     return (
@@ -68,19 +74,19 @@ export function SuspendPlacerMenuItem({ userId }: { userId: number }) {
         leftSection={<IconSticker size={14} stroke={1.5} />}
         onClick={() => restore.mutate({ userId })}
       >
-        Restore sticker placement
+        Restore placement
       </Menu.Item>
     );
 
   const confirm = () => {
     removeExisting.current = false;
     openConfirmModal({
-      title: 'Suspend sticker placement',
+      title: 'Suspend placement',
       children: (
         <Stack gap="xs">
           <Text size="sm">
-            They will not be able to place stickers on anyone&apos;s work. Stickers in comments and
-            DMs are unaffected.
+            They will not be able to place stickers or submit to remix galleries on anyone&apos;s
+            work. Stickers in comments and DMs are unaffected.
           </Text>
           <Checkbox
             label="Also remove everything they have already placed"
@@ -96,12 +102,8 @@ export function SuspendPlacerMenuItem({ userId }: { userId: number }) {
   };
 
   return (
-    <Menu.Item
-      color="red"
-      leftSection={<IconBan size={14} stroke={1.5} />}
-      onClick={confirm}
-    >
-      Suspend sticker placement
+    <Menu.Item color="red" leftSection={<IconBan size={14} stroke={1.5} />} onClick={confirm}>
+      Suspend placement
     </Menu.Item>
   );
 }

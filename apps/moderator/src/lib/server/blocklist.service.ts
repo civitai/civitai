@@ -51,7 +51,6 @@ async function readBlocklistRow(type: string): Promise<BlocklistDTO> {
       message:
         'More than one Blocklist row for a type; entries on the ignored rows are not enforced',
       details: {
-        app: 'moderator',
         blocklistType: type,
         usedId: rows[0].id,
         ignoredIds: rows.slice(1).map((row) => row.id),
@@ -117,22 +116,31 @@ export async function upsertBlocklist({
   await setCache(await readBlocklistRow(result.type));
 }
 
+/**
+ * Returns how many entries were actually dropped, which is NOT the number submitted: a stale `id`
+ * (the DTO is Redis-cached for a month), an entry already gone, or one stored in a case the
+ * lowercased needle cannot match all end in zero. The page reports this number, so "Removed 1
+ * item." above a chip that is still there is a state the UI can no longer reach.
+ */
 export async function removeBlocklistItems({
   id,
   items,
 }: {
   id: number;
   items: string[];
-}): Promise<void> {
+}): Promise<number> {
   const lower = items.map((x) => x.toLowerCase());
   const row = await dbWrite
     .selectFrom('Blocklist')
     .select('data')
     .where('id', '=', id)
     .executeTakeFirst();
-  if (!row) return;
+  if (!row) return 0;
 
   const filtered = row.data.filter((item) => !lower.includes(item));
+  const removed = row.data.length - filtered.length;
+  if (removed === 0) return 0;
+
   const updated = await dbWrite
     .updateTable('Blocklist')
     .set({ data: filtered, updatedAt: new Date() })
@@ -140,4 +148,5 @@ export async function removeBlocklistItems({
     .returning(['id', 'type', 'data'])
     .executeTakeFirstOrThrow();
   await setCache(await readBlocklistRow(updated.type));
+  return removed;
 }

@@ -1,8 +1,7 @@
-import { Button, useComputedColorScheme } from '@mantine/core';
-
 import { useModelQueryParams } from '~/components/Model/model.utils';
+import type { TagChipRowItem } from '~/components/Tags/TagChipRow';
+import { TagChipRow } from '~/components/Tags/TagChipRow';
 import { useCategoryTags } from '~/components/Tags/tag.utils';
-import { TwScrollX } from '~/components/TwScrollX/TwScrollX';
 import { TagTarget } from '~/shared/utils/prisma/enums';
 
 // `selected` without `setSelected` would be silently discarded — the bar reads the URL
@@ -23,18 +22,9 @@ export function CategoryTags({
   filter,
   includeAll = true,
 }: CategoryTagsProps) {
-  const colorScheme = useComputedColorScheme('dark');
   const { set, tag: tagQuery } = useModelQueryParams();
 
   const { data: categories } = useCategoryTags({ entityType: TagTarget.Model });
-
-  // Reserve the row height while the client-side `useCategoryTags` query and the hidden
-  // preferences resolve. Returning null lets the chip row pop in and shove the feed down —
-  // the shift `docs/cls-remediation-plan.md` measured at 0.65 on /images. That fix landed
-  // in TagScroller, which these surfaces never used. 26px is Mantine's
-  // `--button-height-compact-sm`; both states must carry it or the row shifts one way or
-  // the other.
-  if (!categories.length) return <div className="min-h-[26px]" />;
 
   const handleSetTag = (tag: string | undefined) => set({ tag });
 
@@ -45,36 +35,24 @@ export function CategoryTags({
   const _tag = controlled ? selected : tagQuery;
   const _setTag = setSelected ?? handleSetTag;
 
+  // This bar identifies a category by NAME — `?tag=` carries the name, not the id — so the
+  // row's id is the name here. Tag names are unique, so it is still a stable key.
+  const items = categories
+    .filter((x) => (filter ? filter(x.name) : true))
+    .map((tag) => ({ id: tag.name, label: tag.name }));
+
+  const handleSelect = (item: TagChipRowItem) => _setTag(_tag === item.id ? undefined : item.label);
+
   return (
-    <TwScrollX className="flex min-h-[26px] gap-1">
-      {includeAll && (
-        <Button
-          className="overflow-visible uppercase"
-          variant={!_tag ? 'filled' : colorScheme === 'dark' ? 'filled' : 'light'}
-          color={!_tag ? 'blue' : 'gray'}
-          onClick={() => _setTag(undefined)}
-          size="compact-sm"
-        >
-          All
-        </Button>
-      )}
-      {categories
-        .filter((x) => (filter ? filter(x.name) : true))
-        .map((tag) => {
-          const active = _tag === tag.name;
-          return (
-            <Button
-              key={tag.id}
-              className="overflow-visible uppercase"
-              variant={active ? 'filled' : colorScheme === 'dark' ? 'filled' : 'light'}
-              color={active ? 'blue' : 'gray'}
-              onClick={() => _setTag(!active ? tag.name : undefined)}
-              size="compact-sm"
-            >
-              {tag.name}
-            </Button>
-          );
-        })}
-    </TwScrollX>
+    <TagChipRow
+      items={items}
+      activeId={_tag}
+      onSelect={handleSelect}
+      onClear={() => _setTag(undefined)}
+      includeAll={includeAll}
+      // Pre-filter, deliberately: a `filter` that empties the list still leaves the All
+      // chip rendered, which is what this bar did before the row was shared.
+      loading={!categories.length}
+    />
   );
 }

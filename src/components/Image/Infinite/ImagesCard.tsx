@@ -129,7 +129,12 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                     <MediaHash {...image} />
                   )}
                 </RoutedDialogLink>
-                {safe && features.stickerPlacement && <CardStickerOverlay imageId={image.id} />}
+                {safe && features.stickerPlacement && (
+                  <CardStickerOverlay
+                    imageId={image.id}
+                    revealStickers={contextProps.revealStickers}
+                  />
+                )}
                 <div className="absolute left-2 top-2">
                   <div className="flex flex-nowrap items-center gap-1">
                     <ImageGuard2.BlurToggle radius="xl" h={26} style={{ pointerEvents: 'auto' }} />
@@ -305,7 +310,7 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                 // would still change this card's layout for everyone while
                 // adding nothing — a visual regression with no feature behind
                 // it, on the surface the flag exists to keep clear of.
-                (features.stickerPlacement ? (
+                (features.stickerPlacement && !contextProps.hideStickerBadge ? (
                   <div className="flex items-center">
                     <div className="min-w-0 flex-1">
                       <ImageReactions image={image} readonly={!safe || (isScanned && isBlocked)} />

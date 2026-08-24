@@ -1,9 +1,16 @@
-import { Button, CloseButton, Group, ScrollArea, Text, ThemeIcon } from '@mantine/core';
-import { IconPlus, IconSticker } from '@tabler/icons-react';
+import { Button, CloseButton, Group, Select, Text, TextInput, ThemeIcon } from '@mantine/core';
+import {
+  IconAlertTriangle,
+  IconInfoCircle,
+  IconPlus,
+  IconSearch,
+  IconSticker,
+} from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
-import { freeOfferFor, trayPriceLine, trayReviewLine } from '~/components/Sticker/free-offer';
+import { Countdown } from '~/components/Countdown/Countdown';
+import { freeOfferFor, preCommitFreeReason, trayNotes } from '~/components/Sticker/free-offer';
 import { StickerShopPanel } from '~/components/Sticker/StickerShopPanel';
 import { StickerShopTile } from '~/components/Sticker/StickerShopTile';
 import { useStickerDragOut } from '~/components/Sticker/use-sticker-drag-out';
@@ -12,10 +19,9 @@ import {
   useImagePlacementSpace,
 } from '~/components/Sticker/placement.util';
 import { stickerMaxScale } from '~/shared/utils/sticker-placement';
-import { useOwnedSticker } from '~/components/Sticker/sticker.util';
+import { remainingStickerUses, useOwnedSticker } from '~/components/Sticker/sticker.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.store';
-import { STICKER_OFFER_LIMIT } from '~/server/schema/cosmetic.schema';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -31,10 +37,33 @@ import { trpc } from '~/utils/trpc';
  * three stickers sit in a field of empty panel, and pushed the instructions so
  * far from them that they read as unrelated.
  */
+/**
+ * The height of one tile, SET on the tile rather than measured from it. The
+ * tray's two-row cap is derived from this number, so a tile free to grow past it
+ * would leave the second row showing a sliver with nothing to catch it.
+ */
+const STICKER_TILE_HEIGHT = 78;
+/** Mantine `xs`, used as both the gap between tiles and the row's padding. */
+const STICKER_TILE_GAP = 10;
+
+type StickerTraySort = 'used' | 'obtained';
+
+/**
+ * A collection worth searching. Below this the controls are two widgets above
+ * three stickers, which is the clutter the tray's notes were just trimmed of.
+ */
+const STICKER_SEARCH_THRESHOLD = 12;
+
+/** The height that shows exactly `rows` rows of tiles and clips the rest. */
+const trayRowsHeight = (rows: number) =>
+  rows * STICKER_TILE_HEIGHT + (rows - 1) * STICKER_TILE_GAP + 2 * STICKER_TILE_GAP;
+
 export function StickerPlacementTray({ imageId }: { imageId: number }) {
   const currentUser = useCurrentUser();
   const { sticker, isLoading } = useOwnedSticker();
   const [shopping, setShopping] = useState(false);
+  const [search, setSearch] = useState('');
+  const [sortBy, setSortBy] = useState<StickerTraySort>('used');
   const trayRef = useRef<HTMLDivElement>(null);
 
   const targetImageId = useStickerPlacementDraftStore((state) => state.targetImageId);
@@ -58,8 +87,10 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
   useEffect(() => {
     if (!showing) {
       // The panel is state, not markup: without this it survives the tray being
-      // put away and is still open on the next image opened.
+      // put away and is still open on the next image opened. The typed filter is
+      // worse — it comes back showing 2 of 83 with nothing on screen saying why.
       setShopping(false);
+      setSearch('');
       return;
     }
     setTray(trayRef.current);
@@ -74,57 +105,51 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
   const { data: balances } = trpc.cosmetic.getStickerBalances.useQuery(undefined, {
     enabled: !!currentUser && targetImageId != null,
   });
+  // 97.6% of sticker owners hold 12 or fewer and never see the sort control;
+  // 73.4% hold one, where an order is a no-op. tRPC batching is off, so this is
+  // its own round trip on the tray-open path — not worth taking for them.
+  const { data: recentUse } = trpc.cosmetic.getStickerRecentUse.useQuery(undefined, {
+    enabled: !!currentUser && targetImageId != null && sticker.length > 1,
+    staleTime: 60_000,
+  });
   // The creator's ceiling, not just the global one. Read before the early return
   // below, because the pickup gesture is a hook and cannot be conditional.
   const maxScale = stickerMaxScale(space?.settings as Record<string, unknown> | undefined);
   const { grab, dragging } = useStickerDragOut(maxScale);
 
-  // Asked for every owned sticker rather than only the spent ones, because the
-  // list of spent ones changes as drafts are laid down — keying the query on it
-  // would refetch mid-arrangement, and the answer is the same either way.
-  // Capped at what the schema accepts. Past it the whole query fails zod, and
-  // the failure is invisible — `offers` stays undefined and the pack option
-  // silently never appears for anyone with a large collection. Newest-obtained
-  // first, which is the order the row is already in.
-  const ownedIds = useMemo(
-    () => sticker.slice(0, STICKER_OFFER_LIMIT).map((option) => option.id),
-    [sticker]
-  );
-  const { data: offers } = trpc.cosmetic.getStickerOffers.useQuery(
-    { ids: ownedIds },
-    { enabled: !!currentUser && !!ownedIds.length, staleTime: 60_000 }
-  );
   /**
-   * What a spent sticker's draft may be refilled with. The listing is offered
-   * only while it is genuinely on sale — a delisted or sold-out one would show a
-   * price the purchase then refuses.
+   * What the tray actually draws: the collection filtered by what was typed, in
+   * the chosen order.
    *
-   * `pricePerUse` falls back to the owned payload's copy so the single-use price
-   * is there on the first frame, before the offers query lands.
+   * 🔴 THE SECONDARY SORT IS THE STABILITY, NOT A COMPARATOR BRANCH. `sticker`
+   * arrives newest-obtained first, and `Array.prototype.sort` is stable, so two
+   * stickers the placer has never used keep that order for free. Writing the
+   * tie-break by hand would be a second copy of a rule already applied upstream.
    */
-  const refillOffer = (cosmeticId: number, ownedPricePerUse?: number) => {
-    const offer = offers?.find((entry) => entry.cosmeticId === cosmeticId);
-    const listing = offer?.listing;
+  const lastUsedAt = useMemo(
+    () => new Map((recentUse ?? []).map((row) => [row.cosmeticId, row.lastUsedAt])),
+    [recentUse]
+  );
+  const visible = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    const matched = term
+      ? sticker.filter((option) =>
+          `${option.name ?? ''} ${option.slug ?? ''}`.toLowerCase().includes(term)
+        )
+      : sticker;
 
-    return {
-      refill: true,
-      perUse: offer?.pricePerUse ?? ownedPricePerUse,
-      ...(listing
-        ? {
-            pack: {
-              shopItemId: listing.shopItemId,
-              unitAmount: listing.unitAmount,
-              acceptsBlue: listing.acceptsBlue,
-              uses: listing.uses,
-              viaShopUserId: listing.viaShopUserId ?? undefined,
-            },
-          }
-        : {}),
-      // `undefined` until the offers land, which shows no attribution rather
-      // than crediting the wrong party while it is unknown.
-      creatorUsername: offer ? offer.creatorUsername : undefined,
-    };
-  };
+    if (sortBy === 'obtained') return matched;
+
+    return [...matched].sort((a, b) => {
+      const left = lastUsedAt.get(a.id);
+      const right = lastUsedAt.get(b.id);
+      if (left && right) return left < right ? 1 : left > right ? -1 : 0;
+      // Used beats never-used; two never-used keep the obtained order they came in.
+      if (left) return -1;
+      if (right) return 1;
+      return 0;
+    });
+  }, [sticker, search, sortBy, lastUsedAt]);
 
   if (!showing) return null;
 
@@ -134,22 +159,39 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
   // Drafts already on the image are subtracted, because each one will spend a
   // use when it is bought. Without this you could lay out three with one use
   // left and only find out at the third purchase, having arranged all of them.
-  const balanceFor = (cosmeticId: number) => {
-    const remaining = balances?.find((balance) => balance.cosmeticId === cosmeticId)?.remaining;
-    if (remaining == null) return remaining;
-    const drafted = drafts.filter((draft) => draft.cosmeticId === cosmeticId).length;
-    return Math.max(remaining - drafted, 0);
-  };
+  // Shared with the duplicate action, which asks the same question about the
+  // same three states. It was this rule written out twice, which is the drift
+  // the refill offer had already been split into two copies by.
+  const balanceFor = (cosmeticId: number) => remainingStickerUses({ balances, drafts, cosmeticId });
 
   const price = space?.price ?? 0;
   // The same predicate the draft's own control uses, so the sentence here and
   // the button down there cannot disagree about what is on offer.
   const freeAvailable = !!freeOfferFor(space, standing);
-  // Says the panel can be got out of the way, and that more than one is allowed,
-  // only once there is something that would survive it. Before that both are
-  // instructions about nothing.
+
+  /**
+   * Why free is off the table, said while the choice is still being made rather
+   * than after the server has refused it.
+   *
+   * Every branch of that decision is in `free-offer.ts`, where a test can put
+   * all four states to it — inline here, the guards that keep the sentence from
+   * appearing on ordinary paid images are two `&&`s nothing can observe.
+   */
+  const freeUnavailableReason = preCommitFreeReason(freeAvailable, standing, space);
+  // `Countdown` needs a Date; the query hands back whatever JSON carried.
+  const resetsAt = standing?.resetsAt ? new Date(standing.resetsAt) : null;
+
+  const notes = trayNotes({
+    freeAvailable,
+    price,
+    review: space?.mode === 'review',
+    reason: freeUnavailableReason,
+    declineFee: space?.declineFee,
+  });
+  // Says more than one is allowed only once there is a draft to say it about.
+  // Before that it is an instruction about nothing.
   const instruction = drafts.length
-    ? 'Drag out as many as you like, then buy the ones you want. Closing this panel leaves them on the image.'
+    ? 'Drag out as many as you like, then pay to place the ones you want.'
     : 'Drag a sticker onto the image.';
 
   return (
@@ -162,32 +204,95 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
             thing you are shopping to add to, so it stays visible while you buy. */}
         {shopping && <StickerShopPanel maxScale={maxScale} onClose={() => setShopping(false)} />}
         <div className="overflow-hidden rounded-lg border border-gray-3 bg-white shadow-lg dark:border-dark-4 dark:bg-dark-7">
-          <div className="flex items-start gap-2 border-b border-gray-3 px-3 py-2 dark:border-dark-4">
-            <div className="flex-1">
+          <div className="flex flex-wrap items-start gap-2 border-b border-gray-3 px-3 py-2 dark:border-dark-4">
+            <div className="order-1 min-w-0 flex-1">
               <Text size="sm" fw={600}>
                 {instruction}
               </Text>
-              <Text size="xs" c="dimmed">
-                {/* Both sentences come from `free-offer.ts`, where their
-                    branches are covered — inline here, dropping either ternary
-                    is a mutation nothing in the suite can observe, and what it
-                    produces is the exact contradiction these lines exist to
-                    prevent. The free half of the decline warning is
-                    FREE_REVIEW_CAVEAT itself rather than a paraphrase. */}
-                {trayPriceLine(freeAvailable, price)}
-                {space?.mode === 'review' &&
-                  ' · this creator reviews placements, so only you will see it until they approve.'}
-                {space?.mode === 'review' && trayReviewLine(freeAvailable)}
-              </Text>
+              {/* One short line each, with an icon, rather than one sentence
+                  spanning the panel. Which lines exist and what they say is
+                  decided in `free-offer.ts`, where every branch is covered;
+                  this only draws them. */}
+              <div className="mt-0.5 flex flex-col gap-0.5">
+                {notes.map((note) => (
+                  <div key={note.id} className="flex items-start gap-1.5">
+                    {note.tone === 'warn' ? (
+                      <IconAlertTriangle
+                        size={13}
+                        className="mt-0.5 shrink-0 text-yellow-6"
+                        aria-hidden
+                      />
+                    ) : (
+                      <IconInfoCircle
+                        size={13}
+                        className="mt-0.5 shrink-0 opacity-60"
+                        aria-hidden
+                      />
+                    )}
+                    <Text size="xs" c={note.tone === 'warn' ? 'yellow.6' : 'dimmed'}>
+                      {note.text}
+                      {/* The spent-allowance line is the one note whose answer
+                          keeps changing while the panel is open, so it says WHEN
+                          rather than a phrase that ages: a live countdown to the
+                          reset instead of "it comes back tomorrow" still sitting
+                          there at 11:59. Only on that note, and only when the
+                          server told us when. */}
+                      {note.id === 'reason' && standing && standing.remaining <= 0 && resetsAt && (
+                        <>
+                          {' Next free placement: '}
+                          <Countdown endTime={resetsAt} format="short" />
+                        </>
+                      )}
+                    </Text>
+                  </div>
+                ))}
+              </div>
             </div>
+            {!isLoading && sticker.length > STICKER_SEARCH_THRESHOLD && (
+              <div className="order-3 flex w-full shrink-0 items-center gap-2 sm:order-2 sm:w-auto">
+                <TextInput
+                  size="xs"
+                  className="min-w-0 flex-1 sm:w-36 sm:flex-none"
+                  value={search}
+                  onChange={(event) => setSearch(event.currentTarget.value)}
+                  placeholder="Search"
+                  aria-label="Search your stickers"
+                  leftSection={<IconSearch size={14} />}
+                />
+                <Select
+                  size="xs"
+                  className="w-36 shrink-0 sm:w-40"
+                  value={sortBy}
+                  onChange={(value) => setSortBy(value === 'obtained' ? 'obtained' : 'used')}
+                  data={[
+                    { value: 'used', label: 'Recently used' },
+                    { value: 'obtained', label: 'Recently acquired' },
+                  ]}
+                  aria-label="Sort your stickers"
+                  allowDeselect={false}
+                  // The panel clips its overflow, and this app defaults Popover to
+                  // `withinPortal: false`, so the menu would open inside the clip.
+                  comboboxProps={{ withinPortal: true }}
+                />
+              </div>
+            )}
             <CloseButton
+              className="order-2 sm:order-3"
               onClick={closeTray}
               aria-label={drafts.length ? 'Close the sticker panel' : 'Stop placing a sticker'}
             />
           </div>
 
-          <ScrollArea.Autosize mah={120} type="auto" scrollbarSize={6}>
-            <Group gap="xs" wrap="nowrap" p="xs">
+          {/* Native overflow, not `ScrollArea.Autosize`. Autosize wraps its child in a
+              `display:flex; overflow:auto` box whose `flex:1` inner box keeps the default
+              `min-width:auto`, so it refuses to shrink to the panel: the scroll viewport
+              came out wider than the visible panel, putting the track's end and the last
+              sticker outside the clip. */}
+          <div
+            className="overflow-y-auto"
+            style={{ maxHeight: trayRowsHeight(2), scrollbarWidth: 'thin' }}
+          >
+            <Group gap={STICKER_TILE_GAP} p={STICKER_TILE_GAP}>
               {isLoading && <Text size="sm">Loading your stickers…</Text>}
 
               {/* Ahead of the stickers, so it stays put as the row grows. */}
@@ -220,31 +325,29 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
                   </div>
                 </div>
               )}
-              {sticker.map((option) => {
+              {visible.map((option) => {
                 const remaining = balanceFor(option.id);
                 const exhausted = remaining === 0;
                 return (
                   <button
                     key={option.id}
                     type="button"
-                    // An exhausted sticker drags out like any other. What is
-                    // different is the draft it makes: it carries the price of
-                    // one more use, and asks for that before it can be placed.
-                    // Arranging it first is the point — the same argument as
-                    // buying one from the shop, and the same gesture.
-                    onPointerDown={grab(
-                      option.id,
-                      exhausted ? refillOffer(option.id, option.pricePerUse) : undefined
-                    )}
+                    // 🔴 NO GATE IS STORED HERE, DELIBERATELY. An exhausted
+                    // sticker drags out like any other and the draft layer
+                    // decides what it owes, because that answer changes as other
+                    // drafts come and go: freezing "you must buy this" onto the
+                    // draft is what left a sticker asking to be bought for a use
+                    // another draft had just handed back.
+                    onPointerDown={grab(option.id)}
+                    style={{ touchAction: 'none', height: STICKER_TILE_HEIGHT }}
                     className={clsx(
-                      'flex shrink-0 cursor-grab flex-col items-center gap-1 rounded border p-2',
+                      'flex shrink-0 cursor-grab flex-col items-center justify-center gap-1 rounded border p-2',
                       drafts.some((draft) => draft.cosmeticId === option.id) ||
                         dragging === option.id
                         ? 'border-blue-5'
                         : 'border-transparent',
                       exhausted && 'opacity-40'
                     )}
-                    style={{ touchAction: 'none' }}
                   >
                     <EdgeImage
                       src={option.url}
@@ -257,8 +360,13 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
                   </button>
                 );
               })}
+              {!isLoading && !!sticker.length && !visible.length && (
+                <Text size="sm" c="dimmed" px="xs">
+                  No stickers match “{search.trim()}”.
+                </Text>
+              )}
             </Group>
-          </ScrollArea.Autosize>
+          </div>
         </div>
       </div>
     </div>

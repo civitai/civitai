@@ -179,6 +179,7 @@ import {
   throwAuthorizationError,
   throwBadRequestError,
   throwDbError,
+  throwInternalServerError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { fetchTimeoutSignal } from '~/server/utils/fetch-timeout';
@@ -540,6 +541,33 @@ async function getImageTagsForImages(
   );
 }
 
+/**
+ * Associates already-fetched tags to their images in O(N + M).
+ *
+ * `getImageTagsForImages` returns the tags for EVERY image in the batch, so a
+ * per-image `tags.filter(x => x.imageId === i.id)` rescans the whole array once
+ * per image — O(N x M), and M grows with N. CPU profiles of the production API
+ * showed that construct dominating multi-second event-loop stalls.
+ *
+ * 🔴 The empty case must stay `[]`, NOT `undefined`. `.filter()` returned `[]`
+ * for an image with no tags and `Map.get()` returns `undefined`; those are
+ * different values in the API response, and images with no tags are common.
+ * That is what the `?? []` is for — do not "simplify" it away.
+ */
+export function attachTagsToImages<TImage extends { id: number }, TTag extends { imageId: number }>(
+  images: TImage[],
+  tags: TTag[] | undefined
+): (TImage & { tags: TTag[] })[] {
+  const tagsByImageId = tags?.reduce((acc, tag) => {
+    const arr = acc.get(tag.imageId);
+    if (arr) arr.push(tag);
+    else acc.set(tag.imageId, [tag]);
+    return acc;
+  }, new Map<number, TTag[]>());
+
+  return images.map((i) => ({ ...i, tags: tagsByImageId?.get(i.id) ?? [] }));
+}
+
 export const deleteImageById = async ({
   id,
   updatePost,
@@ -586,6 +614,64 @@ export const deleteImageById = async ({
     }).catch(() => undefined);
   }
 };
+
+/**
+ * Queue an image that has been REPLACED (not deleted) for destruction later, instead of
+ * destroying it inline.
+ *
+ * A replacement is not a deletion: nobody asked for the old picture to stop existing, they
+ * asked for a new one to start being used. Destroying the old row + stored object at that
+ * moment turns every reference still holding its url into a 404 — and several such caches
+ * are legitimate and long-lived (the image CDN's redirect is `max-age=86400`, the
+ * account-switcher roster in localStorage is durable by design, feeds and embeds hold
+ * rendered urls). A stale-but-present avatar is invisible to a user; a deleted one is a
+ * broken image. Deferring the reap makes the whole class self-correcting rather than
+ * permanently broken until every cache is individually fixed.
+ *
+ * The queue row is the clock: `remove-replaced-images` measures the retention window from
+ * its `createdAt`, exactly as `remove-blocked-images` does for `BlockedImageDelete`.
+ *
+ * `DO UPDATE` rather than `DO NOTHING` (which is what `enqueueJobs` uses) is load-bearing.
+ * A user can re-select a previously-replaced image, so the same id can be queued twice; on
+ * conflict the row must RESTART its window, not inherit the first replacement's clock, or
+ * the second replacement gets no retention at all.
+ *
+ * Errors are swallowed and logged, like `deleteImageById` above. The one caller runs inside
+ * the `Promise.all` that decides whether a profile save reports success, and a save that has
+ * already committed must not surface as "error updating your profile" because a cleanup
+ * enqueue failed. The failure direction is also the safe one: the image stays fetchable and
+ * is not reaped, so the worst case is one leaked object with a log line naming it — never a
+ * broken avatar.
+ */
+export async function queueReplacedImageDeletion(ids: number[]) {
+  // Deduped and chunked like `enqueueJobs`, whose statement shape this otherwise copies. The
+  // dedupe is not hygiene: `DO UPDATE` cannot touch the same row twice in one statement, so a
+  // repeated id in a single call would fail the whole insert.
+  const batches = chunk(uniq(ids), 500);
+  for (const batch of batches) {
+    try {
+      await dbWrite.$executeRaw`
+        INSERT INTO "JobQueue" ("entityId", "entityType", "type")
+        VALUES ${Prisma.join(
+          batch.map(
+            (entityId) =>
+              Prisma.sql`(${entityId}::integer, ${EntityType.Image}::"EntityType", ${JobQueueType.ReplacedImageDelete}::"JobQueueType")`
+          )
+        )}
+        ON CONFLICT ("entityType", "entityId", "type")
+        DO UPDATE SET "createdAt" = NOW()
+      `;
+    } catch (error) {
+      await logToAxiom({
+        type: 'error',
+        name: 'queue-replaced-image-deletion-failed',
+        message: 'replaced image was not queued for deletion; it will not be reaped',
+        imageIds: batch,
+        error: safeError(error),
+      }).catch(() => undefined);
+    }
+  }
+}
 
 export async function deleteImages(ids: number[], updatePosts = true) {
   const images = await Limiter({ batchSize: 100 }).process(ids, async (ids, batchIndex) => {
@@ -1543,7 +1629,9 @@ export const getAllImages = async (
   // so a hubId arriving means the dispatcher routed wrongly. Returning results
   // would hand the caller the global feed labelled as their hub.
   if (input.hubId)
-    throw new Error('getAllImages cannot serve a hub; hub queries must use the index path');
+    throw throwInternalServerError(
+      new Error('getAllImages cannot serve a hub; hub queries must use the index path')
+    );
 
   const blockedEnforcement = await enforceBlockedBrowsingTags(input, {
     id: input.user?.id,
@@ -3404,9 +3492,9 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
   // BitDex-served Following feed) pay nothing here.
   //
   // ⚠️ THE STALENESS WINDOW IS REPLICA LAG, NOT CACHE TTL — and the cache is the
-  // FRESHER of the two. `userFollowsCache.refresh()` re-reads through `lookupFn(…,
-  // true)`, i.e. dbWrite, and `toggleFollowUser` calls it on both follow and
-  // unfollow; the pre-filter reads the REPLICA. So the reachable disagreement is a
+  // FRESHER of the two. `toggleFollowUser` maintains it from the delta it committed,
+  // falling back to `userFollowsCache.refresh()`, which re-reads via `lookupFn(…,
+  // true)`, i.e. dbWrite; the pre-filter reads the REPLICA. So the disagreement is a
   // caller who has just self-followed: for the replica-lag window this guard says
   // "in scope" and runs the own pass while the replica-derived filter still
   // excludes them. It needs a self-follow to reach at all, is self-healing, and
@@ -3976,8 +4064,8 @@ export async function getImagesFromFeedSearch(
   // describes. Adding the key to that schema without a clause here would serve an
   // unfiltered feed from one of three branches, so fail loudly instead.
   if (input.hubId)
-    throw new Error(
-      'getImagesFromFeedSearch cannot serve a hub; hub queries must use the index path'
+    throw throwInternalServerError(
+      new Error('getImagesFromFeedSearch cannot serve a hub; hub queries must use the index path')
     );
 
   try {
@@ -6358,7 +6446,7 @@ export type ImagesForModelVersions = {
   height: number;
   hash: string;
   modelVersionId: number;
-  // meta: ImageMetaProps | null;
+  meta?: ImageMetaProps | null;
   type: MediaType;
   metadata: ImageMetadata | VideoMetadata | null;
   tags?: number[];
@@ -6486,7 +6574,11 @@ export const getImagesForModelVersion = async ({
       i.minor,
       i.poi,
       t."modelVersionId",
-      ${Prisma.raw(include.includes('meta') ? 'i.meta,' : '')}
+      ${Prisma.raw(
+        include.includes('meta')
+          ? 'CASE WHEN i."hideMeta" THEN NULL ELSE i.meta END AS meta,'
+          : ''
+      )}
       p."availability",
       (
         CASE
@@ -6589,6 +6681,8 @@ export const imagesForModelVersionsCache = createCachedObject<CachedImagesForMod
     // the lag-aware helper so a cache miss right after image upload doesn't
     // poison the entry with `images: []` for a full TTL cycle.
     const db = fromWrite ? dbWrite : await getDbWithoutLagBatch('modelVersion', ids);
+    // No `include: ['meta']`: these rows reach the Meilisearch model document and
+    // the model.getAll wire, and GETALL_DROPPED_IMAGE_FIELDS does not drop meta.
     const images = await getImagesForModelVersion({
       modelVersionIds: ids,
       imagesPerVersion: 20,
@@ -6894,7 +6988,6 @@ type GetImageConnectionRaw = {
   width: number;
   height: number;
   hash: string;
-  meta: ImageMetaProps; // TODO - remove
   hideMeta: boolean;
   createdAt: Date;
   mimeType: string;
@@ -6907,7 +7000,7 @@ type GetImageConnectionRaw = {
   metadata: ImageMetadata | VideoMetadata;
   entityId: number;
   hasMeta: boolean;
-  hasPositivePrompt?: boolean;
+  hasPositivePrompt: boolean;
   poi?: boolean;
   minor?: boolean;
 };
@@ -6978,7 +7071,6 @@ export const getImagesByEntity = async ({
       i.width,
       i.height,
       i.hash,
-      i.meta,
       i."hideMeta",
       i."createdAt",
       i."mimeType",
@@ -7015,10 +7107,7 @@ export const getImagesByEntity = async ({
     tagsVar = await getImageTagsForImages(imageIds);
   }
 
-  return images.map((i) => ({
-    ...i,
-    tags: tagsVar?.filter((x) => x.imageId === i.id),
-  }));
+  return attachTagsToImages(images, tagsVar);
 };
 
 export async function createImage({
@@ -7154,8 +7243,9 @@ type GetEntityImageRaw = {
   width: number;
   height: number;
   hash: string;
-  meta: ImageMetaProps;
   hideMeta: boolean;
+  hasMeta: boolean;
+  hasPositivePrompt: boolean;
   createdAt: Date;
   mimeType: string;
   scannedAt: Date;
@@ -7198,8 +7288,21 @@ export const getEntityCoverImage = async ({
       i.width,
       i.height,
       i.hash,
-      i.meta,
       i."hideMeta",
+      (
+        CASE
+          WHEN i.meta IS NULL OR jsonb_typeof(i.meta) = 'null' OR i."hideMeta" THEN FALSE
+          ELSE TRUE
+        END
+      ) AS "hasMeta",
+      (
+        CASE
+          WHEN i.meta IS NOT NULL AND jsonb_typeof(i.meta) != 'null' AND NOT i."hideMeta"
+            AND i.meta->>'prompt' IS NOT NULL
+          THEN TRUE
+          ELSE FALSE
+        END
+      ) AS "hasPositivePrompt",
       i."createdAt",
       i."mimeType",
       i.type,
@@ -7329,28 +7432,63 @@ export const getEntityCoverImage = async ({
         UNION
         -- CONNECTIONS
         SELECT * FROM (
-          SELECT
+          -- There is one "ImageConnection" row per linked image, so this branch --
+          -- alone among the six -- can emit many rows per entity (fan-out p50 1,
+          -- p99 11, max 525). DISTINCT ON collapses it to the single row the JS
+          -- join below would have consumed anyway, which is what keeps the size of
+          -- this result set proportional to the number of entities requested.
+          --
+          -- The eligibility predicate belongs HERE rather than in the outer WHERE.
+          -- DISTINCT ON picks its row before any later filter runs, so collapsing
+          -- first and filtering afterwards could settle on an unscanned image and
+          -- leave the entity with no cover at all, even though a sibling connection
+          -- was eligible the whole time.
+          --
+          -- Both key columns are required. Every other branch pins a single
+          -- "entityType", so "entityId" alone identifies a row there; this branch
+          -- joins on the pair, so one id can legitimately recur across types.
+          --
+          -- "ImageConnection" carries no ordering column of its own -- no index, no
+          -- timestamp -- so nothing on the link records which image the author meant
+          -- to come first. The tiebreak is the image id, chosen for the properties
+          -- that can actually be guaranteed: it is a primary key, so the order is
+          -- total, never null, and leaves no residual tie for the planner to settle
+          -- arbitrarily. It is deliberately NOT claimed to be a first-attached rule.
+          -- "updateEntityImages" links already-existing images -- with arbitrary older
+          -- ids -- ahead of the ones it creates in the same call, so attaching an older
+          -- image on a later edit lowers the minimum and promotes that image to cover.
+          -- What the tiebreak buys is a stable, deterministic choice, not a
+          -- semantically-first one.
+          SELECT DISTINCT ON (e."entityId", e."entityType")
               e."entityId",
               e."entityType",
               i.id AS "imageId",
               0 "order1",
-	          0 "order2",
-	          0 "order3"
+              0 "order2",
+              0 "order3"
           FROM entities e
           JOIN "ImageConnection" ic ON ic."entityId" = e."entityId" AND ic."entityType" = e."entityType"
           JOIN "Image" i ON i.id = ic."imageId"
+          WHERE i."ingestion" = 'Scanned'
+            AND i."needsReview" IS NULL
+          ORDER BY e."entityId", e."entityType", i.id
         ) t
     ) t
     JOIN "Image" i ON i.id = t."imageId"
     WHERE i."ingestion" = 'Scanned' AND i."needsReview" IS NULL`;
 
+  // Index once instead of scanning `imagesRaw` per entity. `set` is guarded so the
+  // first row for a key wins, matching what `.find()` returned: an entity can still
+  // draw rows from two branches at once (an Article has both a cover image and
+  // content-image connections), and this must not silently switch which one is kept.
+  const imagesByEntity = new Map<string, GetEntityImageRaw>();
+  for (const image of imagesRaw) {
+    const key = `${image.entityId}:${image.entityType}`;
+    if (!imagesByEntity.has(key)) imagesByEntity.set(key, image);
+  }
+
   const images = entities
-    .map((e) => {
-      const image = imagesRaw.find(
-        (i) => i.entityId === e.entityId && i.entityType === e.entityType
-      );
-      return image ?? null;
-    })
+    .map((e) => imagesByEntity.get(`${e.entityId}:${e.entityType}`) ?? null)
     .filter(isDefined);
 
   let tagsVar: (VotableTagModel & { imageId: number })[] | undefined = [];
@@ -7361,9 +7499,8 @@ export const getEntityCoverImage = async ({
 
   const cosmetics = await getCosmeticsForEntity({ ids: images.map((i) => i.id), entity: 'Image' });
 
-  return images.map((i) => ({
+  return attachTagsToImages(images, tagsVar).map((i) => ({
     ...i,
-    tags: tagsVar?.filter((x) => x.imageId === i.id),
     cosmetic: cosmetics[i.id],
   }));
 };

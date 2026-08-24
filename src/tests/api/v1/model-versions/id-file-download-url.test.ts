@@ -48,6 +48,7 @@ vi.mock('~/server/services/image.service', () => ({
 vi.mock('~/server/services/paid-access.service', () => ({
   getPaidAccess: mockGetPaidAccess,
   toPublicPaidAccessDto: () => null,
+  bustModelSaleCache: vi.fn(),
 }));
 vi.mock('~/server/services/creator-program.service', () => ({
   hasValidCreatorMembershipCached: async () => false,

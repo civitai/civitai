@@ -57,26 +57,84 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
   const key = `${type ?? UploadType.Default}/${userId}/${filename}.${generateToken(4)}${ext}`;
   const s3 = backend === 'b2' ? getUploadS3Client('b2') : null;
   const bucket = backend === 'b2' ? getUploadBucket('b2') : null;
-  const result = await getMultipartPutUrl(
-    key,
-    req.body.size,
-    s3,
-    bucket,
-    undefined,
-    getUploadChunkSize(req.body.size)
-  );
-  await logToAxiom({
-    name: 's3-upload',
-    userId,
-    type,
-    filename: fullFilename,
-    key,
-    uploadId: result.uploadId,
-    bucket: result.bucket,
-    backend,
-  });
 
-  res.status(200).json({ ...result, backend });
+  /**
+   * 🔴 This handler had NO try/catch and issued its telemetry BEFORE its response, which
+   * is the worst pairing of the two: `await logToAxiom` sat between a successfully created
+   * multipart session and the 200 that hands the client its presigned part URLs, and any
+   * throw there escaped as an unhandled rejection — a 500 with nothing logged anywhere.
+   *
+   * That is how a telemetry outage took this route down on 2026-08-23 (56 sampled 500s,
+   * against a normal baseline of zero) while the S3 backend was healthy the whole time.
+   * `@civitai/axiom` now contains that write; the ordering and the catch here are the
+   * parts that hold regardless.
+   */
+  try {
+    const result = await getMultipartPutUrl(
+      key,
+      req.body.size,
+      s3,
+      bucket,
+      undefined,
+      getUploadChunkSize(req.body.size)
+    );
+
+    res.status(200).json({ ...result, backend });
+
+    // 🔴 CONTAINED: after the response, but still inside the try — an uncontained throw
+    // would land in the catch below and answer a successful request with a 500.
+    try {
+      await logToAxiom({
+        name: 's3-upload',
+        userId,
+        type,
+        filename: fullFilename,
+        key,
+        uploadId: result.uploadId,
+        bucket: result.bucket,
+        backend,
+      });
+    } catch {
+      /* contained — @civitai/axiom reports its own ingest failures */
+    }
+  } catch (e) {
+    const error = e as Error;
+    console.error('Upload create error:', error.message, error.stack);
+
+    /**
+     * A STATIC body, never the error's own text. Two gates shaped this line and both are
+     * worth recording, because the obvious versions fail one or the other:
+     *
+     *  - `{ error: error.message }` puts driver-derived text on the wire and lands this
+     *    route on `rest-error-envelope-ledger`'s offender list. The ledger caught it.
+     *  - `handleEndpointError(res, e)` is the sanctioned envelope and would be the right
+     *    answer in general — but importing `~/server/utils/endpoint-helpers` here pulls
+     *    `pgDb` → `kyselyDb` into this route's module graph, which broke
+     *    `upload-backend.test.ts` at IMPORT time (reported as `Tests no tests`, not as a
+     *    failure). Not worth a new graph edge on a hotfix for a body no client reads.
+     *
+     * No multipart classification: unlike ./complete.ts and ./abort.ts there is no
+     * existing upload session to be in a terminal state about, so every failure here is a
+     * genuine create-side fault. The diagnosable detail goes to the log below, not the wire.
+     */
+    res.status(500).json({ error: 'Failed to start upload' });
+
+    // The event that makes a create failure diagnosable — key/backend/filename plus the
+    // real message. Contained for the same reason as the success path.
+    try {
+      await logToAxiom({
+        name: 's3-upload-create-error',
+        userId,
+        type,
+        filename: fullFilename,
+        key,
+        backend,
+        error: error.message,
+      });
+    } catch {
+      /* contained — see the success path */
+    }
+  }
 };
 
 export default upload;

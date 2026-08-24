@@ -58,6 +58,7 @@ vi.mock('~/server/services/paid-access.service', () => ({
   materializePaidAccessEndsAt: mockMaterialize,
   writePaidAccessForModelVersion: vi.fn(),
   getPaidAccess: vi.fn().mockResolvedValue({}),
+  bustModelSaleCache: vi.fn(),
 }));
 vi.mock('~/server/services/auction.service', () => ({ deleteBidsForModelVersion: vi.fn() }));
 vi.mock('~/server/services/blocklist.service', () => ({ throwOnBlockedLinkDomain: vi.fn() }));
@@ -76,7 +77,6 @@ vi.mock('~/server/services/notification.service', () => ({ createNotification: v
 vi.mock('~/server/services/orchestrator/models', () => ({ bustOrchestratorModelCache: vi.fn() }));
 vi.mock('~/server/services/post.service', () => ({ addPostImage: vi.fn(), createPost: vi.fn() }));
 vi.mock('~/server/services/model.service', () => ({
-  ingestModelById: vi.fn(),
   updateModelLastVersionAt: vi.fn(),
 }));
 vi.mock('~/server/services/model-file.service', () => ({
@@ -157,6 +157,50 @@ describe('toggleModelVersionEngagement', () => {
     await expect(
       toggleModelVersionEngagement({ userId: 1, versionId: 2, type: 'Notify' as any })
     ).rejects.toThrow('db down');
+  });
+
+  // 868kurkc7. `ModelVersionEngagementType` has exactly ONE member today, so a
+  // PK-addressed write here is not a bug yet — it becomes one the day a second value
+  // is added, silently, because nothing in the code says so. Pinned as a shape.
+  it.each(['deleteMany', 'updateMany'] as const)(
+    'issues no PK-addressed write (%s branch)',
+    async (branch) => {
+      mockDbWrite.modelVersionEngagement.findUnique.mockResolvedValueOnce({
+        type: branch === 'deleteMany' ? 'Notify' : 'Something',
+      });
+      mockDbWrite.modelVersionEngagement.deleteMany.mockResolvedValue({ count: 1 });
+      mockDbWrite.modelVersionEngagement.updateMany.mockResolvedValue({ count: 1 });
+
+      await toggleModelVersionEngagement({ userId: 1, versionId: 2, type: 'Notify' as any });
+
+      // The EXACT where, not `objectContaining`: a loose matcher passes whether or
+      // not `type` is in the filter, which is the whole property under test.
+      expect(mockDbWrite.modelVersionEngagement[branch]).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            userId: 1,
+            modelVersionId: 2,
+            type: branch === 'deleteMany' ? 'Notify' : 'Something',
+          },
+        })
+      );
+      expect([
+        ...mockDbWrite.modelVersionEngagement.delete.mock.calls,
+        ...mockDbWrite.modelVersionEngagement.update.mock.calls,
+      ]).toEqual([]);
+    }
+  );
+
+  it('scopes each write by the type it READ', async () => {
+    mockDbWrite.modelVersionEngagement.findUnique.mockResolvedValueOnce({ type: 'Something' });
+    mockDbWrite.modelVersionEngagement.updateMany.mockResolvedValue({ count: 1 });
+
+    await toggleModelVersionEngagement({ userId: 1, versionId: 2, type: 'Notify' as any });
+
+    expect(mockDbWrite.modelVersionEngagement.updateMany).toHaveBeenCalledWith({
+      where: { userId: 1, modelVersionId: 2, type: 'Something' },
+      data: { type: 'Notify' },
+    });
   });
 });
 

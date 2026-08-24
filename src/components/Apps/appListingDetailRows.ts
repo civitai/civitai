@@ -29,12 +29,17 @@
  *          omits its header META LINE in preview for exactly this reason; the rail row
  *          rendered the same value under the same label two inches lower. The review
  *          surface prints the submission time itself, twice, correctly labelled.
+ *      🔴 THE RULE IS "a number or date the posture cannot supply honestly", NOT "every
+ *      row a preview does not need". The SOURCE row is deliberately NOT in that list: a
+ *      shadow carries `sourceRepoUrl` verbatim and approving PUBLISHES it, so hiding it
+ *      from the moderator would be hiding the very thing under review.
  *
  * The REVIEWS row's word label comes from the SHARED ladder (`~/utils/rating-label`),
  * the same one the model version page renders — not a second copy with its own
  * thresholds. See that module's header.
  */
 
+import { STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
 import { getRatingLabel } from '~/utils/rating-label';
 import { marketplaceCategoryLabel } from '~/server/services/blocks/marketplace-categories.constants';
 import { offsiteContentRatingLabel } from '~/shared/constants/browsingLevel.constants';
@@ -43,11 +48,24 @@ import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.sche
 /** A single label/value row of the Details panel. */
 export type ListingDetailRow = {
   /** Stable key — also the row's `data-listing-detail-row` attribute in the DOM. */
-  key: 'kind' | 'category' | 'rating' | 'reviews' | 'installs' | 'updated';
+  key: 'kind' | 'category' | 'rating' | 'reviews' | 'installs' | 'updated' | 'source';
   /** Dimmed left-hand label. */
   label: string;
   /** Right-hand display value. */
   value: string;
+  /**
+   * When set, the row's value renders as an ANCHOR to this URL rather than as plain
+   * text. Only the `source` row sets it.
+   *
+   * 🔴 THE RENDERER MUST EMIT `target="_blank"` + `rel="noopener noreferrer"` for it.
+   * `noopener` is the load-bearing half — without it the opened page gets a live
+   * `window.opener` handle to this tab and can navigate it anywhere (reverse
+   * tabnabbing, i.e. replacing the store page the user will come back to with a
+   * look-alike). `noreferrer` additionally withholds the referrer. The value here is
+   * already host-allowlisted and normalised server-side by `validateRepositoryUrl`, so
+   * this is defence in depth on a link we already constrain, not the only control.
+   */
+  href?: string;
   /**
    * Mantine colour token for the value, when the value carries a verdict. Only the
    * `reviews` row sets it (the rating ladder's colour); everything else renders in the
@@ -64,7 +82,7 @@ export type ListingDetailRow = {
  * filter uses.
  */
 function kindLabel(detail: Pick<ListingDetail, 'kindData'>): string {
-  return detail.kindData.kind === 'onsite' ? 'On-site app' : 'Standalone';
+  return detail.kindData.kind === 'onsite' ? 'On-site app' : STANDALONE_KIND_LABEL;
 }
 
 /**
@@ -85,7 +103,8 @@ export function buildListingDetailRows(
     | 'reviewCount'
     | 'installCount'
     | 'updatedAt'
-  >,
+  > &
+    Partial<Pick<ListingDetail, 'sourceRepoUrl'>>,
   opts: { preview?: boolean; formatDate: (iso: string) => string }
 ): ListingDetailRow[] {
   const rows: ListingDetailRow[] = [];
@@ -110,6 +129,34 @@ export function buildListingDetailRows(
       key: 'rating',
       label: 'Rating',
       value: offsiteContentRatingLabel(detail.contentRating),
+    });
+  }
+
+  // SOURCE — the app's public source repository, when the author declared one.
+  //
+  // 🔴 PRESENT IN `preview`, unlike reviews / installs / updated, and that is rule 2
+  // applied rather than ignored. Rule 2 omits a row when the PREVIEW POSTURE cannot
+  // supply the value honestly: a shadow listing structurally has no reviews and no
+  // installs, and the date a preview carries is the submission time wearing an
+  // "Updated" label. None of that is true here — the source link is a scalar the
+  // shadow carries verbatim and the one `applyApprovedRevision` will publish, so
+  // showing it to the moderator is the entire point of a review preview.
+  //
+  // 🔴 RUNTIME-GUARDED on the type, like `installCount`/`updatedAt` above and for the
+  // same MEASURED reason: not every producer of a `ListingDetail`-shaped object goes
+  // through `projectListingDetail` (the moderator combined-review surface builds one
+  // through a cast), so a required TYPE is not a runtime guarantee. Absent, a
+  // non-string, or empty ⇒ omit the row entirely — never a "Source: —".
+  if (typeof detail.sourceRepoUrl === 'string' && detail.sourceRepoUrl.length > 0) {
+    rows.push({
+      key: 'source',
+      label: 'Source',
+      // Displayed WITHOUT the scheme (`github.com/owner/repo`): the rail is narrow, and
+      // every accepted value is https by construction, so the prefix is eight columns
+      // of no information. The `href` keeps the full absolute URL — stripping it there
+      // would produce a relative link to a path on civitai.com.
+      value: detail.sourceRepoUrl.replace(/^https:\/\//, ''),
+      href: detail.sourceRepoUrl,
     });
   }
 

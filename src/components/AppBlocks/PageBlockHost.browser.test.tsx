@@ -88,7 +88,11 @@ vi.mock('~/utils/trpc', () => ({
 }));
 
 // eslint-disable-next-line import/first
-import { PageBlockHost } from '~/components/AppBlocks/PageBlockHost';
+import {
+  BLOCK_READY_TIMEOUT_MS,
+  PageBlockHost,
+  TOKEN_WAIT_TIMEOUT_MS,
+} from '~/components/AppBlocks/PageBlockHost';
 // eslint-disable-next-line import/first
 import { IframeInitController } from '~/components/AppBlocks/iframeInitController';
 
@@ -234,24 +238,32 @@ const baseProps = {
 };
 
 /**
- * Six tests below exercise PageBlockHost's two REAL product timeout windows —
- * `BLOCK_READY_TIMEOUT_MS` (10s) and `TOKEN_WAIT_TIMEOUT_MS` (15s) in PageBlockHost.tsx.
- * Sleeping through them in real time cost ~76s, ~95% of this file's runtime. Instead:
+ * Tests below exercise PageBlockHost's REAL recovery windows —
+ * `BLOCK_READY_TIMEOUT_MS` (10s) and `TOKEN_WAIT_TIMEOUT_MS` (15s) in PageBlockHost.tsx,
+ * plus the bounded auto-retry's first backoff (`AUTO_RETRY_BACKOFF_MS[0]`, 2s) in
+ * pageBlockHostLogic.ts. Sleeping through them in real time cost ~76s, ~95% of this
+ * file's runtime.
  *
- *   useFakeClock()  — install Vitest's fake clock BEFORE the render, so the product's
- *                     `setTimeout` is scheduled on it (installing it after the render
- *                     does nothing: the timer is already on the real clock).
- *                     `shouldAdvanceTime` keeps the fake clock ticking with real time so
- *                     browser-mode locator polling still progresses while it's installed.
- *   advancePastWindow(ms) — jump the window, then hand control straight back to REAL
- *                     timers, so every later assertion, `vi.waitFor` and (crucially)
- *                     `userEvent`/locator click runs on the normal clock. No test
- *                     interacts with the DOM while the fake clock is installed.
+ * There are TWO clock helpers here and the difference between them is the ONLY thing
+ * that matters when reading these tests: whether the test touches the DOM while the
+ * clock is installed.
  *
- * These do NOT weaken the tests: each still asserts the same terminal DOM state, and
- * the elapsed window is now explicit (advance 11s past a 10s window) rather than implied
- * by a generous real-time poll. The `afterEach` below is a safety net so a mid-test
- * failure can never leak the fake clock into the next test.
+ *   useFakeClock() + advancePastWindow(ms) — for a test that merely WAITS OUT a window
+ *     and then asserts. `advancePastWindow` deliberately hands control back to REAL
+ *     timers on the way out, so everything after it — assertions, `vi.waitFor`, locator
+ *     queries — runs on the normal clock. `shouldAdvanceTime` keeps the fake clock
+ *     ticking with real time while it is installed so locator polling still progresses.
+ *     🔴 Do NOT use this pair around a user gesture: the real clock it restores is
+ *     exactly the clock a gesture would be racing. See useVirtualClock.
+ *
+ *   useVirtualClock() + advance(ms) / pollFor(...) — for a test that CLICKS. The
+ *     virtual clock STAYS INSTALLED across the click, which is the whole point.
+ *
+ * Neither weakens a test: each still asserts the same terminal DOM state, and the
+ * elapsed window is stated outright — `advancePastWindow(11_000)` for a 10s window, or
+ * `advance(BLOCK_READY_TIMEOUT_MS)` plus `pollFor` nudges — rather than being implied by
+ * a generous real-time poll. The `afterEach` below is a safety net so a mid-test failure
+ * can never leak a fake clock into the next test.
  */
 function useFakeClock() {
   vi.useFakeTimers({ shouldAdvanceTime: true });
@@ -260,24 +272,143 @@ async function advancePastWindow(ms: number) {
   await vi.advanceTimersByTimeAsync(ms);
   vi.useRealTimers();
 }
+
+/**
+ * Install the VIRTUAL clock for one test. Call it BEFORE `renderWithProviders`, so the
+ * host's effects arm their timers against it (installing it afterwards does nothing —
+ * the timers are already on the real clock).
+ *
+ * 🔴 THIS IS THE CLOCK FOR A TEST THAT CLICKS, AND IT MUST STAY INSTALLED ACROSS THE
+ * CLICK. The four Retry tests below drive the button through the browser driver and
+ * then assert on `onRetryToken` call counts. Their premise is that the host's BOUNDED
+ * AUTO-RETRY has not yet fired when the user takes over — and an automatic attempt from
+ * an auth terminal RE-MINTS, i.e. it moves the very counter under assertion. On the real
+ * clock that premise is a race against `AUTO_RETRY_BACKOFF_MS[0]` (2000ms) which the
+ * driver's round-trip can lose on a loaded machine.
+ *
+ * `toFake` is restricted to the timer functions on purpose. Leaving `Date`,
+ * `performance` and `requestAnimationFrame` REAL keeps React's scheduler, Mantine and
+ * the Playwright driver behaving exactly as they do under real timers — the driver still
+ * spends REAL time, which is not the clock these tests race. Virtual time between arming
+ * the backoff and the click advances by ~0ms, so the premise becomes PROVABLE rather
+ * than probable.
+ *
+ * 🔴 Installing a fake clock is NOT by itself sufficient, and that is the trap that
+ * makes this worth spelling out: two of those four tests already installed one, but
+ * reached it through `advancePastWindow`, which restores REAL timers on the way out by
+ * design — so the click and every assertion after it ran on the real clock anyway.
+ *
+ * The same reasoning, and the CI flake (civitai#3674) that established it, is recorded
+ * at length in PageBlockHostAutoRetry.browser.test.tsx; these were the last four sites
+ * of that class still on the real clock.
+ */
+function useVirtualClock() {
+  vi.useFakeTimers({
+    toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'],
+  });
+}
+
 afterEach(() => {
   vi.useRealTimers();
 });
 
+/**
+ * The REAL `setTimeout`, captured at module load — before any test installs a fake
+ * clock, so this binding is never the faked one. `pollFor` needs it: a poll that only
+ * advances VIRTUAL time hands the browser almost no real time, so anything genuinely
+ * asynchronous (an iframe mounting) can miss its window on a loaded box while the poll
+ * burns its whole budget in milliseconds.
+ */
+const realSetTimeout = globalThis.setTimeout.bind(globalThis);
+const realSleep = (ms: number) => new Promise((r) => realSetTimeout(r, ms));
+
+/**
+ * Move time forward by `ms` and let React commit. Works under EITHER clock, so the
+ * helpers below are shared by the virtual-clock tests and the real-timer ones. Under the
+ * virtual clock the elapsed time is EXACT, which is what makes a window jump
+ * deterministic instead of a race against the runner.
+ */
+async function advance(ms: number) {
+  if (vi.isFakeTimers()) {
+    await vi.advanceTimersByTimeAsync(ms);
+    // Flush the promise/effect chain the fired timers kicked off. Each async tick also
+    // yields a REAL macrotask, so the browser (iframe loads, React's scheduler) makes
+    // progress even while virtual time stands still.
+    for (let i = 0; i < 6; i++) await vi.advanceTimersByTimeAsync(0);
+    return;
+  }
+  await new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * Poll `ready()`, nudging the clock in small steps.
+ *
+ * 🔴 For things that depend on real browser work — an iframe mounting, a React commit
+ * landing. NEVER to wait out one of the host's recovery windows: those are jumped with
+ * an explicit `advance(WINDOW)` so a test states exactly how much time it believes has
+ * passed.
+ *
+ * Two budgets, deliberately decoupled: at most 500ms of VIRTUAL time (well inside the
+ * shortest recovery window, the 2s backoff, so a poll can never silently trip the very
+ * behaviour a test is about to assert) and a bounded slice of REAL time for the browser to
+ * actually do the work. Advancing virtual time alone would give the page only
+ * microtasks — the failure mode that makes a fake-timer poll report "iframe never
+ * mounted" on a saturated runner.
+ *
+ * This is also why the clicking tests below use `pollFor` instead of `vi.waitFor`:
+ * `vi.waitFor` ADVANCES the fake clock while polling, spending virtual time against the
+ * very backoff the test needs to stay pending.
+ */
+/**
+ * 🔴 THE ITERATION COUNT IS SIZED AGAINST TWO CEILINGS, NOT PICKED.
+ *
+ * Each fake-clock iteration costs ~30ms REAL (the flush loop's macrotasks plus the
+ * 10ms sleep) and 1ms VIRTUAL. So the budget is ~4.5s real / 150ms virtual.
+ *
+ * REAL ceiling: browser mode forces `testTimeout` to 15s and the root config's 60s
+ * does NOT reach the `component` project. At 500 iterations this loop ran ~15s and
+ * LOST THE RACE to that timeout — measured: the tests below without an explicit
+ * timeout died as `Test timed out in 15000ms` instead of naming what they waited
+ * for, and the one with `20_000` cleared it by 93ms. Staying well under 15s is what
+ * keeps a failure legible.
+ *
+ * VIRTUAL ceiling: every millisecond spent here is spent against
+ * `AUTO_RETRY_BACKOFF_MS[0]` (2000ms), which these tests need to stay PENDING.
+ * 150ms is ~13x inside it. Measured actual spend between terminal and click is
+ * 1-10ms, so this is headroom, not a working budget.
+ */
+async function pollFor(what: string, ready: () => boolean) {
+  const fake = vi.isFakeTimers();
+  for (let i = 0; i < 150; i++) {
+    if (ready()) return;
+    if (fake) {
+      await advance(1);
+      await realSleep(10);
+    } else {
+      await advance(20);
+    }
+  }
+  throw new Error(`timed out waiting for: ${what}`);
+}
+
+const iframeElQuery = () => page.getByTestId('app-page-iframe').query() as HTMLIFrameElement | null;
+const loadingElQuery = () => page.getByTestId('app-page-loading').query();
+const fallbackElQuery = () => page.getByTestId('app-page-fallback').query();
+
 // Drive the handshake to BLOCK_READY (status='ready') so the consent gate's
 // `status === 'ready'` precondition is satisfied — same prerequisite a real
 // block hits before its first Generate.
+//
+// Built on `pollFor` rather than `vi.waitFor` so it is clock-agnostic: the four Retry
+// tests below call it under the virtual clock, where `vi.waitFor` would spend virtual
+// time against a pending backoff.
 async function driveToReady() {
   // Wait until the iframe is mounted + its contentWindow is reachable.
-  await vi.waitFor(() => {
-    const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
-    if (!el.contentWindow) throw new Error('not mounted yet');
-  });
+  await pollFor('iframe mount', () => !!iframeElQuery()?.contentWindow);
   // The host posts BLOCK_INIT on a retry interval; we just ack READY.
-  await vi.waitFor(() => {
+  await pollFor('BLOCK_READY ack', () => {
     postFromBlock('BLOCK_READY', {});
-    const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
-    if (el.getAttribute('data-block-ready') !== 'true') throw new Error('not ready yet');
+    return iframeElQuery()?.getAttribute('data-block-ready') === 'true';
   });
 }
 
@@ -756,7 +887,11 @@ describe('PageBlockHost loading indicator (Task 1)', () => {
 async function driveToFatal() {
   await driveToReady();
   postFromBlock('BLOCK_ERROR', { fatal: true });
-  await expect.element(page.getByTestId('app-page-fallback')).toBeInTheDocument();
+  await pollFor('terminal fallback', () => fallbackElQuery() !== null);
+  // Let the auto-retry scheduling effect arm its backoff timer before anyone measures
+  // from "now" — otherwise a caller under the virtual clock would take over BEFORE the
+  // timer exists and could not claim it had cancelled a pending attempt.
+  await advance(0);
 }
 
 describe('PageBlockHost terminal error surface (Task: readable error + Retry)', () => {
@@ -921,6 +1056,10 @@ describe('PageBlockHost Retry re-mints the token on AUTH failures (the HIGH)', (
   // auth branch fails the first two tests.
 
   test('error (mint failure): Retry calls onRetryToken AND returns to loading', async () => {
+    // VIRTUAL CLOCK, held across the click — `error` is an AUTH terminal, so a pending
+    // automatic attempt would itself call onRetryToken and make the exactly-once
+    // assertion below a race. See useVirtualClock.
+    useVirtualClock();
     const onRetryToken = vi.fn();
     // token=null + tokenError → synchronous `error` terminal; fallback renders.
     renderWithProviders(
@@ -932,7 +1071,10 @@ describe('PageBlockHost Retry re-mints the token on AUTH failures (the HIGH)', (
         onRetryToken={onRetryToken}
       />
     );
-    await expect.element(page.getByTestId('app-page-fallback')).toBeInTheDocument();
+    await pollFor('terminal fallback', () => fallbackElQuery() !== null);
+    // Let the auto-retry effect arm its backoff timer, so the click below is provably a
+    // takeover of a PENDING attempt rather than a race with one that may not exist yet.
+    await advance(0);
     expect(onRetryToken).not.toHaveBeenCalled();
 
     await page.getByRole('button', { name: 'Retry' }).click();
@@ -940,14 +1082,20 @@ describe('PageBlockHost Retry re-mints the token on AUTH failures (the HIGH)', (
     // The token re-mint fired exactly once (the auth-recovery path) …
     expect(onRetryToken).toHaveBeenCalledTimes(1);
     // … and the host returned to the loading state (the local re-arm still runs).
-    await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
-    expect(page.getByTestId('app-page-fallback').query()).toBeNull();
+    await pollFor('retry loading surface', () => loadingElQuery() !== null);
+    expect(fallbackElQuery()).toBeNull();
   });
 
   test('no_token (token never arrived): Retry calls onRetryToken AND returns to loading', async () => {
     const onRetryToken = vi.fn();
     // token=null, no error → token-wait timeout (15s) → `no_token` terminal.
-    useFakeClock();
+    //
+    // 🔴 This used `useFakeClock()` + `advancePastWindow()`, which LOOKS like it covers
+    // the click but does not: `advancePastWindow` restores REAL timers on the way out by
+    // design, so the click and every assertion after it ran on the real clock and raced
+    // the 2s auto-retry backoff. `no_token` is an AUTH terminal, so that automatic
+    // attempt re-mints — it moves the exact counter asserted below.
+    useVirtualClock();
     renderWithProviders(
       <PageBlockHost
         {...baseProps}
@@ -958,25 +1106,37 @@ describe('PageBlockHost Retry re-mints the token on AUTH failures (the HIGH)', (
       />
     );
     // The loader is the precondition — and it also guarantees the render has committed
-    // (so the product's token-wait timer is on the fake clock) before we advance it.
-    await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
-    await advancePastWindow(16_000);
-    await vi.waitFor(
-      () => {
-        expect(page.getByTestId('app-page-fallback').query()).not.toBeNull();
-      },
-      { timeout: 5_000, interval: 100 }
-    );
+    // (so the product's token-wait timer is on the virtual clock) before we advance it.
+    await pollFor('loading surface', () => loadingElQuery() !== null);
+    // 🔴 Advance to the window's EXACT boundary and let `pollFor` nudge the remainder,
+    // rather than over-shooting by a round second. Virtual time spent AFTER the terminal
+    // is reached is spent against the auto-retry backoff, so a generous over-shoot
+    // re-creates from inside the test exactly the pending-attempt-already-fired state
+    // this conversion exists to rule out. `pollFor` nudges 1ms at a time.
+    await advance(TOKEN_WAIT_TIMEOUT_MS);
+    await pollFor('terminal fallback', () => fallbackElQuery() !== null);
+    // Arm the auto-retry backoff before taking over (see the `error` test above).
+    await advance(0);
     expect(onRetryToken).not.toHaveBeenCalled();
 
     await page.getByRole('button', { name: 'Retry' }).click();
 
     expect(onRetryToken).toHaveBeenCalledTimes(1);
-    await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
-    expect(page.getByTestId('app-page-fallback').query()).toBeNull();
+    await pollFor('retry loading surface', () => loadingElQuery() !== null);
+    expect(fallbackElQuery()).toBeNull();
   }, 25_000);
 
   test('fatal (non-auth): Retry returns to loading + remounts but does NOT re-mint the token', async () => {
+    // VIRTUAL CLOCK, held across the click. `fatal` is NOT an auth terminal, so a
+    // pending automatic attempt would not move `onRetryToken` — but it WOULD flip the
+    // status to 'loading' mid-click, at which point `handleRetry`'s double-click guard
+    // makes the click a no-op and the host later settles on the `timeout` terminal
+    // instead. Every assertion below still passes, so the test goes GREEN while
+    // exercising a DIFFERENT branch than its name claims. Measured: shrinking the first
+    // backoff to 50ms takes this test from 200ms to 10531ms (it waits out a whole
+    // BLOCK_READY window) and it still reports a pass. The virtual clock removes the
+    // substitution rather than making it louder.
+    useVirtualClock();
     const onRetryToken = vi.fn();
     // token PRESENT; drive to the `fatal` terminal via a block error. The token
     // was fine — so Retry must remount only, never call onRetryToken.
@@ -988,12 +1148,11 @@ describe('PageBlockHost Retry re-mints the token on AUTH failures (the HIGH)', (
     await page.getByRole('button', { name: 'Retry' }).click();
 
     // Remount-only path is unchanged: back to loading, fresh iframe, NO re-mint.
-    await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
-    expect(page.getByTestId('app-page-fallback').query()).toBeNull();
-    await vi.waitFor(() => {
-      const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
-      if (!el.contentWindow) throw new Error('not remounted yet');
-      if (el.getAttribute('data-block-ready') !== 'false') throw new Error('not reset yet');
+    await pollFor('retry loading surface', () => loadingElQuery() !== null);
+    expect(fallbackElQuery()).toBeNull();
+    await pollFor('fresh iframe mount', () => {
+      const el = iframeElQuery();
+      return !!el?.contentWindow && el.getAttribute('data-block-ready') === 'false';
     });
     expect(onRetryToken).not.toHaveBeenCalled();
   });
@@ -1001,25 +1160,27 @@ describe('PageBlockHost Retry re-mints the token on AUTH failures (the HIGH)', (
   test('timeout (non-auth): Retry returns to loading but does NOT re-mint the token', async () => {
     const onRetryToken = vi.fn();
     // token present, never ack BLOCK_READY → readiness timeout (10s) → `timeout`.
-    useFakeClock();
+    //
+    // 🔴 Same trap as the `no_token` test: this used `useFakeClock()` +
+    // `advancePastWindow()`, which restores REAL timers on the way out, so the click ran
+    // on the real clock against the 2s auto-retry backoff.
+    useVirtualClock();
     renderWithProviders(
       <PageBlockHost {...baseProps} onConsentGranted={vi.fn()} onRetryToken={onRetryToken} />
     );
     // The loader is the precondition — and it also guarantees the render has committed
-    // (so the product's readiness timer is on the fake clock) before we advance it.
-    await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
-    await advancePastWindow(11_000);
-    await vi.waitFor(
-      () => {
-        expect(page.getByTestId('app-page-fallback').query()).not.toBeNull();
-      },
-      { timeout: 5_000, interval: 100 }
-    );
+    // (so the product's readiness timer is on the virtual clock) before we advance it.
+    await pollFor('loading surface', () => loadingElQuery() !== null);
+    // Exact boundary + `pollFor` nudges — see the note in the `no_token` test above.
+    await advance(BLOCK_READY_TIMEOUT_MS);
+    await pollFor('terminal fallback', () => fallbackElQuery() !== null);
+    // Arm the auto-retry backoff before taking over (see the `error` test above).
+    await advance(0);
 
     await page.getByRole('button', { name: 'Retry' }).click();
 
-    await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
-    expect(page.getByTestId('app-page-fallback').query()).toBeNull();
+    await pollFor('retry loading surface', () => loadingElQuery() !== null);
+    expect(fallbackElQuery()).toBeNull();
     // Token was fine on a timeout → no re-mint (remount-only path unchanged).
     expect(onRetryToken).not.toHaveBeenCalled();
   }, 20_000);

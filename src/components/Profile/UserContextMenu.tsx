@@ -11,7 +11,6 @@ import {
   IconDotsVertical,
   IconFlag,
   IconGift,
-  IconInfoCircle,
   IconGraphOff,
   IconGraph,
   IconMicrophone,
@@ -21,6 +20,7 @@ import {
 } from '@tabler/icons-react';
 import React from 'react';
 import { useAccountContext } from '~/components/CivitaiWrapped/AccountProvider';
+import { openAddToHubModal } from '~/components/Dialog/triggers/add-to-hub';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
@@ -30,7 +30,6 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 // import { ProfileHeader } from '~/components/Profile/ProfileHeader';
 // import ProfileLayout from '~/components/Profile/ProfileLayout';
 import UserBanModal from '~/components/Profile/UserBanModal';
-import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
@@ -39,6 +38,9 @@ import { showErrorNotification } from '~/utils/notifications';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { AddToHubMenuItem } from '~/components/MenuItems/AddToHubMenuItem';
+import { ModeratorLookupMenuItem } from '~/components/Moderation/ModeratorLookupMenuItem';
+import { UserHubSourceType } from '~/shared/utils/prisma/enums';
 
 export const UserContextMenu = ({ username }: { username: string }) => {
   const queryUtils = trpc.useUtils();
@@ -277,14 +279,9 @@ export const UserContextMenu = ({ username }: { username: string }) => {
         <>
           {isMod && (
             <>
-              <Menu.Item
-                component="a"
-                target="_blank"
-                leftSection={<IconInfoCircle size={14} stroke={1.5} />}
-                href={`${env.NEXT_PUBLIC_MODERATOR_APP_URL}${moderatorUserLookupPath(user.id)}`}
-              >
+              <ModeratorLookupMenuItem path={moderatorUserLookupPath(user.id)}>
                 Lookup User
-              </Menu.Item>
+              </ModeratorLookupMenuItem>
               {features.impersonation && user.id !== currentUser.id && (
                 <Menu.Item
                   color="yellow"
@@ -378,6 +375,19 @@ export const UserContextMenu = ({ username }: { username: string }) => {
               Gift a membership
             </Menu.Item>
           )}
+          <AddToHubMenuItem
+            onClick={() =>
+              openAddToHubModal({
+                props: {
+                  source: {
+                    type: UserHubSourceType.User,
+                    targetId: user.id,
+                    alias: user.username,
+                  },
+                },
+              })
+            }
+          />
           {!isSameUser && <BlockUserButton userId={user.id} as="menu-item" />}
           {isSameUser && (
             <Menu.Item component={Link} href={`/user/${username}/manage-categories`}>

@@ -1,4 +1,5 @@
 import { getModeratorDb } from './moderator-db';
+import type { SweepMedia } from './front-page-audit.service';
 
 /**
  * `FrontPageTimers` and `FrontPageTimers_catchup` — the front-page sweep's shared resume points.
@@ -8,6 +9,22 @@ import { getModeratorDb } from './moderator-db';
 
 /** Not a person: the row the Split control writes to mark where the queue was forked. */
 export const SPLIT_USERNAME = 'splitQueue';
+
+/**
+ * A resume point belongs to one rating AND one media type. The table has no media column — Retool ran
+ * one sweep and keyed on the rating alone — so the video stream is namespaced into the same free-text
+ * `nsfw` column instead of migrating the table.
+ *
+ * Images keep the bare rating, which is what Retool's own app and every existing row already use, so
+ * nothing that reads them has to change. Video gets its own key, which is what stops the 20-row video
+ * sweep from advancing the point the 200-row image sweep resumes from: same rating, same span, a
+ * population nobody looked at.
+ *
+ * `splitFrontPageQueue` writes and reads the bare `'1'` deliberately — the fork it marks is the image
+ * firehose `ImageSfwDataCatchup` consumes, and video has never been part of that stream.
+ */
+const checkpointKey = (nsfwLevel: number, media: SweepMedia) =>
+  media === 'video' ? `video:${nsfwLevel}` : String(nsfwLevel);
 
 /** Retool's `GetSplitQueue`: where the queue was last forked. */
 export async function getSplitPoint(): Promise<Date | null> {
@@ -103,7 +120,46 @@ export type SweepCheckpoint = {
  *
  * `nsfw` is Retool's column and holds the rating as text.
  */
-export async function getSweepCheckpoint(nsfwLevel: number): Promise<SweepCheckpoint | null> {
+/**
+ * One point per rating, for the ratings asked about. A sweep can cover several at once and they are
+ * NOT interchangeable: each rating is drained at its own pace, so collapsing them to one point would
+ * either re-show work or skip it.
+ */
+export async function getSweepCheckpoints(
+  nsfwLevels: number[],
+  media: SweepMedia
+): Promise<Map<number, SweepCheckpoint>> {
+  if (!nsfwLevels.length) return new Map();
+  const levelByKey = new Map(nsfwLevels.map((l) => [checkpointKey(l, media), l]));
+
+  const rows = await getModeratorDb()
+    .selectFrom('FrontPageTimers')
+    .select(['nsfw', 'lastCheckedAt', 'username', 'buttonPressedTime'])
+    .where('nsfw', 'in', [...levelByKey.keys()])
+    .orderBy('lastCheckedAt', 'desc')
+    .execute();
+
+  // Newest row per key wins; the rest are that rating's history.
+  const out = new Map<number, SweepCheckpoint>();
+  for (const row of rows) {
+    const level = row.nsfw == null ? undefined : levelByKey.get(row.nsfw);
+    if (level === undefined || out.has(level) || !row.lastCheckedAt) continue;
+    out.set(level, {
+      lastCheckedAt: new Date(row.lastCheckedAt as unknown as string),
+      username: row.username,
+      buttonPressedTime: row.buttonPressedTime
+        ? new Date(row.buttonPressedTime as unknown as string)
+        : null,
+      isSplit: row.username === SPLIT_USERNAME,
+    });
+  }
+  return out;
+}
+
+export async function getSweepCheckpoint(
+  nsfwLevel: number,
+  media: SweepMedia
+): Promise<SweepCheckpoint | null> {
   // Deliberately NOT filtered by username, matching `getSplitPoint`: the Split control's sentinel row
   // is itself a position write for the current stream, so excluding it would resurrect a checkpoint the
   // previous catch-up run had already worked. It does mean the newest row can be the fork rather than a
@@ -111,7 +167,7 @@ export async function getSweepCheckpoint(nsfwLevel: number): Promise<SweepCheckp
   const row = await getModeratorDb()
     .selectFrom('FrontPageTimers')
     .select(['lastCheckedAt', 'username', 'buttonPressedTime'])
-    .where('nsfw', '=', String(nsfwLevel))
+    .where('nsfw', '=', checkpointKey(nsfwLevel, media))
     .orderBy('lastCheckedAt', 'desc')
     .limit(1)
     .executeTakeFirst();
@@ -140,6 +196,7 @@ export async function getSweepCheckpoint(nsfwLevel: number): Promise<SweepCheckp
  */
 export async function markSweepChecked(input: {
   nsfwLevel: number;
+  media: SweepMedia;
   lastCheckedAt: Date;
   username: string;
 }): Promise<void> {
@@ -147,7 +204,7 @@ export async function markSweepChecked(input: {
     .insertInto('FrontPageTimers')
     .values({
       username: input.username,
-      nsfw: String(input.nsfwLevel),
+      nsfw: checkpointKey(input.nsfwLevel, input.media),
       lastCheckedAt: input.lastCheckedAt,
       buttonPressedTime: new Date(),
     })

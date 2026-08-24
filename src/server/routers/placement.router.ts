@@ -69,13 +69,16 @@ import {
   retractRemixGallerySubmission,
   setRemixGalleryPins,
 } from '~/server/services/remix-gallery.service';
-import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
+import {
+  guardedProcedure,
+  moderatorProcedure,
+  protectedProcedure,
+  publicProcedure,
+  router,
+} from '~/server/trpc';
 import { domainSpendType } from '~/server/utils/buzz-helpers';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
-import {
-  allBrowsingLevelsFlag,
-  sfwBrowsingLevelsFlag,
-} from '~/shared/constants/browsingLevel.constants';
+import { domainServableLevels, viewerBrowsingLevel } from '~/server/utils/browsing-level';
 import type { PlacementSurface } from '~/shared/utils/placement';
 import type { Context } from '~/server/createContext';
 
@@ -123,28 +126,6 @@ function assertSurfaceEnabled(ctx: Context, surface: PlacementSurface) {
   if (surface === 'remixGallery') return assertRemixGalleryEnabled(ctx);
   return assertPlacementEnabled(ctx);
 }
-
-/**
- * What the viewer may see, with the SFW domain applied.
- *
- * The level itself is client-supplied, as it is for every image listing. The
- * clamp is not a second opinion about the viewer's preference — it is the
- * domain's rule, and a gallery shows content the host creator did not choose,
- * so it cannot inherit the host image's own admissibility.
- */
-const viewerBrowsingLevel = (ctx: Context, requested: number) =>
-  ctx.features.isGreen ? requested & sfwBrowsingLevelsFlag : requested;
-
-/**
- * What this domain may be SENT, as opposed to what the viewer asked for.
- *
- * The review queues carry no browsing level by design — an owner has to see what
- * is waiting on them whatever their own settings say — which makes them the one
- * path that hands an above-ceiling asset to a SFW client. Blur is not that
- * control: it is built from the viewer's own level and never reads the domain's.
- */
-const domainServableLevels = (ctx: Context) =>
-  ctx.features.isGreen ? sfwBrowsingLevelsFlag : allBrowsingLevelsFlag;
 
 export const placementRouter = router({
   getSpace: publicProcedure
@@ -231,23 +212,27 @@ export const placementRouter = router({
     .input(getPlacementSettlementStatesSchema)
     .query(({ input, ctx }) => getPlacementSettlementStates(input.placementIds, ctx.user.id)),
 
-  createSticker: protectedProcedure
-    .input(createStickerPlacementSchema)
-    .mutation(({ input, ctx }) => {
-      assertPlacementEnabled(ctx);
-      return createStickerPlacement({
-        ...input,
-        // After the spread, and the schema has no `placerId` to strip anyway —
-        // both, because this is the id the whole free tier is scoped by and
-        // every check downstream is a statement about it rather than a check of
-        // it. Read off the payload it would spend someone else's daily
-        // allowance and place under their name with nothing raising.
-        placerId: ctx.user.id,
-        // From the request's own domain, never the input: `...input` spreads
-        // first, so a client-sent `spendType` cannot survive this line.
-        spendType: domainSpendType(ctx.features),
-      });
-    }),
+  /**
+   * `guardedProcedure`, not `protectedProcedure`: placing a sticker publishes
+   * content onto someone else's image, so a muted account has to be refused the
+   * same way it is refused a comment. Account state lives here; placement state
+   * — the moderator suspension and the block pair — lives in `assertCanPlace`.
+   */
+  createSticker: guardedProcedure.input(createStickerPlacementSchema).mutation(({ input, ctx }) => {
+    assertPlacementEnabled(ctx);
+    return createStickerPlacement({
+      ...input,
+      // After the spread, and the schema has no `placerId` to strip anyway —
+      // both, because this is the id the whole free tier is scoped by and
+      // every check downstream is a statement about it rather than a check of
+      // it. Read off the payload it would spend someone else's daily
+      // allowance and place under their name with nothing raising.
+      placerId: ctx.user.id,
+      // From the request's own domain, never the input: `...input` spreads
+      // first, so a client-sent `spendType` cannot survive this line.
+      spendType: domainSpendType(ctx.features),
+    });
+  }),
 
   /**
    * The one mutation here that is deliberately NOT flag-gated: turning the flag
@@ -414,7 +399,8 @@ export const placementRouter = router({
       })
     ),
 
-  submitToRemixGallery: protectedProcedure
+  /** `guardedProcedure` for the same reason `createSticker` is. */
+  submitToRemixGallery: guardedProcedure
     .input(submitToRemixGallerySchema)
     .mutation(({ input, ctx }) => {
       assertRemixGalleryEnabled(ctx);

@@ -35,6 +35,13 @@
       "maxLength": 140,
       "pattern": "\\S"
     },
+    "repository": {
+      "type": "string",
+      "description": "Optional PUBLIC SOURCE-REPOSITORY link for an open-source app, rendered as a `Source` row on the app's `/apps` store DETAIL page (never on a store grid card). Manifest-governed: it flows to the store listing on moderator-approve and is re-synced from the manifest on every subsequent approved version; remove the key and the link is cleared. This is NOT your app's internal Civitai repository — it is a link you publish. Must be an `https://` URL, carrying no embedded credentials and no port, whose host is EXACTLY one of github.com, gitlab.com or codeberg.org (an exact-host allowlist — `www.github.com`, `gist.github.com` and `raw.githubusercontent.com` are all rejected), and whose path is exactly `/<owner>/<repo>`, the repository ROOT (a deep link such as `/owner/repo/tree/main` is rejected). A trailing `/` or `.git`, a query string and a fragment are accepted and STRIPPED — the stored value is normalised to `https://<host>/<owner>/<repo>`. Capped at 200 characters, kept in lockstep with MAX_REPOSITORY_URL_LENGTH in src/server/schema/blocks/external-app.schema.ts (a drift-guard test enforces equality, and enforces that this description names exactly the hosts REPOSITORY_HOST_ALLOWLIST contains). NOTE: as with `tagline`, the server measures the TRIMMED string while this maxLength counts the raw one, so the LENGTH bound here is never looser than the server's. The `pattern`, however, is a coarse SHAPE check and NOT the whole rule, so unlike `tagline` this field CAN pass local validation and still be rejected at submit. The server additionally requires each of the two path segments to begin with an ASCII letter or digit and to contain only letters, digits, `.`, `-` and `_`, and it strips a trailing `.git` BEFORE applying that test. Values such as a repository segment that is only `.git`, one starting with a dash, one containing a percent-escape, and one containing a non-ASCII character all match this pattern and are refused by the server. The pattern is deliberately left coarse rather than tightened: the CLI and the starter templates byte-mirror this file, and a stricter regex would be a compatibility change for every vendored copy. Treat passing local validation as necessary, not sufficient — `validateRepositoryUrl` in src/server/schema/blocks/external-app.schema.ts is authoritative.",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^https://(github\\.com|gitlab\\.com|codeberg\\.org)/[^/]+/[^/]+/?$"
+    },
     "type": {
       "type": "string",
       "description": "Free-form descriptor used by some examples (e.g. \"block\"). Not validated by the platform.",

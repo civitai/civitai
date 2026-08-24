@@ -872,6 +872,63 @@ describe('🔴 the listing-completeness advisory has a home', () => {
     await expect.element(holder).toBeInTheDocument();
     expect(holder.element().querySelector('[data-testid="apps-submission-problems"]')).toBeNull();
   });
+
+  /**
+   * 🔴 A PROBLEM CODE IS NOT UNIQUE WITHIN A ROW — and until the scan dimension was wired
+   * into `listMyAppListings`, nothing on this page could demonstrate it.
+   *
+   * `computeListingProblems` emits ONE `blocked-media` per ASSET SLOT, so a listing whose
+   * icon and cover both came back `Blocked` produces two items sharing one code and
+   * differing only in their label. `ListingProblemsIndicator` keyed its list on `p.code`,
+   * which React rejects as a duplicate key.
+   *
+   * 🔴 WHAT THIS KILLS: any "fix" that DEDUPES the list by code — the obvious wrong answer
+   * to the duplicate-React-key problem, and the one that silently hides which asset the
+   * author has to replace. Mutating the component to unique-by-code turns this red.
+   *
+   * 🔴 WHAT IT DOES **NOT** KILL, stated rather than implied. The accompanying
+   * `key={p.code}` → `key={code:label}` change in `ListingProblemsIndicator` has NO
+   * killing test. React renders both items on a first paint with duplicate keys anyway,
+   * and an attempt to assert React's "two children with the same key" warning through a
+   * `console.error` spy SURVIVED its own mutant in this harness — so it was removed rather
+   * than shipped as coverage it does not provide. The key fix is carried by review.
+   */
+  test('🔴 two problems sharing one CODE both reach the reader', async () => {
+    renderWithProviders(
+      <MyAppsBodyView
+        rows={[
+          row({
+            appListingId: 'apl_twoblocked',
+            status: 'draft',
+            problems: [
+              {
+                code: 'blocked-media',
+                label: 'Replace the blocked icon before it can publish',
+                severity: 'blocking',
+              },
+              {
+                code: 'blocked-media',
+                label: 'Replace the blocked cover before it can publish',
+                severity: 'blocking',
+              },
+            ],
+          }),
+        ]}
+      />
+    );
+    const holder = page.getByTestId('apps-mine-problems-apl_twoblocked');
+    await expect.element(holder).toBeInTheDocument();
+    const indicator = holder.element().querySelector('[data-testid="apps-submission-problems"]');
+    expect(indicator).not.toBeNull();
+    // The labels live in a HoverCard dropdown that mounts on hover.
+    await userEvent.hover(indicator as HTMLElement);
+    await expect
+      .element(page.getByText('Replace the blocked icon before it can publish'))
+      .toBeInTheDocument();
+    await expect
+      .element(page.getByText('Replace the blocked cover before it can publish'))
+      .toBeInTheDocument();
+  });
 });
 
 /* ------------------------------------------------------------------ *

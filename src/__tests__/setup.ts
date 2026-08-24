@@ -162,6 +162,11 @@ const promMetricStub = () => {
     dec: vi.fn(),
     set: vi.fn(),
     observe: vi.fn(),
+    // `Histogram.zero(labels)` — used by seedJobMetrics to publish a job's series before
+    // its first observation. Stubbed here for the same reason as its neighbours: the stub
+    // has to cover every prom-client surface our code touches, or a caller dies on
+    // `zero is not a function` far from whatever the test was written to check.
+    zero: vi.fn(),
     startTimer: vi.fn(() => vi.fn()),
     labels: vi.fn(() => child),
   };
@@ -234,6 +239,11 @@ vi.mock('~/server/prom/client', () => ({
   // Cron runner + image-ingestion cron metrics (job.ts / image-ingestion.ts).
   jobDurationHistogram: promMetricStub(),
   jobErrorsCounter: promMetricStub(),
+  // Not a metric — the helper `createJob` calls at module scope to publish each job's
+  // series at zero. Re-exported from '@civitai/telemetry/client', so this
+  // module-replacing mock drops it, and EVERY suite that reaches a job module would die
+  // during evaluation with `No "seedJobMetrics" export is defined on the mock`.
+  seedJobMetrics: vi.fn(),
   imageIngestCronCounter: promMetricStub(),
   imageIngestCronQueueDepth: promMetricStub(),
   imageScanWebhookCounter: promMetricStub(),
@@ -259,8 +269,16 @@ vi.mock('~/server/logging/client', async (importOriginal) => ({
 }));
 
 // Mock session invalidation
+// `invalidateSession` is here rather than mocked per-file on purpose. The module was
+// already globally mocked with `refreshSession` alone, so every path reaching
+// `invalidateSession` — deleteUser, banUser, the moderation paths — died on
+// `No "invalidateSession" export is defined on the mock` rather than by anyone's
+// choice. The two alternatives are worse: `importOriginal` here pulls redis/client and
+// signal-client into every suite's graph (the CI-only failure mode CLAUDE.md warns
+// about), and a local hand-listed mock trips `no-wholesale-module-mock`.
 vi.mock('~/server/auth/session-invalidation', () => ({
   refreshSession: vi.fn().mockResolvedValue(undefined),
+  invalidateSession: vi.fn().mockResolvedValue(undefined),
 }));
 
 // Mock Freshdesk integration

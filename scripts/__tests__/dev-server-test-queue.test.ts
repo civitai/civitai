@@ -207,6 +207,158 @@ describe('dev-server test queue', () => {
     expect(queue.get(next.id).status).toBe('running');
   });
 
+  /**
+   * The two paths where a run's own 'exit' never arrives are exactly the two that must still
+   * release what the run owns. A real handle owns a capture file, two descriptors and a tail
+   * interval, and `finish` is bound to that 'exit' — so dropping `run.handle` here without a
+   * dispose left all three alive forever. Measured before the fix, on a forced run: 2 fds still
+   * open and the log still growing 2s after the run was reported terminal (logIndex 75 -> 471),
+   * the file at 102,465 bytes and never unlinked.
+   *
+   * Asserted on the QUEUE rather than on the handle: a `dispose()` that exists and is never
+   * called is exactly the shape this missed the first time.
+   */
+  it('disposes a handle whose process never exits, on both release paths', () => {
+    const disposals: string[] = [];
+    const stubborn = (tag: string) => (): FakeRun => {
+      const handle = new EventEmitter() as FakeRun & { dispose: () => void };
+      handle.kill = vi.fn();
+      handle.finish = () => {};
+      handle.worktree = '/wt';
+      handle.dispose = vi.fn(() => disposals.push(tag));
+      runner.started.push(handle);
+      return handle;
+    };
+
+    // Path 1 — the sweep's force-release past the kill grace.
+    const queue = build({ killGraceMs: 5_000 });
+    runner.startRun = stubborn('forced');
+    const stuck = queue.request({ worktree: '/wt/a' });
+    now += 60_001;
+    queue.sweep();
+    now += 5_000;
+    expect(queue.sweep().forced).toEqual([stuck.id]);
+    expect(disposals).toEqual(['forced']);
+
+    // Path 2 — daemon shutdown, which exits the process immediately afterwards.
+    const queue2 = build();
+    runner.startRun = stubborn('shutdown');
+    queue2.request({ worktree: '/wt/b' });
+    queue2.shutdown();
+    expect(disposals).toEqual(['forced', 'shutdown']);
+  });
+
+  /**
+   * The regression the dispose itself introduced, and the reason a spy-only fake could not see it.
+   *
+   * `dispose()` and `finish()` share one `finished` flag, so disposing DISABLES the child's exit
+   * callback. `shutdown()` disposed and settled nothing, so the run stayed `running` forever and
+   * `running.size` never dropped — `pump()` could never start another run. That is the wedge this
+   * queue exists to prevent, reintroduced by the fix for a leak.
+   *
+   * The fake below carries the real interaction — a shared flag whose `dispose` suppresses the
+   * later exit — because a `vi.fn()` that only records the call cannot express it.
+   */
+  it('settles a run it shuts down, even though disposing suppresses the exit callback', () => {
+    const queue = build();
+    runner.startRun = ({ worktree, onExit }: RunnerArgs): FakeRun => {
+      const handle = new EventEmitter() as FakeRun & { dispose: () => void };
+      let done = false;
+      handle.kill = vi.fn();
+      // The shape of the real handle: dispose and exit share one latch.
+      handle.dispose = () => {
+        done = true;
+      };
+      handle.finish = (code: number) => {
+        if (done) return;
+        done = true;
+        onExit?.(code);
+      };
+      handle.worktree = worktree;
+      runner.started.push(handle);
+      return handle;
+    };
+
+    const run = queue.request({ worktree: '/wt/a' });
+    queue.shutdown();
+    // The SIGKILLed child's exit arrives after the dispose and is swallowed — as it is in reality.
+    runner.started[0].finish(-1);
+
+    expect(queue.get(run.id).status).toBe('cancelled');
+    expect(queue.get(run.id).error).toMatch(/daemon-shutdown/);
+    // The slot, which is the thing that actually wedges: it must be free.
+    expect(queue.running.size).toBe(0);
+  });
+
+  /**
+   * Releasing the SLOT matters more than releasing the file descriptors.
+   *
+   * `dispose()` does real IO and calls back into `onLog`, and it sits above the detach/release/
+   * settle that free the slot. Unguarded, a throw there skips all three and the queue is wedged —
+   * the identical failure the settle was added to fix. It also aborts the loop, leaving every
+   * remaining run unkilled.
+   */
+  it.each([
+    ['shutdown', (q: ReturnType<typeof build>) => q.shutdown(), 'cancelled'],
+    [
+      'the sweep force-release',
+      (q: ReturnType<typeof build>) => {
+        now += 60_001;
+        q.sweep();
+        now += 5_000;
+        q.sweep();
+      },
+      'timeout',
+    ],
+  ])('frees the slot on %s even when dispose throws', (_name, act, expected) => {
+    const queue = build({ killGraceMs: 5_000 });
+    runner.startRun = ({ worktree }: RunnerArgs): FakeRun => {
+      const handle = new EventEmitter() as FakeRun & { dispose: () => void };
+      handle.kill = vi.fn();
+      handle.finish = () => {};
+      handle.dispose = () => {
+        throw new Error('capture release blew up');
+      };
+      handle.worktree = worktree;
+      runner.started.push(handle);
+      return handle;
+    };
+
+    const run = queue.request({ worktree: '/wt/a' });
+    expect(() => act(queue)).not.toThrow();
+
+    expect(queue.running.size).toBe(0);
+    // The exact status for THIS path, not either-of. `toContain` over both would pass with the
+    // wrong terminal status — a shutdown reported as a timeout, or the reverse — which is the
+    // shape of assertion that lets a real mix-up through.
+    expect(queue.get(run.id).status).toBe(expected);
+    // And it must SAY so. Swallowing this silently hides a clipped log behind `logsDropped: 0`,
+    // which is the one outcome the queue's log contract rules out — and nothing asserted the line
+    // existed, so both call sites could revert to a silent catch with the suite still green.
+    expect(queue.logs(run.id).map((l: { message: string }) => l.message)).toContainEqual(
+      expect.stringContaining('capture release failed: capture release blew up')
+    );
+  });
+
+  // A runner that predates `dispose` must not crash the sweep — the queue calls it optionally.
+  it('tolerates a handle with no dispose', () => {
+    const queue = build({ killGraceMs: 5_000 });
+    runner.startRun = ({ worktree }: RunnerArgs): FakeRun => {
+      const handle = new EventEmitter() as FakeRun;
+      handle.kill = vi.fn();
+      handle.finish = () => {};
+      handle.worktree = worktree;
+      runner.started.push(handle);
+      return handle;
+    };
+    const stuck = queue.request({ worktree: '/wt/a' });
+    now += 60_001;
+    queue.sweep();
+    now += 5_000;
+    expect(() => queue.sweep()).not.toThrow();
+    expect(queue.get(stuck.id).status).toBe('timeout');
+  });
+
   it('does not settle a forced run twice when its exit finally arrives', () => {
     const queue = build({ killGraceMs: 5_000 });
     const stuck = queue.request({ worktree: '/wt/a' });

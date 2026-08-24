@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // Correctness tests for the SQL statement `updateUserProfile` emits for
 // `creatorCardStatsPreferences`.
@@ -15,72 +16,56 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // literally (so the function, the path and the `::jsonb` cast can't drift), and the user data
 // appears only in the bound values.
 
-const { statements, mockDb } = vi.hoisted(() => {
-  const statements: { text: string; values: unknown[] }[] = [];
+const statements: { text: string; values: unknown[] }[] = [];
 
-  // Two call shapes reach the capture. The tagged template (`$executeRaw`…``) arrives as
-  // `(TemplateStringsArray, ...values)` — NOT a `Prisma.Sql` — and is rebuilt here into
-  // `$N`-placeholder text. A pre-built `Prisma.sql` passed as an argument arrives as an object
-  // exposing `.sql`/`.values`. The interpolating `$executeRawUnsafe` arrives as one finished
-  // string. All three reduce to the same {text, values} pair, so a statement can never go
-  // unrecorded and read as a pass.
-  const record = (first: any, rest: unknown[]) => {
-    if (Array.isArray(first) && Array.isArray(first.raw)) {
-      const text = first.reduce(
-        (acc: string, chunk: string, i: number) => acc + (i ? `$${i}` : '') + chunk,
-        ''
-      );
-      statements.push({ text, values: rest });
-    } else if (first && typeof first === 'object' && typeof first.sql === 'string') {
-      statements.push({ text: first.sql, values: Array.isArray(first.values) ? first.values : [] });
-    } else {
-      statements.push({ text: String(first), values: rest });
-    }
-  };
+// Two call shapes reach the capture. The tagged template (`$executeRaw`…``) arrives as
+// `(TemplateStringsArray, ...values)` — NOT a `Prisma.Sql` — and is rebuilt here into
+// `$N`-placeholder text. A pre-built `Prisma.sql` passed as an argument arrives as an object
+// exposing `.sql`/`.values`. The interpolating `$executeRawUnsafe` arrives as one finished
+// string. All three reduce to the same {text, values} pair, so a statement can never go
+// unrecorded and read as a pass.
+const record = (first: any, rest: unknown[]) => {
+  if (Array.isArray(first) && Array.isArray((first as { raw?: unknown }).raw)) {
+    const text = (first as string[]).reduce(
+      (acc: string, chunk: string, i: number) => acc + (i ? `$${i}` : '') + chunk,
+      ''
+    );
+    statements.push({ text, values: rest });
+  } else if (first && typeof first === 'object' && typeof first.sql === 'string') {
+    statements.push({ text: first.sql, values: Array.isArray(first.values) ? first.values : [] });
+  } else {
+    statements.push({ text: String(first), values: rest });
+  }
+};
 
-  const profileRow = { userId: 1, coverImage: null };
-  const tx = {
-    userLink: {
-      deleteMany: vi.fn(async () => ({ count: 0 })),
-      createMany: vi.fn(async () => ({ count: 0 })),
-      updateMany: vi.fn(async () => ({ count: 0 })),
-    },
-    userProfile: {
-      update: vi.fn(async () => profileRow),
-      upsert: vi.fn(async () => ({ userId: 1 })),
-    },
-  };
+// The whole path is on the WRITE client: `getUserWithProfile` reads through `tx ?? dbWrite`
+// (user-profile.service.ts:86), the preferences statement is `dbWrite.$executeRaw` (:242) and the
+// links/profile write is `dbWrite.$transaction` (:275). The one replica read on the path is the
+// stat lookup at :110. The mock this replaces aliased dbRead and dbWrite to a single object, so a
+// mis-attributed call could not have shown up.
+const profileRow = { userId: 1, coverImage: null };
 
-  const mockDb = {
-    $executeRaw: vi.fn(async (first: any, ...rest: unknown[]) => {
-      record(first, rest);
-      return 1;
-    }),
-    $executeRawUnsafe: vi.fn(async (first: any, ...rest: unknown[]) => {
-      record(first, rest);
-      return 1;
-    }),
-    $queryRaw: vi.fn(async () => []),
-    $transaction: vi.fn(async (fn: (client: unknown) => Promise<unknown>) => fn(tx)),
-    user: {
-      findUniqueOrThrow: vi.fn(async () => ({
-        id: 1,
-        meta: {},
-        settings: {},
-        publicSettings: {},
-        profile: { userId: 1, message: null, coverImage: null },
-      })),
-      findUnique: vi.fn(async () => ({ id: 1 })),
-    },
-    userStat: { findFirst: vi.fn(async () => null) },
-    userProfile: tx.userProfile,
-    userLink: tx.userLink,
-  };
+// 🔴 The transaction client stays a SEPARATE object rather than inheriting the canonical
+// `$transaction` default, which hands the callback dbWrite itself. Measured, not assumed:
+// switching the callback to `fn(mockDb)` reds all six cases on
+// `Cannot read properties of undefined (reading 'coverImage')`, because the canonical mock has no
+// default for `update` and the service reads the returned row. Keeping `tx` separate also keeps
+// "written inside the transaction" distinguishable from "written directly", which is the reason
+// the shared-mock recipe gives for not collapsing them.
+const tx = {
+  userLink: {
+    deleteMany: vi.fn(async () => ({ count: 0 })),
+    createMany: vi.fn(async () => ({ count: 0 })),
+    updateMany: vi.fn(async () => ({ count: 0 })),
+  },
+  userProfile: {
+    update: vi.fn(async () => profileRow),
+    upsert: vi.fn(async () => ({ userId: 1 })),
+  },
+};
 
-  return { statements, mockDb };
-});
+const mockDb = dbMock.dbWrite;
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDb, dbWrite: mockDb }));
 // Cover-image ingestion makes a blocking external call; the profile write doesn't depend on it.
 vi.mock('~/server/services/image.service', () => ({
   enqueueImageIngestion: vi.fn(async () => undefined),
@@ -114,6 +99,31 @@ const EXPECTED_SQL =
 beforeEach(() => {
   vi.clearAllMocks();
   statements.length = 0;
+
+  // Restated, not inherited. The canonical mock has no default for `$transaction`'s separate-tx
+  // shape, none for `findUniqueOrThrow` beyond null (which `getUserWithProfile` would throw on),
+  // and none for the raw-SQL capture — the seam these tests are entirely built out of.
+  mockDb.$executeRaw.mockImplementation(async (first: any, ...rest: unknown[]) => {
+    record(first, rest);
+    return 1;
+  });
+  mockDb.$executeRawUnsafe.mockImplementation(async (first: any, ...rest: unknown[]) => {
+    record(first, rest);
+    return 1;
+  });
+  mockDb.$queryRaw.mockResolvedValue([]);
+  mockDb.$transaction.mockImplementation(async (fn: (client: unknown) => Promise<unknown>) =>
+    fn(tx)
+  );
+  mockDb.user.findUniqueOrThrow.mockResolvedValue({
+    id: 1,
+    meta: {},
+    settings: {},
+    publicSettings: {},
+    profile: { userId: 1, message: null, coverImage: null },
+  });
+  mockDb.user.findUnique.mockResolvedValue({ id: 1 });
+  dbMock.dbRead.userStat.findFirst.mockResolvedValue(null);
 });
 
 describe('updateUserProfile — the creator-card stats preferences statement', () => {

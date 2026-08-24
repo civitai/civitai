@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * STEP-6 sysRedis soft-dependency — the cross-pod orchestrator-token READ in
@@ -46,11 +46,22 @@ vi.mock('~/server/orchestrator/orchestrator-token-cache', () => ({
 vi.mock('~/server/services/api-key.service', () => ({ getTemporaryUserApiKey: mockGetTempKey }));
 
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
+import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 
 const ctx = { req: {} as any, res: {} as any };
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // 🔴 PIN THE MODE. `get-orchestrator-token.ts` short-circuits on
+  // `env.ORCHESTRATOR_MODE === 'dev'` and returns the static
+  // ORCHESTRATOR_ACCESS_TOKEN without ever reaching sysRedis — which is the
+  // entire path this file tests. That branch used to be unreachable here only
+  // BY ACCIDENT: ORCHESTRATOR_MODE was missing from the hand-enumerated
+  // TEST_ENV_DEFAULTS, so it read `undefined`. Once the defaults were derived
+  // from the schema (which declares `.default('dev')`) the accident ended and
+  // all three cases returned 'test-orchestrator-token'. Pin it explicitly so
+  // the suite states what it depends on instead of inheriting a gap.
+  setEnv({ ORCHESTRATOR_MODE: 'prod' });
   mockWithSysReadDeadline.mockImplementation((p) => p); // transparent by default
   // The mint path (used on DOWN/SLOW) — coalesced mint returns a fresh token.
   mockGetOrMint.mockImplementation(async (_userId: number, mint: () => Promise<string>) => mint());
@@ -95,4 +106,8 @@ describe('getOrchestratorToken — sysRedis read soft-dependency', () => {
     expect(mockLogSysRedisFailOpen).toHaveBeenCalledTimes(1);
     expect(mockLogSysRedisFailOpen.mock.calls[0][0]).toBe('token-mint-amplification');
   });
+});
+
+afterAll(() => {
+  resetEnv();
 });

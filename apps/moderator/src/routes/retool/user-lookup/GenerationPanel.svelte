@@ -97,6 +97,7 @@
               >
                 {g.modelName}
               </a>
+              <span class="text-xs text-dark-2">{g.versionName ?? `version ${g.modelVersionId}`}</span>
             </li>
           {/each}
         </ul>

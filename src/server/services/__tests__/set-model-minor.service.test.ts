@@ -6,47 +6,24 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // unit test rather than an integration test. Mirrors the mock scaffold used
 // for applyModelFlagSideEffects in model-flag-side-effects.service.test.ts.
 
-const { mockDbRead, mockDbWrite } = vi.hoisted(() => {
-  const mk = () => ({
-    findFirst: vi.fn(),
-    findUnique: vi.fn(),
-    findMany: vi.fn(),
-    create: vi.fn(),
-    update: vi.fn(),
-    updateMany: vi.fn(),
-  });
-  return {
-    mockDbRead: { model: mk(), modelVersion: mk(), $queryRaw: vi.fn() },
-    mockDbWrite: {
-      model: mk(),
-      modelVersion: mk(),
-      $queryRaw: vi.fn(),
-      $executeRaw: vi.fn(),
-    },
-  };
-});
 
 const {
   mockModelTagRefresh,
   mockModelVotableBust,
-  mockRedisDel,
   mockModelsQueueUpdate,
   mockQueueImageSearchIndexUpdate,
   mockTrackModActivity,
   mockPreventReplicationLag,
-  mockLogToAxiom,
-} = vi.hoisted(() => ({
+  } = vi.hoisted(() => ({
   mockModelTagRefresh: vi.fn(),
   mockModelVotableBust: vi.fn(),
-  mockRedisDel: vi.fn(),
   mockModelsQueueUpdate: vi.fn(),
   mockQueueImageSearchIndexUpdate: vi.fn(),
   mockTrackModActivity: vi.fn(),
   mockPreventReplicationLag: vi.fn(),
-  mockLogToAxiom: vi.fn(),
 }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
+
 vi.mock('~/server/db/db-lag-helpers', () => ({
   preventReplicationLag: mockPreventReplicationLag,
   getDbWithoutLag: vi.fn(async () => mockDbRead),
@@ -63,10 +40,7 @@ vi.mock('~/server/redis/caches', () => ({
   userBasicCache: {},
   userModelCountCache: { refresh: vi.fn() },
 }));
-vi.mock('~/server/redis/client', () => ({
-  redis: { del: mockRedisDel },
-  REDIS_KEYS: { MODEL: { GALLERY_SETTINGS: 'model:gallery-settings' } },
-}));
+
 vi.mock('~/server/search-index', () => ({
   collectionsSearchIndex: { queueUpdate: vi.fn() },
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
@@ -113,7 +87,7 @@ vi.mock('~/server/services/model-version.service', () => ({
 vi.mock('~/server/services/moderator.service', () => ({
   trackModActivity: mockTrackModActivity,
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
+
 vi.mock('~/server/services/subscriptions.service', () => ({ getHighestTierSubscription: vi.fn() }));
 vi.mock('~/server/services/system-cache', () => ({ getCategoryTags: vi.fn() }));
 vi.mock('~/server/services/user.service', () => ({
@@ -130,6 +104,13 @@ vi.mock('~/utils/storage-resolver', () => ({ deregisterFileLocationsBatch: vi.fn
 
 import { MINOR_LOCKED_PROPERTIES, setModelMinor } from '~/server/services/model.service';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
+const mockRedisDel = redisMock.redis.del;
+const mockLogToAxiom = loggingMock.logToAxiom;
 
 const MODERATOR_ID = 7;
 const MODEL_ID = 42;

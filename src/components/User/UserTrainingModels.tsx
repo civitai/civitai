@@ -60,6 +60,7 @@ import type {
 } from '~/server/schema/model-version.schema';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import type { MyTrainingModelGetAll } from '~/types/router';
+import { epochsCompletedForRun } from '~/shared/utils/training-epochs';
 import { formatDate } from '~/utils/date-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
 import { getAirModelLink, isAir, splitUppercase } from '~/utils/string-helpers';
@@ -432,10 +433,7 @@ export default function UserTrainingModels() {
             trainingParams?.engine === 'ai-toolkit'
               ? trainingParams?.epochs ?? 0
               : trainingParams?.maxTrainEpochs ?? 0;
-          const epochsDone =
-            (thisFileMetadata?.trainingResults?.version === 2
-              ? thisFileMetadata?.trainingResults?.epochs?.slice(-1)[0]?.epochNumber ?? 0
-              : thisFileMetadata?.trainingResults?.epochs?.slice(-1)[0]?.epoch_number) ?? 0;
+          const epochsDone = epochsCompletedForRun(thisFileMetadata?.trainingResults ?? {});
           const hasFailedWithEpochs = isFailed && epochsDone > 0;
 
           if (!mv.trainingStatus) return <Badge color="gray">N/A</Badge>;
@@ -711,10 +709,7 @@ export default function UserTrainingModels() {
           const isRunning = isSubmitted || isProcessing;
           const isNotDeletable = isRunning || isPaused;
 
-          const epochsDone =
-            (thisFileMetadata?.trainingResults?.version === 2
-              ? thisFileMetadata?.trainingResults?.epochs?.slice(-1)[0]?.epochNumber ?? 0
-              : thisFileMetadata?.trainingResults?.epochs?.slice(-1)[0]?.epoch_number) ?? 0;
+          const epochsDone = epochsCompletedForRun(thisFileMetadata?.trainingResults ?? {});
           const hasFailedWithEpochs = isFailed && epochsDone > 0;
 
           return (

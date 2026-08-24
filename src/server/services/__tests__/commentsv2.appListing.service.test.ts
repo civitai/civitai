@@ -44,7 +44,7 @@ write.commentV2.update.mockResolvedValue({ id: 1 });
 write.$transaction.mockImplementation(async (cb: (t: typeof tx) => Promise<unknown>) => cb(tx));
 // No blocklist round-trip in a unit test; the comment content passes.
 vi.mock('~/server/services/blocklist.service', () => ({
-  throwOnBlockedLinkDomain: vi.fn(async () => undefined),
+  throwOnBlockedCommentContent: vi.fn(async () => undefined),
 }));
 // otel `withSpan` → passthrough (avoid booting the telemetry SDK in node env).
 vi.mock('~/server/utils/otel-helpers', () => ({

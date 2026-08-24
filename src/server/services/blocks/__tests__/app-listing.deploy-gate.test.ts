@@ -32,6 +32,11 @@ const { mockDbRead } = vi.hoisted(() => ({
     appListing: {
       findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
       findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
+      // The MANUAL-APPLY `source_repo_url` column is read through its OWN guarded
+      // `findUnique` (app-listing-source-repo.service) — never via
+      // `listingHydrateSelect`, which the public /apps GRID shares. Mocked here so the
+      // seam is exercised; `null` = "no source repo set", the default for these rows.
+      findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({ sourceRepoUrl: null })),
     },
   },
 }));
@@ -171,5 +176,85 @@ describe('getListingDetail — DEPLOY-GATE (app-layer)', () => {
     const detail = await getListingDetail({ slug: 'ext-app' }, { scope: 'full' });
     expect(detail).not.toBeNull();
     expect(detail!.id).toBe('apl_2');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SOURCE REPOSITORY — the manual-apply column, END TO END through the PUBLIC read
+// ---------------------------------------------------------------------------
+
+describe('🔴 getListingDetail degrades rather than 500ing when source_repo_url is UNAPPLIED', () => {
+  beforeEach(() => {
+    mockDbRead.appListing.findFirst.mockReset();
+    mockDbRead.appListing.findUnique.mockReset();
+  });
+
+  it('POSITIVE CONTROL: it serves the column when the migration IS applied', async () => {
+    // Without this, a read hardcoded to `null` would satisfy the degradation case below
+    // and the guard would look tested while providing nothing.
+    mockDbRead.appListing.findFirst.mockResolvedValueOnce({ ...onsiteRow(), status: 'approved' });
+    mockDbRead.appListing.findUnique.mockResolvedValueOnce({
+      sourceRepoUrl: 'https://github.com/civitai/cool-app',
+    });
+    const detail = await getListingDetail({ slug: 'cool-app' }, { scope: 'full' });
+    expect(detail?.sourceRepoUrl).toBe('https://github.com/civitai/cool-app');
+  });
+
+  it('the WHOLE public detail read still succeeds, with the field null, on P2022', async () => {
+    // The failure mode this prevents: `sourceRepoUrl: true` inside `listingHydrateSelect`
+    // makes the missing column throw for the ENTIRE query, so /apps/<slug> 500s from the
+    // moment the code deploys until a human runs the SQL. Here the column is read
+    // separately and its absence costs exactly one field.
+    mockDbRead.appListing.findFirst.mockResolvedValueOnce({ ...onsiteRow(), status: 'approved' });
+    mockDbRead.appListing.findUnique.mockRejectedValueOnce(
+      Object.assign(new Error('The column `source_repo_url` does not exist'), { code: 'P2022' })
+    );
+
+    const detail = await getListingDetail({ slug: 'cool-app' }, { scope: 'full' });
+
+    expect(detail).not.toBeNull();
+    expect(detail?.sourceRepoUrl).toBeNull();
+    // Everything else still projects — the degradation is ONE field, not the page.
+    expect(detail?.slug).toBe('cool-app');
+    expect(detail?.name).toBe('Cool App');
+    expect(detail?.screenshots).toBeDefined();
+    expect(detail?.kindData.kind).toBe('onsite');
+  });
+
+  it('🔴 a NON-column error still propagates — a dead database must not read as "no repo"', async () => {
+    // The guard is narrow on purpose. Swallowing a connection failure here would turn a
+    // real outage into a quietly missing field, which is the opposite of the point.
+    mockDbRead.appListing.findFirst.mockResolvedValueOnce({ ...onsiteRow(), status: 'approved' });
+    const boom = Object.assign(new Error('Can’t reach database server'), { code: 'P1001' });
+    mockDbRead.appListing.findUnique.mockRejectedValueOnce(boom);
+
+    await expect(getListingDetail({ slug: 'cool-app' }, { scope: 'full' })).rejects.toBe(boom);
+  });
+
+  it('the guarded read asks for THAT COLUMN ONLY, keyed on the row being projected', async () => {
+    mockDbRead.appListing.findFirst.mockResolvedValueOnce({ ...onsiteRow(), status: 'approved' });
+    mockDbRead.appListing.findUnique.mockResolvedValueOnce({ sourceRepoUrl: null });
+    await getListingDetail({ slug: 'cool-app' }, { scope: 'full' });
+    expect(mockDbRead.appListing.findUnique).toHaveBeenCalledWith({
+      where: { id: 'apl_1' },
+      select: { sourceRepoUrl: true },
+    });
+  });
+
+  it('🔴 the LIST path never touches the column at all', async () => {
+    // The grid does not render a Source row, and the column is manual-apply — so the
+    // hot list read must not acquire a dependency on it, either through the shared
+    // select or through a per-row guarded probe (which would be an N+1).
+    mockDbRead.$queryRaw.mockResolvedValueOnce([{ id: 'apl_1', sort_key: 'k' }]);
+    mockDbRead.appListing.findMany.mockResolvedValueOnce([onsiteRow()]);
+    await listAvailableListings({ kind: 'all', sort: 'newest', limit: 20 });
+    expect(mockDbRead.appListing.findUnique).not.toHaveBeenCalled();
+    const select = (
+      mockDbRead.appListing.findMany.mock.calls.at(-1)?.[0] as {
+        select?: Record<string, unknown>;
+      }
+    )?.select;
+    expect(select).toBeDefined();
+    expect(select).not.toHaveProperty('sourceRepoUrl');
   });
 });

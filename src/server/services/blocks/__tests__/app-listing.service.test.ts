@@ -438,6 +438,11 @@ describe('projectListingDetail — public allowlist + gallery', () => {
         'screenshots',
         'serialId',
         'slug',
+        // 🔴 DETAIL-ONLY BY DECISION — the card allowlist above asserts its ABSENCE.
+        // The public source-repo link is an outbound link, and a store grid tile has
+        // no room for the context that makes clicking one safe. See its docstring on
+        // `ListingDetail`.
+        'sourceRepoUrl',
         'tagline',
         'updatedAt',
       ].sort()
@@ -1001,5 +1006,66 @@ describe('getListingPreviewForReview', () => {
     expect(res!.detail.screenshots).toEqual([]);
     // Cover still resolves from the cover image (not the absent first screenshot).
     expect(res!.detail.coverUrl).toBe('cover-key');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SOURCE REPOSITORY — the DETAIL/CARD asymmetry, and the manual-apply posture
+// ---------------------------------------------------------------------------
+
+describe('🔴 sourceRepoUrl is a DETAIL field and is NEVER on the card', () => {
+  it('the detail carries the value the caller resolved', () => {
+    const detail = projectListingDetail(hydratedRow() as never, [], 'https://github.com/o/r');
+    expect(detail.sourceRepoUrl).toBe('https://github.com/o/r');
+  });
+
+  it('the detail defaults to null when no value is passed (the pre-migration path)', () => {
+    expect(projectListingDetail(hydratedRow() as never).sourceRepoUrl).toBeNull();
+    expect(projectListingDetail(hydratedRow() as never, []).sourceRepoUrl).toBeNull();
+  });
+
+  it('🔴 the CARD has no such key even when the input ROW carries the column', () => {
+    // THE ACTUAL RISK: `listingHydrateSelect` is SHARED by the card and detail
+    // projections, so the day the column joins that select every card row starts
+    // carrying it. The card DTO is a deliberate public allowlist; a repo link on a
+    // grid tile is an un-contextualised outbound link on a phishing-relevant surface.
+    // Feeding the row the column is what makes this assertion non-vacuous — asserting
+    // absence on a row that never had it proves nothing.
+    const row = hydratedRow({ sourceRepoUrl: 'https://github.com/o/r' });
+    const card = projectListingCard(row as never);
+    expect(card).not.toHaveProperty('sourceRepoUrl');
+    expect(JSON.stringify(card)).not.toContain('github.com');
+    // …while the detail built from the SAME row still gets it, via the parameter.
+    const detail = projectListingDetail(row as never, [], 'https://github.com/o/r');
+    expect(detail.sourceRepoUrl).toBe('https://github.com/o/r');
+  });
+
+  it('🔴 the row column is IGNORED — the value comes from the guarded parameter only', () => {
+    // The projection must never read `row.sourceRepoUrl`: that column is only present
+    // if something put it in a `select`, which is exactly what the manual-apply guard
+    // forbids. A projection that quietly preferred the row would make the guard
+    // pointless AND would disagree with the guarded read.
+    const row = hydratedRow({ sourceRepoUrl: 'https://github.com/from-the-row/x' });
+    expect(projectListingDetail(row as never, [], null).sourceRepoUrl).toBeNull();
+    expect(
+      projectListingDetail(row as never, [], 'https://gitlab.com/from-the-param/y').sourceRepoUrl
+    ).toBe('https://gitlab.com/from-the-param/y');
+  });
+
+  it('the detail DTO stays JSON-safe (the transformer-less public REST boundary)', () => {
+    // `GET /api/v1/apps/{slug}` serialises this DTO with no tRPC transformer, so every
+    // field must survive a plain JSON round trip. A string and a null both do; an
+    // object or a Date would not.
+    const detail = projectListingDetail(hydratedRow() as never, [], 'https://github.com/o/r');
+    const wire = JSON.parse(JSON.stringify(detail)) as Record<string, unknown>;
+    expect(wire.sourceRepoUrl).toBe('https://github.com/o/r');
+    expect(typeof wire.sourceRepoUrl).toBe('string');
+
+    const empty = JSON.parse(
+      JSON.stringify(projectListingDetail(hydratedRow() as never))
+    ) as Record<string, unknown>;
+    // Explicitly NULL on the wire, not dropped — a client must not have to write `?? null`.
+    expect('sourceRepoUrl' in empty).toBe(true);
+    expect(empty.sourceRepoUrl).toBeNull();
   });
 });

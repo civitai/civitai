@@ -162,6 +162,8 @@ export type Availability = "Public" | "Unsearchable" | "Private" | "EarlyAccess"
 
 export type PaidAccessEntityType = "ModelVersion" | "ComicChapter";
 
+export type SaleDiscountType = "Fixed" | "Percent";
+
 export type EntityCollaboratorStatus = "Pending" | "Approved" | "Rejected";
 
 export type ClubAdminPermission = "ManageMemberships" | "ManageTiers" | "ManagePosts" | "ManageClub" | "ManageResources" | "ViewRevenue" | "WithdrawRevenue";
@@ -176,7 +178,7 @@ export type PurchasableRewardUsage = "SingleUse" | "MultiUse";
 
 export type EntityType = "Image" | "Post" | "Article" | "Bounty" | "BountyEntry" | "ModelVersion" | "Model" | "Collection" | "Comment" | "CommentV2" | "User" | "UserProfile" | "ResourceReview" | "ChatMessage" | "Model3D";
 
-export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest" | "BlockedImageDelete" | "ImageScan";
+export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest" | "BlockedImageDelete" | "ImageScan" | "ReplacedImageDelete";
 
 export type VaultItemStatus = "Pending" | "Stored" | "Failed";
 
@@ -2023,6 +2025,7 @@ export interface AppListing {
   status: string;
   contentRating: string | null;
   externalUrl: string | null;
+  sourceRepoUrl: string | null;
   connectClientId: string | null;
   connectClient?: OauthClient | null;
   connectRequestedScopes: number | null;
@@ -3285,6 +3288,26 @@ export interface PaidAccess {
   terms: JsonValue;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface ModelVersionSale {
+  id: number;
+  userId: number;
+  name: string | null;
+  discountType: SaleDiscountType;
+  discountAmount: number;
+  startsAt: Date;
+  endsAt: Date;
+  canceledAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+  versions?: ModelVersionSaleItem[];
+}
+
+export interface ModelVersionSaleItem {
+  saleId: number;
+  modelVersionId: number;
+  sale?: ModelVersionSale;
 }
 
 export interface EntityCollaborator {

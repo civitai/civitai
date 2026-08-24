@@ -5,13 +5,13 @@ import {
   stickerPricePerUseFromCosmeticData,
   stickerUsesFromCosmeticData,
 } from '~/shared/utils/sticker-token';
+import { STICKER_OFFER_LIMIT } from '~/server/schema/cosmetic.schema';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import type { DraftPurchase } from '~/store/sticker-placement-draft.store';
 
 /**
- * What buying a sticker gets you, as shop copy: the balance included and what a
- * further use costs after that.
- *
  * A sticker with no `uses` really is unlimited — the purchase grant sets
  * `remaining` from that same field — so it gets a statement rather than a blank.
  * A missing `pricePerUse` is different: the sticker sells no top-ups at all, and
@@ -45,8 +45,7 @@ export type ResolvedSticker = {
   pricePerUse?: number;
 };
 
-/** Matches the `ids` cap on `getStickerCosmeticsSchema`. */
-const STICKER_FETCH_CHUNK = 100;
+const STICKER_FETCH_CHUNK = STICKER_OFFER_LIMIT;
 
 const obtainedTime = (value?: Date) => {
   const time = value ? new Date(value).getTime() : NaN;
@@ -55,8 +54,8 @@ const obtainedTime = (value?: Date) => {
 
 /**
  * Owned sticker, most-recently-obtained first — newest purchases surface at the
- * top of the picker. Slugs are unique per cosmetic, so `bySlug` can't collide;
- * first-wins is just how the map is built, not a tie-break rule.
+ * top of the picker. Slugs are unique across stickers (enforced on write), so
+ * `bySlug` can't collide; first-wins is just how the map is built.
  */
 export function useOwnedSticker() {
   const { data, isLoading } = useQueryUserCosmetics();
@@ -121,27 +120,46 @@ export function useBuyStickerUses({
 }
 
 /**
+ * The cosmetic behind each draft — the ids an offer is actually wanted for.
+ *
+ * Named rather than inlined at the call site because `draft.id` and
+ * `draft.cosmeticId` are both numbers on the same object: swapping them
+ * typechecks, and the result is every draft reading "this sticker sells no extra
+ * uses" forever. That is the bug this hook was just fixed for, one layer up.
+ */
+export const draftedCosmeticIds = (drafts: { cosmeticId: number }[]) =>
+  drafts.map((draft) => draft.cosmeticId);
+
+/**
+ * Ids split into request-sized chunks, deduped, **in insertion order**.
+ *
+ * Sorting would make the key independent of the order ids arrive in, which is
+ * worth a little when two components ask for the same set differently ordered —
+ * and costs a lot to any consumer whose list GROWS. A feed appends older, lower
+ * cosmetic ids as it pages; sorted, each one lands mid-list, shifts every chunk
+ * boundary after it, changes every chunk key, and refetches the whole surface.
+ *
+ * Every id lands in exactly one chunk, so no collection is silently truncated to
+ * the first.
+ */
+export function chunkStickerIds(ids: number[], size: number): number[][] {
+  const unique = [...new Set(ids)];
+  const result: number[][] = [];
+  for (let i = 0; i < unique.length; i += size) result.push(unique.slice(i, i + size));
+  return result;
+}
+
+/**
  * One request per 100 distinct ids for a whole surface, rather than one per
  * rendered sticker — tRPC request batching sits behind a feature flag that is off
  * by default, so per-component queries would be per-component HTTP requests.
  */
 export function useStickerCosmetics(ids: number[]) {
-  const chunks = useMemo(() => {
-    // **Insertion order, not sorted.** Sorting makes a key independent of the
-    // order ids arrive in, which is worth a little when two components ask for
-    // the same set differently ordered — and costs a lot to the one consumer
-    // whose list GROWS. A feed appends older, lower cosmetic ids as it pages;
-    // sorted, each one lands mid-list, shifts every chunk boundary after it,
-    // changes every chunk key, and refetches the whole surface's artwork. Below
-    // 100 distinct stickers there is one chunk and no boundary to shift, so this
-    // only bites the case that matters: a long scroll once stickers are popular.
-    const unique = [...new Set(ids)];
-    const result: number[][] = [];
-    for (let i = 0; i < unique.length; i += STICKER_FETCH_CHUNK)
-      result.push(unique.slice(i, i + STICKER_FETCH_CHUNK));
-    return result;
+  const chunks = useMemo(
+    () => chunkStickerIds(ids, STICKER_FETCH_CHUNK),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ids.join(',')]);
+    [ids.join(',')]
+  );
 
   const queries = trpc.useQueries((t) =>
     chunks.map((chunk) =>
@@ -163,4 +181,284 @@ export function useStickerCosmetics(ids: number[]) {
   }, [queries.map((q) => q.dataUpdatedAt).join(',')]);
 
   return { sticker, isLoading: queries.some((q) => q.isLoading) };
+}
+
+/**
+ * What a top-up costs, for the stickers actually being asked about.
+ */
+export function useStickerRefill(cosmeticIds: number[]) {
+  const currentUser = useCurrentUser();
+
+  // 🔴 ONE QUERY PER ID, NOT ONE PER BATCH. A batched key holds the whole drafted
+  // list, so dragging out a second sticker blanks the FIRST one's offer until the
+  // refetch lands — its pack button vanishing mid-session, on a money surface.
+  const ids = useMemo(
+    () => [...new Set(cosmeticIds)],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [cosmeticIds.join(',')]
+  );
+
+  const queries = trpc.useQueries((t) =>
+    ids.map((id) =>
+      t.cosmetic.getStickerOffers({ ids: [id] }, { enabled: !!currentUser, staleTime: 60_000 })
+    )
+  );
+
+  return useMemo(() => {
+    const byCosmetic = new Map<number, StickerOfferLike>();
+    for (const query of queries)
+      for (const offer of query.data ?? []) byCosmetic.set(offer.cosmeticId, offer);
+
+    return (cosmeticId: number, ownedPricePerUse?: number) =>
+      refillFromOffer(byCosmetic.get(cosmeticId), ownedPricePerUse);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queries.map((q) => q.dataUpdatedAt).join(',')]);
+}
+
+/** The fields of a `getStickerOffers` row that `refillFromOffer` reads. */
+export type StickerOfferLike = {
+  pricePerUse: number | null;
+  creatorUsername: string | null;
+  listing: {
+    shopItemId: number;
+    unitAmount: number;
+    acceptsBlue: boolean;
+    uses?: number | null;
+    viaShopUserId?: number | null;
+  } | null;
+};
+
+/**
+ * The top-up gate for one sticker.
+ *
+ * 🔴 THE FALLBACK IS THE POINT. `purchase` is snapshotted onto a draft when the
+ * draft is created and never recomputed, so a gate built before the offers query
+ * resolves is what that draft keeps. Without the owned payload's price standing
+ * in, that gate has no price and no pack — which renders as "this sticker sells
+ * no extra uses, and it is not on sale right now", a false sentence the placer
+ * cannot get out of except by deleting the sticker and starting again.
+ *
+ * A gate with neither price nor pack is still a real state, not a bug: a sticker
+ * sold before per-use pricing existed and since delisted genuinely cannot be
+ * topped up. The draft says so instead of offering a button that fails.
+ */
+export function refillFromOffer(
+  offer: StickerOfferLike | undefined,
+  ownedPricePerUse?: number
+): DraftPurchase {
+  const listing = offer?.listing;
+
+  return {
+    refill: true,
+    perUse: offer?.pricePerUse ?? ownedPricePerUse,
+    ...(listing
+      ? {
+          pack: {
+            shopItemId: listing.shopItemId,
+            unitAmount: listing.unitAmount,
+            acceptsBlue: listing.acceptsBlue,
+            uses: listing.uses,
+            viaShopUserId: listing.viaShopUserId ?? undefined,
+          },
+        }
+      : {}),
+    // `undefined` until the offers land, which shows no attribution rather than
+    // crediting the wrong party while it is unknown.
+    creatorUsername: offer ? offer.creatorUsername : undefined,
+  };
+}
+
+/**
+ * Uses left of one sticker once every draft of it on the image is paid for.
+ *
+ * Three states, and collapsing any two of them is a bug someone has already
+ * shipped: `null` is unlimited, `undefined` is NOT LOADED YET, and a number is a
+ * count. Reading "not loaded" as "has uses" hands out an ungated draft that the
+ * server refuses at `assertHasUse`; reading it as "spent" offers to sell a
+ * top-up to someone who has plenty.
+ *
+ * Every draft counts, including the one being copied — each will spend a use
+ * when it is bought.
+ */
+export function remainingStickerUses({
+  balances,
+  drafts,
+  cosmeticId,
+}: {
+  balances: { cosmeticId: number; remaining: number | null }[] | undefined;
+  drafts: { cosmeticId: number }[];
+  cosmeticId: number;
+}): number | null | undefined {
+  if (!balances) return undefined;
+
+  const holding = balances.find((entry) => entry.cosmeticId === cosmeticId);
+  // No row at all is not "no uses" — it is a sticker the viewer does not own,
+  // which is a different question answered by the draft's own purchase gate.
+  if (!holding) return undefined;
+  if (holding.remaining == null) return null;
+
+  const drafted = drafts.filter((draft) => draft.cosmeticId === cosmeticId).length;
+  return Math.max(holding.remaining - drafted, 0);
+}
+
+/**
+ * The gate a copy inherits: the sticker-not-owned-yet one, and nothing else.
+ *
+ * 🔴 WHAT IS **NOT** HERE IS THE POINT. This used to decide the refill gate too —
+ * "you are out of uses, so this copy must be topped up" — and write it onto the
+ * copy. That is a fact about the moment the copy was made, not about the copy,
+ * and it went stale the instant another draft was deleted: the use came back and
+ * the copy carried on asking to be bought for it. Justin found it by using it,
+ * twice, because the first fix left this path still writing one.
+ *
+ * Whether an owned sticker has a use left is now decided across every draft on
+ * the image, on every render, by `allocateDraftEntitlements`. Nothing stores it.
+ *
+ * A sticker that is not owned at all is different: it must be bought before it
+ * can be placed, one purchase grants it, and `markPurchased` then frees every
+ * draft of it. That is a property of the draft and it travels with the copy.
+ */
+export function unownedGateFor(source: { purchase?: DraftPurchase }): DraftPurchase | undefined {
+  const purchase = source.purchase;
+  if (!purchase?.pack || purchase.refill) return undefined;
+
+  return purchase;
+}
+
+/**
+ * Which drafts on the image are covered by what the placer already has, and
+ * which still have to be bought.
+ *
+ * 🔴 AN ALLOCATION, NOT A SNAPSHOT — and that distinction is the bug Justin
+ * found by using it. The gate used to be decided when a draft was CREATED and
+ * written onto it: with one use left, the first draft was free to place and the
+ * second arrived asking to be bought. Delete the first, and the second kept
+ * asking, because the fact that stopped it was frozen into it. The use it was
+ * waiting for had been handed back and nothing reassigned it.
+ *
+ * So entitlement belongs to the SET of drafts, recomputed whenever it changes:
+ * `remaining` uses cover the first `remaining` drafts of that sticker in the
+ * order they were laid down, and every later one needs a top-up. Remove a
+ * covered draft and the next one moves up into the use it left behind.
+ *
+ * The same rule decides the free placement, and for the same reason: a free
+ * placement is once per image, so exactly ONE draft can be the free one. Showing
+ * "free" on all of them is an offer three of them cannot keep — and the free one
+ * has to move too when the draft holding it is deleted.
+ *
+ * Creation order rather than selection or position: it is the only order that
+ * does not change under the placer's hands, so a sticker does not lose its use
+ * because another one was dragged.
+ */
+export type DraftEntitlement = {
+  /** This draft is covered by a use the placer already owns. */
+  covered: boolean;
+  /** This is the one draft that may take the free placement, if one is on offer. */
+  free: boolean;
+};
+
+export function allocateDraftEntitlements({
+  drafts,
+  balances,
+  freeAvailable,
+  paidDraftIds = [],
+}: {
+  /** In creation order — the store appends, so `drafts` already is. */
+  drafts: { id: string; cosmeticId: number; purchase?: DraftPurchase }[];
+  balances: { cosmeticId: number; remaining: number | null }[] | undefined;
+  freeAvailable: boolean;
+  /** Drafts whose own buy button paid for a use, oldest purchase first. */
+  paidDraftIds?: string[];
+}): Map<string, DraftEntitlement> {
+  const seen = new Map<number, number>();
+  const result = new Map<string, DraftEntitlement>();
+
+  /**
+   * Drafts that paid for a use come first.
+   *
+   * 🔴 WITHOUT THIS, BUYING A USE HANDS IT TO A DIFFERENT STICKER. Coverage is
+   * assigned in creation order, so pressing "Buy a use" on the SECOND of two
+   * gated copies raised the balance and covered the FIRST — the button you paid
+   * on did not change, which reads as a failed purchase and invites paying
+   * again. Uses are fungible per sticker so no Buzz is lost, but the wrong
+   * sticker becomes placeable and the right one keeps asking.
+   *
+   * Purchase order among themselves, so two purchases resolve in the order they
+   * were made rather than by where the drafts happen to sit.
+   */
+  const ordered = [...drafts].sort((a, b) => {
+    const paidA = paidDraftIds.indexOf(a.id);
+    const paidB = paidDraftIds.indexOf(b.id);
+    if (paidA === paidB) return 0;
+    if (paidA < 0) return 1;
+    if (paidB < 0) return -1;
+    return paidA - paidB;
+  });
+
+  for (const draft of ordered) {
+    const before = seen.get(draft.cosmeticId) ?? 0;
+    seen.set(draft.cosmeticId, before + 1);
+
+    const remaining = balances?.find((entry) => entry.cosmeticId === draft.cosmeticId)?.remaining;
+
+    // Unknown is not zero. No balances yet, or no holding for a sticker being
+    // bought outright, both mean this rule has nothing to say — the draft's own
+    // stored gate answers instead.
+    const covered =
+      balances === undefined || remaining === undefined
+        ? true
+        : remaining === null || before < remaining;
+
+    result.set(draft.id, { covered, free: false });
+  }
+
+  /**
+   * The free placement goes to the first draft that can actually take it — which
+   * is decided AFTER coverage, not before.
+   *
+   * 🔴 CHOSEN BEFORE COVERAGE, IT LANDED ON A DRAFT THAT COULD NOT USE IT. A
+   * spent owned sticker created first won the free slot and then rendered a buy
+   * button, because a draft that has to be bought hides the free option — and
+   * every other draft was told there was no free offer. The placer had a free
+   * placement available and nowhere to spend it.
+   *
+   * A sticker not owned at all is skipped for the same reason from the other
+   * direction: it must be bought before it can be placed, which is not what free
+   * means here.
+   */
+  if (freeAvailable) {
+    const freeDraft = drafts.find(
+      (draft) => result.get(draft.id)?.covered && (!draft.purchase?.pack || !!draft.purchase.refill)
+    );
+
+    if (freeDraft) result.set(freeDraft.id, { ...result.get(freeDraft.id)!, free: true });
+  }
+
+  return result;
+}
+
+/**
+ * Whether a failed purchase can be retried as a NEW intent.
+ *
+ * 🔴 STRUCTURAL, NOT TEXTUAL — and the first attempt at this was textual, which
+ * is why it was wrong. It matched refusal wording, and the server says "This
+ * cosmetic is not available", "out of stock", "The price changed to N Buzz" and
+ * four others the list never had. A miss locks the placer out of that sticker
+ * until they reload, which is the bug releasing the key was meant to fix.
+ *
+ * A 4xx is the server declining: nothing was charged, so the next press is a new
+ * intent and needs a new key. Anything else — a 5xx, a timeout, no response at
+ * all — might have gone through, and reissuing the key there is how one purchase
+ * becomes two. Unknown holds the key, always.
+ *
+ * `data.httpStatus` comes from tRPC's error shape, which this repo's
+ * `errorFormatter` passes through untouched. A network failure has no `data` and
+ * therefore holds, which is the point.
+ */
+export function purchaseCanBeRetriedFresh(error: unknown): boolean {
+  const status = (error as { data?: { httpStatus?: number } } | null)?.data?.httpStatus;
+
+  // 408 is the one 4xx that does not mean "nothing happened": a request timed
+  // out at an edge or proxy may still have been forwarded and processed.
+  return typeof status === 'number' && status >= 400 && status < 500 && status !== 408;
 }

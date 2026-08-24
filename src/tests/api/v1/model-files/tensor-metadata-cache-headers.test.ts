@@ -14,10 +14,11 @@ import { redisMock } from '~/__tests__/mocks/redis.mock';
 const IMMUTABLE = 'public, max-age=31536000, s-maxage=31536000, immutable';
 const NO_STORE = 'private, no-store';
 
-const { mockGetFileForModelVersion, mockGetFullTensorAnalysisCached } = vi.hoisted(
+const { mockGetFileForModelVersion, mockGetFullTensorAnalysisCached, mockCorrect } = vi.hoisted(
   () => ({
     mockGetFileForModelVersion: vi.fn(),
     mockGetFullTensorAnalysisCached: vi.fn(),
+    mockCorrect: vi.fn(),
   })
 );
 const mockFindUnique = dbMock.dbRead.modelFile.findUnique;
@@ -34,6 +35,15 @@ vi.mock('~/server/services/tensor-metadata.service', () => ({
   getFullTensorAnalysisCached: (...args: any[]) => mockGetFullTensorAnalysisCached(...args),
 }));
 
+// Stubbed rather than run: the real module reaches `model-file.service`, which builds a
+// `createCachedObject` at module scope and so needs a cache-helpers mock wider than this
+// file's deliberate pass-through. What the correction DECIDES is pinned in
+// model-file-header-correction.service.test.ts; what this file pins is that the endpoint
+// calls it at all, and with the file's own values.
+vi.mock('~/server/services/model-file-header-correction.service', () => ({
+  correctModelFileFromTensorHeader: (...args: any[]) => mockCorrect(...args),
+}));
+
 // Both caches are pass-through here: this test pins response headers, not cache behaviour
 // (that contract lives in tensor-metadata-cache-split.test.ts).
 vi.mock('~/server/utils/cache-helpers', () => ({
@@ -44,7 +54,8 @@ const analysis = {
   format: 'SafeTensor',
   tensorCount: 1,
   totalTensorBytes: 8,
-  dtypes: [],
+  dtypeCounts: [{ dtype: 'F16', count: 1, bytes: 8 }],
+  detectedModelType: null,
   largestTensor: null,
   vramEstimate: null,
   tensors: [{ name: 'weight', shape: [2, 2], dtype: 'F16', sizeBytes: 8 }],
@@ -83,9 +94,12 @@ function fakeRes() {
 
 async function invoke(query: Record<string, unknown>) {
   const res = fakeRes();
+  lastRes = res;
   await handler({ method: 'GET', query } as unknown as NextApiRequest, res);
   return res;
 }
+
+let lastRes: ReturnType<typeof fakeRes> | undefined;
 
 describe('/api/v1/model-files/[id]/tensor-metadata cache headers', () => {
   beforeEach(() => {
@@ -96,9 +110,11 @@ describe('/api/v1/model-files/[id]/tensor-metadata cache headers', () => {
       name: 'moody-cutie-mix.safetensors',
       type: 'Model',
       sizeKB: 24_000_000,
-      metadata: { format: 'SafeTensor' },
+      url: 'https://storage.example/moody-cutie-mix.safetensors',
+      metadata: { format: 'SafeTensor', fp: 'fp32' },
       modelVersion: { model: { type: 'Checkpoint' } },
     });
+    mockCorrect.mockResolvedValue({ corrections: {}, applied: false });
     mockGetFileForModelVersion.mockResolvedValue({
       status: 'success',
       url: 'https://delivery.example/file.safetensors',
@@ -148,6 +164,94 @@ describe('/api/v1/model-files/[id]/tensor-metadata cache headers', () => {
 
     expect(res.statusCode).toBe(200);
     expect(res._getHeader('Cache-Control')).toBe(IMMUTABLE);
+  });
+
+  /**
+   * 🔴 The endpoint is the correction's ONLY production caller, and three plausible
+   * one-line edits kill it silently: dropping either `return void correct(...)`, dropping
+   * `url: true` from the select (the url guard then matches nothing and every write is a
+   * no-op), or swapping `currentFileType` and `modelType`. None of those changes a
+   * response, a status or a log, so without this test the feature can go inert unnoticed.
+   */
+  it.each([
+    ['full', {}],
+    ['summary', { summaryOnly: 'true' }],
+  ])('hands the %s path the file’s own values to correct', async (_label, extra) => {
+    const res = await invoke({ id: '3057178', ...extra });
+
+    expect(res.statusCode).toBe(200);
+    expect(mockCorrect).toHaveBeenCalledTimes(1);
+
+    const arg = mockCorrect.mock.calls[0][0];
+    expect(arg.fileId).toBe(3057178);
+    expect(arg.modelVersionId).toBe(3176604);
+    // Not the delivery url getFileForModelVersion resolved — the stored one the guard needs.
+    expect(arg.fileUrl).toBe('https://storage.example/moody-cutie-mix.safetensors');
+    // Asserted as distinct literals: a single objectContaining would pass with these two swapped.
+    expect(arg.currentFileType).toBe('Model');
+    expect(arg.modelType).toBe('Checkpoint');
+    expect(arg.currentFp).toBe('fp32');
+    expect(arg.format).toBe('SafeTensor');
+  });
+
+  /**
+   * 🔴 Asserted on the SELECT, not on the value, and that is the whole point. `findUnique`
+   * is mocked, so the mock returns the whole fixture whatever the select asks for — drop
+   * `url: true` from the handler and every behavioural assertion above still passes while
+   * `fileUrl` is `undefined` in production, the `AND "url" =` guard matches nothing, and
+   * the feature is inert forever with no error, no log and no changed response. Measured:
+   * with this test absent, deleting that line left all 10 tests green.
+   */
+  /**
+   * 🔴 Pins that the correction is fired AFTER the response, which the handler comment
+   * calls deliberate. `await correct(...)` before `res.json` leaves every other assertion
+   * green while a hot public read starts blocking on a write to the primary. Recorded as a
+   * status observed at call time rather than by ordering promises, so the mutation fails
+   * on a value instead of hanging.
+   */
+  it('does not make the read wait on the write', async () => {
+    let statusWhenCorrectRan: number | undefined;
+    mockCorrect.mockImplementation(() => {
+      statusWhenCorrectRan = lastRes?.statusCode;
+      return Promise.resolve({ corrections: {}, applied: false });
+    });
+
+    await invoke({ id: '3057178' });
+
+    expect(statusWhenCorrectRan).toBe(200);
+  });
+
+  it('selects the columns the correction needs', async () => {
+    await invoke({ id: '3057178' });
+
+    const { select } = mockFindUnique.mock.calls[0][0];
+    // Every column, not just the correction's: the mock returns the whole fixture whatever
+    // the select asks for, so dropping `name` (format inference reads it) or `sizeKB`
+    // (`sizeKB * 1024` becomes NaN) is invisible in exactly the same way.
+    expect(select).toMatchObject({
+      id: true,
+      modelVersionId: true,
+      name: true,
+      url: true,
+      type: true,
+      sizeKB: true,
+      metadata: true,
+    });
+    expect(select.modelVersion).toMatchObject({ select: { model: { select: { type: true } } } });
+  });
+
+  it.each([
+    ['the 422', () => mockGetFullTensorAnalysisCached.mockRejectedValue(new Error('boom'))],
+    [
+      'an access denial',
+      () => mockGetFileForModelVersion.mockResolvedValue({ status: 'no-access' }),
+    ],
+  ])('does not correct on %s', async (_label, arrange) => {
+    arrange();
+
+    await invoke({ id: '3057178' });
+
+    expect(mockCorrect).not.toHaveBeenCalled();
   });
 
   it('does not cache the access-denied response', async () => {

@@ -1,17 +1,17 @@
 import { Menu, useMantineTheme } from '@mantine/core';
-import { IconEdit, IconFlag, IconTrash, IconInfoCircle, IconShieldHalf } from '@tabler/icons-react';
+import { IconEdit, IconFlag, IconTrash, IconShieldHalf } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React from 'react';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { DeletePostButton } from '~/components/Post/DeletePostButton';
-import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { moderatorBulkImageManagerPath } from '~/shared/constants/moderator-app';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { ModeratorLookupMenuItem } from '~/components/Moderation/ModeratorLookupMenuItem';
 
 export function PostControls({
   postId,
@@ -88,17 +88,9 @@ export function PostControls({
         {isModerator && (
           <>
             <Menu.Label>Moderator</Menu.Label>
-            <Menu.Item
-              component="a"
-              target="_blank"
-              leftSection={<IconInfoCircle size={14} stroke={1.5} />}
-              href={`${env.NEXT_PUBLIC_MODERATOR_APP_URL}${moderatorBulkImageManagerPath(
-                'post',
-                postId
-              )}`}
-            >
+            <ModeratorLookupMenuItem path={moderatorBulkImageManagerPath('post', postId)}>
               Lookup Post
-            </Menu.Item>
+            </ModeratorLookupMenuItem>
           </>
         )}
       </Menu.Dropdown>

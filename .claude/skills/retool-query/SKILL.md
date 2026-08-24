@@ -1,11 +1,13 @@
 ---
 name: retool-query
-description: Run queries against the Retool PostgreSQL database for moderation notes, user notes, and other Retool-managed data. Read-only by default. Use when you need to query the Retool database directly.
+description: Run queries against the moderator PostgreSQL database (the former Retool database, consolidated 2026-08-21) for moderation notes, user notes, strikes and other Retool-era data. Read-only by default. Use when you need to query that database directly.
 ---
 
-# Retool Database Query
+# Moderator Database Query
 
-Use this skill to query the Retool PostgreSQL database. This database stores moderation notes (`UserNotes`), and other data managed through Retool dashboards.
+Queries the moderator PostgreSQL database — `MODERATOR_DATABASE_URL`, one instance since the
+2026-08-21 consolidation, holding the Retool-era moderation tables (`UserNotes`, `UserStrikes`,
+`ReToolActions`, …) alongside the xguard-lab tables.
 
 ## Running Queries
 
@@ -50,4 +52,4 @@ node .claude/skills/retool-query/query.mjs --json "SELECT * FROM \"UserNotes\" L
 - Exploring the `UserNotes` table schema
 - Looking up moderation notes for a specific user
 - Writing new moderation notes (with `--writable`)
-- Investigating Retool-managed data
+- Investigating Retool-era moderation data

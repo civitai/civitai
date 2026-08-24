@@ -7,7 +7,16 @@ import {
   useFreePlacementStanding,
   useImagePlacementSpace,
 } from '~/components/Sticker/placement.util';
-import { useOwnedSticker, useStickerCosmetics } from '~/components/Sticker/sticker.util';
+import {
+  allocateDraftEntitlements,
+  unownedGateFor,
+  useOwnedSticker,
+  useStickerCosmetics,
+  draftedCosmeticIds,
+  useStickerRefill,
+} from '~/components/Sticker/sticker.util';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { trpc } from '~/utils/trpc';
 import { resolveTreatment } from '~/components/Sticker/treatments/sticker-treatments';
 import { useStickerTreatment } from '~/components/Sticker/treatments/useStickerTreatment';
 import { STICKER_PLACEMENT_MIN_SCALE, stickerMaxScale } from '~/shared/utils/sticker-placement';
@@ -63,6 +72,37 @@ export function DraftStickerLayer() {
   // per sticker would be N observers refetching through an arrangement.
   const { standing } = useFreePlacementStanding(targetImageId ?? undefined);
   const freeOffer = freeOfferFor(space, standing);
+
+  const currentUser = useCurrentUser();
+  const { data: balances } = trpc.cosmetic.getStickerBalances.useQuery(undefined, {
+    enabled: !!currentUser && targetImageId != null,
+  });
+  // Only what has been dragged out — an offer for a sticker nobody has drafted is
+  // an answer to a question not yet asked.
+  const draftedIds = useMemo(() => draftedCosmeticIds(drafts), [drafts]);
+  const refillFor = useStickerRefill(draftedIds);
+
+  const paidDraftIds = useStickerPlacementDraftStore((state) => state.paidDraftIds);
+  const duplicateDraft = useStickerPlacementDraftStore((state) => state.duplicateDraft);
+
+  const entitlements = useMemo(
+    () => allocateDraftEntitlements({ drafts, balances, freeAvailable: !!freeOffer, paidDraftIds }),
+    [drafts, balances, freeOffer, paidDraftIds]
+  );
+
+  const onDuplicate = useCallback(
+    (id: string) => {
+      const current = useStickerPlacementDraftStore.getState().drafts;
+      const source = current.find((draft) => draft.id === id);
+      if (!source) return null;
+
+      // Only the sticker-not-owned-yet gate travels with a copy. Whether an
+      // owned sticker still has a use is decided across the whole set on every
+      // render — storing that answer here is exactly what froze it before.
+      return duplicateDraft(id, unownedGateFor(source));
+    },
+    [duplicateDraft]
+  );
 
   const gesture = useRef<Gesture | null>(null);
   // Held in a ref because the pointer listener is bound once; re-binding it when
@@ -239,10 +279,24 @@ export function DraftStickerLayer() {
             selected={draft.id === selectedDraftId}
             dressed={dressed}
             price={space?.price ?? 0}
-            freeOffer={freeOffer}
             ownerShare={space?.ownerShare}
             ownerUsername={space?.ownerUsername}
             onGesture={onGesture}
+            onDuplicate={onDuplicate}
+            // The sticker-not-owned-yet gate belongs to the draft; the
+            // is-there-a-use-left gate belongs to the set and is decided above.
+            purchase={
+              draft.purchase ??
+              (entitlements.get(draft.id)?.covered
+                ? undefined
+                : refillFor(
+                    draft.cosmeticId,
+                    sticker.find((option) => option.id === draft.cosmeticId)?.pricePerUse
+                  ))
+            }
+            // Exactly one draft can take the free placement — it is once per
+            // image — so the offer goes to that one rather than to all of them.
+            freeOffer={entitlements.get(draft.id)?.free ? freeOffer : null}
           />
         );
       })}

@@ -646,6 +646,11 @@ export const PaidAccessEntityType = {
   ComicChapter: 'ComicChapter',
 } as const;
 export type PaidAccessEntityType = (typeof PaidAccessEntityType)[keyof typeof PaidAccessEntityType];
+export const SaleDiscountType = {
+  Fixed: 'Fixed',
+  Percent: 'Percent',
+} as const;
+export type SaleDiscountType = (typeof SaleDiscountType)[keyof typeof SaleDiscountType];
 export const EntityCollaboratorStatus = {
   Pending: 'Pending',
   Approved: 'Approved',
@@ -718,6 +723,7 @@ export const JobQueueType = {
   ModerationRequest: 'ModerationRequest',
   BlockedImageDelete: 'BlockedImageDelete',
   ImageScan: 'ImageScan',
+  ReplacedImageDelete: 'ReplacedImageDelete',
 } as const;
 export type JobQueueType = (typeof JobQueueType)[keyof typeof JobQueueType];
 export const VaultItemStatus = {

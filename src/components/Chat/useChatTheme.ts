@@ -1,4 +1,5 @@
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { resolveChatLayout } from '~/shared/constants/chat-layout';
 import { resolveChatTheme } from '~/shared/constants/chat-theme';
 import { trpc } from '~/utils/trpc';
 
@@ -20,4 +21,18 @@ export function useChatTheme() {
   const theme = resolveChatTheme(settings?.theme, isMember);
 
   return { theme, isMember, selectedSlug: settings?.theme };
+}
+
+/**
+ * How the message column is arranged. Ungated, unlike the theme — reading your
+ * own messages down one side is an accessibility preference as much as a look,
+ * and putting it behind a membership would sell that back.
+ */
+export function useChatLayout() {
+  const currentUser = useCurrentUser();
+  const { data: settings } = trpc.chat.getUserSettings.useQuery(undefined, {
+    enabled: !!currentUser,
+  });
+
+  return resolveChatLayout(settings?.layout);
 }

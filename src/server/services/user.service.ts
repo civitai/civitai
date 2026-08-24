@@ -37,6 +37,7 @@ import {
   profilePictureCache,
   userBasicCache,
   userCosmeticCache,
+  setUserFollowCached,
   userDownloadsCache,
   userFollowsCache,
 } from '~/server/redis/caches';
@@ -89,7 +90,9 @@ import {
   BlockedByUsers,
   BlockedUsers,
   HiddenModels,
+  HiddenUsers,
 } from '~/server/services/user-preferences.service';
+import { clearUserEngagement } from '~/server/services/user-engagement';
 import { createCachedObject, fetchThroughCache } from '~/server/utils/cache-helpers';
 import { bustRatingTotalsCache } from '~/server/services/resourceReview.cache';
 import { getResourceReviewsByUserId } from '~/server/services/resourceReview.service';
@@ -583,16 +586,29 @@ export async function forceUpdateUserIdentity({
   }
   userUpdateCounter?.inc({ location: 'user.service:forceUpdateUserIdentity' });
 
-  // Cache-invalidate for any field on User that downstream caches key off of.
-  // (Username changes drop basic data; name/email touch profile + paddle.)
   if (data.username !== undefined || data.name !== undefined) {
     await deleteBasicDataForUser(userId);
-  }
-  if (data.email && user.paddleCustomerId) {
-    await updatePaddleCustomerEmail({
-      customerId: user.paddleCustomerId,
-      email: data.email as string,
-    });
+    // 🔴 A moderator-forced rename has to reach the search index, and NOTHING else will take
+    // it there. The incremental user-index sync scans on `createdAt`, so it never revisits an
+    // existing row, and the nightly reconciler only checks whether an id still qualifies — it
+    // never refreshes a field. Without this enqueue the index serves the OLD username
+    // indefinitely, which is exactly how a renamed account keeps being found (and acted on by
+    // id) under the name it was renamed away from. The self-serve profile save has always
+    // enqueued this; the moderator path did not.
+    // 🔴 NEVER LET THE ENQUEUE BREAK THE RENAME. It is a Redis write, and the rename has
+    // already committed by the time it runs — a blip would throw here, BEFORE
+    // `invalidateSession` below, leaving the account renamed with its old session still live
+    // while the moderator sees a 500. Every other side effect in this file is isolated the
+    // same way; a stale search document is the smallest of the failures available here.
+    await usersSearchIndex
+      .queueUpdate([{ id: userId, action: SearchIndexUpdateQueueAction.Update }])
+      .catch((error) =>
+        logToAxiom({
+          type: 'error',
+          name: 'force-update-identity-search-index',
+          message: (error as Error).message,
+        })
+      );
   }
 
   const { invalidateSession } = await import('~/server/auth/session-invalidation');
@@ -861,19 +877,30 @@ export const toggleModelEngagement = async ({
   });
   setTo ??= engagement?.type === type ? false : true;
 
+  // Every write is scoped by the `type` the row was READ as, never by the PK alone.
+  // `ModelEngagement` holds one row per (user, model) carrying one of
+  // Favorite | Hide | Mute | Notify, and the four have no precedence order, so the
+  // only guard available is the type this call observed — a writer replaces what it
+  // saw or nothing. Unqualified, a Hide arriving here landed on whatever another
+  // writer had just established and reported success.
   if (engagement) {
     if (!setTo && engagement.type === type) {
-      await dbWrite.modelEngagement.delete({
-        where: { userId_modelId: { userId, modelId } },
-      });
+      await dbWrite.modelEngagement.deleteMany({ where: { userId, modelId, type } });
       if (type === 'Hide') await HiddenModels.refreshCache({ userId });
       return false;
     } else if (setTo && engagement.type !== type) {
-      await dbWrite.modelEngagement.update({
-        where: { userId_modelId: { userId, modelId } },
+      const { count } = await dbWrite.modelEngagement.updateMany({
+        where: { userId, modelId, type: engagement.type },
         data: { type, createdAt: new Date() },
       });
-      return true;
+      // `HiddenModels` is keyed on `type = 'Hide'`, so a conversion in EITHER
+      // direction changes the hidden set. Nothing refreshed it here before, leaving
+      // a model hidden after the user converted the row to Notify.
+      if (count && (type === 'Hide' || engagement.type === 'Hide'))
+        await HiddenModels.refreshCache({ userId });
+      // Zero rows means a concurrent writer replaced the row we read; it does not
+      // carry `type`, and saying otherwise is a claim the caller acts on.
+      return count > 0;
     }
     return true; // no change
   } else if (setTo === false) return false;
@@ -892,9 +919,6 @@ export const toggleModelEngagement = async ({
 export const toggleModelNotify = async ({ userId, modelId }: { userId: number; modelId: number }) =>
   toggleModelEngagement({ userId, modelId, type: 'Notify' });
 
-export const toggleModelHide = async ({ userId, modelId }: { userId: number; modelId: number }) =>
-  toggleModelEngagement({ userId, modelId, type: 'Hide' });
-
 export const toggleFollowUser = async ({
   userId,
   targetUserId,
@@ -907,20 +931,35 @@ export const toggleFollowUser = async ({
     select: { type: true },
   });
 
+  // Every write below is scoped by `type`. The row read a moment ago may already
+  // be a different type — a block applied from another tab, say — and an
+  // unqualified `delete`/`update` on the PK would take that block with it while
+  // reporting success.
   if (engagement) {
     if (engagement.type === 'Follow') {
-      await dbWrite.userEngagement.delete({
-        where: { userId_targetUserId: { userId, targetUserId } },
-      });
-      await userFollowsCache.refresh(userId);
+      await clearUserEngagement({ userId, targetUserId, type: UserEngagementType.Follow });
+      await setUserFollowCached({ userId, targetUserId, following: false });
       return false;
     } else if (engagement.type === 'Hide') {
-      await dbWrite.userEngagement.update({
-        where: { userId_targetUserId: { userId, targetUserId } },
-        data: { type: 'Follow' },
+      const { count } = await dbWrite.userEngagement.updateMany({
+        where: { userId, targetUserId, type: UserEngagementType.Hide },
+        data: { type: UserEngagementType.Follow },
       });
-      await userFollowsCache.refresh(userId);
-      return true;
+      // Matching nothing does NOT mean "not following". The Hide this call read is
+      // gone, and one of the things that can hold the pair instead is a Follow — a
+      // second concurrent toggle that won this same `updateMany`. Asserting `false`
+      // there writes a WRONG entry that stands for the rest of the day-long TTL,
+      // where the refetch merely costs.
+      if (count) await setUserFollowCached({ userId, targetUserId, following: true });
+      else await userFollowsCache.refresh(userId);
+      // This branch REMOVES a Hide, and `HiddenUsers` is keyed on `type = 'Hide'`.
+      // Without this the target stays hidden from the feed of the user who just
+      // followed them, until the hash TTL expires.
+      await HiddenUsers.refreshCache({ userId });
+      // Zero rows means the Hide is gone — replaced by a Block, most likely — so
+      // no follow was established and saying otherwise would be a lie the caller
+      // acts on (reward, notification, tracking event).
+      return count > 0;
     }
 
     return false;
@@ -932,17 +971,30 @@ export const toggleFollowUser = async ({
       select: { user: { select: { username: true } } },
     })
     .catch((error) => {
-      // Toggle racing itself: the loser hits the (userId, targetUserId) unique
-      // constraint (P2002). The follow already exists — idempotent, so return
-      // null and fall through to the cache refresh. The racing winner already
-      // created the follow-notification (deduped by `key`), so we skip it here
-      // rather than bubble a 500.
+      // Something took the (userId, targetUserId) PK between the read and the
+      // insert. Which type it is decides the answer, so read it back below rather
+      // than bubble a 500.
       if (!isPrismaUniqueViolation(error)) throw error;
       return null;
     });
-  await userFollowsCache.refresh(userId);
 
-  if (ret) {
+  if (!ret) {
+    const winner = await dbWrite.userEngagement.findUnique({
+      where: { userId_targetUserId: { userId, targetUserId } },
+      select: { type: true },
+    });
+    // Usually the toggle racing itself, and the winner already sent the
+    // follow-notification (deduped by `key`) — but the row can equally be a Block,
+    // which outranks a Follow. Returning true there tells the user they follow
+    // someone they do not, and pays a follow reward for it.
+    const followed = winner?.type === UserEngagementType.Follow;
+    await setUserFollowCached({ userId, targetUserId, following: followed });
+    return followed;
+  }
+
+  await setUserFollowCached({ userId, targetUserId, following: true });
+
+  {
     const details: NotifDetailsFollowedBy = {
       username: ret.user.username,
       userId,
@@ -956,44 +1008,6 @@ export const toggleFollowUser = async ({
     });
   }
 
-  return true;
-};
-
-export const toggleHideUser = async ({
-  userId,
-  targetUserId,
-}: {
-  userId: number;
-  targetUserId: number;
-}) => {
-  const engagement = await dbWrite.userEngagement.findUnique({
-    where: { userId_targetUserId: { targetUserId, userId } },
-    select: { type: true },
-  });
-
-  if (engagement) {
-    if (engagement.type === 'Hide')
-      await dbWrite.userEngagement.delete({
-        where: { userId_targetUserId: { userId, targetUserId } },
-      });
-    else if (engagement.type === 'Follow')
-      await dbWrite.userEngagement.update({
-        where: { userId_targetUserId: { userId, targetUserId } },
-        data: { type: 'Hide' },
-      });
-
-    return false;
-  }
-
-  await dbWrite.userEngagement
-    .create({ data: { type: 'Hide', targetUserId, userId } })
-    .catch((error) => {
-      // Toggle racing itself: the loser hits the (userId, targetUserId) unique
-      // constraint (P2002). The engagement now exists — idempotent, so still
-      // refresh the cache + return true instead of bubbling a 500.
-      if (!isPrismaUniqueViolation(error)) throw error;
-    });
-  await userFollowsCache.refresh(userId);
   return true;
 };
 
@@ -1086,8 +1100,21 @@ export const deleteUser = async ({ id, username, removeModels, removeImages }: D
     dbWrite.model.updateMany({ where: { userId: user.id }, data: modelData }),
     dbWrite.account.deleteMany({ where: { userId: user.id } }),
     dbWrite.session.deleteMany({ where: { userId: user.id } }),
+    // Two OR elements, not one carrying two fields — that is a single ANDed
+    // predicate (`userId = X AND targetUserId = X`), which matches only a
+    // self-engagement row and so deleted nothing. `deleteUser` soft-deletes the User
+    // row, so no FK cascade covers for it: every follow and hide of a deleted account
+    // survived and kept being counted by `getUserList`.
+    //
+    // Blocks are EXEMPT, in both directions. This delete is reversible — `restoreUser`
+    // brings the account back and restores nothing here — so clearing a Block would
+    // silently switch off a safety control that someone else set, with no event
+    // telling them. A Follow or a Hide is list noise; a Block is not.
     dbWrite.userEngagement.deleteMany({
-      where: { OR: [{ userId: user.id, targetUserId: user.id }] },
+      where: {
+        OR: [{ userId: user.id }, { targetUserId: user.id }],
+        type: { not: UserEngagementType.Block },
+      },
     }),
     dbWrite.user.update({
       where: { id: user.id },
@@ -1104,6 +1131,12 @@ export const deleteUser = async ({ id, username, removeModels, removeImages }: D
   ]);
 
   userUpdateCounter?.inc({ location: 'user.service:deleteUser' });
+
+  // The engagement rows are gone for real now, so the deleted user's own follow set
+  // has to go with them. Their FOLLOWERS' caches are deliberately left to expire on
+  // their own TTL — a popular account has six figures of them, and what each holds
+  // is an id whose content this same call has already removed.
+  await userFollowsCache.bust(user.id);
 
   await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
   await deleteBasicDataForUser(id);
@@ -1133,7 +1166,9 @@ export async function setLeaderboardEligibility({ id, setTo }: { id: number; set
  * Restore a soft-deleted user account (the inverse of deleteUser).
  *
  * deleteUser scrubs username, email, paddleCustomerId, image, profilePictureId from the User row
- * and sets deletedAt. It also hard-deletes Account / Session / UserEngagement rows and reassigns
+ * and sets deletedAt. It also hard-deletes Account / Session rows and every
+ * UserEngagement row the account appears in EXCEPT Blocks — those survive precisely so
+ * a restore cannot leave someone unblocked without telling them — and reassigns
  * the user's Models to userId = -1.
  * We can only restore what survives the deletion: the User row's scrubbed fields (caller
  * supplies them) and the orphaned Model ownership (via ClickHouse audit).
@@ -1959,6 +1994,23 @@ export const toggleBan = async ({
     await reinstateSubscription({ userId: id }).catch((error) =>
       logToAxiom({ name: 'reinstate-stripe-subscription', type: 'error', message: error.message })
     );
+
+    // 🔴 Put the account BACK in user search. Ban removes the document, and nothing else ever
+    // re-adds it: the incremental sync's range scan keys on `createdAt`, so an existing row is
+    // never re-pulled, and the reconciler only deletes. Without this, a lifted ban leaves the
+    // account permanently unfindable — a one-way door.
+    // Isolated for the same reason as the rename path: the unban has already committed, and an
+    // unguarded throw here would skip the `account-unbanned` email below and hand the moderator
+    // a 500 for an action that succeeded.
+    await usersSearchIndex
+      .queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }])
+      .catch((error) =>
+        logToAxiom({
+          type: 'error',
+          name: 'unban-user-search-index',
+          message: (error as Error).message,
+        })
+      );
   }
 
   // Notify the user by email of the ban/unban decision. Skip the admin

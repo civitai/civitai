@@ -2,6 +2,7 @@ import { ChatMemberStatus, ChatMessageType, ChatNotifyLevel } from '~/shared/uti
 import * as z from 'zod';
 import { infiniteQuerySchema } from '~/server/schema/base.schema';
 import { MAX_CHAT_MESSAGE_LENGTH } from '~/shared/utils/chat';
+import { chatLayoutSlugs } from '~/shared/constants/chat-layout';
 import { chatThemeSlugs } from '~/shared/constants/chat-theme';
 
 export type CreateChatInput = z.infer<typeof createChatInput>;
@@ -103,6 +104,7 @@ export const userSettingsChat = z.object({
   dmPolicy: chatDmPolicy.optional(),
   holdNewAccounts: z.boolean().optional(),
   theme: z.enum(chatThemeSlugs).optional(),
+  layout: z.enum(chatLayoutSlugs).optional(),
 });
 
 /**

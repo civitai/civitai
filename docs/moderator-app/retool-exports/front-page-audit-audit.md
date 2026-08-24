@@ -32,7 +32,7 @@ anyone complained. Same action, different population; both are needed.
 | --- | --- |
 | `UpdateNsfwLevel` | `updateImageNsfwLevel` (`image-nsfw-level.ts`) — same `UPDATE Image SET nsfwLevel, nsfwLevelLocked = TRUE`, and it additionally recomputes the parent model's level, busts the cache and finalises KoNO. Strictly more correct than Retool's bare UPDATE. |
 | `InsertModActivity` | `recordModActivity`, called by `updateImageNsfwLevel`. Retool's literal `activity = 'setNsfwLevel'` is what that helper writes. |
-| `LogNsfwLevel`, `LogNsfwLevel2` | Two GUI-mode writes to the same `RatingChanges` table — a duplicate, not two behaviours. **One port, not two.** |
+| `LogNsfwLevel`, `LogNsfwLevel2` | **Not duplicates — two behaviours, two ports.** `LogNsfwLevel` fires on setting a rating; `LogNsfwLevel2` on a moderation-tag vote, additions only, taking the rating from the tag. Both are `UPDATE_OR_INSERT_BY` on `imageId`, so `RatingChanges` holds the latest change per image, not a history. Both ported 2026-08-21 — see the `RatingChanges` row in [`parity-findings.md`](parity-findings.md). |
 
 ### superseded (2)
 
@@ -73,9 +73,12 @@ dataset keyed `(userId, imageId)`. They answer different questions.
    the parameter (`selectedAgeRating`) compared against `nsfwLevel`. Porting against
    `@civitai/shared`'s `NsfwLevel` is the obvious reading, but **re-extract to confirm the exact set
    offered** — Retool may have limited the sweep to a subset.
-2. **`FrontPageTimers` and `RatingChanges` are not in `moderator-db-types.ts`** and both are GUI-mode
-   writes, so the export records the target table and no column list. Their live schema must be read
-   before writing to them.
+2. ~~**`FrontPageTimers` and `RatingChanges` are GUI-mode writes**, so the export records the target
+   table and no column list.~~ **Wrong, and it cost this item three rounds of "blocked".** GUI-mode
+   queries record `actionType`, `tableName`, `filterBy` and a full `changeset` — the export carries all
+   of it, inside the transit-encoded `page.data.appState` blob, which is why grepping the file found
+   nothing. Read it by `JSON.parse`-ing `appState` and walking the structure, not by string-matching:
+   see the corrected `RatingChanges` row in [`parity-findings.md`](parity-findings.md).
 3. **`research_ratings` is not in `@civitai/db-schema/kysely`.** It exists in production (Retool writes
    it on the `Prod` resource) but is absent from the generated types, so it needs either a schema
    addition or a raw `sql` insert.

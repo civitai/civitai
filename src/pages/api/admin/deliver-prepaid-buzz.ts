@@ -1,11 +1,14 @@
 import * as z from 'zod';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { unlockTokensForUser } from '~/server/services/subscriptions.service';
-import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
+import { booleanString, commaDelimitedNumberArray } from '~/utils/zod-helpers';
 
-const schema = z.object({
+export const schema = z.object({
   userIds: commaDelimitedNumberArray(),
-  force: z.coerce.boolean().optional(),
+  // booleanString, not z.coerce.boolean: this schema is parsed against req.query, where
+  // coerce runs JS Boolean() and makes `&force=false` TRUE — unlocking every locked token
+  // for each user instead of one, across the whole batch.
+  force: booleanString().optional(),
 });
 
 type UnlockResult = {
@@ -30,7 +33,14 @@ type UnlockResult = {
  */
 export default WebhookEndpoint(async (req, res) => {
   try {
-    const { userIds: targetUserIds, force } = schema.parse(req.query);
+    // safeParse + 400, matching permission.ts: `schema.parse` throws into the catch below,
+    // which reports a rejected query param as a 500 server fault. `?force` as a bare flag
+    // (value '') is a rejected value now, so that path is reachable.
+    const parsed = schema.safeParse(req.query);
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'Invalid request', issues: parsed.error.issues });
+    }
+    const { userIds: targetUserIds, force } = parsed.data;
 
     if (targetUserIds.length === 0) {
       return res.status(400).json({ error: 'userIds is required' });

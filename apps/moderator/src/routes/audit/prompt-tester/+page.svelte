@@ -6,6 +6,7 @@
   import { HIGHLIGHT_LEGEND, HIGHLIGHT_MARK } from '$lib/prompt-highlight';
   import type { PromptSegment } from '@civitai/mod-utils/prompt-audit';
   import type { ActionData } from './$types';
+  import ErrorAlert from '$lib/components/ErrorAlert.svelte';
 
   let { form }: { form: ActionData } = $props();
   let input = $state('');
@@ -43,9 +44,7 @@
 </form>
 
 {#if form?.error}
-  <div class="mb-4 max-w-3xl rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300">
-    {form.error}
-  </div>
+  <ErrorAlert class="mb-4 max-w-3xl" message={form.error} />
 {/if}
 
 {#snippet resultCard(r: { promptSegments: PromptSegment[]; negativeSegments: PromptSegment[] | null })}

@@ -111,3 +111,140 @@ describe('cacheIt cache-write fail-open', () => {
     expect(logSysRedisFailOpen).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * Cache-key composition — the mechanism only. These pass their own options in, so
+ * they cannot see any one procedure's configuration; `tag.router.cache-key.test.ts`
+ * covers that call site against the real router.
+ */
+type KeyInput = {
+  excludedTagIds?: number[];
+  excludedImageIds?: number[];
+  excludedUserIds?: number[];
+  excludedModelIds?: number[];
+};
+
+async function keyFor(input?: KeyInput, adminTags?: boolean) {
+  const mw = cacheIt<KeyInput>({
+    ttl: 60,
+    excludeKeys: ['excludedImageIds', 'excludedUserIds', 'excludedModelIds'],
+    varyBy: (ctx) => ({ adminTags: ctx.features.adminTags }),
+  }) as unknown as (opts: {
+    input?: KeyInput;
+    ctx: unknown;
+    next: () => unknown;
+    path: string;
+  }) => Promise<unknown>;
+
+  await mw({
+    input,
+    ctx: { cache: { canCache: true }, user: undefined, features: { adminTags } },
+    next: vi.fn().mockResolvedValue(COMPUTED),
+    path: 'tag.getAll',
+  });
+
+  return redisFake.packed.get.mock.calls.at(-1)![0] as string;
+}
+
+describe('cacheIt cache-key composition', () => {
+  it.each(['excludedImageIds', 'excludedUserIds', 'excludedModelIds'] as const)(
+    'the key does NOT move when %s changes',
+    async (field) => {
+      const base = await keyFor({ excludedTagIds: [7] });
+      const withField = await keyFor({ excludedTagIds: [7], [field]: [1, 2, 3] });
+
+      expect(withField).toBe(base);
+    }
+  );
+
+  it('the key DOES move when excludedTagIds changes', async () => {
+    const a = await keyFor({ excludedTagIds: [7] });
+    const b = await keyFor({ excludedTagIds: [7, 8] });
+
+    expect(b).not.toBe(a);
+  });
+
+  it('the key DOES move with adminTags — the response drops the adminOnly filter on it', async () => {
+    const asAdmin = await keyFor({ excludedTagIds: [7] }, true);
+    const asAnon = await keyFor({ excludedTagIds: [7] }, undefined);
+
+    expect(asAdmin).not.toBe(asAnon);
+  });
+
+  it('refuses an input key that collides with a varyBy dimension', async () => {
+    await expect(
+      keyFor({ excludedTagIds: [7], ...({ adminTags: true } as object) })
+    ).rejects.toThrow(/collides with an input key/);
+  });
+
+  // The collision is with the INPUT, not with what survived into the key — these
+  // three inputs all contribute nothing to it and would otherwise be overwritten
+  // in silence.
+  it.each([
+    ['false', false],
+    ['zero', 0],
+    ['empty string', ''],
+    ['undefined', undefined],
+  ])('refuses a colliding input key whose value is %s', async (_label, value) => {
+    await expect(
+      keyFor({ excludedTagIds: [7], ...({ adminTags: value } as object) })
+    ).rejects.toThrow(/collides with an input key/);
+  });
+
+  it('refuses a colliding input key that is itself excluded from the key', async () => {
+    const mw = cacheIt<KeyInput>({
+      ttl: 60,
+      excludeKeys: ['excludedModelIds'],
+      varyBy: () => ({ excludedModelIds: [1] }),
+    }) as unknown as (opts: {
+      input?: unknown;
+      ctx: unknown;
+      next: () => unknown;
+      path: string;
+    }) => Promise<unknown>;
+
+    await expect(
+      mw({
+        input: { excludedModelIds: [2] },
+        ctx: { cache: { canCache: true }, user: undefined, features: {} },
+        next: vi.fn().mockResolvedValue(COMPUTED),
+        path: 'tag.getAll',
+      })
+    ).rejects.toThrow(/collides with an input key/);
+  });
+
+  it('does not mistake an inherited property for a collision', async () => {
+    const mw = cacheIt<KeyInput>({
+      ttl: 60,
+      varyBy: () => ({ toString: 'x', constructor: 'y', valueOf: 'z' }),
+    }) as unknown as (opts: {
+      input?: unknown;
+      ctx: unknown;
+      next: () => unknown;
+      path: string;
+    }) => Promise<unknown>;
+
+    await expect(
+      mw({
+        input: { excludedTagIds: [7] },
+        ctx: { cache: { canCache: true }, user: undefined, features: {} },
+        next: vi.fn().mockResolvedValue(COMPUTED),
+        path: 'tag.getAll',
+      })
+    ).resolves.toBeDefined();
+  });
+
+  it('array order and duplicates do not move the key', async () => {
+    const a = await keyFor({ excludedTagIds: [7, 8] });
+    const b = await keyFor({ excludedTagIds: [8, 7, 7, 8] });
+
+    expect(b).toBe(a);
+  });
+
+  it('does not mutate the caller input array', async () => {
+    const excludedTagIds = [9, 3, 9];
+    await keyFor({ excludedTagIds });
+
+    expect(excludedTagIds).toEqual([9, 3, 9]);
+  });
+});

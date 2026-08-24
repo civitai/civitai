@@ -9,6 +9,7 @@ import {
   listAppCollaboratorsSchema,
   removeAppCollaboratorSchema,
   respondToAppInviteSchema,
+  screenAppCollaboratorTargetsSchema,
   setCollaboratorDisplayedSchema,
   transferIdSchema,
 } from '~/server/schema/blocks/app-collaborator.schema';
@@ -132,6 +133,43 @@ export const appCollaboratorsRouter = router({
           appListingId: input.appListingId,
           targetUserId: input.targetUserId,
           actorUserId: ctx.user!.id,
+        })
+      );
+    }),
+
+  /**
+   * OWNER: screen the ids the invite picker is currently offering, and say which of them
+   * cannot hold a seat.
+   *
+   * A QUERY, not a mutation, and it returns ids only — no reason, nothing about accounts that
+   * are fine. The picker uses it to stop offering candidates the invite is going to refuse;
+   * `invite` re-checks the same thing and is what actually prevents the grant.
+   *
+   * 🔴 Owner-keyed (the service asserts ownership of `appListingId`) AND rate-limited, like its
+   * `invite` sibling. Neither is load-bearing against today's audience — both exist so this
+   * cannot quietly become an account-state enumeration endpoint the day the authoring flag
+   * widens. The limit is set well above what the picker can generate: the query re-issues only
+   * when the accumulated id set actually changes, not per keystroke.
+   */
+  ineligibleTargets: appDeveloperProcedure
+    .use(
+      rateLimit({
+        limit: 600,
+        period: 3600,
+        errorMessage: 'Too many collaborator lookups — slow down.',
+      })
+    )
+    .input(screenAppCollaboratorTargetsSchema)
+    .query(async ({ ctx, input }) => {
+      assertNotBanned(ctx.user as SessionUser);
+      const { getIneligibleCollaboratorTargets } = await import(
+        '~/server/services/blocks/app-collaborator.service'
+      );
+      return run(() =>
+        getIneligibleCollaboratorTargets({
+          appListingId: input.appListingId,
+          actorUserId: ctx.user!.id,
+          userIds: input.userIds,
         })
       );
     }),

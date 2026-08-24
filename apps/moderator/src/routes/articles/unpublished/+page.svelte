@@ -25,6 +25,7 @@
   } from '$lib/articles';
   import { userUrl } from '$lib/entity-url';
   import type { ActionData, PageData } from './$types';
+  import ErrorAlert from '$lib/components/ErrorAlert.svelte';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -59,9 +60,7 @@
 </header>
 
 {#if form?.error}
-  <div class="mb-4 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300">
-    {form.error}
-  </div>
+  <ErrorAlert class="mb-4" message={form.error} />
 {/if}
 
 <div class="mb-4 flex flex-wrap items-end gap-x-6 gap-y-3">

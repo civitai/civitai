@@ -73,6 +73,19 @@ export const PLACEMENT_HOLD_KINDS = [
 ] as const satisfies readonly PlacementTransactionKind[];
 
 /**
+ * The legs that pay the content owner: the approval split, and the fee a decline
+ * leaves with them.
+ *
+ * Beside the kinds themselves rather than beside the one reader that sums them,
+ * so adding an owner-directed leg is a change made where the leg is declared. A
+ * hand-typed list at the reader is how an earnings total goes quietly low.
+ */
+export const PLACEMENT_OWNER_PAYOUT_KINDS = [
+  'toOwner',
+  'feeToOwner',
+] as const satisfies readonly PlacementTransactionKind[];
+
+/**
  * Derived from the row, never from the clock.
  *
  * Both existing escrow precedents build `…-${Date.now()}` prefixes, so a retry
@@ -568,6 +581,48 @@ export const effectiveFreeSlots = (setSlots: number, cap: number) =>
  * and the people it costs are the creators who then close their spaces.
  */
 export const FREE_PLACEMENTS_PER_DAY = 1;
+
+/**
+ * What the daily allowance is shared with, in one clause.
+ *
+ * 🔴 **One constant, because the sharing is the fact people get wrong.** Every
+ * string that mentions the daily free is on one of two surfaces, and each used
+ * to say "today's allowance" as though it were its own — so somebody who spent
+ * it submitting a remix met a sticker surface with no explanation for where it
+ * went, and read a limit as a bug. Said once, both surfaces cannot drift into
+ * describing two different budgets.
+ *
+ * **Here rather than in either surface's module**, beside the rule it describes.
+ * It began life in `~/components/Sticker/free-offer`, which made the remix
+ * gallery import a sticker component module for a fact neither feature owns.
+ *
+ * Written as a clause, with **no terminating full stop**, so it can be appended
+ * to whatever came before it and still have a clause appended to it in turn —
+ * which the sticker tray does, with a ` · ` separator.
+ *
+ * The count is read from `FREE_PLACEMENTS_PER_DAY` rather than written out, for
+ * the same reason the reset time is read from the server rather than restated:
+ * a number spelled into copy is a second copy of a rule, and the two are free to
+ * disagree the day the rule moves. The SURFACE list stays literal — no
+ * derivation of it reads as English — so a guard test fails if a third surface
+ * is ever added to `PLACEMENT_SURFACES`.
+ */
+export const SHARED_ALLOWANCE_NOTE = `${
+  FREE_PLACEMENTS_PER_DAY === 1 ? 'one' : FREE_PLACEMENTS_PER_DAY
+} a day, shared between stickers and remix galleries`;
+
+/**
+ * What a held free slot means, in one clause — shared by every surface that says
+ * it.
+ *
+ * The bar says it before a press and the tray says it beside the paid option;
+ * they described the same state in two voices, and the tray's came from a
+ * post-race sentence ("someone took the last free slot **first**") that is
+ * simply false about a reader who has pressed nothing. One constant, so the two
+ * cannot disagree about a fact that lifts on its own.
+ */
+export const FREE_SLOT_TAKEN_NOTE =
+  'The free slot on this image is taken — it comes back if the creator declines.';
 
 /** Milliseconds in a UTC day. Unix time has no leap seconds, so this is exact. */
 const DAY_MS = 24 * 3_600_000;

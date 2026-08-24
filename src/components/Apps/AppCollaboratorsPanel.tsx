@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { keepPreviousData } from '@tanstack/react-query';
+import { useCallback, useState } from 'react';
 
 import { QuickSearchDropdown } from '~/components/Search/QuickSearchDropdown';
 import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
@@ -17,6 +18,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { AppRole, ListingCapability } from '~/shared/constants/app-capabilities.constants';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { SCREENED_USER_ID_LIMIT } from '~/server/schema/blocks/app-collaborator.schema';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -119,6 +121,43 @@ export function AppCollaboratorsPanel({
     onError: (error) => setTransferErrorMessage(error.message ?? 'Something went wrong.'),
   });
 
+  /**
+   * 🔴 SCREEN THE CANDIDATES THE PICKER IS OFFERING, AGAINST THE SERVER.
+   *
+   * The picker's candidates come out of user search, and a search hit is a cached document —
+   * it can be out of date about the account it describes, including about its NAME. So the
+   * picker cannot conclude anything about an account from the fact that search returned it,
+   * and an owner choosing the top result must not be able to act on a document that is wrong.
+   *
+   * The ids are accumulated rather than replaced so an id already found ineligible stays
+   * excluded as the query text changes — dropping it would put it back in the Meili filter,
+   * back into the hits, and back on offer. Bounded by the screening call's own cap.
+   */
+  const [screenedUserIds, setScreenedUserIds] = useState<number[]>([]);
+  const handlePickerHits = useCallback((ids: number[]) => {
+    setScreenedUserIds((prev) => {
+      const added = ids.filter((id) => !prev.includes(id));
+      if (!added.length) return prev; // identical set -> same array, so the query does not re-issue
+      return [...prev, ...added].slice(-SCREENED_USER_ID_LIMIT);
+    });
+  }, []);
+  const screenQuery = trpc.appCollaborators.ineligibleTargets.useQuery(
+    { appListingId, userIds: screenedUserIds },
+    {
+      // Owner-only: the proc asserts ownership of the listing, and only an owner is shown the
+      // invite picker at all, so an editor must not issue this at all rather than 403 on every
+      // render of a tab they are allowed to see.
+      enabled: role === 'owner' && screenedUserIds.length > 0,
+      staleTime: 60_000,
+      retry: false,
+      // 🔴 Without this, `data` snaps back to undefined on every key change, so an id already
+      // known ineligible briefly returns to the picker and is selectable until the new round
+      // trip lands. The server still refuses it, but the picker should not offer it at all.
+      placeholderData: keepPreviousData,
+    }
+  );
+  const ineligibleUserIds = screenQuery.data ?? [];
+
   const rows = (listQuery.data ?? []) as CollaboratorRosterRow[];
   const busy = invite.isPending || remove.isPending || setDisplayed.isPending || leave.isPending;
   const transferBusy = initiateTransfer.isPending || cancelTransfer.isPending;
@@ -146,7 +185,7 @@ export function AppCollaboratorsPanel({
             const selected = item as SearchIndexDataMap['users'][number];
             // Both the guard and the picker filter read the SAME two pure helpers, so they
             // cannot disagree about who is offerable — and a REJECTED seat is offerable.
-            const blocked = inviteBlockedReason(rows, selected.id);
+            const blocked = inviteBlockedReason(rows, selected.id, ineligibleUserIds);
             if (blocked) {
               showErrorNotification({
                 title: blocked.title,
@@ -156,7 +195,8 @@ export function AppCollaboratorsPanel({
             }
             invite.mutate({ appListingId, targetUserId: selected.id });
           }}
-          filters={[currentUser?.id, ...pickerExcludedUserIds(rows)]
+          onHits={handlePickerHits}
+          filters={[currentUser?.id, ...pickerExcludedUserIds(rows, ineligibleUserIds)]
             .filter((id): id is number => !!id)
             .map((id) => `AND NOT id=${id}`)
             .join(' ')

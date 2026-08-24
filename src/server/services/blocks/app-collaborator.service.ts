@@ -324,6 +324,60 @@ export type InviteCollaboratorResult = {
 };
 
 /**
+ * Of the supplied ids, the ones that CANNOT hold a collaborator seat right now.
+ *
+ * 🔴 THE POINT OF THIS FUNCTION IS THAT IT DOES NOT READ THE SEARCH INDEX. The invite picker's
+ * candidate list comes from user search, and a search document is a CACHE of an account's state
+ * at the moment it was last written — it can be stale, and the account's own name is part of
+ * what can be stale. So the picker must not be allowed to conclude "this account is fine"
+ * from the fact that search returned it. This reads the account rows themselves and hands back
+ * the ids the invite mutation is going to refuse, so the picker can stop offering them.
+ *
+ * It is DEFENCE IN DEPTH, never the enforcement point: `inviteCollaborator` re-checks the same
+ * state on the actual invite and is what makes the grant impossible. This exists so the user is
+ * not offered a choice the server will reject, and so a stale search document cannot put an
+ * ineligible account in front of an owner as a plausible one.
+ *
+ * 🔴 THE TWO SIDES REFUSE THE SAME SET — banned, soft-deleted, and an id with no account row.
+ * They did NOT at first: the screen rejected all three while `inviteCollaborator` selected only
+ * `{ id, bannedAt }` and let a soft-deleted account through. Narrowing the screen to match would
+ * have been the smaller diff and would have REMOVED a protection, so the enforcement point was
+ * widened instead. Keep them aligned; a comment claiming they mirror each other is not a check.
+ *
+ * 🔴 OWNER-KEYED. It takes the listing and asserts ownership rather than answering about
+ * arbitrary ids, so it cannot be used to enumerate account state. That coupling is the point:
+ * without it, the only thing standing between this and an enumeration endpoint is who happens
+ * to hold the authoring flag today.
+ *
+ * Deliberately returns ONLY ids, never a reason and never anything about accounts that are
+ * fine. An id the caller already had is not new information; a ban reason would be.
+ */
+export async function getIneligibleCollaboratorTargets(opts: {
+  appListingId: string;
+  actorUserId: number;
+  userIds: number[];
+}): Promise<number[]> {
+  await assertOwner(opts.appListingId, opts.actorUserId);
+
+  const userIds = [...new Set(opts.userIds)];
+  if (!userIds.length) return [];
+
+  const rows = await dbRead.user.findMany({
+    where: { id: { in: userIds } },
+    select: { id: true, bannedAt: true, deletedAt: true },
+  });
+
+  const eligible = new Set(
+    rows.filter((r) => r.bannedAt == null && r.deletedAt == null).map((r) => r.id)
+  );
+
+  // Anything we did not positively confirm eligible comes back as ineligible — including an id
+  // with no row at all. A search hit whose account no longer exists is exactly the shape this
+  // is here to catch, and treating "not found" as fine would fail open on it.
+  return userIds.filter((id) => !eligible.has(id));
+}
+
+/**
  * OWNER: invite a user to an editor seat.
  *
  * Idempotent. A repeat invite for a standing `pending` row does NOT reset the row; it
@@ -341,7 +395,9 @@ export type InviteCollaboratorResult = {
  * a nicety.
  *
  * 🔴 BAN POLICY (decided, and applied consistently across this feature): a BANNED user
- * may neither be invited nor accept. Rationale: on an on-site listing a seat grants
+ * may neither be invited nor accept — and neither may a SOFT-DELETED one, refused as
+ * not-found so the refusal does not disclose that the account exists. Rationale: on an
+ * on-site listing a seat grants
  * Forgejo `write` on the app repo plus visibility of the app's earnings, and
  * `getMyAppRepo` already refuses to issue a push credential to a banned account
  * (`blocks.router.ts:5579`). Seating a banned user would mint exactly the credential
@@ -382,9 +438,11 @@ export async function inviteCollaborator(opts: {
   }
   const target = await dbRead.user.findUnique({
     where: { id: opts.targetUserId },
-    select: { id: true, bannedAt: true },
+    select: { id: true, bannedAt: true, deletedAt: true },
   });
-  if (!target) {
+  // A soft-deleted account is refused as NOT FOUND rather than as a ban: to everyone outside
+  // moderation the account is gone, and saying anything else would leak that it exists.
+  if (!target || target.deletedAt) {
     throw new AppCollaboratorError('INVALID_TARGET', 'That user could not be found');
   }
   if (target.bannedAt) {

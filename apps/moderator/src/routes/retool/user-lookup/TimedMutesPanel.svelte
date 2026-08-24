@@ -9,6 +9,7 @@
   import { fetchSupport } from './user-support';
   import { MUTE_PRESETS } from './enforcement-options';
   import { FormState } from '$lib/form-state.svelte';
+  import ErrorAlert from '$lib/components/ErrorAlert.svelte';
 
   type Identity = NonNullable<LayoutData['result']>['identity'];
 
@@ -50,12 +51,7 @@
   </p>
 
   {#if form.error}
-    <div
-      class="mb-3 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300"
-      role="alert"
-    >
-      {form.error}
-    </div>
+    <ErrorAlert class="mb-3" message={form.error} />
   {/if}
 
   {#if canAct}

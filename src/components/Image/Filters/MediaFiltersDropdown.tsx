@@ -31,6 +31,9 @@ import { baseModelSelectData } from '~/shared/constants/basemodel.constants';
 import type { GetInfiniteImagesOutput } from '~/server/schema/image.schema';
 import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { getDisplayName, titleCase } from '~/utils/string-helpers';
+import type { MediaFilterKey } from '~/components/Image/Filters/media-filter-keys';
+
+export type { MediaFilterKey };
 
 // TODO: adjust filter as we begin to support more media types
 const availableMediaTypes = Object.values(MediaType).filter(
@@ -46,6 +49,7 @@ export function MediaFiltersDropdown({
   hideBaseModels = false,
   hideMediaTypes = false,
   hideTools = false,
+  exclude,
   style,
   ...buttonProps
 }: Props) {
@@ -60,6 +64,22 @@ export function MediaFiltersDropdown({
   // PG-13 access to opt in/out of.
   const showPG13Toggle = isGreen && !!currentUser;
   const showChallengeToggle = filterType !== 'modelImages';
+  // The legacy hide* booleans fold into `excluded` so there is one gate, not two.
+  const excluded = useMemo<MediaFilterKey[]>(
+    () => [
+      ...(exclude ?? []),
+      ...(hideMediaTypes ? (['types'] as const) : []),
+      ...(hideBaseModels ? (['baseModels'] as const) : []),
+      ...(hideTools ? (['tools'] as const) : []),
+    ],
+    [exclude, hideMediaTypes, hideBaseModels, hideTools]
+  );
+  const shows = useCallback((key: MediaFilterKey) => !excluded.includes(key), [excluded]);
+  // A section whose every chip is excluded would otherwise render as a lone divider.
+  const showResources = shows('hideManualResources') || shows('hideAutoResources');
+  const showModerator = (
+    ['poiOnly', 'minorOnly', 'disablePoi', 'disableMinor', 'notPublished', 'scheduled'] as const
+  ).some(shows);
 
   const { filters, setFilters } = useFiltersContext((state) => ({
     filters: state[filterType],
@@ -143,27 +163,34 @@ export function MediaFiltersDropdown({
 
   // maybe have individual filter length with labels next to them
 
+  // Every term is gated on `shows` as well: a count that includes a control the
+  // caller excluded reads as an active filter the user cannot find or clear.
   const filterLength =
-    ('types' in mergedFilters && !hideMediaTypes ? mergedFilters.types?.length ?? 0 : 0) +
-    (mergedFilters.withMeta ? 1 : 0) +
-    (mergedFilters.requiringMeta ? 1 : 0) +
-    (mergedFilters.hidden ? 1 : 0) +
-    (mergedFilters.fromPlatform ? 1 : 0) +
-    (mergedFilters.hideManualResources ? 1 : 0) +
-    (mergedFilters.hideAutoResources ? 1 : 0) +
-    (mergedFilters.notPublished ? 1 : 0) +
-    (mergedFilters.scheduled ? 1 : 0) +
-    (!!mergedFilters.tools?.length ? 1 : 0) +
-    (!!mergedFilters.techniques?.length ? 1 : 0) +
-    (mergedFilters.period && mergedFilters.period !== MetricTimeframe.AllTime ? 1 : 0) +
-    (!hideBaseModels ? mergedFilters.baseModels?.length ?? 0 : 0) +
-    (!!mergedFilters.remixesOnly || !!mergedFilters.nonRemixesOnly ? 1 : 0) +
-    (showChallengeToggle && mergedFilters.hideChallenges ? 1 : 0) +
-    (mergedFilters.poiOnly ? 1 : 0) +
-    (mergedFilters.minorOnly ? 1 : 0) +
-    (isModerator && mergedFilters.disablePoi ? 1 : 0) +
-    (isModerator && mergedFilters.disableMinor ? 1 : 0) +
-    (showPG13Toggle && mergedFilters.includePG13 ? 1 : 0);
+    ('types' in mergedFilters && shows('types') ? mergedFilters.types?.length ?? 0 : 0) +
+    (shows('withMeta') && mergedFilters.withMeta ? 1 : 0) +
+    (shows('requiringMeta') && mergedFilters.requiringMeta ? 1 : 0) +
+    (shows('hidden') && mergedFilters.hidden ? 1 : 0) +
+    (shows('fromPlatform') && mergedFilters.fromPlatform ? 1 : 0) +
+    (shows('hideManualResources') && mergedFilters.hideManualResources ? 1 : 0) +
+    (shows('hideAutoResources') && mergedFilters.hideAutoResources ? 1 : 0) +
+    (shows('notPublished') && mergedFilters.notPublished ? 1 : 0) +
+    (shows('scheduled') && mergedFilters.scheduled ? 1 : 0) +
+    (shows('tools') && !!mergedFilters.tools?.length ? 1 : 0) +
+    (shows('techniques') && !!mergedFilters.techniques?.length ? 1 : 0) +
+    (shows('period') && mergedFilters.period && mergedFilters.period !== MetricTimeframe.AllTime
+      ? 1
+      : 0) +
+    (shows('baseModels') ? mergedFilters.baseModels?.length ?? 0 : 0) +
+    ((shows('remixesOnly') && !!mergedFilters.remixesOnly) ||
+    (shows('nonRemixesOnly') && !!mergedFilters.nonRemixesOnly)
+      ? 1
+      : 0) +
+    (showChallengeToggle && shows('hideChallenges') && mergedFilters.hideChallenges ? 1 : 0) +
+    (shows('poiOnly') && mergedFilters.poiOnly ? 1 : 0) +
+    (shows('minorOnly') && mergedFilters.minorOnly ? 1 : 0) +
+    (isModerator && shows('disablePoi') && mergedFilters.disablePoi ? 1 : 0) +
+    (isModerator && shows('disableMinor') && mergedFilters.disableMinor ? 1 : 0) +
+    (showPG13Toggle && shows('includePG13') && mergedFilters.includePG13 ? 1 : 0);
 
   const handleChange: Props['onChange'] = (value) => {
     patchPending(value);
@@ -186,17 +213,19 @@ export function MediaFiltersDropdown({
 
   const dropdownBody = (
     <Stack gap="lg" p="md">
+      {shows('period') && (
+        <Stack gap="md">
+          <Divider label="Time period" className="text-sm font-bold" mb={4} />
+          <PeriodFilter
+            type={filterType}
+            variant="chips"
+            value={mergedFilters.period ?? MetricTimeframe.AllTime}
+            onChange={(period) => handleChange({ period })}
+          />
+        </Stack>
+      )}
       <Stack gap="md">
-        <Divider label="Time period" className="text-sm font-bold" mb={4} />
-        <PeriodFilter
-          type={filterType}
-          variant="chips"
-          value={mergedFilters.period ?? MetricTimeframe.AllTime}
-          onChange={(period) => handleChange({ period })}
-        />
-      </Stack>
-      <Stack gap="md">
-        {!hideMediaTypes && (
+        {shows('types') && (
           <>
             <Divider label="Media type" className="text-sm font-bold" mb={4} />
             <Chip.Group
@@ -216,7 +245,7 @@ export function MediaFiltersDropdown({
         )}
         <Divider label="Modifiers" className="text-sm font-bold" mb={4} />
         <div className="flex flex-wrap gap-2">
-          {showPG13Toggle && (
+          {showPG13Toggle && shows('includePG13') && (
             <FilterChip
               checked={!!mergedFilters.includePG13}
               onChange={(checked) => handleChange({ includePG13: checked })}
@@ -224,13 +253,15 @@ export function MediaFiltersDropdown({
               <span>Include PG-13</span>
             </FilterChip>
           )}
-          <FilterChip
-            checked={mergedFilters.withMeta}
-            onChange={(checked) => handleChange({ withMeta: checked })}
-          >
-            <span>Metadata only</span>
-          </FilterChip>
-          {(isSameUser || isModerator) && (
+          {shows('withMeta') && (
+            <FilterChip
+              checked={mergedFilters.withMeta}
+              onChange={(checked) => handleChange({ withMeta: checked })}
+            >
+              <span>Metadata only</span>
+            </FilterChip>
+          )}
+          {(isSameUser || isModerator) && shows('requiringMeta') && (
             <FilterChip
               checked={mergedFilters.requiringMeta}
               onChange={(checked) => handleChange({ requiringMeta: checked })}
@@ -240,7 +271,7 @@ export function MediaFiltersDropdown({
               </Tooltip>
             </FilterChip>
           )}
-          {isFeed && currentUser && (
+          {isFeed && currentUser && shows('hidden') && (
             <>
               <FilterChip
                 checked={mergedFilters.hidden}
@@ -250,13 +281,15 @@ export function MediaFiltersDropdown({
               </FilterChip>
             </>
           )}
-          <FilterChip
-            checked={mergedFilters.fromPlatform}
-            onChange={(checked) => handleChange({ fromPlatform: checked })}
-          >
-            <span>Made On-site</span>
-          </FilterChip>
-          {currentUser && !isModerator && (
+          {shows('fromPlatform') && (
+            <FilterChip
+              checked={mergedFilters.fromPlatform}
+              onChange={(checked) => handleChange({ fromPlatform: checked })}
+            >
+              <span>Made On-site</span>
+            </FilterChip>
+          )}
+          {currentUser && !isModerator && shows('scheduled') && (
             <FilterChip
               checked={!!mergedFilters.scheduled}
               onChange={(checked) => handleChange({ scheduled: checked ? checked : undefined })}
@@ -266,23 +299,27 @@ export function MediaFiltersDropdown({
               </Tooltip>
             </FilterChip>
           )}
-          <FilterChip
-            checked={mergedFilters.nonRemixesOnly}
-            onChange={(checked) => {
-              handleChange({ nonRemixesOnly: checked, remixesOnly: checked ? false : undefined });
-            }}
-          >
-            <span>Originals Only</span>
-          </FilterChip>
-          <FilterChip
-            checked={mergedFilters.remixesOnly}
-            onChange={(checked) =>
-              handleChange({ remixesOnly: checked, nonRemixesOnly: checked ? false : undefined })
-            }
-          >
-            <span>Remixes Only</span>
-          </FilterChip>
-          {showChallengeToggle && (
+          {shows('nonRemixesOnly') && (
+            <FilterChip
+              checked={mergedFilters.nonRemixesOnly}
+              onChange={(checked) => {
+                handleChange({ nonRemixesOnly: checked, remixesOnly: checked ? false : undefined });
+              }}
+            >
+              <span>Originals Only</span>
+            </FilterChip>
+          )}
+          {shows('remixesOnly') && (
+            <FilterChip
+              checked={mergedFilters.remixesOnly}
+              onChange={(checked) =>
+                handleChange({ remixesOnly: checked, nonRemixesOnly: checked ? false : undefined })
+              }
+            >
+              <span>Remixes Only</span>
+            </FilterChip>
+          )}
+          {showChallengeToggle && shows('hideChallenges') && (
             <FilterChip
               checked={mergedFilters.hideChallenges}
               onChange={(checked) => handleChange({ hideChallenges: checked })}
@@ -294,73 +331,89 @@ export function MediaFiltersDropdown({
           )}
         </div>
 
-        {filterType === 'modelImages' && (
+        {filterType === 'modelImages' && showResources && (
           <>
             <Divider label="Resources" className="text-sm font-bold" mb={4} />
             <div className="flex gap-2">
-              <FilterChip
-                checked={mergedFilters.hideManualResources}
-                onChange={(checked) => handleChange({ hideManualResources: checked })}
-              >
-                <span>Hide manually-added</span>
-              </FilterChip>
-              <FilterChip
-                checked={mergedFilters.hideAutoResources}
-                onChange={(checked) => handleChange({ hideAutoResources: checked })}
-              >
-                <span>Hide auto-detected</span>
-              </FilterChip>
+              {shows('hideManualResources') && (
+                <FilterChip
+                  checked={mergedFilters.hideManualResources}
+                  onChange={(checked) => handleChange({ hideManualResources: checked })}
+                >
+                  <span>Hide manually-added</span>
+                </FilterChip>
+              )}
+              {shows('hideAutoResources') && (
+                <FilterChip
+                  checked={mergedFilters.hideAutoResources}
+                  onChange={(checked) => handleChange({ hideAutoResources: checked })}
+                >
+                  <span>Hide auto-detected</span>
+                </FilterChip>
+              )}
             </div>
           </>
         )}
 
-        {isModerator && (
+        {isModerator && showModerator && (
           <>
             <Divider label="Moderator" className="text-sm font-bold" mb={4} />
             <div className="flex flex-wrap gap-2">
-              <FilterChip
-                checked={mergedFilters.poiOnly}
-                onChange={(checked) => handleChange({ poiOnly: checked })}
-              >
-                <span>POI</span>
-              </FilterChip>
-              <FilterChip
-                checked={mergedFilters.minorOnly}
-                onChange={(checked) => handleChange({ minorOnly: checked })}
-              >
-                <span>Minor</span>
-              </FilterChip>
-              <FilterChip
-                checked={mergedFilters.disablePoi}
-                onChange={(checked) => handleChange({ disablePoi: checked })}
-              >
-                <span>Disable POI</span>
-              </FilterChip>
-              <FilterChip
-                checked={mergedFilters.disableMinor}
-                onChange={(checked) => handleChange({ disableMinor: checked })}
-              >
-                <span>Disable Minor</span>
-              </FilterChip>
-              <FilterChip
-                checked={!!mergedFilters.notPublished}
-                onChange={(checked) =>
-                  handleChange({ notPublished: checked ? checked : undefined })
-                }
-              >
-                <span>Not Published</span>
-              </FilterChip>
-              <FilterChip
-                checked={!!mergedFilters.scheduled}
-                onChange={(checked) => handleChange({ scheduled: checked ? checked : undefined })}
-              >
-                <span>Scheduled</span>
-              </FilterChip>
+              {shows('poiOnly') && (
+                <FilterChip
+                  checked={mergedFilters.poiOnly}
+                  onChange={(checked) => handleChange({ poiOnly: checked })}
+                >
+                  <span>POI</span>
+                </FilterChip>
+              )}
+              {shows('minorOnly') && (
+                <FilterChip
+                  checked={mergedFilters.minorOnly}
+                  onChange={(checked) => handleChange({ minorOnly: checked })}
+                >
+                  <span>Minor</span>
+                </FilterChip>
+              )}
+              {shows('disablePoi') && (
+                <FilterChip
+                  checked={mergedFilters.disablePoi}
+                  onChange={(checked) => handleChange({ disablePoi: checked })}
+                >
+                  <span>Disable POI</span>
+                </FilterChip>
+              )}
+              {shows('disableMinor') && (
+                <FilterChip
+                  checked={mergedFilters.disableMinor}
+                  onChange={(checked) => handleChange({ disableMinor: checked })}
+                >
+                  <span>Disable Minor</span>
+                </FilterChip>
+              )}
+              {shows('notPublished') && (
+                <FilterChip
+                  checked={!!mergedFilters.notPublished}
+                  onChange={(checked) =>
+                    handleChange({ notPublished: checked ? checked : undefined })
+                  }
+                >
+                  <span>Not Published</span>
+                </FilterChip>
+              )}
+              {shows('scheduled') && (
+                <FilterChip
+                  checked={!!mergedFilters.scheduled}
+                  onChange={(checked) => handleChange({ scheduled: checked ? checked : undefined })}
+                >
+                  <span>Scheduled</span>
+                </FilterChip>
+              )}
             </div>
           </>
         )}
 
-        {!hideBaseModels && (
+        {shows('baseModels') && (
           <>
             <Divider label="Base model" className="text-sm font-bold" mb={4} />
             <MultiSelect
@@ -375,7 +428,7 @@ export function MediaFiltersDropdown({
           </>
         )}
 
-        {!hideTools && (
+        {shows('tools') && (
           <>
             <Divider label="Tools" className="text-sm font-bold" mb={4} />
             <ToolMultiSelect
@@ -388,14 +441,18 @@ export function MediaFiltersDropdown({
           </>
         )}
 
-        <Divider label="Techniques" className="text-sm font-bold" mb={4} />
-        <TechniqueMultiSelect
-          value={mergedFilters.techniques ?? []}
-          onChange={(techniques) => handleChange({ techniques })}
-          placeholder="Created with..."
-          searchable={!isMobileDevice()}
-          comboboxProps={{ withinPortal: false }}
-        />
+        {shows('techniques') && (
+          <>
+            <Divider label="Techniques" className="text-sm font-bold" mb={4} />
+            <TechniqueMultiSelect
+              value={mergedFilters.techniques ?? []}
+              onChange={(techniques) => handleChange({ techniques })}
+              placeholder="Created with..."
+              searchable={!isMobileDevice()}
+              comboboxProps={{ withinPortal: false }}
+            />
+          </>
+        )}
       </Stack>
     </Stack>
   );
@@ -474,4 +531,6 @@ type Props = Omit<ButtonProps, 'onClick' | 'children' | 'rightIcon'> & {
   hideBaseModels?: boolean;
   hideMediaTypes?: boolean;
   hideTools?: boolean;
+  /** Controls this caller cannot honour. Omitted keys render as usual. */
+  exclude?: MediaFilterKey[];
 };

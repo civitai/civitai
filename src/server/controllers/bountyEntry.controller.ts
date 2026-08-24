@@ -22,7 +22,6 @@ import type {
   UpsertBountyEntryInput,
 } from '~/server/schema/bounty-entry.schema';
 import { Currency, MediaType } from '~/shared/utils/prisma/enums';
-import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { getReactionsSelectV2 } from '~/server/selectors/reaction.selector';
 import { getBountyById } from '../services/bounty.service';
 import { bountiesSearchIndex } from '~/server/search-index';
@@ -87,7 +86,6 @@ export const getBountyEntryHandler = async ({
       ...entry,
       images: images.map((i) => ({
         ...i,
-        meta: i.meta as ImageMetaProps,
         metadata: i.metadata as MixedObject,
       })),
       files,

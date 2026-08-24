@@ -10,6 +10,7 @@
   import type { Capped, Notification } from './user-account';
   import { dateTime } from '$lib/format';
   import ListCard from './ListCard.svelte';
+  import ErrorAlert from '$lib/components/ErrorAlert.svelte';
 
   // `details` keys vary by notification type — the notifications service stores a raw payload and the
   // monolith renders it. These are the ones that carry prose; anything else is ids and is not worth
@@ -73,12 +74,7 @@
   </p>
 
   {#if form.error}
-    <div
-      class="mb-3 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300"
-      role="alert"
-    >
-      {form.error}
-    </div>
+    <ErrorAlert class="mb-3" message={form.error} />
   {/if}
 
   {#if !canAct}

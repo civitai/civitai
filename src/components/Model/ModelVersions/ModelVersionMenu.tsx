@@ -25,6 +25,8 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { openUnpublishModal } from '~/components/Dialog/triggers/unpublish';
 import { getModelUrl } from '~/utils/string-helpers';
 import { PAID_ACCESS_REFUND_WINDOW_DAYS } from '~/server/utils/early-access-helpers';
+import { moderatorBulkImageManagerPath } from '~/shared/constants/moderator-app';
+import { ModeratorLookupMenuItem } from '~/components/Moderation/ModeratorLookupMenuItem';
 
 export function ModelVersionMenu({
   modelVersionId,
@@ -270,19 +272,6 @@ export function ModelVersionMenu({
       </Menu.Target>
 
       <Menu.Dropdown>
-        {currentUser?.isModerator && (
-          <Menu.Item
-            leftSection={<IconShieldHalf size={14} stroke={1.5} />}
-            color="yellow"
-            onClick={(e: React.MouseEvent) => {
-              e.stopPropagation();
-              e.preventDefault();
-              handleEnqueueNsfwLevelUpdate();
-            }}
-          >
-            Enqueue NsfwLevel Update
-          </Menu.Item>
-        )}
         {canDelete && (
           <Menu.Item
             color="red"
@@ -309,76 +298,6 @@ export function ModelVersionMenu({
             Unpublish version
           </Menu.Item>
         )}
-        {currentUser?.isModerator && published && (
-          <Menu.Item
-            color="yellow"
-            leftSection={<IconBan size={14} stroke={1.5} />}
-            onClick={() =>
-              openUnpublishModal({
-                props: {
-                  modelId: modelId,
-                  versionId: modelVersionId,
-                },
-              })
-            }
-          >
-            Unpublish as Violation
-          </Menu.Item>
-        )}
-        {currentUser?.isModerator && (
-          <Menu.Item
-            leftSection={<IconCloudX size={14} stroke={1.5} />}
-            color="yellow"
-            onClick={(e: React.MouseEvent) => {
-              e.stopPropagation();
-              e.preventDefault();
-              handleBustCache();
-            }}
-          >
-            Bust Cache
-          </Menu.Item>
-        )}
-
-        {currentUser?.isModerator && showToggleCoverage && features.impersonation && (
-          <>
-            <Menu.Item
-              disabled={isLoading}
-              leftSection={isLoading ? <Loader size="xs" /> : <IconAi size={14} stroke={1.5} />}
-              color="yellow"
-              onClick={() =>
-                handleToggleCoverage({
-                  modelId: modelId,
-                  versionId: modelVersionId,
-                })
-              }
-              closeMenuOnClick={false}
-            >
-              {canGenerate ? 'Remove from generation' : 'Add to generation'}
-            </Menu.Item>
-          </>
-        )}
-
-        {currentUser?.isModerator && (
-          <Menu.Item
-            disabled={toggleGenerationDisabledMutation.isPending}
-            leftSection={
-              toggleGenerationDisabledMutation.isPending ? (
-                <Loader size="xs" />
-              ) : (
-                <IconPlaylistX size={14} stroke={1.5} />
-              )
-            }
-            color="yellow"
-            onClick={(e: React.MouseEvent) => {
-              e.stopPropagation();
-              e.preventDefault();
-              handleToggleGeneration();
-            }}
-          >
-            {generationDisabled ? 'Unblock generation' : 'Block generation'}
-          </Menu.Item>
-        )}
-
         <Menu.Item
           component={Link}
           href={`/models/${modelId}/model-versions/${modelVersionId}/edit`}
@@ -420,6 +339,89 @@ export function ModelVersionMenu({
           >
             Add images
           </Menu.Item>
+        )}
+
+        {currentUser?.isModerator && (
+          <>
+            <Menu.Label>Moderation</Menu.Label>
+            <ModeratorLookupMenuItem
+              path={moderatorBulkImageManagerPath('modelVersion', modelVersionId)}
+            >
+              Lookup Version
+            </ModeratorLookupMenuItem>
+            {published && (
+              <Menu.Item
+                color="yellow"
+                leftSection={<IconBan size={14} stroke={1.5} />}
+                onClick={() =>
+                  openUnpublishModal({
+                    props: {
+                      modelId: modelId,
+                      versionId: modelVersionId,
+                    },
+                  })
+                }
+              >
+                Unpublish as Violation
+              </Menu.Item>
+            )}
+            <Menu.Item
+              leftSection={<IconShieldHalf size={14} stroke={1.5} />}
+              color="yellow"
+              onClick={(e: React.MouseEvent) => {
+                e.stopPropagation();
+                e.preventDefault();
+                handleEnqueueNsfwLevelUpdate();
+              }}
+            >
+              Enqueue NsfwLevel Update
+            </Menu.Item>
+            <Menu.Item
+              leftSection={<IconCloudX size={14} stroke={1.5} />}
+              color="yellow"
+              onClick={(e: React.MouseEvent) => {
+                e.stopPropagation();
+                e.preventDefault();
+                handleBustCache();
+              }}
+            >
+              Bust Cache
+            </Menu.Item>
+            {showToggleCoverage && features.impersonation && (
+              <Menu.Item
+                disabled={isLoading}
+                leftSection={isLoading ? <Loader size="xs" /> : <IconAi size={14} stroke={1.5} />}
+                color="yellow"
+                onClick={() =>
+                  handleToggleCoverage({
+                    modelId: modelId,
+                    versionId: modelVersionId,
+                  })
+                }
+                closeMenuOnClick={false}
+              >
+                {canGenerate ? 'Remove from generation' : 'Add to generation'}
+              </Menu.Item>
+            )}
+            <Menu.Item
+              disabled={toggleGenerationDisabledMutation.isPending}
+              leftSection={
+                toggleGenerationDisabledMutation.isPending ? (
+                  <Loader size="xs" />
+                ) : (
+                  <IconPlaylistX size={14} stroke={1.5} />
+                )
+              }
+              color="yellow"
+              onClick={(e: React.MouseEvent) => {
+                e.stopPropagation();
+                e.preventDefault();
+                handleToggleGeneration();
+              }}
+            >
+              {generationDisabled ? 'Unblock generation' : 'Block generation'}
+            </Menu.Item>
+          </>
         )}
       </Menu.Dropdown>
     </Menu>

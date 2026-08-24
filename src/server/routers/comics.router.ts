@@ -10,6 +10,9 @@ import {
   isFlagProtected,
 } from '~/server/trpc';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { throwOnBlockedCommentContent } from '~/server/services/blocklist.service';
+import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
+import { COMMENT_ALLOWED_TAGS } from '~/utils/html-sanitize-helpers';
 import { fetchTimeoutSignal } from '~/server/utils/fetch-timeout';
 import { regionProxyMiddleware } from '~/server/orchestrator/region-proxy.middleware';
 import {
@@ -5272,7 +5275,11 @@ export const comicsRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const engagement = await dbRead.comicProjectEngagement.findUnique({
+      // dbWrite, not dbRead: the write below is scoped by the type this read saw, so a
+      // replica lagging behind a just-committed change makes the scoped update miss and
+      // report not-engaged for a pair that carries exactly what was asked for. Every
+      // sibling toggle in this family reads the primary for the same reason.
+      const engagement = await dbWrite.comicProjectEngagement.findUnique({
         where: { userId_projectId: { userId: ctx.user.id, projectId: input.projectId } },
       });
 
@@ -5282,11 +5289,17 @@ export const comicsRouter = router({
         // what lets `comicProjectMetrics` detect un-follows incrementally. The row
         // is bounded — one per (userId, projectId) — so it doesn't accumulate.
         const nextType = engagement.type === input.type ? ComicEngagementType.None : input.type;
-        await dbWrite.comicProjectEngagement.update({
-          where: { userId_projectId: { userId: ctx.user.id, projectId: input.projectId } },
+        // Scoped by the type this call READ, never by the PK alone (868kurkc7). One
+        // row per (user, project) carrying one type, so an unqualified update lands
+        // on whatever a sibling writer established in between — and the read above is
+        // off the REPLICA, so that window is replication lag rather than microseconds.
+        const { count } = await dbWrite.comicProjectEngagement.updateMany({
+          where: { userId: ctx.user.id, projectId: input.projectId, type: engagement.type },
           data: { type: nextType },
         });
-        return nextType !== ComicEngagementType.None;
+        // Zero rows means the pair is no longer what this call read, so it does not
+        // carry `nextType` either, and the client re-reads engagement state anyway.
+        return count > 0 && nextType !== ComicEngagementType.None;
       }
 
       await dbWrite.comicProjectEngagement.create({
@@ -6275,10 +6288,23 @@ export const comicsRouter = router({
       z.object({
         projectId: z.number().int(),
         chapterPosition: z.number().int().min(0),
-        content: z.string().min(1).max(10000),
+        // Sanitised like every other comment write. Without this the row reached both the
+        // blocklist guard and the database as raw HTML, so an entity-escaped host
+        // (`blocked&#46;example`) carried no literal dot for the link matcher to see and then
+        // decoded back to a live URL in `RenderHtml` at read time — a bypass the other two
+        // paths do not have, because their zod schema decodes entities before the guard runs.
+        //
+        // No `allowStickers`: this path does not charge for sticker uses the way `upsertComment`
+        // does, so permitting the markup here would make paid stickers free.
+        content: getSanitizedStringSchema({ allowedTags: COMMENT_ALLOWED_TAGS })
+          .refine((v) => v.length > 0, 'Cannot be empty')
+          .refine((v) => v.length <= 10000, 'Comment content too long'),
       })
     )
     .mutation(async ({ ctx, input }) => {
+      // Before the thread upsert: a rejected comment must not leave a Thread row behind.
+      await throwOnBlockedCommentContent(input.content, { isModerator: ctx.user.isModerator });
+
       // Find or create thread for this chapter (upsert avoids race condition)
       const thread = await dbWrite.thread.upsert({
         where: {

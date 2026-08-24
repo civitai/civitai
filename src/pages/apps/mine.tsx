@@ -48,7 +48,7 @@ export default function MyAppsPage() {
       <AppsPageLayout
         size={MY_APPS_CONTAINER_SIZE}
         title="My apps"
-        subtitle="Apps you own and apps you collaborate on, on-site and external. Open a row to see its submission history."
+        subtitle="Apps you own and apps you collaborate on, on-site and standalone. Open a row to see its submission history."
         actions={
           <Button component={Link} href="/apps/submit" rightSection={<IconArrowRight size={16} />}>
             Submit a new app

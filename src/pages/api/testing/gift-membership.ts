@@ -37,11 +37,12 @@ import {
   revokeMembershipGift,
 } from '~/server/services/membership-gift.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
+import { booleanString } from '~/utils/zod-helpers';
 import { MembershipGiftStatus } from '~/shared/utils/prisma/enums';
 
 const actionSchema = z.enum(['dump', 'giftability', 'create-gift', 'fulfill', 'revoke', 'reset']);
 
-const schema = z
+export const schema = z
   .object({
     action: actionSchema,
     userId: z.coerce.number().int().positive().optional(),
@@ -50,10 +51,13 @@ const schema = z
     tier: z.enum(['bronze', 'silver', 'gold']).optional(),
     months: z.coerce.number().int().positive().optional(),
     message: z.string().max(500).optional(),
-    anonymous: z.coerce.boolean().optional(),
+    anonymous: booleanString().optional(),
     giftId: z.string().optional(),
     reason: z.enum(['refund', 'chargeback']).optional(),
-    confirm: z.coerce.boolean().optional(),
+    // booleanString, not z.coerce.boolean: this schema is parsed against req.query, where
+    // coerce runs JS Boolean(). `confirm` is a GUARD (see the superRefine below), so under
+    // coerce `?confirm=false` SATISFIES it and the reset proceeds.
+    confirm: booleanString().optional(),
   })
   .superRefine((data, ctx) => {
     if (['dump', 'giftability', 'reset'].includes(data.action) && !data.userId) {

@@ -3,6 +3,7 @@ import { Group, Text, Tooltip } from '@mantine/core';
 import React from 'react';
 
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { BadgeCosmetic, NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 
@@ -15,6 +16,7 @@ const mapSizeToImageWidth: Record<MantineSize, number> = {
 };
 
 export function Username({
+  id,
   username,
   deletedAt,
   cosmetics = [],
@@ -22,7 +24,14 @@ export function Username({
   inherit = false,
   badgeSize,
 }: Props) {
-  if (deletedAt || !username) return <Text size={size}>[deleted]</Text>;
+  // A moderator following a report to a deleted account had nothing to go on — every surface said
+  // "[deleted]" and the id was only in the URL, if it was anywhere. Moderators see the id; everyone
+  // else still sees the name being gone, which is what the deletion means to them.
+  const currentUser = useCurrentUser();
+  if (deletedAt || !username)
+    return (
+      <Text size={size}>{currentUser?.isModerator && id ? `[deleted] #${id}` : '[deleted]'}</Text>
+    );
 
   const nameplate = cosmetics?.find(({ cosmetic }) =>
     cosmetic ? cosmetic.type === 'NamePlate' : undefined
@@ -99,6 +108,9 @@ export const BadgeDisplay = ({
 };
 
 type Props = {
+  /** Only read when the name is gone and the viewer is a moderator — see the `[deleted]` branch. Most
+   *  call sites spread a user object, so it arrives without anyone passing it deliberately. */
+  id?: number | null;
   username?: string | null;
   deletedAt?: Date | null;
   cosmetics?: UserWithCosmetics['cosmetics'] | null;

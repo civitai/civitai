@@ -656,6 +656,24 @@ export const getCivitaiEvents = async () => {
   return events;
 };
 
+/**
+ * Does the article exist as a published article for anyone, regardless of ingestion state?
+ *
+ * `getArticleById` additionally requires `ingestion = Scanned` for non-owners, so editing a live
+ * article (which sets `Rescan`) makes it throw NOT_FOUND to the public for the length of the scan
+ * — minutes, or longer when a scan is stranded. SSR uses this to tell "nobody can ever see this"
+ * apart from "temporarily unrenderable", so only the first becomes a 404.
+ */
+export const isArticlePublished = async (id: number) => {
+  const db = await getDbWithoutLag('article', id);
+  const article = await db.article.findFirst({
+    where: { id, publishedAt: { not: null }, status: ArticleStatus.Published },
+    select: { id: true },
+  });
+
+  return !!article;
+};
+
 export type ArticleGetById = AsyncReturnType<typeof getArticleById>;
 export const getArticleById = async ({
   id,
