@@ -31,6 +31,38 @@ function safetensorsDtypeToFp(dtype: string): string | null {
 }
 
 /**
+ * The dtype→precision core, shared by the client-side upload probe below and the
+ * server-side tensor-header correction. Callers supply whatever dtype/byte pairs
+ * they already have — a parsed safetensors header, or an analysis' `dtypeCounts`.
+ */
+export function getDominantFpFromDtypes(
+  entries: { dtype: string; bytes: number }[]
+): ModelFileFp | null {
+  const bytesByFp = new Map<string, number>();
+  for (const { dtype, bytes } of entries) {
+    const fp = safetensorsDtypeToFp(dtype);
+    if (!fp) continue;
+    bytesByFp.set(fp, (bytesByFp.get(fp) ?? 0) + Math.max(Number.isFinite(bytes) ? bytes : 0, 0));
+  }
+
+  let best: string | null = null;
+  let bestBytes = -1;
+  for (const [fp, bytes] of bytesByFp) {
+    if (bytes > bestBytes) {
+      best = fp;
+      bestBytes = bytes;
+    }
+  }
+
+  // MXFP8 stores weights as F8_E4M3 with F8_E8M0 shared-exponent scales (~1 byte
+  // per 32 elements), so the scale tensors' presence identifies it, not byte share.
+  if (best === 'fp8' && bytesByFp.has('mxfp8')) best = 'mxfp8';
+
+  // Precision options are mod-managed at runtime; the union lags behind them.
+  return best as ModelFileFp | null;
+}
+
+/**
  * Read a .safetensors file's header (client-side) and infer the dominant weight
  * precision. Returns null when it can't be determined.
  * Only the JSON header is read — never the tensor data — so this is cheap.
@@ -53,32 +85,15 @@ export async function inferSafetensorsPrecision(file: File): Promise<ModelFileFp
       { dtype?: string; data_offsets?: [number, number] }
     >;
 
-    // Pick the dtype that accounts for the most bytes of tensor data.
-    const bytesByFp = new Map<string, number>();
+    const entries: { dtype: string; bytes: number }[] = [];
     for (const [key, value] of Object.entries(header)) {
       if (key === '__metadata__' || !value?.dtype) continue;
-      const fp = safetensorsDtypeToFp(value.dtype);
-      if (!fp) continue;
       const offsets = value.data_offsets;
-      const size = Array.isArray(offsets) && offsets.length === 2 ? offsets[1] - offsets[0] : 1;
-      bytesByFp.set(fp, (bytesByFp.get(fp) ?? 0) + Math.max(size, 0));
+      const bytes = Array.isArray(offsets) && offsets.length === 2 ? offsets[1] - offsets[0] : 1;
+      entries.push({ dtype: value.dtype, bytes });
     }
 
-    let best: string | null = null;
-    let bestBytes = -1;
-    for (const [fp, bytes] of bytesByFp) {
-      if (bytes > bestBytes) {
-        best = fp;
-        bestBytes = bytes;
-      }
-    }
-
-    // MXFP8 stores weights as F8_E4M3 with F8_E8M0 shared-exponent scales (~1 byte
-    // per 32 elements), so the scale tensors' presence identifies it, not byte share.
-    if (best === 'fp8' && bytesByFp.has('mxfp8')) best = 'mxfp8';
-
-    // Precision options are mod-managed at runtime; the union lags behind them.
-    return best as ModelFileFp | null;
+    return getDominantFpFromDtypes(entries);
   } catch {
     return null;
   }

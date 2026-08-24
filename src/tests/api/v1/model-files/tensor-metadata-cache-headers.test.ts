@@ -14,12 +14,10 @@ import { redisMock } from '~/__tests__/mocks/redis.mock';
 const IMMUTABLE = 'public, max-age=31536000, s-maxage=31536000, immutable';
 const NO_STORE = 'private, no-store';
 
-const { mockGetFileForModelVersion, mockGetFullTensorAnalysisCached } = vi.hoisted(
-  () => ({
-    mockGetFileForModelVersion: vi.fn(),
-    mockGetFullTensorAnalysisCached: vi.fn(),
-  })
-);
+const { mockGetFileForModelVersion, mockGetFullTensorAnalysisCached } = vi.hoisted(() => ({
+  mockGetFileForModelVersion: vi.fn(),
+  mockGetFullTensorAnalysisCached: vi.fn(),
+}));
 const mockFindUnique = dbMock.dbRead.modelFile.findUnique;
 
 vi.mock('~/server/utils/endpoint-helpers', () => ({
@@ -32,6 +30,14 @@ vi.mock('~/server/services/file.service', () => ({
 
 vi.mock('~/server/services/tensor-metadata.service', () => ({
   getFullTensorAnalysisCached: (...args: any[]) => mockGetFullTensorAnalysisCached(...args),
+}));
+
+// Stubbed for its import graph, not its behaviour: the real module reaches
+// `model-file.service`, which builds a `createCachedObject` at module scope and so
+// needs a cache-helpers mock wider than this file's deliberate pass-through.
+// The correction contract lives in model-file-header-correction.service.test.ts.
+vi.mock('~/server/services/model-file-header-correction.service', () => ({
+  correctModelFileFromTensorHeader: vi.fn().mockResolvedValue({ corrections: {}, applied: false }),
 }));
 
 // Both caches are pass-through here: this test pins response headers, not cache behaviour

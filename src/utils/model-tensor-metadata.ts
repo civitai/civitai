@@ -1,3 +1,5 @@
+import type { ModelFileType } from '~/server/common/constants';
+
 const MiB = 1024 * 1024;
 const GiB = 1024 * MiB;
 
@@ -52,11 +54,27 @@ export type ModelVramEstimate = {
   dynamicVramPageBytes: number;
 };
 
+export type DetectedModelTensorType =
+  | 'Checkpoint'
+  | 'LoRA'
+  | 'VAE'
+  | 'TextEncoder'
+  | 'VisionEncoder'
+  | 'UNet'
+  | 'DiffusionModel'
+  | 'ControlNet';
+
 export type ModelTensorAnalysis = {
   format: ModelTensorFormat;
   tensorCount: number;
   totalTensorBytes: number;
   dtypeCounts: ModelTensorDtypeSummary[];
+  /**
+   * Derived once here rather than per request: it scans every tensor name, and the
+   * summary cache drops `tensors[]`, so a caller reading a summary has no way back
+   * to it. Optional because entries cached before it existed will not carry it.
+   */
+  detectedModelType?: DetectedModelTensorType | null;
   largestTensor: ModelTensorInfo | null;
   vramEstimate: ModelVramEstimate | null;
   tensors: ModelTensorInfo[];
@@ -115,10 +133,164 @@ export function analyzeModelTensors(
     tensorCount: tensors.length,
     totalTensorBytes,
     dtypeCounts: [...dtypeCounts.values()].sort((a, b) => b.bytes - a.bytes),
+    detectedModelType: format === 'SafeTensor' ? detectModelTypeFromTensors(tensors) : null,
     largestTensor,
     vramEstimate: estimateVram ? estimateComfyDynamicOffloadVram(tensors) : null,
     tensors,
   };
+}
+
+/**
+ * Classify a safetensors file by the shape of its tensor names. Returns null unless
+ * one architecture matches unambiguously — an unrecognised file must read as "no
+ * opinion", never as a guess, because callers write the answer to the file record.
+ */
+export function detectModelTypeFromTensors(
+  tensors: Pick<ModelTensorInfo, 'name'>[]
+): DetectedModelTensorType | null {
+  const names = tensors.map(({ name }) => name.toLowerCase());
+  const has = (predicate: (name: string) => boolean) => names.some(predicate);
+  const count = (predicate: (name: string) => boolean) => names.filter(predicate).length;
+  const startsWithAny = (name: string, prefixes: string[]) =>
+    prefixes.some((prefix) => name.startsWith(prefix));
+
+  const hasLoraA = has((name) => /\.lora_(?:a|down)\.weight$/.test(name));
+  const hasLoraB = has((name) => /\.lora_(?:b|up)\.weight$/.test(name));
+  if (hasLoraA && hasLoraB) return 'LoRA';
+
+  if (
+    has((name) =>
+      startsWithAny(name, [
+        'control_model.',
+        'controlnet_blocks.',
+        'controlnet_down_blocks.',
+        'controlnet_mid_block.',
+        'zero_convs.',
+        'input_hint_block.',
+      ])
+    )
+  )
+    return 'ControlNet';
+
+  const hasDiffusionNamespace = has((name) =>
+    startsWithAny(name, ['model.diffusion_model.', 'diffusion_model.'])
+  );
+  const hasCheckpointComponents = has((name) =>
+    startsWithAny(name, ['first_stage_model.', 'cond_stage_model.', 'conditioner.embedders.'])
+  );
+  if (hasDiffusionNamespace && hasCheckpointComponents) return 'Checkpoint';
+
+  const encoderCount = count((name) => name.startsWith('encoder.'));
+  const decoderCount = count((name) => name.startsWith('decoder.'));
+  const hasVaeEncoderStructure = has((name) =>
+    /^(?:encoder\.(?:down|downsamples|conv_in|mid)|quant_conv\.)/.test(name)
+  );
+  const hasVaeDecoderStructure = has((name) =>
+    /^(?:decoder\.(?:up|upsamples|conv_out|mid)|post_quant_conv\.)/.test(name)
+  );
+  if (encoderCount >= 2 && decoderCount >= 2 && hasVaeEncoderStructure && hasVaeDecoderStructure)
+    return 'VAE';
+
+  if (
+    has((name) => name.includes('vision_model.embeddings.')) &&
+    has((name) => name.includes('vision_model.encoder.'))
+  )
+    return 'VisionEncoder';
+
+  const hasClipTextEncoder =
+    has((name) => name.includes('text_model.embeddings.')) &&
+    has((name) => name.includes('text_model.encoder.'));
+  const hasLlmTextEncoder =
+    has((name) => name.endsWith('embed_tokens.weight')) &&
+    count((name) => /(?:^|\.)layers\.\d+\./.test(name)) >= 2;
+  const hasT5TextEncoder =
+    has((name) => name === 'shared.weight' || name.endsWith('.shared.weight')) &&
+    count((name) => /(?:^|\.)encoder\.block\.\d+\./.test(name)) >= 2;
+  if (hasClipTextEncoder || hasLlmTextEncoder || hasT5TextEncoder) return 'TextEncoder';
+
+  const unetPrefix = '(?:(?:model\\.)?diffusion_model\\.)?';
+  const hasInputBlocks = has((name) => new RegExp(`^${unetPrefix}input_blocks\\.`).test(name));
+  const hasMiddleBlock = has((name) => new RegExp(`^${unetPrefix}middle_block\\.`).test(name));
+  const hasOutputBlocks = has((name) => new RegExp(`^${unetPrefix}output_blocks\\.`).test(name));
+  if (hasInputBlocks && hasMiddleBlock && hasOutputBlocks) return 'UNet';
+
+  const hasFluxBlocks =
+    has((name) => name.startsWith('double_blocks.')) &&
+    has((name) => name.startsWith('single_blocks.'));
+  const hasJointTransformer =
+    has((name) => name.startsWith('joint_blocks.')) &&
+    has((name) => /^(?:x|context)_embedder\./.test(name));
+  const hasDiffusersTransformer =
+    has((name) => name.startsWith('transformer_blocks.')) &&
+    has((name) => /^(?:patch_embed|pos_embed|proj_in|x_embedder)\./.test(name));
+  if (hasFluxBlocks || hasJointTransformer || hasDiffusersTransformer) return 'DiffusionModel';
+
+  return null;
+}
+
+/**
+ * The correction the header justifies, or null to leave `ModelFile.type` alone.
+ *
+ * Null covers two different cases on purpose: the header said nothing, and the
+ * header agrees with a type already valid for this model. A component file on a
+ * matching model is filed as 'Model' rather than by its architecture, so e.g. a
+ * VAE detected inside a VAE model is already correct and must not be relabelled.
+ */
+export function getModelFileTypeCorrection({
+  detectedModelType,
+  modelType,
+  currentFileType,
+}: {
+  detectedModelType: DetectedModelTensorType | null | undefined;
+  modelType?: string | null;
+  currentFileType?: string | null;
+}): ModelFileType | null {
+  if (!detectedModelType) return null;
+
+  let canonicalType: ModelFileType;
+  let compatibleTypes: readonly string[] = [];
+
+  switch (detectedModelType) {
+    case 'Checkpoint':
+      canonicalType = 'Model';
+      compatibleTypes = modelType === 'Checkpoint' ? ['Model', 'Pruned Model'] : ['Model'];
+      break;
+    case 'LoRA':
+      if (modelType === 'LORA' || modelType === 'DoRA' || modelType === 'LoCon') {
+        canonicalType = 'Model';
+        compatibleTypes = ['Model', 'Pruned Model'];
+      } else {
+        canonicalType = 'Enhancement LoRA';
+      }
+      break;
+    case 'VAE':
+      canonicalType = modelType === 'VAE' ? 'Model' : 'VAE';
+      break;
+    case 'TextEncoder':
+      canonicalType = modelType === 'TextEncoder' ? 'Model' : 'Text Encoder';
+      break;
+    case 'VisionEncoder':
+      canonicalType =
+        modelType === 'CLIPVision'
+          ? 'Model'
+          : modelType === 'CLIP'
+          ? 'Vision Encoder'
+          : 'CLIPVision';
+      break;
+    case 'UNet':
+      canonicalType = modelType === 'UNet' ? 'Model' : 'UNet';
+      break;
+    case 'DiffusionModel':
+      canonicalType = modelType === 'UNet' ? 'Model' : 'Diffusion Model';
+      break;
+    case 'ControlNet':
+      canonicalType = modelType === 'Controlnet' ? 'Model' : 'ControlNet';
+      break;
+  }
+
+  if (currentFileType === canonicalType || compatibleTypes.includes(currentFileType ?? ''))
+    return null;
+  return canonicalType;
 }
 
 export function supportsTensorVramEstimate({ modelType, fileType }: ModelTensorVramSupport) {

@@ -6,9 +6,11 @@ import { dbRead } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { getFileForModelVersion } from '~/server/services/file.service';
+import { correctModelFileFromTensorHeader } from '~/server/services/model-file-header-correction.service';
 import { getFullTensorAnalysisCached } from '~/server/services/tensor-metadata.service';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
+import type { ModelTensorAnalysis } from '~/utils/model-tensor-metadata';
 import {
   inferTensorMetadataFormat,
   parseModelTensorMetadata,
@@ -61,6 +63,7 @@ export default MixedAuthEndpoint(async function handler(
       id: true,
       modelVersionId: true,
       name: true,
+      url: true,
       type: true,
       sizeKB: true,
       metadata: true,
@@ -141,6 +144,33 @@ export default MixedAuthEndpoint(async function handler(
         )
       );
 
+    // Repair on demand: the header is the source of truth for precision, and for file
+    // type where it is unambiguous, so a viewed file with a wrong stored value is
+    // corrected here. Deliberately NOT awaited before responding — the read must not
+    // wait on a write, and a failed correction is retried by the next viewer.
+    const correct = (analysis: Pick<ModelTensorAnalysis, 'dtypeCounts' | 'detectedModelType'>) =>
+      correctModelFileFromTensorHeader({
+        fileId: file.id,
+        fileUrl: file.url,
+        modelVersionId: file.modelVersionId,
+        format,
+        dtypeCounts: analysis.dtypeCounts,
+        detectedModelType: analysis.detectedModelType,
+        currentFp: (file.metadata as BasicFileMetadata | null)?.fp,
+        currentFileType: file.type,
+        modelType: file.modelVersion.model.type,
+      }).catch((error) =>
+        logToAxiom({
+          name: 'model-file-tensor-metadata',
+          type: 'error',
+          message: `header correction failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+          fileId: id,
+          modelVersionId: file.modelVersionId,
+        }).catch(() => undefined)
+      );
+
     if (summaryOnly) {
       const summary = await fetchThroughCache(
         `${REDIS_KEYS.CACHES.TENSOR_METADATA_SUMMARY}:${id}`,
@@ -152,12 +182,14 @@ export default MixedAuthEndpoint(async function handler(
         { ttl: CacheTTL.month }
       );
       res.setHeader('Cache-Control', TENSOR_METADATA_CACHE_CONTROL);
-      return res.status(200).json(summary);
+      res.status(200).json(summary);
+      return void correct(summary);
     }
 
     const analysis = await fetchFull();
     res.setHeader('Cache-Control', TENSOR_METADATA_CACHE_CONTROL);
     res.status(200).json(analysis);
+    return void correct(analysis);
   } catch (error) {
     // The upstream byte-range fetch fails transiently. If this 422 ever inherits the immutable
     // header, Cloudflare freezes the error for a year and the file's panel never recovers.
