@@ -1,16 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as ModelFileService from '~/server/services/model-file.service';
 
-const { executeRaw, deleteFilesForModelVersionCache } = vi.hoisted(() => ({
-  executeRaw: vi.fn(),
+const { deleteFilesForModelVersionCache } = vi.hoisted(() => ({
   deleteFilesForModelVersionCache: vi.fn(),
 }));
 
-vi.mock('~/server/db/client', () => ({ dbWrite: { $executeRaw: executeRaw } }));
 vi.mock('~/server/services/model-file.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelFileService>()),
   deleteFilesForModelVersionCache,
 }));
+
+const executeRaw = dbMock.dbWrite.$executeRaw;
 
 import {
   applyModelFileHeaderCorrections,
