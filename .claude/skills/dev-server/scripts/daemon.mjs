@@ -1502,6 +1502,7 @@ class AuthHub {
     this.requiredEnvPath = resolve(this.path, '.env');
     this.envPaths = [];
     this.process = null;
+    this.startPromise = null;
     this.status = 'stopped'; // stopped | starting | running | crashed | error | disabled
     this.ready = false;
     this.readyAt = null;
@@ -1525,6 +1526,14 @@ class AuthHub {
     return logs;
   }
 
+  // The hub passes an empty chain and lets Vite load its own .env. An app started in a worktree
+  // passes one, because the worktree's copy of that .env is gitignored and usually absent — the
+  // chain is what lets it inherit the primary checkout's. Either way process.env is the floor, which
+  // is why the DATABASE_URL warning has to be computed from this and not from the chain alone.
+  spawnEnv() {
+    return this.envPaths.length ? { ...process.env, ...loadEnvChain(this.envPaths) } : process.env;
+  }
+
   // `::` (dual-stack), not a single literal. Bound to `127.0.0.1` these servers answered on v4 and
   // nothing on [::1]; Windows resolves `localhost` to ::1 first, so a browser typing the same `localhost`
   // URL the auth redirects use got connection-refused while curl — which falls back to v4 — reported the
@@ -1539,11 +1548,25 @@ class AuthHub {
     return ['exec', 'vite', 'dev', '--host', '::', '--port', String(this.port), '--strictPort'];
   }
 
+  // `if (this.process)` used to be a sufficient guard because start() was synchronous. It is not any
+  // more: four awaited path probes now sit between that check and the assignment, so two callers in
+  // the same tick both saw `null` and both spawned — with --strictPort one died and the survivor was
+  // referenced by nothing, which is the orphan `stopAppSessions` exists to prevent. Memoising the
+  // in-flight promise closes the window without a sentinel that every return path has to remember to
+  // clear.
+  start() {
+    if (this.startPromise) return this.startPromise;
+    this.startPromise = this.#start().finally(() => {
+      this.startPromise = null;
+    });
+    return this.startPromise;
+  }
+
   // Async because `this.path` is now caller-supplied — an app resolves it against whatever worktree
   // the request named. A synchronous stat on an unreachable path measured 21s on this daemon's only
   // thread, which is why probePath/checkPath exist; a fixed local path never reached that, a worktree
   // argument can. pathExists is the timeout-raced one.
-  async start() {
+  async #start() {
     if (this.process) {
       this.addLog('info', `${this.label} already running`);
       return this.getStatus();
@@ -1564,25 +1587,20 @@ class AuthHub {
       return this.getStatus();
     }
 
-    // An app with no .env of its own inherits the chain — but a chain that resolves to nothing at all
-    // means primaryCheckout fell back (see resolvePrimaryCheckout) and the app would start with no
-    // DATABASE_URL, failing later inside SvelteKit where it reads as the app's bug. Refuse here.
-    if (!this.requiredEnvPath && this.envPaths.length) {
-      const present = [];
-      for (const envPath of this.envPaths) {
-        if (await pathExists(envPath)) present.push(envPath);
-      }
-      if (!present.length) {
-        this.status = 'error';
-        this.lastError =
-          `${this.label} has no env: none of ${this.envPaths.join(', ')} exist. ` +
-          (primaryResolution.derived
-            ? 'Copy one from the primary checkout.'
-            : `The primary checkout could not be resolved from git (${primaryResolution.error}), ` +
-              'so the fall-through has nothing to fall back to.');
-        this.addLog('error', this.lastError);
-        return this.getStatus();
-      }
+    // An app with no .env of its own inherits the chain. If nothing in that chain — nor the daemon's
+    // own environment — supplies a DATABASE_URL, it would start and fail later inside SvelteKit,
+    // where it reads as the app's bug rather than as a missing file. The usual cause is
+    // primaryCheckout having fallen back (see resolvePrimaryCheckout), so name that when it is why.
+    if (!this.requiredEnvPath && !this.spawnEnv().DATABASE_URL) {
+      this.status = 'error';
+      this.lastError =
+        `${this.label} has no DATABASE_URL: none of ${this.envPaths.join(', ')} supply one. ` +
+        (primaryResolution.derived
+          ? 'Copy an .env from the primary checkout.'
+          : `The primary checkout could not be resolved from git (${primaryResolution.error}), ` +
+            'so the fall-through has nothing to fall back to.');
+      this.addLog('error', this.lastError);
+      return this.getStatus();
     }
 
     if (!(await pathExists(resolve(this.path, 'node_modules')))) {
@@ -1602,20 +1620,19 @@ class AuthHub {
     // production database. Nothing in the start output used to say so, and a moderator remove-click
     // deletes live rows — so name the host here, where it is read at the moment it matters, rather
     // than only in a doc nobody opens at start time.
-    if (this.envPaths.length) {
-      this.dbHost = describeDatabaseHost(loadEnvChain(this.envPaths));
-      if (this.dbHost) this.addLog('warn', `${this.label} DATABASE_URL host: ${this.dbHost}`);
-    }
+    //
+    // Describes the MERGED env, not the chain: the child gets `{ ...process.env, ...chain }`, so a
+    // DATABASE_URL inherited from the daemon's own environment is one the app will really use and
+    // nobody chose. Reporting null for it would read as "no database configured".
+    this.dbHost = describeDatabaseHost(this.spawnEnv());
+    if (this.dbHost) this.addLog('warn', `${this.label} DATABASE_URL host: ${this.dbHost}`);
 
     const isWindows = process.platform === 'win32';
     const pnpmCmd = isWindows ? 'pnpm.cmd' : 'pnpm';
 
-    // The hub passes an empty chain and lets Vite load its own .env. An app started in a
-    // worktree passes one, because the worktree's copy of that .env is gitignored and usually
-    // absent — the chain is what lets it inherit the primary checkout's.
     const spawnOptions = {
       cwd: this.path,
-      env: this.envPaths.length ? { ...process.env, ...loadEnvChain(this.envPaths) } : process.env,
+      env: this.spawnEnv(),
       stdio: ['ignore', 'pipe', 'pipe'],
       shell: isWindows,
     };
@@ -1699,6 +1716,7 @@ class AuthHub {
     }
 
     this.addLog('info', `Stopping ${this.label}...`);
+    this.dbHost = null;
     // Detach eagerly so a subsequent start() never sees a stale process (the exit handler is guarded on
     // identity, so the late exit of this proc won't touch the fresh one).
     this.process = null;
@@ -1797,7 +1815,11 @@ function describeDatabaseHost(envVars) {
   if (!url) return null;
   try {
     const parsed = new URL(url);
-    return parsed.port ? `${parsed.hostname}:${parsed.port}` : parsed.hostname;
+    const host = parsed.port ? `${parsed.hostname}:${parsed.port}` : parsed.hostname;
+    // `|| null`, not `?? null`: a value with no `//` parses as an opaque path and yields an empty
+    // hostname, and `postgres://user:sec@ret` yields `ret` — password material that a reader would
+    // take for a host. Collapsing every degenerate shape into "could not read it" is the safe answer.
+    return host || null;
   } catch (e) {
     return null;
   }
@@ -1810,7 +1832,9 @@ function appEnvChain(worktree, name) {
   const relative = APP_REGISTRY[name].path;
   const paths = [resolve(primaryCheckout, relative, '.env')];
   const worktreeEnv = resolve(worktree, relative, '.env');
-  if (worktreeEnv !== paths[0]) paths.push(worktreeEnv);
+  // samePath, not `!==`: started from the primary checkout in the other drive-letter casing this
+  // would otherwise put the same file in the chain twice.
+  if (!samePath(worktreeEnv, paths[0])) paths.push(worktreeEnv);
   return paths;
 }
 
@@ -2219,34 +2243,49 @@ async function main() {
             res.end(JSON.stringify({ error: `Worktree not found: ${resolvedWorktree}` }));
             return;
           }
-          if (existing && existing.status === 'running') {
-            res.writeHead(200);
-            res.end(JSON.stringify({ reused: true, ...existing.getStatus() }));
-            return;
-          }
-
           // The preferred port is where the first worktree lands, so the common case stays the
           // documented number. A second worktree drifts rather than dying on EADDRINUSE. Nothing
           // needs rewriting to follow it: neither spoke's .env carries its own port or base URL,
           // and the hub trusts loopback by HOST in dev, so the drifted origin is still first-party.
+          //
+          // Read, decide and reserve all happen INSIDE the lock. Deciding outside it was the bug the
+          // lock was supposed to fix, moved one layer in: two starts of the same app both read no
+          // entry, both entered, and the second inherited the first's port while it was still coming
+          // up — two vite processes, one port, one orphan.
           let app;
+          let reused = null;
           try {
             app = await withAppAllocation(async () => {
-              // A stale entry — crashed, or errored asynchronously — still holds its port in
-              // getUsedPorts, which is deliberately status-blind. Allocating around it would move the
-              // app off its documented number every time it crashed, permanently. Take the port it
-              // already reserved instead.
-              const stale = appSessions.get(key);
+              const current = appSessions.get(key);
+              // `status === 'running'` is not enough, and sessionIsBusy's own comment says why: a
+              // session that is coming up reads `starting`. A live `process` is checked too, because
+              // proc.on('error') sets status without clearing it.
+              if (current && (sessionIsBusy(current) || current.process)) {
+                reused = current;
+                return null;
+              }
+              // Only an entry with no live process is a reservation worth inheriting. Doing so keeps
+              // a crashed app on its documented number instead of drifting it every crash, because
+              // getUsedPorts is deliberately status-blind and still counts the entry.
               const port =
-                stale?.port ??
+                (!current?.process && current?.port) ||
                 (await findAvailablePort(APP_REGISTRY[name].preferredPort, appReservedPorts(name)));
               const fresh = new AppSession(name, resolvedWorktree, port, appEnvChain(resolvedWorktree, name));
+              // Set before the lock is released: `start()` is awaited outside it, and an entry left
+              // reading `stopped` in between is one a third caller would treat as inheritable.
+              fresh.status = 'starting';
               appSessions.set(key, fresh);
               return fresh;
             });
           } catch (err) {
             res.writeHead(503);
             res.end(JSON.stringify({ error: err.message }));
+            return;
+          }
+
+          if (reused) {
+            res.writeHead(200);
+            res.end(JSON.stringify({ reused: true, ...reused.getStatus() }));
             return;
           }
 
@@ -2938,6 +2977,7 @@ if (invokedDirectly) {
 export {
   APP_REGISTRY,
   appEnvChain,
+  describeDatabaseHost,
   appReservedPorts,
   appSessions,
   checkPath,

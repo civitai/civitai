@@ -163,8 +163,7 @@ async function fetchRunning(daemonRequest) {
 // While apps were global singletons they were invisible here, so `wt rm` would delete a worktree
 // out from under a running moderator and report a clean removal.
 function sessionsIn(worktreePath, running) {
-  const target = resolve(worktreePath).toLowerCase();
-  const inTree = (s) => s.worktree && resolve(s.worktree).toLowerCase() === target;
+  const inTree = (s) => s.worktree && samePath(s.worktree, worktreePath);
 
   const found = [];
   for (const s of running.sessions.filter(inTree)) {
@@ -191,9 +190,15 @@ export function primaryOf(trees, fallback) {
 
 // Windows preserves whatever drive-letter casing the caller typed, and git prints its own. The
 // primary-worktree refusal below is the guard that stops `wt rm` deleting a local main, so it must
-// not be defeated by `c:\dev\...` vs `C:/Dev/...`. sessionsIn already lowercases for this reason.
-function samePathCI(a, b) {
-  return resolve(a).toLowerCase() === resolve(b).toLowerCase();
+// not be defeated by `c:\dev\...` vs `C:/Dev/...`.
+//
+// win32-only, matching daemon.mjs's samePath. An unconditional lowercase would make two genuinely
+// different trees compare equal on a case-sensitive filesystem, and `wt rm --stop-server` would then
+// stop the other one's servers.
+function samePath(a, b) {
+  const x = resolve(a);
+  const y = resolve(b);
+  return process.platform === 'win32' ? x.toLowerCase() === y.toLowerCase() : x === y;
 }
 
 export async function inspect(primary, daemonRequest) {
@@ -202,7 +207,7 @@ export async function inspect(primary, daemonRequest) {
   const running = await fetchRunning(daemonRequest);
   const rows = [];
   for (const t of trees) {
-    const isPrimary = samePathCI(t.path, primaryPath);
+    const isPrimary = samePath(t.path, primaryPath);
     const sessions = sessionsIn(t.path, running);
     rows.push({
       path: t.path,
@@ -255,9 +260,9 @@ export async function cmdRemove(primary, targetArg, opts, daemonRequest) {
   const trees = listWorktrees(primary);
   const primaryPath = primaryOf(trees, primary);
 
-  if (samePathCI(target, primaryPath)) fail('refusing to remove the primary worktree');
+  if (samePath(target, primaryPath)) fail('refusing to remove the primary worktree');
 
-  const entry = trees.find((t) => t.path === target);
+  const entry = trees.find((t) => samePath(t.path, target));
   if (!entry) fail(`not a registered worktree: ${target}\nrun: git worktree list`);
 
   const sessions = sessionsIn(target, await fetchRunning(daemonRequest));

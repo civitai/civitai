@@ -205,18 +205,22 @@ async function cmdStart(worktree, flags = []) {
 
 // `--app <name>` on a session verb means "the app in this worktree", so the whole lifecycle uses one
 // gesture rather than `start --app x` followed by `app x stop`. Returns null when no --app was given.
+//
+// It delegates to parseModeFlags rather than matching `--app` itself. A second hand-rolled matcher
+// was not equivalent to the first: it accepted `--app=` as empty and fell through, so `logs --app=`
+// silently tailed the MAIN app where `start --app=` errored — the same silent-wrong-target this
+// change exists to remove. One parser, one policy.
 function appFromFlags(flags = []) {
+  const appFlags = flags.filter((f) => f === '--app' || f.startsWith('--app='));
+  if (!appFlags.length) return null;
   const i = flags.indexOf('--app');
-  if (i !== -1) {
-    const value = flags[i + 1];
-    if (!value || value.startsWith('--')) {
-      console.error('Error: --app needs an app name, e.g. --app moderator');
-      process.exit(1);
-    }
-    return value;
+  const pair = i === -1 ? appFlags : ['--app', flags[i + 1]].filter((v) => v !== undefined);
+  try {
+    return parseModeFlags(pair).app;
+  } catch (err) {
+    console.error(`Error: ${err.message}`);
+    process.exit(1);
   }
-  const inline = flags.find((f) => f.startsWith('--app='));
-  return inline ? inline.slice('--app='.length) : null;
 }
 
 async function cmdLogs(sessionId, since) {
@@ -843,7 +847,14 @@ const args = process.argv.slice(2);
 const command = args[0];
 // One gesture for the whole lifecycle: `start --app x` then `logs --app x`, `stop --app x`. Without
 // this only `start` took --app and everything after it needed the second `app <name> …` vocabulary.
-const appFlag = appFromFlags(args.slice(1));
+//
+// Only for the verbs that dispatch on it below. Parsing it for EVERY command would let a future
+// `--app` on `test`, `wt` or `probe` be intercepted into the app vocabulary before that verb's own
+// parser ever saw it.
+const APP_FLAG_VERBS = new Set(['start', 'logs', 'tail', 'stop', 'restart']);
+const appFlag = APP_FLAG_VERBS.has(command) ? appFromFlags(args.slice(1)) : null;
+// `stop <worktree> --app moderator` must mean the same tree as `start <worktree> --app moderator`.
+const positional = args.slice(1).find((a) => !a.startsWith('--') && a !== appFlag);
 const arg1 = args[1];
 const arg2 = args[2];
 
@@ -859,18 +870,19 @@ switch (command) {
     else cmdStart(arg1, args.slice(2));
     break;
   case 'logs':
-    if (appFlag) cmdApp(appFlag, 'logs');
+    if (appFlag) cmdApp(appFlag, 'logs', positional);
     else cmdLogs(arg1, arg2);
     break;
   case 'tail':
-    cmdTail(arg1);
+    if (appFlag) cmdApp(appFlag, 'logs', positional);
+    else cmdTail(arg1);
     break;
   case 'stop':
-    if (appFlag) cmdApp(appFlag, 'stop');
+    if (appFlag) cmdApp(appFlag, 'stop', positional);
     else cmdStop(arg1);
     break;
   case 'restart':
-    if (appFlag) cmdApp(appFlag, 'restart');
+    if (appFlag) cmdApp(appFlag, 'restart', positional);
     else cmdRestart(arg1);
     break;
   case 'rgb':
