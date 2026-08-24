@@ -196,7 +196,7 @@ describe('🔴 one table, all three populations `/apps/my-submissions` could not
     await expect.element(page.getByTestId('apps-mine-role-apl_owned')).toHaveTextContent(/owner/i);
   });
 
-  test('ON-SITE and OFF-SITE render in the SAME table, each labelled by kind', async () => {
+  test('ON-SITE and OFF-SITE render in the SAME table', async () => {
     renderWithProviders(
       <MyAppsBodyView
         rows={[
@@ -207,11 +207,78 @@ describe('🔴 one table, all three populations `/apps/my-submissions` could not
     );
     const table = page.getByTestId('apps-mine-table');
     await expect.element(table).toBeInTheDocument();
-    await expect.element(page.getByTestId('apps-mine-kind-apl_on')).toHaveTextContent(/on-site/i);
-    await expect.element(page.getByTestId('apps-mine-kind-apl_off')).toHaveTextContent(/external/i);
+    await expect.element(page.getByTestId('apps-mine-row-apl_on')).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-mine-row-apl_off')).toBeInTheDocument();
     // ONE table, not two sections: both rows are inside it.
     expect(table.element().querySelectorAll('[data-testid^="apps-mine-row-"]')).toHaveLength(2);
   });
+});
+
+/* ------------------------------------------------------------------ *
+ * The kind badge is GONE — pinned as an absence
+ * ------------------------------------------------------------------ */
+
+/**
+ * 🔴 THE KIND IS NOT SHOWN ON `/apps/mine` AT ALL, AND THIS PINS THE ABSENCE.
+ *
+ * The row used to carry a kind badge (`apps-mine-kind-<id>`) reading "On-site" /
+ * "External" — the second of those a RETIRED wording that survived the whole #4247
+ * sweep, because `myAppsView` shipped a shadowing `listingKindLabel` whose name
+ * collided with the canonical one. The badge is deleted: the author already knows what
+ * they built, and the kind still renders on the listing detail and edit pages, which
+ * are where the question gets asked.
+ *
+ * 🔴 AN ABSENCE NEEDS A TEST MORE THAN A PRESENCE DOES, not less. "Restore the kind
+ * badge, it's useful" is a one-line, entirely reasonable-looking change, and nothing
+ * else in this suite would go red for it — the enrolment ledger cannot see it either,
+ * because a restored badge composing from `listingKindLabels` would spell the CORRECT
+ * word. So the decision is asserted here, where it is visible as a decision.
+ */
+describe('🔴 no row shape renders a kind badge', () => {
+  /**
+   * Every dimension the deleted badge branched on, plus the two layouts. The old badge
+   * read `row.kind` for its text AND its colour, so a partial restore (one layout, one
+   * kind) has to fail too — a single-fixture version of this test would miss exactly
+   * that.
+   */
+  for (const compact of [false, true]) {
+    test(`neither kind, in the ${compact ? 'card' : 'table'} layout`, async () => {
+      const rows = [
+        row({ appListingId: 'apl_k_on', kind: 'onsite', status: 'approved' }),
+        row({ appListingId: 'apl_k_off', kind: 'offsite', status: 'pending' }),
+        row({ appListingId: 'apl_k_draft', kind: 'onsite', status: 'draft', role: 'editor' }),
+      ];
+      renderWithProviders(<MyAppsBodyView rows={rows} compact={compact} />);
+      // POSITIVE CONTROL: the rows really did render, so the zeros below are a fact
+      // about the badge and not about an empty page. Without this, deleting the whole
+      // table would satisfy every assertion in this test.
+      for (const r of rows) {
+        await expect
+          .element(page.getByTestId(`apps-mine-row-${r.appListingId}`))
+          .toBeInTheDocument();
+        // …and the badges that DID survive are still there, so "no kind badge" is not
+        // being satisfied by "no badges at all".
+        await expect
+          .element(page.getByTestId(`apps-mine-status-${r.appListingId}`))
+          .toBeInTheDocument();
+        await expect
+          .element(page.getByTestId(`apps-mine-role-${r.appListingId}`))
+          .toBeInTheDocument();
+        expect(
+          page.getByTestId(`apps-mine-kind-${r.appListingId}`).elements(),
+          `${r.appListingId} rendered a kind badge — see "no row shape renders a kind badge"`
+        ).toHaveLength(0);
+      }
+      // 🔴 AND THE TESTID NAMESPACE IS EMPTY, not just the three ids above. A restored
+      // badge under a NEW id would walk the per-row check; the prefix query cannot be
+      // walked that way as long as it keeps the name.
+      expect(document.querySelectorAll('[data-testid^="apps-mine-kind-"]')).toHaveLength(0);
+      // The retired word itself is absent from the rendered page, in either case. This
+      // is the behavioural half of the enrolment ledger's structural claim.
+      expect(document.body.textContent).not.toMatch(/\bExternal\b/);
+      expect(document.body.textContent).not.toMatch(/on-site/i);
+    });
+  }
 });
 
 /* ------------------------------------------------------------------ *
@@ -376,6 +443,299 @@ describe('icon + cover, and the placeholder path', () => {
       .element(page.getByTestId('apps-mine-icon-placeholder-apl_bare'))
       .toBeInTheDocument();
     expect(page.getByTestId('apps-mine-icon-apl_bare').elements()).toHaveLength(0);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * The images open the viewer
+ * ------------------------------------------------------------------ */
+
+/**
+ * A media URL that RESOLVES and is DIFFERENT per call — the same technique
+ * `AppListingDetailBody.viewer.browser.test.tsx` uses, and both halves matter here.
+ *
+ * DISTINCT, because the whole claim is "the image you clicked is the one that opens":
+ * a shared fixture URL makes opening the WRONG image indistinguishable from opening the
+ * right one, which is the only way this feature can be broken without looking broken.
+ *
+ * LOADABLE (a `data:` URI, not http), because an unloadable http source fires a real
+ * `error` ~11 ms after mount and the viewer's own rescue effect would then navigate off
+ * it — so a green would be measuring the race, not the wiring
+ * (`local-rules/no-unloadable-image-fixture`).
+ */
+const okMedia = (tag: string) =>
+  `data:image/svg+xml;base64,${btoa(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" data-tag="${tag}"/>`
+  )}`;
+
+/** The viewer's dialog, read from the DOCUMENT — Mantine portals it out of the tree. */
+const mediaViewer = () =>
+  (document
+    .querySelector('[data-testid="apps-listing-screenshot-viewer"]')
+    ?.closest('[role="dialog"]') as HTMLElement | null) ?? null;
+
+const mediaViewerImage = () =>
+  document.querySelector<HTMLImageElement>('[data-testid="apps-listing-screenshot-viewer-image"]');
+
+const mediaViewerPosition = () =>
+  document
+    .querySelector('[data-testid="apps-listing-screenshot-position"]')
+    ?.textContent?.replace(/\s+/g, ' ')
+    .trim() ?? null;
+
+/** Wait until the viewer is showing exactly `url`. */
+async function expectViewerShowing(url: string, why: string) {
+  await vi.waitFor(() => {
+    const img = mediaViewerImage();
+    expect(img, `no viewer image — ${why}`).not.toBeNull();
+    expect(img!.getAttribute('src'), why).toBe(url);
+  });
+}
+
+describe('🔴 the row images open the shared listing image viewer', () => {
+  const COVER = okMedia('cover');
+  const ICON = okMedia('icon');
+
+  /**
+   * 🔴 THE HEADLINE, AND THE REASON THE INDEX IS COMPUTED RATHER THAN ASSUMED: clicking
+   * the ICON must open the ICON, not the first entry in the list. Cover is entry 0, so
+   * an "always open index 0" implementation renders a perfectly healthy modal showing
+   * the wrong picture — and with a shared fixture URL it would look correct.
+   */
+  test('clicking the ICON opens the viewer on the icon', async () => {
+    renderWithProviders(
+      <MyAppsBodyView
+        rows={[row({ appListingId: 'apl_v1', status: 'approved', iconUrl: ICON, coverUrl: COVER })]}
+      />
+    );
+    const btn = page.getByRole('button', { name: 'View icon image for Name apl_v1' });
+    await expect.element(btn).toBeInTheDocument();
+    // Nothing is open before the click — so the assertions after it are about the click.
+    expect(mediaViewer()).toBeNull();
+    await userEvent.click(btn.element());
+    await expectViewerShowing(ICON, 'the icon button must open the ICON');
+    // 🔴 SEEDED WITH BOTH IMAGES, so prev/next works instead of being a dead end. The
+    // position indicator counts what navigation can actually reach.
+    expect(mediaViewerPosition()).toBe('2 / 2');
+  });
+
+  test('clicking the COVER opens the viewer on the cover', async () => {
+    renderWithProviders(
+      <MyAppsBodyView
+        rows={[row({ appListingId: 'apl_v2', status: 'approved', iconUrl: ICON, coverUrl: COVER })]}
+      />
+    );
+    // 🔴 AWAIT THE ELEMENT BEFORE CLICKING. `renderWithProviders` commits
+    // asynchronously in browser mode, so a synchronous `.element()` here races the
+    // mount and reports "Cannot find element" against an empty <body>.
+    const btn2 = page.getByRole('button', { name: 'View cover image for Name apl_v2' });
+    await expect.element(btn2).toBeInTheDocument();
+    await userEvent.click(btn2.element());
+    await expectViewerShowing(COVER, 'the cover button must open the COVER');
+    expect(mediaViewerPosition()).toBe('1 / 2');
+  });
+
+  /**
+   * 🔴 THE POINT OF SEEDING BOTH IMAGES INTO ONE LIST. Two isolated single-image modals
+   * would render with both arrows permanently disabled and a `1 / 1` counter — which
+   * looks fine and is the whole regression. Navigating from the cover must land on the
+   * icon of the SAME row.
+   */
+  test('🔴 prev/next moves between the row’s two images', async () => {
+    renderWithProviders(
+      <MyAppsBodyView
+        rows={[
+          row({ appListingId: 'apl_v3', status: 'approved', iconUrl: ICON, coverUrl: COVER }),
+          // A second row with its OWN media, so a mutant that pools every row's images
+          // into one list produces a 4-entry viewer and fails the counter below.
+          //
+          // 🔴 ITS NAME IS NOT A PREFIX-EXTENSION OF THE FIRST ROW'S. `getByRole`'s
+          // `name` is a SUBSTRING match by default, so an id like `apl_v3b` makes
+          // "…for Name apl_v3" resolve to BOTH buttons and the query dies on a strict-
+          // mode violation — which reads exactly like the control being missing.
+          row({
+            appListingId: 'apl_other',
+            status: 'pending',
+            kind: 'offsite',
+            iconUrl: okMedia('icon-other'),
+            coverUrl: okMedia('cover-other'),
+          }),
+        ]}
+      />
+    );
+    const btn3 = page.getByRole('button', { name: 'View cover image for Name apl_v3' });
+    await expect.element(btn3).toBeInTheDocument();
+    await userEvent.click(btn3.element());
+    await expectViewerShowing(COVER, 'opened on the cover');
+    expect(mediaViewerPosition()).toBe('1 / 2');
+    const nextBtn = page.getByRole('button', { name: 'Next screenshot' });
+    await expect.element(nextBtn).toBeInTheDocument();
+    await userEvent.click(nextBtn.element());
+    await expectViewerShowing(ICON, 'next from the cover is THIS row’s icon');
+    expect(mediaViewerPosition()).toBe('2 / 2');
+    const prevBtn = page.getByRole('button', { name: 'Previous screenshot' });
+    await expect.element(prevBtn).toBeInTheDocument();
+    await userEvent.click(prevBtn.element());
+    await expectViewerShowing(COVER, 'prev goes back to the cover');
+  });
+
+  /**
+   * 🔴 A ROW WITH ONE IMAGE SEEDS ONE ENTRY, AND THE INDEX SHIFTS. With no cover, the
+   * icon is entry 0 — an implementation that hardcoded "icon = index 1" would open a
+   * viewer on an index that does not exist, and the rescue effect would silently close
+   * it. That failure reads as "the click did nothing".
+   */
+  test('a row with only an icon opens a ONE-entry viewer on that icon', async () => {
+    renderWithProviders(
+      <MyAppsBodyView
+        rows={[row({ appListingId: 'apl_v4', status: 'approved', iconUrl: ICON, coverUrl: null })]}
+      />
+    );
+    const btn4 = page.getByRole('button', { name: 'View icon image for Name apl_v4' });
+    await expect.element(btn4).toBeInTheDocument();
+    await userEvent.click(btn4.element());
+    await expectViewerShowing(ICON, 'the only image is the icon');
+    expect(mediaViewerPosition()).toBe('1 / 1');
+  });
+
+  /**
+   * 🔴 PLACEHOLDERS ARE NOT CLICKABLE — there is nothing to view. A focusable control
+   * that opens an empty modal is worse than none, and this table's rows are mostly
+   * incomplete listings (measured: all 11 `removed` listings have a null cover), so a
+   * placeholder button would add a dead tab stop to nearly every row.
+   *
+   * 🔴 LABELLED AN **INVARIANT GUARD**, NOT REGRESSION COVERAGE, and the distinction is
+   * measured rather than assumed: run against `origin/main` this test PASSES, because
+   * at base nothing on the row was clickable at all. It pins an invariant the bug never
+   * violated. Every OTHER test in this describe is red at base and green here; this one
+   * is not, and counting it as regression coverage would overstate what was proved.
+   * It still earns its place — it is the only thing standing between a future
+   * "simplify the two branches into one wrapper" refactor and a dead tab stop on every
+   * incomplete row — but it is a guard, not evidence.
+   */
+  test('INVARIANT GUARD: neither placeholder is a button, focusable, or clickable', async () => {
+    renderWithProviders(
+      <MyAppsBodyView
+        rows={[row({ appListingId: 'apl_v5', status: 'pending', iconUrl: null, coverUrl: null })]}
+      />
+    );
+    const iconPh = page.getByTestId('apps-mine-icon-placeholder-apl_v5');
+    await expect.element(iconPh).toBeInTheDocument();
+    const coverPh = page.getByTestId('apps-mine-cover-placeholder-apl_v5');
+    await expect.element(coverPh).toBeInTheDocument();
+
+    for (const [label, el] of [
+      ['icon', iconPh.element()],
+      ['cover', coverPh.element()],
+    ] as const) {
+      // Not a button, and not inside one — a wrapper button is the shape that would
+      // sneak past a tagName check on the placeholder itself.
+      expect(el.tagName, `${label} placeholder is a <${el.tagName.toLowerCase()}>`).toBe('DIV');
+      expect(el.closest('button'), `${label} placeholder is wrapped in a button`).toBeNull();
+      // Not keyboard-reachable, and offering no pointer affordance.
+      expect(el.getAttribute('tabindex'), `${label} placeholder is focusable`).toBeNull();
+      expect((el as HTMLElement).style.cursor, `${label} placeholder shows a cursor`).toBe('');
+    }
+
+    // 🔴 NEGATIVE CONTROL FOR THE WHOLE `getByRole` FAMILY ABOVE: no view-image button
+    // exists for this row at all, under EITHER name. Without this, the assertions above
+    // would be satisfied by a placeholder that is inert while some other element opened
+    // the viewer.
+    expect(
+      page.getByRole('button', { name: /^View (icon|cover) image for/ }).elements()
+    ).toHaveLength(0);
+    expect(mediaViewer()).toBeNull();
+  });
+
+  /**
+   * 🔴 THE HALF-EMPTY ROW, which is the common production shape rather than an edge
+   * case. The present image must still be clickable and the absent one must still be
+   * inert — an implementation that gates the buttons on "the row has media" rather than
+   * "THIS image exists" passes the both-present and both-absent tests and fails here.
+   */
+  test('🔴 a row with a cover and NO icon: cover clickable, icon inert', async () => {
+    renderWithProviders(
+      <MyAppsBodyView
+        rows={[row({ appListingId: 'apl_v6', status: 'approved', iconUrl: null, coverUrl: COVER })]}
+      />
+    );
+    await expect.element(page.getByTestId('apps-mine-icon-placeholder-apl_v6')).toBeInTheDocument();
+    expect(
+      page.getByRole('button', { name: 'View icon image for Name apl_v6' }).elements()
+    ).toHaveLength(0);
+    const btn6 = page.getByRole('button', { name: 'View cover image for Name apl_v6' });
+    await expect.element(btn6).toBeInTheDocument();
+    await userEvent.click(btn6.element());
+    await expectViewerShowing(COVER, 'the cover is still clickable with no icon');
+    expect(mediaViewerPosition()).toBe('1 / 1');
+  });
+
+  /**
+   * 🔴 THE ACCESSIBLE NAME NAMES THE APP, not just "image". Two rows both offering a
+   * button called "View cover image" is a screen-reader dead end, and it is also what
+   * makes every `getByRole` query in this file able to address ONE row.
+   */
+  test('🔴 the button names disambiguate BETWEEN rows', async () => {
+    renderWithProviders(
+      <MyAppsBodyView
+        rows={[
+          row({ appListingId: 'apl_v7a', name: 'Aardvark', status: 'approved', coverUrl: COVER }),
+          row({
+            appListingId: 'apl_v7b',
+            name: 'Basilisk',
+            status: 'pending',
+            kind: 'offsite',
+            coverUrl: okMedia('cover-b'),
+          }),
+        ]}
+      />
+    );
+    await expect
+      .element(page.getByRole('button', { name: 'View cover image for Aardvark' }))
+      .toBeInTheDocument();
+    await expect
+      .element(page.getByRole('button', { name: 'View cover image for Basilisk' }))
+      .toBeInTheDocument();
+    // Each name addresses exactly ONE control.
+    expect(
+      page.getByRole('button', { name: 'View cover image for Aardvark' }).elements()
+    ).toHaveLength(1);
+  });
+
+  /**
+   * 🔴 KEYBOARD-OPERABLE, which is the property `UnstyledButton` buys and an
+   * `<img onClick>` does not. A mouse-only affordance that LOOKS wired up is exactly
+   * what the screenshot gallery's own wiring gate exists to prevent.
+   */
+  test('🔴 the control opens on Enter, not only on click', async () => {
+    renderWithProviders(
+      <MyAppsBodyView
+        rows={[row({ appListingId: 'apl_v8', status: 'approved', coverUrl: COVER })]}
+      />
+    );
+    const btn = page.getByRole('button', { name: 'View cover image for Name apl_v8' });
+    await expect.element(btn).toBeInTheDocument();
+    const el = btn.element() as HTMLElement;
+    el.focus();
+    expect(document.activeElement, 'the control is not focusable').toBe(el);
+    await userEvent.keyboard('{Enter}');
+    await expectViewerShowing(COVER, 'Enter must activate the control');
+  });
+
+  test('the viewer closes again', async () => {
+    renderWithProviders(
+      <MyAppsBodyView
+        rows={[row({ appListingId: 'apl_v9', status: 'approved', coverUrl: COVER })]}
+      />
+    );
+    const btn9 = page.getByRole('button', { name: 'View cover image for Name apl_v9' });
+    await expect.element(btn9).toBeInTheDocument();
+    await userEvent.click(btn9.element());
+    await expectViewerShowing(COVER, 'opened');
+    const closeBtn = page.getByRole('button', { name: 'Close screenshot viewer' });
+    await expect.element(closeBtn).toBeInTheDocument();
+    await userEvent.click(closeBtn.element());
+    await vi.waitFor(() => expect(mediaViewer()).toBeNull());
   });
 });
 
@@ -983,16 +1343,147 @@ describe('🔴 submissions without a listing', () => {
       .toHaveTextContent(/scope it never uses/i);
   });
 
-  test('the group is NOT hidden behind the Inactive collapse', async () => {
+  /**
+   * 🔴 THE RULE THIS TEST PINS CHANGED, SO THE TEST WAS REWRITTEN — NOT DELETED.
+   *
+   * It used to assert only "the group is NOT hidden behind the Inactive collapse",
+   * which was the whole rule when the group was unconditionally visible. The group is
+   * now its OWN collapse that opens itself when it holds something actionable. Both
+   * halves of the new rule are asserted here, and the first half is unchanged: this is
+   * still not nested under Inactive.
+   */
+  test('🔴 NOT inside the Inactive collapse, and OPEN without interaction when actionable', async () => {
     renderWithProviders(
       <MyAppsBodyView
-        rows={[row({ appListingId: 'apl_live' })]}
-        orphanedSubmissions={[orphan({ id: 'pubreq_x' })]}
+        // An INACTIVE row, so the Inactive collapse actually exists to be nested in —
+        // with no inactive rows there is no panel and the structural half would pass
+        // vacuously.
+        rows={[row({ appListingId: 'apl_rem', status: 'removed' })]}
+        orphanedSubmissions={[
+          orphan({ id: 'pubreq_x', rejectionReason: 'manifest declares an unused scope' }),
+        ]}
       />
     );
-    // Visible with no interaction at all: no toggle was clicked.
+    const group = page.getByTestId('apps-mine-orphaned');
+    await expect.element(group).toBeInTheDocument();
+
+    // 🔴 STRUCTURAL: the group is not a descendant of the Inactive panel. Asserted as
+    // containment rather than as "it is visible", because the Inactive collapse keeps
+    // its children mounted while closed — so a nested group would still be findable.
+    const inactivePanel = page.getByTestId('apps-mine-inactive-panel').element();
+    expect(inactivePanel, 'no Inactive panel to be nested in').not.toBeNull();
+    expect(
+      inactivePanel.contains(group.element()),
+      'the orphan group is nested inside the Inactive collapse'
+    ).toBe(false);
+
+    // 🔴 STATE: open on arrival, with NO toggle clicked. Read from `aria-expanded`
+    // rather than from the row's presence — Mantine's `Collapse` leaves its children in
+    // the DOM when closed, so `toBeInTheDocument` cannot tell open from closed and
+    // would pass against a permanently-collapsed group.
+    await expect
+      .element(page.getByTestId('apps-mine-orphaned-toggle'))
+      .toHaveAttribute('aria-expanded', 'true');
     await expect.element(page.getByTestId('apps-mine-orphaned-row-pubreq_x')).toBeInTheDocument();
     await expect.element(page.getByTestId('apps-mine-orphaned-count')).toHaveTextContent('1');
+  });
+
+  /**
+   * 🔴 THE PENDING+WITHDRAWABLE HALF of the auto-open rule — the OTHER shape, because a
+   * mutant that only checks `rejectionReason` passes the test above.
+   */
+  test('a PENDING withdrawable orphan also opens the group on arrival', async () => {
+    renderWithProviders(
+      <MyAppsBodyView
+        rows={[]}
+        orphanedSubmissions={[orphan({ id: 'pubreq_open2', status: 'pending', canWithdraw: true })]}
+        onWithdrawOrphan={() => undefined}
+      />
+    );
+    await expect
+      .element(page.getByTestId('apps-mine-orphaned-toggle'))
+      .toHaveAttribute('aria-expanded', 'true');
+  });
+
+  /**
+   * 🔴 THE CLOSED CASE, and it is the one that makes the whole feature more than a
+   * no-op. Settled history collapses — and the COUNT BADGE STAYS ON THE HEADER, because
+   * a closed group with no count is an unlabelled box, indistinguishable from the rows
+   * being gone. That is the exact impression this section exists to stop giving.
+   */
+  test('🔴 nothing actionable → CLOSED, but the count is still on the header', async () => {
+    renderWithProviders(
+      <MyAppsBodyView
+        rows={[]}
+        orphanedSubmissions={[
+          orphan({ id: 'pubreq_hist1', status: 'withdrawn' }),
+          orphan({ id: 'pubreq_hist2', status: 'approved' }),
+          // A rejection with NO reason attached: settled, and nothing to act on.
+          orphan({ id: 'pubreq_hist3', status: 'rejected', rejectionReason: null }),
+        ]}
+      />
+    );
+    await expect.element(page.getByTestId('apps-mine-orphaned')).toBeInTheDocument();
+    const toggle = page.getByTestId('apps-mine-orphaned-toggle');
+    await expect.element(toggle).toHaveAttribute('aria-expanded', 'false');
+
+    // The signal survives the collapse — and it is COUNTING, not a hardcoded 1.
+    const count = page.getByTestId('apps-mine-orphaned-count');
+    await expect.element(count).toHaveTextContent('3');
+
+    /**
+     * 🔴 THE HALF THIS TEST'S NAME CLAIMS AND `toHaveTextContent` DOES NOT PROVE, found
+     * by mutation: moving the badge INSIDE the `Collapse` left this test fully green,
+     * because Mantine's `Collapse` keeps its children MOUNTED when closed. So "the
+     * count is still there" is true of a badge the user cannot see, and the assertion
+     * above reads as coverage while providing none.
+     *
+     * The checkable claim is CONTAINMENT: the badge is on the toggle (the always-
+     * visible header), not in the panel the toggle hides.
+     */
+    const panel = document.querySelector('[data-testid="apps-mine-orphaned-panel"]');
+    expect(panel, 'no collapse panel — the group is not collapsible at all').not.toBeNull();
+    expect(
+      panel!.contains(count.element()),
+      'the count badge is INSIDE the collapse, so a closed group shows no count at all — ' +
+        'an unlabelled box, indistinguishable from the rows being gone'
+    ).toBe(false);
+    expect(
+      toggle.element().contains(count.element()),
+      'the count badge is not on the toggle header'
+    ).toBe(true);
+  });
+
+  test('a closed group opens on click, and its rows are reachable', async () => {
+    renderWithProviders(
+      <MyAppsBodyView
+        rows={[]}
+        orphanedSubmissions={[orphan({ id: 'pubreq_cl', status: 'withdrawn' })]}
+      />
+    );
+    const toggle = page.getByTestId('apps-mine-orphaned-toggle');
+    await expect.element(toggle).toHaveAttribute('aria-expanded', 'false');
+    await userEvent.click(toggle.element());
+    await expect.element(toggle).toHaveAttribute('aria-expanded', 'true');
+    await expect.element(page.getByTestId('apps-mine-orphaned-row-pubreq_cl')).toBeInTheDocument();
+  });
+
+  /**
+   * 🔴 `aria-controls` NAMES A REAL ELEMENT ID. A toggle pointing at nothing reports to
+   * assistive tech that the panel does not exist — the same rule the row-history toggle
+   * and the Inactive toggle already follow, applied to the third disclosure on the page.
+   */
+  test('the toggle’s aria-controls resolves to the panel it controls', async () => {
+    renderWithProviders(
+      <MyAppsBodyView rows={[]} orphanedSubmissions={[orphan({ id: 'pubreq_aria' })]} />
+    );
+    const toggle = page.getByTestId('apps-mine-orphaned-toggle');
+    await expect.element(toggle).toBeInTheDocument();
+    const id = toggle.element().getAttribute('aria-controls');
+    expect(id, 'the toggle controls nothing').toBeTruthy();
+    const panel = document.getElementById(id!);
+    expect(panel, `aria-controls="${id}" resolves to no element`).not.toBeNull();
+    expect(panel!.getAttribute('data-testid')).toBe('apps-mine-orphaned-panel');
   });
 
   test('a PENDING orphan offers Withdraw; a rejected one does not', async () => {

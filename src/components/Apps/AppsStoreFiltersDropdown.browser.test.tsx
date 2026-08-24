@@ -77,7 +77,7 @@ describe('AppsStoreFiltersDropdown — the panel', () => {
   test('selecting a kind emits ONLY the kind patch', async () => {
     const { onChange } = setup({ kind: 'all', category: null });
     await userEvent.click(trigger());
-    await userEvent.click(page.getByRole('button', { name: 'On-site' }));
+    await userEvent.click(page.getByRole('button', { name: 'Embedded' }));
     expect(onChange).toHaveBeenCalledWith({ kind: 'onsite' });
   });
 

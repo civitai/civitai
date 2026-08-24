@@ -95,10 +95,232 @@ describe('the sticker placer hears about an acceptance', () => {
     expect(await query('sticker-placement-resolved')).toContain('\'imageId\', p."targetId"');
   });
 
-  it('selects approvals and moderator removals, nothing else', async () => {
-    // Not `declined` and not `expired`: a declined sticker never appeared
-    // anywhere, and an expiry is nobody deciding anything.
-    expect(statusesSelectedBy(await query('sticker-placement-resolved'))).toBe('approved,removed');
+  /**
+   * `pending` is the one that must never be here: it would tell a placer their
+   * placement was resolved while it is still waiting, and the row would be
+   * selected again for real when it settles.
+   *
+   * `declined` and `expired` joined the set on 2026-08-24 (`868kv5d36`). They were
+   * excluded on 2026-08-18 on the grounds that a declined sticker never appeared
+   * anywhere — true of the sticker, and not of the money, which is why the call
+   * was reversed.
+   */
+  it('selects every settled outcome and nothing pending', async () => {
+    expect(statusesSelectedBy(await query('sticker-placement-resolved'))).toBe(
+      'approved,declined,expired,removed'
+    );
+  });
+
+  /**
+   * 🔴 Every sentence here is a claim about someone's Buzz, so each case asserts
+   * the WHOLE string rather than a fragment. A `toContain('declined')` passes
+   * against all three of these, including the two where the money sentence is
+   * wrong.
+   *
+   * The money itself, read off `placementPaymentSplit`: `declined` keeps
+   * `declineFeeAmount(...)` with the owner and refunds the rest; `expired`
+   * refunds everything. `feeWaived` is the column that separates a decline that
+   * refunded in full from one that did not — `removedBy` is NULL on a decline.
+   */
+  const resolved = (details: Record<string, unknown>) =>
+    defs['sticker-placement-resolved'].prepareMessage({
+      type: 'sticker-placement-resolved',
+      details: { imageId: 74, ownerUsername: 'somebody', ...details },
+    } as Parameters<Def['prepareMessage']>[0])!;
+
+  it('quotes what a decline actually kept', () => {
+    expect(
+      resolved({ status: 'declined', amount: 500, feeToOwner: 25, refundPaid: true }).message
+    ).toBe('somebody declined your sticker. They kept 25 Buzz; the rest has been refunded.');
+  });
+
+  it('promises no refund a free decline never earned', () => {
+    // amount 0 by DB constraint. "Your Buzz has been refunded" would send someone
+    // looking for a credit that never existed.
+    // `refundPaid: true` so the receipt gate is not what is doing the work here.
+    // What suppresses the money sentence on a free decline is the fee test — a
+    // free row has no escrow and so no `feeToOwner` leg — and that is the guard
+    // this pins. The `paidPlacement` check that used to sit in front of it was
+    // deleted as dead code once this fixture proved removing it changed nothing.
+    expect(resolved({ status: 'declined', amount: 0, refundPaid: true }).message).toBe(
+      'somebody declined your sticker.'
+    );
+  });
+
+  it('says the whole escrow came back when the fee was waived', () => {
+    // declineByBlock and declineUnshowableHost. Claiming a fee was kept here is a
+    // false statement about a balance, and `removedBy` is NULL so it cannot be
+    // used to tell this from the case above.
+    // 🔴 `feeToOwner` is what makes this able to fail. Without a fee row the fee
+    // is 0, `!(0 > 0)` is already true, and the right-hand disjunct alone
+    // produces the asserted string — so deleting `details.feeWaived ||` passed
+    // the test named for that flag. The fixture has to carry a fee for the flag
+    // to be the thing under test, and the test above it is then its control.
+    expect(
+      resolved({
+        status: 'declined',
+        amount: 500,
+        feeWaived: true,
+        feeToOwner: 25,
+        refundPaid: true,
+      }).message
+    ).toBe('somebody declined your sticker. Your Buzz has been refunded.');
+  });
+
+  it('tells a placer their Buzz came back when nobody answered', () => {
+    expect(resolved({ status: 'expired', amount: 500, refundPaid: true }).message).toBe(
+      "Your sticker placement on somebody's image expired. Your Buzz has been refunded."
+    );
+  });
+
+  it('says nothing about money when a free placement expires', () => {
+    // `refundPaid: true` for the same reason as the free decline above.
+    expect(resolved({ status: 'expired', amount: 0, refundPaid: true }).message).toBe(
+      "Your sticker placement on somebody's image expired."
+    );
+  });
+
+  /**
+   * 🔴 This test was DELETED as unfalsifiable and then had to come back, and the
+   * reason is worth more than the test.
+   *
+   * When it was written, `url` was computed once before any branch and every
+   * branch returned it, so nothing branch-specific could fail. True then. #4338
+   * then pointed the APPROVAL branch at `imageWithStickersUrl`, which made the
+   * branches differ — and the deletion, plus the comment explaining it, said
+   * there was nothing here worth testing on the exact property the merge had
+   * just made testable.
+   *
+   * A restored assertion gets re-run against a new base. An ABSENCE has nothing
+   * to re-check, and the prose explaining it is not executable. So: when a review
+   * concludes "delete this, it cannot fail", that conclusion is pinned to the
+   * shape of the code at that moment, and it is the first thing to revisit after
+   * anything merges into the same function.
+   *
+   * A discriminator rather than a constant. Asserting the plain URL alone would
+   * still pass if every branch collapsed back onto one string, which is the state
+   * this started in.
+   */
+  it('sends the outcomes with no sticker to see to the plain image', () => {
+    const approved = resolved({ status: 'approved' }).url;
+
+    for (const status of ['declined', 'expired'])
+      expect(resolved({ status, amount: 500 }).url).toBe('/images/74');
+
+    // The negative control: the approval branch reveals, so the two are not the
+    // same string and this cannot pass by every branch agreeing.
+    expect(approved).not.toBe('/images/74');
+  });
+
+  /**
+   * 🔴 The refund sentence is a claim about money that MOVED. Until the leg has a
+   * receipt it has not, and a leg that exhausts its attempts never will.
+   *
+   * Both directions, because a message that never promises a refund would pass a
+   * one-sided version of this and be useless.
+   */
+  it('promises a refund only once the refund has a receipt', () => {
+    const unpaid = resolved({ status: 'expired', amount: 500 }).message;
+    const paid = resolved({ status: 'expired', amount: 500, refundPaid: true }).message;
+
+    expect(unpaid).toBe("Your sticker placement on somebody's image expired.");
+    expect(paid).toBe(
+      "Your sticker placement on somebody's image expired. Your Buzz has been refunded."
+    );
+  });
+
+  /**
+   * A decline that is neither waived nor carrying a receipted fee has not
+   * finished settling. `planPayout` re-reads the legs with no `orderBy`, so a
+   * resume can pay the placer's refund while the fee leg is still stranded —
+   * and "your Buzz has been refunded" would then be wrong in the expensive
+   * direction, because the fee is still owed and will be taken.
+   */
+  it('says nothing about money while the fee outcome is still unknown', () => {
+    expect(resolved({ status: 'declined', amount: 500, refundPaid: true }).message).toBe(
+      'somebody declined your sticker.'
+    );
+  });
+
+  it('states the fee it kept even while the rest is still in flight', () => {
+    // The fee half is observed — it has its own receipt — so it is still true
+    // when the placer's leg has not landed. Dropping the whole sentence there
+    // would tell someone nothing happened.
+    expect(resolved({ status: 'declined', amount: 500, feeToOwner: 25 }).message).toBe(
+      'somebody declined your sticker. They kept 25 Buzz.'
+    );
+  });
+
+  it('reads the fee from the ledger row rather than recomputing it', async () => {
+    const sql = await query('sticker-placement-resolved');
+
+    // The per-space rate can move between the placement and the decline, so a
+    // recomputed figure eventually disagrees with /user/transactions for the same
+    // event. The unique index on (placementId, kind) makes this a lookup.
+    expect(sql).toContain("'feeToOwner', (");
+    // 🔴 A receipt, not a plan. settlePlacement writes the legs with a NULL
+    // transactionId and the Buzz calls happen afterwards, outside that
+    // transaction — so without these filters the message promises a refund that
+    // may never have moved, and on a stranded leg never will.
+    // 🔴 Anchored to their OWN occurrences. `pt."transactionId" IS NOT NULL`
+    // appears twice, so a single file-wide `toContain` is satisfied by either —
+    // deleting it from the fee subselect alone would ship "They kept 25 Buzz"
+    // on a fee that has not moved, printing nothing.
+    const stripped = sql.replace(/--[^\n]*/g, '');
+
+    expect(stripped).toMatch(
+      new RegExp(String.raw`pt\.kind = 'feeToOwner'[\s\S]{0,80}pt\."transactionId" IS NOT NULL`)
+    );
+    // 🔴 Anchored from the KIND LIST, not from the key name. The kinds are what
+    // give `refundPaid` its meaning — swap them to `feeToOwner` and the flag
+    // becomes "the OWNER got paid", so a non-waived decline says "the rest has
+    // been refunded" while the placer's leg is exactly as stranded as before.
+    // Tying the two together means neither half can move without the other.
+    //
+    // It is also the tighter anchor. Measured: 21 characters of the 80 budget
+    // here, against 187 of 200 anchoring from `'refundPaid', EXISTS (` — which
+    // one inserted clause was enough to break. If this ever does go red on a
+    // reformat, do NOT simply raise the number: a budget wide enough to reach
+    // the NEXT `transactionId` filter silently reopens the cross-occurrence hole
+    // the fee anchor above exists to close.
+    expect(stripped).toMatch(
+      new RegExp(
+        String.raw`pt\.kind IN \('principalToPlacer', 'feeToPlacer'\)[\s\S]{0,80}pt\."transactionId" IS NOT NULL`
+      )
+    );
+
+    // 🔴 AND the key name, which the anchor above does not mention. The two
+    // check different things: the anchor proves the predicate is right, this
+    // proves the value reaches `prepareMessage` under the name it reads. Rename
+    // the key in the jsonb alone and every other assertion in this file still
+    // passes, while `details.refundPaid` is permanently undefined and no placer
+    // is ever told their Buzz came back — on any branch.
+    //
+    // It was briefly absent because the anchor REPLACED it rather than joining
+    // it. That is invisible in a diff: the new assertion is strictly stronger
+    // about the predicate and strictly weaker about the name, and a diff only
+    // shows you the first half.
+    expect(stripped).toContain("'refundPaid', EXISTS (");
+    expect(sql).toContain("pt.kind = 'feeToOwner'");
+    expect(sql).toContain(`'feeWaived', p."feeWaived"`);
+  });
+
+  /**
+   * 🔴 Each new branch's OWN time window, not just "resolvedAt appears somewhere".
+   * The approved branch satisfies a file-wide `toContain` on its own, so swapping
+   * the expired branch to `expiresAt` — which is exactly what its comment says it
+   * is avoiding — passed every other assertion in this file.
+   */
+  it.each(['declined', 'expired'])('windows the %s branch on resolvedAt', async (status) => {
+    // Comments stripped locally: `withoutSqlComments` lives in a later describe
+    // block and is not in scope here. The prose in these branches names both
+    // `resolvedAt` and `expiresAt`, so an unstripped match would pass on a
+    // comment.
+    const sql = (await query('sticker-placement-resolved')).replace(/--[^\n]*/g, '');
+
+    expect(sql).toMatch(
+      new RegExp(String.raw`p\.status = '${status}'[\s\S]{0,160}p\."resolvedAt" > '`)
+    );
   });
 
   it('reads the moment the owner acted, not the moment the placement was made', async () => {
@@ -222,6 +444,29 @@ describe('a moderator ending a placement reaches the person who paid', () => {
       expect(sql).toContain('\'removedBy\', p."removedBy"');
       expect(sql).toContain('\'wasLive\', p."takenDownAt" IS NOT NULL');
       expect(sql).toContain("'amount', p.amount");
+
+      // 🔴 `status` is the worst key in this object to lose, and nothing checked
+      // it. Every message test fabricates it, so dropping `'status', p.status`
+      // from the jsonb passes all of them — and `prepareMessage` then falls
+      // through every branch and returns the trailing "accepted your sticker".
+      // Every decline, expiry and takedown would tell the placer their sticker
+      // was accepted.
+      //
+      // The dedupe-key test below reads `p.status "status"`, the outer projected
+      // COLUMN. That is a different expression and survives the mutation intact,
+      // which is why it does not cover this.
+      expect(sql).toContain("'status', p.status");
+
+      // Without these the sentence reads "undefined declined your sticker".
+      // Four of the five money assertions are about the sentence around this
+      // name and none of them can see where the name comes from.
+      expect(sql).toContain("'ownerUsername', u.username");
+      expect(sql).toContain('JOIN "User" u ON u.id = p."ownerId"');
+
+      // Feeds the notification's actor, so losing it blanks the avatar. The
+      // detail-fetcher's own suite hand-builds `ownerId`, so both sides of that
+      // seam are fabricated and neither goes red.
+      expect(sql).toContain('\'ownerId\', p."ownerId"');
     }
   });
 
@@ -292,6 +537,15 @@ describe('a moderator ending a placement reaches the person who paid', () => {
    * whose payout is principal AND fee back to the placer. Telling that person
    * their Buzz is gone is a false statement about their balance, and it is the
    * mistake a single "moderator removals are not refunded" rule would make.
+   *
+   * ⚠️ This asserts the sentence UNGATED, unlike the decline and expiry ones,
+   * which now require a receipted leg before promising a refund. That is scope
+   * rather than oversight: `moderatorRemovalMessage` is shared, and the remix
+   * query does not project `refundPaid` at all, so extending the receipt rule
+   * here is a change to two queries and not just to a message.
+   *
+   * If someone does extend it, THIS assertion is the one that has to change —
+   * and it changing is the fix, not a regression. Do not preserve it.
    */
   it.each(['sticker-placement-resolved', 'remix-gallery-resolved'])(
     '%s promises the refund a pending cosmetic takedown actually pays',

@@ -188,9 +188,97 @@ export function historyStatusColor(status: string): string {
   }
 }
 
-/** Human label for a listing kind. */
-export function listingKindLabel(kind: string): string {
-  return kind === 'onsite' ? 'On-site' : 'External';
+/**
+ * 🔴 `listingKindLabel` USED TO LIVE HERE AND IS GONE ON PURPOSE. Do not re-add it.
+ *
+ * It was a second, DIVERGENT implementation of the App-store kind label (it returned
+ * `'On-site' | 'External'`) whose NAME COLLIDED with the canonical
+ * `~/components/Apps/listingKindLabels`' export of the same name. The collision is
+ * what made the drift invisible: `MyAppsBody` imported the local one, the import line
+ * read exactly like the enrolled one, and the ledger's own SHRINKS rule could not see
+ * it because this page was never enrolled. That is how `/apps/mine` kept rendering
+ * the retired word "External" straight through the #4247 wording sweep.
+ *
+ * `/apps/mine` no longer renders a kind at all (see `MyAppsBody`'s `StatusBadges`),
+ * so there is no caller to re-point at the canonical module — the function is
+ * DELETED rather than left dead. Any future surface that needs the word imports
+ * `LISTING_KIND_LABELS` / `listingKindLabel` from `listingKindLabels` and enrols in
+ * `__tests__/standaloneWordingCallSites.test.ts`.
+ */
+
+/** Which of a row's two images a click was on. Positional, not URL-keyed — see below. */
+export type MyAppMediaKind = 'cover' | 'icon';
+
+/**
+ * The row's images as a VIEWER LIST — `[cover, icon]`, absent entries skipped.
+ *
+ * 🔴 ONE LIST FOR BOTH IMAGES, so prev/next works. Opening each image in its own
+ * single-entry modal is the shape that looks right and is worse: the viewer's arrows
+ * would be permanently disabled and the `N / M` counter would always read `1 / 1`.
+ *
+ * 🔴 COVER FIRST. The order is the ONE thing `listingMediaIndex` depends on, so it is
+ * stated here rather than inferred at the call site — the two functions are a pair and
+ * a disagreement between them opens the wrong picture with nothing erroring.
+ *
+ * The captions are what give the viewer's `<img>` its accessible name: the viewer sets
+ * `alt=""` whenever a caption is present (the caption is rendered as visible text
+ * beside it), so an empty caption here would leave the image unnamed.
+ */
+export function listingMediaShots(
+  row: Pick<MyAppRow, 'name' | 'iconUrl' | 'coverUrl'>
+): { url: string; caption: string | null }[] {
+  const shots: { url: string; caption: string | null }[] = [];
+  if (row.coverUrl) shots.push({ url: row.coverUrl, caption: `${row.name} cover image` });
+  if (row.iconUrl) shots.push({ url: row.iconUrl, caption: `${row.name} icon` });
+  return shots;
+}
+
+/**
+ * Where `which` sits in {@link listingMediaShots}, or `null` when that image is absent.
+ *
+ * 🔴 POSITIONAL, NOT A URL LOOKUP. A `findIndex` on the url would collapse the two
+ * entries whenever a listing's icon and cover happen to be the SAME url — clicking the
+ * icon would open the cover. `null` is the signal that there is nothing to view, which
+ * is what keeps a placeholder inert.
+ */
+export function listingMediaIndex(
+  row: Pick<MyAppRow, 'iconUrl' | 'coverUrl'>,
+  which: MyAppMediaKind
+): number | null {
+  if (which === 'cover') return row.coverUrl ? 0 : null;
+  if (!row.iconUrl) return null;
+  return row.coverUrl ? 1 : 0;
+}
+
+/**
+ * Is this orphaned submission one the author can DO something about?
+ *
+ * Two shapes, and each is a call to action rather than a status: a REJECTION REASON is
+ * the only text on the whole record telling the developer what to change, and a
+ * PENDING request the server says this caller may withdraw is a decision still open to
+ * them. Everything else — an approved-and-superseded request, an already-withdrawn
+ * one, a rejection with no reason attached — is history.
+ */
+export function isActionableOrphan(row: {
+  status: string;
+  rejectionReason: string | null;
+  canWithdraw?: boolean;
+}): boolean {
+  if ((row.rejectionReason ?? '').trim().length > 0) return true;
+  return row.status === 'pending' && row.canWithdraw === true;
+}
+
+/**
+ * Does the "Submissions without a listing" group start OPEN?
+ *
+ * 🔴 THIS IS WHAT PRESERVES THE GROUP'S ORIGINAL GUARANTEE while collapsing it. See
+ * `OrphanedSubmissionsSection`'s header for the measured reason the group must not
+ * simply be hidden behind a toggle.
+ */
+export function orphanGroupStartsOpen(
+  rows: readonly { status: string; rejectionReason: string | null; canWithdraw?: boolean }[]
+): boolean {
+  return rows.some(isActionableOrphan);
 }
 
 /**
