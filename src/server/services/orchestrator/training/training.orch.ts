@@ -13,7 +13,12 @@ import type {
 import { env } from '~/env/server';
 import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
-import { classifyErrorFault, logToAxiom } from '~/server/logging/client';
+import {
+  buildCentralErrorLog,
+  classifyErrorFault,
+  logToAxiom,
+  markServerFaultLogged,
+} from '~/server/logging/client';
 import type { TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import { resolveEpochOffset } from '~/shared/utils/training-epochs';
 import type {
@@ -520,12 +525,12 @@ export const createTrainingWhatIfWorkflow = async ({
     logToAxiom(
       {
         name: 'training-whatif',
-        type: classifyErrorFault(e) === 'client' ? 'info' : 'error',
-        message: e instanceof Error ? e.message : String(e),
+        ...buildCentralErrorLog(e),
         data: whatIfLogData,
       },
       'webhooks'
     ).catch();
+    if (classifyErrorFault(e) === 'server') markServerFaultLogged(e);
     throw e;
   }
 
@@ -534,13 +539,14 @@ export const createTrainingWhatIfWorkflow = async ({
   // `cost.total`; surface their sum so the UI can break out the license fee.
   const licenseFee = Object.values(workflow.cost?.fees ?? {}).reduce((sum, fee) => sum + fee, 0);
 
-  // No exception to catch here: the orchestrator accepted the workflow and priced it at nothing.
+  // `0` stays out of this guard: a zero estimate is spendable, and TrainingSubmit gates on the same
+  // `!isDefined(cost) || cost < 0`. Widening one side alone logs a cost the UI is charging.
   if (cost == null || cost < 0) {
     logToAxiom(
       {
         name: 'training-whatif',
         type: 'error',
-        message: 'Orchestrator returned no cost',
+        message: 'Orchestrator returned an unusable cost',
         data: { ...whatIfLogData, cost },
       },
       'webhooks'

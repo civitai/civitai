@@ -613,6 +613,17 @@ const baseTypeToEcosystem: Partial<Record<TrainingBaseModelType, string>> = {
 };
 
 /**
+ * A base model outside `trainingModelInfo` is a user-supplied AIR, shown as "Custom" on the
+ * submit screen and the model select.
+ */
+export function prettyTrainingBaseModel(baseModel: string | undefined | null): string | null {
+  if (!baseModel) return null;
+  return baseModel in trainingModelInfo
+    ? trainingModelInfo[baseModel as TrainingDetailsBaseModelList].pretty
+    : 'Custom';
+}
+
+/**
  * Get AI Toolkit ecosystem for a training model
  * Reads from the centralized trainingModelInfo structure.
  * Falls back to baseType mapping for custom models where

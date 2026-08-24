@@ -866,11 +866,9 @@ export default function TrainingSelectFile({
                 <Text>
                   Models are currently training{' '}
                   {modelVersion.trainingDetails?.params?.maxTrainEpochs
-                    ? `(${epochsCompletedForRun({
-                        epochs,
-                        epochOffset: (trainingResults as TrainingResultsV2 | undefined)
-                          ?.epochOffset,
-                      })}/${modelVersion.trainingDetails.params.maxTrainEpochs})`
+                    ? `(${epochsCompletedForRun(trainingResults ?? {})}/${
+                        modelVersion.trainingDetails.params.maxTrainEpochs
+                      })`
                     : '...'}
                 </Text>
                 <Text>Results will stream in as they complete.</Text>

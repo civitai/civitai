@@ -1,96 +1,117 @@
 # Training filenames / epoch numbering — review follow-ups
 
 Findings from reviewing branch `feature/training-filenames` — commit `80f6974b79` plus the
-uncommitted Review-step work.
+uncommitted Review-step work. Merged as PR #4329.
 
 Perf came back clean and is not listed: the two widened `trainingDetails` selects measured the same
 4 buffers, the training webhook path gained zero I/O, and the new client modules added no bundle
 weight (`~/utils/training` was already a value import in that chunk via `training.store.ts`).
 
+**Status:** everything answerable from the repo is done. What remains needs a decision from a
+person — the three under Open questions, plus the dead-v1-auto-label call at the bottom.
+
 ## Defects
 
-- [ ] **The what-if error log records the masked message, not the real one.**
-      `createTrainingWhatIfWorkflow` logs `e.message`. `submitWorkflow` throws
-      `throwServiceUnavailableError(ORCHESTRATOR_UNAVAILABLE_MESSAGE, error)` — a generic constant,
-      with the orchestrator's actual error preserved on `.cause`. `buildServerFaultErrorLog(e)` in
-      `src/server/logging/client.ts` exists to un-mask exactly this. As written the logging added to
-      diagnose Mage-Flow cost failures captures nothing about the failure.
-- [ ] **The same log omits `markServerFaultLogged(e)` before rethrowing**, so a server fault is
-      logged a second time by the central chokepoint — in a different dataset, so the two do not
-      dedupe by eye. `buildCentralErrorLog(e)` returns the whole shape in one call.
-- [ ] **`cost === 0` takes neither branch.** The guard is `cost == null || cost < 0` while the log
-      message reads "Orchestrator returned no cost" and the comment says "priced it at nothing".
-      Decide: widen to `<= 0`, or reword both.
-- [ ] **`epochOffset`'s comment asserts an invariant nothing enforces.** The comment on
-      `trainingResultsV2Schema` and `updateTrainingWorkflowRecords` both describe it as
-      server-stamped; the type says only `int().nonnegative().optional()`. Correct the comment, or
-      enforce it.
+- [x] **The what-if error log records the masked message, not the real one.**
+      `createTrainingWhatIfWorkflow` logged `e.message` where `submitWorkflow` throws
+      `throwServiceUnavailableError(ORCHESTRATOR_UNAVAILABLE_MESSAGE, error)` — a generic constant
+      with the orchestrator's actual error on `.cause`. Now built by `buildCentralErrorLog(e)`,
+      which un-masks the cause and picks the same client/server severity the ternary did.
+- [x] **The same log omits `markServerFaultLogged(e)` before rethrowing.** Added, guarded on
+      `classifyErrorFault(e) === 'server'` so a client-fault 4xx is not marked.
+- [x] **`cost === 0` takes neither branch.** Resolved as *reword*, not widen: `TrainingSubmit`
+      gates on the identical `!isDefined(cost) || cost < 0` and spends a zero without complaint, so
+      0 is a valid price and the guard was right. The message is now "Orchestrator returned an
+      unusable cost", and the comment records why 0 sits deliberately outside it.
+- [x] **`epochOffset`'s comment asserts an invariant nothing enforces.** Corrected rather than
+      enforced: `modelFileMetadataSchema` accepts `trainingResults` from the client on
+      `modelFile.create`/`upsert`, so an owner can seed any offset onto their own run. The comment
+      now says so. Impact is cosmetic — shifted epoch numbers on your own model.
 
-## Test gaps — each confirmed by a mutation that no test catches
+## Test gaps — each was confirmed by a mutation no test caught, and each mutation is now red
 
-- [ ] **Archive architecture segment.** Setting `architecture: null` in `getTrainingEpochArchive`
-      passes 8/8. The `getTrainingEpochArchive` fixture has no `trainingDetails`, so the segment
-      never appears in an asserted filename. The realistic regression is someone trimming the Prisma
-      select this branch widened. Fix: add `trainingDetails` to the fixture and assert `_pony_` in
-      `archiveName` and one entry.
-- [ ] **Download handler filename.** Reverting it to the old
-      `modelVersion.model.name.replace(...)` one-liner turns nothing red — and that revert
-      reintroduces the collision the feature exists to fix. Handler test belongs in
-      `src/server/__tests__/`, never under `src/pages` (Next treats every file there as a route).
-- [ ] **The what-if logging has no test at all.** Flipping the
-      `classifyErrorFault(e) === 'client' ? 'info' : 'error'` ternary is invisible, as is dropping
-      `userId`. It is the only new code on a pricing-adjacent path.
-- [ ] **Epoch `0` boundary.** Mutating `e.epochNumber >= 0` to `> 0` passes; the ingest tests only
-      ever use `[1,2,3]` and `[-1]`, so neither side of the sentinel boundary has a case.
-- [ ] **The `Math.max(0, …)` clamp in `epochsCompletedForRun` is untested.** It fires when
-      `epochOffset` exceeds the highest stored number — a continuation whose only ingested epoch is
-      the `-1` sentinel reaches it (`highest` 0, offset 10). Add that case; do not drop the clamp.
+- [x] **Archive architecture segment.** `getTrainingEpochArchive`'s fixture gained
+      `trainingDetails: { baseModel: 'pony' }` and asserts `_pony_` in `archiveName` and two
+      entries. Setting `architecture: null` now fails 1 test.
+- [x] **Download handler filename.** New `src/server/__tests__/training-epoch-download-filename.test.ts`
+      — outside `src/pages`, which Next treats entirely as routes. Asserts the `Content-Disposition`
+      filename for two architectures and for a run predating the field, plus the untrusted-host
+      refusal. Reverting to the old `model.name.replace(...)` one-liner fails 3.
+- [x] **The what-if logging has no test at all.** New
+      `src/server/services/orchestrator/training/__tests__/training-whatif-logging.test.ts` — 5 tests
+      over severity, the un-masked cause, `userId`, the fault mark, and the three cost branches.
+- [x] **Epoch `0` boundary.** `ingest([0, 1])` against an offset of 10 expects `[10, 11]`; mutating
+      `>= 0` to `> 0` swallows epoch 0 into the -1 sentinel and fails.
+- [x] **The `Math.max(0, …)` clamp in `epochsCompletedForRun`.** A continuation whose only ingested
+      epoch is the sentinel (`highest` 0, offset 10) now has a case; dropping the clamp renders
+      -10/10 and fails.
 
 ## Fragile wiring
 
-- [ ] **`TrainingSelectFile` hand-builds `{ epochs, epochOffset }`** where `UserTrainingModels` passes
-      `trainingResults` wholesale. Drop that one property and continuations display `15/10` again
-      with every test green. Pass the object wholesale.
+- [x] **`TrainingSelectFile` hand-built `{ epochs, epochOffset }`.** Now passes `trainingResults`
+      wholesale, the way `UserTrainingModels` does.
 
-## Consistency — the same value named or derived differently across screens
+## Consistency
 
-- [ ] **`maxTrainEpochs` renders as "Checkpoints"** for AI-Toolkit runs in
-      `TrainingSubmitAdvancedSettings` — deliberately, because it is not epochs there. The new
-      summary card calls it "Epochs". Set it on one screen, read it back under another name.
-- [ ] **Row labels are re-hardcoded** rather than read from `trainingSettings`, which already owns
-      them: "Batch size" vs "Train Batch Size", "Learning rate" vs "Unet LR", "Scheduler" vs
-      "LR Scheduler".
-- [ ] **The base-model pretty-name lookup now exists in eight places with five different fallbacks** —
-      `'Custom'`, `'Unknown'`, `'this model'`, the raw key, and the family key. For a custom base model the training list says
-      "Custom" and the review card says "sdxl". Extract one `prettyTrainingBaseModel(baseModel)`
-      beside `trainingModelInfo`.
-- [ ] **The continuation badge drops `sourceVersionName`.** The existing render says
-      "Epoch #12 of MyLoRA v2"; the new badge omits which run it continued from, though the field is
-      on the same object.
+- [x] **`maxTrainEpochs` renders as "Checkpoints"** for AI-Toolkit runs in
+      `TrainingSubmitAdvancedSettings`. The summary card now matches, and the schema settles which
+      side was wrong: `aiToolkitTrainingDetailsParams.epochs` is documented as the saved-checkpoint
+      count, so labelling it "Epochs" was the mislabel. Kohya's `maxTrainEpochs` stays "Epochs".
+- [x] **Row labels are re-hardcoded.** Aligned to the `trainingSettings` strings — "Train Batch
+      Size", "Unet LR", "Text Encoder LR", "LR Scheduler", and "Network Dim"/"Network Alpha" split
+      into their own rows. Still duplicated rather than imported: `trainingSettings` lives in a
+      `.tsx` component module and `run-summary` runs inside the epoch-download API route, so
+      importing it would drag React into that graph.
+- [x] **The base-model pretty-name lookup exists in eight places with five different fallbacks.**
+      `prettyTrainingBaseModel()` now lives beside `trainingModelInfo` and the review card uses it,
+      so a custom base model reads "Custom" on both screens instead of "Custom" on one and "sdxl"
+      on the other. **The other seven call sites are unconverted** — they are in the submit flow, and
+      converting them changes user-visible copy, which is a wider change than this follow-up needs.
+- [x] **The continuation badge drops `sourceVersionName`.** It now reads "Continued from epoch #12
+      of MyLoRA v2", matching the existing render, and falls back to the bare epoch when the run
+      recorded no name.
 
-## Intent — decisions, not defects
+## Answered from the repo — no longer open
+
+- [x] **"The settings used" is 10 of ~24 fields; LoRA Type is the notable omission.** LoRA Type
+      cannot discriminate anything: `loraTypes` in `src/utils/training.ts` has exactly one member,
+      `'lora'`. What the requester is telling apart — "same dataset, multiple formats" — is the base
+      model, and that is the badge. Nothing is hidden by leaving it out.
+- [x] **Does "model save names" mean the epoch download or the published file?** The epoch download.
+      The published `ModelFile` is named from the blob id (`moveAssetFromBlob` →
+      `<blobId>.safetensors`), which is globally unique and opaque — it can be *unhelpful*, but never
+      *identical*, and the report was specifically that multi-architecture training "produces
+      identical filenames". Only `<model>_epoch_N` had that property. Giving the published file a
+      meaningful name is separate and already shipped — `overrideName` (`e5573c88f6`, #2737) is
+      editable on the model-wizard version step and in the file list, and `getDownloadFilename()`
+      prefers it. It carries no architecture segment; that is the only remaining gap on that path.
+      Record: [docs/features/training-file-rename.md](features/training-file-rename.md).
+
+## Open questions — need a person, not the repo
 
 - [ ] **The version scope serves neither ticket.** Cumulative numbering alone removes the
       continuation collision; the architecture segment alone separates a multi-training batch. The
-      `V2-1284593` component addresses a third, unreported collision (two same-architecture runs on
-      one model) and costs the requested shape — the ask was `esadribicstyle_krea2`. Decide whether
-      to keep it, keep only the id, or drop it.
-- [ ] **"The settings used" is 10 of ~24 fields.** LoRA Type is the notable omission: the request is
-      about telling *formats* apart, and format is not shown in the badge or the rows.
-- [ ] **Does "model save names" mean the epoch download or the published file?** The published
-      `ModelFile` name still derives from the S3 asset path and carries no architecture. If the
-      request meant that artifact, this work targets the wrong one. One question to the requester
-      settles it.
+      `v1-1284593` component addresses a third, unreported collision — two same-architecture runs on
+      one model — and costs the requested shape: the ask was `esadribicstyle_krea2`, what ships is
+      `esadribicstyle_krea2_v1-1284593_epoch_10.safetensors`. Decide whether to keep it, keep only
+      the id, or drop it.
 - [ ] **The Mage-Flow ticket's symptom is unchanged.** The diagnostics are the correct app-side
       response to an orchestrator-side cause, but nothing user-visible moved, and there is no record
       in this repo that the orchestrator-side work was filed. The ticket now reads as addressed.
-
-## Compatibility note
-
-- [ ] `/api/v1/model-versions/mini/[id]` matches its `epoch` query param against stored numbers, and
-      answers a miss with the *newest* epoch rather than a 404. New continuations are numbered from
-      the offset, so an external caller still asking for `epoch=3` now silently receives epoch 13's
-      url and AIR. Existing data is unaffected. Confirm this is intended for a public endpoint.
+- [ ] **`/api/v1/model-versions/mini/[id]` — not live, but two bugs that must be fixed together.**
+      The endpoint answers an `epoch` miss with the *newest* epoch rather than a 404 — it returns
+      that epoch's download url and AIR with no indication it substituted. (It does not echo an
+      epoch number back; the sibling `getTrainingFileEpochNumberDetails` does, via
+      `epochNumber: epochNumber ?? …`, and its one caller is generation binding in
+      `generation.service.ts:1221` — same fallback, mislabelled result.) Renumbered continuations
+      would walk straight into both.
+      It is unreachable today only by accident: the handler does `schema.safeParse(req.query)`, and
+      `epoch` is a bare `z.number()` where `id` and `modelFileId` are both `z.coerce.number()` — so
+      `?epoch=3` is a 400 and the param cannot be supplied over HTTP at all. Verified against the
+      real schema, not read off the source.
+      **The hazard is the obvious tidy-up**: adding `.coerce` to match its neighbours silently turns
+      the fallback on for a public, `MixedAuthEndpoint` route. Decide whether the param should work,
+      and if so replace the last-epoch fallback with a 404 in the same change.
 
 ## Map contribution — not this branch's work
 

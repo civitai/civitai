@@ -52,4 +52,9 @@ describe('epochsCompletedForRun', () => {
     expect(epochsCompletedForRun({})).toBe(0);
     expect(epochsCompletedForRun({ epochs: numbered(-1) })).toBe(0);
   });
+
+  // Highest is 0 against an offset of 10 — without the clamp the readout renders -10/10.
+  it('does not go negative when the offset exceeds every stored number', () => {
+    expect(epochsCompletedForRun({ epochs: numbered(-1), epochOffset: 10 })).toBe(0);
+  });
 });

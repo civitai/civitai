@@ -154,11 +154,14 @@ describe('getTrainingEpochArchive', () => {
   const modelVersion = {
     id: 1,
     name: 'V2 (from epoch 5)',
+    trainingDetails: { baseModel: 'pony' },
     model: { userId: 10, name: 'My Cool Model!' },
     files: [{ metadata: { trainingResults: v2Results } }],
   };
 
-  it('archives every blob for the owner', async () => {
+  // The architecture segment reaches the filename only through `trainingDetails` in this select;
+  // dropping it from the select is the regression this pins.
+  it('archives every blob for the owner, named by architecture', async () => {
     findUnique.mockResolvedValue(modelVersion);
 
     const result = await getTrainingEpochArchive({ modelVersionId: 1, userId: 10 });
@@ -167,11 +170,14 @@ describe('getTrainingEpochArchive', () => {
       entries: expect.arrayContaining([
         {
           blobId: 'MODEL1.safetensors',
-          fileName: 'My_Cool_Model__V2__from_epoch_5-1_epoch_1.safetensors',
+          fileName: 'My_Cool_Model__pony_V2__from_epoch_5-1_epoch_1.safetensors',
         },
-        { blobId: 'E2S2.mp4', fileName: 'My_Cool_Model__V2__from_epoch_5-1_epoch_2_sample_2.mp4' },
+        {
+          blobId: 'E2S2.mp4',
+          fileName: 'My_Cool_Model__pony_V2__from_epoch_5-1_epoch_2_sample_2.mp4',
+        },
       ]),
-      archiveName: 'My_Cool_Model__V2__from_epoch_5-1_training.zip',
+      archiveName: 'My_Cool_Model__pony_V2__from_epoch_5-1_training.zip',
     });
     expect(createBlobArchive.mock.calls[0][0].entries).toHaveLength(5);
     expect(result.url).toContain('/archive/token');
