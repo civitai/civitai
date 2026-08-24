@@ -385,6 +385,33 @@ async function cmdAppStart(name, worktree) {
   console.log(JSON.stringify(result.data, null, 2));
 }
 
+// `tail` differs from `logs` only in that it follows. Routing --app to the one-shot printer made the
+// verb quietly mean the other one, and an agent reads that snapshot as "the app stopped producing
+// output". The /app/<name>/logs endpoint already takes `since`, so following it is the same loop.
+async function cmdAppTail(name, worktree) {
+  await ensureDaemon();
+  const query = `?worktree=${encodeURIComponent(worktree)}`;
+  let lastIndex = 0;
+
+  const poll = async () => {
+    const result = await daemonRequest(`/app/${name}/logs${query}&since=${lastIndex}`);
+    if (!result.ok) {
+      console.error('Error:', result.error || result.data?.error || JSON.stringify(result.data));
+      if (result.data?.running?.length) {
+        console.error(`${name} is running in: ${result.data.running.join(', ')}`);
+      }
+      process.exit(1);
+    }
+    for (const log of result.data.logs) {
+      console.log(`[${log.level}] ${log.message}`);
+      lastIndex = log.index;
+    }
+  };
+
+  await poll();
+  setInterval(poll, 1000);
+}
+
 async function cmdApp(name, subcmd, worktreeArg) {
   await ensureDaemon();
   const cwd = worktreeArg ? resolve(worktreeArg) : process.cwd();
@@ -854,7 +881,23 @@ const command = args[0];
 const APP_FLAG_VERBS = new Set(['start', 'logs', 'tail', 'stop', 'restart']);
 const appFlag = APP_FLAG_VERBS.has(command) ? appFromFlags(args.slice(1)) : null;
 // `stop <worktree> --app moderator` must mean the same tree as `start <worktree> --app moderator`.
-const positional = args.slice(1).find((a) => !a.startsWith('--') && a !== appFlag);
+//
+// Skipped by POSITION, not by value. Excluding the flag's value by equality dropped the worktree
+// whenever its path happened to equal the app name — `stop moderator --app moderator`, naming a
+// worktree directory after the app in it, which is the obvious way to name one — and silently
+// targeted the cwd instead.
+const positional = (() => {
+  const rest = args.slice(1);
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i] === '--app' || rest[i] === '--prod' || rest[i] === '--dev') {
+      i++;
+      continue;
+    }
+    if (rest[i].startsWith('--')) continue;
+    return rest[i];
+  }
+  return undefined;
+})();
 const arg1 = args[1];
 const arg2 = args[2];
 
@@ -874,7 +917,7 @@ switch (command) {
     else cmdLogs(arg1, arg2);
     break;
   case 'tail':
-    if (appFlag) cmdApp(appFlag, 'logs', positional);
+    if (appFlag) cmdAppTail(appFlag, positional ? resolve(positional) : process.cwd());
     else cmdTail(arg1);
     break;
   case 'stop':

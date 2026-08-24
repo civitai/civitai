@@ -12,6 +12,7 @@
 
 import { execFileSync } from 'child_process';
 import { readdirSync, lstatSync, rmdirSync, rmSync, unlinkSync, existsSync } from 'fs';
+import { samePath } from './paths.mjs';
 import { resolve, sep } from 'path';
 
 function git(args, cwd) {
@@ -186,19 +187,6 @@ function sessionsIn(worktreePath, running) {
 // worktree you are standing in reads as the thing to protect.
 export function primaryOf(trees, fallback) {
   return trees.length ? trees[0].path : resolve(fallback);
-}
-
-// Windows preserves whatever drive-letter casing the caller typed, and git prints its own. The
-// primary-worktree refusal below is the guard that stops `wt rm` deleting a local main, so it must
-// not be defeated by `c:\dev\...` vs `C:/Dev/...`.
-//
-// win32-only, matching daemon.mjs's samePath. An unconditional lowercase would make two genuinely
-// different trees compare equal on a case-sensitive filesystem, and `wt rm --stop-server` would then
-// stop the other one's servers.
-export function samePath(a, b) {
-  const x = resolve(a);
-  const y = resolve(b);
-  return process.platform === 'win32' ? x.toLowerCase() === y.toLowerCase() : x === y;
 }
 
 export async function inspect(primary, daemonRequest) {

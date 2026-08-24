@@ -23,6 +23,7 @@ import { fileURLToPath } from 'url';
 import { randomBytes, createHash } from 'crypto';
 import { access } from 'fs/promises';
 import { isPortFree } from './port-probe.mjs';
+import { samePath, canonicalPath } from './paths.mjs';
 import { parsePort, resolveDaemonPort } from './daemon-port.mjs';
 import { TestQueue } from './test-queue.mjs';
 import {
@@ -240,13 +241,6 @@ function parseArgs(argv = process.argv.slice(2)) {
 // Where the port scan starts. Set once from the parsed args so the session-side code paths — a
 // branch switch restarting itself, a session moved off a stolen port — can reach it too.
 let baseDevPort = DEFAULT_BASE_DEV_PORT;
-
-// Windows hands back whatever drive-letter and casing the caller typed.
-function samePath(a, b) {
-  return process.platform === 'win32'
-    ? resolve(a).toLowerCase() === resolve(b).toLowerCase()
-    : resolve(a) === resolve(b);
-}
 
 // Generate session ID
 function generateSessionId() {
@@ -1495,14 +1489,16 @@ class AuthHub {
     // worktree — env-modes.mjs lists it in PROD_ONLY_GROUPS for exactly that reason — so a daemon
     // launched from a worktree must still run the primary's copy, which is also the only one with
     // the gitignored apps/auth/.env beside it.
+    // `path` FIRST — requiredEnvPath is derived from it below, so a subclass pointing at a different
+    // root must overwrite this before that. A subclass varies these four; the rest is identical.
     this.path = resolve(primaryCheckout, hubPath);
     this.port = port;
-    // Subclasses vary these three; everything else about running a Vite app is identical.
     this.label = 'Auth hub';
     this.requiredEnvPath = resolve(this.path, '.env');
     this.envPaths = [];
     this.process = null;
     this.startPromise = null;
+    this.spawnedAtMs = null;
     this.status = 'stopped'; // stopped | starting | running | crashed | error | disabled
     this.ready = false;
     this.readyAt = null;
@@ -1556,6 +1552,10 @@ class AuthHub {
   // clear.
   start() {
     if (this.startPromise) return this.startPromise;
+    // Set here rather than in #start(), which does not reach its own assignment until after the path
+    // probes — a caller inspecting status in that window would see `stopped` for a start already
+    // under way. Keeping it in the class also means nothing outside has to write the field.
+    this.status = 'starting';
     this.startPromise = this.#start().finally(() => {
       this.startPromise = null;
     });
@@ -1648,6 +1648,7 @@ class AuthHub {
       return this.getStatus();
     }
     this.process = proc;
+    this.spawnedAtMs = Date.now();
 
     this.startedAt = new Date().toISOString();
     this.stoppedAt = null;
@@ -1708,6 +1709,14 @@ class AuthHub {
   }
 
   async stop() {
+    // A start sitting in its path probes has `this.process === null`, so the early return below would
+    // report `stopped` for a process that is about to exist — and the handler then deletes the map
+    // entry while `#start()` carries on and spawns. That leaves a live server on a --strictPort port
+    // with no entry: uncounted by getUsedPorts, unlisted by `app` and `status`, and unreachable by
+    // stopAppSessions at shutdown. Exactly the orphan that function exists to prevent, and reachable
+    // by `start --app x` followed promptly by `stop --app x`.
+    if (this.startPromise) await this.startPromise.catch(() => {});
+
     const proc = this.process;
     if (!proc) {
       this.status = 'stopped';
@@ -1715,8 +1724,18 @@ class AuthHub {
       return this.getStatus();
     }
 
+    // See SPAWN_SETTLE_MS: killing the tree before the shell has spawned its node child orphans the
+    // child. Only a stop that lands inside that window waits, and it waits only the remainder.
+    const sinceSpawn = this.spawnedAtMs ? Date.now() - this.spawnedAtMs : Infinity;
+    if (sinceSpawn < SPAWN_SETTLE_MS) {
+      const wait = SPAWN_SETTLE_MS - sinceSpawn;
+      this.addLog('info', `${this.label} spawned ${sinceSpawn}ms ago — settling ${wait}ms before kill`);
+      await new Promise((r) => setTimeout(r, wait));
+    }
+
     this.addLog('info', `Stopping ${this.label}...`);
     this.dbHost = null;
+    this.spawnedAtMs = null;
     // Detach eagerly so a subsequent start() never sees a stale process (the exit handler is guarded on
     // identity, so the late exit of this proc won't touch the fresh one).
     this.process = null;
@@ -1724,8 +1743,8 @@ class AuthHub {
     this.status = 'stopped';
     this.stoppedAt = new Date().toISOString();
 
-    return new Promise((resolve) => {
-      proc.once('exit', () => resolve(this.getStatus()));
+    await new Promise((resolve) => {
+      proc.once('exit', resolve);
       try {
         if (process.platform === 'win32') {
           spawn('taskkill', ['/pid', String(proc.pid), '/f', '/t'], { shell: true });
@@ -1733,8 +1752,22 @@ class AuthHub {
           process.kill(-proc.pid, 'SIGKILL');
         }
       } catch (e) {}
-      setTimeout(() => resolve(this.getStatus()), 800);
+      setTimeout(resolve, 800);
     });
+
+    // The port coming back is the only evidence the server is really gone — `exit` fires for the
+    // shell, which is not what was listening. An orphan that survives this is one nothing in the
+    // daemon can reach, so say so with the port in the message rather than reporting a clean stop.
+    const deadline = Date.now() + STOP_PORT_VERIFY_MS;
+    while (Date.now() < deadline) {
+      if (await isPortFree(this.port)) return this.getStatus();
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    this.lastError =
+      `${this.label} stopped but port ${this.port} is still held — a child may have outlived the ` +
+      `kill. Nothing tracks it; find and kill whatever is listening on ${this.port}.`;
+    this.addLog('error', this.lastError);
+    return this.getStatus();
   }
 
   async restart() {
@@ -1847,8 +1880,7 @@ function appSessionKey(worktree, name) {
   // `C:\Dev\...` from one agent and `c:\dev\...` from another. findSessionByWorktree already treats
   // those as one tree; a raw string key here would treat them as two, put two vite processes on the
   // same worktree, and leave the first addressable by nothing while it holds a port.
-  const canonical = process.platform === 'win32' ? worktree.toLowerCase() : worktree;
-  return `${canonical}::${name}`;
+  return `${canonicalPath(worktree)}::${name}`;
 }
 
 // Every app's preferred port is held back, not just the taken ones: moderator drifting off 5174
@@ -1922,6 +1954,19 @@ function getUsedPorts() {
 // URLs. Measured on this box, a killed listener releases the socket 630-668 ms after taskkill is
 // spawned, and stop() waits at most 500 ms — so the naive probe reads "held" on every restart. Wait
 // the port out instead, and move only when it stays held long past any plausible teardown.
+// `taskkill /t` kills the process tree that exists WHEN IT RUNS. `pnpm exec vite` is a shell that
+// spawns node a moment later, so a kill issued in the first couple of seconds takes the shell and
+// leaves the node child to start and bind — a live server on a --strictPort port that no map entry,
+// no `status` row and no shutdown path can reach.
+//
+// Measured on this box, stop issued N seconds after start: 0s orphans every time, 2s and 5s are
+// clean. 3000 buys margin over the observed boundary without making an ordinary stop feel slow —
+// only a stop issued seconds after its own start waits at all.
+const SPAWN_SETTLE_MS = 3000;
+// After the kill, how long to keep checking that the port actually came back. Nothing here can kill
+// a grandchild it has no pid for, so this exists to make a residual orphan LOUD rather than silent.
+const STOP_PORT_VERIFY_MS = 5000;
+
 const PORT_RELEASE_TIMEOUT = 8000;
 const PORT_RELEASE_POLL = 250;
 
@@ -2260,6 +2305,10 @@ async function main() {
               // `status === 'running'` is not enough, and sessionIsBusy's own comment says why: a
               // session that is coming up reads `starting`. A live `process` is checked too, because
               // proc.on('error') sets status without clearing it.
+              //
+              // sessionIsBusy reads four terms and an AppSession only ever sets two, so this
+              // degenerates to `running || starting`. That is the right answer today; a term added
+              // there for DevSession would silently not apply here.
               if (current && (sessionIsBusy(current) || current.process)) {
                 reused = current;
                 return null;
@@ -2271,9 +2320,6 @@ async function main() {
                 (!current?.process && current?.port) ||
                 (await findAvailablePort(APP_REGISTRY[name].preferredPort, appReservedPorts(name)));
               const fresh = new AppSession(name, resolvedWorktree, port, appEnvChain(resolvedWorktree, name));
-              // Set before the lock is released: `start()` is awaited outside it, and an entry left
-              // reading `stopped` in between is one a third caller would treat as inheritable.
-              fresh.status = 'starting';
               appSessions.set(key, fresh);
               return fresh;
             });
@@ -2992,7 +3038,6 @@ export {
   loadEnvChain,
   primaryCheckout,
   primaryResolution,
-  samePath,
   withAppAllocation,
   findSessionByWorktree,
   getUsedPorts,

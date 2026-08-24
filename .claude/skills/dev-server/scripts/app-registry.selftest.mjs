@@ -16,7 +16,9 @@ import {
   primaryResolution,
   withAppAllocation,
 } from './daemon.mjs';
-import { primaryOf, samePath } from './worktree.mjs';
+import { primaryOf } from './worktree.mjs';
+// From the leaf module — the single definition that daemon.mjs and worktree.mjs now both import.
+import { samePath, canonicalPath } from './paths.mjs';
 
 const failures = [];
 let checks = 0;
@@ -115,6 +117,9 @@ if (process.platform === 'win32') {
   check('samePath is exact off win32', samePath(upper, lower), false);
 }
 check('samePath still separates genuinely different trees', samePath(upper, upper + 'y'), false);
+// The Map key and the comparator have to agree, or appSessionKey and samePath disagree about the
+// same two paths — which is the bug this PR fixed in four places.
+check('canonicalPath agrees with samePath', canonicalPath(upper) === canonicalPath(lower), samePath(upper, lower));
 check('appSessionKey separates apps in one worktree', appSessionKey(upper, 'a') === appSessionKey(upper, 'b'), false);
 
 // --- the allocation lock ---
