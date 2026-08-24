@@ -104,7 +104,7 @@ export function defineWebhookEndpoint<S extends z.ZodType, E extends RequestEven
 ) {
   return build(def, { kind: 'webhook' }, (event) => {
     if (event.locals.tokenClient !== 'webhook')
-      error(401, 'Send WEBHOOK_TOKEN as `?token=` or `Authorization: Bearer <token>`.');
+      error(401, 'Send a valid service token as `?token=` or `Authorization: Bearer <token>`.');
   });
 }
 
