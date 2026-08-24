@@ -35,6 +35,15 @@ const PROD_CONFIGURED = {
   orgId: 'org',
   datastream: 'civitai-errors',
   podName: 'pod-test',
+  /**
+   * These suites are about the TRANSPORT — ordering, containment, the timeout race, the shared
+   * failure counter — not about which dataset names exist. The fixtures below use two invented
+   * datastreams (`civitai-errors`, `some-other-stream`) precisely so they cannot be confused with
+   * real ones, so the provisioned-dataset allowlist is overridden here to admit them. Without this
+   * every assertion in the file would be measuring the guard in ../client rather than the behaviour
+   * it names. The guard's own coverage lives in ./provisionedDatastreams.test.ts.
+   */
+  provisionedDatastreams: new Set(['civitai-errors', 'some-other-stream']) as ReadonlySet<string>,
 } as const;
 
 /**
