@@ -108,9 +108,12 @@ function declineMessage(details: Record<string, unknown>) {
   if (!paidPlacement(details)) return `${declined}.`;
 
   const fee = Number(details.feeToOwner ?? 0);
-  if (details.feeWaived || !(fee > 0)) return `${declined}. Your Buzz has been refunded.`;
+  const refunded = details.refundPaid ? ' Your Buzz has been refunded.' : '';
+  const rest = details.refundPaid ? '; the rest has been refunded' : '';
 
-  return `${declined}. They kept ${fee} Buzz; the rest has been refunded.`;
+  if (details.feeWaived || !(fee > 0)) return `${declined}.${refunded}`;
+
+  return `${declined}. They kept ${fee} Buzz${rest}.`;
 }
 
 export const placementNotifications = createNotificationProcessor({
@@ -542,7 +545,7 @@ export const placementNotifications = createNotificationProcessor({
           // the creator was busy or away, and what a placer needs from this
           // sentence is what happened to their Buzz, not whose fault it was.
           message: `Your sticker placement on ${details.ownerUsername}'s image expired.${
-            paidPlacement(details) ? ' Your Buzz has been refunded.' : ''
+            paidPlacement(details) && details.refundPaid ? ' Your Buzz has been refunded.' : ''
           }`,
           url: plain,
         };
@@ -579,6 +582,27 @@ export const placementNotifications = createNotificationProcessor({
             'feeToOwner', (
               SELECT pt.amount FROM "PlacementTransaction" pt
               WHERE pt."placementId" = p.id AND pt.kind = 'feeToOwner'
+                AND pt."transactionId" IS NOT NULL
+            ),
+            -- 🔴 Whether the placer's money has actually MOVED, not whether it
+            -- was planned. settlePlacement writes the status flip and the payout
+            -- legs in one transaction with transactionId NULL on every leg; the
+            -- Buzz calls happen afterwards, outside it, and runLeg can decline
+            -- the lock, fail, or exhaust its attempts and stop. The
+            -- notification job runs every minute off the committed row, so
+            -- without this "your Buzz has been refunded" is a claim about a
+            -- movement nobody has observed -- and on a stranded leg it stays
+            -- false, with the placer's balance as the thing disagreeing.
+            --
+            -- One flag for both placer-directed kinds. A partial payout (the
+            -- principal receipted, the fee refund not) reads as refunded, which
+            -- is the direction that errs toward saying less rather than saying
+            -- something false.
+            'refundPaid', EXISTS (
+              SELECT 1 FROM "PlacementTransaction" pt
+              WHERE pt."placementId" = p.id
+                AND pt.kind IN ('principalToPlacer', 'feeToPlacer')
+                AND pt."transactionId" IS NOT NULL
             )
           ) as "details"
         FROM "Placement" p
