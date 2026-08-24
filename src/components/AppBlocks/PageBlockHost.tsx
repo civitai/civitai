@@ -224,8 +224,13 @@ const REVIEW_NACK_MESSAGE = 'not available in review preview';
  * a narrower window. Below the floor that is the right call (a scrollbar beats
  * unreachable content), so the number's only job is to make the band as small as
  * it can be while still catching the degenerate case. Raising it widens the
- * population that sees two scrollbars; `PageBlockHostScrollFit.browser.test.tsx`
- * bounds it on BOTH sides for that reason.
+ * population that sees two scrollbars, so the value is bounded on BOTH sides —
+ * in `__tests__/pageRunScrollContract.test.ts` (the GATING node suite; that is
+ * the copy that can block a merge) and again in
+ * `PageBlockHostScrollFit.browser.test.tsx` (report-only, which is why it is not
+ * the only one). The NUMBERS deliberately live in those tests, not here: a band
+ * declared beside the value it bounds can be moved in the same edit. What lives
+ * here is the ARITHMETIC that justifies them.
  *
  * THE ARITHMETIC, which decides who lands in the band:
  *
@@ -398,12 +403,13 @@ export interface PageBlockHostProps {
    *     Correct ONLY for a mounter sitting inside a SCROLLING ancestor that does
    *     not otherwise bound its height: the dev tunnel (`/apps/dev/<blockId>`,
    *     default `AppLayout` → `ScrollArea`) and the mod-review preview (inside a
-   *     modal). Without it the host would collapse to the chrome bar and the
-   *     iframe would be sized only by `FILL_MIN_HEIGHT_PX` — measured 300px of
-   *     host, 31px of chrome, 269px of iframe, regardless of how much room the
-   *     page actually has. Usable, but no longer FILLING anything.
+   *     modal). Without it those hosts would be sized only by
+   *     `FILL_MIN_HEIGHT_PX` — measured 300px of host, 31px of chrome, 269px of
+   *     iframe, regardless of how much room the page actually has. Usable, but
+   *     no longer FILLING anything.
    *
-   *   'fill' — the host fills its parent EXACTLY (`flex: 1; min-height: 0`) and
+   *   'fill' — the host fills its parent (`flex: 1`, floored at
+   *     `FILL_MIN_HEIGHT_PX`) and
    *     claims no viewport-derived height of its own. Requires the mounter's
    *     ancestor chain to already bound the height — i.e. a page declared
    *     `Page(…, { scrollable: false })`, whose `AppLayout` branch is

@@ -123,13 +123,14 @@ describe('the run page and its host agree on who owns the height', () => {
     const fillFit = /\bfit=(["']fill["']|\{\s*['"]fill['"]\s*\})/.test(src);
 
     // The equivalence, not two independent presence checks. Half-reverting either
-    // one regresses the page in a DIFFERENT direction (a fixed floor-height slab
-    // / a clipped app — see this file's header), so this is what has to fail.
+    // one regresses the page in a DIFFERENT direction (see this file's header —
+    // neither direction is clipping), so this is what has to fail.
     expect(
       nonScrolling === fillFit,
       `\`scrollable: false\` (${nonScrolling}) and \`fit="fill"\` (${fillFit}) are a ` +
-        'co-requisite on the run page — shipping one without the other replaces the ' +
-        'double scrollbar with a floor-height slab or a clipped app. See this file’s header.'
+        'co-requisite on the run page — drop `fit="fill"` and the double scrollbar ' +
+        'comes back (the page wrapper scrolls the excess); drop `scrollable: false` and ' +
+        'the host becomes a fixed floor-height slab. See this file’s header.'
     ).toBe(true);
   });
 
@@ -180,9 +181,10 @@ describe('the run page and its host agree on who owns the height', () => {
    * item to resolve against, and its `overflowY: 'auto'` is the scroll container
    * of last resort that makes `FILL_MIN_HEIGHT_PX` reachable instead of clipped.
    * Reverting it to the original `{ width: '100%' }` passed BOTH suites in the
-   * pre-merge sweep while letterboxing the iframe to its ~150px intrinsic
-   * height — the browser test cannot see it because that test builds its own
-   * fixture wrapper rather than importing the Next page.
+   * pre-merge sweep while leaving the host sized only by its floor — measured
+   * 300px host / 31px chrome / 269px iframe, whatever the viewport. The browser
+   * test cannot see it because that test builds its own fixture wrapper rather
+   * than importing the Next page.
    */
   it('pins the run page wrapper — the third leg the browser test structurally cannot see', () => {
     const src = code(read(RUN_PAGE));
@@ -299,8 +301,14 @@ describe('the run page and its host agree on who owns the height', () => {
    * suite still measures the CONSEQUENCE (a real host, laid out, at two viewport
    * sizes); this pins the DECISION so a merge cannot quietly change it.
    *
-   * The bounds and the arithmetic behind them live on the constant's own doc
-   * comment — deliberately not restated here, so there is one place to correct.
+   * 🔴 THE BOUNDS ARE DELIBERATELY LITERALS HERE, NOT READ FROM THE SOURCE. A
+   * band imported from (or regexed out of) `PageBlockHost.tsx` would be graded
+   * against the same file it bounds, so a single edit could move the value and
+   * its own limits together — the self-referential trap this whole guard exists
+   * because of. The ARITHMETIC that justifies them lives on the constant's doc
+   * comment; the NUMBERS live here (gating) and in
+   * `PageBlockHostScrollFit.browser.test.tsx` (report-only). Both must admit a
+   * value, so the tighter pair wins and drift is fail-safe.
    */
   it('`FILL_MIN_HEIGHT_PX` stays inside its documented band — in the BLOCKING tier', () => {
     const declared = /export const FILL_MIN_HEIGHT_PX = (\d+);/.exec(code(read(HOST)))?.[1];

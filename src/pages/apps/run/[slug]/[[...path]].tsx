@@ -217,8 +217,9 @@ function AppPage(props: PageProps) {
           `AppLayout`'s non-scrolling `<main>` (this page declares
           `scrollable: false` below), so this wrapper has to GROW rather than sit
           at its content height. A plain block would leave `PageBlockHost`'s
-          `flex: 1` resolving against an auto-height parent, letterboxing the
-          iframe down to its ~150px intrinsic replaced-element height.
+          `flex: 1` resolving against an auto-height parent, leaving the host
+          sized only by `FILL_MIN_HEIGHT_PX` — measured 300px of host, 31px of
+          chrome, 269px of iframe, at every viewport width.
           `minHeight: 0` defeats the flex `min-height: auto` floor so the chain
           can shrink to the viewport instead of pushing past it.
 
@@ -253,13 +254,23 @@ function AppPage(props: PageProps) {
           // options below. `fit="fill"` makes the host claim no height of its
           // own, which needs an ancestor chain that already bounds it; the
           // default scrolling layout does not, so shipping either half alone
-          // regresses this page, in OPPOSITE directions — and a previous round
-          // of this comment had them the wrong way round. Dropping `fill` leaves
-          // the host claiming `100dvh - 60px` inside the `overflow-hidden`
-          // chain, so the bottom of the app is CLIPPED with nothing to scroll.
-          // Dropping `scrollable: false` selects the `ScrollArea` branch, which
-          // bounds nothing, so `flex: 1` has nothing to resolve against and the
-          // host is sized only by its floor.
+          // regresses this page, in OPPOSITE directions. Both measured, not
+          // reasoned — this comment has now been wrong in BOTH directions, once
+          // by guessing and once by "correcting" a claim that was already right:
+          //
+          //   Drop `fill` → the host claims `100dvh - 60px` again. The
+          //   `overflow-hidden` chain sits ABOVE this wrapper, and this wrapper
+          //   is `overflowY: 'auto'`, so the excess is SCROLLED, not clipped:
+          //   a page scrollbar beside the block's own — the exact bug this PR
+          //   removes. (Measured 708px of host in a 600px wrapper,
+          //   `USER_SCROLLABLE=true`.)
+          //
+          //   Drop `scrollable: false` → the `ScrollArea` branch bounds nothing,
+          //   so `flex: 1` has nothing to resolve against and the host is sized
+          //   only by `FILL_MIN_HEIGHT_PX` — a fixed slab, whatever the viewport.
+          //
+          // Neither is clipping. Nothing in this layout clips, because this
+          // wrapper can always scroll.
           fit="fill"
           sandbox={sandbox}
           trustTier={trustTier}

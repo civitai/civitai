@@ -217,11 +217,13 @@ function renderInScrollChain(fit: 'viewport' | 'fill', containerHeight: number) 
  * 90 desktop / 50 mobile) cannot shrink, so on a short viewport the app absorbs
  * the entire shortfall.
  *
- * `available` is what is left for the page after that chrome. At a phone in
- * landscape (~360 CSS px) or a 1366×768 laptop at 200% zoom (~325 CSS px of `innerHeight`, NOT 768/2 — the
- * panel-height error corrected on `FILL_MIN_HEIGHT_PX`) it
- * lands near 150px — far too little to use, and with `overflow-hidden` above
- * there would be nothing to scroll to reach the rest.
+ * `available` is what is left for the page after that chrome. A phone in
+ * landscape (~360 CSS px) lands near 150px — which is the `available = 153` the
+ * tests below use. A 1366×768 laptop at 200% zoom lands LOWER, around 86–118:
+ * its `innerHeight` is ~325, not 768/2 = 384 (the panel-height error corrected
+ * on `FILL_MIN_HEIGHT_PX`; the old 384 is where a second "~150px" came from).
+ * Either way it is far too little to use, and with `overflow-hidden` above there
+ * would be nothing to scroll to reach the rest.
  */
 function renderInNoScrollChain(available: number) {
   return renderWithProviders(
