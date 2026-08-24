@@ -504,9 +504,14 @@ export const placementNotifications = createNotificationProcessor({
    *
    * Covers free placements as well as paid, unlike the pending pair, which split
    * because their messages quote an amount and a free row's is 0. The branches
-   * here choose their own sentence about money from `free` and `feeWaived`, so a
-   * free placement is never told about Buzz that did not move and one type still
-   * serves both.
+   * here choose their own sentence about money from `amount`, `feeWaived` and
+   * `refundPaid` -- NOT from `free`, which is a column on the row and is not in
+   * this payload -- so a free placement is never told about Buzz that did not
+   * move and one type still serves both.
+   *
+   * `refundPaid` is a receipt rather than a plan. See the subquery that builds
+   * it: a settled row's payout legs exist before the Buzz calls do, so a refund
+   * sentence derived from the status alone can be permanently false.
    *
    * An `auto` space approves at the call site, so its placer gets this seconds
    * after placing, confirming something they watched happen. Left that way on
