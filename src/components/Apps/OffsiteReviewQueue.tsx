@@ -46,7 +46,7 @@ import {
   ReasonGatedSubmitButton,
   reasonMeetsMin,
 } from '~/components/Apps/ReasonGatedActionModal';
-import { STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
+import { EMBEDDED_KIND_LABEL, STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
 import { getOffsiteReviewChecklist } from '~/components/Apps/offsiteReviewChecklist';
 import {
   assetSlotDriftLabel,
@@ -572,8 +572,7 @@ export function OffsiteReviewModalBody({
     <Stack gap="md">
       {isOnsite && (
         <Text size="xs" c="dimmed" data-testid="apps-offsite-onsite-note">
-          Listing media update — the on-site app’s media (icon / cover / screenshots) changed.
-          Content-only review; the media must not exceed the app’s rating.
+          {`Listing media update — the ${EMBEDDED_KIND_LABEL} app’s media (icon / cover / screenshots) changed. Content-only review; the media must not exceed the app’s rating.`}
         </Text>
       )}
       <Group gap="xs">

@@ -103,9 +103,13 @@ describe('action metadata', () => {
     expect(listingModActionLabel('purge')).toBe('Purge');
   });
 
-  it('kind chip distinguishes external vs on-site', () => {
-    expect(listingKindChip('offsite')).toEqual({ label: 'external', color: 'grape' });
-    expect(listingKindChip('onsite')).toEqual({ label: 'on-site', color: 'blue' });
+  // 🔴 THIS CHIP WAS A THIRD, DIVERGENT KIND-LABEL IMPLEMENTATION — lowercase
+  // `'external'` / `'on-site'`, hardcoded, while every other surface said something
+  // else. It now resolves from `listingKindLabels`; the words are pinned literally
+  // here, and the file is enrolled in `standaloneWordingCallSites.test.ts`.
+  it('kind chip distinguishes the two kinds, in the ONE vocabulary', () => {
+    expect(listingKindChip('offsite')).toEqual({ label: 'Standalone', color: 'grape' });
+    expect(listingKindChip('onsite')).toEqual({ label: 'Embedded', color: 'blue' });
   });
 });
 
