@@ -158,19 +158,38 @@ const enforceAppBlocksAuthorFlag = middleware(async ({ ctx, next }) => {
  * proc is annotated. Mirrors `blocks.router` `startDevTunnel`/`stopDevTunnel`
  * (`AppBlocksDevTunnel`).
  *
- * 🔴 THE ONE PLACE THAT CLAIM NEEDS A QUALIFIER, and the earlier wording ("no mod-only or
- * CROSS-USER proc is annotated") did not carry it. Several of these procs reach the
- * service through `app-listing-assets::loadOwnedListing`, which SHORT-CIRCUITS FOR
- * MODERATORS — disagreement D1 in `app-access.call-site-ledger.test.ts`, where sibling
- * gates deliberately disagree about the mod bypass. So for a caller who IS a moderator,
- * `getAssets` (and the already-annotated media procs) are cross-listing reads, and this
- * meta lets a THIRD-PARTY APP the moderator authorised with `AppBlocksSubmit` inherit
- * that reach — where before it got a 403. It is delegated moderator authority, not
- * widened authority, and it is the intended consequence of admitting the CLI; but it is
- * a real difference from a moderator using their own session, so it is written down
- * rather than left to be discovered. `updateListing` / `updateRevisionDraft` go through
- * `offsite-listing::loadOwnedEditableListing`, which has NO mod override, so they do not
- * have this property.
+ * 🔴 THAT CLAIM NEEDS A QUALIFIER AND THE EARLIER WORDING ("no mod-only or CROSS-USER
+ * proc is annotated") DID NOT CARRY IT: **the gate behind this set is NOT UNIFORM**, so
+ * do not reason about one member from another. Derived by tracing every member (not by
+ * pattern), the three shapes are:
+ *
+ *   1. MOD-BYPASSING, via `app-listing-assets::loadOwnedListing`, which short-circuits
+ *      the ownership check for `user.isModerator` — disagreement D1 in
+ *      `app-access.call-site-ledger.test.ts`, where sibling gates deliberately disagree
+ *      about the bypass. Reached by `setIcon`, `setCover`, `addScreenshot`,
+ *      `reorderScreenshots` (directly / via `resolveOwnerAssetEditTarget`) and by
+ *      `updateScreenshotCaption`, `removeScreenshot` (via `resolveOwnerScreenshotTarget`).
+ *      `getAssetScanStatuses` carries its OWN equivalent (`user.isModerator ? {} :
+ *      { userId: user.id }`). Seven members.
+ *   2. NO LISTING GATE AT ALL, caller-bound: `persistAssetImage`,
+ *      `ingestAssetFromDataUri` create an `Image` owned by the caller and take no
+ *      listing id. No bypass to have.
+ *   3. NO MOD OVERRIDE, via `offsite-listing::loadOwnedEditableListing`:
+ *      `getMyListingForEdit`, `getMyListingForApp`, `beginListingRevision`,
+ *      `submitListingRevision`, `updateListing`, `updateRevisionDraft`.
+ *
+ * For a caller who IS a moderator, the shape-1 members are cross-listing, so this meta
+ * lets a THIRD-PARTY APP the moderator authorised with `AppBlocksSubmit` inherit that
+ * reach — where an un-annotated proc would have 403'd it. That is delegated moderator
+ * authority rather than widened authority, and it is the accepted cost of admitting the
+ * CLI on the media procs; it is written down rather than left to be discovered.
+ *
+ * 🔴 IT IS ALSO WHY `getAssets` IS **NOT** IN THIS SET. It was annotated during the
+ * `civitai app doctor` work and the annotation was withdrawn as a product decision: it is
+ * shape 1, and it is a pure READ whose whole payload was already reachable from procs
+ * already in this set, so it carried the bypass and bought nothing. New annotations are
+ * decided on that basis — what the proc ADDS, weighed against which gate it sits behind —
+ * never by copying a sibling's `.meta(...)`.
  */
 const listingMediaCliScope = { requiredScope: TokenScope.AppBlocksSubmit } as const;
 
@@ -346,13 +365,22 @@ export const appListingsRouter = router({
   /**
    * Owner/mod read of a listing's current assets (creator dashboard).
    *
-   * CLI-reachable (`listingMediaCliScope`): this is the per-asset half of `civitai app
-   * doctor` — `completeness`, `hasBlockedAsset`, `hasPendingScan` and each asset's
-   * `scanStatus`/`nsfwLevel`. Owner-bound in the service (`loadOwnedListing`), so the meta
-   * widens the CREDENTIAL, not the authority.
+   * 🔴 DELIBERATELY **NOT** `listingMediaCliScope`, and this is the note that keeps it
+   * that way. It was annotated during the `civitai app doctor` work and the annotation
+   * was then withdrawn as a product decision: its service gate
+   * ({@link loadOwnedListing}) SHORT-CIRCUITS for moderators, so admitting a scoped OAuth
+   * token here would let a third-party app a moderator authorised inherit that
+   * cross-listing reach. `app doctor` does not need it — every datum it wanted is already
+   * on annotated procs (`listMine.problems[]` for the advisory + `hasBlockedAsset` /
+   * `hasPendingScan` / completeness equivalents; `getMyListingForEdit` /
+   * `getMyListingForApp` for per-screenshot `{id, imageId, order, caption}`;
+   * `getAssetScanStatuses` for per-image scan state). Re-annotating this proc needs the
+   * mod-bypass question answered first, not a copy of a sibling's `.meta(...)`.
+   *
+   * `app-listings.router.cli-scope.test.ts` asserts a scoped OAuth token is REFUSED here,
+   * so the exclusion is behaviourally pinned rather than left to this comment.
    */
   getAssets: protectedProcedure
-    .meta(listingMediaCliScope)
     .use(enforceAppBlocksAuthorFlag)
     .input(listingAssetsQuerySchema)
     .query(async ({ ctx, input }) => {

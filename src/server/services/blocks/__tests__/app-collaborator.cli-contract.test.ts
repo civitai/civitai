@@ -139,23 +139,32 @@ describe('CLI scope annotations — the reachable set has not shrunk', () => {
     expect(annotations.length).toBeGreaterThan(0);
   });
 
-  it('🔴 all 17 CLI-reachable owner-scoped listing procs remain annotated', () => {
+  it('🔴 all 16 CLI-reachable owner-scoped listing procs remain annotated', () => {
     // An exact count, not a floor: losing one silently 403s every released CLI on that
     // command (an un-annotated proc implicitly requires TokenScope.Full, which the
     // scoped CLI token is not).
     //
-    // 13 → 17 when `civitai app doctor` landed: `listMine` + `getAssets` (the problems
-    // READS) and `updateListing` + `updateRevisionDraft` (the FIXES for
-    // empty-description / empty-tagline / empty-category). The set stopped being
-    // "listing MEDIA" at that point — the membership rule is written at the constant's
-    // declaration in the router, and each proc states its own verdict at its own site.
+    // 13 → 16 when `civitai app doctor` landed: `listMine` (the problems READ) and
+    // `updateListing` + `updateRevisionDraft` (the FIXES for empty-description /
+    // empty-tagline / empty-category). The set stopped being "listing MEDIA" at that
+    // point — the membership rule is written at the constant's declaration in the
+    // router, and each proc states its own verdict at its own site.
+    //
+    // 🔴 IT WAS BRIEFLY 17. `getAssets` was annotated in the same change and the
+    // annotation was WITHDRAWN as a product decision: its service gate
+    // (`app-listing-assets::loadOwnedListing`) short-circuits for moderators, and it
+    // carried nothing `app doctor` could not already read from procs in this set. An
+    // exact count going DOWN is exactly what this assertion is for — the withdrawal had
+    // to be a deliberate edit here, not a silent drift. The behavioural half of the
+    // withdrawal (a scoped token is REFUSED by `getAssets`) is pinned in
+    // `app-listings.router.cli-scope.test.ts`; a count cannot express a refusal.
     //
     // 🔴 THIS IS A COUNT OF DECLARATIONS, WHICH IS NOT A COUNT OF BEHAVIOUR. It fails
     // when the set grows or shrinks, and that is all it can do — a `.meta()` spelled on
     // the wrong proc satisfies it. The behavioural half is
     // `app-listings.router.cli-scope.test.ts`, which drives every one of these procs
     // through `enforceTokenScope` across the four credentials. Change both together.
-    expect(annotations).toHaveLength(17);
+    expect(annotations).toHaveLength(16);
   });
 
   it('the annotation still requires AppBlocksSubmit — the bit the CLI token carries', () => {
