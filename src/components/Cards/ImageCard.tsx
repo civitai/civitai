@@ -31,12 +31,7 @@ export function ImageCard({ data }: Props) {
         // Not mounted at all with the flag off. The overlay renders null there
         // anyway, but a card is rendered by the hundred and this keeps the
         // flag-off tree identical to what shipped before it.
-        safe && (
-          <>
-            {features.stickerPlacement && <CardStickerOverlay imageId={data.id} />}
-            <RemixedCardPeel imageId={data.id} />
-          </>
-        )
+        safe && features.stickerPlacement && <CardStickerOverlay imageId={data.id} />
       }
       header={
         <div className="flex w-full items-start justify-between">
@@ -52,6 +47,10 @@ export function ImageCard({ data }: Props) {
       }
       footer={
         <div className="flex w-full flex-col gap-2">
+          {/* In the footer, not over the media: this card's footer is painted on
+              the image at the same bottom edge, so an anchored panel lands on the
+              reaction counts. */}
+          <RemixedCardPeel imageId={data.id} variant="inline" />
           <UserAvatarSimple {...data.user} />
           <div className="flex flex-wrap justify-between gap-1">
             <Reactions

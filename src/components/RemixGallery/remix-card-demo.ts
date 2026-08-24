@@ -46,13 +46,13 @@ export const useRemixDemoDensity = () => {
 
 /** Verified-live assets used as stand-in gallery entries. */
 const DEMO_THUMBS = [
-  { url: '31c35265-587b-4170-b7fe-44ba5e21b7ba', username: 'Escorwn' },
-  { url: '1fc08b9b-462b-4ffb-9227-8a42c0310a82', username: 'signalofsolarum' },
-  { url: '51c9d355-a2ab-4f47-bb39-e58b9a82268d', username: 'kaelthas_art' },
-  { url: 'ed5b1dce-602c-4143-befe-5bf17f362853', username: 'Nonamedgg' },
-  { url: '4ffac08a-f686-48da-b149-e9224706c3f6', username: 'chamo9009' },
-  { url: 'ea3af848-a01b-453b-9c95-b56adb495c11', username: 'take3tu' },
-  { url: '0134d13b-0151-46ff-ab19-d3953096dc82', username: 'LaffyGaffy2089' },
+  { imageId: 140554938, url: '31c35265-587b-4170-b7fe-44ba5e21b7ba', username: 'Escorwn' },
+  { imageId: 140554932, url: '1fc08b9b-462b-4ffb-9227-8a42c0310a82', username: 'signalofsolarum' },
+  { imageId: 140554931, url: '51c9d355-a2ab-4f47-bb39-e58b9a82268d', username: 'kaelthas_art' },
+  { imageId: 140554927, url: 'ed5b1dce-602c-4143-befe-5bf17f362853', username: 'Nonamedgg' },
+  { imageId: 140554924, url: '4ffac08a-f686-48da-b149-e9224706c3f6', username: 'chamo9009' },
+  { imageId: 140554923, url: 'ea3af848-a01b-453b-9c95-b56adb495c11', username: 'take3tu' },
+  { imageId: 140555502, url: '0134d13b-0151-46ff-ab19-d3953096dc82', username: 'LaffyGaffy2089' },
 ];
 
 export const demoRemixEntries = (imageId: number, count: number) =>
