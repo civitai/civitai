@@ -4,6 +4,7 @@ import type { Actions, PageServerLoad } from './$types';
 import { parseQuery } from '$lib/server/query';
 import { BLOCKLIST_TYPES } from '$lib/blocklist';
 import {
+  BlocklistRowMismatchError,
   getBlocklistDTO,
   upsertBlocklist,
   removeBlocklistItems,
@@ -39,20 +40,33 @@ export const actions: Actions = {
     if (!isType(type)) return fail(400, { error: 'Invalid blocklist type.' });
     if (items.length === 0) return fail(400, { error: 'No items to add.' });
 
-    await upsertBlocklist({ id, type, blocklist: items });
+    // `type` and `id` arrive as two independent form fields, so the pair is checked in the
+    // statement itself rather than here — see `upsertBlocklist`.
+    try {
+      await upsertBlocklist({ id, type, blocklist: items });
+    } catch (error) {
+      if (error instanceof BlocklistRowMismatchError)
+        return fail(409, {
+          error: 'That list has changed since this page loaded. Reload and try again.',
+        });
+      throw error;
+    }
     return { success: true, action: 'add', count: items.length };
   },
   remove: async ({ request }) => {
     const form = await request.formData();
+    const type = String(form.get('type') ?? '');
     const id = Number(form.get('id'));
     const items = parseItems(form.get('blocklist'));
 
+    if (!isType(type)) return fail(400, { error: 'Invalid blocklist type.' });
     if (!id) return fail(400, { error: 'Nothing to remove from.' });
     if (items.length === 0) return fail(400, { error: 'No items to remove.' });
 
-    const count = await removeBlocklistItems({ id, items });
+    const count = await removeBlocklistItems({ id, type, items });
     // A submitted-but-unmatched removal is a failure, not a quiet "Removed 0 items." The list is
-    // served from a month-long Redis cache, so the likeliest cause is that this page is stale.
+    // served from a month-long Redis cache, so the likeliest cause is that this page is stale. An
+    // id belonging to another type lands here too.
     if (count === 0)
       return fail(409, {
         error: 'Nothing was removed — those entries are no longer on this list. Reload the page.',

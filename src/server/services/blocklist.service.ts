@@ -28,29 +28,50 @@ async function setCache({ type, data }: { type: string; data: BlocklistDTO }) {
   });
 }
 
+/** An `id` that belongs to no row of the submitted `type`. Twin of the moderator spoke's. */
+export class BlocklistRowMismatchError extends Error {
+  constructor() {
+    super('That blocklist row does not belong to this type.');
+    this.name = 'BlocklistRowMismatchError';
+  }
+}
+
 export async function upsertBlocklist({ id, type, blocklist }: UpsertBlocklistSchema) {
-  const existingBlocklistData = !id
-    ? []
-    : await dbWrite.blocklist
-        .findUnique({ where: { id }, select: { data: true } })
-        .then((result) => result?.data ?? []);
+  const blocklistData = [
+    ...new Set(blocklist.map((item) => item.toLowerCase()).filter((x) => x.length > 0)),
+  ];
 
-  const blocklistData = blocklist.map((item) => item.toLowerCase()).filter((x) => x.length > 0);
+  if (!id) {
+    await dbWrite.blocklist.create({ data: { data: blocklistData, type }, select: { id: true } });
+  } else {
+    // The read and the write share one transaction and the read takes a row lock. The merge is
+    // read-modify-write over the whole array, so two overlapping edits each computed their merge
+    // from the same pre-state and the later write restored what the earlier one dropped, both
+    // reporting success. The other writer is the moderator spoke, editing the same column through
+    // its own client — which is why the lock has to be in the database rather than in either app.
+    const merged = await dbWrite.$transaction(async (tx) => {
+      const locked = await tx.$queryRaw<{ data: string[] }[]>`
+        SELECT data FROM "Blocklist" WHERE id = ${id} AND type = ${type} FOR UPDATE
+      `;
+      if (!locked.length) return undefined;
 
-  const result = !id
-    ? await dbWrite.blocklist.create({
-        data: { data: blocklistData, type },
-        select: { id: true, type: true, data: true },
-      })
-    : await dbWrite.blocklist.update({
-        where: { id },
-        data: { data: [...new Set([...existingBlocklistData, ...blocklistData])] },
-        select: { id: true, type: true, data: true },
-      });
-  if (!result) throw new Error('failed to update blocklist');
-  // Refresh from the deterministic read, not from `result`: caching the row just written
-  // is what let an edit to a duplicate row silently promote it to the live one.
-  await setCache({ type: result.type, data: await readBlocklistRow(result.type as BlocklistType) });
+      const next = [...new Set([...locked[0].data, ...blocklistData])];
+      // `updateMany`, not `update`: it is the only Prisma write that takes a non-unique `where`,
+      // and `type` has to be in it. The posted id and the posted type are independent inputs, so
+      // without that predicate an id from another type merges these entries into that row —
+      // benign phrases into a deny list, phishing patterns into the email-domain list.
+      await tx.blocklist.updateMany({ where: { id, type }, data: { data: next } });
+      return next;
+    });
+
+    // Refusing beats falling back to an insert: creating a second row for the type is the
+    // duplicate-row state `readBlocklistRow` exists to work around.
+    if (!merged) throw new BlocklistRowMismatchError();
+  }
+
+  // Refresh from the deterministic read, not from the row just written: caching that is what let
+  // an edit to a duplicate row silently promote it to the live one.
+  await setCache({ type, data: await readBlocklistRow(type as BlocklistType) });
 }
 
 /**

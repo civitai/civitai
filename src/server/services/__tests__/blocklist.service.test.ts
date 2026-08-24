@@ -240,12 +240,10 @@ describe('what an edit writes into the cache', () => {
         return filtered.sort((a, b) => (direction === 'desc' ? b.id - a.id : a.id - b.id));
       }
     );
-    dbMock.dbWrite.blocklist.findUnique.mockResolvedValue({ data: ['c.example'] });
-    dbMock.dbWrite.blocklist.update.mockResolvedValue({
-      id: 8,
-      type: BlocklistType.EmailDomain,
-      data: ['c.example', 'new.example'],
-    });
+    // The merge now reads through a locking `SELECT ... FOR UPDATE`, so the row the edit starts
+    // from comes back here rather than from `findUnique`.
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([{ data: ['c.example'] }]);
+    dbMock.dbWrite.blocklist.updateMany.mockResolvedValue({ count: 1 });
   };
 
   const cachedPayload = () => {
@@ -277,6 +275,63 @@ describe('what an edit writes into the cache', () => {
     });
 
     expect(redisMock.redis.set.mock.calls.at(-1)?.[0]).toBe('system:blocklist:EmailDomain');
+  });
+});
+
+describe('what an edit is allowed to touch', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    redisGet.mockResolvedValue(null);
+  });
+
+  // The id and the type reach `upsertBlocklist` as two independent values — in the moderator
+  // spoke they are two form fields on the same POST. Scoping the statements to the id alone
+  // let one type's entries be merged into another type's row, which on a deny list means
+  // arbitrary strings start blocking things.
+  it('refuses an id that belongs to no row of the submitted type, and writes nothing', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
+
+    await expect(
+      upsertBlocklist({
+        id: 1,
+        type: BlocklistType.MessagePattern,
+        blocklist: ['unfreeze your funds'],
+      })
+    ).rejects.toThrow(/does not belong to this type/);
+
+    expect(dbMock.dbWrite.blocklist.updateMany).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.blocklist.create).not.toHaveBeenCalled();
+    expect(redisMock.redis.set).not.toHaveBeenCalled();
+  });
+
+  it('carries the type into the UPDATE as well as the locking read', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([{ data: ['a.example'] }]);
+    dbMock.dbWrite.blocklist.updateMany.mockResolvedValue({ count: 1 });
+
+    await upsertBlocklist({
+      id: 1,
+      type: BlocklistType.EmailDomain,
+      blocklist: ['new.example'],
+    });
+
+    expect(dbMock.dbWrite.blocklist.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 1, type: BlocklistType.EmailDomain },
+      })
+    );
+
+    // The read is raw SQL, so the mock answers whatever it is asked and cannot tell a correctly
+    // scoped statement from one scoped to the id alone. Read the statement instead. The
+    // interpolated values are asserted separately because joining the template's static parts
+    // drops them.
+    const [fragments, ...values] = dbMock.dbWrite.$queryRaw.mock.calls[0] as [
+      readonly string[],
+      ...unknown[]
+    ];
+    const statement = fragments.join('?').replace(/\s+/g, ' ');
+    expect(statement).toMatch(/type = \?/);
+    expect(statement).toMatch(/FOR UPDATE/);
+    expect(values).toEqual([1, BlocklistType.EmailDomain]);
   });
 });
 

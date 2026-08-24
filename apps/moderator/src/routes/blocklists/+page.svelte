@@ -48,9 +48,9 @@
     text = '';
   }
 
-  // Duplicates are reachable: `upsertBlocklist` dedupes only on its update branch, so the first save
-  // of a type persists whatever was submitted. They would collide as `{#each}` keys, and each chip
-  // now carries a remove control identified by that same string.
+  // Duplicates are reachable in rows written before `upsertBlocklist` deduped its insert branch as
+  // well as its update branch. They would collide as `{#each}` keys, and each chip carries a remove
+  // control identified by that same string.
   const sortedItems = $derived(
     [...new Set(data.blocklist.data)].sort((a, b) => a.localeCompare(b))
   );
@@ -198,6 +198,7 @@
               use:enhance={submitChip(item)}
               class="relative"
             >
+              <input type="hidden" name="type" value={data.type} />
               <input type="hidden" name="id" value={data.blocklist.id} />
               <input type="hidden" name="blocklist" value={item} />
               <!-- The badge styling stays on this span, NOT on the form. `badgeVariants` carries

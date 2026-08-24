@@ -77,6 +77,13 @@ export async function getBlocklistDTO({ type }: { type: string }): Promise<Block
   return result;
 }
 
+export class BlocklistRowMismatchError extends Error {
+  constructor() {
+    super('That blocklist row does not belong to this type.');
+    this.name = 'BlocklistRowMismatchError';
+  }
+}
+
 export async function upsertBlocklist({
   id,
   type,
@@ -86,67 +93,103 @@ export async function upsertBlocklist({
   type: string;
   blocklist: string[];
 }): Promise<void> {
-  const items = blocklist.map((item) => item.toLowerCase()).filter((x) => x.length > 0);
+  const items = [
+    ...new Set(blocklist.map((item) => item.toLowerCase()).filter((x) => x.length > 0)),
+  ];
 
-  let result: BlocklistDTO;
   if (!id) {
-    result = await dbWrite
+    await dbWrite
       .insertInto('Blocklist')
       .values({ type, data: items, updatedAt: new Date() })
-      .returning(['id', 'type', 'data'])
+      .returning(['id'])
       .executeTakeFirstOrThrow();
   } else {
-    const existing = await dbWrite
-      .selectFrom('Blocklist')
-      .select('data')
-      .where('id', '=', id)
-      .executeTakeFirst();
-    const merged = [...new Set([...(existing?.data ?? []), ...items])];
-    result = await dbWrite
-      .updateTable('Blocklist')
-      .set({ data: merged, updatedAt: new Date() })
-      .where('id', '=', id)
-      .returning(['id', 'type', 'data'])
-      .executeTakeFirstOrThrow();
+    // The read and the write share one transaction and the read takes a row lock, because the
+    // merge below is read-modify-write over the WHOLE array: two overlapping edits each computed
+    // their merge from the same pre-state and the later write restored what the earlier one
+    // dropped, both reporting success. The lock also covers the cron in the main app, which edits
+    // this same column.
+    const merged = await dbWrite.transaction().execute(async (trx) => {
+      const existing = await trx
+        .selectFrom('Blocklist')
+        .select(['data'])
+        // `type` as well as `id`, and it is a SECURITY predicate rather than a tidiness one: the
+        // posted id and the posted type are two independent form fields, so without it a
+        // hand-crafted post (or a stale tab) merges one type's entries into another type's row —
+        // benign phrases into a deny list, phishing patterns into the email-domain list.
+        .where('id', '=', id)
+        .where('type', '=', type)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!existing) return undefined;
+
+      const next = [...new Set([...existing.data, ...items])];
+      await trx
+        .updateTable('Blocklist')
+        .set({ data: next, updatedAt: new Date() })
+        .where('id', '=', id)
+        .where('type', '=', type)
+        .executeTakeFirstOrThrow();
+      return next;
+    });
+
+    // Refusing beats falling back to an insert: an id that matches no row of this type means the
+    // operator is acting on a list they are not looking at, and creating a second row for the type
+    // is the duplicate-row state `readBlocklistRow` exists to work around.
+    if (!merged) throw new BlocklistRowMismatchError();
   }
 
-  // Cache the row that WINS the read, not the one just written. Caching `result` is what let an
-  // edit to a duplicate row silently promote it to the live answer for the whole month TTL —
-  // and this key is shared with the main app, so it would poison that read too.
-  await setCache(await readBlocklistRow(result.type));
+  // Cache the row that WINS the read, not the one just written. Caching the written row is what let
+  // an edit to a duplicate row silently promote it to the live answer for the whole month TTL — and
+  // this key is shared with the main app, so it would poison that read too.
+  await setCache(await readBlocklistRow(type));
 }
 
 /**
  * Returns how many entries were actually dropped, which is NOT the number submitted: a stale `id`
- * (the DTO is Redis-cached for a month), an entry already gone, or one stored in a case the
- * lowercased needle cannot match all end in zero. The page reports this number, so "Removed 1
- * item." above a chip that is still there is a state the UI can no longer reach.
+ * (the DTO is Redis-cached for a month), an `id` belonging to another type, an entry already gone,
+ * or one stored in a case the lowercased needle cannot match all end in zero. The page reports this
+ * number, so "Removed 1 item." above a chip that is still there is a state the UI can no longer
+ * reach.
  */
 export async function removeBlocklistItems({
   id,
+  type,
   items,
 }: {
   id: number;
+  type: string;
   items: string[];
 }): Promise<number> {
   const lower = items.map((x) => x.toLowerCase());
-  const row = await dbWrite
-    .selectFrom('Blocklist')
-    .select('data')
-    .where('id', '=', id)
-    .executeTakeFirst();
-  if (!row) return 0;
 
-  const filtered = row.data.filter((item) => !lower.includes(item));
-  const removed = row.data.length - filtered.length;
+  // Same lock and the same reason as `upsertBlocklist`: without it two chips removed in quick
+  // succession each filtered the same pre-state and the second write put the first one back.
+  const removed = await dbWrite.transaction().execute(async (trx) => {
+    const row = await trx
+      .selectFrom('Blocklist')
+      .select(['data'])
+      .where('id', '=', id)
+      .where('type', '=', type)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!row) return 0;
+
+    const filtered = row.data.filter((item) => !lower.includes(item));
+    const count = row.data.length - filtered.length;
+    if (count === 0) return 0;
+
+    await trx
+      .updateTable('Blocklist')
+      .set({ data: filtered, updatedAt: new Date() })
+      .where('id', '=', id)
+      .where('type', '=', type)
+      .executeTakeFirstOrThrow();
+    return count;
+  });
+
   if (removed === 0) return 0;
 
-  const updated = await dbWrite
-    .updateTable('Blocklist')
-    .set({ data: filtered, updatedAt: new Date() })
-    .where('id', '=', id)
-    .returning(['id', 'type', 'data'])
-    .executeTakeFirstOrThrow();
-  await setCache(await readBlocklistRow(updated.type));
+  await setCache(await readBlocklistRow(type));
   return removed;
 }
