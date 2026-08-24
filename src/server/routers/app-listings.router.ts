@@ -154,9 +154,23 @@ const enforceAppBlocksAuthorFlag = middleware(async ({ ctx, next }) => {
  * ADDITIVE, never loosening: each proc keeps its `appDeveloperProcedure` /
  * `protectedProcedure + enforceAppBlocksAuthorFlag` author-cohort gate and the
  * service-layer owner checks (`assertOwnerAssetEditable`, owner-bound `userId`). This is
- * one more gate the token must clear, applied only to the owner-scoped listing-media
- * authoring procs — no mod-only or cross-user proc is annotated. Mirrors
- * `blocks.router` `startDevTunnel`/`stopDevTunnel` (`AppBlocksDevTunnel`).
+ * one more gate the token must clear, applied only to owner-scoped procs — no MOD-ONLY
+ * proc is annotated. Mirrors `blocks.router` `startDevTunnel`/`stopDevTunnel`
+ * (`AppBlocksDevTunnel`).
+ *
+ * 🔴 THE ONE PLACE THAT CLAIM NEEDS A QUALIFIER, and the earlier wording ("no mod-only or
+ * CROSS-USER proc is annotated") did not carry it. Several of these procs reach the
+ * service through `app-listing-assets::loadOwnedListing`, which SHORT-CIRCUITS FOR
+ * MODERATORS — disagreement D1 in `app-access.call-site-ledger.test.ts`, where sibling
+ * gates deliberately disagree about the mod bypass. So for a caller who IS a moderator,
+ * `getAssets` (and the already-annotated media procs) are cross-listing reads, and this
+ * meta lets a THIRD-PARTY APP the moderator authorised with `AppBlocksSubmit` inherit
+ * that reach — where before it got a 403. It is delegated moderator authority, not
+ * widened authority, and it is the intended consequence of admitting the CLI; but it is
+ * a real difference from a moderator using their own session, so it is written down
+ * rather than left to be discovered. `updateListing` / `updateRevisionDraft` go through
+ * `offsite-listing::loadOwnedEditableListing`, which has NO mod override, so they do not
+ * have this property.
  */
 const listingMediaCliScope = { requiredScope: TokenScope.AppBlocksSubmit } as const;
 
