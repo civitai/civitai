@@ -234,7 +234,7 @@ export function RemixGallerySettings() {
           surface="remixGallery"
           cap={freeSlotCap}
           value={freeSlots}
-          noun={['free submission', 'free submissions']}
+          noun={['submission', 'submissions']}
           onChange={setFreeSlots}
           onCommit={(value) => {
             setFreeSlots(value);

@@ -78,14 +78,17 @@ describe('the sticker placer hears about an acceptance', () => {
     expect(sql).not.toContain("p.surface = 'remixGallery'");
   });
 
-  it('names the owner and links to the image', async () => {
+  it('names the owner and links to the image with its stickers shown', async () => {
     const message = defs['sticker-placement-resolved'].prepareMessage({
       type: 'sticker-placement-resolved',
       details: { imageId: 74, ownerUsername: 'somebody', status: 'approved' },
     } as Parameters<Def['prepareMessage']>[0])!;
 
     expect(message.message).toBe('somebody accepted your sticker');
-    expect(message.url).toBe('/images/74');
+    // With the reveal param. Placed stickers are hidden by default site-wide, so
+    // the bare `/images/74` lands the placer on an image that looks exactly like
+    // one their sticker was removed from.
+    expect(message.url).toBe('/images/74?stickers=1');
     // The message test hand-builds its details, so it cannot see where imageId
     // comes from. Sourcing it from `p.id` instead links every notification to
     // /images/<placementId> — a dead link, and one nothing above would catch.
@@ -233,6 +236,26 @@ describe('a moderator ending a placement reaches the person who paid', () => {
       amount: 500,
       ...extra,
     });
+
+  // Deliberate, and the reason it is pinned: the approval branch carries
+  // `?stickers=1` so the placer can see what they paid for. A removal has
+  // nothing to show, and turning the site-wide reveal on to display an absence
+  // is worse than leaving it off. Do not make the two branches share a URL.
+  it('links a removal to the plain image, without the reveal param', () => {
+    const removed = defs['sticker-placement-resolved'].prepareMessage({
+      type: 'sticker-placement-resolved',
+      details: {
+        imageId: 74,
+        ownerUsername: 'somebody',
+        status: 'removed',
+        removedBy: 'moderator',
+        wasLive: true,
+        amount: 500,
+      },
+    } as Parameters<Def['prepareMessage']>[0])!;
+
+    expect(removed.url).toBe('/images/74');
+  });
 
   it.each([
     ['sticker-placement-resolved', 'sticker', "somebody's image"],

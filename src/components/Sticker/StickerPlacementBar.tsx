@@ -17,7 +17,7 @@ import hintClasses from '~/components/Sticker/free-hint.module.scss';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.store';
-import { useStickerRevealStore } from '~/store/sticker-reveal.store';
+import { stickersRevealed, useStickerRevealStore } from '~/store/sticker-reveal.store';
 
 /** Where a dismissed free hint is remembered. Per browser, not per session. */
 const HINT_DISMISSED_KEY = 'sticker-free-hint-dismissed';
@@ -80,7 +80,7 @@ export function StickerPlacementBar({
   const pending = (byImage.get(imageId) ?? []).filter((placement) => placement.isPending).length;
 
   const openTray = useStickerPlacementDraftStore((state) => state.open);
-  const revealed = useStickerRevealStore((state) => state.revealed);
+  const revealed = useStickerRevealStore(stickersRevealed);
   const toggle = useStickerRevealStore((state) => state.toggle);
 
   // The creator has not opened this space and nobody has placed anything, so

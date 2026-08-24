@@ -12,5 +12,12 @@ import { syncAccount } from '~/utils/sync-account';
  */
 export function useWithheldHref() {
   const domains = useServerDomains();
-  return (image: { id: number }) => syncAccount(`//${domains.red}/images/${image.id}`);
+  /**
+   * `search` is opt-in and empty by default: the remix queue has nothing to add,
+   * and a param baked in here would ride onto its links too. It goes on before
+   * `syncAccount`, whose `stringifyUrl` merges rather than replaces the query,
+   * so both params survive the cross-domain hop.
+   */
+  return (image: { id: number }, search = '') =>
+    syncAccount(`//${domains.red}/images/${image.id}${search}`);
 }
