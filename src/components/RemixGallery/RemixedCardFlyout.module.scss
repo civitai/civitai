@@ -1,0 +1,37 @@
+/* The strip is clipped to zero height at the card's edge and grows away from
+   it, so it reads as being drawn out from under the card rather than fading in
+   on top of it. Transform alone would slide the whole panel through the card. */
+
+.slideDown {
+  animation: remixSlideDown 200ms cubic-bezier(0.16, 1, 0.3, 1);
+  transform-origin: top center;
+}
+
+.slideUp {
+  animation: remixSlideUp 200ms cubic-bezier(0.16, 1, 0.3, 1);
+  transform-origin: bottom center;
+}
+
+
+@keyframes remixSlideDown {
+  from {
+    clip-path: inset(0 0 100% 0);
+    transform: translateY(-6px);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+    transform: translateY(0);
+  }
+}
+
+@keyframes remixSlideUp {
+  from {
+    clip-path: inset(100% 0 0 0);
+    transform: translateY(6px);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+    transform: translateY(0);
+  }
+}
+

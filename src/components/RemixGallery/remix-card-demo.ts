@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { create } from 'zustand';
 
 /**
@@ -57,6 +57,25 @@ const DEMO_THUMBS = [
 
 export const demoRemixEntries = (imageId: number, count: number) =>
   Array.from({ length: count }, (_, index) => DEMO_THUMBS[(imageId + index) % DEMO_THUMBS.length]);
+
+/**
+ * Whether this viewer has a real pointer.
+ *
+ * Desktop-only for this pass, by decision — the flyout is a hover affordance and
+ * the touch story is deliberately unbuilt. Gates the indicator as well as the
+ * panel: a badge that opens nothing is worse on a phone than no badge at all.
+ *
+ * Starts false and settles in an effect, because the server cannot know and a
+ * value read during render would differ between the two and desynchronise
+ * hydration.
+ */
+export const useFinePointer = () => {
+  const [fine, setFine] = useState(false);
+  useEffect(() => {
+    setFine(window.matchMedia('(hover: hover) and (pointer: fine)').matches);
+  }, []);
+  return fine;
+};
 
 /**
  * Which card has its preview open, site-wide.
