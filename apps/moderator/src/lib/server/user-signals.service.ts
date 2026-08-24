@@ -276,22 +276,57 @@ export async function getSharedSocialAccounts(
   };
 }
 
-// Retool's PotentialSpammer/V2 (Postgres, despite sitting beside the ClickHouse queries): a burst of
-// comments in a short window. V2 supersedes V1 by summing both comment tables instead of returning a row
-// per table, so only that behaviour is ported.
-export async function getCommentBurst(userId: number): Promise<number> {
-  const [v2, v1] = await Promise.all(
-    (['CommentV2', 'Comment'] as const).map(async (table) => {
-      const r = await dbRead
-        .selectFrom(table)
-        .select((eb) => eb.fn.countAll<string>().as('count'))
-        .where('userId', '=', userId)
-        .where('createdAt', '>', sql<Date>`now() - interval '2 days'`)
-        .executeTakeFirst();
-      return Number(r?.count ?? 0);
-    })
-  );
-  return v2 + v1;
+/**
+ * The comment-spam signature, measured 2026-08-24 against the wave that prompted it: 1,002 accounts, a
+ * median age of 1.1 hours at ban, **11 comments on 11 distinct targets inside 2 minutes**, then silence.
+ *
+ * Thresholds confirmed by the mod team. Over 90 days they match 1,071 accounts of which 831 were already
+ * banned, and only 4 of the unbanned remainder were recent signups. Volume ALONE points the wrong way —
+ * accounts posting 20-39 comments an hour are 98% legitimate — so the spread across distinct targets and
+ * the account's age are doing the work, not the count.
+ */
+export const COMMENT_SPAM = { minComments: 10, minTargets: 10, maxAccountAgeDays: 2 } as const;
+
+export type CommentBurst = {
+  comments: number;
+  /** Distinct entities commented on in that hour. A script hits each target once; a conversation does not. */
+  targets: number;
+  hour: string;
+  /** Whether it clears `COMMENT_SPAM`. Account age is applied by the caller, which has the User row. */
+  matchesSignature: boolean;
+};
+
+/**
+ * Retool's PotentialSpammer/V2 measured "more than 2 comments in 48 hours" over Postgres. Both halves of
+ * that are retired:
+ *
+ * - The threshold fired on 367 accounts and 3 bans on an ordinary day, and its own Retool visibility
+ *   expression (`!count < 20`) never gated anything, so nobody could say what it detected.
+ * - Postgres cannot answer the question after a ban. Moderators delete the comments: of the 1,002
+ *   accounts in the 2026-08-24 wave, TWO comments survived. ClickHouse keeps the events, which is also
+ *   what lets the same rule drive a list of accounts rather than one badge.
+ */
+export async function getCommentBurst(userId: number): Promise<CommentBurst | null> {
+  const rows = await getClickhouse().$query<{ comments: string; targets: string; hour: string }>(`
+    SELECT count() AS comments, uniq(entityId) AS targets, toString(toStartOfHour(time)) AS hour
+    FROM comments
+    WHERE userId = ${Number(userId)} AND time >= now() - INTERVAL 30 DAY
+    GROUP BY toStartOfHour(time)
+    ORDER BY comments DESC
+    LIMIT 1
+  `);
+  const row = rows[0];
+  if (!row) return null;
+
+  const comments = Number(row.comments);
+  const targets = Number(row.targets);
+  return {
+    comments,
+    targets,
+    hour: row.hour,
+    matchesSignature:
+      comments >= COMMENT_SPAM.minComments && targets >= COMMENT_SPAM.minTargets,
+  };
 }
 
 // GENERATION ABUSE (Retool's GetBlockedPrompts, GenRateLimited).

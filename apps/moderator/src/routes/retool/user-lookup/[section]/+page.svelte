@@ -10,6 +10,7 @@
   import BuzzHistoryPanel from '../BuzzHistoryPanel.svelte';
   import BuzzTransactionPanel from '../BuzzTransactionPanel.svelte';
   import ChatContactPanel from '../ChatContactPanel.svelte';
+  import CommentBurstAlert from '../CommentBurstAlert.svelte';
   import CommentsPanel from '../CommentsPanel.svelte';
   import ContentCounts from '../ContentCounts.svelte';
   import CosmeticsPanel from '../CosmeticsPanel.svelte';
@@ -53,6 +54,11 @@
        would survive and end up pointed at a different account. -->
   {#key result.identity.id}
     {#if section === 'basic'}
+      <CommentBurstAlert
+        {signals}
+        civitaiUrl={data.civitaiUrl}
+        username={result.identity.username}
+      />
       <IdentityPanel
         identity={result.identity}
         profile={result.profile}

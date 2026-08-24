@@ -160,8 +160,10 @@ accurate, but four of the seven have a cause that is not what the symptom sugges
       "show me who else did this". The ClickHouse events persist, which also turns the signal from a
       per-account badge into the thing the round actually asked for — a queue of accounts to look at.
 
-      Still needs the mod team: whether those thresholds match their judgement, and whether the badge
-      should move off the Addresses panel to Basic where Retool had it.
+      **Decided 2026-08-24, both yes:** the thresholds match the team's judgement, and the badge moves
+      up to where Retool had it. So the signal becomes ≥10 comments on ≥10 distinct targets within an
+      hour from an account under two days old, read from ClickHouse, and Retool's ">2 in 48h" is
+      retired rather than kept alongside — it fires on 367 accounts a day and would drown the new one.
 
 - [x] **A "newest users" page, for catching fresh spam accounts and ban evaders.** Built at
       **`/users/newest`**, a new `NAVIGATION` entry beside `/users` — which is untouched and still

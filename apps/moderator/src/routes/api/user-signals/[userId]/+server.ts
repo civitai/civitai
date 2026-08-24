@@ -25,7 +25,7 @@ export const GET: RequestHandler = async ({ params, locals }) => {
       // whole payload and blanked the Postgres-only halves of this section too — including the social
       // links list and its remove action.
       softly('ips', () => getUserIps(userId), []),
-      getCommentBurst(userId),
+      softly('commentBurst', () => getCommentBurst(userId), null),
       softly('sharedIps', () => getSharedIpAccounts(userId), { accounts: [], truncated: false }),
       getSocials(userId),
       getSharedSocialAccounts(userId),
