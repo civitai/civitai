@@ -7432,28 +7432,63 @@ export const getEntityCoverImage = async ({
         UNION
         -- CONNECTIONS
         SELECT * FROM (
-          SELECT
+          -- There is one "ImageConnection" row per linked image, so this branch --
+          -- alone among the six -- can emit many rows per entity (fan-out p50 1,
+          -- p99 11, max 525). DISTINCT ON collapses it to the single row the JS
+          -- join below would have consumed anyway, which is what keeps the size of
+          -- this result set proportional to the number of entities requested.
+          --
+          -- The eligibility predicate belongs HERE rather than in the outer WHERE.
+          -- DISTINCT ON picks its row before any later filter runs, so collapsing
+          -- first and filtering afterwards could settle on an unscanned image and
+          -- leave the entity with no cover at all, even though a sibling connection
+          -- was eligible the whole time.
+          --
+          -- Both key columns are required. Every other branch pins a single
+          -- "entityType", so "entityId" alone identifies a row there; this branch
+          -- joins on the pair, so one id can legitimately recur across types.
+          --
+          -- "ImageConnection" carries no ordering column of its own -- no index, no
+          -- timestamp -- so nothing on the link records which image the author meant
+          -- to come first. The tiebreak is the image id, chosen for the properties
+          -- that can actually be guaranteed: it is a primary key, so the order is
+          -- total, never null, and leaves no residual tie for the planner to settle
+          -- arbitrarily. It is deliberately NOT claimed to be a first-attached rule.
+          -- "updateEntityImages" links already-existing images -- with arbitrary older
+          -- ids -- ahead of the ones it creates in the same call, so attaching an older
+          -- image on a later edit lowers the minimum and promotes that image to cover.
+          -- What the tiebreak buys is a stable, deterministic choice, not a
+          -- semantically-first one.
+          SELECT DISTINCT ON (e."entityId", e."entityType")
               e."entityId",
               e."entityType",
               i.id AS "imageId",
               0 "order1",
-	          0 "order2",
-	          0 "order3"
+              0 "order2",
+              0 "order3"
           FROM entities e
           JOIN "ImageConnection" ic ON ic."entityId" = e."entityId" AND ic."entityType" = e."entityType"
           JOIN "Image" i ON i.id = ic."imageId"
+          WHERE i."ingestion" = 'Scanned'
+            AND i."needsReview" IS NULL
+          ORDER BY e."entityId", e."entityType", i.id
         ) t
     ) t
     JOIN "Image" i ON i.id = t."imageId"
     WHERE i."ingestion" = 'Scanned' AND i."needsReview" IS NULL`;
 
+  // Index once instead of scanning `imagesRaw` per entity. `set` is guarded so the
+  // first row for a key wins, matching what `.find()` returned: an entity can still
+  // draw rows from two branches at once (an Article has both a cover image and
+  // content-image connections), and this must not silently switch which one is kept.
+  const imagesByEntity = new Map<string, GetEntityImageRaw>();
+  for (const image of imagesRaw) {
+    const key = `${image.entityId}:${image.entityType}`;
+    if (!imagesByEntity.has(key)) imagesByEntity.set(key, image);
+  }
+
   const images = entities
-    .map((e) => {
-      const image = imagesRaw.find(
-        (i) => i.entityId === e.entityId && i.entityType === e.entityType
-      );
-      return image ?? null;
-    })
+    .map((e) => imagesByEntity.get(`${e.entityId}:${e.entityType}`) ?? null)
     .filter(isDefined);
 
   let tagsVar: (VotableTagModel & { imageId: number })[] | undefined = [];
