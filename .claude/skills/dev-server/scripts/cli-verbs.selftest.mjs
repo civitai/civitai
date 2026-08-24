@@ -28,6 +28,10 @@ for (const re of [
   /(?:^|\n)\s*(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(/g,
   /(?:^|\n)\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:\(|function)/g,
   /import\s*\{([^}]*)\}\s*from/g,
+  // Destructuring, which the `const NAME =` pattern above does not match. cli.mjs reaches `cmdStale`
+  // and `cmdRemove` via `const { cmdStale, cmdRemove } = await import('./scripts/worktree.mjs')`,
+  // so without this the widened scan below reports both as undefined.
+  /(?:const|let|var)\s*\{([^}]*)\}\s*=/g,
 ]) {
   for (const m of src.matchAll(re)) {
     for (const name of m[1].split(',')) {
@@ -37,27 +41,31 @@ for (const re of [
   }
 }
 
-// The dispatch switch is the surface a user reaches. Take everything it calls.
-const switchStart = src.indexOf('switch (command) {');
-if (switchStart === -1) {
+// The WHOLE file, not just the dispatch switch. Scanning only the switch missed every helper reached
+// from another function — including `followLogs`, whose extraction is what deleted cmdStop and
+// cmdRestart in the first place. A slice running a few lines further would have taken it too, and a
+// switch-only guard would have stayed green over its own cause.
+const called = new Set();
+for (const m of src.matchAll(/\b((?:cmd|follow)[A-Za-z0-9_$]*)\s*\(/g)) called.add(m[1]);
+
+// The switch still has to be there. Without it this file is reading something that is not the CLI,
+// and every result below is meaningless rather than reassuring.
+checks++;
+if (!src.includes('switch (command) {')) {
   failures.push('could not find the dispatch switch — this guard is looking at the wrong thing');
 }
-const switchBody = switchStart === -1 ? '' : src.slice(switchStart);
-
-const called = new Set();
-for (const m of switchBody.matchAll(/\b(cmd[A-Za-z0-9_$]*)\s*\(/g)) called.add(m[1]);
 
 // If this ever drops to a handful, the regex has stopped matching and the guard has gone quiet
 // without failing — the shape of an inert check.
 checks++;
 if (called.size < 8) {
-  failures.push(`only ${called.size} cmd* calls found in the switch — the extractor is probably broken`);
+  failures.push(`only ${called.size} cmd*/follow* calls found — the extractor is probably broken`);
 }
 
 for (const name of [...called].sort()) {
   checks++;
   if (!defined.has(name)) {
-    failures.push(`the dispatch switch calls \`${name}(\` and cli.mjs does not define it`);
+    failures.push(`cli.mjs calls \`${name}(\` and does not define it`);
   }
 }
 
@@ -66,4 +74,4 @@ if (failures.length) {
   for (const f of failures) console.error('  ' + f);
   process.exit(1);
 }
-console.log(`cli-verbs selftest: ${checks} checks, ${called.size} dispatch targets all defined`);
+console.log(`cli-verbs selftest: ${checks} checks, ${called.size} call targets all defined`);
