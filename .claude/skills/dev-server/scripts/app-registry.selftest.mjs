@@ -9,10 +9,13 @@ import { resolve } from 'path';
 import {
   APP_REGISTRY,
   appEnvChain,
+  appIsLive,
   appReservedPorts,
   appSessionKey,
   appSessions,
   primaryCheckout,
+  inheritablePort,
+  releaseIfOurs,
   primaryResolution,
   withAppAllocation,
 } from './daemon.mjs';
@@ -123,14 +126,17 @@ check('canonicalPath agrees with samePath', canonicalPath(upper) === canonicalPa
 check('appSessionKey separates apps in one worktree', appSessionKey(upper, 'a') === appSessionKey(upper, 'b'), false);
 
 // --- the allocation lock ---
-// Two separate properties, and it is worth being exact about which line buys which, because the
-// obvious guess is wrong. The chain surviving a rejection is bought by `lock.then(fn, fn)` — its
-// reject arm runs the next callback even when the lock it chained from rejected. Measured: removing
-// the reject arm from the TAIL does not deadlock anything.
+// Two properties, and it is worth being exact about which line buys which — my first two attempts at
+// this comment each credited the wrong one.
 //
-// What the tail's reject arm buys is that a rejected allocation never escapes as an unhandled
-// rejection, which in this daemon would be a process-level warning nobody attributes to app starts.
-// That is the property with no other guard, so it is asserted directly.
+// `appAllocationLock` is always `run.then(() => {}, () => {})`, and both arms return undefined, so
+// that promise can never reject — which means the head's `lock.then(fn, fn)` reject arm is
+// UNREACHABLE in the shipped code. The chain surviving a rejection is bought by the tail. The two
+// are redundant with each other and both are kept, so that neither line is load-bearing alone.
+//
+// What the tail's reject arm ALSO buys, and nothing else does, is that a rejected allocation never
+// escapes as an unhandled rejection — a process-level warning nobody would attribute to app starts.
+// That is the property with no other guard, so it is the one asserted.
 const unhandled = [];
 const onUnhandled = (err) => unhandled.push(err);
 process.on('unhandledRejection', onUnhandled);
@@ -145,7 +151,11 @@ const second = withAppAllocation(async () => {
   order.push('b');
   throw new Error('deliberate');
 }).catch(() => order.push('b-rejected'));
-const third = withAppAllocation(async () => order.push('c'));
+const third = withAppAllocation(async () => order.push('c')).catch(() =>
+  // Symmetry with the two above. Without it a mutation that rejects here kills the run with a raw
+  // stack trace instead of a named failure — still red, but red in a way nobody can read.
+  order.push('c-rejected')
+);
 await Promise.all([first, second, third]);
 check('the lock serialises, it does not interleave', order.join(','), 'a-start,a-end,b,b-rejected,c');
 check('a rejected allocation does not wedge the chain', order.includes('c'), true);
@@ -156,9 +166,50 @@ check('a rejected allocation does not wedge the chain', order.includes('c'), tru
 await withAppAllocation(async () => {
   throw new Error('deliberate trailing failure');
 }).catch(() => {});
-await new Promise((r) => setTimeout(r, 60));
+// setImmediate, not a timer. Node publishes the unhandled-rejection list at the end of the tick,
+// after microtasks drain and before the check phase — so this is the FIRST hop that can observe it,
+// and observing it is a guarantee rather than a race. A timer can only ever be later, which is why
+// an arbitrary 60ms also worked; the problem with a number is that the instinct on a slow box is to
+// raise it, which is widening the budget rather than fixing anything.
+await new Promise((r) => setImmediate(r));
 process.off('unhandledRejection', onUnhandled);
 check('a trailing rejected allocation does not escape as an unhandled rejection', unhandled.length, 0);
+
+// --- the two decisions the concurrent-start fix turns on ---
+// These lived inline in the HTTP handler, where reverting the liveness rule to `status === 'running'`
+// — the exact bug fixed twice on this branch — left every check green. The only evidence was a live
+// control run once by hand, which the next person cannot repeat.
+check('no entry is not live', appIsLive(undefined), false);
+check('a starting entry IS live', appIsLive({ status: 'starting' }), true);
+check('a running entry with no process is still live', appIsLive({ status: 'running', process: null }), true);
+// proc.on('error') sets status without clearing the process, so status alone would call this dead
+// and hand its port to a second spawn.
+check('an errored entry holding a live process is live', appIsLive({ status: 'error', process: {} }), true);
+check('a crashed entry with no process is not live', appIsLive({ status: 'crashed', process: null }), false);
+
+check('a dead entry lends its port', inheritablePort({ status: 'crashed', process: null, port: 5174 }), 5174);
+check('a live entry lends nothing', inheritablePort({ status: 'starting', port: 5174 }), null);
+check('an errored-but-alive entry lends nothing', inheritablePort({ status: 'error', process: {}, port: 5174 }), null);
+check('no entry lends nothing', inheritablePort(undefined), null);
+
+// The release has to prove the entry is still the one it means to release. Every caller awaits
+// something first — five path probes, or stop()'s 800ms — and a start arriving in that window
+// replaces the entry. Releasing by key alone then deletes the NEW one and leaves its vite running
+// with nothing referencing it, which is the orphan this branch has now fixed in three places.
+const relKey = '__selftest__::release';
+const mine = { port: 6001 };
+const theirs = { port: 6002 };
+appSessions.set(relKey, mine);
+releaseIfOurs(relKey, mine);
+check('releases the entry when it is still ours', appSessions.has(relKey), false);
+
+appSessions.set(relKey, theirs);
+releaseIfOurs(relKey, mine);
+check('does NOT release an entry that was replaced underneath', appSessions.get(relKey), theirs);
+appSessions.delete(relKey);
+
+releaseIfOurs(relKey, mine);
+check('releasing a key that is not there is a no-op', appSessions.has(relKey), false);
 
 if (failures.length) {
   console.error('FAIL');

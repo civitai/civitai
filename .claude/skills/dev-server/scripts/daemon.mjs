@@ -1624,8 +1624,15 @@ class AuthHub {
     // Describes the MERGED env, not the chain: the child gets `{ ...process.env, ...chain }`, so a
     // DATABASE_URL inherited from the daemon's own environment is one the app will really use and
     // nobody chose. Reporting null for it would read as "no database configured".
-    this.dbHost = describeDatabaseHost(this.spawnEnv());
-    if (this.dbHost) this.addLog('warn', `${this.label} DATABASE_URL host: ${this.dbHost}`);
+    // Only for a process whose env this daemon actually supplies. The auth hub passes an empty
+    // chain and lets Vite load apps/auth/.env itself, so spawnEnv() there is process.env verbatim —
+    // the line would name the daemon's inherited candidate, say nothing about the file the hub
+    // really reads, and stay silent when THAT is the one pointing at production. Saying nothing is
+    // the honest answer for the hub.
+    if (this.envPaths.length) {
+      this.dbHost = describeDatabaseHost(this.spawnEnv());
+      if (this.dbHost) this.addLog('warn', `${this.label} DATABASE_URL host: ${this.dbHost}`);
+    }
 
     const isWindows = process.platform === 'win32';
     const pnpmCmd = isWindows ? 'pnpm.cmd' : 'pnpm';
@@ -1721,6 +1728,7 @@ class AuthHub {
     if (!proc) {
       this.status = 'stopped';
       this.ready = false;
+      this.dbHost = null;
       return this.getStatus();
     }
 
@@ -1849,9 +1857,10 @@ function describeDatabaseHost(envVars) {
   try {
     const parsed = new URL(url);
     const host = parsed.port ? `${parsed.hostname}:${parsed.port}` : parsed.hostname;
-    // `|| null`, not `?? null`: a value with no `//` parses as an opaque path and yields an empty
-    // hostname, and `postgres://user:sec@ret` yields `ret` — password material that a reader would
-    // take for a host. Collapsing every degenerate shape into "could not read it" is the safe answer.
+    // `|| null`, not `?? null`. One shape needs it: a value with no `//` (`postgres:something`)
+    // parses as an opaque path and yields an EMPTY hostname, which `??` would pass through as `""` —
+    // falsy enough to skip the warning silently, but not null, so status would report it. Everything
+    // else degenerate throws and returns null from the catch above.
     return host || null;
   } catch (e) {
     return null;
@@ -1874,6 +1883,33 @@ function appEnvChain(worktree, name) {
 // Keyed by worktree AND app, so two worktrees can serve the same app at once. A key on the app name
 // alone is what made them global singletons.
 const appSessions = new Map();
+
+// The two decisions the concurrent-start fix turns on. They lived inline in the HTTP handler, where
+// nothing could reach them: reverting the liveness rule to `status === 'running'` — the exact bug
+// this branch fixed twice — left every check green, and the only evidence was a live control run
+// once by hand.
+//
+// `status` alone is not enough (sessionIsBusy's own comment says so: a session coming up reads
+// `starting`), and a live `process` counts too because proc.on('error') sets status without
+// clearing it.
+function appIsLive(entry) {
+  return !!entry && (sessionIsBusy(entry) || !!entry.process);
+}
+
+// Only a dead entry's port is worth inheriting. Doing so keeps a crashed app on its documented
+// number instead of drifting it every crash — getUsedPorts is deliberately status-blind, so the
+// entry still counts against the allocator. Inheriting a LIVE entry's port is the bug: two vite
+// processes, one port, one orphan.
+function inheritablePort(entry) {
+  return appIsLive(entry) ? null : entry?.port ?? null;
+}
+
+// Membership of the map IS the port reservation, and every release has to prove the entry is still
+// the one it means to release. Each caller awaits something first — five path probes, or stop()'s
+// 800ms — and the entry can be replaced underneath in that window.
+function releaseIfOurs(key, session) {
+  if (appSessions.get(key) === session) appSessions.delete(key);
+}
 
 function appSessionKey(worktree, name) {
   // Windows hands back whatever drive-letter casing the caller's shell used, so one tree arrives as
@@ -2302,22 +2338,12 @@ async function main() {
           try {
             app = await withAppAllocation(async () => {
               const current = appSessions.get(key);
-              // `status === 'running'` is not enough, and sessionIsBusy's own comment says why: a
-              // session that is coming up reads `starting`. A live `process` is checked too, because
-              // proc.on('error') sets status without clearing it.
-              //
-              // sessionIsBusy reads four terms and an AppSession only ever sets two, so this
-              // degenerates to `running || starting`. That is the right answer today; a term added
-              // there for DevSession would silently not apply here.
-              if (current && (sessionIsBusy(current) || current.process)) {
+              if (appIsLive(current)) {
                 reused = current;
                 return null;
               }
-              // Only an entry with no live process is a reservation worth inheriting. Doing so keeps
-              // a crashed app on its documented number instead of drifting it every crash, because
-              // getUsedPorts is deliberately status-blind and still counts the entry.
               const port =
-                (!current?.process && current?.port) ||
+                inheritablePort(current) ??
                 (await findAvailablePort(APP_REGISTRY[name].preferredPort, appReservedPorts(name)));
               const fresh = new AppSession(name, resolvedWorktree, port, appEnvChain(resolvedWorktree, name));
               appSessions.set(key, fresh);
@@ -2350,7 +2376,7 @@ async function main() {
           // alone would remove whatever entry happens to be there now — which after a replacement is
           // a live reservation belonging to someone else. Same rule as the exit handler's
           // `this.process === proc`.
-          if (status.status === 'error' && appSessions.get(key) === app) appSessions.delete(key);
+          if (status.status === 'error') releaseIfOurs(key, app);
           res.writeHead(status.status === 'error' ? 500 : 200);
           res.end(JSON.stringify(status));
           return;
@@ -2384,7 +2410,12 @@ async function main() {
           const status = await existing.stop();
           // Membership of the map is the port reservation, so a stop that leaves the entry behind
           // holds a port nothing is serving — the same leak DELETE /sessions/:id exists to avoid.
-          appSessions.delete(key);
+          //
+          // Identity-guarded like the other two, and this is the widest window of the three: stop()
+          // waits up to 800ms by construction, and a start arriving inside it sees a stopped entry
+          // with no process, inherits its port and replaces it. Deleting by key alone would then
+          // remove the NEW entry and leave its vite running with nothing referencing it.
+          releaseIfOurs(key, existing);
           res.writeHead(200);
           res.end(JSON.stringify(status));
           return;
@@ -2393,7 +2424,7 @@ async function main() {
           const status = await existing.restart();
           // Same reservation-against-nothing as the start path, and the same identity guard: a
           // restart awaits a stop and then five path probes, so the entry may not be ours any more.
-          if (status.status === 'error' && appSessions.get(key) === existing) appSessions.delete(key);
+          if (status.status === 'error') releaseIfOurs(key, existing);
           res.writeHead(status.status === 'error' ? 500 : 200);
           res.end(JSON.stringify(status));
           return;
@@ -3028,7 +3059,10 @@ if (invokedDirectly) {
 export {
   APP_REGISTRY,
   appEnvChain,
+  appIsLive,
   appSessionKey,
+  inheritablePort,
+  releaseIfOurs,
   describeDatabaseHost,
   appReservedPorts,
   appSessions,

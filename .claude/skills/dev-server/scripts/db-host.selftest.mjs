@@ -47,9 +47,11 @@ check('a missing DATABASE_URL is null', describeDatabaseHost({}), null);
 check('an unparseable value is null, not a guess', describeDatabaseHost({ DATABASE_URL: 'not a url' }), null);
 check('an empty value is null', describeDatabaseHost({ DATABASE_URL: '' }), null);
 
-// Two degenerate shapes the correctness lane found. Both must be null, not a truncated string a
-// reader would take for a hostname — `postgres:whatever` parses as an opaque path with an empty
-// hostname, and `postgres://user:sec@ret` yields `ret`, which is password material.
+// Two degenerate shapes. Only the first is what `|| null` is for: `postgres:something` parses as an
+// opaque path with an EMPTY hostname, which `??` would pass through as `""`. The second throws and
+// returns null from the catch instead — worth pinning either way, but not for the reason the first
+// version of this comment gave. (`postgres://user:sec@ret` does parse, with `ret` as the genuine
+// hostname, not as password material.)
 check('a scheme with no // is null, not an empty string', describeDatabaseHost({ DATABASE_URL: 'postgres:something' }), null);
 check('userinfo with no host is null, not the password tail', describeDatabaseHost({ DATABASE_URL: 'postgres://myuser:sup3r-s3cret' }), null);
 
