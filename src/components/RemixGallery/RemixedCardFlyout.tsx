@@ -54,10 +54,37 @@ const PANEL_Z = 0;
 const CARD_Z = 1;
 /** The owning item, lifted over its neighbours so the panel clears them. */
 const ITEM_Z = 20;
-/** Height of the strip. One 64px row plus its header. */
-const FLYOUT_HEIGHT = 104;
+/** Largest a tile is allowed to be; it shrinks below this to fit the width. */
+const TILE_MAX = 64;
+/** Header row (icon, count, close) and the padding under the tile row. */
+const HEADER_H = 26;
+const ROW_PAD = 8;
+/** Horizontal padding (px-2 each side) and the gap between tiles. */
+const SIDE_PAD = 16;
+const TILE_GAP = 4;
 
-type Placement = { left: number; top: number; width: number; from: 'below' | 'above' };
+/**
+ * How tall the panel needs to be for this many tiles at this width.
+ *
+ * Derived rather than fixed. Tiles are square and flex to fit, so on a narrow
+ * card — or with five entries, where a `+N` tile joins the row — they shrink,
+ * and a fixed height left a band of empty panel under them. Computed here so the
+ * placement maths and the rendered box always agree; measuring the DOM instead
+ * would mean positioning from a height that is one frame stale.
+ */
+const panelHeight = (width: number, tiles: number) => {
+  const available = width - SIDE_PAD - TILE_GAP * Math.max(0, tiles - 1);
+  const tile = Math.min(TILE_MAX, Math.floor(available / Math.max(1, tiles)));
+  return HEADER_H + tile + ROW_PAD;
+};
+
+type Placement = {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  from: 'below' | 'above';
+};
 
 /**
  * The remix strip, slid out from under the card rather than drawn on top of it.
@@ -92,20 +119,27 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
   const [place, setPlace] = useState<Placement | null>(null);
   const fine = useFinePointer();
 
+  // How many boxes the row will hold: the tiles, plus the `+N` box when the
+  // gallery has more than fits.
+  const shown = Math.min(count, 4);
+  const tiles = shown + (count > shown ? 1 : 0);
+
   const measure = useCallback(() => {
     const card = cardRef.current;
     if (!card || !host) return;
     const r = card.getBoundingClientRect();
     const h = host.getBoundingClientRect();
-    const room = window.innerHeight - r.bottom;
-    const from: Placement['from'] = room >= FLYOUT_HEIGHT + 8 ? 'below' : 'above';
     const width = Math.round(r.width) - NARROWER_BY;
+    const height = panelHeight(width, tiles);
+    const room = window.innerHeight - r.bottom;
+    const from: Placement['from'] = room >= height + 8 ? 'below' : 'above';
     // Offsets are relative to the host, because the panel is absolutely
     // positioned inside it rather than fixed to the viewport.
     const next: Placement = {
       left: Math.round(r.left - h.left + NARROWER_BY / 2),
-      top: Math.round((from === 'below' ? r.bottom : r.top - FLYOUT_HEIGHT) - h.top),
+      top: Math.round((from === 'below' ? r.bottom : r.top - height) - h.top),
       width,
+      height,
       from,
     };
     // 🔴 Only set state when the position actually moved. This runs from a
@@ -118,11 +152,12 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
       prev.left === next.left &&
       prev.top === next.top &&
       prev.width === next.width &&
+      prev.height === next.height &&
       prev.from === next.from
         ? prev
         : next
     );
-  }, [host]);
+  }, [host, tiles]);
 
   // Find the card: the nearest ancestor that clips, which is the card box on
   // every surface this renders in.
@@ -289,11 +324,9 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
 
   if (!count || !fine) return null;
 
-  // Four, not five. Tiles are 64px with a 4px gap inside 8px padding, so a fifth
-  // needs 336px against a 320px card and clips at the right edge — the overflow
-  // scroller hides that rather than fixing it, and a half-tile reads as broken.
-  // The overflow stays for narrower cards; `+N` carries the remainder.
-  const entries = demoRemixEntries(imageId, Math.min(count, 4));
+  // At most four thumbnails; `+N` carries the rest. More than that and the tiles
+  // shrink to the point of being unreadable at feed card widths.
+  const entries = demoRemixEntries(imageId, shown);
   const body = (
     <>
       <div className="flex items-center gap-1.5 px-2 pb-1 pt-1.5">
@@ -367,7 +400,7 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
                 left: place.left,
                 top: place.from === 'below' ? place.top - TUCK : place.top,
                 width: place.width,
-                height: FLYOUT_HEIGHT + TUCK,
+                height: place.height + TUCK,
                 zIndex: PANEL_Z,
               }}
               ref={panelRef}

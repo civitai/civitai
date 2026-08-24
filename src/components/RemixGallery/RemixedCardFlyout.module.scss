@@ -1,37 +1,48 @@
-/* The strip is clipped to zero height at the card's edge and grows away from
-   it, so it reads as being drawn out from under the card rather than fading in
-   on top of it. Transform alone would slide the whole panel through the card. */
+/* A real slide, not a reveal.
+ *
+ * The panel starts displaced by its own full height, which puts it entirely
+ * within its card's footprint — and the card paints above it, so it is simply
+ * hidden there. Animating the displacement to zero walks it out from behind the
+ * card's edge, and the card does the masking. No clip-path is involved.
+ *
+ * The earlier version wiped a `clip-path` open over a 6px nudge, which is a
+ * reveal: every part of the panel arrived where it would finally sit and was
+ * uncovered in place. Nothing travelled, so it read as appearing.
+ *
+ * Easing is a strong ease-out (quint): most of the distance is covered early and
+ * it settles, which is what a drawer being pulled feels like. A symmetric curve
+ * reads as mechanical.
+ */
 
 .slideDown {
-  animation: remixSlideDown 200ms cubic-bezier(0.16, 1, 0.3, 1);
-  transform-origin: top center;
+  animation: remixSlideDown 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 .slideUp {
-  animation: remixSlideUp 200ms cubic-bezier(0.16, 1, 0.3, 1);
-  transform-origin: bottom center;
+  animation: remixSlideUp 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
-
 
 @keyframes remixSlideDown {
   from {
-    clip-path: inset(0 0 100% 0);
-    transform: translateY(-6px);
+    transform: translateY(-100%);
   }
   to {
-    clip-path: inset(0 0 0 0);
     transform: translateY(0);
   }
 }
 
 @keyframes remixSlideUp {
   from {
-    clip-path: inset(100% 0 0 0);
-    transform: translateY(6px);
+    transform: translateY(100%);
   }
   to {
-    clip-path: inset(0 0 0 0);
     transform: translateY(0);
   }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .slideDown,
+  .slideUp {
+    animation-duration: 1ms;
+  }
+}
