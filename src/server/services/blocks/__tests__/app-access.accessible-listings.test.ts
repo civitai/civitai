@@ -39,6 +39,19 @@ const { mockDb, mockWriteDb } = vi.hoisted(() => {
     appListingModerationEvent: {
       findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
     },
+    // `hydrateMyAppListings` also resolves the SCAN dimension of the completeness
+    // advisory (`blocked-media` / `scanning-media`) through
+    // `loadListingAssetScansBatch`, which is two batched reads: the page's screenshots,
+    // then every collected asset Image. Declared empty here — this file is about the
+    // ownership∪seat SET, and the scan wiring has its own suite
+    // (`app-access.my-app-listings-scan-problems.test.ts`). Without them the batch reads
+    // `undefined.findMany` and every case in this file fails as a broken mock.
+    appListingScreenshot: {
+      findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
+    },
+    image: {
+      findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
+    },
   });
   return { mockDb: make(), mockWriteDb: make() };
 });

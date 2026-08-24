@@ -40,8 +40,21 @@ export function ListingProblemsIndicator({ problems }: { problems: ListingProble
           {hasBlocking ? 'Required before publishing' : 'Recommended'}
         </Text>
         <List size="xs" spacing={2}>
+          {/*
+            🔴 THE KEY IS code+label, NOT code, BECAUSE A CODE IS NOT UNIQUE PER ROW.
+            `computeListingProblems` emits ONE `blocked-media` (and one `scanning-media`)
+            PER ASSET SLOT, so a listing whose icon AND cover both came back `Blocked`
+            yields two items sharing the code `blocked-media` and differing only in their
+            label ("Replace the blocked icon…" / "…cover…"). Keying on the code alone made
+            those React-duplicate.
+
+            This was latent rather than wrong: the scan codes could not reach any list row
+            until `listMyAppListings` started passing `assetScans`, so the only surface
+            that renders this component never produced two items with one code. The wiring
+            change is what makes the case reachable, so the key is fixed with it.
+          */}
           {problems.map((p) => (
-            <List.Item key={p.code}>{p.label}</List.Item>
+            <List.Item key={`${p.code}:${p.label}`}>{p.label}</List.Item>
           ))}
         </List>
       </HoverCard.Dropdown>
