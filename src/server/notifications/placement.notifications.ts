@@ -676,6 +676,15 @@ export const placementNotifications = createNotificationProcessor({
               -- settled outcome -- so this needs no expiresAt window of its own,
               -- which would re-report a row whose deadline passed long before the
               -- job reached it.
+              -- ⚠️ This also selects a FAILED CREATION. createStickerPlacement
+              -- compensates a failure by calling settlePlacement with 'expire',
+              -- so the row is indistinguishable from one that timed out -- and
+              -- the placer, who already saw an error, is told it "expired".
+              -- Accepted knowingly (Justin, 2026-08-24) rather than missed: the
+              -- path is rare and the receipt gate above keeps the sentence from
+              -- claiming a refund that did not happen. Telling the two apart
+              -- needs a column the row does not carry, so do not "fix" this with
+              -- a WHERE clause -- it would need the unwind to mark itself first.
               p.status = 'expired'
               AND p."resolvedAt" IS NOT NULL
               AND p."resolvedAt" > '${lastSent}'
