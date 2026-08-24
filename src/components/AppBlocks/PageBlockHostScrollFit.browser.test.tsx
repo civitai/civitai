@@ -217,9 +217,17 @@ function renderInScrollChain(fit: 'viewport' | 'fill', containerHeight: number) 
  * 90 desktop / 50 mobile) cannot shrink, so on a short viewport the app absorbs
  * the entire shortfall.
  *
- * `available` is what is left for the page after that chrome. A phone in
- * landscape (~360 CSS px) lands near 150px — which is the `available = 153` the
- * tests below use. A 1366×768 laptop at 200% zoom lands LOWER, around 86–118:
+ * `available` is what is left for the page after that chrome. The `available =
+ * 153` the tests below use is 360 − 60 − 57 − 90, i.e. a short DESKTOP window
+ * (and the headless fixture, whose UA is not mobile).
+ *
+ * ⚠️ It is NOT a phone in landscape, which an earlier version of this comment
+ * claimed. `isMobileDevice()` (`~/hooks/useIsMobile`) keys on UA/`ontouchstart`,
+ * NOT on width, so a phone is mobile in landscape too and gets the 50px ad, not
+ * the 90px one: ~360 CSS px tall lands at 193 (161 with the RewardsBonusBanner),
+ * which is what `FILL_MIN_HEIGHT_PX`'s own table says. Both are below the floor,
+ * so the tests' conclusion is unaffected — but the two docs must not disagree by
+ * 40px about one scenario. A 1366×768 laptop at 200% zoom lands LOWER, around 86–118:
  * its `innerHeight` is ~325, not 768/2 = 384 (the panel-height error corrected
  * on `FILL_MIN_HEIGHT_PX`; the old 384 is where a second "~150px" came from).
  * Either way it is far too little to use, and with `overflow-hidden` above there

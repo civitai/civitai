@@ -323,15 +323,27 @@ function AppPage(props: PageProps) {
  * defaults rather than nulled — this changes layout mechanics, not what the page
  * contains.
  *
- * ⚠️ `subNav: null` IS A PRODUCT DECISION, not just layout. `SubNav2` renders
- * `<HomeTabs />` — the site-wide Models / Images / Videos tabs — so dropping it
- * removes that navigation row from this route for every viewer. The rationale is
- * that the run surface already has the app's own chrome (`AppBlockChrome`) and a
- * second competing header bar reads badly, which is the same call
- * `src/pages/generate/index.tsx` and `src/pages/research/rater.tsx` make for
- * their immersive surfaces. Its `mb-3` was also one of the terms that overflowed
- * the old calc. Flagged rather than buried: if the tabs should stay, drop this
- * line — the scrollbar fix does not depend on it.
+ * `subNav: null` IS A PRODUCT DECISION, not just layout — DECIDED: keep it.
+ * `SubNav2` renders `<HomeTabs />`, the row of top-level section pills, so this
+ * removes that second-level navigation row from the route for every viewer. Four
+ * reasons, written down so the call can be overturned on its merits rather than
+ * rediscovered as an open question:
+ *
+ *   1. TOP-LEVEL NAVIGATION IS NOT LOST. `header` stays at its default, and
+ *      `AppHeader` was confirmed present on the live preview — logo, search,
+ *      Create, Buzz balance, account menu. Only the SECOND-level tab row goes,
+ *      and its destinations stay reachable from the header.
+ *   2. The precedent is exact, not analogous: `src/pages/generate/index.tsx` and
+ *      `src/pages/research/rater.tsx` — this repo's other immersive
+ *      `scrollable: false` surfaces — both pass `subNav: null`.
+ *   3. It is ~52px (h-8 pills + `py-1` + `mb-3`) of the vertical budget this
+ *      route is tightest on; a 375×667 phone leaves the page ~386px total.
+ *   4. Two chrome bars over a THIRD-PARTY app reads badly — the route already
+ *      renders `AppBlockChrome` (the "Apps / <name>" breadcrumb).
+ *
+ * The counter-argument is consistency with the rest of the site, which is what
+ * (2) already decided against twice. The scrollbar fix does not depend on this,
+ * so dropping the line is a safe one-word reversal.
  *
  * Note `RewardsBonusBanner` still renders regardless (`AppLayout` shows it in
  * the `{!subNav && …}` branch), so it is NOT removed by this.

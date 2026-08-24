@@ -214,8 +214,9 @@ const REVIEW_NACK_MESSAGE = 'not available in review preview';
  * fixed chrome cannot shrink, so with a bare `min-height: 0` the app absorbed
  * the ENTIRE shortfall on a short viewport and the overflow was simply clipped
  * away with nothing to scroll. Measured before this floor existed: 153px of host
- * at a ~360px viewport, and 0px at 250px, with `outerScrollbar = false` at every
- * step. That is WCAG 1.4.4 / 1.4.10 — strictly worse than the cosmetic spare
+ * at a ~360px-tall SHORT DESKTOP window (the 90px ad; a phone in landscape gets
+ * the 50px one and lands at 193 — see the table below), and 0px at 250px, with
+ * `outerScrollbar = false` at every step. That is WCAG 1.4.4 / 1.4.10 — strictly worse than the cosmetic spare
  * scrollbar `fill` mode was introduced to remove.
  *
  * 🔴 THE FLOOR IS A TRADE, NOT A FREE WIN, AND ITS VALUE IS THE WHOLE TRADE.

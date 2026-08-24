@@ -33,10 +33,19 @@ import { describe, expect, it } from 'vitest';
  *     gives), then "~150px" (the iframe's intrinsic height — true before the
  *     floor existed, false the moment `FILL_MIN_HEIGHT_PX` was added in the same
  *     PR). Re-derive from the `fill` branch before touching this line.
- *   - `scrollable: false` WITHOUT `fit="fill"` → the outer scrollbar is gone but
- *     the host still claims more height than the now `overflow-hidden` chain can
- *     give it, so the bottom of the app is CLIPPED and unreachable. Strictly
- *     worse than the bug being fixed.
+ *   - `scrollable: false` WITHOUT `fit="fill"` → the host claims
+ *     `100dvh - 60px` again. The `overflow-hidden` chain sits ABOVE the run
+ *     page's own wrapper, and that wrapper is `overflowY: 'auto'`, so the excess
+ *     is SCROLLED, not clipped: a page scrollbar beside the block's own — the
+ *     exact bug this PR removes. Measured 708px of host in a 600px wrapper,
+ *     `USER_SCROLLABLE=true`.
+ *
+ *     🔴 THIS BULLET SAID "CLIPPED" FOR FIVE COMMITS, and it was TRUE when
+ *     written at `4f78d37351` — the wrapper had no `overflowY` then. `c48ba4d029`
+ *     added it and nobody re-derived the sentence. Two later rounds each declared
+ *     the stale-figure class eradicated while this sat here, and one of them
+ *     added cross-references POINTING AT this paragraph. Nothing clips in this
+ *     layout; the wrapper can always scroll.
  *   - EITHER OF THOSE WITHOUT the run page's wrapper `Box` → same as the first
  *     case. This is the leg the browser suite structurally cannot see, because
  *     that suite builds its own fixture wrapper instead of importing the page.
