@@ -79,6 +79,27 @@ try {
   // quiet rather than naming an inherited candidate the process may not even use.
   const hubLike = new AppSession('moderator', worktree, 5174, []);
   check('an empty chain is process.env itself', hubLike.spawnEnv(), process.env);
+
+  // Stability is the benign half; STALENESS is the half with teeth. Without the per-start
+  // invalidation, editing an .env to point away from production and restarting spawns with the old
+  // DATABASE_URL — and because dbHost reads the same cached object, the warning line then confirms
+  // the host you just changed away from.
+  writeFileSync(base, 'SHARED=edited-on-disk\n');
+  check('the cache does not notice a file edit on its own', probe.spawnEnv().SHARED, 'from-base');
+  probe.invalidateSpawnEnv();
+  check('invalidating picks up the edit', probe.spawnEnv().SHARED, 'edited-on-disk');
+
+  // The method is only half of it — #start() has to CALL it. Testable without spawning anything: a
+  // start against a path that does not exist invalidates first and then fails at the probes, so no
+  // child is ever created. Without the call, a restart after an .env edit spawns with the old
+  // DATABASE_URL, and dbHost reads the same cached object — so the warning line confirms the host
+  // you just changed away from.
+  writeFileSync(base, 'SHARED=edited-again\n');
+  const wired = new AppSession('moderator', resolve(dir, 'no-such-worktree'), 5174, [base]);
+  wired.spawnEnvCache = { SHARED: 'stale-from-a-previous-start' };
+  const result = await wired.start();
+  check('a start on a missing path errors without spawning', result.status, 'error');
+  check('start() invalidates the cached env', wired.spawnEnv().SHARED, 'edited-again');
 } finally {
   rmSync(dir, { recursive: true, force: true });
 }

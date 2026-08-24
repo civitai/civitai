@@ -1500,6 +1500,7 @@ class AuthHub {
     this.startPromise = null;
     this.spawnedAtMs = null;
     this.spawnEnvCache = null;
+    this.stopping = false;
     this.status = 'stopped'; // stopped | starting | running | crashed | error | disabled
     this.ready = false;
     this.readyAt = null;
@@ -1527,6 +1528,14 @@ class AuthHub {
   // passes one, because the worktree's copy of that .env is gitignored and usually absent — the
   // chain is what lets it inherit the primary checkout's. Either way process.env is the floor, which
   // is why the DATABASE_URL warning has to be computed from this and not from the chain alone.
+  // A method rather than an inline assignment so the freshness rule has a seam a test can reach:
+  // dropping the clear meant a restart after an .env edit spawned with the OLD DATABASE_URL, and
+  // because dbHost is computed from the same cached object the warning line then confirmed the host
+  // you had just changed away from.
+  invalidateSpawnEnv() {
+    this.spawnEnvCache = null;
+  }
+
   spawnEnv() {
     // Cached for the duration of one start. Three callers read this — the DATABASE_URL refusal, the
     // host warning and the spawn options — and without the cache each one re-read every file in the
@@ -1578,7 +1587,8 @@ class AuthHub {
   // argument can. pathExists is the timeout-raced one.
   async #start() {
     // Dropped per start, not per instance: a restart after an .env edit must see the new values.
-    this.spawnEnvCache = null;
+    this.invalidateSpawnEnv();
+    this.stopping = false;
 
     if (this.process) {
       this.addLog('info', `${this.label} already running`);
@@ -1745,12 +1755,16 @@ class AuthHub {
       return this.getStatus();
     }
 
+    // Declared before the settle wait. Without it the entry keeps a live process and `running`
+    // status for up to SPAWN_SETTLE_MS, so a concurrent start short-circuits and is handed
+    // `reused: true` for a server that is about to be killed.
+    this.stopping = true;
+
     // See SPAWN_SETTLE_MS: killing the tree before the shell has spawned its node child orphans the
     // child. Only a stop that lands inside that window waits, and it waits only the remainder.
-    const sinceSpawn = this.spawnedAtMs ? Date.now() - this.spawnedAtMs : Infinity;
-    if (sinceSpawn < SPAWN_SETTLE_MS) {
-      const wait = SPAWN_SETTLE_MS - sinceSpawn;
-      this.addLog('info', `${this.label} spawned ${sinceSpawn}ms ago — settling ${wait}ms before kill`);
+    const wait = settleDelayMs(this.spawnedAtMs, Date.now());
+    if (wait) {
+      this.addLog('info', `${this.label} settling ${wait}ms before kill`);
       await new Promise((r) => setTimeout(r, wait));
     }
 
@@ -1845,6 +1859,12 @@ class AppSession extends AuthHub {
     // primary checkout instead of refusing to start, which is what `requiredEnvPath: null` buys.
     this.requiredEnvPath = null;
     this.envPaths = envPaths;
+    // Born live. The handler puts a fresh entry in the map inside the allocation lock but calls
+    // start() outside it, with `await authHub.start()` in between — so an entry that begins life
+    // reading `stopped` is one a concurrent start sees as dead and inherits the port of. The handler
+    // sets this too; having the class guarantee it is what makes the invariant testable, and what
+    // stops a future caller reintroducing the gap by constructing one somewhere else.
+    this.status = 'starting';
     this.dbHost = null;
   }
 
@@ -1906,7 +1926,10 @@ const appSessions = new Map();
 // `starting`), and a live `process` counts too because proc.on('error') sets status without
 // clearing it.
 function appIsLive(entry) {
-  return !!entry && (sessionIsBusy(entry) || !!entry.process);
+  // A stopping entry is not live — it is about to be killed, so it must not be handed back as
+  // `reused` — but its port is not inheritable either, which inheritablePort enforces separately.
+  if (!entry || entry.stopping) return false;
+  return sessionIsBusy(entry) || !!entry.process;
 }
 
 // Only a dead entry's port is worth inheriting. Doing so keeps a crashed app on its documented
@@ -1914,7 +1937,14 @@ function appIsLive(entry) {
 // entry still counts against the allocator. Inheriting a LIVE entry's port is the bug: two vite
 // processes, one port, one orphan.
 function inheritablePort(entry) {
-  return appIsLive(entry) ? null : entry?.port ?? null;
+  // A stop in flight still owns its port until it proves the port came back, so nothing may inherit
+  // it — appIsLive says false for a stopping entry, so this needs the check of its own.
+  if (entry?.stopping) return null;
+  // `||`, not `??`. A port of 0 would otherwise be inherited as 0 and short-circuit the allocator
+  // into binding an ephemeral port. Unreachable today — findAvailablePort starts at 5174 and only
+  // climbs — but the inline version this was lifted from treated 0 as falsy, and a faithful
+  // extraction should not quietly change that.
+  return appIsLive(entry) ? null : entry?.port || null;
 }
 
 // Membership of the map IS the port reservation, and every release has to prove the entry is still
@@ -1962,9 +1992,15 @@ function listAppSessions() {
 // Apps bind with --strictPort, so one left running past daemon exit makes the next start of that
 // app fail with EADDRINUSE against a process nothing is tracking any more.
 async function stopAppSessions() {
-  for (const app of appSessions.values()) {
-    if (app.status === 'running') await app.stop();
-  }
+  // appIsLive, not `status === 'running'`. An app started seconds before a shutdown reads `starting`
+  // for its whole boot, and a `status` test skips it — so the daemon exits and vite keeps serving,
+  // which is the exact orphan this function exists to prevent. stop() already handles that case: it
+  // awaits startPromise and honours the settle window. It just never got called.
+  //
+  // Concurrently, because these are independent processes and the settle plus port-verify makes each
+  // stop worth seconds. Sequentially, two apps could outlast a supervisor's grace period and be
+  // SIGKILLed mid-loop, leaving the rest running — the orphan again, by a different door.
+  await Promise.all([...appSessions.values()].filter(appIsLive).map((app) => app.stop()));
 }
 
 // Session manager
@@ -2012,6 +2048,19 @@ function getUsedPorts() {
 // clean. 3000 buys margin over the observed boundary without making an ordinary stop feel slow —
 // only a stop issued seconds after its own start waits at all.
 const SPAWN_SETTLE_MS = 3000;
+
+// How much of the settle window is left. Separated from the wait so the arithmetic can be tested
+// without a clock or a spawn — the claim that it "waits only the remainder" was stated in a comment
+// and checked by nothing.
+//
+// Clamped at both ends. A clock step or a VM resume between spawn and stop makes `now - spawnedAt`
+// negative, and an unclamped `settle - negative` waits LONGER than the window, unbounded in principle.
+function settleDelayMs(spawnedAtMs, nowMs, settleMs = SPAWN_SETTLE_MS) {
+  if (!spawnedAtMs) return 0;
+  const since = nowMs - spawnedAtMs;
+  if (since >= settleMs) return 0;
+  return Math.min(settleMs, Math.max(0, settleMs - since));
+}
 // After the kill, how long to keep checking that the port actually came back. Nothing here can kill
 // a grandchild it has no pid for, so this exists to make a residual orphan LOUD rather than silent.
 const STOP_PORT_VERIFY_MS = 5000;
@@ -2359,6 +2408,13 @@ async function main() {
                 inheritablePort(current) ??
                 (await findAvailablePort(APP_REGISTRY[name].preferredPort, appReservedPorts(name)));
               const fresh = new AppSession(name, resolvedWorktree, port, appEnvChain(resolvedWorktree, name));
+              // Marked live BEFORE the lock releases. start() sets this too, but not soon enough:
+              // `await authHub.start()` sits between here and there, and through it the entry would
+              // sit in the map reading `stopped` with no process — which appIsLive calls dead, so a
+              // second start would inherit its port and spawn a rival on it. Moving the assignment
+              // into start() alone reopened exactly that, and it is invisible whenever the hub is
+              // already running, because then that await is a no-op.
+              fresh.status = 'starting';
               appSessions.set(key, fresh);
               return fresh;
             });
@@ -3075,6 +3131,7 @@ export {
   appEnvChain,
   appIsLive,
   appSessionKey,
+  settleDelayMs,
   inheritablePort,
   releaseIfOurs,
   describeDatabaseHost,

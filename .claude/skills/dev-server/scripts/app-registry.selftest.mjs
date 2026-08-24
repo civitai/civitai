@@ -8,6 +8,7 @@ import { tmpdir } from 'os';
 import { resolve } from 'path';
 import {
   APP_REGISTRY,
+  AppSession,
   appEnvChain,
   appIsLive,
   appReservedPorts,
@@ -15,6 +16,7 @@ import {
   appSessions,
   primaryCheckout,
   inheritablePort,
+  settleDelayMs,
   releaseIfOurs,
   primaryResolution,
   withAppAllocation,
@@ -191,6 +193,34 @@ check('a dead entry lends its port', inheritablePort({ status: 'crashed', proces
 check('a live entry lends nothing', inheritablePort({ status: 'starting', port: 5174 }), null);
 check('an errored-but-alive entry lends nothing', inheritablePort({ status: 'error', process: {}, port: 5174 }), null);
 check('no entry lends nothing', inheritablePort(undefined), null);
+
+// A stop in flight owns its port until it proves the port came back. Without this a concurrent start
+// is handed `reused: true` for a server about to be killed, or inherits a port still being freed.
+check('a stopping entry is not live', appIsLive({ status: 'running', process: {}, stopping: true }), false);
+// The concurrent-start orphan in one line: a freshly constructed session goes into the map inside the
+// allocation lock, but start() is awaited outside it. If it is born dead, a second start inherits its
+// port and spawns a rival. Invisible whenever the auth hub is already running, because the await
+// between them is then a no-op — which is exactly why the live control missed it.
+check(
+  'a freshly constructed AppSession is already live',
+  appIsLive(new AppSession('moderator', primaryCheckout, 5174, [])),
+  true
+);
+check('a stopping entry lends nothing', inheritablePort({ status: 'running', port: 5174, stopping: true }), null);
+// A port of 0 must not short-circuit the allocator into an ephemeral bind. Unreachable today, but the
+// inline version this was lifted from treated 0 as falsy and the extraction must not change that.
+check('a port of 0 is not inheritable', inheritablePort({ status: 'crashed', process: null, port: 0 }), null);
+
+// --- the settle window's arithmetic ---
+// The constant itself is a property of spawn latency on this box and belongs in its comment, not in a
+// test. What IS testable is the claim the comment makes: that it waits only the REMAINDER.
+check('never spawned means no wait', settleDelayMs(null, 1_000_000, 3000), 0);
+check('spawned just now waits the whole window', settleDelayMs(1_000_000, 1_000_000, 3000), 3000);
+check('spawned 2900ms ago waits only the remainder', settleDelayMs(1_000_000, 1_002_900, 3000), 100);
+check('spawned long ago waits nothing', settleDelayMs(1_000_000, 9_000_000, 3000), 0);
+// A clock step or a VM resume between spawn and stop makes `now - spawnedAt` negative, and an
+// unclamped `settle - negative` waits LONGER than the window.
+check('a clock going backwards cannot extend the wait', settleDelayMs(1_000_000, 900_000, 3000), 3000);
 
 // The release has to prove the entry is still the one it means to release. Every caller awaits
 // something first — five path probes, or stop()'s 800ms — and a start arriving in that window
