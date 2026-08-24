@@ -168,7 +168,11 @@ const PROCS: { name: string; input: unknown; mock: ReturnType<typeof vi.fn> }[] 
   { name: 'getAssetScanStatuses', input: { imageIds: [1] }, mock: mockGetAssetScanStatuses },
   { name: 'setIcon', input: { listingId: 'lst_1', imageId: 1 }, mock: mockSetListingIcon },
   { name: 'setCover', input: { listingId: 'lst_1', imageId: 1 }, mock: mockSetListingCover },
-  { name: 'addScreenshot', input: { listingId: 'lst_1', imageId: 1 }, mock: mockAddListingScreenshot },
+  {
+    name: 'addScreenshot',
+    input: { listingId: 'lst_1', imageId: 1 },
+    mock: mockAddListingScreenshot,
+  },
   {
     name: 'reorderScreenshots',
     input: { listingId: 'lst_1', orderedIds: ['ss_1'] },
@@ -229,9 +233,9 @@ describe('app-listings CLI scope gate — bitmask sanity', () => {
   it('the hard-coded bitmasks match the enum', () => {
     expect(TokenScope.Full).toBe(FULL);
     expect(TokenScope.AppBlocksSubmit).toBe(1 << 25);
-    expect(
-      TokenScope.UserRead | TokenScope.AppBlocksSubmit | TokenScope.AppBlocksDevTunnel
-    ).toBe(CLI);
+    expect(TokenScope.UserRead | TokenScope.AppBlocksSubmit | TokenScope.AppBlocksDevTunnel).toBe(
+      CLI
+    );
     expect(TokenScope.UserRead | TokenScope.AppBlocksDevTunnel).toBe(NO_SUBMIT);
     // Full deliberately EXCLUDES AppBlocksSubmit — the reason the early-return, not
     // hasFlag(Full, AppBlocksSubmit), is what preserves the Full-personal-key path.
@@ -245,7 +249,9 @@ describe('app-listings CLI scope gate — the CLI OAuth token reaches every anno
   for (const { name, input, mock } of PROCS) {
     it(`${name}: CLI OAuth token (AppBlocksSubmit) passes the scope gate and reaches the proc`, async () => {
       const caller = appListingsRouter.createCaller(tokenCtx(100, CLI) as never);
-      await expect((caller as never as Record<string, (i: unknown) => Promise<unknown>>)[name](input)).resolves.toBeDefined();
+      await expect(
+        (caller as never as Record<string, (i: unknown) => Promise<unknown>>)[name](input)
+      ).resolves.toBeDefined();
       expect(mock).toHaveBeenCalledTimes(1);
     });
   }
@@ -255,7 +261,9 @@ describe('app-listings CLI scope gate — a Full personal API key still reaches 
   for (const { name, input, mock } of PROCS) {
     it(`${name}: Full personal API key passes the scope gate (no regression)`, async () => {
       const caller = appListingsRouter.createCaller(tokenCtx(100, FULL) as never);
-      await expect((caller as never as Record<string, (i: unknown) => Promise<unknown>>)[name](input)).resolves.toBeDefined();
+      await expect(
+        (caller as never as Record<string, (i: unknown) => Promise<unknown>>)[name](input)
+      ).resolves.toBeDefined();
       expect(mock).toHaveBeenCalledTimes(1);
     });
   }

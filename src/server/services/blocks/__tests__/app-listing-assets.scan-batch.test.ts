@@ -5,7 +5,10 @@ import {
   loadListingAssetScansBatch,
   type ListingAssetScanEntry,
 } from '~/server/services/blocks/app-listing-assets.service';
-import { computeListingProblems, type ListingAssetScan } from '~/server/services/blocks/listing-problems';
+import {
+  computeListingProblems,
+  type ListingAssetScan,
+} from '~/server/services/blocks/listing-problems';
 
 /**
  * The shared `ingestion` → scan-status predicate, the batched page reader that uses it,
@@ -50,7 +53,7 @@ describe('assetScanStatusFromIngestion — the one mapping', () => {
    * consolidation introduced: the predicate refuses to guess, so no call site can inherit
    * another site's answer by accident.
    */
-  it('🔴 null / undefined ⇒ null — absence is the caller\'s question', () => {
+  it("🔴 null / undefined ⇒ null — absence is the caller's question", () => {
     expect(assetScanStatusFromIngestion(null)).toBeNull();
     expect(assetScanStatusFromIngestion(undefined)).toBeNull();
   });
@@ -115,7 +118,7 @@ describe('loadListingAssetScansBatch', () => {
     ]);
   });
 
-  it('a null icon/cover contributes no entry — presence is the completeness gate\'s job', async () => {
+  it("a null icon/cover contributes no entry — presence is the completeness gate's job", async () => {
     const { db } = reader([], [{ id: 20, ingestion: 'Scanned' }]);
     const out = await loadListingAssetScansBatch([{ id: 'a', iconId: null, coverId: 20 }], db);
     expect(out.get('a')).toEqual([{ kind: 'cover', status: 'scanned' }]);
@@ -260,7 +263,7 @@ describe('🔴 the batch output is what computeListingProblems consumes', () => 
    * with no adapter in between. If an adapter ever becomes necessary, this is the test
    * that will say so.
    */
-  it('🔴 the batch\'s output feeds the advisory with no adapter', async () => {
+  it("🔴 the batch's output feeds the advisory with no adapter", async () => {
     const { db } = reader(
       [{ appListingId: 'a', imageId: 30 }],
       [

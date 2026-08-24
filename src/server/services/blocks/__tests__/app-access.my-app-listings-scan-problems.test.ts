@@ -321,7 +321,9 @@ describe('🔴 listMyAppListings — the SCAN codes actually reach a row', () =>
       ])
     );
     const rows = await listMyAppListings({ userId: OWNER });
-    const byId = Object.fromEntries(rows.map((r) => [r.appListingId, r.problems.map((p) => p.code)]));
+    const byId = Object.fromEntries(
+      rows.map((r) => [r.appListingId, r.problems.map((p) => p.code)])
+    );
     expect(byId.apl_sick).toEqual(['blocked-media']);
     expect(byId.apl_well).toEqual([]);
   });
@@ -397,7 +399,9 @@ describe('🔴 listMyAppListings — the scan read is BATCHED, not a per-row fan
     );
 
     await listMyAppListings({ userId: OWNER });
-    const call = mockDb.image.findMany.mock.calls.at(-1)?.[0] as { where: { id: { in: number[] } } };
+    const call = mockDb.image.findMany.mock.calls.at(-1)?.[0] as {
+      where: { id: { in: number[] } };
+    };
     expect([...call.where.id.in].sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 12]);
   });
 
