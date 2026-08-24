@@ -963,9 +963,6 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                   </div>
                 </Stack>
               </Card>
-              {user?.isModerator && (
-                <ModelModerationCard modelId={model.id} versionFlags={version.flags} />
-              )}
               {/* Component-only model message */}
               {isComponentOnlyModel && (
                 <AlertWithIcon
@@ -986,6 +983,11 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
               />
               {downloadSection}
             </Stack>
+          )}
+          {/* Outside the branch ternary on purpose: `publish-pending` is the branch a
+              moderator reviewing an unpublished or draft model lands in. */}
+          {user?.isModerator && (
+            <ModelModerationCard modelId={model.id} versionFlags={version.flags} />
           )}
           {/* Download-related alert */}
           {hideDownload && (
