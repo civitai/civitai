@@ -27,15 +27,22 @@ const CLOSE_DELAY = 260;
  */
 const NARROWER_BY = 28;
 /**
- * Transparent overlap onto the card, in px.
+ * How far the panel runs back underneath the card, in px.
  *
- * The panel is flush with the card's edge, and "flush" still lets the pointer
- * register a leave between the two boxes — which starts the close timer while
- * the pointer is travelling into the panel, so the panel vanished as you reached
- * for it. This is hit area only: the visible surface still starts at the card's
- * edge, the bridge simply overlaps it so the two regions genuinely touch.
+ * Real surface, not padding. The panel is the card's own colour, so the
+ * overlapping strip merges with the card's edge, and the corners on that side
+ * are left square and unbordered — together that reads as one sheet drawn out
+ * from under the card rather than a second card parked against it.
+ *
+ * It also makes the hover region contiguous, which is what a separate
+ * transparent bridge used to do: two boxes that merely touch still register a
+ * pointer leave between them, and that closed the panel while you were reaching
+ * for it.
  */
-const BRIDGE = 12;
+const TUCK = 12;
+/** Stacking while a panel is open, inside the column's context. */
+const PANEL_Z = 10;
+const ITEM_Z = 20;
 /** Height of the strip. One 64px row plus its header. */
 const FLYOUT_HEIGHT = 104;
 
@@ -66,6 +73,9 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
   const anchorRef = useRef<HTMLSpanElement>(null);
   const cardRef = useRef<HTMLElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
+  const [host, setHost] = useState<HTMLElement | null>(null);
+  /** The virtualiser item that owns this card: the host's direct child. */
+  const itemRef = useRef<HTMLElement | null>(null);
   const openTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [place, setPlace] = useState<Placement | null>(null);
@@ -73,14 +83,17 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
 
   const measure = useCallback(() => {
     const card = cardRef.current;
-    if (!card) return;
+    if (!card || !host) return;
     const r = card.getBoundingClientRect();
+    const h = host.getBoundingClientRect();
     const room = window.innerHeight - r.bottom;
     const from: Placement['from'] = room >= FLYOUT_HEIGHT + 8 ? 'below' : 'above';
     const width = Math.round(r.width) - NARROWER_BY;
+    // Offsets are relative to the host, because the panel is absolutely
+    // positioned inside it rather than fixed to the viewport.
     const next: Placement = {
-      left: Math.round(r.left + NARROWER_BY / 2),
-      top: Math.round(from === 'below' ? r.bottom : r.top - FLYOUT_HEIGHT),
+      left: Math.round(r.left - h.left + NARROWER_BY / 2),
+      top: Math.round((from === 'below' ? r.bottom : r.top - FLYOUT_HEIGHT) - h.top),
       width,
       from,
     };
@@ -98,7 +111,7 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
         ? prev
         : next
     );
-  }, []);
+  }, [host]);
 
   // Find the card: the nearest ancestor that clips, which is the card box on
   // every surface this renders in.
@@ -115,7 +128,54 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
       (anchor.parentElement?.closest('[class*="overflow-hidden"]') as HTMLElement | null) ??
       anchor.parentElement;
     if (cardRef.current) cardRef.current.setAttribute('data-remix-card', String(imageId));
+
+    // Portal target: just outside the virtualiser ITEM, which is the element
+    // that clips.
+    //
+    // 🔴 Find the item explicitly, do not walk up to "the first ancestor that
+    // does not clip". Between the card and the item sits `TwCosmeticWrapper`,
+    // which is positioned and does not clip — so that walk stopped inside the
+    // item, mounted the panel in the very box whose clipping the portal exists
+    // to escape, and left it invisible behind every card. The item is
+    // identifiable: it is the ancestor carrying `content-visibility: auto` (or
+    // paint containment), which is what `MasonryColumnsVirtual` sets.
+    //
+    // 🔴 NOT `document.body` either. The panel has to paint BEHIND its own card,
+    // and from the body there is no z-index that does that — it is a different
+    // stacking context from the feed. Mounted as the item's sibling it shares
+    // one with every card in the column, which is what makes the layering below
+    // expressible at all.
+    let item: HTMLElement | null = cardRef.current;
+    while (item) {
+      const cs = getComputedStyle(item);
+      if (cs.contentVisibility === 'auto' || cs.contain.includes('paint')) break;
+      item = item.parentElement;
+    }
+    // Un-virtualised surfaces (the home page cards) have no such ancestor; fall
+    // back to the card's own offset parent so the panel still escapes the card.
+    const node = item?.parentElement ?? cardRef.current?.parentElement ?? null;
+    setHost(node);
+    itemRef.current = item ?? cardRef.current;
   }, [imageId, fine, count]);
+
+  // 🔴 Three layers, not two. Behind its own card and in front of every other
+  // card are different requirements, and a single negative z-index satisfied
+  // only the first — the panel slid under its parent and under the card beneath
+  // it as well, so it was invisible rather than tucked.
+  //
+  // While open, the owning item is raised above its siblings and the panel sits
+  // between them: PANEL_Z under the item, both over the untouched cards. The
+  // inline style is removed again on close, so nothing about the feed's stacking
+  // survives the hover.
+  useEffect(() => {
+    const item = itemRef.current;
+    if (!open || !item) return;
+    const previous = item.style.zIndex;
+    item.style.zIndex = String(ITEM_Z);
+    return () => {
+      item.style.zIndex = previous;
+    };
+  }, [open]);
 
   const cancelOpen = () => {
     if (openTimer.current) clearTimeout(openTimer.current);
@@ -245,7 +305,7 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
               src={entry.url}
               type="image"
               width={128}
-              className="size-16 rounded object-cover ring-1 ring-gray-3 transition hover:ring-2 hover:ring-yellow-5 dark:ring-dark-4"
+              className="size-16 rounded object-cover ring-1 ring-gray-3 transition hover:opacity-80 dark:ring-dark-4"
             />
           </button>
         ))}
@@ -266,39 +326,43 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
           component having to pass one down. */}
       <span ref={anchorRef} className="hidden" aria-hidden />
 
-      {typeof document !== 'undefined' &&
+      {host &&
         open &&
         createPortal(
           place && (
             <div
               data-remix-flyout={place.from}
-              className="fixed z-[300]"
+              className="absolute"
               style={{
                 left: place.left,
-                top: place.from === 'below' ? place.top - BRIDGE : place.top,
+                top: place.from === 'below' ? place.top - TUCK : place.top,
                 width: place.width,
-                height: FLYOUT_HEIGHT + BRIDGE,
-                // The bridge is padding, not surface: it overlaps the card so the
-                // two hover regions touch, while the visible panel below still
-                // starts exactly at the card's edge.
-                paddingTop: place.from === 'below' ? BRIDGE : 0,
-                paddingBottom: place.from === 'below' ? 0 : BRIDGE,
+                height: FLYOUT_HEIGHT + TUCK,
+                zIndex: PANEL_Z,
               }}
               ref={panelRef}
             >
               {/* The card's own chrome, copied rather than approximated, so the
-                  panel reads as the same object sliding out from under it. */}
+                  panel reads as the same object sliding out from under it — with
+                  the edge that meets the card left square and unbordered, so
+                  there is no seam where the two surfaces join. */}
               <div
                 className={clsx(
-                  'size-full overflow-hidden rounded-md border border-gray-3 bg-gray-0 shadow-md shadow-gray-4 dark:border-dark-4 dark:bg-dark-6 dark:shadow-dark-8',
-                  place.from === 'below' ? styles.slideDown : styles.slideUp
+                  'size-full overflow-hidden border border-gray-3 bg-gray-0 shadow-md shadow-gray-4 dark:border-dark-4 dark:bg-dark-6 dark:shadow-dark-8',
+                  place.from === 'below'
+                    ? ['rounded-b-md border-t-0', styles.slideDown]
+                    : ['rounded-t-md border-b-0', styles.slideUp]
                 )}
+                style={{
+                  paddingTop: place.from === 'below' ? TUCK : 0,
+                  paddingBottom: place.from === 'below' ? 0 : TUCK,
+                }}
               >
                 {body}
               </div>
             </div>
           ),
-          document.body
+          host
         )}
     </>
   );
