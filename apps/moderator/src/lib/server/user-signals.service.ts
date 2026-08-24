@@ -1,6 +1,7 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
 import { getClickhouse } from './clickhouse';
+import { COMMENT_SPAM } from '$lib/comment-spam';
 import { clickhouseDate } from './clickhouse-date';
 import { usersByIds } from './users.service';
 import { strikeCountsByUserIds } from './moderation-memory.service';
@@ -285,7 +286,7 @@ export async function getSharedSocialAccounts(
  * accounts posting 20-39 comments an hour are 98% legitimate — so the spread across distinct targets and
  * the account's age are doing the work, not the count.
  */
-export const COMMENT_SPAM = { minComments: 10, minTargets: 10, maxAccountAgeDays: 2 } as const;
+export { COMMENT_SPAM } from '$lib/comment-spam';
 
 export type CommentBurst = {
   comments: number;

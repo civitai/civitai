@@ -8,6 +8,11 @@ import {
   getNewestUsers,
   type NewUserWindow,
 } from '$lib/server/new-users.service';
+import {
+  COMMENT_SPAM_WINDOWS,
+  getCommentSpamAccounts,
+  type CommentSpamWindow,
+} from '$lib/server/comment-spam.service';
 
 const PAGE_SIZES = [50, 100, 200] as const;
 
@@ -25,15 +30,34 @@ const querySchema = z.object({
   cursor: z.coerce.number().int().positive().max(MAX_INT4).optional().catch(undefined),
   username: z.string().trim().catch(''),
   email: z.string().trim().catch(''),
+  // Two views of one question — which fresh accounts are a problem. Registration order is what you
+  // read when you do not yet know who they are; the signature list is what you read once they have
+  // started posting. Same page, same grant, one query each.
+  view: z.enum(['newest', 'spam']).catch('newest'),
+  spamDays: z.coerce
+    .number()
+    .refine((n): n is CommentSpamWindow => (COMMENT_SPAM_WINDOWS as readonly number[]).includes(n))
+    .catch(7),
 });
 
 export const load: PageServerLoad = async ({ url, locals }) => {
   requireAccess(locals.user, url.pathname);
-  const { days, limit, cursor, username, email } = parseQuery(url, querySchema);
+  const { days, limit, cursor, username, email, view, spamDays } = parseQuery(url, querySchema);
 
-  const users = await getNewestUsers({ days, limit, cursor, username, email });
+  // Only the view being rendered runs. The spam query reads ClickHouse and the newest list reads
+  // Postgres, so running both would put an outage in one behind every load of the other.
+  const [users, spam] = await Promise.all([
+    view === 'newest'
+      ? getNewestUsers({ days, limit, cursor, username, email })
+      : Promise.resolve([]),
+    view === 'spam' ? getCommentSpamAccounts({ days: spamDays }) : Promise.resolve([]),
+  ]);
 
   return {
+    view,
+    spam,
+    spamDays,
+    spamWindows: COMMENT_SPAM_WINDOWS,
     days,
     limit,
     username,

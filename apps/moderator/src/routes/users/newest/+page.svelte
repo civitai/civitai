@@ -16,6 +16,7 @@
   import { userLookupUrl } from '$lib/entity-url';
   import { urlWith } from '$lib/url';
   import CursorPager from '$lib/components/CursorPager.svelte';
+  import { COMMENT_SPAM } from '$lib/comment-spam';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -25,17 +26,43 @@
     urlWith(page.url, { ...params, cursor: null });
 
   const domainOf = (email: string | null) => email?.split('@')[1] ?? null;
+  const hours = (n: number) => (n < 1 ? '<1h' : `${Math.round(n)}h`);
 </script>
 
 <header class="page-header">
-  <h1>Newest users</h1>
-  <p>
-    Accounts by registration, newest first, read straight from the database — the site's own user
-    search is Meilisearch-backed, so it lags behind registration and pages badly. For spotting a fresh
-    spam ring or a ban evader coming back.
-  </p>
+  <h1>{data.view === 'spam' ? 'Comment spam signature' : 'Newest users'}</h1>
+  {#if data.view === 'spam'}
+    <p>
+      Accounts that posted <strong>{COMMENT_SPAM.minComments}+ comments on
+      {COMMENT_SPAM.minTargets}+ different things inside one hour</strong>, within
+      {COMMENT_SPAM.maxAccountAgeDays} days of signing up. Already-banned and deleted accounts are
+      left out — this is a list of things to do.
+    </p>
+    <p class="mt-1 text-xs text-dark-2">
+      One comment per target is the tell: a script never revisits a thread, an argument does. Read
+      from ClickHouse, so it still lists an account whose comments have already been deleted.
+    </p>
+  {:else}
+    <p>
+      Accounts by registration, newest first, read straight from the database — the site's own user
+      search is Meilisearch-backed, so it lags behind registration and pages badly. For spotting a
+      fresh spam ring or a ban evader coming back.
+    </p>
+  {/if}
+
+  <nav class="mt-3 flex gap-3 text-sm">
+    <a
+      href={urlWith(page.url, { view: null, cursor: null })}
+      class={data.view === 'newest' ? 'font-semibold text-white' : LINK_CLASS}>By registration</a
+    >
+    <a
+      href={urlWith(page.url, { view: 'spam', cursor: null })}
+      class={data.view === 'spam' ? 'font-semibold text-white' : LINK_CLASS}>Comment spam signature</a
+    >
+  </nav>
 </header>
 
+{#if data.view === 'newest'}
 <section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
   <form method="GET" class="flex flex-wrap items-end gap-3">
     <!-- Keyed on the URL so the boxes re-seed from `data` on every navigation. `Input`'s `value` is
@@ -159,4 +186,71 @@
   </div>
 
   <CursorPager href={data.nextCursor ? urlWith(page.url, { cursor: data.nextCursor }) : null} />
+{/if}
+{:else}
+  <section class="mb-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-dark-2">
+    <span class="flex items-center gap-2">
+      Burst within
+      {#each data.spamWindows as d (d)}
+        <a
+          href={urlWith(page.url, { view: 'spam', spamDays: d })}
+          class={d === data.spamDays ? 'text-white underline' : LINK_CLASS}
+        >
+          {d === 1 ? '24h' : `${d}d`}
+        </a>
+      {/each}
+    </span>
+    <span>{num(data.spam.length)} accounts</span>
+  </section>
+
+  {#if data.spam.length === 0}
+    <p class="text-sm text-dark-2">
+      Nothing matches the signature in this window. That is the normal state between waves.
+    </p>
+  {:else}
+    <div class="rounded-xl border border-dark-4 bg-dark-6">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Account</TableHead>
+            <TableHead>Burst</TableHead>
+            <TableHead>Age when it happened</TableHead>
+            <TableHead>Email</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {#each data.spam as a (`${a.userId}-${a.hour}`)}
+            {@const domain = domainOf(a.email)}
+            <TableRow>
+              <TableCell class="align-top">
+                <a href={userLookupUrl(a.userId)} class={LINK_CLASS}>
+                  {a.username ?? `user ${a.userId}`}
+                </a>
+                <div class="mt-1 text-xs text-dark-2">{a.userId}</div>
+              </TableCell>
+              <TableCell class="align-top whitespace-nowrap">
+                <span class="text-red-300">{num(a.comments)} comments</span>
+                on {num(a.targets)} targets
+                <div class="mt-1 text-xs text-dark-2">{dateTime(a.hour)}</div>
+              </TableCell>
+              <TableCell class="align-top whitespace-nowrap">{hours(a.ageAtBurstHours)} old</TableCell>
+              <TableCell class="align-top">
+                <span class="break-all">{a.email ?? '—'}</span>
+                {#if domain}
+                  <div class="mt-1 text-xs">
+                    <a
+                      href="/retool/bulk-ban?domains={encodeURIComponent(domain)}"
+                      class={LINK_CLASS}
+                    >
+                      others on @{domain}
+                    </a>
+                  </div>
+                {/if}
+              </TableCell>
+            </TableRow>
+          {/each}
+        </TableBody>
+      </Table>
+    </div>
+  {/if}
 {/if}

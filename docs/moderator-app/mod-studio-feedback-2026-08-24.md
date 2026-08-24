@@ -160,10 +160,20 @@ accurate, but four of the seven have a cause that is not what the symptom sugges
       "show me who else did this". The ClickHouse events persist, which also turns the signal from a
       per-account badge into the thing the round actually asked for — a queue of accounts to look at.
 
-      **Decided 2026-08-24, both yes:** the thresholds match the team's judgement, and the badge moves
-      up to where Retool had it. So the signal becomes ≥10 comments on ≥10 distinct targets within an
-      hour from an account under two days old, read from ClickHouse, and Retool's ">2 in 48h" is
-      retired rather than kept alongside — it fires on 367 accounts a day and would drown the new one.
+      **Decided 2026-08-24, both yes — and built.** The signal is ≥10 comments on ≥10 distinct targets
+      within an hour from an account under two days old, read from ClickHouse; Retool's ">2 in 48h" is
+      retired rather than kept alongside, since it fires on 367 accounts a day and would drown the new
+      one. The badge sits at the top of Basic where Retool had it.
+
+      It is also a **list**, which is what the round asked for and what Retool never had:
+      `/users/newest?view=spam` is the same page as the newest-accounts list — same question, same
+      grant, one query each — showing every account matching the signature in the last 24h / 7d / 30d,
+      with already-banned and deleted accounts left out because the list is a queue of things to do.
+      Each row carries the burst, how old the account was when it happened, and a link to every other
+      account on its email domain.
+
+      The thresholds live in `$lib/comment-spam.ts` so the sentence a moderator reads on the page and
+      the rule that built the list are the same constant.
 
 - [x] **A "newest users" page, for catching fresh spam accounts and ban evaders.** Built at
       **`/users/newest`**, a new `NAVIGATION` entry beside `/users` — which is untouched and still
