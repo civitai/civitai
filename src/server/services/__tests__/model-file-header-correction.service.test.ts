@@ -1,14 +1,27 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as ModelFileService from '~/server/services/model-file.service';
+import type * as TensorMetadataService from '~/server/services/tensor-metadata.service';
+import type * as CacheHelpers from '~/server/utils/cache-helpers';
 
-const { deleteFilesForModelVersionCache } = vi.hoisted(() => ({
-  deleteFilesForModelVersionCache: vi.fn(),
-}));
+const { deleteFilesForModelVersionCache, bustFullTensorAnalysis, bustFetchThroughCache } =
+  vi.hoisted(() => ({
+    deleteFilesForModelVersionCache: vi.fn(),
+    bustFullTensorAnalysis: vi.fn(),
+    bustFetchThroughCache: vi.fn(),
+  }));
 
 vi.mock('~/server/services/model-file.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelFileService>()),
   deleteFilesForModelVersionCache,
+}));
+vi.mock('~/server/services/tensor-metadata.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof TensorMetadataService>()),
+  bustFullTensorAnalysis,
+}));
+vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
+  ...(await importOriginal<typeof CacheHelpers>()),
+  bustFetchThroughCache,
 }));
 
 const executeRaw = dbMock.dbWrite.$executeRaw;
@@ -42,6 +55,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   executeRaw.mockResolvedValue(1);
   deleteFilesForModelVersionCache.mockResolvedValue(undefined);
+  bustFetchThroughCache.mockResolvedValue(undefined);
 });
 
 describe('getModelFileHeaderCorrections — precision', () => {
@@ -160,57 +174,86 @@ describe('getModelFileHeaderCorrections — type', () => {
     ).toEqual({ type: 'VAE' });
   });
 
-  // 🔴 The detection misreads whole architectures: an LLM's own weights match the
-  // embed_tokens + layers.N text-encoder rule, and a vision-language model's match
-  // VisionEncoder. Relabelling those drops the file out of primaryFileTypesByModelType,
-  // so it stops being the version's primary file on the download path. A correction may
-  // never demote a file that is already primary. Do not remove this guard.
+  /**
+   * 🔴 These were previously relabelled — an LLM's own weights to 'Text Encoder', a VLM's
+   * to 'CLIPVision', a MotionModule's to 'Enhancement LoRA' — by detection rules the source
+   * documents as misreads of those architectures. On those model types the header has said
+   * nothing unambiguous about the file's ROLE, so the answer is 'Model': it is the model's
+   * own weights. Fixed at the source, in getModelFileTypeCorrection.
+   *
+   * The first attempt instead let the relabel happen and blocked it downstream whenever it
+   * would drop the file out of primaryFileTypesByModelType. That guard was INVERTED — see
+   * the Checkpoint cases below, which it refused — while still mis-typing any file that was
+   * not already the primary one. Do not reintroduce it.
+   */
   it.each([
-    ['LLM', 'Model', 'TextEncoder'],
-    ['VisionLanguage', 'Model', 'VisionEncoder'],
-    ['MotionModule', 'Model', 'LoRA'],
+    ['LLM', 'TextEncoder'],
+    ['VisionLanguage', 'VisionEncoder'],
+    ['VisionLanguage', 'TextEncoder'],
+    ['MotionModule', 'LoRA'],
+  ] as const)('leaves a %s model own weights file as Model', (modelType, detectedModelType) => {
+    expect(
+      getModelFileHeaderCorrections({
+        format: 'SafeTensor',
+        dtypeCounts: bf16Counts,
+        detectedModelType,
+        currentFp: 'bf16',
+        currentFileType: 'Model',
+        modelType,
+      })
+    ).toEqual({});
+  });
+
+  /**
+   * 🔴 The case this feature exists for, and the one the removed guard refused: 'VAE' is
+   * not in primaryFileTypesByModelType.Checkpoint, so a VAE wrongly uploaded as a
+   * checkpoint's main weights file was detected correctly and then left alone. Measured
+   * before the fix: `expected {} to deeply equal { type: 'VAE' }`.
+   */
+  it.each([
+    ['VAE', 'VAE'],
+    ['TextEncoder', 'Text Encoder'],
+    ['ControlNet', 'ControlNet'],
   ] as const)(
-    'refuses a %s correction that would drop the file out of the primary set',
-    (modelType, currentFileType, detectedModelType) => {
+    'corrects a %s mis-filed as a Checkpoint own weights file',
+    (detectedModelType, expected) => {
       expect(
         getModelFileHeaderCorrections({
           format: 'SafeTensor',
           dtypeCounts: bf16Counts,
           detectedModelType,
           currentFp: 'bf16',
-          currentFileType,
-          modelType,
+          currentFileType: 'Model',
+          modelType: 'Checkpoint',
         })
-      ).toEqual({});
+      ).toEqual({ type: expected });
     }
   );
 
-  it('still corrects a non-primary file on a model type with a primary set', () => {
-    // 'Other' is not primary for LLM, so nothing is demoted and the fix goes through.
+  it('still corrects a non-primary file', () => {
     expect(
       getModelFileHeaderCorrections({
         format: 'SafeTensor',
         dtypeCounts: bf16Counts,
-        detectedModelType: 'TextEncoder',
+        detectedModelType: 'VAE',
         currentFp: 'bf16',
         currentFileType: 'Other',
-        modelType: 'LLM',
+        modelType: 'Checkpoint',
       })
-    ).toEqual({ type: 'Text Encoder' });
+    ).toEqual({ type: 'VAE' });
   });
 
-  it('allows a correction that stays inside the primary set', () => {
-    // 'Diffusion Model' is primary for Checkpoint alongside 'Model', so this is not a demotion.
+  it('leaves a Checkpoint own weights file alone when the header agrees', () => {
     expect(
       getModelFileHeaderCorrections({
         format: 'SafeTensor',
         dtypeCounts: bf16Counts,
         detectedModelType: 'DiffusionModel',
         currentFp: 'bf16',
-        currentFileType: 'Model',
+        currentFileType: 'Diffusion Model',
         modelType: 'Checkpoint',
       })
-    ).toEqual({ type: 'Diffusion Model' });
+    ).toEqual({});
   });
 });
 
@@ -310,6 +353,38 @@ describe('applyModelFileHeaderCorrections', () => {
     ]);
   });
 
+  /**
+   * 🔴 `file.type` is an INPUT to the cached tensor analysis — `supportsTensorVramEstimate`
+   * gates `vramEstimate` on it — and neither tensor cache key varies with type. Without
+   * this bust a corrected file keeps a `vramEstimate` that is now wrong for a month in
+   * redis, and up to a year at the CDN because the 200 carries `immutable`.
+   */
+  it('busts the tensor analysis caches when the TYPE changed', async () => {
+    await applyModelFileHeaderCorrections({ ...target, corrections: { type: 'VAE' } });
+
+    expect(bustFullTensorAnalysis).toHaveBeenCalledWith(target.fileId);
+    const keys = bustFetchThroughCache.mock.calls.map((c) => c[0]);
+    expect(keys).toHaveLength(2);
+    expect(keys.some((k: string) => k.endsWith(`tensor-metadata:${target.fileId}`))).toBe(true);
+    expect(keys.some((k: string) => k.endsWith(`tensor-metadata-summary:${target.fileId}`))).toBe(
+      true
+    );
+    // The full blob is stored brotli-compressed; busting it without that flag evicts the
+    // entry instead of marking it stale, and the bust silently no-ops.
+    const full = bustFetchThroughCache.mock.calls.find((c) =>
+      String(c[0]).endsWith(`tensor-metadata:${target.fileId}`)
+    );
+    expect(full?.[1]).toEqual({ compress: true });
+  });
+
+  it('does not bust the tensor caches for a precision-only correction', async () => {
+    await applyModelFileHeaderCorrections({ ...target, corrections: { fp: 'bf16' } });
+
+    expect(deleteFilesForModelVersionCache).toHaveBeenCalledTimes(1);
+    expect(bustFullTensorAnalysis).not.toHaveBeenCalled();
+    expect(bustFetchThroughCache).not.toHaveBeenCalled();
+  });
+
   it('does not bust the cache when the url guard rejected the write', async () => {
     executeRaw.mockResolvedValue(0);
 
@@ -318,6 +393,7 @@ describe('applyModelFileHeaderCorrections', () => {
     ).resolves.toBe(false);
 
     expect(deleteFilesForModelVersionCache).not.toHaveBeenCalled();
+    expect(bustFullTensorAnalysis).not.toHaveBeenCalled();
   });
 });
 

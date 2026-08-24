@@ -256,7 +256,14 @@ export function getModelFileTypeCorrection({
       compatibleTypes = modelType === 'Checkpoint' ? ['Model', 'Pruned Model'] : ['Model'];
       break;
     case 'LoRA':
-      if (modelType === 'LORA' || modelType === 'DoRA' || modelType === 'LoCon') {
+      // A MotionModule's own weights are LoRA-shaped (AnimateDiff), so the paired
+      // down/up tensors identify the model, not an enhancement bolted onto it.
+      if (
+        modelType === 'LORA' ||
+        modelType === 'DoRA' ||
+        modelType === 'LoCon' ||
+        modelType === 'MotionModule'
+      ) {
         canonicalType = 'Model';
         compatibleTypes = ['Model', 'Pruned Model'];
       } else {
@@ -267,11 +274,20 @@ export function getModelFileTypeCorrection({
       canonicalType = modelType === 'VAE' ? 'Model' : 'VAE';
       break;
     case 'TextEncoder':
-      canonicalType = modelType === 'TextEncoder' ? 'Model' : 'Text Encoder';
+      // 🔴 `hasLlmTextEncoder` fires on embed_tokens + layers.N, which is every decoder
+      // LLM — so on an LLM or VLM this detection IS the model's own weights and the
+      // header has said nothing unambiguous about the file's role. Answering 'Model'
+      // here is what makes that true at the source; an earlier version instead let the
+      // relabel happen and tried to catch the damage downstream, which both blocked
+      // real corrections and still mis-typed any file not already the primary one.
+      canonicalType =
+        modelType === 'TextEncoder' || modelType === 'LLM' || modelType === 'VisionLanguage'
+          ? 'Model'
+          : 'Text Encoder';
       break;
     case 'VisionEncoder':
       canonicalType =
-        modelType === 'CLIPVision'
+        modelType === 'CLIPVision' || modelType === 'VisionLanguage'
           ? 'Model'
           : modelType === 'CLIP'
           ? 'Vision Encoder'

@@ -1,9 +1,10 @@
 import { Prisma } from '@prisma/client';
 import type { ModelFileType } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
+import { REDIS_KEYS } from '~/server/redis/client';
 import { deleteFilesForModelVersionCache } from '~/server/services/model-file.service';
-import type { ModelType } from '~/shared/utils/prisma/enums';
-import { primaryFileTypesByModelType } from '~/utils/file-display-helpers';
+import { bustFullTensorAnalysis } from '~/server/services/tensor-metadata.service';
+import { bustFetchThroughCache } from '~/server/utils/cache-helpers';
 import { getDominantFpFromDtypes } from '~/utils/file-helpers';
 import type {
   DetectedModelTensorType,
@@ -77,30 +78,6 @@ const FP_HEADER_CANNOT_STATE: readonly string[] = [
 ];
 
 /**
- * A type correction must never move a file OUT of the primary set for its model type.
- *
- * 🔴 The detection is heuristic and reads several architectures wrongly: an LLM's own
- * weights match `hasLlmTextEncoder` (embed_tokens + layers.N), and a vision-language
- * model's match VisionEncoder. Relabelling those to 'Text Encoder'/'CLIPVision' drops
- * the file out of `primaryFileTypesByModelType[LLM|VisionLanguage]`, so it stops being
- * the version's primary file and loses the download-path scoring bonus.
- *
- * A file that is NOT currently primary is the mis-filed case this feature exists for and
- * stays correctable. This only refuses to demote one that already is.
- */
-function wouldDemoteFromPrimary(
-  modelType: string | null | undefined,
-  currentFileType: string | null | undefined,
-  correctedType: ModelFileType
-) {
-  const primary = primaryFileTypesByModelType[modelType as ModelType] as
-    | readonly string[]
-    | undefined;
-  if (!primary) return false;
-  return primary.includes(currentFileType ?? '') && !primary.includes(correctedType);
-}
-
-/**
  * What the tensor header says should change on a file record. Pure — split from the
  * write below so upload-time auto-detect can reuse the judgement without a database.
  */
@@ -120,7 +97,7 @@ export function getModelFileHeaderCorrections({
     corrections.fp = fp;
 
   const type = getModelFileTypeCorrection({ detectedModelType, modelType, currentFileType });
-  if (type && !wouldDemoteFromPrimary(modelType, currentFileType, type)) corrections.type = type;
+  if (type) corrections.type = type;
 
   return corrections;
 }
@@ -183,8 +160,24 @@ export async function applyModelFileHeaderCorrections({
   // "something actually changed". Without them, every concurrent viewer inside the
   // replica-lag window after the first correction rewrites the same values and busts the
   // cache again: N dead tuples and N busts per window on a hot file.
-  if (updated > 0) await deleteFilesForModelVersionCache(modelVersionId);
-  return updated > 0;
+  if (updated === 0) return false;
+
+  await deleteFilesForModelVersionCache(modelVersionId);
+
+  // 🔴 `file.type` is an INPUT to the cached analysis, not just a field beside it:
+  // `supportsTensorVramEstimate` gates `vramEstimate` on it, and neither tensor cache key
+  // varies with type. Correcting the type into or out of the weights-file set therefore
+  // pins a `vramEstimate` that is now wrong for a month in redis — and up to a year at the
+  // CDN, since the 200 carries `immutable`. Only on a type change; precision is not an input.
+  if (type) {
+    bustFullTensorAnalysis(fileId);
+    await Promise.all([
+      bustFetchThroughCache(`${REDIS_KEYS.CACHES.TENSOR_METADATA}:${fileId}`, { compress: true }),
+      bustFetchThroughCache(`${REDIS_KEYS.CACHES.TENSOR_METADATA_SUMMARY}:${fileId}`),
+    ]);
+  }
+
+  return true;
 }
 
 /**
