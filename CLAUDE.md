@@ -39,6 +39,9 @@ To add a new app, use the `scaffold-civitai-app` skill and follow `docs/packages
 
 ### Development
 **Always use the `/dev-server` skill** to manage dev servers. Never use `pnpm run dev` directly.
+That covers `moderator` and `creator-studio` too — `cli.mjs start --app <name>` runs them from the
+worktree you are in, on a port the daemon reserves, with the auth hub started for you. The other
+`apps/*` have no dev-server integration; use their own `pnpm dev:<name>`.
 
 ### Build & Deploy
 ```bash

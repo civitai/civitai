@@ -13,6 +13,10 @@
 # ⚠️ These are the only services with a dev counterpart. The orchestrator, payments, S3,
 # ClickHouse, the notifications DB, the feeds proxy and OpenSearch have none — a session in `dev`
 # mode still talks to production for those. Pressing Generate spends real Buzz whatever this says.
+#
+# The auth hub is not movable at all, for a different reason: it is one shared process reading its
+# own apps/auth/.env, so an overlay here would only point the app at a hub nobody is running.
+# env-modes.mjs refuses an [auth-hub.*] section rather than honouring it.
 
 # A section must restate EVERY key that names the same service. The overlay only moves keys it
 # mentions, so an omitted one keeps its `.env` value — that is how you get writes on production and
