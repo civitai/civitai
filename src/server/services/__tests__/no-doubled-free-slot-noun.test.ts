@@ -44,6 +44,12 @@ const callers = [...sourceFiles(componentsRoot)]
   )
   .map(({ file, source }) => ({
     file: path.relative(repoRoot, file).split(path.sep).join('/'),
+    // 🔴 `String.raw`, not a plain template literal. `\s` inside a template
+    // literal is just the letter "s", so the class becomes [s/>] and the count
+    // comes back 0 — which reads as "no call sites" and lets the check below
+    // pass. Found by running the control: it went green with a non-literal noun
+    // in place.
+    renders: [...source.matchAll(new RegExp(String.raw`<${COMPONENT}[\s/>]`, 'g'))].length,
     nouns: [...source.matchAll(/noun=\{\[([^\]]*)\]\}/g)].map((match) => match[1]),
   }));
 
@@ -57,8 +63,31 @@ describe('the free-slot slider is not told the word it already says', () => {
    * here instead of in a silent green.
    */
   it('found call sites to check', () => {
+    // Only that the walk found anything. Whether each call site is READABLE is
+    // the next test's job — asserting it here too made the control for that one
+    // fail as `expected false to be true`, naming no file.
     expect(callers.length).toBeGreaterThan(0);
-    expect(callers.every((caller) => caller.nouns.length > 0)).toBe(true);
+  });
+
+  /**
+   * 🔴 A call site whose `noun` is not an inline literal — `noun={NOUNS[surface]}`
+   * — has nothing for the check below to read, and would be SKIPPED rather than
+   * caught. That is the shape a guard goes quiet in: still green, still counting
+   * the file, checking nothing in it.
+   *
+   * So an unreadable call site fails here instead. The remedy is to inline the
+   * literal, or to assert the rendered label in a test of that caller and add it
+   * to the exemption with a reason.
+   */
+  it('can read the noun at every call site', () => {
+    const unreadable = callers
+      .filter(({ renders, nouns }) => nouns.length < renders)
+      .map(
+        ({ file, renders, nouns }) =>
+          `${file}: ${renders} render(s), ${nouns.length} inline noun literal(s)`
+      );
+
+    expect(unreadable).toEqual([]);
   });
 
   it('every caller passes a bare noun', () => {
