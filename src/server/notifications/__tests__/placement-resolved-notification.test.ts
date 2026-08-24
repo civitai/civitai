@@ -95,10 +95,90 @@ describe('the sticker placer hears about an acceptance', () => {
     expect(await query('sticker-placement-resolved')).toContain('\'imageId\', p."targetId"');
   });
 
-  it('selects approvals and moderator removals, nothing else', async () => {
-    // Not `declined` and not `expired`: a declined sticker never appeared
-    // anywhere, and an expiry is nobody deciding anything.
-    expect(statusesSelectedBy(await query('sticker-placement-resolved'))).toBe('approved,removed');
+  /**
+   * `pending` is the one that must never be here: it would tell a placer their
+   * placement was resolved while it is still waiting, and the row would be
+   * selected again for real when it settles.
+   *
+   * `declined` and `expired` joined the set on 2026-08-24 (`868kv5d36`). They were
+   * excluded on 2026-08-18 on the grounds that a declined sticker never appeared
+   * anywhere — true of the sticker, and not of the money, which is why the call
+   * was reversed.
+   */
+  it('selects every settled outcome and nothing pending', async () => {
+    expect(statusesSelectedBy(await query('sticker-placement-resolved'))).toBe(
+      'approved,declined,expired,removed'
+    );
+  });
+
+  /**
+   * 🔴 Every sentence here is a claim about someone's Buzz, so each case asserts
+   * the WHOLE string rather than a fragment. A `toContain('declined')` passes
+   * against all three of these, including the two where the money sentence is
+   * wrong.
+   *
+   * The money itself, read off `placementPaymentSplit`: `declined` keeps
+   * `declineFeeAmount(...)` with the owner and refunds the rest; `expired`
+   * refunds everything. `feeWaived` is the column that separates a decline that
+   * refunded in full from one that did not — `removedBy` is NULL on a decline.
+   */
+  const resolved = (details: Record<string, unknown>) =>
+    defs['sticker-placement-resolved'].prepareMessage({
+      type: 'sticker-placement-resolved',
+      details: { imageId: 74, ownerUsername: 'somebody', ...details },
+    } as Parameters<Def['prepareMessage']>[0])!;
+
+  it('quotes what a decline actually kept', () => {
+    expect(resolved({ status: 'declined', amount: 500, feeToOwner: 25 }).message).toBe(
+      'somebody declined your sticker. They kept 25 Buzz; the rest has been refunded.'
+    );
+  });
+
+  it('promises no refund a free decline never earned', () => {
+    // amount 0 by DB constraint. "Your Buzz has been refunded" would send someone
+    // looking for a credit that never existed.
+    expect(resolved({ status: 'declined', amount: 0 }).message).toBe(
+      'somebody declined your sticker.'
+    );
+  });
+
+  it('says the whole escrow came back when the fee was waived', () => {
+    // declineByBlock and declineUnshowableHost. Claiming a fee was kept here is a
+    // false statement about a balance, and `removedBy` is NULL so it cannot be
+    // used to tell this from the case above.
+    expect(resolved({ status: 'declined', amount: 500, feeWaived: true }).message).toBe(
+      'somebody declined your sticker. Your Buzz has been refunded.'
+    );
+  });
+
+  it('tells a placer their Buzz came back when nobody answered', () => {
+    expect(resolved({ status: 'expired', amount: 500 }).message).toBe(
+      "Your sticker placement on somebody's image expired. Your Buzz has been refunded."
+    );
+  });
+
+  it('says nothing about money when a free placement expires', () => {
+    expect(resolved({ status: 'expired', amount: 0 }).message).toBe(
+      "Your sticker placement on somebody's image expired."
+    );
+  });
+
+  it('sends both new outcomes to the plain image, not the reveal', () => {
+    // There is no sticker on that image to show. The approval branch is the only
+    // one that reveals.
+    expect(resolved({ status: 'declined', amount: 500 }).url).toBe('/images/74');
+    expect(resolved({ status: 'expired', amount: 500 }).url).toBe('/images/74');
+  });
+
+  it('reads the fee from the ledger row rather than recomputing it', async () => {
+    const sql = await query('sticker-placement-resolved');
+
+    // The per-space rate can move between the placement and the decline, so a
+    // recomputed figure eventually disagrees with /user/transactions for the same
+    // event. The unique index on (placementId, kind) makes this a lookup.
+    expect(sql).toContain("'feeToOwner', (");
+    expect(sql).toContain("pt.kind = 'feeToOwner'");
+    expect(sql).toContain(`'feeWaived', p."feeWaived"`);
   });
 
   it('reads the moment the owner acted, not the moment the placement was made', async () => {

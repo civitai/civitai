@@ -75,6 +75,44 @@ function moderatorRemovalMessage({
     : `${what} The Buzz you paid is not refunded.`;
 }
 
+/**
+ * Whether this row moved any of the placer's Buzz at all.
+ *
+ * A free placement is `amount` 0 by DB constraint, so every sentence about money
+ * is false of it -- including "your Buzz has been refunded", which would have
+ * someone looking for a credit that never existed.
+ */
+const paidPlacement = (details: Record<string, unknown>) => Number(details.amount ?? 0) > 0;
+
+/**
+ * What a decline actually cost, in one sentence.
+ *
+ * Three cases, because the money is genuinely three different things:
+ *
+ * - **Free.** Nothing moved. The daily allowance is spent either way, but that is
+ *   a fact about the allowance rather than about a refund.
+ * - **Fee waived.** `declineByBlock` and `declineUnshowableHost` return the whole
+ *   escrow (`FEE_WAIVING_ACTIONS`), so "they kept N Buzz" would be a false
+ *   statement about someone's balance. `feeWaived` is a column on the row --
+ *   `removedBy` is NULL on a decline and cannot tell these apart.
+ * - **Fee taken.** `declined` splits `toOwner = declineFeeAmount(...)` and
+ *   `toPlacer = amount - toOwner`, so part of the payment stays with the creator.
+ *
+ * The number comes from the `feeToOwner` ledger row rather than from recomputing
+ * `declineFeeAmount`: the rate is per-space and can move between the placement
+ * and the decline, so a recomputed figure would eventually disagree with the one
+ * on `/user/transactions` for the same event.
+ */
+function declineMessage(details: Record<string, unknown>) {
+  const declined = `${details.ownerUsername} declined your sticker`;
+  if (!paidPlacement(details)) return `${declined}.`;
+
+  const fee = Number(details.feeToOwner ?? 0);
+  if (details.feeWaived || !(fee > 0)) return `${declined}. Your Buzz has been refunded.`;
+
+  return `${declined}. They kept ${fee} Buzz; the rest has been refunded.`;
+}
+
 export const placementNotifications = createNotificationProcessor({
   'sticker-placement-pending': {
     displayName: 'Sticker awaiting your review',
@@ -450,16 +488,22 @@ export const placementNotifications = createNotificationProcessor({
    * The sticker placer's side, and the gap Ellie reported: a placement could be
    * accepted and the only signal was the placer's Buzz balance moving.
    *
-   * Approval, and the moderator removal modes. No decline and no expiry (Justin,
-   * 2026-08-18): a declined sticker never appeared anywhere. An OWNER removal is
-   * still silent here and is not on the remix type -- that asymmetry is
+   * Approval, the moderator removal modes, DECLINE and EXPIRY. An OWNER removal
+   * is still silent here and is not on the remix type -- that asymmetry is
    * deliberate (Justin, 2026-08-21).
    *
+   * Decline and expiry were deliberately excluded on 2026-08-18, on the grounds
+   * that a declined sticker never appeared anywhere. Reversed on 2026-08-24
+   * (`868kv5d36`) because that reasoning covers the sticker and not the money: a
+   * decline keeps the placer's fee, so the only signal they had was a balance
+   * that went down. Justin also asked for expiry, so a placer learns their Buzz
+   * came back rather than inferring it.
+   *
    * Covers free placements as well as paid, unlike the pending pair, which split
-   * because their messages quote an amount and a free row's is 0. This one quotes
-   * none -- `amount` reaches the message only to decide whether there is a
-   * sentence about the money at all -- so one type serves both and a creator
-   * muting it mutes both.
+   * because their messages quote an amount and a free row's is 0. The branches
+   * here choose their own sentence about money from `free` and `feeWaived`, so a
+   * free placement is never told about Buzz that did not move and one type still
+   * serves both.
    *
    * An `auto` space approves at the call site, so its placer gets this seconds
    * after placing, confirming something they watched happen. Left that way on
@@ -468,7 +512,9 @@ export const placementNotifications = createNotificationProcessor({
    * `resolvedAt` -- would be a rule we invented and would have to keep true.
    */
   'sticker-placement-resolved': {
-    displayName: 'Your sticker placement was answered',
+    // "Resolved", not "answered": expiry is the outcome where nobody answered,
+    // and this is the label on the mute switch.
+    displayName: 'Your sticker placement was resolved',
     category: NotificationCategory.Creator,
     prepareMessage: ({ details }) => {
       if (details.status === 'removed')
@@ -484,6 +530,23 @@ export const placementNotifications = createNotificationProcessor({
           // what the link is for.
           url: `/images/${details.imageId}`,
         };
+      // The plain image URL for every outcome the sticker is not there to see.
+      // Only an approval gets the revealing one.
+      const plain = `/images/${details.imageId}`;
+
+      if (details.status === 'declined') return { message: declineMessage(details), url: plain };
+
+      if (details.status === 'expired')
+        return {
+          // Not "they did not answer in time". The outcome is the same whether
+          // the creator was busy or away, and what a placer needs from this
+          // sentence is what happened to their Buzz, not whose fault it was.
+          message: `Your sticker placement on ${details.ownerUsername}'s image expired.${
+            paidPlacement(details) ? ' Your Buzz has been refunded.' : ''
+          }`,
+          url: plain,
+        };
+
       return {
         message: `${details.ownerUsername} accepted your sticker`,
         url: imageWithStickersUrl(details.imageId),
@@ -503,7 +566,20 @@ export const placementNotifications = createNotificationProcessor({
             'status', p.status,
             'removedBy', p."removedBy",
             'wasLive', p."takenDownAt" IS NOT NULL,
-            'amount', p.amount
+            'amount', p.amount,
+            -- The two things a decline's money sentence turns on, and both are
+            -- columns on the row rather than a join: removedBy is NULL on a
+            -- decline and cannot tell a waived fee from a taken one.
+            'feeWaived', p."feeWaived",
+            -- What was actually taken, not what today's rate would compute. The
+            -- rate is per-space and can move between the placement and the
+            -- decline. NULL where no fee leg was ever claimed, which is the
+            -- waived and free cases. Hits the unique index on
+            -- (placementId, kind), so it is a lookup rather than a scan.
+            'feeToOwner', (
+              SELECT pt.amount FROM "PlacementTransaction" pt
+              WHERE pt."placementId" = p.id AND pt.kind = 'feeToOwner'
+            )
           ) as "details"
         FROM "Placement" p
         JOIN "User" u ON u.id = p."ownerId"
@@ -543,6 +619,25 @@ export const placementNotifications = createNotificationProcessor({
               p.status = 'removed'
               AND p."removedBy" IN ('moderator', 'cosmeticTakedown')
               AND p."takenDownAt" IS NULL
+              AND p."resolvedAt" IS NOT NULL
+              AND p."resolvedAt" > '${lastSent}'
+            )
+            OR (
+              -- The creator said no. settlePlacement stamps resolvedAt for every
+              -- decline mode, including the two that waive the fee, so one branch
+              -- covers all three and the MESSAGE picks its money sentence from
+              -- feeWaived and amount.
+              p.status = 'declined'
+              AND p."resolvedAt" IS NOT NULL
+              AND p."resolvedAt" > '${lastSent}'
+            )
+            OR (
+              -- Nobody answered. expirePlacements runs over status = 'pending'
+              -- regardless of free, and 'expire' stamps resolvedAt like any other
+              -- settled outcome -- so this needs no expiresAt window of its own,
+              -- which would re-report a row whose deadline passed long before the
+              -- job reached it.
+              p.status = 'expired'
               AND p."resolvedAt" IS NOT NULL
               AND p."resolvedAt" > '${lastSent}'
             )
