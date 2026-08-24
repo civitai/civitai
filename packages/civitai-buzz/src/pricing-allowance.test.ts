@@ -1,15 +1,35 @@
 import { describe, expect, it } from 'vitest';
+import { MONETIZATION_MIN_CREATOR_SCORE, minCreatorScoreForSale } from './paid-access';
 import {
-  MONETIZATION_MIN_CREATOR_SCORE,
   exceedsAllowance,
   formatPricingAllowance,
   isAlreadyPriced,
   monthlyPricingAllowance,
   pricingAllowanceMessage,
   pricingAllowanceState,
+  pricingEligibility,
   pricingFloorMessage,
   pricingMonthStart,
 } from './pricing-allowance';
+
+describe('pricingEligibility', () => {
+  it('is exclusive at the boundary in one direction only', () => {
+    expect(pricingEligibility(MONETIZATION_MIN_CREATOR_SCORE - 1).eligible).toBe(false);
+    expect(pricingEligibility(MONETIZATION_MIN_CREATOR_SCORE).eligible).toBe(true);
+  });
+
+  it('reports the shortfall, and zero once cleared', () => {
+    expect(pricingEligibility(7500).shortfall).toBe(2500);
+    expect(pricingEligibility(50000).shortfall).toBe(0);
+  });
+
+  // Fails closed: a creator whose score has never been computed must not be handed a priced editor.
+  it.each([null, undefined, NaN, Infinity, -5])('reads %s as zero, not as eligible', (score) => {
+    const state = pricingEligibility(score as number | null | undefined);
+    expect(state.score).toBe(0);
+    expect(state.eligible).toBe(false);
+  });
+});
 
 describe('isAlreadyPriced — the one definition of the exemption', () => {
   it('counts a positive fee or a permanent gate', () => {
@@ -126,6 +146,17 @@ describe('refusal messages', () => {
     expect(MONETIZATION_MIN_CREATOR_SCORE).toBe(10000);
     expect(pricingFloorMessage()).toContain('10,000');
     expect(pricingAllowanceMessage(3, 3)).toContain('3 of 3');
+  });
+
+  // The two doors onto "may this creator charge" were separate constants that happened to agree.
+  it('the sale floor defaults to the same score, with no override in play', () => {
+    expect(minCreatorScoreForSale()).toBe(MONETIZATION_MIN_CREATOR_SCORE);
+    expect(minCreatorScoreForSale({ minCreatorScore: 500 })).toBe(500);
+  });
+
+  it('names the creator their own score when it is known', () => {
+    expect(pricingFloorMessage(2431)).toContain('2,431');
+    expect(pricingFloorMessage()).not.toMatch(/Yours is/);
   });
 
   it('both say an existing price is unaffected', () => {

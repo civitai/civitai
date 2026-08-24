@@ -59,6 +59,9 @@
     pricingAllowanceState({ used: pricingUsed, limit: pricingLimit, exempt: alreadyPriced })
   );
   const permAtCap = $derived(allowance.atLimit);
+  // The floor gates a NEW price only, and a timed window is not one — so this never blocks starting or
+  // editing early access, and never blocks editing a price the version already carries.
+  const belowPricingFloor = $derived(!alreadyPriced && !caps.pricingFloor.eligible);
 
   // Ever actually published — a Scheduled version's future anchor doesn't count, and an unpublished
   // version that once went live does. Seeding and eligibility must agree on this or the drawer can open
@@ -115,8 +118,8 @@
   // The permanent option stays available to an already-permanent version even if membership lapsed or the
   // tier is at capacity, so an edit can't strand the creator (mirrors the main-app carve-out).
   const alreadyPermanent = $derived(!!version.paidAccessConfig?.permanent);
-  const canChoosePermanent = $derived(alreadyPermanent || !permAtCap);
-  const permBlocked = $derived(permAtCap && !alreadyPermanent);
+  const canChoosePermanent = $derived(alreadyPermanent || (!permAtCap && !belowPricingFloor));
+  const permBlocked = $derived(!canChoosePermanent);
   // A version already on a timed gate stays editable regardless of score/publish state.
   const timedAlreadySet = $derived(!!version.paidAccessConfig && !alreadyPermanent);
   // Same rule the bulk dialog applies, over a selection of one — a published version is simply a
@@ -130,6 +133,8 @@
       publishedCount: everPublished ? 1 : 0,
       maxEarlyAccessDays,
       pricingSlotsLeft: canChoosePermanent ? 1 : 0,
+      pricingFloor: caps.pricingFloor,
+      alreadyPriced,
       resolving: false,
     })
   );
@@ -244,10 +249,13 @@
   {:else if !canChooseTimed && !canChoosePermanent && !version.paidAccessConfig}
     <p class="rounded-lg border border-dark-4 p-3 text-xs text-dark-2">
       {#if version.status === 'Published'}
-        Early access can't be started after a version is published, and you've used this month's
-        pricing allowance ({formatPricingAllowance(allowance)}).
+        Early access can't be started after a version is published.
       {:else}
         Early access isn't available for your account yet — it unlocks as your creator score grows.
+      {/if}
+      {#if eligibility.permBlockedReason}
+        {eligibility.permBlockedReason}
+      {:else}
         You've also used this month's pricing allowance ({formatPricingAllowance(allowance)}).
       {/if}
     </p>

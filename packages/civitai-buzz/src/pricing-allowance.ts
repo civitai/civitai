@@ -5,15 +5,13 @@
 // not need lives here, so a threshold or a message cannot drift between two doors into the same data.
 
 import { finiteOrNull } from './licensing-fee';
-import { CAP_TIERS, CAP_TIER_LABELS, nextCapTier, type CapTier } from './paid-access';
-
-/**
- * Creator score (`User.meta.scores.models`) required to apply a price to something that has none.
- *
- * Deliberately NOT waived for moderators — the one creator-score gate they do not bypass. It states who
- * may sell on the platform, which is not a permission level.
- */
-export const MONETIZATION_MIN_CREATOR_SCORE = 10000;
+import {
+  CAP_TIERS,
+  CAP_TIER_LABELS,
+  MONETIZATION_MIN_CREATOR_SCORE,
+  nextCapTier,
+  type CapTier,
+} from './paid-access';
 
 /**
  * How many NEW prices a tier may apply per calendar month. This is the only thing membership governs
@@ -68,9 +66,34 @@ export function exceedsAllowance(used: number, limit: number, count = 1): boolea
   return Number.isFinite(limit) && used + count > limit;
 }
 
-/** Refusal text for a creator below the eligibility floor. */
-export function pricingFloorMessage(): string {
-  return `You need a creator score of ${MONETIZATION_MIN_CREATOR_SCORE.toLocaleString()} to charge for a model. Prices you have already set are unaffected.`;
+/** Where a creator stands against the eligibility floor. */
+export type PricingEligibility = {
+  score: number;
+  required: number;
+  eligible: boolean;
+  /** Score still to earn. 0 once eligible. */
+  shortfall: number;
+};
+
+/** Fails closed on a missing or malformed score: this decides who may start charging. */
+export function pricingEligibility(score: number | null | undefined): PricingEligibility {
+  const value = typeof score === 'number' && Number.isFinite(score) ? Math.max(0, score) : 0;
+  return {
+    score: value,
+    required: MONETIZATION_MIN_CREATOR_SCORE,
+    eligible: value >= MONETIZATION_MIN_CREATOR_SCORE,
+    shortfall: Math.max(0, MONETIZATION_MIN_CREATOR_SCORE - value),
+  };
+}
+
+/**
+ * Refusal text for a creator below the floor. Pass the score wherever it is known: without it the
+ * reader is told a threshold and left to guess how far off they are.
+ */
+export function pricingFloorMessage(score?: number | null): string {
+  const standing =
+    score == null ? '' : ` Yours is ${pricingEligibility(score).score.toLocaleString()}.`;
+  return `You need a creator score of ${MONETIZATION_MIN_CREATOR_SCORE.toLocaleString()} to charge for a model.${standing} Prices you have already set are unaffected.`;
 }
 
 export function pricingAllowanceMessage(used: number, limit: number): string {

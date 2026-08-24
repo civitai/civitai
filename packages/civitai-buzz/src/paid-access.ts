@@ -285,8 +285,18 @@ export const SALE_DAYS_BY_TIER: Record<string, number> = {
   gold: 30,
 };
 
-/** No sale at all below this creator score, on every tier — a paid membership does not buy past it. */
-export const MIN_CREATOR_SCORE_FOR_SALE = 10_000;
+/**
+ * Creator score (`User.meta.scores.models`) required to charge for anything: to apply a price to
+ * something that has none, and to run a sale on one. One number for both, so the platform states a
+ * single answer to "who may sell here".
+ *
+ * Deliberately NOT waived for moderators — the one creator-score gate they do not bypass. It states
+ * who may sell on the platform, which is not a permission level.
+ *
+ * The sale gate reads it through `minCreatorScoreForSale`, which a KeyValue override can move without
+ * a deploy; the pricing gate has no override and uses this directly.
+ */
+export const MONETIZATION_MIN_CREATOR_SCORE = 10_000;
 
 /** How far ahead a sale may be scheduled, so next month's promo can be prepared from the back half of this one. */
 export const MAX_SALE_LEAD_DAYS = 14;
@@ -316,7 +326,7 @@ export function maxSaleDays(
 }
 
 export const minCreatorScoreForSale = (overrides?: SaleLimitOverrides): number =>
-  overrides?.minCreatorScore ?? MIN_CREATOR_SCORE_FOR_SALE;
+  overrides?.minCreatorScore ?? MONETIZATION_MIN_CREATOR_SCORE;
 
 export const maxSaleLeadDays = (overrides?: SaleLimitOverrides): number =>
   overrides?.maxLeadDays ?? MAX_SALE_LEAD_DAYS;

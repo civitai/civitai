@@ -38,6 +38,7 @@
     capMediaType,
     formatPricingAllowance,
     pricingAllowanceState,
+    pricingFloorMessage,
     type CapTier,
   } from '@civitai/buzz';
   import JoinUpsell from '$lib/components/JoinUpsell.svelte';
@@ -335,6 +336,11 @@
   let feeImages = $state(String(DEFAULT_FEE_IMAGES));
   let feeAffirmed = $state(false);
   // Clearing a fee earns nothing, so only a non-zero fee needs the affirmation.
+  // The fee editor writes a NEW price for a version that has none, so the floor refuses it. Editing a
+  // price the version already carries is exempt.
+  const feeBlockedByFloor = $derived(
+    !data.caps.pricingFloor.eligible && !!editing && !alreadyPricedIds.has(editing.id)
+  );
   const feeNeedsAffirmation = $derived(!!editing && !editing.rightsAffirmed && (feeBuzz ?? 0) > 0);
 
   // Opens the licensing drawer for a version. Seeds only the fee inputs here; the early/paid-access
@@ -401,15 +407,22 @@
   >
     <span class="flex items-center gap-1.5">
       <span class="inline-block h-2 w-2 rounded-full bg-blue-4"></span>
-      <span class="font-medium {permAtCap ? 'text-yellow-5' : 'text-white'}">
-        {formatPricingAllowance(allowance)}
-      </span>
-      {#if !allowance.unlimited}
-        <CapUpsell
-          used={allowance.used}
-          limit={data.caps.pricingLimit ?? Infinity}
-          capTier={data.caps.capTier}
-        />
+      {#if !data.caps.pricingFloor.eligible}
+        <span class="font-medium text-yellow-5">
+          Creator score {data.caps.pricingFloor.score.toLocaleString()} of {data.caps.pricingFloor.required.toLocaleString()}
+          to charge
+        </span>
+      {:else}
+        <span class="font-medium {permAtCap ? 'text-yellow-5' : 'text-white'}">
+          {formatPricingAllowance(allowance)}
+        </span>
+        {#if !allowance.unlimited}
+          <CapUpsell
+            used={allowance.used}
+            limit={data.caps.pricingLimit ?? Infinity}
+            capTier={data.caps.capTier}
+          />
+        {/if}
       {/if}
     </span>
     <span class="flex items-center gap-1.5">
@@ -831,6 +844,11 @@
               {suggested}
               ariaLabelSuffix=" for {editing.name}"
             />
+            {#if feeBlockedByFloor}
+              <p class="w-full text-xs text-yellow-5">
+                {pricingFloorMessage(data.caps.pricingFloor.score)}
+              </p>
+            {/if}
             {#if feeNeedsAffirmation}
               <RightsAffirmation bind:checked={feeAffirmed} />
             {/if}
@@ -838,7 +856,7 @@
               type="submit"
               size="sm"
               class="w-full"
-              disabled={feeNeedsAffirmation && !feeAffirmed}
+              disabled={feeBlockedByFloor || (feeNeedsAffirmation && !feeAffirmed)}
             >
               Save fee
             </Button>

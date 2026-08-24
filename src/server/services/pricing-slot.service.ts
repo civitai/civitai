@@ -93,7 +93,8 @@ export async function assertPricingAllowed({
 
   const score =
     userMeta !== undefined ? creatorScoreFromMeta(userMeta) : await getCreatorScore(userId);
-  if (score < MONETIZATION_MIN_CREATOR_SCORE) throw throwBadRequestError(pricingFloorMessage());
+  if (score < MONETIZATION_MIN_CREATOR_SCORE)
+    throw throwBadRequestError(pricingFloorMessage(score));
 
   const limit = monthlyPricingAllowance(typeof tier === 'function' ? await tier() : tier);
   if (Number.isFinite(limit)) {

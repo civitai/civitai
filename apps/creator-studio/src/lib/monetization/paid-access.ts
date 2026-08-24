@@ -54,13 +54,14 @@ export function earlyAccessQuantityForScore(modelsScore: number): number {
 // and the main app enforces the allowance server-side.
 export {
   monthlyPricingAllowance,
+  pricingEligibility,
   tierAllowanceRows,
   shouldUpsellAllowance,
   nextCapTier,
   monetizationLimits,
   resolveCapTier,
 } from '@civitai/buzz';
-export type { TierAllowanceRow, CapTier } from '@civitai/buzz';
+export type { TierAllowanceRow, CapTier, PricingEligibility } from '@civitai/buzz';
 
 export type PaidAccessConfig = {
   timeframe: number;

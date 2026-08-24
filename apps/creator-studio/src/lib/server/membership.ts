@@ -1,5 +1,5 @@
 import type { SessionUser } from '@civitai/auth';
-import { resolveCapTier, type CapTier } from '@civitai/buzz';
+import { resolveCapTier, type CapTier, type PricingEligibility } from '@civitai/buzz';
 
 // Read membership off SessionUser (resolved by the shared session cache / hub) rather than re-querying.
 
@@ -75,6 +75,8 @@ export type CreatorCaps = {
   /** Prices applied this calendar month, and how many the tier allows. */
   pricingUsed: number;
   pricingLimit: number | null;
+  /** Where the creator's score stands against the monetization floor, for the editors to render. */
+  pricingFloor: PricingEligibility;
   maxEarlyAccessDays: number;
   earlyAccessUsed: number;
   earlyAccessCap: number;

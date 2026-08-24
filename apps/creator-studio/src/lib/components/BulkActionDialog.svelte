@@ -28,7 +28,7 @@
   import RightsAffirmation from '$lib/components/monetization/RightsAffirmation.svelte';
   import type { PaidAccessContext, PaidAccessFormValue } from '$lib/monetization/paid-access-form';
   import { resolveGateEligibility } from '$lib/monetization/gate-eligibility';
-  import type { CapTier } from '@civitai/buzz';
+  import type { CapTier, PricingEligibility } from '@civitai/buzz';
   import {
     BULK_ACTION_FORM,
     BULK_ACTION_TITLE,
@@ -59,6 +59,7 @@
     feeCapsByType: { label: string; cap: number }[];
     caps: {
       tier: string;
+      pricingFloor: PricingEligibility;
       pricingUsed: number;
       pricingLimit: number | null;
       maxEarlyAccessDays: number;
@@ -226,6 +227,10 @@
       publishedCount,
       maxEarlyAccessDays: caps.maxEarlyAccessDays,
       pricingSlotsLeft,
+      pricingFloor: caps.pricingFloor,
+      // A bulk write prices whatever in the selection is unpriced, so nothing here is exempt: the
+      // per-version carve-out belongs to the sidebar editor, which knows which version it is on.
+      alreadyPriced: false,
       resolving: loadingPublished,
     })
   );
@@ -258,7 +263,8 @@
   // Both a fee and a permanent gate spend allowance, so both need the warning — the fee path is
   // all-or-nothing, so without it a 20-version selection just returns 403 with nothing on screen first.
   const overSlots = $derived(
-    (action === 'paidAccess' || action === 'fee') && count > pricingSlotsLeft
+    (action === 'paidAccess' || action === 'fee') &&
+      (count > pricingSlotsLeft || !!eligibility.permBlockedReason)
   );
 
   const submit = () => {
@@ -404,13 +410,18 @@
       {#snippet allowanceAlert()}
         <Alert.Root variant="destructive">
           <IconAlertTriangle />
-          <Alert.Title>Over this month's pricing allowance</Alert.Title>
-          <Alert.Description>
-            You can price {pricingSlotsLeft} more model{pricingSlotsLeft === 1 ? '' : 's'} this month,
-            but
-            {count} are selected. Deselect some, or the save will be rejected. Versions you already charge
-            for don't count.
-          </Alert.Description>
+          {#if eligibility.permBlockedReason}
+            <Alert.Title>You can't charge for a model yet</Alert.Title>
+            <Alert.Description>{eligibility.permBlockedReason}</Alert.Description>
+          {:else}
+            <Alert.Title>Over this month's pricing allowance</Alert.Title>
+            <Alert.Description>
+              You can price {pricingSlotsLeft} more model{pricingSlotsLeft === 1 ? '' : 's'} this month,
+              but
+              {count} are selected. Deselect some, or the save will be rejected. Versions you already
+              charge for don't count.
+            </Alert.Description>
+          {/if}
         </Alert.Root>
       {/snippet}
 

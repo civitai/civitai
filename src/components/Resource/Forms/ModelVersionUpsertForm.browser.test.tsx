@@ -17,6 +17,10 @@ const mutateAsync = vi.hoisted(() =>
   vi.fn(async (input: unknown) => ({ id: 456, ...(input as object) }))
 );
 
+const allowance = vi.hoisted(() => ({
+  data: { used: 0, limit: 3 } as Record<string, unknown>,
+}));
+
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcModule>()),
   trpc: {
@@ -25,7 +29,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       getUserEarlyAccessVersions: { useQuery: () => ({ data: [] }) },
       // Hand-listed, so every router entry the component reads has to appear here or it throws on
       // render — the whole suite went red on this one when the allowance counter was added.
-      getPricingAllowance: { useQuery: () => ({ data: { used: 0, limit: 3 } }) },
+      getPricingAllowance: { useQuery: () => ({ data: allowance.data }) },
       upsert: { useMutation: () => ({ mutateAsync, isPending: false }) },
     },
     useUtils: () => ({
@@ -155,10 +159,51 @@ function renderChargingForm() {
   );
 }
 
+const belowFloor = { score: 2431, required: 10000, eligible: false, shortfall: 7569 };
+
 beforeEach(() => {
   mutateAsync.mockClear();
   flags.current = { licensingFee: true, earlyAccessModel: false };
   currentUser.value = { id: 1, tier: 'free', isModerator: false, meta: {} };
+  allowance.data = { used: 0, limit: 3 };
+});
+
+describe('ModelVersionUpsertForm — the monetization eligibility floor', () => {
+  test('takes the charge switch away from a creator below it, and says why', async () => {
+    allowance.data = { used: 0, limit: 3, eligibility: belowFloor };
+    renderForm();
+
+    await expect.element(page.getByText(/creator score of 10,000/)).toBeInTheDocument();
+    await expect.element(chargeSwitch()).toBeDisabled();
+  });
+
+  // The floor is not a permission level — it states who may sell here, so a moderator meets it too.
+  test('is not waived for a moderator', async () => {
+    allowance.data = { used: 0, limit: 3, eligibility: belowFloor };
+    currentUser.value = { id: 1, tier: 'free', isModerator: true, meta: {} };
+    renderForm();
+
+    await expect.element(chargeSwitch()).toBeDisabled();
+  });
+
+  // Absent while the query is in flight. Failing closed here would disable the switch under the cursor
+  // of every eligible creator for as long as the request takes.
+  test('leaves the switch alone until the answer arrives', async () => {
+    allowance.data = { used: 0, limit: 3 };
+    renderForm();
+
+    await expect.element(chargeSwitch()).toBeEnabled();
+  });
+
+  // Editing a price the version already carries is exempt from the floor, so the controls stay usable
+  // for a creator whose score has since fallen below it.
+  test('does not lock a creator out of a version that already charges', async () => {
+    allowance.data = { used: 0, limit: 3, eligibility: belowFloor };
+    renderChargingForm();
+
+    await expect.element(chargeSwitch()).toBeEnabled();
+    expect(page.getByText(/creator score of 10,000/).elements()).toHaveLength(0);
+  });
 });
 
 describe('ModelVersionUpsertForm — monetization disclosure', () => {

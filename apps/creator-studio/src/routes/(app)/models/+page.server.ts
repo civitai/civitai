@@ -53,6 +53,7 @@ import {
   earlyAccessDaysForScore,
   earlyAccessQuantityForScore,
   monthlyPricingAllowance,
+  pricingEligibility,
 } from '$lib/monetization/paid-access';
 
 // --- input schemas: every load/action input is zod-validated ---
@@ -177,6 +178,9 @@ export const load: PageServerLoad = async ({ locals, parent, url, cookies }) => 
       capTier: cappedTier(membership),
       pricingUsed,
       pricingLimit: Number.isFinite(pricingLimit) ? pricingLimit : null,
+      // The SIMULATED score, deliberately: the moderator score simulator exists to preview what a
+      // creator at a given score sees. What it never moves is the write, which re-reads the real one.
+      pricingFloor: pricingEligibility(modelsScore),
       // Score gates early access two ways: how long a window can run, and how many can run at once.
       maxEarlyAccessDays: earlyAccessDaysForScore(modelsScore),
       earlyAccessUsed,

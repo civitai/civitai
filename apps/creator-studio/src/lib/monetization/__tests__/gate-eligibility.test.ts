@@ -1,11 +1,17 @@
 import { describe, it, expect } from 'vitest';
+import { pricingEligibility } from '@civitai/buzz';
 import { resolveGateEligibility } from '../gate-eligibility';
+
+const ELIGIBLE = pricingEligibility(50_000);
+const BELOW_FLOOR = pricingEligibility(1_000);
 
 const base = {
   selectedCount: 10,
   publishedCount: 0,
   maxEarlyAccessDays: 7,
   pricingSlotsLeft: 20,
+  pricingFloor: ELIGIBLE,
+  alreadyPriced: false,
   resolving: false,
 };
 
@@ -62,5 +68,37 @@ describe('resolveGateEligibility', () => {
     const r = resolveGateEligibility({ ...base, selectedCount: 3, publishedCount: 5 });
     expect(r.eligibleForTimed).toBe(0);
     expect(r.canChooseTimed).toBe(false);
+  });
+});
+
+describe('the monetization floor', () => {
+  it('blocks a permanent gate with a reason, even on a month full of unspent allowance', () => {
+    const r = resolveGateEligibility({ ...base, pricingFloor: BELOW_FLOOR });
+    expect(r.canChoosePermanent).toBe(false);
+    expect(r.permBlocked).toBe(true);
+    expect(r.permBlockedReason).toMatch(/creator score/);
+  });
+
+  // A timed window is not a price: it costs no slot and prices itself out when it closes. Blocking it
+  // here would put early access behind a gate the write path does not apply.
+  it('leaves early access alone', () => {
+    const r = resolveGateEligibility({ ...base, pricingFloor: BELOW_FLOOR });
+    expect(r.canChooseTimed).toBe(true);
+    expect(r.timedBlockedReason).toBeUndefined();
+  });
+
+  it('does not apply to a selection that already carries a price', () => {
+    const r = resolveGateEligibility({ ...base, pricingFloor: BELOW_FLOOR, alreadyPriced: true });
+    expect(r.canChoosePermanent).toBe(true);
+    expect(r.permBlockedReason).toBeUndefined();
+  });
+
+  // The two ways a permanent gate is refused have to stay distinguishable: the allowance case tells the
+  // creator to deselect, which is useless advice to someone below the floor.
+  it('is reported apart from a used-up allowance', () => {
+    const full = resolveGateEligibility({ ...base, pricingSlotsLeft: 0 });
+    expect(full.permBlocked).toBe(true);
+    expect(full.permBlockedReason).toBeUndefined();
+    expect(resolveGateEligibility(base).permBlockedReason).toBeUndefined();
   });
 });

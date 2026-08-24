@@ -909,6 +909,11 @@ export function ModelVersionUpsertForm({
         exempt: hasExistingCharge,
       })
     : null;
+  // Not waived for moderators, and not applied to a version that already charges — editing an existing
+  // price is exempt. Absent while the query is in flight, which leaves the control enabled rather than
+  // flickering shut under the cursor; the server refuses either way.
+  const eligibility = pricingAllowance?.eligibility;
+  const belowPricingFloor = !!eligibility && !eligibility.eligible && !hasExistingCharge;
 
   // Editing a version that already holds an EA slot doesn't count against the cap — mirrors the
   // server carve-out in assertUserEarlyAccessLimits.
@@ -1296,6 +1301,22 @@ export function ModelVersionUpsertForm({
                     )}
                   </Alert>
                 )}
+                {!monetizationBlocked && belowPricingFloor && eligibility && (
+                  <Alert
+                    color="yellow"
+                    icon={<IconAlertTriangle size={18} />}
+                    title="You can't charge for this version yet"
+                    mb="sm"
+                  >
+                    <Text size="sm">
+                      Charging for a model needs a creator score of{' '}
+                      {eligibility.required.toLocaleString()}. Yours is{' '}
+                      {eligibility.score.toLocaleString()} —{' '}
+                      {eligibility.shortfall.toLocaleString()} to go. Prices you have already set
+                      are unaffected.
+                    </Text>
+                  </Alert>
+                )}
                 {!monetizationBlocked && (showPaidAccessInput || showLicensingFeeBlock) && (
                   <Switch
                     label="I want to charge for this version"
@@ -1306,7 +1327,7 @@ export function ModelVersionUpsertForm({
                       setChargeEnabled(checked);
                       if (!checked) clearCharges();
                     }}
-                    disabled={isEarlyAccessOver && !!version?.paidAccess}
+                    disabled={belowPricingFloor || (isEarlyAccessOver && !!version?.paidAccess)}
                   />
                 )}
                 {removingStoredCharge && !monetizationBlocked && (

@@ -1,5 +1,8 @@
-import { finiteOrNull, monthlyPricingAllowance } from '@civitai/buzz';
-import { countPricingSlotsThisMonth } from '~/server/services/pricing-slot.service';
+import { finiteOrNull, monthlyPricingAllowance, pricingEligibility } from '@civitai/buzz';
+import {
+  countPricingSlotsThisMonth,
+  getCreatorScore,
+} from '~/server/services/pricing-slot.service';
 import { getCapTier } from '~/server/services/subscriptions.service';
 import {
   declineReviewHandler,
@@ -99,10 +102,15 @@ const isOwnerOrModerator = middleware(async ({ ctx, input, next }) => {
 
 export const modelVersionRouter = router({
   getPricingAllowance: protectedProcedure.query(async ({ ctx }) => {
-    const limit = monthlyPricingAllowance(await getCapTier(ctx.user.id));
+    const [tier, used, score] = await Promise.all([
+      getCapTier(ctx.user.id),
+      countPricingSlotsThisMonth(ctx.user.id),
+      getCreatorScore(ctx.user.id),
+    ]);
     return {
-      used: await countPricingSlotsThisMonth(ctx.user.id),
-      limit: finiteOrNull(limit),
+      used,
+      limit: finiteOrNull(monthlyPricingAllowance(tier)),
+      eligibility: pricingEligibility(score),
     };
   }),
   getById: publicProcedure
