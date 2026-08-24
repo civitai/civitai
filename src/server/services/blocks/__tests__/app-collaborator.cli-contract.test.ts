@@ -139,11 +139,23 @@ describe('CLI scope annotations — the reachable set has not shrunk', () => {
     expect(annotations.length).toBeGreaterThan(0);
   });
 
-  it('🔴 all 13 CLI-reachable listing-media procs remain annotated', () => {
+  it('🔴 all 17 CLI-reachable owner-scoped listing procs remain annotated', () => {
     // An exact count, not a floor: losing one silently 403s every released CLI on that
     // command (an un-annotated proc implicitly requires TokenScope.Full, which the
     // scoped CLI token is not).
-    expect(annotations).toHaveLength(13);
+    //
+    // 13 → 17 when `civitai app doctor` landed: `listMine` + `getAssets` (the problems
+    // READS) and `updateListing` + `updateRevisionDraft` (the FIXES for
+    // empty-description / empty-tagline / empty-category). The set stopped being
+    // "listing MEDIA" at that point — the membership rule is written at the constant's
+    // declaration in the router, and each proc states its own verdict at its own site.
+    //
+    // 🔴 THIS IS A COUNT OF DECLARATIONS, WHICH IS NOT A COUNT OF BEHAVIOUR. It fails
+    // when the set grows or shrinks, and that is all it can do — a `.meta()` spelled on
+    // the wrong proc satisfies it. The behavioural half is
+    // `app-listings.router.cli-scope.test.ts`, which drives every one of these procs
+    // through `enforceTokenScope` across the four credentials. Change both together.
+    expect(annotations).toHaveLength(17);
   });
 
   it('the annotation still requires AppBlocksSubmit — the bit the CLI token carries', () => {

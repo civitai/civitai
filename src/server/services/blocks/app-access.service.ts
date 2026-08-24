@@ -1,6 +1,11 @@
 import { TRPCError } from '@trpc/server';
 
 import { dbRead } from '~/server/db/client';
+// Static, not a lazy `import()`: `listing-problems` (imported below) already pulls this
+// module into the graph, so naming it here adds no weight — and the batched scan read is
+// on the hot path of every `/apps/mine` render, where a dynamic import would cost a
+// microtask hop per call for nothing.
+import { loadListingAssetScansBatch } from '~/server/services/blocks/app-listing-assets.service';
 import { listingCoverUrl, listingIconUrl } from '~/server/services/blocks/listing-media-url';
 import type { ListingProblem } from '~/server/services/blocks/listing-problems';
 import { computeListingProblems } from '~/server/services/blocks/listing-problems';
@@ -1000,14 +1005,46 @@ async function hydrateMyAppListings(
   const removedListingIds = rows
     .filter((r: { status: string }) => r.status === 'removed')
     .map((r: { id: string }) => r.id);
-  const lastEvents = removedListingIds.length
-    ? await dbRead.appListingModerationEvent.findMany({
-        where: { appListingId: { in: removedListingIds } },
-        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-        distinct: ['appListingId'],
-        select: { appListingId: true, action: true },
-      })
-    : [];
+  /**
+   * THE SCAN DIMENSION OF THE COMPLETENESS ADVISORY — `blocked-media` / `scanning-media`.
+   *
+   * 🔴 THIS USED TO BE UNWIRED, AND THE CONSEQUENCE WAS NOT "a weaker advisory" BUT "two
+   * of the eight codes could never fire ANYWHERE the author can reach". `/apps/mine` is
+   * the only surface the advisory renders on, so `computeListingProblems` was being
+   * called without `assetScans` at the one call site that matters — including for the
+   * BLOCKING one. An author whose icon came back `Blocked` saw a listing reported as
+   * complete, and then a publish refused by `assertAssetsScanClean` with no advisory
+   * having said why.
+   *
+   * 🔴 IT IS BATCHED, NOT A PER-ROW FAN-OUT, and that is the whole reason it is wireable
+   * now. The original note here refused the input because "it needs each asset's
+   * `ingestion` state, which is a per-listing fan-out this LIST read deliberately does not
+   * do" — correct about `getListingAssets` (2 queries per listing), wrong to conclude the
+   * data was unreachable. {@link loadListingAssetScansBatch} takes the WHOLE PAGE and
+   * returns 2 queries total: one screenshot read across every listing id, one Image read
+   * across every collected asset id. So the cost is +2 fixed round trips per `listMine`
+   * call, independent of page size — not +2N.
+   *
+   * 🔴 RUN CONCURRENTLY WITH THE MODERATION-EVENT READ so the added SERIAL depth is one
+   * hop, not two. The two are independent (different tables, different keys).
+   */
+  const [lastEvents, scansByListingId] = await Promise.all([
+    removedListingIds.length
+      ? dbRead.appListingModerationEvent.findMany({
+          where: { appListingId: { in: removedListingIds } },
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          distinct: ['appListingId'],
+          select: { appListingId: true, action: true },
+        })
+      : Promise.resolve([] as { appListingId: string | null; action: string }[]),
+    loadListingAssetScansBatch(
+      rows.map((r: { id: string; iconId?: number | null; coverId?: number | null }) => ({
+        id: r.id,
+        iconId: r.iconId ?? null,
+        coverId: r.coverId ?? null,
+      }))
+    ),
+  ]);
   const lastActionByListingId = new Map<string, string>(
     (lastEvents as Array<{ appListingId: string | null; action: string }>)
       .filter((e): e is { appListingId: string; action: string } => e.appListingId != null)
@@ -1051,10 +1088,9 @@ async function hydrateMyAppListings(
         // keeps the row sortable rather than producing an `Invalid Date` that poisons
         // every comparison it takes part in.
         updatedAt: r.updatedAt ?? new Date(0),
-        // 🔴 NO `assetScans` PASSED, so no scan-state problems are computed here. That
-        // input needs each asset's `ingestion` state, which is a per-listing fan-out this
-        // LIST read deliberately does not do — the same reasoning as the omitted
-        // `connectClientId`. The scan problems remain on the single-listing surfaces.
+        // `assetScans` comes from the ONE batched read above — see its note. Absent from
+        // the map (which cannot happen for a row that was in `subjects`) degrades to `[]`,
+        // i.e. the pre-scan-dimension behaviour, never to an invented problem.
         problems: computeListingProblems({
           iconId: r.iconId ?? null,
           coverId: r.coverId ?? null,
@@ -1062,6 +1098,7 @@ async function hydrateMyAppListings(
           description: r.description ?? null,
           tagline: r.tagline ?? null,
           category: r.category ?? null,
+          assetScans: scansByListingId.get(r.id) ?? [],
         }).problems,
         // 🔴 Only a `removed` row can carry one — see the field's doc. A non-removed row
         // returning an action would let a stale event re-open Republish on a live listing.

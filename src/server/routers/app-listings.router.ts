@@ -123,9 +123,18 @@ const enforceAppBlocksAuthorFlag = middleware(async ({ ctx, next }) => {
 });
 
 /**
- * Token-scope gate for the listing-media authoring procs the civitai CLI drives
+ * Token-scope gate for the OWNER-SCOPED listing procs the civitai CLI drives
  * (`civitai app listing set-icon/set-cover/add-screenshot/rm-screenshot/reorder/status`,
- * civitai/cli#186).
+ * civitai/cli#186; and `civitai app doctor` — the listing-problems read + its fixes).
+ *
+ * 🔴 THE SET IS NO LONGER "MEDIA" — the name is kept because it is referenced from the
+ * CLI-side docs, but the membership rule is broader and is stated here so a future
+ * annotation is a decision rather than a copy: a proc may carry this meta iff it is
+ * OWNER-OR-SEAT bound independently of token scope, writes only author-owned state, and
+ * (for an approved listing) routes material change through the shadow-revision model.
+ * `listMine` + `getAssets` (the doctor READS) and `updateListing` +
+ * `updateRevisionDraft` (its FIXES) joined on exactly that test; each states its own
+ * verdict at its own site.
  *
  * The CLI acts as the caller over the SCOPED OAuth access token `civitai login` mints
  * (`UserRead | AppBlocksSubmit | AppBlocksDevTunnel`) — NOT a Full personal API key.
@@ -320,8 +329,16 @@ function mapOffsiteError(err: unknown): TRPCError {
 }
 
 export const appListingsRouter = router({
-  /** Owner/mod read of a listing's current assets (creator dashboard). */
+  /**
+   * Owner/mod read of a listing's current assets (creator dashboard).
+   *
+   * CLI-reachable (`listingMediaCliScope`): this is the per-asset half of `civitai app
+   * doctor` — `completeness`, `hasBlockedAsset`, `hasPendingScan` and each asset's
+   * `scanStatus`/`nsfwLevel`. Owner-bound in the service (`loadOwnedListing`), so the meta
+   * widens the CREDENTIAL, not the authority.
+   */
   getAssets: protectedProcedure
+    .meta(listingMediaCliScope)
     .use(enforceAppBlocksAuthorFlag)
     .input(listingAssetsQuerySchema)
     .query(async ({ ctx, input }) => {
@@ -586,8 +603,39 @@ export const appListingsRouter = router({
    * shadow-draft revision (`requiresReview:true` + the `shadowId` to edit assets
    * against, then `submitListingRevision`). Owner-bound in the service. Rejected →
    * MUST_RESUBMIT; removed → FORBIDDEN. Typed failures map via `mapOffsiteError`.
+   *
+   * ## CLI-reachable (`listingMediaCliScope`) — a WRITE, so the three checks stated
+   *
+   * `civitai app doctor` reports `empty-description` / `empty-tagline` / `empty-category`;
+   * this is the only proc that can FIX them, so leaving it un-annotated would ship a
+   * read-only diagnosis of problems the CLI cannot act on.
+   *
+   *   (a) AUTHORITY IS INDEPENDENT OF TOKEN SCOPE. `loadOwnedEditableListing` →
+   *       `resolveListingRole` → `resolveListingAccess` admits the listing's OWNER or an
+   *       ACCEPTED collaborator, and NOTHING else — there is not even a moderator
+   *       override on this path. The meta changes which CREDENTIAL may speak for that
+   *       caller, never who the caller may act for.
+   *   (b) IT CANNOT MUTATE ANYTHING A MODERATOR OWNS. Every write funnels through
+   *       `buildListingPatchData`, whose entire output surface is author-owned scalars
+   *       (externalUrl / sourceRepoUrl / name / tagline / description / category /
+   *       contentRating / the derived connect-scope snapshot). No `status`, no
+   *       moderation event, no publish-request row. A `removed` listing is refused
+   *       outright (FORBIDDEN) and a `rejected` one steered to resubmit.
+   *   (c) IT RESPECTS THE SHADOW-REVISION MODEL. `approved` + a MATERIAL change stages
+   *       onto a shadow via `beginListingRevision` and leaves the live parent untouched;
+   *       only trivial edits touch an approved row in place, which is the documented
+   *       design. A shadow passed here is REFUSED (`revisionOfId != null` →
+   *       INVALID_REVISION) — shadows are `updateRevisionDraft`'s job.
+   *
+   * 🔴 The scope-disclosure keys (`requestedScopes`/`scopeJustifications`) are reachable
+   * through this patch, but they are SERVER-DERIVED: `deriveScopePatch` re-resolves the
+   * linked OAuth client's `allowedScopes` ceiling and `assertConnectScopesValid` re-checks
+   * the subset + justifications, so a token cannot request a scope its client does not
+   * already allow. A material scope change also routes to a shadow, i.e. back through mod
+   * review.
    */
   updateListing: appDeveloperProcedure
+    .meta(listingMediaCliScope)
     .use(
       rateLimit({
         limit: 30,
@@ -642,8 +690,23 @@ export const appListingsRouter = router({
    * procs that already mutate an owned shadow). Owner-bound in the service; asserts
    * the target is a draft shadow so it can never edit a live top-level listing.
    * Typed failures map via `mapOffsiteError`.
+   *
+   * ## CLI-reachable (`listingMediaCliScope`) — same three checks as `updateListing`
+   *
+   * The CLI's asset procs (`setIcon`/`setCover`/`addScreenshot`) already take a shadow id
+   * and are already annotated; without this one the SCALAR half of a shadow edit stays
+   * 403 for the same token, so `civitai app doctor --fix` could repair an approved app's
+   * media but not its tagline.
+   *
+   *   (a) Same `loadOwnedEditableListing` owner/seat gate, no moderator override.
+   *   (b) Same `buildListingPatchData` write surface — author-owned scalars only.
+   *   (c) Strictly TIGHTER on the revision model than `updateListing`: it REFUSES a
+   *       top-level listing (`revisionOfId == null` → INVALID_REVISION) and refuses a
+   *       shadow that is not still `draft`, so it can only ever write a not-yet-submitted
+   *       revision draft the caller owns. It cannot touch a live parent at all.
    */
   updateRevisionDraft: appDeveloperProcedure
+    .meta(listingMediaCliScope)
     .use(
       rateLimit({
         limit: 30,
@@ -910,8 +973,15 @@ export const appListingsRouter = router({
    * `appDeveloperProcedure` = the App Blocks author FLAG (`protectedProcedure.use(
    * hasAppBlocksAuthor)`), NOT an ownership check — which is what makes it correct for a
    * seat-only caller who owns nothing. Same gate the collaborator router composes.
+   *
+   * CLI-reachable (`listingMediaCliScope`): THE read behind `civitai app doctor`. It is
+   * the only surface carrying `problems[]` (the 8-code completeness advisory) plus
+   * `lastModerationAction`, so without the meta the CLI's OAuth token 403s on the one
+   * proc that can tell an author what is wrong with their listing. The set it returns is
+   * resolved from ownership ∪ accepted seats in the service; the meta admits a credential,
+   * it does not widen that set.
    */
-  listMine: appDeveloperProcedure.query(async ({ ctx }) => {
+  listMine: appDeveloperProcedure.meta(listingMediaCliScope).query(async ({ ctx }) => {
     if (!ctx.user) return [];
     const { listMyAppListings } = await import('~/server/services/blocks/app-access.service');
     return listMyAppListings({ userId: ctx.user.id });

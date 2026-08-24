@@ -1533,4 +1533,24 @@ describe('getAssetScanStatuses', () => {
     expect(res.statuses).toEqual([]);
     expect(mockDb.image.findMany).not.toHaveBeenCalled();
   });
+
+  /**
+   * 🔴 A ROW WITH A NULL `ingestion` COLUMN IS `pending` HERE, and that is THIS site's
+   * answer — not the shared predicate's.
+   *
+   * `assetScanStatusFromIngestion` reports absence as `null` and leaves the decision to
+   * each caller, because the three callers genuinely disagree: this poll says `pending`
+   * (the badge keeps spinning, which is right for a row whose scan has not been recorded),
+   * `getListingAssets` says `null` (no badge at all), and the batched list read says
+   * "contribute no entry". Before the predicate was consolidated this branch was the
+   * implicit `else` of a ternary and nothing pinned it, so a mutant flipping it to
+   * `scanned` — i.e. telling an author an unscanned asset is clean — survived a green
+   * suite. It does not now.
+   */
+  it('🔴 a row whose ingestion column is NULL reports pending, not scanned', async () => {
+    mockDb.image.findMany.mockResolvedValue([{ id: 1, ingestion: null }]);
+    const { getAssetScanStatuses } = await import('../app-listing-assets.service');
+    const res = await getAssetScanStatuses([1], owner);
+    expect(res.statuses).toEqual([{ imageId: 1, status: 'pending' }]);
+  });
 });
