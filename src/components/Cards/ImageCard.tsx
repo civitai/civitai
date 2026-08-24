@@ -7,6 +7,7 @@ import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 import { DurationBadge } from '~/components/DurationBadge/DurationBadge';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { CardRemixButton } from '~/components/Image/Remix/CardRemixButton';
+import { RemixedCardBadge, RemixedCardPeel } from '~/components/RemixGallery/RemixedCardBadge';
 import { CardStickerOverlay } from '~/components/Sticker/CardStickerOverlay';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { StickerPlacementCardBadge } from '~/components/Sticker/StickerPlacementCardBadge';
@@ -30,7 +31,12 @@ export function ImageCard({ data }: Props) {
         // Not mounted at all with the flag off. The overlay renders null there
         // anyway, but a card is rendered by the hundred and this keeps the
         // flag-off tree identical to what shipped before it.
-        safe && features.stickerPlacement && <CardStickerOverlay imageId={data.id} />
+        safe && (
+          <>
+            {features.stickerPlacement && <CardStickerOverlay imageId={data.id} />}
+            <RemixedCardPeel imageId={data.id} />
+          </>
+        )
       }
       header={
         <div className="flex w-full items-start justify-between">
@@ -40,6 +46,7 @@ export function ImageCard({ data }: Props) {
           <div className="ml-auto flex flex-col gap-2">
             <ImageContextMenu image={data} />
             <CardRemixButton image={data} />
+            <RemixedCardBadge imageId={data.id} />
           </div>
         </div>
       }

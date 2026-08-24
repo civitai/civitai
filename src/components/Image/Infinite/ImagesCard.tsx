@@ -27,6 +27,7 @@ import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { CollectionItemStatus, ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { RemixMenu, isRemixMenuVisible } from '~/components/Image/Remix/RemixMenu';
+import { RemixedCardBadge, RemixedCardPeel } from '~/components/RemixGallery/RemixedCardBadge';
 import { tourOverlayZIndex } from '~/shared/constants/app-layout.constants';
 import { useImageStore } from '~/store/image.store';
 import { useTourContext } from '~/components/Tours/ToursProvider';
@@ -210,8 +211,10 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                         </ThemeIcon>
                       </Tooltip>
                     )}
+                    <RemixedCardBadge imageId={image.id} />
                   </div>
                 )}
+                {safe && <RemixedCardPeel imageId={image.id} />}
 
                 {showVotes ? (
                   <div className={classes.footer}>
