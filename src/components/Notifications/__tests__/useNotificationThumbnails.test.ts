@@ -61,6 +61,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 }));
 
 import { useNotificationThumbnails } from '~/components/Notifications/notification-thumbnails';
+import { MAX_ENTITIES_COVER_IMAGE, getEntitiesCoverImage } from '~/server/schema/image.schema';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 function renderHook<T>(useHook: () => T) {
@@ -148,5 +149,36 @@ describe('resolving the image a notification is about', () => {
     renderHook(() => useNotificationThumbnails([{ details: { placementId: 1 } }]));
 
     expect(state.useQuery.mock.calls[0][1]).toMatchObject({ enabled: false });
+  });
+
+  // The panel is an infinite list with no `maxPages`, so the id list grows with
+  // scroll depth. `getEntitiesCoverImage` bounds `entities`, and a refused query
+  // leaves `data` undefined with no error branch — every thumbnail would vanish,
+  // including the ones under the bound, and stay gone for the session because each
+  // re-render sends the same list. So the hook has to clamp before asking.
+  it('asks for no more entities than the query accepts, however deep the panel is', () => {
+    // Ids are far above the bound so a length that happened to be clamped by
+    // something keyed on the id value could not pass this.
+    const deepPanel = Array.from({ length: MAX_ENTITIES_COVER_IMAGE + 25 }, (_, i) => ({
+      details: { imageId: 900_000 + i },
+    }));
+
+    renderHook(() => useNotificationThumbnails(deepPanel));
+
+    const { entities } = state.useQuery.mock.calls[0][0] as {
+      entities: { entityType: string; entityId: number }[];
+    };
+
+    expect(entities).toHaveLength(MAX_ENTITIES_COVER_IMAGE);
+    // The kept ids are the panel's first, not an arbitrary slice: the newest
+    // notifications are the ones the user is looking at.
+    expect(entities[0]).toEqual({ entityType: 'Image', entityId: 900_000 });
+    expect(entities[MAX_ENTITIES_COVER_IMAGE - 1]).toEqual({
+      entityType: 'Image',
+      entityId: 900_000 + MAX_ENTITIES_COVER_IMAGE - 1,
+    });
+    // The clamp has to leave a request the schema will actually accept, not merely a
+    // shorter one — this is the assertion that fails if the two ever drift apart.
+    expect(getEntitiesCoverImage.safeParse({ entities }).success).toBe(true);
   });
 });

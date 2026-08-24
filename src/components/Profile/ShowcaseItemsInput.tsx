@@ -3,6 +3,7 @@ import type { InputWrapperProps } from '@mantine/core';
 import { Box, Button, Center, Input, Loader, Paper, Stack, Text } from '@mantine/core';
 import React, { useMemo, useState } from 'react';
 import { useDidUpdate } from '@mantine/hooks';
+import { MAX_ENTITIES_COVER_IMAGE } from '~/server/schema/image.schema';
 import type { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';
 import { QuickSearchDropdown } from '~/components/Search/QuickSearchDropdown';
 import { quoteMeiliValue } from '~/components/Search/meili-filter';
@@ -34,13 +35,24 @@ export const ShowcaseItemsInput = ({
   const [showcaseItems, setShowcaseItems] = useState<ShowcaseItemSchema[]>(value || []);
   const [error, setError] = useState('');
   // Sort them so that we don't retrigger a query when the order changes.
+  //
+  // Clamped to the query's own bound after sorting, never before: the sort is what
+  // keeps a drag-reorder from re-querying, and slicing an unsorted list would make
+  // the requested set depend on display order and undo that. This narrows the cover
+  // images that get loaded, not the items — `showcaseItems` is what `onChange` saves
+  // and it is left whole, so editing a showcase longer than the bound cannot silently
+  // truncate it. Without the clamp an over-long list is refused outright and every
+  // item falls back to "There was a problem loading the cover image", including the
+  // ones that would have resolved.
   const sortedShowcaseItems = useMemo(() => {
-    return [...showcaseItems].sort((a, b) => {
-      const aType = `${a.entityType}-${a.entityId}`;
-      const bType = `${b.entityType}-${b.entityId}`;
+    return [...showcaseItems]
+      .sort((a, b) => {
+        const aType = `${a.entityType}-${a.entityId}`;
+        const bType = `${b.entityType}-${b.entityId}`;
 
-      return aType.localeCompare(bType);
-    });
+        return aType.localeCompare(bType);
+      })
+      .slice(0, MAX_ENTITIES_COVER_IMAGE);
   }, [showcaseItems]);
 
   const {
