@@ -113,6 +113,21 @@ function getSharedIngestFailureCounts(): Map<string, number> {
 }
 
 /**
+ * Datastreams already reported as unprovisioned, so the report fires ONCE per name per process.
+ *
+ * globalThis-pinned for the same reason the failure counter above is, and it matters more here:
+ * the bundler emits this module many times into one server build, so a module-scope `Set` would
+ * let the same name be reported once per copy. One line per dead datastream per process is a
+ * diagnosis; fourteen is noise that gets filtered and then ignored.
+ */
+const UNPROVISIONED_REPORTED_KEY = Symbol.for('@civitai/axiom.unprovisionedDatastreamsReported');
+
+function getSharedUnprovisionedReported(): Set<string> {
+  const g = globalThis as typeof globalThis & { [UNPROVISIONED_REPORTED_KEY]?: Set<string> };
+  return (g[UNPROVISIONED_REPORTED_KEY] ??= new Set<string>());
+}
+
+/**
  * Build an Axiom logger. Config defaults come from the package's own env schema
  * (./env); pass a `Partial<AxiomConfig>` to override any value per call (tests,
  * multi-instance, alternate config sources). `deps` injects optional app behavior —
@@ -220,6 +235,39 @@ export function createAxiomLogger(
     }
   }
 
+  const unprovisionedReported = getSharedUnprovisionedReported();
+
+  /**
+   * Say ONCE, on the stderr/log-store path, that a datastream was skipped because no Axiom dataset
+   * backs it.
+   *
+   * This is deliberately NOT `axiom-ingest-failed`. Nothing failed: the event is on the durable
+   * stderr path, and we declined to attempt a write we know Axiom rejects. Emitting a failure here
+   * would put a permanent, unrecoverable entry into the consecutive-failure counter that the
+   * ingest-wedged alerting reads, and would re-create the exact signal-vs-noise problem this
+   * change removes.
+   *
+   * It is still an `error`-typed line rather than a warning, because a datastream name in the
+   * source with no dataset behind it IS a defect — it is just a defect in configuration or in the
+   * call site, not in the transport. One line per name per process makes it findable without
+   * making it loud. Like `recordIngestOutcome`, this must never route through `logToAxiom`.
+   */
+  function reportUnprovisionedDatastream(datastream: string) {
+    if (unprovisionedReported.has(datastream)) return;
+    unprovisionedReported.add(datastream);
+    console.error(
+      JSON.stringify({
+        name: 'axiom-datastream-unprovisioned',
+        type: 'error',
+        level: 'error',
+        pod: config.podName,
+        datastream,
+        message:
+          'No Axiom dataset backs this datastream; skipping the Axiom dual-write. The event is on the stderr/log-store path. Provision the dataset and add it to PROVISIONED_AXIOM_DATASTREAMS (or AXIOM_EXTRA_DATASTREAMS), or drop the datastream argument at the call site.',
+      })
+    );
+  }
+
   async function logToAxiom(data: MixedObject, datastream?: string) {
     const sendData = { pod: config.podName, ...data };
     if (config.isProd) {
@@ -288,6 +336,34 @@ export function createAxiomLogger(
 
       if (!axiom) return;
       if (!datastream) return;
+
+      /**
+       * 🔴 THE PROVISIONED-DATASET GUARD. Only a datastream that names a dataset known to EXIST may
+       * reach `ingestEvents`. Everything else stops here, having already been written to stderr →
+       * the log store by the unconditional write above.
+       *
+       * WHY A GUARD AND NOT A CALL-SITE EDIT. The defect this closes was TEN distinct datastream
+       * names, spread over 18 production call sites in four subsystems, every one of them rejected
+       * on every write. Fixing that per call site fixes the ten that exist today and does nothing
+       * about the eleventh, because the property "this string names a real dataset" is not
+       * expressible at
+       * a call site — it is a relationship between the source and a third-party account. One place
+       * to state it, one place to check it.
+       *
+       * 🔴 WHY NOT "JUST DROP THE SECOND ARGUMENT". Because that does not disable the write, it
+       * REDIRECTS it: `datastream ??= config.datastream` a few lines above means an omitted
+       * argument falls back to the default dataset. For a high-volume stream that silently moves
+       * its whole volume onto the main dataset's ingest bill, and it also rewrites the `_axiom`
+       * field on the stderr line, which is the field existing log queries group by. Keeping the
+       * name and refusing the write preserves both the query surface and the bill.
+       *
+       * The events are not lost and never were: the stderr line above carries the complete payload,
+       * and it is what every consumer of these streams already reads.
+       */
+      if (!config.provisionedDatastreams.has(datastream)) {
+        reportUnprovisionedDatastream(datastream);
+        return;
+      }
 
       /**
        * 🔴 CONTAINED AND BOUNDED — the same contract the injected sink above already has,
