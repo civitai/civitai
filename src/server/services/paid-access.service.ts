@@ -27,7 +27,11 @@ import { getCapTier } from '~/server/services/subscriptions.service';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { createCachedObject } from '~/server/utils/cache-helpers';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
-import { assertPricingAllowed, type TierInput } from '~/server/services/pricing-slot.service';
+import {
+  assertPricingAllowed,
+  type PricingWriteOutcome,
+  type TierInput,
+} from '~/server/services/pricing-slot.service';
 import { increaseDate } from '~/utils/date-helpers';
 
 // A gated version must actually charge for something: `download` always carries a price, and a
@@ -519,8 +523,8 @@ export async function getViewerMonetization({
  *
  * Paid-access PRICES are not checked at all — they are uncapped. Only the licensing fee has a ceiling.
  *
- * Returns whether the write must spend an allowance slot; the caller records it with recordPricingSlot
- * after the version is written.
+ * Returns what the write owes the pricing ledger: a slot to record with recordPricingSlot, or one to
+ * offer back with releasePricingSlot, once the version is written.
  */
 export async function assertMonetizationWrite({
   ownerId,
@@ -547,6 +551,7 @@ export async function assertMonetizationWrite({
    * unlimited new priced ones.
    */
   versionId?: number;
+  /** An object sets the gate, `null` clears it, `undefined` leaves it alone. */
   paidAccess: ModelVersionPaidAccessInputSchema | null | undefined;
   /** The fee this write sets, if it sets one. `undefined` means unchanged; `null`/0 means cleared. */
   licensingFee?: number | null;
@@ -558,7 +563,7 @@ export async function assertMonetizationWrite({
   baseModel?: string | null;
   /** The base model the version is on NOW, when that differs. See the ceiling check below. */
   storedBaseModel?: string | null;
-}): Promise<{ spendsSlot: boolean }> {
+}): Promise<PricingWriteOutcome> {
   const existing = versionId
     ? (await getPaidAccess('ModelVersion', [versionId]))[versionId]
     : undefined;
@@ -592,9 +597,10 @@ export async function assertMonetizationWrite({
     hasPermanentGate: hadPermanentGate,
   });
   const willBePriced = isAlreadyPriced({
-    // An absent `licensingFee` on the input means "unchanged", not "cleared".
+    // Collapsing absent and null reads a gate removal as a version that still charges.
     licensingFee: licensingFee !== undefined ? licensingFee : storedLicensingFee,
-    hasPermanentGate: paidAccess ? !!paidAccess.permanent : hadPermanentGate,
+    hasPermanentGate:
+      paidAccess === undefined ? hadPermanentGate : paidAccess !== null && !!paidAccess.permanent,
   });
 
   return assertPricingAllowed({ userId: ownerId, wasPriced, willBePriced, tier, userMeta });

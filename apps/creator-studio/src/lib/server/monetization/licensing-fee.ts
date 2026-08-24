@@ -13,6 +13,8 @@ import { type Membership } from '$lib/server/membership';
 import {
   assertPricingAllowed,
   recordPricingSlots,
+  releasableVersionIds,
+  releasePricingSlots,
   unpricedVersionIds,
 } from '$lib/server/monetization/pricing-slot';
 import { FEE_IMAGE_OPTIONS } from '$lib/monetization/fee';
@@ -233,6 +235,10 @@ export async function setLicensingFee(
     if (needsAffirmation) await stampRightsAffirmation(trx, userId, [versionId]);
     await recordPricingSlots(userId, newlyPricedIds, trx as typeof dbWrite);
   });
+  // Outside the transaction, and only when the write cleared the fee: releasability is read from the
+  // post-write state, which an uncommitted transaction would not show.
+  if (normalized == null)
+    await releasePricingSlots(userId, await releasableVersionIds(userId, [versionId]));
   return { ok: true };
 }
 
@@ -379,5 +385,9 @@ export async function bulkSetLicensingFee(
     await recordPricingSlots(userId, newlyPricedIds, trx as typeof dbWrite);
     return n;
   });
+  if (normalized == null) {
+    const ids = owned.map((v) => v.id);
+    await releasePricingSlots(userId, await releasableVersionIds(userId, ids));
+  }
   return { ok: true, updated };
 }

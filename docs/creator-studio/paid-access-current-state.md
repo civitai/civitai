@@ -39,7 +39,9 @@ generation too. Early-access state is derived **live** from an active `PaidAcces
 - **Donation goal** — timed-only (it ends a window early; permanent never ends) and **create-once** (the endpoint
   never updates/removes it, so the spoke shows an existing goal read-only).
 - **Bulk permanent paid access** (Creator Studio) — scoped by a **usage-type filter** (`?usage=download|generation`
-  drives the list + select-all so the price fields are unambiguous); selection is capped at `cap − current`.
+  drives the list + select-all so the price fields are unambiguous); selection is not capped — the dialog
+  warns when the selection exceeds the remaining monthly allowance, or when the owner is below the
+  eligibility floor.
 
 ## Where the code lives
 

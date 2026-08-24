@@ -1,14 +1,19 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import {
   MONETIZATION_MIN_CREATOR_SCORE,
+  clearsLastPrice,
   exceedsAllowance,
+  isAlreadyPriced,
   monthlyPricingAllowance,
   pricingAllowanceMessage,
   pricingFloorMessage,
   pricingMonthStart,
 } from '@civitai/buzz';
+import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 
 // The queries and the ordering behind the two pricing rules; the rules themselves are in
 // @civitai/buzz, shared with the creator-studio spoke, which enforces them against the same database
@@ -38,8 +43,8 @@ export async function countPricingSlotsThisMonth(ownerId: number): Promise<numbe
 }
 
 /**
- * Idempotent by primary key — a slot is spent once and never returned. Call it AFTER the write it
- * accompanies succeeds, or a failed write costs the creator a slot.
+ * Idempotent by primary key. Call it AFTER the write it accompanies succeeds, or a failed write costs
+ * the creator a slot. Returned again by releasePricingSlot when the last price comes off.
  */
 export async function recordPricingSlot(
   {
@@ -54,6 +59,162 @@ export async function recordPricingSlot(
     data: [{ entityType, entityId, ownerId }],
     skipDuplicates: true,
   });
+}
+
+/**
+ * How long the charge lookup may take before the caller falls back to the daily mirror. A try/catch
+ * cannot catch a hang and the client sets no request_timeout, so without this its own 30s default
+ * would hold a creator's save open. The query measures ~4ms; this is a fault budget, not a target.
+ */
+const CHARGE_LOOKUP_TIMEOUT_MS = 3000;
+
+/**
+ * Whether a licensing fee has been charged for a version since `since`.
+ *
+ * Read straight from `orchestration.resourceCompensations`, which the orchestrator writes on its own
+ * compensation flush — so this is current to within one flush interval rather than to the day, which
+ * is what `ModelVersionMetric.earnedAmount` mirrors it at.
+ *
+ * Bounded on `date`, the table's leading sort key, and NOT on `userId`. That column defaults to 0
+ * when the owner is unknown and keeps whatever owner was stamped at charge time, so a model transfer
+ * or an unknown owner would make an ownership bound silently miss rows — and a miss here refunds a
+ * slot that was genuinely spent. Dropping it costs nothing: a range on `date` already stops later
+ * key columns skipping granules (measured: 4ms either way over a 3-day window).
+ *
+ * Returns null when ClickHouse cannot answer, so the caller falls back rather than reading "no".
+ */
+async function licensingFeeChargedSince(versionId: number, since: Date): Promise<boolean | null> {
+  if (!clickhouse) return null;
+
+  try {
+    const rows = await withTimeoutFallback<{ charged: number }[] | null>(
+      clickhouse.$query<{ charged: number }>`
+        SELECT 1 AS charged
+        FROM orchestration.resourceCompensations
+        WHERE date >= toDate(${since})
+          AND modelVersionId = ${versionId}
+          AND source = 'licenseFee'
+        LIMIT 1
+      `,
+      CHARGE_LOOKUP_TIMEOUT_MS,
+      null
+    );
+    if (rows === null) return null;
+    return rows.length > 0;
+  } catch (error) {
+    logToAxiom({ type: 'error', name: 'pricing-slot-charge-lookup', error, versionId }).catch(
+      () => undefined
+    );
+    return null;
+  }
+}
+
+/**
+ * Whether anyone has transacted against a version: bought its gate, or been charged its licensing fee.
+ *
+ * Answers TRUE whenever it cannot tell. Every caller is deciding whether to hand an allowance slot
+ * back, so an unanswerable question has to leave the slot spent.
+ *
+ * Three signals, in order of how well they answer the question:
+ *
+ * - `EntityAccess` — the paid-access purchase record itself, and exact.
+ * - `orchestration.resourceCompensations` — the licensing-fee charges, scoped to `since` so a
+ *   version that earned BEFORE this slot was spent does not hold it. Current to one flush interval.
+ * - `ModelVersionMetric.earnedAmount` — the daily mirror of that same table, used only when
+ *   ClickHouse cannot answer. All-time rather than scoped, and a day behind.
+ *
+ * A version that was never published skips both fee checks: no buyer could reach it and no generation
+ * could charge for it, which makes it the one answer here with no staleness in it.
+ */
+export async function versionHasTransacted(
+  versionId: number,
+  ownerId: number,
+  since: Date
+): Promise<boolean> {
+  const [buyers, version] = await Promise.all([
+    // Prefix of the primary key. The owner's own row is not a sale — a grant by anyone else is treated
+    // as one, since this cannot tell a comp from a purchase and the safe answer is "leave it spent".
+    dbRead.entityAccess.count({
+      where: {
+        accessToId: versionId,
+        accessToType: 'ModelVersion',
+        accessorId: { not: ownerId },
+      },
+    }),
+    dbRead.modelVersion.findUnique({
+      where: { id: versionId },
+      select: { initialPublishedAt: true, publishedAt: true },
+    }),
+  ]);
+
+  if (buyers > 0) return true;
+  if (!version) return true;
+  if (!version.initialPublishedAt && !version.publishedAt) return false;
+
+  const charged = await licensingFeeChargedSince(versionId, since);
+  if (charged !== null) return charged;
+
+  const metric = await dbRead.modelVersionMetric.findUnique({
+    where: { modelVersionId: versionId },
+    select: { earnedAmount: true },
+  });
+  return (metric?.earnedAmount ?? 0) > 0;
+}
+
+/**
+ * Hand back the slot a version spent, if nothing has transacted against it. Call it AFTER the write
+ * that removed the last price succeeds.
+ *
+ * Deleting the row rather than marking it: the allowance counts rows created this calendar month, so a
+ * slot spent and returned in the same month becomes spendable again, and one returned in a later month
+ * changes nothing — which is what "recovered" has to mean for a monthly allowance.
+ */
+export async function releasePricingSlot({
+  entityType,
+  entityId,
+  ownerId,
+}: {
+  entityType: PricingSlotEntityType;
+  entityId: number;
+  ownerId: number;
+}): Promise<boolean> {
+  if (entityType !== 'ModelVersion') return false;
+
+  // The slot's own createdAt bounds the charge lookup: only what was charged while THIS slot was live
+  // holds it. A version that earned before its owner priced it keeps nothing hostage.
+  const slot = await dbRead.pricingSlot.findUnique({
+    where: { entityType_entityId: { entityType, entityId } },
+    select: { createdAt: true, ownerId: true },
+  });
+  if (!slot || slot.ownerId !== ownerId) return false;
+
+  // Re-read rather than trusting the caller's pre-write intent: a slot is only returnable while the
+  // version carries no price at all, and the write that prompted this removed one of the two kinds.
+  // The creator-studio mirror answers the same question the same way, off its own post-write read.
+  const [version, gate] = await Promise.all([
+    dbRead.modelVersion.findUnique({ where: { id: entityId }, select: { licensingFee: true } }),
+    dbRead.paidAccess.findUnique({
+      where: { entityType_entityId: { entityType, entityId } },
+      select: { timeframeDays: true },
+    }),
+  ]);
+  if (!version) return false;
+  if (
+    isAlreadyPriced({
+      licensingFee: version.licensingFee != null ? Number(version.licensingFee) : 0,
+      hasPermanentGate: gate != null && gate.timeframeDays == null,
+    })
+  )
+    return false;
+
+  if (await versionHasTransacted(entityId, ownerId, slot.createdAt)) return false;
+
+  // Scoped to the owner as well as the key: the slot belongs to whoever spent it, and a row whose
+  // ownerId has moved on is not this creator's to return.
+  const { count } = await dbWrite.pricingSlot.deleteMany({
+    where: { entityType, entityId, ownerId },
+  });
+  return count > 0;
 }
 
 export type PricingWriteCheck = {
@@ -78,9 +239,16 @@ export type PricingWriteCheck = {
 
 export type TierInput = string | null | undefined | (() => Promise<string | null>);
 
+/** What the caller must do about the ledger once its write succeeds. The two are mutually exclusive. */
+export type PricingWriteOutcome = {
+  spendsSlot: boolean;
+  /** The write takes the last price off — the caller offers the slot back with releasePricingSlot. */
+  releasesSlot: boolean;
+};
+
 /**
- * Refuse a new price the creator may not set. Returns whether the write, if it succeeds, must spend a
- * slot — the caller records it with recordPricingSlot once the entity is written.
+ * Refuse a new price the creator may not set, and report what the write owes the ledger: a slot to
+ * record with recordPricingSlot, or one to offer back with releasePricingSlot.
  */
 export async function assertPricingAllowed({
   userId,
@@ -88,8 +256,9 @@ export async function assertPricingAllowed({
   willBePriced,
   tier,
   userMeta,
-}: PricingWriteCheck): Promise<{ spendsSlot: boolean }> {
-  if (!willBePriced || wasPriced) return { spendsSlot: false };
+}: PricingWriteCheck): Promise<PricingWriteOutcome> {
+  if (!willBePriced || wasPriced)
+    return { spendsSlot: false, releasesSlot: clearsLastPrice({ wasPriced, willBePriced }) };
 
   const score =
     userMeta !== undefined ? creatorScoreFromMeta(userMeta) : await getCreatorScore(userId);
@@ -103,5 +272,5 @@ export async function assertPricingAllowed({
       throw throwBadRequestError(pricingAllowanceMessage(used, limit));
   }
 
-  return { spendsSlot: true };
+  return { spendsSlot: true, releasesSlot: false };
 }

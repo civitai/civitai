@@ -8,7 +8,7 @@ import {
 } from '~/server/services/model-version.service';
 import { getModel, queueModelEarlyAccessReindex } from '~/server/services/model.service';
 import { assertMonetizationWrite } from '~/server/services/paid-access.service';
-import { recordPricingSlot } from '~/server/services/pricing-slot.service';
+import { recordPricingSlot, releasePricingSlot } from '~/server/services/pricing-slot.service';
 import { getCapTier } from '~/server/services/subscriptions.service';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
@@ -78,7 +78,7 @@ export default AuthedEndpoint(
       // floor and the allowance are about whoever sells the model.
       const ownerId = model?.userId ?? user.id;
       const actingOnOwnModel = ownerId === user.id;
-      const { spendsSlot } = await assertMonetizationWrite({
+      const { spendsSlot, releasesSlot } = await assertMonetizationWrite({
         ownerId,
         isModerator: user.isModerator,
         versionId: input.id,
@@ -110,6 +110,8 @@ export default AuthedEndpoint(
 
       if (spendsSlot)
         await recordPricingSlot({ entityType: 'ModelVersion', entityId: updated.id, ownerId });
+      else if (releasesSlot)
+        await releasePricingSlot({ entityType: 'ModelVersion', entityId: updated.id, ownerId });
 
       await queueModelEarlyAccessReindex({ id: updated.modelId }).catch((e) => {
         console.error('Unable to update model early access deadline', e);

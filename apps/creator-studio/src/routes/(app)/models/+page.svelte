@@ -336,12 +336,11 @@
   let feeImages = $state(String(DEFAULT_FEE_IMAGES));
   let feeAffirmed = $state(false);
   // Clearing a fee earns nothing, so only a non-zero fee needs the affirmation.
-  // The fee editor writes a NEW price for a version that has none, so the floor refuses it. Editing a
-  // price the version already carries is exempt.
+  const feeNeedsAffirmation = $derived(!!editing && !editing.rightsAffirmed && (feeBuzz ?? 0) > 0);
+  // Only a NEW price is floored: editing one the version already carries is exempt.
   const feeBlockedByFloor = $derived(
     !data.caps.pricingFloor.eligible && !!editing && !alreadyPricedIds.has(editing.id)
   );
-  const feeNeedsAffirmation = $derived(!!editing && !editing.rightsAffirmed && (feeBuzz ?? 0) > 0);
 
   // Opens the licensing drawer for a version. Seeds only the fee inputs here; the early/paid-access
   // editor (PaidAccessEditor) owns its own state, seeded from the version on mount.

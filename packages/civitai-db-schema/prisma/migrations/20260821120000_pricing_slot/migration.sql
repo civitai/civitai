@@ -19,6 +19,9 @@
 -- Write-once, and never deleted when the gate is cleared: a slot is spent on application and is
 -- never returned.
 --
+-- ^ SUPERSEDED 2026-08-24: clearing the last price off an untransacted entity now DELETES the row.
+-- No schema change was needed; the SQL below is what ran.
+--
 -- There is deliberately no foreign key to the entity. The key is polymorphic so there is nothing
 -- to point at, and the consequence is wanted: deleting a version does not refund its slot. Rows
 -- that outlive their entity are inert, because the count is scoped to the current month — a stale

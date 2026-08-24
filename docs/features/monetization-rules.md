@@ -1,7 +1,8 @@
 # Monetization rules: paid access, licensing fees, donation goals
 
 How the four monetization concepts on a model version interact. Written 2026-08-05 from the code, with
-the surprising claims verified against the prod replica. Where a rule is enforced matters as much as what
+the surprising claims verified against the prod replica; R3 rewritten 2026-08-21 and 2026-08-24 for the
+monetization revamp. Where a rule is enforced matters as much as what
 it is — several are enforced in only one of two write paths, and those are called out.
 
 **Scope**: `ModelVersion` only. `ComicChapter` has its own gate and is not covered here.
@@ -122,25 +123,39 @@ A "price" is a licensing fee or a **permanent** gate. A timed early-access windo
 itself out when the window closes, and is already gated on a far higher creator score of its own.
 
 Applying a price to a version that has none requires the score floor and spends a slot. Editing,
-lowering, or clearing a price that is already set does neither, at any score, with any allowance
-remaining. That exemption is what grandfathers everything priced before these rules existed, and it is
-why the cutover needed **no backfill**.
+lowering, or clearing a price that is already set spends nothing and needs no score — and clearing the
+last one may hand the slot *back* (R3b). That exemption is what grandfathers everything priced before
+these rules existed, and it is why the cutover needed **no backfill**.
 
 The two rules read that question from different places, deliberately:
 
 - **Eligibility reads current state** — does this version carry a fee or a `PaidAccess` row right now.
   Grandfathering attaches to a price that is still set, so no history is needed.
 - **The allowance reads the `PricingSlot` ledger** — what has been *spent* this calendar month. That
-  needs a record, because a gate created and deleted inside the month still spent its slot.
+  needs a record, because a gate created and deleted inside the month usually still spent its slot —
+  the row survives unless the release conditions in R3b are met.
 
 ⚠️ A creator below the floor who **clears** a price cannot re-apply it: current state no longer shows
 one, so re-application is a new price. That follows from "no new fee below the floor" read literally.
 
-#### R3b. One slot per entity, spent once, never returned
+#### R3b. One slot per entity, returned only if the last price comes off untouched
 
 `PricingSlot` is keyed `(entityType, entityId)` — the same key as `PaidAccess`, so it already covers
-ComicChapter. The primary key IS the idempotency: a fee added beside an existing gate, or a price
-cleared and re-applied, finds the row already there and costs nothing.
+ComicChapter. The primary key IS the idempotency while a price stands: a fee added beside an existing
+gate, or any edit to a price already set, finds the row there and costs nothing.
+
+**Clearing the LAST price off a version deletes its slot**, if nothing has transacted against it: no
+`EntityAccess` row held by anyone but the owner, and no licensing fee charged since the slot was
+created. Deleting the row is what "returned" has to mean for an allowance that counts rows created this
+calendar month. Removing one of two prices returns nothing — the version is still priced. So a price
+cleared and re-applied inside one month spends a second slot when the release succeeded, and nothing
+when it did not.
+
+The transaction test reads `orchestration.resourceCompensations` in ClickHouse, bounded on the slot's
+own `createdAt` and raced against a 3s timeout, falling back to the daily
+`ModelVersionMetric.earnedAmount` mirror when ClickHouse cannot answer. Both fail **closed** — an
+unanswerable question leaves the slot spent. A version that was never published skips the fee test
+entirely: no buyer could reach it and no generation could charge for it.
 
 There is deliberately **no foreign key to the entity**. The key is polymorphic, so there is nothing to
 point at, and the consequence is wanted — deleting a version does not refund its slot. Rows that outlive
@@ -254,11 +269,13 @@ affirmation check on that path is owner-scoped, matching `resolveRightsAffirmati
 | Eligibility floor + allowance     | `assertPricingAllowed`                        | ✅ (see below)    |
 | Rights affirmation                | `resolveRightsAffirmation`                    | ✅                |
 
-Three rules have **two implementations each**, because Creator Studio's fee and gate writes are direct
+Four rules have **two implementations each**, because Creator Studio's fee and gate writes are direct
 SQL that never reaches the service layer: the fee ceiling (`assertMonetizationWrite` vs the spoke's
-`licensing-fee.ts`), and the eligibility floor and allowance (`pricing-slot.service.ts` vs the spoke's
-`pricing-slot.ts`). Keep each pair in step — a divergence makes the spoke a way around whichever rule it
-drops, which is the same failure the POI guard has already had here.
+`licensing-fee.ts`), the eligibility floor and the allowance (`pricing-slot.service.ts` vs the spoke's
+`pricing-slot.ts`), and slot release — `versionHasTransacted`/`releasePricingSlot` against
+`releasableVersionIds`/`releasePricingSlots`, each with its own ClickHouse query over
+`orchestration.resourceCompensations`. Keep each pair in step — a divergence makes the spoke a way
+around whichever rule it drops, which is the same failure the POI guard has already had here.
 
 ---
 

@@ -331,7 +331,7 @@ describe('assertMonetizationWrite', () => {
         userMeta: ELIGIBLE,
         baseModel: 'Hunyuan Video',
       })
-    ).resolves.toEqual({ spendsSlot: true });
+    ).resolves.toEqual({ spendsSlot: true, releasesSlot: false });
   });
 
   it('does not check a paid-access price at all — it is uncapped', async () => {
@@ -342,7 +342,7 @@ describe('assertMonetizationWrite', () => {
         tier: 'free',
         userMeta: ELIGIBLE,
       })
-    ).resolves.toEqual({ spendsSlot: true });
+    ).resolves.toEqual({ spendsSlot: true, releasesSlot: false });
   });
 
   it('refuses a creator below the eligibility floor', async () => {
@@ -377,7 +377,7 @@ describe('assertMonetizationWrite', () => {
         tier: 'gold',
         userMeta: ELIGIBLE,
       })
-    ).resolves.toEqual({ spendsSlot: true });
+    ).resolves.toEqual({ spendsSlot: true, releasesSlot: false });
     expect(mockSlotCount).not.toHaveBeenCalled();
   });
 
@@ -406,7 +406,7 @@ describe('assertMonetizationWrite', () => {
         tier: 'free',
         userMeta: ELIGIBLE,
       })
-    ).resolves.toEqual({ spendsSlot: false });
+    ).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
   });
 
   // The gate lookup feeds BOTH wasPriced and the willBePriced fallback.
@@ -435,7 +435,7 @@ describe('assertMonetizationWrite', () => {
           tier: 'free',
           userMeta: { scores: { models: 0 } },
         })
-      ).resolves.toEqual({ spendsSlot: false });
+      ).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
     });
 
     // Re-pricing the gate itself, which is what a creator does most often. The gate row is what makes
@@ -455,7 +455,7 @@ describe('assertMonetizationWrite', () => {
           tier: 'free',
           userMeta: { scores: { models: 0 } },
         })
-      ).resolves.toEqual({ spendsSlot: false });
+      ).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
     });
 
     // The negative control: without it the test above passes for the wrong reason, since a lookup that
@@ -473,7 +473,7 @@ describe('assertMonetizationWrite', () => {
           tier: 'free',
           userMeta: { scores: { models: 50000 } },
         })
-      ).resolves.toEqual({ spendsSlot: true });
+      ).resolves.toEqual({ spendsSlot: true, releasesSlot: false });
     });
 
     // A timed window is not a price, so it must not confer the exemption.
@@ -501,13 +501,13 @@ describe('assertMonetizationWrite', () => {
         assertMonetizationWrite({
           ownerId: 1,
           versionId: 1,
-          paidAccess: null,
+          paidAccess: undefined,
           licensingFee: 0,
           storedLicensingFee: 5,
           tier: 'free',
           userMeta: { scores: { models: 0 } },
         })
-      ).resolves.toEqual({ spendsSlot: false });
+      ).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
     });
   });
 
@@ -540,7 +540,7 @@ describe('assertMonetizationWrite', () => {
         baseModel: 'Hunyuan Video',
         storedBaseModel: 'Hunyuan Video',
       })
-    ).resolves.toEqual({ spendsSlot: false });
+    ).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
   });
 
   // Named after what it claims: the floor test below fails at the floor and never reaches the allowance.
@@ -570,7 +570,7 @@ describe('assertMonetizationWrite', () => {
         tier: 'free',
         userMeta: { scores: { models: 0 } },
       })
-    ).resolves.toEqual({ spendsSlot: false });
+    ).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
   });
 
   it('treats an absent licensingFee as unchanged, not cleared', async () => {
@@ -582,7 +582,7 @@ describe('assertMonetizationWrite', () => {
         tier: 'free',
         userMeta: { scores: { models: 0 } },
       })
-    ).resolves.toEqual({ spendsSlot: false });
+    ).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
   });
 
   it('spends nothing when the write leaves the version unpriced', async () => {
@@ -595,7 +595,73 @@ describe('assertMonetizationWrite', () => {
         tier: 'free',
         userMeta: { scores: { models: 0 } },
       })
-    ).resolves.toEqual({ spendsSlot: false });
+    ).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
+  });
+
+  // The other half of the ledger: taking the last price off offers the slot back. Offered, not given —
+  // releasePricingSlot still has to find nothing transacted against the version.
+  it('offers the slot back when the write clears the only price', async () => {
+    await expect(
+      assertMonetizationWrite({
+        ownerId: 1,
+        paidAccess: null,
+        licensingFee: 0,
+        storedLicensingFee: 5,
+        tier: 'free',
+        userMeta: { scores: { models: 0 } },
+      })
+    ).resolves.toEqual({ spendsSlot: false, releasesSlot: true });
+  });
+
+  // Clearing ONE of two prices is not clearing the price: the version still charges. `undefined`
+  // leaves the gate alone — null would be asking to clear it as well, and does.
+  it('offers nothing back while the other kind of price still stands', async () => {
+    mockCacheFetch.mockImplementation(async () => ({
+      1: {
+        entityId: 1,
+        ownerId: 1,
+        endsAtMs: new Date('2099-01-01T00:00:00.000Z').getTime(),
+        timeframeDays: null,
+        terms: { download: { price: 500 } },
+      },
+    }));
+
+    await expect(
+      assertMonetizationWrite({
+        ownerId: 1,
+        versionId: 1,
+        paidAccess: undefined,
+        licensingFee: 0,
+        storedLicensingFee: 5,
+        tier: 'free',
+        userMeta: { scores: { models: 0 } },
+      })
+    ).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
+  });
+
+  // null is the explicit clear, and it has to reach the ledger as one: removing the gate from a version
+  // whose only price it was returns the slot.
+  it('offers the slot back when a null gate clears the only price', async () => {
+    mockCacheFetch.mockImplementation(async () => ({
+      1: {
+        entityId: 1,
+        ownerId: 1,
+        endsAtMs: new Date('2099-01-01T00:00:00.000Z').getTime(),
+        timeframeDays: null,
+        terms: { download: { price: 500 } },
+      },
+    }));
+
+    await expect(
+      assertMonetizationWrite({
+        ownerId: 1,
+        versionId: 1,
+        paidAccess: null,
+        storedLicensingFee: 0,
+        tier: 'free',
+        userMeta: { scores: { models: 0 } },
+      })
+    ).resolves.toEqual({ spendsSlot: false, releasesSlot: true });
   });
 
   // A timed window is not a price: it prices itself out when the window closes.
@@ -607,7 +673,7 @@ describe('assertMonetizationWrite', () => {
         tier: 'free',
         userMeta: { scores: { models: 0 } },
       })
-    ).resolves.toEqual({ spendsSlot: false });
+    ).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
   });
 });
 

@@ -56,6 +56,23 @@ export function isAlreadyPriced({
   return (licensingFee ?? 0) > 0 || !!hasPermanentGate;
 }
 
+/**
+ * A write that takes the LAST price off an entity — the only shape that can return a slot. Editing a
+ * price is not it, and neither is clearing one of two prices: a fee removed from a version that still
+ * carries a permanent gate leaves it priced.
+ *
+ * Whether the slot actually comes back is each app's own transaction check; this is only the rule half.
+ */
+export function clearsLastPrice({
+  wasPriced,
+  willBePriced,
+}: {
+  wasPriced: boolean;
+  willBePriced: boolean;
+}): boolean {
+  return wasPriced && !willBePriced;
+}
+
 /** The window every slot count is scoped to. */
 export function pricingMonthStart(now: Date = new Date()): Date {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));

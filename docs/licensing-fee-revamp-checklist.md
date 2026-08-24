@@ -1,10 +1,11 @@
 # Licensing fee + paid access revamp
 
-> **Status: implemented and committed** on `feat/licensing-fee-revamp` (unpushed), merged up to main. The migration in
-> `packages/civitai-db-schema/prisma/migrations/20260821120000_pricing_slot/` still has to be applied
-> by hand, per environment — nothing auto-runs it — and it must be applied **before** the code deploys,
-> or every first-time pricing write throws on a missing relation. Read the header comment in that file
-> for the lock-timeout caveat. **The full pre-ship list is in [Before shipping](#before-shipping).**
+> **Status: implemented and committed** on `feat/licensing-fee-revamp` (unpushed), merged up to main. The
+> migration in `packages/civitai-db-schema/prisma/migrations/20260821120000_pricing_slot/` was applied by
+> hand on 2026-08-24 — name the environments it covered here, because nothing auto-runs it and any
+> environment still missing the table 500s the Creator Studio models page the moment the code deploys.
+> Read the header comment in that file for the lock-timeout caveat. **The full pre-ship list is in
+> [Before shipping](#before-shipping).**
 
 Work checklist for moving monetization onto the model proposed in
 [article 33749](https://civitai.com/articles/33749) (JustMaier, 2026-08-10). Decided 2026-08-20.
@@ -126,14 +127,17 @@ applied to it; adjusting that price afterwards is free.
 - [x] Unit is the **entity**, not the model — one slot per priced version, no version→model rollup.
       A creator pricing several versions of one model spends a slot each. That is the intent: the
       tighter the free allowance binds, the more reason to subscribe. Don't loosen it later.
-- [x] A slot is spent on application and **never returned** — clearing the gate does not give it
-      back, and neither does deleting the entity (the table has no FK to it).
+- [x] A slot is spent on application, and returned only by clearing the **last** price off an entity
+      nothing has transacted against (added 2026-08-24 — mechanism in
+      [R3b](features/monetization-rules.md)). Deleting the entity still refunds nothing: no FK to it.
 - [x] Allowance table: free 3, bronze 10, silver 25, gold unlimited. **Calendar month**, no rollover.
 - [x] Count is `PricingSlot WHERE ownerId = ? AND createdAt >= date_trunc('month', now())` — one
       index scan on `(ownerId, createdAt)`, no join.
-- [x] Idempotency comes from the primary key: `(entityType, entityId)` is write-once, so
-      re-pricing, clearing and re-applying within the same month, or any unrelated edit cannot
-      spend a second slot. Insert with `ON CONFLICT DO NOTHING` and let the row be the record.
+- [x] Idempotency comes from the primary key while the price stands: `(entityType, entityId)` is
+      write-once, so re-pricing or any unrelated edit cannot spend a second slot. Insert with
+      `ON CONFLICT DO NOTHING` and let the row be the record. Clearing the last price *deletes* the
+      row when the release conditions hold, so clearing and re-applying inside one month does spend
+      a second.
 - [x] Enforce on the write path, in both surfaces — the onsite model-version form and Creator
       Studio — plus the REST endpoint. `assertMonetizationWrite` (was `assertPaidAccessCaps`) is the natural place for the gate
       half; it is where `PERMANENT_ACCESS_LIMIT_BY_TIER` is checked today, and that check is what
@@ -231,8 +235,23 @@ that have to happen, or be decided, before it reaches creators.
 - [ ] **Existing over-tier fees start billing at full value on deploy.** The one user-visible price
       *increase* in the revamp, and still unmeasured — neither blast-radius table counts how many live
       versions get more expensive for buyers, or by how much.
-- [ ] **Two behaviours recorded rather than decided**: cross-month re-pricing is free (see the
-      consequences section above), and a sub-10k creator who clears a price cannot re-apply it.
+- [x] **A slot now comes back when the last price comes off an untransacted version** (2026-08-24).
+      This was the sharper half of "setting and then removing does not return the allowance": a creator
+      pricing a draft to see what it looked like paid a month's allowance for nothing. Clearing the last
+      price offers the slot back, and `releasePricingSlot` only takes it once nothing has transacted: no
+      `EntityAccess` row held by anyone but the owner, and no licensing fee charged since the slot was
+      created — read live from `orchestration.resourceCompensations`, bounded by the slot's `createdAt`
+      and raced against a 3s timeout, with the daily `ModelVersionMetric.earnedAmount` mirror as the
+      fallback when ClickHouse cannot answer. Both fail closed. A never-published version skips the fee
+      checks entirely, which is the case creators hit and the one with no staleness.
+- [ ] **The mirror fallback lags a day — and only the fallback.** The charge test reads ClickHouse live
+      (current to one orchestrator flush). `ModelVersionMetric.earnedAmount` is consulted only when
+      ClickHouse times out or errors, and it is all-time rather than scoped to the slot, so it errs
+      toward keeping the slot spent. The residual window is a fee charged since the last flush, on a
+      save that also lost ClickHouse. It costs a slot, not money. Worth revisiting if creators find it.
+- [ ] **One behaviour still recorded rather than decided**: a sub-10k creator who clears a price cannot
+      re-apply it. Cross-month re-pricing being free is now the intended shape rather than a quirk —
+      see the release rule above.
 - [ ] **`thirtyDayEarlyAccess` is deferred, not resolved** ("don't worry about it, I thought this was
       already wired up"). The contradiction is still in the code: a granted user below 10k.
 
@@ -280,15 +299,17 @@ that have to happen, or be decided, before it reaches creators.
   grandfathered from before the caps — begins charging generators the stored number. That is the one
   user-visible price *increase* in the revamp, and it is not in the tables above, which only count who
   can no longer start monetizing and who exceeds an allowance.
-- **"Never returned" holds within a month, not across them.** The count is scoped to the calendar
-  month and the slot row is write-once, so a version priced in August, cleared, and re-priced in
-  September passes free and writes nothing. Consistent with "a slot is spent once"; inconsistent with
-  reading the allowance as a hard per-version toll. Recorded as the behaviour, not as an oversight.
+- **A cleared slot can come back inside the month; one that could not be returned still expires with
+  it.** The count is scoped to the calendar month, so a version priced in August, cleared after someone
+  bought it, and re-priced in September passes free and writes nothing — the August row is out of window
+  either way. Consistent with a monthly allowance; inconsistent with reading it as a hard per-version
+  toll. Recorded as the behaviour, not as an oversight.
 
 ## Decisions — all settled
 
 Questions and answers verbatim in [licensing-fee-revamp-questions](licensing-fee-revamp-questions.md).
-Nothing below is still open; each line is enforced by an item above.
+Nothing below is still open, with one exception noted in the table: the slot-return row was reopened and
+re-answered after these were recorded.
 
 | | Settled |
 | --- | --- |
@@ -298,7 +319,7 @@ Nothing below is still open; each line is enforced by an item above.
 | Allowance scope | Licensing fees **and** permanent paid access; timed early access spends nothing |
 | Allowance unit | The gated entity (a model version), not the model |
 | Allowance period | Calendar month, no rollover |
-| Slot return | Never — removing a fee or gate does not give the slot back |
+| Slot return | **Reopened and re-answered 2026-08-24 by briant.** Was "never" (`@dev: no`, question 3 in [licensing-fee-revamp-questions](licensing-fee-revamp-questions.md), which stays a verbatim record and is NOT edited). Now: clearing the last price off a version nothing has transacted against deletes the slot — see [R3b](features/monetization-rules.md) for the mechanism. Worth Justin's eye before ship, since the article is his |
 | Dormancy suspension | Rejected |
 
 ## Raised in the article comments — decide before or alongside

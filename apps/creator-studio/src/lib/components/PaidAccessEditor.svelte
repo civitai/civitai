@@ -59,8 +59,7 @@
     pricingAllowanceState({ used: pricingUsed, limit: pricingLimit, exempt: alreadyPriced })
   );
   const permAtCap = $derived(allowance.atLimit);
-  // The floor gates a NEW price only, and a timed window is not one — so this never blocks starting or
-  // editing early access, and never blocks editing a price the version already carries.
+  // Only a NEW price is floored: a timed window is not a price, and an existing one is exempt.
   const belowPricingFloor = $derived(!alreadyPriced && !caps.pricingFloor.eligible);
 
   // Ever actually published — a Scheduled version's future anchor doesn't count, and an unpublished

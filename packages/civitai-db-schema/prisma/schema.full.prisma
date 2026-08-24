@@ -1176,9 +1176,10 @@ model LicensingRoot {
 }
 
 // One row per ENTITY an owner has put a price on — a licensing fee or a permanent paid-access gate,
-// not one per kind. Write-once and never deleted when the price is cleared: a slot is spent once and
-// never returned. No foreign key to the entity, because the key is polymorphic — so deleting a version
-// does not refund its slot, and rows outliving their entity are inert (the count is month-scoped).
+// not one per kind. A slot is returned only by clearing the last price off an entity nothing has
+// transacted against; the row is DELETED then, because the allowance counts rows created this calendar
+// month. No foreign key to the entity, because the key is polymorphic — so deleting a version does not
+// refund its slot, and rows outliving their entity are inert (the count is month-scoped).
 //
 // See the migration for the apply-order and lock caveats.
 model PricingSlot {

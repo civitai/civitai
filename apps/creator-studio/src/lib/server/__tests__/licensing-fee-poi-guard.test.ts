@@ -8,8 +8,27 @@ const state = vi.hoisted(() => ({
   rows: [] as Record<string, unknown>[],
   written: [] as Record<string, unknown>[],
   slots: [] as Record<string, unknown>[],
+  released: [] as number[][],
+  releaseFilters: [] as string[],
   slotsUsed: 0,
   modelsScore: 50_000,
+  // modelVersionId -> the last licenseFee charge ClickHouse reports for it.
+  charges: {} as Record<number, string>,
+  chargeQueries: [] as string[],
+  clickhouseDown: false,
+}));
+
+vi.mock('$lib/server/clickhouse', () => ({
+  getClickhouse: () => ({
+    $query: async (sql: string) => {
+      state.chargeQueries.push(sql);
+      if (state.clickhouseDown) throw new Error('clickhouse down');
+      return Object.entries(state.charges).map(([modelVersionId, last]) => ({
+        modelVersionId: Number(modelVersionId),
+        last,
+      }));
+    },
+  }),
 }));
 
 vi.mock('$lib/server/db', () => {
@@ -27,10 +46,20 @@ vi.mock('$lib/server/db', () => {
   const selectFrom = (table: string) => {
     if (table.startsWith('ModelVersion'))
       return chain({
-        // Two reads hit this table with different aliases — ownedVersions selects `currentFee`,
-        // unpricedVersionIds selects `fee` + `gated` — so serve both projections off one fixture.
+        // Three reads hit this table with different aliases — ownedVersions selects `currentFee`,
+        // unpricedVersionIds selects `fee` + `gated`, releasableVersionIds adds the transaction
+        // signals — so serve every projection off one fixture.
         execute: async () =>
-          state.rows.map((r) => ({ ...r, fee: r.currentFee, gated: r.gated ?? null })),
+          state.rows.map((r) => ({
+            initialPublishedAt: null,
+            publishedAt: null,
+            earned: 0,
+            sold: false,
+            slotCreatedAt: new Date('2026-08-20T00:00:00.000Z'),
+            ...r,
+            fee: r.currentFee,
+            gated: r.gated ?? null,
+          })),
       });
     if (table === 'User')
       return chain({
@@ -44,6 +73,10 @@ vi.mock('$lib/server/db', () => {
   const update: Record<string, unknown> = {};
   update.set = (values: Record<string, unknown>) => {
     state.written.push(values);
+    // Applied to the fixture, not just recorded: releasableVersionIds reads the version back after the
+    // write, and a fake that never moves would show it still priced and never release anything.
+    if ('licensingFee' in values)
+      for (const row of state.rows) row.currentFee = values.licensingFee;
     return chain(update);
   };
   update.executeTakeFirst = async () => ({ numUpdatedRows: BigInt(state.rows.length) });
@@ -60,10 +93,23 @@ vi.mock('$lib/server/db', () => {
     return chain(insert);
   };
 
+  const deleteFrom = (table: string) => {
+    if (table !== 'PricingSlot') throw new Error(`unstubbed table in delete: ${table}`);
+    const del: Record<string, unknown> = {};
+    del.where = (column: string, op: string, value: unknown) => {
+      if (column === 'entityId') state.released.push(value as number[]);
+      state.releaseFilters.push(column);
+      return chain(del);
+    };
+    del.execute = async () => [];
+    return chain(del);
+  };
+
   const db = {
     selectFrom,
     updateTable: () => chain(update),
     insertInto,
+    deleteFrom,
     transaction: () => ({ execute: async (cb: (trx: unknown) => unknown) => cb(db) }),
   };
   return { dbRead: db, dbWrite: db };
@@ -89,8 +135,133 @@ beforeEach(() => {
   state.rows = [];
   state.written = [];
   state.slots = [];
+  state.released = [];
+  state.releaseFilters = [];
+  state.charges = {};
+  state.chargeQueries = [];
+  state.clickhouseDown = false;
   state.slotsUsed = 0;
   state.modelsScore = 50_000;
+});
+
+// Clearing a price hands the slot back, but only when nothing has transacted against the version — the
+// creator who priced a draft to see what it looked like should not pay a month's allowance for it.
+describe('returning the slot when a fee is cleared', () => {
+  it('releases a version nobody ever bought or generated with', async () => {
+    state.rows = [version({ currentFee: 5 })];
+
+    const result = await setLicensingFee(7, GOLD, 1, null, true);
+
+    expect(result.ok).toBe(true);
+    expect(state.released).toEqual([[1]]);
+  });
+
+  it('releases nothing when the fee is being SET rather than cleared', async () => {
+    state.rows = [version({ currentFee: null })];
+
+    await setLicensingFee(7, GOLD, 1, 1, true);
+
+    expect(state.released).toEqual([]);
+  });
+
+  // The version is still priced by the gate, so there is nothing to give back.
+  it('keeps the slot when a permanent gate still stands', async () => {
+    state.rows = [version({ currentFee: 5, gated: 1 })];
+
+    await setLicensingFee(7, GOLD, 1, null, true);
+
+    expect(state.released).toEqual([]);
+  });
+
+  it('keeps the slot when someone else holds access', async () => {
+    state.rows = [version({ currentFee: 5, sold: true })];
+
+    await setLicensingFee(7, GOLD, 1, null, true);
+
+    expect(state.released).toEqual([]);
+  });
+
+  // earned is an ALL-TIME total, so it cannot say whether anything was charged while this slot was
+  // live — it only decides when ClickHouse is down.
+  it('does not keep the slot on a lifetime total alone', async () => {
+    state.rows = [version({ currentFee: 5, publishedAt: new Date('2026-01-01'), earned: 3 })];
+
+    await setLicensingFee(7, GOLD, 1, null, true);
+
+    expect(state.released).toEqual([[1]]);
+  });
+
+  // An unpublished version is judged without either fee source — the case a creator actually hits, and
+  // the one with no staleness in it.
+  it('releases an unpublished version even if the earnings mirror reads nonzero', async () => {
+    state.rows = [version({ currentFee: 5, earned: 3 })];
+
+    await setLicensingFee(7, GOLD, 1, null, true);
+
+    expect(state.released).toEqual([[1]]);
+  });
+
+  // The compensation table is current to one orchestrator flush, where the earnings mirror is a day
+  // behind — this is the whole reason a same-day price-and-clear can be answered at all.
+  it('keeps the slot when a fee was charged since it was spent', async () => {
+    state.rows = [version({ currentFee: 5, publishedAt: new Date('2026-01-01') })];
+    state.charges = { 1: '2026-08-24' };
+
+    await setLicensingFee(7, GOLD, 1, null, true);
+
+    expect(state.released).toEqual([]);
+  });
+
+  // Scoped to the slot: a version that earned before its owner priced it does not hold the slot it
+  // never paid for.
+  it('releases when the only charges predate the slot', async () => {
+    state.rows = [version({ currentFee: 5, publishedAt: new Date('2026-01-01'), earned: 999 })];
+    state.charges = { 1: '2026-01-05' };
+
+    await setLicensingFee(7, GOLD, 1, null, true);
+
+    expect(state.released).toEqual([[1]]);
+  });
+
+  // Fails soft, not open: with ClickHouse unavailable the day-behind mirror decides.
+  it('falls back to the earnings mirror when ClickHouse is down', async () => {
+    state.rows = [version({ currentFee: 5, publishedAt: new Date('2026-01-01'), earned: 3 })];
+    state.clickhouseDown = true;
+
+    await setLicensingFee(7, GOLD, 1, null, true);
+
+    expect(state.released).toEqual([]);
+  });
+
+  // An unpublished version cannot have been charged for, so it is answered without ClickHouse at all.
+  it('asks ClickHouse nothing about an unpublished version', async () => {
+    state.rows = [version({ currentFee: 5 })];
+
+    await setLicensingFee(7, GOLD, 1, null, true);
+
+    expect(state.chargeQueries).toEqual([]);
+    expect(state.released).toEqual([[1]]);
+  });
+
+  // userId is not a safe bound: it defaults to 0 for an unknown owner and keeps whoever was stamped at
+  // charge time, so a transferred model would silently report no charges and refund a spent slot.
+  it('bounds the charge query on date and version, never on owner', async () => {
+    state.rows = [version({ currentFee: 5, publishedAt: new Date('2026-01-01') })];
+
+    await setLicensingFee(7, GOLD, 1, null, true);
+
+    expect(state.chargeQueries).toHaveLength(1);
+    expect(state.chargeQueries[0]).toContain("date >= toDate('2026-08-20')");
+    expect(state.chargeQueries[0]).not.toContain('userId');
+  });
+
+  it('releases only the untransacted half of a bulk clear', async () => {
+    state.rows = [version({ id: 1, currentFee: 5 }), version({ id: 2, currentFee: 5, sold: true })];
+
+    await bulkSetLicensingFee(7, GOLD, [1, 2], null, true);
+
+    expect(state.released).toEqual([[1]]);
+  });
 });
 
 // Creator Studio writes `licensingFee` with its own SQL and never reaches the main app, so the POI rule

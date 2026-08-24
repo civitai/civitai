@@ -286,15 +286,11 @@ export const SALE_DAYS_BY_TIER: Record<string, number> = {
 };
 
 /**
- * Creator score (`User.meta.scores.models`) required to charge for anything: to apply a price to
- * something that has none, and to run a sale on one. One number for both, so the platform states a
- * single answer to "who may sell here".
+ * Creator score (`User.meta.scores.models`) required to charge for anything — a new price, or a sale.
  *
- * Deliberately NOT waived for moderators — the one creator-score gate they do not bypass. It states
- * who may sell on the platform, which is not a permission level.
- *
- * The sale gate reads it through `minCreatorScoreForSale`, which a KeyValue override can move without
- * a deploy; the pricing gate has no override and uses this directly.
+ * Deliberately NOT waived for moderators: it states who may sell here, not a permission level.
+ * The sale gate reads it via `minCreatorScoreForSale`, which a KeyValue override can move without a
+ * deploy; the pricing gate has no override.
  */
 export const MONETIZATION_MIN_CREATOR_SCORE = 10_000;
 

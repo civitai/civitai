@@ -364,7 +364,7 @@ export const actions: Actions = {
     if (!result.ok) return fail(result.status, { paidAccess: true, error: result.error });
 
     // Intersected with what was actually written: a bulk is reported `ok` even when some versions
-    // failed, and a slot is never returned, so recording the whole intent would burn the creator's
+    // failed, and nothing ever clears a price that was not written, so that slot never comes back, so recording the whole intent would burn the creator's
     // month for prices they do not have.
     const written = new Set(result.updatedIds);
     await recordPricingSlots(

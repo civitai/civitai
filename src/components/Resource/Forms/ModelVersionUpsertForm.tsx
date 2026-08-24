@@ -909,9 +909,8 @@ export function ModelVersionUpsertForm({
         exempt: hasExistingCharge,
       })
     : null;
-  // Not waived for moderators, and not applied to a version that already charges — editing an existing
-  // price is exempt. Absent while the query is in flight, which leaves the control enabled rather than
-  // flickering shut under the cursor; the server refuses either way.
+  // Not waived for moderators, and not applied to a version that already charges. Absent while the
+  // query is in flight, so the control stays enabled rather than flickering shut; the server refuses anyway.
   const eligibility = pricingAllowance?.eligibility;
   const belowPricingFloor = !!eligibility && !eligibility.eligible && !hasExistingCharge;
 

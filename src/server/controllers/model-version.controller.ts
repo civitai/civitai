@@ -1,7 +1,7 @@
 import { TRPCError } from '@trpc/server';
 
 import { licensingFeeBlockedFor, paidAccessBlockedFor } from '@civitai/buzz';
-import { recordPricingSlot } from '~/server/services/pricing-slot.service';
+import { recordPricingSlot, releasePricingSlot } from '~/server/services/pricing-slot.service';
 import {
   assertMonetizationWrite,
   getViewerMonetization,
@@ -501,7 +501,7 @@ export const upsertModelVersionHandler = async ({
     const policyKeepsFee = !owner || !licensingFeeBlockedFor(owner);
     const policyKeepsGate = !owner || !paidAccessBlockedFor(owner);
 
-    const { spendsSlot } = await assertMonetizationWrite({
+    const { spendsSlot, releasesSlot } = await assertMonetizationWrite({
       ownerId,
       isModerator: ctx.user.isModerator,
       // `updatesExistingVersion`, never `input.id`: a templated write creates a NEW version even with
@@ -569,9 +569,12 @@ export const upsertModelVersionHandler = async ({
     });
     if (!version) throw throwNotFoundError(`No model version with id ${input.id as number}`);
 
-    // After the write, so a failed one never costs the creator a slot.
+    // After the write, so a failed one never costs the creator a slot — and so a release is judged
+    // against the version's post-write state.
     if (spendsSlot)
       await recordPricingSlot({ entityType: 'ModelVersion', entityId: version.id, ownerId });
+    else if (releasesSlot)
+      await releasePricingSlot({ entityType: 'ModelVersion', entityId: version.id, ownerId });
 
     // Just update early access deadline if updating the model version
     if (input.id)
