@@ -11,6 +11,11 @@
 -- Leaderboard.public or .active, so a badge that exists when the board first populates is
 -- awarded and equippable that same night, before anyone has read a row.
 --
+-- Do not apply between 23:00 and 00:01 UTC. isLeaderboardPopulated compares boards populated
+-- for today against the count of active boards, and update-user-leaderboard-rank and
+-- deliver-leaderboard-cosmetics both throw on it at 00:01 — so a row added after that night's
+-- prepare-leaderboard run costs every board its rank rebuild and cosmetic delivery for one night.
+--
 -- The query is the images-overall board's query plus one filter, ic.mediaType = 'video'.
 -- Keep the CTE named ch_image_scores. prepare-leaderboard dispatches on 'image_scores AS' to
 -- the image path, then on 'ch_image_scores' inside it to choose ClickHouse over Postgres; a

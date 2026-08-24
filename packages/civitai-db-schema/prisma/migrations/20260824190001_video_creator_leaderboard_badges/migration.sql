@@ -19,16 +19,22 @@ FROM (VALUES
 WHERE NOT EXISTS (
   SELECT 1 FROM "Cosmetic" c
   WHERE c."leaderboardId" = 'videos-overall' AND c."leaderboardPosition" = v.position
-);
+)
+-- Self-enforcing order. Cosmetic."leaderboardId" has no foreign key, so applying this file
+-- early succeeds and hands out badges on the board's next populate. Gated on the board's own
+-- public flag, applying it early inserts nothing instead; re-run it after the flip.
+AND EXISTS (SELECT 1 FROM "Leaderboard" WHERE id = 'videos-overall' AND public);
 
--- Verify before moving on: expects one row, count 4, positions {1,3,10,100}.
+-- Verify before moving on: expects one row, count 4, positions {1,3,10,100}. A count of 0 means
+-- the board is not public yet, not that the statement failed.
 -- SELECT count(*), array_agg("leaderboardPosition" ORDER BY "leaderboardPosition")
 -- FROM "Cosmetic" WHERE "leaderboardId" = 'videos-overall';
 
 -- Homeblock strip (HomeBlock id 4). Prepends at one below the current lowest index (-4 -> -5).
--- Run this only once the board is public; it is the step that shows the strip to everyone.
+-- It is the step that shows the strip to everyone, so it carries the same public gate.
 UPDATE "HomeBlock"
 SET metadata = jsonb_set(metadata, '{leaderboards}',
   ('[{"id":"videos-overall","index":-5}]'::jsonb) || (metadata->'leaderboards'))
 WHERE id = 4
-  AND NOT metadata->'leaderboards' @> '[{"id":"videos-overall"}]'::jsonb;
+  AND NOT metadata->'leaderboards' @> '[{"id":"videos-overall"}]'::jsonb
+  AND EXISTS (SELECT 1 FROM "Leaderboard" WHERE id = 'videos-overall' AND public);
