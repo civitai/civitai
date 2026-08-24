@@ -190,6 +190,7 @@ vi.mock('~/server/prom/client', () => ({
   restrictedImageDriftGauge: promMetricStub(),
   restrictedImageReconcileLastSuccessGauge: promMetricStub(),
   restrictedBaseModelDivergenceGauge: promMetricStub(),
+  restrictedImageOverhiddenGauge: promMetricStub(),
   missingSignedAtCounter: promMetricStub(),
   newUserCounter: promMetricStub(),
   loginCounter: promMetricStub(),

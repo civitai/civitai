@@ -426,3 +426,23 @@ export const restrictedBaseModelDivergenceGauge = registerInstrumentationMetric(
       registers: [instrumentationRegistry],
     })
 );
+
+/**
+ * Flagged images that no longer qualify — the recovery queue, reported and never acted on.
+ *
+ * Un-hiding restores content to public feeds, which is a moderation decision rather
+ * than a reconciliation, so the job never clears the flag. This is the number that
+ * says how much is sitting hidden without a current reason, and the query behind it
+ * is also the answer to "which images do we restore" if a model owner ever flips a
+ * base model to a restricted value and back. Read it with the heartbeat below: an
+ * unset gauge scrapes as 0, which here reads as the reassuring answer.
+ */
+export const restrictedImageOverhiddenGauge = registerInstrumentationMetric(
+  PROM_PREFIX + 'restricted_image_overhidden',
+  () =>
+    new client.Gauge({
+      name: PROM_PREFIX + 'restricted_image_overhidden',
+      help: 'Images flagged modelRestricted that no longer match any restricted base model',
+      registers: [instrumentationRegistry],
+    })
+);

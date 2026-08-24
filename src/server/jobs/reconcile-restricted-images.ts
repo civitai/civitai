@@ -6,6 +6,7 @@ import { logToAxiom } from '~/server/logging/client';
 import {
   restrictedBaseModelDivergenceGauge,
   restrictedImageDriftGauge,
+  restrictedImageOverhiddenGauge,
   restrictedImageReconcileLastSuccessGauge,
 } from '~/server/prom/client';
 import { createJob } from './job';
@@ -34,13 +35,28 @@ const VERSIONS_PER_CHUNK = 100;
 // That ceiling belongs to the measuring path, not to production — the app connects
 // inside the cluster and is not behind it, so do not reason about prod from 60 s.
 // `statement_timeout` is 2 min (the database default, which `civitai-app-writer`
-// inherits), and a statement already observed spanning 22-57 s does not have the
-// headroom to be run hourly unchunked. Per 100 versions it measured 0.7-8.5 s,
-// against ~1,712 restricted versions.
+// inherits). Unchunked and with the versions supplied by the join rather than as
+// literals, the planner switches to a parallel seq scan of `ImageResourceNew`:
+// 440M rows, ~19 GB, 23.8 s. Both properties are load-bearing.
 export const reconcileRestrictedImages = createJob(
   'reconcile-restricted-images',
   '0 * * * *',
   async (ctx) => {
+    // Read and publish before the chunk loop, so a chunk that times out cannot take
+    // the divergence signal down with it. A labelled gauge that is never set does not
+    // scrape at all, so an alert on it would go quiet in exactly the state it exists
+    // to report.
+    const rows = await dbWrite.$queryRaw<{ baseModel: string }[]>`
+      SELECT "baseModel" FROM "RestrictedBaseModels"
+    `;
+    const inDb = new Set(rows.map((r) => r.baseModel));
+    const inCode = new Set<string>(nsfwRestrictedBaseModels);
+    const missingInDb = [...inCode].filter((bm) => !inDb.has(bm));
+    const missingInCode = [...inDb].filter((bm) => !inCode.has(bm));
+
+    restrictedBaseModelDivergenceGauge.set({ direction: 'missing_in_db' }, missingInDb.length);
+    restrictedBaseModelDivergenceGauge.set({ direction: 'missing_in_code' }, missingInCode.length);
+
     const versions = await dbWrite.$queryRaw<{ id: number }[]>`
       SELECT mv.id
       FROM "RestrictedBaseModels" rbm
@@ -55,6 +71,18 @@ export const reconcileRestrictedImages = createJob(
     );
     for (const ids of chunks) {
       ctx.checkIfCanceled();
+      // 🔴 `EXCEPT` against `idx_image_restricted_true`, not a `modelRestricted`
+      // filter on the joined row. Measured on prod, heaviest chunk: the filtered
+      // form ran 97,270 random `Image_pkey` probes and 77,699 disk reads (~607 MB,
+      // 7,886 ms cold) to produce 521 rows, because the filter is applied after the
+      // probe. Two index-only scans do the same work in 924 ms and 17 reads.
+      //
+      // 🔴 `flagged` must stay the UPDATE's rowcount and must never become the
+      // subquery's. 1,016 of 6,640 resource rows for these base models name an image
+      // that no longer exists — `ImageResourceNew` has no enforced foreign key — and
+      // those ids survive the `EXCEPT` on every run. Counting the read instead would
+      // give the drift gauge a permanent floor and it would never reach the zero
+      // that `prom/client.ts` calls healthy.
       flagged += await dbWrite.$executeRaw`
         UPDATE "Image" i
         SET "modelRestricted" = true
@@ -63,21 +91,31 @@ export const reconcileRestrictedImages = createJob(
             SELECT irn."imageId"
             FROM "ImageResourceNew" irn
             WHERE irn."modelVersionId" IN (${Prisma.join(ids)})
+            EXCEPT
+            SELECT id FROM "Image" WHERE "modelRestricted" = true
           )
       `;
     }
 
-    const rows = await dbWrite.$queryRaw<{ baseModel: string }[]>`
-      SELECT "baseModel" FROM "RestrictedBaseModels"
+    // Reported, never acted on. This is also the recovery query if a model owner
+    // ever sets a version's base model to a restricted value and back: `baseModel`
+    // is owner-settable on a published version, so the flag can be applied to other
+    // people's images, and nothing un-hides them. Measured 2.7 s on the prod replica.
+    const [{ count: overhidden }] = await dbWrite.$queryRaw<{ count: bigint }[]>`
+      SELECT count(*) AS count
+      FROM "Image" i
+      WHERE i."modelRestricted" = true
+        AND NOT EXISTS (
+          SELECT 1
+          FROM "ImageResourceNew" irn
+          JOIN "ModelVersion" mv ON mv.id = irn."modelVersionId"
+          JOIN "RestrictedBaseModels" rbm ON rbm."baseModel" = mv."baseModel"
+          WHERE irn."imageId" = i.id
+        )
     `;
-    const inDb = new Set(rows.map((r) => r.baseModel));
-    const inCode = new Set<string>(nsfwRestrictedBaseModels);
-    const missingInDb = [...inCode].filter((bm) => !inDb.has(bm));
-    const missingInCode = [...inDb].filter((bm) => !inCode.has(bm));
 
     restrictedImageDriftGauge.set(flagged);
-    restrictedBaseModelDivergenceGauge.set({ direction: 'missing_in_db' }, missingInDb.length);
-    restrictedBaseModelDivergenceGauge.set({ direction: 'missing_in_code' }, missingInCode.length);
+    restrictedImageOverhiddenGauge.set(Number(overhidden));
     restrictedImageReconcileLastSuccessGauge.set(Math.floor(Date.now() / 1000));
 
     if (flagged > 0 || missingInDb.length > 0 || missingInCode.length > 0) {
@@ -89,13 +127,20 @@ export const reconcileRestrictedImages = createJob(
           flagged,
           missingInDb,
           missingInCode,
+          overhidden: Number(overhidden),
           versions: versions.length,
         },
         'webhooks'
       );
     }
 
-    return { flagged, missingInDb, missingInCode, versions: versions.length };
+    return {
+      flagged,
+      overhidden: Number(overhidden),
+      missingInDb,
+      missingInCode,
+      versions: versions.length,
+    };
   },
   { lockExpiration: 30 * 60 }
 );
