@@ -342,10 +342,11 @@ export function createAxiomLogger(
        * reach `ingestEvents`. Everything else stops here, having already been written to stderr →
        * the log store by the unconditional write above.
        *
-       * WHY A GUARD AND NOT A CALL-SITE EDIT. The defect this closes was eleven distinct datastream
-       * names, spread over ~19 call sites in four subsystems, every one of them rejected on every
-       * write. Fixing that per call site fixes the eleven that exist today and does nothing about
-       * the twelfth, because the property "this string names a real dataset" is not expressible at
+       * WHY A GUARD AND NOT A CALL-SITE EDIT. The defect this closes was TEN distinct datastream
+       * names, spread over 18 production call sites in four subsystems, every one of them rejected
+       * on every write. Fixing that per call site fixes the ten that exist today and does nothing
+       * about the eleventh, because the property "this string names a real dataset" is not
+       * expressible at
        * a call site — it is a relationship between the source and a third-party account. One place
        * to state it, one place to check it.
        *

@@ -8,9 +8,9 @@
  * surfaces only as `{"name":"axiom-ingest-failed","reason":"error"}`, a CATEGORY that a 404, a 503
  * and an ECONNRESET all share, so it reads as transient.
  *
- * That failure mode shipped and ran unnoticed. Measured against the ingest org, ELEVEN distinct
- * datastream names in this repo had no dataset behind them; the oldest had been failing 100% of its
- * writes for ~76 days. No telemetry was actually lost — `logToAxiom` writes the full structured line
+ * That failure mode shipped and ran unnoticed. Measured against the ingest org, TEN distinct
+ * datastream names in this repo had no dataset behind them, across 18 production call sites; the
+ * oldest had been failing 100% of its writes for ~76 days. No telemetry was actually lost — `logToAxiom` writes the full structured line
  * to stderr (→ the log store) BEFORE it attempts the Axiom write, unconditionally, and every real
  * consumer of these events reads the log store or metrics, never Axiom. What was lost was a longer
  * retention window, and 76 days of a permanently-red write path nobody could see.
