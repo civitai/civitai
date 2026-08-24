@@ -209,15 +209,35 @@ function AppPage(props: PageProps) {
   return (
     <>
       <Meta title={`${appName} — Civitai Apps`} deIndex />
-      {/* The host is a FLEX ITEM of `AppLayout`'s non-scrolling `<main>` (this
-          page declares `scrollable: false` below), so this wrapper has to grow
-          rather than sit at its content height — a plain block would leave
-          `PageBlockHost`'s `flex: 1` resolving against an auto-height parent and
-          collapse the iframe. `minHeight: 0` defeats the flex `min-height: auto`
-          floor so the chain can actually shrink to the viewport instead of
-          pushing past it. */}
+      {/* 🔴 THE THIRD LEG OF THE LAYOUT CONTRACT — not incidental styling. Pinned
+          by `pageRunScrollContract.test.ts`, because reverting it passes every
+          other assertion in this PR while breaking the page.
+
+          `display/flexDirection/flex/minHeight` — the host is a FLEX ITEM of
+          `AppLayout`'s non-scrolling `<main>` (this page declares
+          `scrollable: false` below), so this wrapper has to GROW rather than sit
+          at its content height. A plain block would leave `PageBlockHost`'s
+          `flex: 1` resolving against an auto-height parent, letterboxing the
+          iframe down to its ~150px intrinsic replaced-element height.
+          `minHeight: 0` defeats the flex `min-height: auto` floor so the chain
+          can shrink to the viewport instead of pushing past it.
+
+          `overflowY: auto` — the SCROLL CONTAINER OF LAST RESORT, and the reason
+          `FILL_MIN_HEIGHT_PX` is safe. Every ancestor above is `overflow-hidden`
+          under `scrollable: false`, so without this the host's floor would be
+          clipped rather than scrolled and a short viewport (phone landscape, or
+          200% zoom) would put content permanently out of reach. It costs nothing
+          at ordinary sizes: above the floor `flex: 1` fills the parent exactly,
+          so there is no overflow and no scrollbar. */}
       <Box
-        style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, width: '100%' }}
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          flex: 1,
+          minHeight: 0,
+          overflowY: 'auto',
+          width: '100%',
+        }}
       >
         <PageBlockHost
           appBlockId={appBlockId}
@@ -287,9 +307,18 @@ function AppPage(props: PageProps) {
  * defaults rather than nulled — this changes layout mechanics, not what the page
  * contains.
  *
- * `subNav: null` because the run surface is the app's own chrome
- * (`AppBlockChrome`); the site sub-nav would be a second, competing header bar
- * and its `mb-3` is one of the terms that overflowed the old calc.
+ * ⚠️ `subNav: null` IS A PRODUCT DECISION, not just layout. `SubNav2` renders
+ * `<HomeTabs />` — the site-wide Models / Images / Videos tabs — so dropping it
+ * removes that navigation row from this route for every viewer. The rationale is
+ * that the run surface already has the app's own chrome (`AppBlockChrome`) and a
+ * second competing header bar reads badly, which is the same call
+ * `src/pages/generate/index.tsx` and `src/pages/research/rater.tsx` make for
+ * their immersive surfaces. Its `mb-3` was also one of the terms that overflowed
+ * the old calc. Flagged rather than buried: if the tabs should stay, drop this
+ * line — the scrollbar fix does not depend on it.
+ *
+ * Note `RewardsBonusBanner` still renders regardless (`AppLayout` shows it in
+ * the `{!subNav && …}` branch), so it is NOT removed by this.
  */
 export default Page(AppPage, {
   scrollable: false,

@@ -4,10 +4,11 @@ import { describe, expect, it } from 'vitest';
 
 /**
  * `/apps/run/<slug>` must declare a NON-SCROLLING layout, and its host must
- * claim no height of its own. Node `unit` project — the suite CI actually runs
- * (the `.browser.test.tsx` component suites are not run in CI at all), which is
- * why the coupling is pinned here and only MEASURED in
- * `PageBlockHostScrollFit.browser.test.tsx`.
+ * claim no height of its own. Node `unit` project — the GATING suite. The
+ * `.browser.test.tsx` component suites DO run in CI, as the report-only
+ * `preview / component-tests` status (`pnpm run test:component`), so a break
+ * there is visible but does not block a merge. The coupling is pinned here for
+ * that reason, and only MEASURED in `PageBlockHostScrollFit.browser.test.tsx`.
  *
  * WHAT BROKE. The route shipped a bare `export default function AppPage`, so it
  * inherited `AppLayout`'s default `scrollable: true` — a `ScrollArea` with
@@ -18,21 +19,26 @@ import { describe, expect, it } from 'vitest';
  * taller than the space it had: an outer scrollbar that scrolled only the
  * residue, beside the block's own scrollbar inside the iframe.
  *
- * 🔴 THE TWO HALVES ARE A CO-REQUISITE, WHICH IS THE ACTUAL POINT OF THIS FILE.
- * Neither is safe alone and they live in different places, so the failure mode is
- * someone reverting one during an unrelated change:
+ * 🔴 IT IS A CO-REQUISITE OF THREE LEGS, IN THREE PLACES. None is safe alone, so
+ * the failure mode is someone reverting one during an unrelated change:
  *
  *   - `fit="fill"` WITHOUT `scrollable: false` → the host claims no height inside
  *     a layout that bounds nothing, so `flex: 1` resolves against an auto-height
- *     parent and the iframe renders 0px tall. A blank page, which reads as a
- *     broken block rather than a layout regression.
+ *     parent and the iframe LETTERBOXES to roughly its ~150px intrinsic
+ *     replaced-element height. (Measured. An earlier version of this note said
+ *     "0px"; that is what `flex: 0` produces, not this.) Broken, but quietly —
+ *     it reads as a badly-sized block rather than a layout regression.
  *   - `scrollable: false` WITHOUT `fit="fill"` → the outer scrollbar is gone but
  *     the host still claims more height than the now `overflow-hidden` chain can
  *     give it, so the bottom of the app is CLIPPED and unreachable. Strictly
  *     worse than the bug being fixed.
+ *   - EITHER OF THOSE WITHOUT the run page's wrapper `Box` → same as the first
+ *     case. This is the leg the browser suite structurally cannot see, because
+ *     that suite builds its own fixture wrapper instead of importing the page.
  *
- * A test that only checked for the presence of each would pass on either
- * half-revert, so the assertions below are written as an equivalence.
+ * Presence checks alone pass a half-revert of the third leg and every mutation
+ * that inverts rather than deletes, so the assertions below pin whole normalised
+ * expressions as well.
  */
 
 const REPO_ROOT = path.resolve(__dirname, '../../../..');
@@ -53,6 +59,27 @@ function read(file: string): string {
  *  it is being searched for in. */
 function code(src: string): string {
   return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+}
+
+/** Collapse whitespace so an assertion pins the EXPRESSION, not its formatting. */
+function norm(src: string): string {
+  return src.replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Pull one balanced-looking source region out of a file by anchor regex, and
+ * fail loudly if the anchor stops matching.
+ *
+ * 🔴 A regex that no longer matches must never read as "the rule is satisfied".
+ * These assertions are the only thing standing between a later refactor and a
+ * silent return of the bug, so an unmatched anchor is a FAILURE, not a skip.
+ */
+function region(src: string, anchor: RegExp, label: string): string {
+  const m = anchor.exec(src);
+  expect(m, `${label}: anchor ${anchor} no longer matches — update the pin deliberately`).not.toBe(
+    null
+  );
+  return norm(m![0]);
 }
 
 describe('the run page and its host agree on who owns the height', () => {
@@ -85,6 +112,66 @@ describe('the run page and its host agree on who owns the height', () => {
     ).toBe(true);
   });
 
+  /**
+   * 🔴 PIN THE WHOLE EXPRESSION, NOT FEATURES OF IT.
+   *
+   * A pre-merge mutation sweep on the first version of this file found 9 of 17
+   * mutants surviving, because every assertion here was a presence check. The
+   * three that matter, all invisible to a token grep:
+   *
+   *   - INVERT THE TERNARY (`fit === 'fill'` → `fit !== 'fill'`) — breaks EVERY
+   *     surface at once: the run page gets the viewport calc back (the double
+   *     scrollbar) and the dev tunnel + mod review get `fill` inside unbounded
+   *     parents (the collapse the prop doc warns about). Every token a presence
+   *     check looks for is still there.
+   *   - `flex: 1` → `flex: 0` in the fill branch — a 0px host.
+   *   - DELETE (or comment out) `overflow: 'hidden'` on the reveal wrapper — the
+   *     8px transform leak returns.
+   *
+   * Pinning the normalised text of the whole expression kills all three in one
+   * assertion. The accepted cost is that a cosmetic reformat of these exact
+   * blocks fails this test — that is the trade for a machine-checkable claim,
+   * and the failure message says so. `code()` runs first, so commenting a line
+   * out changes the normalised string exactly as deleting it does.
+   */
+  it("pins the host's `fit` branches verbatim — inversion, `flex: 0` and a dropped `overflow` all fail", () => {
+    const src = code(read(HOST));
+    expect(region(src, /\.\.\.\(fit === 'fill'[\s\S]*?\}\),/, 'fit ternary')).toBe(
+      "...(fit === 'fill' ? { flex: 1, minHeight: FILL_MIN_HEIGHT_PX, } " +
+        ": { height: '100%', minHeight: 'calc(100dvh - 60px)', }),"
+    );
+  });
+
+  it('pins the reveal wrapper, whose `overflow: hidden` is what confines the 8px transform', () => {
+    const src = code(read(HOST));
+    expect(
+      region(src, /<Box\s+style=\{\{\s*position: 'relative',[\s\S]*?\}\}\s*>/, 'reveal wrapper')
+    ).toBe(
+      "<Box style={{ position: 'relative', flex: 1, display: 'flex', overflow: 'hidden', }} >"
+    );
+  });
+
+  /**
+   * 🔴 THE CO-REQUISITE IS A TRIO, NOT A PAIR — this is the third leg.
+   *
+   * The run page's own wrapper `Box` is what gives `fit="fill"` a growing flex
+   * item to resolve against, and its `overflowY: 'auto'` is the scroll container
+   * of last resort that makes `FILL_MIN_HEIGHT_PX` reachable instead of clipped.
+   * Reverting it to the original `{ width: '100%' }` passed BOTH suites in the
+   * pre-merge sweep while letterboxing the iframe to its ~150px intrinsic
+   * height — the browser test cannot see it because that test builds its own
+   * fixture wrapper rather than importing the Next page.
+   */
+  it('pins the run page wrapper — the third leg the browser test structurally cannot see', () => {
+    const src = code(read(RUN_PAGE));
+    expect(
+      region(src, /<Box\s+style=\{\{\s*display: 'flex',[\s\S]*?\}\}\s*>/, 'page wrapper')
+    ).toBe(
+      "<Box style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, " +
+        "overflowY: 'auto', width: '100%', }} >"
+    );
+  });
+
   it('the host still DEFAULTS to `viewport`, so the other three mounters are untouched', () => {
     const src = code(read(HOST));
     // The dev tunnel and the mod-review preview mount inside scrolling ancestors
@@ -95,6 +182,11 @@ describe('the run page and its host agree on who owns the height', () => {
   it('only the run page opts into `fill` — a new mounter must opt in deliberately', () => {
     // A directory walk, not a hand-kept list: the point is to notice a mounter
     // nobody told this test about.
+    //
+    // Scoped to files that actually mount `PageBlockHost`, because `fit` is not
+    // a name this codebase owns — Mantine's `Image` has a `fit` prop too, so an
+    // unrelated `fit="fill"` elsewhere in `src` would otherwise fail this test
+    // and hand an unrelated team a maintenance tax.
     const offenders: string[] = [];
     const walk = (dir: string) => {
       for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -103,9 +195,9 @@ describe('the run page and its host agree on who owns the height', () => {
           if (entry.name === 'node_modules' || entry.name === '__tests__') continue;
           walk(full);
         } else if (/\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name)) {
-          if (
-            /\bfit=(["']fill["']|\{\s*['"]fill['"]\s*\})/.test(code(fs.readFileSync(full, 'utf8')))
-          )
+          const src = code(fs.readFileSync(full, 'utf8'));
+          if (!/<PageBlockHost\b/.test(src)) continue;
+          if (/\bfit=(["']fill["']|\{\s*['"]fill['"]\s*\})/.test(src))
             offenders.push(path.relative(REPO_ROOT, full));
         }
       }
@@ -123,9 +215,28 @@ describe('the run page and its host agree on who owns the height', () => {
 
     // The scrollable branch is a bounded, auto-overflow viewport…
     expect(src).toMatch(/scrollable\s*\?\s*\(\s*<ScrollArea/);
-    // …and the non-scrollable branch clips instead of scrolling, all the way down.
+    // …and the non-scrollable branch clips instead of scrolling, all the way
+    // down. Asserted as an unordered SET of classes, not as a literal string: a
+    // prettier/tailwind-sort reorder is a no-op that would otherwise fail this.
     expect(src).toMatch(/no-scroll[^"']*flex[^"']*overflow-hidden/);
-    expect(src).toMatch(/<main className="flex flex-1 flex-col overflow-hidden">/);
+
+    // 🔴 `AppLayout` has TWO `<main>` elements — one per branch — so match ALL
+    // of them and look for the no-scroll one. Reading only the first match found
+    // the SCROLLABLE branch's `min-w-0 flex-1` and failed against the set this
+    // test is about; a first-match read of a repeated pattern is its own bug
+    // class, in the assertion as much as in an edit.
+    //
+    // 🔴 SORTED ARRAYS, NOT `Set`s. `expect([...]).toContainEqual(new Set([...]))`
+    // does NOT deep-compare Set contents in Vitest — measured: it PASSES when
+    // the expected set is absent entirely. A first draft of this assertion used
+    // it and was silently vacuous, which the mutation sweep caught only because
+    // dropping `overflow-hidden` survived. Sorting makes the comparison
+    // order-independent without relying on Set equality.
+    const mainClasses = [...src.matchAll(/<main className="([^"]*)">/g)].map((m) =>
+      m[1].split(/\s+/).filter(Boolean).sort()
+    );
+    expect(mainClasses.length, 'expected both AppLayout branches to render a <main>').toBe(2);
+    expect(mainClasses).toContainEqual(['flex', 'flex-1', 'flex-col', 'overflow-hidden'].sort());
   });
 
   it('`HEADER_HEIGHT` is still 60, so the surviving `viewport` calc is not silently stale', () => {

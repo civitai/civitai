@@ -204,6 +204,39 @@ type Status = 'loading' | 'ready' | 'timeout' | 'fatal' | 'no_token' | 'error';
 // (gotcha #73). Module-scope so referencing it in a handler adds no effect dep.
 const REVIEW_NACK_MESSAGE = 'not available in review preview';
 
+/**
+ * The floor a `fit="fill"` host will not shrink below, in px.
+ *
+ * 🔴 WHY A FLOOR EXISTS AT ALL. `fit="fill"` is only correct under a
+ * `Page(…, { scrollable: false })` layout, where EVERY ancestor is
+ * `overflow-hidden`. That is what removes the double scrollbar — and it also
+ * means the page is the only thing left that can offer a scrollbar. The site's
+ * fixed chrome cannot shrink (header 60 + `AppFooter` 45 + its `mt-3` 12 +
+ * `AdhesiveAd` 90 desktop / 50 mobile), so with a bare `min-height: 0` the app
+ * absorbed the ENTIRE shortfall on a short viewport and the overflow was simply
+ * clipped away with nothing to scroll.
+ *
+ * Measured before this floor existed: a ~360px phone-landscape viewport left the
+ * host 153px, and a 250px viewport collapsed it to 0 — with `outerScrollbar =
+ * false` at every step. A 1366×768 laptop at 200% browser zoom lands in the same
+ * band. That is WCAG 1.4.4 / 1.4.10 (content unreachable on zoom/reflow), i.e.
+ * strictly worse than the cosmetic spare scrollbar the `fill` mode was
+ * introduced to remove.
+ *
+ * 400 is chosen to sit ABOVE the ~395px a real block renders at (and above the
+ * synthetic install's `minHeight: 200`) while staying below what any ordinary
+ * viewport leaves: a 768px laptop has 561px after chrome, so the floor never
+ * fires there. It is deliberately NOT derived from `100dvh` — that arithmetic is
+ * exactly what this PR removed.
+ *
+ * The floor only helps if something can scroll once it binds, so the run page's
+ * wrapper carries `overflowY: 'auto'` as the scroll container of last resort.
+ * Both halves are asserted in `PageBlockHostScrollFit.browser.test.tsx`
+ * ("short viewports — squeezed, but never unreachable"), at a short viewport AND
+ * at a normal one so a floor that fired for everyone would fail.
+ */
+export const FILL_MIN_HEIGHT_PX = 400;
+
 export interface PageBlockHostProps {
   /** AppBlock id (`apb_*`) — used to build the BLOCK_INIT ids + trust chrome. */
   appBlockId: string;
@@ -3507,12 +3540,14 @@ export function PageBlockHost({
         // viewport arithmetic can never agree with its own scroll viewport.
         ...(fit === 'fill'
           ? {
-              // Fill the (already bounded) parent exactly. `minHeight: 0` is
-              // load-bearing: a flex item's default `min-height: auto` floors it
-              // at its content height, which would push the column past the
-              // parent and hand the scrollbar straight back.
+              // Fill the (already bounded) parent — but never below
+              // `FILL_MIN_HEIGHT_PX`. See that constant for why a bare
+              // `minHeight: 0` here was a WCAG regression rather than a tidier
+              // fix. Above the floor `flex: 1` still resolves to exactly the
+              // parent's height, so nothing overflows and no outer scrollbar
+              // appears; the floor is inert at every ordinary viewport.
               flex: 1,
-              minHeight: 0,
+              minHeight: FILL_MIN_HEIGHT_PX,
             }
           : {
               // Full viewport under the global header. The host chrome sits on

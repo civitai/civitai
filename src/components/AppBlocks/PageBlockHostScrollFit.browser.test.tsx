@@ -42,10 +42,11 @@ import type * as TrpcMod from '~/utils/trpc';
  * arms render the SAME host into the SAME container, differing only in `fit`.
  * Delete the red arm and the green one stops proving anything.
  *
- * NOTE ON REACH: CI runs the node `unit` project only — the browser suites are
- * not run there. The half of this contract that gates a merge is the source-scan
- * guard in `__tests__/pageRunScrollContract.test.ts`, which pins that the route
- * ships BOTH halves together. This file is the empirical half.
+ * NOTE ON REACH: this suite DOES run in CI — `pnpm run test:component`, surfaced
+ * as the `preview / component-tests` commit status — but REPORT-ONLY, so a break
+ * here is visible without blocking a merge. The gating half of this contract is
+ * the source-scan guard in `__tests__/pageRunScrollContract.test.ts`. This file
+ * is the empirical half, and it is the one that can see layout at all.
  */
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
@@ -107,7 +108,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 }));
 
 // eslint-disable-next-line import/first
-import { PageBlockHost } from '~/components/AppBlocks/PageBlockHost';
+import { FILL_MIN_HEIGHT_PX, PageBlockHost } from '~/components/AppBlocks/PageBlockHost';
 
 const SAME_ORIGIN_SRC = `${window.location.origin}/`;
 
@@ -196,6 +197,52 @@ function renderInScrollChain(fit: 'viewport' | 'fill', containerHeight: number) 
   );
 }
 
+/**
+ * The `scrollable: false` chain at a SHORT viewport — the squeeze case.
+ *
+ * `Page(…, { scrollable: false })` puts `overflow-hidden` on every ancestor, so
+ * whatever the page renders is the ONLY thing that can offer a scrollbar. That
+ * is the whole point of the fix at normal sizes, and the hazard at small ones:
+ * the site's fixed chrome (header 60 + AppFooter 45 + its mt-3 12 + AdhesiveAd
+ * 90 desktop / 50 mobile) cannot shrink, so on a short viewport the app absorbs
+ * the entire shortfall.
+ *
+ * `available` is what is left for the page after that chrome. At a phone in
+ * landscape (~360 CSS px) or a 1366×768 laptop at 200% zoom (~384 CSS px) it
+ * lands near 150px — far too little to use, and with `overflow-hidden` above
+ * there would be nothing to scroll to reach the rest.
+ */
+function renderInNoScrollChain(available: number) {
+  return renderWithProviders(
+    <div
+      data-testid="no-scroll-main"
+      // `AppLayout`'s `<main className="flex flex-1 flex-col overflow-hidden">`.
+      style={{
+        height: `${available}px`,
+        overflow: 'hidden',
+        display: 'flex',
+        flexDirection: 'column',
+      }}
+    >
+      {/* The run page's own wrapper Box — kept in sync with
+          `src/pages/apps/run/[slug]/[[...path]].tsx`. `overflowY: auto` is the
+          scroll-of-last-resort that makes the squeeze recoverable. */}
+      <div
+        data-testid="page-wrapper"
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          flex: 1,
+          minHeight: 0,
+          overflowY: 'auto',
+        }}
+      >
+        <PageBlockHost {...baseProps} fit="fill" />
+      </div>
+    </div>
+  );
+}
+
 function scrollChain() {
   return page.getByTestId('scroll-chain').element() as HTMLElement;
 }
@@ -243,6 +290,74 @@ describe('PageBlockHost — `fit` decides whether the page grows a SECOND scroll
     const { containerHeight } = layoutChainHeights();
     await mountAndSettle('fill', containerHeight);
     expect(page.getByTestId('app-page-frame').element().getAttribute('data-fit')).toBe('fill');
+  });
+
+  /**
+   * 🔴 THE FIX MUST NOT TRADE A COSMETIC SCROLLBAR FOR AN UNREACHABLE ONE.
+   *
+   * Raised by the pre-merge audit of #4339 and reproduced here before being
+   * fixed: with `scrollable: false` every ancestor is `overflow-hidden`, so a
+   * host that floors at `minHeight: 0` absorbs the whole shortfall on a short
+   * viewport and NOTHING can scroll to what got squeezed out. A phone in
+   * landscape and a 1366×768 laptop at 200% zoom both land here, which makes it
+   * a WCAG 1.4.4 / 1.4.10 problem rather than a cosmetic one — strictly worse
+   * than the spare scrollbar this PR set out to remove.
+   *
+   * The cure is a real floor (`FILL_MIN_HEIGHT_PX`) plus one scroll container of
+   * last resort on the page's own wrapper. Above the floor nothing overflows, so
+   * the double-scrollbar fix is untouched; below it, one scrollbar appears and
+   * the content is reachable again.
+   */
+  describe('short viewports — squeezed, but never unreachable', () => {
+    test('the app keeps a usable height instead of collapsing toward zero', async () => {
+      // ~360px phone-landscape viewport minus the site's fixed chrome.
+      const available = 153;
+      renderInNoScrollChain(available);
+      await expect.element(page.getByTestId('app-page-frame')).toBeInTheDocument();
+
+      const frame = page.getByTestId('app-page-frame').element() as HTMLElement;
+      // The floor holds even though the parent is far shorter than it.
+      expect(frame.getBoundingClientRect().height).toBeGreaterThanOrEqual(FILL_MIN_HEIGHT_PX);
+    });
+
+    test('and what is squeezed out stays REACHABLE — exactly one scrollbar, not zero', async () => {
+      const available = 153;
+      renderInNoScrollChain(available);
+      await expect.element(page.getByTestId('app-page-frame')).toBeInTheDocument();
+
+      const wrapper = page.getByTestId('page-wrapper').element() as HTMLElement;
+
+      // 🔴 `scrollHeight > clientHeight` ALONE DOES NOT MEAN "REACHABLE", and
+      // this test asserted only that at first. An `overflow: hidden` box still
+      // reports `scrollHeight > clientHeight` — it has overflow, it just refuses
+      // to let the user get to it. Flipping this fixture's `overflowY` from
+      // `auto` to `hidden` left all 8 tests GREEN, i.e. the assertion passed for
+      // a reason unrelated to what it claimed. Both halves are needed: there is
+      // something to scroll, AND the box is user-scrollable.
+      expect(wrapper.scrollHeight).toBeGreaterThan(wrapper.clientHeight);
+      expect(['auto', 'scroll']).toContain(getComputedStyle(wrapper).overflowY);
+
+      // ...and the ONE scrollbar is the wrapper's. The `overflow-hidden`
+      // ancestor must not have grown one too — that would be the double
+      // scrollbar again, just at a different size.
+      const main = page.getByTestId('no-scroll-main').element() as HTMLElement;
+      expect(main.scrollHeight).toBe(main.clientHeight);
+    });
+
+    test('at a NORMAL viewport the floor is inert — still no outer scrollbar', async () => {
+      // The other half of the "measure at >= 2 points" rule: a floor that fires
+      // at ordinary sizes would reintroduce the bug for everyone. 900px is
+      // comfortably above the floor.
+      const available = 900;
+      renderInNoScrollChain(available);
+      await expect.element(page.getByTestId('app-page-frame')).toBeInTheDocument();
+
+      const wrapper = page.getByTestId('page-wrapper').element() as HTMLElement;
+      expect(wrapper.scrollHeight).toBe(wrapper.clientHeight);
+      // The host filled the space rather than sitting at its floor.
+      const frame = page.getByTestId('app-page-frame').element() as HTMLElement;
+      expect(frame.getBoundingClientRect().height).toBe(available);
+    });
   });
 
   test('the DEFAULT is `viewport`, so the three non-page mounters are unchanged', async () => {
