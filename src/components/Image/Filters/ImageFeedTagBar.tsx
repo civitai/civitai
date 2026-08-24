@@ -3,6 +3,7 @@ import { useImageQueryParams } from '~/components/Image/image.utils';
 import type { TagChipRowItem } from '~/components/Tags/TagChipRow';
 import { TagChipRow } from '~/components/Tags/TagChipRow';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '~/utils/trpc';
 
 type FeedTagBarFeed = 'images' | 'videos';
@@ -21,6 +22,7 @@ type FeedTagBarFeed = 'images' | 'videos';
  */
 export function ImageFeedTagBar({ feed }: { feed: FeedTagBarFeed }) {
   const { trackAction } = useTrackEvent();
+  const features = useFeatureFlags();
 
   // The same hook the feed itself filters through (`useImageFilters` → `query.tags`).
   // Reading `router.query` directly here instead would give the chips and the feed two
@@ -29,7 +31,7 @@ export function ImageFeedTagBar({ feed }: { feed: FeedTagBarFeed }) {
   const { query, replace } = useImageQueryParams();
   const tagIds = query.tags ?? [];
 
-  const { data } = trpc.tag.getFeedTagBar.useQuery();
+  const { data } = trpc.tag.getFeedTagBar.useQuery(undefined, { enabled: features.feedTagBar });
   const { items: tags, loadingPreferences } = useApplyHiddenPreferences({
     type: 'tags',
     data,
@@ -61,6 +63,8 @@ export function ImageFeedTagBar({ feed }: { feed: FeedTagBarFeed }) {
     emit(undefined);
     replace({ tags: [] });
   };
+
+  if (!features.feedTagBar) return null;
 
   return (
     <TagChipRow
