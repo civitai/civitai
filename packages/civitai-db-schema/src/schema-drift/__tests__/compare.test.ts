@@ -310,3 +310,72 @@ describe('assessCoverage', () => {
     expect(assessCoverage(report)).toEqual([]);
   });
 });
+
+/**
+ * A model mapped to something that is not there at all.
+ *
+ * Until the catalog carried a view list, a model on a view and a model on nothing arrived
+ * here as the same thing — "no table of that name" — and both were dropped in silence. That
+ * inverted what the tool is for: an absent COLUMN was at least a pending finding, so the
+ * bigger the divergence the quieter it got. Measured on the 2026-08-03 production snapshot,
+ * appending a model on an invented table produced output byte-identical to a clean run.
+ */
+describe('a declared table that is neither a table nor a view', () => {
+  const parsed = parsePrismaSchema(readFileSync(join(here, 'fixtures/fixture.prisma'), 'utf8'));
+
+  function withViews(views: string[]): DbCatalog {
+    return { ...loadCatalog('catalog-aligned.json'), views };
+  }
+
+  // A missing-table finding is about the whole relation, so it carries no columns and
+  // `ids()` would render it with a trailing dot. Read the table names instead.
+  function missingTables(report: { findings: DriftFinding[] }): string[] {
+    return report.findings.filter((f) => f.kind === 'missing-table').map((f) => f.table);
+  }
+
+  it('is reported as missing-table, and says what went unchecked', () => {
+    const report = compareSchemaToCatalog(parsed, withViews([]));
+    expect(missingTables(report)).toEqual(['report_view']);
+    expect(report.counts.missingTables).toBe(1);
+    const finding = report.findings.find((f) => f.kind === 'missing-table');
+    expect(finding?.actual).toBe('no such table or view');
+    expect(finding?.detail).toMatch(/unchecked/);
+    expect(report.skippedModels.find((s) => s.model === 'ReportView')?.classification).toBe(
+      'absent'
+    );
+  });
+
+  // The pair that makes the assertion above mean something: the SAME model, the SAME
+  // catalog, with the one table named as a view instead. If this also reported a finding,
+  // the check above would be firing on "skipped" rather than on "absent".
+  it('is NOT reported when the same table is a view', () => {
+    const report = compareSchemaToCatalog(parsed, withViews(['report_view']));
+    expect(missingTables(report)).toEqual([]);
+    expect(report.counts.missingTables).toBe(0);
+    expect(report.skippedModels.find((s) => s.model === 'ReportView')?.classification).toBe('view');
+  });
+
+  // 🔴 Do not "simplify" this by defaulting `views` to `[]`. Every catalog captured before
+  // the view query existed has no view list, and reading its absence as "there are no
+  // views" would accuse all 24 view-backed models in the production snapshot of being
+  // missing tables — 24 fabricated findings, in the one direction that looks like progress.
+  it('reports NOTHING when the snapshot cannot say (no view list)', () => {
+    const report = compareSchemaToCatalog(parsed, loadCatalog('catalog-aligned.json'));
+    expect(loadCatalog('catalog-aligned.json').views).toBeUndefined();
+    expect(missingTables(report)).toEqual([]);
+    expect(report.counts.missingTables).toBe(0);
+    expect(report.counts.modelsUnclassified).toBe(1);
+    expect(report.skippedModels.find((s) => s.model === 'ReportView')?.classification).toBe(
+      'unclassified'
+    );
+  });
+
+  // @@ignore is a statement about Prisma's management, not about the database, and it wins
+  // over both. LegacyThing's table IS in the catalog.
+  it('classifies an @@ignore model as ignored, whatever the catalog says', () => {
+    const report = compareSchemaToCatalog(parsed, withViews([]));
+    expect(report.skippedModels.find((s) => s.model === 'LegacyThing')?.classification).toBe(
+      'ignored'
+    );
+  });
+});
