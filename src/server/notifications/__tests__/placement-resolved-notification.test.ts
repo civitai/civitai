@@ -197,6 +197,19 @@ describe('the sticker placer hears about an acceptance', () => {
     );
   });
 
+  /**
+   * A decline that is neither waived nor carrying a receipted fee has not
+   * finished settling. `planPayout` re-reads the legs with no `orderBy`, so a
+   * resume can pay the placer's refund while the fee leg is still stranded —
+   * and "your Buzz has been refunded" would then be wrong in the expensive
+   * direction, because the fee is still owed and will be taken.
+   */
+  it('says nothing about money while the fee outcome is still unknown', () => {
+    expect(resolved({ status: 'declined', amount: 500, refundPaid: true }).message).toBe(
+      'somebody declined your sticker.'
+    );
+  });
+
   it('states the fee it kept even while the rest is still in flight', () => {
     // The fee half is observed — it has its own receipt — so it is still true
     // when the placer's leg has not landed. Dropping the whole sentence there

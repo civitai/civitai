@@ -111,7 +111,17 @@ function declineMessage(details: Record<string, unknown>) {
   const refunded = details.refundPaid ? ' Your Buzz has been refunded.' : '';
   const rest = details.refundPaid ? '; the rest has been refunded' : '';
 
-  if (details.feeWaived || !(fee > 0)) return `${declined}.${refunded}`;
+  // Waived: the whole escrow comes back, so the refund clause is the only thing
+  // to say and `refundPaid` decides whether it is true yet.
+  if (details.feeWaived) return `${declined}.${refunded}`;
+
+  // 🔴 Neither waived nor carrying a receipted fee means this decline has not
+  // finished settling, and "your Buzz has been refunded" would be wrong in the
+  // direction that matters: a fee is still owed and will be taken. It is
+  // reachable because `planPayout` re-reads the legs with no `orderBy`, so a
+  // sweeper-driven resume can receipt the placer's refund while the fee leg is
+  // still stranded. Saying nothing about money is true at every moment.
+  if (!(fee > 0)) return `${declined}.`;
 
   return `${declined}. They kept ${fee} Buzz${rest}.`;
 }
