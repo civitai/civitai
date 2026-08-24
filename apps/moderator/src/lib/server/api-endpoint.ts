@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { error, json, type RequestEvent } from '@sveltejs/kit';
 import { requireAccess } from './access';
+import { SEND_A_TOKEN } from './webhook-endpoint';
 import type { EndpointDoc } from './api-guard';
 
 // ENDPOINT DEFINITIONS — one declaration per HTTP method, replacing a hand-written `_doc` beside a
@@ -18,7 +19,8 @@ import type { EndpointDoc } from './api-guard';
 // Two builders rather than one with an `auth` option, because who may call is not a detail of an
 // endpoint, it is the first thing about it — and because the two need different things:
 //
-//   defineWebhookEndpoint — a service holding WEBHOOK_TOKEN. A moderator's browser session is REFUSED,
+//   defineWebhookEndpoint — a service holding an accepted service token. A moderator's browser session
+//     is REFUSED,
 //     matching the main app's WebhookEndpoint. Nobody is behind the call, so it can attribute nothing,
 //     which is what keeps `human_judgement` out of reach.
 //   defineEndpoint — a signed-in moderator holding the `page` grant. A token is refused.
@@ -98,13 +100,12 @@ function build<S extends z.ZodType, E extends RequestEvent>(
   return Object.assign(handle, { spec });
 }
 
-/** Service-authenticated: a verified WEBHOOK_TOKEN, set by hooks.server.ts. No user. */
+/** Service-authenticated: any accepted service token, verified in hooks.server.ts. No user. */
 export function defineWebhookEndpoint<S extends z.ZodType, E extends RequestEvent>(
   def: Definition<S, E>
 ) {
   return build(def, { kind: 'webhook' }, (event) => {
-    if (event.locals.tokenClient !== 'webhook')
-      error(401, 'Send a valid service token as `?token=` or `Authorization: Bearer <token>`.');
+    if (event.locals.tokenClient !== 'webhook') error(401, SEND_A_TOKEN);
   });
 }
 

@@ -102,6 +102,32 @@ describe('authenticateWebhookToken', () => {
     expect((result as Response).status).toBe(401);
   });
 
+  it('INVARIANT: refuses a token that is a SUPERSTRING of an accepted one', async () => {
+    // The mirror of the prefix case, and the one that exercises the length check as an EQUALITY
+    // rather than a floor: relaxing `===` to `>=` makes timingSafeEqual throw on this input, which
+    // is a 500 out of the hook instead of a 401.
+    const result = authenticateWebhookToken(eventWith({ query: `${INBOUND}x` }));
+    expect(result).toBeInstanceOf(Response);
+    expect((result as Response).status).toBe(401);
+  });
+
+  it('INVARIANT: both variables set to the SAME value still authenticates exactly once', () => {
+    setEnv({ WEBHOOK_TOKEN: LEGACY, MOD_INBOUND_TOKEN: LEGACY });
+    expect(authenticateWebhookToken(eventWith({ query: LEGACY }))).toBe('webhook');
+  });
+
+  it('REGRESSION: a WHITESPACE-ONLY secret is not configured — this closed a real bypass', async () => {
+    // 🔴 The case that made the `.filter()` load-bearing rather than tidy. Before this change the
+    // guard was `if (!expected)`, which a whitespace-only value passes as truthy; the secret was then
+    // `.trim()`ed to ZERO length, and timingSafeEqual(<empty>, <empty>) is TRUE — so a request
+    // presenting `?token=` with no value authenticated as 'webhook' and every wrapped endpoint was
+    // open. Latent (a real deployment holds a real value) but real, and pinned here so it stays shut.
+    setEnv({ WEBHOOK_TOKEN: '   ' });
+    const result = authenticateWebhookToken(eventWith({ query: '' }));
+    expect(result).toBeInstanceOf(Response);
+    expect((result as Response).status).toBe(503);
+  });
+
   it('INVARIANT: fails CLOSED with 503 when neither variable is configured', async () => {
     setEnv({});
     const result = authenticateWebhookToken(eventWith({ query: LEGACY }));

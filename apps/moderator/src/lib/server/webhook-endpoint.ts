@@ -22,21 +22,30 @@ import { env } from '$env/dynamic/private';
 // TWO CREDENTIALS ARE ACCEPTED, and the difference is reach, not privilege — inside this app they
 // authorise exactly the same thing:
 //
-//   MOD_INBOUND_TOKEN — inbound-only, and the one to hand out. It appears NOWHERE else: no outbound
-//     caller reads it and the main app does not know it, so a holder can reach this app and nothing
-//     beyond it. A service that only ever calls IN should hold this and only this.
-//   WEBHOOK_TOKEN  — kept accepted for COMPATIBILITY, because this app is on BOTH ends of it. The main
-//     app presents it when it calls in, and four services here present it when they call out
-//     (user-actions.service.ts, search-index.ts, kono.ts, training-moderation.service.ts) — see
-//     .env.example, which requires it to match the main app's. One variable, two directions, so its
-//     value is not ours to change independently: that is why the fix is a second accepted token and
-//     not a rotation.
+//   MOD_INBOUND_TOKEN — inbound-only, and the one to prefer for anything that only calls IN.
+//   WEBHOOK_TOKEN     — accepted for COMPATIBILITY. This app is on both ends of it, so its value is
+//     shared rather than local (see .env.example) and a second accepted token, not a rotation, is
+//     what lets an inbound-only caller hold something narrower.
 //
 // So this is a MIGRATION SEAM, not a permission model. Move each inbound caller to MOD_INBOUND_TOKEN,
-// and once none present WEBHOOK_TOKEN inbound, drop it from `acceptedTokens` — the outbound callers
-// keep using it and are unaffected. Scoping a token to particular endpoints is a separate, later
-// change: `EndpointAuth` is already `{kind:'webhook'} | {kind:'session'; page}` (api-endpoint.ts),
-// so `{kind:'webhook'; scope}` has somewhere to go.
+// and once none present WEBHOOK_TOKEN inbound, drop it from `acceptedTokens` — outbound callers are
+// unaffected by that. 🔴 Dropping it here is NOT the same as unsetting the variable: four services in
+// this app present it outbound, and two of them degrade by WARNING rather than failing. Scoping a
+// token to particular endpoints is a separate, later change: `EndpointAuth` is already
+// `{kind:'webhook'} | {kind:'session'; page}` (api-endpoint.ts), so `{kind:'webhook'; scope}` has
+// somewhere to go.
+//
+// Operational rationale for the split lives in the private infra repo, not here.
+
+/**
+ * The 401 body, shared by the hook and by both endpoint wrappers. One constant because all three
+ * must say the same thing: this PR had to edit the literal in three places, which is the tell.
+ *
+ * Deliberately does NOT name a variable. Which credentials a deployment accepts is a deployment
+ * detail, and the caller does not need it to fix a bad token.
+ */
+export const SEND_A_TOKEN =
+  'Send a valid service token as `?token=` or `Authorization: Bearer <token>`.';
 
 function presentedToken(event: { url: URL; request: Request }): Buffer {
   const query = event.url.searchParams.get('token');
@@ -92,18 +101,15 @@ export function authenticateWebhookToken(event: {
     );
 
   const provided = presentedToken(event);
-  // Every candidate is compared, with no early exit on a match, so the time taken does not reveal WHICH
-  // credential was presented or how many are configured. Length is checked first because
-  // timingSafeEqual THROWS on a length mismatch; that leaks only the length, not the secret.
+  // Every candidate is compared with no early exit on a match, so WHICH credential matched is not
+  // revealed by how long the comparison takes. (It does not hide how many candidates share the
+  // presented token's LENGTH — that is not a property being claimed here.) Length is checked first
+  // because timingSafeEqual THROWS on a length mismatch; that leaks only the length, not the secret.
   let matched = false;
   for (const secret of accepted)
     if (provided.length === secret.length && timingSafeEqual(provided, secret)) matched = true;
 
-  if (!matched)
-    return Response.json(
-      { message: 'Send a valid service token as `?token=` or `Authorization: Bearer <token>`.' },
-      { status: 401 }
-    );
+  if (!matched) return Response.json({ message: SEND_A_TOKEN }, { status: 401 });
 
   return 'webhook';
 }
@@ -117,8 +123,7 @@ export function WebhookEndpoint<E extends RequestEvent, R>(
     // The hook already verified the token; this is the opt-in that makes THIS endpoint token-callable.
     // A signed-in moderator hitting it is refused too — like the main app's WebhookEndpoint, these are
     // service endpoints, and there is no user behind one.
-    if (event.locals.tokenClient !== 'webhook')
-      error(401, 'Send a valid service token as `?token=` or `Authorization: Bearer <token>`.');
+    if (event.locals.tokenClient !== 'webhook') error(401, SEND_A_TOKEN);
     return handler(event);
   };
 }
