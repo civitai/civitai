@@ -145,10 +145,7 @@ function lastCommit(worktreePath) {
   return gitQuiet(['log', '-1', '--format=%ci'], worktreePath);
 }
 
-// Main-app sessions AND app sessions, because both hold a port and a live process in this tree.
-// While apps were global singletons they were invisible here, so `wt rm` would delete a worktree
-// out from under a running moderator and report a clean removal.
-// Both lists, once, so a caller looping over worktrees does not re-fetch them per iteration.
+// Both lists in one round-trip, so a caller looping over worktrees does not re-fetch per iteration.
 async function fetchRunning(daemonRequest) {
   const [sessionRes, appRes] = await Promise.all([
     daemonRequest('/sessions'),

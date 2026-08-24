@@ -1,14 +1,12 @@
 // Path identity, in one place.
 //
-// This PR fixed the same comparison bug in four separate spots — the app session key, the .env chain
-// dedupe, the primary-worktree refusal, and the lookup immediately below that refusal — and left the
-// rule written twice, in daemon.mjs and worktree.mjs. Two copies means the next person to improve
-// one (trailing separators, UNC paths, `\\?\` prefixes) improves half the callers, and the
-// disagreement surfaces as `wt rm` refusing a tree the daemon is serving, or not refusing one it is.
+// A leaf module rather than a corner of daemon.mjs, because worktree.mjs and the selftests would
+// otherwise import a module that runs `execSync` and constructs AuthHub and RgbProxy at load, just
+// to reach six lines of string comparison.
 //
-// It lives in its own leaf module rather than in daemon.mjs because worktree.mjs and the selftests
-// would otherwise import a module that runs `execSync` and constructs AuthHub and RgbProxy at load
-// just to reach six lines of string comparison.
+// One definition, because the next person to improve it (trailing separators, UNC paths, `\\?\`
+// prefixes) has to improve every caller at once: a daemon and a `wt rm` that disagree about whether
+// two paths are the same tree is how `wt rm` deletes one the daemon is serving.
 import { resolve } from 'path';
 
 /**

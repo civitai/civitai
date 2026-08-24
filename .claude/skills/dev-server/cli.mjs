@@ -119,11 +119,10 @@ async function cmdList() {
 
 // `--prod db,buzz` / `--dev search`, repeatable. Groups come from env-modes.local, so the daemon
 // validates the names — this only has to get the shape right.
-// Flags on `start` and the app verbs that consume the following token. Named once because three
-// places have to agree: parseModeFlags, appFromFlags, and the positional scan. A fourth value-flag
-// added to the parser alone would have its value silently eaten as the worktree.
+// Flags on `start` and the app verbs that consume the following token. A fourth value-flag added to
+// parseModeFlags without being added here has its value silently eaten as the worktree.
 //
-// Not to be confused with `probe`'s own VALUE_FLAGS further down — different verb, different set.
+// Not `probe`'s own VALUE_FLAGS further down — different verb, different set.
 const SESSION_VALUE_FLAGS = new Set(['--app', '--prod', '--dev']);
 
 function parseModeFlags(flags) {
@@ -989,10 +988,14 @@ Commands:
                       [--session id] [--port n] [--timeout ms] [--json]
   unwedge <session>   Stop, delete the build dir, restart, wait for ready, re-probe.
                       ~45s of downtime — only after probe says WEDGED.
-  logs [session-id]   Get logs for a session
-  tail [session-id]   Tail logs continuously
-  stop <session-id>   Stop a session
-  restart <session-id> Restart a session
+  logs [session-id] [--app name]
+                      Get logs for a session, or for an app in this worktree
+  tail [session-id] [--app name]
+                      Tail logs continuously
+  stop <session-id> | stop --app name
+                      Stop a session or an app
+  restart <session-id> | restart --app name
+                      Restart a session or an app
   rgb [subcmd]        RGB proxy control (status|start|stop|restart|logs)
   auth [subcmd]       Auth hub control (status|start|stop|restart|logs)
   app                 List running apps and what is available (moderator, creator-studio)

@@ -1489,8 +1489,7 @@ class AuthHub {
     // worktree — env-modes.mjs lists it in PROD_ONLY_GROUPS for exactly that reason — so a daemon
     // launched from a worktree must still run the primary's copy, which is also the only one with
     // the gitignored apps/auth/.env beside it.
-    // `path` FIRST — requiredEnvPath is derived from it below, so a subclass pointing at a different
-    // root must overwrite this before that. A subclass varies these four; the rest is identical.
+    // requiredEnvPath is derived from this.path below, so the two assignments cannot swap order.
     this.path = resolve(primaryCheckout, hubPath);
     this.port = port;
     this.label = 'Auth hub';
@@ -1528,19 +1527,17 @@ class AuthHub {
   // passes one, because the worktree's copy of that .env is gitignored and usually absent — the
   // chain is what lets it inherit the primary checkout's. Either way process.env is the floor, which
   // is why the DATABASE_URL warning has to be computed from this and not from the chain alone.
-  // A method rather than an inline assignment so the freshness rule has a seam a test can reach:
-  // dropping the clear meant a restart after an .env edit spawned with the OLD DATABASE_URL, and
-  // because dbHost is computed from the same cached object the warning line then confirmed the host
-  // you had just changed away from.
+  // Dropping this means a restart after an .env edit spawns with the OLD DATABASE_URL — and since
+  // dbHost is computed from the same cached object, the warning line then confirms the host you have
+  // just changed away from.
   invalidateSpawnEnv() {
     this.spawnEnvCache = null;
   }
 
   spawnEnv() {
-    // Cached for the duration of one start. Three callers read this — the DATABASE_URL refusal, the
-    // host warning and the spawn options — and without the cache each one re-read every file in the
-    // chain from disk. Cheap either way (~200us a read), but the three must also agree with each
-    // other: the thing refused, the thing described and the thing handed to the child are one object.
+    // Cached for the duration of one start. Not for speed — the three callers (the DATABASE_URL
+    // refusal, the host warning, the spawn options) must AGREE with each other: the thing refused,
+    // the thing described and the thing handed to the child have to be one object.
     if (!this.spawnEnvCache) {
       this.spawnEnvCache = this.envPaths.length
         ? { ...process.env, ...loadEnvChain(this.envPaths) }
@@ -1564,7 +1561,7 @@ class AuthHub {
   }
 
   // `if (this.process)` used to be a sufficient guard because start() was synchronous. It is not any
-  // more: four awaited path probes now sit between that check and the assignment, so two callers in
+  // more: awaited path probes now sit between that check and the assignment, so two callers in
   // the same tick both saw `null` and both spawned — with --strictPort one died and the survivor was
   // referenced by nothing, which is the orphan `stopAppSessions` exists to prevent. Memoising the
   // in-flight promise closes the window without a sentinel that every return path has to remember to
@@ -1582,11 +1579,10 @@ class AuthHub {
   }
 
   // Async because `this.path` is now caller-supplied — an app resolves it against whatever worktree
-  // the request named. A synchronous stat on an unreachable path measured 21s on this daemon's only
-  // thread, which is why probePath/checkPath exist; a fixed local path never reached that, a worktree
+  // the request named. A synchronous stat on an unreachable path is recorded in this file at 21s on
+  // the daemon's only thread, which is why probePath/checkPath exist; a fixed local path never reached that, a worktree
   // argument can. pathExists is the timeout-raced one.
   async #start() {
-    // Dropped per start, not per instance: a restart after an .env edit must see the new values.
     this.invalidateSpawnEnv();
     this.stopping = false;
 
@@ -1859,11 +1855,8 @@ class AppSession extends AuthHub {
     // primary checkout instead of refusing to start, which is what `requiredEnvPath: null` buys.
     this.requiredEnvPath = null;
     this.envPaths = envPaths;
-    // Born live. The handler puts a fresh entry in the map inside the allocation lock but calls
-    // start() outside it, with `await authHub.start()` in between — so an entry that begins life
-    // reading `stopped` is one a concurrent start sees as dead and inherits the port of. The handler
-    // sets this too; having the class guarantee it is what makes the invariant testable, and what
-    // stops a future caller reintroducing the gap by constructing one somewhere else.
+    // Born live: an entry reading `stopped` between the map insert and start() is one a concurrent
+    // start treats as dead and inherits the port of. The handler sets it too — see there for why.
     this.status = 'starting';
     this.dbHost = null;
   }
@@ -1893,7 +1886,7 @@ function describeDatabaseHost(envVars) {
     // `|| null`, not `?? null`. One shape needs it: a value with no `//` (`postgres:something`)
     // parses as an opaque path and yields an EMPTY hostname, which `??` would pass through as `""` —
     // falsy enough to skip the warning silently, but not null, so status would report it. Everything
-    // else degenerate throws and returns null from the catch above.
+    // else degenerate throws and returns null from the catch below.
     return host || null;
   } catch (e) {
     return null;
@@ -1917,14 +1910,12 @@ function appEnvChain(worktree, name) {
 // alone is what made them global singletons.
 const appSessions = new Map();
 
-// The two decisions the concurrent-start fix turns on. They lived inline in the HTTP handler, where
-// nothing could reach them: reverting the liveness rule to `status === 'running'` — the exact bug
-// this branch fixed twice — left every check green, and the only evidence was a live control run
-// once by hand.
+// The two decisions the concurrent-start fix turns on. Named because inline in the HTTP handler
+// nothing could reach them, and reverting the liveness rule to `status === 'running'` left every
+// check green.
 //
-// `status` alone is not enough (sessionIsBusy's own comment says so: a session coming up reads
-// `starting`), and a live `process` counts too because proc.on('error') sets status without
-// clearing it.
+// `status` alone is not enough: a session coming up reads `starting`. A live `process` counts
+// too, because proc.on('error') sets status without clearing it.
 function appIsLive(entry) {
   // A stopping entry is not live — it is about to be killed, so it must not be handed back as
   // `reused` — but its port is not inheritable either, which inheritablePort enforces separately.
@@ -1948,7 +1939,7 @@ function inheritablePort(entry) {
 }
 
 // Membership of the map IS the port reservation, and every release has to prove the entry is still
-// the one it means to release. Each caller awaits something first — five path probes, or stop()'s
+// the one it means to release. Each caller awaits something first — start()'s path probes, or stop()'s
 // 800ms — and the entry can be replaced underneath in that window.
 function releaseIfOurs(key, session) {
   if (appSessions.get(key) === session) appSessions.delete(key);
@@ -2052,8 +2043,8 @@ function getUsedPorts() {
 // leaves the node child to start and bind — a live server on a --strictPort port that no map entry,
 // no `status` row and no shutdown path can reach.
 //
-// Measured on this box, stop issued N seconds after start: 0s orphans every time, 2s and 5s are
-// clean. 3000 buys margin over the observed boundary without making an ordinary stop feel slow —
+// Measured on this box, stop issued N seconds after start: 0s orphaned in 3 of 3 observations,
+// 2s and 5s clean in 1 each. 3000 buys margin over the observed boundary without making an ordinary stop feel slow —
 // only a stop issued seconds after its own start waits at all.
 const SPAWN_SETTLE_MS = 3000;
 
@@ -2061,13 +2052,14 @@ const SPAWN_SETTLE_MS = 3000;
 // without a clock or a spawn — the claim that it "waits only the remainder" was stated in a comment
 // and checked by nothing.
 //
-// Clamped at both ends. A clock step or a VM resume between spawn and stop makes `now - spawnedAt`
+// Clamped upward. A clock step or a VM resume between spawn and stop makes `now - spawnedAt`
 // negative, and an unclamped `settle - negative` waits LONGER than the window, unbounded in principle.
 function settleDelayMs(spawnedAtMs, nowMs, settleMs = SPAWN_SETTLE_MS) {
   if (!spawnedAtMs) return 0;
   const since = nowMs - spawnedAtMs;
   if (since >= settleMs) return 0;
-  return Math.min(settleMs, Math.max(0, settleMs - since));
+  // No lower clamp: the early return above guarantees `since < settleMs`, so this is always > 0.
+  return Math.min(settleMs, settleMs - since);
 }
 // After the kill, how long to keep checking that the port actually came back. Nothing here can kill
 // a grandchild it has no pid for, so this exists to make a residual orphan LOUD rather than silent.
@@ -2449,7 +2441,7 @@ async function main() {
           // release it either. A missing node_modules would burn the app's preferred port for the
           // life of the daemon, and the next start would drift off a number that was free.
           //
-          // Guarded by identity, not by key: start() awaits five path probes, and a delete by key
+          // Guarded by identity, not by key: start() awaits path probes first, and a delete by key
           // alone would remove whatever entry happens to be there now — which after a replacement is
           // a live reservation belonging to someone else. Same rule as the exit handler's
           // `this.process === proc`.
@@ -2500,7 +2492,7 @@ async function main() {
         if (action === 'restart' && req.method === 'POST') {
           const status = await existing.restart();
           // Same reservation-against-nothing as the start path, and the same identity guard: a
-          // restart awaits a stop and then five path probes, so the entry may not be ours any more.
+          // restart awaits a stop and then start()'s probes, so the entry may not be ours any more.
           if (status.status === 'error') releaseIfOurs(key, existing);
           res.writeHead(status.status === 'error' ? 500 : 200);
           res.end(JSON.stringify(status));

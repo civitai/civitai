@@ -179,13 +179,15 @@ and prints each timing. It costs a guaranteed ~45s rebuild, so it is not automat
 guess a session: name the id, because the session you did not name is usually the one someone is
 looking at.
 
-Self-tests — run all three after touching `probe.mjs` or the hook:
+Self-tests. Standalone scripts, no vitest — run the ones your change touches, and `cli-verbs`
+after any edit to `cli.mjs`:
 
 ```bash
 node .claude/skills/dev-server/scripts/env-chain.selftest.mjs          # .env layering, both directions
 node .claude/skills/dev-server/scripts/app-registry.selftest.mjs       # registry, ports, path identity, the lock
 node .claude/skills/dev-server/scripts/db-host.selftest.mjs            # the DB host line never emits a credential
 node .claude/skills/dev-server/scripts/cli-verbs.selftest.mjs          # every dispatch target in cli.mjs exists
+node .claude/skills/dev-server/scripts/branch-watch.selftest.mjs       # HEAD watching + the restart decision
 node .claude/skills/dev-server/scripts/probe.selftest.mjs              # the classifier, pure
 node .claude/skills/dev-server/scripts/probe.integration.selftest.mjs  # the real probe() end to end
 node .claude/hooks/check-writable.selftest.mjs                         # the hook, both directions
@@ -206,10 +208,10 @@ fails.** Anything that adds a new signal belongs in the integration file, not ju
 | `status` | Check daemon status and list all sessions |
 | `list` | List all dev sessions |
 | `start [worktree] [--app name] [--prod a,b] [--dev a,b]` | Start a dev server (default: the main app, current directory) |
-| `logs [session-id]` | Get logs for a session |
-| `tail [session-id]` | Tail logs continuously |
-| `stop <session-id>` | Stop a session |
-| `restart <session-id>` | Restart a session |
+| `logs [session-id] [--app name]` | Get logs for a session, or for an app in this worktree |
+| `tail [session-id] [--app name]` | Tail logs continuously |
+| `stop <session-id>` \| `stop --app name` | Stop a session or an app |
+| `restart <session-id>` \| `restart --app name` | Restart a session or an app |
 | `rgb [subcmd]` | RGB proxy control (`status`\|`start`\|`stop`\|`restart`\|`logs`) |
 | `app` | List running apps, their worktree, and what is available |
 | `app <name> [subcmd] [worktree]` | App control (`status`\|`start`\|`stop`\|`restart`\|`logs`) |
@@ -244,10 +246,14 @@ node .claude/skills/dev-server/cli.mjs start --prod all
 node .claude/skills/dev-server/cli.mjs start --prod all --dev search
 ```
 
-The groups are whatever `env-modes.local` defines. `env-modes.example` documents several, but
-**what is actually defined on this box is one: `db`.** So today `--prod`/`--dev` moves the primary
-database and nothing else, however many services the mechanism could carry. Adding one is an edit to
-`env-modes.local` (gitignored, holds credentials), not to the code.
+`--prod`/`--dev` can only move the groups **your own** `env-modes.local` defines, and that file is
+gitignored — a fresh copy of `env-modes.example` defines none, so `--prod all` is a no-op until you
+fill it in. Adding a service is an edit to that file, not to the code.
+
+⚠️ **`env-modes.local` does not fall through** the way `.env` now does. It is read from the skill
+directory of the daemon that is running (`env-modes.mjs`), so a daemon started from a worktree's own
+copy of the CLI finds none and applies no overlay at all. Start the daemon from the primary checkout,
+or the groups simply will not exist.
 
 Several services have **no dev counterpart to move to at all** — `env-modes.mjs` lists orchestrator,
 payments, s3, clickhouse, notifications, feeds and opensearch in `PROD_ONLY_GROUPS`, and `auth-hub`
@@ -454,7 +460,8 @@ node .claude/skills/dev-server/cli.mjs app moderator restart
 node .claude/skills/dev-server/cli.mjs app moderator stop
 ```
 
-`--app <name>` works on `start`, `logs`, `stop` and `restart`, so one gesture covers the lifecycle;
+`--app <name>` works on `start`, `logs`, `tail`, `stop` and `restart`, so one gesture covers the
+lifecycle;
 `app <name> <subcmd>` is the same thing spelled the other way. Both default to the current
 directory's worktree, and `app <name> <subcmd> <worktree>` names a different one. Running apps also
 appear under `apps` in `status`, beside the main-app sessions.
@@ -467,9 +474,8 @@ appear under `apps` in `status`, beside the main-app sessions.
 **Preferred, not fixed.** The first worktree to start an app gets the number in that table; a second
 worktree starting the same app drifts to the next free port instead of dying on EADDRINUSE, so two
 branches of the same app can run side by side. Nothing has to be rewritten to follow the drift:
-neither app's `.env` carries its own port or base URL, and in dev the auth hub trusts loopback by
-**host**, so a drifted origin is still a first-party client. Every app's preferred port is held back
-from the drift search, so moderator drifting never displaces creator-studio.
+neither app's `.env` carries its own port or base URL. Every app's preferred port is held back from
+the drift search, so moderator drifting never displaces creator-studio.
 
 🔴 **Read the `path` field, not just the fact that it started.** An app serving the wrong checkout
 answers 200s and looks completely healthy — the only thing that contradicts you is `path`.
@@ -508,9 +514,12 @@ Vite compiles routes on demand in dev. The first hit on a cold app can take **25
 (the auth hub's `/login` is the worst offender); every hit after is a few hundred milliseconds. A
 browser sitting on a white page right after startup is usually this, not a hang.
 
+The dashboard shows main-app sessions only. Apps started with `--app` do not appear there — use
+`cli.mjs app` or `cli.mjs status`.
+
 ## Auth Hub
 
-Authentication was split into a standalone **login hub** (`apps/auth`, SvelteKit on port **5173**). The main app is now a **verify-only spoke**: it validates the hub's `civ-token` via the hub's JWKS and no longer runs next-auth sign-in itself. So a *fresh* login in dev needs the hub running. The daemon boots and manages it as a sidecar, same as the RGB proxy.
+Authentication was split into a standalone **login hub** (`apps/auth`, SvelteKit on port **5173**). The main app is now a **verify-only spoke**: it validates the hub's `civ-token` via the hub's JWKS and no longer runs next-auth sign-in itself. So a *fresh* login in dev needs the hub running. The daemon boots and manages it as a sidecar, and starting an app (`start --app <name>`) starts it too when `AUTH_HUB_ENABLED` is set and it is not already running.
 
 ### Control
 
@@ -529,7 +538,7 @@ In the dashboard TUI press `A` to toggle it; the session line shows `AUTH: ready
 
 ```env
 AUTH_HUB_ENABLED=true      # auto-start the hub when the daemon boots
-AUTH_HUB_PATH=apps/auth    # path relative to project root
+AUTH_HUB_PATH=apps/auth    # relative to the PRIMARY checkout, not the tree the daemon runs from
 AUTH_HUB_PORT=5173         # hub dev port (matches AUTH_JWT_ISSUER)
 ```
 

@@ -1,5 +1,7 @@
 # dev-server: what changed, in one page
 
+_Written 2026-08-24, against the change that added per-worktree app support._
+
 The dev server used to boot one thing: the main Next.js app. It now boots the **moderator** and
 **creator-studio** apps too, from whatever worktree you are standing in. This is the short version
 for people who have to use it — `SKILL.md` is the long version.
@@ -13,7 +15,7 @@ node .claude/skills/dev-server/cli.mjs logs   --app moderator
 node .claude/skills/dev-server/cli.mjs tail   --app moderator   # follows, like tail on a session
 node .claude/skills/dev-server/cli.mjs stop   --app moderator
 node .claude/skills/dev-server/cli.mjs app                      # what is running, and where
-node .claude/skills/dev-server/cli.mjs status                   # sessions AND apps, one table
+node .claude/skills/dev-server/cli.mjs status                   # full JSON: sessions, apps, hub
 ```
 
 - `--app <name>` works on `start`, `logs`, `tail`, `stop`, `restart`.
@@ -26,7 +28,7 @@ node .claude/skills/dev-server/cli.mjs status                   # sessions AND a
 **Ports are preferred, not fixed.** moderator 5174, creator-studio 5175. A second worktree starting
 the same app drifts to the next free port instead of dying on EADDRINUSE, so you can run two
 branches of one app side by side. Nothing needs rewriting to follow the drift — neither app's `.env`
-carries its own port, and in dev the auth hub trusts loopback by host.
+carries its own port or base URL.
 
 **🔴 Read the `path` field, not just that it started.** An app serving the wrong checkout answers
 200s and looks completely healthy. `path` is the only thing that contradicts you. This is the bug
@@ -40,10 +42,10 @@ start at all. That base may be a production database. The app now prints its `DA
 on startup and carries it as `dbHost` in `app` / `status` output. Host only, never the credential.
 **Read it before you click anything that writes.**
 
-**The main app's `.env` now falls through too.** Previously a worktree `.env` *replaced* the project
-root's outright, so a file written to override two keys started the server with no `DATABASE_URL` and
-no secrets. Now the root's is the base and the worktree's overrides it key by key — a worktree file
-only needs to restate what it changes.
+**The main app's `.env` now falls through too.** Previously a worktree `.env` *replaced* the primary
+checkout's outright, so a file written to override two keys started the server with no `DATABASE_URL`
+and no secrets. Now the primary's is the base and the worktree's overrides it key by key — a worktree
+file only needs to restate what it changes.
 
 **Starting an app starts the auth hub**, if it is enabled and not already running. It does **not**
 start the main app: the apps reach it over REST, and a cold Next.js compile is not something to
@@ -88,15 +90,12 @@ node .claude/skills/dev-server/scripts/branch-watch.selftest.mjs
 node .claude/skills/dev-server/scripts/probe.selftest.mjs
 ```
 
-If you change any of this, mutate it and check the test goes red. Several of these were written,
-looked green, and could not have failed — the concurrency check passed on the broken code until it
-counted the right thing.
+If you change any of this, mutate it and check the test goes red.
 
 ⚠️ **Nothing else reads `cli.mjs`.** `pnpm typecheck` is scoped to `src/`, CI's ESLint filters by
-path prefix, and every other selftest imports `daemon.mjs` and friends. A refactor once deleted
-`cmdStop` and `cmdRestart` and left both call sites: `node --check` passed, five review rounds and
-29 mutants missed it, and `stop <session-id>` threw ReferenceError for everyone on the branch.
-`cli-verbs.selftest.mjs` is the only thing looking at that file — run it after touching it.
+path prefix, and every other selftest imports `daemon.mjs` and friends. `node --check` will not catch
+a deleted function whose call site remains — that is a ReferenceError, not a syntax error.
+`cli-verbs.selftest.mjs` is the only thing looking at that file. Run it after touching it.
 
 ## If something looks wrong
 
