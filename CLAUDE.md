@@ -140,7 +140,7 @@ suite you did not run — the scripts above already use `'unit*'` for this reaso
 
 #### Run the suites that cover your change; run the WHOLE suite once, at the end
 
-The full unit suite is ~19,500 tests and ~75s, and `test:unit:run` is serialised through the dev-server
+The full unit suite is ~21,500 tests and ~75s, and `test:unit:run` is serialised through the dev-server
 queue — so running it between edits blocks everyone else's runs for minutes at a time. Name the covering
 suites before you start editing and run those on each iteration:
 
