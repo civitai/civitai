@@ -180,11 +180,37 @@ describe('the sticker placer hears about an acceptance', () => {
     );
   });
 
-  /* Deleted: a test asserting both new branches return `/images/74`.
-     `url` is computed once before any branch and every branch returns it, so no
-     change to either new branch could turn it red — and the one mutation it did
-     catch, editing that shared line, is already covered above. It also named a
-     "reveal URL" that does not exist in this file. */
+  /**
+   * 🔴 This test was DELETED as unfalsifiable and then had to come back, and the
+   * reason is worth more than the test.
+   *
+   * When it was written, `url` was computed once before any branch and every
+   * branch returned it, so nothing branch-specific could fail. True then. #4338
+   * then pointed the APPROVAL branch at `imageWithStickersUrl`, which made the
+   * branches differ — and the deletion, plus the comment explaining it, said
+   * there was nothing here worth testing on the exact property the merge had
+   * just made testable.
+   *
+   * A restored assertion gets re-run against a new base. An ABSENCE has nothing
+   * to re-check, and the prose explaining it is not executable. So: when a review
+   * concludes "delete this, it cannot fail", that conclusion is pinned to the
+   * shape of the code at that moment, and it is the first thing to revisit after
+   * anything merges into the same function.
+   *
+   * A discriminator rather than a constant. Asserting the plain URL alone would
+   * still pass if every branch collapsed back onto one string, which is the state
+   * this started in.
+   */
+  it('sends the outcomes with no sticker to see to the plain image', () => {
+    const approved = resolved({ status: 'approved' }).url;
+
+    for (const status of ['declined', 'expired'])
+      expect(resolved({ status, amount: 500 }).url).toBe('/images/74');
+
+    // The negative control: the approval branch reveals, so the two are not the
+    // same string and this cannot pass by every branch agreeing.
+    expect(approved).not.toBe('/images/74');
+  });
 
   /**
    * 🔴 The refund sentence is a claim about money that MOVED. Until the leg has a
