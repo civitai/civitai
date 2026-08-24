@@ -125,19 +125,43 @@ accurate, but four of the seven have a cause that is not what the symptom sugges
       the wiring — that last one exists because the helper's own tests stay green if the call site is
       removed.
 
-- [ ] **"Comment Spam Identifier" from Retool.** Cannot be ported: **it is not in anything we have.**
-      All nine Retool app exports are in [`retool-exports/`](retool-exports/) — User Lookup v2,
-      Moderation Status, Bulk Image Manager, User Reports, Chat Audit, Front Page Audit, Bulk Ban, Image
-      Lookup, Article Lookup — and none of them is a comment-spam tool, under that name or any other.
-      The closest thing on record is the **"Comment Spammer alert"** in User Lookup's Quick Info, parked
-      2026-08-12 for the same reason: Retool's definition of the signal is not in the export either, so
-      building one would be inventing a heuristic rather than porting it.
+- [ ] **"Comment Spam Identifier" from Retool.** **It exists, it is in the export, and it is already
+      ported — the earlier entry here was wrong on all three counts.** It is Retool's **"Comment
+      Spammer"** alert in User Lookup's Quick Info, backed by `PotentialSpammerV2`, and it lives in this
+      repo as `getCommentBurst` (`user-signals.service.ts`), rendered as an amber line on the
+      **Addresses** panel: "N comments in the last 48 hours — possible spam burst."
 
-      Two ways forward, and the reporters have to pick: either this was a **tenth app** nobody exported
-      before Retool went dark — in which case a screenshot is enough to size it — or it is the Quick
-      Info alert, in which case what is missing is the rule (rate over a window? the same text across
-      threads? comments as a share of the account's other activity?). Given the wave in progress, the
-      second is worth defining now regardless of which it was.
+      **Retool's rule was "more than 2 comments in 48 hours", and its threshold was broken.** The alert's
+      visibility expression was `!total_comment_count < 20`, which evaluates `!x` to a boolean first —
+      so the 20 never gated anything and the only real gate was the query's own `> 2`. Measured on prod
+      2026-08-24: that rule matches **367 accounts right now, 3 of them banned.** So the reason nobody
+      could say what it measured is that it measured almost nothing — which is worth knowing before
+      rebuilding it faithfully.
+
+      **What the current wave actually looks like** (1,002 accounts banned 2026-08-24, measured from
+      ClickHouse `comments` events, which survive the comment deletion that follows a ban):
+
+      | | |
+      | --- | --- |
+      | account age at ban | p50 **1.1 h**, p90 5.5 h |
+      | comments posted | p50 **11**, and 11 is also the p90 — a script that stops |
+      | distinct targets | **11** — one comment each, no thread twice |
+      | first to last comment | **2 minutes** |
+
+      A candidate rule falls straight out: **≥10 comments on ≥10 distinct targets within one hour.**
+      Over 90 days that matches 1,071 accounts, **831 already banned**; of the 240 it matches that are
+      not banned, only **4** are recent signups. Adding "account younger than 2 days" is what separates
+      the wave from established power users — note the accounts posting *20–39* comments an hour are
+      almost all legitimate (1.6% banned), so raw volume alone points the wrong way.
+
+      🔴 **Build it on ClickHouse, not Postgres, and make it a LIST.** `getCommentBurst` reads Postgres,
+      and moderators delete the comments when they ban: of the 1,002 accounts in this wave, **2 comments
+      remain**. The Postgres signal is therefore blind to any account already actioned, and useless for
+      "show me who else did this". The ClickHouse events persist, which also turns the signal from a
+      per-account badge into the thing the round actually asked for — a queue of accounts to look at.
+
+      Still needs the mod team: whether those thresholds match their judgement, and whether the badge
+      should move off the Addresses panel to Basic where Retool had it.
 
 - [x] **A "newest users" page, for catching fresh spam accounts and ban evaders.** Built at
       **`/users/newest`**, a new `NAVIGATION` entry beside `/users` — which is untouched and still
@@ -238,12 +262,12 @@ look on paper.
       that instead. Making the endpoint synchronous was the other option and does not survive 1000
       accounts at ~2s each.
 
-- [ ] **Should a message-pattern match HIDE the comment as well as report it?** Today it reports only:
-      the comment stays up, an automated report lands in the queue, and the author is told nothing.
-      Hiding would take the phishing link off the page immediately at the cost of making a false
-      positive silently invisible with no route back — which is the same one-way-door problem as the
-      item below, and would be settled by the same fix. Worth deciding while a wave is live; it is a
-      small change either way. **Needs the mod team, not a developer.**
+- [x] **Should a message-pattern match HIDE the comment as well as report it?** **Decided 2026-08-24:
+      report only.** The comment stays up, an automated report lands in the queue, and the author is
+      told nothing. Hiding was the alternative — the link comes off the page immediately — and was
+      declined while a false positive would be invisible with no route back (nothing clears the flag;
+      see the one-way-door item below). Revisit if the queue cannot keep pace with a wave, and revisit
+      it WITH that fix rather than instead of it.
 
 - [ ] **User Lookup's enforcement actions are gated on the `/users` PAGE grant.** `contentAction` (bulk
       comment delete and ToS), `purgeContent` (irreversible) and `setBanned` all check

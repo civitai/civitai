@@ -411,9 +411,13 @@ browser as user 1290051, not by reading the code.
       before anything here can call it, and is tracked there rather than duplicated.
 - [x] **Browsing level shown** (2026-08-11 — a `Viewing: <label>` header chip off `User.browsingLevel`,
       labelled with the shared `getBrowsingLevelLabel` so it matches the rest of the site).
-- [ ] **Comment Spammer alert** in Quick Info — **parked 2026-08-12, re-raised 2026-08-24 as "Comment
-      Spam Identifier".** Live item, and the decision it needs:
-      [`mod-studio-feedback-2026-08-24.md`](mod-studio-feedback-2026-08-24.md) § This round.
+- [x] **Comment Spammer alert** in Quick Info — **ported all along.** `PotentialSpammerV2` is
+      `getCommentBurst`, rendered on the Addresses panel rather than Quick Info. Parked 2026-08-12 as
+      "nobody is sure what it should measure", which was wrong: the export carries the query. What is
+      still open is whether Retool's threshold is worth keeping (">2 comments in 48h" matches 367
+      accounts and 3 bans on a normal day) and where the badge belongs — see
+      [`mod-studio-feedback-2026-08-24.md`](mod-studio-feedback-2026-08-24.md) § This round for the
+      measured alternative.
 - [ ] **Timed mutes: Mute Start / Notify User** — **still parked, new reasoning 2026-08-20.** The
       `TimedMutes` table is gone; a timed mute is `User.muteExpiresAt`, and expiry works
       (`processTimedUnmutesJob`, hourly). Mute *start* needs a `muteStartsAt` column plus a second job —
