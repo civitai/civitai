@@ -10,6 +10,7 @@ import type { BlockInstall, PageContext } from '~/components/AppBlocks/types';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ratingAllowedOnHost } from '~/server/utils/server-domain';
+import { Page } from '~/components/AppLayout/Page';
 
 /**
  * W10 — full-page App Block route: `/apps/run/<slug>` (+ optional sub-path).
@@ -90,7 +91,7 @@ export const getServerSideProps = createServerSideProps<PageProps>({
   },
 });
 
-export default function AppPage(props: PageProps) {
+function AppPage(props: PageProps) {
   const { appBlockId, blockId, appId, appName, iframeSrc, sandbox, trustTier, slug, scopes } =
     props;
   const currentUser = useCurrentUser();
@@ -208,7 +209,16 @@ export default function AppPage(props: PageProps) {
   return (
     <>
       <Meta title={`${appName} — Civitai Apps`} deIndex />
-      <Box style={{ width: '100%' }}>
+      {/* The host is a FLEX ITEM of `AppLayout`'s non-scrolling `<main>` (this
+          page declares `scrollable: false` below), so this wrapper has to grow
+          rather than sit at its content height — a plain block would leave
+          `PageBlockHost`'s `flex: 1` resolving against an auto-height parent and
+          collapse the iframe. `minHeight: 0` defeats the flex `min-height: auto`
+          floor so the chain can actually shrink to the viewport instead of
+          pushing past it. */}
+      <Box
+        style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, width: '100%' }}
+      >
         <PageBlockHost
           appBlockId={appBlockId}
           blockId={blockId}
@@ -218,6 +228,14 @@ export default function AppPage(props: PageProps) {
           iframeSrc={iframeSrc}
           // The public full-page run surface.
           surface="page-run"
+          // 🔴 THE DOUBLE-SCROLLBAR FIX, and it is only half of one — it is
+          // correct ONLY in combination with `scrollable: false` on the `Page`
+          // options below. `fit="fill"` makes the host claim no height of its
+          // own, which needs an ancestor chain that already bounds it; the
+          // default scrolling layout does not, so shipping either half alone
+          // regresses this page (drop `fill` → two scrollbars again; drop
+          // `scrollable: false` → the iframe collapses to 0px).
+          fit="fill"
           sandbox={sandbox}
           trustTier={trustTier}
           slug={slug}
@@ -250,3 +268,30 @@ export default function AppPage(props: PageProps) {
     </>
   );
 }
+
+/**
+ * 🔴 `scrollable: false` IS PART OF THE RENDER CONTRACT, not a cosmetic choice.
+ *
+ * The default (`scrollable: true`) wraps the page in `AppLayout`'s `ScrollArea`
+ * — a bounded, `overflow-y: auto` viewport. A full-page App Block already owns a
+ * scroll surface: the block's own document inside the iframe. Nesting one inside
+ * the other is what produces the double scrollbar, because the host's height and
+ * the scroll viewport's height are computed from different terms and cannot
+ * agree (see `PageBlockHost`'s `fit` prop for the arithmetic).
+ *
+ * `scrollable: false` selects `MainContent`'s `no-scroll` branch — `flex-1
+ * overflow-hidden` from the layout root down — so the outer surface has exactly
+ * one height, no scrollbar of its own, and the block scrolls internally. The
+ * footer is built for this mode (`AppFooter` carries `group-[.no-scroll]:`
+ * variants), so it and the adhesive ad rail are deliberately left at their
+ * defaults rather than nulled — this changes layout mechanics, not what the page
+ * contains.
+ *
+ * `subNav: null` because the run surface is the app's own chrome
+ * (`AppBlockChrome`); the site sub-nav would be a second, competing header bar
+ * and its `mb-3` is one of the terms that overflowed the old calc.
+ */
+export default Page(AppPage, {
+  scrollable: false,
+  subNav: null,
+});
