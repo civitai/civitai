@@ -19,8 +19,8 @@ import type { EndpointDoc } from './api-guard';
 // Two builders rather than one with an `auth` option, because who may call is not a detail of an
 // endpoint, it is the first thing about it — and because the two need different things:
 //
-//   defineWebhookEndpoint — a service holding an accepted service token. A moderator's browser session
-//     is REFUSED,
+//   defineWebhookEndpoint — a service holding an accepted service token. A moderator's browser
+//     session is REFUSED,
 //     matching the main app's WebhookEndpoint. Nobody is behind the call, so it can attribute nothing,
 //     which is what keeps `human_judgement` out of reach.
 //   defineEndpoint — a signed-in moderator holding the `page` grant. A token is refused.

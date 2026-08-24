@@ -3,9 +3,9 @@ import type { RequestHandler } from './$types';
 import { WebhookEndpoint } from '$lib/server/webhook-endpoint';
 import { modActions } from '$lib/server/mod-actions/registry';
 
-// Ingress the main app POSTs to, delegating a mutation the spoke owns. Authenticated by WEBHOOK_TOKEN in
-// hooks.server.ts ($lib/server/webhook-endpoint), not here. The caller already gated on `moderatorProcedure`,
-// so the body's `userId` is trusted here.
+// Ingress the main app POSTs to, delegating a mutation the spoke owns. Authenticated by any accepted
+// service token in hooks.server.ts ($lib/server/webhook-endpoint), not here. The caller already gated
+// on `moderatorProcedure`, so the body's `userId` is trusted here.
 export const POST: RequestHandler = WebhookEndpoint(async ({ params, request }) => {
   // Object.hasOwn so a params.action of `__proto__`/`constructor` can't resolve to an inherited member.
   if (!Object.hasOwn(modActions, params.action))

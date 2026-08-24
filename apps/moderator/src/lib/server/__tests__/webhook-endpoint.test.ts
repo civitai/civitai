@@ -7,14 +7,17 @@ import { authenticateWebhookToken } from '$lib/server/webhook-endpoint';
  * and `defineWebhookEndpoint` only assert the verdict this function produced (`locals.tokenClient`),
  * so everything about which credentials are accepted is decided here.
  *
- * Two tiers below, labelled, because they are not the same kind of evidence:
+ * Two tiers below, labelled, because they are not the same kind of evidence. The tiers are defined by
+ * the MATRIX, not by subject matter — run this file against `origin/main`'s webhook-endpoint.ts and
+ * exactly the REGRESSION set fails:
  *
- *   REGRESSION — the MOD_INBOUND_TOKEN cases. Red before the change (the function read only
- *     `env.WEBHOOK_TOKEN`), green after.
- *   INVARIANT  — the WEBHOOK_TOKEN, fail-closed and rejection cases. These passed before the change
- *     too. They are here because the change's whole point is that they must KEEP passing: the main
- *     app presents WEBHOOK_TOKEN on every call into this app, so accepting a second token must not
- *     stop accepting the first.
+ *   REGRESSION — red before the change, green after. Mostly the MOD_INBOUND_TOKEN cases, plus the
+ *     whitespace-only-secret case, which is not about the new variable at all: it pins an auth bypass
+ *     the change closed as a side effect.
+ *   INVARIANT  — green on BOTH sides: the WEBHOOK_TOKEN, fail-closed and rejection cases. They are
+ *     here because the change's whole point is that they must KEEP passing — the main app presents
+ *     WEBHOOK_TOKEN on every call into this app, so accepting a second token must not stop accepting
+ *     the first.
  *
  * `$env/dynamic/private` is aliased to `src/test/env.mock.ts`, which is `process.env` itself, and
  * `acceptedTokens()` re-reads it per call — so assigning here really does change what the function
@@ -111,7 +114,7 @@ describe('authenticateWebhookToken', () => {
     expect((result as Response).status).toBe(401);
   });
 
-  it('INVARIANT: both variables set to the SAME value still authenticates exactly once', () => {
+  it('INVARIANT: both variables set to the SAME value still authenticates', () => {
     setEnv({ WEBHOOK_TOKEN: LEGACY, MOD_INBOUND_TOKEN: LEGACY });
     expect(authenticateWebhookToken(eventWith({ query: LEGACY }))).toBe('webhook');
   });

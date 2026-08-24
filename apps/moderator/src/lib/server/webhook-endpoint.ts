@@ -28,10 +28,18 @@ import { env } from '$env/dynamic/private';
 //     what lets an inbound-only caller hold something narrower.
 //
 // So this is a MIGRATION SEAM, not a permission model. Move each inbound caller to MOD_INBOUND_TOKEN,
-// and once none present WEBHOOK_TOKEN inbound, drop it from `acceptedTokens` — outbound callers are
-// unaffected by that. 🔴 Dropping it here is NOT the same as unsetting the variable: four services in
-// this app present it outbound, and two of them degrade by WARNING rather than failing. Scoping a
-// token to particular endpoints is a separate, later change: `EndpointAuth` is already
+// and once none present WEBHOOK_TOKEN inbound, drop it from `acceptedTokens`.
+//
+// 🔴 TWO WAYS TO GET THAT REMOVAL WRONG, and neither is visible from this file alone:
+//   1. "None present it inbound" is a claim about THE MAIN APP, not about this repo. The main app
+//      presents WEBHOOK_TOKEN on every call into this app, from its own codebase — so grepping HERE,
+//      finding no inbound presenter and concluding the migration is done 401s every delegated
+//      moderation action. Nothing in this app records WHICH credential authenticated, so there is
+//      also no runtime signal to check it against; add one before you rely on the answer.
+//   2. Dropping it from `acceptedTokens` is NOT the same as unsetting the variable. Four services in
+//      this app present it OUTBOUND, and two of them degrade by WARNING rather than failing.
+//
+// Scoping a token to particular endpoints is a separate, later change: `EndpointAuth` is already
 // `{kind:'webhook'} | {kind:'session'; page}` (api-endpoint.ts), so `{kind:'webhook'; scope}` has
 // somewhere to go.
 //
