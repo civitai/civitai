@@ -15,6 +15,7 @@ import { cacheCleanup } from '~/server/jobs/cache-cleanup';
 import { checkProcessingResourceTrainingV2 } from '~/server/jobs/check-processing-resource-training-v2';
 import { cleanImageResources } from '~/server/jobs/clean-image-resources';
 import { clearVaultItems } from '~/server/jobs/clear-vault-items';
+import { reconcileRestrictedImages } from '~/server/jobs/reconcile-restricted-images';
 import { reconcileVaultStorage } from '~/server/jobs/reconcile-vault-storage';
 import { reconcileCollectionCollaboration } from '~/server/jobs/reconcile-collection-collaboration';
 import { contestCollectionVimeoUpload } from '~/server/jobs/collection-contest-vimeo-upload';
@@ -175,6 +176,7 @@ export const jobs: Job[] = [
   // processCreatorProgramImageGenerationRewards,
   processVaultItems,
   reconcileVaultStorage,
+  reconcileRestrictedImages,
   reconcileCollectionCollaboration,
   clearVaultItems,
   reconcileWildcardSetsJob,
