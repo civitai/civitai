@@ -57,7 +57,6 @@ export type TrainingEpochArchiveEntries = {
 export function buildEpochArchiveEntries({
   trainingResults,
   modelName,
-  versionName,
   versionId,
   architecture,
   maxEntries = MAX_BLOB_ARCHIVE_ENTRIES,
@@ -68,7 +67,7 @@ export function buildEpochArchiveEntries({
   const epochs = [...normalizeEpochs(trainingResults)].sort(
     (a, b) => a.epochNumber - b.epochNumber
   );
-  const run = { modelName, versionName, versionId, architecture };
+  const run = { modelName, versionId, architecture };
   const candidates: Array<{ url: string; fileName: (blobId: string) => string }> = [];
   for (const epoch of epochs) {
     candidates.push({
@@ -128,7 +127,6 @@ export async function getTrainingEpochArchive({
     where: { id: modelVersionId },
     select: {
       id: true,
-      name: true,
       trainingDetails: true,
       model: { select: { userId: true, name: true } },
       files: { select: { metadata: true }, where: { type: 'Training Data' } },
@@ -145,7 +143,6 @@ export async function getTrainingEpochArchive({
 
   const run = {
     modelName: modelVersion.model.name,
-    versionName: modelVersion.name,
     versionId: modelVersion.id,
     architecture: trainingArchitectureKey(
       modelVersion.trainingDetails as TrainingDetailsObj | null

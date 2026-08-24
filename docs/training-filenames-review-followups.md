@@ -7,8 +7,9 @@ Perf came back clean and is not listed: the two widened `trainingDetails` select
 4 buffers, the training webhook path gained zero I/O, and the new client modules added no bundle
 weight (`~/utils/training` was already a value import in that chunk via `training.store.ts`).
 
-**Status:** everything answerable from the repo is done. What remains needs a decision from a
-person — the three under Open questions, plus the dead-v1-auto-label call at the bottom.
+**Status:** everything answerable from the repo is done, and the filename shape was settled on
+2026-08-24. What remains needs a decision from a person — the two under Open questions, plus the
+dead-v1-auto-label call at the bottom.
 
 ## Defects
 
@@ -71,7 +72,7 @@ person — the three under Open questions, plus the dead-v1-auto-label call at t
       of MyLoRA v2", matching the existing render, and falls back to the bare epoch when the run
       recorded no name.
 
-## Answered from the repo — no longer open
+## Closed — no longer open
 
 - [x] **"The settings used" is 10 of ~24 fields; LoRA Type is the notable omission.** LoRA Type
       cannot discriminate anything: `loraTypes` in `src/utils/training.ts` has exactly one member,
@@ -87,14 +88,21 @@ person — the three under Open questions, plus the dead-v1-auto-label call at t
       prefers it. It carries no architecture segment; that is the only remaining gap on that path.
       Record: [docs/features/training-file-rename.md](features/training-file-rename.md).
 
+- [x] **The version scope cost the requested shape.** Settled 2026-08-24: keep the id, drop the
+      version name. `esadribicstyle_krea2_v1-1284593_epoch_10.safetensors` →
+      `esadribicstyle_krea2_1284593_epoch_10.safetensors`. Dropping the scope entirely was rejected:
+      cumulative numbering only separates a *continuation* from its parent, so a fresh retrain of one
+      model on the same base still restarts at epoch 1 and reproduces the collision the feature
+      exists to fix. The version name went because it carried nothing — for continuations it is
+      auto-generated as `V2 (from epoch 5)` and sanitizes to `V2__from_epoch_5`. Nothing persists
+      these names (a `link.download`, a `Content-Disposition`, a transient zip manifest), so the
+      change needed no migration and stays reversible. Three tests that existed only to protect the
+      version-name component were deleted rather than rewritten. A fourth, "distinguishes the same
+      epoch number across two runs of one model", survives under a new name — it is the one that now
+      pins the retrain case.
+
 ## Open questions — need a person, not the repo
 
-- [ ] **The version scope serves neither ticket.** Cumulative numbering alone removes the
-      continuation collision; the architecture segment alone separates a multi-training batch. The
-      `v1-1284593` component addresses a third, unreported collision — two same-architecture runs on
-      one model — and costs the requested shape: the ask was `esadribicstyle_krea2`, what ships is
-      `esadribicstyle_krea2_v1-1284593_epoch_10.safetensors`. Decide whether to keep it, keep only
-      the id, or drop it.
 - [ ] **The Mage-Flow ticket's symptom is unchanged.** The diagnostics are the correct app-side
       response to an orchestrator-side cause, but nothing user-visible moved, and there is no record
       in this repo that the orchestrator-side work was filed. The ticket now reads as addressed.

@@ -60,11 +60,11 @@ describe('buildEpochArchiveEntries', () => {
     expect(unresolvedCount).toBe(0);
     expect(cappedCount).toBe(0);
     expect(entries).toEqual([
-      { blobId: 'MODEL1.safetensors', fileName: 'My_Cool_Model__V1-77_epoch_1.safetensors' },
-      { blobId: 'MODEL2.safetensors', fileName: 'My_Cool_Model__V1-77_epoch_2.safetensors' },
-      { blobId: 'E1S1.jpeg', fileName: 'My_Cool_Model__V1-77_epoch_1_sample_1.jpeg' },
-      { blobId: 'E2S1.jpeg', fileName: 'My_Cool_Model__V1-77_epoch_2_sample_1.jpeg' },
-      { blobId: 'E2S2.mp4', fileName: 'My_Cool_Model__V1-77_epoch_2_sample_2.mp4' },
+      { blobId: 'MODEL1.safetensors', fileName: 'My_Cool_Model__77_epoch_1.safetensors' },
+      { blobId: 'MODEL2.safetensors', fileName: 'My_Cool_Model__77_epoch_2.safetensors' },
+      { blobId: 'E1S1.jpeg', fileName: 'My_Cool_Model__77_epoch_1_sample_1.jpeg' },
+      { blobId: 'E2S1.jpeg', fileName: 'My_Cool_Model__77_epoch_2_sample_1.jpeg' },
+      { blobId: 'E2S2.mp4', fileName: 'My_Cool_Model__77_epoch_2_sample_2.mp4' },
     ]);
   });
 
@@ -91,8 +91,8 @@ describe('buildEpochArchiveEntries', () => {
     });
 
     expect(entries).toEqual([
-      { blobId: 'LEGACY.safetensors', fileName: 'legacy_V1-77_epoch_1.safetensors' },
-      { blobId: 'LEGACYS1.jpeg', fileName: 'legacy_V1-77_epoch_1_sample_1.jpeg' },
+      { blobId: 'LEGACY.safetensors', fileName: 'legacy_77_epoch_1.safetensors' },
+      { blobId: 'LEGACYS1.jpeg', fileName: 'legacy_77_epoch_1_sample_1.jpeg' },
     ]);
   });
 
@@ -114,9 +114,7 @@ describe('buildEpochArchiveEntries', () => {
       versionId: 77,
     });
 
-    expect(entries).toEqual([
-      { blobId: 'OK.jpeg', fileName: 'legacy_V1-77_epoch_1_sample_1.jpeg' },
-    ]);
+    expect(entries).toEqual([{ blobId: 'OK.jpeg', fileName: 'legacy_77_epoch_1_sample_1.jpeg' }]);
     expect(unresolvedCount).toBe(2);
     expect(cappedCount).toBe(0);
   });
@@ -153,7 +151,6 @@ describe('getTrainingEpochArchive', () => {
 
   const modelVersion = {
     id: 1,
-    name: 'V2 (from epoch 5)',
     trainingDetails: { baseModel: 'pony' },
     model: { userId: 10, name: 'My Cool Model!' },
     files: [{ metadata: { trainingResults: v2Results } }],
@@ -170,14 +167,14 @@ describe('getTrainingEpochArchive', () => {
       entries: expect.arrayContaining([
         {
           blobId: 'MODEL1.safetensors',
-          fileName: 'My_Cool_Model__pony_V2__from_epoch_5-1_epoch_1.safetensors',
+          fileName: 'My_Cool_Model__pony_1_epoch_1.safetensors',
         },
         {
           blobId: 'E2S2.mp4',
-          fileName: 'My_Cool_Model__pony_V2__from_epoch_5-1_epoch_2_sample_2.mp4',
+          fileName: 'My_Cool_Model__pony_1_epoch_2_sample_2.mp4',
         },
       ]),
-      archiveName: 'My_Cool_Model__pony_V2__from_epoch_5-1_training.zip',
+      archiveName: 'My_Cool_Model__pony_1_training.zip',
     });
     expect(createBlobArchive.mock.calls[0][0].entries).toHaveLength(5);
     expect(result.url).toContain('/archive/token');

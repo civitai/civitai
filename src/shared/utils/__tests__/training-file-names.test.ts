@@ -12,44 +12,22 @@ describe('training file names', () => {
     expect(
       trainingEpochModelFileName({
         modelName: MODEL,
-        versionName: 'V1',
         versionId: 401,
         architecture: 'sdxl',
         epochNumber: 6,
       })
-    ).toBe('My_Cool_Model__sdxl_V1-401_epoch_6.safetensors');
+    ).toBe('My_Cool_Model__sdxl_401_epoch_6.safetensors');
   });
 
   it('omits the architecture segment for runs that predate it', () => {
-    expect(
-      trainingEpochModelFileName({
-        modelName: MODEL,
-        versionName: 'V1',
-        versionId: 401,
-        epochNumber: 6,
-      })
-    ).toBe('My_Cool_Model__V1-401_epoch_6.safetensors');
+    expect(trainingEpochModelFileName({ modelName: MODEL, versionId: 401, epochNumber: 6 })).toBe(
+      'My_Cool_Model__401_epoch_6.safetensors'
+    );
   });
 
-  it('distinguishes the same epoch number across two runs of one model', () => {
-    const first = trainingEpochModelFileName({
-      modelName: MODEL,
-      versionName: 'V1',
-      versionId: 401,
-      epochNumber: 6,
-    });
-    const second = trainingEpochModelFileName({
-      modelName: MODEL,
-      versionName: 'V2 (from epoch 5)',
-      versionId: 402,
-      epochNumber: 6,
-    });
-
-    expect(first).not.toBe(second);
-  });
-
-  it('distinguishes two versions that share a name', () => {
-    const args = { modelName: MODEL, versionName: 'V1', epochNumber: 6 };
+  // Cumulative numbering only covers continuations; a fresh retrain restarts at epoch 1.
+  it('keeps two runs of one model distinct at the same epoch and architecture', () => {
+    const args = { modelName: MODEL, architecture: 'sdxl', epochNumber: 6 };
 
     expect(trainingEpochModelFileName({ ...args, versionId: 401 })).not.toBe(
       trainingEpochModelFileName({ ...args, versionId: 402 })
@@ -61,7 +39,6 @@ describe('training file names', () => {
     const name = trainingEpochSampleFileName(
       {
         modelName: 'M'.repeat(664),
-        versionName: 'V'.repeat(296),
         versionId: 4029135,
         architecture: 'A'.repeat(64),
         epochNumber: 100,
@@ -71,19 +48,7 @@ describe('training file names', () => {
     );
 
     expect(name.length).toBeLessThanOrEqual(255);
-    expect(name).toContain('-4029135_');
-  });
-
-  it('keeps long-named versions of the same model distinct', () => {
-    const args = {
-      modelName: 'M'.repeat(664),
-      versionName: 'V'.repeat(296),
-      epochNumber: 6,
-    };
-
-    expect(trainingEpochModelFileName({ ...args, versionId: 401 })).not.toBe(
-      trainingEpochModelFileName({ ...args, versionId: 402 })
-    );
+    expect(name).toContain('_4029135_');
   });
 
   // These names land in a Content-Disposition header, and `architecture` comes from an unvalidated
@@ -91,7 +56,6 @@ describe('training file names', () => {
   it('strips header-breaking characters from every user-controlled part', () => {
     const name = trainingEpochModelFileName({
       modelName: 'evil"\r\nX-Injected: 1',
-      versionName: 'v\n1',
       versionId: 401,
       architecture: 'sd\r\nxl"',
       epochNumber: 6,
@@ -100,26 +64,15 @@ describe('training file names', () => {
     expect(name).not.toMatch(/[\r\n"]/);
   });
 
-  it('still produces a usable name when the version name sanitizes away', () => {
-    expect(
-      trainingEpochModelFileName({
-        modelName: MODEL,
-        versionName: '!!!',
-        versionId: 402,
-        epochNumber: 6,
-      })
-    ).toBe('My_Cool_Model__402_epoch_6.safetensors');
-  });
-
   it('scopes samples and the run archive the same way as epoch models', () => {
-    const run = { modelName: MODEL, versionName: 'V1', versionId: 401 };
+    const run = { modelName: MODEL, versionId: 401 };
 
     expect(trainingEpochModelFileName({ ...run, epochNumber: 6 })).toBe(
-      'My_Cool_Model__V1-401_epoch_6.safetensors'
+      'My_Cool_Model__401_epoch_6.safetensors'
     );
     expect(trainingEpochSampleFileName({ ...run, epochNumber: 6, sampleNumber: 2 }, '.jpeg')).toBe(
-      'My_Cool_Model__V1-401_epoch_6_sample_2.jpeg'
+      'My_Cool_Model__401_epoch_6_sample_2.jpeg'
     );
-    expect(trainingRunArchiveName(run)).toBe('My_Cool_Model__V1-401_training.zip');
+    expect(trainingRunArchiveName(run)).toBe('My_Cool_Model__401_training.zip');
   });
 });

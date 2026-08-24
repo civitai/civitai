@@ -19,7 +19,6 @@ const EPOCH_URL = 'https://orchestration.civitai.com/v2/consumer/blobs/MODEL3.sa
 const givenModelVersion = (trainingDetails: unknown) =>
   findUnique.mockResolvedValue({
     id: 1284593,
-    name: 'v1',
     trainingDetails,
     model: { id: 7, userId: OWNER.id, name: 'esadribicstyle' },
     files: [
@@ -78,13 +77,13 @@ describe('training epoch download filename', () => {
     );
   });
 
-  it('carries the architecture and the version scope', async () => {
+  it('carries the architecture and the version id', async () => {
     givenModelVersion({ baseModel: 'krea2' });
 
     const res = await call();
 
     expect(res.headers['Content-Disposition']).toBe(
-      'attachment; filename="esadribicstyle_krea2_v1-1284593_epoch_3.safetensors"'
+      'attachment; filename="esadribicstyle_krea2_1284593_epoch_3.safetensors"'
     );
   });
 
@@ -102,14 +101,13 @@ describe('training epoch download filename', () => {
     const res = await call();
 
     expect(res.headers['Content-Disposition']).toBe(
-      'attachment; filename="esadribicstyle_v1-1284593_epoch_3.safetensors"'
+      'attachment; filename="esadribicstyle_1284593_epoch_3.safetensors"'
     );
   });
 
   it('refuses an epoch URL outside the orchestrator hosts', async () => {
     findUnique.mockResolvedValue({
       id: 1284593,
-      name: 'v1',
       trainingDetails: { baseModel: 'krea2' },
       model: { id: 7, userId: OWNER.id, name: 'esadribicstyle' },
       files: [

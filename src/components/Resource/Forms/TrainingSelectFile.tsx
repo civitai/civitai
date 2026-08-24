@@ -87,7 +87,6 @@ const EpochRow = ({
   canGenerate,
   isVideo,
   modelName,
-  versionName,
   architecture,
 }: {
   epoch: TrainingResultsV2['epochs'][number];
@@ -108,7 +107,6 @@ const EpochRow = ({
   canGenerate?: boolean;
   isVideo: boolean;
   modelName: string;
-  versionName: string;
   architecture?: string | null;
 }) => {
   const currentUser = useCurrentUser();
@@ -123,7 +121,6 @@ const EpochRow = ({
     link.href = `/api/download/training/${modelVersionId}?epochNumber=${epoch.epochNumber}`;
     link.download = trainingEpochModelFileName({
       modelName,
-      versionName,
       versionId: modelVersionId,
       architecture,
       epochNumber: epoch.epochNumber,
@@ -986,7 +983,6 @@ export default function TrainingSelectFile({
             canGenerate={features.privateModels && !!modelVersion.id && canGenerateWithEpochBool}
             isVideo={isVideo}
             modelName={model.name}
-            versionName={modelVersion.name}
             architecture={architecture}
           />
           {epochs.length > 1 && (
@@ -1018,7 +1014,6 @@ export default function TrainingSelectFile({
                   }
                   isVideo={isVideo}
                   modelName={model.name}
-                  versionName={modelVersion.name}
                   architecture={architecture}
                 />
               ))}
