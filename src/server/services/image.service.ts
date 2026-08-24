@@ -2980,6 +2980,22 @@ export const makeMeiliImageSearchFilter = (
 ): MeiliImageFilter => {
   return `${field} ${criteria}`;
 };
+/**
+ * Owner carve-out for a `scheduled` request: own content whose publish date is
+ * still in the future.
+ *
+ * The publish predicate is the whole point. A bare `userId = me` admits every
+ * unpublished row the caller owns — drafts, bounty entry uploads, orphans — so
+ * turning Scheduled on filled a creator's own profile with work they never
+ * posted (ClickUp 868kt9y1w). Shared rather than inlined because all three
+ * call sites had their own copy and only one of them would have been fixed.
+ */
+const makeOwnScheduledMeiliFilter = (currentUserId: number, snappedNow: number) =>
+  `(${makeMeiliImageSearchFilter('userId', `= ${currentUserId}`)} AND ${makeMeiliImageSearchFilter(
+    'publishedAtUnix',
+    `> ${snappedNow}`
+  )})`;
+
 type MeiliImageSort = `${MetricsImageSortableAttribute}:${'asc' | 'desc'}`;
 export const makeMeiliImageSearchSort = (
   field: MetricsImageSortableAttribute,
@@ -4632,9 +4648,11 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     // their own scheduled/unpublished content pinned to feeds. The `scheduled`
     // flag is opt-in: when set, OR-in the owner carve-out so the user-own
     // second pass surfaces own scheduled hits.
-    const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snappedNow}`)];
+    const publishedFilters: string[] = [
+      makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snappedNow}`),
+    ];
     if (currentUserId && scheduled) {
-      publishedFilters.push(makeMeiliImageSearchFilter('userId', `= ${currentUserId}`));
+      publishedFilters.push(makeOwnScheduledMeiliFilter(currentUserId, snappedNow));
     }
     filters.push(`(${publishedFilters.join(' OR ')})`);
   }
@@ -5559,21 +5577,25 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
       filters.push(`(${publishedFilters.join(' OR ')})`);
     }
   } else if (userId) {
-    const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snappedNow}`)];
+    const publishedFilters: string[] = [
+      makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snappedNow}`),
+    ];
     // For own user's profile view, only surface own scheduled content when the
     // caller explicitly opted in via the `scheduled` flag. Without opt-in, the
     // strict published filter applies even to own profile.
     if (currentUserId && userId === currentUserId && scheduled) {
-      publishedFilters.push(makeMeiliImageSearchFilter('userId', `= ${currentUserId}`));
+      publishedFilters.push(makeOwnScheduledMeiliFilter(currentUserId, snappedNow));
     }
     filters.push(`(${publishedFilters.join(' OR ')})`);
   } else {
     // General feed queries - strict published filter for caching by default.
     // When `scheduled` is opt-in, OR-in the owner carve-out so own scheduled
     // hits surface in the main feed.
-    const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snappedNow}`)];
+    const publishedFilters: string[] = [
+      makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snappedNow}`),
+    ];
     if (currentUserId && scheduled) {
-      publishedFilters.push(makeMeiliImageSearchFilter('userId', `= ${currentUserId}`));
+      publishedFilters.push(makeOwnScheduledMeiliFilter(currentUserId, snappedNow));
     }
     filters.push(`(${publishedFilters.join(' OR ')})`);
   }
@@ -6575,9 +6597,7 @@ export const getImagesForModelVersion = async ({
       i.poi,
       t."modelVersionId",
       ${Prisma.raw(
-        include.includes('meta')
-          ? 'CASE WHEN i."hideMeta" THEN NULL ELSE i.meta END AS meta,'
-          : ''
+        include.includes('meta') ? 'CASE WHEN i."hideMeta" THEN NULL ELSE i.meta END AS meta,' : ''
       )}
       p."availability",
       (
