@@ -10,8 +10,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * edits as well as creates.
  */
 
-const { amIBlockedByUser, mockCreateOrUpdateComment, mockHasEntityAccess } = vi.hoisted(() => ({
+const {
+  amIBlockedByUser,
+  mockCreateOrUpdateComment,
+  mockHasEntityAccess,
+  throwOnBlockedCommentContent,
+} = vi.hoisted(() => ({
   amIBlockedByUser: vi.fn(async (..._a: unknown[]): Promise<boolean> => false),
+  throwOnBlockedCommentContent: vi.fn(async (..._a: unknown[]): Promise<void> => undefined),
   mockCreateOrUpdateComment: vi.fn(
     async (..._a: unknown[]): Promise<unknown> => ({
       id: 1,
@@ -24,9 +30,7 @@ const { amIBlockedByUser, mockCreateOrUpdateComment, mockHasEntityAccess } = vi.
 }));
 
 vi.mock('~/server/services/user.service', () => ({ amIBlockedByUser }));
-vi.mock('~/server/services/blocklist.service', () => ({
-  throwOnBlockedLinkDomain: vi.fn(async () => undefined),
-}));
+vi.mock('~/server/services/blocklist.service', () => ({ throwOnBlockedCommentContent }));
 vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
 vi.mock('~/server/rewards', () => ({ reportAcceptedReward: { apply: vi.fn() } }));
 vi.mock('~/server/services/common.service', () => ({
@@ -105,7 +109,38 @@ beforeEach(() => {
   vi.clearAllMocks();
   amIBlockedByUser.mockResolvedValue(false);
   mockHasEntityAccess.mockResolvedValue([{ hasAccess: true }]);
+  throwOnBlockedCommentContent.mockResolvedValue(undefined);
   arrange();
+});
+
+/**
+ * The blocklist guard is mocked in every suite that reaches a call site, so nothing observed
+ * that the wiring existed: deleting the call, or hardcoding `{ isModerator: true }` here, left
+ * the whole workspace green. The second is the production state 868kw2f8y was filed about.
+ */
+describe('upsertCommentHandler - blocklist guard wiring', () => {
+  it('runs the guard once on the submitted content, with the caller moderator flag', async () => {
+    await upsertCommentHandler({ ctx: ctx(), input: baseInput });
+    expect(throwOnBlockedCommentContent).toHaveBeenCalledTimes(1);
+    expect(throwOnBlockedCommentContent).toHaveBeenCalledWith('<p>hello</p>', {
+      isModerator: false,
+    });
+  });
+
+  it('forwards a moderator through to the guard rather than deciding locally', async () => {
+    await upsertCommentHandler({ ctx: ctx({ isModerator: true }), input: baseInput });
+    expect(throwOnBlockedCommentContent).toHaveBeenCalledWith('<p>hello</p>', {
+      isModerator: true,
+    });
+  });
+
+  // Ordering: a guard running AFTER the write would leave the phishing comment in the table
+  // and merely fail the request.
+  it('rejects before writing when the guard throws', async () => {
+    throwOnBlockedCommentContent.mockRejectedValueOnce(new Error('blocked'));
+    await expect(upsertCommentHandler({ ctx: ctx(), input: baseInput })).rejects.toThrow();
+    expect(mockCreateOrUpdateComment).not.toHaveBeenCalled();
+  });
 });
 
 describe('upsertCommentHandler — block enforcement', () => {

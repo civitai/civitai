@@ -10,6 +10,7 @@ import {
   getClientBenignLists,
   stripBenignPhrases,
   throwOnBlockedLinkDomain,
+  throwOnBlockedMessagePattern,
   upsertBlocklist,
 } from '../blocklist.service';
 import { BlocklistType } from '~/server/common/enums';
@@ -303,5 +304,63 @@ describe('getClientBenignLists', () => {
 
     expect(result.prompt).toEqual(['teen titans']);
     expect(result.profanityWords).toEqual(['spreadsheet']);
+  });
+});
+
+/**
+ * The DM path. It was the only surface enforcing `MessagePattern` before 868kw2f8y and it had no
+ * test at all, so the folding added to it there was unobserved - and the empty-entry case is
+ * WORSE here than on comments: this path throws a plain `Error`, which the tRPC layer turns into
+ * a 500 on every DM, where the comment path throws a BAD_REQUEST.
+ */
+describe('throwOnBlockedMessagePattern', () => {
+  const setPatterns = (patterns: string[]) =>
+    redisGet.mockResolvedValue(
+      JSON.stringify({ type: BlocklistType.MessagePattern, data: patterns })
+    );
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('lets an ordinary message through', async () => {
+    setPatterns(['to safely unlock your held balance']);
+    await expect(
+      throwOnBlockedMessagePattern('hey, nice work on that model')
+    ).resolves.toBeUndefined();
+  });
+
+  it('blocks a message matching a pattern', async () => {
+    setPatterns(['to safely unlock your held balance']);
+    await expect(
+      throwOnBlockedMessagePattern('click here to safely unlock your held balance')
+    ).rejects.toThrow();
+  });
+
+  // The half of decision 2C that reaches DMs: content is folded, so a lookalike spelling still
+  // meets an ASCII rule. Remove the folded second pass and this is what fails.
+  it('folds the message so a lookalike spelling still matches an ASCII pattern', async () => {
+    setPatterns(['example security desk']);
+    // Small-caps, not ASCII.
+    await expect(
+      throwOnBlockedMessagePattern(
+        '\u1D07x\u1D00\u1D0D\u1D18\u029F\u1D07 s\u1D07\u1D04\u1D1C\u0280\u026A\u1D1B\u028F \u1D05\u1D07s\u1D0B here'
+      )
+    ).rejects.toThrow();
+  });
+
+  // Entries are NOT folded, for the same reason as on comments: `includes` means a folded entry
+  // becomes a broader rule. See the comment on `substringEntries`.
+  it('does not let a stylised entry become an ASCII rule nobody wrote', async () => {
+    setPatterns(['\u1D00\u1D04\u1D04\u1D0F\u1D1C\u0274\u1D1B']);
+    await expect(
+      throwOnBlockedMessagePattern('updated my account settings')
+    ).resolves.toBeUndefined();
+  });
+
+  // A 500 on every DM if this regresses.
+  it('does not block every message when an entry is empty', async () => {
+    setPatterns(['', 'to safely unlock your held balance']);
+    await expect(throwOnBlockedMessagePattern('hello there')).resolves.toBeUndefined();
   });
 });

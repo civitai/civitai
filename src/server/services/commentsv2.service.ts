@@ -10,7 +10,7 @@ import type {
   CommentConnectorInput,
   GetCommentsInfiniteInput,
 } from './../schema/commentv2.schema';
-import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import { throwOnBlockedCommentContent } from '~/server/services/blocklist.service';
 import {
   getBlockCheckOwnerIdsForComment,
   throwIfBlockedByEntityOwner,
@@ -265,7 +265,7 @@ export const upsertComment = async ({
   isModerator?: boolean;
   track?: Parameters<typeof recordStickerUsage>[0]['track'];
 }) => {
-  await throwOnBlockedLinkDomain(data.content);
+  await throwOnBlockedCommentContent(data.content, { isModerator });
   // Edits too, not just creates — a comment written before the block would otherwise stay editable
   // into anything afterwards. An edit resolves its target from the stored comment rather than from
   // `entityType`/`entityId`: those are client-supplied and never checked against the comment being
