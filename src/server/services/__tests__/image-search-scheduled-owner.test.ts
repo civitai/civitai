@@ -96,6 +96,12 @@ const publicationClauseFor = async (
 // The snapped timestamp is read back off the clause rather than pinned with fake
 // timers: the builders snap `Date.now()` to the minute themselves, and a test that
 // recomputes it races the minute boundary.
+//
+// This pins that the two arms carry the SAME timestamp — a helper computing its own
+// `Date.now()` fails the `toBe` below. It cannot see the value or the unit, so a
+// switch from milliseconds to seconds keeps every case green. The index writes
+// `publishedAtUnix` in milliseconds (`metrics-images.search-index.ts`), and nothing
+// here would catch that changing.
 const snappedNowIn = (clause: string) => {
   const match = clause.match(/publishedAtUnix <= (\d+)/);
   expect(match, `no snapped timestamp in: ${clause}`).not.toBeNull();
@@ -125,7 +131,11 @@ describe.each([
   ],
   [
     // `userId === currentUserId` is the own-profile branch, which exists only in the
-    // post-filter builder and is the surface the bug was reported on.
+    // post-filter builder and is the surface the bug was reported on. It does reach
+    // that branch and does catch a revert of it — but all three branches emit a
+    // byte-identical clause, so these assertions cannot tell you WHICH branch ran.
+    // Deleting the own-profile branch and falling through to the general one would
+    // keep every case here green.
     'getImagesFromSearchPostFilter, own profile',
     getImagesFromSearchPostFilter,
     { userId: OWNER } as Record<string, unknown>,
