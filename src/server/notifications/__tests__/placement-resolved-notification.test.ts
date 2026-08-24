@@ -137,7 +137,12 @@ describe('the sticker placer hears about an acceptance', () => {
   it('promises no refund a free decline never earned', () => {
     // amount 0 by DB constraint. "Your Buzz has been refunded" would send someone
     // looking for a credit that never existed.
-    expect(resolved({ status: 'declined', amount: 0 }).message).toBe(
+    // `refundPaid: true` so the receipt gate is not what is doing the work here.
+    // What suppresses the money sentence on a free decline is the fee test — a
+    // free row has no escrow and so no `feeToOwner` leg — and that is the guard
+    // this pins. The `paidPlacement` check that used to sit in front of it was
+    // deleted as dead code once this fixture proved removing it changed nothing.
+    expect(resolved({ status: 'declined', amount: 0, refundPaid: true }).message).toBe(
       'somebody declined your sticker.'
     );
   });
@@ -169,7 +174,8 @@ describe('the sticker placer hears about an acceptance', () => {
   });
 
   it('says nothing about money when a free placement expires', () => {
-    expect(resolved({ status: 'expired', amount: 0 }).message).toBe(
+    // `refundPaid: true` for the same reason as the free decline above.
+    expect(resolved({ status: 'expired', amount: 0, refundPaid: true }).message).toBe(
       "Your sticker placement on somebody's image expired."
     );
   });
@@ -230,8 +236,25 @@ describe('the sticker placer hears about an acceptance', () => {
     // transactionId and the Buzz calls happen afterwards, outside that
     // transaction — so without these filters the message promises a refund that
     // may never have moved, and on a stranded leg never will.
-    expect(sql).toContain('pt."transactionId" IS NOT NULL');
-    expect(sql).toContain("'refundPaid', EXISTS (");
+    // 🔴 Anchored to their OWN occurrences. `pt."transactionId" IS NOT NULL`
+    // appears twice, so a single file-wide `toContain` is satisfied by either —
+    // deleting it from the fee subselect alone would ship "They kept 25 Buzz"
+    // on a fee that has not moved, printing nothing.
+    const stripped = sql.replace(/--[^\n]*/g, '');
+
+    expect(stripped).toMatch(
+      new RegExp(String.raw`pt\.kind = 'feeToOwner'[\s\S]{0,80}pt\."transactionId" IS NOT NULL`)
+    );
+    expect(stripped).toMatch(
+      new RegExp(String.raw`'refundPaid', EXISTS \([\s\S]{0,200}pt\."transactionId" IS NOT NULL`)
+    );
+
+    // 🔴 The kind list is what gives `refundPaid` its meaning, and it was the
+    // key name alone that was pinned. Swapping it to `feeToOwner` turns the flag
+    // into "the OWNER got paid", so a non-waived decline says "the rest has been
+    // refunded" while the placer's leg is exactly as stranded as before — which
+    // is the failure this gate exists to prevent, reachable in one word.
+    expect(stripped).toContain("pt.kind IN ('principalToPlacer', 'feeToPlacer')");
     expect(sql).toContain("pt.kind = 'feeToOwner'");
     expect(sql).toContain(`'feeWaived', p."feeWaived"`);
   });

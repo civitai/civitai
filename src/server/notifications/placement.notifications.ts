@@ -105,8 +105,13 @@ const paidPlacement = (details: Record<string, unknown>) => Number(details.amoun
  */
 function declineMessage(details: Record<string, unknown>) {
   const declined = `${details.ownerUsername} declined your sticker`;
-  if (!paidPlacement(details)) return `${declined}.`;
 
+  // No `paidPlacement` check here, deliberately. A free row is `amount` 0 and
+  // has no escrow, so it has no `feeToOwner` leg either — the "fee outcome
+  // unknown" return below already covers it, and a second guard in front of it
+  // was dead code that two tests were nonetheless claiming to exercise. Measured
+  // by deleting it: nothing changed. The expiry branch still needs its own
+  // check, because its money sentence is not behind a fee test.
   const fee = Number(details.feeToOwner ?? 0);
   const refunded = details.refundPaid ? ' Your Buzz has been refunded.' : '';
   const rest = details.refundPaid ? '; the rest has been refunded' : '';
