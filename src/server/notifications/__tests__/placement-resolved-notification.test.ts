@@ -491,6 +491,15 @@ describe('a moderator ending a placement reaches the person who paid', () => {
    * whose payout is principal AND fee back to the placer. Telling that person
    * their Buzz is gone is a false statement about their balance, and it is the
    * mistake a single "moderator removals are not refunded" rule would make.
+   *
+   * ⚠️ This asserts the sentence UNGATED, unlike the decline and expiry ones,
+   * which now require a receipted leg before promising a refund. That is scope
+   * rather than oversight: `moderatorRemovalMessage` is shared, and the remix
+   * query does not project `refundPaid` at all, so extending the receipt rule
+   * here is a change to two queries and not just to a message.
+   *
+   * If someone does extend it, THIS assertion is the one that has to change —
+   * and it changing is the fix, not a regression. Do not preserve it.
    */
   it.each(['sticker-placement-resolved', 'remix-gallery-resolved'])(
     '%s promises the refund a pending cosmetic takedown actually pays',
