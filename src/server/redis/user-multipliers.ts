@@ -20,6 +20,9 @@ const BASE_MULTIPLIER = 1;
  * (civitai-buzz-*) are placeholders that convey a tier and no perks, and either can out-rank a
  * paid membership at the same tier on the date tiebreak — silently zeroing the multiplier the
  * member is paying for. See ClickUp 868kv4q7t / 868kr8bh3.
+ *
+ * A row with no multiplier counts as 1, but the result is NOT floored at 1 — a product priced
+ * below 1 keeps its value, as it did when this was one COALESCE over a single winning row.
  */
 export function foldUserMultipliers(rows: UserMultiplierRow[]): Record<number, UserMultipliers> {
   const records: Record<number, UserMultipliers> = {};
@@ -30,8 +33,8 @@ export function foldUserMultipliers(rows: UserMultiplierRow[]): Record<number, U
       records[row.userId] = {
         userId: row.userId,
         rewardsIneligible: row.rewardsIneligible,
-        rewardsMultiplier: Math.max(BASE_MULTIPLIER, row.rewardsMultiplier ?? BASE_MULTIPLIER),
-        purchasesMultiplier: Math.max(BASE_MULTIPLIER, row.purchasesMultiplier ?? BASE_MULTIPLIER),
+        rewardsMultiplier: row.rewardsMultiplier ?? BASE_MULTIPLIER,
+        purchasesMultiplier: row.purchasesMultiplier ?? BASE_MULTIPLIER,
       };
       continue;
     }

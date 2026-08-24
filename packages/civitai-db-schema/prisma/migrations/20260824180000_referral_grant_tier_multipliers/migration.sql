@@ -9,6 +9,13 @@
 -- stipend and no badge. Only the two advertised multipliers are added.
 --
 -- Every numeric value in Product.metadata is stored Stripe-style, as a string.
+--
+-- 🔴 AFTER APPLYING: purge the multiplier cache. userMultipliersCache has a 1-day TTL and is only
+-- busted per user; nothing invalidates it when a Product changes. Without a purge, grant holders
+-- keep the perkless multiplier for up to 24h at whatever rate their entries happen to expire:
+--
+--   purge the 'packed:caches:multipliers-for-user' prefix (REDIS_KEYS.CACHES.MULTIPLIERS_FOR_USER)
+--   with the cache-purge skill, then POST /api/admin/refresh-user-sessions
 
 UPDATE "Product"
 SET metadata = metadata || '{"rewardsMultiplier":"1.5","purchasesMultiplier":"1.05"}'::jsonb

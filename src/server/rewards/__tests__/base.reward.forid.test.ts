@@ -84,6 +84,29 @@ const insertedRow = () => {
   return call[0].values[0];
 };
 
+describe('buzzEvents columns narrower than BuzzEventLog', () => {
+  it('clamps a multiplier past the Decimal(3, 2) ceiling instead of losing the row', async () => {
+    // gold's 4 times MAX_GLOBAL_BONUS of 5 is 20, against a column that stops at 9.99.
+    h.getMultipliersForUser.mockResolvedValue({ rewardsMultiplier: 20 });
+    h.evalImpl.mockResolvedValue(80 as any);
+
+    await stringKeyReward().apply({ userId: 7, jobId: 'job-abc' });
+
+    const row = insertedRow();
+    expect(row.multiplier).toBe(9.99);
+    expect(JSON.parse(row.transactionDetails)).toMatchObject({ multiplierRaw: 20 });
+  });
+
+  it('leaves a multiplier the column can hold alone', async () => {
+    h.getMultipliersForUser.mockResolvedValue({ rewardsMultiplier: 4 });
+    h.evalImpl.mockResolvedValue(16 as any);
+
+    await stringKeyReward().apply({ userId: 7, jobId: 'job-abc' });
+
+    expect(insertedRow().multiplier).toBe(4);
+  });
+});
+
 describe('buzzEvents forId must be an Int32 by the time it reaches ClickHouse', () => {
   it('inserts a number for a non-numeric key, so the row is not silently dropped', async () => {
     await stringKeyReward().apply({ userId: 7, jobId: 'S34PXN0E7NNXGPBWM2G883Z0F0.jpeg' });
@@ -124,6 +147,18 @@ describe('buzzEvents forId must be an Int32 by the time it reaches ClickHouse', 
     const [transactions] = h.createBuzzTransactionMany.mock.calls[0] as any[];
     expect(transactions[0].externalTransactionId).toBe('testStringForId:job-abc-7-7');
     expect(transactions[0].details.forId).toBe('job-abc');
+  });
+
+  it('reads a whitespace-padded key as a hash, not as the same number', async () => {
+    // buzzEvents is ORDER BY (type, toUserId, forId, byUserId) on a ReplacingMergeTree, so two
+    // distinct keys collapsing to one id replace each other instead of both landing.
+    await stringKeyReward().apply({ userId: 7, jobId: ' 42 ' });
+    const padded = insertedRow().forId;
+
+    h.insertImpl.mockClear();
+    await stringKeyReward().apply({ userId: 7, jobId: '42' });
+
+    expect(padded).not.toBe(insertedRow().forId);
   });
 
   it('leaves a numeric forId untouched', async () => {

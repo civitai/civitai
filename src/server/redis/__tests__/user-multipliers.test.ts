@@ -93,6 +93,22 @@ describe('foldUserMultipliers', () => {
     expect(result[8].rewardsMultiplier).toBe(1);
   });
 
+  it('keeps a multiplier below 1 rather than flooring it to 1', () => {
+    // A penalty tier is not in the catalogue today, but the query this replaced honoured a value
+    // below 1 and nothing should quietly turn one into a no-op if it is ever added.
+    const penalty: UserMultiplierRow = {
+      userId: 9,
+      rewardsIneligible: false,
+      rewardsMultiplier: 0.5,
+      purchasesMultiplier: 0.5,
+    };
+
+    const result = foldUserMultipliers([penalty]);
+
+    expect(result[9].rewardsMultiplier).toBe(0.5);
+    expect(result[9].purchasesMultiplier).toBe(0.5);
+  });
+
   it('returns nothing for no rows', () => {
     expect(foldUserMultipliers([])).toEqual({});
   });
@@ -100,12 +116,15 @@ describe('foldUserMultipliers', () => {
 
 describe('userMultipliersCache wiring', () => {
   const source = fs.readFileSync(path.join(process.cwd(), 'src/server/redis/caches.ts'), 'utf-8');
-  const lookup = source.slice(
-    source.indexOf('export const userMultipliersCache'),
-    source.indexOf('type UserBasicLookup')
-  );
+  const start = source.indexOf('export const userMultipliersCache');
+  const end = source.indexOf('type UserBasicLookup');
+  const lookup = source.slice(start, end);
 
   it('reads the source it is meant to read', () => {
+    // Both bounds asserted: `indexOf` returning -1 makes `slice` widen to the whole file, and the
+    // assertions below would then keep passing while bounding nothing.
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
     expect(lookup).toContain('MULTIPLIERS_FOR_USER');
   });
 

@@ -556,22 +556,59 @@ export function createBuzzEvent<T>({
   };
 }
 
+const INT32_MAX = 2147483647;
+// `buzzEvents` is narrower than `BuzzEventLog`: `forId` is Int32, `status` is
+// Enum8('pending','awarded','capped') and `multiplier` is Decimal(3, 2).
+const CLICKHOUSE_STATUSES = new Set(['pending', 'awarded', 'capped']);
+const CLICKHOUSE_MAX_MULTIPLIER = 9.99;
+
 /**
- * `buzzEvents.forId` is Int32, but a reward key may carry a string (generation-feedback's jobId,
- * ad-watched's token). Inserts run with `async_insert=1, wait_for_async_insert=0`, so ClickHouse
- * accepts the request, fails to parse the row server-side and drops it — the app sees success and
- * still pays the Buzz. That is how 4M generation-feedback payouts recorded zero events, with no
- * 500 and no alert (ClickUp 868ktbnjh). Coerce here rather than at the key, so `sendAward`'s
- * `externalTransactionId` keeps the value it has always used.
+ * Fit an event to the `buzzEvents` column types before it goes over the wire.
+ *
+ * Inserts run `async_insert=1, wait_for_async_insert=0`, so ClickHouse accepts the request, parses
+ * the batch server-side afterwards, and drops it — the app sees success and `sendAward` still pays.
+ * A value the column cannot hold therefore costs a row, or a whole 1000-row chunk, with no error
+ * anywhere. Three fields could do it, and all three were doing it (ClickUp 868ktbnjh):
+ *
+ *   forId       a reward keyed on a string (generation-feedback's jobId, ad-watched's token,
+ *               appBlockReview's appBlockId). 4M payouts, zero event rows.
+ *   status      `unqualified` is not in the enum, so a chunk carrying one loses the awarded and
+ *               capped updates riding with it and those rows stay `pending` forever.
+ *   multiplier  gold's 4 times MAX_GLOBAL_BONUS of 5 is 20, against a ceiling of 9.99.
+ *
+ * The original value is kept in `transactionDetails` so a coerced row is still traceable, and the
+ * event itself is left alone so `sendAward`'s `externalTransactionId` keeps the value it has
+ * always used.
  */
 export function toClickhouseBuzzEvent(event: BuzzEventLog): BuzzEventLog {
-  if (typeof event.forId === 'number') return event;
+  const coerced: MixedObject = {};
 
-  const asNumber = Number(event.forId);
-  const forId =
-    Number.isInteger(asNumber) && Math.abs(asNumber) <= 2147483647
-      ? asNumber
-      : hashify(event.forId);
+  let forId = event.forId;
+  if (typeof forId !== 'number') {
+    coerced.forIdRaw = forId;
+    // Strict digits only: `Number('')` is 0 and `Number(' 42 ')` is 42, and buzzEvents is ordered
+    // by (type, toUserId, forId, byUserId), so two keys collapsing to one id replace each other.
+    forId =
+      /^-?\d+$/.test(forId) && Math.abs(Number(forId)) <= INT32_MAX
+        ? Number(forId)
+        : hashify(forId);
+  }
+
+  let status = event.status;
+  if (status && !CLICKHOUSE_STATUSES.has(status)) {
+    coerced.statusRaw = status;
+    // `unqualified` and `capped` both mean seen and paid nothing. Recording it as the nearest
+    // legal value keeps the row; widening the enum would let it keep its own name.
+    status = 'capped';
+  }
+
+  let multiplier = event.multiplier;
+  if (multiplier !== undefined && multiplier > CLICKHOUSE_MAX_MULTIPLIER) {
+    coerced.multiplierRaw = multiplier;
+    multiplier = CLICKHOUSE_MAX_MULTIPLIER;
+  }
+
+  if (Object.keys(coerced).length === 0) return event;
 
   let details: MixedObject;
   try {
@@ -583,7 +620,9 @@ export function toClickhouseBuzzEvent(event: BuzzEventLog): BuzzEventLog {
   return {
     ...event,
     forId,
-    transactionDetails: JSON.stringify({ ...details, forIdRaw: event.forId }),
+    status,
+    multiplier,
+    transactionDetails: JSON.stringify({ ...details, ...coerced }),
   };
 }
 
