@@ -175,6 +175,7 @@ export function ChatList() {
       searchInput.length > 0
         ? tabData.filter((d) => {
             if (
+              d.name?.toLowerCase().includes(searchInput) ||
               d.chatMembers
                 .filter((cm) => cm.userId !== currentUser?.id)
                 .some((cm) => cm.user.username?.toLowerCase().includes(searchInput))
@@ -369,7 +370,7 @@ export function ChatList() {
                           c={hasMod ? 'red' : undefined}
                           highlight={searchInput}
                         >
-                          {otherMembers.map((cm) => cm.user.username).join(', ')}
+                          {d.name ?? otherMembers.map((cm) => cm.user.username).join(', ')}
                         </Highlight>
                         {!!myMember?.pinnedAt && (
                           <IconPin size={12} style={{ flex: 'none', opacity: 0.6 }} />

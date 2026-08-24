@@ -8,6 +8,7 @@ import {
   useChatMessageUpdatedSignal,
   useChatNewMessageSignal,
   useChatNewRoomSignal,
+  useChatRoomUpdatedSignal,
 } from '~/components/Chat/ChatSignals';
 import { useNotificationSignal } from '~/components/Notifications/notifications.utils';
 import { useSessionRefreshSignal } from '~/components/Signals/SessionRefreshSignal';
@@ -41,6 +42,7 @@ export function SignalsRegistrar() {
 
   useChatNewMessageSignal();
   useChatNewRoomSignal();
+  useChatRoomUpdatedSignal();
   useChatMessageDeletedSignal();
   useChatMessageUpdatedSignal();
 

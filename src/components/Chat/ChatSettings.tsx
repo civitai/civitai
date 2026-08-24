@@ -103,9 +103,10 @@ export function ChatSettings() {
   const myMember = chat?.chatMembers.find((cm) => cm.userId === currentUser?.id);
   const otherMembers = chat?.chatMembers.filter((cm) => cm.userId !== currentUser?.id) ?? [];
   const conversationName =
-    otherMembers.length === 1
+    chat?.name ??
+    (otherMembers.length === 1
       ? otherMembers[0]?.user.username ?? 'This conversation'
-      : 'This group';
+      : 'This group');
 
   // The conversation scope has nothing to hang off once the chat closes.
   const scope = myMember ? settingsScope : 'global';

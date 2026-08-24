@@ -5,21 +5,37 @@ import { MAX_CHAT_MESSAGE_LENGTH } from '~/shared/utils/chat';
 import { chatLayoutSlugs } from '~/shared/constants/chat-layout';
 import { chatThemeSlugs } from '~/shared/constants/chat-theme';
 
+export const MAX_CHAT_NAME_LENGTH = 60;
+
 export type CreateChatInput = z.infer<typeof createChatInput>;
 export const createChatInput = z.object({
   userIds: z.array(z.number()),
+  // Omitted means "infer from the member count". Passing it lets a caller start
+  // a group with two people, which is the only way to have two threads with the
+  // same person.
+  isGroup: z.boolean().optional(),
+  name: z.string().trim().min(1).max(MAX_CHAT_NAME_LENGTH).optional(),
+});
+
+/** Rename a group. `null` (or blank) clears the name back to the member-list title. */
+export type UpdateChatInput = z.infer<typeof updateChatInput>;
+export const updateChatInput = z.object({
+  chatId: z.number(),
+  name: z.string().trim().max(MAX_CHAT_NAME_LENGTH).nullable(),
 });
 
 export type AddUsersInput = z.infer<typeof addUsersInput>;
 export const addUsersInput = z.object({
   chatId: z.number(),
-  userIds: z.array(z.number()),
+  userIds: z.array(z.number()).min(1),
 });
 
 export type ModifyUserInput = z.infer<typeof modifyUserInput>;
 export const modifyUserInput = z.object({
   chatMemberId: z.number(),
-  // isOwner: z.boolean().optional(), // probably shouldn't be able to change this for now
+  // Promotion only. `false` has no meaning on its own — a group without an admin
+  // cannot be administered — so handing over is the only way to stop being one.
+  isOwner: z.literal(true).optional(),
   isMuted: z.boolean().optional(),
   status: z.enum(ChatMemberStatus).optional(),
   lastViewedMessageId: z.number().optional(),

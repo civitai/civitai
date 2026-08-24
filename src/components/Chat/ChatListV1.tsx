@@ -1,6 +1,5 @@
 import type { GroupProps } from '@mantine/core';
 import {
-  ActionIcon,
   Badge,
   Box,
   Button,
@@ -208,6 +207,7 @@ export function ChatListV1() {
       searchInput.length > 0
         ? tabData.filter((d) => {
             if (
+              d.name?.toLowerCase().includes(searchInput) ||
               d.chatMembers
                 .filter((cm) => cm.userId !== currentUser?.id)
                 .some((cm) => cm.user.username?.toLowerCase().includes(searchInput))
@@ -418,7 +418,7 @@ export function ChatListV1() {
                         c={hasMod ? 'red' : undefined}
                         highlight={searchInput}
                       >
-                        {otherMembers.map((cm) => cm.user.username).join(', ')}
+                        {d.name ?? otherMembers.map((cm) => cm.user.username).join(', ')}
                       </Highlight>
                       {/* TODO this is kind of a hack, we should be returning only valid latest message */}
                       {!!d.messages[0]?.content && myMember?.status === ChatMemberStatus.Joined && (
