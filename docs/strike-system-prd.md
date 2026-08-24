@@ -31,7 +31,7 @@ From the ClickUp task and team discussion:
 | Severe content (realistic + minor + R+) | 3 points for a single incident |
 | 2 active points | Auto-mute for 3 days |
 | 3 active points | Muted + flagged for LLM/mod review |
-| Strike expiration | 30 days from creation |
+| Strike expiration | 365 days from creation (was 30 through Phase 1; changed 2026-08-24 — see [moderator-app/strike-rules.md](moderator-app/strike-rules.md) §2) |
 
 ### What we are NOT building yet:
 - Auto-strikes from image scan/blocking (too many false positives — blocked content goes to review queue for manual evaluation)
@@ -97,7 +97,7 @@ model UserStrike {
   reportId        Int?          // Link to originating report
 
   createdAt       DateTime      @default(now())
-  expiresAt       DateTime      // Default: createdAt + 30 days
+  expiresAt       DateTime      // Default: createdAt + 365 days
   voidedAt        DateTime?
   voidedBy        Int?
   voidedByUser    User?         @relation("voidedStrikes", fields: [voidedBy], references: [id], onDelete: SetNull)

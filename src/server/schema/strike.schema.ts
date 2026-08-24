@@ -34,7 +34,7 @@ export const createStrikeSchema = z.object({
   entityType: z.enum(EntityType).optional(),
   entityId: z.number().optional(),
   reportId: z.number().optional(),
-  expiresInDays: z.number().min(1).max(365).default(30),
+  expiresInDays: z.number().min(1).max(365).default(365),
 });
 export type CreateStrikeInput = z.infer<typeof createStrikeSchema>;
 

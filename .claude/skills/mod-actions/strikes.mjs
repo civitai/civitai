@@ -20,7 +20,7 @@
  *   --entity-type <type>    Entity type
  *   --entity-id <id>        Entity ID
  *   --report-id <id>        Report ID
- *   --expires-days <n>      Days until expiry (default 30)
+ *   --expires-days <n>      Days until expiry (default 365)
  *   --user-id <id>          Filter by user ID
  *   --username <name>       Filter by username
  *   --status <s1,s2>        Filter by status (comma-separated)
@@ -69,7 +69,7 @@ Options:
   --entity-type <type>    Entity type
   --entity-id <id>        Entity ID
   --report-id <id>        Report ID
-  --expires-days <n>      Days until expiry (default 30)
+  --expires-days <n>      Days until expiry (default 365)
   --user-id <id>          Filter by user ID
   --username <name>       Filter by username
   --status <s1,s2>        Filter by status (comma-separated)
@@ -284,7 +284,7 @@ async function main() {
         process.exit(1);
       }
 
-      const expiresInDays = intOrUndef(flags['expires-days']) ?? 30;
+      const expiresInDays = intOrUndef(flags['expires-days']) ?? 365;
       if (expiresInDays < 1 || expiresInDays > 365) {
         console.error('Error: --expires-days must be between 1 and 365');
         process.exit(1);

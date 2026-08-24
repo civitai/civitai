@@ -124,8 +124,8 @@ standard is one link away**. Each of these has cost real time when broken. Full 
   the dev server's watcher; that collision froze an editor for a full day. Read `svelte-check`'s
   **WARNING** lines too: `state_referenced_locally` is a real bug and appears nowhere else.
 - **`typecheck` stops at `src/`.** It extends `.svelte-kit/tsconfig.json`, so the standalone scripts
-  under `moderator-db/` and `xguard-lab/` are invisible to it — including the one that writes to two
-  production databases. Run `pnpm run typecheck:scripts` (`tsconfig.scripts.json`) when you touch either.
+  under `moderator-db/` and `xguard-lab/` are invisible to it — including the two that read and write
+  two production databases at once. Run `pnpm run typecheck:scripts` (`tsconfig.scripts.json`) when you touch either.
 - **Before calling a segment done**, run `svelte-correctness-review`, `svelte-idiom-review` and
   `svelte-abstraction-review` (or the `/svelte-review` skill) — then **look at the page**. Typecheck
   passes on plenty of pages that render blank.

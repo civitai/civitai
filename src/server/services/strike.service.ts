@@ -19,6 +19,11 @@ import type { UserMeta } from '~/server/schema/user.schema';
 import { StrikeReason, StrikeStatus } from '~/shared/utils/prisma/enums';
 import { logToAxiom } from '~/server/logging/client';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
+import {
+  INDEFINITE_MUTE_POINTS,
+  TIMED_MUTE_DAYS,
+  TIMED_MUTE_POINTS,
+} from '~/shared/constants/strike.constants';
 
 // ============================================================================
 // Rate Limiting
@@ -321,12 +326,6 @@ export async function getUserStandings(input: GetUserStandingsInput) {
 
 export type EscalationAction = 'none' | 'muted' | 'muted-and-flagged' | 'unmuted';
 
-// The escalation ladder, in active strike points. At or above INDEFINITE_MUTE_POINTS the mute has no
-// expiry and the account is flagged for moderator review; at or above TIMED_MUTE_POINTS it expires
-// after TIMED_MUTE_DAYS; below that, a mute this engine applied earlier is lifted again.
-const TIMED_MUTE_POINTS = 2;
-const INDEFINITE_MUTE_POINTS = 3;
-const TIMED_MUTE_DAYS = 3;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**

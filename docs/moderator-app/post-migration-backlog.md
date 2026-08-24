@@ -202,10 +202,12 @@ findings are done — see the parity checklist.
       cannot go stale and mislabel the next automatic mute. Two tests cover the guard and both fail on
       a revert.
 - [x] ~~**Strikes write a second, disconnected ledger.**~~ **Closed** — `issueStrike` writes the main
-      app's `UserStrike` through `retool/strike → create`, so escalation, points, expiry, the
+      app's `UserStrike` through `/api/mod/strike/create`, so escalation, points, expiry, the
       `StrikeReason` enum, `reportId`, the typed notification and its email, and the void path all come
-      with it. Legacy `UserStrikes` rows are still read alongside so history is not lost. Same item as
-      the ticked one in `retool-parity-checklist.md`.
+      with it. The legacy `UserStrikes` rows were migrated into `UserStrike` 2026-08-21 and the second
+      read retired the same day (`2b7639a3ab`) — see
+      [`legacy-strike-migration.md`](legacy-strike-migration.md). Same item as the ticked one in
+      `retool-parity-checklist.md`.
 - [ ] **Nobody has looked at the page.** `apps/moderator/CLAUDE.md` is explicit that a segment which
       only typechecks is not done. Every component here has been compiled through Vite, but no
       moderator-app page in this slice has been rendered in a browser — and the two worst bugs found

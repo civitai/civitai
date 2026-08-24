@@ -17,6 +17,7 @@ export const BAN_REASONS = [
   'Scat',
   'Nudify',
   'Harassment',
+  'SpamBot',
   'LeaderboardCheating',
   'BuzzCheating',
   'RRDViolation',
@@ -24,6 +25,15 @@ export const BAN_REASONS = [
 ] as const;
 
 export type BanReasonCode = (typeof BAN_REASONS)[number];
+
+/**
+ * Reasons where leaving the content up is never the intent, so every removal toggle is pre-ticked.
+ * The moderator can still untick, and each ban form warns what will go before it is confirmed.
+ *
+ * Shared by the single- and bulk-ban forms; the main app's `UserBanModal` keeps its own copy of this
+ * rule because it cannot import across the app boundary — change both.
+ */
+export const BAN_REASONS_REMOVING_CONTENT: BanReasonCode[] = ['SpamBot'];
 
 /** Free-text profile fields a moderator can clear, as `[column, label]`. */
 export const PROFILE_FIELDS = [

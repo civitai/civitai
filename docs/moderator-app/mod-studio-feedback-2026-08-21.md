@@ -130,6 +130,11 @@ this repo is public (CLAUDE.md → Security). The private triage keeps attributi
       requirement against the deploy and no second deploy. Reasoning:
       [`legacy-strike-migration.md`](legacy-strike-migration.md#the-one-thing-that-matters).
 
+      **Corrected 2026-08-24.** Both notes above are superseded: the second reader was retired
+      `2b7639a3ab`, and an *earlier* import pass had already copied the same rows Active and
+      point-bearing — those duplicates were deleted 2026-08-24. See
+      [`legacy-strike-migration.md`](legacy-strike-migration.md).
+
 - [x] **Generator Restrictions can see previous successful generations again.** The main site's page had
       a "View Generations" drawer; the ported one had nothing, so the question that decides the ruling
       meant leaving the ruling screen. There is a collapsible panel on the restriction detail now,

@@ -14,7 +14,7 @@
   import { FormState } from '$lib/form-state.svelte';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import { userLookupUrl } from '$lib/entity-url';
-  import { BAN_REASONS } from '$lib/enforcement';
+  import { BAN_REASONS, BAN_REASONS_REMOVING_CONTENT, type BanReasonCode } from '$lib/enforcement';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -48,6 +48,15 @@
   // highest-blast-radius action makes an unconsidered `Other` the permanent record of why.
   let reasonCode = $state('');
   let removeMedia = $state(false);
+  let removeComments = $state(false);
+
+  const pickReason = (value: string) => {
+    reasonCode = value;
+    if (!BAN_REASONS_REMOVING_CONTENT.includes(value as BanReasonCode)) return;
+    removeMedia = true;
+    removeComments = true;
+  };
+
   let confirming = $state(false);
   const onSubmit = new FormState({ reload: true, onSuccess: () => (confirming = false) });
 
@@ -325,10 +334,14 @@
                 <input type="checkbox" name="removeMedia" value="true" bind:checked={removeMedia} />
                 Also remove their images and models
               </label>
+              <label class="mb-2 flex items-center gap-2 text-xs text-dark-2">
+                <input type="checkbox" name="removeComments" value="true" bind:checked={removeComments} />
+                Also remove their comments
+              </label>
               <div class="flex flex-wrap items-end gap-2">
                 <label class="flex flex-col gap-1 text-xs text-dark-2">
                   Reason
-                  <Select.Root type="single" bind:value={reasonCode}>
+                  <Select.Root type="single" bind:value={() => reasonCode, pickReason}>
                     <Select.Trigger class="w-56">{reasonCode || 'Select a reason'}</Select.Trigger>
                     <Select.Content>
                       {#each BAN_REASONS as r (r)}
@@ -338,6 +351,14 @@
                   </Select.Root>
                 </label>
                 <input type="hidden" name="reasonCode" value={reasonCode} />
+                {#if removeMedia || removeComments}
+                  <p class="mb-2 w-full rounded border border-red-500/50 bg-red-500/15 p-2 text-xs text-white">
+                    <strong>Confirming takes down content on all {num(bannable.length)} accounts</strong>
+                    — {[removeMedia ? 'images and models' : null, removeComments ? 'comments' : null]
+                      .filter(Boolean)
+                      .join(' and ')}. Untick above to leave it up.
+                  </p>
+                {/if}
                 <!-- Retool had a second free-text box here for a per-account note. It wrote the same
                      string to every account in the run, which is what `detailsInternal` beside it
                      already does, and the mod team called it redundant. Notes on a cohort you have not

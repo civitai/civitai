@@ -8,7 +8,7 @@
   import { Label } from '@civitai/ui/components/ui/label/index.js';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
-  import { BAN_REASONS } from '$lib/enforcement';
+  import { BAN_REASONS, BAN_REASONS_REMOVING_CONTENT, type BanReasonCode } from '$lib/enforcement';
   import { num } from '$lib/format';
 
   let {
@@ -35,7 +35,19 @@
 
   let reasonCode = $state('');
   let removeModels = $state(true);
+  let removeMedia = $state(false);
+  let removeComments = $state(false);
   const uid = $props.id();
+
+  const pickReason = (value: string) => {
+    reasonCode = value;
+    if (!BAN_REASONS_REMOVING_CONTENT.includes(value as BanReasonCode)) return;
+    removeModels = true;
+    removeMedia = true;
+    removeComments = true;
+  };
+
+  const removesAnything = $derived(removeModels || removeMedia || removeComments);
 
   // What this ban actually takes down. Derived so opening the form on a different account re-asks, and
   // so a slow count never blocks the form from rendering.
@@ -76,7 +88,8 @@
       <p class="mb-2 text-xs text-amber-300">Could not count this account's content.</p>
     {/await}
 
-    <Select.Root type="single" name="reasonCode" bind:value={reasonCode}>
+    <!-- Function binding, not `bind:value`: picking a reason must also preset the removal toggles. -->
+    <Select.Root type="single" name="reasonCode" bind:value={() => reasonCode, pickReason}>
       <Select.Trigger class="mb-2 w-full">{reasonCode || 'Reason code (optional)'}</Select.Trigger>
       <Select.Content>
         {#each BAN_REASONS as reason (reason)}
@@ -95,17 +108,53 @@
     />
 
     <div class="mt-2 flex items-center gap-2">
-      <Checkbox id="ban-remove-media-{uid}" name="removeMedia" />
+      <Checkbox
+        id="ban-remove-media-{uid}"
+        name="removeMedia"
+        bind:checked={() => removeMedia, (v) => (removeMedia = v)}
+      />
       <Label for="ban-remove-media-{uid}" class="font-normal text-dark-0">
         Also remove their images
       </Label>
     </div>
     <div class="mt-2 flex items-center gap-2">
-      <Checkbox id="ban-remove-models-{uid}" name="removeModels" bind:checked={removeModels} />
+      <Checkbox
+        id="ban-remove-models-{uid}"
+        name="removeModels"
+        bind:checked={() => removeModels, (v) => (removeModels = v)}
+      />
       <Label for="ban-remove-models-{uid}" class="font-normal text-dark-0">
         Unpublish their models
       </Label>
     </div>
+    <div class="mt-2 flex items-center gap-2">
+      <Checkbox
+        id="ban-remove-comments-{uid}"
+        name="removeComments"
+        bind:checked={() => removeComments, (v) => (removeComments = v)}
+      />
+      <Label for="ban-remove-comments-{uid}" class="font-normal text-dark-0">
+        Remove their comments
+      </Label>
+    </div>
+
+    {#if removesAnything}
+      <p class="mt-2 rounded border border-red-500/50 bg-red-500/15 p-2 text-sm text-white">
+        <strong>Confirming takes down their content.</strong>
+        {#await preview then counts}
+          {#if counts}
+            {[
+              removeModels ? `${num(counts.modelCount)} model${counts.modelCount === 1 ? '' : 's'}` : null,
+              removeMedia ? `${num(counts.imageCount)} image${counts.imageCount === 1 ? '' : 's'}` : null,
+              removeComments ? 'every comment' : null,
+            ]
+              .filter(Boolean)
+              .join(', ')} will be removed.
+          {/if}
+        {/await}
+        Untick anything you want left up.
+      </p>
+    {/if}
     {#if reasonCode === 'Other'}
       <p class="mt-2 text-xs text-amber-300">
         “Other” needs an internal note saying what the ban is for.

@@ -1,6 +1,6 @@
 import { getModeratorDb } from './moderator-db';
 import { dbRead } from './db';
-import { LEGACY_STRIKE_MARKER, legacyStrikeId } from '$lib/legacy-strike-import';
+import { IMPORT_MARKER_PREFIXES, importedLegacyStrikeId } from '$lib/legacy-strike-import';
 import { getNotifications } from './notifications';
 import { recordModActivity } from './mod-activity';
 import { isInt4Id } from './users.service';
@@ -60,6 +60,8 @@ export async function getModerationFlags(userId: number): Promise<ModerationFlag
  * `strikeCountsByUserIds` subtracts these so a strike is counted on exactly one side: it spans both
  * stores, and the import moved every row across on 2026-08-21 without a deploy behind it. Kept rather
  * than assumed-empty because the migration doc documents a rollback, which would put rows back.
+ *
+ * BOTH markers, or a row the earlier import pass wrote is counted on both sides at once.
  */
 async function importedLegacyIds(userIds: number[]): Promise<Set<number>> {
   if (!userIds.length) return new Set();
@@ -67,12 +69,14 @@ async function importedLegacyIds(userIds: number[]): Promise<Set<number>> {
     .selectFrom('UserStrike')
     .select('internalNotes')
     .where('userId', 'in', userIds)
-    .where('internalNotes', 'like', `${LEGACY_STRIKE_MARKER}%`)
+    .where((eb) =>
+      eb.or(IMPORT_MARKER_PREFIXES.map((prefix) => eb('internalNotes', 'like', `${prefix}%`)))
+    )
     .execute();
 
   return new Set(
     rows.flatMap((r) => {
-      const id = legacyStrikeId(r.internalNotes);
+      const id = importedLegacyStrikeId(r.internalNotes);
       return id === null ? [] : [id];
     })
   );

@@ -132,8 +132,9 @@ Open, with the evidence each audit produced:
 - [x] **Strikes write a second, disconnected ledger** (2026-08-12 — decision: the main app owns strikes,
       Retool only ever gave mods manual give/revoke on top of it). `addUserStrike` inserted into the
       moderator database's legacy `UserStrikes`, which gets none of what a strike does. Issuing now calls
-      `retool/strike → create`, so escalation, points, expiry, the typed `strike-issued` notification and
-      the void path all apply. The legacy table stays as Retool-era history: read and shown, never written.
+      `/api/mod/strike/create`, so escalation, points, expiry, the typed `strike-issued` notification and
+      the void path all apply. The legacy table was Retool-era history — read and shown, never written —
+      until it was migrated into `UserStrike` 2026-08-21 and the second read retired (`2b7639a3ab`).
       `ManualModAction` is the reason on purpose — it is both the right classification and the one value
       the endpoint exempts from the 1-auto-strike-per-day limit; any other value silently returns
       `{ skipped: true }` on a moderator's second strike of the day, which a 200 would have hidden. The
@@ -484,8 +485,9 @@ browser as user 1290051, not by reading the code.
       The panel's strike LIST had the mirror-image bug: it read that same legacy table, so it showed
       **`Strikes (0)` on an account carrying ten live ones** — the worst possible number to be wrong
       about on the screen where the next strike is issued. It now lists the main app's rows with points,
-      expiry, and voided/expired badged distinctly from active, with the legacy count kept as a
-      one-line footnote.
+      expiry, and voided/expired badged distinctly from active. (The legacy count it originally kept as
+      a one-line footnote was retired 2026-08-21 with the import — see
+      [`legacy-strike-migration.md`](legacy-strike-migration.md).)
 - [x] 🔴 **`violationType` / `violationDetails` are never sent on removal.** `/api/mod/remove-images`
       accepts a `violationType` **enum** plus a details string and forwards both to the ClickHouse
       `DeleteTOS` event; the port sends only free-text `reason`. **Every removal from this page is

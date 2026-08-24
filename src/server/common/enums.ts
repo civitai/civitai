@@ -331,6 +331,7 @@ export enum BanReasonCode {
   Scat = 'Scat',
   Nudify = 'Nudify',
   Harassment = 'Harassment',
+  SpamBot = 'SpamBot',
   LeaderboardCheating = 'LeaderboardCheating',
   BuzzCheating = 'BuzzCheating',
   RRDViolation = 'RRDViolation',

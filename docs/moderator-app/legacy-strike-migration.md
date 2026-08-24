@@ -18,7 +18,8 @@ Dry run by default — it reads both databases, resolves every row, and prints w
 `--apply` writes and then runs the verification pass in the same process; a failed check exits non-zero.
 
 It is idempotent. Each imported row carries `retool:UserStrikes:<id>` at the head of `internalNotes`, and
-a run imports only what is not already marked, so a partial failure resumes rather than duplicating.
+a run imports only ids not already present under **either** import marker (see the Correction below), so
+a partial failure resumes rather than duplicating.
 
 **Dry run against the live databases, 2026-08-21:**
 
@@ -55,8 +56,9 @@ So the migration preserves **history**, not enforcement state:
 - a moderator opening an account sees its past strikes in one list, with dates and reasons
 - the escalation ladder counts only what the current system has issued
 
-`verify()` re-reads the imported rows and fails the run if any is countable. It is the gate, not a
-formality, and it runs automatically after `--apply`.
+`verify()` re-reads the imported rows and fails the run if any is countable, automatically after
+`--apply`. It sees only the rows **this** script inserted — see the Correction below for what that
+misses.
 
 ## What is lost, and why
 
@@ -75,7 +77,12 @@ strikes issued by the app carry no such marker.
 DELETE FROM "UserStrike" WHERE "internalNotes" LIKE 'retool:UserStrikes:%';
 ```
 
-The source table is never modified by any of this, so a rollback loses nothing.
+The source `UserStrikes` table is never modified by any of this, so the history is always recoverable
+by re-running the import.
+
+⚠️ **Since the 2026-08-24 cleanup this is no longer a return to the previous state.** The first-pass
+copies that used to sit beside these rows are gone, so running the `DELETE` now leaves `UserStrike` with
+no Retool-era history at all until the import is re-run.
 
 ## Sequencing — one deploy, and the script whenever
 
@@ -85,14 +92,10 @@ per-environment on different days. Two properties make that true:
 - **The script writes nothing new to the schema.** Only existing columns and existing enum values
   (`ManualModAction`, `Expired`), so the currently-deployed build already understands every row it
   writes. There is no expand/contract step and no migration file.
-- **The display is import-aware.** `getUserStrikes` and `strikeCountsByUserIds` subtract the legacy ids
-  already carrying a marker in `UserStrike`, so each strike is counted on exactly one side:
-
-  | State | Live list | "Plus N from the Retool era" |
-  | --- | --- | --- |
-  | Before the import | strikes issued since the cutover | N = all legacy rows |
-  | Part-way through | + what has landed | N = the remainder |
-  | After the import | everything | line disappears (N = 0) |
+- **The display was import-aware while both stores were read.** `strikeCountsByUserIds` subtracted the
+  legacy ids already carrying a marker in `UserStrike`, so a part-migrated environment never showed a
+  strike twice and never dropped one. That second reader was retired 2026-08-21 (see below), so the live
+  list is now the only place strikes appear.
 
 The marker protocol both sides share is `src/lib/legacy-strike-import.ts`, covered by
 `src/lib/__tests__/legacy-strike-import.test.ts`. If the writer and the readers ever disagree nothing
@@ -101,9 +104,46 @@ rather than a string in two files.
 
 ### Retiring the legacy read
 
-Optional cleanup, not a required second deploy. Once the import has run everywhere, `getUserStrikes`,
-`strikeCountsByUserIds`, `legacyStrikeCount` and the collapsed count beneath `StrikeList` can all go.
-Until then they cost one indexed query and are what makes an un-migrated environment still show history.
+Done, 2026-08-21 (`2b7639a3ab`). `getUserStrikes`, `legacyStrikeCount` and the panels that rendered them
+are gone. `strikeCountsByUserIds` stays: the shared-IP and shared-link panels are the only place their
+number appears and have no live-strike reader beside them, so it must keep subtracting.
+
+## Correction — an earlier import this document did not know about (2026-08-24)
+
+The idempotency claim above is true only of **this** script's own marker. A **first** import pass
+had already copied the same legacy rows into `UserStrike`, marked `Imported from Retool strike #<id>. Issued
+by: …`, and the version that ran on 2026-08-21 could not see that marker — so it duplicated all 12,381 of them.
+`alreadyImported()` now consults both, so a re-run resumes rather than re-importing.
+
+The two passes disagree on exactly the property this document calls "the one thing that matters": the
+first-pass rows are **Active, 1 point, 365-day lifetime**, so they DO count on the escalation ladder.
+Measured against production 2026-08-24 **before the cleanup below**: 3,895 still Active across 3,452
+accounts, 414 accounts at 2+ points and 36 at 3+ almost entirely on imported points. Those rows are now
+deleted — see The cleanup, and [strike-rules.md](strike-rules.md) §10 item 7.
+
+`verify()` did not catch this because it only re-reads the rows **this** script inserted. Its
+dupes check compares second-pass markers against each other, so a duplicate wearing the other pass's
+marker is invisible to it — the check proves the script did not run twice, not that a legacy strike
+appears once.
+
+### The cleanup
+
+`apps/moderator/moderator-db/remove-duplicate-legacy-strikes.ts`, dry-run by default:
+
+```bash
+pnpm exec tsx --env-file=apps/moderator/.env apps/moderator/moderator-db/remove-duplicate-legacy-strikes.ts
+pnpm exec tsx --env-file=apps/moderator/.env apps/moderator/moderator-db/remove-duplicate-legacy-strikes.ts --apply
+```
+
+It deletes a first-pass row only when a second-pass row holds the same legacy strike id, so the account
+keeps its history — on the better copy, which has the real description text, un-shifted timestamps and
+resolved attribution. Unpaired rows are reported and kept. Live dry run 2026-08-24: **every one of
+them paired, 0 unpaired**.
+
+It does not unmute anyone. `reportStrandedMutes` names, at the end of an `--apply` run, every account
+left over-punished on points the delete removed — muted with no points left, or still indefinitely muted
+below 3 — so a moderator can act from Mod Studio, which refreshes the session too. A raw `UPDATE` here
+would leave them muted in their live session.
 
 ## Status
 
@@ -112,9 +152,17 @@ Until then they cost one indexed query and are what makes an un-migrated environ
       exactly, no marker twice. Checked against the main database rather than trusting the script's own
       `verify()`: 0 non-Expired, 0 with points, 0 with `expiresAt <> createdAt`, 0 countable by
       escalation (`Active AND expiresAt > NOW()`).
-- [ ] Legacy read retired — **now the outstanding half.** `getLiveStrikes` has no status filter, so the
-      imported rows already show in the strike list, while `AccountHistory` still adds "Plus N from the
-      Retool era … not part of the counts above" and User Lookup still shows an `N legacy` badge. Both
-      now double-report the same rows on all 10,690 accounts. Not urgent — the largest account holds 10
-      strikes against a 50-row cap, so nothing is hidden and no enforcement reads the count — but the
-      line is false as written.
+- [x] **Duplicate first-pass rows deleted** — 2026-08-24, 12,381 rows. Verified against the main
+      database rather than the script's own `verify()`: 0 first-pass rows left, history rows and
+      account count unchanged at 12,902 / 10,690, escalation-countable rows down from 3,936 to 41.
+      Separately confirmed from the pre-delete snapshot that all of them are preserved on the SAME
+      account — 0 cross-account mispairings. Accounts at 2+ points went 414 → 2, at 3+ 36 → 0.
+      `reportStrandedMutes` named 2 accounts (7874835, 8394294); both hold 1 point with a
+      `muteExpiresAt` within 24h, so the hourly `process-timed-unmutes` job clears them with the
+      session refresh — no manual unmute needed. Worth confirming they cleared after 2026-08-25.
+- [ ] Legacy read retired — optional cleanup, no longer a correctness problem. The double-reporting
+      this bullet used to describe is gone: the User Lookup badge reads "all-time" and `AccountHistory`
+      lists one store, so nothing claims a separate Retool era any more. What remains is
+      `strikeCountsByUserIds` still cross-querying the moderator database and subtracting every id back
+      out — one indexed query that now always contributes 0, kept because the rollback above would put
+      those rows back.

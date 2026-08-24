@@ -13,6 +13,9 @@ newest file is the only one with open boxes. Earlier rounds:
 [`mod-studio-feedback-2026-08-19.md`](mod-studio-feedback-2026-08-19.md),
 [`mod-studio-feedback-2026-08-17.md`](mod-studio-feedback-2026-08-17.md).
 
+A separate strike-policy round ran the same day; its decisions and remaining open items are in
+[`strike-rules.md`](strike-rules.md) §10, not here.
+
 Reporter identities, message links, quotes and the account ids used as examples are deliberately absent:
 this repo is public (CLAUDE.md → Security). The private triage keeps attribution.
 
