@@ -245,16 +245,23 @@ describe('the sticker placer hears about an acceptance', () => {
     expect(stripped).toMatch(
       new RegExp(String.raw`pt\.kind = 'feeToOwner'[\s\S]{0,80}pt\."transactionId" IS NOT NULL`)
     );
+    // 🔴 Anchored from the KIND LIST, not from the key name. The kinds are what
+    // give `refundPaid` its meaning — swap them to `feeToOwner` and the flag
+    // becomes "the OWNER got paid", so a non-waived decline says "the rest has
+    // been refunded" while the placer's leg is exactly as stranded as before.
+    // Tying the two together means neither half can move without the other.
+    //
+    // It is also the tighter anchor. Measured: 21 characters of the 80 budget
+    // here, against 187 of 200 anchoring from `'refundPaid', EXISTS (` — which
+    // one inserted clause was enough to break. If this ever does go red on a
+    // reformat, do NOT simply raise the number: a budget wide enough to reach
+    // the NEXT `transactionId` filter silently reopens the cross-occurrence hole
+    // the fee anchor above exists to close.
     expect(stripped).toMatch(
-      new RegExp(String.raw`'refundPaid', EXISTS \([\s\S]{0,200}pt\."transactionId" IS NOT NULL`)
+      new RegExp(
+        String.raw`pt\.kind IN \('principalToPlacer', 'feeToPlacer'\)[\s\S]{0,80}pt\."transactionId" IS NOT NULL`
+      )
     );
-
-    // 🔴 The kind list is what gives `refundPaid` its meaning, and it was the
-    // key name alone that was pinned. Swapping it to `feeToOwner` turns the flag
-    // into "the OWNER got paid", so a non-waived decline says "the rest has been
-    // refunded" while the placer's leg is exactly as stranded as before — which
-    // is the failure this gate exists to prevent, reachable in one word.
-    expect(stripped).toContain("pt.kind IN ('principalToPlacer', 'feeToPlacer')");
     expect(sql).toContain("pt.kind = 'feeToOwner'");
     expect(sql).toContain(`'feeWaived', p."feeWaived"`);
   });
