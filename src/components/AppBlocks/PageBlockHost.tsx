@@ -399,8 +399,9 @@ export interface PageBlockHostProps {
    *     not otherwise bound its height: the dev tunnel (`/apps/dev/<blockId>`,
    *     default `AppLayout` → `ScrollArea`) and the mod-review preview (inside a
    *     modal). Without it the host would collapse to the chrome bar and the
-   *     iframe (`flex: 1` of an auto-height parent) would letterbox to roughly
-   *     its ~150px intrinsic replaced-element height.
+   *     iframe would be sized only by `FILL_MIN_HEIGHT_PX` — measured 300px of
+   *     host, 31px of chrome, 269px of iframe, regardless of how much room the
+   *     page actually has. Usable, but no longer FILLING anything.
    *
    *   'fill' — the host fills its parent EXACTLY (`flex: 1; min-height: 0`) and
    *     claims no viewport-derived height of its own. Requires the mounter's

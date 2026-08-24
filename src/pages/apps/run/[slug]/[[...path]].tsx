@@ -253,8 +253,13 @@ function AppPage(props: PageProps) {
           // options below. `fit="fill"` makes the host claim no height of its
           // own, which needs an ancestor chain that already bounds it; the
           // default scrolling layout does not, so shipping either half alone
-          // regresses this page (drop `fill` → two scrollbars again; drop
-          // `scrollable: false` → the app is clipped behind `overflow-hidden`).
+          // regresses this page, in OPPOSITE directions — and a previous round
+          // of this comment had them the wrong way round. Dropping `fill` leaves
+          // the host claiming `100dvh - 60px` inside the `overflow-hidden`
+          // chain, so the bottom of the app is CLIPPED with nothing to scroll.
+          // Dropping `scrollable: false` selects the `ScrollArea` branch, which
+          // bounds nothing, so `flex: 1` has nothing to resolve against and the
+          // host is sized only by its floor.
           fit="fill"
           sandbox={sandbox}
           trustTier={trustTier}

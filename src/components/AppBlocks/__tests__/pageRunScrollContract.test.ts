@@ -22,12 +22,17 @@ import { describe, expect, it } from 'vitest';
  * 🔴 IT IS A CO-REQUISITE OF THREE LEGS, IN THREE PLACES. None is safe alone, so
  * the failure mode is someone reverting one during an unrelated change:
  *
- *   - `fit="fill"` WITHOUT `scrollable: false` → the host claims no height inside
- *     a layout that bounds nothing, so `flex: 1` resolves against an auto-height
- *     parent and the iframe LETTERBOXES to roughly its ~150px intrinsic
- *     replaced-element height. (Measured. An earlier version of this note said
- *     "0px"; that is what `flex: 0` produces, not this.) Broken, but quietly —
- *     it reads as a badly-sized block rather than a layout regression.
+ *   - `fit="fill"` WITHOUT `scrollable: false` → the host sits inside a layout
+ *     that bounds nothing, so `flex: 1` has nothing to resolve against and the
+ *     host is sized purely by `FILL_MIN_HEIGHT_PX` — a fixed 300px slab on a
+ *     1080px screen. Broken, but quietly: it reads as a badly-sized block rather
+ *     than a layout regression.
+ *
+ *     🔴 THIS FIGURE HAS BEEN WRONG TWICE, both times by editing the sentence
+ *     instead of re-reading the code. It said "0px" (that is what `flex: 0`
+ *     gives), then "~150px" (the iframe's intrinsic height — true before the
+ *     floor existed, false the moment `FILL_MIN_HEIGHT_PX` was added in the same
+ *     PR). Re-derive from the `fill` branch before touching this line.
  *   - `scrollable: false` WITHOUT `fit="fill"` → the outer scrollbar is gone but
  *     the host still claims more height than the now `overflow-hidden` chain can
  *     give it, so the bottom of the app is CLIPPED and unreachable. Strictly
@@ -118,13 +123,13 @@ describe('the run page and its host agree on who owns the height', () => {
     const fillFit = /\bfit=(["']fill["']|\{\s*['"]fill['"]\s*\})/.test(src);
 
     // The equivalence, not two independent presence checks. Half-reverting either
-    // one regresses the page in a DIFFERENT direction (0px iframe / clipped app),
-    // so this is what has to fail.
+    // one regresses the page in a DIFFERENT direction (a fixed floor-height slab
+    // / a clipped app — see this file's header), so this is what has to fail.
     expect(
       nonScrolling === fillFit,
       `\`scrollable: false\` (${nonScrolling}) and \`fit="fill"\` (${fillFit}) are a ` +
         'co-requisite on the run page — shipping one without the other replaces the ' +
-        'double scrollbar with a 0px or clipped iframe. See this file’s header.'
+        'double scrollbar with a floor-height slab or a clipped app. See this file’s header.'
     ).toBe(true);
   });
 
@@ -140,7 +145,7 @@ describe('the run page and its host agree on who owns the height', () => {
    *     scrollbar) and the dev tunnel + mod review get `fill` inside unbounded
    *     parents (the collapse the prop doc warns about). Every token a presence
    *     check looks for is still there.
-   *   - `flex: 1` → `flex: 0` in the fill branch — a 0px host.
+   *   - `flex: 1` → `flex: 0` in the fill branch — the host stops growing at all.
    *   - DELETE (or comment out) `overflow: 'hidden'` on the reveal wrapper — the
    *     8px transform leak returns.
    *
@@ -275,5 +280,44 @@ describe('the run page and its host agree on who owns the height', () => {
     expect(hostCalc, 'the viewport-fit calc not found in PageBlockHost.tsx').toBeDefined();
 
     expect(hostCalc).toBe(declared);
+  });
+
+  /**
+   * 🔴 THE FLOOR'S VALUE BELONGS IN THE GATING TIER, NOT ONLY THE BROWSER ONE.
+   *
+   * `FILL_MIN_HEIGHT_PX` is the whole WCAG fix: too low and a short viewport
+   * strands content behind `overflow-hidden`; too high and the page grows a
+   * scrollbar beside the block's own on ordinary phones, which is THIS PR'S BUG
+   * in a narrower window. Both guards on it were in
+   * `PageBlockHostScrollFit.browser.test.tsx` — and that suite is REPORT-ONLY
+   * (`preview / component-tests`) and historically ~16% flaky, i.e. exactly the
+   * combination that trains people to click through. Measured: with the floor set
+   * to 0, this gating file was 9/9 GREEN and only the non-blocking tier went red.
+   *
+   * So the band is asserted HERE too, by reading the declaration out of the
+   * source the same way the `HEADER_HEIGHT` tripwire above does. The browser
+   * suite still measures the CONSEQUENCE (a real host, laid out, at two viewport
+   * sizes); this pins the DECISION so a merge cannot quietly change it.
+   *
+   * The bounds and the arithmetic behind them live on the constant's own doc
+   * comment — deliberately not restated here, so there is one place to correct.
+   */
+  it('`FILL_MIN_HEIGHT_PX` stays inside its documented band — in the BLOCKING tier', () => {
+    const declared = /export const FILL_MIN_HEIGHT_PX = (\d+);/.exec(code(read(HOST)))?.[1];
+    expect(
+      declared,
+      'FILL_MIN_HEIGHT_PX declaration not found in PageBlockHost.tsx — if it was renamed or ' +
+        'derived, this guard must be re-pointed, not deleted: it is the only BLOCKING check on ' +
+        'the floor value.'
+    ).toBeDefined();
+
+    const floor = Number(declared);
+    // Lower: below this the block's own area (floor − ~31px AppBlockChrome) stops
+    // being usable, which is the case the floor exists to prevent.
+    // Upper: every px added widens the viewport population that sees two
+    // scrollbars. 400 — the value this PR itself shipped one commit ago — is
+    // outside the band on purpose.
+    expect(floor).toBeGreaterThanOrEqual(280);
+    expect(floor).toBeLessThanOrEqual(340);
   });
 });

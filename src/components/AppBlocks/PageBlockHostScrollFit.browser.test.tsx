@@ -218,7 +218,8 @@ function renderInScrollChain(fit: 'viewport' | 'fill', containerHeight: number) 
  * the entire shortfall.
  *
  * `available` is what is left for the page after that chrome. At a phone in
- * landscape (~360 CSS px) or a 1366×768 laptop at 200% zoom (~384 CSS px) it
+ * landscape (~360 CSS px) or a 1366×768 laptop at 200% zoom (~325 CSS px of `innerHeight`, NOT 768/2 — the
+ * panel-height error corrected on `FILL_MIN_HEIGHT_PX`) it
  * lands near 150px — far too little to use, and with `overflow-hidden` above
  * there would be nothing to scroll to reach the rest.
  */
@@ -342,7 +343,11 @@ describe('PageBlockHost — `fit` decides whether the page grows a SECOND scroll
       // A literal cannot be satisfied by construction, so this is what actually
       // holds the floor down. It is intentionally a little below the constant so
       // a small deliberate retune does not fail the suite.
-      expect(frame.getBoundingClientRect().height).toBeGreaterThanOrEqual(280);
+      // 270, not 280: the band below PERMITS a floor of 280, and the rendered
+      // height equals the constant to the pixel, so a 280 literal would pass with
+      // zero slack — the two guards would stop being independent at exactly the
+      // value the band allows. 270 keeps the headroom this comment claims.
+      expect(frame.getBoundingClientRect().height).toBeGreaterThanOrEqual(270);
     });
 
     /**
@@ -364,7 +369,7 @@ describe('PageBlockHost — `fit` decides whether the page grows a SECOND scroll
       expect(FILL_MIN_HEIGHT_PX).toBeLessThanOrEqual(340);
     });
 
-    test('and what is squeezed out stays REACHABLE — exactly one scrollbar, not zero', async () => {
+    test('and what is squeezed out stays REACHABLE — user-scrollable, not merely overflowing', async () => {
       const available = 153;
       renderInNoScrollChain(available);
       await expect.element(page.getByTestId('app-page-frame')).toBeInTheDocument();
