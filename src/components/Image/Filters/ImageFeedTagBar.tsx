@@ -31,7 +31,11 @@ export function ImageFeedTagBar({ feed }: { feed: FeedTagBarFeed }) {
   const { query, replace } = useImageQueryParams();
   const tagIds = query.tags ?? [];
 
-  const { data } = trpc.tag.getFeedTagBar.useQuery(undefined, { enabled: features.feedTagBar });
+  // `!!` is load-bearing: FeatureAccess is sparse, so an off flag is `undefined` rather
+  // than `false`, and react-query reads `enabled: undefined` as enabled.
+  const { data } = trpc.tag.getFeedTagBar.useQuery(undefined, {
+    enabled: !!features.feedTagBar,
+  });
   const { items: tags, loadingPreferences } = useApplyHiddenPreferences({
     type: 'tags',
     data,

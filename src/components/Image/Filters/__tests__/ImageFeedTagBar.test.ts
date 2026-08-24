@@ -19,7 +19,9 @@ const mocks = vi.hoisted(() => ({
   loadingPreferences: false,
   maxNsfwLevel: 1,
   trackAction: vi.fn(() => Promise.resolve()),
-  feedTagBar: true,
+  // Sparse, exactly as FeatureAccess is: an off flag is ABSENT, so it reads `undefined`.
+  // Driving the off case with `false` would test a state production never produces.
+  feedTagBar: true as boolean | undefined,
   getFeedTagBar: vi.fn(),
 }));
 
@@ -149,7 +151,7 @@ describe('ImageFeedTagBar', () => {
   // in under the floor it shipped on (868kv1b9m). `feedTagBar` fails OPEN, so the case
   // that needs pinning is that OFF actually removes it.
   it('renders nothing when the feedTagBar flag is off', () => {
-    mocks.feedTagBar = false;
+    mocks.feedTagBar = undefined;
     const container = render();
 
     expect(buttonLabels(container)).toEqual([]);
@@ -159,13 +161,21 @@ describe('ImageFeedTagBar', () => {
   });
 
   it('does not request the chip list when the flag is off, and does when it is on', () => {
-    mocks.feedTagBar = false;
+    // `undefined`, not `false` — see the note on `mocks.feedTagBar`.
+    mocks.feedTagBar = undefined;
     render();
-    expect(mocks.getFeedTagBar).toHaveBeenCalledWith(undefined, { enabled: false });
+    // Strictly `false`, not merely falsy: react-query reads `enabled: undefined` as
+    // ENABLED, so a gate that forwarded the sparse flag straight through would fetch.
+    // Zero calls satisfies this too, so hoisting the gate above the hook stays green.
+    for (const [, options] of mocks.getFeedTagBar.mock.calls) {
+      expect(options?.enabled).toBe(false);
+    }
 
     mocks.getFeedTagBar.mockClear();
     mocks.feedTagBar = true;
     render();
+    // The control. Without it the arm above passes for a bar that can never fetch.
+    expect(mocks.getFeedTagBar).toHaveBeenCalledTimes(1);
     expect(mocks.getFeedTagBar).toHaveBeenCalledWith(undefined, { enabled: true });
   });
 
