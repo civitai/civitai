@@ -572,6 +572,27 @@ export function DraftSticker({
   });
 
   /**
+   * Holds the caption cluster level while the artwork turns.
+   *
+   * Every child of the wrapper inherits its `rotate(...)`, so the note field,
+   * the payout line and the Buzz button all tilt with the sticker — a textarea
+   * at 40 degrees is awkward to read and worse to type into, and past a half
+   * turn the prose is upside down. The resize handles and the knob keep
+   * rotating: those belong to the box, and the caption is the part that reads
+   * wrong.
+   *
+   * The `rotate` property rather than a `transform`, because the cluster's
+   * centring is a Tailwind `-translate-x-1/2` and an inline `transform` would
+   * replace it, dropping the cluster half its own width to the right.
+   *
+   * `offsetHeight` and the anchor are both unaffected — the element spins about
+   * its own centre and its layout box does not move — so the flip geometry is
+   * untouched. Its `getBoundingClientRect` becomes the upright box, which is
+   * what the clip and tray overlap tests wanted in the first place.
+   */
+  const upright = draft.rotation ? `${-draft.rotation}deg` : undefined;
+
+  /**
    * A second copy of this sticker, already arranged.
    *
    * Placing several of one sticker meant a trip back through the tray for each,
@@ -798,6 +819,7 @@ export function DraftSticker({
           flipped ? 'bottom-full' : 'top-full mt-2'
         )}
         style={{
+          rotate: upright,
           minWidth: BUY_BUTTON_MIN_WIDTH,
           // Clears whichever obstacle is taller: the knob, which scales with the
           // sticker, or the panel band, which does not. Below ~164px the

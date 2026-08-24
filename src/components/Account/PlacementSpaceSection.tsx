@@ -289,7 +289,7 @@ export function PlacementSpaceSection() {
           surface="sticker"
           cap={freeSlotCap}
           value={freeSlots}
-          noun={['free sticker', 'free stickers']}
+          noun={['sticker', 'stickers']}
           onChange={setFreeSlots}
           onCommit={(value) => {
             setFreeSlots(value);

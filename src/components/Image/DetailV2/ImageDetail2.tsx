@@ -33,7 +33,10 @@ import {
   IconShare3,
 } from '@tabler/icons-react';
 import { useMemo, useRef } from 'react';
+import { useRouter } from 'next/router';
 import clsx from 'clsx';
+import { STICKER_REVEAL_PARAM, stickerRevealRequested } from '~/components/Placement/queue-routes';
+import { useStickerRevealParam } from '~/store/sticker-reveal.store';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { env } from '~/env/client';
 import { AdhesiveAd } from '~/components/Ads/AdhesiveAd';
@@ -139,6 +142,11 @@ export function ImageDetail2() {
     key: `image-detail-open`,
     defaultValue: true,
   });
+
+  // Here rather than in the overlay: the overlay is behind the `safe` gate in
+  // the carousel, so on a blurred image it never mounts and the link would
+  // silently do nothing on exactly the images where the reveal matters most.
+  useStickerRevealParam(stickerRevealRequested(useRouter().query[STICKER_REVEAL_PARAM]));
 
   const videoRef = useRef<EdgeVideoRef | null>(null);
   const adContainerRef = useRef<HTMLDivElement | null>(null);

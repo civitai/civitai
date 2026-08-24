@@ -347,6 +347,47 @@ describe('the free option is a price, not a process', () => {
 });
 
 /**
+ * The note and the payout line are the two pieces of PROSE in the draft's chrome,
+ * and every one of its children is inside the element carrying `rotate(...)` —
+ * so without a counter-rotation a sticker turned any distance leaves both of them
+ * sideways, and at a half turn upside down. Placed stickers already counter-rotate
+ * their marks; this is the draft's half.
+ *
+ * The fixture sits at 15 degrees, so the assertion is a specific angle rather
+ * than "some transform": a counter-rotation by the wrong sign is the failure that
+ * looks most like a fix.
+ */
+describe('the note and the payout caption stay upright', () => {
+  test('counter-rotates by exactly the sticker angle', async () => {
+    await renderDraft(null, { ownerShare: 1 });
+
+    const note = (await page.getByRole('button', { name: /Add a note/ }).element()) as HTMLElement;
+    const caption = (await page.getByText(/proceeds go to/).element()) as HTMLElement;
+    const cluster = note.closest<HTMLElement>('.w-max');
+
+    // One cluster carries all three, and the containment checks are what prove
+    // the note and the payout line are inside the thing that was turned back
+    // upright. Asserting the cluster's own angle alone passes just as happily
+    // with either of them moved out of it.
+    expect(cluster?.style.rotate).toBe('-15deg');
+    expect(cluster?.contains(note)).toBe(true);
+    expect(cluster?.contains(caption)).toBe(true);
+  });
+
+  // The negative control for the pair above: they would both pass against a
+  // component that counter-rotated nothing if the sticker itself were never
+  // rotated, and `draft.rotation` is a fixture anyone may edit.
+  test('the sticker it sits in really is rotated', async () => {
+    await renderDraft(null);
+
+    const note = (await page.getByRole('button', { name: /Add a note/ }).element()) as HTMLElement;
+    const root = note.closest<HTMLElement>('.cursor-move');
+
+    expect(root?.style.transform).toContain('rotate(15deg)');
+  });
+});
+
+/**
  * The glyph on the flip control has to name the axis the transform mirrors
  * across, and Tabler's names run the other way: `IconFlipHorizontal` draws a
  * HORIZONTAL mirror line, which reads as a top-to-bottom flip. Picking the icon

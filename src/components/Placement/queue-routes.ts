@@ -44,3 +44,33 @@ export const REMIX_QUEUE_RECEIVED_URL = '/user/placements?type=remix&tab=receive
 
 /** The viewer's own outgoing remix submissions. */
 export const REMIX_QUEUE_SENT_URL = '/user/placements?type=remix&tab=sent';
+
+/**
+ * Turns the reveal on for whoever follows the link.
+ *
+ * Placed stickers are hidden by default site-wide and the count chip is the only
+ * control that shows them — so every link that exists BECAUSE of a sticker lands
+ * on an image that looks untouched, and the person has no way to tell that from
+ * the sticker having been removed. That is the queue's "view image" link, and
+ * the placer's "your sticker was accepted" notification.
+ */
+export const STICKER_REVEAL_PARAM = 'stickers';
+
+const STICKER_REVEAL_VALUE = '1';
+
+/** An image, with its placed stickers shown on arrival. */
+export function imageWithStickersUrl(imageId: number) {
+  return `/images/${imageId}?${STICKER_REVEAL_PARAM}=${STICKER_REVEAL_VALUE}`;
+}
+
+/**
+ * Whether a router query value is asking for the reveal.
+ *
+ * Beside the writer above rather than at the reading end, so the two cannot
+ * drift into a link that carries a value nothing recognises — which fails as a
+ * page that simply does not reveal, indistinguishable from the bug this exists
+ * to fix.
+ */
+export function stickerRevealRequested(value: string | string[] | undefined) {
+  return (Array.isArray(value) ? value[0] : value) === STICKER_REVEAL_VALUE;
+}

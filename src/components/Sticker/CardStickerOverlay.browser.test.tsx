@@ -35,9 +35,14 @@ vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 7 }) }))
 // The store's default is `revealed: false`, which renders no placements at all —
 // so without this the overlay never measures and every assertion below would be
 // asserting an empty card.
+type RevealState = { revealed: boolean; forced: boolean };
+
 vi.mock('~/store/sticker-reveal.store', () => ({
-  useStickerRevealStore: (select: (state: { revealed: boolean }) => unknown) =>
-    select({ revealed: true }),
+  // Both exports, because the overlay reads the store THROUGH the selector now.
+  // A mock supplying only the hook hands it `undefined` to call.
+  stickersRevealed: (state: RevealState) => state.revealed || state.forced,
+  useStickerRevealStore: (select: (state: RevealState) => unknown) =>
+    select({ revealed: true, forced: false }),
 }));
 
 vi.mock('~/components/Sticker/StickerPlacementBatchProvider', () => ({

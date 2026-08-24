@@ -47,3 +47,21 @@ export const rotate = (x: number, y: number, degrees: number) => {
 
 /** Where the rotate knob sits above the sticker, as a fraction of its height. */
 export const KNOB_OFFSET = 0.22;
+
+/**
+ * The angle the knob is being dragged to, from the pointer's offset off the
+ * sticker's centre, in the -180..180 the store stores.
+ *
+ * 🔴 THE WRAP IS THE WHOLE POINT. `atan2` returns -180..180 and the knob sits
+ * straight up, so the `+ 90` that moves zero from right to up pushes the range
+ * to -90..270 — and the store CLAMPS rotation to ±180 rather than wrapping it.
+ * Every angle in the lower-left quadrant therefore came out above 180 and
+ * clamped: dragging counterclockwise past 90° stopped dead and snapped the
+ * sticker to 180°, a half-turn in the wrong direction from where the pointer
+ * was. Wrapping maps that quadrant onto -180..-90, which is the same rotation
+ * and is inside the clamp.
+ */
+export function knobRotation(dx: number, dy: number) {
+  const degrees = (Math.atan2(dy, dx) * 180) / Math.PI + 90;
+  return ((((degrees + 180) % 360) + 360) % 360) - 180;
+}

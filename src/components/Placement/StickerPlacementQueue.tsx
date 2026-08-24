@@ -13,6 +13,7 @@ import {
 } from '@mantine/core';
 import { IconExternalLink } from '@tabler/icons-react';
 import Link from 'next/link';
+import { imageWithStickersUrl } from '~/components/Placement/queue-routes';
 import { useRouter } from 'next/router';
 import { useState } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
@@ -343,7 +344,12 @@ function ReceivedTab({
                   &ldquo;{row.data.comment}&rdquo;
                 </Text>
               )}
-              <Anchor component={Link} href={`/images/${row.targetId}`} size="xs" target="_blank">
+              <Anchor
+                component={Link}
+                href={imageWithStickersUrl(row.targetId)}
+                size="xs"
+                target="_blank"
+              >
                 <Group gap={4} wrap="nowrap">
                   <IconExternalLink size={12} />
                   See it on the image
@@ -470,7 +476,12 @@ function PlacedTab({
                     &ldquo;{row.data.comment}&rdquo;
                   </Text>
                 )}
-                <Anchor component={Link} href={`/images/${row.targetId}`} size="xs" target="_blank">
+                <Anchor
+                  component={Link}
+                  href={imageWithStickersUrl(row.targetId)}
+                  size="xs"
+                  target="_blank"
+                >
                   <Group gap={4} wrap="nowrap">
                     <IconExternalLink size={12} />
                     See it on the image

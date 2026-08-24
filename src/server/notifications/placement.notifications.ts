@@ -1,6 +1,7 @@
 import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 import {
+  imageWithStickersUrl,
   REMIX_QUEUE_RECEIVED_URL,
   STICKER_QUEUE_RECEIVED_URL,
 } from '~/components/Placement/queue-routes';
@@ -470,7 +471,6 @@ export const placementNotifications = createNotificationProcessor({
     displayName: 'Your sticker placement was answered',
     category: NotificationCategory.Creator,
     prepareMessage: ({ details }) => {
-      const url = `/images/${details.imageId}`;
       if (details.status === 'removed')
         return {
           message: moderatorRemovalMessage({
@@ -479,9 +479,15 @@ export const placementNotifications = createNotificationProcessor({
             location: `${details.ownerUsername}'s image`,
             details,
           }),
-          url,
+          // The plain image URL, not the revealing one: this sticker is gone, and
+          // turning the whole reveal on to show its absence is the opposite of
+          // what the link is for.
+          url: `/images/${details.imageId}`,
         };
-      return { message: `${details.ownerUsername} accepted your sticker`, url };
+      return {
+        message: `${details.ownerUsername} accepted your sticker`,
+        url: imageWithStickersUrl(details.imageId),
+      };
     },
     prepareQuery: async ({ lastSent }) => `
       WITH data AS (

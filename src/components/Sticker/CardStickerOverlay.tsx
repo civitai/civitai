@@ -3,7 +3,7 @@ import { mediaContentRectOf } from '~/components/Sticker/media-content-rect';
 import { StickerPlacementOverlay } from '~/components/Sticker/StickerPlacementOverlay';
 import { useStickerPlacementBatch } from '~/components/Sticker/StickerPlacementBatchProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useStickerRevealStore } from '~/store/sticker-reveal.store';
+import { stickersRevealed, useStickerRevealStore } from '~/store/sticker-reveal.store';
 
 type Box = { width: number; height: number; left: number; top: number };
 
@@ -105,7 +105,7 @@ export function CardStickerOverlay({
   artworkWidth?: number;
 }) {
   const currentUser = useCurrentUser();
-  const revealed = useStickerRevealStore((state) => state.revealed) || !!revealStickers;
+  const revealed = useStickerRevealStore(stickersRevealed) || !!revealStickers;
   const batch = useStickerPlacementBatch(imageId);
   const ref = useRef<HTMLDivElement>(null);
   const [box, setBox] = useState<Box | null>(null);

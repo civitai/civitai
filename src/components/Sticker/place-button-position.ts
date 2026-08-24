@@ -24,19 +24,44 @@ const shift = (box: Box, dx: number, dy: number): Box => ({
 export const STICKER_PANEL_BAND_PX = 36;
 
 /**
+ * The left panel's width, derived rather than measured, because the count of
+ * controls in it is what moves.
+ *
+ * A `size="sm"` `ActionIcon` is 22px, `gap-0.5` is 2px and `px-1` is 4px a side.
+ * Duplicate, flip and opacity: `4 + 22 + 2 + 22 + 2 + 22 + 4`.
+ *
+ * 🔴 KEEP THIS IN STEP WITH THE PANEL'S JSX. The constant below was computed for
+ * TWO icons and stayed at 124 when Copy was added as a third, so on every
+ * sticker between 124px and 172px wide the panel reached past the rotate knob
+ * and swallowed the press — the knob was visibly there and completely dead.
+ */
+const PANEL_LEFT_CONTROLS = 3;
+const PANEL_ICON_PX = 22;
+const PANEL_ICON_GAP_PX = 2;
+const PANEL_PADDING_X_PX = 4;
+
+export const STICKER_PANEL_LEFT_WIDTH_PX =
+  PANEL_PADDING_X_PX * 2 +
+  PANEL_LEFT_CONTROLS * PANEL_ICON_PX +
+  (PANEL_LEFT_CONTROLS - 1) * PANEL_ICON_GAP_PX;
+
+/** The rotate knob is `size-4`, centred on the top edge, so it reaches 8px each way. */
+const KNOB_HALF_WIDTH_PX = 8;
+
+/**
  * The narrowest sticker whose top edge can host both panels without the rotate
  * knob ending up underneath one.
  *
- * The knob is centred on the top edge and 16px wide, so it spans
- * `[w/2 - 8, w/2 + 8]`; the left panel (two icons) reaches 54px in from the left
- * edge. Clear of each other needs `w/2 - 8 >= 54`. Below this there are no
- * panels above the sticker at all: the draft's controls move into the buy
- * cluster, which measures its own position against the tray and the clipping
- * ancestor. Anchoring them to a small sticker's box fails in both directions —
- * inside it they reach past each other and the knob, outside it they hang off
- * the sticker and are clipped away near the edges of the image.
+ * The knob spans `[w/2 - 8, w/2 + 8]` and the left panel reaches
+ * `STICKER_PANEL_LEFT_WIDTH_PX` in from the left edge, so clear of each other
+ * needs `w/2 - 8 >= left`. Below this there are no panels above the sticker at
+ * all: the draft's controls move into the buy cluster, which measures its own
+ * position against the tray and the clipping ancestor. Anchoring them to a small
+ * sticker's box fails in both directions — inside it they reach past each other
+ * and the knob, outside it they hang off the sticker and are clipped away near
+ * the edges of the image.
  */
-export const STICKER_PANEL_MIN_WIDTH_PX = 124;
+export const STICKER_PANEL_MIN_WIDTH_PX = (STICKER_PANEL_LEFT_WIDTH_PX + KNOB_HALF_WIDTH_PX) * 2;
 
 /**
  * Whether the panels can sit flush with the sticker's own edges.

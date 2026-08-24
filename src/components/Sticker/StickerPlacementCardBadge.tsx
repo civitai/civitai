@@ -1,7 +1,7 @@
 import clsx from 'clsx';
 import { StickerCountChip } from '~/components/Sticker/StickerCountChip';
 import { useStickerPlacementBatch } from '~/components/Sticker/StickerPlacementBatchProvider';
-import { useStickerRevealStore } from '~/store/sticker-reveal.store';
+import { stickersRevealed, useStickerRevealStore } from '~/store/sticker-reveal.store';
 
 /**
  * The reaction-bar entry on a feed card: how many stickers are here, and the
@@ -21,7 +21,7 @@ export function StickerPlacementCardBadge({
   className?: string;
 }) {
   const batch = useStickerPlacementBatch(imageId);
-  const revealed = useStickerRevealStore((state) => state.revealed);
+  const revealed = useStickerRevealStore(stickersRevealed);
   const toggle = useStickerRevealStore((state) => state.toggle);
 
   // Approved plus the viewer's own pending, matching what the toggle reveals.
