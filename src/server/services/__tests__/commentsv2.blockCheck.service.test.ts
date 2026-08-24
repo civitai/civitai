@@ -8,8 +8,9 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
  * only creates left the block trivially bypassable.
  */
 
-const { amIBlockedByUser, tx } = vi.hoisted(() => ({
+const { amIBlockedByUser, throwOnBlockedCommentContent, tx } = vi.hoisted(() => ({
   amIBlockedByUser: vi.fn(async (..._a: unknown[]): Promise<boolean> => false),
+  throwOnBlockedCommentContent: vi.fn(async (..._a: unknown[]): Promise<void> => undefined),
   // 🔴 `tx` stays a SEPARATE object from the write client, because every assertion below is
   // on `db.tx.*` and means "written inside the transaction". Inheriting the canonical
   // `$transaction` would hand the callback `dbMock.dbWrite` and collapse the two, so an
@@ -55,9 +56,7 @@ dbMock.dbWrite.$transaction.mockImplementation(async (cb: (t: typeof tx) => Prom
 );
 
 vi.mock('~/server/services/user.service', () => ({ amIBlockedByUser }));
-vi.mock('~/server/services/blocklist.service', () => ({
-  throwOnBlockedLinkDomain: vi.fn(async () => undefined),
-}));
+vi.mock('~/server/services/blocklist.service', () => ({ throwOnBlockedCommentContent }));
 vi.mock('~/server/utils/otel-helpers', () => ({
   withSpan: (_name: string, fn: () => unknown) => fn(),
 }));
@@ -74,6 +73,46 @@ const baseCreate = {
 beforeEach(() => {
   vi.clearAllMocks();
   amIBlockedByUser.mockResolvedValue(false);
+  throwOnBlockedCommentContent.mockResolvedValue(undefined);
+});
+
+/**
+ * The blocklist guard is wired at exactly three call sites and mocked in every suite that
+ * reaches one, so nothing observed that the wiring existed: deleting the call in
+ * `commentsv2.service.ts`, or hardcoding `{ isModerator: true }`, left the whole workspace
+ * green. That second mutation is the production state 868kw2f8y was filed about.
+ *
+ * These assert the CALL, which is the only thing a mocked guard can pin.
+ */
+describe('upsertComment - blocklist guard wiring', () => {
+  it('runs the guard once, passing the author moderator flag', async () => {
+    await upsertComment({ ...baseCreate });
+    expect(throwOnBlockedCommentContent).toHaveBeenCalledTimes(1);
+    expect(throwOnBlockedCommentContent).toHaveBeenCalledWith('hello', { isModerator: undefined });
+  });
+
+  it('forwards a moderator through to the guard rather than deciding locally', async () => {
+    await upsertComment({ ...baseCreate, isModerator: true } as Parameters<
+      typeof upsertComment
+    >[0]);
+    expect(throwOnBlockedCommentContent).toHaveBeenCalledWith('hello', { isModerator: true });
+  });
+
+  // Ordering, which nothing else pins: a guard that ran AFTER the write would leave the
+  // phishing comment in the table and merely fail the request.
+  it('rejects before writing anything when the guard throws', async () => {
+    throwOnBlockedCommentContent.mockRejectedValueOnce(new Error('blocked'));
+    await expect(upsertComment({ ...baseCreate })).rejects.toThrow('blocked');
+    expect(db.tx.commentV2.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects before writing anything on the edit path too', async () => {
+    throwOnBlockedCommentContent.mockRejectedValueOnce(new Error('blocked'));
+    await expect(
+      upsertComment({ ...baseCreate, id: 5 } as Parameters<typeof upsertComment>[0])
+    ).rejects.toThrow('blocked');
+    expect(db.tx.commentV2.update).not.toHaveBeenCalled();
+  });
 });
 
 describe('upsertComment — block enforcement on create', () => {

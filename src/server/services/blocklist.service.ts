@@ -8,6 +8,8 @@ import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { createLruCache } from '~/server/utils/lru-cache';
 import { logToAxiom } from '~/server/logging/client';
 import { buildBenignPhraseRegex, stripBenignPhrasesWith } from '~/shared/utils/benign-phrases';
+import { removeTags, removeTagsCompact } from '~/utils/string-helpers';
+import { foldConfusables } from '~/server/utils/confusable-fold';
 
 export type BlocklistDTO = {
   id?: number;
@@ -110,19 +112,42 @@ export async function getBlocklistData(type: BlocklistType) {
 }
 
 // #region [blocked links]
-export async function throwOnBlockedLinkDomain(value: string) {
-  const blockedDomains = await getBlocklistData(BlocklistType.LinkDomain);
-  const matches = value
-    .toLowerCase()
-    .match(
-      /(http|ftp|https):\/\/([\w_-]+(?:(?:\.[\w_-]+)+))([\w.,@?^=%&:\/~+#-]*[\w@?^=%&\/~+#-])/gim
-    );
+/**
+ * The scheme is OPTIONAL, which is the whole point of the leading group. `sanitizeHtml` stores a
+ * scheme-relative `href` verbatim (it prepends `http://` only to compute the host it checks), so
+ * `<a href="//evil.example/x">click</a>` survives to the database and the browser resolves it to
+ * a live link — while a scheme-anchored regex sees no URL at all and the guard passes it.
+ * A dotted host is still required after the slashes, so ordinary `//` in prose does not match.
+ */
+const LINK_PATTERN =
+  /(?:(?:http|ftp|https):)?\/\/([\w_-]+(?:(?:\.[\w_-]+)+))([\w.,@?^=%&:\/~+#-]*[\w@?^=%&\/~+#-])/gim;
+
+/**
+ * The spellings of a host that mean the same host to a browser but not to `===`.
+ *
+ * `url.host` carries the port, and a trailing dot is a legal absolute-root FQDN, so
+ * `evil.example:8080` and `evil.example.` both resolve for the reader and both miss an entry of
+ * `evil.example`. Comparing against every spelling can only match more, never less.
+ *
+ * Subdomains are deliberately NOT covered: matching `www.evil.example` against an entry of
+ * `evil.example` is a moderation policy change (it would also block every subdomain of any host
+ * on the list), not a normalisation fix.
+ */
+function hostSpellings(url: URL) {
+  const withoutPort = url.hostname;
+  return [url.host, withoutPort, withoutPort.replace(/\.$/, '')];
+}
+
+function findBlockedLinkDomains(value: string, blockedDomains: string[]) {
+  const matches = value.toLowerCase().match(LINK_PATTERN);
   const blockedFor: string[] = [];
   if (matches) {
     for (const match of matches) {
       let url: URL;
       try {
-        url = new URL(match);
+        // A scheme-relative match has no scheme for `new URL()` to parse. Which scheme we
+        // invent is irrelevant — only the host is read back.
+        url = new URL(match.startsWith('//') ? `https:${match}` : match);
       } catch {
         // A regex-matched substring that `new URL()` can't parse isn't a URL we
         // can attribute to a host, so it can't be a blocked-domain hit. Skip it
@@ -131,9 +156,16 @@ export async function throwOnBlockedLinkDomain(value: string) {
         // matches the link regex but `new URL()` rejects the invalid IPv4 octet.
         continue;
       }
-      if (blockedDomains.some((x) => x === url.host)) blockedFor.push(match);
+      const spellings = hostSpellings(url);
+      if (blockedDomains.some((x) => spellings.includes(x))) blockedFor.push(match);
     }
   }
+  return blockedFor;
+}
+
+export async function throwOnBlockedLinkDomain(value: string) {
+  const blockedDomains = await getBlocklistData(BlocklistType.LinkDomain);
+  const blockedFor = findBlockedLinkDomains(value, blockedDomains);
 
   // User-input validation rejection → BAD_REQUEST (400), not a plain Error (which
   // the tRPC layer would wrap as INTERNAL_SERVER_ERROR / 500).
@@ -207,13 +239,141 @@ export async function getClientBenignLists(): Promise<ClientBenignLists> {
 // #endregion
 
 // #region [blocked message patterns]
+/**
+ * Returns the matched pattern, or `undefined`. Callers must test against `undefined` and NOT
+ * for truthiness: an empty pattern matches every string and returns `''`, so a truthiness test
+ * silently swallows exactly the case `substringEntries` exists to prevent — and swallowing it
+ * looks like the guard working.
+ */
+function findBlockedPattern(value: string, blockedPatterns: string[]) {
+  const lowerValue = value.toLowerCase();
+  return blockedPatterns.find((pattern) => lowerValue.includes(pattern));
+}
+
+/**
+ * Entries for a SUBSTRING match. Empties dropped, and deliberately NOT folded.
+ *
+ * 🔴 Folding a substring rule rewrites what the rule means. Measured against the 90 live
+ * `MessagePattern` rows: 17 of the 19 non-ASCII ones fold to a string nobody added, and two of
+ * them fold to a single ordinary English word. Their live ASCII neighbours are all narrow
+ * multi-word phrases containing that word, so a moderator adding a stylised-only row was
+ * drawing exactly that distinction. Folding erases it, and `includes` then rejects every
+ * comment carrying the bare word — 44 of 94,376 comments and 42 of 87,113 DMs over 30 days on
+ * production. (The rows are not quoted here: this repo is public, and a term list tells a
+ * reader what is blocked while a stated absence tells them what is not.)
+ *
+ * Folding the CONTENT is still done, and is the half that stops the bypass: homoglyph text
+ * reaches an ASCII rule that way. The other consequence, stated because it is not obvious: a
+ * folded form is always ASCII, so a non-ASCII entry can only ever be found in the RAW form,
+ * byte for byte. 19 of the 90 live rows are in that position. That is not a regression — they
+ * were equally narrow on DMs before this — but it is the reason the answer is to normalise at
+ * WRITE time in the moderator UI, where broadening a rule can be a visible deliberate act. The cost of not folding entries is narrower and it is the safe
+ * direction — a stylised-only row no longer catches the plain-ASCII spelling, which a moderator
+ * can add as a row, whereas nobody can undo a rule that silently ate a common word.
+ *
+ * 🔴 The empty filter is not defensive tidying either. `includes('')` is true for every string,
+ * so one empty entry blocks every comment on the site.
+ */
+function substringEntries(entries: string[]) {
+  return entries.filter((entry) => entry.trim().length > 0);
+}
+
+/**
+ * Entries for an EXACT match — link domains, compared with `===` against `url.host`.
+ *
+ * These ARE folded, and safely enough: an exact-match rule cannot broaden WITHIN a namespace,
+ * because a folded host is just one more host that has to be equalled in full. Note the
+ * qualifier — folding crosses namespaces, so a lookalike entry manufactures the REAL domain as
+ * a live rule. Checked against the 6 non-ASCII rows live today: every one folds to its intended
+ * target and none is a mainstream domain. Adding a lookalike of a domain we do not want to
+ * block would block it here and nowhere else, since `throwOnBlockedLinkDomain` does not fold. That is the whole difference from
+ * `substringEntries` above, and it is why the two exist separately rather than as one helper
+ * with a flag. 6 of the 696 live link domains are non-ASCII — styled Unicode and
+ * invisible-character spellings — and folding them is what makes those rows enforce at all.
+ */
+function exactEntries(entries: string[]) {
+  return [...new Set([...entries, ...entries.map(foldConfusables)])].filter(
+    (entry) => entry.trim().length > 0
+  );
+}
+
 export async function throwOnBlockedMessagePattern(value: string) {
   const blockedPatterns = await getBlocklistData(BlocklistType.MessagePattern);
   if (!blockedPatterns.length) return;
 
-  const lowerValue = value.toLowerCase();
-  const matched = blockedPatterns.find((pattern) => lowerValue.includes(pattern));
-  if (matched) throw new Error(`Message blocked by content filter`);
+  const matchable = substringEntries(blockedPatterns);
+  const matched =
+    findBlockedPattern(value, matchable) ?? findBlockedPattern(foldConfusables(value), matchable);
+  // BAD_REQUEST, not a bare `Error`: this is a rejection of user input, and a plain throw
+  // reaches the client as a 500 that tells the sender nothing.
+  if (matched !== undefined) throwBadRequestError('Message blocked by content filter');
+}
+// #endregion
+
+// #region [comment content]
+/**
+ * The forms of a comment a pattern could be hiding in. Comments are stored as HTML, and
+ * scanning any single form has a measured hole in it:
+ *
+ * - the raw string misses a pattern split by a tag. `phish-verify<strong>5</strong>92807.example`
+ *   is the shape the editor stores, and `strong`/`em`/`u`/`s`/`span`/`code`/`a` all survive
+ *   `COMMENT_ALLOWED_TAGS`. A sticker `<span>` splits a pattern the same way.
+ * - the tag-stripped text misses anything that only exists in an attribute. Drop the tag from
+ *   `<a href="https://evil.example/x">click</a>` and the URL is gone; what is left is "click".
+ * - `removeTags` (tag to a space, then collapse) does not close the first hole — `id 592807`
+ *   still fails to match. Joining with nothing does not close the third: it glues
+ *   `<p>a</p><p>b</p>` into `ab`, so a multi-word pattern that needs the space stops matching.
+ *
+ * Hence every form, not a chosen one. Scanning an extra form can only make the filter match
+ * more, never less, so a form added later cannot open a bypass.
+ *
+ * 🔴 Keeping the RAW form is load-bearing beyond the `href` case. Because it is scanned, every
+ * literal substring of the stored string is always visible to the matcher, whatever malformed
+ * markup does to the derived forms — an attribute value containing `>` desynchronises the tag
+ * regex, and the raw form is what still carries the URL. Drop it as redundant (the other two
+ * look like supersets, and are not) and that guarantee goes with it.
+ *
+ * The collapse in `removeTags` is load-bearing, not tidiness: `</p><p>` becomes TWO spaces, and
+ * a pattern carrying one space then misses the very case this form exists for.
+ */
+export function scannableCommentForms(content: string) {
+  const forms = [content, removeTagsCompact(content), removeTags(content)];
+  return [...new Set([...forms, ...forms.map(foldConfusables)])];
+}
+
+/**
+ * Both blocklists over a comment. Comments never called the pattern list at all until now,
+ * which is how 366 accounts posted phishing comments in four hours on 2026-08-24 while the
+ * same patterns were being enforced on DMs.
+ *
+ * Moderators are exempt from BOTH lists. Several of these patterns ARE the phishing text, and
+ * quoting it to warn people is a thing moderators do — one such comment is live on the site
+ * today. The link half was raised explicitly (it was NOT exempt on `main`) and kept exempt on
+ * purpose, 2026-08-24; do not restore it without asking.
+ *
+ * The DM precedent is not uniform and should not be cited as though it were: chat SEND exempts
+ * moderators from both lists, chat EDIT exempts nobody.
+ */
+export async function throwOnBlockedCommentContent(
+  content: string,
+  { isModerator = false }: { isModerator?: boolean } = {}
+) {
+  if (isModerator) return;
+
+  const [blockedDomains, blockedPatterns] = await Promise.all([
+    getBlocklistData(BlocklistType.LinkDomain),
+    getBlocklistData(BlocklistType.MessagePattern),
+  ]);
+  const matchable = substringEntries(blockedPatterns);
+  const matchableDomains = exactEntries(blockedDomains);
+
+  for (const form of scannableCommentForms(content)) {
+    const blockedFor = findBlockedLinkDomains(form, matchableDomains);
+    if (blockedFor.length) throwBadRequestError(`invalid urls: ${blockedFor.join(', ')}`);
+
+    if (findBlockedPattern(form, matchable) !== undefined)
+      throwBadRequestError('Comment blocked by content filter');
+  }
 }
 // #endregion
 
