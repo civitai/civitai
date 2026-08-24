@@ -581,16 +581,22 @@ export function DraftSticker({
    * rotating: those belong to the box, and the caption is the part that reads
    * wrong.
    *
-   * The `rotate` property rather than a `transform`, because the cluster's
-   * centring is a Tailwind `-translate-x-1/2` and an inline `transform` would
-   * replace it, dropping the cluster half its own width to the right.
+   * 🔴 THE CENTRING AND THE ROTATION MUST BE ONE `transform`, IN THIS ORDER.
+   * The first version of this used the individual `rotate` property and left the
+   * Tailwind `-translate-x-1/2` class in place, on the reasoning that the two
+   * compose. They do compose — in the order `translate · rotate · scale ·
+   * transform` — so the class's `transform` applies FIRST and the element then
+   * orbits its already-shifted box about the original centre. Measured in
+   * Chromium on a 200px box: the painted centre moved 29px right and 71px down
+   * at 45 degrees, and at 180 degrees the cluster sits a full cluster width to
+   * the side of the sticker it belongs to. Offset is `w/2·(1-cos θ)` across and
+   * `w/2·sin θ` down.
    *
-   * `offsetHeight` and the anchor are both unaffected — the element spins about
-   * its own centre and its layout box does not move — so the flip geometry is
-   * untouched. Its `getBoundingClientRect` becomes the upright box, which is
-   * what the clip and tray overlap tests wanted in the first place.
+   * `offsetHeight` and the anchor are unaffected either way, so the flip
+   * geometry reads the same numbers — which is exactly why the wrong version was
+   * self-consistent about a wrong position rather than obviously broken.
    */
-  const upright = draft.rotation ? `${-draft.rotation}deg` : undefined;
+  const upright = `translateX(-50%)${draft.rotation ? ` rotate(${-draft.rotation}deg)` : ''}`;
 
   /**
    * A second copy of this sticker, already arranged.
@@ -783,7 +789,14 @@ export function DraftSticker({
           instead — the `!panelsInside` row inside `buttonRef` below. */}
       {panelsInside && (
         <>
+          {/* 🔴 Its width decides STICKER_PANEL_MIN_WIDTH_PX, which is what keeps
+              it off the rotate knob. Adding a control here without raising
+              PANEL_LEFT_CONTROLS in `place-button-position.ts` puts the panel
+              back over the knob on a new band of sticker widths — that is the
+              bug this file was fixed for. `data-left-panel` is what the browser
+              test counts to catch it. */}
           <div
+            data-left-panel
             className="absolute -top-9 left-0 flex cursor-auto items-center gap-0.5 rounded-full bg-dark-7 px-1 py-0.5"
             onPointerDown={pressPanel}
           >
@@ -793,9 +806,9 @@ export function DraftSticker({
           </div>
 
           <div
-            // Padding equal on both axes, unlike its two-icon sibling: a single
-            // icon in a pill sized `px`/`py` comes out wider than it is tall, so
-            // `rounded-full` reads as a lozenge rather than a circle.
+            // Padding equal on both axes, unlike the multi-icon panel beside it:
+            // a single icon in a pill sized `px`/`py` comes out wider than it is
+            // tall, so `rounded-full` reads as a lozenge rather than a circle.
             className="absolute -top-9 right-0 flex cursor-auto items-center rounded-full bg-dark-7 p-0.5"
             onPointerDown={pressPanel}
           >
@@ -815,11 +828,13 @@ export function DraftSticker({
         // than the button, and a `w-max` box sized by whichever is longer leaves
         // the other one off-centre.
         className={clsx(
-          'absolute left-1/2 flex w-max -translate-x-1/2 cursor-auto flex-col items-center gap-1 whitespace-nowrap',
+          'absolute left-1/2 flex w-max cursor-auto flex-col items-center gap-1 whitespace-nowrap',
           flipped ? 'bottom-full' : 'top-full mt-2'
         )}
         style={{
-          rotate: upright,
+          // Not `-translate-x-1/2`: the centring has to share one `transform`
+          // with the counter-rotation. See `upright` above.
+          transform: upright,
           minWidth: BUY_BUTTON_MIN_WIDTH,
           // Clears whichever obstacle is taller: the knob, which scales with the
           // sticker, or the panel band, which does not. Below ~164px the

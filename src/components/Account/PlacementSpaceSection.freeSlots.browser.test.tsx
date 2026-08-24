@@ -111,10 +111,8 @@ describe('PlacementSpaceSection — what a save sends for freeSlots', () => {
     expect(lastPayload().freeSlots).toBeUndefined();
   });
 
-  // The whole label, not a substring. `/free stickers/i` — which is what the
-  // test below matches on — passes just as happily against "Free free stickers
-  // you'll accept", the string this page shipped: the slider supplies "Free"
-  // and the caller was passing "free stickers" as the noun.
+  // The slider supplies "Free" and the caller was passing "free stickers" as the
+  // noun, so this page shipped "Free free stickers you'll accept".
   test('names the control once, not twice', async () => {
     givenSpace(null);
     renderWithProviders(<PlacementSpaceSection />);
@@ -130,6 +128,19 @@ describe('PlacementSpaceSection — what a save sends for freeSlots', () => {
     await expect.element(slider).toBeInTheDocument();
 
     expect(slider.element().getAttribute('aria-label')).toBe("Free stickers you'll accept");
+
+    // And the string people actually read. The assertion above is on the thumb's
+    // `aria-label`; the visible label is a sibling `Text`. Both interpolate the
+    // same noun today, so a fix applied to only one of them would pass here.
+    //
+    // `exact` for the same reason the attribute is read above: `getByText` also
+    // matches as a case-insensitive substring, so without it this finds the
+    // doubled string too. It costs the 15s budget on failure — but only in the
+    // narrow case where the attribute assertion above already passed, since that
+    // one fails first and fails fast.
+    await expect
+      .element(page.getByText("Free stickers you'll accept", { exact: true }))
+      .toBeInTheDocument();
   });
 
   // The negative control. Without it, "never send freeSlots" would pass every

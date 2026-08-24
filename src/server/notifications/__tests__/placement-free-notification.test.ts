@@ -145,8 +145,12 @@ describe('the free notification reaches the creator, about the right image', () 
     //
     // With the reveal param, because placed stickers are hidden by default and
     // the bare image is indistinguishable from one the sticker was removed from.
+    // 🔴 The literal, not `imageWithStickersUrl(74)`. This and its twin in
+    // `placement-resolved-notification.test.ts` are the only places the param's
+    // spelling is pinned to something other than itself — the helper, the
+    // reader and the store test all resolve through the same two constants, so
+    // "tidying" this into the helper unpins the whole chain.
     expect(message.url).toBe('/images/74?stickers=1');
-    expect(message.url).toContain('/images/');
   });
 });
 

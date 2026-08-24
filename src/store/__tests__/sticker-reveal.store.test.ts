@@ -32,7 +32,7 @@ function mount(present: boolean) {
 
 describe('the reveal query param', () => {
   beforeEach(() => {
-    useStickerRevealStore.setState({ revealed: false, forced: false });
+    useStickerRevealStore.setState({ revealed: false, forced: 0 });
   });
 
   const shown = () => stickersRevealed(useStickerRevealStore.getState());
@@ -50,6 +50,16 @@ describe('the reveal query param', () => {
     expect(stickerRevealRequested(query.get(STICKER_REVEAL_PARAM) ?? undefined)).toBe(true);
     expect(stickerRevealRequested(undefined)).toBe(false);
     expect(stickerRevealRequested('0')).toBe(false);
+
+    // 🔴 Literals, because everything above resolves through the same two
+    // constants — writer, reader and assertion move together, so no edit to
+    // either can turn that half red. These are the only lines here that pin the
+    // spelling to something outside itself.
+    expect(imageWithStickersUrl(74)).toBe('/images/74?stickers=1');
+    expect(stickerRevealRequested('1')).toBe(true);
+    // `true` as well, because that is what the rest of the app's boolean query
+    // params use and a hand-typed support link will spell it that way.
+    expect(stickerRevealRequested('true')).toBe(true);
   });
 
   /**
@@ -105,6 +115,35 @@ describe('the reveal query param', () => {
     view.unmount();
   });
 
+  /**
+   * 🔴 Two views can hold the override at once, and the FIRST to leave must not
+   * take it from the one still there.
+   *
+   * Live path: land on `/images/123?stickers=1`, open a remix-gallery thumbnail
+   * from that page, and a second `ImageDetail2` mounts as a routed dialog over
+   * the first. Routed dialogs navigate through `history.pushState` rather than
+   * next/router, so both instances read `stickers=1` and both claim it. With
+   * `forced` as a boolean, closing the dialog cleared it while the page beneath
+   * was still mounted — and that instance's effect is keyed on `present`, which
+   * did not change, so it never re-ran. The image the link was for went back to
+   * showing nothing, under a chip reading off, until a reload.
+   */
+  it('keeps the override while a second view still holds it', () => {
+    const page = mount(true);
+    const dialog = mount(true);
+    expect(shown()).toBe(true);
+
+    dialog.unmount();
+
+    expect(shown()).toBe(true);
+
+    page.unmount();
+
+    // And released once the last holder goes, so this cannot pass against a
+    // count that only ever increments.
+    expect(shown()).toBe(false);
+  });
+
   // The same press on an ordinary view, so the test above cannot pass against a
   // toggle that never does anything.
   it('still toggles when nothing is forcing it', () => {
@@ -122,7 +161,7 @@ describe('the reveal query param', () => {
    * notification link — and nothing on screen would say why or offer a way back.
    */
   it('never writes the per-view override to storage', () => {
-    useStickerRevealStore.getState().setForced(true);
+    useStickerRevealStore.getState().pushForced();
     useStickerRevealStore.getState().setRevealed(true);
 
     const stored = JSON.parse(localStorage.getItem('sticker-reveal') ?? '{}');

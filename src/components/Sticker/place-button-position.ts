@@ -35,7 +35,7 @@ export const STICKER_PANEL_BAND_PX = 36;
  * sticker between 124px and 172px wide the panel reached past the rotate knob
  * and swallowed the press — the knob was visibly there and completely dead.
  */
-const PANEL_LEFT_CONTROLS = 3;
+export const PANEL_LEFT_CONTROLS = 3;
 const PANEL_ICON_PX = 22;
 const PANEL_ICON_GAP_PX = 2;
 const PANEL_PADDING_X_PX = 4;

@@ -141,8 +141,11 @@ describe('panelsFitInsideEdges', () => {
     expect(STICKER_PANEL_MIN_WIDTH_PX).toBe(172);
   });
 
+  // Literal widths, deliberately. `panelsFitInsideEdges` IS
+  // `w >= STICKER_PANEL_MIN_WIDTH_PX`, so a case written in terms of that
+  // constant holds for every value the constant could take and pins nothing.
   it('allows it at the sizes the flush layout was designed for', () => {
-    expect(panelsFitInsideEdges(STICKER_PANEL_MIN_WIDTH_PX)).toBe(true);
+    expect(panelsFitInsideEdges(172)).toBe(true);
     expect(panelsFitInsideEdges(400)).toBe(true);
   });
 
@@ -151,7 +154,8 @@ describe('panelsFitInsideEdges', () => {
   // the button decline a flip it could have taken.
   it('reports no band to clear where no panels are drawn', () => {
     expect(panelBandFor(51)).toBe(0);
-    expect(panelBandFor(STICKER_PANEL_MIN_WIDTH_PX)).toBe(STICKER_PANEL_BAND_PX);
+    // Literal, for the reason above.
+    expect(panelBandFor(172)).toBe(STICKER_PANEL_BAND_PX);
   });
 });
 

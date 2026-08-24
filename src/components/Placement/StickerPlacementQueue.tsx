@@ -13,7 +13,7 @@ import {
 } from '@mantine/core';
 import { IconExternalLink } from '@tabler/icons-react';
 import Link from 'next/link';
-import { imageWithStickersUrl } from '~/components/Placement/queue-routes';
+import { imageWithStickersUrl, STICKER_REVEAL_SEARCH } from '~/components/Placement/queue-routes';
 import { useRouter } from 'next/router';
 import { useState } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
@@ -127,7 +127,7 @@ function PlacementThumb({
   withheldHref,
 }: {
   image: ReceivedRow['image'] | PlacedRow['image'];
-  withheldHref: (image: { id: number }) => string;
+  withheldHref: (image: { id: number }, search?: string) => string;
 }) {
   if (!image) return null;
 
@@ -146,7 +146,10 @@ function PlacementThumb({
       style={{ width: 90, height: 'auto', borderRadius: 6 }}
     />
   ) : (
-    <WithheldThumb nsfwLevel={image.nsfwLevel} href={withheldHref(image)} />
+    // The reveal param here too. This is the branch where the owner has no other
+    // route to the picture, so a link that lands on an untouched-looking image is
+    // worse here than on the anchor beside it.
+    <WithheldThumb nsfwLevel={image.nsfwLevel} href={withheldHref(image, STICKER_REVEAL_SEARCH)} />
   );
 }
 
