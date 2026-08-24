@@ -1,10 +1,11 @@
-# dev-server: what changed, in one page
+# dev-server, in one page
 
-_Written 2026-08-24, against the change that added per-worktree app support._
+The dev server runs the main Next.js app and the **moderator** and **creator-studio** apps, each from
+whatever worktree you are standing in. This is the short version for people who have to use it —
+`SKILL.md` is the reference.
 
-The dev server used to boot one thing: the main Next.js app. It now boots the **moderator** and
-**creator-studio** apps too, from whatever worktree you are standing in. This is the short version
-for people who have to use it — `SKILL.md` is the long version.
+_Written 2026-08-24, when per-worktree app support landed; the "what changed" notes below are
+relative to that._
 
 ## The commands
 
