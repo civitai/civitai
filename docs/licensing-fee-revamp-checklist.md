@@ -206,14 +206,14 @@ that have to happen, or be decided, before it reaches creators.
 
 ### Must happen
 
-- [ ] **Apply the migration, per environment, BEFORE the deploy.** `20260821120000_pricing_slot`.
+- [x] **Apply the migration, per environment, BEFORE the deploy.** `20260821120000_pricing_slot`.
+      Applied 2026-08-24.
       Until the table exists every first-time pricing write throws on a missing relation and the Creator
       Studio models page 500s outright, because its loader counts slots. Under a short `lock_timeout` —
       the owner FK takes `SHARE ROW EXCLUSIVE` on `User`. See the migration header.
-- [ ] **Decide whether the revamp ships behind a flag.** The scheduled-sales feature that merged
-      alongside it gates its *reads* on `scheduled-model-sales` for exactly this reason, and says so:
-      "The flag has to gate the reads, not just the UI." This change has the same manually-applied
-      migration and no flag, so the migration is the only thing standing between a deploy and a 500.
+- [x] **Decided: no feature flag.** The migration is applied, which was the reason to want one — the
+      `PricingSlot` reads had nothing to fall back on until the table existed. Every other change is a
+      rule move over columns that already ship.
 - [ ] **Push, open the PR** (one PR for the whole revamp), and move the ClickUp task off "to do".
 - [ ] **Update Justin's article** to the monthly allowance — tracked in
       [creator-studio/paid-access-followups](creator-studio/paid-access-followups.md), which warns that
@@ -221,9 +221,10 @@ that have to happen, or be decided, before it reaches creators.
 
 ### Should be decided
 
-- [ ] **The eligibility floor has no UI.** `MONETIZATION_MIN_CREATOR_SCORE` appears in no client
-      component in either app. 845 creators will fill in the fee form and learn at save time, with no
-      path from the refusal to their score. The floor is meant as a junk filter, not a punishment.
+- [x] **The eligibility floor now has UI**, in both apps: the onsite form disables the charge switch
+      and states the shortfall, Creator Studio blocks the fee submit and the permanent-gate card, and
+      the models header strip shows the standing before any editor is opened. Early access is
+      untouched — a timed window is not a price and the write path does not apply the floor to it.
 - [ ] **The upsell lands on the wrong tier.** Measured over 30 days: 11 of 26 bronze creators exceed the
       allowance against 5 of 789 free. The free allowance was set tight *because* it is the upsell, but
       the data says it delivers bronze→silver, not free→bronze.
@@ -260,12 +261,12 @@ that have to happen, or be decided, before it reaches creators.
 
 ### Opened by the merge with scheduled sales
 
-- [ ] **Two 10k creator-score floors and two per-tier allowance tables now live in `@civitai/buzz`**,
-      written a week apart by different work: `MONETIZATION_MIN_CREATOR_SCORE` (10000) beside
-      `MIN_CREATOR_SCORE_FOR_SALE` (10_000), and `MONTHLY_PRICING_ALLOWANCE_BY_TIER`
-      (3/10/25/∞ prices) beside `SALE_DAYS_BY_TIER` (3/7/14/30 days). They mean different things and
-      happen to share a threshold, which is the shape that drifts silently. Worth collapsing the score
-      floor to one constant before both grow more consumers.
+- [x] **The two 10k creator-score floors are one constant.** `MIN_CREATOR_SCORE_FOR_SALE` is gone;
+      `minCreatorScoreForSale` defaults to `MONETIZATION_MIN_CREATOR_SCORE` and keeps its KeyValue
+      override, so the sale floor stays tunable without a deploy while the platform states one answer
+      to who may sell here. The two per-tier tables (`MONTHLY_PRICING_ALLOWANCE_BY_TIER` 3/10/25/∞
+      prices, `SALE_DAYS_BY_TIER` 3/7/14/30 days) are deliberately left apart: they govern different
+      things and only look alike.
 - [ ] **A sale now discounts the STORED price**, since the ceiling it used to compose over is gone.
       Sale limits are validated against a floor computed from stored prices too. The 2026-08-24 merge
       extended this to `querySalesForModels`, which anchored the model-card badge on the capped price;
