@@ -3946,11 +3946,20 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
     // it is recorded under its own outcomes rather than inflating `fallback_*`
     // with requests that never fell back.
     const cursoredServe = hasBdxCursor && !!opts.serving;
+    // A LIVE cursor with an empty page means the pass budget ran out, NOT the
+    // index. The loop above is bounded by MAX_PASSES as well as by `!result.cursor`,
+    // and an ordinary filter can empty every page it sees (a poi-heavy slice under
+    // `disablePoi`, a private-heavy one) while more content sits behind the cursor.
+    // Ending the feed there would truncate it permanently, which is worse than the
+    // page-1 restart this branch exists to fix.
+    const liveCursor = lastCursor ? `bdx:${JSON.stringify(lastCursor)}` : undefined;
     if (bitdexCallsObserved > 0)
       recordBitdexPrimaryResult(
         cursoredServe
           ? anyQueryFailed
             ? 'cursored_error'
+            : liveCursor
+            ? 'cursored_skip'
             : 'cursored_end'
           : anyQueryFailed
           ? 'fallback_error'
@@ -3958,28 +3967,30 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
         serveMode
       );
 
-    // A cursored request must NOT fall back to Meili. The Meili path parses
-    // cursors as `offset|entryTimestamp` (:2666) and a `bdx:{…}` cursor fails
-    // both `isNumber` guards, so `offset` degrades to 0 AND the `entry` pin is
-    // lost — the user's infinite scroll silently restarts at the top of a feed
-    // that has been reshuffled by anything published since. No error, no empty
-    // page, just the wrong content.
+    // A cursored request must NOT fall back to Meili. `getAllImagesIndex` parses
+    // cursors as `offset|entryTimestamp` behind two `isNumber` guards (see its
+    // `cursorParsed`), and a `bdx:{…}` cursor fails both — so `offset` degrades
+    // to 0 AND the `entry` pin is lost, and the user's infinite scroll silently
+    // restarts at the top of a feed reshuffled by anything published since. No
+    // error, no empty page, just the wrong content.
     //
     // The two empties are answered differently because only one of them is worth
     // retrying, which is the whole reason the split above exists:
     //   • a call FAILED  → nobody knows what was in the index. Throw, so the
     //     client retries the same cursor and can land on the real page.
-    //   • nothing failed → the page really is empty. End the feed. Retrying
-    //     cannot produce different content, and `fallback_empty` is the bulk of
-    //     normal fallback volume, so erroring here would spin the client on the
-    //     routine case.
+    //   • nothing failed → no error. `fallback_empty` is the bulk of normal
+    //     fallback volume, so erroring here would spin the client on the routine
+    //     case. Whether that means END or SKIP is decided by `liveCursor` below.
     //
     // Shadow mode is deliberately excluded: it serves nobody, and throwing there
     // would move `fallback_exception{serve_mode="shadow"}` off the flat zero that
     // makes it a usable tripwire for app-side throws.
     if (cursoredServe) {
       if (anyQueryFailed) throw new BitdexCursoredPageUnavailable();
-      return { data: [], nextCursor: undefined };
+      // `liveCursor` undefined here means the loop broke on `!result.cursor` — the
+      // index really is exhausted, so the feed is over. Otherwise hand the cursor
+      // back and let the client skip forward over the emptied region.
+      return { data: [], nextCursor: liveCursor };
     }
 
     return null;

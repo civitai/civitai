@@ -123,11 +123,11 @@
 // not the backend team. It reads a flat zero today, which makes it a clean
 // tripwire rather than a redundant series.
 //
-// 🔴 CARDINALITY: 4 outcomes × 2 modes = 8 series, plus 6 failure reasons = 14
+// 🔴 CARDINALITY: 7 outcomes × 2 modes = 14 series, plus 6 failure reasons = 20
 // series per process, TOTAL, and the bound rests on CODE — every label value is
 // narrowed at runtime against a closed union declared once in this file, and an
 // unrecognised value is DROPPED rather than passed through or relabelled to a
-// plausible default (either would make the "14 series" claim a wish). Explicitly
+// plausible default (either would make the "20 series" claim a wish). Explicitly
 // disqualified as labels: user id, cursor, filter shape, sort, model/post ids,
 // and the raw status code — this fires once per feed request on the highest-
 // traffic path in the application, nothing caches it, and prom-client retains
@@ -167,6 +167,11 @@ import client, { type Counter, type Registry } from 'prom-client';
  * - `cursored_error` — an empty cursored page where at least one query failed,
  *   raised to the client as a retryable 503. The paginated twin of
  *   `fallback_error`, and the one worth alerting on.
+ * - `cursored_skip` — an empty cursored page where every query succeeded but the
+ *   cursor is still live: the pass budget ran out, not the index. The cursor is
+ *   handed back so the client skips forward. NOT an end of feed, and separated
+ *   from `cursored_end` because treating it as one truncates a feed that still
+ *   has content.
  */
 export const BITDEX_SERVE_OUTCOMES = [
   'served',
@@ -175,6 +180,7 @@ export const BITDEX_SERVE_OUTCOMES = [
   'fallback_exception',
   'cursored_end',
   'cursored_error',
+  'cursored_skip',
 ] as const;
 export type BitdexServeOutcome = (typeof BITDEX_SERVE_OUTCOMES)[number];
 
@@ -231,7 +237,7 @@ type MetricsBundle = {
 };
 
 /**
- * Initialise all 14 series to 0 at registration.
+ * Initialise all 20 series to 0 at registration.
  *
  * 🔴 WHY, AND WHY IT IS NOT COSMETIC. prom-client only materialises a child
  * series on its first `inc()`, so without this a process exposes NOTHING for a
@@ -248,7 +254,7 @@ type MetricsBundle = {
  * and an absent series must be distinguishable, and today for those they are
  * not.
  *
- * Free by construction: 14 series is this family's whole cardinality budget, so
+ * Free by construction: 20 series is this family's whole cardinality budget, so
  * seeding costs exactly what a fully-exercised process already costs and cannot
  * grow.
  *
@@ -297,8 +303,8 @@ export function ensureRegisterBitdexFeedServeMetrics(
       'One increment = one request, NOT one page shown to a user (shadow requests reach nobody) and NOT every request routed to the primary path: the moderator queues declined before any query is issued are deliberately outside this denominator. ' +
       'Deliberate exceptions to that denominator include: outcome=fallback_exception, which is emitted from the caller catch arms and is NOT gated on a query having been issued (it means the application threw on this path, which is worth paging on even if it threw before the first call); and a deployment with no endpoint configured, which reports a failure without a request leaving the process and so records fallback_error rather than going quiet. ' +
       'Also note a request whose FEED query returned early can still be counted, because the parallel own-content query may have gone out regardless (the condition is the skipOwnExcluded predicate in the feed service, not a property of the feed query). So this is "requests that engaged the backend", NOT "requests whose feed query went out", and must not be read as the latter. ' +
-      'outcome (served = BitDex answered and its documents were returned; fallback_empty = every query succeeded and the merged post-filtered result was still empty, so the index genuinely had nothing — not a defect; fallback_error = the result was empty AND at least one query in the request failed, so the emptiness is untrustworthy; fallback_exception = the application code itself threw while handling the response — page the app team, not the backend team). ' +
-      'mode (primary = BitDex served the user or its failure sent the request to Meilisearch; shadow = the same path ran in the background for comparison and Meilisearch served the user regardless).',
+      'outcome (served = BitDex answered and its documents were returned; fallback_empty = every query succeeded and the merged post-filtered result was still empty, so the index genuinely had nothing — not a defect; fallback_error = the result was empty AND at least one query in the request failed, so the emptiness is untrustworthy; fallback_exception = the application code itself threw while handling the response — page the app team, not the backend team; cursored_end = an empty page on a request carrying a bdx: cursor where every query succeeded, so the feed was ended rather than restarted at page 1 — routine, the paginated twin of fallback_empty; cursored_error = the same but at least one query failed, raised to the client as a retryable 503 — the paginated twin of fallback_error, and the one worth alerting on; cursored_skip = an empty page whose cursor is still live, i.e. the pass budget ran out rather than the index — the cursor is handed back and the client skips forward, so this is NOT an end of feed). ' +
+      'mode (primary = the request was served from the BitDex path — BitDex answered, or its failure sent the request to Meilisearch, or for the cursored_* outcomes the request was ended or failed WITHOUT reaching Meilisearch; shadow = the same path ran in the background for comparison and Meilisearch served the user regardless. The cursored_* outcomes never occur in shadow: they are gated on serving).',
     ['outcome', 'mode']
   );
 
