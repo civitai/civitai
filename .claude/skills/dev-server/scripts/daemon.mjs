@@ -2000,7 +2000,15 @@ async function stopAppSessions() {
   // Concurrently, because these are independent processes and the settle plus port-verify makes each
   // stop worth seconds. Sequentially, two apps could outlast a supervisor's grace period and be
   // SIGKILLed mid-loop, leaving the rest running — the orphan again, by a different door.
-  await Promise.all([...appSessions.values()].filter(appIsLive).map((app) => app.stop()));
+  // `appIsLive || stopping`, because the two questions are different and one predicate cannot serve
+  // both. appIsLive answers "may a second start reuse this, or take its port?" — a stopping entry
+  // answers NO. This function asks "is there anything here that still needs killing or waiting on?"
+  // — a stopping entry answers YES: its stop may be sitting in the settle timeout with taskkill not
+  // yet fired, and filtering it out lets process.exit run straight past it, leaving vite alive.
+  // That is the orphan this function exists to prevent, arriving through the predicate that was
+  // meant to fix it.
+  const pending = [...appSessions.values()].filter((app) => appIsLive(app) || app.stopping);
+  await Promise.all(pending.map((app) => app.stop()));
 }
 
 // Session manager

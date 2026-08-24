@@ -207,6 +207,11 @@ check(
   true
 );
 check('a stopping entry lends nothing', inheritablePort({ status: 'running', port: 5174, stopping: true }), null);
+// The two questions appIsLive is asked are NOT the same, and this is the pair that proves it.
+// "May a start reuse this?" -> no. "Does shutdown still need to wait on it?" -> yes. A single
+// predicate serving both is how a stopping app gets skipped at exit and outlives the daemon.
+const stoppingEntry = { status: 'running', process: {}, port: 5174, stopping: true };
+check('shutdown must still wait on a stopping entry', appIsLive(stoppingEntry) || stoppingEntry.stopping, true);
 // A port of 0 must not short-circuit the allocator into an ephemeral bind. Unreachable today, but the
 // inline version this was lifted from treated 0 as falsy and the extraction must not change that.
 check('a port of 0 is not inheritable', inheritablePort({ status: 'crashed', process: null, port: 0 }), null);

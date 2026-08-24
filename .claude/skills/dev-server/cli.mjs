@@ -270,6 +270,34 @@ async function cmdTail(sessionId) {
   await followLogs((since) => `/sessions/${sessionId}/logs?since=${since}`);
 }
 
+async function cmdStop(sessionId) {
+  await ensureDaemon();
+  if (!sessionId) {
+    console.error('Session ID required');
+    process.exit(1);
+  }
+  const result = await daemonRequest(`/sessions/${sessionId}`, { method: 'DELETE' });
+  if (!result.ok) {
+    console.error('Error:', result.error || result.data?.error);
+    process.exit(1);
+  }
+  console.log(JSON.stringify(result.data, null, 2));
+}
+
+async function cmdRestart(sessionId) {
+  await ensureDaemon();
+  if (!sessionId) {
+    console.error('Session ID required');
+    process.exit(1);
+  }
+  const result = await daemonRequest(`/sessions/${sessionId}/restart`, { method: 'POST' });
+  if (!result.ok) {
+    console.error('Error:', result.error || result.data?.error);
+    process.exit(1);
+  }
+  console.log(JSON.stringify(result.data, null, 2));
+}
+
 async function cmdRgb(subcmd) {
   await ensureDaemon();
   const action = subcmd || 'status';

@@ -185,6 +185,7 @@ Self-tests — run all three after touching `probe.mjs` or the hook:
 node .claude/skills/dev-server/scripts/env-chain.selftest.mjs          # .env layering, both directions
 node .claude/skills/dev-server/scripts/app-registry.selftest.mjs       # registry, ports, path identity, the lock
 node .claude/skills/dev-server/scripts/db-host.selftest.mjs            # the DB host line never emits a credential
+node .claude/skills/dev-server/scripts/cli-verbs.selftest.mjs          # every dispatch target in cli.mjs exists
 node .claude/skills/dev-server/scripts/probe.selftest.mjs              # the classifier, pure
 node .claude/skills/dev-server/scripts/probe.integration.selftest.mjs  # the real probe() end to end
 node .claude/hooks/check-writable.selftest.mjs                         # the hook, both directions

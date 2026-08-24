@@ -83,6 +83,7 @@ Standalone scripts, no vitest. Run any of them directly:
 node .claude/skills/dev-server/scripts/env-chain.selftest.mjs      # .env layering + which object is read
 node .claude/skills/dev-server/scripts/app-registry.selftest.mjs   # registry, ports, path identity, the lock
 node .claude/skills/dev-server/scripts/db-host.selftest.mjs        # the DB host line never emits a credential
+node .claude/skills/dev-server/scripts/cli-verbs.selftest.mjs      # every dispatch target in cli.mjs exists
 node .claude/skills/dev-server/scripts/branch-watch.selftest.mjs
 node .claude/skills/dev-server/scripts/probe.selftest.mjs
 ```
@@ -90,6 +91,12 @@ node .claude/skills/dev-server/scripts/probe.selftest.mjs
 If you change any of this, mutate it and check the test goes red. Several of these were written,
 looked green, and could not have failed — the concurrency check passed on the broken code until it
 counted the right thing.
+
+⚠️ **Nothing else reads `cli.mjs`.** `pnpm typecheck` is scoped to `src/`, CI's ESLint filters by
+path prefix, and every other selftest imports `daemon.mjs` and friends. A refactor once deleted
+`cmdStop` and `cmdRestart` and left both call sites: `node --check` passed, five review rounds and
+29 mutants missed it, and `stop <session-id>` threw ReferenceError for everyone on the branch.
+`cli-verbs.selftest.mjs` is the only thing looking at that file — run it after touching it.
 
 ## If something looks wrong
 
