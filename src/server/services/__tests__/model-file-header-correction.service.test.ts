@@ -106,7 +106,7 @@ describe('getModelFileHeaderCorrections — precision', () => {
     ).toEqual({ fp: 'mxfp8' });
   });
 
-  // 🔴 The whole point of FP_HEADER_CANNOT_STATE. Each of these is a value no safetensors
+  // 🔴 The whole point of FP_HEADER_MAY_REPLACE. Each of these is a value no safetensors
   // header can express, so the header is SILENT about it rather than disagreeing. Because
   // the correction runs on read, overwriting one re-applies over any manual fix — the
   // creator can never get their record back. Do not "fix" these to expect a correction.
@@ -120,6 +120,24 @@ describe('getModelFileHeaderCorrections — precision', () => {
     expect(getModelFileHeaderCorrections({ format: 'SafeTensor', dtypeCounts, currentFp })).toEqual(
       {}
     );
+  });
+
+  /**
+   * 🔴 Precisions are MOD-MANAGED at runtime (`modelFileOptions`); `constants.modelFileFp`
+   * is only the fallback. A deny-list of "values the header cannot state" silently stops
+   * covering anything a mod adds after it is written, and the first read then overwrites a
+   * correct value — permanently, since the correction re-applies over any manual fix. The
+   * allow-list makes an unknown precision refused by construction. This test is the guard
+   * on that: it uses a value that is in NO list in the codebase.
+   */
+  it('refuses to overwrite a precision it has never heard of', () => {
+    expect(
+      getModelFileHeaderCorrections({
+        format: 'SafeTensor',
+        dtypeCounts: bf16Counts,
+        currentFp: 'fp4_scaled_future_mod_added' as never,
+      })
+    ).toEqual({});
   });
 
   // The complement, and it must be able to FAIL: an earlier version of this asserted

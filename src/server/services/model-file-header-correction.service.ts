@@ -34,48 +34,32 @@ type FileTarget = {
 };
 
 /**
- * Precisions a safetensors header can never state, so a stored one is never overwritten.
+ * The only stored precisions a safetensors header is allowed to overwrite.
  *
- * 🔴 The header carries a dtype, and these values are not dtypes. Two ways they hide:
+ * 🔴 Stated as an ALLOW-list on purpose. The obvious shape is a deny-list of values the
+ * header cannot express, and that shape is unsafe here: `constants.modelFileFp` is only a
+ * FALLBACK — precisions are mod-managed at runtime through `modelFileOptions`
+ * (`model-file.service.ts` `getModelFileOptions` / `addModelFileOptions`). A deny-list
+ * silently stops covering every precision a mod adds after it is written, and since this
+ * correction runs on READ, the first overwrite re-applies over any manual fix. Inverted,
+ * an unknown precision is refused by construction and the list cannot drift.
  *
- * - `fp8_scaled` / `fp8_mixed` are scaling schemes layered on an F8 dtype. The header
- *   reads F8 and says nothing about the scaling.
- * - `nf4` / `nvfp4` / `int4` are packed into `U8` (bitsandbytes) or `I32` (GPTQ/AWQ),
- *   which `SAFETENSORS_DTYPE_TO_FP` deliberately leaves unmapped. The quantized bulk
- *   therefore contributes NOTHING to the vote, and the winner is whatever the auxiliary
- *   layernorm/embedding/scale tensors are — typically fp16.
+ * These four are exactly the values a dtype can state. Everything else is refused because
+ * the header is SILENT about it, not because it disagrees:
  *
- * In both cases the header is SILENT, not contradicting, and taking it literally writes
- * a wrong value over a right one. It is unrecoverable rather than merely wrong: this runs
- * on read, so it re-applies over any correction the creator makes by hand.
+ * - `fp8_scaled` / `fp8_mixed` are scaling schemes layered on an F8 dtype.
+ * - `nf4` / `nvfp4` / `int4`, and GPTQ/AWQ `int8`, pack into `U8` / `I32`, which
+ *   `SAFETENSORS_DTYPE_TO_FP` deliberately leaves unmapped — so the quantized bulk
+ *   contributes NOTHING to the byte-share vote and the winner is whatever leftover fp16
+ *   housekeeping tensors are present.
+ * - `mxfp8` and `int8` ARE emittable, and are still excluded: mxfp8 is inferred from
+ *   F8_E8M0 scale tensors an exporter may store as `U8` instead, and true `I8` cannot be
+ *   told from the GPTQ case. Correcting a file already labelled with one is worth little
+ *   next to overwriting a right value permanently.
  *
- * 🔴 The test is SILENCE, not "can the mapper emit it". Those come apart, and where they
- * do the emittable-means-safe proxy fails open:
- *
- * - `mxfp8` is emittable but is not a dtype either — it is inferred from F8_E8M0-typed
- *   scale tensors. An exporter that stores those scales as `U8` (permitted: E8M0 is
- *   byte-wide) leaves no signal, the vote returns plain `fp8`, and a correct value is lost.
- * - `int8` is emittable from `I8`, but GPTQ/AWQ at 8 bits packs into the unmapped `I32` —
- *   the same mechanism as int4, with leftover fp16 tensors winning the vote.
- *
- * Both are on the list for that reason. The cost is only that a file ALREADY labelled
- * mxfp8 or int8 is never re-corrected; an empty `fp` is still filled from the header, and
- * a wrong fp32/fp16/bf16/fp8 is still fixed.
- *
- * Traded away knowingly: keying on the HEADER's answer instead would let a positive mxfp8
- * identification overwrite a stored `fp8_scaled`. Correcting a mislabelled file is worth
- * little next to destroying a right value permanently, and this runs on read, so a bad
- * overwrite re-applies over any manual fix. Prefer the refusal in both directions.
+ * An absent `fp` is always fillable — that is the backlog this feature exists for.
  */
-const FP_HEADER_CANNOT_STATE: readonly string[] = [
-  'fp8_scaled',
-  'fp8_mixed',
-  'mxfp8',
-  'int8',
-  'nf4',
-  'nvfp4',
-  'int4',
-];
+const FP_HEADER_MAY_REPLACE: readonly string[] = ['fp32', 'fp16', 'bf16', 'fp8'];
 
 /**
  * What the tensor header says should change on a file record. Pure — split from the
@@ -93,7 +77,7 @@ export function getModelFileHeaderCorrections({
   if (format !== 'SafeTensor') return corrections;
 
   const fp = getDominantFpFromDtypes(dtypeCounts ?? []);
-  if (fp && fp !== currentFp && !FP_HEADER_CANNOT_STATE.includes(currentFp ?? ''))
+  if (fp && fp !== currentFp && (!currentFp || FP_HEADER_MAY_REPLACE.includes(currentFp)))
     corrections.fp = fp;
 
   const type = getModelFileTypeCorrection({ detectedModelType, modelType, currentFileType });
