@@ -149,6 +149,19 @@ async function cmdStart(worktree, flags = []) {
   await ensureDaemon();
   const cwd = worktree ? resolve(worktree) : process.cwd();
 
+  // `start --app moderator` is the same gesture as `start`, aimed at a different app in the same
+  // worktree. It routes to /app/<name>/start rather than /sessions: an app is not a Next.js session
+  // and has no build dir, prewarm or branch watching to configure.
+  const appIndex = flags.indexOf('--app');
+  if (appIndex !== -1) {
+    const app = flags[appIndex + 1];
+    if (!app || app.startsWith('--')) {
+      console.error('Error: --app needs an app name (e.g. --app moderator)');
+      process.exit(1);
+    }
+    return cmdAppStart(app, cwd);
+  }
+
   let modes;
   try {
     modes = parseModeFlags(flags);
@@ -315,47 +328,71 @@ async function cmdAuth(subcmd) {
   console.log(JSON.stringify(result.data, null, 2));
 }
 
-async function cmdApp(name, subcmd) {
-  await ensureDaemon();
+// Shared by `start --app <name>` and `app <name> start`. The worktree travels with the request:
+// without it the daemon serves whichever checkout launched it, and does so silently.
+async function cmdAppStart(name, worktree) {
+  const result = await daemonRequest(`/app/${name}/start`, {
+    method: 'POST',
+    body: JSON.stringify({ worktree }),
+  });
+  if (!result.ok) {
+    console.error('Error:', result.error || result.data?.error || JSON.stringify(result.data));
+    if (result.data?.available) console.error('Available apps:', result.data.available.join(', '));
+    process.exit(1);
+  }
+  console.log(JSON.stringify(result.data, null, 2));
+}
 
-  // `app` with no name lists what is registered and what each one is doing.
+async function cmdApp(name, subcmd, worktreeArg) {
+  await ensureDaemon();
+  const cwd = worktreeArg ? resolve(worktreeArg) : process.cwd();
+
+  // `app` with no name lists what is registered and what is running where.
   if (!name) {
     const result = await daemonRequest('/apps');
     if (!result.ok) {
       console.error('Error:', result.error || JSON.stringify(result.data));
       process.exit(1);
     }
+    if (!result.data.apps.length) {
+      console.log(`No apps running. Available: ${result.data.available.join(', ')}`);
+      return;
+    }
     for (const app of result.data.apps) {
       const state = app.ready ? 'ready' : app.status;
-      console.log(`${app.name.padEnd(16)} ${state.padEnd(9)} ${app.url}`);
+      console.log(`${app.name.padEnd(16)} ${state.padEnd(9)} ${app.url.padEnd(24)} ${app.worktree}`);
       if (app.lastError) console.log(`${' '.repeat(16)} ${app.lastError}`);
     }
     return;
   }
 
   const action = subcmd || 'status';
+  if (action === 'start') return cmdAppStart(name, cwd);
+
   const routes = {
     status: ['', 'GET'],
     logs: ['/logs', 'GET'],
-    start: ['/start', 'POST'],
     stop: ['/stop', 'POST'],
     restart: ['/restart', 'POST'],
   };
   const route = routes[action];
   if (!route) {
     console.error(`Unknown app subcommand: ${action}`);
-    console.error('Usage: app <name> [status|start|stop|restart|logs]');
+    console.error('Usage: app <name> [status|start|stop|restart|logs] [worktree]');
     process.exit(1);
   }
 
   const [suffix, method] = route;
   const result = await daemonRequest(
-    `/app/${name}${suffix}`,
-    method === 'POST' ? { method } : undefined
+    `/app/${name}${suffix}?worktree=${encodeURIComponent(cwd)}`,
+    method === 'POST' ? { method, body: JSON.stringify({ worktree: cwd }) } : undefined
   );
   if (!result.ok) {
     console.error('Error:', result.error || result.data?.error || JSON.stringify(result.data));
     if (result.data?.available) console.error('Available apps:', result.data.available.join(', '));
+    if (result.data?.running?.length) {
+      console.error(`${name} is running in: ${result.data.running.join(', ')}`);
+    }
     process.exit(1);
   }
   console.log(JSON.stringify(result.data, null, 2));
@@ -799,7 +836,7 @@ switch (command) {
     cmdAuth(arg1);
     break;
   case 'app':
-    cmdApp(arg1, process.argv[4]);
+    cmdApp(arg1, args[2], args[3]);
     break;
   case 'shutdown':
     cmdShutdown();
@@ -822,8 +859,10 @@ switch (command) {
 Commands:
   status              Check daemon status and list sessions
   list                List all sessions
-  start [worktree] [--prod a,b] [--dev a,b]
-                      Start a dev server (default: current directory).
+  start [worktree] [--app name] [--prod a,b] [--dev a,b]
+                      Start a dev server (default: the main app, current directory).
+                      --app moderator|creator-studio starts that app from the same
+                      worktree instead, on its preferred port or the next free one.
                       Every env group defaults to dev; --prod moves named groups
                       (or "all") to production for this start only. See SKILL.md.
   probe [route]       Request a route with a hard timeout and say WHY it was slow.
@@ -837,8 +876,11 @@ Commands:
   restart <session-id> Restart a session
   rgb [subcmd]        RGB proxy control (status|start|stop|restart|logs)
   auth [subcmd]       Auth hub control (status|start|stop|restart|logs)
-  app                 List spoke apps (moderator, creator-studio, storage, notifications)
-  app <name> [subcmd] Spoke app control (status|start|stop|restart|logs)
+  app                 List running apps and what is available (moderator, creator-studio)
+  app <name> [subcmd] [worktree]
+                      App control (status|start|stop|restart|logs).
+                      Defaults to the current directory's worktree, not the
+                      checkout the daemon happens to have been started from.
   shutdown            Shutdown the daemon
   test run [wt]       Queue a unit-test run; returns position + the command to wait on it
   test wait <run-id>  Block until that run finishes; exits with the run's exit code

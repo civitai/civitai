@@ -39,6 +39,26 @@ const skillDir = resolve(__dirname, '..');
 const projectRoot = resolve(skillDir, '../../..');
 const pidFile = resolve(skillDir, 'daemon.pid');
 
+// The checkout that owns the .git directory — the base of every env chain. This is NOT projectRoot:
+// the skill directory is committed, so a daemon launched from a worktree derives projectRoot as that
+// worktree, and the "fall back to the primary" half of every chain then points at a file the
+// worktree does not have. `git rev-parse --git-common-dir` resolves to the primary's `.git` from
+// inside any worktree, which is the only spelling of this that does not depend on where the process
+// was started. Falls back to projectRoot when git cannot answer, which is the pre-worktree behaviour.
+function resolvePrimaryCheckout() {
+  try {
+    const gitCommonDir = execSync('git rev-parse --path-format=absolute --git-common-dir', {
+      cwd: projectRoot,
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    if (gitCommonDir) return resolve(gitCommonDir, '..');
+  } catch (e) {}
+  return projectRoot;
+}
+
+const primaryCheckout = resolvePrimaryCheckout();
+
 // Configuration
 const DEFAULT_BASE_DEV_PORT = 3000;
 const MAX_LOG_LINES = 2000;
@@ -298,6 +318,17 @@ function loadEnvFile(envPath) {
   return env;
 }
 
+// Layer .env files, later paths winning key by key. A worktree's .env used to REPLACE the
+// primary checkout's outright, so a file written to override two keys started the server with
+// no DATABASE_URL and no secrets — a failure that looks nothing like the two-line edit that
+// caused it. A missing file contributes nothing rather than erroring, so the chain is also how
+// an app with no .env of its own inherits one.
+function loadEnvChain(paths) {
+  const env = {};
+  for (const path of paths) Object.assign(env, loadEnvFile(path));
+  return env;
+}
+
 // Get git branch for a directory
 function getGitBranch(dir) {
   try {
@@ -502,11 +533,12 @@ function lastErrorLog(session) {
 
 // Session class
 class DevSession {
-  constructor(id, worktree, port, envPath, modeOverrides = { prod: [], dev: [] }) {
+  constructor(id, worktree, port, envPaths, modeOverrides = { prod: [], dev: [] }) {
     this.id = id;
     this.worktree = worktree;
     this.port = port;
-    this.envPath = envPath;
+    // Base first, override last. A single path is still valid — it just has nothing under it.
+    this.envPaths = Array.isArray(envPaths) ? envPaths : [envPaths];
     this.modeOverrides = modeOverrides;
     // Pinned at creation. start() re-reads the skill .env for everything else, so without this an
     // edit to DEVSERVER_PROD_GROUPS would move a LIVE session onto production at its next
@@ -542,6 +574,11 @@ class DevSession {
     this.lockHash = null;
     this.schemaHash = null;
     this.depsBaselined = false;
+  }
+
+  // The top of the chain — what a reader means by "which .env is this session on".
+  get envPath() {
+    return this.envPaths[this.envPaths.length - 1];
   }
 
   lockfilePath() {
@@ -644,7 +681,7 @@ class DevSession {
     }
 
     // Load environment variables
-    let envVars = loadEnvFile(this.envPath);
+    let envVars = loadEnvChain(this.envPaths);
 
     // The overlay goes on before the port remap, so a mode that supplies its own auth URLs still
     // gets rewritten to this session's port like any other .env value would be.
@@ -709,7 +746,7 @@ class DevSession {
     this.addLog('info', `Starting dev server on port ${this.port}`);
     this.addLog('info', `Worktree: ${this.worktree}`);
     this.addLog('info', `Branch: ${this.branch}`);
-    this.addLog('info', `Env: ${this.envPath}`);
+    this.addLog('info', `Env: ${this.envPaths.join(' <- ')}`);
     this.addLog('info', `Env modes: ${this.modeSummary}`);
     this.addLog('info', `Build dir: ${this.distDir}`);
 
@@ -990,7 +1027,7 @@ class DevSession {
         from === head ? `Re-checking ${head} for dependency changes` : `Branch switch: ${from} -> ${head}`
       );
 
-      const env = { ...process.env, ...loadEnvFile(this.envPath) };
+      const env = { ...process.env, ...loadEnvChain(this.envPaths) };
       const log = (l, m) => this.addLog(l, m);
       const pnpmCmd = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
 
@@ -1247,6 +1284,7 @@ class DevSession {
       worktree: this.worktree,
       branch: this.branch,
       envPath: this.envPath,
+      envPaths: this.envPaths,
       envModes: Object.fromEntries(
         Object.entries(this.modes).map(([group, choice]) => [group, choice.mode])
       ),
@@ -1447,8 +1485,16 @@ const rgbProxy = new RgbProxy(skillConfig.rgbProxyPath);
 // track logs/status. Ready is detected from Vite's startup line; a JWKS probe confirms it's live.
 class AuthHub {
   constructor(hubPath, port) {
-    this.path = resolve(projectRoot, hubPath);
+    // The primary checkout, never this daemon's own root. The hub is ONE shared process for every
+    // worktree — env-modes.mjs lists it in PROD_ONLY_GROUPS for exactly that reason — so a daemon
+    // launched from a worktree must still run the primary's copy, which is also the only one with
+    // the gitignored apps/auth/.env beside it.
+    this.path = resolve(primaryCheckout, hubPath);
     this.port = port;
+    // Subclasses vary these three; everything else about running a Vite app is identical.
+    this.label = 'Auth hub';
+    this.requiredEnvPath = resolve(this.path, '.env');
+    this.envPaths = [];
     this.process = null;
     this.status = 'stopped'; // stopped | starting | running | crashed | error | disabled
     this.ready = false;
@@ -1473,29 +1519,44 @@ class AuthHub {
     return logs;
   }
 
+  // `::` (dual-stack), not a single literal. Bound to `127.0.0.1` these servers answered on v4 and
+  // nothing on [::1]; Windows resolves `localhost` to ::1 first, so a browser typing the same `localhost`
+  // URL the auth redirects use got connection-refused while curl — which falls back to v4 — reported the
+  // server perfectly healthy. `localhost` is not the fix either: it resolves to ::1 *only*, which just
+  // moves the outage onto every caller that hardcodes 127.0.0.1. `::` accepts v4-mapped addresses, so both
+  // spellings work, and it matches what `next dev` already binds for the main app on 3000.
+  //
+  // `--strictPort` is what makes the port the daemon reserved the port the app actually binds.
+  // Without it Vite drifts to the next free one on its own and the reservation stops meaning
+  // anything — two apps would report ports neither of them is serving.
+  spawnArgs() {
+    return ['exec', 'vite', 'dev', '--host', '::', '--port', String(this.port), '--strictPort'];
+  }
+
   start() {
     if (this.process) {
-      this.addLog('info', 'Auth hub already running');
+      this.addLog('info', `${this.label} already running`);
       return this.getStatus();
     }
 
     if (!existsSync(this.path)) {
       this.status = 'error';
-      this.lastError = `Auth hub path not found: ${this.path}`;
+      this.lastError = `${this.label} path not found: ${this.path}`;
       this.addLog('error', this.lastError);
       return this.getStatus();
     }
 
-    if (!existsSync(resolve(this.path, '.env'))) {
+    // `null` means the app has no .env of its own to require — it inherits the chain instead.
+    if (this.requiredEnvPath && !existsSync(this.requiredEnvPath)) {
       this.status = 'error';
-      this.lastError = `Auth hub .env missing: ${resolve(this.path, '.env')}. See SKILL.md (Auth Hub setup).`;
+      this.lastError = `${this.label} .env missing: ${this.requiredEnvPath}`;
       this.addLog('error', this.lastError);
       return this.getStatus();
     }
 
     if (!existsSync(resolve(this.path, 'node_modules'))) {
       this.status = 'error';
-      this.lastError = `Auth hub dependencies not installed. Run: pnpm install`;
+      this.lastError = `${this.label} dependencies not installed. Run: pnpm install`;
       this.addLog('error', this.lastError);
       return this.getStatus();
     }
@@ -1504,14 +1565,17 @@ class AuthHub {
     this.ready = false;
     this.readyAt = null;
     this.lastError = null;
-    this.addLog('info', `Starting auth hub on port ${this.port}: ${this.path}`);
+    this.addLog('info', `Starting ${this.label} on port ${this.port}: ${this.path}`);
 
     const isWindows = process.platform === 'win32';
     const pnpmCmd = isWindows ? 'pnpm.cmd' : 'pnpm';
 
+    // The hub passes an empty chain and lets Vite load its own .env. An app started in a
+    // worktree passes one, because the worktree's copy of that .env is gitignored and usually
+    // absent — the chain is what lets it inherit the primary checkout's.
     const spawnOptions = {
       cwd: this.path,
-      env: process.env, // Vite loads apps/auth/.env itself — no injection
+      env: this.envPaths.length ? { ...process.env, ...loadEnvChain(this.envPaths) } : process.env,
       stdio: ['ignore', 'pipe', 'pipe'],
       shell: isWindows,
     };
@@ -1519,17 +1583,7 @@ class AuthHub {
 
     let proc;
     try {
-      // `::` (dual-stack), not a single literal. Bound to `127.0.0.1` these servers answered on v4 and
-      // nothing on [::1]; Windows resolves `localhost` to ::1 first, so a browser typing the same `localhost`
-      // URL the auth redirects use got connection-refused while curl — which falls back to v4 — reported the
-      // server perfectly healthy. `localhost` is not the fix either: it resolves to ::1 *only*, which just
-      // moves the outage onto every caller that hardcodes 127.0.0.1. `::` accepts v4-mapped addresses, so both
-      // spellings work, and it matches what `next dev` already binds for the main app on 3000.
-      proc = spawn(
-        pnpmCmd,
-        ['exec', 'vite', 'dev', '--host', '::', '--port', String(this.port), '--strictPort'],
-        spawnOptions
-      );
+      proc = spawn(pnpmCmd, this.spawnArgs(), spawnOptions);
     } catch (err) {
       this.status = 'error';
       this.lastError = err.message;
@@ -1547,7 +1601,7 @@ class AuthHub {
       if (this.ready) return;
       this.ready = true;
       this.readyAt = new Date().toISOString();
-      this.addLog('info', `Auth hub ready on http://localhost:${this.port}`);
+      this.addLog('info', `${this.label} ready on http://localhost:${this.port}`);
     };
 
     proc.stdout.on('data', (data) => {
@@ -1575,7 +1629,7 @@ class AuthHub {
 
     proc.on('exit', (code, signal) => {
       this.exitCode = code;
-      this.addLog('info', `Auth hub exited (code=${code}, signal=${signal})`);
+      this.addLog('info', `${this.label} exited (code=${code}, signal=${signal})`);
       // Only mutate shared state if this is still the CURRENT process. A restart may have already
       // replaced it (Vite also self-restarts on .env change) — a late exit must not clobber the new one.
       if (this.process === proc) {
@@ -1604,7 +1658,7 @@ class AuthHub {
       return this.getStatus();
     }
 
-    this.addLog('info', 'Stopping auth hub...');
+    this.addLog('info', `Stopping ${this.label}...`);
     // Detach eagerly so a subsequent start() never sees a stale process (the exit handler is guarded on
     // identity, so the late exit of this proc won't touch the fresh one).
     this.process = null;
@@ -1652,39 +1706,68 @@ class AuthHub {
 
 const authHub = new AuthHub(skillConfig.authHubPath, skillConfig.authHubPort);
 
-// Every other SvelteKit app under apps/ runs the same way the auth hub does: `vite dev` in the app
-// directory, vite loads that app's own .env. AuthHub already encodes all of that plus the readiness
-// parsing, crash handling and log ring buffer, so a spoke is an AuthHub with a different label.
+// The SvelteKit spokes run the same way the auth hub does: `vite dev` in the app directory. AuthHub
+// already encodes that plus the readiness parsing, crash handling and log ring buffer, so an app is
+// an AuthHub with a different root, port and env chain.
 //
-// Ports are fixed per app rather than auto-assigned so a redirect between two of them (moderator ->
-// auth) always lands on the same place, and so `--strictPort` fails loudly on a collision instead of
-// silently drifting to the next free port.
-const SPOKE_APPS = {
-  moderator: { path: 'apps/moderator', port: 5174 },
-  'creator-studio': { path: 'apps/creator-studio', port: 5175 },
-  storage: { path: 'apps/storage', port: 5176 },
-  notifications: { path: 'apps/notifications', port: 5177 },
+// `storage` and `notifications` were registered here and could never start: they have no
+// vite.config.ts (their dev script is `tsx watch src/server.ts`) and no .env, so every attempt died
+// at the .env precheck reporting an auth-hub problem. They are out until someone runs them properly.
+const APP_REGISTRY = {
+  moderator: { path: 'apps/moderator', preferredPort: 5174 },
+  'creator-studio': { path: 'apps/creator-studio', preferredPort: 5175 },
 };
 
-class SpokeApp extends AuthHub {
-  constructor(name, appPath, port) {
-    super(appPath, port);
+// An app runs from the worktree it was started in. The previous class resolved its path against
+// `projectRoot` — derived from the daemon script's own location — so `app moderator start` typed in
+// a worktree served the primary checkout instead, silently: the app came up, answered 200s, and
+// showed `main`. Nothing in the output contradicted you unless you read the `path` field.
+class AppSession extends AuthHub {
+  constructor(name, worktree, port, envPaths) {
+    super('.', port);
     this.name = name;
+    this.worktree = worktree;
+    this.path = resolve(worktree, APP_REGISTRY[name].path);
+    this.label = name;
+    // The app's own .env is gitignored, so a fresh worktree has none. The chain supplies it from the
+    // primary checkout instead of refusing to start, which is what `requiredEnvPath: null` buys.
+    this.requiredEnvPath = null;
+    this.envPaths = envPaths;
   }
 
   getStatus() {
-    return { ...super.getStatus(), name: this.name, enabled: true };
+    const { jwksUrl, ...rest } = super.getStatus();
+    return { ...rest, name: this.name, worktree: this.worktree, enabled: true };
   }
 }
 
-const spokeApps = new Map(
-  Object.entries(SPOKE_APPS).map(([name, cfg]) => [name, new SpokeApp(name, cfg.path, cfg.port)])
-);
+// The primary checkout's copy of an app's .env is the base; the worktree's own, if it has one, wins
+// key by key. Both are gitignored, so the base is what a fresh worktree actually runs on — without
+// it the app refuses to start over a file that has never been in a checkout.
+function appEnvChain(worktree, name) {
+  const relative = APP_REGISTRY[name].path;
+  const paths = [resolve(primaryCheckout, relative, '.env')];
+  const worktreeEnv = resolve(worktree, relative, '.env');
+  if (worktreeEnv !== paths[0]) paths.push(worktreeEnv);
+  return paths;
+}
 
-// Spokes bind with --strictPort, so one left running past daemon exit makes the next start of
-// that app fail with EADDRINUSE against a process nothing is tracking any more.
-async function stopSpokeApps() {
-  for (const app of spokeApps.values()) {
+// Keyed by worktree AND app, so two worktrees can serve the same app at once. A key on the app name
+// alone is what made them global singletons.
+const appSessions = new Map();
+
+function appSessionKey(worktree, name) {
+  return `${worktree}::${name}`;
+}
+
+function listAppSessions() {
+  return [...appSessions.values()].map((a) => a.getStatus());
+}
+
+// Apps bind with --strictPort, so one left running past daemon exit makes the next start of that
+// app fail with EADDRINUSE against a process nothing is tracking any more.
+async function stopAppSessions() {
+  for (const app of appSessions.values()) {
     if (app.status === 'running') await app.stop();
   }
 }
@@ -1704,6 +1787,12 @@ function getUsedPorts() {
   const ports = new Set();
   for (const session of sessions.values()) {
     ports.add(session.port);
+  }
+  // App sessions reserve their port the same way. Leaving them out let the main app's allocator
+  // hand out a port a spoke was already bound to, and --strictPort turns that into a start that
+  // fails on a number nothing in `status` accounted for.
+  for (const app of appSessions.values()) {
+    ports.add(app.port);
   }
   return ports;
 }
@@ -1891,7 +1980,7 @@ async function main() {
   console.error(`  Project root: ${projectRoot}`);
 
   // Find the main .env file
-  const mainEnvPath = resolve(projectRoot, '.env');
+  const mainEnvPath = resolve(primaryCheckout, '.env');
 
   const handler = async (req, res) => {
     const url = new URL(req.url, `http://localhost:${config.port}`);
@@ -1984,53 +2073,133 @@ async function main() {
         return;
       }
 
-      // /app/<name>[/logs|/start|/stop|/restart] - spoke app control
+      // /app/<name>[/logs|/start|/stop|/restart] — per-worktree app control
       if (path === '/apps' && req.method === 'GET') {
         res.writeHead(200);
         res.end(JSON.stringify({
-          apps: [...spokeApps.values()].map((a) => a.getStatus()),
+          available: Object.keys(APP_REGISTRY),
+          apps: listAppSessions(),
         }));
         return;
       }
 
       if (path.startsWith('/app/')) {
         const [, , name, action] = path.split('/');
-        const app = spokeApps.get(name);
-        if (!app) {
+        if (!APP_REGISTRY[name]) {
           res.writeHead(404);
           res.end(JSON.stringify({
             error: `Unknown app: ${name}`,
-            available: [...spokeApps.keys()],
+            available: Object.keys(APP_REGISTRY),
+          }));
+          return;
+        }
+
+        let body = {};
+        if (req.method === 'POST') {
+          const raw = await readBody(req);
+          try {
+            body = JSON.parse(raw || '{}');
+          } catch (e) {
+            res.writeHead(400);
+            res.end(JSON.stringify({ error: 'Invalid JSON body' }));
+            return;
+          }
+        }
+        // Falling back to projectRoot is the failure this whole change exists to remove, so it is
+        // reached only when the caller named no worktree at all — never as the quiet result of a
+        // body that did not parse.
+        const requestedWorktree = body.worktree || url.searchParams.get('worktree');
+        const resolvedWorktree = requestedWorktree ? resolve(requestedWorktree) : projectRoot;
+        const key = appSessionKey(resolvedWorktree, name);
+        const existing = appSessions.get(key);
+
+        if (action === 'start' && req.method === 'POST') {
+          if (!(await pathExists(resolvedWorktree))) {
+            res.writeHead(400);
+            res.end(JSON.stringify({ error: `Worktree not found: ${resolvedWorktree}` }));
+            return;
+          }
+          if (existing && existing.status === 'running') {
+            res.writeHead(200);
+            res.end(JSON.stringify({ reused: true, ...existing.getStatus() }));
+            return;
+          }
+
+          // The preferred port is where the first worktree lands, so the common case stays the
+          // documented number. A second worktree drifts rather than dying on EADDRINUSE. Nothing
+          // needs rewriting to follow it: neither spoke's .env carries its own port or base URL,
+          // and the hub trusts loopback by HOST in dev, so the drifted origin is still first-party.
+          // Every app's preferred port is reserved against the drift search, not just the taken
+          // ones: moderator drifting off 5174 would otherwise land on 5175 and displace
+          // creator-studio from its own documented number for as long as it ran.
+          const reserved = getUsedPorts();
+          for (const [other, spec] of Object.entries(APP_REGISTRY)) {
+            if (other !== name) reserved.add(spec.preferredPort);
+          }
+          let port;
+          try {
+            port = await findAvailablePort(APP_REGISTRY[name].preferredPort, reserved);
+          } catch (err) {
+            res.writeHead(503);
+            res.end(JSON.stringify({ error: err.message }));
+            return;
+          }
+
+          const envPaths = appEnvChain(resolvedWorktree, name);
+          const app = new AppSession(name, resolvedWorktree, port, envPaths);
+          appSessions.set(key, app);
+
+          // Decision 2A: the hub is one shared, idempotent process and a spoke cannot log anyone in
+          // without it. The main app is deliberately NOT started — the spokes reach it over REST when
+          // they need it, and a cold Next.js compile is not something to trigger on someone's behalf.
+          if (skillConfig.authHubEnabled && authHub.status !== 'running') authHub.start();
+
+          const status = app.start();
+          // A start that never spawned holds no process, so the map entry is a port reservation
+          // against nothing — and since the entry is also the only way to address it, nothing can
+          // release it either. A missing node_modules would burn the app's preferred port for the
+          // life of the daemon, and the next start would drift off a number that was free.
+          if (status.status === 'error') appSessions.delete(key);
+          res.writeHead(status.status === 'error' ? 500 : 200);
+          res.end(JSON.stringify(status));
+          return;
+        }
+
+        if (!existing) {
+          res.writeHead(404);
+          res.end(JSON.stringify({
+            error: `${name} is not running in ${resolvedWorktree}`,
+            running: listAppSessions().filter((a) => a.name === name).map((a) => a.worktree),
           }));
           return;
         }
 
         if (!action && req.method === 'GET') {
           res.writeHead(200);
-          res.end(JSON.stringify(app.getStatus()));
+          res.end(JSON.stringify(existing.getStatus()));
           return;
         }
         if (action === 'logs' && req.method === 'GET') {
           const since = parseInt(url.searchParams.get('since') || '0', 10);
           const limit = parseInt(url.searchParams.get('limit') || '500', 10);
           res.writeHead(200);
-          res.end(JSON.stringify({ currentIndex: app.logIndex, logs: app.getLogs(since, limit) }));
-          return;
-        }
-        if (action === 'start' && req.method === 'POST') {
-          const status = app.start();
-          res.writeHead(status.status === 'error' ? 500 : 200);
-          res.end(JSON.stringify(status));
+          res.end(JSON.stringify({
+            currentIndex: existing.logIndex,
+            logs: existing.getLogs(since, limit),
+          }));
           return;
         }
         if (action === 'stop' && req.method === 'POST') {
-          const status = await app.stop();
+          const status = await existing.stop();
+          // Membership of the map is the port reservation, so a stop that leaves the entry behind
+          // holds a port nothing is serving — the same leak DELETE /sessions/:id exists to avoid.
+          appSessions.delete(key);
           res.writeHead(200);
           res.end(JSON.stringify(status));
           return;
         }
         if (action === 'restart' && req.method === 'POST') {
-          const status = await app.restart();
+          const status = await existing.restart();
           res.writeHead(status.status === 'error' ? 500 : 200);
           res.end(JSON.stringify(status));
           return;
@@ -2384,18 +2553,23 @@ async function main() {
           port = await findAvailablePort(config.baseDevPort, usedPorts);
         }
 
-        // A worktree's own .env is the one its branch was written against. Falling back to the
-        // daemon's project root hands every session whichever tree happened to launch the daemon.
+        // The primary checkout's .env is the base of every session; a worktree's own .env (or an
+        // explicit --env) layers on top of it. So a worktree file needs to restate only the keys
+        // it wants to change, and one that restates nothing is a no-op rather than an outage.
+        //
+        // "Present" is the safe answer for the top of the chain and the unsafe one for the base:
+        // a timed-out check must not DROP the primary file, because that is what leaves a session
+        // with no DATABASE_URL and no secrets, failing in a way that looks nothing like a slow
+        // filesystem.
         const worktreeEnvPath = resolve(resolvedWorktree, '.env');
-        const resolvedEnvPath = envPath
+        const overlayPath = envPath
           ? resolve(envPath)
-          : // "Present" is the safe answer for the worktree and the unsafe one here: picking a
-            // file that may not exist over a known-good fallback starts the server with no env at
-            // all — no DATABASE_URL, no secrets — failing in a way that looks nothing like a slow
-            // filesystem. So an unknown answer falls back to the main .env.
-            await checkPath(worktreeEnvPath).then((r) => r.exists && !r.timedOut)
+          : (await checkPath(worktreeEnvPath).then((r) => r.exists && !r.timedOut))
             ? worktreeEnvPath
-            : mainEnvPath;
+            : null;
+        const resolvedEnvPaths = [mainEnvPath, overlayPath].filter(
+          (p, i, all) => p && all.indexOf(p) === i
+        );
 
         // Create and start session
         const sessionId = generateSessionId();
@@ -2403,7 +2577,7 @@ async function main() {
           sessionId,
           resolvedWorktree,
           port,
-          resolvedEnvPath,
+          resolvedEnvPaths,
           modeOverrides
         );
         sessions.set(sessionId, session);
@@ -2536,7 +2710,7 @@ async function main() {
         testQueue.shutdown();
         await rgbProxy.stop();
         await authHub.stop();
-        await stopSpokeApps();
+        await stopAppSessions();
 
         res.writeHead(200);
         res.end(JSON.stringify({ success: true }));
@@ -2609,7 +2783,7 @@ async function main() {
     testQueue.shutdown();
     await rgbProxy.stop();
     await authHub.stop();
-    await stopSpokeApps();
+    await stopAppSessions();
     try { unlinkSync(pidFile); } catch (e) {}
     server.close();
     process.exit(0);
@@ -2623,7 +2797,7 @@ async function main() {
     testQueue.shutdown();
     await rgbProxy.stop();
     await authHub.stop();
-    await stopSpokeApps();
+    await stopAppSessions();
     try { unlinkSync(pidFile); } catch (e) {}
     server.close();
     process.exit(0);
@@ -2658,6 +2832,7 @@ export {
   checkPath,
   claimPortForReuse,
   DevSession,
+  loadEnvChain,
   findSessionByWorktree,
   getUsedPorts,
   listSessions,

@@ -144,16 +144,45 @@ function lastCommit(worktreePath) {
   return gitQuiet(['log', '-1', '--format=%ci'], worktreePath);
 }
 
+// Main-app sessions AND app sessions, because both hold a port and a live process in this tree.
+// While apps were global singletons they were invisible here, so `wt rm` would delete a worktree
+// out from under a running moderator and report a clean removal.
 async function sessionsFor(worktreePath, daemonRequest) {
-  const res = await daemonRequest('/sessions');
-  if (!res.ok) return [];
   const target = resolve(worktreePath).toLowerCase();
-  return (res.data.sessions || []).filter((s) => resolve(s.worktree).toLowerCase() === target);
+  const inTree = (s) => s.worktree && resolve(s.worktree).toLowerCase() === target;
+
+  const found = [];
+  const sessionRes = await daemonRequest('/sessions');
+  if (sessionRes.ok) {
+    for (const s of (sessionRes.data.sessions || []).filter(inTree)) {
+      found.push({ id: s.id, port: s.port, status: s.status, stopPath: `/sessions/${s.id}` });
+    }
+  }
+  const appRes = await daemonRequest('/apps');
+  if (appRes.ok) {
+    for (const a of (appRes.data.apps || []).filter(inTree)) {
+      found.push({
+        id: `app:${a.name}`,
+        port: a.port,
+        status: a.status,
+        stopPath: `/app/${a.name}/stop?worktree=${encodeURIComponent(a.worktree)}`,
+      });
+    }
+  }
+  return found;
+}
+
+// `git worktree list` puts the main worktree first, always. The caller's `primary` is only the
+// directory git is run from — invoked through a worktree's own copy of the CLI it IS that worktree,
+// which inverts every isPrimary test: the real main checkout reads as a removable candidate and the
+// worktree you are standing in reads as the thing to protect.
+function primaryOf(trees, fallback) {
+  return trees.length ? trees[0].path : resolve(fallback);
 }
 
 export async function inspect(primary, daemonRequest) {
   const trees = listWorktrees(primary);
-  const primaryPath = resolve(primary);
+  const primaryPath = primaryOf(trees, primary);
   const rows = [];
   for (const t of trees) {
     const isPrimary = t.path === primaryPath;
@@ -205,12 +234,12 @@ export async function cmdStale(primary, daemonRequest) {
 }
 
 export async function cmdRemove(primary, targetArg, opts, daemonRequest) {
-  const primaryPath = resolve(primary);
   const target = resolve(targetArg);
+  const trees = listWorktrees(primary);
+  const primaryPath = primaryOf(trees, primary);
 
   if (target === primaryPath) fail('refusing to remove the primary worktree');
 
-  const trees = listWorktrees(primary);
   const entry = trees.find((t) => t.path === target);
   if (!entry) fail(`not a registered worktree: ${target}\nrun: git worktree list`);
 
@@ -224,8 +253,10 @@ export async function cmdRemove(primary, targetArg, opts, daemonRequest) {
     );
   }
   for (const s of sessions) {
-    await daemonRequest(`/sessions/${s.id}`, { method: 'DELETE' });
-    console.log(`stopped session ${s.id}`);
+    // An app stops through POST /app/<name>/stop; a main-app session through DELETE /sessions/<id>.
+    // Both release the port — the difference is only which endpoint owns the reservation.
+    await daemonRequest(s.stopPath, { method: s.id.startsWith('app:') ? 'POST' : 'DELETE' });
+    console.log(`stopped ${s.id}`);
   }
 
   const dirty = dirtyCount(target);
