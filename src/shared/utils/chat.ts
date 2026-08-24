@@ -2,6 +2,12 @@ import { ChatMemberStatus, ChatNotifyLevel } from '~/shared/utils/prisma/enums';
 
 export type ChatBucket = 'Inbox' | 'Requests' | 'Archived';
 
+/** A membership that still occupies a seat and can still read the conversation. */
+export const activeMemberStatuses: ChatMemberStatus[] = [
+  ChatMemberStatus.Invited,
+  ChatMemberStatus.Joined,
+];
+
 const archivedStatuses: ChatMemberStatus[] = [
   ChatMemberStatus.Ignored,
   ChatMemberStatus.Left,
@@ -31,6 +37,13 @@ export function chatBucketFor(member: {
  * not see.
  */
 export const MAX_CHAT_MESSAGE_LENGTH = 2000;
+
+/**
+ * Seat cap for a conversation, shared by the server guard and the member
+ * pickers so the UI stops at the same number the API refuses at. Here rather
+ * than in `chat.service` because the pickers are client components.
+ */
+export const MAX_CHAT_MEMBERS = 10;
 
 /**
  * Whether an incoming message should ring for a member, given their

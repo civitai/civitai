@@ -8,6 +8,8 @@ export const singleChatSelect = Prisma.validator<Prisma.ChatSelect>()({
   createdAt: true,
   hash: true,
   ownerId: true,
+  isGroup: true,
+  name: true,
   chatMembers: {
     // where: { status: { in: [ChatMemberStatus.Joined, ChatMemberStatus.Invited] } },
     select: {

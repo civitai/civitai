@@ -143,6 +143,7 @@ export enum SignalMessages {
   ChatTypingStatus = 'chat:typing-status',
   ChatMessageDeleted = 'chat:message-deleted',
   ChatMessageUpdated = 'chat:message-updated',
+  ChatRoomUpdated = 'chat:room-updated',
   OrchestratorUpdate = 'orchestrator-job:status-update',
   TextToImageUpdate = 'orchestrator:text-to-image-update',
   WorkflowUpdate = 'orchestrator:workflow-update',
@@ -449,7 +450,6 @@ export enum NewOrderSignalActions {
 export enum ExternalModerationType {
   Clavata = 'Clavata',
 }
-
 
 export enum MarketplacePaymentMethod {
   CashApp = 'CashApp',

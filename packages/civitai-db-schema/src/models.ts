@@ -3478,8 +3478,10 @@ export interface ClubMetric {
 export interface Chat {
   id: number;
   createdAt: Date;
-  hash: string;
+  hash: string | null;
   ownerId: number;
+  isGroup: boolean;
+  name: string | null;
   owner?: User;
   chatMembers?: ChatMember[];
   messages?: ChatMessage[];

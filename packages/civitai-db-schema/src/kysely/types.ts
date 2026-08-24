@@ -1622,8 +1622,10 @@ export type Changelog = {
 export type Chat = {
   id: Generated<number>;
   createdAt: Generated<Timestamp>;
-  hash: string;
+  hash: string | null;
   ownerId: number;
+  isGroup: Generated<boolean>;
+  name: string | null;
 };
 export type ChatMember = {
   id: Generated<number>;

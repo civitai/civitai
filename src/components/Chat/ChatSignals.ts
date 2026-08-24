@@ -110,7 +110,7 @@ export const useChatNewMessageSignal = () => {
         play();
       }
     },
-    [queryUtils, play, currentUser, currentUser?.id, features.chat]
+    [queryUtils, play, currentUser, features.chat]
   );
 
   useSignalConnection(SignalMessages.ChatNewMessage, onUpdate);
@@ -182,6 +182,30 @@ export const useChatMessageUpdatedSignal = () => {
   );
 
   useSignalConnection(SignalMessages.ChatMessageUpdated, onUpdate);
+};
+
+/**
+ * A rename lands on everyone else's list, which otherwise keeps showing the old
+ * title until something else refetches it.
+ */
+export const useChatRoomUpdatedSignal = () => {
+  const queryUtils = trpc.useUtils();
+
+  const onUpdate = useCallback(
+    ({ id, name }: { id: number; name: string | null }) => {
+      queryUtils.chat.getAllByUser.setData(
+        undefined,
+        produce((old) => {
+          const thisChat = old?.find((c) => c.id === id);
+          if (!thisChat) return old;
+          thisChat.name = name;
+        })
+      );
+    },
+    [queryUtils]
+  );
+
+  useSignalConnection(SignalMessages.ChatRoomUpdated, onUpdate);
 };
 
 export const useChatNewRoomSignal = () => {
