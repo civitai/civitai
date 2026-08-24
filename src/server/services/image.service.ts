@@ -7424,11 +7424,17 @@ export const getEntityCoverImage = async ({
           -- "entityType", so "entityId" alone identifies a row there; this branch
           -- joins on the pair, so one id can legitimately recur across types.
           --
-          -- "ImageConnection" carries no ordering column of its own, so the tiebreak
-          -- is the image id: a total order (primary key, never null, no residual
-          -- ties), and since links are inserted in the order the author submitted
-          -- them, the lowest id is the first image attached to the entity -- the
-          -- closest analogue to the "index"-based first-image rule used above.
+          -- "ImageConnection" carries no ordering column of its own -- no index, no
+          -- timestamp -- so nothing on the link records which image the author meant
+          -- to come first. The tiebreak is the image id, chosen for the properties
+          -- that can actually be guaranteed: it is a primary key, so the order is
+          -- total, never null, and leaves no residual tie for the planner to settle
+          -- arbitrarily. It is deliberately NOT claimed to be a first-attached rule.
+          -- "updateEntityImages" links already-existing images -- with arbitrary older
+          -- ids -- ahead of the ones it creates in the same call, so attaching an older
+          -- image on a later edit lowers the minimum and promotes that image to cover.
+          -- What the tiebreak buys is a stable, deterministic choice, not a
+          -- semantically-first one.
           SELECT DISTINCT ON (e."entityId", e."entityType")
               e."entityId",
               e."entityType",

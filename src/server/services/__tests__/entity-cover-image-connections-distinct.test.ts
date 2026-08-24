@@ -124,6 +124,20 @@ function connectionsBranch(sql: string) {
 }
 
 /**
+ * Everything from the outer join onto the UNION's output to the end of the query,
+ * whitespace-normalised -- the far side of the boundary `connectionsBranch` stops at.
+ */
+function outerFilter(sql: string) {
+  const start = sql.indexOf('JOIN "Image" i ON i.id = t."imageId"');
+
+  // Same positive control as above: a marker that stopped matching would make the
+  // assertion below a statement about an empty string.
+  expect(start, 'the outer UNION join is gone -- re-anchor this slice').toBeGreaterThan(-1);
+
+  return sql.slice(start).replace(/\s+/g, ' ').trim();
+}
+
+/**
  * The branch with comments dropped and whitespace normalised -- the SQL as Postgres
  * sees it. Comments have to go before the newlines do: a `--` comment runs to end of
  * line, so stripping it after normalising would swallow the statement behind it.
@@ -230,5 +244,55 @@ describe('getEntityCoverImage bounds the CONNECTIONS branch to one row per entit
 
     expect(result).toHaveLength(1);
     expect(result[0].id, 'the indexed join changed which row an entity resolves to').toBe(10);
+  });
+
+  it('keys the JS join on entityType too, so one id under two types cannot collide', async () => {
+    // The SQL keeps the pair apart -- that is what the composite DISTINCT ON above is
+    // for -- and the JS join underneath it has to do the same, or the work is undone
+    // one line later. This is not a hypothetical: the endpoint accepts eleven entity
+    // types and callers mix them in a single request (`getUserCosmeticsHandler` builds
+    // its list from a user's equipped cosmetics across several types), so one
+    // `entityId` recurring under two types is ordinary traffic. Keyed on `entityId`
+    // alone both rows collapse onto one map entry, and first-wins then hands the
+    // second entity the first one's cover image.
+    //
+    // The first-wins test above cannot see this -- both of its rows are Articles.
+    const article = { ...RAW_ROW, id: 10, entityId: 7, entityType: 'Article' };
+    const bounty = { ...RAW_ROW, id: 20, entityId: 7, entityType: 'Bounty' };
+
+    const queryRaw = dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>;
+    queryRaw.mockResolvedValue([article, bounty]);
+
+    const result = await getEntityCoverImage({
+      entities: [
+        { entityId: 7, entityType: 'Article' },
+        { entityId: 7, entityType: 'Bounty' },
+      ],
+    });
+
+    expect(result).toHaveLength(2);
+    expect(
+      result.map((r) => [r.entityType, r.id]),
+      "the JS join collapses two entity types onto one key, so an entity was handed another entity type's cover image"
+    ).toEqual([
+      ['Article', 10],
+      ['Bounty', 20],
+    ]);
+  });
+
+  it('keeps the outer eligibility filter, the only one guarding the IMAGES branch', async () => {
+    // Pre-existing, and pinned here because this file is now the only thing looking at
+    // this query. The IMAGES branch (`entityType = 'Image'`, where the entity *is* the
+    // image) carries no predicate of its own, so this outer WHERE is the sole check
+    // that stops an unscanned or needs-review image being served as a cover. Every
+    // other branch filters in-branch, which is exactly why deleting this line leaves
+    // the rest of the suite green.
+    expect(
+      outerFilter(await captureQuery()),
+      'the outer eligibility filter is gone, so the IMAGES branch can serve unscanned or needs-review images'
+    ).toBe(
+      'JOIN "Image" i ON i.id = t."imageId" ' +
+        `WHERE i."ingestion" = 'Scanned' AND i."needsReview" IS NULL`
+    );
   });
 });
