@@ -333,17 +333,34 @@ function AppPage(props: PageProps) {
  *      `AppHeader` was confirmed present on the live preview — logo, search,
  *      Create, Buzz balance, account menu. Only the SECOND-level tab row goes,
  *      and its destinations stay reachable from the header.
- *   2. The precedent is exact, not analogous: `src/pages/generate/index.tsx` and
- *      `src/pages/research/rater.tsx` — this repo's other immersive
- *      `scrollable: false` surfaces — both pass `subNav: null`.
+ *   2. There IS precedent, but it is SPLIT — do not read it as a repo rule.
+ *      Complete enumeration of `scrollable: false` in `src/pages` (6 routes
+ *      besides this one), not a sample:
+ *        pass `subNav: null` — `generate/index.tsx`, `research/rater.tsx`,
+ *          `images/[imageId].tsx`
+ *        keep the sub-nav — `comics/project/[id]/read.tsx`,
+ *          `comics/project/[id]/iterate.tsx`, `images/iterate.tsx`
+ *      3-for / 3-against. `images/iterate.tsx` is the sharpest counter-example:
+ *      it nulls MORE chrome than this route does (`header: null`,
+ *      `footer: null`) and still keeps the sub-nav. So this reason establishes
+ *      that dropping it is a normal, precedented choice here — not that it is
+ *      the convention. The weight sits on 1, 3 and 4.
+ *
+ *      🔴 An earlier version of this bullet said "the precedent is exact" and
+ *      named two files. That was a SAMPLE generalised into an enumeration: it
+ *      missed a third supporting case and all three counter-examples. Enumerate
+ *      before claiming a convention.
  *   3. It is ~52px (h-8 pills + `py-1` + `mb-3`) of the vertical budget this
  *      route is tightest on; a 375×667 phone leaves the page ~386px total.
  *   4. Two chrome bars over a THIRD-PARTY app reads badly — the route already
  *      renders `AppBlockChrome` (the "Apps / <name>" breadcrumb).
  *
- * The counter-argument is consistency with the rest of the site, which is what
- * (2) already decided against twice. The scrollbar fix does not depend on this,
- * so dropping the line is a safe one-word reversal.
+ * The counter-argument is consistency with the rest of the site, and (2) shows
+ * this repo genuinely splits on it. The case for dropping it here rests on (1)
+ * — nothing is unreachable — and on (4): unlike every route in either list
+ * above, this one embeds a THIRD-PARTY app, so a second civitai nav strip sits
+ * over someone else's UI. The scrollbar fix does not depend on this, so
+ * restoring the tabs is a safe one-word reversal.
  *
  * Note `RewardsBonusBanner` still renders regardless (`AppLayout` shows it in
  * the `{!subNav && …}` branch), so it is NOT removed by this.
