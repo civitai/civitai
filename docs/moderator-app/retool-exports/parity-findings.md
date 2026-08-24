@@ -243,7 +243,9 @@ New, not previously logged:
 - [x] **Report banners** (open UserReport is now a banner with a link to the queue; CSAM is a header badge): a pending/processing `UserReport` and any `CsamReport` should show "very
       clearly at the top", with a way to action/unaction from this page. Related to the
       `CsamReport`-read-nowhere finding above.
-- [ ] LoRA training metadata + a clickthrough to the orchestrator dashboard.
+- [x] LoRA training metadata — built 2026-08-24 on `moderator-feedback-3`, not merged or deployed. The
+      orchestrator-dashboard clickthrough was deliberately not built; see
+      `../post-migration-backlog.md` § User Lookup.
 - [x] Multi-select comments to ToS/delete them.
 - [x] Prompts *and blocked prompts* list; editable socials & bio; mod notes that wrap.
 

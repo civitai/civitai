@@ -225,8 +225,23 @@ findings are done — see the parity checklist.
       `identity.edit`, seeded to senior. The form itself already existed; what it lacked was the gate.
 - [ ] **Display name from the user table** (distinct from username).
 - [ ] **Longer mod notes don't wrap** — a rendering fix carried over from Retool's own complaint.
-- [ ] **LoRA training metadata**, plus a clickthrough to the orchestrator dashboard
-      (`orchestration-dashboard.civitai.com/job-search?workflow=…`).
+- [x] **LoRA training metadata.** **Built 2026-08-24 on `moderator-feedback-3` — not merged or
+      deployed.** Surviving runs already carried theirs; the gap was the runs the
+      30-day draft reap hard-deleted. `/api/user-training-orchestration` recovers those from
+      `orchestration.jobs` — epochs, real GPU cost, provider, base checkpoint, and whether a training
+      job ever ran — joined on the submit second, since that table carries no workflow column. Beside
+      them the Buzz ledger's `refund` rows, which join on workflow id exactly and answer what the panel
+      is usually open for: did the account get its Buzz back. `orchestration.workflowSteps` is behind a
+      click because it costs 5-9s where the rest is under one; it adds the status word, the failure
+      class and the ecosystem name, and it is the only thing that surfaces a run whose job rows are
+      already gone. The list pages ten at a time; that bound is what keeps the scanned
+      window the size of what is on screen.
+
+      The clickthrough to the orchestrator dashboard
+      (`orchestration-dashboard.civitai.com/job-search?workflow=…`) was asked for and **deliberately
+      not built**: the orchestrator flushes at 30 days, the same horizon whose draft reap deletes these
+      runs, so the link would be dead on almost every row it appeared on. The workflow id is not
+      displayed at all — it is a join key here, not something a moderator can act on.
 - [ ] **Blocked prompts** alongside the prompt list. 🎥 *"You can check their blocked prompts."*
 - [x] **Grant cosmetic items** from the shop panel — `grantCosmetic`, behind `user.cosmetics.grant`.
       🎥 *"Check their cosmetic shop, potentially grant them items."*

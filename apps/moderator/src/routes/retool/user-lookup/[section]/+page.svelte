@@ -121,7 +121,7 @@
     {:else if section === 'generation'}
       <GenerationPanel {signals} userId={result.identity.id} civitaiUrl={data.civitaiUrl} />
     {:else if section === 'training'}
-      <TrainingsPanel {account} civitaiUrl={data.civitaiUrl} />
+      <TrainingsPanel {account} userId={result.identity.id} civitaiUrl={data.civitaiUrl} />
     {:else if section === 'bounties'}
       <BountiesPanel {account} civitaiUrl={data.civitaiUrl} />
     {:else if section === 'comments'}

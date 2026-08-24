@@ -126,13 +126,15 @@ export-vs-build pass. Two findings worth knowing here because they change other 
   section was written. `user-lookup.service.ts` reads status/type/id, and `resolveRestriction` runs the
   Overturn path (restriction resolved, subscription reinstated, user told) as a form action on
   `AccountActionsPanel`.
-- [ ] **The 5 open findings from the first pass**, most severe first:
+- [ ] **The 4 open findings from the first pass**, most severe first:
   - **Two `tabbedContainer14` panes WRITE** and were deliberately not built pending a decision.
   - Image-only account nuke absent; counts report rows *found*, not rows *changed*; remove+strike not
     ported (Bulk Image Manager).
   - `table53`/`table54` — the **grouped** receipt/payment views, not the flat ones (User Lookup Buzz).
   - The `Check Buzz` button, After-date picker and three filters from the ticket screenshots.
-  - LoRA training metadata clickthrough to the orchestrator dashboard.
+  - ~~LoRA training metadata clickthrough to the orchestrator dashboard.~~ **Decided 2026-08-24:
+    metadata built, clickthrough deliberately not built** — see
+    `docs/moderator-app/post-migration-backlog.md` § User Lookup for why.
 
 The `retool-fidelity-review` agent postdates most of that sweep (both landed 2026-08-10), and on Bulk
 Image Manager it found four gaps the three code reviews had structurally missed. A slice with a section

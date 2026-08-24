@@ -2,6 +2,7 @@ import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
 import { getClickhouse } from './clickhouse';
 import { clickhouseDate } from './clickhouse-date';
+import { utcMs } from '$lib/format';
 import { getBuzz } from './buzz';
 import { getNotifications } from './notifications';
 import { getModeratorDb } from './moderator-db';
@@ -879,20 +880,20 @@ const MAX_UNMATCHED = 200;
 /**
  * Charges this account was billed that no surviving run accounts for — the deleted runs.
  *
- * 🔴 ClickHouse hands back `YYYY-MM-DD HH:MM:SS` with no zone, and it is UTC. `Date.parse` reads that
- * shape as LOCAL time, so without the `Z` every charge shifts by the box's offset and nothing matches —
- * which fails as "all runs deleted" on a correct account, silently. Pinned by a test.
+ * 🔴 Dates arrive in both shapes (zone-marked from `getTrainingCharges`, raw ClickHouse elsewhere) and
+ * are compared, not displayed — parsing one as local shifts it and matches nothing, which fails as
+ * "all runs deleted" on a healthy account. Pinned by a test.
  */
 export function unaccountedCharges(
   charges: TrainingChargeRow[],
   submitTimes: (string | null)[]
 ): TrainingChargeRow[] {
   const submitted = submitTimes.flatMap((time) => {
-    const ms = time ? Date.parse(time) : NaN;
+    const ms = time ? utcMs(time) : NaN;
     return Number.isNaN(ms) ? [] : [ms];
   });
   return charges.filter((charge) => {
-    const ms = Date.parse(`${charge.date.replace(' ', 'T')}Z`);
+    const ms = utcMs(charge.date);
     if (Number.isNaN(ms)) return true;
     return !submitted.some((t) => Math.abs(t - ms) <= CHARGE_MATCH_MS);
   });
@@ -946,7 +947,7 @@ async function getTrainingCharges(
     const unmatched = unaccountedCharges(
       rows.map((r) => ({
         id: r.id,
-        date: r.date,
+        date: clickhouseDate(r.date),
         buzz: Number(r.buzz),
         workflowId: r.workflowId || null,
       })),
@@ -956,8 +957,8 @@ async function getTrainingCharges(
     return {
       count: rows.length,
       buzz: rows.reduce((sum, r) => sum + Number(r.buzz), 0),
-      first: rows[rows.length - 1]?.date ?? null,
-      last: rows[0]?.date ?? null,
+      first: clickhouseDate(rows[rows.length - 1]?.date ?? '') || null,
+      last: clickhouseDate(rows[0]?.date ?? '') || null,
       unmatched: unmatched.slice(0, MAX_UNMATCHED),
       truncated: unmatched.length > MAX_UNMATCHED,
     };
