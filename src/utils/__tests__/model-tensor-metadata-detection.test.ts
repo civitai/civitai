@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { getDominantFpFromDtypes } from '~/utils/file-helpers';
 import {
+  analyzeModelTensors,
   detectModelTypeFromTensors,
   getModelFileTypeCorrection,
 } from '~/utils/model-tensor-metadata';
@@ -135,5 +137,80 @@ describe('getModelFileTypeCorrection', () => {
         currentFileType: 'Model',
       })
     ).toBe('Enhancement LoRA');
+  });
+});
+
+describe('analyzeModelTensors', () => {
+  const tensor = (name: string, dtype = 'BF16') => ({
+    name,
+    shape: [2, 2],
+    dtype,
+    sizeBytes: 8,
+  });
+
+  // Nothing else proves the detector is ever CALLED. Without this, changing the field to
+  // `undefined` — or deleting it — leaves every other suite green while type correction
+  // silently never fires again, because the summary cache drops `tensors[]` and the
+  // correction has no other way back to the names.
+  it('populates detectedModelType for a safetensors analysis', () => {
+    const analysis = analyzeModelTensors(
+      'SafeTensor',
+      [tensor('encoder.conv_in.weight'), tensor('decoder.conv_out.weight')],
+      { estimateVram: false }
+    );
+
+    expect(analysis.detectedModelType).toBe(null);
+
+    const vae = analyzeModelTensors(
+      'SafeTensor',
+      [
+        tensor('encoder.conv_in.weight'),
+        tensor('encoder.down.0.block.0.norm1.weight'),
+        tensor('decoder.conv_out.weight'),
+        tensor('decoder.up.0.block.0.norm1.weight'),
+        tensor('quant_conv.weight'),
+        tensor('post_quant_conv.weight'),
+      ],
+      { estimateVram: false }
+    );
+
+    expect(vae.detectedModelType).toBe('VAE');
+  });
+
+  it('never claims a detected type for GGUF, whose names follow other conventions', () => {
+    const analysis = analyzeModelTensors(
+      'GGUF',
+      [
+        tensor('encoder.conv_in.weight'),
+        tensor('encoder.down.0.block.0.norm1.weight'),
+        tensor('decoder.conv_out.weight'),
+        tensor('decoder.up.0.block.0.norm1.weight'),
+        tensor('quant_conv.weight'),
+        tensor('post_quant_conv.weight'),
+      ],
+      { estimateVram: false }
+    );
+
+    expect(analysis.detectedModelType).toBe(null);
+  });
+});
+
+describe('getDominantFpFromDtypes', () => {
+  // 🔴 A dtype whose byte count we could not measure must never win. NaN poisons its
+  // accumulator and `NaN > bestBytes` is false against every value including the initial
+  // -1, which is what makes it lose. Coercing NaN to 0 — the obvious "tidy-up" — lets it
+  // win outright when it is the only mapped dtype, so the upload form would auto-fill a
+  // precision derived from a header it could not read.
+  it('lets a measurable dtype beat an unmeasurable one', () => {
+    expect(
+      getDominantFpFromDtypes([
+        { dtype: 'F32', bytes: Number.NaN },
+        { dtype: 'BF16', bytes: 8 },
+      ])
+    ).toBe('bf16');
+  });
+
+  it('returns null when every mapped dtype is unmeasurable', () => {
+    expect(getDominantFpFromDtypes([{ dtype: 'F32', bytes: Number.NaN }])).toBe(null);
   });
 });

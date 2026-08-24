@@ -42,7 +42,10 @@ export function getDominantFpFromDtypes(
   for (const { dtype, bytes } of entries) {
     const fp = safetensorsDtypeToFp(dtype);
     if (!fp) continue;
-    bytesByFp.set(fp, (bytesByFp.get(fp) ?? 0) + Math.max(Number.isFinite(bytes) ? bytes : 0, 0));
+    // NaN is left to poison this fp's total on purpose: `NaN > bestBytes` is false for
+    // every comparison including the initial -1, so a dtype we could not measure can
+    // never win. Coercing it to 0 would let it win outright when it is the only one.
+    bytesByFp.set(fp, (bytesByFp.get(fp) ?? 0) + Math.max(bytes, 0));
   }
 
   let best: string | null = null;
