@@ -177,10 +177,28 @@ function isAuthedBrowser() {
  * opposite of the goal).
  *
  * IMPORTANT — this is the FULL set of procedures that apply `edgeCacheIt` and do NOT opt
- * back out for authed sessions via `noEdgeCache({ authedOnly: true })` (or a blanket
- * `noEdgeCache()`). NB: `createContext` seeds `edgeTTL: 0` for logged-in users, but
- * `edgeCacheIt` OVERWRITES it with a positive TTL (it only honors the `?batch` bail and
+ * back out for authed sessions. Three spellings count as opting out:
+ * `noEdgeCache({ authedOnly: true })`, a blanket `noEdgeCache()`, and a `ctx.cache.skip`
+ * set from `ctx.user` in a middleware applied UPSTREAM of `edgeCacheIt` (see
+ * `model.router.ts`'s `skipEdgeCache` — `edgeCacheIt` reads `skip` before the resolver
+ * runs, so only an upstream position works).
+ *
+ * NB: `createContext` seeds `edgeTTL: 0` for logged-in users, but `edgeCacheIt` OVERWRITES
+ * it with a positive TTL (it only honors the `?batch` bail, `ctx.cache.skip` and
  * `ctx.cache.canCache`), so these responses ARE cacheable for authed users today.
+ *
+ * 🔴 One exception to that last sentence, and it is subtle: `edgeCacheIt` MUTATES
+ * `ctx.cache`, while `responseMeta` reads the ROOT context and tRPC's `next({ ctx })`
+ * builds a new object. A procedure whose upstream middleware REPLACES `ctx.cache`
+ * (`cache: { ...ctx.cache }`) therefore hands `edgeCacheIt` a copy, and its TTLs never
+ * reach the header at all. `model.getAll` is the only such procedure today. Do not rely
+ * on that for safety — it is incidental, and one refactor from disappearing.
+ *
+ * 🔴 `noEdgeCache()` is ALSO inert when combined with `edgeCacheIt`, in either order:
+ * `noEdgeCache` writes before `next()` and `edgeCacheIt` writes after it, so `edgeCacheIt`
+ * wins. No procedure combines them today, so the clause above has never been exercised —
+ * if you reach for it on an `edgeCacheIt` procedure, it will not work. Use the upstream
+ * `skip` pattern instead.
  *
  * 🔴 Keep this in sync with the routers. `trpc-batching.test.ts` re-derives this set by
  * parsing every `*.router.ts` and FAILS if it drifts — so adding a new `edgeCacheIt`
@@ -201,7 +219,7 @@ export const CACHEABLE_PROCEDURES: ReadonlySet<string> = new Set([
   'homeBlock.getHomeBlock',
   'image.get404Images',
   'image.getResources',
-  'model.getAll',
+
   'modelFile.getOptions',
   'nowPayments.getBuzzConversionRate',
   'nowPayments.getMinAmount',
