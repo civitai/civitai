@@ -59,6 +59,7 @@ import { SortFilter } from '~/components/Filters';
 import { AdaptiveFiltersDropdown } from '~/components/Filters/AdaptiveFiltersDropdown';
 import { ImageContextMenuProvider } from '~/components/Image/ContextMenu/ImageContextMenuProvider';
 import { MediaFiltersDropdown } from '~/components/Image/Filters/MediaFiltersDropdown';
+import { useUpdateCollectionCoverImage } from '~/components/Image/hooks/useUpdateCollectionCoverImage';
 import { useImageQueryParams } from '~/components/Image/image.utils';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { IsClient } from '~/components/IsClient/IsClient';
@@ -92,10 +93,8 @@ import type { CollectionByIdModel } from '~/types/router';
 import { getRandom } from '~/utils/array-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
-import { showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { removeTags } from '~/utils/string-helpers';
-import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { Gated } from '~/components/Gated/Gated';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
@@ -219,8 +218,7 @@ const ImageCollection = ({
     query.sort && imageCollectionSortOptions.includes(query.sort) ? query.sort : ImageSort.Newest;
   const sort = isContestCollection ? ImageSort.Random : defaultSort;
   const period = query.period ?? MetricTimeframe.AllTime;
-  const updateCollectionCoverImageMutation = trpc.collection.updateCoverImage.useMutation();
-  const utils = trpc.useUtils();
+  const updateCollectionCoverImage = useUpdateCollectionCoverImage();
   const currentUser = useCurrentUser();
 
   const [toolSearchOpened, setToolSearchOpened] = useState(false);
@@ -254,7 +252,7 @@ const ImageCollection = ({
   return (
     <ImageContextMenuProvider
       additionalMenuItemsBefore={(image) => {
-        const canUpdateCover = !permissions || !permissions.manage || !image.id;
+        const canUpdateCover = !!permissions?.manage && !!image.id;
 
         return (
           <>
@@ -268,21 +266,10 @@ const ImageCollection = ({
                 onClick={(e: React.MouseEvent) => {
                   e.preventDefault();
                   e.stopPropagation();
-                  updateCollectionCoverImageMutation.mutate(
-                    {
-                      id: collection.id,
-                      imageId: image.id,
-                    },
-                    {
-                      onSuccess: async () => {
-                        showSuccessNotification({
-                          title: 'Cover image updated',
-                          message: 'Collection cover image has been updated',
-                        });
-                        await utils.collection.getById.invalidate({ id: collection.id });
-                      },
-                    }
-                  );
+                  updateCollectionCoverImage({
+                    collectionId: collection.id,
+                    imageId: image.id,
+                  });
                 }}
               >
                 Use as cover image
