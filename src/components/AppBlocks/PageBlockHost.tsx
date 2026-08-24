@@ -211,31 +211,50 @@ const REVIEW_NACK_MESSAGE = 'not available in review preview';
  * `Page(…, { scrollable: false })` layout, where EVERY ancestor is
  * `overflow-hidden`. That is what removes the double scrollbar — and it also
  * means the page is the only thing left that can offer a scrollbar. The site's
- * fixed chrome cannot shrink (header 60 + `AppFooter` 45 + its `mt-3` 12 +
- * `AdhesiveAd` 90 desktop / 50 mobile), so with a bare `min-height: 0` the app
- * absorbed the ENTIRE shortfall on a short viewport and the overflow was simply
- * clipped away with nothing to scroll.
+ * fixed chrome cannot shrink, so with a bare `min-height: 0` the app absorbed
+ * the ENTIRE shortfall on a short viewport and the overflow was simply clipped
+ * away with nothing to scroll. Measured before this floor existed: 153px of host
+ * at a ~360px viewport, and 0px at 250px, with `outerScrollbar = false` at every
+ * step. That is WCAG 1.4.4 / 1.4.10 — strictly worse than the cosmetic spare
+ * scrollbar `fill` mode was introduced to remove.
  *
- * Measured before this floor existed: a ~360px phone-landscape viewport left the
- * host 153px, and a 250px viewport collapsed it to 0 — with `outerScrollbar =
- * false` at every step. A 1366×768 laptop at 200% browser zoom lands in the same
- * band. That is WCAG 1.4.4 / 1.4.10 (content unreachable on zoom/reflow), i.e.
- * strictly worse than the cosmetic spare scrollbar the `fill` mode was
- * introduced to remove.
+ * 🔴 THE FLOOR IS A TRADE, NOT A FREE WIN, AND ITS VALUE IS THE WHOLE TRADE.
+ * When `available < FILL_MIN_HEIGHT_PX` the host overflows the page wrapper and
+ * that wrapper grows a scrollbar — beside the block's own, i.e. THIS PR'S BUG in
+ * a narrower window. Below the floor that is the right call (a scrollbar beats
+ * unreachable content), so the number's only job is to make the band as small as
+ * it can be while still catching the degenerate case. Raising it widens the
+ * population that sees two scrollbars; `PageBlockHostScrollFit.browser.test.tsx`
+ * bounds it on BOTH sides for that reason.
  *
- * 400 is chosen to sit ABOVE the ~395px a real block renders at (and above the
- * synthetic install's `minHeight: 200`) while staying below what any ordinary
- * viewport leaves: a 768px laptop has 561px after chrome, so the floor never
- * fires there. It is deliberately NOT derived from `100dvh` — that arithmetic is
- * exactly what this PR removed.
+ * THE ARITHMETIC, which decides who lands in the band:
+ *
+ *   available = innerHeight − 60 (header) − 57 (AppFooter 45 + its mt-3 12)
+ *                           − AdhesiveAd (90 desktop / 50 mobile / 0 for paid)
+ *                           − RewardsBonusBanner (~32 when active)
+ *
+ * 🔴 `innerHeight`, NOT the screen height — an earlier version of this comment
+ * justified 400 with "a 768px laptop has 561px after chrome, so the floor never
+ * fires there". That subtracted chrome from the PANEL height. A maximised
+ * browser on a 768px screen has `innerHeight ≈ 650` once the OS taskbar, tab
+ * strip, omnibox and bookmarks bar are gone, so the real margin was ~43px, not
+ * 161 — one bookmarks bar or 110% zoom would have eaten it.
+ *
+ * At 300, the floor fires below roughly `innerHeight < 467` (logged-out mobile)
+ * / `< 507` (logged-out desktop). That clears the mainstream portrait phones a
+ * 400 floor caught — 375×667-class Safari (`innerHeight ≈ 553`, available ≈ 386)
+ * and 360×640 Android (`≈ 560`, available ≈ 393) — while still protecting phone
+ * LANDSCAPE (~360 tall → available ≈ 193) and heavy desktop zoom, which is where
+ * the unreachable-content case actually lives.
+ *
+ * It is deliberately NOT derived from `100dvh` — that arithmetic is exactly what
+ * this PR removed. Note the block's own area is `floor − AppBlockChrome`, so the
+ * usable figure is meaningfully smaller than the constant.
  *
  * The floor only helps if something can scroll once it binds, so the run page's
  * wrapper carries `overflowY: 'auto'` as the scroll container of last resort.
- * Both halves are asserted in `PageBlockHostScrollFit.browser.test.tsx`
- * ("short viewports — squeezed, but never unreachable"), at a short viewport AND
- * at a normal one so a floor that fired for everyone would fail.
  */
-export const FILL_MIN_HEIGHT_PX = 400;
+export const FILL_MIN_HEIGHT_PX = 300;
 
 export interface PageBlockHostProps {
   /** AppBlock id (`apb_*`) — used to build the BLOCK_INIT ids + trust chrome. */
@@ -380,7 +399,8 @@ export interface PageBlockHostProps {
    *     not otherwise bound its height: the dev tunnel (`/apps/dev/<blockId>`,
    *     default `AppLayout` → `ScrollArea`) and the mod-review preview (inside a
    *     modal). Without it the host would collapse to the chrome bar and the
-   *     iframe (`flex: 1` of an auto-height parent) would render 0px tall.
+   *     iframe (`flex: 1` of an auto-height parent) would letterbox to roughly
+   *     its ~150px intrinsic replaced-element height.
    *
    *   'fill' — the host fills its parent EXACTLY (`flex: 1; min-height: 0`) and
    *     claims no viewport-derived height of its own. Requires the mounter's

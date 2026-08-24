@@ -254,7 +254,7 @@ function AppPage(props: PageProps) {
           // own, which needs an ancestor chain that already bounds it; the
           // default scrolling layout does not, so shipping either half alone
           // regresses this page (drop `fill` → two scrollbars again; drop
-          // `scrollable: false` → the iframe collapses to 0px).
+          // `scrollable: false` → the app is clipped behind `overflow-hidden`).
           fit="fill"
           sandbox={sandbox}
           trustTier={trustTier}

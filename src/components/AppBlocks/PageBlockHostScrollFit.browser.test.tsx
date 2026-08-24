@@ -188,8 +188,18 @@ function renderInScrollChain(fit: 'viewport' | 'fill', containerHeight: number) 
         flexDirection: 'column',
       }}
     >
-      {/* `fill` needs a growing flex item to resolve against — this is the run
-          page's own wrapper Box, same three properties. */}
+      {/* 🔴 DELIBERATELY *NOT* THE CURRENT PRODUCTION WRAPPER — do not "sync"
+          this with `[[...path]].tsx`. This helper models the PRE-FIX page (a
+          scrolling `ScrollArea` layout, wrapper `{ width: '100%' }`), because
+          that is the state the RED ARM has to reproduce. `renderInNoScrollChain`
+          below is the one that mirrors production.
+
+          Adding production's `overflowY: 'auto'` here was tried and reverted: it
+          moves the scroll to this inner wrapper, so `scroll-chain` stops
+          overflowing and the RED ARM fails with `expected 716 to be greater
+          than 716` — i.e. the reproduction quietly stops reproducing. The two
+          fixtures model two different points in time and are supposed to
+          differ. */}
       <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
         <PageBlockHost {...baseProps} fit={fit} />
       </div>
@@ -298,10 +308,13 @@ describe('PageBlockHost — `fit` decides whether the page grows a SECOND scroll
    * Raised by the pre-merge audit of #4339 and reproduced here before being
    * fixed: with `scrollable: false` every ancestor is `overflow-hidden`, so a
    * host that floors at `minHeight: 0` absorbs the whole shortfall on a short
-   * viewport and NOTHING can scroll to what got squeezed out. A phone in
-   * landscape and a 1366×768 laptop at 200% zoom both land here, which makes it
-   * a WCAG 1.4.4 / 1.4.10 problem rather than a cosmetic one — strictly worse
-   * than the spare scrollbar this PR set out to remove.
+   * viewport and NOTHING can scroll to what got squeezed out. Phone landscape
+   * and heavy desktop zoom both land here, which makes it a WCAG 1.4.4 / 1.4.10
+   * problem rather than a cosmetic one — strictly worse than the spare scrollbar
+   * this PR set out to remove. (The band is viewport-height driven; see
+   * `FILL_MIN_HEIGHT_PX` for who actually falls in it, and note every
+   * measurement in this file is taken at the runner's default 414px-WIDE
+   * viewport — nothing here exercises a desktop width.)
    *
    * The cure is a real floor (`FILL_MIN_HEIGHT_PX`) plus one scroll container of
    * last resort on the page's own wrapper. Above the floor nothing overflows, so
@@ -310,14 +323,45 @@ describe('PageBlockHost — `fit` decides whether the page grows a SECOND scroll
    */
   describe('short viewports — squeezed, but never unreachable', () => {
     test('the app keeps a usable height instead of collapsing toward zero', async () => {
-      // ~360px phone-landscape viewport minus the site's fixed chrome.
+      // A ~360px-tall viewport minus the site's fixed chrome.
       const available = 153;
       renderInNoScrollChain(available);
       await expect.element(page.getByTestId('app-page-frame')).toBeInTheDocument();
 
       const frame = page.getByTestId('app-page-frame').element() as HTMLElement;
-      // The floor holds even though the parent is far shorter than it.
-      expect(frame.getBoundingClientRect().height).toBeGreaterThanOrEqual(FILL_MIN_HEIGHT_PX);
+
+      // 🔴 ABSOLUTE LITERALS, DELIBERATELY NOT `FILL_MIN_HEIGHT_PX`.
+      //
+      // This assertion used to read `.toBeGreaterThanOrEqual(FILL_MIN_HEIGHT_PX)`,
+      // which compares the measured height against the very constant that
+      // PRODUCED it — true by construction for every value. Measured: setting
+      // the floor to 0 (i.e. fully reverting the WCAG fix) passed all 17 tests
+      // across both suites. The unit guard did not help either: it pins the
+      // IDENTIFIER `minHeight: FILL_MIN_HEIGHT_PX` in the source, not the number.
+      //
+      // A literal cannot be satisfied by construction, so this is what actually
+      // holds the floor down. It is intentionally a little below the constant so
+      // a small deliberate retune does not fail the suite.
+      expect(frame.getBoundingClientRect().height).toBeGreaterThanOrEqual(280);
+    });
+
+    /**
+     * The floor's VALUE is a product decision with a viewport population behind
+     * it, so it gets its own bounds rather than being free to drift.
+     *
+     * Lower bound: below ~280 the block's own area (floor minus the host chrome)
+     * stops being usable, which is the case the floor exists to prevent.
+     *
+     * Upper bound: the floor fires whenever `available < FILL_MIN_HEIGHT_PX`, and
+     * when it fires the page grows a scrollbar beside the block's own — i.e. the
+     * original bug, in a narrower window. Every px added here widens the
+     * viewport population that sees it, so the ceiling is what stops "just raise
+     * the floor" from quietly undoing this PR. The arithmetic is in the
+     * constant's doc comment.
+     */
+    test('the floor stays inside its documented band — a retune is deliberate, not drift', () => {
+      expect(FILL_MIN_HEIGHT_PX).toBeGreaterThanOrEqual(280);
+      expect(FILL_MIN_HEIGHT_PX).toBeLessThanOrEqual(340);
     });
 
     test('and what is squeezed out stays REACHABLE — exactly one scrollbar, not zero', async () => {
@@ -334,14 +378,15 @@ describe('PageBlockHost — `fit` decides whether the page grows a SECOND scroll
       // `auto` to `hidden` left all 8 tests GREEN, i.e. the assertion passed for
       // a reason unrelated to what it claimed. Both halves are needed: there is
       // something to scroll, AND the box is user-scrollable.
+      // ⚠️ This half is WEAK ON ITS OWN and is kept only as a precondition: the
+      // fixture's `AppBlockChrome` is ~200px tall, so at `available = 153` the
+      // wrapper overflows because of the CHROME whether or not the floor exists.
+      // It cannot distinguish fixed from reverted — the absolute-height
+      // assertion above is what does that. Stated here so nobody reads this line
+      // as floor coverage.
       expect(wrapper.scrollHeight).toBeGreaterThan(wrapper.clientHeight);
+      // This half is the real one: user-scrollable, not merely overflowing.
       expect(['auto', 'scroll']).toContain(getComputedStyle(wrapper).overflowY);
-
-      // ...and the ONE scrollbar is the wrapper's. The `overflow-hidden`
-      // ancestor must not have grown one too — that would be the double
-      // scrollbar again, just at a different size.
-      const main = page.getByTestId('no-scroll-main').element() as HTMLElement;
-      expect(main.scrollHeight).toBe(main.clientHeight);
     });
 
     test('at a NORMAL viewport the floor is inert — still no outer scrollbar', async () => {

@@ -75,12 +75,28 @@ function norm(src: string): string {
  * silent return of the bug, so an unmatched anchor is a FAILURE, not a skip.
  */
 function region(src: string, anchor: RegExp, label: string): string {
-  const m = anchor.exec(src);
-  expect(m, `${label}: anchor ${anchor} no longer matches — update the pin deliberately`).not.toBe(
-    null
-  );
-  return norm(m![0]);
+  // `matchAll`, not `exec`: a first-match read silently grades the WRONG
+  // occurrence if a second ever appears. That exact bug bit the `<main>`
+  // assertion below (it read the scrollable branch instead of the no-scroll
+  // one), so the lesson is applied at every site rather than the one that hurt.
+  const all = [...src.matchAll(new RegExp(anchor.source, `${anchor.flags.replace('g', '')}g`))];
+  expect(
+    all.length,
+    `${label}: expected exactly ONE match for ${anchor}, found ${all.length}. ` +
+      'Zero means the anchor rotted — update the pin deliberately rather than deleting it. ' +
+      'More than one means this pin is now ambiguous and is grading an arbitrary occurrence.'
+  ).toBe(1);
+  return norm(all[0][0]);
 }
+
+/** Shared explanation attached to every verbatim pin, so a failure tells the
+ *  maintainer what it is and what to do rather than just diffing two strings. */
+const PIN_HELP =
+  'This is a DELIBERATE verbatim pin, not an incidental string match — a token check here ' +
+  'passed a ternary inversion, a `flex: 0` and a deleted `overflow: hidden`. If you changed ' +
+  'this block on purpose (including a pure reformat or a rename), update the expected string ' +
+  'here in the same commit. If you did not, you have reintroduced the /apps/run double ' +
+  'scrollbar or its 0-height cousin — see this file’s header.';
 
 describe('the run page and its host agree on who owns the height', () => {
   it('the run page ships BOTH halves — non-scrolling layout AND a fill-fit host', () => {
@@ -136,7 +152,7 @@ describe('the run page and its host agree on who owns the height', () => {
    */
   it("pins the host's `fit` branches verbatim — inversion, `flex: 0` and a dropped `overflow` all fail", () => {
     const src = code(read(HOST));
-    expect(region(src, /\.\.\.\(fit === 'fill'[\s\S]*?\}\),/, 'fit ternary')).toBe(
+    expect(region(src, /\.\.\.\(fit === 'fill'[\s\S]*?\}\),/, 'fit ternary'), PIN_HELP).toBe(
       "...(fit === 'fill' ? { flex: 1, minHeight: FILL_MIN_HEIGHT_PX, } " +
         ": { height: '100%', minHeight: 'calc(100dvh - 60px)', }),"
     );
@@ -145,7 +161,8 @@ describe('the run page and its host agree on who owns the height', () => {
   it('pins the reveal wrapper, whose `overflow: hidden` is what confines the 8px transform', () => {
     const src = code(read(HOST));
     expect(
-      region(src, /<Box\s+style=\{\{\s*position: 'relative',[\s\S]*?\}\}\s*>/, 'reveal wrapper')
+      region(src, /<Box\s+style=\{\{\s*position: 'relative',[\s\S]*?\}\}\s*>/, 'reveal wrapper'),
+      PIN_HELP
     ).toBe(
       "<Box style={{ position: 'relative', flex: 1, display: 'flex', overflow: 'hidden', }} >"
     );
@@ -165,7 +182,8 @@ describe('the run page and its host agree on who owns the height', () => {
   it('pins the run page wrapper — the third leg the browser test structurally cannot see', () => {
     const src = code(read(RUN_PAGE));
     expect(
-      region(src, /<Box\s+style=\{\{\s*display: 'flex',[\s\S]*?\}\}\s*>/, 'page wrapper')
+      region(src, /<Box\s+style=\{\{\s*display: 'flex',[\s\S]*?\}\}\s*>/, 'page wrapper'),
+      PIN_HELP
     ).toBe(
       "<Box style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, " +
         "overflowY: 'auto', width: '100%', }} >"
@@ -196,7 +214,11 @@ describe('the run page and its host agree on who owns the height', () => {
           walk(full);
         } else if (/\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name)) {
           const src = code(fs.readFileSync(full, 'utf8'));
-          if (!/<PageBlockHost\b/.test(src)) continue;
+          // Match the IMPORT, not the JSX tag: `import { PageBlockHost as Host }`
+          // renders `<Host …>`, which a tag-only test misses entirely. (The
+          // pre-scoping version caught it, over-broadly; this keeps the scoping
+          // without reopening that hole.)
+          if (!/\bPageBlockHost\b/.test(src)) continue;
           if (/\bfit=(["']fill["']|\{\s*['"]fill['"]\s*\})/.test(src))
             offenders.push(path.relative(REPO_ROOT, full));
         }
