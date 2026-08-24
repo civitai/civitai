@@ -108,17 +108,17 @@ describe('getModelFileHeaderCorrections — precision', () => {
     );
   });
 
-  // The complement: the list must not be so wide it protects values the header CAN state.
-  it.each(['fp32', 'fp16', 'bf16', 'fp8', 'mxfp8', 'int8'] as const)(
+  // The complement, and it must be able to FAIL: an earlier version of this asserted
+  // `.fp ?? 'bf16'`, which collapsed "corrected to bf16" and "not corrected at all" into
+  // the same pass, so adding any of these to FP_HEADER_CANNOT_STATE stayed green. That is
+  // the direction with the asymmetric cost — over-widening the list silently stops
+  // correcting across the whole corpus, with no signal at all.
+  it.each(['fp32', 'fp16', 'fp8'] as const)(
     'still corrects a stored %s, which the header can state',
     (currentFp) => {
       expect(
-        getModelFileHeaderCorrections({
-          format: 'SafeTensor',
-          dtypeCounts: bf16Counts,
-          currentFp,
-        }).fp ?? 'bf16'
-      ).toBe('bf16');
+        getModelFileHeaderCorrections({ format: 'SafeTensor', dtypeCounts: bf16Counts, currentFp })
+      ).toEqual({ fp: 'bf16' });
     }
   );
 
@@ -271,6 +271,25 @@ describe('applyModelFileHeaderCorrections', () => {
     expect(sql).not.toContain('jsonb_typeof');
     expect(sql).toContain('"type" =');
     expect(values).toEqual(['VAE', target.fileId, target.fileUrl, 'VAE']);
+  });
+
+  /**
+   * 🔴 The regression a previous fix round introduced. Moving the shape guard out of the
+   * shared WHERE and into its own OR-branch left the jsonb merge UNGUARDED: a row matched
+   * on its `type` branch alone still ran it, which raises on scalar metadata and silently
+   * appends to an array. Only an fp AND type correction together reaches it, which is why
+   * the two single-column tests above could not see it. Assert the CASE, not the merge.
+   */
+  it('guards the metadata merge even when a type correction matched the row', async () => {
+    await expect(
+      applyModelFileHeaderCorrections({ ...target, corrections: { fp: 'bf16', type: 'VAE' } })
+    ).resolves.toBe(true);
+
+    const { sql } = executeRaw.mock.calls[0][0];
+    const setClause = sql.slice(sql.indexOf('SET'), sql.indexOf('WHERE'));
+    expect(setClause).toContain('CASE WHEN');
+    expect(setClause).toContain('jsonb_typeof');
+    expect(setClause).toContain('ELSE "metadata" END');
   });
 
   it('writes precision and type in the same statement', async () => {

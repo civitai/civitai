@@ -94,9 +94,12 @@ function fakeRes() {
 
 async function invoke(query: Record<string, unknown>) {
   const res = fakeRes();
+  lastRes = res;
   await handler({ method: 'GET', query } as unknown as NextApiRequest, res);
   return res;
 }
+
+let lastRes: ReturnType<typeof fakeRes> | undefined;
 
 describe('/api/v1/model-files/[id]/tensor-metadata cache headers', () => {
   beforeEach(() => {
@@ -199,11 +202,41 @@ describe('/api/v1/model-files/[id]/tensor-metadata cache headers', () => {
    * the feature is inert forever with no error, no log and no changed response. Measured:
    * with this test absent, deleting that line left all 10 tests green.
    */
+  /**
+   * 🔴 Pins that the correction is fired AFTER the response, which the handler comment
+   * calls deliberate. `await correct(...)` before `res.json` leaves every other assertion
+   * green while a hot public read starts blocking on a write to the primary. Recorded as a
+   * status observed at call time rather than by ordering promises, so the mutation fails
+   * on a value instead of hanging.
+   */
+  it('does not make the read wait on the write', async () => {
+    let statusWhenCorrectRan: number | undefined;
+    mockCorrect.mockImplementation(() => {
+      statusWhenCorrectRan = lastRes?.statusCode;
+      return Promise.resolve({ corrections: {}, applied: false });
+    });
+
+    await invoke({ id: '3057178' });
+
+    expect(statusWhenCorrectRan).toBe(200);
+  });
+
   it('selects the columns the correction needs', async () => {
     await invoke({ id: '3057178' });
 
     const { select } = mockFindUnique.mock.calls[0][0];
-    expect(select).toMatchObject({ url: true, type: true, metadata: true });
+    // Every column, not just the correction's: the mock returns the whole fixture whatever
+    // the select asks for, so dropping `name` (format inference reads it) or `sizeKB`
+    // (`sizeKB * 1024` becomes NaN) is invisible in exactly the same way.
+    expect(select).toMatchObject({
+      id: true,
+      modelVersionId: true,
+      name: true,
+      url: true,
+      type: true,
+      sizeKB: true,
+      metadata: true,
+    });
     expect(select.modelVersion).toMatchObject({ select: { model: { select: { type: true } } } });
   });
 

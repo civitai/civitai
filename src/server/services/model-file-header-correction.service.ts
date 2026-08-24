@@ -48,18 +48,29 @@ type FileTarget = {
  * a wrong value over a right one. It is unrecoverable rather than merely wrong: this runs
  * on read, so it re-applies over any correction the creator makes by hand.
  *
- * The list is the complement of what `getDominantFpFromDtypes` can emit — fp32, fp16,
- * bf16, fp8, mxfp8, int8. Adding a dtype to that mapper means removing its value here.
+ * 🔴 The test is SILENCE, not "can the mapper emit it". Those come apart, and where they
+ * do the emittable-means-safe proxy fails open:
  *
- * Traded away knowingly: an earlier shape keyed on the HEADER's answer instead, which let a
- * positive mxfp8 identification (F8_E8M0 scale tensors, which the header does state)
- * overwrite a stored `fp8_scaled`. That case is now refused with the rest. Correcting a
- * mislabelled mxfp8 file is worth little; getting the list wrong in the other direction
- * destroys a creator's value permanently, because this runs on read. Prefer the refusal.
+ * - `mxfp8` is emittable but is not a dtype either — it is inferred from F8_E8M0-typed
+ *   scale tensors. An exporter that stores those scales as `U8` (permitted: E8M0 is
+ *   byte-wide) leaves no signal, the vote returns plain `fp8`, and a correct value is lost.
+ * - `int8` is emittable from `I8`, but GPTQ/AWQ at 8 bits packs into the unmapped `I32` —
+ *   the same mechanism as int4, with leftover fp16 tensors winning the vote.
+ *
+ * Both are on the list for that reason. The cost is only that a file ALREADY labelled
+ * mxfp8 or int8 is never re-corrected; an empty `fp` is still filled from the header, and
+ * a wrong fp32/fp16/bf16/fp8 is still fixed.
+ *
+ * Traded away knowingly: keying on the HEADER's answer instead would let a positive mxfp8
+ * identification overwrite a stored `fp8_scaled`. Correcting a mislabelled file is worth
+ * little next to destroying a right value permanently, and this runs on read, so a bad
+ * overwrite re-applies over any manual fix. Prefer the refusal in both directions.
  */
 const FP_HEADER_CANNOT_STATE: readonly string[] = [
   'fp8_scaled',
   'fp8_mixed',
+  'mxfp8',
+  'int8',
   'nf4',
   'nvfp4',
   'int4',
@@ -128,24 +139,29 @@ export async function applyModelFileHeaderCorrections({
   if (!fp && !type) return false;
 
   const assignments: Prisma.Sql[] = [];
-  // 🔴 Both guards below are per-column and belong in the SET/WHERE, not around the call.
   const changed: Prisma.Sql[] = [];
+  const metadataIsObject = Prisma.sql`(
+    "metadata" IS NULL OR "metadata" = 'null'::jsonb OR jsonb_typeof("metadata") = 'object'
+  )`;
 
   if (fp) {
+    // 🔴 The shape guard travels with the ASSIGNMENT, not with the row match, and the CASE
+    // is what makes that true. Putting it only in the WHERE looks equivalent and is not:
+    // the branches are OR-ed, so a row matched on its `type` branch alone still runs this
+    // merge — and `'"legacy"'::jsonb || '{...}'::jsonb` raises on a scalar, while a jsonb
+    // ARRAY concatenates silently and appends the object as an element, corrupting the
+    // column with nothing to log. Reached only by an fp AND type correction together.
     assignments.push(
-      Prisma.sql`"metadata" = COALESCE(NULLIF("metadata", 'null'::jsonb), '{}'::jsonb) || ${JSON.stringify(
-        { fp }
-      )}::jsonb`
+      Prisma.sql`"metadata" = CASE WHEN ${metadataIsObject}
+        THEN COALESCE(NULLIF("metadata", 'null'::jsonb), '{}'::jsonb) || ${JSON.stringify({
+          fp,
+        })}::jsonb
+        ELSE "metadata" END`
     );
-    // The shape guard only gates the jsonb merge — a `type`-only correction has nothing
-    // to do with metadata, and gating it on this made a row with scalar metadata issue an
-    // UPDATE matching 0 rows on every single read, forever.
-    changed.push(
-      Prisma.sql`(
-        ("metadata" IS NULL OR "metadata" = 'null'::jsonb OR jsonb_typeof("metadata") = 'object')
-        AND "metadata"->>'fp' IS DISTINCT FROM ${fp}
-      )`
-    );
+    // Kept in the WHERE too, so an fp-only correction we cannot apply does not match the
+    // row at all. Gating the TYPE branch on it was the bug: a scalar-metadata row then
+    // issued an UPDATE matching 0 rows on every read, forever.
+    changed.push(Prisma.sql`(${metadataIsObject} AND "metadata"->>'fp' IS DISTINCT FROM ${fp})`);
   }
   if (type) {
     assignments.push(Prisma.sql`"type" = ${type}`);
