@@ -147,27 +147,36 @@ function lastCommit(worktreePath) {
 // Main-app sessions AND app sessions, because both hold a port and a live process in this tree.
 // While apps were global singletons they were invisible here, so `wt rm` would delete a worktree
 // out from under a running moderator and report a clean removal.
-async function sessionsFor(worktreePath, daemonRequest) {
+// Both lists, once, so a caller looping over worktrees does not re-fetch them per iteration.
+async function fetchRunning(daemonRequest) {
+  const [sessionRes, appRes] = await Promise.all([
+    daemonRequest('/sessions'),
+    daemonRequest('/apps'),
+  ]);
+  return {
+    sessions: sessionRes.ok ? sessionRes.data.sessions || [] : [],
+    apps: appRes.ok ? appRes.data.apps || [] : [],
+  };
+}
+
+// Main-app sessions AND app sessions, because both hold a port and a live process in this tree.
+// While apps were global singletons they were invisible here, so `wt rm` would delete a worktree
+// out from under a running moderator and report a clean removal.
+function sessionsIn(worktreePath, running) {
   const target = resolve(worktreePath).toLowerCase();
   const inTree = (s) => s.worktree && resolve(s.worktree).toLowerCase() === target;
 
   const found = [];
-  const sessionRes = await daemonRequest('/sessions');
-  if (sessionRes.ok) {
-    for (const s of (sessionRes.data.sessions || []).filter(inTree)) {
-      found.push({ id: s.id, port: s.port, status: s.status, stopPath: `/sessions/${s.id}` });
-    }
+  for (const s of running.sessions.filter(inTree)) {
+    found.push({ id: s.id, port: s.port, status: s.status, stopPath: `/sessions/${s.id}` });
   }
-  const appRes = await daemonRequest('/apps');
-  if (appRes.ok) {
-    for (const a of (appRes.data.apps || []).filter(inTree)) {
-      found.push({
-        id: `app:${a.name}`,
-        port: a.port,
-        status: a.status,
-        stopPath: `/app/${a.name}/stop?worktree=${encodeURIComponent(a.worktree)}`,
-      });
-    }
+  for (const a of running.apps.filter(inTree)) {
+    found.push({
+      id: `app:${a.name}`,
+      port: a.port,
+      status: a.status,
+      stopPath: `/app/${a.name}/stop?worktree=${encodeURIComponent(a.worktree)}`,
+    });
   }
   return found;
 }
@@ -176,17 +185,25 @@ async function sessionsFor(worktreePath, daemonRequest) {
 // directory git is run from — invoked through a worktree's own copy of the CLI it IS that worktree,
 // which inverts every isPrimary test: the real main checkout reads as a removable candidate and the
 // worktree you are standing in reads as the thing to protect.
-function primaryOf(trees, fallback) {
+export function primaryOf(trees, fallback) {
   return trees.length ? trees[0].path : resolve(fallback);
+}
+
+// Windows preserves whatever drive-letter casing the caller typed, and git prints its own. The
+// primary-worktree refusal below is the guard that stops `wt rm` deleting a local main, so it must
+// not be defeated by `c:\dev\...` vs `C:/Dev/...`. sessionsIn already lowercases for this reason.
+function samePathCI(a, b) {
+  return resolve(a).toLowerCase() === resolve(b).toLowerCase();
 }
 
 export async function inspect(primary, daemonRequest) {
   const trees = listWorktrees(primary);
   const primaryPath = primaryOf(trees, primary);
+  const running = await fetchRunning(daemonRequest);
   const rows = [];
   for (const t of trees) {
-    const isPrimary = t.path === primaryPath;
-    const sessions = await sessionsFor(t.path, daemonRequest);
+    const isPrimary = samePathCI(t.path, primaryPath);
+    const sessions = sessionsIn(t.path, running);
     rows.push({
       path: t.path,
       branch: t.branch,
@@ -238,12 +255,12 @@ export async function cmdRemove(primary, targetArg, opts, daemonRequest) {
   const trees = listWorktrees(primary);
   const primaryPath = primaryOf(trees, primary);
 
-  if (target === primaryPath) fail('refusing to remove the primary worktree');
+  if (samePathCI(target, primaryPath)) fail('refusing to remove the primary worktree');
 
   const entry = trees.find((t) => t.path === target);
   if (!entry) fail(`not a registered worktree: ${target}\nrun: git worktree list`);
 
-  const sessions = await sessionsFor(target, daemonRequest);
+  const sessions = sessionsIn(target, await fetchRunning(daemonRequest));
   const live = sessions.filter((s) => s.status === 'running');
   if (live.length && !opts.stopServer) {
     fail(

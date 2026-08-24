@@ -120,9 +120,23 @@ async function cmdList() {
 // `--prod db,buzz` / `--dev search`, repeatable. Groups come from env-modes.local, so the daemon
 // validates the names — this only has to get the shape right.
 function parseModeFlags(flags) {
-  const modes = { prod: [], dev: [] };
+  const modes = { prod: [], dev: [], app: null };
   for (let i = 0; i < flags.length; i++) {
     const flag = flags[i];
+    const inlineApp = flag.match(/^--app=(.*)$/);
+    if (inlineApp) {
+      if (!inlineApp[1].trim()) throw new Error('--app= needs an app name, e.g. --app=moderator');
+      modes.app = inlineApp[1].trim();
+      continue;
+    }
+    if (flag === '--app') {
+      const value = flags[++i];
+      if (!value || value.startsWith('--')) {
+        throw new Error('--app needs an app name, e.g. --app moderator');
+      }
+      modes.app = value;
+      continue;
+    }
     const inline = flag.match(/^--(prod|dev)=(.*)$/);
     if (inline) {
       // `--prod=` would otherwise be an empty, silent no-op while the spaced form errors.
@@ -140,27 +154,16 @@ function parseModeFlags(flags) {
       modes[flag.slice(2)].push(value);
       continue;
     }
-    throw new Error(`Unknown option "${flag}". Usage: start [worktree] [--prod a,b] [--dev a,b]`);
+    throw new Error(
+      `Unknown option "${flag}". Usage: start [worktree] [--app name] [--prod a,b] [--dev a,b]`
+    );
   }
-  return { prod: modes.prod.join(','), dev: modes.dev.join(',') };
+  return { app: modes.app, prod: modes.prod.join(','), dev: modes.dev.join(',') };
 }
 
 async function cmdStart(worktree, flags = []) {
   await ensureDaemon();
   const cwd = worktree ? resolve(worktree) : process.cwd();
-
-  // `start --app moderator` is the same gesture as `start`, aimed at a different app in the same
-  // worktree. It routes to /app/<name>/start rather than /sessions: an app is not a Next.js session
-  // and has no build dir, prewarm or branch watching to configure.
-  const appIndex = flags.indexOf('--app');
-  if (appIndex !== -1) {
-    const app = flags[appIndex + 1];
-    if (!app || app.startsWith('--')) {
-      console.error('Error: --app needs an app name (e.g. --app moderator)');
-      process.exit(1);
-    }
-    return cmdAppStart(app, cwd);
-  }
 
   let modes;
   try {
@@ -170,15 +173,50 @@ async function cmdStart(worktree, flags = []) {
     process.exit(1);
   }
 
+  // `start --app moderator` is the same gesture as `start`, aimed at a different app in the same
+  // worktree. It routes to /app/<name>/start rather than /sessions: an app is not a Next.js session
+  // and has no build dir, prewarm or branch watching to configure.
+  //
+  // Parsing happens BEFORE the branch so an unknown flag still fails here, and so a mode flag on an
+  // app start is refused rather than silently dropped — apps get the raw env chain, with no overlay
+  // applied, which is precisely the difference a `--prod db` would be trying to express.
+  const { app, ...sessionModes } = modes;
+  if (app) {
+    if (sessionModes.prod || sessionModes.dev) {
+      console.error(
+        `Error: --prod/--dev are not supported with --app. Apps run on the .env chain with no ` +
+          `overlay; only the main app has env modes.`
+      );
+      process.exit(1);
+    }
+    return cmdAppStart(app, cwd);
+  }
+
   const result = await daemonRequest('/sessions', {
     method: 'POST',
-    body: JSON.stringify({ worktree: cwd, ...modes }),
+    body: JSON.stringify({ worktree: cwd, ...sessionModes }),
   });
   if (!result.ok) {
     console.error('Error:', result.error || result.data?.error);
     process.exit(1);
   }
   console.log(JSON.stringify(result.data, null, 2));
+}
+
+// `--app <name>` on a session verb means "the app in this worktree", so the whole lifecycle uses one
+// gesture rather than `start --app x` followed by `app x stop`. Returns null when no --app was given.
+function appFromFlags(flags = []) {
+  const i = flags.indexOf('--app');
+  if (i !== -1) {
+    const value = flags[i + 1];
+    if (!value || value.startsWith('--')) {
+      console.error('Error: --app needs an app name, e.g. --app moderator');
+      process.exit(1);
+    }
+    return value;
+  }
+  const inline = flags.find((f) => f.startsWith('--app='));
+  return inline ? inline.slice('--app='.length) : null;
 }
 
 async function cmdLogs(sessionId, since) {
@@ -803,6 +841,9 @@ async function cmdWorktree(rest) {
 // Parse arguments
 const args = process.argv.slice(2);
 const command = args[0];
+// One gesture for the whole lifecycle: `start --app x` then `logs --app x`, `stop --app x`. Without
+// this only `start` took --app and everything after it needed the second `app <name> …` vocabulary.
+const appFlag = appFromFlags(args.slice(1));
 const arg1 = args[1];
 const arg2 = args[2];
 
@@ -818,16 +859,19 @@ switch (command) {
     else cmdStart(arg1, args.slice(2));
     break;
   case 'logs':
-    cmdLogs(arg1, arg2);
+    if (appFlag) cmdApp(appFlag, 'logs');
+    else cmdLogs(arg1, arg2);
     break;
   case 'tail':
     cmdTail(arg1);
     break;
   case 'stop':
-    cmdStop(arg1);
+    if (appFlag) cmdApp(appFlag, 'stop');
+    else cmdStop(arg1);
     break;
   case 'restart':
-    cmdRestart(arg1);
+    if (appFlag) cmdApp(appFlag, 'restart');
+    else cmdRestart(arg1);
     break;
   case 'rgb':
     cmdRgb(arg1);

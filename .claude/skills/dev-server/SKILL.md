@@ -183,6 +183,7 @@ Self-tests — run all three after touching `probe.mjs` or the hook:
 
 ```bash
 node .claude/skills/dev-server/scripts/env-chain.selftest.mjs          # .env layering, both directions
+node .claude/skills/dev-server/scripts/app-registry.selftest.mjs       # registry, port reservation, primaryOf
 node .claude/skills/dev-server/scripts/probe.selftest.mjs              # the classifier, pure
 node .claude/skills/dev-server/scripts/probe.integration.selftest.mjs  # the real probe() end to end
 node .claude/hooks/check-writable.selftest.mjs                         # the hook, both directions
@@ -220,9 +221,9 @@ fails.** Anything that adds a new signal belongs in the integration file, not ju
 
 ## Env modes — which services a session talks to
 
-A session picks one `.env` (its worktree's if present, otherwise the project root's) and then
-applies a per-service **overlay** on top of it. The overlay only restates the keys for the services
-it names, so nothing else in the chosen `.env` moves — the two `.env` files are still never merged.
+A session layers its `.env` files — the primary checkout's as the base, the worktree's own on top —
+and then applies a per-service **overlay** on that. The overlay only restates the keys for the
+services it names, so nothing else in the chain moves.
 
 **No `env-modes.local` means no overlay at all** — not "everything on dev". The file is gitignored,
 so it never comes with a checkout: until it exists, every start runs on the base `.env` exactly as
@@ -241,9 +242,19 @@ node .claude/skills/dev-server/cli.mjs start --prod all
 node .claude/skills/dev-server/cli.mjs start --prod all --dev search
 ```
 
-The groups are whatever `env-modes.local` defines — today `db`, `buzz`, `search`, `signals`,
-`redis`. Copy `env-modes.example` to `env-modes.local` (gitignored, holds credentials) and fill it
-in; adding a service is an edit to that file, not to the code.
+The groups are whatever `env-modes.local` defines. `env-modes.example` documents several, but
+**what is actually defined on this box is one: `db`.** So today `--prod`/`--dev` moves the primary
+database and nothing else, however many services the mechanism could carry. Adding one is an edit to
+`env-modes.local` (gitignored, holds credentials), not to the code.
+
+Several services have **no dev counterpart to move to at all** — `env-modes.mjs` lists orchestrator,
+payments, s3, clickhouse, notifications, feeds and opensearch in `PROD_ONLY_GROUPS`, and `auth-hub`
+in `UNMOVABLE_GROUPS` (it is one shared process reading its own `.env`, so an overlay there would
+repoint the app at a hub that is not running). `mode: dev` therefore never means "nothing here is
+production".
+
+⚠️ **Apps have no env modes.** `--prod`/`--dev` apply to the main app only; an app runs on its `.env`
+chain with no overlay. `start --app <name> --prod db` is refused rather than silently ignored.
 
 **Defaults.** Every group defaults to `dev`. Move a default in the skill's own `.env` when a dev
 service is unreliable:
@@ -441,8 +452,10 @@ node .claude/skills/dev-server/cli.mjs app moderator restart
 node .claude/skills/dev-server/cli.mjs app moderator stop
 ```
 
-`start --app <name>` and `app <name> start` are the same thing. Both default to the current
-directory's worktree; `app <name> <subcmd> <worktree>` names a different one.
+`--app <name>` works on `start`, `logs`, `stop` and `restart`, so one gesture covers the lifecycle;
+`app <name> <subcmd>` is the same thing spelled the other way. Both default to the current
+directory's worktree, and `app <name> <subcmd> <worktree>` names a different one. Running apps also
+appear under `apps` in `status`, beside the main-app sessions.
 
 | App | Preferred port |
 |-----|----------------|
@@ -461,8 +474,12 @@ answers 200s and looks completely healthy — the only thing that contradicts yo
 
 **`.env` falls through from the primary checkout.** An app reads `<primary>/apps/<name>/.env` as its
 base, with `<worktree>/apps/<name>/.env` layered on top when the worktree has one. Those files are
-gitignored, so a fresh worktree has neither — the base is what makes it start at all. Both of the
-primary checkout's copies point at the **production** database.
+gitignored, so a fresh worktree has neither — the base is what makes it start at all.
+
+⚠️ **That base may point at a production database**, and the fall-through means a fresh worktree
+inherits it without anyone choosing it. The app prints the `DATABASE_URL` **host** (never the
+credential) on startup and carries it as `dbHost` in `app` / `status` output — read it before you
+click anything that writes.
 
 `storage` and `notifications` are **not** here. They were registered and could never start: no
 `vite.config.ts` (their dev script is `tsx watch src/server.ts`) and no `.env`, so every attempt died
