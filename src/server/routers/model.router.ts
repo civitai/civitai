@@ -131,11 +131,43 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   });
 });
 
+/**
+ * Marks `getAll` un-edge-cacheable when its response would be caller-dependent.
+ *
+ * Runs UPSTREAM of `edgeCacheIt` deliberately, and that is the only position that
+ * works: `edgeCacheIt` reads `ctx.cache.skip` to compute the TTL *before* it calls
+ * the resolver, so a resolver (or controller) assigning `ctx.cache.skip` is inert.
+ * See the comment in `system.router.ts`.
+ *
+ * 🔴 `!!ctx.user` is load-bearing, not belt-and-braces. `createContext` defaults
+ * `edgeTTL` to 0 for a session, but `edgeCacheIt` overwrites that default with its
+ * own `ttl` without consulting `ctx.user` — so for an authenticated caller this
+ * middleware is the ONLY thing standing between the response and a shared,
+ * `public, s-maxage=60` edge entry keyed on nothing but the URL.
+ *
+ * The response really is caller-dependent:
+ * `getModelsWithImagesAndModelVersions` branches on `user.isModerator` when
+ * filtering by status and on `model.user.id === user?.id` for owner-only fields,
+ * and the controller reads the per-user feature flags `getAllModelImagesSlim` and
+ * `modelMetricPrivacyReadtime`. None of that is expressible in an edge cache key.
+ *
+ * Anonymous callers are unaffected — they have no `ctx.user`, their response is the
+ * same for all of them, and they are the bulk of this procedure's cache hits.
+ * `canCache = false` (set later, when a result `isPrivate`) is NOT a substitute:
+ * it makes the middleware skip the block that assigns the TTLs, which leaves the
+ * context defaults in place — and for an anonymous caller that default is 60.
+ */
 const skipEdgeCache = middleware(async ({ input, ctx, next }) => {
   const _input = input as GetAllModelsOutput;
 
   return next({
-    ctx: { user: ctx.user, cache: { ...ctx.cache, skip: _input.favorites || _input.hidden } },
+    ctx: {
+      user: ctx.user,
+      cache: {
+        ...ctx.cache,
+        skip: !!ctx.user || !!_input.favorites || !!_input.hidden,
+      },
+    },
   });
 });
 
