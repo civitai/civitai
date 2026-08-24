@@ -1499,6 +1499,7 @@ class AuthHub {
     this.process = null;
     this.startPromise = null;
     this.spawnedAtMs = null;
+    this.spawnEnvCache = null;
     this.status = 'stopped'; // stopped | starting | running | crashed | error | disabled
     this.ready = false;
     this.readyAt = null;
@@ -1527,7 +1528,16 @@ class AuthHub {
   // chain is what lets it inherit the primary checkout's. Either way process.env is the floor, which
   // is why the DATABASE_URL warning has to be computed from this and not from the chain alone.
   spawnEnv() {
-    return this.envPaths.length ? { ...process.env, ...loadEnvChain(this.envPaths) } : process.env;
+    // Cached for the duration of one start. Three callers read this — the DATABASE_URL refusal, the
+    // host warning and the spawn options — and without the cache each one re-read every file in the
+    // chain from disk. Cheap either way (~200us a read), but the three must also agree with each
+    // other: the thing refused, the thing described and the thing handed to the child are one object.
+    if (!this.spawnEnvCache) {
+      this.spawnEnvCache = this.envPaths.length
+        ? { ...process.env, ...loadEnvChain(this.envPaths) }
+        : process.env;
+    }
+    return this.spawnEnvCache;
   }
 
   // `::` (dual-stack), not a single literal. Bound to `127.0.0.1` these servers answered on v4 and
@@ -1567,6 +1577,9 @@ class AuthHub {
   // thread, which is why probePath/checkPath exist; a fixed local path never reached that, a worktree
   // argument can. pathExists is the timeout-raced one.
   async #start() {
+    // Dropped per start, not per instance: a restart after an .env edit must see the new values.
+    this.spawnEnvCache = null;
+
     if (this.process) {
       this.addLog('info', `${this.label} already running`);
       return this.getStatus();
@@ -3058,6 +3071,7 @@ if (invokedDirectly) {
 
 export {
   APP_REGISTRY,
+  AppSession,
   appEnvChain,
   appIsLive,
   appSessionKey,

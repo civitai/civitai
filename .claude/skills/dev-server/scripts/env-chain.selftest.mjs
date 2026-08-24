@@ -8,7 +8,7 @@
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'fs';
 import { tmpdir } from 'os';
 import { resolve } from 'path';
-import { loadEnvChain, appEnvChain, APP_REGISTRY, primaryCheckout } from './daemon.mjs';
+import { loadEnvChain, appEnvChain, APP_REGISTRY, primaryCheckout, AppSession } from './daemon.mjs';
 
 const dir = mkdtempSync(resolve(tmpdir(), 'env-chain-'));
 const base = resolve(dir, 'base.env');
@@ -62,6 +62,23 @@ try {
   // read `Env: a <- a` and is pure noise.
   const selfChain = appEnvChain(primaryCheckout, 'moderator');
   check('the primary checkout does not chain onto itself', selfChain.length, 1);
+
+  // --- WHICH OBJECT, not how it parses ---
+  // The DATABASE_URL warning and the "no env" refusal both read spawnEnv(), and the bug they were
+  // fixed for was not a parsing bug — it was reading the CHAIN when the child is handed
+  // `{ ...process.env, ...chain }`. Reverting to loadEnvChain(this.envPaths) passes every check in
+  // db-host.selftest.mjs, because all of those call the parser directly. This is the one that sees it.
+  const probe = new AppSession('moderator', worktree, 5174, [base]);
+  const env = probe.spawnEnv();
+  check('spawnEnv layers the chain over process.env', env.SHARED, 'from-base');
+  check('spawnEnv keeps a key only process.env has', env.PATH, process.env.PATH);
+  check('spawnEnv is stable within one start', probe.spawnEnv(), env);
+
+  // An empty chain means "this daemon does not supply this process's env" — the auth hub, which lets
+  // Vite load its own .env. spawnEnv must then be process.env itself, and the warning must stay
+  // quiet rather than naming an inherited candidate the process may not even use.
+  const hubLike = new AppSession('moderator', worktree, 5174, []);
+  check('an empty chain is process.env itself', hubLike.spawnEnv(), process.env);
 } finally {
   rmSync(dir, { recursive: true, force: true });
 }

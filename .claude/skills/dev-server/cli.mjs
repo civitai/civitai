@@ -414,6 +414,16 @@ async function cmdAppTail(name, worktree) {
 
 async function cmdApp(name, subcmd, worktreeArg) {
   await ensureDaemon();
+  // The positional on an app verb is a worktree, and only that. `logs --app moderator 500` reads
+  // like `logs <session> <since>` and would otherwise become a worktree, 404ing with
+  // "moderator is not running in <cwd>/500" — which sends the reader looking for the app rather
+  // than at what they typed. Fails closed either way; this says which.
+  if (worktreeArg && !existsSync(resolve(worktreeArg))) {
+    console.error(`Error: "${worktreeArg}" is not a directory.`);
+    console.error(`Usage: app <name> [status|start|stop|restart|logs] [worktree]`);
+    console.error(`The positional on an app command is a worktree path — there is no "since" here.`);
+    process.exit(1);
+  }
   const cwd = worktreeArg ? resolve(worktreeArg) : process.cwd();
 
   // `app` with no name lists what is registered and what is running where.
