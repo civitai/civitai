@@ -494,12 +494,21 @@ export const removeImageResourceSchema = z.object({
 
 export type GetEntitiesCoverImage = z.infer<typeof getEntitiesCoverImage>;
 export const getEntitiesCoverImage = z.object({
-  entities: z.array(
-    z.object({
-      entityType: z.union([z.enum(SearchIndexEntityTypes), z.enum(['ModelVersion', 'Post'])]),
-      entityId: z.number(),
-    })
-  ),
+  entities: z
+    .array(
+      z.object({
+        entityType: z.union([z.enum(SearchIndexEntityTypes), z.enum(['ModelVersion', 'Post'])]),
+        entityId: z.number(),
+      })
+    )
+    // Sized off what the callers can actually produce, with room to spare. A profile
+    // showcase is capped server-side at `constants.profile.showcaseItemsLimit` (32,
+    // applied in `addEntityToShowcase`), and the notification panel dedupes image ids
+    // out of a 30-per-page infinite list, so 500 is ~16 pages deep. No caller in the
+    // repo comes near it; it exists so the array has a ceiling at all.
+    // An empty array is deliberately still accepted: `getEntityCoverImage` returns []
+    // for it, and this is a token-reachable read where that is a valid no-op.
+    .max(500),
 });
 
 export type ScanJobsOutput = z.output<typeof scanJobsSchema>;
