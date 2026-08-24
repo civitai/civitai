@@ -250,7 +250,13 @@ that have to happen, or be decided, before it reaches creators.
 - `creator-shop.service.ts:getEarlyAccessModelPrices` reports a closed early-access window as still
   priced — it skips `isPaidAccessActive`. Pre-existing, unrelated to this change.
 - 4 type errors and 1 failing suite (`user-payment-configuration`, `civitai-telemetry`) arrived with
-  the merge from main. Verified pre-existing there; this branch contributes none.
+  the merge from main. Verified pre-existing there; this branch contributes none. As of the 2026-08-24
+  merge only the `civitai-telemetry` type error survives; the rest were stale Prisma output and went
+  away with `db:generate`.
+- **`PricingSlot.ownerId` deliberately does NOT move with a model transfer**, unlike `PaidAccess.ownerId`
+  and `DonationGoal.userId` (#4309). Those two are denormalised copies of the current owner and decide
+  who gets paid; a slot is a record of who spent an allowance and when. Moving it would refund the
+  seller a slot they did spend and charge the recipient for a pricing they never made.
 
 ### Opened by the merge with scheduled sales
 
@@ -261,8 +267,10 @@ that have to happen, or be decided, before it reaches creators.
       happen to share a threshold, which is the shape that drifts silently. Worth collapsing the score
       floor to one constant before both grow more consumers.
 - [ ] **A sale now discounts the STORED price**, since the ceiling it used to compose over is gone.
-      Sale limits are validated against a floor computed from stored prices too. Worth a second look
-      from whoever owns sales, because the numbers a creator sees when authoring one have moved.
+      Sale limits are validated against a floor computed from stored prices too. The 2026-08-24 merge
+      extended this to `querySalesForModels`, which anchored the model-card badge on the capped price;
+      it now anchors on the stored one, so card and page agree again. Still worth a second look from
+      whoever owns sales, because the numbers a creator sees when authoring one have moved.
 
 ## Consequences neither blast-radius table measures
 
