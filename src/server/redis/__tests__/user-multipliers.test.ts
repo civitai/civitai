@@ -1,0 +1,116 @@
+import fs from 'fs';
+import path from 'path';
+import { describe, expect, it } from 'vitest';
+import type { UserMultiplierRow } from '~/server/redis/user-multipliers';
+import { foldUserMultipliers } from '~/server/redis/user-multipliers';
+
+const paidBronze = (userId: number): UserMultiplierRow => ({
+  userId,
+  rewardsIneligible: false,
+  rewardsMultiplier: 1.5,
+  purchasesMultiplier: 1.05,
+});
+
+const referralGrant = (userId: number): UserMultiplierRow => ({
+  userId,
+  rewardsIneligible: false,
+  rewardsMultiplier: null,
+  purchasesMultiplier: null,
+});
+
+const buzzPurchaseGrant = (userId: number): UserMultiplierRow => ({
+  userId,
+  rewardsIneligible: false,
+  rewardsMultiplier: 1,
+  purchasesMultiplier: 1,
+});
+
+describe('foldUserMultipliers', () => {
+  it('a perkless referral grant must not shadow a paid membership', () => {
+    // Do not "simplify" this back to picking one winning row. A referral grant conveys a tier and
+    // no perks, and out-ranked the paid row on the currentPeriodEnd tiebreak (ClickUp 868kv4q7t).
+    const result = foldUserMultipliers([referralGrant(1), paidBronze(1)]);
+
+    expect(result[1].rewardsMultiplier).toBe(1.5);
+    expect(result[1].purchasesMultiplier).toBe(1.05);
+  });
+
+  it('is order-independent, because row order is not part of the contract', () => {
+    const result = foldUserMultipliers([paidBronze(2), referralGrant(2)]);
+
+    expect(result[2].rewardsMultiplier).toBe(1.5);
+    expect(result[2].purchasesMultiplier).toBe(1.05);
+  });
+
+  it('a civitai-buzz-* grant carrying an explicit 1 must not shadow it either', () => {
+    const result = foldUserMultipliers([buzzPurchaseGrant(3), paidBronze(3)]);
+
+    expect(result[3].rewardsMultiplier).toBe(1.5);
+    expect(result[3].purchasesMultiplier).toBe(1.05);
+  });
+
+  it('falls back to 1 when the only active row carries no perks', () => {
+    const result = foldUserMultipliers([referralGrant(4)]);
+
+    expect(result[4].rewardsMultiplier).toBe(1);
+    expect(result[4].purchasesMultiplier).toBe(1);
+  });
+
+  it('takes the best across tiers rather than the highest tier', () => {
+    const activeGoldGrant: UserMultiplierRow = {
+      userId: 5,
+      rewardsIneligible: false,
+      rewardsMultiplier: null,
+      purchasesMultiplier: null,
+    };
+    const paidSilver: UserMultiplierRow = {
+      userId: 5,
+      rewardsIneligible: false,
+      rewardsMultiplier: 2.5,
+      purchasesMultiplier: 1.1,
+    };
+
+    const result = foldUserMultipliers([activeGoldGrant, paidSilver]);
+
+    expect(result[5].rewardsMultiplier).toBe(2.5);
+  });
+
+  it('zeroes rewards for an ineligible user without touching purchases', () => {
+    const result = foldUserMultipliers([
+      { ...paidBronze(6), rewardsIneligible: true },
+      { ...referralGrant(6), rewardsIneligible: true },
+    ]);
+
+    expect(result[6].rewardsMultiplier).toBe(0);
+    expect(result[6].purchasesMultiplier).toBe(1.05);
+    expect(result[6].rewardsIneligible).toBe(true);
+  });
+
+  it('keeps users separate', () => {
+    const result = foldUserMultipliers([paidBronze(7), referralGrant(8)]);
+
+    expect(result[7].rewardsMultiplier).toBe(1.5);
+    expect(result[8].rewardsMultiplier).toBe(1);
+  });
+
+  it('returns nothing for no rows', () => {
+    expect(foldUserMultipliers([])).toEqual({});
+  });
+});
+
+describe('userMultipliersCache wiring', () => {
+  const source = fs.readFileSync(path.join(process.cwd(), 'src/server/redis/caches.ts'), 'utf-8');
+  const lookup = source.slice(
+    source.indexOf('export const userMultipliersCache'),
+    source.indexOf('type UserBasicLookup')
+  );
+
+  it('reads the source it is meant to read', () => {
+    expect(lookup).toContain('MULTIPLIERS_FOR_USER');
+  });
+
+  it('resolves multipliers through foldUserMultipliers, not a single winning row', () => {
+    expect(lookup).toContain('foldUserMultipliers(');
+    expect(lookup).not.toContain('ROW_NUMBER()');
+  });
+});

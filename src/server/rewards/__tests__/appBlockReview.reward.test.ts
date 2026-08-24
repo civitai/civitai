@@ -48,6 +48,7 @@ vi.mock('~/shared/constants/buzz.constants', () => ({
 }));
 vi.mock('~/utils/string-helpers', () => ({
   hashifyObject: (o: any) => `hash:${JSON.stringify(o)}`,
+  hashify: (str: string) => str.length,
 }));
 
 // Import AFTER mocks.
@@ -81,7 +82,14 @@ describe('appBlockReviewReward', () => {
       type: 'appBlockReview',
       toUserId: 7,
       byUserId: 7,
-      forId: 'ab_42',
+      // `appBlockId` is a string and `buzzEvents.forId` is Int32, so the row is
+      // coerced on the way in. Asserting the raw string here pinned a row
+      // ClickHouse silently drops (ClickUp 868ktbnjh); the string is preserved
+      // in `transactionDetails.forIdRaw` and in the transaction id below.
+      forId: expect.any(Number),
+    });
+    expect(JSON.parse(inserted.values[0].transactionDetails)).toMatchObject({
+      forIdRaw: 'ab_42',
     });
 
     // Award granted to the BLUE account.

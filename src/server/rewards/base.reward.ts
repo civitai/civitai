@@ -15,7 +15,7 @@ import { TransactionType } from '~/shared/constants/buzz.constants';
 import { createBuzzTransactionMany, getMultipliersForUser } from '~/server/services/buzz.service';
 import type { ResolvedRewardConfig, RewardConfig } from '~/server/rewards/reward-config';
 import { resolveFromConfig, resolveRewardConfig } from '~/server/rewards/reward-config';
-import { hashifyObject } from '~/utils/string-helpers';
+import { hashify, hashifyObject } from '~/utils/string-helpers';
 import { isClickHouseConnectionError, withRetries } from '../utils/errorHandling';
 
 // Retry budget for the batch `process` (cron) path — can afford to block.
@@ -556,6 +556,37 @@ export function createBuzzEvent<T>({
   };
 }
 
+/**
+ * `buzzEvents.forId` is Int32, but a reward key may carry a string (generation-feedback's jobId,
+ * ad-watched's token). Inserts run with `async_insert=1, wait_for_async_insert=0`, so ClickHouse
+ * accepts the request, fails to parse the row server-side and drops it — the app sees success and
+ * still pays the Buzz. That is how 4M generation-feedback payouts recorded zero events, with no
+ * 500 and no alert (ClickUp 868ktbnjh). Coerce here rather than at the key, so `sendAward`'s
+ * `externalTransactionId` keeps the value it has always used.
+ */
+export function toClickhouseBuzzEvent(event: BuzzEventLog): BuzzEventLog {
+  if (typeof event.forId === 'number') return event;
+
+  const asNumber = Number(event.forId);
+  const forId =
+    Number.isInteger(asNumber) && Math.abs(asNumber) <= 2147483647
+      ? asNumber
+      : hashify(event.forId);
+
+  let details: MixedObject;
+  try {
+    details = JSON.parse(event.transactionDetails ?? '{}');
+  } catch {
+    details = {};
+  }
+
+  return {
+    ...event,
+    forId,
+    transactionDetails: JSON.stringify({ ...details, forIdRaw: event.forId }),
+  };
+}
+
 // TODO: sometimes this can cause duplicate entries.
 //  hypothesis is that this occurs due to a combination of
 //  async inserts + ch's merge strategy
@@ -568,7 +599,7 @@ async function addBuzzEvent(
     async () =>
       await clickhouse?.insert({
         table: 'buzzEvents',
-        values: [event],
+        values: [toClickhouseBuzzEvent(event)],
         format: 'JSONEachRow',
       }),
     retries,
@@ -582,7 +613,7 @@ async function updateBuzzEvents(events: BuzzEventLog[]) {
     async () =>
       await clickhouse?.insert({
         table: 'buzzEvents',
-        values: events,
+        values: events.map(toClickhouseBuzzEvent),
         format: 'JSONEachRow',
       }),
     5,
