@@ -70,6 +70,31 @@ const SRC = path.resolve(__dirname, '../../..');
 const SCAN_ROOTS = ['components/Apps', 'components/AppBlocks', 'pages/apps'];
 
 /**
+ * 🔴 THE ROOTS FOR THE **TEST** SWEEP, AND WHY THEY ARE A SEPARATE LIST.
+ *
+ * `SCAN_ROOTS` above walks PRODUCTION files only — `walk()` excludes `*.test.ts(x)` /
+ * `*.browser.test.ts(x)` by construction. That exclusion is correct for the enrolment
+ * rules (a test SHOULD pin a label as a literal; deriving the expectation from the
+ * constant is the vacuous-test failure this repo bans), but it left a hole the size of
+ * a directory: **a test asserting a RETIRED wording is on screen was invisible to every
+ * rule in this file.**
+ *
+ * 🔴 MEASURED, NOT HYPOTHETICAL. `src/tests/pages/apps/invites-transfer-blocked.browser
+ * .test.tsx` asserted `toHaveTextContent(/On-site app/i)`. The kind rename made that
+ * assertion false, every rule here stayed green, the whole `unit` tier stayed green, and
+ * the only thing that caught it was the preview pipeline's `component-tests` job — which
+ * is report-only, runs 187 files (not the App-store subset), and is the tier a local
+ * `vitest src/components/Apps` run cannot see. Note the shape: this file's docblock
+ * claims rule (1) fails "when the set GROWS", and for `src/tests/**` it could not. A
+ * guard narrower than its own description reads as coverage while providing none.
+ *
+ * `src/tests` is the page-level suite (it is NOT reached by `SCAN_ROOTS`, which are all
+ * under `src/components` and `src/pages`), and the App-store component tests sit beside
+ * their components, so both are listed.
+ */
+const TEST_SCAN_ROOTS = ['tests', 'components/Apps', 'components/AppBlocks', 'pages/apps'];
+
+/**
  * The retired wordings.
  *
  * 🔴 Deliberately NOT a bare `offsite` / lowercase `external`. `'offsite'` is a stored
@@ -239,6 +264,17 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
+/** The MIRROR of {@link walk}: test files ONLY. See {@link TEST_SCAN_ROOTS}. */
+function walkTests(dir: string, out: string[] = []): string[] {
+  if (!fs.existsSync(dir)) return out;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) walkTests(full, out);
+    else if (/\.(test|browser\.test)\.tsx?$/.test(entry.name)) out.push(full);
+  }
+  return out;
+}
+
 /**
  * Every string a HUMAN could read in this source, as `{ line, text }`.
  *
@@ -290,6 +326,106 @@ function findHardcodedKindLabel(fileName: string, text: string): string[] {
   return userFacingStrings(fileName, text).flatMap(({ line, text: s }) =>
     KIND_LABEL_WORD.test(s) ? [String(line)] : []
   );
+}
+
+/**
+ * 🔴 TEXT A TEST ASSERTS IS **ON SCREEN** — not a test title, not fixture data.
+ *
+ * This is the whole reason the test sweep is a separate extractor rather than
+ * `userFacingStrings` pointed at a wider root. Measured over the 286 test files in
+ * `TEST_SCAN_ROOTS`, the naive version produced **7** retired-wording hits of which
+ * **6 were noise**: five were `test(...)` / `describe(...)` TITLES naming the SCENARIO
+ * ("🔴 an ON-SITE listing — transfer stays available" — a true sentence about the
+ * fixture's `kind`, not a claim about copy), and one was an app-name fixture
+ * (`name: 'Offsite App'`). Six false positives out of seven is precisely the
+ * "allowlisted into uselessness" outcome this file's own `RETIRED_WORDINGS` docblock
+ * warns about, and it would have buried the one real hit.
+ *
+ * So the rule keys on the ONE thing that makes a string a claim about rendered copy:
+ * it is an argument to a text-matching assertion. Collected:
+ *   - the argument to `toHaveTextContent` / `toHaveAccessibleName` and the
+ *     `*ByText` / `*ByLabelText` / `*ByAltText` / `*ByTitle` / `*ByPlaceholderText`
+ *     query family (string, template or REGEX — the live defect was a regex);
+ *   - the `name:` option of `getByRole(role, { name })`, which is how this repo
+ *     addresses a button by its accessible name;
+ *   - the value of `toHaveAttribute('aria-label' | 'title' | 'alt', …)`.
+ *
+ * 🔴 WHAT IT DOES NOT COVER, stated rather than implied: `toBe` / `toEqual` on a
+ * view-model field (`expect(row.badge).toBe('Standalone')`). That is a claim about a
+ * FUNCTION'S RETURN, not about the screen, and widening to it would re-admit every
+ * fixture literal in the repo. Those call sites are covered instead by the production
+ * SHRINKS/GROWS rules on the module the function lives in.
+ */
+const TEXT_ASSERTION_CALLS = new Set([
+  'toHaveTextContent',
+  'toHaveAccessibleName',
+  'getByText',
+  'findByText',
+  'queryByText',
+  'getByLabelText',
+  'findByLabelText',
+  'queryByLabelText',
+  'getByAltText',
+  'getByTitle',
+  'getByPlaceholderText',
+]);
+const ROLE_QUERY_CALLS = new Set(['getByRole', 'findByRole', 'queryByRole']);
+const LABELLING_ATTRS = new Set(['aria-label', 'title', 'alt']);
+
+function assertedScreenText(fileName: string, text: string): { line: number; text: string }[] {
+  const sf = parseTsx(fileName, text);
+  const out: { line: number; text: string }[] = [];
+  const at = (n: ts.Node) => sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1;
+
+  /** The literal text of a string / template / REGEX argument, or null if it is dynamic. */
+  const literalOf = (n: ts.Node): string | null => {
+    if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) return n.text;
+    // A regex's SOURCE is the assertion — `/On-site app/i` is the live defect's shape.
+    if (ts.isRegularExpressionLiteral(n)) return n.text;
+    if (ts.isTemplateExpression(n)) {
+      return [n.head.text, ...n.templateSpans.map((s) => s.literal.text)].join(' ');
+    }
+    return null;
+  };
+
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+      const name = node.expression.name.text;
+      if (TEXT_ASSERTION_CALLS.has(name)) {
+        for (const a of node.arguments) {
+          const v = literalOf(a);
+          if (v !== null) out.push({ line: at(a), text: v });
+        }
+      } else if (ROLE_QUERY_CALLS.has(name) && node.arguments.length >= 2) {
+        const opts = node.arguments[1];
+        if (ts.isObjectLiteralExpression(opts)) {
+          for (const p of opts.properties) {
+            if (ts.isPropertyAssignment(p) && ts.isIdentifier(p.name) && p.name.text === 'name') {
+              const v = literalOf(p.initializer);
+              if (v !== null) out.push({ line: at(p.initializer), text: v });
+            }
+          }
+        }
+      } else if (name === 'toHaveAttribute' && node.arguments.length >= 2) {
+        const attr = literalOf(node.arguments[0]);
+        if (attr !== null && LABELLING_ATTRS.has(attr)) {
+          const v = literalOf(node.arguments[1]);
+          if (v !== null) out.push({ line: at(node.arguments[1]), text: v });
+        }
+      }
+    }
+    node.forEachChild(visit);
+  };
+  visit(sf);
+  return out;
+}
+
+/** Retired-wording hits among the text a TEST asserts is on screen. */
+function findAssertedRetiredWording(fileName: string, text: string): string[] {
+  return assertedScreenText(fileName, text).flatMap(({ line, text: s }) => {
+    const hit = RETIRED_WORDINGS.find((re) => re.test(s));
+    return hit ? [`${line}:${hit.source}`] : [];
+  });
 }
 
 /**
@@ -491,6 +627,101 @@ const SCANNED = SCAN_ROOTS.flatMap((root) => walk(path.join(SRC, root))).map((fi
   rel: path.relative(SRC, file).split(path.sep).join('/'),
   raw: fs.readFileSync(file, 'utf8'),
 }));
+
+const SCANNED_TESTS = TEST_SCAN_ROOTS.flatMap((root) => walkTests(path.join(SRC, root))).map(
+  (file) => ({
+    rel: path.relative(SRC, file).split(path.sep).join('/'),
+    raw: fs.readFileSync(file, 'utf8'),
+  })
+);
+
+describe('🔴 NO TEST ASSERTS A RETIRED WORDING IS ON SCREEN', () => {
+  /**
+   * 🔴 THE CONTROLS COME FIRST, because this rule's headline assertion is a ZERO and a
+   * reassuring zero is indistinguishable from an extractor wired to nothing. Both
+   * directions are driven through synthetic sources whose answer is known, so neither
+   * can go stale when the tree changes.
+   */
+  it('POSITIVE CONTROL: it FINDS a retired wording in every assertion shape', () => {
+    const bad = `
+      test('a scenario about an on-site listing', async () => {
+        await expect.element(card).toHaveTextContent(/On-site app/i);
+        await expect.element(page.getByText('an external app')).toBeInTheDocument();
+        await expect.element(page.getByRole('button', { name: 'Off-site thing' })).toBeVisible();
+        await expect.element(el).toHaveAttribute('aria-label', 'the off-site one');
+      });`;
+    // FOUR hits — one per shape. The test TITLE also contains "on-site" and is NOT one
+    // of them; that is the whole point of the extractor.
+    expect(findAssertedRetiredWording('bad.browser.test.tsx', bad)).toHaveLength(4);
+  });
+
+  /**
+   * 🔴 THE CONTROL THAT JUSTIFIES THE EXTRACTOR'S NARROWNESS. Measured on the real tree,
+   * the naive "every user-facing string" version produced 7 hits of which 6 were these
+   * two shapes. If someone later "simplifies" this rule to reuse `userFacingStrings`,
+   * this goes red and names the reason.
+   */
+  it('NEGATIVE CONTROL: a test TITLE and FIXTURE DATA are not screen claims', () => {
+    const noise = `
+      const CATALOG = [{ id: 'a', kind: 'offsite', name: 'Offsite App' }];
+      describe('🔴 an ON-SITE listing — transfer stays available', () => {
+        test('…and the off-site payload renders the other way', async () => {
+          state.context = contextFor({ kind: 'offsite' });
+          expect(row.badge).toBe('External');
+        });
+      });`;
+    expect(findAssertedRetiredWording('noise.browser.test.tsx', noise)).toEqual([]);
+    // …and the naive extractor DOES flag them, which is why the two are different
+    // functions rather than one shared one.
+    expect(findRetiredWording('noise.browser.test.tsx', noise).length).toBeGreaterThan(0);
+  });
+
+  it('NEGATIVE CONTROL: the CURRENT wording asserted on screen is fine', () => {
+    const good = `
+      test('renders the kind', async () => {
+        await expect.element(card).toHaveTextContent(/Embedded app/i);
+        await expect.element(page.getByText('Standalone app')).toBeInTheDocument();
+        await expect.element(page.getByRole('button', { name: 'Embedded' })).toBeVisible();
+      });`;
+    expect(findAssertedRetiredWording('good.browser.test.tsx', good)).toEqual([]);
+  });
+
+  /**
+   * 🔴 A FLOOR ON THE TEST SWEEP ITSELF — the same reason `SCANNED` has one. A
+   * `TEST_SCAN_ROOTS` typo, or a `walkTests` that silently matches nothing, turns the
+   * rule below into a green no-op. Both numbers are asserted: the FILE count (the walk
+   * reached the directories) and the EXTRACTED-ASSERTION count (the extractor actually
+   * pulled screen claims out of them). A widened root that finds nothing is
+   * indistinguishable from one wired to nothing.
+   */
+  it('POSITIVE CONTROL: the test sweep really visited the suites', () => {
+    expect(SCANNED_TESTS.length).toBeGreaterThan(200);
+    const rels = SCANNED_TESTS.map((s) => s.rel);
+    // The specific file the live defect lived in, named so a move is loud.
+    expect(rels).toContain('tests/pages/apps/invites-transfer-blocked.browser.test.tsx');
+    // …and `src/tests/**` is genuinely reached, which NO other rule in this file does.
+    expect(rels.filter((r) => r.startsWith('tests/')).length).toBeGreaterThan(20);
+    const extracted = SCANNED_TESTS.reduce(
+      (n, { rel, raw }) => n + assertedScreenText(rel, raw).length,
+      0
+    );
+    expect(extracted).toBeGreaterThan(500);
+  });
+
+  /**
+   * 🔴 THE RULE. A test that asserts a retired wording is on screen is either testing a
+   * surface that was never renamed, or it is a stale expectation that will fail the
+   * moment the rename lands — and it fails in the REPORT-ONLY browser tier, hours later,
+   * on a job that runs 187 files rather than the App-store subset a developer runs
+   * locally.
+   */
+  it('🔴 no test asserts a retired wording is rendered', () => {
+    const offenders = SCANNED_TESTS.flatMap(({ rel, raw }) =>
+      findAssertedRetiredWording(rel, raw).map((h) => `${rel}:${h}`)
+    );
+    expect(offenders).toEqual([]);
+  });
+});
 
 describe('🔒 the App-store kind label has ONE source', () => {
   /**
