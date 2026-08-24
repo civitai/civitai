@@ -213,6 +213,9 @@ const featureFlags = createFeatureFlags({
     fliptKey: 'training-auto-label-orchestrator',
   },
   imageTrainingResults: { availability: ['user'], fliptKey: 'image-training-results' },
+  // Training list reads its status/epochs/cost from the orchestrator workflow instead of the
+  // stored copy. Default off; ramp via Flipt. Flipping it off restores the DB read with no deploy.
+  trainingOrchestratorState: { availability: ['mod'], fliptKey: 'training-orchestrator-state' },
   trainingAutoCaption: { availability: ['public'], fliptKey: 'training-auto-caption2' },
   trainingAutoTag: { availability: ['public'], fliptKey: 'training-auto-tag2' },
   wan22MultiStep: { availability: ['public'], fliptKey: 'wan22-multi-step' },

@@ -1,14 +1,10 @@
 import { Upload } from '@aws-sdk/lib-storage';
 import type {
   AudioCaptioningStepTemplate,
-  ImageResourceTrainingStep,
-  ImageResourceTrainingOutput,
   MediaCaptioningStepTemplate,
   WdTaggingStepTemplate,
   Workflow,
   WorkflowStepTemplate,
-  TrainingStep,
-  TrainingOutput,
 } from '@civitai/client';
 import type { WorkflowStatus } from '@civitai/client';
 import {
@@ -447,25 +443,24 @@ export const getJobEstStartsHandler = async ({ userId }: { userId: number }) => 
 };
 
 // ----- Training workflow status update logic -----
-
-type WorkflowStepMetadata = { modelFileId: number };
-export type CustomImageResourceTrainingStep = ImageResourceTrainingStep & {
-  metadata: WorkflowStepMetadata;
-};
-export type CustomTrainingStep = TrainingStep & {
-  metadata: WorkflowStepMetadata;
-};
-
-export const mapWorkflowStatusToTrainingStatus: { [key in WorkflowStatus]: TrainingStatus } = {
-  unassigned: TrainingStatus.Submitted,
-  preparing: TrainingStatus.Submitted,
-  scheduled: TrainingStatus.Submitted,
-  processing: TrainingStatus.Processing,
-  failed: TrainingStatus.Failed,
-  expired: TrainingStatus.Expired,
-  canceled: TrainingStatus.Failed,
-  succeeded: TrainingStatus.InReview,
-};
+//
+// The workflow→state mapping itself lives in `orchestrator/training/workflow-state`, which the
+// read overlay shares. Re-exported here because the webhook imports these from this module.
+export type {
+  CustomImageResourceTrainingStep,
+  CustomTrainingStep,
+  DerivedTrainingWorkflowState,
+} from '~/server/services/orchestrator/training/workflow-state';
+export {
+  deriveTrainingWorkflowState,
+  mapWorkflowStatusToTrainingStatus,
+  PermanentTrainingWebhookError,
+  TrainingRecordNotFoundError,
+} from '~/server/services/orchestrator/training/workflow-state';
+import {
+  deriveTrainingWorkflowState,
+  TrainingRecordNotFoundError,
+} from '~/server/services/orchestrator/training/workflow-state';
 
 export type TrainingWorkflowUpdateResult = {
   trainingStatus: TrainingStatus;
@@ -483,35 +478,6 @@ export type TrainingWorkflowUpdateResult = {
 };
 
 /**
- * Base type for PERMANENT, non-retryable failures of the training webhook path:
- * conditions where retrying the workflow callback will deterministically fail
- * again (the orchestrator re-delivers the identical workflow every time). The
- * webhook handler catches this base type and acks (200) instead of returning
- * 500, so a single orphaned/malformed training can't turn into a
- * retry-amplified 500 storm. A genuine TRANSIENT failure (DB error, dependency
- * timeout, unexpected bug) throws a plain Error instead and stays a 5xx so the
- * orchestrator's retry can legitimately recover it.
- */
-export class PermanentTrainingWebhookError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'PermanentTrainingWebhookError';
-  }
-}
-
-/**
- * Thrown when the training's backing ModelFile no longer exists (deleted or
- * orphaned training) — the dominant observed storm cause. A subtype of
- * PermanentTrainingWebhookError, so the handler treats it the same way.
- */
-export class TrainingRecordNotFoundError extends PermanentTrainingWebhookError {
-  constructor(message: string) {
-    super(message);
-    this.name = 'TrainingRecordNotFoundError';
-  }
-}
-
-/**
  * Updates the model file metadata and model version training status based on workflow data.
  * Returns data needed for notifications (signals, emails, webhooks) which should be handled by the caller.
  */
@@ -519,74 +485,8 @@ export async function updateTrainingWorkflowRecords(
   workflow: Workflow,
   status: WorkflowStatus
 ): Promise<TrainingWorkflowUpdateResult> {
-  const { transactions, steps, id: workflowId, createdAt, status: workflowStatus } = workflow;
-
-  const step = steps?.[0] as (CustomImageResourceTrainingStep | CustomTrainingStep) | undefined;
-  // Permanent: the workflow is created WITH its step + modelFileId metadata
-  // (see training.orch.ts). If the re-fetched workflow lacks either, the record
-  // is malformed/orphaned and every retry re-derives the same absence — ack it.
-  if (!step) throw new PermanentTrainingWebhookError('Missing step data');
-  if (!step.metadata.modelFileId) throw new PermanentTrainingWebhookError('Missing modelFileId');
-
-  const {
-    metadata: { modelFileId },
-    output,
-    startedAt,
-    completedAt,
-  } = step;
-
-  let trainingStatus = mapWorkflowStatusToTrainingStatus[workflowStatus ?? status];
-
-  // Determine step type and extract data accordingly
-  const stepType = step.$type;
-  let epochs: Array<{
-    epochNumber?: number;
-    blobUrl?: string;
-    blobSize?: number | null;
-    sampleImages?: string[];
-  }> = [];
-  let sampleImagesPrompts: string[] = [];
-  let moderationStatus: string | undefined;
-
-  if (stepType === 'training') {
-    // TrainingStep: new AI Toolkit format
-    const trainingStep = step as CustomTrainingStep;
-    moderationStatus = output?.moderationStatus;
-    sampleImagesPrompts = trainingStep.input?.samples?.prompts ?? [];
-
-    // Map TrainingEpochResult to our internal format
-    const trainingOutput = output as TrainingOutput | undefined;
-    epochs = (trainingOutput?.epochs ?? []).map((epoch) => ({
-      epochNumber: epoch.epochNumber ?? -1,
-      blobUrl: epoch.model?.url ?? '',
-      blobSize: 0, // Not provided in TrainingStep
-      sampleImages: (epoch.samples ?? []).map((s) => s.url ?? ''),
-    }));
-  } else if (stepType === 'imageResourceTraining') {
-    // ImageResourceTrainingStep: legacy format
-    const imageOutput = output as ImageResourceTrainingOutput | undefined;
-    epochs = (imageOutput?.epochs ?? []).map((e) => ({
-      epochNumber: e.epochNumber ?? -1,
-      blobUrl: e.blobUrl,
-      blobSize: e.blobSize ?? null,
-      sampleImages: e.sampleImages ?? [],
-    }));
-    sampleImagesPrompts = imageOutput?.sampleImagesPrompts ?? [];
-    moderationStatus = imageOutput?.moderationStatus;
-  } else {
-    // Permanent: the step's $type is fixed at workflow creation; a type we
-    // don't handle won't become handleable on retry (retrying just re-fetches
-    // the same type). Ack + warn so a code-side gap surfaces without storming.
-    throw new PermanentTrainingWebhookError(`Unsupported step type: ${stepType}`);
-  }
-
-  if (moderationStatus === 'underReview') trainingStatus = TrainingStatus.Paused;
-  else if (moderationStatus === 'rejected') {
-    // If the workflow expired, the rejection was due to timeout, not a moderator decision
-    if (trainingStatus !== TrainingStatus.Expired) {
-      trainingStatus = TrainingStatus.Denied;
-    }
-  }
+  const derived = deriveTrainingWorkflowState(workflow, status);
+  const { modelFileId, trainingStatus, epochs: epochData } = derived;
 
   const modelFile = await dbWrite.modelFile.findFirst({
     where: { id: modelFileId },
@@ -633,15 +533,7 @@ export async function updateTrainingWorkflowRecords(
     });
   }
 
-  const epochData: TrainingResultsV2['epochs'] = epochs.map((e) => ({
-    epochNumber: e.epochNumber ?? -1,
-    modelUrl: e.blobUrl ?? '',
-    modelSize: e.blobSize ?? 0,
-    sampleImages: e.sampleImages ?? [],
-  }));
-
-  const resolvedStartedAt =
-    trainingResults.startedAt ?? (startedAt ? new Date(startedAt).toISOString() : null);
+  const resolvedStartedAt = trainingResults.startedAt ?? derived.startedAt;
 
   // Flag anomalous completion: workflow succeeded but never had a start time or produced no epochs
   if (
@@ -654,7 +546,7 @@ export async function updateTrainingWorkflowRecords(
         type: 'warning',
         message: 'Training completed without starting or producing output',
         data: {
-          workflowId,
+          workflowId: derived.workflowId,
           modelFileId,
           startedAt: resolvedStartedAt,
           epochCount: epochData.length,
@@ -669,14 +561,14 @@ export async function updateTrainingWorkflowRecords(
   const newTrainingResults: TrainingResultsV2 = {
     ...trainingResults,
     version: 2,
-    workflowId: trainingResults.workflowId ?? workflowId ?? 'unk',
-    submittedAt: (createdAt ? new Date(createdAt) : new Date()).toISOString(),
+    workflowId: trainingResults.workflowId ?? derived.workflowId ?? 'unk',
+    submittedAt: derived.submittedAt ?? new Date().toISOString(),
     startedAt: resolvedStartedAt,
-    completedAt: completedAt ? new Date(completedAt).toISOString() : null,
+    completedAt: derived.completedAt,
     epochs: epochData,
     history,
-    sampleImagesPrompts,
-    transactionData: transactions?.list ?? trainingResults.transactionData ?? [],
+    sampleImagesPrompts: derived.sampleImagesPrompts,
+    transactionData: derived.transactionData ?? trainingResults.transactionData ?? [],
   };
 
   const newMetadata: FileMetadata = {

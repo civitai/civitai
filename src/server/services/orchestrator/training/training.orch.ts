@@ -20,6 +20,7 @@ import type {
   ImageTrainingWorkflowSchema,
   ImageTraininWhatIfWorkflowSchema,
 } from '~/server/schema/orchestrator/training.schema';
+import { TRAINING_WORKFLOW_TAG } from '~/server/services/orchestrator/training/workflow-state';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import type { TrainingRequest } from '~/server/services/training.service';
 import { getTrainingServiceStatus } from '~/server/services/training.service';
@@ -391,10 +392,20 @@ export const createTrainingWorkflow = async ({
 
   const stepRun = createTrainingStep(runArgs);
 
+  // `type` and `baseModel` are fixed at submit, so tagging them here is what makes those two
+  // filters answerable orchestrator-side later — tags are the only server-side filter
+  // `queryWorkflows` offers. Nothing reads them yet.
+  const trainingType = modelVersion.trainingDetails.type;
+
   const workflow = await submitWorkflow({
     token,
     body: {
-      tags: ['training', `modelVersion:${modelVersionId}`],
+      tags: [
+        TRAINING_WORKFLOW_TAG,
+        `modelVersion:${modelVersionId}`,
+        `baseModel:${baseModel}`,
+        ...(trainingType ? [`trainingType:${trainingType}`] : []),
+      ],
       steps: [stepRun],
       callbacks: [
         {

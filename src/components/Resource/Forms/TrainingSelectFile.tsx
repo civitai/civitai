@@ -411,8 +411,19 @@ export default function TrainingSelectFile({
   const trainingDataFiles = modelVersion.files.filter((f) => f.type === 'Training Data');
   const modelFile = pickBestTrainingFile(trainingDataFiles);
   const existingModelFile = modelVersion.files.find((f) => f.type === 'Model');
-  const trainingResults = modelFile?.metadata?.trainingResults;
   const isVideo = modelVersion.trainingDetails?.mediaType === 'video';
+
+  // This screen is driven by the orchestrator: the epochs the user picks between, and the status
+  // gating that choice, come from the live workflow. `getRunState` returns the stored copy itself
+  // once the workflow is past retention, so there is nothing to fall back to separately here —
+  // only the window before it has answered, and the flag-off path.
+  const { data: runState } = trpc.training.getRunState.useQuery(
+    { modelVersionId: modelVersion.id },
+    { enabled: features.trainingOrchestratorState && !!modelVersion.id }
+  );
+
+  const trainingResults = runState?.trainingResults ?? modelFile?.metadata?.trainingResults;
+  const trainingStatus = runState?.trainingStatus ?? modelVersion.trainingStatus;
 
   const [selectedFile, setSelectedFile] = useState<string | undefined>(
     existingModelFile?.metadata?.selectedEpochUrl
@@ -449,6 +460,7 @@ export default function TrainingSelectFile({
       await queryUtils.modelVersion.getByIdForEdit.invalidate({ id: vData.id, withFiles: true });
       await queryUtils.model.getById.invalidate({ id: model?.id });
       await queryUtils.model.getMyTrainingModels.invalidate();
+      await queryUtils.training.getRunState.invalidate({ modelVersionId: vData.id });
 
       setAwaitInvalidate(false);
       onNextClick();
@@ -507,9 +519,9 @@ export default function TrainingSelectFile({
 
   const thisTrainingDetails = modelVersion.trainingDetails as TrainingDetailsObj | undefined;
   const trainingEnded =
-    modelVersion.trainingStatus === TrainingStatus.InReview ||
-    modelVersion.trainingStatus === TrainingStatus.Approved ||
-    modelVersion.trainingStatus === TrainingStatus.Failed;
+    trainingStatus === TrainingStatus.InReview ||
+    trainingStatus === TrainingStatus.Approved ||
+    trainingStatus === TrainingStatus.Failed;
   const canTrainFurther =
     features.trainingStepsPricing &&
     trainingEnded &&
@@ -697,9 +709,9 @@ export default function TrainingSelectFile({
 
   // Check if training files have been purged (completed training but no training data file)
   const trainingCompleted =
-    modelVersion.trainingStatus === TrainingStatus.InReview ||
-    modelVersion.trainingStatus === TrainingStatus.Approved ||
-    modelVersion.trainingStatus === TrainingStatus.Failed;
+    trainingStatus === TrainingStatus.InReview ||
+    trainingStatus === TrainingStatus.Approved ||
+    trainingStatus === TrainingStatus.Failed;
 
   if (!modelFile && trainingCompleted) {
     return (
@@ -780,21 +792,21 @@ export default function TrainingSelectFile({
   const epochImagesMayBeBlurred = buzzType !== 'yellow';
 
   const errorMessage =
-    modelVersion.trainingStatus === TrainingStatus.Paused
+    trainingStatus === TrainingStatus.Paused
       ? 'Your training will resume or terminate within 1 business day. No action is required on your part.'
-      : modelVersion.trainingStatus === TrainingStatus.Failed
+      : trainingStatus === TrainingStatus.Failed
       ? 'The training job failed. You can still access any completed epochs below, or contact us for help.'
-      : modelVersion.trainingStatus === TrainingStatus.Denied
+      : trainingStatus === TrainingStatus.Denied
       ? 'The training job was denied for violating the TOS. Please contact us with any questions.'
-      : modelVersion.trainingStatus === TrainingStatus.Expired
+      : trainingStatus === TrainingStatus.Expired
       ? 'The training data review was not completed in time. Please submit your training again.'
       : undefined;
   const noEpochs = !epochs || !epochs.length;
   // Allow access to epochs for failed trainings if epochs exist
-  const hasFailedWithEpochs = modelVersion.trainingStatus === TrainingStatus.Failed && !noEpochs;
+  const hasFailedWithEpochs = trainingStatus === TrainingStatus.Failed && !noEpochs;
   const resultsLoading =
-    (modelVersion.trainingStatus !== TrainingStatus.InReview &&
-      modelVersion.trainingStatus !== TrainingStatus.Approved &&
+    (trainingStatus !== TrainingStatus.InReview &&
+      trainingStatus !== TrainingStatus.Approved &&
       !hasFailedWithEpochs) ||
     noEpochs;
 
@@ -812,7 +824,7 @@ export default function TrainingSelectFile({
   // prompts are still saved server-side but are otherwise only visible in the page source.
   // Surface them so they can be copied/reused (Freshdesk #66457).
   const showFailedSamplePrompts =
-    modelVersion.trainingStatus === TrainingStatus.Failed &&
+    trainingStatus === TrainingStatus.Failed &&
     noEpochs &&
     samplePrompts.some((p) => p.trim().length > 0);
 
@@ -839,7 +851,7 @@ export default function TrainingSelectFile({
         </Stack>
       ) : (
         <>
-          {modelVersion.trainingStatus === TrainingStatus.Processing && (
+          {trainingStatus === TrainingStatus.Processing && (
             <Stack p="xl" align="center">
               <Loader />
               <Stack gap="sm" align="center">

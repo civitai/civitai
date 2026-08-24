@@ -12,10 +12,12 @@ import {
   getAutoLabelUploadUrlSchema,
   getAutoLabelWorkflowSchema,
   getTrainingEpochArchiveSchema,
+  getTrainingRunStateSchema,
   moveAssetInput,
   submitAutoLabelWorkflowSchema,
 } from '~/server/schema/training.schema';
 import { getTrainingEpochArchive } from '~/server/services/orchestrator/training/epoch-archive';
+import { getTrainingRunState } from '~/server/services/orchestrator/training/training-state';
 import {
   autoCaptionHandler,
   autoTagHandler,
@@ -81,6 +83,22 @@ export const trainingRouter = router({
         ...input,
         userId: ctx.user.id,
         isModerator: ctx.user.isModerator,
+      })
+    ),
+  // Live state for one run, for the epoch-selection screen. Separate from `model.getById` — which
+  // feeds that screen and is a cached public endpoint on the model detail path — so the
+  // orchestrator round-trip is paid only by the owner of the run, on the screen that needs it.
+  getRunState: protectedProcedure
+    .meta({ requiredScope: TokenScope.AIServicesRead })
+    .input(getTrainingRunStateSchema)
+    .use(isFlagProtected('imageTraining'))
+    .use(rateLimit({ limit: 300, period: 60 }))
+    .query(({ input, ctx }) =>
+      getTrainingRunState({
+        ...input,
+        userId: ctx.user.id,
+        isModerator: !!ctx.user.isModerator,
+        ctx,
       })
     ),
   getModelBasic: publicProcedure
