@@ -29,6 +29,11 @@ export const BLOCKLIST_DESCRIPTIONS: Partial<Record<BlocklistType, string>> = {
     ' upstream disposable-email-domains project, and it re-adds anything it still carries. So' +
     ' removing a domain that is on the upstream list holds until the next Sunday run and then' +
     ' silently comes back. Removing one the upstream list does not carry is permanent.',
+  MessagePattern:
+    'Case-insensitive substrings matched against chat messages and comments. A chat message that' +
+    ' contains one is REFUSED; a comment is accepted and reported instead — it lands in the report' +
+    ' queue as an automated report naming the pattern, and the author is told nothing, so a spam run' +
+    ' cannot use the error to find out which words to change.',
   PromptBenignPhrase:
     'Whole phrases in the positive prompt that innocently contain a minor/POI detection word (proper nouns, technical terms). Each phrase is blanked from the prompt before the scan audit runs, so it never false-flags an image for review. Enter the full phrase — e.g. "teen titans", "minor barrel distortion".' + PHRASE_GAP_RULE,
   NegativeBenignPhrase:

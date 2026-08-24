@@ -116,7 +116,8 @@ list (other pages it needed), and the check demanded **all** of them plus the ro
 carried `defaultRoles`, seeded on first load and intersected with the roles already holding those
 pages, so a default could never pre-arm anyone.
 
-`/users` was declared in `NAVIGATION` but never built past a "Not built yet" placeholder, so nobody
+`/users` was declared in `NAVIGATION` but never built past a "Not built yet" placeholder (it still is
+one; the 2026-08-24 newest-accounts list is its sibling `/users/newest`), so nobody
 held it. Every consequence followed from that:
 
 - Five permissions seeded to `[]` — the intersection with a page nobody held is empty.

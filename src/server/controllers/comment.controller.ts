@@ -39,6 +39,7 @@ import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 import { dbRead } from '../db/client';
 import { hasEntityAccess } from '../services/common.service';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import { reportBlockedMessagePattern } from '~/server/services/message-pattern.service';
 
 export const getCommentsInfiniteHandler = async ({
   input,
@@ -164,6 +165,14 @@ export const upsertCommentHandler = async ({
     }
 
     const comment = await createOrUpdateComment({ ...input, ownerId, locked, track: ctx.track });
+
+    await reportBlockedMessagePattern({
+      type: 'Comment',
+      entityId: comment.id,
+      userId: ctx.user.id,
+      content: input.content,
+      isModerator: ctx.user.isModerator,
+    });
 
     if (!input.commentId) {
       await ctx.track.comment({

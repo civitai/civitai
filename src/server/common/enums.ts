@@ -448,8 +448,8 @@ export enum NewOrderSignalActions {
 
 export enum ExternalModerationType {
   Clavata = 'Clavata',
+  MessagePattern = 'MessagePattern',
 }
-
 
 export enum MarketplacePaymentMethod {
   CashApp = 'CashApp',

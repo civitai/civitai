@@ -48,7 +48,10 @@ tracker only ever listed nine of the parent's **thirteen** subtasks. Export pull
       `GetEmail`/`getEmails`, `UserNotes`. That is how a list of accounts is assembled in the first
       place.
 - [x] `deleteComments` runs against `Prod` as part of the flow — confirm whether banning here is
-      expected to remove comments too.
+      expected to remove comments too. **Answered 2026-08-24: yes, opt-in.** Bulk Ban and the User
+      Lookup ban panel both carry "Also remove their comments", which flags `tosViolation` on `Comment`
+      and `CommentV2` through `/api/mod/ban-user` — never a delete, so an appeal can still read what was
+      taken down.
 - [ ] 🎥 **Restricted today, and that is a decision to revisit**: *"limited to only some mods… that's
       good for other mods to have access to this too."* Gate it, then widen deliberately.
 
@@ -407,10 +410,9 @@ browser as user 1290051, not by reading the code.
       before anything here can call it, and is tracked there rather than duplicated.
 - [x] **Browsing level shown** (2026-08-11 — a `Viewing: <label>` header chip off `User.browsingLevel`,
       labelled with the shared `getBrowsingLevelLabel` so it matches the rest of the site).
-- [ ] **Comment Spammer alert** in Quick Info — **parked 2026-08-12: nobody is sure what it should
-      measure.** Nothing computes this signal today, and Retool's own definition is not in the export, so
-      building one would be inventing a moderation heuristic rather than porting it. Needs a rule from
-      the mod team (rate? duplicate text? ratio to other activity?) before it means anything.
+- [ ] **Comment Spammer alert** in Quick Info — **parked 2026-08-12, re-raised 2026-08-24 as "Comment
+      Spam Identifier".** Live item, and the decision it needs:
+      [`mod-studio-feedback-2026-08-24.md`](mod-studio-feedback-2026-08-24.md) § This round.
 - [ ] **Timed mutes: Mute Start / Notify User** — **still parked, new reasoning 2026-08-20.** The
       `TimedMutes` table is gone; a timed mute is `User.muteExpiresAt`, and expiry works
       (`processTimedUnmutesJob`, hourly). Mute *start* needs a `muteStartsAt` column plus a second job —
@@ -1148,8 +1150,9 @@ Filed against the page ported in §0, by the mod who uses it on bot chains.
       target is never implied). Verified: 6 accounts → 4 with it ticked.
 - [x] **The per-account note section is redundant** (2026-08-13 — removed). It wrote the same string to
       every account in the run, which is what `detailsInternal` beside it already does. The endpoint
-      takes `note` as optional, so nothing else changed. Verified: the ban form now posts `userIds`,
-      `removeMedia`, `reasonCode`, `detailsInternal` and nothing else.
+      takes `note` as optional, so nothing else changed. Verified: the ban form posts `userIds`,
+      `removeMedia`, `reasonCode` and `detailsInternal`, with no per-account note. (`removeComments`
+      joined them 2026-08-24.)
 - [x] **The paste boxes grow without bound instead of scrolling.** (2026-08-13.) **The cause is one
       class on the shared `Textarea`** — `field-sizing-content`, which grows the element with its
       content and has no ceiling. Capped per-box here (`max-h-40 overflow-y-auto`) rather than removed

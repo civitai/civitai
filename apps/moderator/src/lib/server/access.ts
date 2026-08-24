@@ -167,6 +167,11 @@ export const NAVIGATION: NavLink[] = [
   // would hide the numbers their review produces.
   { path: '/xguard', label: 'XGuard Lab' },
   { path: '/users', label: 'Users' },
+  // A SIBLING of `/users`, not a child, and deliberately so. `/users`' grant is what User Lookup's ban,
+  // purge and bulk-comment actions are gated on, so a read-only list living under it would make
+  // "let them see new signups" mean "let them ban anyone". `canAccess` takes the longest matching
+  // grant, so this path carries its own.
+  { path: '/users/newest', label: 'Newest Users' },
   { path: '/admin', label: 'Permissions' },
   { path: '/page-visits', label: 'Page Usage' },
 ];

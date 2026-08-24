@@ -91,7 +91,7 @@ Re-read off the live ticket 2026-08-21; the section above had captured the middl
 
       *Filed until 2026-08-24 as "CommentV2 has no ToS field — main-app schema change", which sent
       three status passes past it as blocked. It had one: `CommentV2.tosViolation`
-      (`schema.full.prisma:3910`) and `bulkSetCommentV2TosViolation` (`commentsv2.service.ts:385`) were
+      (`schema.full.prisma:3910`) and `bulkSetCommentV2TosViolation` (`commentsv2.service.ts:412`) were
       both already there, doing the flag, the report actioning, the reward and the notification. Only
       the control the ask actually named — one on civitai.com — was missing.*
 - [x] **Unpublishing toggle — the MINOR half.** `UnpublishModal` offers "Also mark this model as
@@ -245,7 +245,48 @@ findings are done — see the parity checklist.
 - [ ] **Blocked prompts** alongside the prompt list. 🎥 *"You can check their blocked prompts."*
 - [x] **Grant cosmetic items** from the shop panel — `grantCosmetic`, behind `user.cosmetics.grant`.
       🎥 *"Check their cosmetic shop, potentially grant them items."*
-- [ ] **Multi-select comments to ToS/delete them.** The ask is a selection UI; the bulk endpoints exist.
+- [x] **Multi-select comments to ToS/delete them.** **Built 2026-08-24 on `moderator-feedback-3` — not
+      merged or deployed.** Both lists in User Lookup → Comments carry a select-all over the *filtered*
+      rows, and the ids post from the selection rather than the rendered checkboxes, so it reaches past
+      the card's "Show more" fold. Actioned rows drop in place instead of refetching the account.
+- [ ] **`/users` page grant doubles as the ban / purge / bulk-comment permission.** `contentAction`,
+      `purgeContent` and `setBanned` in User Lookup all gate on `canAccess(user, '/users')`. Page grants
+      and permissions are meant to be independent axes here; these are welded, so granting a page is
+      granting enforcement. Wants `user.ban`, `user.purge` and `user.comments.bulk` in
+      `$lib/permissions.ts`, resolved through `locals.grants`. Surfaced 2026-08-24 by the newest-users
+      page, which was moved to `/users/newest` to avoid widening it in the meantime.
+
+      ⚠️ **Ship it when someone can tick `/admin` the same hour.** There are no default roles here, so
+      the moment it deploys nobody holds the three new permissions and every enforcement action in User
+      Lookup is off until they are granted. That is a coordinated change, not a quiet one.
+- [ ] **A comment thread over ~1000 comments costs ~1 s and 1.4M buffers per first page.** Pre-existing:
+      `fetchCommentsPaginated` orders by `c.id`, so above that size the planner leaves
+      `CommentV2_threadId` for a full primary-key walk (measured: 2333-comment thread, 953 ms,
+      `Rows Removed by Filter: 1447307`). Ordering by `c."createdAt", c.id` would use the existing
+      `idx_commentv2_thread_created_asc`, or a `(threadId, id)` index would give ordering and
+      selectivity together. Found 2026-08-24 while measuring the ToS-visibility change, which does not
+      affect the plan either way.
+- [ ] **~1.6 GB of duplicate indexes on `User`.** `User_email_idx` duplicates `User_email_key` (911 MB),
+      `User_username_idx` duplicates `User_username_key` (685 MB), and `User_id_idx1` is byte-identical
+      to `User_id_idx`. Maintained on every non-HOT update of the table and read by nothing. Found
+      2026-08-24; unrelated to any moderator work.
+- [ ] **`minor-hash.service.ts` documents a `make_interval` failure that does not happen.** The comment
+      says a bound JS number reaches `make_interval` as int8 and 500s the query, and it is the stated
+      reason that call site interpolates with `sql.raw`. Measured 2026-08-24: node-postgres declares no
+      parameter types, so the server infers int4 and resolution succeeds. The comment is what makes the
+      next person reach for `sql.raw` on a value — which is the shape that turns a value into SQL.
+- [ ] **Comic chapter comments are written outside `upsertComment`.** `createChapterComment` builds the
+      `CommentV2` row itself, so every comment guard has to be hand-copied onto it — the link-domain
+      check, the message-pattern report and (2026-08-24) the mute check and rate limit were all added
+      one at a time, after the fact. Routing it through the service would delete the copies and inherit
+      `commentsv2.blockCheck.service.test.ts`; the obstacle is that a chapter thread is keyed on
+      (project, chapter position) rather than a single entity id.
+- [ ] **No way back from a ToS flag on a comment.** Setting it is a one-way door: nothing in the main
+      app or the spoke clears `tosViolation` on `Comment` or `CommentV2`, and there is no comment
+      equivalent of `restoreImages`. That was survivable while the flag did nothing on v2 threads; as of
+      2026-08-24 it is what removes the comment, and a ban purge can set it across an account in one
+      action. Wants the mirror of the flag — a moderator-only unflag that also reopens the reports the
+      ToS action closed.
 - [ ] **More than 50 buzz entries.** *"Only showing 50 buzz entries will be too few for support to
       troubleshoot issues."* (The Payments/Receipts split and filters are parity; raising the cap is not.)
 - [ ] 🎥 **Ban-evasion view**: other accounts sharing an ISP, and whether action has been taken on each.

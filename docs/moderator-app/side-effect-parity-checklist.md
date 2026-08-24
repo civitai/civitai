@@ -20,7 +20,7 @@ Closed/clean items are in the buckets below; this table is only what's still **o
 | 1 | Rating-locked **Blocked** rows never unblocked on accept (`resetBlockedNsfwLevel` missing) | shared `acceptImage` (minor-review, comics-review, appeals, delegated `image.moderate`) | **BLOCKER** (regression vs `c371fcbc16`) | ✅ **DONE** — reset UPDATE before recompute in `acceptImage` |
 | 2 | **KoNO finalize** dropped (vote finalize, smites, counters, pool-reset, signals) | `/images/ratings` + `/images/downleveled` `setLevel` | **BLOCKER** (downleveled) | ✅ **DONE** — delegated: spoke `syncKonoFinalize` (`kono.ts`) → new main `/api/internal/kono-finalize` runs `updatePendingImageRatings` + pool reset |
 | 3 | Comic **project/chapter** mod tools not ported (TOS toggle, set project/chapter nsfw, unpublish chapter) | comic detail mod UI (not the queue) | BLOCKER-if-expected | 🅿️ **Deferred** — NOT a migrated page (this surface was never in the spoke); revisit if comic project/chapter moderation moves here. Every *migrated* page is at parity. |
-| 4 | **User moderation** (ban / mute / strikes / restrictions) unbuilt | `/users` placeholder | BLOCKER-if-expected | 🅿️ **Out of scope for now** (user decision) — stays main-app until session-revoke is designed |
+| 4 | **User moderation** (ban / mute / strikes / restrictions) unbuilt | `/users` still a placeholder; `/users/newest` is read-only | BLOCKER-if-expected | 🅿️ **Out of scope for now** (user decision) — stays main-app until session-revoke is designed |
 | 5 | `metadata.nsfwLevelReason` not written (+ `IMAGE_METADATA` bust) | `setLevel` (ratings/downleveled) | DEGRADED | ✅ **DONE** — reason + Model3D rollup + cache bust in `updateImageNsfwLevel` |
 | 6 | `postId` images deleted without post-nsfw recompute | article delete | COSMETIC (~0.2%) | ✅ **DONE** — `deleteImagesByIds` now recomputes each affected post (`update_post_nsfw_levels` + `bustPostGalleryCaches`); postMetrics self-heals |
 | 7 | Model3D thumbnail nsfwLevel rollup dropped | `setLevel` (ratings/downleveled) | COSMETIC (rare `postId==null` edge) | ✅ **DONE** — folded into `updateImageNsfwLevel` (#5) |
@@ -92,7 +92,8 @@ deferred), #4 (user moderation, out of scope), #8 (dispute auto-resolve, needs a
   onto the restore path, or delegate to the main app.
 - [~] **Prohibited-prompts — "flag as suspicious" sysRedis write** — **RECLASSIFIED (not a prohibited-prompts
   gap).** `saveSuspiciousMatches` lives on the main app's `generation-restrictions.tsx` page, not the
-  prohibited-prompts page. The spoke's `/users` (generation-restrictions) surface is an unbuilt placeholder
+  prohibited-prompts page. The spoke's `/users` is still an unbuilt placeholder — the 2026-08-24
+  newest-accounts list is its sibling `/users/newest`, which reads and actions nothing
   (Bucket C — user moderation, delegate). There is no spoke mutation whose side effect this is — porting a
   sysRedis-write helper with no caller would be dead code. Handle when generation-restrictions is ported/delegated.
 - [~] **Scanner `deleteLabelVerdict`** — **RECLASSIFIED (no main-app operation to port).** There is no
@@ -148,7 +149,7 @@ New gaps found:
   established) rather than porting the new-order engine + signals. The pool-reset + counters are Redis-portable
   in isolation, but the signal emit is not — delegating the whole chain keeps it coherent.
 - [ ] **User moderation** (ban / mute / strikes / restrictions) — **BLOCKER-if-expected**
-  (currently unbuilt; `/users` is a placeholder). Product direction: **restrictions are role-based** (no
+  (currently unbuilt; `/users` is a placeholder, and its sibling `/users/newest` only lists new accounts). Product direction: **restrictions are role-based** (no
   feature flags), and moderator access is already role-gated in `hooks.server.ts` via `canAccess`.
   Notifications/email/buzz exist; the remaining hard dependency is **session invalidation** — a ban / role
   downgrade must revoke the user's live sessions, which is an auth-hub (`@civitai/auth`) concern the spoke

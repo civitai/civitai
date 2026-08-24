@@ -11,6 +11,7 @@ import type {
   GetCommentsInfiniteInput,
 } from './../schema/commentv2.schema';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import { reportBlockedMessagePattern } from '~/server/services/message-pattern.service';
 import {
   getBlockCheckOwnerIdsForComment,
   throwIfBlockedByEntityOwner,
@@ -57,6 +58,7 @@ async function getReplyThreads({
   sort,
   hidden,
   excludedUserIds,
+  isModerator = false,
 }: {
   commentIds: number[];
   depth: number;
@@ -65,6 +67,7 @@ async function getReplyThreads({
   sort: ThreadSort;
   hidden: boolean | null;
   excludedUserIds: number[];
+  isModerator?: boolean;
 }): Promise<{ threads: ReplyThread[]; childlessCommentIds: number[] }> {
   const empty = { threads: [], childlessCommentIds: [] };
   if (!commentIds.length || depth < 1) return empty;
@@ -98,6 +101,7 @@ async function getReplyThreads({
       where: {
         threadId: { in: threadIds },
         hidden: hidden ?? false,
+        tosViolation: isModerator ? undefined : false,
         userId: excludedUserIds.length ? { notIn: excludedUserIds } : undefined,
       },
       select: commentV2Select,
@@ -107,6 +111,7 @@ async function getReplyThreads({
       where: {
         threadId: { in: threadIds },
         hidden: true,
+        tosViolation: isModerator ? undefined : false,
         userId: excludedUserIds.length ? { notIn: excludedUserIds } : undefined,
       },
       _count: { _all: true },
@@ -302,7 +307,7 @@ export const upsertComment = async ({
     });
 
   if (!data.id) {
-    return await dbWrite.$transaction(async (tx) => {
+    const created = await dbWrite.$transaction(async (tx) => {
       const chargedStickers = await chargeStickers(tx);
       if (!thread) {
         const parentThread = parentThreadId
@@ -335,6 +340,15 @@ export const upsertComment = async ({
       });
       return created;
     });
+
+    await reportBlockedMessagePattern({
+      type: 'CommentV2',
+      entityId: created.id,
+      userId,
+      content: data.content,
+      isModerator,
+    });
+    return created;
   }
   // Wrapped so the edit's charge and the edit itself commit together.
   const { updated, charged } = await dbWrite.$transaction(async (tx) => {
@@ -353,12 +367,23 @@ export const upsertComment = async ({
     entityType: 'comment',
     entityId: updated.id,
   });
+
+  await reportBlockedMessagePattern({
+    type: 'CommentV2',
+    entityId: updated.id,
+    userId,
+    content: data.content,
+    isModerator,
+  });
   return updated;
 };
 
-export const getComment = async ({ id }: GetByIdInput): Promise<Comment> => {
+export const getComment = async ({
+  id,
+  isModerator = false,
+}: GetByIdInput & { isModerator?: boolean }): Promise<Comment> => {
   const comment = await dbRead.commentV2.findFirst({
-    where: { id },
+    where: { id, tosViolation: isModerator ? undefined : false },
     select: commentV2Select,
   });
   if (!comment) throw throwNotFoundError();
@@ -377,7 +402,9 @@ export async function bulkDeleteCommentsV2({ ids }: { ids: number[] }) {
 
 /**
  * Mirror of the legacy `setTosViolationHandler` flow for CommentV2:
- * 1) Set `tosViolation = true`
+ * 1) Set `tosViolation = true` — the reads here filter it for non-moderators, which is what takes the
+ *    comment off the page. `hidden` does not: that is only a fold behind a "See N hidden comments"
+ *    modal any viewer can open.
  * 2) Mark CommentV2Report rows with reason=TOSViolation as Actioned
  * 3) Reward reporters via reportAcceptedReward
  * 4) Send 'tos-violation' notification to comment owner
@@ -399,6 +426,8 @@ export async function bulkSetCommentV2TosViolation({
 
   let rewardedReports = 0;
   let notified = 0;
+  // Rows actually flagged, NOT ids submitted — see the note on the legacy twin in comment.service.ts.
+  let count = 0;
 
   for (const id of ids) {
     const updated = await dbWrite.commentV2
@@ -409,6 +438,7 @@ export async function bulkSetCommentV2TosViolation({
       })
       .catch(() => null);
     if (!updated) continue;
+    count += 1;
 
     const reports = await dbWrite.$queryRaw<{ id: number; userId: number }[]>`
       UPDATE "Report" r SET status = ${enums.ReportStatus.Actioned}::"ReportStatus"
@@ -440,7 +470,7 @@ export async function bulkSetCommentV2TosViolation({
       .catch(() => {});
   }
 
-  return { count: ids.length, notified, rewardedReports };
+  return { count, notified, rewardedReports };
 }
 
 export const getCommentCount = async ({ entityId, entityType, hidden }: CommentConnectorInput) => {
@@ -457,8 +487,10 @@ export async function getCommentsThreadDetails2({
   entityId,
   entityType,
   excludedUserIds = [],
+  isModerator = false,
 }: CommentConnectorInput & {
   excludedUserIds?: number[];
+  isModerator?: boolean;
 }): Promise<{ id: number; locked: boolean; hiddenCount: number } | null> {
   const mainThread = await dbRead.thread.findUnique({
     where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
@@ -472,6 +504,7 @@ export async function getCommentsThreadDetails2({
       threadId: mainThread.id,
       userId: excludedUserIds.length ? { notIn: excludedUserIds } : undefined,
       hidden: true,
+      tosViolation: isModerator ? undefined : false,
     },
   });
 
@@ -556,6 +589,7 @@ async function fetchCommentsPaginated({
   sort,
   excludedUserIds = [],
   hidden = false,
+  isModerator = false,
 }: {
   threadId: number;
   limit: number;
@@ -563,6 +597,7 @@ async function fetchCommentsPaginated({
   sort: ThreadSort;
   excludedUserIds: number[];
   hidden: boolean | null;
+  isModerator?: boolean;
 }): Promise<CommentV2Model[]> {
   // Build dynamic ORDER BY based on sort mode
   let orderBy: string;
@@ -724,6 +759,7 @@ async function fetchCommentsPaginated({
           : Prisma.empty
       }
       AND c.hidden = ${hidden}
+      ${isModerator ? Prisma.empty : Prisma.sql`AND c."tosViolation" = false`}
       ${cursorCondition}
     ORDER BY ${Prisma.raw(orderBy)}
     LIMIT ${limit}
@@ -749,7 +785,8 @@ export async function getCommentsInfinite({
   repliesDepth,
   repliesLimit = constants.comments.replyPageSize,
   excludedUserIds = [],
-}: GetCommentsInfiniteInput & { excludedUserIds?: number[] }) {
+  isModerator = false,
+}: GetCommentsInfiniteInput & { excludedUserIds?: number[]; isModerator?: boolean }) {
   return withSpan('commentv2:getInfinite', async () => {
     // 1. Get thread metadata
     const mainThread = await dbRead.thread.findUnique({
@@ -766,6 +803,7 @@ export async function getCommentsInfinite({
             pinnedAt: { not: null },
             userId: excludedUserIds.length ? { notIn: excludedUserIds } : undefined,
             hidden,
+            tosViolation: isModerator ? undefined : false,
           },
           orderBy: { pinnedAt: 'desc' },
           select: commentV2Select,
@@ -780,6 +818,7 @@ export async function getCommentsInfinite({
       sort,
       excludedUserIds,
       hidden,
+      isModerator,
     });
 
     // 4. If a target comment was requested (notification deep-link) and it isn't already
@@ -796,6 +835,7 @@ export async function getCommentsInfinite({
             id: targetCommentId,
             threadId: mainThread.id,
             hidden,
+            tosViolation: isModerator ? undefined : false,
             userId: excludedUserIds.length ? { notIn: excludedUserIds } : undefined,
           },
           select: commentV2Select,
@@ -819,6 +859,7 @@ export async function getCommentsInfinite({
           sort,
           hidden,
           excludedUserIds,
+          isModerator,
         })
       : { threads: [], childlessCommentIds: [] };
 

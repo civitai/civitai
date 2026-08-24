@@ -39,14 +39,23 @@ Written 2026-08-07. Delete items as they are done.
 
 ## 2. Database migrations — none are auto-applied
 
-**All three use `CREATE INDEX CONCURRENTLY`, so each must run OUTSIDE a transaction.** The first two
-predate this session; verify rather than assume they are already applied.
+**Four of the five use `CREATE INDEX CONCURRENTLY`, so each must run OUTSIDE a transaction** (the first
+creates a table). The first three predate this session; verify rather than assume they are applied. The
+last two were applied to **production** by hand on 2026-08-24 and to nothing else.
 
 - [ ] `20260803120000_add_app_page_access` — creates `AppPageAccess` (per-page role grants)
 - [ ] `20260805120000_mod_activity_append_only` — drops the unique constraint that collapsed repeat mod
       actions into one row; adds `(entityType, entityId, createdAt)` and `(userId, createdAt)`
 - [ ] `20260807120000_report_open_reason_index` — partial index on `Report (reason, id)` for open
       statuses. The Reports sub-nav count query was seq-scanning ~2.4M rows (~300ms) without it.
+- [ ] `20260824120000_user_email_domain_index` — expression index for Bulk Ban's email-domain search,
+      which 500s without it. 🔴 **`ANALYZE "User";` is part of this migration**: Postgres has no
+      statistics for an index expression until an ANALYZE runs after the index exists, and the planner
+      declined the live, valid index until it did (search still 23.1 s). Verification steps are in the
+      migration file.
+- [ ] `20260824140000_comment_user_id_indexes` — `(userId)` on `Comment` and `CommentV2`. Without them
+      the ban's `removeComments` seq-scans both tables per account (~0.5 s primary CPU, ~900 MB of
+      buffers), and Bulk Ban detaches up to 1000 of those at once.
 
 ## 2b. Grant the new pages on `/admin`
 

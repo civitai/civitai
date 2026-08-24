@@ -8,8 +8,9 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
  * only creates left the block trivially bypassable.
  */
 
-const { amIBlockedByUser, tx } = vi.hoisted(() => ({
+const { amIBlockedByUser, reportBlockedMessagePattern, tx } = vi.hoisted(() => ({
   amIBlockedByUser: vi.fn(async (..._a: unknown[]): Promise<boolean> => false),
+  reportBlockedMessagePattern: vi.fn(async (..._a: unknown[]): Promise<void> => undefined),
   // 🔴 `tx` stays a SEPARATE object from the write client, because every assertion below is
   // on `db.tx.*` and means "written inside the transaction". Inheriting the canonical
   // `$transaction` would hand the callback `dbMock.dbWrite` and collapse the two, so an
@@ -58,6 +59,7 @@ vi.mock('~/server/services/user.service', () => ({ amIBlockedByUser }));
 vi.mock('~/server/services/blocklist.service', () => ({
   throwOnBlockedLinkDomain: vi.fn(async () => undefined),
 }));
+vi.mock('~/server/services/message-pattern.service', () => ({ reportBlockedMessagePattern }));
 vi.mock('~/server/utils/otel-helpers', () => ({
   withSpan: (_name: string, fn: () => unknown) => fn(),
 }));
@@ -87,6 +89,38 @@ describe('upsertComment — block enforcement on create', () => {
     await expect(upsertComment({ ...baseCreate })).resolves.toMatchObject({ id: 999 });
     expect(amIBlockedByUser).toHaveBeenCalledWith({ userId: 7, targetUserId: 100 });
     expect(db.tx.commentV2.create).toHaveBeenCalledTimes(1);
+  });
+
+  // The MessagePattern blocklist reaches comments through this call and nowhere else — dropping it
+  // leaves every other assertion in this file green.
+  it('hands the posted comment to the message-pattern check', async () => {
+    await upsertComment({ ...baseCreate });
+    expect(reportBlockedMessagePattern).toHaveBeenCalledTimes(1);
+    expect(reportBlockedMessagePattern).toHaveBeenCalledWith({
+      type: 'CommentV2',
+      entityId: 999,
+      userId: 7,
+      content: 'hello',
+      isModerator: undefined,
+    });
+  });
+
+  // The bypass this closes is post-benign-then-edit-to-spam, so the edit branch needs its own
+  // assertion — the create one stays green when the second call site is deleted.
+  it('hands an EDITED comment to the message-pattern check too', async () => {
+    await upsertComment({ ...baseCreate, id: 5, isModerator: true } as Parameters<
+      typeof upsertComment
+    >[0]);
+    expect(reportBlockedMessagePattern).toHaveBeenCalledTimes(1);
+    expect(reportBlockedMessagePattern).toHaveBeenCalledWith({
+      type: 'CommentV2',
+      entityId: 5,
+      userId: 7,
+      content: 'hello',
+      // Forwarded, not defaulted: the check skips moderators, and it can only do that if the caller
+      // says who is writing.
+      isModerator: true,
+    });
   });
 
   it('exempts moderators from the block check', async () => {

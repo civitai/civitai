@@ -125,12 +125,12 @@
     {:else if section === 'bounties'}
       <BountiesPanel {account} civitaiUrl={data.civitaiUrl} />
     {:else if section === 'comments'}
+      <!-- No `onSuccess`: the panel keeps its own rows in step, and a refresh here would discard them. -->
       <CommentsPanel
         {account}
         userId={result.identity.id}
         canAct={data.canAct}
         civitaiUrl={data.civitaiUrl}
-        onSuccess={() => (version += 1)}
       />
     {:else if section === 'leaderboard' || section === 'score'}
       <ReputationPanel stats={result.stats} scores={result.scores} ranks={result.ranks} />

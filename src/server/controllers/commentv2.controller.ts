@@ -38,7 +38,7 @@ import {
 
 export const getCommentHandler = async ({ ctx, input }: { ctx: Context; input: GetByIdInput }) => {
   try {
-    const comment = await getComment({ ...input });
+    const comment = await getComment({ ...input, isModerator: ctx.user?.isModerator ?? false });
     if (!comment) throw throwNotFoundError(`No comment with id ${input.id}`);
 
     if (ctx.user && !ctx.user.isModerator) {
@@ -191,7 +191,11 @@ export const getCommentsThreadDetailsHandler = async ({
       isContentOwner,
     });
 
-    return await getCommentsThreadDetails2({ ...input, excludedUserIds });
+    return await getCommentsThreadDetails2({
+      ...input,
+      excludedUserIds,
+      isModerator: ctx.user?.isModerator ?? false,
+    });
   } catch (error) {
     throw throwDbError(error);
   }
@@ -318,7 +322,11 @@ export const getCommentsInfiniteHandler = async ({
       isContentOwner,
     });
 
-    return await getCommentsInfinite({ ...input, excludedUserIds });
+    return await getCommentsInfinite({
+      ...input,
+      excludedUserIds,
+      isModerator: ctx.user?.isModerator ?? false,
+    });
   } catch (error) {
     throw throwDbError(error);
   }

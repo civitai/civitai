@@ -484,6 +484,7 @@ export const toggleBanUserSchema = z.object({
   type: z.enum(['universal', 'contest']).default('universal').optional(),
   removeMedia: z.boolean().optional(),
   removeModels: z.boolean().optional(),
+  removeComments: z.boolean().optional(),
 });
 
 export type GetBanContentPreviewInput = z.infer<typeof getBanContentPreviewSchema>;

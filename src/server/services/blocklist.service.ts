@@ -207,13 +207,16 @@ export async function getClientBenignLists(): Promise<ClientBenignLists> {
 // #endregion
 
 // #region [blocked message patterns]
-export async function throwOnBlockedMessagePattern(value: string) {
+export async function findBlockedMessagePattern(value: string) {
   const blockedPatterns = await getBlocklistData(BlocklistType.MessagePattern);
-  if (!blockedPatterns.length) return;
+  if (!blockedPatterns.length) return null;
 
   const lowerValue = value.toLowerCase();
-  const matched = blockedPatterns.find((pattern) => lowerValue.includes(pattern));
-  if (matched) throw new Error(`Message blocked by content filter`);
+  return blockedPatterns.find((pattern) => lowerValue.includes(pattern)) ?? null;
+}
+
+export async function throwOnBlockedMessagePattern(value: string) {
+  if (await findBlockedMessagePattern(value)) throw new Error(`Message blocked by content filter`);
 }
 // #endregion
 

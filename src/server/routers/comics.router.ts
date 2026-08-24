@@ -4,6 +4,7 @@ import { comicProjectMetaSchema, parseComicProjectMeta } from '~/server/schema/c
 import {
   router,
   protectedProcedure,
+  guardedProcedure,
   publicProcedure,
   moderatorProcedure,
   middleware,
@@ -49,6 +50,10 @@ import {
 } from '~/server/services/orchestrator/preset-image-gen.service';
 import { WorkflowData } from '~/shared/orchestrator/workflow-data';
 import { colorDomainNames, type ColorDomain } from '~/shared/constants/domain.constants';
+import { rateLimit } from '~/server/middleware.trpc';
+import { commentRateLimits } from '~/server/schema/comment.schema';
+import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import { reportBlockedMessagePattern } from '~/server/services/message-pattern.service';
 import { enhanceComicPrompt } from '~/server/services/comics/prompt-enhance';
 import { orchestratorChatCompletionCost } from '~/server/services/comics/orchestrator-chat';
 import { resolveReferenceMentions } from '~/server/services/comics/mention-resolver';
@@ -145,6 +150,10 @@ const comicFlag = isFlagProtected('comicCreator');
 // `blurredPreviewUrl` on a blocked panel), which RU ISPs DPI-block. Rewrite them
 // to the Cloudflare-fronted proxy for RU requests. See ClickUp 868kdkv93.
 const comicProtectedProcedure = protectedProcedure.use(comicFlag).use(regionProxyMiddleware);
+// For writes that are ordinary user content rather than comic authoring: `guardedProcedure` adds the
+// onboarding and MUTE checks every other comment surface has. Without it a muted account could comment
+// on a chapter — the box is hidden client-side, which is presentation, not a gate.
+const comicGuardedProcedure = guardedProcedure.use(comicFlag).use(regionProxyMiddleware);
 const comicPublicProcedure = publicProcedure.use(comicFlag).use(regionProxyMiddleware);
 const comicModeratorProcedure = moderatorProcedure.use(comicFlag);
 
@@ -6270,7 +6279,7 @@ export const comicsRouter = router({
           commentCount: true,
           comments: {
             orderBy: { createdAt: 'asc' },
-            where: ctx.user?.isModerator ? {} : { hidden: false },
+            where: ctx.user?.isModerator ? {} : { hidden: false, tosViolation: false },
             select: commentV2Select,
           },
         },
@@ -6279,8 +6288,9 @@ export const comicsRouter = router({
       return thread;
     }),
 
-  createChapterComment: comicProtectedProcedure
+  createChapterComment: comicGuardedProcedure
     .meta({ requiredScope: TokenScope.SocialWrite })
+    .use(rateLimit(commentRateLimits))
     .input(
       z.object({
         projectId: z.number().int(),
@@ -6309,12 +6319,22 @@ export const comicsRouter = router({
         throw throwBadRequestError('Comments are locked for this chapter');
       }
 
+      await throwOnBlockedLinkDomain(input.content);
+
       const comment = await dbWrite.commentV2.create({
         data: {
           userId: ctx.user.id,
           content: input.content,
           threadId: thread.id,
         },
+      });
+
+      await reportBlockedMessagePattern({
+        type: 'CommentV2',
+        entityId: comment.id,
+        userId: ctx.user.id,
+        content: input.content,
+        isModerator: ctx.user.isModerator,
       });
 
       // Increment comment count
