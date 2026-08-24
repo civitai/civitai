@@ -32,12 +32,20 @@ import {
   showRepublish,
   showUnpublish,
 } from '~/components/Apps/myAppsAuthorActions';
-import type { MyAppRow } from '~/components/Apps/myAppsView';
+import { AppListingScreenshotViewer } from '~/components/Apps/AppListingScreenshotViewer';
+import {
+  NO_BROKEN_SCREENSHOTS,
+  withBrokenIndex,
+  type BrokenScreenshotIndexes,
+} from '~/components/Apps/appListingScreenshotNav';
+import type { MyAppMediaKind, MyAppRow } from '~/components/Apps/myAppsView';
 import {
   historyStatusColor,
-  listingKindLabel,
+  listingMediaIndex,
+  listingMediaShots,
   listingStatusColor,
   myAppListingHref,
+  orphanGroupStartsOpen,
   pageCount,
   pageSlice,
   partitionMyAppRows,
@@ -119,7 +127,56 @@ function formatWhen(value: string | Date | null | undefined): string {
   return formatDate(value, 'MMM D, YYYY');
 }
 
-function ListingIcon({ row }: { row: MyAppRow }) {
+/**
+ * 🔴 THE CLICK TARGET IS A REAL `<button>`, AND THE PLACEHOLDER IS NOT ONE.
+ *
+ * Both media components below wrap their image in `UnstyledButton` — which renders a
+ * real `<button type="button">`, so it is tab-reachable, Enter/Space-activatable and
+ * carries a focus ring. An `<img onClick>` would be a mouse-only affordance that LOOKS
+ * wired up; the screenshot gallery this viewer is shared with learned that already
+ * (`appListingScreenshotViewerWiring.test.ts`'s "the tile is a real button").
+ *
+ * 🔴 NOT Mantine `Anchor`. Its root sets `color: var(--mantine-color-anchor)`, which
+ * recolours every `currentColor` descendant — including the "No cover" glyph inside the
+ * placeholder. That bug is INVISIBLE on the has-image path (an `<img>` ignores `color`)
+ * and only appears on the no-image path, which is the path that must not be a link at
+ * all. It is also not a navigation: nothing gets an href.
+ *
+ * 🔴 A PLACEHOLDER IS INERT — no button, no `tabIndex`, no pointer cursor. There is
+ * nothing to view, and a focusable control that opens an empty modal is worse than no
+ * control: it adds a tab stop to every row of a table whose rows are mostly incomplete
+ * listings (measured: all 11 `removed` listings have a null cover).
+ */
+function MediaButton({
+  label,
+  onOpen,
+  children,
+}: {
+  label: string;
+  onOpen: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <UnstyledButton
+      onClick={onOpen}
+      aria-label={label}
+      // `display: flex` so the button box is exactly the image box — a default
+      // `display: block` UnstyledButton would add descender space under the image and
+      // make the focus ring taller than the thing it is outlining.
+      style={{ display: 'flex', cursor: 'zoom-in', borderRadius: 8 }}
+    >
+      {children}
+    </UnstyledButton>
+  );
+}
+
+function ListingIcon({
+  row,
+  onOpenMedia,
+}: {
+  row: MyAppRow;
+  onOpenMedia?: (row: MyAppRow, which: MyAppMediaKind) => void;
+}) {
   if (!row.iconUrl) {
     return (
       <div
@@ -135,7 +192,7 @@ function ListingIcon({ row }: { row: MyAppRow }) {
       />
     );
   }
-  return (
+  const img = (
     // 🔴 A PLAIN `<img>`, NOT `next/image`. The server already hands us a CDN-transformed
     // URL (`getEdgeUrl(..., { width })`), so `next/image` would put a SECOND optimizer in
     // front of an already-optimized asset — extra cost, no smaller bytes. The two things
@@ -154,9 +211,21 @@ function ListingIcon({ row }: { row: MyAppRow }) {
       style={{ borderRadius: 8, objectFit: 'cover', flex: `0 0 ${ICON_BOX}px` }}
     />
   );
+  if (!onOpenMedia) return img;
+  return (
+    <MediaButton label={`View icon image for ${row.name}`} onOpen={() => onOpenMedia(row, 'icon')}>
+      {img}
+    </MediaButton>
+  );
 }
 
-function ListingCover({ row }: { row: MyAppRow }) {
+function ListingCover({
+  row,
+  onOpenMedia,
+}: {
+  row: MyAppRow;
+  onOpenMedia?: (row: MyAppRow, which: MyAppMediaKind) => void;
+}) {
   if (!row.coverUrl) {
     return (
       <div
@@ -177,7 +246,7 @@ function ListingCover({ row }: { row: MyAppRow }) {
       </div>
     );
   }
-  return (
+  const img = (
     // Plain `<img>` for the same reason as the icon above — the URL is already a
     // width-transformed CDN URL, and the CLS/lazy properties are set explicitly.
     // eslint-disable-next-line @next/next/no-img-element
@@ -191,6 +260,15 @@ function ListingCover({ row }: { row: MyAppRow }) {
       decoding="async"
       style={{ borderRadius: 6, objectFit: 'cover' }}
     />
+  );
+  if (!onOpenMedia) return img;
+  return (
+    <MediaButton
+      label={`View cover image for ${row.name}`}
+      onOpen={() => onOpenMedia(row, 'cover')}
+    >
+      {img}
+    </MediaButton>
   );
 }
 
@@ -220,16 +298,26 @@ function ListingName({ row }: { row: MyAppRow }) {
   );
 }
 
+/**
+ * 🔴 THERE IS NO KIND BADGE HERE, AND ITS ABSENCE IS THE DECISION.
+ *
+ * `/apps/mine` used to render one (testid `apps-mine-kind-<id>`). It is DELETED: the
+ * author already knows what they built, the word cost a badge slot in a row that also
+ * carries role, status and the completeness advisory, and the page is not where anyone
+ * looks the kind up. The kind still renders on the listing DETAIL page
+ * (`appListingDetailRows`' "Kind" row) and on the edit surface, which are the places
+ * that answer a question about it.
+ *
+ * 🔴 SO THIS FILE IS DELIBERATELY **NOT** ENROLLED in
+ * `__tests__/standaloneWordingCallSites.test.ts`. Enrolling it would assert that it
+ * resolves the kind word from the one source — a claim that is only meaningful for a
+ * surface that renders one. The absence is pinned instead, by
+ * `MyAppsBody.browser.test.tsx`'s "no row shape renders a kind badge", so a future
+ * "helpfully restore the badge" change is visible rather than silent.
+ */
 function StatusBadges({ row }: { row: MyAppRow }) {
   return (
     <Group gap={6} wrap="nowrap">
-      <Badge
-        variant="light"
-        color={row.kind === 'onsite' ? 'blue' : 'grape'}
-        data-testid={`apps-mine-kind-${row.appListingId}`}
-      >
-        {listingKindLabel(row.kind)}
-      </Badge>
       {/* 🔴 The role badge is not decoration: an editor cannot invite, remove or transfer,
           so saying which one they are is what makes the missing controls legible rather
           than looking broken. */}
@@ -569,6 +657,8 @@ type RowRenderProps = {
   onUnpublish?: (row: MyAppRow) => void;
   onRepublish?: (row: MyAppRow) => void;
   republishing: boolean;
+  /** Open the row's image viewer at the image that was clicked. */
+  onOpenMedia?: (row: MyAppRow, which: MyAppMediaKind) => void;
 };
 
 function rowTestId(group: 'active' | 'inactive', appListingId: string): string {
@@ -585,7 +675,7 @@ function AppTableRow(props: RowRenderProps) {
       <Table.Tr data-testid={rowTestId(group, row.appListingId)}>
         <Table.Td>
           <Group gap="sm" wrap="nowrap">
-            <ListingIcon row={row} />
+            <ListingIcon row={row} onOpenMedia={props.onOpenMedia} />
             <Stack gap={0}>
               <ListingName row={row} />
               <Text size="xs" c="dimmed">
@@ -595,7 +685,7 @@ function AppTableRow(props: RowRenderProps) {
           </Group>
         </Table.Td>
         <Table.Td>
-          <ListingCover row={row} />
+          <ListingCover row={row} onOpenMedia={props.onOpenMedia} />
         </Table.Td>
         <Table.Td>
           <Stack gap={4} align="flex-start">
@@ -652,14 +742,14 @@ function AppCardRow(props: RowRenderProps) {
     <Paper withBorder p="sm" radius="md" data-testid={rowTestId(group, row.appListingId)}>
       <Stack gap="xs">
         <Group gap="sm" wrap="nowrap" align="flex-start">
-          <ListingIcon row={row} />
+          <ListingIcon row={row} onOpenMedia={props.onOpenMedia} />
           <Stack gap={0} style={{ minWidth: 0, flex: 1 }}>
             <ListingName row={row} />
             <Text size="xs" c="dimmed">
               {row.slug}
             </Text>
           </Stack>
-          <ListingCover row={row} />
+          <ListingCover row={row} onOpenMedia={props.onOpenMedia} />
         </Group>
         <StatusBadges row={row} />
         <ModRemovedNotice row={row} />
@@ -819,6 +909,37 @@ export function MyAppsBodyView({
   const [inactiveOpen, setInactiveOpen] = useState(false);
   const [inactivePage, setInactivePage] = useState(1);
 
+  /**
+   * The row whose images are open in the viewer, and which one is on screen.
+   *
+   * 🔴 ONE VIEWER FOR THE WHOLE PAGE, not one per row. A `<Modal>` per row would put
+   * `rows.length` dialogs in the DOM, each registering its own capture-phase `keydown`
+   * listener for Escape — and this table routinely renders dozens of rows.
+   *
+   * 🔴 `broken` IS RESET ON EVERY OPEN, because it is a set of indices into THIS row's
+   * `[cover, icon]` list. Carrying it across rows would mean "index 1 is broken" —
+   * learned from one listing's icon — silently hiding a different listing's icon. That
+   * is the same index-space rule the screenshot gallery states in
+   * `appListingScreenshotNav.ts`; here the list changes per row rather than per refetch.
+   */
+  const [mediaTarget, setMediaTarget] = useState<{ rowId: string; index: number } | null>(null);
+  const [mediaBroken, setMediaBroken] = useState<BrokenScreenshotIndexes>(NO_BROKEN_SCREENSHOTS);
+
+  const openMedia = useCallback((row: MyAppRow, which: MyAppMediaKind) => {
+    const index = listingMediaIndex(row, which);
+    // 🔴 `null` means that image is absent. Unreachable from the UI today (a placeholder
+    // renders no button at all), so this is the structural half of that guarantee rather
+    // than its only enforcement — an opened-on-nothing viewer is an empty modal.
+    if (index === null) return;
+    setMediaBroken(NO_BROKEN_SCREENSHOTS);
+    setMediaTarget({ rowId: row.appListingId, index });
+  }, []);
+  const closeMedia = useCallback(() => setMediaTarget(null), []);
+  const markMediaBroken = useCallback(
+    (index: number) => setMediaBroken((prev) => withBrokenIndex(prev, index)),
+    []
+  );
+
   // 🔴 GUARDED ON `> 0` so the initial render does not open the section — the prop defaults
   // to 0 and only a real unpublish bumps it. See `revealInactive` on the props type.
   useEffect(() => {
@@ -831,6 +952,12 @@ export function MyAppsBodyView({
   );
   const inactivePages = pageCount(inactive.length);
   const inactiveVisible = pageSlice(inactive, inactivePage);
+
+  // Resolved from `rows` rather than stored on open, so the viewer can never outlive
+  // the row it is showing (see the mount site).
+  const mediaRow = mediaTarget
+    ? rows.find((r) => r.appListingId === mediaTarget.rowId) ?? null
+    : null;
 
   const renderRow = useCallback(
     (row: MyAppRow, group: 'active' | 'inactive'): RowRenderProps => {
@@ -849,6 +976,7 @@ export function MyAppsBodyView({
         onUnpublish,
         onRepublish,
         republishing,
+        onOpenMedia: openMedia,
       };
     },
     [
@@ -863,6 +991,7 @@ export function MyAppsBodyView({
       onUnpublish,
       onRepublish,
       republishing,
+      openMedia,
     ]
   );
 
@@ -1037,6 +1166,32 @@ export function MyAppsBodyView({
           withdrawEnabled={withdrawEnabled}
         />
       )}
+
+      {/*
+        🔴 REUSED, NOT REBUILT — and the alternatives were rejected for a STRUCTURAL
+        reason, not by omission. `ImageViewer` and `ImageDetailModal` are keyed on a
+        numeric civitai `Image` id and driven by a `?imageId=` query param; a row here
+        carries a CDN URL STRING (`getEdgeUrl`) and no image id exists to hand them.
+        `AppListingScreenshotViewer` is URL-keyed, which is exactly the shape this page
+        has — see its own rejected-alternatives ledger for the longer version.
+
+        It is mounted OUTSIDE the row list so it survives pagination and the Inactive
+        collapse closing under it; `mediaRow` is looked up from `rows`, so a row that
+        leaves the list (a withdraw, a refetch) leaves `shots` empty and the viewer's
+        own rescue effect closes it rather than framing a dead URL.
+
+        Its `stackId` is INERT here — degrading cleanly with no `Modal.Stack` ancestor
+        is a documented property of that component, and `/apps/mine` nests no dialogs.
+      */}
+      <AppListingScreenshotViewer
+        shots={mediaRow ? listingMediaShots(mediaRow) : []}
+        name={mediaRow?.name ?? ''}
+        broken={mediaBroken}
+        index={mediaRow ? mediaTarget?.index ?? null : null}
+        onIndexChange={(index) => setMediaTarget((prev) => (prev ? { ...prev, index } : prev))}
+        onBroken={markMediaBroken}
+        onClose={closeMedia}
+      />
     </Stack>
   );
 }
@@ -1051,9 +1206,32 @@ export function MyAppsBodyView({
  * state — i.e. 100% of rejections were unreachable from anywhere in the product, including
  * from the "your app was rejected" notification that now points at this page.
  *
- * 🔴 ALWAYS VISIBLE, deliberately NOT behind the Inactive collapse. These rows are the
- * ones a developer arrives looking for, and the group is small and bounded; collapsing the
- * only surface that shows a rejection reason would re-create the defect in a nicer shape.
+ * 🔴 COLLAPSIBLE, BUT IT OPENS ITSELF WHENEVER IT HAS SOMETHING ACTIONABLE — and that
+ * conditional is what carries the old "ALWAYS VISIBLE" guarantee forward rather than
+ * dropping it. The previous rule was that this group must never sit behind a toggle,
+ * for three reasons that all still hold: it is the only surface in the product showing
+ * a REJECTION REASON, the "your app was rejected" notification deep-links to this page,
+ * and on production 2026-08-20 **3 of 3 rejected** and **27 of 33 withdrawn** on-site
+ * requests were unreachable from anywhere before it existed.
+ *
+ * Read those three reasons precisely: every one of them is about a row the author can
+ * still ACT ON. None of them is an argument for keeping an unbounded pile of settled
+ * history permanently expanded above the fold. So the rule is now:
+ *
+ *   - a row with a rejection reason, or a `pending` row the SERVER says this caller may
+ *     withdraw → the group is open on arrival, with no interaction. The notification
+ *     deep-link lands on an open group, which is the guarantee that mattered;
+ *   - nothing actionable → collapsed, because it is archive.
+ *
+ * 🔴 THE COUNT BADGE STAYS ON THE HEADER, closed or open. A collapsed group with no
+ * count is an unlabelled box, which is indistinguishable from the rows being GONE — the
+ * exact impression this whole section exists to stop giving. The predicate itself is
+ * `orphanGroupStartsOpen` in `myAppsView.ts`, in the blocking `unit` project.
+ *
+ * 🔴 STILL NOT INSIDE THE INACTIVE COLLAPSE. That has not changed and is not the same
+ * question: this is its OWN disclosure, whose open state it decides from its OWN rows.
+ * Nesting it under Inactive would put an actionable rejection two clicks deep behind a
+ * control that says nothing about it.
  */
 function OrphanedSubmissionsSection({
   rows,
@@ -1066,73 +1244,96 @@ function OrphanedSubmissionsSection({
   withdrawing: boolean;
   withdrawEnabled: boolean;
 }) {
+  /**
+   * Initial state ONLY — deliberately not re-derived on every `rows` change. Once the
+   * author has opened or closed this group, a refetch (or a withdraw removing the one
+   * actionable row) must not reach in and move it under their hands.
+   */
+  const [open, setOpen] = useState(() => orphanGroupStartsOpen(rows));
   return (
     <Stack gap="xs" data-testid="apps-mine-orphaned">
-      <Group gap={6}>
-        <Text fw={600} size="sm">
-          Submissions without a listing
-        </Text>
-        <Badge variant="light" color="gray" data-testid="apps-mine-orphaned-count">
-          {rows.length}
-        </Badge>
-      </Group>
-      <Text size="xs" c="dimmed">
-        These apps never got a store listing — a first version that was rejected or withdrawn
-        releases its slug, so there is no app page to show them on.
-      </Text>
-      <Stack gap="xs">
-        {rows.map((r) => (
-          <Paper
-            key={r.id}
-            withBorder
-            p="sm"
-            radius="md"
-            data-testid={`apps-mine-orphaned-row-${r.id}`}
-          >
-            <Group justify="space-between" wrap="wrap" gap="xs">
-              <Stack gap={2}>
-                <Text fw={600}>{r.slug}</Text>
-                <Text size="xs" c="dimmed">
-                  v{r.version} · submitted {formatWhen(r.submittedAt)}
-                </Text>
-              </Stack>
-              <Group gap="xs">
-                <Badge
-                  variant="outline"
-                  color={historyStatusColor(r.status)}
-                  data-testid={`apps-mine-orphaned-status-${r.id}`}
-                >
-                  {r.status}
-                </Badge>
-                {r.canWithdraw && onWithdraw && withdrawEnabled ? (
-                  <Button
-                    size="compact-xs"
-                    variant="subtle"
-                    color="gray"
-                    disabled={withdrawing}
-                    onClick={() => onWithdraw(r)}
-                    data-testid={`apps-mine-orphaned-withdraw-${r.id}`}
-                  >
-                    Withdraw
-                  </Button>
-                ) : null}
-              </Group>
-            </Group>
-            {/* 🔴 THE REVIEWER'S REASON IS THE POINT OF THIS GROUP. It is the only thing
+      <UnstyledButton
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-controls="apps-mine-orphaned-panel"
+        data-testid="apps-mine-orphaned-toggle"
+      >
+        <Group gap={6}>
+          {open ? <IconChevronDown size={16} /> : <IconChevronRight size={16} />}
+          <Text fw={600} size="sm">
+            Submissions without a listing
+          </Text>
+          <Badge variant="light" color="gray" data-testid="apps-mine-orphaned-count">
+            {rows.length}
+          </Badge>
+        </Group>
+      </UnstyledButton>
+      <Collapse in={open}>
+        <Stack gap="xs" id="apps-mine-orphaned-panel" data-testid="apps-mine-orphaned-panel">
+          <Text size="xs" c="dimmed">
+            These apps never got a store listing — a first version that was rejected or withdrawn
+            releases its slug, so there is no app page to show them on.
+          </Text>
+          <Stack gap="xs">
+            {rows.map((r) => (
+              <Paper
+                key={r.id}
+                withBorder
+                p="sm"
+                radius="md"
+                data-testid={`apps-mine-orphaned-row-${r.id}`}
+              >
+                <Group justify="space-between" wrap="wrap" gap="xs">
+                  <Stack gap={2}>
+                    <Text fw={600}>{r.slug}</Text>
+                    <Text size="xs" c="dimmed">
+                      v{r.version} · submitted {formatWhen(r.submittedAt)}
+                    </Text>
+                  </Stack>
+                  <Group gap="xs">
+                    <Badge
+                      variant="outline"
+                      color={historyStatusColor(r.status)}
+                      data-testid={`apps-mine-orphaned-status-${r.id}`}
+                    >
+                      {r.status}
+                    </Badge>
+                    {r.canWithdraw && onWithdraw && withdrawEnabled ? (
+                      <Button
+                        size="compact-xs"
+                        variant="subtle"
+                        color="gray"
+                        disabled={withdrawing}
+                        onClick={() => onWithdraw(r)}
+                        data-testid={`apps-mine-orphaned-withdraw-${r.id}`}
+                      >
+                        Withdraw
+                      </Button>
+                    ) : null}
+                  </Group>
+                </Group>
+                {/* 🔴 THE REVIEWER'S REASON IS THE POINT OF THIS GROUP. It is the only thing
                 on the whole record that tells the developer what to change, and it was
                 unreachable before this section existed. */}
-            {r.rejectionReason ? (
-              <Text size="xs" c="red" mt={6} data-testid={`apps-mine-orphaned-notes-${r.id}`}>
-                {r.rejectionReason}
-              </Text>
-            ) : r.approvalNotes ? (
-              <Text size="xs" c="dimmed" mt={6} data-testid={`apps-mine-orphaned-notes-${r.id}`}>
-                {r.approvalNotes}
-              </Text>
-            ) : null}
-          </Paper>
-        ))}
-      </Stack>
+                {r.rejectionReason ? (
+                  <Text size="xs" c="red" mt={6} data-testid={`apps-mine-orphaned-notes-${r.id}`}>
+                    {r.rejectionReason}
+                  </Text>
+                ) : r.approvalNotes ? (
+                  <Text
+                    size="xs"
+                    c="dimmed"
+                    mt={6}
+                    data-testid={`apps-mine-orphaned-notes-${r.id}`}
+                  >
+                    {r.approvalNotes}
+                  </Text>
+                ) : null}
+              </Paper>
+            ))}
+          </Stack>
+        </Stack>
+      </Collapse>
     </Stack>
   );
 }

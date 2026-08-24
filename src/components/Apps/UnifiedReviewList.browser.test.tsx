@@ -74,14 +74,14 @@ function renderList(overrides?: {
 }
 
 describe('UnifiedReviewList — renders both kinds with correct badges', () => {
-  test('both rows render with App / External kind badges', async () => {
+  test('both rows render with App / Standalone kind badges', async () => {
     renderList();
     await expect
       .element(page.getByTestId('apps-unified-review-kind-onsite:or1'))
       .toHaveTextContent('App');
     await expect
       .element(page.getByTestId('apps-unified-review-kind-offsite:fr1'))
-      .toHaveTextContent('External');
+      .toHaveTextContent('Standalone');
     // Both apps' names surface.
     await expect.element(page.getByText('My Onsite App')).toBeInTheDocument();
     await expect.element(page.getByText('My External App')).toBeInTheDocument();

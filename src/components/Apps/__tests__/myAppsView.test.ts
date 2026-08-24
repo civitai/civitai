@@ -3,9 +3,13 @@ import { describe, expect, it } from 'vitest';
 import {
   INACTIVE_LISTING_STATUSES,
   INACTIVE_PAGE_SIZE,
+  isActionableOrphan,
   isInactiveListing,
+  listingMediaIndex,
+  listingMediaShots,
   MY_APPS_CONTAINER_SIZE,
   myAppListingHref,
+  orphanGroupStartsOpen,
   pageCount,
   pageSlice,
   partitionMyAppRows,
@@ -262,5 +266,200 @@ describe('MY_APPS_CONTAINER_SIZE', () => {
     // The page went from a single-column card list to a two-image table when it absorbed
     // /apps/my-submissions; 1100 is the width that made the old submissions table clip.
     expect(MY_APPS_CONTAINER_SIZE).toBeGreaterThan(1100);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * The row's two images, as ONE viewer list
+ * ------------------------------------------------------------------ */
+
+/**
+ * 🔴 THESE TWO FUNCTIONS ARE A PAIR, AND THE PAIRING IS WHAT IS PINNED.
+ *
+ * `listingMediaShots` decides the ORDER; `listingMediaIndex` answers "where is the one
+ * that was clicked". A disagreement between them opens the WRONG picture — the icon's
+ * click landing on the cover — and nothing errors, nothing looks broken, and no
+ * rendering test that only checks "a viewer opened" can see it. So every case below
+ * asserts the two against each other, not just each on its own.
+ */
+describe('listingMediaShots / listingMediaIndex — the row media viewer list', () => {
+  const media = (
+    name: string,
+    coverUrl: string | null,
+    iconUrl: string | null
+  ): { name: string; coverUrl: string | null; iconUrl: string | null } => ({
+    name,
+    coverUrl,
+    iconUrl,
+  });
+
+  it('COVER FIRST, then the icon — both present', () => {
+    // Pairwise-distinct urls and a name that appears in neither, so a mutant returning
+    // the wrong url (or the same url twice) cannot pass by coincidence.
+    const row = media('Zephyr', 'https://cdn/cover-a.png', 'https://cdn/icon-b.png');
+    expect(listingMediaShots(row)).toEqual([
+      { url: 'https://cdn/cover-a.png', caption: 'Zephyr cover image' },
+      { url: 'https://cdn/icon-b.png', caption: 'Zephyr icon' },
+    ]);
+    expect(listingMediaIndex(row, 'cover')).toBe(0);
+    expect(listingMediaIndex(row, 'icon')).toBe(1);
+  });
+
+  it('🔴 the icon SHIFTS TO 0 when there is no cover — the index is positional', () => {
+    const row = media('Quill', null, 'https://cdn/icon-c.png');
+    expect(listingMediaShots(row)).toEqual([
+      { url: 'https://cdn/icon-c.png', caption: 'Quill icon' },
+    ]);
+    // The whole reason the index is computed rather than assumed: with the cover gone,
+    // the icon is entry 0, and an implementation that returned a fixed 1 would open a
+    // viewer on an index that does not exist.
+    expect(listingMediaIndex(row, 'icon')).toBe(0);
+    expect(listingMediaIndex(row, 'cover')).toBeNull();
+  });
+
+  it('a cover with no icon keeps the cover at 0', () => {
+    const row = media('Harbor', 'https://cdn/cover-d.png', null);
+    expect(listingMediaShots(row)).toEqual([
+      { url: 'https://cdn/cover-d.png', caption: 'Harbor cover image' },
+    ]);
+    expect(listingMediaIndex(row, 'cover')).toBe(0);
+    expect(listingMediaIndex(row, 'icon')).toBeNull();
+  });
+
+  it('🔴 neither image → an EMPTY list and null for both, so nothing is clickable', () => {
+    const row = media('Vellum', null, null);
+    expect(listingMediaShots(row)).toEqual([]);
+    expect(listingMediaIndex(row, 'cover')).toBeNull();
+    expect(listingMediaIndex(row, 'icon')).toBeNull();
+  });
+
+  /**
+   * 🔴 THE CASE A `findIndex(s => s.url === url)` IMPLEMENTATION GETS WRONG. When a
+   * listing's icon and cover are the SAME url, a url lookup collapses both to entry 0,
+   * so clicking the icon opens the cover — and because the pixels are identical, it
+   * looks correct. Only the position can tell them apart.
+   */
+  it('🔴 identical icon and cover urls are still TWO distinct positions', () => {
+    const same = 'https://cdn/same-image.png';
+    const row = media('Twin', same, same);
+    expect(listingMediaShots(row)).toHaveLength(2);
+    expect(listingMediaIndex(row, 'cover')).toBe(0);
+    expect(listingMediaIndex(row, 'icon')).toBe(1);
+  });
+
+  it('every returned index really addresses an entry in the list it is paired with', () => {
+    // The relationship, quantified over every media shape rather than the four above.
+    for (const cover of ['https://cdn/c.png', null]) {
+      for (const icon of ['https://cdn/i.png', null]) {
+        const row = media('Atlas', cover, icon);
+        const shots = listingMediaShots(row);
+        for (const which of ['cover', 'icon'] as const) {
+          const idx = listingMediaIndex(row, which);
+          const url = which === 'cover' ? cover : icon;
+          if (url === null) {
+            expect(idx, `${which} absent → null`).toBeNull();
+          } else {
+            expect(idx, `${which} present → an index`).not.toBeNull();
+            expect(shots[idx as number]?.url, `${which} @ ${idx}`).toBe(url);
+          }
+        }
+      }
+    }
+  });
+
+  it('every caption is non-empty — the viewer uses it as the image accessible name', () => {
+    // `AppListingScreenshotViewer` sets `alt=""` whenever a caption is present (the
+    // caption renders as visible text beside the image), so an empty caption would
+    // leave the image unnamed rather than merely uncaptioned.
+    const shots = listingMediaShots(media('Ridge', 'https://cdn/c.png', 'https://cdn/i.png'));
+    for (const s of shots) {
+      expect(s.caption ?? '').not.toBe('');
+      expect(s.caption).toContain('Ridge');
+    }
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * Which orphaned submissions are ACTIONABLE
+ * ------------------------------------------------------------------ */
+
+/**
+ * 🔴 THIS PREDICATE IS THE ONLY THING CARRYING FORWARD A MEASURED GUARANTEE. The
+ * "Submissions without a listing" group is now collapsible; before, it was
+ * unconditionally visible because it is the ONLY surface showing a rejection reason and
+ * the "your app was rejected" notification deep-links to this page (production
+ * 2026-08-20: 3 of 3 rejected and 27 of 33 withdrawn on-site requests were otherwise
+ * unreachable). Collapsing it is only safe because this returns `true` for exactly the
+ * rows those reasons are about. A mutant that narrows it re-hides a rejection.
+ */
+describe('isActionableOrphan / orphanGroupStartsOpen', () => {
+  const orphan = (over: Partial<Parameters<typeof isActionableOrphan>[0]> = {}) => ({
+    status: 'approved',
+    rejectionReason: null,
+    canWithdraw: false,
+    ...over,
+  });
+
+  it('🔴 a REJECTION REASON is actionable — it is the only text saying what to fix', () => {
+    expect(
+      isActionableOrphan(orphan({ status: 'rejected', rejectionReason: 'scope never used' }))
+    ).toBe(true);
+  });
+
+  it('🔴 a rejection reason is actionable on ANY status, not only `rejected`', () => {
+    // The reason is the signal, not the status word — a withdrawn request that was
+    // reviewed first still carries the reviewer's note, and it is still the only copy.
+    expect(
+      isActionableOrphan(orphan({ status: 'withdrawn', rejectionReason: 'missing icon' }))
+    ).toBe(true);
+  });
+
+  it('🔴 PENDING + the server says withdrawable → actionable (a decision still open)', () => {
+    expect(isActionableOrphan(orphan({ status: 'pending', canWithdraw: true }))).toBe(true);
+  });
+
+  it('🔴 BOTH halves of the pending rule are required', () => {
+    // pending but NOT withdrawable — the server's own refusal, mirrored. Offering the
+    // group open here would promise an action that 403s.
+    expect(isActionableOrphan(orphan({ status: 'pending', canWithdraw: false }))).toBe(false);
+    // withdrawable-looking but NOT pending — a decided request cannot be withdrawn.
+    expect(isActionableOrphan(orphan({ status: 'approved', canWithdraw: true }))).toBe(false);
+    expect(isActionableOrphan(orphan({ status: 'rejected', canWithdraw: true }))).toBe(false);
+  });
+
+  it('an ABSENT canWithdraw is read as false — the safe direction', () => {
+    const { canWithdraw: _drop, ...noFlag } = orphan({ status: 'pending' });
+    expect(isActionableOrphan(noFlag)).toBe(false);
+  });
+
+  it('🔴 a WHITESPACE-ONLY reason is not a reason', () => {
+    // `rejectionReason: ' '` renders as an empty red line. Treating it as actionable
+    // would open the group on nothing at all.
+    expect(isActionableOrphan(orphan({ status: 'rejected', rejectionReason: '   ' }))).toBe(false);
+    expect(isActionableOrphan(orphan({ status: 'rejected', rejectionReason: '' }))).toBe(false);
+  });
+
+  it('settled history is NOT actionable', () => {
+    expect(isActionableOrphan(orphan({ status: 'withdrawn' }))).toBe(false);
+    expect(isActionableOrphan(orphan({ status: 'approved' }))).toBe(false);
+    expect(isActionableOrphan(orphan({ status: 'rejected' }))).toBe(false);
+  });
+
+  it('🔴 the group opens if ANY row is actionable, not only the first', () => {
+    // A `rows[0]`-only mutant passes a one-row fixture and every "first row" fixture.
+    // The actionable row is LAST here, behind two settled ones.
+    const rows = [
+      orphan({ status: 'withdrawn' }),
+      orphan({ status: 'approved' }),
+      orphan({ status: 'pending', canWithdraw: true }),
+    ];
+    expect(orphanGroupStartsOpen(rows)).toBe(true);
+  });
+
+  it('all-settled → CLOSED, and an empty list → CLOSED', () => {
+    expect(
+      orphanGroupStartsOpen([orphan({ status: 'withdrawn' }), orphan({ status: 'approved' })])
+    ).toBe(false);
+    expect(orphanGroupStartsOpen([])).toBe(false);
   });
 });

@@ -324,4 +324,98 @@ describe('🔴 the screenshot viewer is WIRED to the gallery that owns the list'
       ).toMatch(stacked(stackId));
     }
   });
+
+  /**
+   * 🔴 THE SECOND CONSUMER: `/apps/mine`'s ROW MEDIA.
+   *
+   * `MyAppsBody` reuses this same viewer for a row's icon + cover. It is the same class
+   * of seam as the gallery's, for the same reason, and it lives here for the reason
+   * this whole file exists: the browser suite that measures it for real
+   * (`MyAppsBody.browser.test.tsx`) runs only as the preview pipeline's report-only
+   * `preview / component-tests`. A guard that lives only there cannot block a
+   * regression.
+   *
+   * 🔴 THE RELATIONSHIP, not the components. `listingMediaShots` (in the blocking unit
+   * project) decides the ORDER of `[cover, icon]`, and `listingMediaIndex` answers
+   * "where is the one that was clicked". Both are pinned arithmetically in
+   * `myAppsView.test.ts`. What NEITHER of them can see is the page handing the viewer a
+   * list built by one rule and an index computed by another — at which point clicking
+   * the icon opens the cover, every arithmetic test stays green, and nothing errors.
+   * That join is the checkable claim, so it is checked.
+   *
+   * NOT CAUGHT here (and deliberately not claimed): whether the click actually reaches
+   * `openMedia`, or what renders. That is the browser file's job.
+   */
+  it('🔴 /apps/mine feeds the viewer the SAME row list its index is computed from', () => {
+    const MINE = path.resolve(__dirname, '../MyAppsBody.tsx');
+    const src = norm(stripComments(fs.readFileSync(MINE, 'utf8')));
+
+    // Positive controls: the matchers can see their targets, and the stripper is what
+    // stops this file's own prose (which names every one of these bindings verbatim)
+    // from satisfying the gate.
+    expect(norm('<AppListingScreenshotViewer shots={x} />')).toContain(
+      '<AppListingScreenshotViewer'
+    );
+    expect(
+      norm(stripComments('/* <AppListingScreenshotViewer listingMediaShots( */'))
+    ).not.toContain('<AppListingScreenshotViewer');
+
+    const WHY =
+      'MyAppsBody no longer mounts AppListingScreenshotViewer, or no longer builds its ' +
+      '`shots` from `listingMediaShots(mediaRow)` and its `index` from the SAME ' +
+      '`mediaTarget` that `listingMediaIndex` wrote. Those two ARE the shared index ' +
+      'space: a viewer reading a list built any other way opens a different image than ' +
+      'the one that was clicked, and every unit test on the arithmetic stays green ' +
+      'while it does. See `listingMediaShots` in myAppsView.ts.';
+
+    // The seam exists…
+    expect(src, WHY).toContain('<AppListingScreenshotViewer');
+    // …and is fed the row list, not a hand-rolled array.
+    expect(src, WHY).toContain('shots={mediaRow ? listingMediaShots(mediaRow) : []}');
+    // …with the index the OPEN handler wrote, via the paired index function.
+    expect(src, WHY).toContain('index={mediaRow ? mediaTarget?.index ?? null : null}');
+    expect(src, WHY).toContain('const index = listingMediaIndex(row, which);');
+
+    // 🔴 AND THE CLICK TARGET IS A REAL BUTTON, not an `<img onClick>` — the same rule
+    // the screenshot tile follows two tests up, applied to this consumer. An image with
+    // a click handler is not tab-reachable, not Enter/Space-activatable, and exposes no
+    // accessible name.
+    const BTN =
+      "MyAppsBody's row media is no longer a real button (UnstyledButton with an " +
+      'aria-label). An <img onClick> renders as a mouse-only affordance that LOOKS ' +
+      'wired up. See MediaButton.';
+    const btn = norm(fnBody(stripComments(fs.readFileSync(MINE, 'utf8')), 'MediaButton'));
+    expect(btn, BTN).not.toBe('');
+    expect(btn, BTN).toContain('<UnstyledButton');
+    expect(btn, BTN).toContain('onClick={onOpen}');
+    expect(btn, BTN).toContain('aria-label={label}');
+    // The handler belongs to the button, and the image is only its child.
+    expect(src, BTN).not.toContain('<img onClick');
+
+    /**
+     * 🔴 THE PLACEHOLDER MUST STAY INERT, and this is the half that is easy to lose in
+     * a refactor that "simplifies" the two branches into one wrapper. Asserted on the
+     * FUNCTION BODIES: the early `if (!row.iconUrl) return (<div …>)` / `if
+     * (!row.coverUrl)` must come BEFORE anything that mounts a MediaButton, so the
+     * no-image path cannot reach it.
+     */
+    const stripped = stripComments(fs.readFileSync(MINE, 'utf8'));
+    for (const [fn, guard] of [
+      ['ListingIcon', 'if (!row.iconUrl)'],
+      ['ListingCover', 'if (!row.coverUrl)'],
+    ] as const) {
+      const body = norm(fnBody(stripped, fn));
+      const WHY_PH =
+        `${fn} no longer returns its placeholder BEFORE reaching MediaButton. A ` +
+        `placeholder wrapped in a button is a focusable control that opens an empty ` +
+        `viewer — a dead tab stop on nearly every row of this table (measured: all 11 ` +
+        `removed listings have a null cover).`;
+      expect(body, WHY_PH).not.toBe('');
+      expect(body, WHY_PH).toContain(guard);
+      const guardAt = body.indexOf(guard);
+      const buttonAt = body.indexOf('<MediaButton');
+      expect(buttonAt, WHY_PH).toBeGreaterThan(-1);
+      expect(guardAt, WHY_PH).toBeLessThan(buttonAt);
+    }
+  });
 });
