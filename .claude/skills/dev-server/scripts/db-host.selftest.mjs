@@ -38,6 +38,11 @@ check(
   describeDatabaseHost({ DATABASE_URL: 'postgres://myuser:sup3r-s3cret@db.example.com/civitai_prod_db' }),
   'db.example.com'
 );
+check(
+  'an IPv6 literal keeps its brackets',
+  describeDatabaseHost({ DATABASE_URL: 'postgres://myuser:sup3r-s3cret@[::1]:5432/civitai_prod_db' }),
+  '[::1]:5432'
+);
 check('a missing DATABASE_URL is null', describeDatabaseHost({}), null);
 check('an unparseable value is null, not a guess', describeDatabaseHost({ DATABASE_URL: 'not a url' }), null);
 check('an empty value is null', describeDatabaseHost({ DATABASE_URL: '' }), null);

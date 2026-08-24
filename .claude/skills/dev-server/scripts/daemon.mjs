@@ -2299,7 +2299,12 @@ async function main() {
           // against nothing — and since the entry is also the only way to address it, nothing can
           // release it either. A missing node_modules would burn the app's preferred port for the
           // life of the daemon, and the next start would drift off a number that was free.
-          if (status.status === 'error') appSessions.delete(key);
+          //
+          // Guarded by identity, not by key: start() awaits five path probes, and a delete by key
+          // alone would remove whatever entry happens to be there now — which after a replacement is
+          // a live reservation belonging to someone else. Same rule as the exit handler's
+          // `this.process === proc`.
+          if (status.status === 'error' && appSessions.get(key) === app) appSessions.delete(key);
           res.writeHead(status.status === 'error' ? 500 : 200);
           res.end(JSON.stringify(status));
           return;
@@ -2340,9 +2345,9 @@ async function main() {
         }
         if (action === 'restart' && req.method === 'POST') {
           const status = await existing.restart();
-          // Same reservation-against-nothing as the start path: a restart whose start half fails
-          // leaves a process-less entry holding a port that nothing can release.
-          if (status.status === 'error') appSessions.delete(key);
+          // Same reservation-against-nothing as the start path, and the same identity guard: a
+          // restart awaits a stop and then five path probes, so the entry may not be ours any more.
+          if (status.status === 'error' && appSessions.get(key) === existing) appSessions.delete(key);
           res.writeHead(status.status === 'error' ? 500 : 200);
           res.end(JSON.stringify(status));
           return;
@@ -2977,6 +2982,7 @@ if (invokedDirectly) {
 export {
   APP_REGISTRY,
   appEnvChain,
+  appSessionKey,
   describeDatabaseHost,
   appReservedPorts,
   appSessions,
@@ -2985,6 +2991,9 @@ export {
   DevSession,
   loadEnvChain,
   primaryCheckout,
+  primaryResolution,
+  samePath,
+  withAppAllocation,
   findSessionByWorktree,
   getUsedPorts,
   listSessions,

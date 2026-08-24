@@ -183,7 +183,7 @@ Self-tests — run all three after touching `probe.mjs` or the hook:
 
 ```bash
 node .claude/skills/dev-server/scripts/env-chain.selftest.mjs          # .env layering, both directions
-node .claude/skills/dev-server/scripts/app-registry.selftest.mjs       # registry, port reservation, primaryOf
+node .claude/skills/dev-server/scripts/app-registry.selftest.mjs       # registry, ports, path identity, the lock
 node .claude/skills/dev-server/scripts/db-host.selftest.mjs            # the DB host line never emits a credential
 node .claude/skills/dev-server/scripts/probe.selftest.mjs              # the classifier, pure
 node .claude/skills/dev-server/scripts/probe.integration.selftest.mjs  # the real probe() end to end

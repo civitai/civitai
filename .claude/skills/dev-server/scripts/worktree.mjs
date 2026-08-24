@@ -195,7 +195,7 @@ export function primaryOf(trees, fallback) {
 // win32-only, matching daemon.mjs's samePath. An unconditional lowercase would make two genuinely
 // different trees compare equal on a case-sensitive filesystem, and `wt rm --stop-server` would then
 // stop the other one's servers.
-function samePath(a, b) {
+export function samePath(a, b) {
   const x = resolve(a);
   const y = resolve(b);
   return process.platform === 'win32' ? x.toLowerCase() === y.toLowerCase() : x === y;
