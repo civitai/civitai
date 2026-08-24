@@ -277,6 +277,11 @@ findings are done — see the parity checklist.
       reason that call site interpolates with `sql.raw`. Measured 2026-08-24: node-postgres declares no
       parameter types, so the server infers int4 and resolution succeeds. The comment is what makes the
       next person reach for `sql.raw` on a value — which is the shape that turns a value into SQL.
+- [ ] **`getJudgeCommentForImage` returns comment content with no ToS predicate.**
+      `commentsv2.service.ts` reads a challenge judge's comment by raw SQL and returns the body. Every
+      other v2 read filters `tosViolation` for non-moderators as of 2026-08-24; this one does not. The
+      authors are challenge judges, so the exposure is small — filed rather than fixed, and it is the
+      one v2 content read left unfiltered.
 - [ ] **Comic chapter comments are written outside `upsertComment`.** `createChapterComment` builds the
       `CommentV2` row itself, so every comment guard has to be hand-copied onto it — the link-domain
       check, the message-pattern report and (2026-08-24) the mute check and rate limit were all added

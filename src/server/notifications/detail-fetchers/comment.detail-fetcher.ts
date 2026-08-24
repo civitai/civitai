@@ -12,9 +12,12 @@ export const commentDetailFetcher = createDetailFetcher({
     const commentIds = notifications
       .map((n) => (n.details.version !== 2 ? (n.details.commentId as number | undefined) : null))
       .filter(isDefined);
+    // A removed comment must not keep serving its body here. This runs at READ time, so the preview
+    // is re-fetched every time the panel opens — a phishing reply taken down by a moderator (or by a
+    // ban's comment purge) otherwise stays legible in every recipient's inbox indefinitely.
     const comments = commentIds.length
       ? await db.comment.findMany({
-          where: { id: { in: commentIds } },
+          where: { id: { in: commentIds }, tosViolation: false },
           select: { id: true, content: true, user: { select: simpleUserSelect } },
         })
       : [];
@@ -24,7 +27,7 @@ export const commentDetailFetcher = createDetailFetcher({
       .filter(isDefined);
     const commentsV2 = commentV2Ids.length
       ? await db.commentV2.findMany({
-          where: { id: { in: commentV2Ids } },
+          where: { id: { in: commentV2Ids }, tosViolation: false },
           select: { id: true, content: true, user: { select: simpleUserSelect } },
         })
       : [];
