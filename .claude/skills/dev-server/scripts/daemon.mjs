@@ -1782,7 +1782,7 @@ class AuthHub {
     const deadline = Date.now() + STOP_PORT_VERIFY_MS;
     while (Date.now() < deadline) {
       if (await isPortFree(this.port)) return this.getStatus();
-      await new Promise((r) => setTimeout(r, 250));
+      await new Promise((r) => setTimeout(r, PORT_RELEASE_POLL));
     }
     this.lastError =
       `${this.label} stopped but port ${this.port} is still held — a child may have outlived the ` +

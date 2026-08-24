@@ -7,7 +7,7 @@
 import { spawn, execSync } from 'child_process';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, unlinkSync, statSync } from 'fs';
 import { exitCodeFor, isTerminal as isTerminalStatus } from './scripts/test-queue.mjs';
 import { resolveDaemonUrl } from './scripts/daemon-port.mjs';
 
@@ -119,6 +119,13 @@ async function cmdList() {
 
 // `--prod db,buzz` / `--dev search`, repeatable. Groups come from env-modes.local, so the daemon
 // validates the names — this only has to get the shape right.
+// Flags on `start` and the app verbs that consume the following token. Named once because three
+// places have to agree: parseModeFlags, appFromFlags, and the positional scan. A fourth value-flag
+// added to the parser alone would have its value silently eaten as the worktree.
+//
+// Not to be confused with `probe`'s own VALUE_FLAGS further down — different verb, different set.
+const SESSION_VALUE_FLAGS = new Set(['--app', '--prod', '--dev']);
+
 function parseModeFlags(flags) {
   const modes = { prod: [], dev: [], app: null };
   for (let i = 0; i < flags.length; i++) {
@@ -260,50 +267,7 @@ async function cmdTail(sessionId) {
     sessionId = running ? running.id : listResult.data.sessions[0].id;
   }
 
-  let lastIndex = -1;
-
-  const poll = async () => {
-    const result = await daemonRequest(`/sessions/${sessionId}/logs?since=${lastIndex}`);
-    if (!result.ok) {
-      console.error('Error:', result.error || result.data?.error);
-      process.exit(1);
-    }
-    for (const log of result.data.logs) {
-      console.log(`[${log.level}] ${log.message}`);
-      lastIndex = log.index;
-    }
-  };
-
-  await poll();
-  setInterval(poll, 1000);
-}
-
-async function cmdStop(sessionId) {
-  await ensureDaemon();
-  if (!sessionId) {
-    console.error('Session ID required');
-    process.exit(1);
-  }
-  const result = await daemonRequest(`/sessions/${sessionId}`, { method: 'DELETE' });
-  if (!result.ok) {
-    console.error('Error:', result.error || result.data?.error);
-    process.exit(1);
-  }
-  console.log(JSON.stringify(result.data, null, 2));
-}
-
-async function cmdRestart(sessionId) {
-  await ensureDaemon();
-  if (!sessionId) {
-    console.error('Session ID required');
-    process.exit(1);
-  }
-  const result = await daemonRequest(`/sessions/${sessionId}/restart`, { method: 'POST' });
-  if (!result.ok) {
-    console.error('Error:', result.error || result.data?.error);
-    process.exit(1);
-  }
-  console.log(JSON.stringify(result.data, null, 2));
+  await followLogs((since) => `/sessions/${sessionId}/logs?since=${since}`);
 }
 
 async function cmdRgb(subcmd) {
@@ -387,18 +351,16 @@ async function cmdAppStart(name, worktree) {
 
 // `tail` differs from `logs` only in that it follows. Routing --app to the one-shot printer made the
 // verb quietly mean the other one, and an agent reads that snapshot as "the app stopped producing
-// output". The /app/<name>/logs endpoint already takes `since`, so following it is the same loop.
-async function cmdAppTail(name, worktree) {
-  await ensureDaemon();
-  const query = `?worktree=${encodeURIComponent(worktree)}`;
+// output". Both endpoints take `since`, so one loop serves both — written once so a colour, a level
+// filter or a --since added later cannot land on only one of them.
+async function followLogs(urlFor) {
   let lastIndex = 0;
-
   const poll = async () => {
-    const result = await daemonRequest(`/app/${name}/logs${query}&since=${lastIndex}`);
+    const result = await daemonRequest(urlFor(lastIndex));
     if (!result.ok) {
       console.error('Error:', result.error || result.data?.error || JSON.stringify(result.data));
       if (result.data?.running?.length) {
-        console.error(`${name} is running in: ${result.data.running.join(', ')}`);
+        console.error(`Running in: ${result.data.running.join(', ')}`);
       }
       process.exit(1);
     }
@@ -407,24 +369,44 @@ async function cmdAppTail(name, worktree) {
       lastIndex = log.index;
     }
   };
-
   await poll();
   setInterval(poll, 1000);
 }
 
-async function cmdApp(name, subcmd, worktreeArg) {
+async function cmdAppTail(name, worktreeArg) {
   await ensureDaemon();
-  // The positional on an app verb is a worktree, and only that. `logs --app moderator 500` reads
-  // like `logs <session> <since>` and would otherwise become a worktree, 404ing with
-  // "moderator is not running in <cwd>/500" — which sends the reader looking for the app rather
-  // than at what they typed. Fails closed either way; this says which.
-  if (worktreeArg && !existsSync(resolve(worktreeArg))) {
+  // Same validation as cmdApp. `tail` dispatches straight here rather than through it, so without
+  // this `tail --app moderator 500` still turned 500 into a worktree — the exact confusing 404 the
+  // validation was added to remove, left open on one verb.
+  const worktree = resolveWorktreeArg(worktreeArg);
+  const query = `?worktree=${encodeURIComponent(worktree)}`;
+  await followLogs((since) => `/app/${name}/logs${query}&since=${since}`);
+}
+
+// The positional on an app verb is a worktree, and only that. `logs --app moderator 500` reads like
+// `logs <session> <since>` and would otherwise become a worktree, 404ing with "moderator is not
+// running in <cwd>/500" — which sends the reader looking for the app rather than at what they typed.
+// Fails closed either way; this says which. statSync, not existsSync, so the message is true: a file
+// would otherwise pass the check and 404 anyway.
+function resolveWorktreeArg(worktreeArg) {
+  if (!worktreeArg) return process.cwd();
+  const resolved = resolve(worktreeArg);
+  let isDir = false;
+  try {
+    isDir = statSync(resolved).isDirectory();
+  } catch (e) {}
+  if (!isDir) {
     console.error(`Error: "${worktreeArg}" is not a directory.`);
     console.error(`Usage: app <name> [status|start|stop|restart|logs] [worktree]`);
     console.error(`The positional on an app command is a worktree path — there is no "since" here.`);
     process.exit(1);
   }
-  const cwd = worktreeArg ? resolve(worktreeArg) : process.cwd();
+  return resolved;
+}
+
+async function cmdApp(name, subcmd, worktreeArg) {
+  await ensureDaemon();
+  const cwd = resolveWorktreeArg(worktreeArg);
 
   // `app` with no name lists what is registered and what is running where.
   if (!name) {
@@ -899,7 +881,7 @@ const appFlag = APP_FLAG_VERBS.has(command) ? appFromFlags(args.slice(1)) : null
 const positional = (() => {
   const rest = args.slice(1);
   for (let i = 0; i < rest.length; i++) {
-    if (rest[i] === '--app' || rest[i] === '--prod' || rest[i] === '--dev') {
+    if (SESSION_VALUE_FLAGS.has(rest[i])) {
       i++;
       continue;
     }
@@ -927,7 +909,7 @@ switch (command) {
     else cmdLogs(arg1, arg2);
     break;
   case 'tail':
-    if (appFlag) cmdAppTail(appFlag, positional ? resolve(positional) : process.cwd());
+    if (appFlag) cmdAppTail(appFlag, positional);
     else cmdTail(arg1);
     break;
   case 'stop':
