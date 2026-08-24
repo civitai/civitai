@@ -9,6 +9,20 @@ vi.mock('~/env/other', () => ({
   isPreview: false,
 }));
 
+// `setup.ts` mocks `~/env/server` globally but NOT `~/env/client`, which validates the
+// client schema at module load and THROWS on a miss. Importing the real router reaches it
+// via `model.service` -> `paid-access.service` -> `server/common/constants`. That resolved
+// fine locally and threw in CI ("Invalid environment variables", failing the whole file as a
+// suite-level error rather than an assertion), so pin it here rather than depend on ambient
+// env. Same shape as `middleware.trpc.rate-limit-key.test.ts`.
+vi.mock('~/env/client', () => ({
+  env: {
+    NEXT_PUBLIC_BASE_URL: 'http://localhost:3000',
+    NEXT_PUBLIC_CIVITAI_LINK: 'http://localhost:3000',
+  },
+  formatErrors: () => [],
+}));
+
 // tRPC's `_def.middlewares` ends with the wrapper that invokes the resolver, so
 // running the real chain runs the real handler. Stub the one service it calls so the
 // chain completes without a database — the subject here is the middleware ordering
