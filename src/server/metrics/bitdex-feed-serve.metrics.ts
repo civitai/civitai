@@ -154,12 +154,27 @@ import client, { type Counter, type Registry } from 'prom-client';
  *   page was empty. This is the value this issue exists to make observable.
  * - `fallback_exception` — the application's own code threw while handling the
  *   response. Distinct owner, distinct response.
+ *
+ * The two below are empty CURSORED pages, which since 2026-08-24 do not fall
+ * back at all. They are named apart from the `fallback_*` family on purpose: a
+ * `bdx:` cursor is unreadable by the fallback backend, so routing one there
+ * restarts the user's scroll at page 1. Counting these as `fallback_*` would
+ * leave those counters describing a fallback that no longer happens — the same
+ * drift as a counter whose meaning changes while its name does not.
+ *
+ * - `cursored_end` — an empty cursored page where every query succeeded. The
+ *   feed was ended honestly. Routine, and the paginated twin of `fallback_empty`.
+ * - `cursored_error` — an empty cursored page where at least one query failed,
+ *   raised to the client as a retryable 503. The paginated twin of
+ *   `fallback_error`, and the one worth alerting on.
  */
 export const BITDEX_SERVE_OUTCOMES = [
   'served',
   'fallback_empty',
   'fallback_error',
   'fallback_exception',
+  'cursored_end',
+  'cursored_error',
 ] as const;
 export type BitdexServeOutcome = (typeof BITDEX_SERVE_OUTCOMES)[number];
 

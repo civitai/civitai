@@ -245,22 +245,108 @@ describe('BitDex primary — empty result falls back to Meilisearch for every ca
     expect(result.data).toEqual([]);
   });
 
-  // INVARIANT GUARD + the paginated decision: a subsequent page never issues the
-  // own-excluded pass, so an empty page already returned the fallback signal
-  // before this change and still does. Pinned so the decision is explicit.
-  it('authenticated + paginated (bdx cursor) + zero documents → falls back to Meili, no own-excluded pass', async () => {
+  // THE PAGINATED DECISION, REVERSED ON PURPOSE 2026-08-24 — read this before
+  // "fixing" it back.
+  //
+  // This arm used to assert `source === 'meili'`, pinned by @ZacxDev on
+  // 2026-08-14 (777845bab2) with the note "pinned so the decision is explicit".
+  // That pin did its job: it is why this change is deliberate rather than
+  // accidental. The decision was revisited by Justin on 2026-08-24 and changed,
+  // and @ZacxDev was told before the diff landed.
+  //
+  // Why it changed: falling back handed the Meili path a `bdx:` cursor it cannot
+  // parse. `getAllImagesIndex` splits cursors on `offset|entryTimestamp` behind
+  // two `isNumber` guards, so a `bdx:` cursor degrades `offset` to 0 AND drops
+  // the `entry` pin — the user's infinite scroll silently restarts at the top of
+  // a feed reshuffled by anything published since. Falling back was never
+  // landing them on "the same Meili page"; it was landing them on page 1.
+  it('authenticated + paginated (bdx cursor) + zero documents, nothing failed → ends the feed', async () => {
     serve({ main: EMPTY_PAGE, ownExcluded: page([ownPrivateDoc]) });
 
     const result = await getImagesFromSearch(
       authedInput({ cursor: 'bdx:{"sortAt":1700000000,"id":101}' })
     );
 
-    expect(result.source).toBe('meili');
+    // NOT 'meili'. Retrying cannot produce different content when nothing failed,
+    // so the honest answer is that the feed is over.
+    expect(result.source).toBe('bitdex');
     expect(result.data).toEqual([]);
+    expect(result.nextCursor).toBeUndefined();
     // The own-excluded pass is first-page-only; proving it never ran is what
     // makes "the paginated arm is unchanged" a claim about the code and not
     // about the fake.
     expect(queryBitdexMock.mock.calls.filter((c) => isOwnExcludedQuery(c[1]))).toHaveLength(0);
+  });
+
+  // The other half of the split. An empty page whose query FAILED is not an empty
+  // feed — nobody knows what was in the index — so it must not be reported as the
+  // end of the feed, and must not fall back to Meili either.
+  it('authenticated + paginated (bdx cursor) + a FAILED query → throws SERVICE_UNAVAILABLE', async () => {
+    queryBitdexMock.mockImplementation(
+      async (
+        _index: string,
+        _filters: unknown,
+        _sort?: unknown,
+        _limit?: number,
+        _cursor?: unknown,
+        _offset?: number,
+        _includeDocs?: unknown,
+        onFailure?: (reason: string) => void
+      ) => {
+        onFailure?.('http_error');
+        return null;
+      }
+    );
+
+    await expect(
+      getImagesFromSearch(authedInput({ cursor: 'bdx:{"sortAt":1700000000,"id":101}' }))
+    ).rejects.toMatchObject({ code: 'SERVICE_UNAVAILABLE' });
+  });
+
+  // A MALFORMED `bdx:` cursor must be treated as cursored too. The decision turns
+  // on what the caller sent, not on whether we could parse it: an unparseable
+  // `bdx:` cursor is still meaningless to Meili, so routing it there degrades
+  // offset to 0 exactly as a well-formed one would. Gating on the parsed value
+  // instead of the prefix reopens the bug for this input, and nothing else in
+  // this file would notice.
+  it('authenticated + UNPARSEABLE bdx cursor + zero documents → ends the feed, does not fall back', async () => {
+    // Both passes empty on purpose. An unparseable cursor still leaves
+    // `skipOwnExcluded` false (that decision reads the PARSED cursor), so seeding
+    // the own-excluded pass here would serve page-1 content and this test would
+    // be asserting that behaviour rather than the fallback decision.
+    serve({});
+
+    const result = await getImagesFromSearch(authedInput({ cursor: 'bdx:{not valid json' }));
+
+    expect(result.source).toBe('bitdex');
+    expect(result.data).toEqual([]);
+    expect(result.nextCursor).toBeUndefined();
+  });
+
+  // SCOPE CONTROL for both tests above. The same failure on a FIRST page still
+  // falls back to Meili. Without this, the two tests would pass equally well if
+  // the change had made every empty BitDex page throw, which would take the
+  // whole feed down whenever BitDex was briefly unhealthy.
+  it('authenticated + FIRST page + a FAILED query → still falls back to Meili', async () => {
+    queryBitdexMock.mockImplementation(
+      async (
+        _index: string,
+        _filters: unknown,
+        _sort?: unknown,
+        _limit?: number,
+        _cursor?: unknown,
+        _offset?: number,
+        _includeDocs?: unknown,
+        onFailure?: (reason: string) => void
+      ) => {
+        onFailure?.('http_error');
+        return null;
+      }
+    );
+
+    const result = await getImagesFromSearch(authedInput());
+
+    expect(result.source).toBe('meili');
   });
 });
 

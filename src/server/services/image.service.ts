@@ -3217,6 +3217,19 @@ function isScheduledForFuture(
  * The main query is fully cacheable (no per-user filter clauses).
  * Returns null if BitDex can't serve the request.
  */
+/**
+ * A cursored BitDex page came back empty because a query FAILED, so falling back to
+ * Meili would silently restart the user's scroll at page 1. Caught by the only
+ * caller that serves users and re-raised as a retryable 503.
+ *
+ * A dedicated class rather than a TRPCError: `fetchBitdexPrimary`'s call site
+ * swallows every throw and falls through to Meili, which is correct for the
+ * app-side map/merge/sort bugs that catch exists for. This one must survive it,
+ * and matching on TRPCError would also catch throws from deeper in the query path
+ * whose fallback behaviour is not ours to change.
+ */
+class BitdexCursoredPageUnavailable extends Error {}
+
 async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boolean } = {}) {
   // Two moderator queues BitDex cannot answer, declined so Meili does.
   //
@@ -3445,11 +3458,17 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
 
   // Decode BitDex keyset cursor from "offset|bdx:JSON" format
   let bitdexCursor: any = undefined;
+  // Tracked separately from the parsed value because the fallback decision turns
+  // on "the caller sent a bdx: cursor", not on "we understood it". A cursor that
+  // fails to parse is still meaningless to Meili, so treating it as uncursored
+  // would send it down the very path that degrades offset to 0.
+  let hasBdxCursor = false;
   if (input.cursor) {
     const raw = input.cursor.toString();
     const pipeIdx = raw.indexOf('|');
     const entryPart = pipeIdx >= 0 ? raw.slice(pipeIdx + 1) : raw;
     if (entryPart.startsWith('bdx:')) {
+      hasBdxCursor = true;
       try {
         bitdexCursor = JSON.parse(entryPart.slice(4));
       } catch {}
@@ -3923,18 +3942,46 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
     // request that never contacted BitDex is neither of these things, and
     // recording it would make this counter's denominator disagree with its own
     // help string.
+    // A cursored request that is being SERVED does not fall back (see below), so
+    // it is recorded under its own outcomes rather than inflating `fallback_*`
+    // with requests that never fell back.
+    const cursoredServe = hasBdxCursor && !!opts.serving;
     if (bitdexCallsObserved > 0)
-      recordBitdexPrimaryResult(anyQueryFailed ? 'fallback_error' : 'fallback_empty', serveMode);
+      recordBitdexPrimaryResult(
+        cursoredServe
+          ? anyQueryFailed
+            ? 'cursored_error'
+            : 'cursored_end'
+          : anyQueryFailed
+          ? 'fallback_error'
+          : 'fallback_empty',
+        serveMode
+      );
 
-    // ⚠️ A cursored request does not fall back cleanly — the Meili path parses
-    // cursors as `offset|entryTimestamp` (:2594) and a `bdx:{…}` cursor fails
-    // both `isNumber` guards, so offset degrades to 0. An earlier revision of
-    // this PR ended the feed instead, and that was wrong: the paginated fallback
-    // is a DELIBERATE, pinned decision — see the invariant guard
-    // "authenticated + paginated (bdx cursor) + zero documents → falls back to
-    // Meili" in bitdex-empty-fallback.test.ts, whose comment says it is "pinned
-    // so the decision is explicit". Reversing it belongs in a change that owns
-    // that decision, not in this one. Raised separately.
+    // A cursored request must NOT fall back to Meili. The Meili path parses
+    // cursors as `offset|entryTimestamp` (:2666) and a `bdx:{…}` cursor fails
+    // both `isNumber` guards, so `offset` degrades to 0 AND the `entry` pin is
+    // lost — the user's infinite scroll silently restarts at the top of a feed
+    // that has been reshuffled by anything published since. No error, no empty
+    // page, just the wrong content.
+    //
+    // The two empties are answered differently because only one of them is worth
+    // retrying, which is the whole reason the split above exists:
+    //   • a call FAILED  → nobody knows what was in the index. Throw, so the
+    //     client retries the same cursor and can land on the real page.
+    //   • nothing failed → the page really is empty. End the feed. Retrying
+    //     cannot produce different content, and `fallback_empty` is the bulk of
+    //     normal fallback volume, so erroring here would spin the client on the
+    //     routine case.
+    //
+    // Shadow mode is deliberately excluded: it serves nobody, and throwing there
+    // would move `fallback_exception{serve_mode="shadow"}` off the flat zero that
+    // makes it a usable tripwire for app-side throws.
+    if (cursoredServe) {
+      if (anyQueryFailed) throw new BitdexCursoredPageUnavailable();
+      return { data: [], nextCursor: undefined };
+    }
+
     return null;
   }
 
@@ -4018,6 +4065,17 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
       if (result) return { ...result, source: 'bitdex' as const };
       console.log('[BitDex] PRIMARY returned no results, falling through to Meili');
     } catch (err) {
+      // Re-raised, not swallowed: this is the one throw from `fetchBitdexPrimary`
+      // that means "do not fall through to Meili". Falling through would hand the
+      // Meili path a `bdx:` cursor it cannot parse and restart the user's scroll
+      // at page 1, which is the defect this branch exists to prevent.
+      if (err instanceof BitdexCursoredPageUnavailable) {
+        throw new TRPCError({
+          code: 'SERVICE_UNAVAILABLE',
+          message: 'Image feed is temporarily unavailable — please retry.',
+          cause: err,
+        });
+      }
       console.error('[BitDex] PRIMARY error, falling through to Meili:', err);
       recordBitdexError(err);
       // Distinct from `fallback_error`, and the distinction is the point: the
