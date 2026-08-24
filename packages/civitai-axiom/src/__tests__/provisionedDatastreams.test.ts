@@ -4,7 +4,7 @@ import {
   PROVISIONED_AXIOM_DATASTREAMS,
   buildProvisionedDatastreams,
   parseExtraDatastreams,
-} from '../datastreams';
+} from '../env';
 
 /**
  * THE RELATIONSHIP: a datastream that reaches `axiom.ingestEvents` is one that is supposed to exist.

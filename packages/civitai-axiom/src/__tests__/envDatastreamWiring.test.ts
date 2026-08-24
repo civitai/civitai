@@ -68,12 +68,8 @@ afterEach(() => {
 
 /** Import the package fresh, after `process.env` has been arranged for this case. */
 async function loadFresh() {
-  const [env, client, datastreams] = await Promise.all([
-    import('../env'),
-    import('../client'),
-    import('../datastreams'),
-  ]);
-  return { ...env, ...client, ...datastreams };
+  const [env, client] = await Promise.all([import('../env'), import('../client')]);
+  return { ...env, ...client };
 }
 
 /**

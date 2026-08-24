@@ -40,7 +40,7 @@ await logger.logToAxiom({ name: 'sysredis-fail-open', error: safeError(err) });
 - Only logs to Axiom when `NODE_ENV=production`; dev is stderr-only regardless of token.
 - 🔴 **A datastream must name a dataset that EXISTS.** Axiom does not create one on ingest, so an
   unprovisioned name is rejected on every write, forever, reported only as `reason: "error"` — a
-  category it shares with every transient fault. The allowlist in `src/datastreams.ts` is the
+  category it shares with every transient fault. The allowlist in `src/env.ts` is the
   checkable form of that requirement: a name outside it never reaches `ingestEvents` and is reported
   once per process as `axiom-datastream-unprovisioned`. The event still reaches stderr → the log
   store in full, so nothing is lost.

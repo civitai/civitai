@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from 'fs';
 import { join, relative, sep } from 'path';
 import { describe, expect, it } from 'vitest';
-import { PROVISIONED_AXIOM_DATASTREAMS } from '@civitai/axiom/datastreams';
+import { PROVISIONED_AXIOM_DATASTREAMS } from '@civitai/axiom/env';
 
 /**
  * CALL-SITE LEDGER for the Axiom datastream argument.
@@ -21,7 +21,7 @@ import { PROVISIONED_AXIOM_DATASTREAMS } from '@civitai/axiom/datastreams';
  * never existed, and nothing could tell you.
  *
  * The runtime half of the fix is the provisioned-dataset guard in `@civitai/axiom` (see
- * `packages/civitai-axiom/src/datastreams.ts`): an unprovisioned name never reaches `ingestEvents`.
+ * `packages/civitai-axiom/src/env.ts`): an unprovisioned name never reaches `ingestEvents`.
  * That guard makes the failure harmless. It does NOT make it visible at authoring time — a new
  * call site naming a new dead dataset is silently Loki-only, which is the same invisibility in a
  * kinder shape.
