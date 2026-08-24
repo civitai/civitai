@@ -262,6 +262,19 @@ describe('the sticker placer hears about an acceptance', () => {
         String.raw`pt\.kind IN \('principalToPlacer', 'feeToPlacer'\)[\s\S]{0,80}pt\."transactionId" IS NOT NULL`
       )
     );
+
+    // 🔴 AND the key name, which the anchor above does not mention. The two
+    // check different things: the anchor proves the predicate is right, this
+    // proves the value reaches `prepareMessage` under the name it reads. Rename
+    // the key in the jsonb alone and every other assertion in this file still
+    // passes, while `details.refundPaid` is permanently undefined and no placer
+    // is ever told their Buzz came back — on any branch.
+    //
+    // It was briefly absent because the anchor REPLACED it rather than joining
+    // it. That is invisible in a diff: the new assertion is strictly stronger
+    // about the predicate and strictly weaker about the name, and a diff only
+    // shows you the first half.
+    expect(stripped).toContain("'refundPaid', EXISTS (");
     expect(sql).toContain("pt.kind = 'feeToOwner'");
     expect(sql).toContain(`'feeWaived', p."feeWaived"`);
   });
