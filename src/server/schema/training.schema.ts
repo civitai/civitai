@@ -120,5 +120,5 @@ export type TrainingServiceStatus = z.infer<typeof trainingServiceStatusSchema>;
 
 export type GetTrainingRunStateInput = z.infer<typeof getTrainingRunStateSchema>;
 export const getTrainingRunStateSchema = z.object({
-  modelVersionId: z.number(),
+  modelVersionId: z.number().positive(),
 });

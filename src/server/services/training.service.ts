@@ -34,6 +34,10 @@ import { trainingServiceStatusSchema } from '~/server/schema/training.schema';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { isTrustedOrchestratorUrl } from '~/server/services/orchestrator/trusted-blob-url';
 import {
+  deriveTrainingWorkflowState,
+  TrainingRecordNotFoundError,
+} from '~/server/services/orchestrator/training/workflow-state';
+import {
   throwAuthorizationError,
   throwBadRequestError,
   throwNotFoundError,
@@ -461,10 +465,6 @@ export {
   PermanentTrainingWebhookError,
   TrainingRecordNotFoundError,
 } from '~/server/services/orchestrator/training/workflow-state';
-import {
-  deriveTrainingWorkflowState,
-  TrainingRecordNotFoundError,
-} from '~/server/services/orchestrator/training/workflow-state';
 
 export type TrainingWorkflowUpdateResult = {
   trainingStatus: TrainingStatus;
@@ -490,7 +490,7 @@ export async function updateTrainingWorkflowRecords(
   status: WorkflowStatus
 ): Promise<TrainingWorkflowUpdateResult> {
   const derived = deriveTrainingWorkflowState(workflow, status);
-  const { modelFileId, trainingStatus, epochs: epochData } = derived;
+  const { modelFileId, trainingStatus, epochs: derivedEpochs } = derived;
 
   const modelFile = await dbWrite.modelFile.findFirst({
     where: { id: modelFileId },
@@ -545,15 +545,12 @@ export async function updateTrainingWorkflowRecords(
   // offset on their own run.
   const epochOffset = trainingResults.epochOffset ?? 0;
 
-  const epochData: TrainingResultsV2['epochs'] = epochs.map((e) => ({
-    epochNumber: e.epochNumber != null && e.epochNumber >= 0 ? e.epochNumber + epochOffset : -1,
-    modelUrl: e.blobUrl ?? '',
-    modelSize: e.blobSize ?? 0,
-    sampleImages: e.sampleImages ?? [],
+  const epochData: TrainingResultsV2['epochs'] = derivedEpochs.map((e) => ({
+    ...e,
+    epochNumber: e.epochNumber >= 0 ? e.epochNumber + epochOffset : -1,
   }));
 
-  const resolvedStartedAt =
-    trainingResults.startedAt ?? derived.startedAt ?? (startedAt ? new Date(startedAt).toISOString() : null);
+  const resolvedStartedAt = trainingResults.startedAt ?? derived.startedAt;
 
   // Flag anomalous completion: workflow succeeded but never had a start time or produced no epochs
   if (
