@@ -293,3 +293,78 @@ describe('listingEditHeaderCopy', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// SOURCE REPOSITORY — prefill + the minimal scalar diff
+// ---------------------------------------------------------------------------
+
+describe('sourceRepoUrl — prefill and the minimal patch', () => {
+  const REPO = 'https://github.com/civitai/vitrine';
+
+  it('prefills from the context, and an absent/null value blanks the input', () => {
+    const withRepo = makeCtx({
+      scalars: { ...makeCtx().scalars, sourceRepoUrl: REPO },
+    });
+    expect(editContextToForm(withRepo).sourceRepoUrl).toBe(REPO);
+
+    // `sourceRepoUrl` is OPTIONAL on the context type so every pre-existing fixture
+    // (all of which predate the field) still type-checks — absent must read exactly
+    // like "not set", never as `undefined` leaking into a controlled input.
+    expect(editContextToForm(makeCtx()).sourceRepoUrl).toBe('');
+    expect(
+      editContextToForm(makeCtx({ scalars: { ...makeCtx().scalars, sourceRepoUrl: null } }))
+        .sourceRepoUrl
+    ).toBe('');
+  });
+
+  it('🔴 an UNCHANGED field is NOT in the patch — the manual-apply column stays out of unrelated saves', () => {
+    // Two reasons this matters. (1) The patch is the wire payload, so an always-present
+    // key would make every edit a write to `source_repo_url` — which, until a human
+    // applies the migration, fails the whole save. (2) It would also make every save a
+    // MATERIAL change candidate on the server.
+    const ctx = makeCtx({ scalars: { ...makeCtx().scalars, sourceRepoUrl: REPO } });
+    const patch = buildScalarPatch(ctx, { ...editContextToForm(ctx), tagline: 'new tagline' });
+    expect('sourceRepoUrl' in patch).toBe(false);
+    expect(patch).toEqual({ tagline: 'new tagline' });
+  });
+
+  it('a CHANGED value is emitted verbatim (the server normalises + re-validates)', () => {
+    const ctx = makeCtx({ scalars: { ...makeCtx().scalars, sourceRepoUrl: REPO } });
+    const patch = buildScalarPatch(ctx, {
+      ...editContextToForm(ctx),
+      sourceRepoUrl: '  https://gitlab.com/other/app  ',
+    });
+    // TRIMMED here (the form's own hygiene) but NOT canonicalised — canonicalisation is
+    // the server's job (`buildListingPatchData`), single-sourced with the manifest path.
+    expect(patch.sourceRepoUrl).toBe('https://gitlab.com/other/app');
+  });
+
+  it('CLEARING the box emits an explicit null (an empty string would not clear the column)', () => {
+    const ctx = makeCtx({ scalars: { ...makeCtx().scalars, sourceRepoUrl: REPO } });
+    const patch = buildScalarPatch(ctx, { ...editContextToForm(ctx), sourceRepoUrl: '' });
+    expect('sourceRepoUrl' in patch).toBe(true);
+    expect(patch.sourceRepoUrl).toBeNull();
+  });
+
+  it('ADDING a link to a listing that had none emits it', () => {
+    const ctx = makeCtx();
+    const patch = buildScalarPatch(ctx, { ...editContextToForm(ctx), sourceRepoUrl: REPO });
+    expect(patch.sourceRepoUrl).toBe(REPO);
+  });
+
+  it('whitespace-only input on a listing that had none is NOT a change', () => {
+    const ctx = makeCtx();
+    const patch = buildScalarPatch(ctx, { ...editContextToForm(ctx), sourceRepoUrl: '   ' });
+    expect('sourceRepoUrl' in patch).toBe(false);
+  });
+
+  it('🔴 a COSMETIC re-spelling still sends a patch — and that is correct', () => {
+    // This diff answers "did the author retype the box?", not "do these two strings mean
+    // the same repository". The second question is `patchHasMaterialChange`'s, and it
+    // compares CANONICAL forms — so this patch is classified as no material change and
+    // applied in place, rather than queuing a moderator re-review.
+    const ctx = makeCtx({ scalars: { ...makeCtx().scalars, sourceRepoUrl: REPO } });
+    const patch = buildScalarPatch(ctx, { ...editContextToForm(ctx), sourceRepoUrl: `${REPO}.git` });
+    expect(patch.sourceRepoUrl).toBe(`${REPO}.git`);
+  });
+});

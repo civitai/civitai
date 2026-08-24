@@ -2876,6 +2876,15 @@ model AppListing {
   contentRating   String?      @map("content_rating")
   // Off-site external-link target (Visit CTA). NULL for on-site / OAuth-connect.
   externalUrl     String?      @map("external_url")
+  // OPTIONAL public source-repository link ("this app is open source"), rendered as
+  // a `Source` row on the store DETAIL page only — never on a grid card. NOT the
+  // internal Forgejo repo (`AppBlock.repoUrl`); this is an author-declared public
+  // link, host-allowlisted to github.com / gitlab.com / codeberg.org and normalised
+  // to `https://<host>/<owner>/<repo>` by `validateRepositoryUrl`. Manifest-governed
+  // for on-site listings (`manifest.repository`), listing-form-governed for off-site.
+  // MANUAL-APPLY, like every migration here — the read paths degrade to NULL while
+  // the column is absent rather than 500ing the public store.
+  sourceRepoUrl   String?      @map("source_repo_url")
   // Off-site OAuth-connect client (Connect CTA). NULL for on-site/external-link.
   connectClientId String?      @map("connect_client_id")
   connectClient   OauthClient? @relation(fields: [connectClientId], references: [id], onDelete: SetNull)
@@ -5491,6 +5500,7 @@ enum JobQueueType {
   ModerationRequest
   BlockedImageDelete
   ImageScan
+  ReplacedImageDelete
 }
 
 model JobQueue {
@@ -6869,6 +6879,10 @@ model UserProfile {
   showcaseItems           Json      @default("[]")
 
   @@id([userId])
+  // Serves the ON DELETE SET NULL referential-integrity trigger for the
+  // sfwCoverImage relation. Without it every Image delete sequentially scans this
+  // whole table. Prisma does not index relation scalars on its own.
+  @@index([sfwCoverImageId])
 }
 
 /// @view

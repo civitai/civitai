@@ -1,6 +1,48 @@
-import { trace, context, ROOT_CONTEXT, SpanStatusCode } from '@opentelemetry/api';
+import { trace, context, propagation, ROOT_CONTEXT, SpanStatusCode } from '@opentelemetry/api';
 
 const tracer = trace.getTracer('civitai-app');
+
+/**
+ * Set attributes on the CURRENTLY ACTIVE span, if there is one. For values only known after the
+ * work inside a `withSpan` callback has finished (a result count, an attempt count) — call it from
+ * INSIDE the callback, where the active span is the one `withSpan` opened; called outside, the
+ * active span is the caller's and the attribute lands on the wrong span. No-op when tracing is
+ * disabled or no span is active, and never throws.
+ */
+export function setActiveSpanAttributes(attrs: Record<string, string | number | boolean>): void {
+  try {
+    trace.getActiveSpan()?.setAttributes(attrs);
+  } catch {
+    // Telemetry must never fail the work it describes.
+  }
+}
+
+/**
+ * W3C trace-context headers (`traceparent`, and `tracestate` when present) for the
+ * CURRENTLY ACTIVE span, ready to merge into an outbound request's headers.
+ *
+ * WHY this exists as a manual helper rather than an auto-instrumentation: this app runs
+ * `HttpInstrumentation({ ignoreOutgoingRequestHook: () => true })` (instrumentation.node.ts)
+ * — outbound client spans, and with them traceparent injection, are deliberately suppressed
+ * on Node core http/https for their per-request `async_hooks` cost. The orchestrator and
+ * meilisearch clients use fetch/undici and were NEVER auto-instrumented at all, so no
+ * outbound call anywhere in the app currently carries a traceparent and no trace crosses a
+ * service boundary. Injecting per-call — only at the boundaries we care about — buys the
+ * cross-service linkage without re-introducing the whole-app span cost that was removed.
+ *
+ * TOTAL and cheap: it reads the ambient context and writes strings. When OTEL is disabled
+ * the global propagator is the API's no-op, so this returns `{}` and callers spread nothing.
+ * Never throws — a telemetry fault must not fail the request it is describing.
+ */
+export function traceContextHeaders(): Record<string, string> {
+  try {
+    const carrier: Record<string, string> = {};
+    propagation.inject(context.active(), carrier);
+    return carrier;
+  } catch {
+    return {};
+  }
+}
 
 export function withSpan<T>(name: string, fn: () => T): T;
 export function withSpan<T>(
@@ -13,8 +55,7 @@ export function withSpan<T>(
   attrsOrFn: Record<string, string | number | boolean> | (() => T),
   maybeFn?: () => T
 ): T {
-  const [attrs, fn] =
-    typeof attrsOrFn === 'function' ? [{}, attrsOrFn] : [attrsOrFn, maybeFn!];
+  const [attrs, fn] = typeof attrsOrFn === 'function' ? [{}, attrsOrFn] : [attrsOrFn, maybeFn!];
 
   return tracer.startActiveSpan(name, (span) => {
     try {

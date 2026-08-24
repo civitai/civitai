@@ -164,6 +164,12 @@ export const ActionType = [
   'Model_Create_Click',
   'Image_Remix_Click',
   'Generator_Submit',
+  // Image/video feed tag bar. 🔴 `actions.type` is an Enum16 in ClickHouse: a value
+  // the column does not carry is dropped by the tracker with no error here and no
+  // row there. The widening migration
+  // (src/server/clickhouse/migrations/2026-08-21-feed-tag-bar-action.sql) must be
+  // applied to prod BEFORE this deploys, or the bar ships blind.
+  'Feed_TagBar_Click',
 ] as const;
 export type ActionType = (typeof ActionType)[number];
 

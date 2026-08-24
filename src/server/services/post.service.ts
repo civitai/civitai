@@ -943,6 +943,25 @@ export const deletePost = async ({ id, isModerator }: GetByIdInput & { isModerat
 
       return { post, deletedImages };
     },
+    // Back to 10s (2026-08-22). This was temporarily raised to 30s in #4276 while post
+    // deletion was failing with Prisma P2028 "Transaction already closed"; that comment
+    // said to revert once the slowness was root-caused, and it now has been.
+    //
+    // The cause was NOT this budget. `UserProfile.sfwCoverImageId` is a foreign key to
+    // `Image` with ON DELETE SET NULL and no index, on a ~1.5 GB / 3.44M row table, so
+    // Postgres's referential-integrity trigger full-scanned it ONCE PER DELETED IMAGE:
+    // 1.74M calls at a 634 ms mean, ~290 hours of scan time, to null 12 rows. That made
+    // this DELETE cost ~634 ms per image, which is why ~100 images took ~63 s and why
+    // the failure was deterministic by post size rather than random.
+    //
+    // Fixed by the index in #4284, applied 2026-08-22 21:01:26Z. Measured after, on
+    // production traffic: the RI trigger went 634 ms -> 0.003 ms over 2,613 calls, and
+    // the plan went from ~193,719 buffers to 3. Slow (>5s) executions of this statement:
+    // 11 in the six minutes before the index, ZERO in the fifteen minutes after.
+    //
+    // So 10s is no longer a tight budget — at 0.003 ms/image even a 1000-image post
+    // spends ~3 ms in that trigger. Keeping 30s would only mean a genuinely stuck delete
+    // takes three times as long to surface.
     { timeout: 10000 }
   );
 

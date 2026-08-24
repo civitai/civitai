@@ -58,6 +58,12 @@ export type ListingEditContext = {
     category: string | null;
     contentRating: string | null;
     externalUrl: string | null;
+    /**
+     * The public source-repository link. OPTIONAL on this type so every pre-existing
+     * edit context + fixture (all of which predate the field) still type-checks, and
+     * absent reads exactly like "not set" — see {@link editContextToForm}.
+     */
+    sourceRepoUrl?: string | null;
   };
   assets: {
     icon: EditAsset;
@@ -103,6 +109,7 @@ export function editContextToForm(ctx: ListingEditContext): OffsiteSubmitFormVal
     slug: ctx.slug,
     name: s.name ?? '',
     externalUrl: s.externalUrl ?? '',
+    sourceRepoUrl: s.sourceRepoUrl ?? '',
     tagline: s.tagline ?? '',
     description: s.description ?? '',
     category: (s.category as MarketplaceCategory | null) ?? null,
@@ -225,6 +232,23 @@ export function buildScalarPatch(
   if (!isOnsiteEdit(ctx)) {
     const url = current.externalUrl.trim();
     if (url !== original.externalUrl.trim()) patch.externalUrl = url;
+  }
+
+  // Source repository. Emitted ONLY when the author actually changed the text, which
+  // is what keeps the column out of every unrelated patch — load-bearing while the
+  // manual-apply migration is outstanding, since a write naming a missing column would
+  // fail the whole save. Cleared with an explicit `null`, like tagline/description.
+  //
+  // 🔴 A RAW STRING COMPARISON IS CORRECT HERE, and only because the server does the
+  // canonical one. This diff answers "did the author retype the box?"; whether the two
+  // values MEAN the same repository is `patchHasMaterialChange`'s question, and it
+  // compares normalised forms. So re-saving `.../a/b` as `.../a/b/` does send a patch,
+  // and the server correctly classifies it as no material change — an in-place no-op
+  // write rather than a needless mod re-review.
+  const sourceRepoUrl = current.sourceRepoUrl.trim();
+  const originalSourceRepoUrl = original.sourceRepoUrl.trim();
+  if (sourceRepoUrl !== originalSourceRepoUrl) {
+    patch.sourceRepoUrl = sourceRepoUrl.length > 0 ? sourceRepoUrl : null;
   }
 
   const tagline = current.tagline.trim();

@@ -4,9 +4,11 @@
 
 When users train models on Civitai and publish them, the safetensors filename is auto-derived from the orchestrator's asset path (e.g., `abc123_0000010.safetensors`). These names are opaque and unhelpful to end users downloading the model. This feature lets users specify a meaningful display/download name (and optional version string) before or after publishing.
 
+This plan covers the **published** `ModelFile` only. Pre-publish epoch downloads and the run zip are a separate artifact, named by `src/shared/utils/training-file-names.ts`, and never consult `overrideName`.
+
 ## Approach: `overrideName` (display name only — recommended)
 
-**Recommended approach** is to use the existing `overrideName` field on `ModelFile` (already in Prisma schema at `prisma/schema.prisma:1117`). The S3 path and `name` field stay unchanged; `overrideName` overrides what users see and what browsers name the downloaded file. The `getDownloadFilename()` function at `src/server/services/file.service.ts:389` already checks `overrideName` first — no new logic needed there.
+**Recommended approach** is to use the existing `overrideName` field on `ModelFile` (already in the schema at `packages/civitai-db-schema/prisma/schema.full.prisma:1251`). The S3 path and `name` field stay unchanged; `overrideName` overrides what users see and what browsers name the downloaded file. The `getDownloadFilename()` function in `src/server/services/file.service.ts` already checks `overrideName` first — no new logic needed there.
 
 **Why not rename the S3 file itself?** No collision risk (S3 keys are scoped to `modelVersion/{modelVersionId}/`) — but it adds a copy+delete operation during the already-slow publish flow, requires modifying `moveAsset`, and makes the change hard to undo. The `overrideName` approach gives the same user-visible result with no storage-layer changes and is fully reversible.
 

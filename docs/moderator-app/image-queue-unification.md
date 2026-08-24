@@ -91,8 +91,10 @@ shell + 300px grid + Next**, with a page-supplied card body.
 
 Done:
 1. Extracted `ImageQueueGrid.svelte` — the shared primitive: 300px auto-fill grid, `aspect-[4/5]` image
-   card linking to the main app (`EdgeMedia w=450`), empty-state, cursor-paged Next (number *or* string
-   cursor). Body via a `card` snippet; optional per-card `itemClass` for dimming; optional `keyOf`.
+   card linking to the main app (`EdgeMedia w=450`), empty-state, and paging in two modes — numbered
+   (`total` + `perPage`, via `NumberedPager`) where the query already counts its matches, otherwise
+   cursor-paged Next/Back/First (number *or* string cursor, trail in the URL). Body via a `card`
+   snippet; optional per-card `itemClass` for dimming; optional `keyOf`.
 2. Rewrote `ImageReviewGrid` to compose it (public props unchanged, so `[slug]` is untouched) — it now
    only adds the title + browsing-level filter header and the user-header row.
 3. Migrated the three pages whose card matches exactly: **image-tags**, **image-rating-review**,

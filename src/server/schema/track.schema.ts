@@ -587,6 +587,28 @@ const generatorSubmitSchema = z.object({
 // single request; the browser flushes well below this cap (see trackEventBuffer).
 // `trackBatchEventSchema` / `trackBatchSchema` are declared at the bottom of this
 // file (after `trackActionSchema`, which the action arm references).
+// Image/video feed tag bar click-through. This event is the CONDITION the bar ships
+// under — a click-through floor was agreed, and the bar is removed if it is not met
+// (ClickUp 868kv0cdr). The denominator is `pageViews` on /images and /videos; query
+// strings never reach that table, so the path alone identifies the feed.
+//
+// `tag` is null for the All chip, which clears the filter rather than setting one.
+// It is still a press, so it is recorded; a query measuring intent to NARROW
+// should filter it out rather than assume it is absent.
+const feedTagBarClickSchema = z.object({
+  type: z.literal('Feed_TagBar_Click'),
+  details: z.object({
+    // Which feed the bar was pressed on.
+    feed: z.enum(['images', 'videos']),
+    // Chip name, or null for All. Bounded server-side by FEED_TAG_BAR_TAG_NAMES;
+    // capped here so a tampered client cannot bloat the `details` String column.
+    tag: z.string().trim().max(64).nullable(),
+    tagId: z.number().nullable(),
+    // Whether the press selected a chip or cleared back to the whole feed.
+    action: z.enum(['select', 'clear']),
+  }),
+});
+
 export const TRACK_BATCH_MAX = 100;
 
 export type TrackActionInput = z.infer<typeof trackActionSchema>;
@@ -610,6 +632,7 @@ export const trackActionSchema = z.discriminatedUnion('type', [
   modelCreateClickSchema,
   imageRemixClickSchema,
   generatorSubmitSchema,
+  feedTagBarClickSchema,
 ]);
 
 // Feed impression event — an entity was actually SEEN in a feed, as opposed to

@@ -84,8 +84,18 @@ export const offsetWithin = (el: HTMLElement, stop: Element | null) => {
 export function CardStickerOverlay({
   imageId,
   artworkWidth = CARD_ARTWORK_WIDTH,
+  revealStickers,
 }: {
   imageId: number;
+  /**
+   * Draw the placements whatever the viewer's site-wide reveal preference says.
+   *
+   * A prop rather than a read of `ImagesContext`: this component is mounted by
+   * hosts that have no images provider at all, and reaching for one here would
+   * pull the provider's module — and everything it imports — into every one of
+   * them. A widener, so defaulting off is the correct absent value.
+   */
+  revealStickers?: boolean;
   /**
    * What the CDN is asked for, when the host draws the media wider than a card.
    * A sticker's drawn size is a fraction of the measured box, so a host with a
@@ -95,7 +105,7 @@ export function CardStickerOverlay({
   artworkWidth?: number;
 }) {
   const currentUser = useCurrentUser();
-  const revealed = useStickerRevealStore((state) => state.revealed);
+  const revealed = useStickerRevealStore((state) => state.revealed) || !!revealStickers;
   const batch = useStickerPlacementBatch(imageId);
   const ref = useRef<HTMLDivElement>(null);
   const [box, setBox] = useState<Box | null>(null);

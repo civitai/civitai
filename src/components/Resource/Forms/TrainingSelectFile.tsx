@@ -48,6 +48,10 @@ import type {
   TrainingDetailsObj,
 } from '~/server/schema/model-version.schema';
 import { getEpochJobAndFileName } from '~/server/utils/model-helpers';
+import { trainingEpochModelFileName } from '~/shared/utils/training-file-names';
+import { TrainingRunSummary } from '~/components/Training/TrainingRunSummary/TrainingRunSummary';
+import { trainingArchitectureKey } from '~/utils/training/run-summary';
+import { epochsCompletedForRun } from '~/shared/utils/training-epochs';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { stringifyAIR } from '~/shared/utils/air';
 import { ModelType, ModelUploadType, TrainingStatus } from '~/shared/utils/prisma/enums';
@@ -83,6 +87,8 @@ const EpochRow = ({
   canGenerate,
   isVideo,
   modelName,
+  versionName,
+  architecture,
 }: {
   epoch: TrainingResultsV2['epochs'][number];
   epochIndex: number;
@@ -102,6 +108,8 @@ const EpochRow = ({
   canGenerate?: boolean;
   isVideo: boolean;
   modelName: string;
+  versionName: string;
+  architecture?: string | null;
 }) => {
   const currentUser = useCurrentUser();
   // On small containers the 4 labeled actions overflow the card, so collapse the
@@ -113,7 +121,13 @@ const EpochRow = ({
     // Use direct navigation so the browser streams to disk without buffering in memory
     const link = document.createElement('a');
     link.href = `/api/download/training/${modelVersionId}?epochNumber=${epoch.epochNumber}`;
-    link.download = `${modelName}_epoch_${epoch.epochNumber}.safetensors`;
+    link.download = trainingEpochModelFileName({
+      modelName,
+      versionName,
+      versionId: modelVersionId,
+      architecture,
+      epochNumber: epoch.epochNumber,
+    });
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -506,6 +520,7 @@ export default function TrainingSelectFile({
   const [continuingFrom, setContinuingFrom] = useState<number | undefined>();
 
   const thisTrainingDetails = modelVersion.trainingDetails as TrainingDetailsObj | undefined;
+  const architecture = trainingArchitectureKey(thisTrainingDetails);
   const trainingEnded =
     modelVersion.trainingStatus === TrainingStatus.InReview ||
     modelVersion.trainingStatus === TrainingStatus.Approved ||
@@ -818,6 +833,11 @@ export default function TrainingSelectFile({
 
   return (
     <Stack>
+      <TrainingRunSummary
+        modelName={model.name}
+        versionName={modelVersion.name}
+        trainingDetails={thisTrainingDetails}
+      />
       {showBlockingError ? (
         <Stack p="xl" align="center">
           <IconAlertCircle size={52} />
@@ -846,9 +866,11 @@ export default function TrainingSelectFile({
                 <Text>
                   Models are currently training{' '}
                   {modelVersion.trainingDetails?.params?.maxTrainEpochs
-                    ? `(${epochs[0]?.epochNumber ?? 0}/${
-                        modelVersion.trainingDetails.params.maxTrainEpochs
-                      })`
+                    ? `(${epochsCompletedForRun({
+                        epochs,
+                        epochOffset: (trainingResults as TrainingResultsV2 | undefined)
+                          ?.epochOffset,
+                      })}/${modelVersion.trainingDetails.params.maxTrainEpochs})`
                     : '...'}
                 </Text>
                 <Text>Results will stream in as they complete.</Text>
@@ -966,6 +988,8 @@ export default function TrainingSelectFile({
             canGenerate={features.privateModels && !!modelVersion.id && canGenerateWithEpochBool}
             isVideo={isVideo}
             modelName={model.name}
+            versionName={modelVersion.name}
+            architecture={architecture}
           />
           {epochs.length > 1 && (
             <>
@@ -996,6 +1020,8 @@ export default function TrainingSelectFile({
                   }
                   isVideo={isVideo}
                   modelName={model.name}
+                  versionName={modelVersion.name}
+                  architecture={architecture}
                 />
               ))}
             </>

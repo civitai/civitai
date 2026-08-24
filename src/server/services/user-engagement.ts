@@ -13,8 +13,8 @@ import { UserEngagementType } from '~/shared/utils/prisma/enums';
  * Three writers stay outside them, deliberately: `toggleBlockUser` keeps the
  * `upsert` that #4210 settled on for the block itself, `toggleFollowUser` converts
  * a Hide into a Follow — a deliberate downgrade rather than a claim, which has no
- * expression here — and `deleteUser` clears a pair wholesale, which is the right
- * shape for it even though its predicate is currently wrong (868kurkcf). Every
+ * expression here — and `deleteUser` clears every pair the account appears in,
+ * which is a different shape from one pair and one type. Every
  * other writer routes through these two, and a new one should.
  *
  * Do NOT call either inside an interactive `$transaction`. Prisma does not

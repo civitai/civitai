@@ -1612,6 +1612,53 @@ export async function getUserFollows(userId: number) {
   return userFollows[userId]?.follows ?? [];
 }
 
+/**
+ * Apply one follow/unfollow to the cached set instead of re-deriving it.
+ *
+ * Every follow / hide / block toggle used to end in `userFollowsCache.refresh`,
+ * which refetches the user's ENTIRE follow set from the primary. Measured on prod
+ * (868kurkd0): 19,224 buffers and ~100 ms for a user with 130k follows, per click,
+ * three orders of magnitude above the toggle's own statements — with no
+ * single-flight in front of it.
+ *
+ * The refetch stays as the fallback rather than being replaced. It reads the
+ * PRIMARY deliberately: the replica can be behind the write that just happened, and
+ * the point of touching the cache here is that the user sees their own action.
+ *
+ * Call this ONLY where the resulting follow state is known for certain. Where it is
+ * not — an un-hide or an unblock that matched no row, which leaves a pair that may
+ * still hold a Follow — call `userFollowsCache.refresh` and take the cost.
+ */
+export async function setUserFollowCached({
+  userId,
+  targetUserId,
+  following,
+}: {
+  userId: number;
+  targetUserId: number;
+  following: boolean;
+}) {
+  const updated = await userFollowsCache.update(userId, (current) => {
+    // `indexOf` rather than a Set round trip. This runs on the single Next.js thread
+    // for the whole toggle, and the tail user's follow set is 130k elements: measured
+    // 13.9 ms to rebuild through a Set against 1.3 ms here, on a payload that costs
+    // 3.8 ms to decode and re-encode. The PK (userId, targetUserId) already makes the
+    // array duplicate-free, so the Set was buying nothing.
+    const at = current.follows.indexOf(targetUserId);
+    if (following) {
+      if (at !== -1) return current;
+      return { ...current, follows: [...current.follows, targetUserId] };
+    }
+    if (at === -1) return current;
+    return {
+      ...current,
+      follows: [...current.follows.slice(0, at), ...current.follows.slice(at + 1)],
+    };
+  });
+
+  if (!updated) await userFollowsCache.refresh(userId);
+}
+
 type ImageTagsCacheItem = {
   imageId: number;
   tags: ImageTagComposite[];

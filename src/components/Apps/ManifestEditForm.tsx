@@ -17,6 +17,9 @@ import { buildScopeJustifications } from '~/components/Apps/blockScopeSelection'
 import {
   ALLOWED_CONTENT_RATINGS,
   MANIFEST_TAGLINE_MAX_LENGTH,
+  MAX_REPOSITORY_URL_LENGTH,
+  REPOSITORY_HOST_ALLOWLIST,
+  validateRepositoryUrl,
 } from '~/server/services/block-manifest-validator.service';
 import {
   MARKETPLACE_CATEGORIES,
@@ -46,6 +49,7 @@ type StoredManifest = Record<string, unknown> & {
   name?: string;
   description?: string;
   tagline?: string;
+  repository?: string;
   category?: string;
   contentRating?: string;
   scopes?: string[];
@@ -77,6 +81,9 @@ export function ManifestEditForm({
   // category = "not set" and is sent as an explicit `null` so the server CLEARS
   // the manifest key (see the nullable patch fields in blocks.router).
   const [tagline, setTagline] = useState<string>(manifest.tagline ?? '');
+  // Public source-repository link — manifest-governed on exactly the same terms as
+  // tagline/category, so the same empty-string → explicit-`null` clearing applies.
+  const [repository, setRepository] = useState<string>(manifest.repository ?? '');
   const [category, setCategory] = useState<string | null>(
     isMarketplaceCategory(manifest.category) ? manifest.category : null
   );
@@ -109,10 +116,7 @@ export function ManifestEditForm({
       await utils.blocks.getMyAppManifest.invalidate({ appBlockId });
     },
     onError: (err) => {
-      showErrorNotification({
-        title: 'Could not submit manifest update',
-        error: new Error(err.message),
-      });
+      showErrorNotification({ title: 'Could not submit manifest update', error: new Error(err.message) });
     },
   });
 
@@ -134,7 +138,8 @@ export function ManifestEditForm({
       !!manifest.scopeJustifications &&
       typeof manifest.scopeJustifications === 'object' &&
       Object.keys(manifest.scopeJustifications).length > 0;
-    const shouldSend = Object.keys(scopeJustifications).length > 0 || storedHadJustifications;
+    const shouldSend =
+      Object.keys(scopeJustifications).length > 0 || storedHadJustifications;
     mutation.mutate({
       appBlockId,
       patch: {
@@ -144,6 +149,11 @@ export function ManifestEditForm({
         // Explicit `null` = clear the manifest key (an `undefined` may be dropped
         // in transit and the server merge would then retain the stored value).
         tagline: tagline.trim() || null,
+        // Explicit `null` = clear the manifest key, for the same reason as `tagline`:
+        // the server merges `{...stored, ...patch}`, so an `undefined` (which superjson
+        // may drop in transit) would silently RETAIN the old repository link — an author
+        // clearing the field would see it come back.
+        repository: repository.trim() || null,
         category: category ?? null,
         contentRating,
         scopes,
@@ -163,12 +173,23 @@ export function ManifestEditForm({
   // Advisory client gate only — the server re-validates every field with
   // BlockManifestValidator (which is what actually enforces the tagline cap).
   const taglineTooLong = tagline.trim().length > MANIFEST_TAGLINE_MAX_LENGTH;
+  // Advisory too — the SAME `validateRepositoryUrl` the server runs, so the inline
+  // message is character-for-character what a save would return rather than a
+  // second, drifting approximation of the rule.
+  const repositoryError =
+    repository.trim().length > 0
+      ? (() => {
+          const res = validateRepositoryUrl(repository);
+          return res.ok ? undefined : res.error;
+        })()
+      : undefined;
   const canSave =
     versionValid &&
     versionHigher &&
     !mutation.isPending &&
     name.trim().length > 0 &&
-    !taglineTooLong;
+    !taglineTooLong &&
+    !repositoryError;
 
   return (
     <Stack gap="md">
@@ -176,8 +197,8 @@ export function ManifestEditForm({
 
       <Alert icon={<IconInfoCircle size={16} />} color="blue" variant="light">
         Saving commits the new manifest to your app&apos;s repository and opens a moderator review.
-        The change does <strong>not</strong> go live until a moderator approves it. blockId (
-        <code>{slug}</code>) cannot be changed.
+        The change does <strong>not</strong> go live until a moderator approves it. blockId
+        (<code>{slug}</code>) cannot be changed.
       </Alert>
 
       <TextInput label="Block ID (immutable)" value={slug} readOnly disabled />
@@ -196,9 +217,7 @@ export function ManifestEditForm({
         value={tagline}
         onChange={(e) => setTagline(e.currentTarget.value)}
         error={
-          taglineTooLong
-            ? `Tagline must be at most ${MANIFEST_TAGLINE_MAX_LENGTH} characters`
-            : undefined
+          taglineTooLong ? `Tagline must be at most ${MANIFEST_TAGLINE_MAX_LENGTH} characters` : undefined
         }
       />
 
@@ -209,6 +228,18 @@ export function ManifestEditForm({
         maxRows={6}
         value={description}
         onChange={(e) => setDescription(e.currentTarget.value)}
+      />
+
+      <TextInput
+        label="Source repository"
+        description={`Public link to your app's source code, shown on its Apps store page. Optional — leave it empty for no link. ${REPOSITORY_HOST_ALLOWLIST.join(
+          ', '
+        )} only, linking to the repository itself (e.g. https://github.com/your-org/your-app). Max ${MAX_REPOSITORY_URL_LENGTH} characters.`}
+        placeholder="https://github.com/your-org/your-app"
+        value={repository}
+        onChange={(e) => setRepository(e.currentTarget.value)}
+        error={repositoryError}
+        data-testid="apps-manifest-source-repo"
       />
 
       <Select
@@ -256,8 +287,8 @@ export function ManifestEditForm({
           Scopes
         </Text>
         <Text size="xs" c="dimmed">
-          The permissions your app requests. Must be a subset of your app&apos;s granted scopes —
-          the server enforces this. Sensitive scopes are flagged.
+          The permissions your app requests. Must be a subset of your app&apos;s granted
+          scopes — the server enforces this. Sensitive scopes are flagged.
         </Text>
         <BlockScopeSelector value={scopes} onChange={setScopes} />
       </Stack>
@@ -268,8 +299,9 @@ export function ManifestEditForm({
             Permission justifications
           </Text>
           <Text size="xs" c="dimmed">
-            Optional. Explain why your app needs each requested permission — a moderator sees this
-            during review. (These are shown as-is and are not automatically verified.)
+            Optional. Explain why your app needs each requested permission — a
+            moderator sees this during review. (These are shown as-is and are not
+            automatically verified.)
           </Text>
           <Stack gap="xs" mt={4}>
             {scopes.map((scope) => (

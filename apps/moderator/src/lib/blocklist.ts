@@ -24,6 +24,11 @@ const PHRASE_GAP_RULE =
   ' happens the flag you see may name the phrase itself.';
 
 export const BLOCKLIST_DESCRIPTIONS: Partial<Record<BlocklistType, string>> = {
+  EmailDomain:
+    'Disposable-email domains blocked at signup. 🔴 A weekly job re-syncs this list from the' +
+    ' upstream disposable-email-domains project, and it re-adds anything it still carries. So' +
+    ' removing a domain that is on the upstream list holds until the next Sunday run and then' +
+    ' silently comes back. Removing one the upstream list does not carry is permanent.',
   PromptBenignPhrase:
     'Whole phrases in the positive prompt that innocently contain a minor/POI detection word (proper nouns, technical terms). Each phrase is blanked from the prompt before the scan audit runs, so it never false-flags an image for review. Enter the full phrase — e.g. "teen titans", "minor barrel distortion".' + PHRASE_GAP_RULE,
   NegativeBenignPhrase:

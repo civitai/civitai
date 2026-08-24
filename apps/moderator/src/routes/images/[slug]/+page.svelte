@@ -11,12 +11,24 @@
   import ReviewActions from './ReviewActions.svelte';
   import AppealActions from './AppealActions.svelte';
   import PromptHighlight from '$lib/components/PromptHighlight.svelte';
+  import { userLookupUrl } from '$lib/entity-url';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
-  // imageId → verdict label; optimistic (dims the card + shows the outcome) and cleared on a new page.
-  const acted = new SvelteMap<number, string>();
+  // The report queue rules on reports, so its verdicts are report statuses. Everywhere else the
+  // verdict is about the image.
+  const reported = $derived(data.kind === 'reported');
+  const acceptedVerdict = $derived(reported ? 'Unactioned' : 'Accepted');
+
+  // CARD KEY → verdict label; optimistic (dims the card + shows the outcome) and cleared on a new page.
+  //
+  // Keyed like `keyOf` and `selected`, i.e. by report id on the reported queue, NOT by image id. That
+  // queue returns one row PER REPORT (`getReportedImageQueue`), so an image with two open reports has
+  // two cards — keying on the image marked both when one was actioned, and the sibling report read as
+  // handled and got skipped.
+  const acted = new SvelteMap<string | number, string>();
+  const keyOfItem = (item: { id: number; report?: { id: number } }) => item.report?.id ?? item.id;
   // imageId → appeal resolution message (bound to each appeal card's textarea).
   const messages = new SvelteMap<number, string>();
   // Multiselect: selected card keys (image id, or report id on the reported queue).
@@ -33,7 +45,9 @@
   const selectedItems = $derived(
     data.items.filter((i) => selected.has('report' in i ? i.report.id : i.id))
   );
-  const selectedImageIds = $derived(selectedItems.map((i) => i.id).join(','));
+  // Deduped: two selected reports on one image are two cards but one image, and the action would
+  // otherwise be posted `5,5` and report twice the work it did.
+  const selectedImageIds = $derived([...new Set(selectedItems.map((i) => i.id))].join(','));
   const selectedReportIds = $derived(
     selectedItems
       .map((i) => ('report' in i ? i.report.id : 0))
@@ -42,14 +56,16 @@
   );
 
   const bulkSubmit = optimisticEnhancer(({ action, formData }) => {
-    const ids = String(formData.get('imageIds') ?? '')
+    // The CARD keys the bar acted on. `reportIds` on the reported queue, `imageIds` elsewhere — reading
+    // `imageIds` there would mark every card sharing an image, including reports nobody ruled on.
+    const ids = String(formData.get(reported ? 'reportIds' : 'imageIds') ?? '')
       .split(',')
       .map(Number)
       .filter(Boolean);
     const verdict = action.search.includes('bulkAccept')
-      ? 'Accepted'
+      ? acceptedVerdict
       : action.search.includes('bulkBlock')
-        ? 'Deleted'
+        ? 'Removed'
         : formData.get('status') === 'Approved'
           ? 'Approved'
           : 'Rejected';
@@ -63,17 +79,18 @@
   });
 
   const submit = optimisticEnhancer(({ action, formData }) => {
-    const imageId = Number(formData.get('imageId'));
+    // Same rule as the bulk bar: the card, not the image.
+    const key = Number(formData.get('reportId') ?? formData.get('imageId'));
     const a = action.search;
     const verdict = a.includes('accept')
-      ? 'Accepted'
+      ? acceptedVerdict
       : a.includes('block')
-        ? 'Deleted'
+        ? 'Removed'
         : formData.get('status') === 'Approved'
           ? 'Approved'
           : 'Rejected';
-    acted.set(imageId, verdict);
-    return () => acted.delete(imageId);
+    acted.set(key, verdict);
+    return () => acted.delete(key);
   });
 
   // Optimistically-unpublished parent Model3D ids (the thumbnail affordance).
@@ -83,7 +100,8 @@
     return async ({ update }) => update({ invalidateAll: false });
   };
 
-  const cardClass = (item: { id: number }) => (acted.has(item.id) ? 'opacity-60' : '');
+  const cardClass = (item: { id: number; report?: { id: number } }) =>
+    acted.has(keyOfItem(item)) ? 'opacity-60' : '';
 
   const fmt = (d: Date | string | null) => (d ? new Date(d).toLocaleDateString() : '');
 
@@ -122,15 +140,23 @@
   {selected}
 />
 
-{#snippet userHeader(item: { username: string | null; profilePicture?: boolean | null })}
+{#snippet userHeader(item: {
+  userId: number;
+  username: string | null;
+  profilePicture?: boolean | null;
+})}
   <div class="flex items-center gap-1.5">
+    <!-- On the report queue a username is the start of an investigation, not a profile visit, so it
+         goes to User Lookup. The other queues rule on one image and the profile is the useful page. -->
     <a
-      href={`${data.civitaiUrl}/user/${item.username}`}
-      target="_blank"
+      href={reported && item.username
+        ? userLookupUrl(item.username)
+        : `${data.civitaiUrl}/user/${item.username}`}
+      target={reported && item.username ? undefined : '_blank'}
       rel="noreferrer"
       class="truncate text-xs text-muted-foreground hover:text-foreground"
     >
-      {item.username ?? '[deleted]'}
+      {item.username ?? `[deleted] #${item.userId}`}
     </a>
     {#if item.profilePicture}
       <Badge class="shrink-0 bg-indigo-500/15 text-indigo-400">Avatar</Badge>
@@ -138,9 +164,9 @@
   </div>
 {/snippet}
 
-<!-- Accept / Delete for the review + reported queues. A `reportId` couples the report status
-     (accept → Unactioned, block → Actioned). `minor` adds the "Accept + clear minor" button; plain
-     Accept keeps the flag for SFW and auto-clears it for R+ (handled server-side). -->
+<!-- Accept / Remove for the review queues, Unaction / Remove for the reported one. A `reportId`
+     couples the report status (accept → Unactioned, block → Actioned). `minor` adds the "Accept +
+     clear minor" button; plain Accept keeps the flag for SFW and auto-clears it for R+ (server-side). -->
 <!-- When the image is a Model3D's @unique thumbnail: link the parent + one-click unpublish it. -->
 {#snippet model3dAffordance(item: { model3d: { id: number; name: string; status: string } | null })}
   {#if item.model3d}
@@ -203,13 +229,13 @@
           {#if item.promptHighlight.hasHighlights}
             <PromptHighlight result={item.promptHighlight} />
           {/if}
-          <ReviewActions {item} minorQueue verdict={acted.get(item.id)} {selected} {submit} />
+          <ReviewActions {item} minorQueue verdict={acted.get(keyOfItem(item))} {selected} {submit} />
         </div>
       {:else}
         <div class="flex flex-col gap-1.5">
           <Badge class="w-fit bg-fuchsia-500/15 text-fuchsia-400">Remix source — prompt flagged</Badge>
           <PromptHighlight result={item.promptHighlight} />
-          <ReviewActions {item} verdict={acted.get(item.id)} {selected} {submit} />
+          <ReviewActions {item} verdict={acted.get(keyOfItem(item))} {selected} {submit} />
         </div>
       {/if}
       {@render model3dAffordance(item)}
@@ -237,11 +263,11 @@
         <div class="mt-0.5 text-muted-foreground">
           by
           <a
-            href={`${data.civitaiUrl}/user/${item.report.username}`}
-            target="_blank"
-            rel="noreferrer"
-            class="hover:text-foreground">{item.report.username ?? '[deleted]'}</a
+            href={userLookupUrl(item.report.username ?? item.report.userId)}
+            class="hover:text-foreground"
           >
+            {item.report.username ?? `[deleted] #${item.report.userId}`}
+          </a>
           · {new Date(item.report.createdAt).toLocaleDateString()}
         </div>
         {#each detailEntries(item.report.details) as [k, v] (k)}
@@ -251,7 +277,7 @@
           </p>
         {/each}
       </div>
-      <ReviewActions {item} reportId={item.report.id} verdict={acted.get(item.id)} {selected} {submit} />
+      <ReviewActions {item} reportId={item.report.id} {reported} verdict={acted.get(keyOfItem(item))} {selected} {submit} />
       {@render model3dAffordance(item)}
     {/snippet}
   </ImageQueueGrid>
@@ -286,7 +312,8 @@
             href={`${data.civitaiUrl}/user/${item.appeal.username}`}
             target="_blank"
             rel="noreferrer"
-            class="hover:text-foreground">{item.appeal.username ?? '[deleted]'}</a
+            class="hover:text-foreground"
+            >{item.appeal.username ?? `[deleted] #${item.appeal.userId}`}</a
           >
           · {fmt(item.appeal.createdAt)}
         </div>
@@ -307,7 +334,7 @@
           </div>
         {/if}
       </div>
-      <AppealActions {item} verdict={acted.get(item.id)} {selected} {messages} {submit} />
+      <AppealActions {item} verdict={acted.get(keyOfItem(item))} {selected} {messages} {submit} />
       {@render model3dAffordance(item)}
     {/snippet}
   </ImageQueueGrid>
@@ -364,7 +391,7 @@
       {:else}
         <Badge class="w-fit bg-rose-600/20 font-semibold text-rose-500">CSAM — flagged for review</Badge>
       {/if}
-      <ReviewActions {item} verdict={acted.get(item.id)} {selected} {submit} />
+      <ReviewActions {item} verdict={acted.get(keyOfItem(item))} {selected} {submit} />
       {@render model3dAffordance(item)}
     {/snippet}
   </ImageQueueGrid>
@@ -377,4 +404,5 @@
   submit={bulkSubmit}
   appeal={data.kind === 'appeal'}
   minorQueue={data.view === 'minor'}
+  {reported}
 />

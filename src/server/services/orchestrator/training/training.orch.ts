@@ -13,7 +13,9 @@ import type {
 import { env } from '~/env/server';
 import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
+import { classifyErrorFault, logToAxiom } from '~/server/logging/client';
 import type { TrainingResultsV2 } from '~/server/schema/model-file.schema';
+import { resolveEpochOffset } from '~/shared/utils/training-epochs';
 import type {
   AiToolkitTrainingParams,
   ImageTrainingStepSchema,
@@ -421,6 +423,10 @@ export const createTrainingWorkflow = async ({
     startedAt: null,
     completedAt: null,
     epochs: existingTrainingResults.epochs ?? [],
+    epochOffset: resolveEpochOffset(
+      existingTrainingResults.epochOffset,
+      modelVersion.trainingDetails.continueFromEpoch?.epochNumber
+    ),
     history: [...existingHistory, { time: now, status: TrainingStatus.Submitted }],
     sampleImagesPrompts: samplePrompts,
     transactionData: workflow.transactions?.list ?? [],
@@ -453,8 +459,9 @@ export const createTrainingWorkflow = async ({
 export const createTrainingWhatIfWorkflow = async ({
   token,
   currencies,
+  userId,
   ...input
-}: ImageTraininWhatIfWorkflowSchema) => {
+}: ImageTraininWhatIfWorkflowSchema & { userId?: number }) => {
   const { model, priority, engine, trainingDataImagesCount, samplePrompts, ...trainingParams } =
     input;
 
@@ -485,22 +492,60 @@ export const createTrainingWhatIfWorkflow = async ({
     negativePrompt: '',
   };
 
+  const whatIfLogData = {
+    userId,
+    engine,
+    ecosystem: 'ecosystem' in params ? params.ecosystem : undefined,
+    modelVariant: 'modelVariant' in params ? params.modelVariant : undefined,
+    model,
+    trainingDataImagesCount,
+  };
+
   const stepRun = createTrainingStep(runArgs);
 
-  const workflow = await submitWorkflow({
-    token,
-    body: {
-      steps: [stepRun],
-      // @ts-ignore - BuzzSpendType is properly supported.
-      currencies,
-    },
-    query: { whatif: true },
-  });
+  let workflow: Awaited<ReturnType<typeof submitWorkflow>>;
+  try {
+    workflow = await submitWorkflow({
+      token,
+      body: {
+        steps: [stepRun],
+        // @ts-ignore - BuzzSpendType is properly supported.
+        currencies,
+      },
+      query: { whatif: true },
+    });
+  } catch (e) {
+    // This query re-fires on a 100ms debounce over every param, so logging a rejected settings
+    // combination (4xx) at error severity would be a keystroke storm on the error board.
+    logToAxiom(
+      {
+        name: 'training-whatif',
+        type: classifyErrorFault(e) === 'client' ? 'info' : 'error',
+        message: e instanceof Error ? e.message : String(e),
+        data: whatIfLogData,
+      },
+      'webhooks'
+    ).catch();
+    throw e;
+  }
 
   const cost = workflow.cost?.total;
   // Per-resource licensing fees (keyed by resource AIR) are already included in
   // `cost.total`; surface their sum so the UI can break out the license fee.
   const licenseFee = Object.values(workflow.cost?.fees ?? {}).reduce((sum, fee) => sum + fee, 0);
+
+  // No exception to catch here: the orchestrator accepted the workflow and priced it at nothing.
+  if (cost == null || cost < 0) {
+    logToAxiom(
+      {
+        name: 'training-whatif',
+        type: 'error',
+        message: 'Orchestrator returned no cost',
+        data: { ...whatIfLogData, cost },
+      },
+      'webhooks'
+    ).catch();
+  }
 
   const _step = workflow.steps?.[0] as ImageResourceTrainingStep | undefined;
   // console.dir(_step);

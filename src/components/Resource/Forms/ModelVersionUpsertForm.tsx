@@ -90,7 +90,7 @@ import {
   ratioToFee,
   resolveCapTier,
   separateGenerationPriceMissing,
-  suggestedFee,
+  seedFeeRatio,
 } from '@civitai/buzz';
 import type { ModelUpsertInput } from '~/server/schema/model.schema';
 import {
@@ -649,8 +649,8 @@ export function ModelVersionUpsertForm({
     if (!feeEditorOpen || feeSeededRef.current) return;
     feeSeededRef.current = true;
     if (hasExistingCharge || (form.getValues('licensingFee') ?? 0) > 0) return;
-    const suggestion = suggestedFee({ modelType: model?.type, baseModel });
-    if (suggestion > 0) applyFeeRatio(feeToRatio(suggestion));
+    const seeded = seedFeeRatio({ modelType: model?.type, baseModel });
+    if (seeded.buzz > 0) applyFeeRatio(seeded);
   }, [feeEditorOpen]);
 
   // Non-commercial base models can't be monetized. The monetization controls are

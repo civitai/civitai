@@ -1,5 +1,16 @@
 # Handover — `src/server/services/__tests__` a–m shared-mock migration
 
+**Status (corrected 2026-08-22):** Historical handover log, superseded in two respects.
+Landed as **PR #3973** (merged 2026-08-16), squash commit `533640662d` — cite those, not a branch.
+The reference branch `perf/services-a-m-mock-migration` was deleted on merge, and the commit this
+document names for it, `632a3da432`, no longer resolves in this repository at all.
+🔴 An earlier version of this line named `perf/test-mock-migration-services-a-m` as the reference.
+That is the STALE remote this document's own "Landing state" section warns about — it predates the
+rebase, its history diverges, and it still sits at `19e95f05b5`. The status line pointed a successor
+at the one branch the body says not to trust.
+Also superseded: the "2 hold-outs remaining" count is now 0 (converted in #4281), and the
+`TEST_ENV_DEFAULTS` seeding fix this document reports as not landed DID land, also in #4281.
+
 josh, 2026-08-15, continued and closed out by liz through batches 6–9 (her sections are marked).
 Kept as a LOG rather than rewritten to current state: which claims were superseded, and by what, is
 the thing a successor most needs — josh's _"the three easiest remaining files"_ with the ✅ beneath
@@ -464,6 +475,12 @@ and `REPLICATION_LAG_DELAY` is a zod `.default(0)` key **absent from `TEST_ENV_D
 canonical env reads `undefined` and `undefined <= 0` is `false` where `0 <= 0` is `true`. Checked
 against the base on 2026-08-15, not inherited: `TEST_ENV_DEFAULTS` is still hand-enumerated, so the
 seeding fix has not landed. **When it does, these two become ordinary entry-point conversions.**
+
+📌 **CORRECTED 2026-08-22: it landed.** `TEST_ENV_DEFAULTS` now derives from `serverSchema.shape`
+(`src/__tests__/mocks/env.mock.ts`), shipped in **PR #4281**, and both hold-outs were converted in
+the same PR — so the count above is 0, not 2. They remain on the generated allowlist for a
+different reason (a direct redis-client mock, and a logging-client one), addressed by **PR #4293**
+(open at the time of writing — check its state before relying on this).
 
 ### ⚠️ #3973 is a STACKED PR — the retarget after #3959 lands is load-bearing
 

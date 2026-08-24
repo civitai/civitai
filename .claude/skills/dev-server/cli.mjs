@@ -7,7 +7,7 @@
 import { spawn, execSync } from 'child_process';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, unlinkSync, statSync } from 'fs';
 import { exitCodeFor, isTerminal as isTerminalStatus } from './scripts/test-queue.mjs';
 import { resolveDaemonUrl } from './scripts/daemon-port.mjs';
 
@@ -119,10 +119,30 @@ async function cmdList() {
 
 // `--prod db,buzz` / `--dev search`, repeatable. Groups come from env-modes.local, so the daemon
 // validates the names — this only has to get the shape right.
+// Flags on `start` and the app verbs that consume the following token. A fourth value-flag added to
+// parseModeFlags without being added here has its value silently eaten as the worktree.
+//
+// Not `probe`'s own VALUE_FLAGS further down — different verb, different set.
+const SESSION_VALUE_FLAGS = new Set(['--app', '--prod', '--dev']);
+
 function parseModeFlags(flags) {
-  const modes = { prod: [], dev: [] };
+  const modes = { prod: [], dev: [], app: null };
   for (let i = 0; i < flags.length; i++) {
     const flag = flags[i];
+    const inlineApp = flag.match(/^--app=(.*)$/);
+    if (inlineApp) {
+      if (!inlineApp[1].trim()) throw new Error('--app= needs an app name, e.g. --app=moderator');
+      modes.app = inlineApp[1].trim();
+      continue;
+    }
+    if (flag === '--app') {
+      const value = flags[++i];
+      if (!value || value.startsWith('--')) {
+        throw new Error('--app needs an app name, e.g. --app moderator');
+      }
+      modes.app = value;
+      continue;
+    }
     const inline = flag.match(/^--(prod|dev)=(.*)$/);
     if (inline) {
       // `--prod=` would otherwise be an empty, silent no-op while the spaced form errors.
@@ -140,9 +160,11 @@ function parseModeFlags(flags) {
       modes[flag.slice(2)].push(value);
       continue;
     }
-    throw new Error(`Unknown option "${flag}". Usage: start [worktree] [--prod a,b] [--dev a,b]`);
+    throw new Error(
+      `Unknown option "${flag}". Usage: start [worktree] [--app name] [--prod a,b] [--dev a,b]`
+    );
   }
-  return { prod: modes.prod.join(','), dev: modes.dev.join(',') };
+  return { app: modes.app, prod: modes.prod.join(','), dev: modes.dev.join(',') };
 }
 
 async function cmdStart(worktree, flags = []) {
@@ -157,15 +179,54 @@ async function cmdStart(worktree, flags = []) {
     process.exit(1);
   }
 
+  // `start --app moderator` is the same gesture as `start`, aimed at a different app in the same
+  // worktree. It routes to /app/<name>/start rather than /sessions: an app is not a Next.js session
+  // and has no build dir, prewarm or branch watching to configure.
+  //
+  // Parsing happens BEFORE the branch so an unknown flag still fails here, and so a mode flag on an
+  // app start is refused rather than silently dropped — apps get the raw env chain, with no overlay
+  // applied, which is precisely the difference a `--prod db` would be trying to express.
+  const { app, ...sessionModes } = modes;
+  if (app) {
+    if (sessionModes.prod || sessionModes.dev) {
+      console.error(
+        `Error: --prod/--dev are not supported with --app. Apps run on the .env chain with no ` +
+          `overlay; only the main app has env modes.`
+      );
+      process.exit(1);
+    }
+    return cmdAppStart(app, cwd);
+  }
+
   const result = await daemonRequest('/sessions', {
     method: 'POST',
-    body: JSON.stringify({ worktree: cwd, ...modes }),
+    body: JSON.stringify({ worktree: cwd, ...sessionModes }),
   });
   if (!result.ok) {
     console.error('Error:', result.error || result.data?.error);
     process.exit(1);
   }
   console.log(JSON.stringify(result.data, null, 2));
+}
+
+// `--app <name>` on a session verb means "the app in this worktree", so the whole lifecycle uses one
+// gesture rather than `start --app x` followed by `app x stop`. Returns null when no --app was given.
+//
+// It delegates to parseModeFlags rather than matching `--app` itself. A second hand-rolled matcher
+// was not equivalent to the first: it accepted `--app=` as empty and fell through, so `logs --app=`
+// silently tailed the MAIN app where `start --app=` errored — the same silent-wrong-target this
+// change exists to remove. One parser, one policy.
+function appFromFlags(flags = []) {
+  const appFlags = flags.filter((f) => f === '--app' || f.startsWith('--app='));
+  if (!appFlags.length) return null;
+  const i = flags.indexOf('--app');
+  const pair = i === -1 ? appFlags : ['--app', flags[i + 1]].filter((v) => v !== undefined);
+  try {
+    return parseModeFlags(pair).app;
+  } catch (err) {
+    console.error(`Error: ${err.message}`);
+    process.exit(1);
+  }
 }
 
 async function cmdLogs(sessionId, since) {
@@ -205,22 +266,7 @@ async function cmdTail(sessionId) {
     sessionId = running ? running.id : listResult.data.sessions[0].id;
   }
 
-  let lastIndex = -1;
-
-  const poll = async () => {
-    const result = await daemonRequest(`/sessions/${sessionId}/logs?since=${lastIndex}`);
-    if (!result.ok) {
-      console.error('Error:', result.error || result.data?.error);
-      process.exit(1);
-    }
-    for (const log of result.data.logs) {
-      console.log(`[${log.level}] ${log.message}`);
-      lastIndex = log.index;
-    }
-  };
-
-  await poll();
-  setInterval(poll, 1000);
+  await followLogs((since) => `/sessions/${sessionId}/logs?since=${since}`);
 }
 
 async function cmdStop(sessionId) {
@@ -315,47 +361,126 @@ async function cmdAuth(subcmd) {
   console.log(JSON.stringify(result.data, null, 2));
 }
 
-async function cmdApp(name, subcmd) {
-  await ensureDaemon();
+// Shared by `start --app <name>` and `app <name> start`. The worktree travels with the request:
+// without it the daemon serves whichever checkout launched it, and does so silently.
+async function cmdAppStart(name, worktree) {
+  const result = await daemonRequest(`/app/${name}/start`, {
+    method: 'POST',
+    body: JSON.stringify({ worktree }),
+  });
+  if (!result.ok) {
+    console.error('Error:', result.error || result.data?.error || JSON.stringify(result.data));
+    if (result.data?.available) console.error('Available apps:', result.data.available.join(', '));
+    process.exit(1);
+  }
+  console.log(JSON.stringify(result.data, null, 2));
+}
 
-  // `app` with no name lists what is registered and what each one is doing.
+// `tail` differs from `logs` only in that it follows. Routing --app to the one-shot printer made the
+// verb quietly mean the other one, and an agent reads that snapshot as "the app stopped producing
+// output". Both endpoints take `since`, so one loop serves both — written once so a colour, a level
+// filter or a --since added later cannot land on only one of them.
+async function followLogs(urlFor) {
+  let lastIndex = 0;
+  const poll = async () => {
+    const result = await daemonRequest(urlFor(lastIndex));
+    if (!result.ok) {
+      console.error('Error:', result.error || result.data?.error || JSON.stringify(result.data));
+      if (result.data?.running?.length) {
+        console.error(`Running in: ${result.data.running.join(', ')}`);
+      }
+      process.exit(1);
+    }
+    for (const log of result.data.logs) {
+      console.log(`[${log.level}] ${log.message}`);
+      lastIndex = log.index;
+    }
+  };
+  await poll();
+  setInterval(poll, 1000);
+}
+
+async function cmdAppTail(name, worktreeArg) {
+  await ensureDaemon();
+  // Same validation as cmdApp. `tail` dispatches straight here rather than through it, so without
+  // this `tail --app moderator 500` still turned 500 into a worktree — the exact confusing 404 the
+  // validation was added to remove, left open on one verb.
+  const worktree = resolveWorktreeArg(worktreeArg);
+  const query = `?worktree=${encodeURIComponent(worktree)}`;
+  await followLogs((since) => `/app/${name}/logs${query}&since=${since}`);
+}
+
+// The positional on an app verb is a worktree, and only that. `logs --app moderator 500` reads like
+// `logs <session> <since>` and would otherwise become a worktree, 404ing with "moderator is not
+// running in <cwd>/500" — which sends the reader looking for the app rather than at what they typed.
+// Fails closed either way; this says which. statSync, not existsSync, so the message is true: a file
+// would otherwise pass the check and 404 anyway.
+function resolveWorktreeArg(worktreeArg) {
+  if (!worktreeArg) return process.cwd();
+  const resolved = resolve(worktreeArg);
+  let isDir = false;
+  try {
+    isDir = statSync(resolved).isDirectory();
+  } catch (e) {}
+  if (!isDir) {
+    console.error(`Error: "${worktreeArg}" is not a directory.`);
+    console.error(`Usage: app <name> [status|start|stop|restart|logs] [worktree]`);
+    console.error(`The positional on an app command is a worktree path — there is no "since" here.`);
+    process.exit(1);
+  }
+  return resolved;
+}
+
+async function cmdApp(name, subcmd, worktreeArg) {
+  await ensureDaemon();
+  const cwd = resolveWorktreeArg(worktreeArg);
+
+  // `app` with no name lists what is registered and what is running where.
   if (!name) {
     const result = await daemonRequest('/apps');
     if (!result.ok) {
       console.error('Error:', result.error || JSON.stringify(result.data));
       process.exit(1);
     }
+    if (!result.data.apps.length) {
+      console.log(`No apps running. Available: ${result.data.available.join(', ')}`);
+      return;
+    }
     for (const app of result.data.apps) {
       const state = app.ready ? 'ready' : app.status;
-      console.log(`${app.name.padEnd(16)} ${state.padEnd(9)} ${app.url}`);
+      console.log(`${app.name.padEnd(16)} ${state.padEnd(9)} ${app.url.padEnd(24)} ${app.worktree}`);
       if (app.lastError) console.log(`${' '.repeat(16)} ${app.lastError}`);
     }
     return;
   }
 
   const action = subcmd || 'status';
+  if (action === 'start') return cmdAppStart(name, cwd);
+
   const routes = {
     status: ['', 'GET'],
     logs: ['/logs', 'GET'],
-    start: ['/start', 'POST'],
     stop: ['/stop', 'POST'],
     restart: ['/restart', 'POST'],
   };
   const route = routes[action];
   if (!route) {
     console.error(`Unknown app subcommand: ${action}`);
-    console.error('Usage: app <name> [status|start|stop|restart|logs]');
+    console.error('Usage: app <name> [status|start|stop|restart|logs] [worktree]');
     process.exit(1);
   }
 
   const [suffix, method] = route;
   const result = await daemonRequest(
-    `/app/${name}${suffix}`,
-    method === 'POST' ? { method } : undefined
+    `/app/${name}${suffix}?worktree=${encodeURIComponent(cwd)}`,
+    method === 'POST' ? { method, body: JSON.stringify({ worktree: cwd }) } : undefined
   );
   if (!result.ok) {
     console.error('Error:', result.error || result.data?.error || JSON.stringify(result.data));
     if (result.data?.available) console.error('Available apps:', result.data.available.join(', '));
+    if (result.data?.running?.length) {
+      console.error(`${name} is running in: ${result.data.running.join(', ')}`);
+    }
     process.exit(1);
   }
   console.log(JSON.stringify(result.data, null, 2));
@@ -766,6 +891,32 @@ async function cmdWorktree(rest) {
 // Parse arguments
 const args = process.argv.slice(2);
 const command = args[0];
+// One gesture for the whole lifecycle: `start --app x` then `logs --app x`, `stop --app x`. Without
+// this only `start` took --app and everything after it needed the second `app <name> …` vocabulary.
+//
+// Only for the verbs that dispatch on it below. Parsing it for EVERY command would let a future
+// `--app` on `test`, `wt` or `probe` be intercepted into the app vocabulary before that verb's own
+// parser ever saw it.
+const APP_FLAG_VERBS = new Set(['start', 'logs', 'tail', 'stop', 'restart']);
+const appFlag = APP_FLAG_VERBS.has(command) ? appFromFlags(args.slice(1)) : null;
+// `stop <worktree> --app moderator` must mean the same tree as `start <worktree> --app moderator`.
+//
+// Skipped by POSITION, not by value. Excluding the flag's value by equality dropped the worktree
+// whenever its path happened to equal the app name — `stop moderator --app moderator`, naming a
+// worktree directory after the app in it, which is the obvious way to name one — and silently
+// targeted the cwd instead.
+const positional = (() => {
+  const rest = args.slice(1);
+  for (let i = 0; i < rest.length; i++) {
+    if (SESSION_VALUE_FLAGS.has(rest[i])) {
+      i++;
+      continue;
+    }
+    if (rest[i].startsWith('--')) continue;
+    return rest[i];
+  }
+  return undefined;
+})();
 const arg1 = args[1];
 const arg2 = args[2];
 
@@ -781,16 +932,20 @@ switch (command) {
     else cmdStart(arg1, args.slice(2));
     break;
   case 'logs':
-    cmdLogs(arg1, arg2);
+    if (appFlag) cmdApp(appFlag, 'logs', positional);
+    else cmdLogs(arg1, arg2);
     break;
   case 'tail':
-    cmdTail(arg1);
+    if (appFlag) cmdAppTail(appFlag, positional);
+    else cmdTail(arg1);
     break;
   case 'stop':
-    cmdStop(arg1);
+    if (appFlag) cmdApp(appFlag, 'stop', positional);
+    else cmdStop(arg1);
     break;
   case 'restart':
-    cmdRestart(arg1);
+    if (appFlag) cmdApp(appFlag, 'restart', positional);
+    else cmdRestart(arg1);
     break;
   case 'rgb':
     cmdRgb(arg1);
@@ -799,7 +954,7 @@ switch (command) {
     cmdAuth(arg1);
     break;
   case 'app':
-    cmdApp(arg1, process.argv[4]);
+    cmdApp(arg1, args[2], args[3]);
     break;
   case 'shutdown':
     cmdShutdown();
@@ -822,8 +977,10 @@ switch (command) {
 Commands:
   status              Check daemon status and list sessions
   list                List all sessions
-  start [worktree] [--prod a,b] [--dev a,b]
-                      Start a dev server (default: current directory).
+  start [worktree] [--app name] [--prod a,b] [--dev a,b]
+                      Start a dev server (default: the main app, current directory).
+                      --app moderator|creator-studio starts that app from the same
+                      worktree instead, on its preferred port or the next free one.
                       Every env group defaults to dev; --prod moves named groups
                       (or "all") to production for this start only. See SKILL.md.
   probe [route]       Request a route with a hard timeout and say WHY it was slow.
@@ -831,14 +988,21 @@ Commands:
                       [--session id] [--port n] [--timeout ms] [--json]
   unwedge <session>   Stop, delete the build dir, restart, wait for ready, re-probe.
                       ~45s of downtime — only after probe says WEDGED.
-  logs [session-id]   Get logs for a session
-  tail [session-id]   Tail logs continuously
-  stop <session-id>   Stop a session
-  restart <session-id> Restart a session
+  logs [session-id] [--app name]
+                      Get logs for a session, or for an app in this worktree
+  tail [session-id] [--app name]
+                      Tail logs continuously
+  stop <session-id> | stop --app name
+                      Stop a session or an app
+  restart <session-id> | restart --app name
+                      Restart a session or an app
   rgb [subcmd]        RGB proxy control (status|start|stop|restart|logs)
   auth [subcmd]       Auth hub control (status|start|stop|restart|logs)
-  app                 List spoke apps (moderator, creator-studio, storage, notifications)
-  app <name> [subcmd] Spoke app control (status|start|stop|restart|logs)
+  app                 List running apps and what is available (moderator, creator-studio)
+  app <name> [subcmd] [worktree]
+                      App control (status|start|stop|restart|logs).
+                      Defaults to the current directory's worktree, not the
+                      checkout the daemon happens to have been started from.
   shutdown            Shutdown the daemon
   test run [wt]       Queue a unit-test run; returns position + the command to wait on it
   test wait <run-id>  Block until that run finishes; exits with the run's exit code

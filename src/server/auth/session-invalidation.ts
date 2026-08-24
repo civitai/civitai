@@ -94,6 +94,10 @@ async function updateSessionState(
 
   let chunksWritten = 0;
   let chunksTotal = 0;
+  // This is where the hub's shaped session-user entry (`session:data2:{userId}`, 4h TTL) gets busted —
+  // `clearSessionCache` asks the hub to drop it, so the next read re-produces from the DB. It runs on
+  // BOTH the 'refresh' and 'invalid' paths, and unconditionally (not gated on the token scan above), so
+  // every per-user caller of refreshSession/invalidateSession gets a fresh shape on the next read.
   await clearSessionCache(userId);
   if (userTokens.length > 0) {
     // Atomic multi-field set+TTL — single EVAL replaces the sequential
@@ -151,6 +155,24 @@ async function sendSessionSignal(userId: number, type: 'refresh' | 'invalid') {
   }
 }
 
+/**
+ * Mark a user's tokens for refresh, bust their cached session state, and signal active sessions.
+ *
+ * 🔴 This DOES bust the hub's shaped session-user entry (`session:data2:{userId}`) — via
+ * `updateSessionState` → `clearSessionCache` → `sessionClient.invalidate`, which POSTs the hub's
+ * `/api/auth/identity` and lands in the hub's own `invalidateSessionUser`. So a caller that edits a
+ * field carried on the SessionUser shape (username, image/profilePicture, onboarding, settings, …)
+ * only has to call this; the next session read re-produces from the DB rather than serving the
+ * cached shape for the remainder of its 4h TTL.
+ *
+ * The main app reaches the hub's `invalidateSessionUser` over HTTP, not by import — grepping for that
+ * function name in `src/` finds nothing and reads as "no main-app path busts the cache", which is how
+ * this got misdiagnosed in #4298. The seam is pinned by
+ * `src/server/controllers/__tests__/user.controller.session-avatar-bust.test.ts`.
+ *
+ * Contrast `invalidateAllSessions` below, which deliberately does NOT wipe the shape — that exemption
+ * is specific to the MASS path and does not apply here.
+ */
 export async function refreshSession(
   userId: number,
   { sendSignal = true, caller = 'unspecified' }: RefreshSessionOptions = {}
@@ -198,7 +220,9 @@ export async function invalidateSession(
 export async function invalidateAllSessions() {
   // Mass invalidation is hub-owned: set the global revocation cutoff (the shared SESSION.ALL marker the hub
   // registry owns) through the hub rather than writing it directly — revokes every token signed before now.
-  // The shared session:data2 cache is NOT wiped — its 4h TTL bounds data staleness (see the hub handler).
+  // 🔴 THIS MASS PATH ONLY: the shared session:data2 cache is NOT wiped, because a cluster-wide SCAN+del
+  // costs far more than the freshness it buys and its 4h TTL bounds the staleness. The PER-USER paths above
+  // (refreshSession / invalidateSession) DO wipe it — do not read this sentence as a statement about them.
   await sessionClient.invalidateAll();
   log(`Scheduling session refresh for all users`);
 }

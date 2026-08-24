@@ -1,37 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { increaseDate } from '~/utils/date-helpers';
 
-const { mockDbWrite, mockBust, mockCacheFetch, mockSlotCount } = vi.hoisted(() => ({
-  mockSlotCount: vi.fn(async () => 0),
-  // Keyed by the cache's redis key so one stub can drive both the PaidAccess and cap-tier caches.
+const { mockBust, mockCacheFetch } = vi.hoisted(() => ({
   mockCacheFetch: vi.fn(async (_key: string, _ids: number[]) => ({} as Record<string, unknown>)),
-  mockDbWrite: {
-    paidAccess: {
-      deleteMany: vi.fn(),
-      upsert: vi.fn(),
-      findUnique: vi.fn(),
-      update: vi.fn(),
-    },
-    modelVersion: { findUnique: vi.fn() },
-    $executeRaw: vi.fn(),
-  },
   mockBust: vi.fn(),
 }));
 
-vi.mock('~/server/db/client', () => ({
-  // Stubbed at the DB layer rather than by mocking pricing-slot.service: assertPricingAllowed calls
-  // countPricingSlotsThisMonth through the module-local binding, which a module mock cannot intercept.
-  // This way the rules under test — the floor, the allowance arithmetic, the already-priced exemption —
-  // are the real ones.
-  dbRead: { pricingSlot: { count: mockSlotCount } },
-  dbWrite: mockDbWrite,
-}));
 vi.mock('~/server/common/constants', () => ({ CacheTTL: { hour: 3600, xs: 60 } }));
-vi.mock('~/server/redis/client', () => ({
-  REDIS_KEYS: {
-    CACHES: { PAID_ACCESS: 'test:paid-access' },
-  },
-}));
 vi.mock('~/server/utils/cache-helpers', () => ({
   createCachedObject: ({ key }: { key: string }) => ({
     fetch: (ids: number[]) => mockCacheFetch(key, ids),
@@ -48,6 +23,17 @@ import {
   toPublicPaidAccessDto,
   writePaidAccessForModelVersion,
 } from '~/server/services/paid-access.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { REDIS_KEYS } from '~/server/redis/client';
+
+const mockDbWrite = dbMock.dbWrite;
+
+// Stubbed at the DB layer rather than by mocking pricing-slot.service: assertPricingAllowed reaches
+// countPricingSlotsThisMonth through a module-local binding a module mock cannot intercept, so the
+// rules under test — the floor, the allowance arithmetic, the already-priced exemption — are real.
+const mockSlotCount = dbMock.dbRead.pricingSlot.count;
+
+const PAID_ACCESS_KEY = `${REDIS_KEYS.CACHES.PAID_ACCESS}:ModelVersion`;
 
 const TERMS = { download: { price: 500 }, generation: { trialLimit: 5 } };
 const PUBLISHED = new Date('2026-07-01T00:00:00.000Z');
@@ -283,7 +269,7 @@ describe('getViewerMonetization — the stored price is the charged price', () =
     await getViewerMonetization({ versions: [{ id: 1, licensingFee: 8 }], viewer: { id: 2 } });
 
     const keys = new Set(mockCacheFetch.mock.calls.map(([key]) => key));
-    expect([...keys]).toEqual(['test:paid-access:ModelVersion']);
+    expect([...keys]).toEqual([PAID_ACCESS_KEY]);
   });
 });
 

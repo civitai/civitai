@@ -35,6 +35,11 @@ const { mockDb } = vi.hoisted(() => ({
     appListing: {
       findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
       findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
+      // The MANUAL-APPLY `source_repo_url` column is read through its OWN guarded
+      // `findUnique` (app-listing-source-repo.service) — never via
+      // `listingHydrateSelect`, which the public /apps GRID shares. Mocked here so the
+      // seam is exercised; `null` = "no source repo set", the default for these rows.
+      findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({ sourceRepoUrl: null })),
     },
   },
 }));

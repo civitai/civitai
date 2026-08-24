@@ -6,14 +6,10 @@ import type { Jsonified } from '$lib/format';
 import type {
   ModerationFlags as ServerModerationFlags,
   UserNote,
-  UserStrike,
 } from '$lib/server/moderation-memory.service';
 import type { LiveStrike as ServerLiveStrike } from '$lib/server/user-lookup.service';
 
 export type Note = Jsonified<UserNote>;
-
-/** A Retool-era row from the moderator database's `UserStrikes`. History; nothing writes it. */
-export type Strike = Jsonified<UserStrike>;
 
 /** A row from the main app's `UserStrike` — what "Issue strike" writes. */
 export type LiveStrike = Jsonified<ServerLiveStrike>;
@@ -22,7 +18,6 @@ export type ModerationFlags = ServerModerationFlags;
 
 export type Memory = {
   notes: Note[];
-  strikes: Strike[];
   /** `null` means the main database could not be reached — NOT that the account has no strikes. */
   liveStrikes: LiveStrike[] | null;
   flags: ModerationFlags;

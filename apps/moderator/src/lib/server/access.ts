@@ -141,6 +141,7 @@ export const NAVIGATION: NavLink[] = [
       { path: '/retool/image-lookup', label: 'Image Lookup' },
       { path: '/retool/article-lookup', label: 'Article Lookup' },
       { path: '/retool/user-reports', label: 'User Reports' },
+      { path: '/retool/post-reports', label: 'Post Reports' },
       { path: '/retool/bulk-image-manager', label: 'Bulk Image Manager' },
       { path: '/retool/chat-audit', label: 'Chat Audit' },
       { path: '/retool/front-page-audit', label: 'Front Page Audit' },
@@ -156,6 +157,10 @@ export const NAVIGATION: NavLink[] = [
     ],
   },
   { path: '/comics-review', label: 'Comics Review' },
+  // One grant covers the section. Its detail view (`/abuse/<runId>`) resolves here by prefix rather
+  // than being listed: a run and its findings are one thing, and granting the list without the rows
+  // would show a moderator a count they cannot open.
+  { path: '/abuse', label: 'Abuse Detection' },
   { path: '/blocklists', label: 'Blocklists' },
   // One grant covers the whole lab. Its sub-pages (labels, runs, docs) resolve here by prefix rather than
   // being listed: they are steps of one loop, and granting a reviewer the queue but not the run history

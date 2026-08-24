@@ -1,43 +1,45 @@
 # Is vitest the right runner? Scouting Bun and node:test
 
+**Status (added 2026-08-21):** Recommendation unchanged — stay on vitest. The measurement was single-shot and not re-run; the ~20x ratio on the like-for-like file is a point estimate.
+
 Recorded 2026-08-15. Measurement and a recommendation; no migration was attempted, and no box time
 was used — every probe is a single-process module import, not a suite run.
 
 > **Two corrections were made to this document after first publication, and both are stated in place
 > below rather than silently edited out.** (1) A per-module ratio derived from `inventory.json`'s
 > static counts is retracted; that artifact over-counted by up to 75x, selectively. (2) The headline
-> comparison was not like-for-like — it set vitest's `collect` for a *test file* against a probe
-> importing only the *source module* beneath it, which is a smaller graph. The gap was overstated as
+> comparison was not like-for-like — it set vitest's `collect` for a _test file_ against a probe
+> importing only the _source module_ beneath it, which is a smaller graph. The gap was overstated as
 > ~1600x; it is ~20x. **The recommendation did not change under either correction.**
 
 **Recommendation: stay on vitest — but the reason overturns the cost model we had been optimising
-against.** The per-module constant is *not* inherent to our module graph. On the one file all three
+against.** The per-module constant is _not_ inherent to our module graph. On the one file all three
 runtimes can load, bun loads the same 82-module closure ~15-20x faster than vitest's `collect`.
 
 ## The measurement
 
 **The like-for-like row is the test file, not the source module.** vitest's `collect` loads the
 whole test-file closure — the file, its imports, and `vitest` itself. An early version of this doc
-compared that against a probe importing only the *source* module underneath it, which is a different
+compared that against a probe importing only the _source_ module underneath it, which is a different
 and much smaller graph. Corrected:
 
-| target | real closure | vitest `collect` | bun | node + tsx |
-|---|---|---|---|---|
-| `model-substitution.test.ts` | 82 modules | **5298 ms** | **259 ms** (median of 5: 250–262) | ✗ cannot import `vitest` under CJS |
+| target                       | real closure | vitest `collect` | bun                               | node + tsx                         |
+| ---------------------------- | ------------ | ---------------- | --------------------------------- | ---------------------------------- |
+| `model-substitution.test.ts` | 82 modules   | **5298 ms**      | **259 ms** (median of 5: 250–262) | ✗ cannot import `vitest` under CJS |
 
 So **~20x on the one file all three could be asked to load**, not the three orders of magnitude an
 earlier draft claimed.
 
-Source-module-only probes, which are *not* comparable to `collect` and are kept only to show the
+Source-module-only probes, which are _not_ comparable to `collect` and are kept only to show the
 runtimes' floor:
 
-| source module | bun | node + tsx |
-|---|---|---|
-| `model-substitution.ts` | 3.3 ms | 8.5 ms |
-| `challenge.constants.ts` | 4.0 ms | 10.4 ms |
-| `placement.ts` | 3.7 ms | 122.7 ms |
-| `image.schema.ts` | 68.6 ms | 514 ms |
-| `utils/metadata/audit.ts` | 162.6 ms | 1755 ms |
+| source module             | bun      | node + tsx |
+| ------------------------- | -------- | ---------- |
+| `model-substitution.ts`   | 3.3 ms   | 8.5 ms     |
+| `challenge.constants.ts`  | 4.0 ms   | 10.4 ms    |
+| `placement.ts`            | 3.7 ms   | 122.7 ms   |
+| `image.schema.ts`         | 68.6 ms  | 514 ms     |
+| `utils/metadata/audit.ts` | 162.6 ms | 1755 ms    |
 
 🔴 **A per-module ratio published here earlier is RETRACTED.** It divided `collect` by
 `inventory.json`'s static module counts, and that artifact was later found wrong by up to 75x and
@@ -65,11 +67,11 @@ has — and everything downstream that divides by a module count rests on it.
 **What both of this document's errors had in common**, since the pattern generalises past this
 question: each was a denominator error, and each produced a number that was right about the thing it
 measured and wrong about what that thing was. The second was catchable alone by asking what `collect`
-actually includes before dividing by anything. It is easy to check that two *runtimes* are comparable
-and forget to check that the two *quantities* are.
+actually includes before dividing by anything. It is easy to check that two _runtimes_ are comparable
+and forget to check that the two _quantities_ are.
 
 **So the cost is the module runner, not the modules.** That is consistent with the tracer result from
-this morning — 569 module *bodies* executing in ~0.4 s against a 25.4 s import phase — and it locates
+this morning — 569 module _bodies_ executing in ~0.4 s against a 25.4 s import phase — and it locates
 the missing time in vite-node's per-module fetch/instantiate, not in compile-and-evaluate as we had
 been assuming. The two hypotheses make the same prediction for pool choice, which is why swapping
 pools did not distinguish them; a different runtime does.
@@ -77,7 +79,7 @@ pools did not distinguish them; a different runtime does.
 ⚠️ **Read the limits before quoting any of it.** These probes import one graph in one process, with no
 test framework, no mock interception, and no isolation between files. vitest's `collect` includes the
 setup file, the mock machinery, and a fresh registry per test file. The gap is real but it is not
-apples to apples, and nothing here shows bun *running our tests* faster — only loading our modules
+apples to apples, and nothing here shows bun _running our tests_ faster — only loading our modules
 faster. `node + tsx` could not even import a test file: `Vitest cannot be imported in a CommonJS
 module using require()`.
 
@@ -97,7 +99,7 @@ flattering-slice trap: the runner whose win is startup was measured only where s
 load these files" is a hard failure observed directly and does not rest on a count.
 
 **Module-scope env aborts the import under every runtime.** `~/env/server` validates at module scope,
-so a bare import throws `Invalid environment variables` under bun *and* node. Satisfying it with a
+so a bare import throws `Invalid environment variables` under bun _and_ node. Satisfying it with a
 synthesised env got past the gate; `cache-helpers` then **hung past 300 s** under bun, which looks
 like a module-scope client construction that never settles. Not diagnosed further.
 
@@ -121,7 +123,7 @@ vitest APIs or its reporter contract. None of that is wall-clock, and all of it 
 
 **One thing a switch would NOT fix.** `IS_BUILD` / `IS_DATAPACKET` are read at module scope and set
 both ways by different tests. Any runner that shares a process between files has that limit, so the
-two-project split's *existence* is runner-independent. A cheaper runner could change the size of the
+two-project split's _existence_ is runner-independent. A cheaper runner could change the size of the
 residue, not remove it.
 
 ## Recommendation
@@ -134,7 +136,7 @@ mock sites plus six pieces of first-party tooling.
 than the graph, which says:
 
 - shrinking the graph (fewer modules per worker) attacks a term whose real work is a fraction of a
-  millisecond per module — the leverage is in how many times vite-node *instantiates* a module, not in
+  millisecond per module — the leverage is in how many times vite-node _instantiates_ a module, not in
   how many modules exist;
 - `isolate: false` is the only lever that removes instantiations rather than reducing their count,
   which is consistent with it being the largest measured effect all day (collect 4565 s → 280 s);

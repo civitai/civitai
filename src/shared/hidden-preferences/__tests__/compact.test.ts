@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import type { HiddenPreferenceTypes } from '~/server/services/user-preferences.service';
 import {
   applyOptimisticHiddenToggle,
-  applyServerHiddenToggle,
+  applyToggleSuccess,
   expandHiddenPreferences,
+  planToggleRollback,
+  reconcileHiddenToggle,
   HIDDEN_PREFS_COMPACT_VERSION,
   isCompactHiddenPreferences,
   toCompactHiddenPreferences,
@@ -175,17 +177,157 @@ describe('optimistic cache mutation — shape parity (compact vs legacy)', () =>
     expect(res.hiddenUsers).toContainEqual({ id: 30, username: 'dave', hidden: true });
   });
 
+  // 868kurj0y. The click optimistically hides the target; the server can refuse a
+  // hide it ranks below an existing block. `added`/`removed` cannot express that
+  // refusal — five of the six kinds return both empty on every call — so `hidden`
+  // carries it, and without this the phantom state survives until the next refetch.
+  it('a REFUSED hide (hidden=false) drops the optimistic entry across shapes', () => {
+    const res = bothShapesAgree('hiddenUsers', (cache) =>
+      reconcileHiddenToggle(
+        applyOptimisticHiddenToggle(cache, 'hiddenUsers', [{ id: 30 }], true),
+        'user',
+        [{ id: 30 }],
+        { added: [], removed: [], hidden: false }
+      )
+    );
+    expect(res.hiddenUsers.map((x) => x.id)).not.toContain(30);
+  });
+
+  it('a GRANTED hide (hidden=true) keeps the optimistic entry across shapes', () => {
+    const res = bothShapesAgree('hiddenUsers', (cache) =>
+      reconcileHiddenToggle(
+        applyOptimisticHiddenToggle(cache, 'hiddenUsers', [{ id: 30 }], true),
+        'user',
+        [{ id: 30 }],
+        { added: [], removed: [], hidden: true }
+      )
+    );
+    expect(res.hiddenUsers.map((x) => x.id)).toContain(30);
+  });
+
+  // The five kinds that never report an outcome must keep the optimistic write,
+  // or every model/image hide would revert on its own success.
+  it('an omitted `hidden` leaves the optimistic entry alone across shapes', () => {
+    const res = bothShapesAgree('hiddenModels', (cache) =>
+      reconcileHiddenToggle(
+        applyOptimisticHiddenToggle(cache, 'hiddenModels', [{ id: 999 }], true),
+        'model',
+        [{ id: 999 }],
+        { added: [], removed: [] }
+      )
+    );
+    expect(res.hiddenModels.map((x) => x.id)).toContain(999);
+  });
+
+  // The add-direction twin above is idempotent under `hidden ?? true`, so it cannot
+  // catch that coercion. This one can: re-applying `true` to an optimistic un-hide
+  // puts the entry back, which is the same phantom-state bug one direction over.
+  it('an omitted `hidden` leaves an optimistic UN-hide alone across shapes', () => {
+    const res = bothShapesAgree('hiddenModels', (cache) =>
+      reconcileHiddenToggle(
+        applyOptimisticHiddenToggle(cache, 'hiddenModels', [{ id: 100 }], false),
+        'model',
+        [{ id: 100 }],
+        { added: [], removed: [] }
+      )
+    );
+    expect(res.hiddenModels.map((x) => x.id)).not.toContain(100);
+  });
+
+  // `applyServerHiddenToggle` writes the item minus `kind`, and the account pages
+  // render what it carries. immer's draft is `any`, so narrowing that write to
+  // `{ id }` type-checks — this is the only thing that catches it.
+  it('a server-added user keeps its username', () => {
+    const res = bothShapesAgree('hiddenUsers', (cache) =>
+      reconcileHiddenToggle(cache, 'user', [], {
+        added: [{ kind: 'user', id: 30, username: 'dave', hidden: true }],
+        removed: [],
+      })
+    );
+
+    expect(res.hiddenUsers).toContainEqual({ id: 30, username: 'dave', hidden: true });
+  });
+
   it('server-diff reconcile (added/removed) matches across shapes', () => {
     const res = bothShapesAgree('hiddenModels', (cache) =>
-      applyServerHiddenToggle(
-        cache,
-        'hiddenModels',
-        [{ kind: 'model', id: 500, hidden: true }],
-        [{ kind: 'model', id: 100, hidden: true }]
-      )
+      reconcileHiddenToggle(cache, 'model', [], {
+        added: [{ kind: 'model', id: 500, hidden: true }],
+        removed: [{ kind: 'model', id: 100, hidden: true }],
+      })
     );
     const ids = res.hiddenModels.map((x) => x.id);
     expect(ids).toContain(500);
     expect(ids).not.toContain(100);
+  });
+});
+
+/**
+ * The mutation's cache wiring. It lives in this module rather than inline in
+ * `useToggleHiddenPreferences` because no test in the repo runs that hook — the
+ * mutations below all passed against the inline version.
+ */
+describe('toggleHidden cache wiring', () => {
+  const hidden30 = () =>
+    applyOptimisticHiddenToggle(structuredClone(legacy), 'hiddenUsers', [{ id: 30 }], true);
+
+  it('forwards the toggled ids, so a refusal actually reaches them', () => {
+    // Mutating the call to pass `[]` reinstates the exact phantom state this PR
+    // removes, and every other test in this file stays green.
+    const res = applyToggleSuccess(
+      hidden30(),
+      { kind: 'user', data: [{ id: 30 }] },
+      { added: [], removed: [], hidden: false }
+    );
+
+    expect(res.hiddenUsers.map((x) => x.id)).not.toContain(30);
+  });
+
+  it('forwards the kind, so the override lands on the right set', () => {
+    const res = applyToggleSuccess(
+      hidden30(),
+      { kind: 'user', data: [{ id: 30 }] },
+      { added: [], removed: [], hidden: true }
+    );
+
+    expect(res.hiddenUsers.map((x) => x.id)).toContain(30);
+    expect(res.hiddenModels.map((x) => x.id)).not.toContain(30);
+  });
+
+  it('substitutes an empty cache when getHidden has not populated', () => {
+    const res = applyToggleSuccess(
+      undefined,
+      { kind: 'user', data: [{ id: 30 }] },
+      { added: [], removed: [], hidden: true }
+    );
+
+    expect(res.hiddenUsers.map((x) => x.id)).toEqual([30]);
+  });
+
+  // 🔴 Identity, not contents. The accepted path must return the SAME object:
+  // `expandHiddenPreferences` is a useMemo keyed on it and HiddenPreferencesProvider
+  // rebuilds every Map when it changes — measured ~93ms of main-thread stall per
+  // click at the tail if this breaks. Membership assertions cannot see it.
+  it('returns the base cache BY REFERENCE when nothing changes', () => {
+    const cache = hidden30();
+
+    expect(
+      reconcileHiddenToggle(cache, 'user', [{ id: 30 }], {
+        added: [],
+        removed: [],
+        hidden: true,
+      })
+    ).toBe(cache);
+  });
+
+  // React Query reads an `undefined` updater result as "no update", so restoring a
+  // missing snapshot would leave the optimistic write standing forever.
+  it('plans a refetch when onMutate captured no snapshot', () => {
+    expect(planToggleRollback(undefined)).toEqual({ invalidate: true });
+  });
+
+  it('restores the snapshot when there is one', () => {
+    const snapshot = structuredClone(legacy);
+
+    expect(planToggleRollback(snapshot)).toEqual({ restore: snapshot });
   });
 });

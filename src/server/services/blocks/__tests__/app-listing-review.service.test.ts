@@ -22,6 +22,10 @@ import { LISTING_REVIEW_DETAILS_MAX } from '~/server/schema/blocks/app-listing-r
 
 type WriteMock = {
   $transaction: ReturnType<typeof vi.fn>;
+  // The prior review is read with `SELECT … FOR UPDATE` (raw — Prisma has no row lock
+  // on `findUnique`), so the delta cannot be computed against a stale `exclude` that a
+  // concurrent moderator hide has already changed. It returns ROWS, not a row.
+  $queryRaw: ReturnType<typeof vi.fn>;
   appListingReview: { findUnique: ReturnType<typeof vi.fn>; upsert: ReturnType<typeof vi.fn> };
   appListingMetric: { upsert: ReturnType<typeof vi.fn>; updateMany: ReturnType<typeof vi.fn> };
 };
@@ -49,6 +53,7 @@ const SAVED_REVIEW = {
 const { mockRead, mockWrite } = vi.hoisted(() => {
   const write: WriteMock = {
     $transaction: vi.fn(),
+    $queryRaw: vi.fn(async () => []),
     appListingReview: {
       findUnique: vi.fn(async () => null),
       upsert: vi.fn(async () => SAVED_REVIEW),
@@ -89,6 +94,7 @@ beforeEach(() => {
   mockWrite.$transaction.mockImplementation(async (cb: (tx: WriteMock) => Promise<unknown>) =>
     cb(mockWrite)
   );
+  mockWrite.$queryRaw.mockResolvedValue([]);
   mockWrite.appListingReview.findUnique.mockResolvedValue(null);
   mockWrite.appListingReview.upsert.mockResolvedValue(SAVED_REVIEW);
   mockWrite.appListingMetric.upsert.mockResolvedValue({});
@@ -153,11 +159,7 @@ describe('upsertAppListingReview — new review (no prior)', () => {
 
 describe('upsertAppListingReview — editing an existing review', () => {
   it('details-only edit (same recommend) does NOT touch the metric (no double-count)', async () => {
-    mockWrite.appListingReview.findUnique.mockResolvedValue({
-      id: 7,
-      recommended: true,
-      exclude: false,
-    });
+    mockWrite.$queryRaw.mockResolvedValue([{ id: 7, recommended: true, exclude: false }]);
     const res = await upsertAppListingReview({
       userId: CALLER,
       input: { appListingId: APP_ID, recommended: true, details: 'nice app' },
@@ -170,11 +172,7 @@ describe('upsertAppListingReview — editing an existing review', () => {
   });
 
   it('flipping recommend true→false moves the count (−1 up, +1 down) and clamps up ≥0', async () => {
-    mockWrite.appListingReview.findUnique.mockResolvedValue({
-      id: 7,
-      recommended: true,
-      exclude: false,
-    });
+    mockWrite.$queryRaw.mockResolvedValue([{ id: 7, recommended: true, exclude: false }]);
     await upsertAppListingReview({
       userId: CALLER,
       input: { appListingId: APP_ID, recommended: false },
@@ -195,11 +193,7 @@ describe('upsertAppListingReview — editing an existing review', () => {
   });
 
   it('a mod-EXCLUDED prior review is treated as un-counted → editing it makes no delta', async () => {
-    mockWrite.appListingReview.findUnique.mockResolvedValue({
-      id: 7,
-      recommended: true,
-      exclude: true,
-    });
+    mockWrite.$queryRaw.mockResolvedValue([{ id: 7, recommended: true, exclude: true }]);
     await upsertAppListingReview({
       userId: CALLER,
       input: { appListingId: APP_ID, recommended: false },
@@ -207,6 +201,73 @@ describe('upsertAppListingReview — editing an existing review', () => {
     });
     // Prior didn't count (excluded) and the edit stays excluded → no counter change.
     expect(mockWrite.appListingMetric.upsert).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE PRIOR READ IS A LOCKED READ — asserted on the SQL TEXT.
+//
+// 🔴 Every other test in this file mocks `$queryRaw` away, which means the SQL
+// STRING is never asserted and never executed: measured, three mutations on that
+// template all SURVIVED the full 21k-test suite —
+//   • deleting `FOR UPDATE`  → silently reverts the race fix this commit exists for
+//   • `app_listing_reviews` → `app_listing_review` → a hard runtime failure, zero CI signal
+//   • dropping `"exclude"` from the SELECT → `prior.exclude` is `undefined`, so a
+//     mod-hidden review starts counting again and the delta is wrong
+// None of them touch a mocked RESULT, so no behavioural assertion can see them. The
+// conditional-update half of this fix has four kills plus an ordering pin; this half
+// had none. Asserting the tagged template's static strings closes it with no DB.
+//
+// `$queryRaw` is called as a tagged template, so `calls[0][0]` is the
+// TemplateStringsArray (the static text) and the rest are the BOUND values.
+// ---------------------------------------------------------------------------
+describe('upsertAppListingReview — the prior read is a LOCKED read (SQL text)', () => {
+  function priorReadCall() {
+    expect(mockWrite.$queryRaw).toHaveBeenCalledTimes(1);
+    const call = mockWrite.$queryRaw.mock.calls[0] as [string[], ...unknown[]];
+    return { sql: call[0].join('?'), values: call.slice(1) };
+  }
+
+  beforeEach(async () => {
+    await upsertAppListingReview({
+      userId: CALLER,
+      input: { appListingId: APP_ID, recommended: true },
+      scope: 'full',
+    });
+  });
+
+  it('POSITIVE CONTROL: the assertion is reading real SQL, not an empty string', () => {
+    const { sql } = priorReadCall();
+    // Without this, every `toContain` below is a claim about `''` and passes only
+    // because nothing was there to contradict it.
+    expect(sql.length).toBeGreaterThan(40);
+    expect(sql).toMatch(/\bSELECT\b/);
+  });
+
+  it('takes a ROW LOCK — the clause whose deletion silently reverts the fix', () => {
+    expect(priorReadCall().sql).toMatch(/\bFOR\s+UPDATE\b/);
+  });
+
+  it('reads the right TABLE, quoted', () => {
+    expect(priorReadCall().sql).toContain('"app_listing_reviews"');
+  });
+
+  it('selects every column the delta needs — `exclude` above all', () => {
+    const { sql } = priorReadCall();
+    // `exclude` is the one that fails QUIETLY: dropped, `prior.exclude` is undefined,
+    // `countedContribution` reads it as falsy, and a mod-hidden review re-enters the
+    // aggregate on its author's next edit.
+    for (const col of ['"id"', '"recommended"', '"exclude"']) expect(sql).toContain(col);
+    expect(sql).toContain('"app_listing_id"');
+    expect(sql).toContain('"user_id"');
+  });
+
+  it('passes the lookup keys as BOUND parameters, never interpolated text', () => {
+    const { sql, values } = priorReadCall();
+    expect(values).toEqual([APP_ID, CALLER]);
+    // The ids must not appear in the static half — that would mean string-built SQL.
+    expect(sql).not.toContain(APP_ID);
+    expect(sql).not.toContain(String(CALLER));
   });
 });
 

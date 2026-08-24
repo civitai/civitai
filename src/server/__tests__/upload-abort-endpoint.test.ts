@@ -39,6 +39,8 @@ vi.mock('~/server/auth/get-server-auth-session', () => ({
 }));
 
 import handler from '~/pages/api/upload/abort';
+// Mocked in ~/__tests__/setup as vi.fn(); imported here so it can be made to REJECT.
+import { logToAxiom } from '~/server/logging/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 function makeRes() {
@@ -54,6 +56,10 @@ function makeRes() {
     },
     json(payload: unknown) {
       this.body = payload;
+      // A real `res.json()` ENDS the response. The double must too, or a `sent` predicate
+      // built on `body !== undefined || ended` is really measuring the payload: a handler
+      // answering `json(undefined)` reads as "not committed" and fails a correct route.
+      this.ended = true;
       return this;
     },
     end() {
@@ -108,11 +114,22 @@ beforeEach(() => {
 });
 
 describe('/api/upload/abort — error classification', () => {
-  it('happy path: abortMultipartUpload resolves → 200', async () => {
+  it('happy path: abortMultipartUpload resolves → 200 with an empty body', async () => {
+    // 🔴 The fixture is `undefined` because that is what the real collaborator returns —
+    // `abortMultipartUpload` is `Promise<void>` (see ~/utils/s3-utils). An earlier version used
+    // `{ ok: true, … }`, a shape it can never produce.
+    //
+    // ⚠️ WHAT THIS DOES AND DOES NOT PIN. `toBeUndefined()` kills `res.json({})`, but it is
+    // satisfied by sending NOTHING, so `json(result)` → `end()` and → `json(undefined)` both
+    // survive. Those two are production-inert — the handler's result really is `void` and the
+    // sole caller fire-and-forgets without reading the body (~/store/s3-upload.store.ts) — but
+    // do not read this case as pinning a pass-through. It pins "200, and no body content".
     mockAbortMultipartUpload.mockResolvedValue(undefined);
     const res = makeRes();
     await handler(makeReq(), res);
     expect(res.statusCode).toBe(200);
+    expect(res.body).toBeUndefined();
+    expect(res.ended).toBe(true);
   });
 
   it('NoSuchUpload (already gone) → 204 idempotent success, not 500', async () => {
@@ -128,6 +145,11 @@ describe('/api/upload/abort — error classification', () => {
     await handler(makeReq(), res);
     expect(res.statusCode).toBe(204);
     expect(res.ended).toBe(true);
+    // 🔴 A 204 MUST CARRY NO BODY, and `ended` alone no longer says that. Round 4 made the
+    // double's `json()` set `ended` (so a `sent` predicate would stop measuring the payload),
+    // which silently turned the assertion above into a tautology: `res.status(204).json({})`
+    // passed the whole suite. This is the assertion that distinguishes `.end()` from `.json()`.
+    expect(res.body).toBeUndefined();
   });
 
   it('InvalidPart (name + $metadata 400) → 422 + no-store, not 500', async () => {
@@ -135,7 +157,7 @@ describe('/api/upload/abort — error classification', () => {
       s3Error({
         name: 'InvalidPart',
         message:
-          'One or more of the specified parts could not be found. The part may not have been uploaded, or the specified entity tag may not match the part\'s entity tag.',
+          "One or more of the specified parts could not be found. The part may not have been uploaded, or the specified entity tag may not match the part's entity tag.",
         $metadata: { httpStatusCode: 400 },
       })
     );
@@ -180,5 +202,84 @@ describe('/api/upload/abort — error classification', () => {
     const res = makeRes();
     await handler(makeReq(), res);
     expect(res.statusCode).toBe(500);
+  });
+
+  /**
+   * 🔴 THE RESPONSE MUST NOT DEPEND ON TELEMETRY. Every case above runs with a resolving
+   * `logToAxiom` (a `vi.fn()` from `~/__tests__/setup`), so none of them could see the
+   * 2026-08-23 failure: with Axiom's ingest host unreachable, the awaited log call above
+   * the classifier threw and this entire taxonomy became unreachable — 92 sampled 500s on
+   * a route whose normal 500 rate is zero. Mirrors the block in
+   * ./upload-complete-endpoint.test.ts, which carries the full mechanism.
+   *
+   * Asserts the handler settles cleanly AND the client's status — see the note in
+   * ./upload-complete-endpoint.test.ts on why `resolves` is load-bearing. Pre-fix, both
+   * cases observe `statusCode` 0.
+   */
+  describe('telemetry failure cannot change the client response', () => {
+    const withFailingLogger = async (res: ReturnType<typeof makeRes>) => {
+      vi.mocked(logToAxiom).mockRejectedValue(new Error('timeout of 30000ms exceeded'));
+      try {
+        await expect(handler(makeReq(), res)).resolves.toBeUndefined();
+      } finally {
+        vi.mocked(logToAxiom).mockReset();
+      }
+    };
+
+    it('NoSuchUpload still classifies to 204 — the branch is reachable', async () => {
+      mockAbortMultipartUpload.mockRejectedValue(
+        s3Error({ name: 'NoSuchUpload', $metadata: { httpStatusCode: 404 } })
+      );
+      const res = makeRes();
+      await withFailingLogger(res);
+      expect(res.statusCode).toBe(204);
+    });
+
+    it('a successful abort still returns 200', async () => {
+      mockAbortMultipartUpload.mockResolvedValue({ ok: true });
+      const res = makeRes();
+      await withFailingLogger(res);
+      expect(res.statusCode).toBe(200);
+    });
+
+    /**
+     * 🔴 ORDERING, read directly. A status-only assertion cannot see the log being moved back
+     * ahead of the response once the log is contained — a mutation sweep proved that on the
+     * sibling sign-part route. This reads the response state AT LOG TIME.
+     */
+    it('ORDERING: the response is committed before either event is logged', async () => {
+      // `sent` proves COMMITMENT — the 204 arm uses `.end()` and never sets a body, so this
+      // must accept either. `res.status()` on its own writes nothing.
+      const seen: Array<{ name: string; statusAtLogTime: number; sent: boolean }> = [];
+      const res = makeRes();
+      vi.mocked(logToAxiom).mockImplementation(async (d: Record<string, unknown>) => {
+        seen.push({
+          name: String((d as { name?: unknown }).name),
+          statusAtLogTime: res.statusCode,
+          sent: res.body !== undefined || res.ended,
+        });
+      });
+      mockAbortMultipartUpload.mockResolvedValue({ ok: true });
+      await handler(makeReq(), res);
+
+      const res2 = makeRes();
+      vi.mocked(logToAxiom).mockImplementation(async (d: Record<string, unknown>) => {
+        seen.push({
+          name: String((d as { name?: unknown }).name),
+          statusAtLogTime: res2.statusCode,
+          sent: res2.body !== undefined || res2.ended,
+        });
+      });
+      mockAbortMultipartUpload.mockRejectedValue(
+        s3Error({ name: 'NoSuchUpload', $metadata: { httpStatusCode: 404 } })
+      );
+      await handler(makeReq(), res2);
+      vi.mocked(logToAxiom).mockReset();
+
+      expect(seen).toEqual([
+        { name: 's3-upload-abort', statusAtLogTime: 200, sent: true },
+        { name: 's3-upload-abort-error', statusAtLogTime: 204, sent: true },
+      ]);
+    });
   });
 });

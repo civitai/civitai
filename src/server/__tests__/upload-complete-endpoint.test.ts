@@ -76,6 +76,10 @@ function makeRes() {
     },
     json(payload: unknown) {
       this.body = payload;
+      // A real `res.json()` ENDS the response. The double must too, or a `sent` predicate
+      // built on `body !== undefined || ended` is really measuring the payload: a handler
+      // answering `json(undefined)` reads as "not committed" and fails a correct route.
+      this.ended = true;
       return this;
     },
     end() {
@@ -561,5 +565,137 @@ describe('/api/upload/complete — a successful completion is VERIFIED against t
       const opts = mockS3Send.mock.calls[0][1] as { abortSignal?: AbortSignal };
       expect(opts?.abortSignal).toBeInstanceOf(AbortSignal);
     });
+  });
+
+  /**
+   * 🔴 THE RESPONSE MUST NOT DEPEND ON TELEMETRY. Every case above runs with a
+   * `logToAxiom` that RESOLVES (it is a plain `vi.fn()` from `~/__tests__/setup`), so a
+   * suite of 35 green tests said nothing about what happens when it does not — and on
+   * 2026-08-23 it did not, for 44 minutes.
+   *
+   * What that cost: Axiom's ingest host became unreachable, `logToAxiom` awaited it
+   * uncontained, and the throw landed (a) after a SUCCESSFUL completion on the happy
+   * path, turning a stored object into a 500, and (b) above `classifyS3MultipartError`
+   * in the catch, so no branch of the 409/422/503 taxonomy could execute. Spanmetrics
+   * recorded ZERO 409/422/503 on this route across the whole episode against 1,009
+   * terminal `NoSuchUpload`s — the paths were not rare, they were dead. ~5,300 requests,
+   * 350 distinct users; clients retried because 500 is retryable.
+   *
+   * These drive the real handler with a REJECTING logger and assert BOTH that the handler
+   * itself settles cleanly AND that the client got the right status. On the pre-fix
+   * ordering every case observes `statusCode === 0` — nothing was ever sent.
+   *
+   * 🔴 `resolves` is load-bearing, not decoration. An earlier draft of this fix moved the
+   * response ahead of the logging but left the log call inside the S3 `try`, so a logging
+   * rejection unwound into the catch, was classified as an S3 fault, and wrote a SECOND
+   * response over a request that had already succeeded — 200 then 500. These tests caught
+   * it; a version that only asserted the status would not have.
+   */
+  describe('telemetry failure cannot change the client response', () => {
+    const withFailingLogger = async (res: ReturnType<typeof makeRes>) => {
+      vi.mocked(logToAxiom).mockRejectedValue(new Error('timeout of 30000ms exceeded'));
+      try {
+        await expect(handler(makeReq(), res)).resolves.toBeUndefined();
+      } finally {
+        vi.mocked(logToAxiom).mockReset();
+      }
+    };
+
+    it('happy path: a stored object still returns 200, not 500', async () => {
+      mockCompleteMultipartUpload.mockResolvedValue({ Location: 'https://cdn/x' });
+      const res = makeRes();
+      await withFailingLogger(res);
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toBe('https://cdn/x');
+    });
+
+    it('NoSuchUpload still classifies to 409 — the branch is reachable', async () => {
+      mockCompleteMultipartUpload.mockRejectedValue(
+        s3Error({
+          name: 'NoSuchUpload',
+          message: 'The specified upload does not exist.',
+          $metadata: { httpStatusCode: 404 },
+        })
+      );
+      mockObjectExists.mockResolvedValue(false);
+      const res = makeRes();
+      await withFailingLogger(res);
+      expect(res.statusCode).toBe(409);
+    });
+
+    it('a transient S3 fault still classifies to 503, not 500', async () => {
+      mockCompleteMultipartUpload.mockRejectedValue(
+        s3Error({ name: 'ServiceUnavailable', $metadata: { httpStatusCode: 503 } })
+      );
+      const res = makeRes();
+      await withFailingLogger(res);
+      expect(res.statusCode).toBe(503);
+      expect(res.headers['Retry-After']).toBe('2');
+    });
+
+    /**
+     * 🔴 ORDERING, read directly — the assertions above are status-only, and a mutation sweep
+     * showed that is the weaker guard: once the log is contained, moving it back ahead of the
+     * response still produces the same status, so only the 2 s telemetry stall in front of the
+     * client's answer is reintroduced and a status assertion cannot see it. These read the
+     * response state AT LOG TIME, so they fail on reordering alone.
+     */
+    it('ORDERING: the response is committed before either event is logged', async () => {
+      // `sent` is what proves the response was COMMITTED — `res.status()` alone writes
+      // nothing, so a mutant splitting status from json/end passes a status-only assertion.
+      const seen: Array<{ name: string; statusAtLogTime: number; sent: boolean }> = [];
+      const res = makeRes();
+      vi.mocked(logToAxiom).mockImplementation(async (d: Record<string, unknown>) => {
+        seen.push({
+          name: String((d as { name?: unknown }).name),
+          statusAtLogTime: res.statusCode,
+          sent: res.body !== undefined || res.ended,
+        });
+      });
+
+      // Happy path first.
+      mockCompleteMultipartUpload.mockResolvedValue({ Location: 'https://cdn/x' });
+      await handler(makeReq(), res);
+
+      // Then the classified-error path.
+      const res2 = makeRes();
+      vi.mocked(logToAxiom).mockImplementation(async (d: Record<string, unknown>) => {
+        seen.push({
+          name: String((d as { name?: unknown }).name),
+          statusAtLogTime: res2.statusCode,
+          sent: res2.body !== undefined || res2.ended,
+        });
+      });
+      mockCompleteMultipartUpload.mockRejectedValue(
+        s3Error({ name: 'NoSuchUpload', $metadata: { httpStatusCode: 404 } })
+      );
+      mockObjectExists.mockResolvedValue(false);
+      await handler(makeReq(), res2);
+      vi.mocked(logToAxiom).mockReset();
+
+      expect(seen).toEqual([
+        { name: 's3-upload-complete', statusAtLogTime: 200, sent: true },
+        { name: 's3-upload-complete-error', statusAtLogTime: 409, sent: true },
+      ]);
+    });
+  });
+
+  /**
+   * ⚠️ INVARIANT GUARD, NOT A REGRESSION TEST — labelled so nobody counts it as coverage of a
+   * bug that existed. The real `objectExists` cannot reject (`headObject` wraps its whole body
+   * in a try returning `{status:'unknown'}`), so `mockObjectExists.mockRejectedValue` here
+   * simulates a state the current dependency cannot produce. It pins the handler's side of the
+   * contract — "an unavailable probe is a 409, never a 500" — against a future change to
+   * `headObject`'s swallow-everything behaviour. It was RED at base only because the awaited
+   * telemetry ran first; it is not evidence that a throwing probe ever escaped in production.
+   */
+  it('a THROWING objectExists probe yields 409, not an escaped 500', async () => {
+    mockCompleteMultipartUpload.mockRejectedValue(
+      s3Error({ name: 'NoSuchUpload', $metadata: { httpStatusCode: 404 } })
+    );
+    mockObjectExists.mockRejectedValue(new Error('connect ETIMEDOUT'));
+    const res = makeRes();
+    await handler(makeReq(), res);
+    expect(res.statusCode).toBe(409);
   });
 });

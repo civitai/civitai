@@ -92,8 +92,8 @@ export function RemoveReportedPlacement({
                   free: true,
                 })
               : placement.status === 'pending'
-              ? 'It never went live, so its escrow is forfeited rather than refunded.'
-              : 'No Buzz moves: the creator was already paid for it, and clawing that back would punish the wrong person. Suspend the placer if the problem is them rather than this one sticker.'}
+              ? 'It never went live, so its escrow is forfeited rather than refunded. The placer is told a moderator removed it with no refund.'
+              : 'No Buzz moves: the creator was already paid for it, and clawing that back would punish the wrong person. The placer is told a moderator removed it with no refund. Suspend the placer if the problem is them rather than this one sticker.'}
           </Text>
         </Stack>
       ),

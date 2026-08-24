@@ -1,6 +1,6 @@
 # Turbopack "assets emitted to the same output path" — root cause and options
 
-**Date:** 2026-08-18 · **Status:** diagnosed, not fixed · **Next:** 16.3.0 (`^16.3.0`)
+**Date:** 2026-08-18 · **Status (corrected 2026-08-21):** diagnosed, not fixed. Repo is on `^16.3.1`; the doc's "Next: 16.3.0" was a forward-looking expectation, not the current version. 16.3.1 re-rolls the collision but does not fix the mechanism (see §Next 16.3.1 is a re-roll, not a fix).
 
 ## Symptom
 

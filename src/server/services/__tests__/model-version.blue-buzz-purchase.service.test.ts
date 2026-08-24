@@ -1,17 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type * as RedisClient from '@civitai/redis/client';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+
+// `~/server/redis/client` and `~/server/logging/client` are covered by the canonical
+// shared mocks (`redisMock` / `loggingMock`) that `src/__tests__/setup.ts` registers for
+// every suite, so this file declares neither. Nothing here reads or asserts on a redis
+// command or on the Axiom logger; a test that needs to would import the canonical mock
+// (`import { redisMock } from '~/__tests__/mocks/redis.mock'`) and drive it, rather than
+// re-declaring a local factory.
 
 // Blue Buzz for paid access. A blue purchase must credit the owner blue, or it turns non-withdrawable
 // credit into withdrawable currency. `toAccountType` defaults to yellow in buzz.service.
-
-const { mockDbWrite } = vi.hoisted(() => ({
-  mockDbWrite: {
-    modelVersion: { findUnique: vi.fn() },
-    entityAccess: { findFirst: vi.fn(), upsert: vi.fn() },
-    donation: { create: vi.fn() },
-    $queryRaw: vi.fn(),
-  },
-}));
 
 const {
   mockCreateMultiAccountBuzzTransaction,
@@ -31,7 +29,6 @@ const {
   mockCheckDonationGoalComplete: vi.fn(),
 }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbWrite, dbWrite: mockDbWrite }));
 vi.mock('~/server/prom/client', async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
   return { ...actual, dbReadFallbackCounter: { inc: vi.fn() } };
@@ -42,14 +39,6 @@ vi.mock('~/server/redis/caches', () => ({
   dataForModelsCache: { refresh: vi.fn() },
   modelVersionAccessCache: { refresh: vi.fn() },
 }));
-vi.mock('~/server/redis/client', async () => {
-  const actual = await vi.importActual<typeof RedisClient>('@civitai/redis/client');
-  return {
-    ...actual,
-    redis: { get: vi.fn(), set: vi.fn(), del: vi.fn().mockResolvedValue(undefined) },
-    sysRedis: { get: vi.fn() },
-  };
-});
 vi.mock('~/server/redis/resource-data.redis', () => ({ resourceDataCache: { bust: vi.fn() } }));
 vi.mock('~/server/search-index', () => ({
   modelsSearchIndex: { queueUpdate: vi.fn() },
@@ -94,7 +83,6 @@ vi.mock('~/server/services/model-file.service', () => ({
 vi.mock('~/server/services/monetization-rights.service', () => ({
   resolveRightsAffirmation: vi.fn(),
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
 
 import { earlyAccessPurchase } from '~/server/services/model-version.service';
 
@@ -106,14 +94,19 @@ const seed = ({
   acceptsBlueBuzz = false,
   goal = null as { id: number; active: boolean } | null,
 } = {}) => {
-  mockDbWrite.modelVersion.findUnique.mockResolvedValue({
+  const versionRow = {
     id: VERSION_ID,
     status: 'Published',
     name: 'v1',
     meta: { hadEarlyAccessPurchase: true },
     baseModel: 'SDXL 1.0',
     model: { id: 1, name: 'Model', userId: OWNER, nsfw: false },
-  });
+  };
+  // getDbWithoutLag('modelVersion', id) returns dbRead when REPLICATION_LAG_DELAY=0;
+  // earlyAccessPurchase calls getVersionById which uses it. Set up both sides so
+  // the test is correct regardless of which client the service routes through.
+  dbMock.dbRead.modelVersion.findUnique.mockResolvedValue(versionRow);
+  dbMock.dbWrite.modelVersion.findUnique.mockResolvedValue(versionRow);
   mockGetPaidAccess.mockResolvedValue({
     [VERSION_ID]: {
       entityType: 'ModelVersion',
@@ -127,8 +120,10 @@ const seed = ({
   });
   mockGetOwnerDonationGoals.mockResolvedValue(goal ? { [VERSION_ID]: goal } : {});
   mockHasEntityAccess.mockResolvedValue([{ hasAccess: false, permissions: 0, meta: null }]);
-  mockDbWrite.entityAccess.findFirst.mockResolvedValue(null);
-  mockDbWrite.entityAccess.upsert.mockResolvedValue({});
+  dbMock.dbRead.entityAccess.findFirst.mockResolvedValue(null);
+  dbMock.dbRead.entityAccess.upsert.mockResolvedValue({});
+  dbMock.dbWrite.entityAccess.findFirst.mockResolvedValue(null);
+  dbMock.dbWrite.entityAccess.upsert.mockResolvedValue({});
   mockCreateMultiAccountBuzzTransaction.mockResolvedValue({
     transactionCount: 1,
     transactionIds: [],
@@ -199,7 +194,7 @@ describe('earlyAccessPurchase — Blue Buzz', () => {
       buzzType: 'blue',
     });
 
-    expect(mockDbWrite.donation.create).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.donation.create).not.toHaveBeenCalled();
     expect(mockCheckDonationGoalComplete).not.toHaveBeenCalled();
   });
 
@@ -213,7 +208,7 @@ describe('earlyAccessPurchase — Blue Buzz', () => {
       buzzType: 'green',
     });
 
-    expect(mockDbWrite.donation.create).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbWrite.donation.create).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -281,14 +276,16 @@ describe('earlyAccessPurchase — a scheduled sale is priced from the PRIMARY, n
     // this, a resolver that charged before validating would pass every assertion in this file.
     seed();
     mockGetFreshSalesForPermanentGate.mockResolvedValue([liveSale]);
-    mockDbWrite.modelVersion.findUnique.mockResolvedValue({
+    const draftVersion = {
       id: VERSION_ID,
       status: 'Draft',
       name: 'v1',
       meta: {},
       baseModel: 'SDXL 1.0',
       model: { id: 1, name: 'Model', userId: OWNER, nsfw: false },
-    });
+    };
+    dbMock.dbRead.modelVersion.findUnique.mockResolvedValue(draftVersion);
+    dbMock.dbWrite.modelVersion.findUnique.mockResolvedValue(draftVersion);
 
     await expect(
       earlyAccessPurchase({
@@ -300,7 +297,7 @@ describe('earlyAccessPurchase — a scheduled sale is priced from the PRIMARY, n
     ).rejects.toThrow();
 
     expect(mockCreateMultiAccountBuzzTransaction).not.toHaveBeenCalled();
-    expect(mockDbWrite.entityAccess.upsert).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.entityAccess.upsert).not.toHaveBeenCalled();
   });
 });
 

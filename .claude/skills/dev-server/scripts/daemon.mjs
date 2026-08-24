@@ -23,6 +23,7 @@ import { fileURLToPath } from 'url';
 import { randomBytes, createHash } from 'crypto';
 import { access } from 'fs/promises';
 import { isPortFree } from './port-probe.mjs';
+import { samePath, canonicalPath } from './paths.mjs';
 import { parsePort, resolveDaemonPort } from './daemon-port.mjs';
 import { TestQueue } from './test-queue.mjs';
 import {
@@ -38,6 +39,32 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const skillDir = resolve(__dirname, '..');
 const projectRoot = resolve(skillDir, '../../..');
 const pidFile = resolve(skillDir, 'daemon.pid');
+
+// The checkout that owns the .git directory — the base of every env chain. This is NOT projectRoot:
+// the skill directory is committed, so a daemon launched from a worktree derives projectRoot as that
+// worktree, and the "fall back to the primary" half of every chain then points at a file the
+// worktree does not have. `git rev-parse --git-common-dir` resolves to the primary's `.git` from
+// inside any worktree, which is the only spelling of this that does not depend on where the process
+// was started. Falls back to projectRoot when git cannot answer, which is the pre-worktree behaviour.
+function resolvePrimaryCheckout() {
+  try {
+    const gitCommonDir = execSync('git rev-parse --path-format=absolute --git-common-dir', {
+      cwd: projectRoot,
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      // This runs at module load, before the listener exists, so a wedged git would hang the daemon
+      // where `ensureDaemon` reports a bare "Failed to start daemon" with nothing naming git.
+      timeout: 5000,
+    }).trim();
+    if (gitCommonDir) return { path: resolve(gitCommonDir, '..'), derived: true, error: null };
+  } catch (e) {
+    return { path: projectRoot, derived: false, error: e.message };
+  }
+  return { path: projectRoot, derived: false, error: 'git named no common dir' };
+}
+
+const primaryResolution = resolvePrimaryCheckout();
+const primaryCheckout = primaryResolution.path;
 
 // Configuration
 const DEFAULT_BASE_DEV_PORT = 3000;
@@ -215,13 +242,6 @@ function parseArgs(argv = process.argv.slice(2)) {
 // branch switch restarting itself, a session moved off a stolen port — can reach it too.
 let baseDevPort = DEFAULT_BASE_DEV_PORT;
 
-// Windows hands back whatever drive-letter and casing the caller typed.
-function samePath(a, b) {
-  return process.platform === 'win32'
-    ? resolve(a).toLowerCase() === resolve(b).toLowerCase()
-    : resolve(a) === resolve(b);
-}
-
 // Generate session ID
 function generateSessionId() {
   return randomBytes(4).toString('hex');
@@ -295,6 +315,17 @@ function loadEnvFile(envPath) {
     }
   }
 
+  return env;
+}
+
+// Layer .env files, later paths winning key by key. A worktree's .env used to REPLACE the
+// primary checkout's outright, so a file written to override two keys started the server with
+// no DATABASE_URL and no secrets — a failure that looks nothing like the two-line edit that
+// caused it. A missing file contributes nothing rather than erroring, so the chain is also how
+// an app with no .env of its own inherits one.
+function loadEnvChain(paths) {
+  const env = {};
+  for (const path of paths) Object.assign(env, loadEnvFile(path));
   return env;
 }
 
@@ -502,11 +533,12 @@ function lastErrorLog(session) {
 
 // Session class
 class DevSession {
-  constructor(id, worktree, port, envPath, modeOverrides = { prod: [], dev: [] }) {
+  constructor(id, worktree, port, envPaths, modeOverrides = { prod: [], dev: [] }) {
     this.id = id;
     this.worktree = worktree;
     this.port = port;
-    this.envPath = envPath;
+    // Base first, override last. A single path is still valid — it just has nothing under it.
+    this.envPaths = Array.isArray(envPaths) ? envPaths : [envPaths];
     this.modeOverrides = modeOverrides;
     // Pinned at creation. start() re-reads the skill .env for everything else, so without this an
     // edit to DEVSERVER_PROD_GROUPS would move a LIVE session onto production at its next
@@ -542,6 +574,11 @@ class DevSession {
     this.lockHash = null;
     this.schemaHash = null;
     this.depsBaselined = false;
+  }
+
+  // The top of the chain — what a reader means by "which .env is this session on".
+  get envPath() {
+    return this.envPaths[this.envPaths.length - 1];
   }
 
   lockfilePath() {
@@ -644,7 +681,7 @@ class DevSession {
     }
 
     // Load environment variables
-    let envVars = loadEnvFile(this.envPath);
+    let envVars = loadEnvChain(this.envPaths);
 
     // The overlay goes on before the port remap, so a mode that supplies its own auth URLs still
     // gets rewritten to this session's port like any other .env value would be.
@@ -709,7 +746,7 @@ class DevSession {
     this.addLog('info', `Starting dev server on port ${this.port}`);
     this.addLog('info', `Worktree: ${this.worktree}`);
     this.addLog('info', `Branch: ${this.branch}`);
-    this.addLog('info', `Env: ${this.envPath}`);
+    this.addLog('info', `Env: ${this.envPaths.join(' <- ')}`);
     this.addLog('info', `Env modes: ${this.modeSummary}`);
     this.addLog('info', `Build dir: ${this.distDir}`);
 
@@ -990,7 +1027,7 @@ class DevSession {
         from === head ? `Re-checking ${head} for dependency changes` : `Branch switch: ${from} -> ${head}`
       );
 
-      const env = { ...process.env, ...loadEnvFile(this.envPath) };
+      const env = { ...process.env, ...loadEnvChain(this.envPaths) };
       const log = (l, m) => this.addLog(l, m);
       const pnpmCmd = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
 
@@ -1247,6 +1284,7 @@ class DevSession {
       worktree: this.worktree,
       branch: this.branch,
       envPath: this.envPath,
+      envPaths: this.envPaths,
       envModes: Object.fromEntries(
         Object.entries(this.modes).map(([group, choice]) => [group, choice.mode])
       ),
@@ -1447,9 +1485,21 @@ const rgbProxy = new RgbProxy(skillConfig.rgbProxyPath);
 // track logs/status. Ready is detected from Vite's startup line; a JWKS probe confirms it's live.
 class AuthHub {
   constructor(hubPath, port) {
-    this.path = resolve(projectRoot, hubPath);
+    // The primary checkout, never this daemon's own root. The hub is ONE shared process for every
+    // worktree — env-modes.mjs lists it in PROD_ONLY_GROUPS for exactly that reason — so a daemon
+    // launched from a worktree must still run the primary's copy, which is also the only one with
+    // the gitignored apps/auth/.env beside it.
+    // requiredEnvPath is derived from this.path below, so the two assignments cannot swap order.
+    this.path = resolve(primaryCheckout, hubPath);
     this.port = port;
+    this.label = 'Auth hub';
+    this.requiredEnvPath = resolve(this.path, '.env');
+    this.envPaths = [];
     this.process = null;
+    this.startPromise = null;
+    this.spawnedAtMs = null;
+    this.spawnEnvCache = null;
+    this.stopping = false;
     this.status = 'stopped'; // stopped | starting | running | crashed | error | disabled
     this.ready = false;
     this.readyAt = null;
@@ -1473,29 +1523,108 @@ class AuthHub {
     return logs;
   }
 
+  // The hub passes an empty chain and lets Vite load its own .env. An app started in a worktree
+  // passes one, because the worktree's copy of that .env is gitignored and usually absent — the
+  // chain is what lets it inherit the primary checkout's. Either way process.env is the floor, which
+  // is why the DATABASE_URL warning has to be computed from this and not from the chain alone.
+  // Dropping this means a restart after an .env edit spawns with the OLD DATABASE_URL — and since
+  // dbHost is computed from the same cached object, the warning line then confirms the host you have
+  // just changed away from.
+  invalidateSpawnEnv() {
+    this.spawnEnvCache = null;
+  }
+
+  spawnEnv() {
+    // Cached for the duration of one start. Not for speed — the three callers (the DATABASE_URL
+    // refusal, the host warning, the spawn options) must AGREE with each other: the thing refused,
+    // the thing described and the thing handed to the child have to be one object.
+    if (!this.spawnEnvCache) {
+      this.spawnEnvCache = this.envPaths.length
+        ? { ...process.env, ...loadEnvChain(this.envPaths) }
+        : process.env;
+    }
+    return this.spawnEnvCache;
+  }
+
+  // `::` (dual-stack), not a single literal. Bound to `127.0.0.1` these servers answered on v4 and
+  // nothing on [::1]; Windows resolves `localhost` to ::1 first, so a browser typing the same `localhost`
+  // URL the auth redirects use got connection-refused while curl — which falls back to v4 — reported the
+  // server perfectly healthy. `localhost` is not the fix either: it resolves to ::1 *only*, which just
+  // moves the outage onto every caller that hardcodes 127.0.0.1. `::` accepts v4-mapped addresses, so both
+  // spellings work, and it matches what `next dev` already binds for the main app on 3000.
+  //
+  // `--strictPort` is what makes the port the daemon reserved the port the app actually binds.
+  // Without it Vite drifts to the next free one on its own and the reservation stops meaning
+  // anything — two apps would report ports neither of them is serving.
+  spawnArgs() {
+    return ['exec', 'vite', 'dev', '--host', '::', '--port', String(this.port), '--strictPort'];
+  }
+
+  // `if (this.process)` used to be a sufficient guard because start() was synchronous. It is not any
+  // more: awaited path probes now sit between that check and the assignment, so two callers in
+  // the same tick both saw `null` and both spawned — with --strictPort one died and the survivor was
+  // referenced by nothing, which is the orphan `stopAppSessions` exists to prevent. Memoising the
+  // in-flight promise closes the window without a sentinel that every return path has to remember to
+  // clear.
   start() {
+    if (this.startPromise) return this.startPromise;
+    // Set here rather than in #start(), which does not reach its own assignment until after the path
+    // probes — a caller inspecting status in that window would see `stopped` for a start already
+    // under way. Keeping it in the class also means nothing outside has to write the field.
+    this.status = 'starting';
+    this.startPromise = this.#start().finally(() => {
+      this.startPromise = null;
+    });
+    return this.startPromise;
+  }
+
+  // Async because `this.path` is now caller-supplied — an app resolves it against whatever worktree
+  // the request named. A synchronous stat on an unreachable path is recorded in this file at 21s on
+  // the daemon's only thread, which is why probePath/checkPath exist; a fixed local path never reached that, a worktree
+  // argument can. pathExists is the timeout-raced one.
+  async #start() {
+    this.invalidateSpawnEnv();
+    this.stopping = false;
+
     if (this.process) {
-      this.addLog('info', 'Auth hub already running');
+      this.addLog('info', `${this.label} already running`);
       return this.getStatus();
     }
 
-    if (!existsSync(this.path)) {
+    if (!(await pathExists(this.path))) {
       this.status = 'error';
-      this.lastError = `Auth hub path not found: ${this.path}`;
+      this.lastError = `${this.label} path not found: ${this.path}`;
       this.addLog('error', this.lastError);
       return this.getStatus();
     }
 
-    if (!existsSync(resolve(this.path, '.env'))) {
+    // `null` means the app has no .env of its own to require — it inherits the chain instead.
+    if (this.requiredEnvPath && !(await pathExists(this.requiredEnvPath))) {
       this.status = 'error';
-      this.lastError = `Auth hub .env missing: ${resolve(this.path, '.env')}. See SKILL.md (Auth Hub setup).`;
+      this.lastError = `${this.label} .env missing: ${this.requiredEnvPath}`;
       this.addLog('error', this.lastError);
       return this.getStatus();
     }
 
-    if (!existsSync(resolve(this.path, 'node_modules'))) {
+    // An app with no .env of its own inherits the chain. If nothing in that chain — nor the daemon's
+    // own environment — supplies a DATABASE_URL, it would start and fail later inside SvelteKit,
+    // where it reads as the app's bug rather than as a missing file. The usual cause is
+    // primaryCheckout having fallen back (see resolvePrimaryCheckout), so name that when it is why.
+    if (!this.requiredEnvPath && !this.spawnEnv().DATABASE_URL) {
       this.status = 'error';
-      this.lastError = `Auth hub dependencies not installed. Run: pnpm install`;
+      this.lastError =
+        `${this.label} has no DATABASE_URL: none of ${this.envPaths.join(', ')} supply one. ` +
+        (primaryResolution.derived
+          ? 'Copy an .env from the primary checkout.'
+          : `The primary checkout could not be resolved from git (${primaryResolution.error}), ` +
+            'so the fall-through has nothing to fall back to.');
+      this.addLog('error', this.lastError);
+      return this.getStatus();
+    }
+
+    if (!(await pathExists(resolve(this.path, 'node_modules')))) {
+      this.status = 'error';
+      this.lastError = `${this.label} dependencies not installed. Run: pnpm install`;
       this.addLog('error', this.lastError);
       return this.getStatus();
     }
@@ -1504,14 +1633,32 @@ class AuthHub {
     this.ready = false;
     this.readyAt = null;
     this.lastError = null;
-    this.addLog('info', `Starting auth hub on port ${this.port}: ${this.path}`);
+    this.addLog('info', `Starting ${this.label} on port ${this.port}: ${this.path}`);
+
+    // A fresh worktree inherits the primary checkout's apps/<name>/.env, and those point at the
+    // production database. Nothing in the start output used to say so, and a moderator remove-click
+    // deletes live rows — so name the host here, where it is read at the moment it matters, rather
+    // than only in a doc nobody opens at start time.
+    //
+    // Describes the MERGED env, not the chain: the child gets `{ ...process.env, ...chain }`, so a
+    // DATABASE_URL inherited from the daemon's own environment is one the app will really use and
+    // nobody chose. Reporting null for it would read as "no database configured".
+    // Only for a process whose env this daemon actually supplies. The auth hub passes an empty
+    // chain and lets Vite load apps/auth/.env itself, so spawnEnv() there is process.env verbatim —
+    // the line would name the daemon's inherited candidate, say nothing about the file the hub
+    // really reads, and stay silent when THAT is the one pointing at production. Saying nothing is
+    // the honest answer for the hub.
+    if (this.envPaths.length) {
+      this.dbHost = describeDatabaseHost(this.spawnEnv());
+      if (this.dbHost) this.addLog('warn', `${this.label} DATABASE_URL host: ${this.dbHost}`);
+    }
 
     const isWindows = process.platform === 'win32';
     const pnpmCmd = isWindows ? 'pnpm.cmd' : 'pnpm';
 
     const spawnOptions = {
       cwd: this.path,
-      env: process.env, // Vite loads apps/auth/.env itself — no injection
+      env: this.spawnEnv(),
       stdio: ['ignore', 'pipe', 'pipe'],
       shell: isWindows,
     };
@@ -1519,17 +1666,7 @@ class AuthHub {
 
     let proc;
     try {
-      // `::` (dual-stack), not a single literal. Bound to `127.0.0.1` these servers answered on v4 and
-      // nothing on [::1]; Windows resolves `localhost` to ::1 first, so a browser typing the same `localhost`
-      // URL the auth redirects use got connection-refused while curl — which falls back to v4 — reported the
-      // server perfectly healthy. `localhost` is not the fix either: it resolves to ::1 *only*, which just
-      // moves the outage onto every caller that hardcodes 127.0.0.1. `::` accepts v4-mapped addresses, so both
-      // spellings work, and it matches what `next dev` already binds for the main app on 3000.
-      proc = spawn(
-        pnpmCmd,
-        ['exec', 'vite', 'dev', '--host', '::', '--port', String(this.port), '--strictPort'],
-        spawnOptions
-      );
+      proc = spawn(pnpmCmd, this.spawnArgs(), spawnOptions);
     } catch (err) {
       this.status = 'error';
       this.lastError = err.message;
@@ -1537,6 +1674,7 @@ class AuthHub {
       return this.getStatus();
     }
     this.process = proc;
+    this.spawnedAtMs = Date.now();
 
     this.startedAt = new Date().toISOString();
     this.stoppedAt = null;
@@ -1547,7 +1685,7 @@ class AuthHub {
       if (this.ready) return;
       this.ready = true;
       this.readyAt = new Date().toISOString();
-      this.addLog('info', `Auth hub ready on http://localhost:${this.port}`);
+      this.addLog('info', `${this.label} ready on http://localhost:${this.port}`);
     };
 
     proc.stdout.on('data', (data) => {
@@ -1575,7 +1713,7 @@ class AuthHub {
 
     proc.on('exit', (code, signal) => {
       this.exitCode = code;
-      this.addLog('info', `Auth hub exited (code=${code}, signal=${signal})`);
+      this.addLog('info', `${this.label} exited (code=${code}, signal=${signal})`);
       // Only mutate shared state if this is still the CURRENT process. A restart may have already
       // replaced it (Vite also self-restarts on .env change) — a late exit must not clobber the new one.
       if (this.process === proc) {
@@ -1597,14 +1735,38 @@ class AuthHub {
   }
 
   async stop() {
+    // A start sitting in its path probes has `this.process === null`, so the early return below would
+    // report `stopped` for a process that is about to exist — and the handler then deletes the map
+    // entry while `#start()` carries on and spawns. That leaves a live server on a --strictPort port
+    // with no entry: uncounted by getUsedPorts, unlisted by `app` and `status`, and unreachable by
+    // stopAppSessions at shutdown. Exactly the orphan that function exists to prevent, and reachable
+    // by `start --app x` followed promptly by `stop --app x`.
+    if (this.startPromise) await this.startPromise.catch(() => {});
+
     const proc = this.process;
     if (!proc) {
       this.status = 'stopped';
       this.ready = false;
+      this.dbHost = null;
       return this.getStatus();
     }
 
-    this.addLog('info', 'Stopping auth hub...');
+    // Declared before the settle wait. Without it the entry keeps a live process and `running`
+    // status for up to SPAWN_SETTLE_MS, so a concurrent start short-circuits and is handed
+    // `reused: true` for a server that is about to be killed.
+    this.stopping = true;
+
+    // See SPAWN_SETTLE_MS: killing the tree before the shell has spawned its node child orphans the
+    // child. Only a stop that lands inside that window waits, and it waits only the remainder.
+    const wait = settleDelayMs(this.spawnedAtMs, Date.now());
+    if (wait) {
+      this.addLog('info', `${this.label} settling ${wait}ms before kill`);
+      await new Promise((r) => setTimeout(r, wait));
+    }
+
+    this.addLog('info', `Stopping ${this.label}...`);
+    this.dbHost = null;
+    this.spawnedAtMs = null;
     // Detach eagerly so a subsequent start() never sees a stale process (the exit handler is guarded on
     // identity, so the late exit of this proc won't touch the fresh one).
     this.process = null;
@@ -1612,8 +1774,8 @@ class AuthHub {
     this.status = 'stopped';
     this.stoppedAt = new Date().toISOString();
 
-    return new Promise((resolve) => {
-      proc.once('exit', () => resolve(this.getStatus()));
+    await new Promise((resolve) => {
+      proc.once('exit', resolve);
       try {
         if (process.platform === 'win32') {
           spawn('taskkill', ['/pid', String(proc.pid), '/f', '/t'], { shell: true });
@@ -1621,13 +1783,27 @@ class AuthHub {
           process.kill(-proc.pid, 'SIGKILL');
         }
       } catch (e) {}
-      setTimeout(() => resolve(this.getStatus()), 800);
+      setTimeout(resolve, 800);
     });
+
+    // The port coming back is the only evidence the server is really gone — `exit` fires for the
+    // shell, which is not what was listening. An orphan that survives this is one nothing in the
+    // daemon can reach, so say so with the port in the message rather than reporting a clean stop.
+    const deadline = Date.now() + STOP_PORT_VERIFY_MS;
+    while (Date.now() < deadline) {
+      if (await isPortFree(this.port)) return this.getStatus();
+      await new Promise((r) => setTimeout(r, PORT_RELEASE_POLL));
+    }
+    this.lastError =
+      `${this.label} stopped but port ${this.port} is still held — a child may have outlived the ` +
+      `kill. Nothing tracks it; find and kill whatever is listening on ${this.port}.`;
+    this.addLog('error', this.lastError);
+    return this.getStatus();
   }
 
   async restart() {
     await this.stop();
-    return this.start();
+    return await this.start();
   }
 
   getStatus() {
@@ -1652,41 +1828,178 @@ class AuthHub {
 
 const authHub = new AuthHub(skillConfig.authHubPath, skillConfig.authHubPort);
 
-// Every other SvelteKit app under apps/ runs the same way the auth hub does: `vite dev` in the app
-// directory, vite loads that app's own .env. AuthHub already encodes all of that plus the readiness
-// parsing, crash handling and log ring buffer, so a spoke is an AuthHub with a different label.
+// The SvelteKit spokes run the same way the auth hub does: `vite dev` in the app directory. AuthHub
+// already encodes that plus the readiness parsing, crash handling and log ring buffer, so an app is
+// an AuthHub with a different root, port and env chain.
 //
-// Ports are fixed per app rather than auto-assigned so a redirect between two of them (moderator ->
-// auth) always lands on the same place, and so `--strictPort` fails loudly on a collision instead of
-// silently drifting to the next free port.
-const SPOKE_APPS = {
-  moderator: { path: 'apps/moderator', port: 5174 },
-  'creator-studio': { path: 'apps/creator-studio', port: 5175 },
-  storage: { path: 'apps/storage', port: 5176 },
-  notifications: { path: 'apps/notifications', port: 5177 },
+// `storage` and `notifications` were registered here and could never start: they have no
+// vite.config.ts (their dev script is `tsx watch src/server.ts`) and no .env, so every attempt died
+// at the .env precheck reporting an auth-hub problem. They are out until someone runs them properly.
+const APP_REGISTRY = {
+  moderator: { path: 'apps/moderator', preferredPort: 5174 },
+  'creator-studio': { path: 'apps/creator-studio', preferredPort: 5175 },
 };
 
-class SpokeApp extends AuthHub {
-  constructor(name, appPath, port) {
-    super(appPath, port);
+// An app runs from the worktree it was started in. The previous class resolved its path against
+// `projectRoot` — derived from the daemon script's own location — so `app moderator start` typed in
+// a worktree served the primary checkout instead, silently: the app came up, answered 200s, and
+// showed `main`. Nothing in the output contradicted you unless you read the `path` field.
+class AppSession extends AuthHub {
+  constructor(name, worktree, port, envPaths) {
+    super('.', port);
     this.name = name;
+    this.worktree = worktree;
+    this.path = resolve(worktree, APP_REGISTRY[name].path);
+    this.label = name;
+    // The app's own .env is gitignored, so a fresh worktree has none. The chain supplies it from the
+    // primary checkout instead of refusing to start, which is what `requiredEnvPath: null` buys.
+    this.requiredEnvPath = null;
+    this.envPaths = envPaths;
+    // Born live: an entry reading `stopped` between the map insert and start() is one a concurrent
+    // start treats as dead and inherits the port of. The handler sets it too — see there for why.
+    this.status = 'starting';
+    this.dbHost = null;
   }
 
   getStatus() {
-    return { ...super.getStatus(), name: this.name, enabled: true };
+    const { jwksUrl, ...rest } = super.getStatus();
+    return {
+      ...rest,
+      name: this.name,
+      worktree: this.worktree,
+      enabled: true,
+      // Host only — see describeDatabaseHost. Never the connection string.
+      dbHost: this.dbHost ?? null,
+    };
   }
 }
 
-const spokeApps = new Map(
-  Object.entries(SPOKE_APPS).map(([name, cfg]) => [name, new SpokeApp(name, cfg.path, cfg.port)])
-);
-
-// Spokes bind with --strictPort, so one left running past daemon exit makes the next start of
-// that app fail with EADDRINUSE against a process nothing is tracking any more.
-async function stopSpokeApps() {
-  for (const app of spokeApps.values()) {
-    if (app.status === 'running') await app.stop();
+// Host only, never the credential. A DATABASE_URL is `postgres://user:pass@host:port/db`, so the
+// value must never be logged whole — this parses out the host and drops everything else on the
+// floor, and returns null rather than guessing if it cannot.
+function describeDatabaseHost(envVars) {
+  const url = envVars.DATABASE_URL;
+  if (!url) return null;
+  try {
+    const parsed = new URL(url);
+    const host = parsed.port ? `${parsed.hostname}:${parsed.port}` : parsed.hostname;
+    // `|| null`, not `?? null`. One shape needs it: a value with no `//` (`postgres:something`)
+    // parses as an opaque path and yields an EMPTY hostname, which `??` would pass through as `""` —
+    // falsy enough to skip the warning silently, but not null, so status would report it. Everything
+    // else degenerate throws and returns null from the catch below.
+    return host || null;
+  } catch (e) {
+    return null;
   }
+}
+
+// The primary checkout's copy of an app's .env is the base; the worktree's own, if it has one, wins
+// key by key. Both are gitignored, so the base is what a fresh worktree actually runs on — without
+// it the app refuses to start over a file that has never been in a checkout.
+function appEnvChain(worktree, name) {
+  const relative = APP_REGISTRY[name].path;
+  const paths = [resolve(primaryCheckout, relative, '.env')];
+  const worktreeEnv = resolve(worktree, relative, '.env');
+  // samePath, not `!==`: started from the primary checkout in the other drive-letter casing this
+  // would otherwise put the same file in the chain twice.
+  if (!samePath(worktreeEnv, paths[0])) paths.push(worktreeEnv);
+  return paths;
+}
+
+// Keyed by worktree AND app, so two worktrees can serve the same app at once. A key on the app name
+// alone is what made them global singletons.
+const appSessions = new Map();
+
+// The two decisions the concurrent-start fix turns on. Named because inline in the HTTP handler
+// nothing could reach them, and reverting the liveness rule to `status === 'running'` left every
+// check green.
+//
+// `status` alone is not enough: a session coming up reads `starting`. A live `process` counts
+// too, because proc.on('error') sets status without clearing it.
+function appIsLive(entry) {
+  // A stopping entry is not live — it is about to be killed, so it must not be handed back as
+  // `reused` — but its port is not inheritable either, which inheritablePort enforces separately.
+  if (!entry || entry.stopping) return false;
+  return sessionIsBusy(entry) || !!entry.process;
+}
+
+// Only a dead entry's port is worth inheriting. Doing so keeps a crashed app on its documented
+// number instead of drifting it every crash — getUsedPorts is deliberately status-blind, so the
+// entry still counts against the allocator. Inheriting a LIVE entry's port is the bug: two vite
+// processes, one port, one orphan.
+function inheritablePort(entry) {
+  // A stop in flight still owns its port until it proves the port came back, so nothing may inherit
+  // it — appIsLive says false for a stopping entry, so this needs the check of its own.
+  if (entry?.stopping) return null;
+  // `||`, not `??`. A port of 0 would otherwise be inherited as 0 and short-circuit the allocator
+  // into binding an ephemeral port. Unreachable today — findAvailablePort starts at 5174 and only
+  // climbs — but the inline version this was lifted from treated 0 as falsy, and a faithful
+  // extraction should not quietly change that.
+  return appIsLive(entry) ? null : entry?.port || null;
+}
+
+// Membership of the map IS the port reservation, and every release has to prove the entry is still
+// the one it means to release. Each caller awaits something first — start()'s path probes, or stop()'s
+// 800ms — and the entry can be replaced underneath in that window.
+function releaseIfOurs(key, session) {
+  if (appSessions.get(key) === session) appSessions.delete(key);
+}
+
+function appSessionKey(worktree, name) {
+  // Windows hands back whatever drive-letter casing the caller's shell used, so one tree arrives as
+  // `C:\Dev\...` from one agent and `c:\dev\...` from another. findSessionByWorktree already treats
+  // those as one tree; a raw string key here would treat them as two, put two vite processes on the
+  // same worktree, and leave the first addressable by nothing while it holds a port.
+  return `${canonicalPath(worktree)}::${name}`;
+}
+
+// Every app's preferred port is held back, not just the taken ones: moderator drifting off 5174
+// would otherwise land on 5175 and displace creator-studio from its own documented number for as
+// long as it ran.
+function appReservedPorts(name) {
+  const reserved = getUsedPorts();
+  for (const [other, spec] of Object.entries(APP_REGISTRY)) {
+    if (other !== name) reserved.add(spec.preferredPort);
+  }
+  return reserved;
+}
+
+// Allocating a port and reserving it are two steps with an await between them, so two starts landing
+// in the same tick both saw the port free and both claimed it — and the loser was reported `running`
+// before its --strictPort vite died on EADDRINUSE. Two worktrees starting the same app at once is
+// the headline case for this feature, so the pair is serialised. (The main-app path at POST
+// /sessions has the same window; it predates this and is not fixed here.)
+let appAllocationLock = Promise.resolve();
+function withAppAllocation(fn) {
+  const run = appAllocationLock.then(fn, fn);
+  appAllocationLock = run.then(() => {}, () => {});
+  return run;
+}
+
+function listAppSessions() {
+  return [...appSessions.values()].map((a) => a.getStatus());
+}
+
+// Apps bind with --strictPort, so one left running past daemon exit makes the next start of that
+// app fail with EADDRINUSE against a process nothing is tracking any more.
+async function stopAppSessions() {
+  // appIsLive, not `status === 'running'`. An app started seconds before a shutdown reads `starting`
+  // for its whole boot, and a `status` test skips it — so the daemon exits and vite keeps serving,
+  // which is the exact orphan this function exists to prevent. stop() already handles that case: it
+  // awaits startPromise and honours the settle window. It just never got called.
+  //
+  // Concurrently, because these are independent processes and the settle plus port-verify makes each
+  // stop worth seconds. Sequentially, two apps could outlast a supervisor's grace period and be
+  // SIGKILLed mid-loop, leaving the rest running — the orphan again, by a different door.
+  // `appIsLive || stopping`, because the two questions are different and one predicate cannot serve
+  // both. appIsLive answers "may a second start reuse this, or take its port?" — a stopping entry
+  // answers NO. This function asks "is there anything here that still needs killing or waiting on?"
+  // — a stopping entry answers YES: its stop may be sitting in the settle timeout with taskkill not
+  // yet fired, and filtering it out lets process.exit run straight past it, leaving vite alive.
+  // That is the orphan this function exists to prevent, arriving through the predicate that was
+  // meant to fix it.
+  const pending = [...appSessions.values()].filter((app) => appIsLive(app) || app.stopping);
+  await Promise.all(pending.map((app) => app.stop()));
 }
 
 // Session manager
@@ -1705,6 +2018,12 @@ function getUsedPorts() {
   for (const session of sessions.values()) {
     ports.add(session.port);
   }
+  // App sessions reserve their port the same way. Leaving them out let the main app's allocator
+  // hand out a port a spoke was already bound to, and --strictPort turns that into a start that
+  // fails on a number nothing in `status` accounted for.
+  for (const app of appSessions.values()) {
+    ports.add(app.port);
+  }
   return ports;
 }
 
@@ -1719,6 +2038,33 @@ function getUsedPorts() {
 // URLs. Measured on this box, a killed listener releases the socket 630-668 ms after taskkill is
 // spawned, and stop() waits at most 500 ms — so the naive probe reads "held" on every restart. Wait
 // the port out instead, and move only when it stays held long past any plausible teardown.
+// `taskkill /t` kills the process tree that exists WHEN IT RUNS. `pnpm exec vite` is a shell that
+// spawns node a moment later, so a kill issued in the first couple of seconds takes the shell and
+// leaves the node child to start and bind — a live server on a --strictPort port that no map entry,
+// no `status` row and no shutdown path can reach.
+//
+// Measured on this box, stop issued N seconds after start: 0s orphaned in 3 of 3 observations,
+// 2s and 5s clean in 1 each. 3000 buys margin over the observed boundary without making an ordinary stop feel slow —
+// only a stop issued seconds after its own start waits at all.
+const SPAWN_SETTLE_MS = 3000;
+
+// How much of the settle window is left. Separated from the wait so the arithmetic can be tested
+// without a clock or a spawn — the claim that it "waits only the remainder" was stated in a comment
+// and checked by nothing.
+//
+// Clamped upward. A clock step or a VM resume between spawn and stop makes `now - spawnedAt`
+// negative, and an unclamped `settle - negative` waits LONGER than the window, unbounded in principle.
+function settleDelayMs(spawnedAtMs, nowMs, settleMs = SPAWN_SETTLE_MS) {
+  if (!spawnedAtMs) return 0;
+  const since = nowMs - spawnedAtMs;
+  if (since >= settleMs) return 0;
+  // No lower clamp: the early return above guarantees `since < settleMs`, so this is always > 0.
+  return Math.min(settleMs, settleMs - since);
+}
+// After the kill, how long to keep checking that the port actually came back. Nothing here can kill
+// a grandchild it has no pid for, so this exists to make a residual orphan LOUD rather than silent.
+const STOP_PORT_VERIFY_MS = 5000;
+
 const PORT_RELEASE_TIMEOUT = 8000;
 const PORT_RELEASE_POLL = 250;
 
@@ -1891,7 +2237,7 @@ async function main() {
   console.error(`  Project root: ${projectRoot}`);
 
   // Find the main .env file
-  const mainEnvPath = resolve(projectRoot, '.env');
+  const mainEnvPath = resolve(primaryCheckout, '.env');
 
   const handler = async (req, res) => {
     const url = new URL(req.url, `http://localhost:${config.port}`);
@@ -1932,9 +2278,11 @@ async function main() {
           pid: process.pid,
           uptime: process.uptime(),
           sessions: await listSessions(),
+          apps: listAppSessions(),
           rgbProxy: rgbProxy.getStatus(),
           authHub: authHub.getStatus(),
           projectRoot,
+          primaryCheckout,
           daemonPort: config.port,
           baseDevPort: config.baseDevPort,
         }));
@@ -1984,53 +2332,168 @@ async function main() {
         return;
       }
 
-      // /app/<name>[/logs|/start|/stop|/restart] - spoke app control
+      // /app/<name>[/logs|/start|/stop|/restart] — per-worktree app control
       if (path === '/apps' && req.method === 'GET') {
         res.writeHead(200);
         res.end(JSON.stringify({
-          apps: [...spokeApps.values()].map((a) => a.getStatus()),
+          available: Object.keys(APP_REGISTRY),
+          apps: listAppSessions(),
         }));
         return;
       }
 
       if (path.startsWith('/app/')) {
         const [, , name, action] = path.split('/');
-        const app = spokeApps.get(name);
-        if (!app) {
+        if (!APP_REGISTRY[name]) {
           res.writeHead(404);
           res.end(JSON.stringify({
             error: `Unknown app: ${name}`,
-            available: [...spokeApps.keys()],
+            available: Object.keys(APP_REGISTRY),
+          }));
+          return;
+        }
+
+        let body = {};
+        if (req.method === 'POST') {
+          const raw = await readBody(req);
+          try {
+            body = JSON.parse(raw || '{}');
+          } catch (e) {
+            res.writeHead(400);
+            res.end(JSON.stringify({ error: 'Invalid JSON body' }));
+            return;
+          }
+        }
+        // No fallback. Defaulting to projectRoot IS the failure this change exists to remove, and a
+        // caller that omits the field would get the daemon's own checkout with a plausible-looking
+        // path in the response. POST /sessions already answers this input with a 400; match it.
+        const requestedWorktree = body.worktree || url.searchParams.get('worktree');
+        if (!requestedWorktree) {
+          res.writeHead(400);
+          res.end(JSON.stringify({
+            error: 'worktree required',
+            usage: 'POST /app/<name>/start { "worktree": "/path/to/worktree" }, or ?worktree= on GET',
+          }));
+          return;
+        }
+        const resolvedWorktree = resolve(requestedWorktree);
+        const key = appSessionKey(resolvedWorktree, name);
+        const existing = appSessions.get(key);
+
+        if (action === 'start' && req.method === 'POST') {
+          if (!(await pathExists(resolvedWorktree))) {
+            res.writeHead(400);
+            res.end(JSON.stringify({ error: `Worktree not found: ${resolvedWorktree}` }));
+            return;
+          }
+          // The preferred port is where the first worktree lands, so the common case stays the
+          // documented number. A second worktree drifts rather than dying on EADDRINUSE. Nothing
+          // needs rewriting to follow it: neither spoke's .env carries its own port or base URL,
+          // and the hub trusts loopback by HOST in dev, so the drifted origin is still first-party.
+          //
+          // Read, decide and reserve all happen INSIDE the lock. Deciding outside it was the bug the
+          // lock was supposed to fix, moved one layer in: two starts of the same app both read no
+          // entry, both entered, and the second inherited the first's port while it was still coming
+          // up — two vite processes, one port, one orphan.
+          let app;
+          let reused = null;
+          try {
+            app = await withAppAllocation(async () => {
+              const current = appSessions.get(key);
+              if (appIsLive(current)) {
+                reused = current;
+                return null;
+              }
+              const port =
+                inheritablePort(current) ??
+                (await findAvailablePort(APP_REGISTRY[name].preferredPort, appReservedPorts(name)));
+              const fresh = new AppSession(name, resolvedWorktree, port, appEnvChain(resolvedWorktree, name));
+              // Marked live BEFORE the lock releases. start() sets this too, but not soon enough:
+              // `await authHub.start()` sits between here and there, and through it the entry would
+              // sit in the map reading `stopped` with no process — which appIsLive calls dead, so a
+              // second start would inherit its port and spawn a rival on it. Moving the assignment
+              // into start() alone reopened exactly that, and it is invisible whenever the hub is
+              // already running, because then that await is a no-op.
+              fresh.status = 'starting';
+              appSessions.set(key, fresh);
+              return fresh;
+            });
+          } catch (err) {
+            res.writeHead(503);
+            res.end(JSON.stringify({ error: err.message }));
+            return;
+          }
+
+          if (reused) {
+            res.writeHead(200);
+            res.end(JSON.stringify({ reused: true, ...reused.getStatus() }));
+            return;
+          }
+
+          // Decision 2A: the hub is one shared, idempotent process and a spoke cannot log anyone in
+          // without it. The main app is deliberately NOT started — the spokes reach it over REST when
+          // they need it, and a cold Next.js compile is not something to trigger on someone's behalf.
+          if (skillConfig.authHubEnabled && authHub.status !== 'running') await authHub.start();
+
+          const status = await app.start();
+          // A start that never spawned holds no process, so the map entry is a port reservation
+          // against nothing — and since the entry is also the only way to address it, nothing can
+          // release it either. A missing node_modules would burn the app's preferred port for the
+          // life of the daemon, and the next start would drift off a number that was free.
+          //
+          // Guarded by identity, not by key: start() awaits path probes first, and a delete by key
+          // alone would remove whatever entry happens to be there now — which after a replacement is
+          // a live reservation belonging to someone else. Same rule as the exit handler's
+          // `this.process === proc`.
+          if (status.status === 'error') releaseIfOurs(key, app);
+          res.writeHead(status.status === 'error' ? 500 : 200);
+          res.end(JSON.stringify(status));
+          return;
+        }
+
+        if (!existing) {
+          res.writeHead(404);
+          res.end(JSON.stringify({
+            error: `${name} is not running in ${resolvedWorktree}`,
+            running: listAppSessions().filter((a) => a.name === name).map((a) => a.worktree),
           }));
           return;
         }
 
         if (!action && req.method === 'GET') {
           res.writeHead(200);
-          res.end(JSON.stringify(app.getStatus()));
+          res.end(JSON.stringify(existing.getStatus()));
           return;
         }
         if (action === 'logs' && req.method === 'GET') {
           const since = parseInt(url.searchParams.get('since') || '0', 10);
           const limit = parseInt(url.searchParams.get('limit') || '500', 10);
           res.writeHead(200);
-          res.end(JSON.stringify({ currentIndex: app.logIndex, logs: app.getLogs(since, limit) }));
-          return;
-        }
-        if (action === 'start' && req.method === 'POST') {
-          const status = app.start();
-          res.writeHead(status.status === 'error' ? 500 : 200);
-          res.end(JSON.stringify(status));
+          res.end(JSON.stringify({
+            currentIndex: existing.logIndex,
+            logs: existing.getLogs(since, limit),
+          }));
           return;
         }
         if (action === 'stop' && req.method === 'POST') {
-          const status = await app.stop();
+          const status = await existing.stop();
+          // Membership of the map is the port reservation, so a stop that leaves the entry behind
+          // holds a port nothing is serving — the same leak DELETE /sessions/:id exists to avoid.
+          //
+          // Identity-guarded like the other two, and this is the widest window of the three: stop()
+          // waits up to 800ms by construction, and a start arriving inside it sees a stopped entry
+          // with no process, inherits its port and replaces it. Deleting by key alone would then
+          // remove the NEW entry and leave its vite running with nothing referencing it.
+          releaseIfOurs(key, existing);
           res.writeHead(200);
           res.end(JSON.stringify(status));
           return;
         }
         if (action === 'restart' && req.method === 'POST') {
-          const status = await app.restart();
+          const status = await existing.restart();
+          // Same reservation-against-nothing as the start path, and the same identity guard: a
+          // restart awaits a stop and then start()'s probes, so the entry may not be ours any more.
+          if (status.status === 'error') releaseIfOurs(key, existing);
           res.writeHead(status.status === 'error' ? 500 : 200);
           res.end(JSON.stringify(status));
           return;
@@ -2058,7 +2521,7 @@ async function main() {
 
       // POST /auth/start - Start auth hub
       if (path === '/auth/start' && req.method === 'POST') {
-        const status = authHub.start();
+        const status = await authHub.start();
         res.writeHead(status.status === 'error' ? 500 : 200);
         res.end(JSON.stringify(status));
         return;
@@ -2384,18 +2847,23 @@ async function main() {
           port = await findAvailablePort(config.baseDevPort, usedPorts);
         }
 
-        // A worktree's own .env is the one its branch was written against. Falling back to the
-        // daemon's project root hands every session whichever tree happened to launch the daemon.
+        // The primary checkout's .env is the base of every session; a worktree's own .env (or an
+        // explicit --env) layers on top of it. So a worktree file needs to restate only the keys
+        // it wants to change, and one that restates nothing is a no-op rather than an outage.
+        //
+        // "Present" is the safe answer for the top of the chain and the unsafe one for the base:
+        // a timed-out check must not DROP the primary file, because that is what leaves a session
+        // with no DATABASE_URL and no secrets, failing in a way that looks nothing like a slow
+        // filesystem.
         const worktreeEnvPath = resolve(resolvedWorktree, '.env');
-        const resolvedEnvPath = envPath
+        const overlayPath = envPath
           ? resolve(envPath)
-          : // "Present" is the safe answer for the worktree and the unsafe one here: picking a
-            // file that may not exist over a known-good fallback starts the server with no env at
-            // all — no DATABASE_URL, no secrets — failing in a way that looks nothing like a slow
-            // filesystem. So an unknown answer falls back to the main .env.
-            await checkPath(worktreeEnvPath).then((r) => r.exists && !r.timedOut)
+          : (await checkPath(worktreeEnvPath).then((r) => r.exists && !r.timedOut))
             ? worktreeEnvPath
-            : mainEnvPath;
+            : null;
+        const resolvedEnvPaths = [mainEnvPath, overlayPath].filter(
+          (p, i, all) => p && all.indexOf(p) === i
+        );
 
         // Create and start session
         const sessionId = generateSessionId();
@@ -2403,7 +2871,7 @@ async function main() {
           sessionId,
           resolvedWorktree,
           port,
-          resolvedEnvPath,
+          resolvedEnvPaths,
           modeOverrides
         );
         sessions.set(sessionId, session);
@@ -2536,7 +3004,7 @@ async function main() {
         testQueue.shutdown();
         await rgbProxy.stop();
         await authHub.stop();
-        await stopSpokeApps();
+        await stopAppSessions();
 
         res.writeHead(200);
         res.end(JSON.stringify({ success: true }));
@@ -2577,7 +3045,10 @@ async function main() {
 
     if (skillConfig.authHubEnabled) {
       console.error('AUTH_HUB_ENABLED=true — starting auth hub...');
-      authHub.start();
+      // Not awaited: this is the listen callback, and the ready signal below is what every `cli`
+      // invocation waits on. start() records its own failures in lastError and the log buffer, so
+      // the catch is only here to stop an unexpected rejection becoming an unhandled one.
+      authHub.start().catch((err) => console.error(`Auth hub failed to start: ${err.message}`));
     }
 
     // Output ready signal to stdout for parsing
@@ -2609,7 +3080,7 @@ async function main() {
     testQueue.shutdown();
     await rgbProxy.stop();
     await authHub.stop();
-    await stopSpokeApps();
+    await stopAppSessions();
     try { unlinkSync(pidFile); } catch (e) {}
     server.close();
     process.exit(0);
@@ -2623,7 +3094,7 @@ async function main() {
     testQueue.shutdown();
     await rgbProxy.stop();
     await authHub.stop();
-    await stopSpokeApps();
+    await stopAppSessions();
     try { unlinkSync(pidFile); } catch (e) {}
     server.close();
     process.exit(0);
@@ -2655,9 +3126,24 @@ if (invokedDirectly) {
 }
 
 export {
+  APP_REGISTRY,
+  AppSession,
+  appEnvChain,
+  appIsLive,
+  appSessionKey,
+  settleDelayMs,
+  inheritablePort,
+  releaseIfOurs,
+  describeDatabaseHost,
+  appReservedPorts,
+  appSessions,
   checkPath,
   claimPortForReuse,
   DevSession,
+  loadEnvChain,
+  primaryCheckout,
+  primaryResolution,
+  withAppAllocation,
   findSessionByWorktree,
   getUsedPorts,
   listSessions,

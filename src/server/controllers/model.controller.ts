@@ -628,6 +628,10 @@ export const getModelsPagedSimpleHandler = async ({
     },
   });
 
+  // Same signal getModelsInfiniteHandler acts on: getModels reports when the row
+  // set it returned depends on who asked, which no cache key can express.
+  if (results.isPrivate && ctx.cache) ctx.cache.canCache = false;
+
   const isModerator = ctx?.user?.isModerator;
   const parsedResults = {
     ...results,

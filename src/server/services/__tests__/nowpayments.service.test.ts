@@ -1,10 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import type { NOWPayments } from '~/server/http/nowpayments/nowpayments.schema';
 
 // Use vi.hoisted so mocks are available inside vi.mock factories
 const {
-  mockDbRead,
-  mockDbWrite,
   mockNowpaymentsCaller,
   mockGrantBuzzPurchase,
   mockGetTransactionByExternalId,
@@ -12,20 +11,7 @@ const {
   mockSignalClient,
   mockWithDistributedLock,
 } = vi.hoisted(() => {
-  const mockCryptoWallet = {
-    findUnique: vi.fn(),
-    create: vi.fn(),
-  };
-
   return {
-    mockDbRead: {
-      cryptoWallet: { findUnique: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
-      cryptoDeposit: { findUnique: vi.fn().mockResolvedValue(null), findMany: vi.fn().mockResolvedValue([]), count: vi.fn().mockResolvedValue(0) },
-    },
-    mockDbWrite: {
-      cryptoWallet: mockCryptoWallet,
-      cryptoDeposit: { upsert: vi.fn().mockResolvedValue({}), update: vi.fn().mockResolvedValue({}), updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
-    },
     mockNowpaymentsCaller: {
       createPayment: vi.fn(),
       getPaymentStatus: vi.fn(),
@@ -49,17 +35,8 @@ vi.mock('~/env/server', () => ({
   env: { NEXTAUTH_URL: 'https://civitai.com', LOGGING: '' },
 }));
 
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: vi.fn().mockResolvedValue(undefined),
-}));
-
 vi.mock('~/server/services/notification.service', () => ({
   createNotification: vi.fn().mockResolvedValue(undefined),
-}));
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: mockDbRead,
-  dbWrite: mockDbWrite,
 }));
 
 vi.mock('~/server/http/nowpayments/nowpayments.caller', () => ({
@@ -85,21 +62,6 @@ vi.mock('~/server/common/enums', () => ({
   NotificationCategory: { Buzz: 'buzz' },
 }));
 
-vi.mock('~/server/redis/client', () => ({
-  redis: {
-    packed: {
-      get: vi.fn().mockResolvedValue(null),
-      set: vi.fn().mockResolvedValue(undefined),
-    },
-    del: vi.fn().mockResolvedValue(1),
-  },
-  REDIS_KEYS: {
-    CACHES: {
-      SUPPORTED_CRYPTO_CURRENCIES: 'packed:caches:supported-crypto-currencies',
-    },
-  },
-}));
-
 vi.mock('~/server/common/constants', () => ({
   CacheTTL: { sm: 180, hour: 3600 },
 }));
@@ -115,6 +77,20 @@ import {
   getDepositHistory,
   reconcileDeposits,
 } from '~/server/services/nowpayments.service';
+
+// The two clients stay split, exactly as the fixture they replace had them: the old `mockDbRead`
+// carried only read methods and `mockDbWrite` only writes, so a mis-routed call used to die on a
+// missing method. It now lands on a vivified node instead, which is why the write returns below
+// are restated rather than left to the canonical defaults — a service that reads what a write
+// returned must keep getting a value.
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
+
+// Reads are left to the canonical defaults: findUnique → null, findMany → [], count → 0, which
+// is what the old fixture spelled out by hand. Writes have no canonical default.
+mockDbWrite.cryptoDeposit.upsert.mockResolvedValue({});
+mockDbWrite.cryptoDeposit.update.mockResolvedValue({});
+mockDbWrite.cryptoDeposit.updateMany.mockResolvedValue({ count: 1 });
 
 // Helper to build a webhook event
 function makeWebhookEvent(
@@ -185,9 +161,7 @@ describe('processDeposit', () => {
     const result = await processDeposit(12345, 'partially_paid', event);
 
     expect(result).toEqual({ userId: 42, buzzAmount: 3000, transactionId: 'tx_123' });
-    expect(mockGrantBuzzPurchase).toHaveBeenCalledWith(
-      expect.objectContaining({ amount: 3000 })
-    );
+    expect(mockGrantBuzzPurchase).toHaveBeenCalledWith(expect.objectContaining({ amount: 3000 }));
   });
 
   it('does not grant buzz on confirming status', async () => {
@@ -366,7 +340,10 @@ describe('processDeposit', () => {
 
   it('does not overwrite finished status with confirming', async () => {
     mockDbRead.cryptoWallet.findUnique.mockResolvedValueOnce({ chain: 'evm' });
-    mockDbRead.cryptoDeposit.findUnique.mockResolvedValueOnce({ status: 'finished', buzzCredited: 5000 });
+    mockDbRead.cryptoDeposit.findUnique.mockResolvedValueOnce({
+      status: 'finished',
+      buzzCredited: 5000,
+    });
 
     const event = makeWebhookEvent({ payment_status: 'confirming' });
     await processDeposit(12345, 'confirming', event);
@@ -377,7 +354,10 @@ describe('processDeposit', () => {
 
   it('does not overwrite finished status with buzz_failed', async () => {
     mockDbRead.cryptoWallet.findUnique.mockResolvedValueOnce({ chain: 'evm' });
-    mockDbRead.cryptoDeposit.findUnique.mockResolvedValueOnce({ status: 'finished', buzzCredited: 5000 });
+    mockDbRead.cryptoDeposit.findUnique.mockResolvedValueOnce({
+      status: 'finished',
+      buzzCredited: 5000,
+    });
     mockGrantBuzzPurchase.mockRejectedValueOnce(new Error('Buzz API down'));
 
     const event = makeWebhookEvent({ outcome_amount: 5.0 });
@@ -389,7 +369,10 @@ describe('processDeposit', () => {
 
   it('allows buzz_failed to be overwritten by finished on successful retry', async () => {
     mockDbRead.cryptoWallet.findUnique.mockResolvedValueOnce({ chain: 'evm' });
-    mockDbRead.cryptoDeposit.findUnique.mockResolvedValueOnce({ status: 'buzz_failed', buzzCredited: null });
+    mockDbRead.cryptoDeposit.findUnique.mockResolvedValueOnce({
+      status: 'buzz_failed',
+      buzzCredited: null,
+    });
 
     const event = makeWebhookEvent({ outcome_amount: 5.0 });
     await processDeposit(12345, 'finished', event);
@@ -666,7 +649,9 @@ describe('reconcileDeposits', () => {
 
   it('handles partially_paid status', async () => {
     mockNowpaymentsCaller.getListPayments.mockResolvedValueOnce({
-      data: [makePayment({ payment_id: 555, payment_status: 'partially_paid', outcome_amount: 3.0 })],
+      data: [
+        makePayment({ payment_id: 555, payment_status: 'partially_paid', outcome_amount: 3.0 }),
+      ],
     });
 
     const result = await reconcileDeposits({ dateFrom: '2026-03-01', dateTo: '2026-03-31' });

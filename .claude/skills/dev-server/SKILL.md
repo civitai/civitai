@@ -179,9 +179,15 @@ and prints each timing. It costs a guaranteed ~45s rebuild, so it is not automat
 guess a session: name the id, because the session you did not name is usually the one someone is
 looking at.
 
-Self-tests — run all three after touching `probe.mjs` or the hook:
+Self-tests. Standalone scripts, no vitest — run the ones your change touches, and `cli-verbs`
+after any edit to `cli.mjs`:
 
 ```bash
+node .claude/skills/dev-server/scripts/env-chain.selftest.mjs          # .env layering, both directions
+node .claude/skills/dev-server/scripts/app-registry.selftest.mjs       # registry, ports, path identity, the lock
+node .claude/skills/dev-server/scripts/db-host.selftest.mjs            # the DB host line never emits a credential
+node .claude/skills/dev-server/scripts/cli-verbs.selftest.mjs          # every dispatch target in cli.mjs exists
+node .claude/skills/dev-server/scripts/branch-watch.selftest.mjs       # HEAD watching + the restart decision
 node .claude/skills/dev-server/scripts/probe.selftest.mjs              # the classifier, pure
 node .claude/skills/dev-server/scripts/probe.integration.selftest.mjs  # the real probe() end to end
 node .claude/hooks/check-writable.selftest.mjs                         # the hook, both directions
@@ -201,14 +207,14 @@ fails.** Anything that adds a new signal belongs in the integration file, not ju
 | `unwedge <session-id>` | Stop, purge the build dir, restart, wait, re-probe (~45s) |
 | `status` | Check daemon status and list all sessions |
 | `list` | List all dev sessions |
-| `start [worktree] [--prod a,b] [--dev a,b]` | Start dev server (default: current directory) |
-| `logs [session-id]` | Get logs for a session |
-| `tail [session-id]` | Tail logs continuously |
-| `stop <session-id>` | Stop a session |
-| `restart <session-id>` | Restart a session |
+| `start [worktree] [--app name] [--prod a,b] [--dev a,b]` | Start a dev server (default: the main app, current directory) |
+| `logs [session-id] [--app name]` | Get logs for a session, or for an app in this worktree |
+| `tail [session-id] [--app name]` | Tail logs continuously |
+| `stop <session-id>` \| `stop --app name` | Stop a session or an app |
+| `restart <session-id>` \| `restart --app name` | Restart a session or an app |
 | `rgb [subcmd]` | RGB proxy control (`status`\|`start`\|`stop`\|`restart`\|`logs`) |
-| `app` | List the spoke apps and their state |
-| `app <name> [subcmd]` | Spoke app control (`status`\|`start`\|`stop`\|`restart`\|`logs`) |
+| `app` | List running apps, their worktree, and what is available |
+| `app <name> [subcmd] [worktree]` | App control (`status`\|`start`\|`stop`\|`restart`\|`logs`) |
 | `auth [subcmd]` | Auth hub control (`status`\|`start`\|`stop`\|`restart`\|`logs`) |
 | `test run [worktree]` | Queue a unit-test run; returns position + the command to wait on it |
 | `test wait <run-id>` | Block until that run finishes; exits with the run's exit code |
@@ -219,9 +225,9 @@ fails.** Anything that adds a new signal belongs in the integration file, not ju
 
 ## Env modes — which services a session talks to
 
-A session picks one `.env` (its worktree's if present, otherwise the project root's) and then
-applies a per-service **overlay** on top of it. The overlay only restates the keys for the services
-it names, so nothing else in the chosen `.env` moves — the two `.env` files are still never merged.
+A session layers its `.env` files — the primary checkout's as the base, the worktree's own on top —
+and then applies a per-service **overlay** on that. The overlay only restates the keys for the
+services it names, so nothing else in the chain moves.
 
 **No `env-modes.local` means no overlay at all** — not "everything on dev". The file is gitignored,
 so it never comes with a checkout: until it exists, every start runs on the base `.env` exactly as
@@ -240,9 +246,23 @@ node .claude/skills/dev-server/cli.mjs start --prod all
 node .claude/skills/dev-server/cli.mjs start --prod all --dev search
 ```
 
-The groups are whatever `env-modes.local` defines — today `db`, `buzz`, `search`, `signals`,
-`redis`. Copy `env-modes.example` to `env-modes.local` (gitignored, holds credentials) and fill it
-in; adding a service is an edit to that file, not to the code.
+`--prod`/`--dev` can only move the groups **your own** `env-modes.local` defines, and that file is
+gitignored — a fresh copy of `env-modes.example` defines none, so `--prod all` is a no-op until you
+fill it in. Adding a service is an edit to that file, not to the code.
+
+⚠️ **`env-modes.local` does not fall through** the way `.env` now does. It is read from the skill
+directory of the daemon that is running (`env-modes.mjs`), so a daemon started from a worktree's own
+copy of the CLI finds none and applies no overlay at all. Start the daemon from the primary checkout,
+or the groups simply will not exist.
+
+Several services have **no dev counterpart to move to at all** — `env-modes.mjs` lists orchestrator,
+payments, s3, clickhouse, notifications, feeds and opensearch in `PROD_ONLY_GROUPS`, and `auth-hub`
+in `UNMOVABLE_GROUPS` (it is one shared process reading its own `.env`, so an overlay there would
+repoint the app at a hub that is not running). `mode: dev` therefore never means "nothing here is
+production".
+
+⚠️ **Apps have no env modes.** `--prod`/`--dev` apply to the main app only; an app runs on its `.env`
+chain with no overlay. `start --app <name> --prod db` is refused rather than silently ignored.
 
 **Defaults.** Every group defaults to `dev`. Move a default in the skill's own `.env` when a dev
 service is unreliable:
@@ -427,49 +447,66 @@ In the dashboard TUI, press `R` to toggle the proxy.
 
 Redbird binds ports 80 and 443. On Windows the daemon must be launched from an elevated terminal; on macOS/Linux start it with `sudo`. If it fails the daemon surfaces `lastError` via `/rgb` status and in RGB proxy logs.
 
-## Spoke Apps
+## Apps
 
-The SvelteKit apps under `apps/` (moderator, creator-studio, storage, notifications) run through the
-daemon the same way the auth hub does, so their logs land in the same place and either a human or an
-agent can start one and read the output.
+`moderator` and `creator-studio` run through the daemon the same way the main app does — started
+from the worktree you are in, logs in the same place, port reserved by the same allocator.
 
 ```bash
-node .claude/skills/dev-server/cli.mjs app                      # list all, with state and URL
-node .claude/skills/dev-server/cli.mjs app moderator start
+node .claude/skills/dev-server/cli.mjs start --app moderator    # from the worktree you are in
+node .claude/skills/dev-server/cli.mjs app                      # what is running, and where
 node .claude/skills/dev-server/cli.mjs app moderator logs
 node .claude/skills/dev-server/cli.mjs app moderator restart
 node .claude/skills/dev-server/cli.mjs app moderator stop
 ```
 
-| App | Port |
-|-----|------|
+`--app <name>` works on `start`, `logs`, `tail`, `stop` and `restart`, so one gesture covers the
+lifecycle;
+`app <name> <subcmd>` is the same thing spelled the other way. Both default to the current
+directory's worktree, and `app <name> <subcmd> <worktree>` names a different one. Running apps also
+appear under `apps` in `status`, beside the main-app sessions.
+
+| App | Preferred port |
+|-----|----------------|
 | moderator | 5174 |
 | creator-studio | 5175 |
-| storage | 5176 |
-| notifications | 5177 |
 
-Ports are fixed rather than auto-assigned, so a redirect between two apps (moderator sends you to the
-auth hub to sign in) always lands in the same place. `--strictPort` means a collision fails loudly
-instead of silently drifting to the next free port.
+**Preferred, not fixed.** The first worktree to start an app gets the number in that table; a second
+worktree starting the same app drifts to the next free port instead of dying on EADDRINUSE, so two
+branches of the same app can run side by side. Nothing has to be rewritten to follow the drift:
+neither app's `.env` carries its own port or base URL. Every app's preferred port is held back from
+the drift search, so moderator drifting never displaces creator-studio.
 
-Each app needs its own `.env` in its directory — vite loads it, the daemon does not inject it. Start
-from that app's `.env.example`.
+🔴 **Read the `path` field, not just the fact that it started.** An app serving the wrong checkout
+answers 200s and looks completely healthy — the only thing that contradicts you is `path`.
 
-**Most spoke pages need the auth hub running**, since they redirect to it to sign in:
+**`.env` falls through from the primary checkout.** An app reads `<primary>/apps/<name>/.env` as its
+base, with `<worktree>/apps/<name>/.env` layered on top when the worktree has one. Those files are
+gitignored, so a fresh worktree has neither — the base is what makes it start at all.
 
-```bash
-node .claude/skills/dev-server/cli.mjs auth start
-node .claude/skills/dev-server/cli.mjs app moderator start
-```
+⚠️ **That base may point at a production database**, and the fall-through means a fresh worktree
+inherits it without anyone choosing it. The app prints the `DATABASE_URL` **host** (never the
+credential) on startup and carries it as `dbHost` in `app` / `status` output — read it before you
+click anything that writes.
 
-### They bind to 127.0.0.1, deliberately
+`storage` and `notifications` are **not** here. They were registered and could never start: no
+`vite.config.ts` (their dev script is `tsx watch src/server.ts`) and no `.env`, so every attempt died
+at the `.env` precheck reporting an auth-hub problem. Register them properly or not at all.
 
-The daemon starts every vite sidecar with `--host 127.0.0.1`. Vite's default binds IPv6 loopback
-only (`[::1]`), and a Windows hosts file that defines `localhost` explicitly lists `127.0.0.1`
-first — so the browser dials an IPv4 socket nothing is listening on and hangs with no error
-anywhere. curl papers over it by falling back to `::1` after a couple hundred milliseconds, which
-makes it look like a slow server rather than a broken one. Forcing the IPv4 bind removes the whole
-class of problem.
+**Starting an app starts the auth hub** if it is enabled and not already running — an app cannot log
+anyone in without it. The **main app is not** started: the apps reach it over REST when they need it,
+and a cold Next.js compile is not something to trigger on someone's behalf. Start it yourself if the
+page you are looking at needs it.
+
+### They bind `::`, deliberately
+
+The daemon starts every vite sidecar with `--host ::`. Bound to `127.0.0.1` they answered on v4 and
+nothing on `[::1]`; Windows resolves `localhost` to `::1` first, so the browser got
+connection-refused while curl — which falls back to v4 — reported the server perfectly healthy.
+`--host localhost` is **not** the fix either: it resolves to `::1` only, moving the outage onto every
+caller that hardcodes `127.0.0.1`. `::` accepts v4-mapped addresses, so `localhost`, `127.0.0.1` and
+`[::1]` all answer, and it matches what `next dev` already binds on 3000. Tradeoff: `::` also listens
+on LAN interfaces, where the old bind was loopback-only.
 
 ### First request is slow
 
@@ -477,9 +514,12 @@ Vite compiles routes on demand in dev. The first hit on a cold app can take **25
 (the auth hub's `/login` is the worst offender); every hit after is a few hundred milliseconds. A
 browser sitting on a white page right after startup is usually this, not a hang.
 
+The dashboard shows main-app sessions only. Apps started with `--app` do not appear there — use
+`cli.mjs app` or `cli.mjs status`.
+
 ## Auth Hub
 
-Authentication was split into a standalone **login hub** (`apps/auth`, SvelteKit on port **5173**). The main app is now a **verify-only spoke**: it validates the hub's `civ-token` via the hub's JWKS and no longer runs next-auth sign-in itself. So a *fresh* login in dev needs the hub running. The daemon boots and manages it as a sidecar, same as the RGB proxy.
+Authentication was split into a standalone **login hub** (`apps/auth`, SvelteKit on port **5173**). The main app is now a **verify-only spoke**: it validates the hub's `civ-token` via the hub's JWKS and no longer runs next-auth sign-in itself. So a *fresh* login in dev needs the hub running. The daemon boots and manages it as a sidecar, and starting an app (`start --app <name>`) starts it too when `AUTH_HUB_ENABLED` is set and it is not already running.
 
 ### Control
 
@@ -498,7 +538,7 @@ In the dashboard TUI press `A` to toggle it; the session line shows `AUTH: ready
 
 ```env
 AUTH_HUB_ENABLED=true      # auto-start the hub when the daemon boots
-AUTH_HUB_PATH=apps/auth    # path relative to project root
+AUTH_HUB_PATH=apps/auth    # relative to the PRIMARY checkout, not the tree the daemon runs from
 AUTH_HUB_PORT=5173         # hub dev port (matches AUTH_JWT_ISSUER)
 ```
 
@@ -602,9 +642,17 @@ node .claude/skills/dev-server/cli.mjs start /path/to/worktree
 
 What's already handled:
 
-- **A worktree's own `.env` wins.** A session loads `<worktree>/.env` when one exists, and falls back to the project root's `.env` only when it doesn't — so a worktree with no `.env` still boots healthy. The chosen file is logged as `Env: <path>` at session start and returned as `envPath` in session status.
+- **A worktree's own `.env` layers on the primary's.** The primary checkout's `.env` is the base of every session; `<worktree>/.env` (or an explicit `--env`) overrides it key by key. So a worktree file needs to restate only what it wants to change, and one that restates nothing is a no-op rather than an outage. The whole chain is logged as `Env: <base> <- <overlay>` at session start and returned as `envPaths` in session status (`envPath` remains the top of the chain).
 
-  **The two are not merged.** Whichever file is chosen supplies every key; nothing is inherited from the other. A worktree `.env` that is a partial copy will therefore be missing whatever it doesn't restate, and different files can point a session at a different database — check the `Env:` line if a session behaves unlike its neighbours.
+  Before this they were **not** merged — the worktree file replaced the primary outright, so a two-key override file started the server with no `DATABASE_URL` and no secrets, failing in a way that looked nothing like the edit that caused it.
+
+  **"Primary checkout" is resolved from git, not from where the daemon was launched.** The skill
+  directory is committed, so every worktree has its own copy of `daemon.mjs` — a daemon started from
+  one would otherwise treat that worktree as the primary and fall back to a `.env` it does not have.
+  `git rev-parse --git-common-dir` answers the same from inside any worktree. `wt stale` / `wt rm`
+  take the primary from the first entry of `git worktree list`, which git guarantees is the main
+  worktree; before that, running them through a worktree's own CLI copy inverted every check and
+  offered the real main checkout as removable.
 - **Auth on secondary ports.** `NEXTAUTH_URL`, `NEXTAUTH_URL_INTERNAL`, and `NEXT_PUBLIC_BASE_URL` are rewritten to `http://localhost:<port>`, so logins work on non-3000 sessions instead of bouncing to the primary.
 - **Independent branch watching + prewarming** per session.
 - **Port allocation sees listeners the daemon does not own.** The picker connects to both loopback

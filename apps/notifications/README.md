@@ -14,6 +14,10 @@ One process owns the whole notification write side:
   recipients against the **main DB** `UserNotificationSettings` (reachable now that we're in-repo), and
   UPSERTs the `PendingNotification` queue row. This is net-new surface — the external server was
   GET-only.
+- **(A2) Bulk producer** — `POST /notifications/bulk`, same auth. Takes **pre-resolved** recipients
+  and applies **no** opt-out filter; each `send-notifications` processor filters in its own SQL. This
+  is the path `src/server/jobs/send-notifications.ts` uses, and it is why a processor missing its
+  `NOT EXISTS "UserNotificationSettings"` clause is unmuteable.
 - **(B) Fan-out worker** — the ported ~5s poll loop. Claims `PendingNotification` rows, fans each into
   `Notification` + `UserNotification` rows (normal / debounced), deletes/reschedules the pending row,
   and POSTs a realtime `notification:new` signal per affected user while bumping the redis unread

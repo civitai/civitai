@@ -290,6 +290,32 @@ export type ListingDetail = {
    * the ranking SQL reads it (`COALESCE(m.install_count, 0)`).
    */
   installCount: number;
+  /**
+   * PUBLIC SOURCE-REPOSITORY link ("this app is open source"), or null.
+   *
+   * 🔴 ALLOWLIST JUSTIFICATION. It is a link the AUTHOR chose to publish about their
+   * own app, host-restricted to github.com / gitlab.com / codeberg.org and normalised
+   * to `https://<host>/<owner>/<repo>` by `validateRepositoryUrl` — so it can carry no
+   * credentials, no port, no query string, no deep path and no host outside that set.
+   * It reveals nothing the author has not deliberately made public, and it is
+   * moderator-gated on both kinds (manifest-governed + re-reviewed on approve for
+   * on-site; a MATERIAL patch field routing through a shadow revision for off-site).
+   *
+   * 🔴 DETAIL-ONLY, and the asymmetry with `tagline`/`category` is deliberate: it is
+   * NOT on `ListingCard`. A grid of store cards is a low-attention surface where an
+   * outbound link has no room for the context that makes it safe to click; the detail
+   * page shows it as one labelled row next to the app's other declared facts. Adding it
+   * to the card DTO would put an un-contextualised outbound link on every `/apps` tile.
+   * The exact-key-set assertions in `app-listing.service.test.ts` pin both halves.
+   *
+   * 🔴 NOT `AppBlock.repoUrl` — that is the app's INTERNAL Forgejo repository and is
+   * never public. This is a separate, author-declared column (`source_repo_url`).
+   *
+   * A STRING (or null), not an object: this DTO also crosses the transformer-less
+   * public REST `GET /api/v1/apps/{slug}` boundary, so it must be a JSON-safe scalar.
+   * Null while the MANUAL-APPLY migration is outstanding — see `projectListingDetail`.
+   */
+  sourceRepoUrl: string | null;
   /** Ordered gallery — screenshots whose backing Image still exists (null-image rows dropped). */
   screenshots: ListingGalleryScreenshot[];
   kindData: ListingDetailKindData;

@@ -24,6 +24,7 @@ const valid: OffsiteSubmitFormValues = {
   slug: 'my-external-app',
   name: 'My External App',
   externalUrl: 'https://example.com/app',
+  sourceRepoUrl: '',
   tagline: 'a neat tool',
   description: 'does neat things',
   category: 'utility',
@@ -159,5 +160,96 @@ describe('🔴 the Select option lists render LABELS, never the stored key', () 
     for (const o of [...OFFSITE_CATEGORY_OPTIONS, ...OFFSITE_CONTENT_RATING_OPTIONS]) {
       expect(o.label).not.toBe(o.value);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SOURCE REPOSITORY — the client mirror
+// ---------------------------------------------------------------------------
+
+describe('sourceRepoUrl — the client mirror delegates to the SERVER validator', () => {
+  it('the bound + the host label are DERIVED, not re-typed', async () => {
+    const { MAX_REPOSITORY_URL_LENGTH, REPOSITORY_HOST_ALLOWLIST } = await import(
+      '~/server/schema/blocks/external-app.schema'
+    );
+    const { SOURCE_REPO_HOSTS_LABEL } = await import('../offsiteSubmitFormConfig');
+    expect(OFFSITE_SUBMIT_LIMITS.sourceRepoUrlMax).toBe(MAX_REPOSITORY_URL_LENGTH);
+    // The help text a user reads must name exactly the hosts the server accepts — a
+    // hard-coded copy is how a form promises a host that submit rejects.
+    for (const host of REPOSITORY_HOST_ALLOWLIST) {
+      expect(SOURCE_REPO_HOSTS_LABEL).toContain(host);
+    }
+  });
+
+  it('an EMPTY value is valid (the field is optional)', () => {
+    expect(validateOffsiteSubmitForm({ ...valid, sourceRepoUrl: '' }).sourceRepoUrl).toBeUndefined();
+    expect(validateOffsiteSubmitForm({ ...valid, sourceRepoUrl: '   ' }).sourceRepoUrl).toBeUndefined();
+  });
+
+  it('accepts each allowlisted host (so the check is not vacuously rejecting)', () => {
+    for (const url of [
+      'https://github.com/o/r',
+      'https://gitlab.com/o/r',
+      'https://codeberg.org/o/r',
+      'https://github.com/o/r.git',
+    ]) {
+      expect(
+        validateOffsiteSubmitForm({ ...valid, sourceRepoUrl: url }).sourceRepoUrl,
+        url
+      ).toBeUndefined();
+    }
+  });
+
+  it.each([
+    ['http', 'http://github.com/o/r'],
+    ['a non-allowlisted host', 'https://gist.github.com/o/r'],
+    ['www.', 'https://www.github.com/o/r'],
+    ['a deep path', 'https://github.com/o/r/tree/main'],
+    ['the host root', 'https://github.com'],
+    ['credentials', 'https://u:p@github.com/o/r'],
+  ])('surfaces an inline error for %s', (_label, sourceRepoUrl) => {
+    const errors = validateOffsiteSubmitForm({ ...valid, sourceRepoUrl });
+    expect(errors.sourceRepoUrl).toBeDefined();
+    expect(isOffsiteSubmitFormValid({ ...valid, sourceRepoUrl })).toBe(false);
+  });
+
+  it('🔴 the inline message is the SERVER’s message, character for character', async () => {
+    // A second, hand-written client message is a second thing to drift. Whatever
+    // `validateRepositoryUrl` says at submit is what the author sees before submitting.
+    const { validateRepositoryUrl } = await import('~/server/schema/blocks/external-app.schema');
+    for (const bad of ['http://github.com/o/r', 'https://gist.github.com/o/r', 'https://github.com']) {
+      const server = validateRepositoryUrl(bad);
+      expect(server.ok).toBe(false);
+      if (server.ok) continue;
+      expect(validateOffsiteSubmitForm({ ...valid, sourceRepoUrl: bad }).sourceRepoUrl).toBe(
+        server.error
+      );
+    }
+  });
+});
+
+describe('toSubmitExternalInput — sourceRepoUrl', () => {
+  it('omits an empty value entirely (an omitted optional, not an empty string)', async () => {
+    const { toSubmitExternalInput } = await import('../offsiteSubmitFormConfig');
+    const payload = toSubmitExternalInput({
+      ...valid,
+      sourceRepoUrl: '   ',
+      connectClientId: 'oc_1',
+      requestedScopes: 0,
+      scopeJustifications: {},
+    } as never);
+    expect(payload.sourceRepoUrl).toBeUndefined();
+  });
+
+  it('trims and forwards a provided value', async () => {
+    const { toSubmitExternalInput } = await import('../offsiteSubmitFormConfig');
+    const payload = toSubmitExternalInput({
+      ...valid,
+      sourceRepoUrl: '  https://github.com/o/r  ',
+      connectClientId: 'oc_1',
+      requestedScopes: 0,
+      scopeJustifications: {},
+    } as never);
+    expect(payload.sourceRepoUrl).toBe('https://github.com/o/r');
   });
 });

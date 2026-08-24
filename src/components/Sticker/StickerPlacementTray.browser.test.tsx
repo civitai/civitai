@@ -106,6 +106,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
   trpc: {
     cosmetic: {
       getStickerBalances: { useQuery: () => ({ data: [] }) },
+      getStickerRecentUse: { useQuery: () => ({ data: [] }) },
       getStickerOffers: { useQuery: () => ({ data: [] }) },
     },
   },
@@ -201,7 +202,7 @@ describe('StickerPlacementTray — the reason free is unavailable', () => {
     });
     await renderTray();
 
-    await expect.element(page.getByText(/Free, or 100 Buzz/)).toBeInTheDocument();
+    await expect.element(page.getByText(/Free placement \+ one sticker use/)).toBeInTheDocument();
     expect(page.getByText(/used today's free placement/).elements()).toHaveLength(0);
     expect(page.getByText(/already used a free sticker/).elements()).toHaveLength(0);
     expect(page.getByText(/free slot on this image is taken/).elements()).toHaveLength(0);
@@ -218,7 +219,7 @@ describe('StickerPlacementTray — the reason free is unavailable', () => {
 
     // The price line still renders — the tray is fine, it simply has no refusal
     // to explain, because nobody was offered anything.
-    await expect.element(page.getByText(/100 Buzz \+ one use/)).toBeInTheDocument();
+    await expect.element(page.getByText(/100 Buzz \+ one sticker use/)).toBeInTheDocument();
     expect(page.getByText(/used today's free placement/).elements()).toHaveLength(0);
   });
 });

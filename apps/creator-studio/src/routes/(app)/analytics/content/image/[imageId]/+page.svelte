@@ -9,6 +9,7 @@
   import ChartTypeToggle from '$lib/components/ChartTypeToggle.svelte';
   import DeltaChip from '$lib/components/DeltaChip.svelte';
   import AnalyticsHeader from '$lib/components/AnalyticsHeader.svelte';
+  import ImpressionsNotice from '$lib/components/ImpressionsNotice.svelte';
   import { chartType } from '$lib/stores/chart-type';
   import { formatRange, dayDiff, shiftIso } from '$lib/date-range';
   import { IconArrowLeft, IconExternalLink } from '@tabler/icons-svelte';
@@ -99,8 +100,6 @@
     };
   }
 
-  // Images and videos are both tracked for impressions, so 0 here is a real zero and stays on screen — the
-  // absent case is an entity TYPE with no impression arm, which never reaches this page.
   const engagementCharts = $derived([
     {
       title: 'Feed impressions',
@@ -148,6 +147,8 @@
     </a>
   </h2>
 </div>
+
+<ImpressionsNotice />
 
 <div class="mb-4 flex flex-wrap gap-4">
   <div class="w-40 shrink-0 overflow-hidden rounded-lg border border-dark-4 bg-dark-7">

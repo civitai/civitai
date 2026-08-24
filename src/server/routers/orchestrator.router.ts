@@ -554,6 +554,7 @@ export const orchestratorRouter = router({
       const args = {
         ...input,
         token: ctx.token,
+        userId: ctx.user.id,
         currencies: getAllowedAccountTypes(ctx.features, ['blue']),
       };
       return await createTrainingWhatIfWorkflow(args);

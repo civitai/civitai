@@ -4,8 +4,9 @@ import Link from 'next/link';
 /**
  * That this one cost nothing, and where the owner changes that.
  *
- * Shared by both review queues and the sticker overlay so the fact reads the
- * same everywhere it appears — same colour, same words, same explanation.
+ * Shared by both review queues so the fact reads the same in each — same colour,
+ * same words, same explanation. The overlay states it on the sticker instead,
+ * where a popover has nothing to open from: that layer is pointer-events-none.
  *
  * The popover exists because a queue is where a creator first meets a free
  * placement, arriving from a notification, and "why is this free and how do I
@@ -14,15 +15,8 @@ import Link from 'next/link';
 export function PlacementFreeBadge({
   /** What was placed here: `placement` on stickers, `submission` on galleries. */
   noun,
-  /**
-   * Solid rather than tinted. `light` is a translucent fill, which is legible on
-   * a queue card and unreadable over artwork — so the copy on an image asks for
-   * this, and nothing else should need it.
-   */
-  solid = false,
 }: {
   noun: 'placement' | 'submission';
-  solid?: boolean;
 }) {
   return (
     // `withinPortal` explicitly: the repo theme sets `withinPortal: false` for
@@ -36,7 +30,7 @@ export function PlacementFreeBadge({
           component="button"
           type="button"
           size="sm"
-          variant={solid ? 'filled' : 'light'}
+          variant="light"
           color="blue"
           className="w-fit cursor-pointer"
         >

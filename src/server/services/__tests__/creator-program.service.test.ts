@@ -95,6 +95,13 @@ vi.mock('~/server/prom/client', () => ({ userUpdateCounter: { inc: vi.fn() } }))
 vi.mock('~/utils/errorHandling', () => ({
   withRetries: vi.fn(async (fn: () => Promise<any>) => fn()),
 }));
+// NOTE: a DIFFERENT module from `~/utils/errorHandling` above — this is the server-side one that
+// owns `handleLogError` / `throwBadRequestError`. Spread the original so the throw helpers stay real.
+const { mockHandleLogError } = vi.hoisted(() => ({ mockHandleLogError: vi.fn() }));
+vi.mock('~/server/utils/errorHandling', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('~/server/utils/errorHandling')>()),
+  handleLogError: mockHandleLogError,
+}));
 
 // ── Import the service under test ──────────────────────────────────────────────
 import {
@@ -110,6 +117,8 @@ import {
 } from '~/server/services/creator-program.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+// Globally stubbed in `src/__tests__/setup.ts` — imported here only to drive its rejection.
+import { refreshSession } from '~/server/auth/session-invalidation';
 const mockDbWrite = dbMock.dbWrite;
 const mockSysRedis = redisMock.sysRedis;
 
@@ -274,6 +283,59 @@ describe('joinCreatorsProgram', () => {
     );
 
     await expect(joinCreatorsProgram(userId)).rejects.toThrow();
+  });
+
+  // ── #4304: a failed cache bust must not 500 a committed join ────────────────
+  //
+  // Same shape as the five sites in the issue's PR, and the same COLUMN as
+  // `completeOnboardingHandler`: the `onboarding` bitmask is written by the raw UPDATE above, then
+  // the session cache is busted. Reachable from tRPC `creatorProgram.joinCreatorsProgram`
+  // (protectedProcedure) and `pages/api/v1/creator-program/join.ts`, so an unreachable cache redis
+  // used to hand the user a 500 for a membership they had already joined — and the client's retry
+  // re-runs a requirements check that now passes against a row that already has the flag set.
+  const armJoin = () => {
+    mockDbWrite.$queryRaw.mockResolvedValueOnce([
+      { score: MIN_CREATOR_SCORE + 1000, membership: 'silver' },
+    ]);
+    mockDbWrite.user.findFirstOrThrow.mockResolvedValueOnce(mockUser());
+    mockDbWrite.$executeRaw.mockResolvedValueOnce(undefined);
+  };
+
+  it('positive control — the bust is actually reached on the happy path', async () => {
+    armJoin();
+
+    await joinCreatorsProgram(userId);
+
+    expect(vi.mocked(refreshSession)).toHaveBeenCalledWith(userId, { caller: 'membership' });
+  });
+
+  it('still resolves when the session bust fails, after the join is committed', async () => {
+    armJoin();
+    vi.mocked(refreshSession).mockRejectedValueOnce(new Error('cache redis unreachable'));
+
+    await expect(joinCreatorsProgram(userId)).resolves.not.toThrow();
+    // The bitmask really was written — that is what makes a 500 here a lie rather than a warning.
+    expect(mockDbWrite.$executeRaw).toHaveBeenCalled();
+  });
+
+  it('logs the failed bust rather than swallowing it', async () => {
+    armJoin();
+    vi.mocked(refreshSession).mockRejectedValueOnce(new Error('cache redis unreachable'));
+
+    await joinCreatorsProgram(userId);
+
+    expect(mockHandleLogError).toHaveBeenCalledTimes(1);
+    expect((mockHandleLogError.mock.calls[0][0] as Error).message).toBe('cache redis unreachable');
+  });
+
+  it('STILL fails when the join write itself fails — the guard is narrow', async () => {
+    mockDbWrite.$queryRaw.mockResolvedValueOnce([
+      { score: MIN_CREATOR_SCORE + 1000, membership: 'silver' },
+    ]);
+    mockDbWrite.user.findFirstOrThrow.mockResolvedValueOnce(mockUser());
+    mockDbWrite.$executeRaw.mockRejectedValueOnce(new Error('db write failed'));
+
+    await expect(joinCreatorsProgram(userId)).rejects.toThrow('db write failed');
   });
 });
 

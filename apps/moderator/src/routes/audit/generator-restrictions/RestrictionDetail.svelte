@@ -9,6 +9,7 @@
   import { LINK_CLASS, dateTime } from '$lib/format';
   import { userLookupUrl } from '$lib/entity-url';
   import type { RestrictionRow } from '$lib/server/user-restriction.service';
+  import UserWorkflowsPanel from './UserWorkflowsPanel.svelte';
   import TriggerCard from './TriggerCard.svelte';
   import StatusBadge from './StatusBadge.svelte';
 
@@ -128,6 +129,11 @@
       </div>
     {/if}
   {/if}
+
+  <!-- The triggers say what one prompt tripped; this says whether the account has a history of it. -->
+  <div class="mb-3">
+    <UserWorkflowsPanel userId={restriction.userId} />
+  </div>
 
   <div class="mb-2 flex items-center gap-2">
     <Badge variant="secondary">{restriction.triggers.length} triggers</Badge>

@@ -1,6 +1,8 @@
 <script lang="ts">
   import { browser } from '$app/environment';
+  import { untrack } from 'svelte';
   import { enhance, deserialize } from '$app/forms';
+  import GenerationOnlyHint from '$lib/components/monetization/GenerationOnlyHint.svelte';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Label } from '@civitai/ui/components/ui/label/index.js';
@@ -10,10 +12,13 @@
   import { IconAlertTriangle } from '@tabler/icons-svelte';
   import { toast } from '@civitai/ui/components/ui/sonner/index.js';
   import { invalidateAll } from '$app/navigation';
-  import { DEFAULT_FEE_IMAGES, feeToRatio, type MonetizationLimits } from '$lib/monetization/fee';
+  import {
+    DEFAULT_FEE_IMAGES,
+    suggestedFeeRatio,
+    type MonetizationLimits,
+  } from '$lib/monetization/fee';
   import {
     DEFAULT_GENERATION_TRIAL_LIMIT,
-    GENERATION_ONLY_HINT,
     MIN_ACCESS_PRICE,
     type CreatorUsageControl,
   } from '$lib/monetization/paid-access';
@@ -69,6 +74,9 @@
 
   let buzz = $state<number | undefined>();
   let images = $state(String(DEFAULT_FEE_IMAGES));
+  // The suggestion comes from the type FILTER while the caps come from the SELECTION, and the two can
+  // disagree; the helper drops a suggestion this editor has no denominator for.
+  const suggestedRatio = $derived(suggestedFeeRatio(suggestedFee, limits.fee.denominators));
   let usageControl = $state<CreatorUsageControl>('Download');
   // Seeded by the open effect below rather than here: reading a prop in a $state initializer captures
   // only its first value, and every open re-seeds anyway.
@@ -123,13 +131,17 @@
   }
 
   // Every open starts clean: a tick or a typed confirmation must never carry over from a previous run.
+  // `action` is the ONLY dependency: the seeds read props that move while the dialog is open (a bulk
+  // apply calls invalidateAll, which rebuilds `limits`), and re-running this mid-edit would wipe the
+  // creator's typed amount and re-enable submit under an in-flight write.
   $effect(() => {
-    if (action) {
+    if (!action) return;
+    untrack(() => {
       affirmed = false;
       confirmText = '';
       submitting = false;
       buzz = undefined;
-      images = String(DEFAULT_FEE_IMAGES);
+      images = String(suggestedRatio.images);
       usageControl = 'Download';
       genMode = 'bundled';
       ea = {
@@ -145,7 +157,7 @@
         donationGoalEnabled: false,
         donationGoal: undefined,
       };
-    }
+    });
   });
 
   // Both previews are resolved on the server: "select all matching" reaches versions this page never
@@ -413,7 +425,7 @@
                 bind:buzz
                 bind:images
                 {limits}
-                suggested={suggestedFee != null ? feeToRatio(suggestedFee) : undefined}
+                suggested={suggestedRatio.buzz > 0 ? suggestedRatio : undefined}
               />
               {#if overSlots}
                 {@render allowanceAlert()}
@@ -457,7 +469,7 @@
               allowGenerationOnly={caps.canSetGenerationOnly}
             />
             {#if !caps.canSetGenerationOnly}
-              <p class="text-xs text-dark-2">{GENERATION_ONLY_HINT}</p>
+              <GenerationOnlyHint />
             {/if}
             <p class="text-xs text-dark-2">
               A gated version's price moves to whichever tier survives — no version is left gated

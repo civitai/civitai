@@ -20,6 +20,8 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { CollectionType, CosmeticEntity } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
+import { moderatorBulkImageManagerPath } from '~/shared/constants/moderator-app';
+import { ModeratorLookupMenuItem } from '~/components/Moderation/ModeratorLookupMenuItem';
 
 export function ModelCardContextMenu({ data }: { data: UseQueryModelReturn[number] }) {
   const currentUser = useCurrentUser();
@@ -147,6 +149,20 @@ export function ModelCardContextMenu({ data }: { data: UseQueryModelReturn[numbe
   if (currentUser) contextMenuItems.splice(2, 0, blockTagsOption);
 
   if (currentUser?.isModerator) {
+    // Unshifted to the top rather than appended: the moderator items land after every user action, and
+    // the lookup is the one a moderator opens this menu FOR — it is the way out to the moderator app,
+    // not another action on the card. Moderator-gated, so nobody else's menu moves.
+    contextMenuItems.unshift({
+      key: 'lookup-model',
+      component: (
+        <ModeratorLookupMenuItem
+          key="lookup-model"
+          path={moderatorBulkImageManagerPath('model', data.id)}
+        >
+          Lookup Model
+        </ModeratorLookupMenuItem>
+      ),
+    });
     contextMenuItems.push({
       key: 'set-minor',
       component: (

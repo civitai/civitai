@@ -14,13 +14,14 @@
   import type { ActionData, PageData } from './$types';
   import { FormState } from '$lib/form-state.svelte';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
-  import { userLookupUrl } from '$lib/entity-url';
+  import { imageLookupUrl, userLookupUrl } from '$lib/entity-url';
   import { urlWith } from '$lib/url';
   import { BULK_SOURCE_LABELS, BULK_SOURCES } from './sources';
-  import { DEFAULT_LIMIT, LIMIT_OPTIONS, MAX_LIMIT } from './limits';
+  import { DEFAULT_LIMIT, LIMIT_OPTIONS } from './limits';
   import ImageActionBar from '$lib/components/ImageActionBar.svelte';
   import ListFilterBar, { type FilterField } from '$lib/components/ListFilterBar.svelte';
   import { NsfwLevel } from '@civitai/shared';
+  import ErrorAlert from '$lib/components/ErrorAlert.svelte';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -128,8 +129,8 @@
 
   // `limit` is carried through a new search rather than reset: a moderator who raised it did so because
   // this account needs it, and every subsequent lookup on that account would otherwise snap back to 200.
-  // Built from scratch rather than mutated: changing the source or the term makes every other param on
-  // the URL — a cursor, a previous term — describe a batch that no longer exists.
+  // Built from scratch rather than mutated: changing the source or the term makes `offset` — and any
+  // stale term — describe a batch that no longer exists.
   const navigate = (value: string, limit: number) =>
     goto(
       urlWith(new URL(page.url.pathname, page.url), {
@@ -144,6 +145,11 @@
     e.preventDefault();
     navigate(term.trim(), data.limit);
   };
+
+  // Paging keeps the batch and changes only the window, so it mutates the URL rather than rebuilding
+  // it — the opposite of `navigate`, which is changing WHICH batch is on screen.
+  const paginate = (offset: number) =>
+    goto(urlWith(page.url, { offset: offset || null }), { keepFocus: true });
 </script>
 
 <header class="page-header">
@@ -174,12 +180,7 @@
 </form>
 
 {#if form?.error}
-  <div
-    class="mb-4 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300"
-    role="alert"
-  >
-    {form.error}
-  </div>
+  <ErrorAlert class="mb-4" message={form.error} />
 {:else}
   <!-- A warning no longer HIDES the success line. A removal that struck only some of its owners has
        two facts to report, and the one the moderator has to act on is not the one that succeeded. -->
@@ -230,21 +231,29 @@
   </section>
 {:else if data.batch}
   {@const batch = data.batch}
+  {@const first = batch.offset + 1}
+  {@const last = batch.offset + batch.items.length}
+  {@const pageCount = Math.max(1, Math.ceil(batch.total / data.limit))}
+  {@const pageNumber = Math.floor(batch.offset / data.limit) + 1}
   <section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
     <h2 class="mb-1 text-sm font-semibold text-white">
-      {num(batch.items.length)} of {num(batch.total)} images
+      {#if batch.total > batch.items.length}
+        Images {num(first)}–{num(last)} of {num(batch.total)}
+      {:else}
+        {num(batch.total)} images
+      {/if}
     </h2>
     <p class="mb-3 text-xs text-dark-2">
-      {#if batch.truncated}
+      {#if batch.truncated || batch.offset > 0}
         <span class="text-amber-300">
-          Capped — an action here covers only what is loaded, not all {num(batch.total)}.
+          An action here covers only this page, not all {num(batch.total)}.
         </span>
       {:else}
         The whole set.
       {/if}
       Click an image to select it once a selection has started.
     </p>
-    <div class="mb-3 flex items-center gap-2">
+    <div class="mb-3 flex flex-wrap items-center gap-2">
       <span class="text-xs text-dark-2">Load up to</span>
       <Select.Root
         type="single"
@@ -258,10 +267,28 @@
           {/each}
         </Select.Content>
       </Select.Root>
-      {#if batch.truncated}
-        <span class="text-xs text-dark-2">
-          Past {num(MAX_LIMIT)}, use Remove all images on this account.
-        </span>
+      <span class="text-xs text-dark-2">per page</span>
+
+      {#if batch.total > data.limit}
+        <div class="ml-auto flex items-center gap-2">
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={batch.offset === 0}
+            onclick={() => paginate(Math.max(0, batch.offset - data.limit))}
+          >
+            Previous
+          </Button>
+          <span class="text-xs text-dark-2">Page {num(pageNumber)} of {num(pageCount)}</span>
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={!batch.truncated}
+            onclick={() => paginate(batch.offset + data.limit)}
+          >
+            Next
+          </Button>
+        </div>
       {/if}
     </div>
 
@@ -300,20 +327,32 @@
     />
   {/if}
 
+  <!-- No selection without the actions: ticking a box with no action bar leaves the moderator in a
+       mode where clicking an image toggles instead of opening it, for no reason. -->
+  <ImageQueueGrid
+    items={filteredItems}
+    civitaiUrl={data.civitaiUrl}
+    selected={data.canAct ? selected : undefined}
+    card={imageCard}
+    empty="No images in this batch."
+    endLabel={batch.truncated ? null : 'End of batch.'}
+  />
+
   {#if data.canAct && data.subjectUserId != null}
     {@const account = data.owners.find((o) => o.id === data.subjectUserId)}
-    <!-- The one action that is NOT scoped to what is on screen. The page caps at 200 images, so on a
-         prolific account "select all" and this are different sizes — which is the whole reason Retool
-         had it. Kept away from the selection controls for the same reason it is typed to confirm. -->
-    <section class="mb-4 rounded-xl border border-red-500/40 bg-red-500/5 p-5">
+    <!-- The one action that is NOT scoped to what is on screen, and the only one on this page that
+         cannot be undone from it. BELOW the grid and behind a collapsed trigger: sitting above the
+         images it was one mis-aimed click away from every per-selection button a moderator uses all
+         day. Reaching it now costs a scroll past the work, which is the point. -->
+    <section class="mt-6 rounded-xl border border-red-500/40 bg-red-500/5 p-5">
       <h2 class="mb-1 text-sm font-semibold text-white">Remove every image on this account</h2>
       <p class="mb-3 text-xs text-dark-2">
-        Blocks all {num(batch.total)} images this account owns, not only the {num(batch.items.length)}
-        loaded here. Images only — models, posts and articles are untouched; use Purge Content in User
-        Lookup for those.
+        Blocks all {num(data.subjectImageTotal ?? batch.total)} images this account owns, not only the
+        {num(batch.items.length)} on this page. Images only — models, posts and articles are untouched;
+        use Purge Content in User Lookup for those.
       </p>
       {#if !nuking}
-        <Button size="sm" variant="destructive" onclick={() => (nuking = true)}>
+        <Button size="sm" variant="outline" class="text-red-400 hover:text-red-300" onclick={() => (nuking = true)}>
           Remove all images…
         </Button>
       {:else}
@@ -343,20 +382,10 @@
       {/if}
     </section>
   {/if}
-
-  <!-- No selection without the actions: ticking a box with no action bar leaves the moderator in a
-       mode where clicking an image toggles instead of opening it, for no reason. -->
-  <ImageQueueGrid
-    items={filteredItems}
-    civitaiUrl={data.civitaiUrl}
-    selected={data.canAct ? selected : undefined}
-    card={imageCard}
-    empty="No images in this batch."
-    endLabel={batch.truncated ? null : 'End of batch.'}
-  />
 {/if}
 
 {#snippet imageCard(img: {
+  id: number;
   ingestion?: string;
   blockedFor?: string | null;
   needsReview?: string | null;
@@ -380,6 +409,10 @@
         minor={img.minor}
       />
       <span>{dateTime(img.createdAt ?? null)}</span>
+      <!-- New tab: this page's whole job is assembling a selection, and navigating away loses it. -->
+      <a href={imageLookupUrl(img.id)} target="_blank" rel="noreferrer" class={LINK_CLASS}>
+        Lookup #{img.id}
+      </a>
     </div>
 
     <!-- Removing either of these breaks something the owner did not upload: an account's avatar, or
@@ -401,7 +434,7 @@
     <!-- Selected since the page was written and rendered nowhere. A prohibited term sitting in the
          negative is the same finding, and the prompt search above matches it either way. -->
     {#if img.negativePrompt}
-      <p class="line-clamp-2 wrap-break-word text-dark-3" title={img.negativePrompt}>
+      <p class="line-clamp-2 wrap-break-word text-dark-2" title={img.negativePrompt}>
         <span class="text-dark-2">neg:</span>
         {img.negativePrompt}
       </p>

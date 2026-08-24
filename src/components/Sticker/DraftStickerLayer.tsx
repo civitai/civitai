@@ -12,6 +12,7 @@ import {
   unownedGateFor,
   useOwnedSticker,
   useStickerCosmetics,
+  draftedCosmeticIds,
   useStickerRefill,
 } from '~/components/Sticker/sticker.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -72,33 +73,18 @@ export function DraftStickerLayer() {
   const { standing } = useFreePlacementStanding(targetImageId ?? undefined);
   const freeOffer = freeOfferFor(space, standing);
 
-  /**
-   * What the placer has left of each sticker, and what a top-up costs.
-   *
-   * `getStickerBalances` takes no input, so it genuinely shares the tray's cache
-   * entry. The offers query does NOT share it by accident — it is keyed on the
-   * OWNED ids inside `useStickerRefill`, which is the only way both callers ask
-   * the same question. Keying it on the drafted ids, as this did first, is a
-   * second request that refetches every time a draft is laid down.
-   */
   const currentUser = useCurrentUser();
   const { data: balances } = trpc.cosmetic.getStickerBalances.useQuery(undefined, {
     enabled: !!currentUser && targetImageId != null,
   });
-  const refillFor = useStickerRefill();
+  // Only what has been dragged out — an offer for a sticker nobody has drafted is
+  // an answer to a question not yet asked.
+  const draftedIds = useMemo(() => draftedCosmeticIds(drafts), [drafts]);
+  const refillFor = useStickerRefill(draftedIds);
 
   const paidDraftIds = useStickerPlacementDraftStore((state) => state.paidDraftIds);
   const duplicateDraft = useStickerPlacementDraftStore((state) => state.duplicateDraft);
 
-  /**
-   * Who is covered and who is buying, recomputed from the whole set every time
-   * it changes.
-   *
-   * 🔴 THIS REPLACES A SNAPSHOT, AND THAT IS THE POINT. The gate used to be
-   * decided when a draft was created and written onto it — so with one use left,
-   * deleting the covered draft left the other one still asking to be bought for
-   * a use that had just been handed back. Entitlement belongs to the set.
-   */
   const entitlements = useMemo(
     () => allocateDraftEntitlements({ drafts, balances, freeAvailable: !!freeOffer, paidDraftIds }),
     [drafts, balances, freeOffer, paidDraftIds]

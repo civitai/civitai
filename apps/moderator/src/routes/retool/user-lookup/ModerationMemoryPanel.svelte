@@ -10,6 +10,7 @@
   import CannedReasonPicker from '$lib/components/CannedReasonPicker.svelte';
   import StrikeList from '$lib/components/StrikeList.svelte';
   import { STRIKE_REASONS } from '$lib/moderation-reasons';
+  import ErrorAlert from '$lib/components/ErrorAlert.svelte';
 
   let {
     userId,
@@ -72,12 +73,7 @@
     </div>
 
     {#if notesForm.error}
-      <div
-        class="mb-3 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300"
-        role="alert"
-      >
-        {notesForm.error}
-      </div>
+      <ErrorAlert class="mb-3" message={notesForm.error} />
     {/if}
 
     {#if adding}
@@ -179,12 +175,7 @@
     <p class="mb-3 text-xs text-dark-2">Issuing a strike notifies the user.</p>
 
     {#if strikeForm.error}
-      <div
-        class="mb-3 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300"
-        role="alert"
-      >
-        {strikeForm.error}
-      </div>
+      <ErrorAlert class="mb-3" message={strikeForm.error} />
     {/if}
 
     {#if striking}
@@ -212,35 +203,7 @@
           Could not check strikes — treat as unknown, not none.
         </p>
       {:else}
-        <StrikeList
-          strikes={result.liveStrikes}
-          empty={result.strikes.length > 0
-            ? 'No strikes issued since the Retool cutover.'
-            : 'No strikes on this account.'}
-        />
-
-        {#if result.strikes.length > 0}
-          <details class="mt-3 border-t border-dark-4 pt-3">
-            <summary class="text-xs text-dark-2">
-              {result.strikes.length} from the Retool era — history, not part of the list above
-            </summary>
-            <ul class="mt-2 space-y-2">
-              {#each result.strikes as strike (strike.id)}
-                <li class="text-sm">
-                  <div class="flex flex-wrap items-baseline gap-x-2">
-                    <Badge variant="outline">legacy</Badge>
-                    <span class="text-xs text-dark-2">
-                      {strike.createdBy ?? 'unknown'} · {dateTime(strike.createdAt)}
-                    </span>
-                  </div>
-                  {#if strike.reason}
-                    <p class="text-dark-0">{strike.reason}</p>
-                  {/if}
-                </li>
-              {/each}
-            </ul>
-          </details>
-        {/if}
+        <StrikeList strikes={result.liveStrikes} empty="No strikes on this account." />
       {/if}
     {:catch}
       <p class="text-sm text-red-300">Could not load strikes.</p>

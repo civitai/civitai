@@ -1,5 +1,7 @@
 # The measuring box moves further than most of the effects we measured
 
+**Status (added 2026-08-21):** Historical measurement. The ~20% drift envelope is a point estimate from one contaminated pair; a clean pair has not been taken. The methodological conclusions (pair controls, cost-comparable control groups) remain valid.
+
 Recorded 2026-08-15 from the unit-suite performance work. This is the number that decides which of
 the day's other numbers are readable, so it belongs beside them rather than inside any one PR.
 
@@ -14,7 +16,7 @@ drift-3   wall 253.8s   collect 5845s     +20.5% collect, +17.2% wall
 ```
 
 ⚠️ **That pair was contaminated** — another agent's suite started during the second run; five vitest
-workers were live on the box immediately afterwards. So `+20.5%` is not a drift *figure*. It is a
+workers were live on the box immediately afterwards. So `+20.5%` is not a drift _figure_. It is a
 demonstration that this box can move that far while nothing under measurement changes, which is the
 part that matters: **any comparison assembled from two different windows sits inside that envelope.**
 
@@ -25,7 +27,7 @@ take one; it is the denominator for everything else.
 
 **1. Quote in-pair controls, not cross-window deltas.** A wall-clock difference between a run taken
 now and a run taken an hour ago is unreadable. The readable form is a single pair with a control
-group inside it — files the change cannot have affected — reported *first*, before the headline.
+group inside it — files the change cannot have affected — reported _first_, before the headline.
 `scripts/test-perf/compare-runs.mjs` does this and prints the control group with the header "if this
 moved, the headline below is drift, not the change."
 
@@ -42,7 +44,7 @@ Two seconds of absolute noise rendered as a large percentage. A good control was
 
 **3. Dose-response is suggestive, not conclusive, when the axis is confounded.** Pre-bundling five
 external packages showed a clean-looking gradient — files reaching none of them moved −6.9%, files
-reaching one or two moved −31%/−30%. That argues the effect is real rather than ambient, *except*
+reaching one or two moved −31%/−30%. That argues the effect is real rather than ambient, _except_
 that mean per-file `collect` rises monotonically with exposure (0.32s → 10.43s), so "sorts by
 exposure" and "sorts by file weight" are not separated by that data. The contaminated drift pair
 sorted by exposure too, inversely. **Load can produce a gradient on any axis that correlates with
@@ -62,7 +64,7 @@ instant.** Three failures in one day, three different shapes:
   their MCP servers plus the dev-server daemon are ~30 node processes at rest;
 - a genuine zero sample that was simply the gap between two of someone's short runs.
 
-The check that works is *for the workload, not the runtime*:
+The check that works is _for the workload, not the runtime_:
 
 ```powershell
 Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
@@ -78,6 +80,6 @@ window as a commitment from whoever holds the box, not as an inference from a pr
 
 Every one of these is the same mistake wearing different clothes: **a measurement passing because the
 thing being measured never happened.** A run that stopped early. A config that emitted no chunk. A
-module that never loaded. A gate that could not fire. Verifying that the change was *engaged* — the
+module that never loaded. A gate that could not fire. Verifying that the change was _engaged_ — the
 chunk on disk, the module body executing, the worker actually spawned — costs seconds and is the only
 thing that separates a result from a coincidence.

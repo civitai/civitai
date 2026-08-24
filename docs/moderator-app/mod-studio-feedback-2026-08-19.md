@@ -7,10 +7,12 @@ place to see what this round asked for and whether it is done.
 channel and from the team directly — PLUS everything still open from earlier rounds, carried into the
 second half of this file.
 
-**This is the live list.** A round gets its own dated file so it is clear when something was first asked
-for, and unfinished items move to the newest file rather than being ticked across several — so the
-newest file is the only one with open boxes, and an older one is the record of what its round reported
-and what shipped. Earlier rounds: [`mod-studio-feedback-2026-08-17.md`](mod-studio-feedback-2026-08-17.md).
+**This is no longer the live list.** Everything still open when the 2026-08-21 round opened moved to
+[`mod-studio-feedback-2026-08-21.md`](mod-studio-feedback-2026-08-21.md), so there is one live list
+rather than boxes to tick in two files. They keep the date they were first raised. What stays here is
+the record of what this round reported and what shipped — moved items appear below as plain bullets
+with their reasoning intact, and no checkbox. Earlier round:
+[`mod-studio-feedback-2026-08-17.md`](mod-studio-feedback-2026-08-17.md).
 
 Reporter identities, message links, quotes and the account ids used as examples are deliberately absent:
 this repo is public (CLAUDE.md → Security). The private triage keeps attribution.
@@ -78,7 +80,7 @@ two tools side by side, which is a comparison that stops being possible today. A
 
 ## P1 — reported defects
 
-- [ ] **Comment highlighting does not work on article comments.** Flagged by the reporter as a
+- **Comment highlighting does not work on article comments.** Flagged by the reporter as a
       pre-existing bug rather than a regression: following a report or a deep link to an article comment
       does not highlight the row it landed on. It works elsewhere.
 
@@ -99,7 +101,7 @@ two tools side by side, which is a comparison that stops being possible today. A
 
 ## P2 — needs a decision or clarification
 
-- [ ] **A paged list has no "load more".** Reported as loading a fixed number of rows with no way to page
+- **A paged list has no "load more".** Reported as loading a fixed number of rows with no way to page
       further back, identified by screenshot only.
 
       **One panel in User Lookup matched and has been fixed; the reporter still needs to confirm it is the
@@ -202,11 +204,11 @@ round still reads as the record of what was reported that day.
         the old Retool model lookup did, and nobody asked for it back.
       - **chat** — `NEXT_PUBLIC_CHAT_LOOKUP_URL` had no reader left in `src/`; its only call site went
         with the reports page in `95157404b0`. Removed from `client-schema.ts` rather than repointed.
-- [ ] **Finish the environment and database steps** *(first raised 08-17)* — handover blockers
+- **Finish the environment and database steps** *(first raised 08-17)* — handover blockers
       [#1–#4](retool-migration-handover.md). Narrower than that list reads: `CIVITAI_MOD_API_KEY` is
-      retired and must NOT be provisioned, so what remains is `RETOOL_DATABASE_URL` per deployed
-      environment, the `FRESHDESK_TOKEN` rename, and verifying two of the three SQL migrations.
-- [ ] **Tick the action grants on `/admin`, then check as a non-admin** *(replaces "confirm the
+      retired and must NOT be provisioned. (`RETOOL_DATABASE_URL` was also on this list; it was retired
+      on 08-21, after this round closed — see [the 08-21 round](mod-studio-feedback-2026-08-21.md).)
+- **Tick the action grants on `/admin`, then check as a non-admin** *(replaces "confirm the
       sub-permission defaults", 08-17)*. That item asked whether the 08-14 defaults were right; there are
       no defaults any more. `defaultRoles` was removed with the page/action split (`e14a5428dd`) because
       seeding them against an ungranted page is what silently zeroed them. Every action grant is now an
@@ -217,16 +219,16 @@ round still reads as the record of what was reported that day.
 
 ## P1 — reported defects
 
-- [ ] **User Lookup unavailable for the staff role** *(08-17)*. Not a defect — the `/admin` grant in
+- **User Lookup unavailable for the staff role** *(08-17)*. Not a defect — the `/admin` grant in
       [`permissions-handoff.md`](permissions-handoff.md). Nothing to build; it is part of the `/admin`
       pass above.
-- [ ] **`reportedUser` renders greyed out on reports** *(08-18)*. Suspected downstream of User Lookup
+- **`reportedUser` renders greyed out on reports** *(08-18)*. Suspected downstream of User Lookup
       being unavailable — confirm it clears once that is granted, otherwise it is its own defect. Not
       investigable before the `/admin` pass.
-- [ ] **Comment rows are "funky" to read** *(08-18)*. Reported alongside the comment-highlight fix and not
+- **Comment rows are "funky" to read** *(08-18)*. Reported alongside the comment-highlight fix and not
       addressed: the complaint arrived as a screenshot and the layout problem is not reconstructable from
       the text. Needs the reporter to say what is wrong with it.
-- [ ] **Why are banned users' comics queued for review at all?** *(08-18)*. Raised as a possible better
+- **Why are banned users' comics queued for review at all?** *(08-18)*. Raised as a possible better
       fix for the comics 500. It is a queue-predicate question, not that defect.
 
       **The predicate is now known; the decision is not made.** `getComicReviewQueue` filters on the
@@ -241,28 +243,28 @@ round still reads as the record of what was reported that day.
 
 ## P2 — decisions, not implementation
 
-- [ ] **`ReToolActions` vs `ModActivity`** *(08-17)* — two mod-action logs that nothing reconciles. A
+- **`ReToolActions` vs `ModActivity`** *(08-17)* — two mod-action logs that nothing reconciles. A
       recommendation is on the table; it needs a human's yes.
-- [ ] **Two strike systems** *(08-17)* — **the decision is narrower than it was, and it was the cause of
+- **Two strike systems** *(08-17)* — **the decision is narrower than it was, and it was the cause of
       the P0 above.** This app no longer writes `UserStrikes`: `d0820283c0` moved the write to the main
       app's system, and the display now reads it (P0 above). What is left is a data question, not a
       routing one — whether the 12.7k Retool-era `UserStrikes` rows get migrated into `UserStrike`, or
       stay where they are as read-only history. They are shown as history today, which is the safe
       default but not a decision.
-- [ ] **`aiNsfwLevel` / `aiModel` exist in production but not in `schema.full.prisma`** *(08-17)* — add
+- **`aiNsfwLevel` / `aiModel` exist in production but not in `schema.full.prisma`** *(08-17)* — add
       them to the schema, or accept the raw `sql` read.
-- [ ] **`RatingChanges`** *(08-17, narrowed 08-20)* — the rating audit trail, the one Front Page Audit
+- **`RatingChanges`** *(08-17, narrowed 08-20)* — the rating audit trail, the one Front Page Audit
       write still unported; `FrontPageTimers` is done. Current state, and the only place it is recorded:
       [Front Page Audit: port state](retool-exports/parity-findings.md#front-page-audit-port-state-canonical).
-- [ ] **How queue sweeps get tracked** *(08-17)* — a new table, or an extension of `ModActivity`. Blocks
+- **How queue sweeps get tracked** *(08-17)* — a new table, or an extension of `ModActivity`. Blocks
       the remaining queue requests.
 
 ## P3 — improvements, after parity
 
-- [ ] **Show "recently worked" and "time sweeps" beside the queues they describe** *(08-17)*.
-- [ ] **Whether the `/images/*` triage queues join the sweep tracking** *(08-17)* — a decision, not an
+- **Show "recently worked" and "time sweeps" beside the queues they describe** *(08-17)*.
+- **Whether the `/images/*` triage queues join the sweep tracking** *(08-17)* — a decision, not an
       oversight.
-- [ ] **Link a report to the site it originated from** *(08-17)* — **filed as not implementable; that was
+- **Link a report to the site it originated from** *(08-17)* — **filed as not implementable; that was
       too strong.** `Report` has no origin *column*, but it has `details Json?`, which `createReport`
       already writes to (it stamps `reportType` there). So the origin can be captured going forward as one
       more key, with no migration.
@@ -270,10 +272,10 @@ round still reads as the record of what was reported that day.
       What genuinely cannot be done is the retroactive half: reports already filed carry no origin and
       never will. So the decision is whether a forward-only answer is worth having — not whether one is
       possible.
-- [ ] **The "Admin Attention" report reason is too vague to action** *(08-17)* — remove it or merge it.
+- **The "Admin Attention" report reason is too vague to action** *(08-17)* — remove it or merge it.
       Changes what reporters see, so it is not a moderator-side call alone.
-- [ ] **The mod changelog modal disappears once a model is unpublished** *(08-17)*, so the changes and the
+- **The mod changelog modal disappears once a model is unpublished** *(08-17)*, so the changes and the
       unpublish reason cannot be read together.
-- [ ] **Unpublished articles have no republish path** *(08-17)*; authors are told to contact support.
-- [ ] **A model marked as depicting a minor can still receive a new version containing X-rated images**
+- **Unpublished articles have no republish path** *(08-17)*; authors are told to contact support.
+- **A model marked as depicting a minor can still receive a new version containing X-rated images**
       *(08-17)*.

@@ -83,8 +83,9 @@ literal sentinel `splitQueue` there. Any name→id backfill must skip it — see
 - [x] ~~**`TimedMutes.userId` is `text`.** Migrate to `integer`.~~ **Superseded — drop the table
       instead.** It duplicated `User.muteExpiresAt`, which the main app already drains hourly via
       `processTimedUnmutesJob` and which is strike-aware; the side table had no consumer, so a mute
-      recorded only there never lifted. As of 2026-08-20 nothing in the spoke reads or writes it and it
-      is gone from `moderator-db-types.ts`. It held 0 rows.
+      recorded only there never lifted. As of 2026-08-20 nothing in the spoke reads or writes it. It is
+      still typed — introspection takes every table — so the ban on reading it lives in a `///` comment on
+      the model in `apps/moderator/prisma/schema.prisma`. It held 0 rows.
 - [ ] **Drop `TimedMutes` at cutover**, once Retool is switched off. Left in place only because Retool
       can still write it while it is live.
 - [ ] **`ReToolActions` has no subject column.** `getRetoolActivity` recovers the account by regex over

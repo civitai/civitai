@@ -6,7 +6,7 @@
   import ImageFlagBadges from '$lib/components/ImageFlagBadges.svelte';
   import { getBrowsingLevelLabel } from '@civitai/shared';
   import { LINK_CLASS, dateTime } from '$lib/format';
-  import { userLookupUrl } from '$lib/entity-url';
+  import { bulkImageManagerUrl, userLookupUrl } from '$lib/entity-url';
   import type { PostLookupResult } from '$lib/server/image-lookup.service';
 
   let {
@@ -45,7 +45,7 @@
     </div>
     <!-- This panel reads a post; Bulk Image Manager acts on one. Sending the moderator there with the
          post already loaded is the hand-off, rather than making them retype the id into another page. -->
-    <Button variant="outline" size="sm" href="/retool/bulk-image-manager?source=post&q={post.id}">
+    <Button variant="outline" size="sm" href={bulkImageManagerUrl('post', post.id)}>
       Action these images
     </Button>
     <!-- The way out. Every other link on this panel stays in the app, so the one that leaves says so. -->

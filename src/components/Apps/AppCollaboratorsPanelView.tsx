@@ -180,8 +180,19 @@ export function inviteDisclosureItems(
  */
 export function inviteBlockedReason(
   rows: CollaboratorRosterRow[],
-  userId: number
+  userId: number,
+  ineligibleUserIds: readonly number[] = []
 ): { title: string; message: string } | null {
+  // 🔴 INELIGIBILITY OUTRANKS EVERY ROSTER REASON, including the re-invitable `rejected` seat.
+  // A declined seat is re-offerable because the person may say yes next time; an account the
+  // server has told us cannot hold a seat is not, and checking the roster first would hand a
+  // `rejected` row back as offerable.
+  if (ineligibleUserIds.includes(userId)) {
+    return {
+      title: 'Not eligible',
+      message: 'That account is not eligible for a collaborator seat.',
+    };
+  }
   const row = rows.find((r) => r.userId === userId);
   if (!row || row.status === 'rejected') return null;
   return row.status === 'accepted'
@@ -189,9 +200,19 @@ export function inviteBlockedReason(
     : { title: 'Already invited', message: 'That user already has a pending invitation.' };
 }
 
-/** The roster ids the picker hides. A REJECTED seat stays offerable — see above. */
-export function pickerExcludedUserIds(rows: CollaboratorRosterRow[]): number[] {
-  return rows.filter((r) => r.status !== 'rejected').map((r) => r.userId);
+/**
+ * The ids the picker hides. A REJECTED seat stays offerable — see above.
+ *
+ * `ineligibleUserIds` is what the server said about the accounts currently on offer, and it is
+ * a SEPARATE list from the roster on purpose: an ineligible account usually has no roster row
+ * at all, so there is nothing in `rows` that could ever express it.
+ */
+export function pickerExcludedUserIds(
+  rows: CollaboratorRosterRow[],
+  ineligibleUserIds: readonly number[] = []
+): number[] {
+  const excluded = rows.filter((r) => r.status !== 'rejected').map((r) => r.userId);
+  return [...new Set([...excluded, ...ineligibleUserIds])];
 }
 
 /** `pending`/`rejected` are inert; say so rather than letting a badge imply access. */

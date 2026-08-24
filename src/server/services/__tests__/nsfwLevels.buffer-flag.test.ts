@@ -57,21 +57,10 @@ vi.mock('@prisma/client', () => {
   );
 });
 
-const { hGet, queryRaw } = vi.hoisted(() => ({
-  hGet: vi.fn(),
-  queryRaw: vi.fn(() => Promise.resolve([])),
-}));
 
-vi.mock('~/server/redis/client', () => ({
-  sysRedis: { hGet, hSet: vi.fn(), sAdd: vi.fn(), sMembers: vi.fn(), del: vi.fn() },
-  REDIS_SYS_KEYS: { SYSTEM: { FEATURES: 'system:features' } },
-  REDIS_SUB_KEYS: {},
-}));
 
-vi.mock('~/server/db/client', () => ({
-  dbWrite: { $queryRaw: queryRaw },
-  dbRead: {},
-}));
+
+
 
 // Stub the search-index named exports the service module imports at load.
 vi.mock('~/server/search-index', () => ({
@@ -87,6 +76,10 @@ vi.mock('~/server/services/job-queue.service', () => ({
 }));
 
 import { updateModelVersionNsfwLevels } from '~/server/services/nsfwLevels.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+const queryRaw = dbMock.dbWrite.$queryRaw;
+const hGet = redisMock.sysRedis.hGet;
 
 // Pull the rendered SQL out of a Prisma.sql Sql object. Prisma's Sql exposes
 // `.strings` (the static fragments) — joining them gives us the literal query

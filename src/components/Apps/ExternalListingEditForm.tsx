@@ -29,6 +29,7 @@ import {
   isUrlStepComplete,
   scopeJustificationError,
   validateOffsiteSubmitForm,
+  SOURCE_REPO_HOSTS_LABEL,
   type OffsiteSubmitFormErrors,
   type OffsiteSubmitFormValues,
 } from '~/components/Apps/offsiteSubmitFormConfig';
@@ -467,6 +468,22 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
               onChange={(e) => setField('description', e.currentTarget.value)}
               error={errors.description}
               maxLength={OFFSITE_SUBMIT_LIMITS.descriptionMax}
+            />
+
+            {/* Public source repository. The copy states the re-review consequence
+                up front: this is a MATERIAL field, so on an approved listing changing
+                it stages a shadow revision and the change does not go live until a
+                moderator approves it. An author who is not told that reads the
+                unchanged live page afterwards as a bug. */}
+            <TextInput
+              label="Source repository"
+              description={`Public link to your app's source code, shown on its store page (optional). ${SOURCE_REPO_HOSTS_LABEL} only, linking to the repository itself — e.g. https://github.com/your-org/your-app. Changing this needs moderator re-review before it goes live.`}
+              placeholder="https://github.com/your-org/your-app"
+              value={values.sourceRepoUrl}
+              onChange={(e) => setField('sourceRepoUrl', e.currentTarget.value)}
+              error={errors.sourceRepoUrl}
+              maxLength={OFFSITE_SUBMIT_LIMITS.sourceRepoUrlMax}
+              data-testid="apps-offsite-edit-source-repo"
             />
 
             <Group grow align="flex-start">

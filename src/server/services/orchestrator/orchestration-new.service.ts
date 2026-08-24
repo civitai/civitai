@@ -91,6 +91,7 @@ import { randomInt } from 'crypto';
 import { MAX_RANDOM_SEED } from '~/shared/constants/generation.constants';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
 import { createXGuardModerationRequest } from '~/server/services/orchestrator/orchestrator.service';
+import { submitSourceForSurface } from '~/server/services/orchestrator/orchestrator-submit-metrics';
 import { logToAxiom } from '~/server/logging/client';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { expandSnippetsToTargets } from '~/server/services/wildcard-set-resolver.service';
@@ -1635,6 +1636,22 @@ export async function generateFromGraph({
   // Submit workflow to orchestrator
   const workflow = (await submitWorkflow({
     token,
+    // THE population this instrument exists to size: the submit leg of `generateFromGraph`, which
+    // carries 82–98% of that procedure's latency.
+    //
+    // 🔴 Derived from the request's OWN surface, not hardcoded. `generateFromGraph` has two entry
+    // points, and only one of them is the tRPC procedure: `preset-image-gen.service` reaches this exact
+    // code with surface `preset`, and one of ITS callers is the `process-enqueued-comic-panels` CRON
+    // JOB, which runs outside the tRPC request path entirely. Stamping a flat `generate` here would
+    // therefore have blended a background job into the very number that gets divided against
+    // `orchestrator.generateFromGraph`'s wall time — the same contamination this label exists to
+    // remove, one level up from where it was first looked for. Reusing `GenerationSurface` (already
+    // bounded, already tested, already fixed at context construction by the caller) rather than
+    // inventing a parallel vocabulary means the two can never drift apart.
+    // The mapping itself lives in the metrics module, where the `source` vocabulary is defined and
+    // where it is unit-tested; `modelSubstitutions` is optional on the ctx type and an absent collector
+    // resolves to `other`, never to `generate`.
+    source: submitSourceForSurface(externalCtx.modelSubstitutions?.surface),
     body: {
       tags,
       steps,

@@ -1,9 +1,12 @@
 import {
+  DEFAULT_FEE_IMAGES,
   FEE_IMAGE_OPTIONS,
+  feeToRatio,
   finiteOrNull,
   maxLicensingFeeCeiling,
   suggestedFeePerImage,
   type CapMediaType,
+  type FeeRatio,
 } from './licensing-fee';
 import { capMediaType } from './media-type';
 import { CAP_TIERS, type CapTier } from './paid-access';
@@ -44,7 +47,45 @@ export function suggestedFee({
   return suggestedFeePerImage(modelType, capMediaType(baseModel));
 }
 
-/** Every limit an editor needs for ONE version. Plain data — no methods, nothing derived twice. */
+/**
+ * The suggestion a fee editor may open on, as a ratio. `denominators` is the list that editor actually
+ * offers; a suggestion outside it would seed an option the select has no item for, so it falls back to
+ * the flat denominator with no amount.
+ */
+export function suggestedFeeRatio(
+  suggested: number | undefined | null,
+  denominators?: number[]
+): FeeRatio {
+  if (suggested == null) return { buzz: 0, images: DEFAULT_FEE_IMAGES };
+  const ratio = feeToRatio(suggested);
+  if (denominators && !denominators.includes(ratio.images)) {
+    return { buzz: 0, images: DEFAULT_FEE_IMAGES };
+  }
+  return ratio;
+}
+
+/**
+ * What a fee editor opens on: an existing fee wins, otherwise the per-type suggestion.
+ *
+ * Only the suggestion is clamped to `denominators`; an existing fee never is, so a creator always opens
+ * on the denominator they actually stored.
+ */
+export function seedFeeRatio({
+  licensingFee,
+  modelType,
+  baseModel,
+  denominators,
+}: {
+  licensingFee?: number | null;
+  modelType?: string | null;
+  baseModel?: string | null;
+  denominators?: number[];
+}): FeeRatio {
+  if (licensingFee != null && licensingFee > 0) return feeToRatio(licensingFee);
+  return suggestedFeeRatio(suggestedFee({ modelType, baseModel }), denominators);
+}
+
+/** Every ceiling an editor needs for ONE version. Plain data — no methods, nothing derived twice. */
 export type MonetizationLimits = {
   fee: {
     /** Per-generation ceiling. The same for every creator; only the media axis moves it. */

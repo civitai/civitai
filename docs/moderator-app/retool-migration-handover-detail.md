@@ -29,12 +29,13 @@ Written 2026-08-07. Delete items as they are done.
       URL from it and `.env.example` has it bare. Check it is not producing `https://https://…`.
 
 - [x] **`MODERATOR_DATABASE_URL` was defined twice in `.env.example`** with different values — the
-      xguard-lab one and the Retool one. Split: `MODERATOR_DATABASE_URL` is the internal_tools instance
-      (XGuard lab), `RETOOL_DATABASE_URL` is Retool's Postgres behind `getModeratorDb()`.
+      xguard-lab one and the Retool one. **Resolved by consolidation 2026-08-21, not by the split.** The
+      moderation tables now live beside the xguard-lab tables in one database, `getModeratorDb()` reads
+      `MODERATOR_DATABASE_URL`, and `RETOOL_DATABASE_URL` is retired and gone from `.env.example`.
 
-      **Deployed environments need `RETOOL_DATABASE_URL` set.** Prod already had
-      `MODERATOR_DATABASE_URL` pointing at internal_tools for the lab, so until this is set every
-      `UserNotes` / `UserStrikes` / `TimedMutes` read and write was aimed at the wrong database.
+      **Deployed environments need `MODERATOR_DATABASE_URL` set**, and pointed at that consolidated
+      database rather than at the lab alone — prod already had the variable for the lab, so "it is set"
+      is not the check.
 
 ## 2. Database migrations — none are auto-applied
 
@@ -104,7 +105,8 @@ shared resume point and the audit log. (A third, `research_ratings`, is closed �
 deliberately dropped it.)
 
 Retool wrote the first two through **GUI-mode queries**, which record the target table and *no column
-list* — so the export cannot tell us the shape, and neither table is in `moderator-db-types.ts`.
+list* — so the export cannot tell us which columns each write set. The tables themselves are typed:
+introspection generates every table in the moderator database.
 
 - [ ] **`FrontPageTimers`** (~67k rows, `retool_db`). Read shape is known from `Timestamp`:
       `lastCheckedAt`, `username`, `buttonPressedTime`, filtered by `nsfw = <rating>`. The WRITE
@@ -130,8 +132,8 @@ list* — so the export cannot tell us the shape, and neither table is in `moder
       `@no-type`. Confirm which; if it should be typed, it needs a schema addition and
       `pnpm run db:generate`. Otherwise the insert has to go through raw `sql`.
 
-Once the two `retool_db` shapes are known, add them to `moderator-db-types.ts` alongside `UserNotes`
-and friends — that file is the migration target when these tables move off Retool's database.
+Both `retool_db` shapes are now generated alongside `UserNotes` and friends, so what remains is
+recovering each GUI-mode write's column list, not typing the tables.
 
 ## 3. Nothing has been run
 
@@ -150,7 +152,7 @@ and builds; that is all that is established. Before any of it is trusted in prod
       the strike as recorded. **Exercise this first on User Reports**: a review found that the partial
       failure previously left the form armed, and a second click writes a second strike for one
       offence. Strike counts drive bans.
-- [ ] **User Reports queue** — action / dismiss / claim a report, confirm the queue refreshes and the
+- [ ] **User Reports queue** — action / unaction a report, confirm the queue refreshes and the
       count matches the sidebar badge (they previously disagreed, which is why the queue now uses the
       shared `getReports`).
 - [ ] **The suspect grid** — confirm a reported account's **videos** render as video. They were going

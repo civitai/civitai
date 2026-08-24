@@ -1,6 +1,6 @@
 <script lang="ts" generics="T extends { id: number; url: string; type: MediaType; nsfwLevel?: number }">
   import { goto } from '$app/navigation';
-  import { page } from '$app/state';
+  import { page as pageState } from '$app/state';
   import type { Snippet } from 'svelte';
   // Used by the `generics=` attribute on the script tag above. ESLint cannot see that as a usage and
   // reports it unused — deleting it is a build error, not a cleanup.
@@ -12,6 +12,8 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Card, CardContent } from '@civitai/ui/components/ui/card/index.js';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
+  import NumberedPager from '$lib/components/NumberedPager.svelte';
+  import { readCursorTrail, writeCursorTrail, clearPaging, IMAGE_PAGE_PARAM } from '$lib/paging';
   import { getBrowsingLevelLabel, NsfwLevel } from '@civitai/shared';
 
   const RATING_BADGE: Record<number, string> = {
@@ -27,6 +29,9 @@
     items,
     civitaiUrl,
     nextCursor,
+    total,
+    perPage,
+    page: pageProp,
     keyOf,
     itemClass,
     card,
@@ -37,46 +42,73 @@
   }: {
     items: T[];
     civitaiUrl: string;
+    /** Cursor paging: forward-only, Back walks the trail in the URL. Unused in numbered mode. */
     nextCursor?: number | string;
+    /** Numbered paging. Pass all three or none: `page` comes from the SERVER, which clamps it —
+     *  re-deriving it from the URL renders a pager pointing at a page the grid is not showing. */
+    total?: number;
+    perPage?: number;
+    page?: number;
     /** Key accessor — defaults to the image id (the reported queue keys by report id). */
     keyOf?: (item: T) => string | number;
     itemClass?: (item: T) => string;
     card: Snippet<[T]>;
-    /** Pass a set to enable multiselect. The image itself then becomes the select target and the
-     *  corner arrow is the way out to the site — selecting is the gesture these pages are for, and
-     *  making it the secondary one cost a navigation on the first click of every batch. */
+    /** Pass a set to enable multiselect: the image becomes the select target and the corner arrow
+     *  is the way out to the site. */
     selected?: SvelteSet<string | number>;
     empty?: string;
-    /** `null` suppresses the terminator — for a capped batch, where "End of queue." would contradict
-     *  the page's own truncation warning. */
+    /** `null` suppresses the terminator where a capped batch would contradict the truncation warning. */
     endLabel?: string | null;
-    /** Minimum column width. 300 is the standard every full-width queue uses and is the default; the
-     *  only reason to lower it is a grid rendering beside another column, where 300 yields three cards
-     *  a row and combing a large account costs the moderator the scrolling instead. */
+    /** 300 unless the grid sits beside another column. */
     minColumn?: number;
   } = $props();
 
   const key = (item: T) => keyOf?.(item) ?? item.id;
 
   function toggle(item: T) {
-    // `selected` is optional — a queue rendered without it has no selection to toggle. Returning is
-    // the honest reading of that; asserting it away would throw on the one caller that omits it.
     if (!selected) return;
     const k = key(item);
     if (selected.has(k)) selected.delete(k);
     else selected.add(k);
   }
 
-  function goNext() {
-    if (nextCursor == null) return;
-    const url = new URL(page.url);
-    url.searchParams.set('cursor', String(nextCursor));
+  const numbered = $derived(total != null && perPage != null && pageProp != null);
+  const trail = $derived(readCursorTrail(pageState.url.searchParams));
+  const pageNumber = $derived(numbered ? (pageProp ?? 1) : trail.length + 1);
+
+  // A `cursor` with no trail beside it — a bookmark, or a link shared before the trail existed — is
+  // page 1 by `pageNumber` and can still render empty, which is the one state with no control on it.
+  const paged = $derived(pageNumber > 1 || pageState.url.searchParams.has('cursor'));
+
+  function navigate(mutate: (params: URLSearchParams) => void) {
+    const url = new URL(pageState.url);
+    mutate(url.searchParams);
     goto(url.pathname + url.search);
   }
+
+  const goPage = (n: number) =>
+    navigate((params) => {
+      if (n <= 1) params.delete(IMAGE_PAGE_PARAM);
+      else params.set(IMAGE_PAGE_PARAM, String(n));
+    });
+
+  const goNext = () =>
+    nextCursor != null &&
+    navigate((params) => writeCursorTrail(params, [...trail, String(nextCursor)]));
+
+  const goBack = () => navigate((params) => writeCursorTrail(params, trail.slice(0, -1)));
+
+  const goFirst = () => navigate(clearPaging);
 </script>
 
 {#if items.length === 0}
   <div class="placeholder">{empty}</div>
+  <!-- A narrowed filter or a deep link can land here with no other control on the page. -->
+  {#if paged}
+    <div class="mt-4 flex justify-center">
+      <Button variant="outline" onclick={goFirst}>Back to the first page</Button>
+    </div>
+  {/if}
 {:else}
   <div class="grid gap-4" style="grid-template-columns: repeat(auto-fill, minmax({minColumn}px, 1fr))">
     {#each items as item (key(item))}
@@ -152,11 +184,26 @@
     {/each}
   </div>
 
-  {#if nextCursor || endLabel}
-    <div class="mt-6 flex justify-center">
+  {#if numbered}
+    <NumberedPager
+      page={pageNumber}
+      total={total ?? 0}
+      perPage={perPage ?? 1}
+      label="images"
+      onPageChange={goPage}
+    />
+  {:else if nextCursor || endLabel || paged}
+    <div class="mt-6 flex flex-wrap items-center justify-center gap-3">
+      {#if paged}
+        <Button size="lg" variant="outline" onclick={goFirst}>First</Button>
+        <Button size="lg" variant="outline" onclick={goBack}>Back</Button>
+      {/if}
+      {#if paged || nextCursor}
+        <span class="text-sm text-dark-2">Page {pageNumber}</span>
+      {/if}
       {#if nextCursor}
         <Button size="lg" onclick={goNext}>Next</Button>
-      {:else}
+      {:else if endLabel}
         <span class="text-sm text-dark-2">{endLabel}</span>
       {/if}
     </div>

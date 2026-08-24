@@ -7,12 +7,11 @@ import { Page } from '~/components/AppLayout/Page';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { HubsLayout } from '~/components/Hubs/HubsLayout';
 import HubUpsertModal from '~/components/Hubs/HubUpsertModal';
+import { useHubSort } from '~/components/Hubs/useHubSort';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
-import { ImageSort } from '~/server/common/enums';
-import { hubSortSchema } from '~/server/schema/user-hub.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -36,6 +35,8 @@ export default Page(
       { enabled: Number.isInteger(hubId) }
     );
 
+    const sort = useHubSort(hub?.sort);
+
     const deleteMutation = trpc.userHub.delete.useMutation({
       onSuccess: async () => {
         const remaining = await utils.userHub.getAll.fetch(undefined, { staleTime: 0 });
@@ -53,7 +54,6 @@ export default Page(
       );
     if (!hub) return <NotFound />;
 
-    const sort = hubSortSchema.catch(ImageSort.Newest).parse(hub.sort);
     const hasSources = hub.sources.some((s) => s.enabled);
 
     return (

@@ -1,4 +1,5 @@
 import type { IncomingMessage } from 'http';
+import { buildFliptContext as buildSharedFliptContext } from '@civitai/flipt/context';
 import type * as FliptClient from '~/server/flipt/client';
 import { camelCase } from 'lodash-es';
 import type { NextApiRequest } from 'next';
@@ -179,12 +180,12 @@ const featureFlags = createFeatureFlags({
   civitaiLink: ['mod', 'member'],
   imageTraining: { availability: ['user'], fliptKey: 'image-training' },
   videoTraining: { availability: ['public'], fliptKey: 'video-training' },
-  aiToolkitSd15: { availability: ['mod'], fliptKey: 'ai-toolkit-sd15' },
-  aiToolkitSdxl: { availability: ['mod'], fliptKey: 'ai-toolkit-sdxl' },
-  aiToolkitFlux: { availability: ['mod'], fliptKey: 'ai-toolkit-flux' },
+  aiToolkitSd15: { availability: ['public'], fliptKey: 'ai-toolkit-sd15' },
+  aiToolkitSdxl: { availability: ['public'], fliptKey: 'ai-toolkit-sdxl' },
+  aiToolkitFlux: { availability: ['public'], fliptKey: 'ai-toolkit-flux' },
   aiToolkitSd35: { availability: ['mod'], fliptKey: 'ai-toolkit-sd35' },
-  aiToolkitHunyuan: { availability: ['mod'], fliptKey: 'ai-toolkit-hunyuan' },
-  aiToolkitWan: { availability: ['mod'], fliptKey: 'ai-toolkit-wan' },
+  aiToolkitHunyuan: { availability: ['public'], fliptKey: 'ai-toolkit-hunyuan' },
+  aiToolkitWan: { availability: ['public'], fliptKey: 'ai-toolkit-wan' },
   aiToolkitChroma: { availability: ['mod'], fliptKey: 'ai-toolkit-chroma' },
   aiToolkitDefaultSd: { availability: ['mod'], fliptKey: 'ai-toolkit-default-sd' },
   kohyaTraining: { availability: ['public'], fliptKey: 'kohya-training' },
@@ -195,22 +196,22 @@ const featureFlags = createFeatureFlags({
   fluxTwoKleinTraining: { availability: ['mod'], fliptKey: 'flux2-klein-training' },
   ltx2Training: { availability: ['mod'], fliptKey: 'ltx2-training' },
   ltx23Training: { availability: ['mod'], fliptKey: 'ltx23-training' },
-  ltx25Training: { availability: ['mod'], fliptKey: 'ltx25-training' },
+  ltx25Training: { availability: ['public'], fliptKey: 'ltx25-training' },
   minimaxh3Training: { availability: ['mod'], fliptKey: 'minimaxh3-training' },
   wan22Training: { availability: ['mod'], fliptKey: 'wan22-training' },
   ernieTraining: { availability: ['mod'], fliptKey: 'ernie-training' },
   hidreamO1Training: { availability: ['mod'], fliptKey: 'hidream-o1-training' },
   animaTraining: { availability: ['mod'], fliptKey: 'anima-training' },
-  booguTraining: { availability: ['mod'], fliptKey: 'boogu-training' },
-  krea2Training: { availability: ['mod'], fliptKey: 'krea2-training' },
-  mageflowTraining: { availability: ['mod'], fliptKey: 'mageflow-training' },
+  booguTraining: { availability: ['public'], fliptKey: 'boogu-training' },
+  krea2Training: { availability: ['public'], fliptKey: 'krea2-training' },
+  mageflowTraining: { availability: ['public'], fliptKey: 'mageflow-training' },
   ideogram4Training: { availability: ['mod'], fliptKey: 'ideogram4-training' },
   audioTraining: { availability: ['mod'], fliptKey: 'audio-training' },
   // Steps-based training pricing + QOL inputs (steps/batchSize/sample params/continue-training).
   // Public availability so it can be rolled out to a tester segment via Flipt; default off.
   trainingStepsPricing: { availability: ['mod'], fliptKey: 'training-steps-pricing' },
   trainingAutoLabelOrchestrator: {
-    availability: ['mod'],
+    availability: ['public'],
     fliptKey: 'training-auto-label-orchestrator',
   },
   imageTrainingResults: { availability: ['user'], fliptKey: 'image-training-results' },
@@ -317,6 +318,13 @@ const featureFlags = createFeatureFlags({
   // testers while stickers themselves open up. Required *in addition to*
   // `stickers`, so placement cannot outlive the feature it belongs to.
   stickerPlacement: { availability: ['mod'], fliptKey: 'sticker-placement' },
+  // The sticker book profile tab. Its own flag rather than riding `stickers`:
+  // the tab publishes what a creator owns and what their work has collected on a
+  // PUBLIC profile, which is a disclosure decision separate from whether
+  // stickers can be bought or placed at all. Gates the tab only — the book's own
+  // endpoints stay open so a creator paid for a placement does not lose the
+  // record of it if the flag goes back to testers.
+  stickerBook: { availability: ['mod'], fliptKey: 'sticker-book' },
   // Paying to put your own image in someone else's gallery. Its own flag rather
   // than riding `stickerPlacement`: the two surfaces open to testers on
   // different schedules, and unlike stickers this one places arbitrary
@@ -409,7 +417,7 @@ const featureFlags = createFeatureFlags({
   annualMemberships: ['dev'],
   disablePayments: ['blue', 'red', 'public'],
   prepaidMemberships: ['public'],
-  giftMemberships: { availability: ['mod'], fliptKey: 'gift-memberships' },
+  giftMemberships: { availability: ['public'], fliptKey: 'gift-memberships' },
   buzzMemberships: { availability: ['mod'], fliptKey: 'buzz-memberships' },
   coinbasePayments: [],
   emerchantpayPayments: ['public'],
@@ -453,7 +461,7 @@ const featureFlags = createFeatureFlags({
   // dropped from the version options, which both hides it and makes a submitted
   // `polygenVersion: 'v7'` fail the node's schema (see polygen-graph.ts).
   tripoGenerator: { availability: ['mod'], fliptKey: 'tripo-generator' },
-  hunyuan3dGenerator: { availability: ['mod'], fliptKey: 'hunyuan3d-generator' },
+  hunyuan3dGenerator: { availability: ['public'], fliptKey: 'hunyuan3d-generator' },
   meshyV7Generator: { availability: ['mod'], fliptKey: 'meshy-v7-generator' },
   // Grok Imagine Image 2.0 — gates ONLY the v2.0 entry in the Grok version
   // picker; v1.0 / v1.5 stay live regardless, so Grok image + video generation
@@ -715,27 +723,18 @@ if (typeof window === 'undefined') {
 }
 
 export function buildFliptContext(user?: SessionUser): Record<string, string> {
-  const ctx: Record<string, string> = {};
-  if (user) {
-    ctx.userId = String(user.id);
-    ctx.isModerator = String(!!user.isModerator);
-    ctx.tier = user.tier ?? 'free';
-    ctx.isLoggedIn = 'true';
-    ctx.isMember = String(!!user.tier && user.tier !== 'free');
-    // Creator Program membership is recorded as an onboarding-step bit
-    // (set on join in creator-program.service, cleared on leave).
-    ctx.isInCreatorProgram = String(Flags.hasFlag(user.onboarding, OnboardingSteps.CreatorProgram));
-    // Early-adopter opt-in, stored in `User.settings` and projected onto the session by
-    // the auth hub. Always emitted for a logged-in user (never opted in ⇒ 'false'), so a
-    // Flipt segment can match on the string EQUALLY rather than on key presence — same
-    // shape as `isModerator` above. Absent entirely for an anonymous request.
-    ctx.isEarlyAdopter = String(!!user.isEarlyAdopter);
-  } else {
-    ctx.isLoggedIn = 'false';
-  }
-  const deploymentId = process.env.FLIPT_DEPLOYMENT_ID;
-  if (deploymentId) ctx.deploymentId = deploymentId;
-  return ctx;
+  return buildSharedFliptContext(
+    user,
+    user
+      ? {
+          // Creator Program membership is recorded as an onboarding-step bit (set on join in
+          // creator-program.service, cleared on leave) — the bit lives in the app, not the package.
+          isInCreatorProgram: String(
+            Flags.hasFlag(user.onboarding, OnboardingSteps.CreatorProgram)
+          ),
+        }
+      : undefined
+  );
 }
 
 const hasFeature = (

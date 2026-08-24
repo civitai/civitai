@@ -588,6 +588,64 @@ export const deleteImageById = async ({
   }
 };
 
+/**
+ * Queue an image that has been REPLACED (not deleted) for destruction later, instead of
+ * destroying it inline.
+ *
+ * A replacement is not a deletion: nobody asked for the old picture to stop existing, they
+ * asked for a new one to start being used. Destroying the old row + stored object at that
+ * moment turns every reference still holding its url into a 404 — and several such caches
+ * are legitimate and long-lived (the image CDN's redirect is `max-age=86400`, the
+ * account-switcher roster in localStorage is durable by design, feeds and embeds hold
+ * rendered urls). A stale-but-present avatar is invisible to a user; a deleted one is a
+ * broken image. Deferring the reap makes the whole class self-correcting rather than
+ * permanently broken until every cache is individually fixed.
+ *
+ * The queue row is the clock: `remove-replaced-images` measures the retention window from
+ * its `createdAt`, exactly as `remove-blocked-images` does for `BlockedImageDelete`.
+ *
+ * `DO UPDATE` rather than `DO NOTHING` (which is what `enqueueJobs` uses) is load-bearing.
+ * A user can re-select a previously-replaced image, so the same id can be queued twice; on
+ * conflict the row must RESTART its window, not inherit the first replacement's clock, or
+ * the second replacement gets no retention at all.
+ *
+ * Errors are swallowed and logged, like `deleteImageById` above. The one caller runs inside
+ * the `Promise.all` that decides whether a profile save reports success, and a save that has
+ * already committed must not surface as "error updating your profile" because a cleanup
+ * enqueue failed. The failure direction is also the safe one: the image stays fetchable and
+ * is not reaped, so the worst case is one leaked object with a log line naming it — never a
+ * broken avatar.
+ */
+export async function queueReplacedImageDeletion(ids: number[]) {
+  // Deduped and chunked like `enqueueJobs`, whose statement shape this otherwise copies. The
+  // dedupe is not hygiene: `DO UPDATE` cannot touch the same row twice in one statement, so a
+  // repeated id in a single call would fail the whole insert.
+  const batches = chunk(uniq(ids), 500);
+  for (const batch of batches) {
+    try {
+      await dbWrite.$executeRaw`
+        INSERT INTO "JobQueue" ("entityId", "entityType", "type")
+        VALUES ${Prisma.join(
+          batch.map(
+            (entityId) =>
+              Prisma.sql`(${entityId}::integer, ${EntityType.Image}::"EntityType", ${JobQueueType.ReplacedImageDelete}::"JobQueueType")`
+          )
+        )}
+        ON CONFLICT ("entityType", "entityId", "type")
+        DO UPDATE SET "createdAt" = NOW()
+      `;
+    } catch (error) {
+      await logToAxiom({
+        type: 'error',
+        name: 'queue-replaced-image-deletion-failed',
+        message: 'replaced image was not queued for deletion; it will not be reaped',
+        imageIds: batch,
+        error: safeError(error),
+      }).catch(() => undefined);
+    }
+  }
+}
+
 export async function deleteImages(ids: number[], updatePosts = true) {
   const images = await Limiter({ batchSize: 100 }).process(ids, async (ids, batchIndex) => {
     const results = await dbWrite.$queryRaw<
@@ -3407,9 +3465,9 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
   // BitDex-served Following feed) pay nothing here.
   //
   // ⚠️ THE STALENESS WINDOW IS REPLICA LAG, NOT CACHE TTL — and the cache is the
-  // FRESHER of the two. `userFollowsCache.refresh()` re-reads through `lookupFn(…,
-  // true)`, i.e. dbWrite, and `toggleFollowUser` calls it on both follow and
-  // unfollow; the pre-filter reads the REPLICA. So the reachable disagreement is a
+  // FRESHER of the two. `toggleFollowUser` maintains it from the delta it committed,
+  // falling back to `userFollowsCache.refresh()`, which re-reads via `lookupFn(…,
+  // true)`, i.e. dbWrite; the pre-filter reads the REPLICA. So the disagreement is a
   // caller who has just self-followed: for the replica-lag window this guard says
   // "in scope" and runs the own pass while the replica-derived filter still
   // excludes them. It needs a self-follow to reach at all, is self-healing, and

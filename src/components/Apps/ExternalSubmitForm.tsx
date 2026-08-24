@@ -31,6 +31,7 @@ import {
   OFFSITE_CATEGORY_OPTIONS,
   OFFSITE_CONTENT_RATING_OPTIONS,
   OFFSITE_SUBMIT_LIMITS,
+  SOURCE_REPO_HOSTS_LABEL,
   deriveListingFromUrl,
   deriveScopesFromClient,
   emptyOffsiteSubmitForm,
@@ -787,6 +788,21 @@ function ExternalCreateForm() {
                 maxLength={OFFSITE_SUBMIT_LIMITS.descriptionMax}
                 disabled={busy}
                 data-testid="apps-offsite-submit-description"
+              />
+
+              {/* Optional public source-repository link. Host list comes from the
+                  SERVER allowlist (SOURCE_REPO_HOSTS_LABEL), never a second copy. */}
+              <TextInput
+                label="Source repository"
+                description={`Public link to your app's source code, shown on its store page (optional). ${SOURCE_REPO_HOSTS_LABEL} only, linking to the repository itself.`}
+                placeholder="https://github.com/your-org/your-app"
+                value={values.sourceRepoUrl}
+                onChange={(e) => setField('sourceRepoUrl', e.currentTarget.value)}
+                onKeyDown={handleDetailsKeyDown}
+                error={errors.sourceRepoUrl}
+                maxLength={OFFSITE_SUBMIT_LIMITS.sourceRepoUrlMax}
+                disabled={busy}
+                data-testid="apps-offsite-submit-source-repo"
               />
 
               <Group grow align="flex-start">

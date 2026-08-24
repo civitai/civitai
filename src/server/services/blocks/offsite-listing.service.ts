@@ -12,7 +12,15 @@ import {
 import {
   assertNoOnPlatformSurface,
   validateExternalUrl,
+  validateRepositoryUrl,
 } from '~/server/schema/blocks/external-app.schema';
+import {
+  assertSourceRepoWritable,
+  isSourceRepoColumnAvailable,
+  readListingSourceRepoUrl,
+  sourceRepoWriteFragment,
+  type ListingSourceRepoRead,
+} from '~/server/services/blocks/app-listing-source-repo.service';
 import {
   OFFSITE_CONTENT_RATINGS,
   OFFSITE_REJECTION_REASON_MAX,
@@ -180,6 +188,31 @@ export async function submitExternalListing(opts: {
   // is exported + unit-tested directly, not only reached through the schema.
   const url = input.externalUrl != null ? validateExternalUrl(input.externalUrl) : null;
   if (url && !url.ok) throw new TRPCError({ code: 'BAD_REQUEST', message: url.error });
+  // Same posture for the OPTIONAL public source-repository link: re-run the shared
+  // validator (this fn is exported + unit-tested directly, not only reached through the
+  // schema) and STORE THE NORMALISED FORM, so a later material-change comparison is
+  // against a canonical value rather than whatever the author happened to paste.
+  const sourceRepo =
+    input.sourceRepoUrl != null ? validateRepositoryUrl(input.sourceRepoUrl) : null;
+  if (sourceRepo && !sourceRepo.ok) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: sourceRepo.error });
+  }
+  // 🔴 THE AUTHOR SUPPLIED A LINK, SO THE COLUMN MUST EXIST BEFORE WE PROMISE TO STORE
+  // IT. `app_listings.source_repo_url` is MANUAL-APPLY; writing it before a human runs
+  // the SQL raises P2022 and the author gets a 500 naming a database column, and
+  // dropping it silently would return "submitted" for a listing whose source link is
+  // simply gone. Neither is acceptable, so refuse with a message that names the field.
+  //
+  // 🔴 PROBED ONLY WHEN THERE IS SOMETHING TO WRITE. An author who leaves the field
+  // empty must be able to submit exactly as before — same query count, same behaviour —
+  // which is also why the create below OMITS the key rather than writing `null`.
+  //
+  // Probed on `dbWrite` (the PRIMARY), because the primary is where the create lands: a
+  // replica probe could answer "absent" for a column DDL that has already committed on
+  // the primary and not yet replicated, refusing a submit that would have worked.
+  if (sourceRepo && sourceRepo.ok) {
+    assertSourceRepoWritable(await isSourceRepoColumnAvailable(dbWrite));
+  }
   const surface = assertNoOnPlatformSurface({
     page: input.page,
     targets: input.targets,
@@ -277,6 +310,21 @@ export async function submitExternalListing(opts: {
           contentRating,
           // OPTIONAL homepage / Visit link — canonicalized when provided, else null.
           externalUrl: url && url.ok ? url.url : null,
+          // OPTIONAL public source-repository link, canonicalized.
+          //
+          // The key is OMITTED ENTIRELY when the author supplied none, rather than
+          // written as `null`. That keeps the column out of the INSERT's column list.
+          //
+          // 🔴 IT DOES **NOT** MAKE THIS CREATE SAFE AGAINST AN UNAPPLIED MIGRATION, and
+          // an earlier version of this comment claimed it did ("the column is simply
+          // never mentioned"). Prisma returns the created row, so it emits
+          // `INSERT … RETURNING <every scalar the MODEL declares>` — and `sourceRepoUrl`
+          // is on the model. The generated SQL names `source_repo_url` regardless of
+          // `data`, so this create raises P2022 on any database without the column.
+          // Measured on the PR preview env: 5 smoke specs 500'd here, for authors who
+          // supplied no link at all. The migration is therefore a HARD PRE-DEPLOY step —
+          // see the header of 20260823120000_app_listing_source_repo/migration.sql.
+          ...(sourceRepo && sourceRepo.ok ? { sourceRepoUrl: sourceRepo.url } : {}),
           // REQUIRED OAuth client link + the disclosed (review-only) scope set
           // (SERVER-DERIVED from the client's allowedScopes) + per-scope justifications.
           connectClientId: input.connectClientId,
@@ -672,8 +720,16 @@ async function closeTerminalListing(
  * listing to SFW users. `externalUrl`/`name` are the listing's identity/destination.
  * `tagline`/`description`/`category` stay trivial — quick copy edits are intended
  * and are delistable if abused.
+ *
+ * `sourceRepoUrl` is MATERIAL for the same reason `externalUrl` is: it is an OUTBOUND
+ * LINK rendered on a public store page, and the moderator approved a specific
+ * destination. The host allowlist bounds where it can point but not what is THERE —
+ * a repo can be replaced, renamed or transferred — so a change re-enters review
+ * rather than going live silently. Like `externalUrl` it compares against the
+ * validator's CANONICAL form, so re-saving `…/a/b` as `…/a/b.git` is correctly seen
+ * as no change and does not cost a pointless mod re-review.
  */
-const MATERIAL_PATCH_FIELDS = ['externalUrl', 'name', 'contentRating'] as const;
+const MATERIAL_PATCH_FIELDS = ['externalUrl', 'name', 'contentRating', 'sourceRepoUrl'] as const;
 
 /**
  * Validate + normalize an update patch (shared by the in-place + shadow paths).
@@ -685,7 +741,7 @@ const MATERIAL_PATCH_FIELDS = ['externalUrl', 'name', 'contentRating'] as const;
  */
 export function buildListingPatchData(
   patch: UpdateListingPatch,
-  opts?: {
+  opts: {
     /**
      * The connect client's `allowedScopes` ceiling (from the listing's
      * `connectClientId`). REQUIRED when the patch touches `requestedScopes` /
@@ -694,6 +750,21 @@ export function buildListingPatchData(
      * is rejected.
      */
     connectAllowedScopes?: number | null;
+    /**
+     * Whether the MANUAL-APPLY `app_listings.source_repo_url` column actually exists,
+     * from the caller's guarded read (`EditableListing.sourceRepoAvailable`).
+     *
+     * 🔴 REQUIRED, AND `opts` IS NO LONGER OPTIONAL, PRECISELY SO A NEW CALL SITE
+     * CANNOT FORGET IT. This function is the single place every off-site scalar edit
+     * funnels through — `updateListing`'s three branches and `updateRevisionDraft` —
+     * and the first version of this feature took no availability parameter at all, so
+     * every one of those four paths wrote the column unconditionally and 500'd with a
+     * P2022 naming a database column. A defaulted parameter would have re-created that
+     * silently; a required one makes the compiler ask the question at each call site.
+     * At runtime an absent value is read as `false` (fail CLOSED — a refusal the author
+     * can act on beats a 500 they cannot).
+     */
+    sourceRepoAvailable: boolean;
   }
 ): Prisma.AppListingUpdateInput {
   const data: Prisma.AppListingUpdateInput = {};
@@ -701,6 +772,26 @@ export function buildListingPatchData(
     const url = validateExternalUrl(patch.externalUrl);
     if (!url.ok) throw new TRPCError({ code: 'BAD_REQUEST', message: url.error });
     data.externalUrl = url.url;
+  }
+  // Public source-repository link. Follows this builder's established convention
+  // exactly: an OMITTED key leaves the column untouched, an explicit `null` CLEARS it,
+  // and a provided value is validated + stored NORMALISED (so the material-change
+  // comparison below is against a canonical value).
+  if (patch.sourceRepoUrl !== undefined) {
+    // 🔴 THE COLUMN GATE COMES FIRST, before the value is even looked at. An explicit
+    // `null` is as unwritable as a URL while the column is missing — Prisma raises the
+    // same P2022 for `{sourceRepoUrl: null}` as for a value — so BOTH instructions have
+    // to be refused, and refused with a message about the environment rather than about
+    // the author's input. `opts?.` is deliberate belt-and-braces on a REQUIRED field:
+    // absent reads as `false`, which refuses rather than 500s.
+    assertSourceRepoWritable(opts?.sourceRepoAvailable === true);
+    if (patch.sourceRepoUrl === null) {
+      data.sourceRepoUrl = null;
+    } else {
+      const repo = validateRepositoryUrl(patch.sourceRepoUrl);
+      if (!repo.ok) throw new TRPCError({ code: 'BAD_REQUEST', message: repo.error });
+      data.sourceRepoUrl = repo.url;
+    }
   }
   if (patch.name !== undefined) data.name = patch.name;
   if (patch.tagline !== undefined) data.tagline = patch.tagline;
@@ -761,6 +852,7 @@ function patchHasMaterialChange(
     externalUrl: string | null;
     name: string;
     contentRating: string | null;
+    sourceRepoUrl: string | null;
     connectRequestedScopes: number | null;
   }
 ): boolean {
@@ -772,6 +864,25 @@ function patchHasMaterialChange(
       // An invalid URL is a material change (it will be rejected downstream, but
       // it is not "unchanged").
       if (!url.ok || url.url !== live.externalUrl) return true;
+      continue;
+    }
+    if (field === 'sourceRepoUrl') {
+      // 🔴 COMPARED IN CANONICAL FORM, not as a raw string — the same treatment
+      // `externalUrl` gets one branch up, and for a sharper reason. The author edits
+      // this in a text box, so `https://github.com/a/b`, `…/a/b/` and `…/a/b.git` all
+      // arrive from an author who changed NOTHING. Plain inequality would route each of
+      // those onto a shadow revision and back into the moderator queue, which is both
+      // noise for the mod and a needless "pending re-review" banner for the author.
+      if (patched === null) {
+        // An explicit CLEAR is material iff there was something to clear.
+        if (live.sourceRepoUrl !== null) return true;
+        continue;
+      }
+      const repo = validateRepositoryUrl(patched);
+      // An invalid value is material (rejected downstream, but not "unchanged") —
+      // mirrors the externalUrl branch, so an author cannot slip an unreviewed value
+      // through the trivial in-place path by making it malformed.
+      if (!repo.ok || repo.url !== live.sourceRepoUrl) return true;
       continue;
     }
     // name / contentRating: plain scalar inequality vs the live value.
@@ -821,6 +932,18 @@ type EditableListing = {
   connectScopeJustifications: Prisma.JsonValue | null;
   iconId: number | null;
   coverId: number | null;
+  /**
+   * The public source-repository link, resolved SEPARATELY from the select below.
+   *
+   * 🔴 IT IS DELIBERATELY NOT IN `editableListingSelect`. `source_repo_url` is a
+   * MANUAL-APPLY column, so naming it in that select would make every author edit and
+   * every `beginListingRevision` throw P2022 until a human runs the migration —
+   * breaking two pre-existing flows for an additive field. `loadOwnedEditableListing`
+   * fills it via the guarded `readListingSourceRepoUrl` instead.
+   */
+  sourceRepoUrl: string | null;
+  /** See {@link ListingSourceRepoRead.available} — `false` ⇒ never write the column. */
+  sourceRepoAvailable: boolean;
 };
 
 const editableListingSelect = {
@@ -917,14 +1040,23 @@ async function loadOwnedEditableListing(
   const listing = (await dbRead.appListing.findUnique({
     where: { id: listingId },
     select: editableListingSelect,
-  })) as EditableListing | null;
+  })) as Omit<EditableListing, 'sourceRepoUrl' | 'sourceRepoAvailable'> | null;
   if (!listing) {
     throw new OffsiteRequestError('NOT_FOUND', `listing ${listingId} not found`);
   }
   if ((await resolveListingRole(listingId, userId)) === null) {
     throw new OffsiteRequestError('NOT_OWNED', 'you can only edit your own listings');
   }
-  return listing;
+  // Guarded second read for the MANUAL-APPLY `source_repo_url` column — see the
+  // `sourceRepoUrl` field note on `EditableListing`. Costs one extra round trip on an
+  // author edit path (a handful of calls per editing session, not a hot read); the
+  // alternative is a select that 500s the whole edit flow until a human runs SQL.
+  const sourceRepo: ListingSourceRepoRead = await readListingSourceRepoUrl(listingId, dbRead);
+  return {
+    ...listing,
+    sourceRepoUrl: sourceRepo.value,
+    sourceRepoAvailable: sourceRepo.available,
+  };
 }
 
 /**
@@ -967,7 +1099,26 @@ export async function updateListing(opts: {
     userId,
     isModerator,
   });
-  const patchOpts = { connectAllowedScopes };
+  // 🔴 HOISTED ABOVE THE STATE ROUTING, for the same reason the scope validation above
+  // is: the `approved` + material branch opens a SHADOW REVISION before it builds the
+  // patch data, so a refusal raised inside `buildListingPatchData` would land AFTER
+  // `beginListingRevision` has minted one — leaving the author an orphan revision draft
+  // and their listing stuck in "pending re-review" for an edit that never applied.
+  // Checked here, nothing has been written when it throws.
+  //
+  // `listing.sourceRepoAvailable` comes from the guarded read on the REPLICA. That is
+  // the safe direction for a REFUSAL: DDL reaches the primary first, so a replica that
+  // can see the column proves the primary can, and the only error this can make is a
+  // transient false refusal during the seconds a freshly-applied `ALTER TABLE` takes to
+  // replicate. The opposite mistake — believing a column the primary lacks — is the one
+  // that 500s, and it is not reachable from this direction.
+  if (effectivePatch.sourceRepoUrl !== undefined) {
+    assertSourceRepoWritable(listing.sourceRepoAvailable);
+  }
+  const patchOpts = {
+    connectAllowedScopes,
+    sourceRepoAvailable: listing.sourceRepoAvailable,
+  };
 
   switch (listing.status) {
     case 'removed':
@@ -995,6 +1146,7 @@ export async function updateListing(opts: {
         externalUrl: listing.externalUrl,
         name: listing.name,
         contentRating: listing.contentRating,
+        sourceRepoUrl: listing.sourceRepoUrl,
         connectRequestedScopes: listing.connectRequestedScopes,
       });
       if (!material) {
@@ -1059,6 +1211,21 @@ export async function beginListingRevision(opts: {
   });
   if (existing) return { shadowId: existing.id, created: false };
 
+  // 🔴 RE-READ THE SOURCE REPO ON THE **PRIMARY**, not from `parent` (which came off the
+  // REPLICA via `loadOwnedEditableListing`). The two clients can disagree about this
+  // column for a few seconds after the manual `ALTER TABLE`, and the disagreement DELETES
+  // DATA in exactly one direction: clone-time reads the replica and sees "unavailable",
+  // so the shadow is created WITHOUT the column; apply-time reads the primary
+  // (`applyApprovedRevision`, inside its own tx) and sees "available", so the fragment
+  // emits `{sourceRepoUrl: null}` and the approve wipes the parent's live public link —
+  // no error, no moderator-visible diff, the link simply gone.
+  //
+  // Reading on the primary makes both ends of the round trip ask the SAME database, so
+  // the pair is consistent by construction rather than by luck of replication timing.
+  // It costs one query on a path that already runs a transaction, and only when a shadow
+  // is actually being minted (the idempotent-reuse return above is ahead of it).
+  const parentSourceRepo = await readListingSourceRepoUrl(listingId, dbWrite);
+
   const shadowId = newAppListingId();
   // Synthetic, globally-unique slug: the shadow is never public, but slug is
   // @unique, so it must not collide with the parent or any other listing.
@@ -1085,6 +1252,17 @@ export async function beginListingRevision(opts: {
           category: parent.category,
           contentRating: parent.contentRating,
           externalUrl: parent.externalUrl,
+          // 🔴 CARRIED ONTO THE SHADOW, or a revision that does NOT touch the source
+          // link would silently CLEAR it on approve — `applyApprovedRevision` copies the
+          // shadow's value onto the parent unconditionally, so an uncopied column here
+          // becomes a deletion there. Same reasoning as `connectRequestedScopes` below.
+          // Omitted entirely (not null) when the manual-apply column is unreadable, so
+          // opening a revision keeps working before the migration lands.
+          //
+          // 🔴 FROM THE PRIMARY READ ABOVE, NOT FROM `parent` — see that comment. A
+          // replica-sourced `available: false` paired with a primary-sourced
+          // `available: true` at apply time is what silently clears a live link.
+          ...sourceRepoWriteFragment(parentSourceRepo),
           connectClientId: parent.connectClientId,
           // Carry the disclosed OAuth scope subset + justifications onto the shadow so
           // a revision that DOESN'T touch scopes preserves them (and one that does
@@ -1302,6 +1480,13 @@ export type ListingEditScalars = {
   category: string | null;
   contentRating: string | null;
   externalUrl: string | null;
+  /**
+   * The public source-repository link. `null` for "not set" AND (indistinguishably, on
+   * purpose) while the manual-apply column is absent: to the FORM those are the same
+   * state — an empty input — and the form's diff only emits the field when the author
+   * types into it, so an unreadable column cannot cause a spurious write.
+   */
+  sourceRepoUrl: string | null;
 };
 
 export type ListingEditAsset = { imageId: number | null; url: string | null };
@@ -1394,6 +1579,10 @@ async function loadListingEditView(
   connectScopeJustifications: Record<string, string> | null;
 }> {
   const { getEdgeUrl } = await import('~/client-utils/edge-url');
+  // Guarded, SEPARATE read of the manual-apply `source_repo_url` column — never added
+  // to the select below, which would 500 the whole author edit-prefill page until a
+  // human runs the migration. Degrades to null; see app-listing-source-repo.service.
+  const sourceRepo = await readListingSourceRepoUrl(listingId, db);
   const row = (await db.appListing.findUnique({
     where: { id: listingId },
     select: {
@@ -1452,6 +1641,7 @@ async function loadListingEditView(
       category: row.category,
       contentRating: row.contentRating,
       externalUrl: row.externalUrl,
+      sourceRepoUrl: sourceRepo.value,
     },
     connectRequestedScopes: row.connectRequestedScopes ?? null,
     connectScopeJustifications:
@@ -1902,7 +2092,17 @@ export async function updateRevisionDraft(opts: {
     userId,
     isModerator,
   });
-  const data = buildListingPatchData(effectivePatch, { connectAllowedScopes });
+  // Same up-front column gate as `updateListing` — a shadow edit writes the same column
+  // through the same builder, so an unapplied migration must refuse here too rather than
+  // reach Prisma. (No shadow is opened on this path, so there is nothing to orphan; the
+  // check is hoisted anyway to keep the two edit entry points reading identically.)
+  if (effectivePatch.sourceRepoUrl !== undefined) {
+    assertSourceRepoWritable(shadow.sourceRepoAvailable);
+  }
+  const data = buildListingPatchData(effectivePatch, {
+    connectAllowedScopes,
+    sourceRepoAvailable: shadow.sourceRepoAvailable,
+  });
   await dbWrite.appListing.update({ where: { id: shadowId }, data });
   return { shadowId };
 }
@@ -2471,6 +2671,19 @@ async function applyApprovedRevision(opts: {
     );
   }
 
+  // Does the MANUAL-APPLY column exist? Asked HERE, OUTSIDE the transaction, and on the
+  // same primary the transaction will run against.
+  //
+  // 🔴 THE POINT IS TO NEVER ISSUE A FAILING STATEMENT INSIDE THE TRANSACTION. The
+  // guarded read below swallows P2022 at the application level, but PostgreSQL puts a
+  // transaction into the aborted state on ANY statement error, and Prisma's interactive
+  // transactions issue no savepoints — so a caught-and-ignored missing-column error can
+  // still leave every following statement failing with 25P02 and take the whole revision
+  // apply down. Probing first means that when the column is absent the transaction never
+  // names it at all, which is what makes "until the SQL runs, the feature is inert" true
+  // of this path rather than merely intended.
+  const sourceRepoColumnAvailable = await isSourceRepoColumnAvailable(dbWrite);
+
   await dbWrite.$transaction(async (tx) => {
     // (1) AUTHORITATIVE re-read of the shadow on the PRIMARY (row-consistent with
     // the copy). The sibling asset mutators write to dbWrite, so a pre-tx replica
@@ -2504,6 +2717,19 @@ async function applyApprovedRevision(opts: {
         'cannot approve — the revision draft is no longer available'
       );
     }
+    // The shadow's public source-repository link, read through the MANUAL-APPLY guard
+    // rather than added to the select above — a missing column there would abort this
+    // whole transaction and make every off-site revision unapprovable until a human
+    // runs the migration. Read on `tx` (the PRIMARY, inside the transaction) for the
+    // same row-consistency reason the select is.
+    //
+    // 🔴 `available` — NOT `value != null` — decides whether the copy below writes the
+    // column at all. Conflating them would mean an unreadable column looked exactly
+    // like "the author removed the link", and the copy would need to distinguish
+    // "clear it" from "don't touch it". It can, because it asks the right question.
+    const shadowSourceRepo: ListingSourceRepoRead = sourceRepoColumnAvailable
+      ? await readListingSourceRepoUrl(shadowId, tx)
+      : { available: false, value: null };
     const shadowScreenshotRows = await tx.appListingScreenshot.findMany({
       where: { appListingId: shadowId, imageId: { not: null } },
       select: { imageId: true },
@@ -2645,6 +2871,13 @@ async function applyApprovedRevision(opts: {
           category: shadow.category,
           contentRating: finalRating,
           externalUrl: shadow.externalUrl,
+          // The reviewed source-repository link. UNCONDITIONAL in both directions, like
+          // every other scalar here: a revision that cleared it clears it on the parent.
+          // That is exactly why `beginListingRevision` copies it onto the shadow — and
+          // why `OFFSITE_UNCOMPARED_APPLY_FIELDS` names it, so the drift panel cannot
+          // tell a moderator this apply "changes nothing" while it rewrites a public
+          // outbound link. Omitted (not null) while the manual-apply column is absent.
+          ...sourceRepoWriteFragment(shadowSourceRepo),
           connectClientId: shadow.connectClientId,
           // Apply the revision's disclosed OAuth scopes + justifications onto the live
           // parent (a scope change is material, so the shadow carries the reviewed set).

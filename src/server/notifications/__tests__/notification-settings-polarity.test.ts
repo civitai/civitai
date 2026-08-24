@@ -28,17 +28,8 @@ const queryFor = async (type: string) => {
 
 const OPT_OUT_CLAUSE = 'NOT EXISTS (SELECT 1 FROM "UserNotificationSettings"';
 
-/**
- * Types that render a toggle and ignore it, left as they are.
- *
- * `cosmetic-shop-item-sold` is a pre-existing defect this guard found, not one
- * introduced with it: it draws a checkbox under System and its query never reads
- * the settings table, so the switch has never done anything. Left alone because
- * fixing it silences an earnings notification for whoever already tried to mute
- * it, which is a product decision on someone else's surface rather than part of
- * the placement work that added this check.
- */
-const KNOWN_INERT = ['cosmetic-shop-item-sold'];
+/** Types that render a toggle and ignore it. Pinned empty — see the guard below. */
+const KNOWN_INERT: string[] = [];
 /** A LEFT JOIN would satisfy a bare `JOIN` substring test while restricting nothing. */
 const DERIVES_RECIPIENTS = /(?<!LEFT )(?<!LEFT OUTER )JOIN "UserNotificationSettings"/;
 
@@ -100,6 +91,18 @@ describe('notification settings polarity', () => {
     // in both directions — a new inert type appears, or a listed one is fixed
     // and must be struck off here.
     expect(inert.join(', ')).toBe(KNOWN_INERT.join(', '));
+  });
+
+  it('the shop earnings type honours its own checkbox', async () => {
+    // Asserted positively as well as by absence from KNOWN_INERT, where an empty
+    // expected string passes for several reasons and only one is the fix.
+    //
+    // Scoped to `sold_items."ownerId"`: gating on the buyer's `cp."userId"`, also
+    // in scope, would silence the seller's notification for whoever the BUYER
+    // muted — and every other assertion here passes straight through that.
+    expect(await queryFor('cosmetic-shop-item-sold')).toContain(
+      `WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = sold_items."ownerId" AND type = 'cosmetic-shop-item-sold')`
+    );
   });
 
   it('that check is capable of failing', () => {

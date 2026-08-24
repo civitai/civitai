@@ -15,7 +15,9 @@ vi.mock('~/server/services/collection.service', () => ({
 }));
 
 import {
+  addUserHubSource,
   getHubSourceSuggestions,
+  removeUserHubSource,
   getUserHubById,
   resolveHubSourceFromUrl,
   resolveHubSources,
@@ -36,6 +38,9 @@ import {
 import { ImageSort } from '~/server/common/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 const findFirstHub = dbMock.dbRead.userHub.findFirst;
+// The source mutations read the hub through the WRITER — the duplicate check, the cap
+// and the next index all come off that row.
+const writerHub = dbMock.dbWrite.userHub.findFirst;
 const findManyCollections = dbMock.dbRead.collection.findMany;
 const queryRaw = dbMock.dbRead.$queryRaw;
 
@@ -207,7 +212,9 @@ describe('upsertUserHub', () => {
     await upsertUserHub({ name: 'defaults', sources: [], userId: 5 });
 
     const arg = dbMock.dbWrite.userHub.create.mock.calls[0][0];
-    expect(arg.data.sort).toBe(ImageSort.Newest);
+    // NOT Newest: a caller that omitted the field cannot have decided this viewer is
+    // offered Newest, and the sort menu withholds it from anyone who cannot view NSFW.
+    expect(arg.data.sort).toBe(ImageSort.MostReactions);
     expect(arg.data.period).toBe(MetricTimeframe.AllTime);
 
     // The half the title used to claim and never exercised: the same call shape
@@ -575,6 +582,45 @@ describe('source suggestions stay inside the viewer', () => {
     // "a". Bounded by the id list above, so it is not the scan that ILIKE was on
     // the unbounded query.
     expect(names.where.username).toEqual({ contains: 'some', mode: 'insensitive' });
+    expect(names.orderBy).toEqual({ username: 'asc' });
+  });
+
+  it('keeps the most recent relationships when there is nothing to search', async () => {
+    // Ordering by name sits above `take`, so with no term it would decide WHICH
+    // suggestions survive: a viewer following more than a page of creators would
+    // get the alphabetically first ones and never their most recent follows.
+    const followed = Array.from({ length: 60 }, (_, i) => ({ targetUserId: 100 + i }));
+    dbMock.dbRead.userEngagement.findMany.mockResolvedValue(followed);
+    dbMock.dbRead.user.findMany.mockResolvedValue([
+      { id: 101, username: 'zoe' },
+      { id: 100, username: 'aaron' },
+    ]);
+
+    const result = await getHubSourceSuggestions({ userId: 5, type: UserHubSourceType.User });
+
+    const names = dbMock.dbRead.user.findMany.mock.calls[0][0];
+    expect(names.orderBy).toBeUndefined();
+    // A margin over the page size, because deleted rows are filtered after the id
+    // restriction — asking for exactly 25 returns a short page when one has gone.
+    expect(names.where.id.in).toEqual(followed.slice(0, 50).map((f) => f.targetUserId));
+    expect(names.where.id.in.length).toBeGreaterThan(25);
+    expect(result.map((r) => r.targetId)).toEqual([100, 101]);
+  });
+
+  it('trims the deleted-row margin back to one page, keeping the most recent', async () => {
+    const followed = Array.from({ length: 60 }, (_, i) => ({ targetUserId: 100 + i }));
+    dbMock.dbRead.userEngagement.findMany.mockResolvedValue(followed);
+    // 40 survive the `deletedAt` filter, in whatever order the PK scan produced.
+    dbMock.dbRead.user.findMany.mockResolvedValue(
+      Array.from({ length: 40 }, (_, i) => ({ id: 139 - i, username: `user${139 - i}` }))
+    );
+
+    const result = await getHubSourceSuggestions({ userId: 5, type: UserHubSourceType.User });
+
+    expect(result).toHaveLength(25);
+    // The 25 earliest positions in the follow list, not the 25 the query happened to
+    // return first — a page short of 25, or ordered by id, both fail here.
+    expect(result.map((r) => r.targetId)).toEqual(Array.from({ length: 25 }, (_, i) => 100 + i));
   });
 
   it('scopes every models arm to the viewer, and filters names once over the union', async () => {
@@ -601,6 +647,47 @@ describe('source suggestions stay inside the viewer', () => {
     const names = dbMock.dbRead.model.findMany.mock.calls[1][0];
     expect(names.where.id).toEqual({ in: [1, 2, 3] });
     expect(names.where.name).toEqual({ contains: 'nova', mode: 'insensitive' });
+    expect(names.orderBy).toEqual({ name: 'asc' });
+  });
+
+  it('offers only the models the paste-a-link path would resolve', async () => {
+    dbMock.dbRead.collection.findFirst.mockResolvedValue(null);
+    dbMock.dbRead.model.findMany.mockResolvedValue([{ id: 1 }]);
+    dbMock.dbRead.modelEngagement.findMany.mockResolvedValue([{ modelId: 2 }]);
+    dbMock.dbRead.collectionItem.findMany.mockResolvedValue([]);
+
+    await getHubSourceSuggestions({ userId: 5, type: UserHubSourceType.Model });
+    const suggested = dbMock.dbRead.model.findMany.mock.calls[1][0].where;
+
+    dbMock.dbRead.model.findFirst.mockResolvedValue(null);
+    await resolveHubSourceFromUrl({ url: 'https://civitai.com/models/2', userId: 5 });
+    const resolved = dbMock.dbRead.model.findFirst.mock.calls[0][0].where;
+
+    // Read off the resolve path rather than written out here, so the two cannot drift.
+    expect(suggested.deletedAt).toEqual(resolved.deletedAt);
+    expect(suggested.OR).toEqual(resolved.OR);
+    // The control: two undefined visibility clauses would satisfy the pair above.
+    expect(resolved.OR).toEqual([
+      { userId: 5 },
+      { status: ModelStatus.Published, availability: { not: Availability.Private } },
+    ]);
+  });
+
+  it('lifts the visibility filter for a moderator, as the link path does', async () => {
+    dbMock.dbRead.collection.findFirst.mockResolvedValue(null);
+    dbMock.dbRead.model.findMany.mockResolvedValue([{ id: 1 }]);
+    dbMock.dbRead.modelEngagement.findMany.mockResolvedValue([]);
+    dbMock.dbRead.collectionItem.findMany.mockResolvedValue([]);
+
+    await getHubSourceSuggestions({
+      userId: 5,
+      type: UserHubSourceType.Model,
+      isModerator: true,
+    });
+
+    const suggested = dbMock.dbRead.model.findMany.mock.calls[1][0].where;
+    expect(suggested.OR).toBeUndefined();
+    expect(suggested.deletedAt).toBeNull();
   });
 
   it('offers no collections while the write path refuses them', async () => {
@@ -627,5 +714,153 @@ describe('taken-down models', () => {
     expect(source).toBeNull();
     const where = dbMock.dbRead.modelVersion.findFirst.mock.calls[0][0].where;
     expect(where.model.deletedAt).toBeNull();
+  });
+});
+
+describe('addUserHubSource', () => {
+  const source = { type: UserHubSourceType.User, targetId: 42, alias: 'someone' };
+
+  it('refuses a hub the viewer does not own', async () => {
+    writerHub.mockResolvedValue(null);
+
+    await expect(addUserHubSource({ userId: 999, hubId: 1, ...source })).rejects.toThrow();
+    expect(dbMock.dbWrite.userHubSource.create).not.toHaveBeenCalled();
+    expect(writerHub).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 1, userId: 999 } })
+    );
+  });
+
+  it('is a no-op when the hub already has that source', async () => {
+    writerHub.mockResolvedValue({
+      id: 1,
+      sources: [{ id: 9, type: UserHubSourceType.User, targetId: 42, enabled: true, index: 0 }],
+    });
+
+    const result = await addUserHubSource({ userId: 5, hubId: 1, ...source });
+
+    expect(result).toEqual({ hubId: 1, added: false });
+    expect(dbMock.dbWrite.userHubSource.create).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.userHubSource.update).not.toHaveBeenCalled();
+  });
+
+  it('re-enables a source the owner had switched off, rather than reporting a no-op', async () => {
+    // A disabled source is invisible to the feed, so "already there" would be a success
+    // message for a hub that still shows the viewer nothing from that creator.
+    writerHub.mockResolvedValue({
+      id: 1,
+      sources: [{ id: 9, type: UserHubSourceType.User, targetId: 42, enabled: false, index: 0 }],
+    });
+
+    const result = await addUserHubSource({ userId: 5, hubId: 1, ...source });
+
+    expect(result).toEqual({ hubId: 1, added: true });
+    expect(dbMock.dbWrite.userHubSource.update).toHaveBeenCalledWith({
+      where: { id: 9 },
+      data: { enabled: true },
+    });
+    expect(dbMock.dbWrite.userHubSource.create).not.toHaveBeenCalled();
+  });
+
+  it('tells two sources apart by type as well as target', async () => {
+    // Matching on targetId alone would report Model 42 as already present in a hub that
+    // holds User 42, and the checkbox would never tick with nothing to explain it.
+    writerHub.mockResolvedValue({
+      id: 1,
+      sources: [{ id: 9, type: UserHubSourceType.Model, targetId: 42, enabled: true, index: 3 }],
+    });
+
+    const result = await addUserHubSource({ userId: 5, hubId: 1, ...source });
+
+    expect(result).toEqual({ hubId: 1, added: true });
+    expect(dbMock.dbWrite.userHubSource.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ type: UserHubSourceType.User, targetId: 42, index: 4 }),
+    });
+  });
+
+  it('refuses a Collection source while collection sources are switched off', async () => {
+    // The router accepts the whole enum, so this is reachable even though the modal
+    // never sends it. `assertHubSourcesUsable` is the only thing that refuses it, and
+    // deleting that call from the add path is otherwise invisible.
+    writerHub.mockResolvedValue({ id: 1, sources: [] });
+
+    await expect(
+      addUserHubSource({
+        userId: 5,
+        hubId: 1,
+        type: UserHubSourceType.Collection,
+        targetId: 7,
+        alias: null,
+      })
+    ).rejects.toThrow();
+    expect(dbMock.dbWrite.userHubSource.create).not.toHaveBeenCalled();
+  });
+
+  it('adds past the highest existing index, not past the count', async () => {
+    // Indexes are not dense — removing a source leaves a gap — so appending at
+    // `length` collides with a row that is still there.
+    writerHub.mockResolvedValue({
+      id: 1,
+      sources: [
+        { id: 1, type: UserHubSourceType.Model, targetId: 1, enabled: true, index: 0 },
+        { id: 2, type: UserHubSourceType.Model, targetId: 2, enabled: true, index: 7 },
+      ],
+    });
+
+    await addUserHubSource({ userId: 5, hubId: 1, ...source });
+
+    expect(dbMock.dbWrite.userHubSource.create).toHaveBeenCalledWith({
+      data: { hubId: 1, type: UserHubSourceType.User, targetId: 42, alias: 'someone', index: 8 },
+    });
+  });
+
+  it('refuses to go past the per-hub source cap', async () => {
+    writerHub.mockResolvedValue({
+      id: 1,
+      sources: Array.from({ length: hubLimits.sourcesPerHub }, (_, i) => ({
+        id: i + 1,
+        type: UserHubSourceType.Model,
+        targetId: i + 100,
+        enabled: true,
+        index: i,
+      })),
+    });
+
+    await expect(addUserHubSource({ userId: 5, hubId: 1, ...source })).rejects.toThrow();
+    expect(dbMock.dbWrite.userHubSource.create).not.toHaveBeenCalled();
+  });
+});
+
+describe('removeUserHubSource', () => {
+  it('refuses a hub the viewer does not own', async () => {
+    writerHub.mockResolvedValue(null);
+
+    await expect(
+      removeUserHubSource({ userId: 999, hubId: 1, type: UserHubSourceType.User, targetId: 42 })
+    ).rejects.toThrow();
+    expect(dbMock.dbWrite.userHubSource.deleteMany).not.toHaveBeenCalled();
+    // The scope has to be IN the lookup. Asserting only that a null hub throws passes
+    // just as well when the lookup stops asking whose hub it is.
+    expect(writerHub).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 1, userId: 999 } })
+    );
+  });
+
+  it('deletes only the named source in that hub', async () => {
+    writerHub.mockResolvedValue({ id: 1 });
+    dbMock.dbWrite.userHubSource.deleteMany.mockResolvedValue({ count: 1 });
+
+    const result = await removeUserHubSource({
+      userId: 5,
+      hubId: 1,
+      type: UserHubSourceType.User,
+      targetId: 42,
+    });
+
+    expect(result).toEqual({ hubId: 1, removed: true });
+    // Owner-scoped on the DELETE too, not only in the lookup above it — dropping it
+    // there is a cross-owner delete the moment `UserHub.userId` can move.
+    expect(dbMock.dbWrite.userHubSource.deleteMany).toHaveBeenCalledWith({
+      where: { hubId: 1, type: UserHubSourceType.User, targetId: 42, hub: { userId: 5 } },
+    });
   });
 });

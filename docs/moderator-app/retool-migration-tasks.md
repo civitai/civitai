@@ -80,7 +80,8 @@ backends. Do **not** scope as one task. Suggested split, each shippable:
 - 1.2e Prior mod activity panel (depends on 0.2)
 - 1.2f Content actions — comments bulk delete / ToS, blocked prompts list
 - 1.2g Account actions — ban/unban, purge content, mute, force logout, edit socials & bio
-- 1.2h Subscription & Buzz — balances, receipts, payments, Stripe/Paddle deep links
+- 1.2h Subscription & Buzz — balances, receipts, payments, Stripe deep link. **No Paddle** (decided
+  2026-08-07; the deep link was built anyway and removed 2026-08-21).
 - 1.2i Support context — Freshdesk contact match
 - 1.2j LoRA trainings, DMs sent
 - 1.2k "Talked to another mod before" popup (depends on 0.2)

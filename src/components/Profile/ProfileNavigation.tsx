@@ -9,6 +9,7 @@ import {
   IconPencilMinus,
   IconPhoto,
   IconShoppingBag,
+  IconSticker,
   IconVideo,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
@@ -30,7 +31,7 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
   const router = useRouter();
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
-  const isShopOwner =
+  const isProfileOwner =
     !!currentUser && postgresSlugify(currentUser.username) === postgresSlugify(username);
   const isModerator = currentUser?.isModerator ?? false;
 
@@ -99,6 +100,18 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
       count: userOverview?.collectionCount ?? 0,
       disabled: !!user?.bannedAt,
     },
+    'sticker-book': {
+      url: `${baseUrl}/sticker-book`,
+      icon: (props) => <IconSticker {...props} />,
+      label: 'Sticker Book',
+      // Hidden from visitors when the creator hid it, the same way a disabled
+      // shop is — the owner and moderators keep the tab. The book's own payload
+      // withholds the content independently; this only decides the nav item.
+      disabled:
+        !features.stickerBook ||
+        !!user?.bannedAt ||
+        (!isProfileOwner && !isModerator && !!user?.stickerBookHidden),
+    },
     shop: {
       url: `${baseUrl}/shop`,
       icon: (props) => <IconShoppingBag {...props} />,
@@ -109,7 +122,7 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
       disabled:
         !features.creatorShop ||
         !!user?.bannedAt ||
-        (!isShopOwner && !isModerator && !user?.creatorShopEnabled),
+        (!isProfileOwner && !isModerator && !user?.creatorShopEnabled),
     },
   };
 

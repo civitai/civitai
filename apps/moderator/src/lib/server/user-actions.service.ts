@@ -635,64 +635,6 @@ export async function resolveRestriction(input: {
   return { ok: true };
 }
 
-// PADDLE ACCOUNT LINKING (Retool's three-step wizard behind the Membership panel's Paddle button:
-// find the account holding a customer id, unlink it, link this one).
-//
-// Written here rather than through the main app: `paddleCustomerId` has no mod endpoint, and the
-// column is a plain pointer — the billing side effects belong to Paddle's own webhooks, which resolve
-// the account BY this column. That is also why a mis-link is worth fixing: until it is, the wrong
-// account receives another account's subscription events.
-
-/** Who currently holds a customer id, so a link cannot silently move it off another account. */
-export async function findPaddleCustomerOwner(
-  paddleCustomerId: string
-): Promise<{ id: number; username: string | null } | null> {
-  const row = await dbRead
-    .selectFrom('User')
-    .select(['id', 'username'])
-    .where('paddleCustomerId', '=', paddleCustomerId)
-    .executeTakeFirst();
-  return row ?? null;
-}
-
-export async function setPaddleCustomer(input: {
-  userId: number;
-  /** `null` unlinks. */
-  paddleCustomerId: string | null;
-  /** Clear the id off whichever account currently holds it first — Retool's "unlink an old one" step. */
-  takeFrom?: number;
-  moderatorId: number;
-}): Promise<ActionResult> {
-  if (input.takeFrom && input.takeFrom !== input.userId) {
-    await dbWrite
-      .updateTable('User')
-      .set({ paddleCustomerId: null })
-      .where('id', '=', input.takeFrom)
-      .execute();
-    await logAction('paddleUnlink', input.takeFrom, input.moderatorId);
-  }
-
-  const result = await dbWrite
-    .updateTable('User')
-    .set({ paddleCustomerId: input.paddleCustomerId })
-    .where('id', '=', input.userId)
-    .executeTakeFirst();
-  if (Number(result.numUpdatedRows ?? 0) === 0) return { ok: false, error: 'User not found.' };
-
-  await logAction(
-    input.paddleCustomerId ? 'paddleLink' : 'paddleUnlink',
-    input.userId,
-    input.moderatorId
-  );
-
-  // The membership the page renders is read through caches keyed on the account, so without this the
-  // panel keeps showing the pre-link subscription and the moderator re-links a second time.
-  await resetSubscriptionCaches({ userId: input.userId, moderatorId: input.moderatorId }).catch(
-    () => undefined
-  );
-  return { ok: true };
-}
-
 // REWARDS ELIGIBILITY (Retool's UpdateBuzzEligible → /api/mod/set-rewards-eligibility).
 export async function setRewardsEligibility(input: {
   userId: number;
@@ -1179,7 +1121,8 @@ export async function setModerationFlag(input: {
 }
 
 // TIMED MUTES. A timed mute is `User.muteExpiresAt`, drained hourly by the main app's
-// `processTimedUnmutesJob` — not a side table. See moderator-db-types.ts for why one is not coming back.
+// `processTimedUnmutesJob` — not a side table. The moderator DB has a `TimedMutes` table; its model
+// comment says why nothing may read it.
 export type TimedMute = {
   muteExpiresAt: Date;
   /** Who set it. `strikes` means the escalation engine, and carries no reason or moderator. */

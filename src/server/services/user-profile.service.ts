@@ -152,12 +152,19 @@ export const getUserWithProfile = async ({
       (user.settings as { creatorShop?: { enabled?: boolean } } | null)?.creatorShop?.enabled ===
       true;
 
+    // Only the fact, never the settings blob. The tab is hidden from visitors
+    // when it is set — the book's own payload refuses the content separately, so
+    // this decides a nav item and nothing else.
+    const stickerBookHidden =
+      (user.settings as { hideStickerBook?: boolean } | null)?.hideStickerBook === true;
+
     return {
       ...user,
       meta: undefined,
       // Never leak the private settings blob; expose only whether the shop is public.
       settings: undefined,
       creatorShopEnabled,
+      stickerBookHidden,
       ...getUserBanDetails({
         meta: userMeta,
         isModerator: isModerator ?? false,

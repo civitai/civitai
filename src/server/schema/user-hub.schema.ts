@@ -149,3 +149,21 @@ export const getHubSourceSuggestionsSchema = z.object({
 export type HubSuggestionType = z.infer<typeof hubSuggestionTypeSchema>;
 
 export type GetHubSourceSuggestionsInput = z.infer<typeof getHubSourceSuggestionsSchema>;
+
+// One source at a time, addressed by what it points at rather than by row id: the
+// caller is a model or creator page that knows the target and nothing about the
+// hub's rows. Distinct from `upsertUserHubSchema.sources`, which REPLACES the list
+// and so cannot be used by a caller that has not loaded it.
+export const userHubSourceRefSchema = z.object({
+  hubId: z.number().int().positive(),
+  type: z.enum(UserHubSourceType),
+  targetId: z.number().int().positive(),
+});
+
+export const addUserHubSourceSchema = userHubSourceRefSchema.extend({
+  alias: userHubSourceSchema.shape.alias,
+});
+
+export type UserHubSourceRefInput = z.infer<typeof userHubSourceRefSchema>;
+
+export type AddUserHubSourceInput = z.infer<typeof addUserHubSourceSchema>;

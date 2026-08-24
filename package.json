@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.1.33",
+  "version": "5.1.36",
   "private": true,
   "packageManager": "pnpm@10.28.1",
   "engines": {
@@ -82,6 +82,8 @@
     "db:generate": "node scripts/generate-slim-schema.js && prisma generate --no-hints",
     "db:check-generated": "pnpm run db:generate && git diff --exit-code -- packages/civitai-db-schema/src",
     "db:seed": "prisma db seed",
+    "db:moderator:pull": "prisma db pull --schema apps/moderator/prisma/schema.prisma",
+    "db:moderator:generate": "prisma generate --no-hints --schema apps/moderator/prisma/schema.prisma",
     "share": "ngrok http 3000",
     "prepare": "husky",
     "analyze": "cross-env ANALYZE=true next build",
@@ -100,7 +102,7 @@
     "test:packages:run": "vitest run --project '@civitai/*'",
     "test:apps": "vitest --project 'app:*'",
     "test:apps:run": "vitest run --project 'app:*'",
-    "test:lint-rules": "vitest run --project 'unit*' src/server/services/__tests__/hub-filter-parity.test.ts src/server/services/__tests__/no-coerce-boolean-in-api.test.ts src/server/services/__tests__/no-io-in-transaction.test.ts src/server/services/__tests__/no-module-scope-cache.test.ts src/server/services/__tests__/no-server-infra-in-app-graph.test.ts src/server/services/__tests__/no-stale-moderator-route-probe.test.ts src/server/services/__tests__/no-unbounded-paging-fake.test.ts src/server/services/__tests__/no-unloadable-image-fixture.test.ts src/server/services/__tests__/no-wholesale-module-mock.test.ts src/server/schema/__tests__/track.addView.schema.test.ts",
+    "test:lint-rules": "vitest run --project 'unit*' src/server/services/__tests__/hub-filter-parity.test.ts src/server/services/__tests__/no-coerce-boolean-in-api.test.ts src/server/services/__tests__/no-io-in-transaction.test.ts src/server/services/__tests__/no-module-scope-cache.test.ts src/server/services/__tests__/no-pk-addressed-engagement-write.test.ts src/server/services/__tests__/no-server-infra-in-app-graph.test.ts src/server/services/__tests__/no-stale-moderator-route-probe.test.ts src/server/services/__tests__/no-unbounded-paging-fake.test.ts src/server/services/__tests__/no-unloadable-image-fixture.test.ts src/server/services/__tests__/no-wholesale-module-mock.test.ts src/server/schema/__tests__/track.addView.schema.test.ts src/server/notifications/__tests__/notification-settings-polarity.test.ts",
     "test:component": "vitest run --project component",
     "test:component:watch": "vitest --project component",
     "meilisearch:migrate": "NODE_ENV=development tsx scripts/oneoffs/meilisearch-migration.ts",

@@ -193,6 +193,9 @@
   <Table>
     <TableHeader>
       <TableRow>
+        <!-- Identity first. The row named the reason and the reporter but never the thing reported, so
+             "which model is this about" cost a Details click or a trip out to the site. -->
+        <TableHead>{reportEntityLabels[data.type]}</TableHead>
         <TableHead>Reason</TableHead>
         <TableHead>Details</TableHead>
         <TableHead>Status</TableHead>
@@ -206,6 +209,15 @@
       {#each data.items as report (report.id)}
         {@const itemUrl = getReportItemUrl(data.civitaiUrl, data.type, report.entityId, report.contextUrl)}
         <TableRow>
+          <TableCell class="whitespace-nowrap tabular-nums">
+            {#if report.entityId == null}
+              <span class="text-muted-foreground">—</span>
+            {:else if itemUrl}
+              <a href={itemUrl} target="_blank" rel="noreferrer" class="link">#{report.entityId}</a>
+            {:else}
+              #{report.entityId}
+            {/if}
+          </TableCell>
           <TableCell>{report.reason}</TableCell>
           <!-- Retool's Details column. The reporter's own words decide whether a row is worth opening,
                and reading them meant opening the sheet and picking them out of a JSON dump. -->
@@ -226,6 +238,7 @@
                 href={`${data.civitaiUrl}/user/${report.reportedByUsername}`}
                 target="_blank"
                 rel="noreferrer"
+                class="link"
               >
                 {report.reportedByUsername}
               </a>
@@ -249,7 +262,7 @@
         </TableRow>
       {:else}
         <TableRow>
-          <TableCell colspan={7} class="py-8 text-center text-muted-foreground">
+          <TableCell colspan={8} class="py-8 text-center text-muted-foreground">
             No reports match this view.
           </TableCell>
         </TableRow>
@@ -303,8 +316,9 @@
 
       <div class="flex flex-col gap-5 px-4 pb-6">
         {#if itemUrl}
-          <a href={itemUrl} target="_blank" rel="noreferrer" class="inline-flex items-center gap-1">
-            View {reportEntityLabels[data.type].toLowerCase()}
+          <a href={itemUrl} target="_blank" rel="noreferrer" class="link inline-flex items-center gap-1">
+            View {reportEntityLabels[data.type].toLowerCase()}{#if selected.entityId != null}
+              #{selected.entityId}{/if}
             <IconExternalLink size={14} />
           </a>
         {/if}

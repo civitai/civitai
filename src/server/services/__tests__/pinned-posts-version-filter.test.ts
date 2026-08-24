@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as PromClient from '~/server/prom/client';
 import type * as FliptClient from '~/server/flipt/client';
 
@@ -39,31 +40,14 @@ vi.mock('~/env/server', () => ({
   }),
 }));
 
-const queryRaw = vi.fn();
-vi.mock('~/server/db/client', () => ({
-  dbRead: {
-    get $queryRaw() {
-      return queryRaw;
-    },
-  },
-  dbWrite: {
-    get $queryRaw() {
-      return queryRaw;
-    },
-  },
-}));
+// `getResourceIdsForImages` picks its client at call time —
+// `const db = useWrite ? dbWrite : dbRead` — off the IMAGE_RESOURCE_USE_WRITE flag, and the
+// flipt mock below pins that flag to false. So the read here lands on the REPLICA, and naming
+// the replica is what makes a route change visible: the old fixture aliased both clients to
+// one spy, which would have absorbed the flag flipping either way.
+const queryRaw = dbMock.dbRead.$queryRaw;
+
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
-vi.mock('~/server/redis/client', () => {
-  type KeyProxy = (() => string) & { [key: string]: KeyProxy };
-  const make = (): KeyProxy => new Proxy((() => 'k') as KeyProxy, { get: () => make() });
-  const keyProxy = make();
-  return {
-    redis: { packed: { get: vi.fn(), set: vi.fn() } },
-    sysRedis: {},
-    REDIS_KEYS: keyProxy,
-    REDIS_SYS_KEYS: keyProxy,
-  };
-});
 
 vi.mock('../../flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),

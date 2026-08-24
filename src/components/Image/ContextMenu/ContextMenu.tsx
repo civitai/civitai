@@ -21,14 +21,10 @@ export function ContextMenu({
           {...actionIconProps}
         />
       </Menu.Target>
-      <Menu.Dropdown
-        onClick={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-        }}
-      >
-        {children}
-      </Menu.Dropdown>
+      {/* stopPropagation only. The dropdown portals out of the card, so the stop is what keeps the
+          click off the card's link — while a preventDefault here also cancels the default action of
+          anything inside, which silently breaks any `component="a"` item. */}
+      <Menu.Dropdown onClick={(e) => e.stopPropagation()}>{children}</Menu.Dropdown>
     </Menu>
   );
 }

@@ -32,7 +32,7 @@ export function requireIdParam(
 export const requireUserIdParam = (
   locals: App.Locals,
   params: { userId?: string },
-  pagePath: string
+  pagePath: string | string[]
 ) => requireIdParam(locals, params.userId, pagePath, 'userId');
 
 // ─── Script-facing helpers ────────────────────────────────────────────────────────────────────────
