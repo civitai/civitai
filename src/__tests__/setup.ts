@@ -187,6 +187,9 @@ vi.mock('~/server/prom/client', () => ({
   // Named metric exports the real module ships.
   placementExhaustedLegsGauge: promMetricStub(),
   placementUnfundedSettlementsGauge: promMetricStub(),
+  restrictedImageDriftGauge: promMetricStub(),
+  restrictedImageReconcileLastSuccessGauge: promMetricStub(),
+  restrictedBaseModelDivergenceGauge: promMetricStub(),
   missingSignedAtCounter: promMetricStub(),
   newUserCounter: promMetricStub(),
   loginCounter: promMetricStub(),
