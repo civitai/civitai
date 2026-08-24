@@ -59,6 +59,27 @@ export const demoRemixEntries = (imageId: number, count: number) =>
   Array.from({ length: count }, (_, index) => DEMO_THUMBS[(imageId + index) % DEMO_THUMBS.length]);
 
 /**
+ * The frame an image wears because somebody remixed it.
+ *
+ * Same shape as any `ContentDecoration` cosmetic — `cssFrame` plus `glow`, which
+ * is all `TwCosmeticWrapper` reads — so it renders through the existing path
+ * with no cosmetic row, no grant and no entitlement check.
+ *
+ * 🔴 It must never win over a cosmetic the owner actually has. Theirs is bought
+ * or earned; this is automatic, and quietly painting over it would take away
+ * something someone paid for. Call sites resolve the owner's first and fall back
+ * to this.
+ */
+export const REMIX_FRAME = {
+  glow: true,
+  cssFrame: 'linear-gradient(45deg, #ffd24a 5%, #f5a524 50%, #ffe9a8 95%)',
+} as const;
+
+/** The remix frame for an image, or nothing when it has no entries. */
+export const remixFrame = (imageId: number, modulus?: number) =>
+  demoRemixCount(imageId, modulus) ? REMIX_FRAME : undefined;
+
+/**
  * Whether this viewer has a real pointer.
  *
  * Desktop-only for this pass, by decision — the flyout is a hover affordance and

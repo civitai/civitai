@@ -40,8 +40,19 @@ const NARROWER_BY = 28;
  * for it.
  */
 const TUCK = 12;
-/** Stacking while a panel is open, inside the column's context. */
-const PANEL_Z = 10;
+/**
+ * Stacking while a panel is open, inside the column's context.
+ *
+ * Above the cards rather than beneath them: the panel is meant to cover the
+ * content frame it emerges from, not slide under it. That also removes the
+ * item-raising this used to need — when the panel was below its own card it had
+ * to be above the neighbouring ones, which is a layer that only exists to be
+ * between two others.
+ */
+const PANEL_Z = 0;
+/** The card, lifted over the panel so only the frame is covered. */
+const CARD_Z = 1;
+/** The owning item, lifted over its neighbours so the panel clears them. */
 const ITEM_Z = 20;
 /** Height of the strip. One 64px row plus its header. */
 const FLYOUT_HEIGHT = 104;
@@ -74,7 +85,7 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
   const cardRef = useRef<HTMLElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const [host, setHost] = useState<HTMLElement | null>(null);
-  /** The virtualiser item that owns this card: the host's direct child. */
+  /** The virtualiser item, whose clipping and stacking are borrowed while open. */
   const itemRef = useRef<HTMLElement | null>(null);
   const openTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -151,29 +162,43 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
       if (cs.contentVisibility === 'auto' || cs.contain.includes('paint')) break;
       item = item.parentElement;
     }
-    // Un-virtualised surfaces (the home page cards) have no such ancestor; fall
-    // back to the card's own offset parent so the panel still escapes the card.
-    const node = item?.parentElement ?? cardRef.current?.parentElement ?? null;
-    setHost(node);
-    itemRef.current = item ?? cardRef.current;
+    itemRef.current = item;
+    // 🔴 Mounted INSIDE the item, as the card's sibling — not outside it.
+    //
+    // The panel has to paint above the content frame and below the card, and
+    // those are both inside the item, which is a stacking context. From outside
+    // it there is no z-index that lands between them: the panel is above the
+    // frame AND the card, or below both. Being outside is what made it either
+    // cover the artwork or vanish under the frame.
+    //
+    // The item clips, which is what a portal was originally for. That is lifted
+    // for the duration of the hover instead, below.
+    setHost(cardRef.current?.parentElement ?? null);
   }, [imageId, fine, count]);
 
-  // 🔴 Three layers, not two. Behind its own card and in front of every other
-  // card are different requirements, and a single negative z-index satisfied
-  // only the first — the panel slid under its parent and under the card beneath
-  // it as well, so it was invisible rather than tucked.
-  //
-  // While open, the owning item is raised above its siblings and the panel sits
-  // between them: PANEL_Z under the item, both over the untouched cards. The
-  // inline style is removed again on close, so nothing about the feed's stacking
-  // survives the hover.
+  // While open, borrow two things from the item and give them back on close:
+  // its paint containment, so the panel can extend past the card, and its
+  // stacking, so the panel clears the neighbouring cards. The card itself is
+  // lifted over the panel so the panel covers only the frame.
   useEffect(() => {
     const item = itemRef.current;
-    if (!open || !item) return;
-    const previous = item.style.zIndex;
+    const card = cardRef.current;
+    if (!open || !item || !card) return;
+    const item0 = {
+      cv: item.style.contentVisibility,
+      contain: item.style.contain,
+      z: item.style.zIndex,
+    };
+    const card0 = card.style.zIndex;
+    item.style.contentVisibility = 'visible';
+    item.style.contain = 'none';
     item.style.zIndex = String(ITEM_Z);
+    card.style.zIndex = String(CARD_Z);
     return () => {
-      item.style.zIndex = previous;
+      item.style.contentVisibility = item0.cv;
+      item.style.contain = item0.contain;
+      item.style.zIndex = item0.z;
+      card.style.zIndex = card0;
     };
   }, [open]);
 
@@ -288,11 +313,16 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
           <IconX size={14} />
         </button>
       </div>
-      <div className="flex gap-1 overflow-x-auto px-2 pb-2">
+      {/* No scroller. Four 64px tiles plus gaps and padding come to 284px, which
+          is wider than the panel on a 308px card — so the row scrolled by a few
+          pixels on some widths and not others. The tiles flex instead: they cap
+          at 64px and shrink to fit anything narrower, so the row always fits
+          exactly and there is nothing to scroll. */}
+      <div className="flex gap-1 px-2 pb-2">
         {entries.map((entry, index) => (
           <button
             key={index}
-            className="w-16 shrink-0"
+            className="min-w-0 max-w-16 flex-1"
             aria-label={`Open ${entry.username}'s remix`}
             onClick={(event) => {
               event.preventDefault();
@@ -305,12 +335,12 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
               src={entry.url}
               type="image"
               width={128}
-              className="size-16 rounded object-cover ring-1 ring-gray-3 transition hover:opacity-80 dark:ring-dark-4"
+              className="aspect-square w-full rounded object-cover ring-1 ring-gray-3 transition hover:opacity-80 dark:ring-dark-4"
             />
           </button>
         ))}
         {count > entries.length && (
-          <div className="flex size-16 shrink-0 items-center justify-center rounded bg-gray-2 dark:bg-dark-5">
+          <div className="flex aspect-square min-w-0 max-w-16 flex-1 items-center justify-center rounded bg-gray-2 dark:bg-dark-5">
             <Text size="xs" fw={600}>
               +{count - entries.length}
             </Text>

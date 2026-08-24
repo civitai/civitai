@@ -7,7 +7,7 @@ import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 import { DurationBadge } from '~/components/DurationBadge/DurationBadge';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { CardRemixButton } from '~/components/Image/Remix/CardRemixButton';
-import { RemixedCardBadge } from '~/components/RemixGallery/RemixedCardBadge';
+import { remixFrame, useRemixDemoDensity } from '~/components/RemixGallery/remix-card-demo';
 import { RemixedCardFlyout } from '~/components/RemixGallery/RemixedCardFlyout';
 import { CardStickerOverlay } from '~/components/Sticker/CardStickerOverlay';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -19,11 +19,15 @@ import { ThemeIcon } from '@mantine/core';
 export function ImageCard({ data }: Props) {
   const { getImages, ...context } = useImagesContext();
   const features = useFeatureFlags();
+  // Called unconditionally: inside the `??` below it would sit after a
+  // short-circuit, which is a conditional hook call.
+  const remixDensity = useRemixDemoDensity();
 
   return (
     <AspectRatioImageCard
       image={data}
-      cosmetic={data.cosmetic?.data}
+      // The owner's own cosmetic wins; the remix frame is only a fallback.
+      cosmetic={data.cosmetic?.data ?? remixFrame(data.id, remixDensity)}
       routedDialog={{
         name: 'imageDetail',
         state: { imageId: data.id, images: getImages(), ...context },
@@ -42,7 +46,6 @@ export function ImageCard({ data }: Props) {
           <div className="ml-auto flex flex-col gap-2">
             <ImageContextMenu image={data} />
             <CardRemixButton image={data} />
-            <RemixedCardBadge imageId={data.id} />
           </div>
         </div>
       }

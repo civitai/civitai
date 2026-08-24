@@ -27,7 +27,7 @@ import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { CollectionItemStatus, ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { RemixMenu, isRemixMenuVisible } from '~/components/Image/Remix/RemixMenu';
-import { RemixedCardBadge } from '~/components/RemixGallery/RemixedCardBadge';
+import { remixFrame, useRemixDemoDensity } from '~/components/RemixGallery/remix-card-demo';
 import { RemixedCardFlyout } from '~/components/RemixGallery/RemixedCardFlyout';
 import { tourOverlayZIndex } from '~/shared/constants/app-layout.constants';
 import { useImageStore } from '~/store/image.store';
@@ -85,15 +85,18 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
     if (running) helpers?.next();
   }, [running, helpers]);
 
+  // The owner's own cosmetic wins; the remix frame is only a fallback.
+  // The hook is called first and unconditionally — inside the `??` it sits after
+  // a short-circuit, which is a conditional hook call.
+  const remixDensity = useRemixDemoDensity();
+  const cosmetic = image.cosmetic?.data ?? remixFrame(image.id, remixDensity);
+
   const twCardStyle = useMemo(() => {
-    return !image.cosmetic?.data ? { height } : undefined;
-  }, [image.cosmetic, height]);
+    return !cosmetic ? { height } : undefined;
+  }, [cosmetic, height]);
 
   return (
-    <TwCosmeticWrapper
-      cosmetic={image.cosmetic?.data}
-      style={image.cosmetic?.data ? { height } : undefined}
-    >
+    <TwCosmeticWrapper cosmetic={cosmetic} style={cosmetic ? { height } : undefined}>
       <ElementInView component={TwCard} style={twCardStyle} className="border">
         <ImageGuard2 image={image}>
           {(safe) => (
@@ -212,7 +215,6 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                         </ThemeIcon>
                       </Tooltip>
                     )}
-                    <RemixedCardBadge imageId={image.id} />
                   </div>
                 )}
                 {safe && <RemixedCardFlyout imageId={image.id} />}
