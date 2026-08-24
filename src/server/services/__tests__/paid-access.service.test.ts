@@ -438,6 +438,26 @@ describe('assertMonetizationWrite', () => {
       ).resolves.toEqual({ spendsSlot: false });
     });
 
+    // Re-pricing the gate itself, which is what a creator does most often. The gate row is what makes
+    // the version already-priced, so the new terms are irrelevant to both rules.
+    it('lets a below-floor owner change the PRICE of a gate they already have, at no cost', async () => {
+      mockCacheFetch.mockImplementation(async () => gateRow(null));
+      mockSlotCount.mockResolvedValue(99);
+
+      await expect(
+        assertMonetizationWrite({
+          ownerId: 1,
+          versionId: 1,
+          paidAccess: {
+            permanent: true,
+            terms: { download: { price: 99999 } },
+          } as never,
+          tier: 'free',
+          userMeta: { scores: { models: 0 } },
+        })
+      ).resolves.toEqual({ spendsSlot: false });
+    });
+
     // The negative control: without it the test above passes for the wrong reason, since a lookup that
     // returns nothing at all also produces spendsSlot on the same inputs.
     it('charges for the same write when no gate row exists', async () => {
