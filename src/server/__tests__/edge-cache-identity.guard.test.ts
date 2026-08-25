@@ -184,18 +184,28 @@ export function procedureWrapsEdgeCache(block: string, aliases: Set<string>): bo
 
 /**
  * A caller-aware opt-out: something applied UPSTREAM of the resolver that zeroes the
- * edge TTL based on who is calling. Three spellings exist today:
+ * edge TTL based on who is calling. Four spellings exist today:
  *   - `noEdgeCache({ authedOnly: true })` — skips caching for logged-in callers.
  *   - `noEdgeCache()`                     — blanket; kills edge caching outright.
- *   - a local middleware `.use(name)` that sets `cache.skip` from `ctx.user`.
+ *   - a local middleware `.use(name)` whose `cache.skip` VALUE is read off `ctx.user`
+ *     (`model.router.ts`'s `skipEdgeCache` once #4347 lands).
+ *   - a local middleware `.use(name)` that sets a CONSTANT `cache.skip` behind an
+ *     identity GUARD — `if (!ctx.user?.isModerator) return next();` then
+ *     `next({ ctx: { …, cache: { …ctx.cache, skip: true } } })`. This is
+ *     `leaderboard.router.ts`'s `skipEdgeCacheForModerators` (#4377), and it is the
+ *     spelling this derivation was originally blind to: the identity never appears in
+ *     the `skip:` expression, so an expression-only test reads it as input-derived and
+ *     silently leaves a FIXED procedure in the ledger as "not safe". Both branches are
+ *     required; neither is a superset of the other.
  *
  * DELIBERATELY NOT counted as opt-outs:
- *   - `ctx.cache.skip = …` assigned inside the RESOLVER. `edgeCacheIt` reads `skip`
- *     to compute `reqTTL` BEFORE it awaits `next()`, so a handler-side assignment
- *     lands too late and changes nothing on `main`. (`homeBlock.getHomeBlock`'s
- *     Announcement branch and the comment on `system.getBenignPhrases` are both
- *     instances of this.) PR #4368 proposes re-reading `skip` after `next()`; this
- *     guard must be correct against `main` as it stands, so it does not assume it.
+ *   - `ctx.cache.skip = …` assigned inside the RESOLVER. Since #4368 landed,
+ *     `edgeCacheIt` re-reads `skip` AFTER `next()`, so — unlike on the `main` this
+ *     guard was first written against — such an assignment now does take effect.
+ *     It is still not counted, for the same reason as `canCache` below: at every live
+ *     site it is conditional on something other than caller identity
+ *     (`homeBlock.getHomeBlock`'s Announcement branch is the instance), so counting it
+ *     would exempt every OTHER input shape, which stays caller-varying.
  *   - `ctx.cache.canCache = false` inside the resolver. That one DOES take effect
  *     (it is read after `next()`), but at every live site it is CONDITIONAL on
  *     something other than caller identity, so it is a mitigation, not an opt-out.
@@ -219,7 +229,15 @@ export function callerAwareOptOut(block: string, routerContent: string): string 
     // computes it from the INPUT (`favorites || hidden`), which does not make the
     // response caller-independent for every other input shape.
     const skip = /\bskip\s*:\s*([^,}]+)/.exec(body);
-    if (skip && IDENTITY_EXPR_RE.test(skip[1])) return `${name} (skip from ctx identity)`;
+    if (!skip) continue;
+    if (IDENTITY_EXPR_RE.test(skip[1])) return `${name} (skip from ctx identity)`;
+    // The identity can instead sit in a GUARD that decides whether the skip is
+    // reached at all (`skipEdgeCacheForModerators`). Deliberately narrow: identity
+    // must appear inside an `if (…)` CONDITION, not merely somewhere in the body —
+    // a middleware that skips on input while logging `ctx.user` must NOT be exempted,
+    // because a false opt-out silently removes a procedure from the ledger.
+    if (/\bif\s*\([^)]*\bctx\s*\??\.\s*(?:user|features|session)\b/.test(body))
+      return `${name} (skip gated on ctx identity)`;
   }
   return null;
 }
@@ -646,8 +664,10 @@ const LEDGER: Record<string, LedgerEntry> = {
       'wider than the edge header: getHomeBlockById returns via getHomeBlockCached, which ' +
       'stores the result in Redis under a key of type:identifier:domain carrying no user ' +
       'segment, so identity reaching that path would cross callers even with edgeCacheIt ' +
-      'removed. Note also that ctx.cache.skip assigned in this handler does NOT opt out on ' +
-      'main — edgeCacheIt reads `skip` before it awaits the resolver.',
+      'removed. Note also that the ctx.cache.skip assigned in this handler is scoped to the ' +
+      'Announcement branch: since #4368 landed, edgeCacheIt re-reads `skip` after the resolver ' +
+      'so that assignment now takes effect, but it is conditional on the block TYPE, not on ' +
+      'the caller, so every other block type stays edge-cached and this entry still stands.',
     identity: ['ctx.user'],
     forwards: ['getHomeBlockById|user|ignores'],
     directUses: 0,
@@ -664,21 +684,17 @@ const LEDGER: Record<string, LedgerEntry> = {
     forwards: ['getLeaderboardLegends|isModerator|ignores'],
     directUses: 0,
   },
-  'leaderboard.getLeaderboard': {
-    status: 'accepted-variance',
-    why:
-      'PRE-EXISTING, NOT SAFE. The resolver forwards `isModerator` into getLeaderboard, which ' +
-      'branches on it: a non-moderator query appends `AND l.public = true`, a moderator query ' +
-      'does not. The two callers therefore get different result sets from the same URL, and ' +
-      'the response carries public cache headers either way. The redis-side `cacheIt` on this ' +
-      'procedure varies correctly (`varyBy: isModerator`); the edge key is the URL and cannot.',
-    closes:
-      'Remove this entry when the procedure either applies noEdgeCache({ authedOnly: true }) ' +
-      'or stops taking isModerator from ctx. Checked by: this test failing as a stale entry.',
-    identity: ['ctx.user'],
-    forwards: ['getLeaderboard|isModerator|uses'],
-    directUses: 0,
-  },
+  // `leaderboard.getLeaderboard` was here as `accepted-variance` ("PRE-EXISTING, NOT
+  // SAFE": the resolver forwards `isModerator` into getLeaderboard, which appends
+  // `AND l.public = true` only for a non-moderator, so two callers get different
+  // bodies from one URL under public cache headers). #4377 closed it with an upstream
+  // `skipEdgeCacheForModerators`, so the procedure now carries a caller-aware opt-out
+  // and `isRisky` no longer selects it. The entry is removed rather than restated:
+  // leaving it would have this guard assert "we accepted this" about an exposure that
+  // is fixed. Its stated closing condition named only two spellings, and #4377 used a
+  // third — which is why `callerAwareOptOut` grew the guard branch above in the same
+  // change. If the opt-out is ever removed, the derivation puts the procedure back in
+  // `risky` and the `unledgered` assertion fails until someone re-reads this.
   'user.getCreator': {
     status: 'accepted-variance',
     why:
@@ -768,6 +784,53 @@ describe('parsing primitives (instrument validation)', () => {
       '({ input }) => g(input)'
     );
     expect(terminalResolver('  a: p\n    .use(m)\n    .query(myHandler),')!.text).toBe('myHandler');
+  });
+
+  it('callerAwareOptOut recognises a CONSTANT skip behind an identity guard (#4377)', () => {
+    // The spelling the expression-only test was blind to. `skip: true` carries no
+    // identity; the identity is in the early return that decides whether the skip is
+    // reached. Verbatim shape of leaderboard.router.ts's skipEdgeCacheForModerators.
+    const gatedSkip =
+      'const modSkip = middleware(({ ctx, next }) => {\n' +
+      '  if (!ctx.cache || !ctx.user?.isModerator) return next();\n' +
+      '  return next({ ctx: { ...ctx, cache: { ...ctx.cache, skip: true } } });\n' +
+      '});';
+    expect(callerAwareOptOut('.use(modSkip)', gatedSkip)).toBe(
+      'modSkip (skip gated on ctx identity)'
+    );
+
+    // NEGATIVE CONTROL, and the one that matters: identity present in the body but NOT
+    // in any condition, with the skip taken from the input. A body-wide identity test
+    // would exempt this, dropping a caller-varying procedure out of the ledger — the
+    // failure direction that loses coverage silently. It must stay null.
+    const logsIdentity =
+      'const noisySkip = middleware(({ input, ctx, next }) => {\n' +
+      '  logger.info({ userId: ctx.user?.id });\n' +
+      '  return next({ ctx: { ...ctx, cache: { ...ctx.cache, skip: input.favorites } } });\n' +
+      '});';
+    expect(callerAwareOptOut('.use(noisySkip)', logsIdentity)).toBe(null);
+
+    // A guard on something that is NOT identity is not an opt-out either.
+    const inputGuard =
+      'const inputSkip = middleware(({ input, next }) => {\n' +
+      '  if (!input.favorites) return next();\n' +
+      '  return next({ ctx: { cache: { skip: true } } });\n' +
+      '});';
+    expect(callerAwareOptOut('.use(inputSkip)', inputGuard)).toBe(null);
+  });
+
+  it('the real leaderboard router is derived as opted-out, not as risky', () => {
+    // Binds the unit above to the live tree: if #4377's middleware is removed or
+    // renamed, this fails here rather than silently re-listing the procedure.
+    const content = readFileSync(join(SRC, 'server/routers/leaderboard.router.ts'), 'utf8');
+    const derived = deriveEdgeCachedProcedures().all.find(
+      (d) => d.path === 'leaderboard.getLeaderboard'
+    );
+    expect(content).toContain('skipEdgeCacheForModerators');
+    expect({ found: !!derived, optOut: derived?.optOut }).toEqual({
+      found: true,
+      optOut: 'skipEdgeCacheForModerators (skip gated on ctx identity)',
+    });
   });
 
   it('callerAwareOptOut recognises all three spellings and rejects an input-derived skip', () => {
