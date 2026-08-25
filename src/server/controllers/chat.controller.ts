@@ -22,7 +22,7 @@ import type {
 } from '~/server/schema/chat.schema';
 import { resolveChatSettings } from '~/server/schema/chat.schema';
 import { truncateAuditValue } from '~/server/common/chat-audit.constants';
-import { deriveMuteColumns, scopeMemberPrivacy } from '~/shared/utils/chat';
+import { deriveMuteColumns, inboxStatuses, scopeMemberPrivacy } from '~/shared/utils/chat';
 import {
   throwOnBlockedLinkDomain,
   throwOnBlockedMessagePattern,
@@ -190,6 +190,8 @@ export const getChatsForUserHandler = async ({ ctx }: { ctx: ProtectedContext })
   }
 };
 
+const inboxStatusLiterals = inboxStatuses.map((status) => `'${status}'`).join(', ');
+
 /**
  * Get number of unread messages for user
  */
@@ -203,6 +205,10 @@ export const getUnreadMessagesForUserHandler = async ({
   try {
     const { id: userId } = ctx.user;
 
+    // The badge counts what the Inbox tab holds, so the membership filter is
+    // `chatBucketFor`'s inbox case spelled in SQL. Requests (filteredAt set) are
+    // deliberately absent: a filtered request that still lights the header badge
+    // is not filtered.
     const unread = await dbRead.$queryRaw<{ chatId: number; cnt: number }[]>`
       select memb."chatId"          as "chatId",
              count(msg.id)::integer as "cnt"
@@ -215,27 +221,14 @@ export const getUnreadMessagesForUserHandler = async ({
                           (memb."clearedAt" is null or msg."createdAt" > memb."clearedAt") and
                           msg."deletedAt" is null
       where memb."userId" = ${userId}
-        and memb.status = 'Joined'
+        and memb.status in (${Prisma.raw(inboxStatusLiterals)})
         and memb."notifyLevel" <> 'None'
         and memb."filteredAt" is null
         and msg."userId" != ${userId}
       group by memb."chatId"
     `;
 
-    // Requests (filteredAt set) are deliberately absent: a filtered request that
-    // still lights the header badge is not filtered.
-    const pending = await dbRead.$queryRaw<{ chatId: number; cnt: number }[]>`
-      select memb."chatId" as "chatId",
-             1             as "cnt"
-      from "ChatMember" memb
-      where memb."userId" = ${userId}
-        and memb.status = 'Invited'
-        and memb."notifyLevel" <> 'None'
-        and memb."filteredAt" is null
-      group by memb."chatId"
-    `;
-
-    return [...unread, ...pending];
+    return unread;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
