@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+// The REAL key constants — `~/server/redis/client` is mocked below, the PACKAGE it
+// re-exports is not, so the assertion cannot drift from production again.
+import { REDIS_SYS_KEYS } from '@civitai/redis/client';
 
 // Regression test for the prod 500-floor bug:
 //   ERR wrong number of arguments for 'zrem' command  (~6/3h)
@@ -14,26 +17,18 @@ const { mockRedis, mockSysRedis } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('~/server/redis/client', () => ({
+// 🔴 Spread the REAL package for the key constants rather than re-typing them. The
+// hand-typed block that used to sit here had to enumerate every key the counter factory
+// reads at module load, and two of them had drifted: SANITY_CHECKS.FAILURES read
+// 'new-order:sanity-check-failures' against the real 'new-order:sanity-failures', and
+// JUDGEMENTS.ACOLYTE_FAILED dropped the 'judgments:' segment. It also declared an
+// IMAGE_RATINGS key that exists nowhere in the codebase outside this file. Spreading the
+// package removes the enumeration entirely, so a key added to the factory tomorrow needs no
+// edit here and cannot be stubbed with the wrong value.
+vi.mock('~/server/redis/client', async () => ({
+  ...(await import('@civitai/redis/client')),
   redis: mockRedis,
   sysRedis: mockSysRedis,
-  REDIS_KEYS: {},
-  REDIS_SYS_KEYS: {
-    NEW_ORDER: {
-      FERVOR: 'new-order:fervor',
-      SANITY_CHECKS: { FAILURES: 'new-order:sanity-check-failures' },
-      // The factory reads these at module load; supply the ones the imported
-      // counters reference plus harmless stand-ins for the rest.
-      JUDGEMENTS: { ACOLYTE_FAILED: 'new-order:acolyte-failed' },
-      EXP: 'new-order:exp',
-      BUZZ: 'new-order:blessed-buzz',
-      PENDING_BUZZ: 'new-order:pending-buzz',
-      RECENTLY_GRANTED_BUZZ: 'new-order:recently-granted-buzz',
-      SMITE: 'new-order:smite-progress',
-      QUEUES: 'new-order:queues',
-      IMAGE_RATINGS: 'new-order:image-ratings',
-    },
-  },
 }));
 
 vi.mock('~/server/redis/atomic', () => ({
@@ -76,6 +71,9 @@ describe('createCounter().reset — empty id array guard', () => {
   it('unordered counter: reset with non-empty ids still calls hDel', async () => {
     await sanityCheckFailuresCounter.reset({ id: [3] });
     expect(mockSysRedis.hDel).toHaveBeenCalledTimes(1);
-    expect(mockSysRedis.hDel).toHaveBeenCalledWith('new-order:sanity-check-failures', ['3']);
+    expect(mockSysRedis.hDel).toHaveBeenCalledWith(
+      REDIS_SYS_KEYS.NEW_ORDER.SANITY_CHECKS.FAILURES,
+      ['3']
+    );
   });
 });

@@ -105,9 +105,13 @@ vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksEnabled: mockIsAppBlocksEnabled,
   isAppBlocksAuthorEnabled: mockIsAppBlocksAuthorEnabled,
 }));
-vi.mock('~/server/redis/client', () => ({
+// 🔴 Spread the REAL package for the key constants rather than re-typing them. The
+// hand-typed SUBMIT_RATE_LIMIT here read 'blocks:submit-rate-limit' while production uses
+// 'system:blocks:submit-rate-limit', so the rate-limit path was exercised against a key
+// Redis never sees. Client and control surface stay overridden.
+vi.mock('~/server/redis/client', async () => ({
+  ...(await import('@civitai/redis/client')),
   sysRedis: mockRedis,
-  REDIS_SYS_KEYS: { BLOCKS: { SUBMIT_RATE_LIMIT: 'blocks:submit-rate-limit' } },
   withSysReadDeadline: mockWithSysReadDeadline,
 }));
 // The route dynamically imports env + the service; mock both so the heavy
@@ -176,9 +180,7 @@ beforeEach(() => {
   mockRedis.ttl.mockResolvedValue(60);
   mockIsAppBlocksEnabled.mockResolvedValue(true);
   // Author gate mirrors the mod floor by default; the widening test overrides it.
-  mockIsAppBlocksAuthorEnabled.mockImplementation(
-    async (opts) => !!opts?.user?.isModerator
-  );
+  mockIsAppBlocksAuthorEnabled.mockImplementation(async (opts) => !!opts?.user?.isModerator);
   mockSubmitVersion.mockResolvedValue({
     publishRequestId: 'pubreq_abc',
     slug: 'my-block',
