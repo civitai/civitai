@@ -148,3 +148,31 @@ describe('getBlurbsForUser', () => {
     });
   });
 });
+
+describe('blocked link domains', () => {
+  const blockedHtml = '<a href="https://blocked.example/x">x</a>';
+
+  beforeEach(() => {
+    // The real guard, reading a seeded blocklist row — a blurb body is spliced into
+    // entities whose own domain check already ran, so it has to be caught on this write.
+    dbMock.dbWrite.blocklist.findMany.mockResolvedValue([
+      { id: 1, type: 'LinkDomain', data: ['blocked.example'] },
+    ]);
+  });
+
+  it('refuses to create a blurb carrying a blocked domain', async () => {
+    await expect(createBlurb({ userId: 1, name: 'footer', content: blockedHtml })).rejects.toThrow(
+      /blocked\.example/
+    );
+
+    expect(dbMock.dbWrite.blurb.create).not.toHaveBeenCalled();
+  });
+
+  it('refuses to update a blurb to a blocked domain', async () => {
+    await expect(updateBlurbContent({ userId: 1, id: 2, content: blockedHtml })).rejects.toThrow(
+      /blocked\.example/
+    );
+
+    expect(dbMock.dbWrite.blurb.update).not.toHaveBeenCalled();
+  });
+});

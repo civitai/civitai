@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as BlocklistService from '~/server/services/blocklist.service';
 import type * as BlurbMaterializeService from '~/server/services/blurb-materialize.service';
 import type * as DbLagHelpers from '~/server/db/db-lag-helpers';
 import type * as RedisCaches from '~/server/redis/caches';
@@ -15,22 +16,30 @@ import type * as TextModerationService from '~/server/services/text-moderation.s
 // exists.
 const {
   expandBlurbs,
+  getReferencedBlurbIds,
   reconcileBlurbReferences,
   submitTextModeration,
   preventReplicationLag,
   refreshUserArticleCount,
+  throwOnBlockedLinkDomain,
 } = vi.hoisted(() => ({
   expandBlurbs: vi.fn(),
+  getReferencedBlurbIds: vi.fn(),
   reconcileBlurbReferences: vi.fn(),
   submitTextModeration: vi.fn(),
   preventReplicationLag: vi.fn(async () => {}),
   refreshUserArticleCount: vi.fn(async () => {}),
+  throwOnBlockedLinkDomain: vi.fn(),
 }));
 
-vi.mock('~/server/services/blocklist.service', () => ({ throwOnBlockedLinkDomain: vi.fn() }));
+vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof BlocklistService>()),
+  throwOnBlockedLinkDomain,
+}));
 vi.mock('~/server/services/blurb-materialize.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BlurbMaterializeService>()),
   expandBlurbs,
+  getReferencedBlurbIds,
   reconcileBlurbReferences,
 }));
 vi.mock('~/server/services/text-moderation.service', async (importOriginal) => ({
@@ -58,6 +67,7 @@ const MODERATOR_ID = 9;
 
 const CLIENT_HTML = '<span data-type="blurb" data-id="7">ATTACKER SUPPLIED</span>';
 const EXPANDED_HTML = '<span data-type="blurb" data-id="7">REAL</span>';
+const BLOCKED_HTML = '<span data-type="blurb" data-id="7"><a href="https://blocked.example">x</a></span>';
 const USES = [{ blurbId: 7, contentHash: 'h7' }];
 
 const storedArticle = {
@@ -93,9 +103,22 @@ function contentWrites() {
     .filter((data: Record<string, unknown>) => 'content' in data);
 }
 
+/**
+ * The `$executeRaw` templates that write the content column, joined back into readable SQL.
+ * `updateArticleImageScanStatus` issues raw statements of its own, so a bare call count
+ * over `$executeRaw` measures the wrong thing.
+ */
+function contentSql() {
+  return dbMock.dbWrite.$executeRaw.mock.calls
+    .map(([strings]) => (strings as string[]).join('?'))
+    .filter((sql) => /UPDATE "Article"\s+SET content =/.test(sql));
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   expandBlurbs.mockResolvedValue({ html: EXPANDED_HTML, uses: USES });
+  getReferencedBlurbIds.mockResolvedValue([7]);
+  throwOnBlockedLinkDomain.mockResolvedValue(undefined);
   reconcileBlurbReferences.mockResolvedValue(undefined);
   submitTextModeration.mockResolvedValue(undefined);
   dbMock.dbWrite.article.findUnique.mockResolvedValue(storedArticle);
@@ -132,7 +155,61 @@ describe('upsertArticle — blurb expansion', () => {
 
     // A moderator's own blurb set resolves none of the owner's `data-id`s, and every span
     // would be unwrapped to plain text — a silent, permanent loss of the article's blurbs.
-    expect(expandBlurbs).toHaveBeenCalledWith({ userId: OWNER_ID, html: CLIENT_HTML });
+    expect(expandBlurbs).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: OWNER_ID, html: CLIENT_HTML })
+    );
+  });
+
+  it('rejects a blocked domain that arrived inside the blurb body', async () => {
+    // The client html is clean; the blurb the server splices in is not. The guard at the
+    // top of `upsertArticle` ran before the splice, so only a re-check of the EXPANDED
+    // html can see this.
+    expandBlurbs.mockResolvedValue({ html: BLOCKED_HTML, uses: USES });
+    throwOnBlockedLinkDomain.mockImplementation(async (html: string) => {
+      if (html.includes('blocked.example')) throw new Error('invalid urls: blocked.example');
+    });
+
+    await expect(upsert()).rejects.toThrow('invalid urls');
+
+    expect(throwOnBlockedLinkDomain).toHaveBeenCalledWith(BLOCKED_HTML);
+    expect(dbMock.dbWrite.article.update).not.toHaveBeenCalled();
+  });
+
+  it('resolves only the blurbs the article already references when a moderator saves', async () => {
+    getReferencedBlurbIds.mockResolvedValue([7]);
+
+    await upsert({ userId: MODERATOR_ID, isModerator: true });
+
+    // Without this a moderator could splice in guessed `data-id`s across a range and read
+    // the owner's whole blurb library back out of the mutation response.
+    expect(getReferencedBlurbIds).toHaveBeenCalledWith({
+      entityType: 'Article',
+      entityId: ARTICLE_ID,
+    });
+    expect(expandBlurbs).toHaveBeenCalledWith(
+      expect.objectContaining({ restrictToBlurbIds: [7] })
+    );
+  });
+
+  it('leaves the owner unrestricted', async () => {
+    await upsert();
+
+    expect(getReferencedBlurbIds).not.toHaveBeenCalled();
+    expect(expandBlurbs).toHaveBeenCalledWith(
+      expect.objectContaining({ restrictToBlurbIds: undefined })
+    );
+  });
+
+  it('links content images on a content-changing save', async () => {
+    await upsert({ scanContent: true });
+
+    // The observable that makes the `context` contract enforceable: drop the caller's
+    // pre-write snapshot and `hasContentChanged` computes false, so this never fires.
+    const rescans = dbMock.dbWrite.article.update.mock.calls
+      .map(([arg]) => arg.data)
+      .filter((data: Record<string, unknown>) => 'scanRequestedAt' in data);
+    expect(rescans).toHaveLength(1);
+    expect(rescans[0].ingestion).toBe('Rescan');
   });
 
   it('stores the expanded html on a create too', async () => {
@@ -158,6 +235,20 @@ describe('upsertArticle — blurb reconciliation', () => {
 
     expect(submit).toBeGreaterThan(write);
     expect(reconcile).toBeGreaterThan(submit);
+  });
+
+  it('runs the moved follow-up block exactly once per save', async () => {
+    await upsert();
+
+    // Re-inline the block into `upsertArticle` and leave the extracted copy in place and
+    // every other assertion here still passes — a duplicated block just does the work
+    // twice. Drift between the interactive path and the fan-out path is the failure this
+    // extraction exists to prevent, and this count is the only thing that sees it.
+    expect(preventReplicationLag).toHaveBeenCalledTimes(2);
+
+    // And does not replay the column write the transaction already committed — a second
+    // save landing in between would be silently reinstated as the older body.
+    expect(contentSql()).toEqual([]);
   });
 
   it('reconciles a new article against the id it was created with', async () => {
@@ -191,9 +282,29 @@ describe('applyArticleContentChange', () => {
     // The fan-out calls this with nothing but new HTML. Route it back through the
     // form-shaped upsert and the failure mode is silent field loss — title, tags,
     // attachments and cover cleared on every entity the job touches.
-    const [firstWrite] = dbMock.dbWrite.article.update.mock.calls[0];
-    expect(Object.keys(firstWrite.data)).toEqual(['content']);
-    expect(firstWrite.where).toEqual({ id: ARTICLE_ID });
+    const [sql, ...extra] = contentSql();
+    expect(extra).toEqual([]);
+    expect(sql).toMatch(/WHERE id =/);
+    expect(sql).not.toMatch(/title|coverId|tags|userNsfwLevel|status/);
+  });
+
+  it('writes content through raw SQL so a re-materialization does not bump updatedAt', async () => {
+    await applyArticleContentChange({ id: ARTICLE_ID, userId: OWNER_ID, content: EXPANDED_HTML });
+
+    // Prisma's @updatedAt would reorder the Recently Updated feed and reopen the
+    // rating-dispute re-edit window on every blurb edit the owner makes.
+    expect(contentSql()).toHaveLength(1);
+    expect(contentWrites()).toEqual([]);
+  });
+
+  it('rejects a blocked link domain before writing anything', async () => {
+    throwOnBlockedLinkDomain.mockRejectedValue(new Error('invalid urls: blocked.example'));
+
+    await expect(
+      applyArticleContentChange({ id: ARTICLE_ID, userId: OWNER_ID, content: BLOCKED_HTML })
+    ).rejects.toThrow('invalid urls');
+
+    expect(contentSql()).toEqual([]);
   });
 
   it('runs the follow-up work a content change implies', async () => {

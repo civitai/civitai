@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import { hashContent } from '~/server/services/entity-moderation.service';
 import {
   throwBadRequestError,
@@ -30,6 +31,10 @@ export async function createBlurb({
   name: string;
   content: string;
 }) {
+  // Checked here as well as on every surface that expands a blurb: a blurb body is
+  // spliced into entities that were domain-checked before it arrived.
+  await throwOnBlockedLinkDomain(content);
+
   const existing = await dbWrite.blurb.count({ where: { userId, deletedAt: null } });
   if (existing >= MAX_BLURBS_PER_USER)
     throw throwBadRequestError(`You have reached the limit of ${MAX_BLURBS_PER_USER} blurbs.`);
@@ -54,6 +59,8 @@ export async function updateBlurbContent({
   id: number;
   content: string;
 }) {
+  await throwOnBlockedLinkDomain(content);
+
   const blurb = await dbWrite.blurb.findFirst({ where: { id, userId, deletedAt: null } });
   if (!blurb) throw throwNotFoundError('Blurb not found.');
 

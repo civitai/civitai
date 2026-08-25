@@ -37,6 +37,7 @@ import { deriveArticleIngestionState } from '~/server/services/article-ingestion
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import {
   expandBlurbs,
+  getReferencedBlurbIds,
   reconcileBlurbReferences,
 } from '~/server/services/blurb-materialize.service';
 import {
@@ -849,11 +850,20 @@ export const upsertArticle = async ({
     // the write so what is stored is what the blurb actually says. Keyed on the OWNER,
     // not the actor: a moderator saving someone else's article resolves none of their
     // blurbs and would strip every span.
+    const restrictToBlurbIds =
+      article && article.userId !== userId
+        ? await getReferencedBlurbIds({ entityType: 'Article', entityId: article.id })
+        : undefined;
     const { html: expandedContent, uses: blurbUses } = await expandBlurbs({
       userId: article?.userId ?? userId,
       html: data.content,
+      restrictToBlurbIds,
     });
     data.content = expandedContent;
+
+    // The guard at the top of this function saw the CLIENT's html. Blurb bodies were
+    // spliced in above, so the string about to be written is one it never checked.
+    await throwOnBlockedLinkDomain(data.content);
 
     // TODO make coverImage required here and in db
     // create image entity to be attached to article
@@ -1207,6 +1217,9 @@ export const upsertArticle = async ({
       },
     });
 
+    // Deliberately unguarded: a failure here 500s a save that already committed, but
+    // swallowing it leaves the reference rows stale, and the fan-out then skips this
+    // article forever — a silently unmaintained body is the worse of the two.
     await reconcileBlurbReferences({ entityType: 'Article', entityId: id, uses: blurbUses });
 
     // If it was published, process it.
@@ -1247,6 +1260,10 @@ type ArticleContentChangeContext = {
  *
  * Deliberately narrow. The full upsert is form-shaped, so a caller holding only new
  * HTML cannot use it without clearing title, tags, attachments and cover.
+ *
+ * `scanContent` defaults on, deliberately: the fan-out ingests images that arrive inside a
+ * blurb. `upsertArticle` overrides it from `ctx.features.articleImageScanning`, which the
+ * fan-out has no session to read — so narrowing that flag would not reach this path.
  */
 export async function applyArticleContentChange({
   id,
@@ -1259,9 +1276,16 @@ export async function applyArticleContentChange({
   userId: number;
   content: string;
   scanContent?: boolean;
-  /** Read from the row when the caller doesn't already hold the pre-write values. */
+  /**
+   * A caller that has ALREADY written this body passes its pre-write snapshot here. Delete
+   * it from such a call site and the re-read below runs after that caller's own commit, so
+   * `previousContent` is the new content, `hasContentChanged` is false, and article images
+   * silently stop being linked and ingested on every save.
+   */
   context?: ArticleContentChangeContext;
 }) {
+  await throwOnBlockedLinkDomain(content);
+
   let resolved = context;
   if (!resolved) {
     const stored = await dbWrite.article.findUnique({
@@ -1278,12 +1302,18 @@ export async function applyArticleContentChange({
   }
   const { ownerId, title, previousContent, coverId } = resolved;
 
-  await dbWrite.article.update({ where: { id }, data: { content } });
+  // A caller holding the pre-write snapshot has already written this body itself. Replaying
+  // it would reinstate the older body over a save that committed in between.
+  if (!context) {
+    // Raw SQL because Prisma's @updatedAt fires on every client-side update(), and a blurb
+    // re-materialization is not a user edit: it must not reorder the "Recently Updated"
+    // feed or reopen the rating-dispute re-edit window keyed on `updatedAt > resolvedAt`.
+    await dbWrite.$executeRaw`UPDATE "Article" SET content = ${content} WHERE id = ${id}`;
+  }
 
   await preventReplicationLag('article', id);
   await preventReplicationLag('userArticles', ownerId);
 
-  // Link content images (creates Image entities and ImageConnections)
   if (content) {
     const hasContentChanged = previousContent !== content;
 
@@ -1297,7 +1327,7 @@ export async function applyArticleContentChange({
           cleanupOnly: !scanContent,
         });
 
-        // Delete truly orphaned images (DB + S3 + cache) post-transaction
+        // Delete truly orphaned images (DB + S3 + cache)
         for (const imageId of orphanedImageIds) {
           await deleteImageById({ id: imageId }).catch((error) => {
             handleLogError(error, 'article-orphaned-image-cleanup', {
@@ -1308,8 +1338,8 @@ export async function applyArticleContentChange({
         }
 
         if (scanContent) {
-          // Content changed and images need re-scanning — use Rescan to distinguish
-          // user-edit-triggered rescans from initial pending scans.
+          // Content changed and images need re-scanning — use Rescan to distinguish a
+          // rescan of existing content from an initial pending scan.
           await dbWrite.article.update({
             where: { id },
             data: { scanRequestedAt: new Date(), ingestion: ArticleIngestionStatus.Rescan },

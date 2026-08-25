@@ -64,9 +64,10 @@ function mockStored({
 }
 
 // The FIRST article.update is the form write from the transaction — the one these
-// assertions are about. It is no longer the last: `applyArticleContentChange` rewrites the
-// content column afterwards.
+// assertions are about, and not necessarily the last one recorded.
 function updateData() {
+  // Without this, `?? {}` makes every `not.toHaveProperty` below pass on zero writes.
+  expect(mockDbWrite.article.update).toHaveBeenCalled();
   return mockDbWrite.article.update.mock.calls[0]?.[0]?.data ?? {};
 }
 
