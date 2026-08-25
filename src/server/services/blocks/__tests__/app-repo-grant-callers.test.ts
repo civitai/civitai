@@ -30,7 +30,10 @@ import { describe, expect, it } from 'vitest';
  *     deliberately and out of scope for this PR**, recorded here rather than left implied:
  *       * it is PRE-EXISTING and unchanged by this PR;
  *       * it is consented at both ends (the owner initiates, the recipient accepts);
- *       * a push cannot deploy while the backing block is `suspended`; and
+ *       * the app is NOT SERVING anyway — a delist/unpublish flips `app_blocks.status`
+ *         approved → suspended in the SAME transaction, and that suspension is the real
+ *         runtime stop for `<slug>.civit.ai` and the run page (measured; whether a BUILD is
+ *         additionally refused is a separate mechanism this note does not claim); and
  *       * the case a status guard would break is REAL and sympathetic — an owner
  *         unpublishes their own app and then hands it over ("I'm stepping back"), which is
  *         the single most likely legitimate transfer of a `removed` listing. Blocking that
@@ -57,7 +60,8 @@ const DECLARED: Record<string, string> = {
     'seat accept — STATUS-GUARDED by assertSeatGrantable (with its invite sibling)',
   'src/server/services/blocks/app-ownership-transfer.service.ts':
     'ownership-transfer accept — NOT status-guarded; pre-existing, consented both ends, ' +
-    'cannot deploy while suspended, and a guard would break an owner-unpublished handover',
+    'the block is suspended so the app is not serving, and a guard would break an ' +
+    'owner-unpublished handover',
 };
 
 /** Every non-test source file that CALLS `grantAppRepoWrite`. Its definition is excluded. */

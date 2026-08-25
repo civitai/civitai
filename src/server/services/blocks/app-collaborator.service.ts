@@ -338,8 +338,9 @@ async function loadSeatListing(appListingId: string): Promise<SeatListing> {
  * which reads as an enumeration of the repo-grant SURFACE and is not one.
  * `grantAppRepoWrite` has a THIRD caller — `app-ownership-transfer.service.ts` on transfer
  * accept — which reads no status at all and is knowingly NOT guarded here (pre-existing,
- * consented at both ends, cannot deploy while the block is suspended, and a guard would
- * break an owner-unpublished handover). That is recorded, with the full reasoning and a
+ * consented at both ends, the app is not serving because the block is suspended, and a
+ * guard would break an owner-unpublished handover). That is recorded, with the full
+ * reasoning and a
  * set-equality ledger over every caller, in `app-repo-grant-callers.test.ts` — go there
  * before assuming this guard closes the grant surface.
  *
