@@ -36,9 +36,14 @@ async function setCache({ type, data }: { type: string; data: BlocklistDTO }) {
  *
  * ⚠️ What this does NOT close: a DELETE does not commute with the POPULATE in `getBlocklistDTO`,
  * which is plain cache-aside. A reader that missed and read the row before the commit can `set` its
- * pre-write snapshot AFTER the bust, pinning it for the month TTL. A write guarantees the next read
- * misses, so a bust actively drives readers into that window. Closing it needs a lease, a version,
- * or a TTL short enough to bound the staleness; none of those is in this change.
+ * pre-write snapshot AFTER the bust, pinning it for the month TTL.
+ *
+ * The causation runs to the NEXT write, not this one: a bust guarantees the following read misses,
+ * so a reader is typically mid-fill when the write AFTER this one commits — and back-to-back writes
+ * are ordinary here, a moderator removing chips one at a time. This write's own bust cannot put a
+ * reader into this write's window, because a miss it caused reads a row that is already updated.
+ * Closing it needs a lease, a version, or a TTL short enough to bound the staleness; none of those
+ * is in this change.
  *
  * The moderator spoke busts the same key the same way. The two must agree.
  *

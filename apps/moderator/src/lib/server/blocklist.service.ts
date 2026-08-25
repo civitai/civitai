@@ -29,10 +29,14 @@ async function setCache(data: BlocklistDTO) {
  * ⚠️ What this does NOT close, stated because the obvious reading of "deletes commute" is that it
  * does: a DELETE does not commute with the POPULATE in `getBlocklistDTO`, which is plain
  * cache-aside. A reader that missed and read the row before the commit can `set` its pre-write
- * snapshot AFTER the bust, pinning it for the whole month TTL — and since a write guarantees the
- * next read misses, and the page reloads through `load` on every submit, two moderators submitting
- * seconds apart is enough. Closing it needs a lease, a version, or a TTL short enough that the
- * staleness is bounded; none of those is in this change.
+ * snapshot AFTER the bust, pinning it for the whole month TTL.
+ *
+ * The causation runs to the NEXT write, not this one: a bust guarantees the following read misses,
+ * and the page reloads through `load` on every submit, so a reader is typically mid-fill when the
+ * write AFTER this one commits — two moderators submitting seconds apart is enough. This write's
+ * own bust cannot put a reader into this write's window, because a miss it caused reads a row that
+ * is already updated. Closing it needs a lease, a version, or a TTL short enough that the staleness
+ * is bounded; none of those is in this change.
  *
  * Returns false rather than throwing. The row is already committed by the time this runs, and a
  * throw here reports failure for a write that succeeded — on the remove path the operator's retry
