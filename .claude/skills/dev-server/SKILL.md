@@ -190,6 +190,7 @@ node .claude/skills/dev-server/scripts/cli-verbs.selftest.mjs          # every d
 node .claude/skills/dev-server/scripts/branch-watch.selftest.mjs       # HEAD watching + the restart decision
 node .claude/skills/dev-server/scripts/probe.selftest.mjs              # the classifier, pure
 node .claude/skills/dev-server/scripts/probe.integration.selftest.mjs  # the real probe() end to end
+node .claude/skills/dev-server/scripts/worktree.selftest.mjs           # what `wt stale` / `wt rm` say about a PR and a prune
 node .claude/hooks/check-writable.selftest.mjs                         # the hook, both directions
 ```
 
