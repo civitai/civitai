@@ -48,7 +48,13 @@ export const useRemixDemoDensity = () => {
     // Whether the stand-in data is in play at all, which is now a different
     // question from what density it uses: without `?remixdemo=` the cards read
     // the real batched counts, and the demo has to be asked for.
-    useRemixPeelStore.setState({ demoActive: valid });
+    //
+    // 🔴 Only when it changes. `setState` builds a fresh object, so `Object.is`
+    // never matches and EVERY subscriber is notified — and this hook runs once
+    // per card. Unconditionally, a 500-card feed fired 500 no-op notifications
+    // into several subscriptions each, on mount and on every page of scroll.
+    if (useRemixPeelStore.getState().demoActive !== valid)
+      useRemixPeelStore.setState({ demoActive: valid });
   }, [modulus, setModulus]);
 
   return modulus;
