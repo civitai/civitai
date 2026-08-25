@@ -51,9 +51,7 @@ describe('registration shape', () => {
     // send would succeed, the row would exist, and the developer would see nothing —
     // a silent failure that no test of this module alone can see.
     expect(notificationProcessors).toHaveProperty('app-moderator-message');
-    expect(
-      (notificationProcessors as Record<string, unknown>)['app-moderator-message']
-    ).toBe(def);
+    expect((notificationProcessors as Record<string, unknown>)['app-moderator-message']).toBe(def);
   });
 });
 

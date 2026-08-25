@@ -17,8 +17,13 @@ import { redisMock } from '~/__tests__/mocks/redis.mock';
  * than as a declared return value.
  */
 
-const { checkModMessageModeratorQuota, checkModMessageListingQuota, MOD_MESSAGE_MAX_PER_LISTING, MOD_MESSAGE_MAX_PER_MODERATOR, MOD_MESSAGE_WINDOW_SECONDS } =
-  await import('~/server/utils/app-moderator-message-rate-limit');
+const {
+  checkModMessageModeratorQuota,
+  checkModMessageListingQuota,
+  MOD_MESSAGE_MAX_PER_LISTING,
+  MOD_MESSAGE_MAX_PER_MODERATOR,
+  MOD_MESSAGE_WINDOW_SECONDS,
+} = await import('~/server/utils/app-moderator-message-rate-limit');
 
 beforeEach(() => {
   // Per-FILE reset for the shared hybrid mocks — declare per test.

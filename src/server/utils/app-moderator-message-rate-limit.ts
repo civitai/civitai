@@ -47,7 +47,9 @@ function listingQuotaKey(appListingId: string): string {
   return `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:mod-message-listing:${appListingId}`;
 }
 
-export type ModMessageQuotaResult = { allowed: true } | { allowed: false; retryAfterSeconds: number };
+export type ModMessageQuotaResult =
+  | { allowed: true }
+  | { allowed: false; retryAfterSeconds: number };
 
 /**
  * One INCR + EXPIRE fixed window. Shared by both counters so the two ceilings cannot

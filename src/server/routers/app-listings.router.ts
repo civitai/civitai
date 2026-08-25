@@ -361,11 +361,11 @@ function mapOffsiteError(err: unknown): TRPCError {
         : code === 'ALREADY_REPORTED'
         ? 'CONFLICT'
         : // 🔴 An exhausted quota must NOT fall through to the BAD_REQUEST default.
-          // BAD_REQUEST reads to a caller as "your input was wrong" and carries no
-          // retry semantics, so a mod who hit the hourly ceiling would be told to fix
-          // a message that is fine. TOO_MANY_REQUESTS is the honest code and is what
-          // the sibling mod-only limiter (`blocks.retriggerBuild`) already returns.
-          code === 'RATE_LIMITED'
+        // BAD_REQUEST reads to a caller as "your input was wrong" and carries no
+        // retry semantics, so a mod who hit the hourly ceiling would be told to fix
+        // a message that is fine. TOO_MANY_REQUESTS is the honest code and is what
+        // the sibling mod-only limiter (`blocks.retriggerBuild`) already returns.
+        code === 'RATE_LIMITED'
         ? 'TOO_MANY_REQUESTS'
         : 'BAD_REQUEST';
     return new TRPCError({ code: trpcCode, message: err.message, cause: err });

@@ -34,8 +34,8 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
  */
 
 const { mockActorQuota, mockListingQuota, mockBlockedLink, mockNotify } = vi.hoisted(() => ({
-  mockActorQuota: vi.fn(async (_id: number) => ({ allowed: true }) as unknown),
-  mockListingQuota: vi.fn(async (_id: string) => ({ allowed: true }) as unknown),
+  mockActorQuota: vi.fn(async (_id: number) => ({ allowed: true } as unknown)),
+  mockListingQuota: vi.fn(async (_id: string) => ({ allowed: true } as unknown)),
   mockBlockedLink: vi.fn(async (_v: string) => undefined),
   mockNotify: vi.fn(async (_o: unknown) => undefined),
 }));
@@ -270,8 +270,7 @@ describe('collaborators are opt-in, and the set is de-duplicated', () => {
 describe('nothing is delivered that was not first recorded', () => {
   it('the audit write is invoked BEFORE the send', async () => {
     await messageAppOwner({ input: input(), moderatorUserId: MOD });
-    const writeOrder =
-      dbMock.dbWrite.appListingModerationEvent.create.mock.invocationCallOrder[0];
+    const writeOrder = dbMock.dbWrite.appListingModerationEvent.create.mock.invocationCallOrder[0];
     const sendOrder = mockNotify.mock.invocationCallOrder[0];
     expect(writeOrder).toBeLessThan(sendOrder);
   });

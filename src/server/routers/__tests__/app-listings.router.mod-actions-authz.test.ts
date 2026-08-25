@@ -240,9 +240,13 @@ describe('mod actions — reviewer id is bound to ctx (never client-supplied)', 
 
 describe('mod actions — error mapping via mapOffsiteError', () => {
   it('a typed NOT_TRANSITIONABLE maps to BAD_REQUEST', async () => {
-    mockDelist.mockRejectedValueOnce(offsiteModErr('NOT_TRANSITIONABLE', 'This listing can no longer be delisted.'));
+    mockDelist.mockRejectedValueOnce(
+      offsiteModErr('NOT_TRANSITIONABLE', 'This listing can no longer be delisted.')
+    );
     const caller = appListingsRouter.createCaller(fakeCtx(mod) as never);
-    await expect(caller.delistListing({ appListingId: 'apl_1', reason: REASON })).rejects.toMatchObject({
+    await expect(
+      caller.delistListing({ appListingId: 'apl_1', reason: REASON })
+    ).rejects.toMatchObject({
       code: 'BAD_REQUEST',
       message: expect.stringContaining('no longer be delisted'),
     });
@@ -251,13 +255,17 @@ describe('mod actions — error mapping via mapOffsiteError', () => {
   it('a typed NOT_FOUND maps to NOT_FOUND', async () => {
     mockRelist.mockRejectedValueOnce(offsiteModErr('NOT_FOUND', 'Standalone listing not found.'));
     const caller = appListingsRouter.createCaller(fakeCtx(mod) as never);
-    await expect(caller.relistListing({ appListingId: 'apl_x', reason: REASON })).rejects.toMatchObject({
+    await expect(
+      caller.relistListing({ appListingId: 'apl_x', reason: REASON })
+    ).rejects.toMatchObject({
       code: 'NOT_FOUND',
     });
   });
 
   it('a typed REPORT_NOT_PENDING maps to BAD_REQUEST', async () => {
-    mockResolve.mockRejectedValueOnce(offsiteModErr('REPORT_NOT_PENDING', 'This report has already been handled.'));
+    mockResolve.mockRejectedValueOnce(
+      offsiteModErr('REPORT_NOT_PENDING', 'This report has already been handled.')
+    );
     const caller = appListingsRouter.createCaller(fakeCtx(mod) as never);
     await expect(caller.resolveReport({ reportId: 'alrp_1' })).rejects.toMatchObject({
       code: 'BAD_REQUEST',
