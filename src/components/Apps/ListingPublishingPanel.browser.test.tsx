@@ -57,6 +57,8 @@ const mocks = vi.hoisted(() => ({
   /** `[procedureName, input]` for every mutation fired, in order. */
   calls: [] as Array<[string, unknown]>,
   republishPending: false,
+  /** Every `utils.appListings.<proc>.invalidate()` the panel issues, by procedure name. */
+  invalidated: [] as string[],
 }));
 
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
@@ -90,9 +92,12 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
   trpc: {
     useUtils: () => ({
       appListings: {
-        getAuthoringContext: { invalidate: vi.fn() },
-        listingHistory: { invalidate: vi.fn() },
-        listMine: { invalidate: vi.fn() },
+        // 🔴 RECORDED BY NAME, not `vi.fn()` each. Asserting that `refresh()` ran proves
+        // nothing about WHICH read it refreshed, and the one that matters is the read this
+        // panel's own props come from — see the invalidation test below.
+        getAuthoringContext: { invalidate: () => mocks.invalidated.push('getAuthoringContext') },
+        listingHistory: { invalidate: () => mocks.invalidated.push('listingHistory') },
+        listMine: { invalidate: () => mocks.invalidated.push('listMine') },
       },
     }),
     appListings: {
@@ -182,6 +187,7 @@ function renderedActions(): string[] {
 beforeEach(() => {
   mocks.calls = [];
   mocks.republishPending = false;
+  mocks.invalidated = [];
 });
 
 describe('the ledger — the SET of publishing controls the panel offers, per state', () => {
@@ -337,6 +343,26 @@ describe('the wiring — each control fires the right procedure with the right i
       ['unpublishOwnListing', { appListingId: 'apl_live_on', reason: undefined }],
     ]);
     expect(onChanged).toHaveBeenCalledTimes(1);
+
+    // 🔴 THE INVALIDATION IS NAMED, not merely counted. `getAuthoringContext` is the read
+    // this panel's `status`/`lastModerationAction` props come from AND the read the page's
+    // whole tab set is derived from, so it is the one that turns a successful unpublish
+    // into a Republish button. A `refresh()` that invalidated only `listMine` would leave
+    // the tab rendering `approved` with the Unpublish button still on screen, and the
+    // author's next click would hit a listing that is already removed.
+    expect(mocks.invalidated).toContain('getAuthoringContext');
+  });
+
+  test('🔴 a successful REPUBLISH re-reads the same authoring context', async () => {
+    // The mirror of the case above. Both writes change `AppListing.status`, which is the
+    // column the tab set and this panel's own state routing read — so a republish that did
+    // not invalidate would leave the Republish button on a listing that is live again.
+    renderWithProviders(<ListingPublishingPanel {...OWNER_HIDDEN} />);
+    const button = page.getByTestId('apps-publishing-republish');
+    await expect.element(button).toBeInTheDocument();
+    await userEvent.click(button);
+    expect(mocks.calls).toEqual([['republishOwnListing', { appListingId: 'apl_hidden_q2' }]]);
+    expect(mocks.invalidated).toContain('getAuthoringContext');
   });
 
   /**
