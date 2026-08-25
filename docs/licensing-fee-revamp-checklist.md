@@ -244,7 +244,7 @@ that have to happen, or be decided, before it reaches creators.
 - [ ] **The upsell lands on the wrong tier.** Measured over 30 days: 11 of 26 bronze creators exceed the
       allowance against 5 of 789 free. The free allowance was set tight *because* it is the upsell, but
       the data says it delivers bronze→silver, not free→bronze.
-- [ ] **Existing over-ceiling prices start billing at full value on deploy — measured 2026-08-24, and
+- [x] **Existing over-ceiling prices would have started billing at full value on deploy — measured 2026-08-24, and
       bigger than this item used to imply.** Counts and multiples are exact, against stored state and
       today's tier; the money projection is soft, because tier-at-charge-time is not recoverable from
       Postgres and some owners appear to have lapsed from a higher tier.
@@ -261,24 +261,15 @@ that have to happen, or be decided, before it reaches creators.
       Buzz more. The fee rise is spread thin over 1,283 people paying a couple more per generation;
       this is 27 people paying 4,000 more each.
 
-      **Decided 2026-08-25: grandfather them.**
-      `scripts/oneoffs/grandfather-over-ceiling-prices.ts` writes the price buyers were actually being
-      charged into the stored field, so the deploy changes nothing for them and the rise becomes opt-in
-      — under the new rules any tier may raise to the flat ceiling whenever they choose. Dry run by
-      default, `--apply` to write.
+      **Resolved 2026-08-25 by restoring the charge-time clamp instead.** There is no price rise to
+      manage: `effectiveLicensingFee` and `cappedTerms` lower a stored price to the owner's tier cap
+      at charge time, exactly as before, so nothing goes live at deploy and no stored value is touched.
+      A grandfather backfill was written and then deleted — rewriting a number a creator set, with no
+      explanation they would ever see, is worse than the problem it solved.
 
-      **Run it immediately BEFORE the deploy, and never after.** Before is safe: the old code clamps at
-      charge time, so a stored value already at its cap bills identically either way. After, there are
-      no tier caps left and the script cannot tell a newly-legitimate price from a grandfathered one —
-      it would clamp a deliberate 50 back to the old free cap of 0.1.
+      For the record, the dry run that backfill produced: 612 fee versions across 68 owners (max 1000x)
+      and 11 permanent gates. That is the population the clamp is protecting.
 
-      Dry run against prod 2026-08-25: **612 fee versions across 68 owners** (max 1000x) and **11
-      permanent gates**. The gate count and max multiple match the earlier independent measurement
-      exactly; the fee count is 23 higher because that one counted published versions only and this
-      deliberately does not.
-
-      Note what this gives up: the old "re-subscribe and your original price returns" behaviour goes
-      with the tier caps, so a creator who wants the higher number sets it again.
 - [x] **A slot now comes back when the last price comes off an untransacted version** (2026-08-24).
       This was the sharper half of "setting and then removing does not return the allowance": a creator
       pricing a draft to see what it looked like paid a month's allowance for nothing. Clearing the last
