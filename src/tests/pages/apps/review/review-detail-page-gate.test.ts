@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+// Module scope, not a test body: from a body this transform is charged to one test's 60s
+// budget. See vitest.config.mts.
+import '~/pages/apps/review/[publishRequestId]';
 
 /**
  * PER-SUBMISSION REVIEW PAGE SSR gate (`/apps/review/<publishRequestId>`).
@@ -57,7 +60,9 @@ vi.mock('~/components/Meta/Meta', () => ({ Meta: () => null }));
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ appBlocks: true, appReviewPage: true }),
 }));
-vi.mock('~/utils/trpc', () => ({ trpc: { blocks: { getPublishRequest: { useQuery: () => ({}) } } } }));
+vi.mock('~/utils/trpc', () => ({
+  trpc: { blocks: { getPublishRequest: { useQuery: () => ({}) } } },
+}));
 
 function makeCtx(
   opts: {
@@ -85,7 +90,6 @@ function makeCtx(
 }
 
 async function loadResolver() {
-  await import('~/pages/apps/review/[publishRequestId]');
   if (!capturedResolver.fn) throw new Error('resolver not captured');
   return capturedResolver.fn;
 }
