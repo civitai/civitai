@@ -133,8 +133,8 @@ export class BlocklistRowMismatchError extends Error {
 export type BlocklistWriteResult = { count: number; cacheStale: boolean };
 
 /** What the transaction changed, and which row it changed — `recordModActivity` needs the row id.
- *  Absent when no row matched at all: the submitted id names no row of this type there, so it must
- *  not be reached for as a stand-in. */
+ *  Absent when a submitted id matched no row of the type: the id names no row there, so it must not
+ *  be reached for as a stand-in. */
 type Written = { count: number; rowId: number };
 
 /**
@@ -232,6 +232,10 @@ export async function removeBlocklistItems({
   // succession each filtered the same pre-state and the second write put the first one back.
   const removed = await dbWrite.transaction().execute(async (trx): Promise<Written | undefined> => {
     const row = await readRowForWrite(trx, type, id);
+    // `undefined` means a quiet zero here, and a thrown `BlocklistRowMismatchError` in
+    // `upsertBlocklist` — same signature, opposite reading. Deliberate: the remove action turns a
+    // zero into its own 409, and has no try/catch, so copying upsert's `throw` guard across turns
+    // that message into a 500.
     if (!row) return undefined;
 
     const filtered = row.data.filter((item) => !lower.includes(item));
