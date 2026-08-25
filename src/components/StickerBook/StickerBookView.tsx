@@ -23,7 +23,11 @@ import { useState } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { StickerBookBand, StickerBookSection } from '~/components/StickerBook/StickerBookSection';
+import {
+  StickerBookBand,
+  StickerBookSection,
+  StickerBookWidth,
+} from '~/components/StickerBook/StickerBookSection';
 import { StickerBookSettingsModal } from '~/components/StickerBook/StickerBookSettingsModal';
 import { StickerBookStickers } from '~/components/StickerBook/StickerBookStickers';
 import { stickerBookSectionCopy } from '~/components/StickerBook/sticker-book.util';
@@ -83,61 +87,65 @@ export function StickerBookView({ username }: { username: string }) {
   return (
     <div className="flex flex-col">
       {access.moderatorOverride && (
-        <Alert color="yellow" icon={<IconShieldCheck size={18} />} mb="md">
-          <Text size="sm">
-            {username} has hidden some or all of this. You can see it because you&rsquo;re a
-            moderator; other visitors cannot.
-          </Text>
-        </Alert>
+        <StickerBookWidth>
+          <Alert color="yellow" icon={<IconShieldCheck size={18} />} mb="md">
+            <Text size="sm">
+              {username} has hidden some or all of this. You can see it because you&rsquo;re a
+              moderator; other visitors cannot.
+            </Text>
+          </Alert>
+        </StickerBookWidth>
       )}
 
       {/* The shop page's header shape: an icon, the creator's name for the thing,
           and the one number worth stating — with no page title above it, because
           no other profile tab carries one. */}
-      <Group justify="space-between" align="flex-start" wrap="nowrap" py="md">
-        <Group gap="md" align="center" wrap="nowrap" className="min-w-0">
-          <ThemeIcon size={48} radius="xl" variant="light" color="yellow">
-            <IconSticker size={28} />
-          </ThemeIcon>
-          <Stack gap={2} className="min-w-0">
-            <Title order={1} size="h2">
-              {username}&apos;s Sticker Book
-            </Title>
-            {access.canViewEarnings && data.earnedBuzz !== null ? (
-              <Group gap={4} wrap="nowrap">
-                <CurrencyIcon currency={Currency.BUZZ} size={16} />
-                <Text size="sm">
-                  <Text span fw={700}>
-                    {numberWithCommas(data.earnedBuzz)} Buzz
-                  </Text>{' '}
-                  earned from stickers on {isOwner ? 'your' : 'their'} images
+      <StickerBookWidth>
+        <Group justify="space-between" align="flex-start" wrap="nowrap" py="md">
+          <Group gap="md" align="center" wrap="nowrap" className="min-w-0">
+            <ThemeIcon size={48} radius="xl" variant="light" color="yellow">
+              <IconSticker size={28} />
+            </ThemeIcon>
+            <Stack gap={2} className="min-w-0">
+              <Title order={1} size="h2">
+                {username}&apos;s Sticker Book
+              </Title>
+              {access.canViewEarnings && data.earnedBuzz !== null ? (
+                <Group gap={4} wrap="nowrap">
+                  <CurrencyIcon currency={Currency.BUZZ} size={16} />
+                  <Text size="sm">
+                    <Text span fw={700}>
+                      {numberWithCommas(data.earnedBuzz)} Buzz
+                    </Text>{' '}
+                    earned from stickers on {isOwner ? 'your' : 'their'} images
+                  </Text>
+                </Group>
+              ) : (
+                <Text size="sm" c="dimmed">
+                  {isOwner
+                    ? 'Your stickers, where you have put them, and what people have put on your work.'
+                    : `Stickers ${username} owns and the images they have been part of.`}
                 </Text>
-              </Group>
-            ) : (
-              <Text size="sm" c="dimmed">
-                {isOwner
-                  ? 'Your stickers, where you have put them, and what people have put on your work.'
-                  : `Stickers ${username} owns and the images they have been part of.`}
-              </Text>
-            )}
-          </Stack>
-        </Group>
+              )}
+            </Stack>
+          </Group>
 
-        <Group gap="xs" wrap="nowrap">
-          {isOwner && (
-            <Tooltip label="Sticker settings">
-              <ActionIcon
-                variant="default"
-                size="lg"
-                onClick={() => setSettingsOpen(true)}
-                aria-label="Manage sticker placement settings"
-              >
-                <IconSettings size={18} />
-              </ActionIcon>
-            </Tooltip>
-          )}
+          <Group gap="xs" wrap="nowrap">
+            {isOwner && (
+              <Tooltip label="Sticker settings">
+                <ActionIcon
+                  variant="default"
+                  size="lg"
+                  onClick={() => setSettingsOpen(true)}
+                  aria-label="Manage sticker placement settings"
+                >
+                  <IconSettings size={18} />
+                </ActionIcon>
+              </Tooltip>
+            )}
+          </Group>
         </Group>
-      </Group>
+      </StickerBookWidth>
 
       {access.canViewStickers && !!data.stickers.length && (
         <StickerBookBand
@@ -193,15 +201,17 @@ export function StickerBookView({ username }: { username: string }) {
       />
 
       {nothingYet && isOwner && (
-        <Alert color="blue" mt="md">
-          <Text size="sm">
-            Nothing in your book yet. Buy a sticker in the{' '}
-            <Text component={Link} href="/shop" c="blue.4" inherit>
-              shop
-            </Text>{' '}
-            and put one on an image, or turn stickers on for your own images from the gear above.
-          </Text>
-        </Alert>
+        <StickerBookWidth>
+          <Alert color="blue" mt="md">
+            <Text size="sm">
+              Nothing in your book yet. Buy a sticker in the{' '}
+              <Text component={Link} href="/shop" c="blue.4" inherit>
+                shop
+              </Text>{' '}
+              and put one on an image, or turn stickers on for your own images from the gear above.
+            </Text>
+          </Alert>
+        </StickerBookWidth>
       )}
 
       {isOwner && (

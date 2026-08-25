@@ -3,6 +3,7 @@ import { BackButton } from '~/components/BackButton/BackButton';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useState } from 'react';
 import { StickerBookGrid } from '~/components/StickerBook/StickerBookGrid';
+import { StickerBookWidth } from '~/components/StickerBook/StickerBookSection';
 import type { StickerBookSide } from '~/components/StickerBook/sticker-book.util';
 import { stickerBookSectionCopy } from '~/components/StickerBook/sticker-book.util';
 import { trpc } from '~/utils/trpc';
@@ -57,7 +58,7 @@ export function StickerBookSectionPage({
   const copy = stickerBookSectionCopy(side, { username, isOwner: data.isOwner });
 
   return (
-    <div className="flex flex-col gap-4">
+    <StickerBookWidth className="flex flex-col gap-4">
       {/* The shared back button rather than a link with an arrow glyph in it:
           it also goes back through history when there is history, so arriving
           from the tab returns to the scroll position it was left at. */}
@@ -103,6 +104,6 @@ export function StickerBookSectionPage({
           </Button>
         )}
       </Group>
-    </div>
+    </StickerBookWidth>
   );
 }

@@ -7,6 +7,7 @@ import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApp
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import type { StickerBookSide } from '~/components/StickerBook/sticker-book.util';
+import { STICKER_BOOK_MAX_COLUMNS } from '~/shared/utils/sticker-book';
 import type { RouterOutput } from '~/types/router';
 
 type BookItems = RouterOutput['stickerBook']['get']['placed'];
@@ -22,6 +23,15 @@ type BookItems = RouterOutput['stickerBook']['get']['placed'];
  */
 const CARD_WIDTH = 280;
 const CARD_HEIGHT = Math.round((CARD_WIDTH * 9) / 7);
+const GRID_GAP = 12;
+
+/**
+ * Centred and capped, because uncapped `auto-fill` was the one grid on the
+ * profile that kept adding columns to the edge of the window — every other one
+ * goes through `MasonryContainer`, which stops at seven and centres itself.
+ */
+export const STICKER_BOOK_MAX_WIDTH =
+  STICKER_BOOK_MAX_COLUMNS * CARD_WIDTH + (STICKER_BOOK_MAX_COLUMNS - 1) * GRID_GAP;
 
 /**
  * The images in one section, drawn with the standard feed card.
@@ -79,8 +89,8 @@ export function StickerBookGrid({
     // control.
     <ImagesProvider images={visible} hideStickerBadge revealStickers>
       <div
-        className="grid items-start gap-3"
-        style={{ gridTemplateColumns: `repeat(auto-fill, ${CARD_WIDTH}px)` }}
+        className="grid items-start"
+        style={{ gridTemplateColumns: `repeat(auto-fill, ${CARD_WIDTH}px)`, gap: GRID_GAP }}
       >
         {shown.map((item) => (
           <div key={item.imageId} className="relative">

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as ImageService from '~/server/services/image.service';
 import type * as UserPreferences from '~/server/services/user-preferences.service';
+import { STICKER_BOOK_MAX_COLUMNS, STICKER_BOOK_TAB_LIMIT } from '~/shared/utils/sticker-book';
 
 const blockedPairIds = vi.fn(async () => [] as number[]);
 /**
@@ -109,6 +110,29 @@ const oneStickeredImage = () => {
       nsfwLevel: 1,
     },
   ]);
+};
+
+/**
+ * A section with more images than the tab draws, so a count assertion is about
+ * the tab's own limit rather than about the fixture running out. Ids are even so
+ * a test can withhold the odd half and still have enough left to fill the page.
+ */
+const manyStickeredImages = (count: number) => {
+  const all = Array.from({ length: count }, (_, i) => ({
+    targetId: 900 + i,
+    _max: { createdAt: new Date(2026, 0, 1, 0, count - i) },
+  }));
+
+  // 🔴 HONOURS `take` AND `skip`. A flat `mockResolvedValue` hands back every row
+  // whatever the query asked for, which makes the overfetch invisible: the walk
+  // sees all 40 candidates even with the overfetch removed, and a test named for
+  // it passes over code that does not do it. Caught by reverting
+  // `SECTION_OVERFETCH` and watching this stay green.
+  placementGroupBy.mockImplementation(async (args: { take?: number; skip?: number }) => {
+    const from = args?.skip ?? 0;
+    return all.slice(from, from + (args?.take ?? all.length));
+  });
+  placementFindMany.mockResolvedValue([]);
 };
 
 const EARNED = 1234;
@@ -392,10 +416,54 @@ describe('getStickerBook — what leaves the server', () => {
   it('bounds the section limit rather than passing a caller number through', async () => {
     await getStickerBook({ username: 'creator', ...viewer(CREATOR), limit: 5000, ...levels });
 
-    // The cap plus the one row that decides `hasMore`. Asserted as the cap it
-    // came from rather than as 61, so raising the cap fails here rather than
-    // silently letting a caller ask for 5000.
-    for (const call of placementGroupBy.mock.calls) expect(call[0].take).toBe(60 + 1);
+    // The cap, overfetched, plus the one row that decides `hasMore`. Asserted as
+    // the cap it came from rather than as 241, so raising the cap fails here
+    // rather than silently letting a caller ask for 5000.
+    for (const call of placementGroupBy.mock.calls) expect(call[0].take).toBe(60 * 4 + 1);
+  });
+
+  it('asks the tab for WHOLE ROWS of the grid, not a round number', async () => {
+    // 🔴 Do not "simplify" this to a literal. The tab's fetch is two full rows at
+    // the grid's seven-column ceiling, and the two are multiplied in
+    // `shared/utils/sticker-book` precisely so they cannot drift. A limit that
+    // is not a whole multiple of the ceiling leaves the last row short on a wide
+    // window, which is the bug this replaced (Ellie, 2026-08-24: "what's the two
+    // blank image spots for?"). If you change the column ceiling, this moves
+    // with it on its own; if you hardcode either number, it stops protecting
+    // anything.
+    // Twenty stickered images, all visible — more than the tab draws, so the
+    // count below is the tab's decision rather than the fixture running out.
+    manyStickeredImages(20);
+
+    const book = await getStickerBook({ username: 'creator', ...viewer(CREATOR), ...levels });
+
+    // Asserted on what the tab RECEIVES, not on the query's `take`, which is now
+    // the overfetch window and says nothing about how many cards get drawn.
+    // As an object so a failure prints the numbers that disagree: asserted bare
+    // it reads `expected 5 to be +0`, naming neither the count nor the ceiling.
+    expect({
+      columns: STICKER_BOOK_MAX_COLUMNS,
+      shown: book.placed.length,
+      shortInLastRow: book.placed.length % STICKER_BOOK_MAX_COLUMNS,
+    }).toMatchObject({ shown: STICKER_BOOK_TAB_LIMIT, shortInLastRow: 0 });
+  });
+
+  it('overfetches so images the feed withholds cannot leave the tab short', async () => {
+    // Forty candidates with every other one withheld. Without the overfetch the
+    // tab asks for exactly its 14, loses half of them to the feed, and draws the
+    // half-empty last row this was reported for.
+    manyStickeredImages(40);
+    allImages.mockImplementation(async ({ ids }: { ids?: number[] }) => ({
+      items: (ids ?? []).filter((id) => id % 2 === 0).map((id) => ({ id, url: `url-${id}` })),
+      nextCursor: undefined,
+    }));
+
+    const book = await getStickerBook({ username: 'creator', ...viewer(CREATOR), ...levels });
+
+    expect(book.placed).toHaveLength(STICKER_BOOK_TAB_LIMIT);
+    // The survivors, not the first fourteen candidates — a walk that ignored the
+    // filter would return odd ids too and still have the right length.
+    for (const row of book.placed) expect(row.imageId % 2).toBe(0);
   });
 });
 

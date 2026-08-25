@@ -1,8 +1,9 @@
 import { Button, Group, Text, ThemeIcon, Title } from '@mantine/core';
 import { IconArrowRight } from '@tabler/icons-react';
+import clsx from 'clsx';
 import type { ReactNode } from 'react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { StickerBookGrid } from '~/components/StickerBook/StickerBookGrid';
+import { StickerBookGrid, STICKER_BOOK_MAX_WIDTH } from '~/components/StickerBook/StickerBookGrid';
 import type { StickerBookSide } from '~/components/StickerBook/sticker-book.util';
 import type { RouterOutput } from '~/types/router';
 
@@ -16,6 +17,29 @@ type BookItems = RouterOutput['stickerBook']['get']['placed'];
  * review. The negative margin lets the band's colour reach the container's edges
  * while the content stays on the page's own gutter.
  */
+/**
+ * The grid's own ceiling, centred — what `MasonryContainer` does for every other
+ * grid on the site.
+ *
+ * On the band it wraps the heading and the cards TOGETHER, so a shaded band's
+ * colour still reaches the window's edges while its content lines up with the
+ * cards. Wrapping only the grid would leave the heading and its "View all"
+ * hanging off to the left of what they label on a wide monitor.
+ */
+export function StickerBookWidth({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={clsx('mx-auto w-full', className)} style={{ maxWidth: STICKER_BOOK_MAX_WIDTH }}>
+      {children}
+    </div>
+  );
+}
+
 export function StickerBookBand({
   title,
   icon,
@@ -32,18 +56,20 @@ export function StickerBookBand({
 }) {
   return (
     <section className={`-mx-3 px-3 py-6 ${shaded ? 'bg-gray-1 dark:bg-dark-8' : ''}`.trim()}>
-      <Group justify="space-between" align="center" mb="md" wrap="nowrap">
-        <Group gap="sm" wrap="nowrap" className="min-w-0">
-          <ThemeIcon size="xl" color="dark" variant="default">
-            {icon}
-          </ThemeIcon>
-          <Title order={3} className="truncate">
-            {title}
-          </Title>
+      <StickerBookWidth>
+        <Group justify="space-between" align="center" mb="md" wrap="nowrap">
+          <Group gap="sm" wrap="nowrap" className="min-w-0">
+            <ThemeIcon size="xl" color="dark" variant="default">
+              {icon}
+            </ThemeIcon>
+            <Title order={3} className="truncate">
+              {title}
+            </Title>
+          </Group>
+          {action}
         </Group>
-        {action}
-      </Group>
-      {children}
+        {children}
+      </StickerBookWidth>
     </section>
   );
 }

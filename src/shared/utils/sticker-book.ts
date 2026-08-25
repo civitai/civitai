@@ -10,6 +10,21 @@
  * the positive ("showStickerBook") would make every account that predates this
  * feature read as hidden.
  */
+/**
+ * Where the grid stops widening, and how much of it the profile tab shows.
+ *
+ * Seven is the ceiling every other grid on the site uses — `MasonryProvider`
+ * defaults `maxColumnCount` to 7 — and the tab's fetch is two full rows of it.
+ *
+ * 🔴 They live together because the fetch is a ROW COUNT wearing a number: a
+ * limit that is not a whole multiple of the ceiling leaves the tab's last row
+ * short, which is the report this pair was written for. Multiplied rather than
+ * written as 14 so the two cannot drift apart.
+ */
+export const STICKER_BOOK_MAX_COLUMNS = 7;
+export const STICKER_BOOK_TAB_ROWS = 2;
+export const STICKER_BOOK_TAB_LIMIT = STICKER_BOOK_MAX_COLUMNS * STICKER_BOOK_TAB_ROWS;
+
 export type StickerBookSettings = {
   hideStickerBook?: boolean;
   hidePurchasedStickers?: boolean;
