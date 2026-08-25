@@ -1,16 +1,7 @@
-import { INDEFINITE_MUTE_POINTS, TIMED_MUTE_POINTS } from '~/shared/constants/strike.constants';
+import { REVIEW_MUTE_POINTS, MUTE_POINTS } from '~/shared/constants/strike.constants';
 
-/**
- * The ToS re-acceptance gate: a user muted by the strike system is asked to re-read and accept the
- * terms at the moment they try to do something the mute blocks, rather than being told only that they
- * are "restricted".
- *
- * Shared by the tRPC mute guard (which raises it) and the client (which opens the ToS modal on it), so
- * the marker has exactly one spelling.
- */
-
-/** Section of the ToS a struck user is sent to. Every canned strike reason cites this one. */
-export const TOS_REACCEPTANCE_SECTION = 'tos-prohibited-content';
+/** Section of the ToS a struck user is sent to. Re-exported so the client half needs one import. */
+export { TOS_PROHIBITED_CONTENT_ID as TOS_REACCEPTANCE_SECTION } from '~/components/Markdown/rehype-tos-section-ids';
 
 /**
  * Stamped on `meta.muteReason` when strike escalation mutes an account. The scam auto-mute and the
@@ -55,34 +46,5 @@ export function tosReacceptanceOffer({
 }): boolean {
   if (!couldAwaitTosReacceptance({ muted, mutedAt })) return false;
   if (muteReason !== STRIKE_MUTE_REASON) return false;
-  return activePoints >= TIMED_MUTE_POINTS && activePoints < INDEFINITE_MUTE_POINTS;
-}
-
-/** Per-domain acceptance timestamps written by the ToS accept flow. */
-const TOS_SEEN_FIELDS = ['tosLastSeenDate', 'tosGreenLastSeenDate', 'tosRedLastSeenDate'] as const;
-
-/**
- * Has this account accepted the Terms since it was last struck?
- *
- * This is what holds — and releases — the 2-point mute, in place of a new column: the accept flow
- * already records a timestamp, and every strike already has a `createdAt`. A NEW strike is therefore
- * newer than any prior acceptance, which re-arms the gate with no bookkeeping of its own.
- *
- * The MAX across domains, not the domain that issued the strike: strikes are platform-wide while the
- * Terms are per-domain, and trapping a green-domain user because they accepted the wrong document is
- * the worse failure.
- */
-export function acceptedTosSinceLastStrike(
-  settings: Record<string, unknown> | null | undefined,
-  lastStrikeAt: Date | null | undefined
-): boolean {
-  // Never struck: nothing to accept for.
-  if (!lastStrikeAt) return true;
-
-  const accepted = TOS_SEEN_FIELDS.map((f) => settings?.[f])
-    .map((v) => (typeof v === 'string' || v instanceof Date ? new Date(v) : null))
-    .filter((d): d is Date => d != null && !Number.isNaN(d.getTime()));
-
-  if (!accepted.length) return false;
-  return Math.max(...accepted.map((d) => d.getTime())) > lastStrikeAt.getTime();
+  return activePoints >= MUTE_POINTS && activePoints < REVIEW_MUTE_POINTS;
 }

@@ -2,7 +2,9 @@
 
 **ClickUp Task**: https://app.clickup.com/t/868hctmjw
 **PR**: https://github.com/civitai/civitai/pull/2019
-**Status**: In Progress — backend implementation complete, testing in progress
+**Status**: Shipped. Live business rules are [moderator-app/strike-rules.md](moderator-app/strike-rules.md); this file is the Phase 1 design record.
+
+**Original status**: In Progress — backend implementation complete, testing in progress
 **Priority**: Critical (Foundation for moderation enforcement)
 **Due**: Feb 10, 2026
 
@@ -29,7 +31,7 @@ From the ClickUp task and team discussion:
 |------|--------|
 | Strike per blocked content | 1 point per incident (max 1 auto-strike per day per user) |
 | Severe content (realistic + minor + R+) | 3 points for a single incident |
-| 2 active points | Auto-mute for 3 days |
+| 2 active points | Muted with no expiry, until the user re-accepts the ToS or their points fall below 2 (changed 2026-08-25 — see [moderator-app/strike-rules.md](moderator-app/strike-rules.md) §3) |
 | 3 active points | Muted + flagged for LLM/mod review |
 | Strike expiration | 365 days from creation (was 30 through Phase 1; changed 2026-08-24 — see [moderator-app/strike-rules.md](moderator-app/strike-rules.md) §2) |
 
@@ -49,7 +51,7 @@ Each strike record has a `points` field (1-3). A severe violation creates one re
 Ban reasons are specific to banning (SexualMinor, Nudify, etc.). Strike reasons need different granularity (BlockedContent, TOSViolation, ManualModAction). Keeping them separate lets each evolve independently.
 
 ### `muteExpiresAt` column on User
-Current mute is boolean. Adding `muteExpiresAt` (nullable DateTime) enables timed mutes without breaking existing manual mutes. An hourly job checks and auto-unmutes when the expiration passes.
+Current mute is boolean. `muteExpiresAt` (nullable DateTime) carries a **moderator's** timed mute, which the daily job ends when it passes. Strike mutes leave it null — they end on ToS re-acceptance or on the points decaying, not on a timer.
 
 ### Voided (not deleted) for overturned strikes
 When a mod overturns a strike, it gets status `Voided` rather than deleted, preserving the audit trail.
@@ -221,13 +223,13 @@ processTimedUnmutes() → { unmutedCount }
 #### Escalation Logic (inside `evaluateStrikeEscalation`):
 
 ```
-1. Sum active points: SELECT SUM(points) FROM UserStrike WHERE userId=X AND status='Active'
-2. Threshold check (descending):
-   - >= 3 points: mute (indefinite, muteExpiresAt=null) + set meta.strikeFlaggedForReview=true → notify
-   - >= 2 points: mute for 3 days (set muteExpiresAt = now+3d, resets if already muted) → notify
-   - < 2 points: no action
-3. invalidateSession(userId) after any mute
-4. Mute stacking: if already timed-muted, reset muteExpiresAt to now+3d on each new 2pt escalation
+1. Lock + sum active points (CTE, then aggregate — FOR UPDATE is illegal on an aggregate query)
+2. Threshold check (descending), and ONLY if the caller passed allowMute (createStrike is the only one):
+   - >= 3 points: mute, muteExpiresAt=null, meta.strikeFlaggedForReview=true, meta.muteReason='strike-escalation' → notify
+   - >= 2 points: mute, muteExpiresAt=null, meta.muteReason='strike-escalation' → notify
+   - < 2 points: release a mute this system applied; never touch one with mutedAt set
+3. invalidateSession(userId) after a mute, refreshSession after a release
+4. No stacking and no timer: a second strike at the same tier changes nothing about the mute
 ```
 
 #### Rate Limiting (inside `shouldRateLimitStrike`):
@@ -236,9 +238,6 @@ SELECT COUNT(*) FROM "UserStrike"
 WHERE "userId" = $1 AND "createdAt" >= CURRENT_DATE AND "reason" != 'ManualModAction'
 ```
 **Only applies to automated/system strikes.** Manual mod strikes (`ManualModAction`) always bypass the daily limit. Mods can issue as many manual strikes as needed.
-
-#### Mute Stacking
-If a user is already muted (from a previous escalation) and receives another strike, the mute timer **resets to 3 days from now**. This means repeat offenders during an active mute get their punishment extended. If the new total reaches 3+ points, the mute becomes indefinite + flagged for review (overriding the timed mute).
 
 ### 4. Controller — `src/server/controllers/strike.controller.ts` (NEW)
 
@@ -305,7 +304,7 @@ Two jobs:
 | Job | Cron | Logic |
 |-----|------|-------|
 | `expire-strikes` | `0 2 * * *` (daily 2AM) | Set expired strikes to `Expired` status, optionally notify users |
-| `process-timed-unmutes` | `0 * * * *` (hourly) | Unmute users whose `muteExpiresAt` has passed, refresh sessions |
+| `process-timed-unmutes` | `0 3 * * *` (daily 3AM) | Release-only. Strike mutes whose points no longer justify them, and moderator mutes whose expiry passed |
 
 ### 11. Job Registration — `src/pages/api/webhooks/run-jobs/[[...run]].ts`
 
@@ -320,7 +319,7 @@ Add `strikeFlaggedForReview` and `strikeFlaggedAt` fields to the `userMeta` zod 
 ## Integration Points
 
 ### With Existing Mute System
-- Strike-based mutes use `muteExpiresAt` for timed mutes (3 days)
+- Strike-based mutes have no expiry — stamped `meta.muteReason = 'strike-escalation'` and released by ToS re-acceptance or point decay
 - Existing manual mutes (`toggleMute`) remain unchanged — they have no expiration
 - The `confirm-mutes` job (`src/server/jobs/confirm-mutes.ts`) is unaffected — it handles subscription cancellation for confirmed mutes, which is a separate concern
 - Auto-unmute happens via the new `process-timed-unmutes` job
@@ -403,7 +402,7 @@ Step 8: Typecheck + lint
 - [x] Router registered in `index.ts`
 - [x] 5 notification types: `strike-issued`, `strike-voided`, `strike-escalation-muted`, `strike-expired`, `strike-de-escalation-unmuted`
 - [x] Email template for strike issued
-- [x] Cron jobs: `expire-strikes` (daily 2AM), `process-timed-unmutes` (hourly)
+- [x] Cron jobs: `expire-strikes` (daily 2AM), `process-timed-unmutes` (daily 3AM)
 - [x] Jobs registered in `run-jobs`
 - [x] `strikeFlaggedForReview` / `strikeFlaggedAt` added to `UserMeta`
 - [x] Code review (2 rounds) — all critical/high/medium issues resolved
@@ -501,7 +500,7 @@ Jobs are already testable via the existing job runner:
 # Expire strikes (normally runs daily at 2AM)
 GET /api/webhooks/run-jobs?run=expire-strikes&token=WEBHOOK_TOKEN
 
-# Process timed unmutes (normally runs hourly)
+# Process timed unmutes (normally runs daily at 3AM)
 GET /api/webhooks/run-jobs?run=process-timed-unmutes&token=WEBHOOK_TOKEN
 ```
 

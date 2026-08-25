@@ -31,8 +31,7 @@ export const strikeNotifications = createNotificationProcessor({
       message:
         details.muteDays === 'indefinite'
           ? 'Your account has been muted due to accumulated strikes and is pending review. Please review our Terms of Service.'
-          : // No duration: this tier ends when the user re-accepts the Terms, not on a timer. It said
-            // "3 days" while actually re-applying itself for as long as the points stood.
+          : // No duration: this tier ends on re-acceptance, not on a timer.
             'Your account has been muted due to accumulated strikes. Review and accept our Terms of Service to lift it — you will be asked the next time you try to post or comment.',
       // TODO: add url once /user/account#strikes UI exists
     }),

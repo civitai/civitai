@@ -432,7 +432,7 @@ acted on; two did not survive that check and are corrected rather than fixed.
   choice ("a free-text hours box invites 240 where someone meant 24"), not an oversight. The *gap* was
   real, so it is fixed below — but as a date picker, which was Retool's `muteEnd` and does not
   reintroduce the hazard the presets exist to avoid. **Scheduled START (`muteStart`) is still not ported.** Not for the reason
-  given here — expiry works (`processTimedUnmutesJob`, hourly, since 2026-08-12) — but because there is
+  given here — expiry works (`processTimedUnmutesJob`, daily since 2026-08-25) — but because there is
   no `muteStartsAt` column to write, so a scheduled start is a schema change plus a second job.
 
 ## Fixed
@@ -491,7 +491,7 @@ acted on; two did not survive that check and are corrected rather than fixed.
       answerable for the Retool era and not for ours.
 - [ ] **`numberOfImages` on `FrontPageTimers`.** **Confirmed to exist** (integer) 2026-08-20, and typed
       since the schema introspection, so `markSweepChecked` can write it. Not blocked, and no type work left.
-- [ ] **Scheduled mute start.** Not blocked on a cron — expiry runs hourly (`processTimedUnmutesJob`).
+- [ ] **Scheduled mute start.** Not blocked on a cron — expiry runs daily (`processTimedUnmutesJob`).
       There is no `muteStartsAt` column, so this is a schema change plus a second job. Confirm anyone
       wants it before building.
 

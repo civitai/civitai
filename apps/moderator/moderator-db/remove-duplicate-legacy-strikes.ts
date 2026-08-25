@@ -29,8 +29,8 @@ import {
 
 const BATCH = 500;
 // Unexported copies of strike.service.ts's ladder — keep in step.
-const TIMED_MUTE_POINTS = 2;
-const INDEFINITE_MUTE_POINTS = 3;
+const MUTE_POINTS = 2;
+const REVIEW_MUTE_POINTS = 3;
 /** Written before the delete, so a failure afterwards cannot lose the only human-actionable output. */
 const AFFECTED_USERS_FILE = 'stranded-mute-candidates.json';
 
@@ -211,13 +211,13 @@ async function reportStrandedMutes(users: number[]) {
           eb(sql<boolean>`(u."meta"->>'strikeFlaggedForReview')::boolean`, '=', true),
         ])
       )
-      .where((eb) => eb(activePoints(eb), '<', INDEFINITE_MUTE_POINTS))
+      .where((eb) => eb(activePoints(eb), '<', REVIEW_MUTE_POINTS))
       .execute();
 
     for (const r of rows) {
       const points = Number(r.points ?? 0);
       const indefinite = r.muteExpiresAt === null || r.flagged;
-      if (points < TIMED_MUTE_POINTS) stranded.push({ ...r, fix: 'unmute — no points left' });
+      if (points < MUTE_POINTS) stranded.push({ ...r, fix: 'unmute — no points left' });
       else if (indefinite)
         stranded.push({ ...r, fix: `downgrade to a timed mute — ${points} points, not 3+` });
     }

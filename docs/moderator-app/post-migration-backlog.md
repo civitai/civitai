@@ -192,7 +192,7 @@ findings are done — see the parity checklist.
 
 - [x] ~~🔴 **Timed mutes never expire / provenance is not enforced.**~~ **Both halves closed 2026-08-20.**
 
-      Expiry: the spoke writes `User.muteExpiresAt`, drained hourly by `processTimedUnmutesJob`.
+      Expiry: the spoke writes `User.muteExpiresAt`, drained daily by `processTimedUnmutesJob` (see [strike-rules.md](strike-rules.md) §8).
 
       Provenance: **`mutedAt` is the marker, and `meta.manualMute` is gone.** The flag was written by
       two apps and read by none, while `mutedAt` already carried exactly this meaning for

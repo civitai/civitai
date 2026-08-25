@@ -142,7 +142,7 @@ Open, with the evidence each audit produced:
       🔴 **This uncovered a live production outage, fixed in the same change.**
       `evaluateStrikeEscalation` ran `SELECT SUM(points) … FOR UPDATE`, which Postgres refuses outright
       (`0A000: FOR UPDATE is not allowed with aggregate functions`). It is called by `createStrike`,
-      `voidStrike`, `expireStrikes` (daily) and `processTimedUnmutes` (hourly) — so **no strike could be
+      `voidStrike`, `expireStrikes` (daily) and `processTimedUnmutes` (daily) — so **no strike could be
       issued or voided, no strike ever expired, and no timed mute ever lifted**. The two crons catch per
       user and log, so it failed silently: **679 `strike-expired-escalation-failed` events in the last 30
       days of `civitai-prod`**, every one this error. Fixed by locking the rows and aggregating in a
@@ -421,7 +421,7 @@ browser as user 1290051, not by reading the code.
       [`mod-studio-feedback-2026-08-24.md`](mod-studio-feedback-2026-08-24.md) § This round.
 - [ ] **Timed mutes: Mute Start / Notify User** — **still parked, new reasoning 2026-08-20.** The
       `TimedMutes` table is gone; a timed mute is `User.muteExpiresAt`, and expiry works
-      (`processTimedUnmutesJob`, hourly). Mute *start* needs a `muteStartsAt` column plus a second job —
+      (`processTimedUnmutesJob`, daily 03:00). Mute *start* needs a `muteStartsAt` column plus a second job —
       a schema change, not a control. Notify User is a wiring job now that `issueStrike`/`notify` exist.
       Neither is worth doing until someone confirms the feature is wanted.
 - [x] **Banned for CSAM** (2026-08-11). The ban badge now carries its reason code, and a separate

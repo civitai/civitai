@@ -4,7 +4,7 @@ import { useRouter } from 'next/router';
 import type { ReactNode } from 'react';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useHasClientHistory } from '~/store/ClientHistoryStore';
-import { TIMED_MUTE_POINTS } from '~/shared/constants/strike.constants';
+import { MUTE_POINTS } from '~/shared/constants/strike.constants';
 import type { RouterOutput } from '~/types/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
 
@@ -39,7 +39,7 @@ function renderRequirement(req: Requirement): { title: string; content: ReactNod
               ? "Your account isn't eligible to create challenges."
               : req.muted
               ? "Muted accounts can't create challenges."
-              : req.activePoints >= TIMED_MUTE_POINTS
+              : req.activePoints >= MUTE_POINTS
               ? "You can't create challenges while your account has active strikes."
               : 'No active strikes or restrictions on your account.'}
           </Text>

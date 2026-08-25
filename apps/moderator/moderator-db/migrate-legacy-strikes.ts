@@ -9,7 +9,7 @@
  * would write. Nothing is written without the flag.
  *
  * 🔴 Imported rows are INERT, and that is the whole design. `evaluateStrikeEscalation` sums points over
- *    `status = 'Active' AND "expiresAt" > NOW()` and mutes indefinitely at `INDEFINITE_MUTE_POINTS`.
+ *    `status = 'Active' AND "expiresAt" > NOW()` and mutes indefinitely at `REVIEW_MUTE_POINTS`.
  *    Importing ~12.9k historical strikes as Active would hand out mutes nobody decided on, off evidence
  *    up to four years old, each with its own notification. So every row lands `Expired`, `points = 0`,
  *    `expiresAt = createdAt`: visible in a strike list, countable by nothing. `verify()` re-reads the

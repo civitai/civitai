@@ -4,6 +4,7 @@ What the strike system does, what the moderation team decided in the 2026-08-24/
 what is still open.
 
 Code: `src/server/services/strike.service.ts`, `src/server/common/tos-reacceptance.ts`,
+`src/server/services/tos-reacceptance.service.ts`, `src/hooks/useTosReacceptancePrompt.ts`,
 `src/shared/constants/strike.constants.ts`, `src/server/jobs/process-strikes.ts`,
 `apps/moderator/src/lib/server/user-actions.service.ts`.
 
@@ -53,12 +54,14 @@ to *release*, never to re-apply — so a moderator's manual unmute is not undone
 - their points fall below 2 and the daily job releases them — the backstop, which at a 365-day
   lifetime means up to a year.
 
-A moderator voiding a strike also releases it: a strike taken back is not held against the account.
-Expired strikes still count as "the last time we told them", because time served is not acceptance.
+Voiding takes a strike's points back at once, so a void that drops the total below 2 releases the mute
+on the spot rather than waiting for the job. Nothing re-mutes an account that has accepted:
+`createStrike` is the only caller that may mute, so only a NEW strike can apply one again.
 
-**A mute a moderator set is never touched by any of this** — not lifted, not extended, and its expiry
-is left alone. `mutedAt` is the discriminator: a person's decision sets it, every automatic path
-leaves it null.
+**Strike escalation never touches a mute a moderator set** — not lifted, not extended, expiry left
+alone. `mutedAt` is the discriminator: a person's decision sets it, every automatic path leaves it
+null. The daily sweep does end one when its own expiry passes, because that expiry is the moderator's
+decision too and nothing else in the system honours it.
 
 ## 4. What else an active strike costs
 
@@ -108,10 +111,9 @@ is no delete: voided strikes stay in the history.
 | Job | Schedule | Does |
 | --- | --- | --- |
 | `expire-strikes` | daily 02:00 | Flips past-expiry strikes to `Expired`, notifies, re-evaluates |
-| `process-timed-unmutes` | daily 03:00 | **Releases only.** Unmutes strike mutes whose points have fallen below 2 |
+| `process-timed-unmutes` | daily 03:00 | **Releases only.** Strike mutes whose points fell below 2, and moderator mutes whose expiry passed |
 
-Neither job can mute. Daily rather than hourly because strikes expire on a day boundary, so nothing
-finer changes anything.
+Daily rather than hourly because strikes expire on a day boundary, so nothing finer changes anything.
 
 ## 9. The ToS re-acceptance gate
 
@@ -120,7 +122,9 @@ carries a marker, and the client opens the Terms at **§9.6** — the prohibited
 of strikes come from. Browsing is untouched: the user is asked at the moment they try to act, rather
 than the whole site being gated up front.
 
-Accepting lifts the mute and refreshes the session, so they are unblocked immediately.
+Accepting lifts the mute and refreshes the session, so they are unblocked immediately. The mutation
+re-checks eligibility inside its own write transaction and can refuse — a moderator's mute, or a third
+strike landing mid-call — in which case the client says so rather than closing silently.
 
 **Who gets the offer — and who deliberately does not:**
 
@@ -136,8 +140,9 @@ automatic mutes (all of which also leave `mutedAt` null). The acceptance endpoin
 predicate as the guard, because it is callable directly by any signed-in account — suppressing the
 modal is not a control.
 
-Coverage is tRPC mutations. Generation is gated separately by prompt auditing, and REST endpoints
-refuse on their own.
+Coverage is every tRPC mutation behind `guardedProcedure`, which includes generation —
+`orchestratorGuardedProcedure` extends it. Prompt auditing is a second, independent gate on the same
+path. REST endpoints refuse on their own and carry no marker.
 
 **Which part of the ToS**, measured over real strikes: 95% fall under §9.6; the rest were §11
 (harassment 11.2, multi-accounting 11.8).

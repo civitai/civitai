@@ -5,6 +5,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 import { useAppContext } from '~/providers/AppProvider';
+import { showErrorNotification } from '~/utils/notifications';
 import { TOS_REACCEPTANCE_SECTION } from '~/server/common/tos-reacceptance';
 
 const TosModal = dynamic(() => import('~/components/ToSModal/TosModal'), { ssr: false });
@@ -27,7 +28,9 @@ export function useTosReacceptancePrompt() {
   // Same SSR-seeded metadata the update-modal uses: which ToS this domain serves, which settings
   // fields record acceptance, and the content hash to store.
   const { tosMeta } = useAppContext();
-  const acceptTos = trpc.strike.acceptTosAfterMute.useMutation();
+  // `mutateAsync`, not the result object: react-query returns a fresh object every render, so
+  // depending on it re-subscribes this effect on every render of the app root.
+  const { mutateAsync: acceptTos } = trpc.strike.acceptTosAfterMute.useMutation();
 
   useEffect(() => {
     if (!currentUser || !tosMeta) return;
@@ -39,8 +42,10 @@ export function useTosReacceptancePrompt() {
         ?.data;
       if (!data?.tosReacceptRequired) return;
 
-      // `dialogStore` de-dupes by component, so a user mashing a blocked button gets one modal.
       dialogStore.trigger({
+        // Fixed id: the store de-dupes on it and defaults to `Date.now()`, so without this a second
+        // blocked click stacks a second copy of the same modal.
+        id: 'tos-reacceptance',
         component: TosModal,
         props: {
           slug: 'tos',
@@ -51,8 +56,22 @@ export function useTosReacceptancePrompt() {
           onAccepted: async () => {
             // Lifts the mute server-side, then refreshes. In this order deliberately: refreshing
             // first would re-seed the session while it is still muted.
-            await acceptTos.mutateAsync().catch(() => undefined);
+            const result = await acceptTos().catch(() => undefined);
             await currentUser.refresh();
+
+            // The service distinguishes 'a moderator muted you' and 'you are queued for review' from a
+            // release. Closing the modal on those without a word leaves the user believing they are
+            // unblocked, and their next action refused again with no explanation.
+            if (!result?.unmuted) {
+              showErrorNotification({
+                title: 'Your account is still restricted',
+                error: new Error(
+                  result?.reason === 'review'
+                    ? 'A moderator is reviewing your account. Accepting the Terms does not lift this.'
+                    : 'Thanks for accepting. A moderator will need to lift this restriction.'
+                ),
+              });
+            }
           },
         },
       });

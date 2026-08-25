@@ -406,18 +406,14 @@ const isMuted = middleware(async ({ ctx, next }) => {
   const { user } = ctx;
   if (!user) throw new TRPCError({ code: 'UNAUTHORIZED' });
   if (user.muted) {
-    // One read, and only on a write that is already refused: the session carries `muted`/`mutedAt` but
-    // not the mute's reason or the point total, and offering the Terms to the wrong kind of mute would
-    // release accounts muted for something else.
+    // `.catch`: this decides whether to OFFER a way out, never whether to refuse. A replica blip
+    // rejecting here would turn the refusal into a 500 carrying the driver's message.
     const offer = couldAwaitTosReacceptance(user)
-      ? await shouldOfferTosReacceptance(user.id)
+      ? await shouldOfferTosReacceptance(user.id).catch(() => false)
       : false;
     throw new TRPCError({
       code: 'FORBIDDEN',
       message: 'You cannot perform this action because your account has been restricted',
-      // Every muted write in the app funnels through here, which is why the ToS gate hangs off it:
-      // the user is asked to re-accept at the moment they try to act, instead of the whole site being
-      // gated up front. Only mutes the gate can actually release are marked.
       ...(offer ? { cause: { tosReacceptRequired: true } } : {}),
     });
   }

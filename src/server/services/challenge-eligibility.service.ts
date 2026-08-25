@@ -7,7 +7,7 @@ import {
   CHALLENGE_CREATE_DAILY_LIMIT,
 } from '~/shared/constants/challenge.constants';
 import { ChallengeSource, ChallengeStatus, StrikeStatus } from '~/shared/utils/prisma/enums';
-import { TIMED_MUTE_POINTS } from '~/shared/constants/strike.constants';
+import { MUTE_POINTS } from '~/shared/constants/strike.constants';
 
 function forbidden(message: string) {
   return new TRPCError({ code: 'FORBIDDEN', message });
@@ -68,7 +68,7 @@ export async function assertUserAccountInGoodStanding(
   if (standing.bannedAt || standing.deletedAt)
     throw forbidden('Your account is not eligible to create challenges.');
   if (standing.muted) throw forbidden('Muted accounts cannot create challenges.');
-  if (standing.activePoints >= TIMED_MUTE_POINTS)
+  if (standing.activePoints >= MUTE_POINTS)
     throw forbidden('Your account has active strikes and cannot create challenges right now.');
   return standing;
 }
@@ -170,7 +170,7 @@ export async function getUserChallengeCreateEligibility(
     },
     {
       key: 'standing',
-      met: !banned && !standing.muted && standing.activePoints < TIMED_MUTE_POINTS,
+      met: !banned && !standing.muted && standing.activePoints < MUTE_POINTS,
       muted: standing.muted,
       activePoints: standing.activePoints,
       banned,

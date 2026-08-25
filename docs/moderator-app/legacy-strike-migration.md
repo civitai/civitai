@@ -158,7 +158,7 @@ would leave them muted in their live session.
       Separately confirmed from the pre-delete snapshot that all of them are preserved on the SAME
       account — 0 cross-account mispairings. Accounts at 2+ points went 414 → 2, at 3+ 36 → 0.
       `reportStrandedMutes` named 2 accounts (7874835, 8394294); both hold 1 point with a
-      `muteExpiresAt` within 24h, so the hourly `process-timed-unmutes` job clears them with the
+      `muteExpiresAt` within 24h, so the daily `process-timed-unmutes` job clears them with the
       session refresh — no manual unmute needed. Worth confirming they cleared after 2026-08-25.
 - [ ] Legacy read retired — optional cleanup, no longer a correctness problem. The double-reporting
       this bullet used to describe is gone: the User Lookup badge reads "all-time" and `AccountHistory`

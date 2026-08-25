@@ -460,6 +460,11 @@ export const userMeta = z.object({
   membershipChangedAt: z.date().optional(),
   strikeFlaggedForReview: z.boolean().optional(),
   strikeFlaggedAt: z.date().optional(),
+  // Set by the moderator mute (free text) and by strike escalation (`STRIKE_MUTE_REASON`); automatic
+  // mutes leave it unset, which is how the ToS gate refuses them. Cleared with `mutedBy` as one unit
+  // by `clearedMuteFields`.
+  muteReason: z.string().optional(),
+  mutedBy: z.number().optional(),
   imageRemoval: z.enum(['grace', 'immediate']).optional(),
 });
 export type UserMeta = z.infer<typeof userMeta>;

@@ -37,5 +37,12 @@ describe('canned reason ToS citations', () => {
     // picker this fails, which is the moment to decide whether the modal can anchor §11 too.
     const cited = all.filter((r) => r.tos).map((r) => r.tos);
     expect(new Set(cited)).toEqual(new Set(['9.6']));
+
+    // And every reason that SHOULD cite one still does — the set above collapses cardinality, so a
+    // reason quietly losing its `tos` passes it while sending the reader to an unanchored document.
+    const uncited = ['Non AI content', 'Likeness/DMCA', 'Other'];
+    for (const reason of all.filter((r) => !uncited.includes(r.label))) {
+      expect(reason.tos, `"${reason.label}" lost its ToS citation`).toBeDefined();
+    }
   });
 });
