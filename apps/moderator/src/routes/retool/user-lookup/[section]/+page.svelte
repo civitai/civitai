@@ -157,7 +157,9 @@
       <!-- Beside the human record, not in a section of its own: "what did WE do about this account"
            and "what did the DETECTORS say about it" are the same question a moderator is asking, and
            /abuse deep-links here so the two arrive together. -->
-      <AbuseFindingsPanel userId={result.identity.id} />
+      {#if data.canSeeAbuse}
+        <AbuseFindingsPanel userId={result.identity.id} />
+      {/if}
     {:else if section === 'chat'}
       <ChatContactPanel modContact={result.modContact} username={result.identity.username} />
     {:else if section === 'notes'}

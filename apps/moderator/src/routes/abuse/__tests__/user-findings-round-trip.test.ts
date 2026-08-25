@@ -55,6 +55,22 @@ describe('abuse finding → user lookup round trip', () => {
     ).toMatch(/<AbuseFindingsPanel\b/);
   });
 
+  it('the linked section is a REAL section — sections.ts is the routing authority', async () => {
+    // 🔴 THE THIRD PARTY TO THE SEAM, which the test above cannot see. The section page's
+    // `{:else if section === '…'}` branch is not what decides routing: `[section]/+page.server.ts`
+    // rejects anything `isSection()` denies with a 404 BEFORE the page renders. So renaming the
+    // slug in sections.ts alone made /abuse's link 404 while every other assertion here stayed
+    // green — the link matched the branch, the branch rendered the panel, and the route did not
+    // exist. Three parties, and the guard compared two of them.
+    const linked = /href="\/retool\/user-lookup\/([a-z-]+)\?q=/.exec(read(RUN_PAGE))?.[1];
+    expect(linked, 'the link must name a section at all').toBeTruthy();
+    const { isSection } = await import('../../retool/user-lookup/sections');
+    expect(
+      isSection(linked as string),
+      `'${linked}' is linked from /abuse but is not a known section`
+    ).toBe(true);
+  });
+
   it('the panel is imported where it is rendered', () => {
     const src = read(SECTION_PAGE);
     expect(src).toMatch(/import AbuseFindingsPanel from/);
@@ -126,10 +142,55 @@ describe('the endpoint is guarded like its siblings', () => {
     );
   });
 
-  it('a caller without that grant gets nothing, not an error banner', () => {
-    // 403 here means "not yours", not "broken". Staff and payroll legitimately reach this section.
-    const src = read(PANEL);
-    expect(src).toMatch(/status === 403/);
+  it('the panel is MOUNTED on the grant, so it has no 403 branch to get wrong', () => {
+    // 🔴 WHY THIS IS STRUCTURAL AND NOT A REGEX. The panel used to mount for everyone and interpret
+    // the 403 itself, and a one-line mutation — `Promise.resolve(null)` to
+    // `Promise.resolve({ findings: [] })` — turned a permission boundary into "No detector has ever
+    // reported this account", a reassuring zero shown to someone not allowed to know. A test
+    // grepping for `status === 403` could not see that mutation. Deciding server-side deletes the
+    // branch instead of guarding it.
+    const layout = read('routes/retool/user-lookup/+layout.server.ts');
+    expect(layout).toMatch(/canSeeAbuse = canAccess\(locals\.user, '\/abuse'\)/);
+    expect(layout, 'the flag must actually reach the page').toMatch(/canSeeAbuse[,}]/);
+
+    const section = read(SECTION_PAGE);
+    const guarded = /\{#if data\.canSeeAbuse\}[\s\S]*?<AbuseFindingsPanel[\s\S]*?\{\/if\}/.exec(
+      section
+    );
+    expect(
+      guarded,
+      'the panel must be mounted behind the grant, not mounted then denied'
+    ).toBeTruthy();
+
+    // Assert the absence of a CODE PATH, not of the digits — the panel's comment explains the 403
+    // history on purpose, and a guard that forbids the number punishes the documentation it
+    // depends on. (Caught by this assertion failing on its own explanatory comment.)
+    expect(read(PANEL), 'no permission BRANCH belongs in the panel').not.toMatch(/r\.status\s*===/);
+  });
+
+  it('a capped result is reported as capped, never as a total', () => {
+    // The service returns at most 50. `total={rows.length}` alone renders that cap as the total, and
+    // an account with 300 findings reads as "Abuse detections (50)" — seen the whole record.
+    const panel = read(PANEL);
+    expect(panel).toMatch(/capped=\{truncated\}/);
+    const service = read('lib/server/abuse-detection.service.ts');
+    const fn = /export async function getAbuseFindingsForUser[\s\S]*?\n\}/.exec(service)?.[0];
+    expect(fn, 'the service must SIGNAL truncation, not silently cap').toMatch(/truncated/);
+    // 🔴 MATCH THE CALL, NOT THE PROSE. `/limit \+ 1/` also matches the comment above the query
+    // that SAYS "same `limit + 1` probe" — so removing the probe from the code left this green.
+    // Caught by the mutant surviving; the fix is to assert the expression that does the work.
+    expect(fn, 'detected with the same limit + 1 probe as its sibling').toMatch(
+      /\.limit\(limit \+ 1\)/
+    );
+  });
+
+  it('the expand toggle actually expands — children takes the row limit', () => {
+    // ListCard's `children` is `Snippet<[number]>` and it renders `children(limit)`. Implicit
+    // children ignore the argument, so every row draws regardless and "Show all N" toggles only its
+    // own label. svelte-check cannot see it: Snippet<[]> is assignable to Snippet<[number]>.
+    const panel = read(PANEL);
+    expect(panel).toMatch(/\{#snippet children\(limit: number\)\}/);
+    expect(panel).toMatch(/rows\.slice\(0, limit\)/);
   });
 
   it('is a plain RequestHandler, not a WebhookEndpoint — there IS a user behind this call', () => {
@@ -143,7 +204,7 @@ describe('the endpoint is guarded like its siblings', () => {
 // Kept out of the source-level block on purpose: this one executes the handler.
 describe('the endpoint returns what the panel expects', () => {
   it('answers { findings: [...] } from the service', async () => {
-    const rows = [
+    const findings = [
       {
         id: 1,
         runId: 4,
@@ -156,7 +217,7 @@ describe('the endpoint returns what the panel expects', () => {
       },
     ];
     vi.doMock('$lib/server/abuse-detection.service', () => ({
-      getAbuseFindingsForUser: vi.fn().mockResolvedValue(rows),
+      getAbuseFindingsForUser: vi.fn().mockResolvedValue({ findings, truncated: false }),
     }));
     vi.doMock('$lib/server/api-guard', () => ({ requireUserIdParam: () => 7 }));
 
@@ -165,8 +226,11 @@ describe('the endpoint returns what the panel expects', () => {
       params: { userId: '7' },
       locals: {},
     });
+    // The panel destructures BOTH keys; a service that dropped `truncated` would render a cap as a
+    // total, so the endpoint must pass it through rather than re-wrapping just the array.
     await expect(res.json()).resolves.toEqual({
-      findings: rows.map((r) => ({ ...r, createdAt: r.createdAt.toISOString() })),
+      findings: findings.map((r) => ({ ...r, createdAt: r.createdAt.toISOString() })),
+      truncated: false,
     });
   });
 });

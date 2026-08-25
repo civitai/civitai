@@ -1,4 +1,4 @@
-import { json } from '@sveltejs/kit';
+import { error, json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { requireUserIdParam } from '$lib/server/api-guard';
 import { getAbuseFindingsForUser } from '$lib/server/abuse-detection.service';
@@ -31,6 +31,25 @@ import { getAbuseFindingsForUser } from '$lib/server/abuse-detection.service';
 // WIDER. The data's own page is the only correct gate.
 export const GET: RequestHandler = async ({ params, locals }) => {
   const userId = requireUserIdParam(locals, params, '/abuse');
-  const findings = await getAbuseFindingsForUser(userId);
-  return json({ findings });
+  try {
+    return json(await getAbuseFindingsForUser(userId));
+  } catch (e) {
+    // 🔴 THE SAME DISCRIMINATION THE /abuse PAGES ALREADY DO, for the same reason: a flat 500 sends
+    // an operator hunting a database outage when the tables have simply never been created, or were
+    // created by the WRONG ROLE — two states that are likely, distinct, and otherwise
+    // indistinguishable from a real outage. Without this, an environment missing schema.sql answers
+    // 500 on EVERY visit to this section for EVERY account, and logs it as an unhandled error.
+    console.error('[abuse-detection] per-user findings load failed', e);
+    const code = (e as { code?: unknown }).code;
+    if (code === '42P01')
+      throw error(503, 'The abuse-detection tables do not exist yet — apply schema.sql.');
+    if (code === '42501')
+      throw error(
+        503,
+        'The abuse-detection tables exist but this role cannot read them — re-run schema.sql as the application role.'
+      );
+    if (e instanceof Error && e.message.includes('DATABASE_URL'))
+      throw error(503, 'MODERATOR_DATABASE_URL is not configured for this environment.');
+    throw error(503, 'Could not reach the abuse-detection database.');
+  }
 };
