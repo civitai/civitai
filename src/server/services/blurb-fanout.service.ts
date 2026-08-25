@@ -1,5 +1,8 @@
 import { dbRead, dbWrite } from '~/server/db/client';
-import { getBlurbFanoutAdapter } from '~/server/services/blurb-fanout.adapters';
+import {
+  getBlurbFanoutAdapter,
+  getSupportedBlurbEntityTypes,
+} from '~/server/services/blurb-fanout.adapters';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { replaceBlurbSpans, unwrapBlurbSpans } from '~/server/utils/blurb-html';
 
@@ -62,12 +65,20 @@ function recordReference(ref: Ref, contentHash: string) {
 // A rewrite that fails leaves `materializedHash` stale, so the row is simply
 // re-selected on the next pass — no separate retry path needed.
 export async function runBlurbFanout({ limit = 500 }: { limit?: number } = {}) {
+  const supportedTypes = getSupportedBlurbEntityTypes();
+
+  // Excluding unsupported entityTypes from the selector itself (rather than letting them
+  // into the batch and discarding them per-row) is what stops them starving the queue: a
+  // row processBlurbReference can't rewrite never gets its materializedAt touched, so an
+  // in-batch reject would permanently occupy the head of the `ORDER BY materializedAt`
+  // window once there were `limit` of them.
   const stale = await dbRead.$queryRaw<Array<Ref & Blurb>>`
     SELECT r."blurbId", r."entityType", r."entityId", r."materializedHash",
            b.id, b.content, b."contentHash", b."deletedAt"
     FROM "BlurbReference" r
     JOIN "Blurb" b ON b.id = r."blurbId"
-    WHERE r."materializedHash" <> b."contentHash" OR b."deletedAt" IS NOT NULL
+    WHERE (r."materializedHash" <> b."contentHash" OR b."deletedAt" IS NOT NULL)
+      AND r."entityType" = ANY(${supportedTypes}::text[])
     ORDER BY r."materializedAt" ASC
     LIMIT ${limit}
   `;
@@ -81,6 +92,16 @@ export async function runBlurbFanout({ limit = 500 }: { limit?: number } = {}) {
     }),
     5
   );
+
+  // The selector above never returns these rows, so their count has to come from
+  // its own query to stay visible — a real misconfiguration (an entityType wired up
+  // at the schema layer with no adapter registered) that someone has to notice.
+  const [{ count: unsupported }] = await dbRead.$queryRaw<{ count: number }[]>`
+    SELECT count(*)::int AS count
+    FROM "BlurbReference" r
+    WHERE NOT (r."entityType" = ANY(${supportedTypes}::text[]))
+  `;
+  counts.unsupported = unsupported;
 
   // A soft-deleted blurb whose references are all gone has nothing left to unwrap.
   await dbWrite.$executeRaw`

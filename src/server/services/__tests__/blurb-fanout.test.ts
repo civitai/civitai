@@ -67,4 +67,12 @@ describe('processBlurbReference', () => {
     const call = dbMock.dbWrite.blurbReference.update.mock.calls[0][0];
     expect(call.data.materializedHash).toBe('new');
   });
+
+  it('drops the reference when a soft-deleted blurb is already unwrapped', async () => {
+    adapter.load.mockResolvedValue({ userId: 10, html: 'OLD' });
+    const result = await processBlurbReference(ref, { ...blurb, deletedAt: new Date() });
+    expect(result).toBe('skipped');
+    expect(adapter.save).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.blurbReference.deleteMany).toHaveBeenCalled();
+  });
 });
