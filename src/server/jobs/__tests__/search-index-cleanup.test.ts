@@ -90,6 +90,15 @@ type Stats = {
  * `passCovered` defaults to this run's `idsScanned`, which is what a pass that never
  * resumed reports. A resumed run is the case where the two differ, and the tests that
  * care about it set it explicitly.
+ *
+ * 🔴 `cursorCleared: false` is the default because that is what the REAL scan produces
+ * for this scenario — a completed pass with nothing stored discards nothing. It briefly
+ * was not: `clearScanCursor` returned `true` unconditionally, so production put "cursor
+ * cleared" on every healthy line for every index while this fake said otherwise, and
+ * the `stays quiet about the ordinary case` test below asserted a message production
+ * would never emit. A fixture encoding a shape the code cannot produce is worse than no
+ * fixture — it certifies the wrong behaviour. The real-code side of this is pinned in
+ * cleanup.test.ts ("`cursorCleared` means a cursor was actually discarded").
  */
 function stats(over: Partial<Stats> & { key: string }): Stats {
   return {

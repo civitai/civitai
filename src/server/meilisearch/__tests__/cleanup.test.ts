@@ -60,6 +60,10 @@ import {
   EMPTY_PAGE_TRUST_COVERAGE,
 } from '~/server/meilisearch/cleanup';
 import { MAX_CURSOR_AGE_MS, readScanCursor } from '~/server/meilisearch/cleanup-cursor';
+import {
+  COVERAGE_SHORTFALL_FLOOR,
+  COVERAGE_SHORTFALL_RATIO,
+} from '~/server/meilisearch/cleanup-coverage';
 
 /** ids 1..n, dense — the fixtures below need indexes big enough to clear the absolute
  *  shortfall floor, which no toy fixture can. */
@@ -858,10 +862,29 @@ const COVERAGE_BAND: { total: number; covered: number; reachedEnd: boolean }[] =
 ];
 
 describe('cleanupIndex: keeping the cursor and reporting incomplete are ONE decision', () => {
+  it('pins the coverage band constants by value', async () => {
+    // 🔴 Same lesson as the staleness bound and the empty-page constants, and it applies
+    // here HARDER: consolidating the predicate promoted these two from deciding a log
+    // line to deciding, alone, whether a truncated pass keeps its resume cursor.
+    //
+    // The six-row table below reads them purely through behaviour, which is what makes
+    // it independent of the numbers — and therefore blind to the numbers moving. Its
+    // rows only bracket the ratio to roughly [0.15, 0.4) and the floor to [800, 3000];
+    // measured, 0.15 / 0.39 / 800 / 3000 all survive it. The table narrows the
+    // survivable range, the value pin closes it.
+    expect(COVERAGE_SHORTFALL_RATIO).toBe(0.25);
+    expect(COVERAGE_SHORTFALL_FLOOR).toBe(1000);
+  });
+
   for (const { total, covered, reachedEnd } of COVERAGE_BAND) {
     it(`covered ${covered} of ${total} → ${
       reachedEnd ? 'clears' : 'KEEPS'
     } the cursor`, async () => {
+      // A cursor at id 0 with nothing covered, so the "clears" rows have something
+      // real to clear and `cursorCleared` is a fact rather than a formality. It is
+      // equivalent to starting from the bottom: the filter becomes `id > 0`, and ids
+      // here are 1..total.
+      seedCursor('models', { lastId: 0, startedAt: Date.now() - 60_000, covered: 0 });
       // One page of `covered` ids, then the engine answers empty for the whole
       // confirmation schedule — a truncated pass that exits through the terminator,
       // which is the only case where coverage decides anything.
@@ -894,6 +917,7 @@ describe('cleanupIndex: keeping the cursor and reporting incomplete are ONE deci
     // while the engine was ingesting is a moving number, so a shortfall against it is
     // not evidence of anything. No resumable fixture exercised this, so deleting the
     // clause changed nothing observable.
+    seedCursor('models', { lastId: 0, startedAt: Date.now() - 60_000, covered: 0 });
     const fake = makeFakeIndex({
       docs: idsUpTo(8000),
       isIndexing: true,
@@ -918,11 +942,69 @@ describe('cleanupIndex: keeping the cursor and reporting incomplete are ONE deci
 });
 
 describe('cleanupIndex: a cursor the scan could not advance past is DISCARDED', () => {
-  it('clears rather than persists when the monotonicity guard fires', async () => {
-    // 🔴 Persisting it wedges the whole index: every later run resumes at the same
-    // cursor, trips the same guard on its first page, and examines ZERO documents —
-    // for as long as the staleness bound allows. Before the cursor existed, everything
-    // below the bad page was still cleaned nightly. Clearing restores exactly that.
+  it('clears when the guard fires on the FIRST page of a resumed run', async () => {
+    // 🔴 The wedge. `frozenPage` answers [7] whatever the filter, and the stored cursor
+    // is already 7 — so the very first page of the resumed run cannot advance. Persist
+    // that and every later run reproduces the identical abort and examines ZERO
+    // documents, for as long as the staleness bound allows. Before the cursor existed,
+    // everything below the bad page was still cleaned nightly; clearing restores that.
+    seedCursor('models', { lastId: 7, startedAt: Date.now() - 60_000, covered: 7 });
+    const fake = makeFakeIndex({ docs: [7], frozenPage: [7] });
+    setFakeIndex(fake);
+    const rec = makeDelayRecorder();
+
+    const stats = await cleanupIndex(modelsCfg, {
+      apply: false,
+      batch: 5,
+      maxBatches: 50,
+      resumable: true,
+      delay: rec.delay,
+    });
+
+    expect(stats.resumedFrom).toBe(7);
+    // Nothing was examined: the guard fired before the first page was judged.
+    expect(stats.idsScanned).toBe(0);
+    expect(stats.stoppedEarly).toBe(true);
+    expect(stats.errors).toBe(1);
+    expect(stats.cursorPersisted).toBe(null);
+    expect(stats.cursorCleared).toBe(true);
+    expect(storedCursor('models')).toBeUndefined();
+  });
+
+  it('does not claim a COMPLETED pass when the wedge clear fails', async () => {
+    // A comment or a message is a claim like any other. This error also fires on the
+    // wedge path, where the pass explicitly did not complete — saying "after a
+    // completed pass" there sends whoever reads it looking for the wrong thing.
+    seedCursor('models', { lastId: 7, startedAt: Date.now() - 60_000, covered: 7 });
+    redisMock.sysRedis.hDel.mockRejectedValue(new Error('sysRedis unavailable'));
+    const fake = makeFakeIndex({ docs: [7], frozenPage: [7] });
+    setFakeIndex(fake);
+    const rec = makeDelayRecorder();
+    const errors: string[] = [];
+
+    const stats = await cleanupIndex(modelsCfg, {
+      apply: false,
+      batch: 5,
+      maxBatches: 50,
+      resumable: true,
+      delay: rec.delay,
+      onError: ({ error }) => errors.push(error.message),
+    });
+
+    expect(stats.cursorCleared).toBe(false);
+    const clearError = errors.find((m) => m.includes('could not CLEAR the scan cursor'));
+    expect(clearError).toBeDefined();
+    expect(clearError).toContain('after aborting on a cursor it could not advance past');
+    expect(clearError).not.toContain('after a completed pass');
+  });
+
+  it('KEEPS the cursor when the guard fires after the run made progress', async () => {
+    // 🔴 The other half, and the one a broad fix gets wrong. Same frozen page, but the
+    // stored cursor is 5, so page 1 DOES advance (5 -> 7) and is judged; the guard only
+    // fires on page 2. That run cleaned everything between 5 and 7 — discarding its
+    // cursor throws a whole night's progress away and restarts at the bottom, which is
+    // the exact cost this change exists to eliminate. There is no wedge here either:
+    // the next run resumes at 7, which is a DIFFERENT cursor from the one that aborted.
     seedCursor('models', { lastId: 5, startedAt: Date.now() - 60_000, covered: 5 });
     const fake = makeFakeIndex({ docs: [7], frozenPage: [7] });
     setFakeIndex(fake);
@@ -936,9 +1018,60 @@ describe('cleanupIndex: a cursor the scan could not advance past is DISCARDED', 
       delay: rec.delay,
     });
 
+    expect(stats.resumedFrom).toBe(5);
+    expect(stats.idsScanned).toBe(1);
     expect(stats.stoppedEarly).toBe(true);
     expect(stats.errors).toBe(1);
+    expect(stats.cursorCleared).toBe(false);
+    expect(stats.cursorPersisted).toBe(7);
+    expect(storedCursor('models')).toMatchObject({ lastId: 7 });
+  });
+});
+
+describe('cleanupIndex: `cursorCleared` means a cursor was actually discarded', () => {
+  it('does NOT claim a clear when there was nothing stored', async () => {
+    // 🔴 The common path: almost every run completes with nothing stored. Reporting
+    // those as "cursor cleared" put that note on every healthy nightly line for every
+    // index and drained the field of the meaning it was added for — the same noise
+    // deliberately suppressed for `cursorDiscardReason: 'missing'`, arriving from the
+    // other side.
+    const fake = makeFakeIndex({ docs: [1, 2, 3, 4, 5, 6, 7, 8] });
+    setFakeIndex(fake);
+    const rec = makeDelayRecorder();
+
+    const stats = await cleanupIndex(modelsCfg, {
+      apply: false,
+      batch: 8,
+      resumable: true,
+      delay: rec.delay,
+    });
+
+    expect(stats.cursorDiscardReason).toBe('missing');
+    expect(stats.cursorCleared).toBe(false);
     expect(stats.cursorPersisted).toBe(null);
+    expect(storedCursor('models')).toBeUndefined();
+    // 🔴 And it is NOT an error. "Nothing to clear" is genuinely a third outcome:
+    // folding it into `failed` would raise an error on every healthy nightly run of
+    // every index, which is the same noise as the false `cursorCleared`, arriving
+    // through the alarm instead of the log line.
+    expect(stats.errors).toBe(0);
+  });
+
+  it('DOES claim a clear when a stored cursor was discarded', async () => {
+    // The positive half. Without it, "never report a clear" would pass the case above.
+    seedCursor('models', { lastId: 4, startedAt: Date.now() - 60_000, covered: 4 });
+    const fake = makeFakeIndex({ docs: [1, 2, 3, 4, 5, 6, 7, 8] });
+    setFakeIndex(fake);
+    const rec = makeDelayRecorder();
+
+    const stats = await cleanupIndex(modelsCfg, {
+      apply: false,
+      batch: 8,
+      resumable: true,
+      delay: rec.delay,
+    });
+
+    expect(stats.resumedFrom).toBe(4);
     expect(stats.cursorCleared).toBe(true);
     expect(storedCursor('models')).toBeUndefined();
   });
@@ -1403,8 +1536,12 @@ describe('cleanupIndex: an empty page is re-asked harder when coverage says it c
     expect(stats.idsScanned).toBe(0);
     expect(stats.passCovered).toBe(0);
     expect(stats.stoppedEarly).toBe(false);
-    // An empty index is a finished pass, not a truncated one.
-    expect(stats.cursorCleared).toBe(true);
+    // An empty index is a finished pass, not a truncated one — nothing is carried
+    // forward. Nothing was stored either, so nothing was cleared: `cursorCleared`
+    // reports a discarded cursor, not the decision to discard one.
+    expect(stats.cursorCleared).toBe(false);
+    expect(stats.cursorPersisted).toBe(null);
+    expect(storedCursor('models')).toBeUndefined();
     expect(rec.delays).toEqual([500]);
   });
 

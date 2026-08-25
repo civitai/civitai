@@ -133,17 +133,34 @@ export async function writeScanCursor(key: string, cursor: ScanCursor): Promise<
 }
 
 /**
+ * Why a clear did or did not happen. Three outcomes, not two.
+ *
+ * 🔴 `absent` exists because collapsing it into `cleared` made the flag lie on the
+ * common path: the overwhelming majority of runs complete with nothing stored, so an
+ * unconditional `true` put "cursor cleared — the next run starts over" on EVERY healthy
+ * nightly line for EVERY index, and the field stopped meaning the thing it was added to
+ * report. Collapsing it into `failed` instead would be worse — it would raise an error
+ * every night. It is genuinely a third outcome.
+ */
+export type ClearCursorOutcome =
+  | 'cleared' // a stored cursor was discarded
+  | 'absent' // there was nothing stored; the next run starts from the bottom anyway
+  | 'failed'; // the store rejected the write — the stale cursor is still there
+
+/**
  * Drop the cursor so the next run starts over from the bottom.
  *
- * Called only when a pass genuinely completed. Without it the cursor would sit at the
- * top of the index forever and the low-id region — where documents that were eligible
- * when indexed and have since gone stale actually live — would never be re-examined.
+ * Called when a pass genuinely completed. Without it the cursor would sit at the top of
+ * the index forever and the low-id region — where documents that were eligible when
+ * indexed and have since gone stale actually live — would never be re-examined.
  */
-export async function clearScanCursor(key: string): Promise<boolean> {
+export async function clearScanCursor(key: string): Promise<ClearCursorOutcome> {
   try {
-    await sysRedis.hDel(REDIS_SYS_KEYS.SEARCH_INDEX_CLEANUP.CURSORS, FIELD(key));
-    return true;
+    const removed = await sysRedis.hDel(REDIS_SYS_KEYS.SEARCH_INDEX_CLEANUP.CURSORS, FIELD(key));
+    // A non-numeric answer means we cannot claim a cursor was discarded, so report the
+    // weaker `absent`: over-reporting a clear is the defect this return value fixes.
+    return Number(removed) > 0 ? 'cleared' : 'absent';
   } catch {
-    return false;
+    return 'failed';
   }
 }

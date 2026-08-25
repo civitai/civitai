@@ -706,12 +706,17 @@ export async function cleanupIndex(
     const nextId = docIds[docIds.length - 1];
     if (!(nextId > lastId)) {
       stats.errors += 1;
-      // 🔴 A cursor the scan could not advance past must NOT be handed to the next
-      // run. Persisting it makes every subsequent run trip this same guard on its
-      // first page and examine ZERO documents, for as long as the staleness bound
-      // allows — turning a bad page into a whole index going uncleaned. Before the
-      // cursor existed, everything below the bad page was still cleaned nightly;
-      // discarding the cursor restores exactly that.
+      // 🔴 A cursor the scan could not advance past on the FIRST page of a resumed run
+      // must NOT be handed to the next run: persisting it makes every later run trip
+      // this same guard immediately and examine ZERO documents, for as long as the
+      // staleness bound allows — turning one bad page into a whole index going
+      // uncleaned. Before the cursor existed, everything below the bad page was still
+      // cleaned nightly, and discarding restores exactly that.
+      //
+      // Recorded, not acted on here: whether this abort should discard depends on
+      // whether the run made progress first, which is decided after the loop by
+      // `wedgedOnResume`. Discarding unconditionally would throw away a whole night's
+      // work whenever the guard fires deep into a pass.
       cursorUnadvanceable = true;
       opts.onError?.({
         key: cfg.key,
@@ -818,16 +823,32 @@ export async function cleanupIndex(
      */
     const verdict = assessPassCoverage(stats);
 
-    if (verdict.reachedEnd || cursorUnadvanceable) {
+    /**
+     * 🔴 The wedge is specifically a guard that fires on the FIRST page of a RESUMED
+     * run — there, and only there, persisting the unchanged cursor makes every later
+     * run reproduce the identical abort and examine zero documents.
+     *
+     * Firing after real progress is a different event: the run walked from
+     * `resumedFrom` up to `lastId` and cleaned everything on the way. Discarding the
+     * cursor then throws a whole night's progress away and restarts at the bottom,
+     * which is the exact cost this change exists to eliminate — so that case keeps its
+     * cursor like any other truncated pass. `lastId === stats.resumedFrom` is the
+     * discriminator; a pass that never resumed has `resumedFrom === null`, which no
+     * numeric `lastId` can equal, and it has nothing stored to wedge on anyway.
+     */
+    const wedgedOnResume = cursorUnadvanceable && lastId === stats.resumedFrom;
+
+    if (verdict.reachedEnd || wedgedOnResume) {
       // Start the next run from the bottom. Without this the cursor sits at the top
       // of the index forever and the low-id region — where a document that was
       // eligible when it was indexed and has since gone stale actually lives — is
-      // never re-examined. `cursorUnadvanceable` lands here too, deliberately: see
-      // the monotonicity guard for why a cursor the scan could not pass must be
-      // discarded rather than handed on.
-      const cleared = await clearScanCursor(cfg.key);
-      stats.cursorCleared = cleared;
-      if (!cleared) {
+      // never re-examined.
+      const outcome = await clearScanCursor(cfg.key);
+      // `absent` is NOT a clear. The overwhelming majority of runs complete with
+      // nothing stored, and reporting those as "cursor cleared" put the note on every
+      // healthy nightly line for every index and drained the field of meaning.
+      stats.cursorCleared = outcome === 'cleared';
+      if (outcome === 'failed') {
         // 🔴 Loud, because the silent version is the worst failure this code has.
         // A completed pass that cannot clear its cursor resumes at the TOP of the
         // index next run, scans nothing, carries the old `covered` forward so the
@@ -839,8 +860,14 @@ export async function cleanupIndex(
           key: cfg.key,
           offset: -1,
           error: new Error(
-            `could not CLEAR the scan cursor for ${cfg.indexName} after a completed pass; ` +
-              `the next run will resume at id ${lastId} and may scan nothing`
+            `could not CLEAR the scan cursor for ${cfg.indexName} ` +
+              // Not "after a completed pass" unconditionally: on the wedge path the
+              // pass explicitly did NOT complete, and a message that says otherwise
+              // sends the reader looking for the wrong thing.
+              (wedgedOnResume
+                ? 'after aborting on a cursor it could not advance past'
+                : 'after a completed pass') +
+              `; the next run will resume at id ${lastId} and may scan nothing`
           ),
         });
       }
