@@ -6,6 +6,7 @@ import React, { useMemo } from 'react';
 
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { CreatorAnnouncementsCarousel } from '~/components/Announcements/CreatorAnnouncementsCarousel';
+import { CreatorAnnouncementsEntry } from '~/components/Announcements/CreatorAnnouncementsEntry';
 import { useQueryCreatorAnnouncements } from '~/components/Announcements/creator-announcements.utils';
 import { ProfileSidebar } from '~/components/Profile/ProfileSidebar';
 import { shouldShowProfileMessage } from '~/components/Profile/profile.utils';
@@ -136,6 +137,7 @@ export function ProfileHeader({ username }: { username: string }) {
     return (
       <div className="flex flex-col gap-3">
         {!user.muted && <CreatorAnnouncementsCarousel userId={user.id} className="container" />}
+        <CreatorAnnouncementsEntry userId={user.id} userMuted={user.muted} className="container" />
         {renderMessage()}
         <div className="flex flex-col">
           {renderCoverImage()}
@@ -155,6 +157,7 @@ export function ProfileHeader({ username }: { username: string }) {
     <Stack>
       {renderCoverImage()}
       {!user.muted && <CreatorAnnouncementsCarousel userId={user.id} className="container" />}
+      <CreatorAnnouncementsEntry userId={user.id} userMuted={user.muted} className="container" />
       {renderMessage()}
     </Stack>
   );
