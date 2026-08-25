@@ -82,6 +82,12 @@ export const POST = defineWebhookEndpoint({
       .max(1)
       .optional()
       .describe("Override the version's stored threshold."),
+    mode: z
+      .enum(['prompt', 'text'])
+      .optional()
+      .describe(
+        'Override the scanner to measure against. Normally omit it: the mode is derived from the samples themselves (model listings are `text`, generation prompts are `prompt`). Pass it only to force a comparison the data would not choose.'
+      ),
     note: z
       .string()
       .trim()
@@ -94,7 +100,7 @@ export const POST = defineWebhookEndpoint({
   notes: [
     'A run needs confirmed ground truth. With none, this fails 400 rather than producing a run of n/a.',
   ],
-  handler: async ({ label, version, batch, threshold, note }) => {
+  handler: async ({ label, version, batch, threshold, mode, note }) => {
     let resolveRunId: (id: string) => void = () => {};
     const created = new Promise<string>((resolve) => {
       resolveRunId = resolve;
@@ -106,6 +112,7 @@ export const POST = defineWebhookEndpoint({
       policyVersion: version,
       batch,
       thresholdOverride: threshold,
+      mode,
       note,
       orchestrator: orchestratorEnv(),
       onRunCreated: resolveRunId,

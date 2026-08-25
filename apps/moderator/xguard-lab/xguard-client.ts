@@ -32,6 +32,18 @@ export type XGuardInput = {
   negativePrompt?: string | null;
 };
 
+/**
+ * Which scanner to evaluate against. `prompt` and `text` are separate registries with separate
+ * label sets and separate thresholds, so this is not cosmetic: a policy tuned in one mode says
+ * nothing about the other, which is the same warning `/xguard/docs` gives about thresholds not
+ * transferring between scanners.
+ *
+ * Model listings are scanned in `text` mode in production (`model-moderation.adapter.ts`), so a
+ * sample drawn from a model must be evaluated in `text` mode or the loop optimises the wrong
+ * scanner. Prompt stays the default because every existing batch is generation prompts.
+ */
+export type XGuardMode = 'prompt' | 'text';
+
 type WorkflowResponse = {
   status?: string;
   steps?: Array<{ $type?: string; output?: { results?: LabelResult[] } }>;
@@ -53,12 +65,13 @@ export function orchestratorConfig(override?: Partial<OrchestratorConfig>): Orch
 export async function scan(args: {
   input: XGuardInput;
   policies: LabelPolicy[];
+  mode?: XGuardMode;
   wait?: number;
   withReason?: boolean;
   orchestrator?: Partial<OrchestratorConfig>;
 }): Promise<LabelResult[]> {
   const { endpoint, token } = orchestratorConfig(args.orchestrator);
-  const { input, policies, wait = 60, withReason = true } = args;
+  const { input, policies, mode = 'prompt', wait = 60, withReason = true } = args;
 
   // An empty policy string means "use whatever the live registry has", so it must not be sent as
   // an override - that is how a baseline run works.
@@ -71,14 +84,23 @@ export async function scan(args: {
       policy: p.policy,
     }));
 
+  // Text mode carries the content as `text` and has no negative prompt; the shapes are not
+  // interchangeable, so build them separately rather than spreading a common object.
+  const modeInput =
+    mode === 'text'
+      ? { mode: 'text' as const, text: input.positivePrompt }
+      : {
+          mode: 'prompt' as const,
+          positivePrompt: input.positivePrompt,
+          negativePrompt: input.negativePrompt ?? '',
+        };
+
   const body = {
     steps: [
       {
         $type: 'xGuardModeration',
         input: {
-          mode: 'prompt',
-          positivePrompt: input.positivePrompt,
-          negativePrompt: input.negativePrompt ?? '',
+          ...modeInput,
           labels: policies.map((p) => p.label),
           storeFullResponse: withReason,
           ...(overrides.length > 0 ? { labelOverrides: overrides } : {}),
