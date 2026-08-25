@@ -20,10 +20,14 @@ import { StrikeReason, StrikeStatus } from '~/shared/utils/prisma/enums';
 import { logToAxiom } from '~/server/logging/client';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import {
-  INDEFINITE_MUTE_POINTS,
-  TIMED_MUTE_DAYS,
-  TIMED_MUTE_POINTS,
-} from '~/shared/constants/strike.constants';
+  acceptedTosSinceLastStrike,
+  STRIKE_MUTE_REASON,
+  tosReacceptanceOffer,
+} from '~/server/common/tos-reacceptance';
+import { getStaticContent, resolveTosHash } from '~/server/services/content.service';
+import { setUserSetting } from '~/server/services/user.service';
+import type { Context } from '~/server/createContext';
+import { INDEFINITE_MUTE_POINTS, TIMED_MUTE_POINTS } from '~/shared/constants/strike.constants';
 
 // ============================================================================
 // Rate Limiting
@@ -326,14 +330,13 @@ export async function getUserStandings(input: GetUserStandingsInput) {
 
 export type EscalationAction = 'none' | 'muted' | 'muted-and-flagged' | 'unmuted';
 
-const DAY_MS = 24 * 60 * 60 * 1000;
-
 /**
  * Evaluate strike escalation for a user based on their total active points.
  * Handles both escalation (mute/flag) and de-escalation (unmute when points drop).
  */
 export async function evaluateStrikeEscalation(
-  userId: number
+  userId: number,
+  { allowMute = false }: { allowMute?: boolean } = {}
 ): Promise<{ totalPoints: number; action: EscalationAction }> {
   // The point total and the mute-state write are one atomic unit. `FOR UPDATE` on the strike rows
   // only serializes concurrent evaluations while the transaction is open, so the write has to be
@@ -360,11 +363,32 @@ export async function evaluateStrikeEscalation(
 
       const user = await tx.user.findUnique({
         where: { id: userId },
-        select: { muted: true, mutedAt: true, muteExpiresAt: true, meta: true },
+        select: { muted: true, mutedAt: true, muteExpiresAt: true, meta: true, settings: true },
       });
       if (!user) return { totalPoints, action: 'none', notify: false };
 
+      // What holds the 2-point mute, in place of a dedicated column — see acceptedTosSinceLastStrike.
+      // ALL strikes, not just the countable ones: the mute outlives the points that caused it, so an
+      // expired strike still counts as "the last time we told them".
+      // Voided strikes are excluded, and that is what makes a void still release the mute: a strike a
+      // moderator took back is not something to hold someone to. Expired ones DO count — the mute
+      // outliving the points is the decision, and time served is not acceptance.
+      const [lastStrike] = await tx.$queryRaw<[{ last: Date | null }]>`
+        SELECT MAX("createdAt") as last
+        FROM "UserStrike"
+        WHERE "userId" = ${userId}
+          AND "status" != ${StrikeStatus.Voided}::"StrikeStatus"
+      `;
+      const acceptedSinceLastStrike = acceptedTosSinceLastStrike(
+        user.settings as Record<string, unknown> | null,
+        lastStrike?.last
+      );
+
       const currentMeta = (user.meta as UserMeta) ?? {};
+      // A mute this system applied, as opposed to the scam job or a generation restriction — all three
+      // leave `mutedAt` null, so the reason is the only thing that tells them apart.
+      const strikeMuted =
+        user.muted && (currentMeta as { muteReason?: string }).muteReason === STRIKE_MUTE_REASON;
 
       // `mutedAt` is set ONLY by a moderator decision — a restriction uphold, the mod mute toggle, or
       // the moderator app. Every automatic path (prompt auditing, scam auto-mute, and this file) leaves
@@ -399,32 +423,39 @@ export async function evaluateStrikeEscalation(
       }
 
       if (totalPoints >= TIMED_MUTE_POINTS) {
-        // The window restarts on every evaluation, so a new strike extends an active mute
-        const strikeExpiry = new Date(Date.now() + TIMED_MUTE_DAYS * DAY_MS);
-        const alreadyTimedMuted = user.muted && user.muteExpiresAt !== null;
-        // Never SHORTEN a moderator's mute. A 30-day mute set by a person outlasting a 3-day strike
-        // window is the intended outcome; overwriting it silently released the account 27 days early.
-        const keepsLonger =
-          moderatorMuted && user.muteExpiresAt != null && user.muteExpiresAt > strikeExpiry;
-        const muteExpiresAt = keepsLonger ? user.muteExpiresAt : strikeExpiry;
+        // Muting happens ONLY when a strike is issued. Voiding, expiry and the daily sweep re-evaluate
+        // to RELEASE, never to re-apply — otherwise a moderator's manual unmute is silently undone by
+        // the next job run, which is what happened before this flag existed.
+        if (!allowMute) return { totalPoints, action: 'none', notify: false };
+
+        // Already accepted since the last strike: they took the early exit, so nothing re-mutes them
+        // until a NEW strike lands (which is newer than the acceptance, and re-arms this).
+        if (acceptedSinceLastStrike) return { totalPoints, action: 'none', notify: false };
+
+        const alreadyHeld = user.muted && !moderatorMuted;
 
         await tx.user.update({
           where: { id: userId },
           data: {
             muted: true,
-            muteExpiresAt,
-            // Coming down from the indefinite tier, so the review flag no longer applies
-            ...(currentMeta.strikeFlaggedForReview && {
-              meta: {
-                ...currentMeta,
-                strikeFlaggedForReview: false,
-              },
-            }),
+            // No expiry: this tier ends when the points fall below two or the user accepts, not on a
+            // timer. A moderator's own expiry is left ALONE — nulling it would quietly turn their
+            // 30-day mute into a permanent one.
+            ...(moderatorMuted ? {} : { muteExpiresAt: null }),
+            meta: {
+              ...currentMeta,
+              // What separates this from the scam auto-mute and the restriction mute, which also leave
+              // `mutedAt` null. The ToS gate offers itself on THIS reason only: accepting the Terms
+              // must not release an account muted for something else.
+              muteReason: STRIKE_MUTE_REASON,
+              ...(currentMeta.strikeFlaggedForReview && totalPoints < INDEFINITE_MUTE_POINTS
+                ? { strikeFlaggedForReview: false }
+                : {}),
+            },
           },
         });
 
-        // Only notify on a new mute, not on extending an existing one
-        return { totalPoints, action: 'muted', notify: !alreadyTimedMuted };
+        return { totalPoints, action: 'muted', notify: !alreadyHeld };
       }
 
       // Logged when the guard FIRES, because holding the mute is otherwise unobservable: correct
@@ -444,13 +475,14 @@ export async function evaluateStrikeEscalation(
         });
       }
 
-      // De-escalation: unmute a mute STRIKES applied. `moderatorMuted` is the guard — without it a
-      // moderator's timed mute was lifted the moment an unrelated strike decayed below the threshold,
-      // with a de-escalation notification to the user, and nothing recorded that it had happened.
+      // De-escalation: release a mute STRIKES applied, once the points no longer justify it. Two ways
+      // out of the 2-point tier and this is the backstop one — the strikes expire, the daily job
+      // re-evaluates, the mute goes. The other is the user accepting the Terms early
+      // (`acceptTosAfterMute`). `moderatorMuted` is the guard that keeps a person's mute out of both.
       if (
         user.muted &&
         !moderatorMuted &&
-        (user.muteExpiresAt !== null || currentMeta.strikeFlaggedForReview)
+        (user.muteExpiresAt !== null || currentMeta.strikeFlaggedForReview || strikeMuted)
       ) {
         // `clearedMuteFields` owns the whole "why was this muted" set — see its docstring. The review
         // flag is this file's own, so it is layered on top of the meta the helper returns.
@@ -491,7 +523,8 @@ export async function evaluateStrikeEscalation(
             category: NotificationCategory.System,
             key: `strike-escalation-muted:${userId}:${Date.now()}`,
             userId,
-            details: { muteDays: action === 'muted-and-flagged' ? 'indefinite' : TIMED_MUTE_DAYS },
+            // No number for the 2-point tier: it ends on acceptance, not after N days.
+            details: { muteDays: action === 'muted-and-flagged' ? 'indefinite' : 'until-accepted' },
           }
     );
   }
@@ -500,6 +533,71 @@ export async function evaluateStrikeEscalation(
   else await invalidateSession(userId, 'strike');
 
   return { totalPoints, action };
+}
+
+/**
+ * Lift the 2-point mute after the user has re-read and accepted the Terms.
+ *
+ * Writes the acceptance timestamp ITSELF rather than trusting the modal's separate settings write to
+ * have landed first: the modal fires that write without awaiting it, so a check against the stored
+ * timestamp here would race. One call, one decision, and `evaluateStrikeEscalation` reads the same
+ * timestamp afterwards to decide whether the account stays released.
+ *
+ * Refuses above the review tier. Three points means a moderator is supposed to look at the account;
+ * ticking a box must not pre-empt that.
+ */
+export async function acceptTosAfterMute({
+  userId,
+  domain,
+}: {
+  userId: number;
+  domain?: string;
+}): Promise<{ unmuted: boolean; reason?: string }> {
+  const user = await dbRead.user.findUnique({
+    where: { id: userId },
+    select: { muted: true, mutedAt: true, meta: true },
+  });
+  if (!user) throw new TRPCError({ code: 'NOT_FOUND', message: 'User not found' });
+
+  // The SAME predicate the mute guard uses to decide whether to offer the Terms — deliberately, and
+  // not a second set of checks that happen to agree today. This mutation is callable by any signed-in
+  // account, so it is the enforcement point: without the reason check, an account muted by the scam
+  // job or a generation restriction could unmute itself by calling it.
+  const totalPoints = await getActiveStrikePoints(userId);
+  const eligible = tosReacceptanceOffer({
+    muted: user.muted,
+    mutedAt: user.mutedAt,
+    muteReason: (user.meta as { muteReason?: string } | null)?.muteReason ?? null,
+    activePoints: totalPoints,
+  });
+  if (!eligible) {
+    if (user.mutedAt != null) return { unmuted: false, reason: 'moderator' };
+    if (totalPoints >= INDEFINITE_MUTE_POINTS) return { unmuted: false, reason: 'review' };
+    return { unmuted: false, reason: 'not-eligible' };
+  }
+
+  const tos = await getStaticContent({ slug: ['tos'], ctx: { domain } as Context });
+  const now = new Date();
+  await setUserSetting(userId, {
+    ...(domain === 'green'
+      ? { tosGreenLastSeenDate: now, tosGreenAcceptedHash: resolveTosHash(tos.hash) }
+      : domain === 'red'
+      ? { tosRedLastSeenDate: now, tosRedAcceptedHash: resolveTosHash(tos.hash) }
+      : { tosLastSeenDate: now, tosAcceptedHash: resolveTosHash(tos.hash) }),
+  });
+
+  if (!user.muted) return { unmuted: false, reason: 'not-muted' };
+
+  const currentMeta = (user.meta as UserMeta) ?? {};
+  await updateUserById({
+    id: userId,
+    data: clearedMuteFields(currentMeta),
+    updateSource: 'tos-reacceptance',
+  });
+  userUpdateCounter?.inc({ location: 'strike.service:acceptTosAfterMute' });
+  await refreshSession(userId, { caller: 'strike' });
+
+  return { unmuted: true };
 }
 
 // ============================================================================
@@ -566,8 +664,8 @@ export async function createStrike(input: CreateStrikeInput & { issuedBy?: numbe
     },
   });
 
-  // Evaluate escalation after creating the strike
-  await evaluateStrikeEscalation(userId);
+  // The ONLY caller that may mute. Every other evaluation can release, never re-apply.
+  await evaluateStrikeEscalation(userId, { allowMute: true });
 
   // Get updated active points for notification/email
   const activePoints = await getActiveStrikePoints(userId);
@@ -756,48 +854,38 @@ export async function expireStrikes(): Promise<{ expiredCount: number }> {
 }
 
 /**
- * Process timed mutes that have expired.
+ * Release strike mutes whose points have fallen below the threshold.
+ *
+ * Only ever UNMUTES. Muting happens when a strike is issued and nowhere else, so a moderator's manual
+ * unmute is not silently undone the next time this runs — which is what happened while this job also
+ * re-applied mutes.
+ *
+ * Daily rather than hourly: strikes expire on a 365-day boundary, so the finest granularity that
+ * changes anything is a day.
  */
 export async function processTimedUnmutes(): Promise<{ unmutedCount: number }> {
-  // Find users whose timed mute has expired
-  const usersToUnmute = await dbRead.user.findMany({
-    where: {
-      muted: true,
-      muteExpiresAt: {
-        not: null,
-        lte: new Date(),
-      },
-    },
-    select: { id: true },
-  });
+  // Strike mutes have no expiry, so `muteExpiresAt` cannot find them. `mutedAt IS NULL` keeps a
+  // moderator's mute out, and the reason keeps the scam auto-mute and restriction mutes out.
+  const usersToCheck = await dbRead.$queryRaw<{ id: number }[]>`
+    SELECT u."id"
+    FROM "User" u
+    WHERE u."muted" = true
+      AND u."mutedAt" IS NULL
+      AND (
+        u."meta"->>'muteReason' = ${STRIKE_MUTE_REASON}
+        OR u."muteExpiresAt" <= NOW()
+      )
+  `;
 
-  if (usersToUnmute.length === 0) {
-    return { unmutedCount: 0 };
-  }
+  if (usersToCheck.length === 0) return { unmutedCount: 0 };
 
-  // Re-evaluate escalation for each user before unmuting.
-  // If they still have >= 2 active strike points, they should stay muted.
   let unmutedCount = 0;
-  for (const { id } of usersToUnmute) {
+  for (const { id } of usersToCheck) {
     try {
+      // Cannot mute — `allowMute` defaults false — so the worst case here is that it declines to
+      // release an account whose points still stand.
       const { action } = await evaluateStrikeEscalation(id);
-
-      // evaluateStrikeEscalation handles re-muting if points are still high.
-      // Only manually unmute if escalation returned 'none' (points < 2) or 'unmuted'.
-      if (action === 'none') {
-        const existing = await dbRead.user.findUnique({ where: { id }, select: { meta: true } });
-        await updateUserById({
-          id,
-          data: clearedMuteFields(existing?.meta as UserMeta | null),
-          updateSource: 'timed-unmute',
-        });
-        await refreshSession(id, { caller: 'strike' });
-        unmutedCount++;
-      } else if (action === 'unmuted') {
-        // evaluateStrikeEscalation already unmuted them
-        unmutedCount++;
-      }
-      // If action is 'muted' or 'muted-and-flagged', escalation re-applied the mute
+      if (action === 'unmuted') unmutedCount++;
     } catch (error) {
       const err = error as Error;
       logToAxiom({

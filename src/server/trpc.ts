@@ -1,4 +1,6 @@
 import { initTRPC, TRPCError } from '@trpc/server';
+import { couldAwaitTosReacceptance } from '~/server/common/tos-reacceptance';
+import { shouldOfferTosReacceptance } from '~/server/services/tos-reacceptance.service';
 import type { NextApiRequest } from 'next';
 import semver from 'semver';
 import { OnboardingSteps } from '~/server/common/enums';
@@ -109,9 +111,16 @@ const t = initTRPC
       // `cause.softBlock` is set only by the generation gate (auditPromptServer)
       // and read only by the generator form. Keep it off the message: consumers
       // match that with `startsWith`.
-      const cause = error.cause as { softBlock?: boolean } | undefined;
+      const cause = error.cause as
+        | { softBlock?: boolean; tosReacceptRequired?: boolean }
+        | undefined;
       if (cause?.softBlock === true) {
         return { ...shape, data: { ...shape.data, softBlock: true } };
+      }
+      // The client opens the ToS modal on this rather than showing the refusal — see
+      // `server/common/tos-reacceptance.ts`. Off the message, same reason as softBlock.
+      if (cause?.tosReacceptRequired === true) {
+        return { ...shape, data: { ...shape.data, tosReacceptRequired: true } };
       }
       return shape;
     },
@@ -396,11 +405,22 @@ const isAuthed = t.middleware(({ ctx: { user, acceptableOrigin, ...ctx }, next }
 const isMuted = middleware(async ({ ctx, next }) => {
   const { user } = ctx;
   if (!user) throw new TRPCError({ code: 'UNAUTHORIZED' });
-  if (user.muted)
+  if (user.muted) {
+    // One read, and only on a write that is already refused: the session carries `muted`/`mutedAt` but
+    // not the mute's reason or the point total, and offering the Terms to the wrong kind of mute would
+    // release accounts muted for something else.
+    const offer = couldAwaitTosReacceptance(user)
+      ? await shouldOfferTosReacceptance(user.id)
+      : false;
     throw new TRPCError({
       code: 'FORBIDDEN',
       message: 'You cannot perform this action because your account has been restricted',
+      // Every muted write in the app funnels through here, which is why the ToS gate hangs off it:
+      // the user is asked to re-accept at the moment they try to act, instead of the whole site being
+      // gated up front. Only mutes the gate can actually release are marked.
+      ...(offer ? { cause: { tosReacceptRequired: true } } : {}),
     });
+  }
 
   return next({
     ctx: { ...ctx, user },

@@ -2,6 +2,7 @@ import { z } from 'zod';
 import {
   createStrikeHandler,
   getMyStrikesHandler,
+  acceptTosAfterMuteHandler,
   getMyStrikeSummaryHandler,
   getStrikesHandler,
   getUserStandingsHandler,
@@ -25,6 +26,10 @@ export const strikeRouter = router({
     .input(getMyStrikesSchema)
     .use(isFlagProtected('strikes'))
     .query(getMyStrikesHandler),
+  acceptTosAfterMute: protectedProcedure
+    .meta({ requiredScope: TokenScope.Full })
+    .use(isFlagProtected('strikes'))
+    .mutation(acceptTosAfterMuteHandler),
   getMyStrikeSummary: protectedProcedure
     .meta({ requiredScope: TokenScope.Full })
     .use(isFlagProtected('strikes'))

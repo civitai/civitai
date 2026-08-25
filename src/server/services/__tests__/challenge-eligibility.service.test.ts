@@ -31,7 +31,7 @@ function mockUser(overrides: Partial<typeof GOOD_USER> = {}) {
 
 describe('assertUserAccountInGoodStanding (standing-only, edit gate — no score check)', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     mockDbRead.userStrike.aggregate.mockResolvedValue({ _sum: { points: 0 } });
   });
 
@@ -79,13 +79,13 @@ describe('assertUserAccountInGoodStanding (standing-only, edit gate — no score
     mockUser();
     mockDbRead.userStrike.aggregate.mockResolvedValueOnce({ _sum: { points: 1 } });
 
-    await expect(assertUserAccountInGoodStanding(1)).resolves.toBeDefined();
+    await expect(assertUserAccountInGoodStanding(1)).resolves.toMatchObject({ activePoints: 1 });
   });
 });
 
 describe('assertUserInGoodStanding (create gate — standing AND score, unchanged)', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     mockDbRead.userStrike.aggregate.mockResolvedValue({ _sum: { points: 0 } });
   });
 
@@ -114,7 +114,7 @@ describe('assertUserInGoodStanding (create gate — standing AND score, unchange
 
 describe('getUserChallengeCreateEligibility (non-throwing requirements evaluator)', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
   });
 
   // Sets up the four data sources the evaluator (and the assert* gate) read, in the order they are
@@ -180,6 +180,17 @@ describe('getUserChallengeCreateEligibility (non-throwing requirements evaluator
     const result = await getUserChallengeCreateEligibility(1);
 
     expect(req(result, 'standing')).toMatchObject({ met: false, activePoints: 2 });
+  });
+
+  // The evaluator holds its own copy of the threshold, so the boundary has to be pinned on BOTH sides:
+  // reverted here alone, the UI tells a 1-point account it cannot create challenges while the API
+  // lets it through.
+  it('leaves the standing row MET for a single 1-point strike', async () => {
+    setup({ strikes: 1, tier: 'gold' });
+
+    const result = await getUserChallengeCreateEligibility(1);
+
+    expect(req(result, 'standing')).toMatchObject({ met: true, activePoints: 1, muted: false });
   });
 
   it('marks the daily-limit row unmet when the 24h create limit is reached', async () => {
