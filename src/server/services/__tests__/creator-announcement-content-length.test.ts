@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { assertContentLength } from '~/server/services/creator-announcement.service';
-import { CREATOR_ANNOUNCEMENT_CONTENT_MAX } from '~/server/schema/announcement.schema';
+import {
+  CREATOR_ANNOUNCEMENT_CONTENT_CEILING,
+  CREATOR_ANNOUNCEMENT_CONTENT_MAX,
+} from '~/server/schema/announcement.schema';
 
 const text = (length: number) => 'x'.repeat(length);
 const OVER = CREATOR_ANNOUNCEMENT_CONTENT_MAX + 1;
@@ -60,5 +63,23 @@ describe('the limit itself', () => {
 
     expect(declared, 'CONTENT_MAX not found in the creator-studio source').toBeDefined();
     expect(Number(declared)).toBe(CREATOR_ANNOUNCEMENT_CONTENT_MAX);
+  });
+
+  // The spoke form must accept anything the main app might still allow, or a legacy over-limit row
+  // is refused before it ever reaches the grandfather branch above.
+  it('is matched by a creator-studio ceiling no lower than ours', async () => {
+    const { readFileSync } = await import('fs');
+    const { fileURLToPath } = await import('url');
+    const source = readFileSync(
+      fileURLToPath(
+        new URL('../../../../apps/creator-studio/src/lib/announcements.ts', import.meta.url)
+      ),
+      'utf8'
+    );
+
+    const declared = source.match(/export const CONTENT_CEILING = (\d+);/)?.[1];
+
+    expect(declared, 'CONTENT_CEILING not found in the creator-studio source').toBeDefined();
+    expect(Number(declared)).toBe(CREATOR_ANNOUNCEMENT_CONTENT_CEILING);
   });
 });

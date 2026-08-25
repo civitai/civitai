@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { CREATOR_ANNOUNCEMENT_CONTENT_MAX } from '~/server/schema/announcement.schema';
 
 // The property under test is that a creator write cannot reach a sitewide surface, and it
 // is enforced structurally rather than by a check: the creator schema has no `metadata.type`
@@ -37,6 +38,7 @@ import {
   getCreatorAnnouncements,
   getFollowedAnnouncements,
   upsertCreatorAnnouncement,
+  MIN_ANNOUNCEMENT_DURATION_MS,
 } from '../creator-announcement.service';
 import { getAnnouncementAllowance } from '~/server/services/announcement-allowance.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
@@ -79,10 +81,15 @@ beforeEach(() => {
   dbMock.dbWrite.announcement.delete.mockResolvedValue({ id: 1 } as never);
   dbMock.dbRead.announcement.findMany.mockResolvedValue([] as never);
   vi.mocked(amIBlockedByUser).mockResolvedValue(false as never);
+  // `startsAt` and `content` are selected by assertOwnedAnnouncement and drive the reschedule
+  // and legacy-length branches. Omitting them left both permanently undefined here — green,
+  // and blind to the two guards this file is the only place that drives.
   dbMock.dbRead.announcement.findFirst.mockResolvedValue({
     id: 1,
     coverId: null,
     profileOnly: false,
+    startsAt: null,
+    content: 'Trained on a fresh dataset.',
   } as never);
 });
 
@@ -547,9 +554,8 @@ describe('a row crossing into notifying starts its life then', () => {
 
     const data = (tx.announcement.update.mock.calls[0][0] as { data: { startsAt: Date } }).data;
 
-    // The fan-out selects COALESCE(startsAt, createdAt) inside a 30-minute floor. A draft
-    // written an hour ago keeps its old timestamp, is charged a slot, and is then picked
-    // up by nobody — the creator pays and reaches no one, with no error anywhere.
+    // `getFollowedAnnouncements` orders by startsAt desc NULLS LAST, so a draft that keeps its
+    // old timestamp is charged a slot and then sits at the bottom of every follower's feed.
     expect(data.startsAt).toBeInstanceOf(Date);
     expect(data.startsAt.getTime()).toBeGreaterThanOrEqual(before);
   });
@@ -630,5 +636,108 @@ describe('a link to one of our own domains becomes a path', () => {
 
   it('turns our bare domain into the site root rather than an empty string', () => {
     expect(toDomainRelativeLink('https://civitai-dev.green')).toBe('/');
+  });
+});
+
+// These drive `upsertCreatorAnnouncement` itself rather than the two guard functions, because the
+// unit tests beside them pass with the guards UNWIRED: deleting both calls from the service left
+// 347 files / 4814 tests green. Testing a pure function says nothing about whether anything calls it.
+describe('the write path actually applies the guards', () => {
+  const overLimit = 'x'.repeat(CREATOR_ANNOUNCEMENT_CONTENT_MAX + 1);
+
+  it('clamps a past start forward on the way to the database', async () => {
+    dbMock.dbRead.announcement.findFirst.mockResolvedValue(null as never);
+    const before = Date.now();
+
+    await upsertCreatorAnnouncement({
+      ...validInput,
+      profileOnly: true,
+      startsAt: new Date('2020-01-01T00:00:00.000Z'),
+      userId: AUTHOR,
+    });
+
+    const data = (
+      dbMock.dbWrite.announcement.create.mock.calls[0][0] as { data: { startsAt: Date } }
+    ).data;
+    expect(data.startsAt.getTime()).toBeGreaterThanOrEqual(before);
+  });
+
+  it('pushes an end that does not clear the start by the minimum', async () => {
+    dbMock.dbRead.announcement.findFirst.mockResolvedValue(null as never);
+    const start = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+    await upsertCreatorAnnouncement({
+      ...validInput,
+      profileOnly: true,
+      startsAt: start,
+      endsAt: new Date(start.getTime() + 60_000),
+      userId: AUTHOR,
+    });
+
+    const data = (dbMock.dbWrite.announcement.create.mock.calls[0][0] as { data: { endsAt: Date } })
+      .data;
+    expect(data.endsAt.getTime()).toBe(start.getTime() + MIN_ANNOUNCEMENT_DURATION_MS);
+  });
+
+  it('refuses over-limit content instead of writing it', async () => {
+    dbMock.dbRead.announcement.findFirst.mockResolvedValue(null as never);
+
+    await expect(
+      upsertCreatorAnnouncement({
+        ...validInput,
+        content: overLimit,
+        profileOnly: true,
+        userId: AUTHOR,
+      })
+    ).rejects.toThrow();
+
+    expect(dbMock.dbWrite.announcement.create).not.toHaveBeenCalled();
+  });
+
+  it('lets a row that was already over the limit be saved unchanged', async () => {
+    const legacy = 'y'.repeat(900);
+    dbMock.dbRead.announcement.findFirst.mockResolvedValue({
+      id: 9,
+      coverId: null,
+      profileOnly: false,
+      startsAt: null,
+      content: legacy,
+    } as never);
+
+    await upsertCreatorAnnouncement({ ...validInput, id: 9, content: legacy, userId: AUTHOR });
+
+    expect(dbMock.dbWrite.announcement.update).toHaveBeenCalled();
+  });
+
+  // The regression the unit test could not see: the composer round-trips a stored start through a
+  // `datetime-local`, which truncates to the minute. Passing the SAME Date object on both sides
+  // (as creator-announcement-window.test.ts does) never exercises that.
+  it('does not reschedule a running announcement the creator did not touch', async () => {
+    const stored = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+    stored.setSeconds(37, 123);
+    dbMock.dbRead.announcement.findFirst.mockResolvedValue({
+      id: 9,
+      coverId: null,
+      profileOnly: false,
+      startsAt: stored,
+      content: validInput.content,
+    } as never);
+
+    // Exactly what the picker hands back: same minute, seconds and milliseconds gone.
+    const roundTripped = new Date(stored);
+    roundTripped.setSeconds(0, 0);
+
+    await upsertCreatorAnnouncement({
+      ...validInput,
+      id: 9,
+      startsAt: roundTripped,
+      userId: AUTHOR,
+    });
+
+    const data = (
+      dbMock.dbWrite.announcement.update.mock.calls[0][0] as { data: { startsAt: Date } }
+    ).data;
+    expect(data.startsAt).toEqual(roundTripped);
+    expect(data.startsAt.getTime()).toBeLessThan(Date.now() - 60_000);
   });
 });

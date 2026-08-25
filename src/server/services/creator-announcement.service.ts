@@ -237,10 +237,6 @@ export function toDomainRelativeLink(link: string) {
 }
 
 /**
- * Shortest announcement we will store. Mirrored in apps/creator-studio/src/lib/announcements.ts,
- * where the picker enforces the same floor while the creator is choosing.
- */
-/**
  * Enforces the content limit on new writing without trapping the rows that predate it.
  *
  * A migrated profile banner can be longer than the limit through no act of its owner, and
@@ -267,6 +263,19 @@ export const MIN_ANNOUNCEMENT_DURATION_MS = 60 * 60 * 1000;
  * republish a running announcement to the top of every follower's feed on a typo fix —
  * `getFollowedAnnouncements` orders by `startsAt` desc.
  */
+/**
+ * `datetime-local` cannot express seconds, so the composer round-trips a stored start through
+ * `YYYY-MM-DDTHH:mm` and hands back a value truncated to the minute. Comparing exact timestamps
+ * therefore reported "changed" for every row whose start carried seconds — which is precisely the
+ * rows this protects, since a row crossing into notifying is stamped with `new Date()`.
+ *
+ * The picker cannot produce a sub-minute edit, so a real reschedule always differs by a whole
+ * minute and this cannot mask one.
+ */
+const MINUTE_MS = 60_000;
+const sameMinute = (a: Date, b: Date) =>
+  Math.floor(a.getTime() / MINUTE_MS) === Math.floor(b.getTime() / MINUTE_MS);
+
 export function clampAnnouncementWindow({
   startsAt,
   endsAt,
@@ -278,8 +287,7 @@ export function clampAnnouncementWindow({
   previousStartsAt?: Date | null;
   now: Date;
 }): { startsAt: Date | null; endsAt: Date | null } {
-  const untouched =
-    !!startsAt && !!previousStartsAt && startsAt.getTime() === previousStartsAt.getTime();
+  const untouched = !!startsAt && !!previousStartsAt && sameMinute(startsAt, previousStartsAt);
 
   const start =
     startsAt && !untouched && startsAt.getTime() < now.getTime() ? now : startsAt ?? null;

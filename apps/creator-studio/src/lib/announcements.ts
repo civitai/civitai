@@ -4,6 +4,18 @@ import type { DomainColor } from '@civitai/db-schema/enums';
 // The endpoint rejects anything longer, so these must not drift upward without it.
 export const TITLE_MAX = 120;
 export const CONTENT_MAX = 500;
+/**
+ * The form's hard bound, deliberately ABOVE CONTENT_MAX.
+ *
+ * A migrated profile banner can already be longer than CONTENT_MAX through no act of its owner.
+ * Rejecting it here would stop it ever reaching the main app, which is what decides whether an
+ * over-long row may be saved (it may, if it is not being lengthened) — so this form would refuse a
+ * save the server would have allowed, and the owner could not edit their own card at all.
+ *
+ * Must stay in step with CREATOR_ANNOUNCEMENT_CONTENT_CEILING in
+ * src/server/schema/announcement.schema.ts.
+ */
+export const CONTENT_CEILING = 1500;
 export const LINK_TEXT_MAX = 40;
 
 export const DOMAIN_COLORS = [

@@ -11,6 +11,7 @@
   import { ToggleGroup, ToggleGroupItem } from '@civitai/ui/components/ui/toggle-group/index.js';
   import { IconCheck } from '@tabler/icons-svelte';
   import {
+    CONTENT_CEILING,
     CONTENT_MAX,
     DEFAULT_DOMAINS,
     DOMAIN_CHIPS,
@@ -107,8 +108,8 @@
   const startsAt = $derived(toInstant(startsLocal));
   const endsAt = $derived(toInstant(endsLocal));
 
-  // Re-read on every keystroke in the pickers so the floor tracks the clock across a long compose,
-  // rather than freezing at whatever `now` was when the form mounted.
+  // Re-read whenever a date field is touched, so the floor is current at the moment the creator
+  // picks. It does NOT advance while they type elsewhere — the server clamp covers that.
   let clock = $state(Date.now());
 
   // An announcement that is already running legitimately started in the past, and a `min` above its
@@ -206,13 +207,15 @@
     <div class="flex flex-col gap-1.5">
       <div class="flex items-baseline justify-between gap-2">
         <Label for="announcement-content">Message</Label>
-        <span class="text-xs text-dark-2">{content.length}/{CONTENT_MAX}</span>
+        <span class={content.length > CONTENT_MAX ? 'text-xs text-red-300' : 'text-xs text-dark-2'}>
+          {content.length}/{CONTENT_MAX}
+        </span>
       </div>
       <Textarea
         id="announcement-content"
         name="content"
         bind:value={content}
-        maxlength={CONTENT_MAX}
+        maxlength={CONTENT_CEILING}
         rows={5}
         placeholder="Tell your followers what is happening."
         required
