@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { NsfwLevel } from '~/server/common/enums';
+import { Availability } from '~/shared/utils/prisma/enums';
 import {
   allBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
@@ -2120,6 +2121,46 @@ describe('the reads a Buzz figure is rendered from', () => {
     // something to inspect — deleting it as pointless removes the guard's
     // anchor with nothing turning red.
     expect(placementFindMany).toHaveBeenCalled();
+  });
+
+  /**
+   * 🔴 Named for the decision, because the clauses look like padding next to the
+   * five that were already there and read like an obvious tidy-up to delete.
+   *
+   * The host on this list belongs to somebody else. Every clause below admitted
+   * a host the submitter could still see after its owner had stopped showing it
+   * to anyone else, and none is implied by the `ingestion = 'Scanned'` beside
+   * them — a moderator flag leaves `ingestion` untouched, and a scheduled post
+   * carries a non-null FUTURE `publishedAt`.
+   *
+   * Asserted on the ONE read that joins `Post`. The joined text of every
+   * `queryRaw` call would pass if a clause landed in the submitter's own-image
+   * read instead, which is a different question about a different person's
+   * picture.
+   */
+  it('fetches the host under the full public rules, not published-only', async () => {
+    placementFindMany.mockResolvedValue([
+      { id: 1, targetId: HOST_IMAGE, ownerId: OWNER, data: { imageId: REMIX_IMAGE } },
+    ]);
+
+    await getMyRemixGallerySubmissions({
+      placerId: PLACER,
+      domainLevels: allBrowsingLevelsFlag,
+      viewerLevels: allBrowsingLevelsFlag,
+    });
+
+    const hostReads = queryRaw.mock.calls.filter((call) => flatten(call).includes('JOIN "Post"'));
+    // Exactly one, so the assertions below cannot be satisfied by some other
+    // read that happens to carry the same words.
+    expect(hostReads).toHaveLength(1);
+    const sql = flatten(hostReads[0]);
+
+    expect(sql).toContain('p."availability" !=');
+    expect(boundValues(hostReads[0])).toContain(Availability.Private);
+    // `IS NOT NULL` alone served a scheduled post ahead of its own publish time.
+    expect(sql).toContain('p."publishedAt" < now()');
+    expect(sql).toContain('i."needsReview" IS NULL');
+    expect(sql).toContain('NOT i."acceptableMinor"');
   });
 
   it('the submitter’s pending rows on the image detail card', async () => {
