@@ -459,11 +459,22 @@ jobs:
 
       # `scripts/test-unit-run.mjs` forwards process.argv.slice(2) straight into
       # `vitest run --project unit* ...args`, and its queueDecision() returns
-      # early on CI, so the dev-server queue never sees this. Verified before
-      # shipping: if the wrapper did NOT forward the flag, every shard would run
-      # the ENTIRE suite — 4x the cost, four green checks, and no error anywhere.
+      # early on CI, so the dev-server queue never sees this.
+      #
+      # 🔴 NO `--` SEPARATOR, and that is not a style choice. pnpm forwards `--`
+      # through LITERALLY rather than consuming it (measured, pnpm 11.21.0):
+      #
+      #   pnpm run x -- --shard=1/4   ->  ["--", "--shard=1/4"]
+      #   pnpm run x    --shard=1/4   ->  ["--shard=1/4"]
+      #
+      # With the separator, vitest receives a bare `--` and treats everything
+      # after it as POSITIONAL FILENAME FILTERS. `--shard` is then never applied
+      # and `--outputFile` never writes a report — while the step still exits 0.
+      # That shipped, and it is what the assert step below caught on the first
+      # run. The sibling `packages` / `apps` jobs have always used this
+      # separator-less form; copy them, not the shell habit.
       - name: Unit tests
-        run: pnpm run test:unit:run -- --shard=${{ matrix.shard }}/4 --reporter=default --reporter=json --outputFile=unit-report.json
+        run: pnpm run test:unit:run --shard=${{ matrix.shard }}/4 --reporter=default --reporter=json --outputFile=unit-report.json
 
       # 🔴 POSITIVE CONTROL. A `--shard` expression that matches no files exits 0
       # and reports a green check — the same silent-zero class this repo has been
