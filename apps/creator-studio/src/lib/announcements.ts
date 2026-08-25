@@ -3,7 +3,19 @@ import type { DomainColor } from '@civitai/db-schema/enums';
 // Mirrors upsertCreatorAnnouncementSchema in the main app (src/server/schema/announcement.schema.ts).
 // The endpoint rejects anything longer, so these must not drift upward without it.
 export const TITLE_MAX = 120;
-export const CONTENT_MAX = 5000;
+export const CONTENT_MAX = 500;
+/**
+ * The form's hard bound, deliberately ABOVE CONTENT_MAX.
+ *
+ * A migrated profile banner can already be longer than CONTENT_MAX through no act of its owner.
+ * Rejecting it here would stop it ever reaching the main app, which is what decides whether an
+ * over-long row may be saved (it may, if it is not being lengthened) — so this form would refuse a
+ * save the server would have allowed, and the owner could not edit their own card at all.
+ *
+ * Must stay in step with CREATOR_ANNOUNCEMENT_CONTENT_CEILING in
+ * src/server/schema/announcement.schema.ts.
+ */
+export const CONTENT_CEILING = 1500;
 export const LINK_TEXT_MAX = 40;
 
 export const DOMAIN_COLORS = [
@@ -38,12 +50,34 @@ export const DEFAULT_DOMAINS: AnnouncementDomain[] = DOMAIN_CHIPS.map((c) => c.c
 // Labels for rendering an announcement's stored domains, including values the picker does not
 // offer — `all` is on every migrated profile banner, and `red` on anything written before this.
 export const DOMAIN_LABELS: Record<AnnouncementDomain, { label: string; hint: string }> = {
-  green: { label: 'Civitai', hint: 'civitai.com' },
-  blue: { label: 'Civitai Red', hint: 'civitai.red' },
+  green: { label: 'civitai.com', hint: 'Civitai' },
+  blue: { label: 'civitai.red', hint: 'Civitai Red' },
   // Only reachable on rows written before the picker existed — no request resolves to this colour.
   red: { label: 'Unrouted', hint: 'no site resolves to this' },
   all: { label: 'Everywhere', hint: 'All domains' },
 };
+
+/**
+ * Unless `registerEnumArrayTypeParsers` has run, pg hands a user-defined enum array back as the raw
+ * literal `{green,blue}` — and `[...new Set(value)]` on that string yielded one chip per LETTER.
+ * `hooks.server.ts` registers the parser at boot but fail-open, so this must stand on its own.
+ */
+export function toDomainArray(value: unknown): string[] {
+  const list = Array.isArray(value)
+    ? value
+    : typeof value === 'string'
+      ? value.replace(/^\{|\}$/g, '').split(',')
+      : [];
+
+  return [...new Set(list.map((entry) => String(entry).trim()).filter(Boolean))];
+}
+
+/**
+ * Shortest announcement the server will store; the picker enforces it so the creator sees the
+ * constraint while choosing. Must stay in step with MIN_ANNOUNCEMENT_DURATION_MS in
+ * src/server/services/creator-announcement.service.ts.
+ */
+export const MIN_ANNOUNCEMENT_DURATION_MS = 60 * 60 * 1000;
 
 export type AnnouncementAllowance = {
   eligible: boolean;

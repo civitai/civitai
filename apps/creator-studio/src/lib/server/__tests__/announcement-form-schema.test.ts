@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { allowanceSchema, announcementFormSchema } from '../announcements-schema';
-import { DOMAIN_CHIPS } from '../../announcements';
+import { CONTENT_CEILING, DOMAIN_CHIPS } from '../../announcements';
 
 // A complete, valid submission as the action receives it — Object.fromEntries(FormData), so every
 // value is a string. Each test overrides only the field it is about.
@@ -94,16 +94,35 @@ describe('announcementFormSchema', () => {
     expect(parse({ startsAt: 'sometime next week' }).success).toBe(false);
   });
 
-  it('rejects an end date at or before the start date', () => {
-    expect(
-      messages({
-        startsAt: '2026-09-01T10:00:00.000Z',
-        endsAt: '2026-08-01T10:00:00.000Z',
-      })
-    ).toContain('End date must be after the start date');
-    expect(
-      parse({ startsAt: '2026-08-01T10:00:00.000Z', endsAt: '2026-09-01T10:00:00.000Z' }).success
-    ).toBe(true);
+  it('passes an inverted window through for the server to clamp', () => {
+    const result = parse({
+      startsAt: '2026-09-01T10:00:00.000Z',
+      endsAt: '2026-08-01T10:00:00.000Z',
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.startsAt?.toISOString()).toBe('2026-09-01T10:00:00.000Z');
+      expect(result.data.endsAt?.toISOString()).toBe('2026-08-01T10:00:00.000Z');
+    }
+  });
+
+  // A migrated profile banner can already exceed CONTENT_MAX through no act of its owner. Capping
+  // this form at CONTENT_MAX refused it before it ever reached the main app, which is the thing that
+  // decides whether an over-long row may be saved — so the owner could not edit their own card.
+  it('passes an over-limit legacy body through for the main app to judge', () => {
+    const legacy = 'y'.repeat(900);
+    const result = parse({ content: legacy });
+
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.content).toBe(legacy);
+  });
+
+  it('accepts a body at the ceiling and refuses one past it', () => {
+    // Both sides: `too long fails` alone is also true of a schema capped back at CONTENT_MAX,
+    // which is the regression this pair exists to catch.
+    expect(parse({ content: 'y'.repeat(CONTENT_CEILING) }).success).toBe(true);
+    expect(parse({ content: 'y'.repeat(CONTENT_CEILING + 1) }).success).toBe(false);
   });
 
   it('rejects a cover key that is not the uploader UUID', () => {

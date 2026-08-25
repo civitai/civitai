@@ -9,13 +9,16 @@
   import { Switch } from '@civitai/ui/components/ui/switch/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import { ToggleGroup, ToggleGroupItem } from '@civitai/ui/components/ui/toggle-group/index.js';
+  import { IconCheck } from '@tabler/icons-svelte';
   import {
     CONTENT_MAX,
     DEFAULT_DOMAINS,
     DOMAIN_CHIPS,
     LINK_TEXT_MAX,
     TITLE_MAX,
+    MIN_ANNOUNCEMENT_DURATION_MS,
     allowanceState,
+    toDomainArray,
     type AnnouncementAllowance,
     type AnnouncementDomain,
   } from '$lib/announcements';
@@ -57,7 +60,9 @@
   let title = $state(seed?.title ?? '');
   let content = $state(seed?.content ?? '');
   let domains = $state<AnnouncementDomain[]>(
-    seed?.domain?.length ? [...new Set(seed.domain as AnnouncementDomain[])] : [...DEFAULT_DOMAINS]
+    seed?.domain?.length
+      ? (toDomainArray(seed.domain) as AnnouncementDomain[])
+      : [...DEFAULT_DOMAINS]
   );
   let profileOnly = $state(seed?.profileOnly ?? false);
   let startsLocal = $state(toLocalInput(seed?.startsAt));
@@ -102,6 +107,35 @@
   const startsAt = $derived(toInstant(startsLocal));
   const endsAt = $derived(toInstant(endsLocal));
 
+  // Re-read whenever a date field is touched, so the floor is current at the moment the creator
+  // picks. It does NOT advance while they type elsewhere — the server clamp covers that.
+  let clock = $state(Date.now());
+
+  // An announcement that is already running legitimately started in the past, and a `min` above its
+  // own value makes the field invalid and blocks the form. Its existing start is the floor instead.
+  const startFloor = $derived(
+    seed?.startsAt && new Date(seed.startsAt).getTime() < clock
+      ? new Date(seed.startsAt)
+      : new Date(clock)
+  );
+  const startMin = $derived(toLocalInput(startFloor));
+  const endMin = $derived(
+    toLocalInput(
+      new Date(
+        (startsAt ? new Date(startsAt).getTime() : startFloor.getTime()) +
+          MIN_ANNOUNCEMENT_DURATION_MS
+      )
+    )
+  );
+
+  // Pull the end along; otherwise moving the start past the end leaves the field invalid and blocks
+  // submit with nothing on screen saying why.
+  function onStartChange() {
+    clock = Date.now();
+    if (!endsLocal) return;
+    if (endsLocal < endMin) endsLocal = endMin;
+  }
+
   const allowState = $derived(allowance ? allowanceState(allowance) : null);
   // A slot is spent on the profile-only → notifying transition, so editing an announcement that
   // already notifies costs nothing and must stay possible once the allowance is used up.
@@ -109,6 +143,10 @@
   const blocked = $derived(spendsSlot && allowState !== null && allowState !== 'available');
   // The migrated profile banners carry no subject, and the server requires one on every write.
   const needsTitle = $derived(!!seed && seed.title.trim() === '' && title.trim() === '');
+
+  // The ceiling is only for a row that was ALREADY over the limit when it was seeded. Raising the
+  // input's own bound for everyone replaces a keystroke-level stop with a round-trip that fails.
+  const contentMax = $derived(Math.max(CONTENT_MAX, seed?.content?.length ?? 0));
 
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
@@ -172,13 +210,15 @@
     <div class="flex flex-col gap-1.5">
       <div class="flex items-baseline justify-between gap-2">
         <Label for="announcement-content">Message</Label>
-        <span class="text-xs text-dark-2">{content.length}/{CONTENT_MAX}</span>
+        <span class={content.length > CONTENT_MAX ? 'text-xs text-red-300' : 'text-xs text-dark-2'}>
+          {content.length}/{CONTENT_MAX}
+        </span>
       </div>
       <Textarea
         id="announcement-content"
         name="content"
         bind:value={content}
-        maxlength={CONTENT_MAX}
+        maxlength={contentMax}
         rows={5}
         placeholder="Tell your followers what is happening."
         required
@@ -197,27 +237,45 @@
         onValueChange={setDomains}
       >
         {#each DOMAIN_CHIPS as chip (chip.color)}
-          <ToggleGroupItem value={chip.color} aria-label={chip.label}>{chip.label}</ToggleGroupItem>
+          {@const selected = domains.includes(chip.color)}
+          <ToggleGroupItem
+            value={chip.color}
+            aria-label={`${chip.label} (${chip.host})`}
+            class="gap-1.5"
+          >
+            <!-- Reserved rather than conditionally rendered: the chip would otherwise resize as it is
+                 toggled, which moves its neighbour out from under the pointer. -->
+            <IconCheck size={14} class={selected ? '' : 'invisible'} aria-hidden="true" />
+            {chip.host}
+          </ToggleGroupItem>
         {/each}
       </ToggleGroup>
-      <span class="text-xs text-dark-2">
-        {DOMAIN_CHIPS.filter((c) => domains.includes(c.color))
-          .map((c) => c.host)
-          .join(' · ')}
-      </span>
     </fieldset>
 
     <div class="grid gap-4 sm:grid-cols-2">
       <div class="flex flex-col gap-1.5">
         <Label for="announcement-starts">Starts</Label>
-        <Input id="announcement-starts" type="datetime-local" bind:value={startsLocal} />
+        <Input
+          id="announcement-starts"
+          type="datetime-local"
+          min={startMin}
+          bind:value={startsLocal}
+          oninput={onStartChange}
+        />
       </div>
       <div class="flex flex-col gap-1.5">
         <Label for="announcement-ends">Ends</Label>
-        <Input id="announcement-ends" type="datetime-local" bind:value={endsLocal} />
+        <Input
+          id="announcement-ends"
+          type="datetime-local"
+          min={endMin}
+          bind:value={endsLocal}
+          oninput={() => (clock = Date.now())}
+        />
       </div>
       <span class="text-xs text-dark-2 sm:col-span-2">
         Your local time{timeZone ? ` (${timeZone})` : ''}. Leave both empty to show it from now on.
+        An announcement runs for at least an hour.
       </span>
     </div>
 

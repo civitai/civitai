@@ -25,7 +25,7 @@ directly (e.g. `import { sql } from 'kysely'`).
 | Import | Returns | Env | Use when |
 |---|---|---|---|
 | `@civitai/db` (`createPrismaClients`) | `{ dbRead, dbWrite }` Prisma clients | **Requires** the full DB env set (below) | App uses Prisma |
-| `@civitai/db/kysely` (`createKyselyClients<DB>`) | `{ dbRead, dbWrite }` or `{ db }` Kysely clients | **None** — connection config is explicit | App uses Kysely (lighter; no Prisma engine) |
+| `@civitai/db/kysely` (`createKyselyClients<DB>`) | `{ dbRead, dbWrite, pool }` or `{ db, pool }` Kysely clients — `pool` is the primary pg pool | **None** — connection config is explicit | App uses Kysely (lighter; no Prisma engine) |
 
 The `/kysely` subpath imports only `kysely` + `pg` (never Prisma), so a Vite/SSR app can use it without
 pulling the Prisma engine.
@@ -52,8 +52,12 @@ export const { dbRead, dbWrite } = createKyselyClients<DB>({
 });
 ```
 
-Other shapes: `singleClient: true` → `{ db }` (no replica / read-your-writes); or pass pre-built
+Other shapes: `singleClient: true` → `{ db, pool }` (no replica / read-your-writes); or pass pre-built
 `pool` / `readPool` (e.g. the main app's `getClient()` pools) for full control.
+
+The returned `pool` is the **primary** pg pool backing `dbWrite`, handed back for startup work that
+needs a pool rather than a Kysely instance — `registerEnumArrayTypeParsers` being the one that exists.
+Kysely does not expose its dialect's pool.
 
 ## Gotchas
 

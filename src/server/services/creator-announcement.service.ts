@@ -4,6 +4,7 @@ import type {
   AnnouncementMetaSchema,
   UpsertCreatorAnnouncementSchema,
 } from '~/server/schema/announcement.schema';
+import { CREATOR_ANNOUNCEMENT_CONTENT_MAX } from '~/server/schema/announcement.schema';
 import { getAnnouncementAllowance } from '~/server/services/announcement-allowance.service';
 import { resolveCoverImageId } from '~/server/services/cover-image.service';
 import { isImageOwner } from '~/server/services/util.service';
@@ -128,9 +129,8 @@ export async function getCreatorAnnouncements({
 /**
  * The *Creators* chip: live announcements from authors the caller follows.
  *
- * Muted creators are absent entirely, not merely un-pinged. A mute that silenced the
- * notification but left the posts in the feed would not be the escape hatch the ticket
- * asked for — the follower would still be reading what they opted out of.
+ * Muted creators are absent entirely, not merely demoted — leaving their posts in the feed
+ * would not be the escape hatch the ticket asked for.
  *
  * Profile-only rows never appear here; that is what profile-only means.
  */
@@ -204,7 +204,7 @@ export async function getFollowedAnnouncements({
 async function assertOwnedAnnouncement(id: number, userId: number, isModerator = false) {
   const existing = await dbRead.announcement.findFirst({
     where: isModerator ? { id, userId: { not: null } } : { id, userId },
-    select: { id: true, coverId: true, profileOnly: true },
+    select: { id: true, coverId: true, profileOnly: true, startsAt: true, content: true },
   });
   if (!existing) throw throwAuthorizationError('Announcement not found');
   return existing;
@@ -234,6 +234,69 @@ export function toDomainRelativeLink(link: string) {
   if (!ours) return link;
 
   return `${url.pathname}${url.search}${url.hash}` || '/';
+}
+
+/**
+ * Enforces the content limit on new writing without trapping the rows that predate it.
+ *
+ * A migrated profile banner can be longer than the limit through no act of its owner, and
+ * refusing every save would leave them unable to edit their own card at all. Shortening is
+ * always allowed; growing past the limit never is.
+ */
+export function assertContentLength(content: string, previousContent?: string) {
+  if (content.length <= CREATOR_ANNOUNCEMENT_CONTENT_MAX) return;
+  if (previousContent && content.length <= previousContent.length) return;
+
+  throw throwBadRequestError(
+    `Announcements are limited to ${CREATOR_ANNOUNCEMENT_CONTENT_MAX} characters.`
+  );
+}
+
+export const MIN_ANNOUNCEMENT_DURATION_MS = 60 * 60 * 1000;
+
+const MINUTE_MS = 60_000;
+const sameMinute = (a: Date, b: Date) =>
+  Math.floor(a.getTime() / MINUTE_MS) === Math.floor(b.getTime() / MINUTE_MS);
+
+/**
+ * The picker is wall-clock: a creator who selects "in two minutes" then spends five writing submits
+ * a start that is already past. Refusing that is a dead end, so the start moves up to now and the
+ * end out to clear it by an hour.
+ *
+ * 🔴 A start the creator did not touch is left alone even when past. Re-stamping it would
+ * republish a running announcement to the top of every follower's feed on a typo fix —
+ * `getFollowedAnnouncements` orders by `startsAt` desc.
+ *
+ * "Did not touch" is compared at MINUTE granularity, not by exact timestamp. The composer
+ * round-trips a stored start through a `datetime-local`, whose `YYYY-MM-DDTHH:mm` IS a
+ * floor-to-the-minute — so a value derived that way always lands in the same bucket as the value it
+ * came from, whatever produced the original. That is a property of the transform, not of the
+ * widget, and it is what stops a row stamped `new Date()` (every row crossing into notifying) from
+ * reading as rescheduled on an edit that changed nothing.
+ *
+ * REST and tRPC accept arbitrary instants, so two starts under a minute apart CAN read as
+ * unchanged there. That direction leaves the start alone, which is the safe one.
+ */
+export function clampAnnouncementWindow({
+  startsAt,
+  endsAt,
+  previousStartsAt,
+  now,
+}: {
+  startsAt?: Date | null;
+  endsAt?: Date | null;
+  previousStartsAt?: Date | null;
+  now: Date;
+}): { startsAt: Date | null; endsAt: Date | null } {
+  const untouched = !!startsAt && !!previousStartsAt && sameMinute(startsAt, previousStartsAt);
+
+  const start =
+    startsAt && !untouched && startsAt.getTime() < now.getTime() ? now : startsAt ?? null;
+
+  const earliestEnd = (start ?? now).getTime() + MIN_ANNOUNCEMENT_DURATION_MS;
+  const end = endsAt && endsAt.getTime() < earliestEnd ? new Date(earliestEnd) : endsAt ?? null;
+
+  return { startsAt: start, endsAt: end };
 }
 
 export async function upsertCreatorAnnouncement({
@@ -279,14 +342,23 @@ export async function upsertCreatorAnnouncement({
       : {}),
   };
 
+  assertContentLength(input.content, existing?.content);
+
+  const schedule = clampAnnouncementWindow({
+    startsAt: input.startsAt,
+    endsAt: input.endsAt,
+    previousStartsAt: existing?.startsAt,
+    now: new Date(),
+  });
+
   const data = {
     title: input.title,
     content: input.content,
     emoji: input.emoji,
     color: input.color ?? 'blue',
     domain: input.domain,
-    startsAt: input.startsAt ?? null,
-    endsAt: input.endsAt ?? null,
+    startsAt: schedule.startsAt,
+    endsAt: schedule.endsAt,
     // Never written on an update. A creator cannot set `disabled` at all (the schema has
     // no such field), so a row a moderator took down stays down through any edit.
     ...(existing ? {} : { disabled: false }),
@@ -355,9 +427,9 @@ export async function upsertCreatorAnnouncement({
     const announcement = existing
       ? await tx.announcement.update({
           where: { id: existing.id },
-          // A row crossing into notifying starts its life now. The fan-out selects on
-          // COALESCE(startsAt, createdAt) inside a 30-minute floor, so a draft written
-          // an hour ago would be charged a slot and then picked up by nobody.
+          // A row crossing into notifying starts its life now. `getFollowedAnnouncements` orders
+          // by startsAt desc NULLS LAST, so a draft that keeps a null start is charged a slot and
+          // then lands at the bottom of every follower's feed.
           data: { ...data, startsAt: data.startsAt ?? new Date() },
           select: creatorAnnouncementSelect,
         })
