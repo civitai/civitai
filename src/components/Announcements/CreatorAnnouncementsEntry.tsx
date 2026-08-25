@@ -14,12 +14,14 @@ export function CreatorAnnouncementsEntry({
   userMuted,
   announcementCount,
   announcementsLoading,
+  announcementsErrored,
   className,
 }: {
   userId: number;
   userMuted: boolean;
   announcementCount: number;
   announcementsLoading: boolean;
+  announcementsErrored: boolean;
   className?: string;
 }) {
   const currentUser = useCurrentUser();
@@ -32,6 +34,7 @@ export function CreatorAnnouncementsEntry({
     profileUserMuted: userMuted,
     announcementCount,
     announcementsLoading,
+    announcementsErrored,
   });
 
   if (!variant) return null;

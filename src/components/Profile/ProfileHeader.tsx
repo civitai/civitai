@@ -28,7 +28,11 @@ export function ProfileHeader({ username }: { username: string }) {
     username,
   });
   const isMobile = useContainerSmallerThan('sm');
-  const { announcements, isLoading: announcementsLoading } = useQueryCreatorAnnouncements(user?.id);
+  const {
+    announcements,
+    isLoading: announcementsLoading,
+    isError: announcementsErrored,
+  } = useQueryCreatorAnnouncements(user?.id);
 
   const cover = user?.profile?.coverImage;
   const images = useMemo(
@@ -142,6 +146,7 @@ export function ProfileHeader({ username }: { username: string }) {
           userMuted={user.muted}
           announcementCount={announcements.length}
           announcementsLoading={announcementsLoading}
+          announcementsErrored={announcementsErrored}
           className="container"
         />
         {renderMessage()}
@@ -168,6 +173,7 @@ export function ProfileHeader({ username }: { username: string }) {
         userMuted={user.muted}
         announcementCount={announcements.length}
         announcementsLoading={announcementsLoading}
+        announcementsErrored={announcementsErrored}
         className="container"
       />
       {renderMessage()}
