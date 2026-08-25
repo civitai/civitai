@@ -1109,6 +1109,11 @@ async function hydrateMyAppListings(
         // the map (which cannot happen for a row that was in `subjects`) degrades to `[]`,
         // i.e. the pre-scan-dimension behaviour, never to an invented problem.
         problems: computeListingProblems({
+          // 🔴 The row's OWN kind, not a constant: `listMine` returns BOTH kinds, and the
+          // three empty-text problems give different (opposite) advice per kind. This is
+          // the same `kind` the row already reports, so the advisory and the capabilities
+          // can never disagree about what sort of listing this is.
+          kind,
           iconId: r.iconId ?? null,
           coverId: r.coverId ?? null,
           screenshotCount: r._count?.screenshots ?? 0,
