@@ -270,9 +270,6 @@
       <input type="hidden" name="usageControl" value={usageControl} />
 
       <PaidAccessFields bind:ea bind:genMode {isGenOnly} ctx={paidAccessCtx} />
-      <!-- Capped, not stored. A sale composes over `cappedTerms`, so a lapsed gold creator storing
-           5000 is billed 500 and a 20% sale takes buyers to 400 — quoting 4000 here would be wrong on
-           the one screen whose whole job is stating a price. The ceiling governs permanent gates only. -->
       <!-- Only for a permanent gate: a sale cannot cover early access, so quoting a sale price beside a
            timed gate advertises a discount that will never apply. -->
       <SaleUndercutNotice

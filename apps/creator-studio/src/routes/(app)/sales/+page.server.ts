@@ -118,7 +118,7 @@ export const load: PageServerLoad = async ({ locals, parent, cookies }) => {
 export const actions: Actions = {
   // What the sale form needs about a selection it can't see: how much of it is early access (a sale
   // can't cover that) and the cheapest price among the rest (a fixed discount must stay under it).
-  salePreview: async ({ request, locals, cookies }) => {
+  salePreview: async ({ request, locals }) => {
     if (await salesOff(locals.user))
       return fail(403, { error: 'Scheduled sales are not available yet.' });
     const form = await request.formData();
@@ -126,11 +126,7 @@ export const actions: Actions = {
     if (!parsed.success) return fail(400, { error: firstError(parsed.error) });
     const [earlyAccess, minCoveredPrice] = await Promise.all([
       countEarlyAccessVersions(locals.user.id, parsed.data),
-      cheapestCoveredPrice(
-        locals.user.id,
-        parsed.data,
-        cappedTier(resolveMembership(locals.user, cookies.get(TEST_MEMBERSHIP_COOKIE)))
-      ),
+      cheapestCoveredPrice(locals.user.id, parsed.data),
     ]);
     return { earlyAccess, minCoveredPrice };
   },

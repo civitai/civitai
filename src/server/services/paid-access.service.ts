@@ -23,7 +23,6 @@ import type {
   ModelVersionPaidAccessInputSchema,
 } from '~/server/schema/model-version.schema';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { getCapTier } from '~/server/services/subscriptions.service';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { createCachedObject } from '~/server/utils/cache-helpers';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
@@ -454,7 +453,7 @@ export type ViewerMonetization = {
     discountType: SaleDiscountKind;
     discountAmount: number;
   } | null;
-  /** The stored per-generation fee. Nothing clamps it — the ceiling is the same for every creator. */
+  /** The stored per-generation fee. */
   licensingFee: number | null;
 };
 
@@ -576,21 +575,24 @@ export async function assertMonetizationWrite({
     : undefined;
   const hadPermanentGate = existing != null && existing.timeframeDays == null;
 
-  // Compared in whole cents: the stored value is a Prisma Decimal and the input a JSON float, so a raw
-  // `>` can read "raised" on an untouched fee.
-  if (!isModerator && licensingFee != null && licensingFee > 0) {
+  // The stored fee when the write does not restate one: an upsert that omits `licensingFee` leaves it
+  // in place, and the media axis below can still move under it.
+  const feeAfterWrite = licensingFee !== undefined ? licensingFee : storedLicensingFee;
+  if (!isModerator && feeAfterWrite != null && feeAfterWrite > 0) {
+    // Whole cents: the stored value is a Prisma Decimal and the input a JSON float, so a raw `>` can
+    // read "raised" on an untouched fee.
     const toCents = (v: number) => Math.round(v * 100);
     const mediaType = capMediaType(baseModel);
     const ceiling = maxLicensingFeeCeiling(mediaType);
     // Raise-only, so a fee stored above the ceiling stays savable — EXCEPT when this write moves the
     // version onto a stricter media axis. A video model earns 5x, so re-saving an untouched 500 while
     // switching to an image base model is not a raise by the numbers, and the fee would then bill at 5x
-    // the image ceiling forever (nothing clamps at charge time any more).
+    // the image ceiling forever — nothing clamps at charge time.
     const movesToStricterMedia =
       storedBaseModel != null && mediaType !== capMediaType(storedBaseModel);
     const over = movesToStricterMedia
-      ? licensingFee > ceiling
-      : raisesOverCap(toCents(licensingFee), toCents(storedLicensingFee ?? 0), toCents(ceiling));
+      ? feeAfterWrite > ceiling
+      : raisesOverCap(toCents(feeAfterWrite), toCents(storedLicensingFee ?? 0), toCents(ceiling));
     if (over)
       throw throwBadRequestError(
         `A licensing fee can be at most ${ceiling} Buzz per generation${

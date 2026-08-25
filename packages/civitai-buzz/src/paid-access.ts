@@ -396,10 +396,7 @@ export function discountedPrice(
 }
 
 /**
- * Terms with any active sale applied — what a buyer pays. Compose OVER cappedTerms, never under: the tier
- * ceiling decides what the creator may charge, and the sale comes off what the buyer would actually have
- * been billed. The other order lets the cap silently eat the discount (a lapsed gold creator stored at 5000
- * is billed 500; 20% off must be 400, not 4000 clamped back to 500).
+ * Terms with any active sale applied — what a buyer pays, discounted off the stored price.
  *
  * Applies to BOTH chargeable prices. A generation tier with no price of its own falls back to the download
  * price, which is discounted here already, so it follows automatically.

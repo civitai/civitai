@@ -61,19 +61,12 @@ export async function countEarlyAccessVersions(
  * The cheapest price a BUYER would actually be charged across versions a sale would cover. Null when
  * nothing in the selection is priced.
  *
- * 🔴 Capped, not stored. A sale composes over `cappedTerms`, so the price it discounts is the stored
- * price lowered to the owner's current tier ceiling. Measuring the stored price instead lets a fixed
- * discount reach zero: a lapsed gold creator storing 5000 is billed 500, so "1000 off" looks safe
- * against 5000 and takes the buyer to nothing. An over-cap stored price is a normal supported state
- * (the cap guards RAISES, not existing values — CU 868kj4q4j), not an edge case.
- *
  * Both chargeable prices count, since a sale discounts the download price and any separate generation
  * price alike.
  */
 export async function cheapestCoveredPrice(
   userId: number,
-  versionIds: number[],
-  tier: string | null
+  versionIds: number[]
 ): Promise<number | null> {
   if (!versionIds.length) return null;
   return lowestBuyerPrice(await coveredPriceRows(dbRead, userId, versionIds));

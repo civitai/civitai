@@ -524,6 +524,23 @@ describe('assertMonetizationWrite', () => {
     ).rejects.toThrow(/at most 100 Buzz per generation on this base model/);
   });
 
+  // The upsert treats an absent fee as unchanged, so a write that moves only the base model has to
+  // face the same ceiling — otherwise it is the way around the check above.
+  it('refuses the same move when the write omits the fee entirely', async () => {
+    await expect(
+      assertMonetizationWrite({
+        ownerId: 1,
+        paidAccess: null,
+        licensingFee: undefined,
+        storedLicensingFee: 500,
+        tier: 'gold',
+        userMeta: { scores: { models: 50000 } },
+        baseModel: 'SDXL 1.0',
+        storedBaseModel: 'Hunyuan Video',
+      })
+    ).rejects.toThrow(/at most 100 Buzz per generation on this base model/);
+  });
+
   it('still allows re-saving that fee while the version stays on a video base model', async () => {
     await expect(
       assertMonetizationWrite({
