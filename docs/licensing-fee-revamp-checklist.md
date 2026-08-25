@@ -16,15 +16,13 @@ governing _how often_ they may put a new price on something.
 | | Today | After |
 | --- | --- | --- |
 | Who may monetize at all | Anyone | Creator score ≥ 10,000 |
-| Licensing fee a creator may SET | Per tier (free 1/0.1 → gold 100) | Flat 100/generation for everyone, ×5 video |
-| Licensing fee a creator EARNS | Per tier | **Unchanged — still per tier** |
-| Paid access price a creator may SET | Per tier (free 500 → gold unlimited) | None — uncapped |
-| Paid access price a creator EARNS | Per tier | **Unchanged — still per tier** |
+| Licensing fee ceiling | Per tier (free 1/0.1 → gold 100) | Flat 100/generation for everyone, ×5 video |
+| Paid access price ceiling | Per tier (free 500 → gold unlimited) | None — uncapped |
 | Permanent gate allowance | Concurrent count, free capped at 3 | — replaced by the monthly allowance |
 | New priced versions | Unlimited | Monthly allowance: free 3, bronze 10, silver 25, gold unlimited — a fee or a permanent gate both count |
 | Re-pricing an already-priced version | Cap-checked | Free — costs no allowance |
 | Early access | Uncapped price, score-gated length | Unchanged, and never counts against the allowance |
-| Membership lapse | Payouts clamp to the lower tier's cap | **Unchanged** — payouts still clamp; the allowance shrinks too |
+| Membership lapse | Prices clamp to the lower tier's cap | Nothing changes; only the allowance shrinks |
 
 ## What this replaces
 
@@ -107,17 +105,8 @@ video (500). Paid access is uncapped.**
       there is no ceiling to check, not a large one, so the paid-access price loses its raise check
       too, and `assertPaidAccessCaps` keeps only the eligibility and allowance work — it shipped as
       `assertMonetizationWrite`.
-- [x] ~~`effectiveLicensingFee` loses its `recipientTier` argument and stops clamping.~~
-      **Reverted 2026-08-25.** The charge-time clamp is back, along with `maxLicensingFee`,
-      `maxPaidAccessPrice`, `cappedTerms` and the cap-tier cache. Removing it would have made every
-      stored over-cap price go live at deploy, and the only way to stop that without the clamp was to
-      rewrite creators' stored prices — which changes a number they set, with no explanation they would
-      see. The clamp instead leaves the stored value alone and shows both figures in the editor, which
-      is what it did before.
-
-      What did NOT come back: the **write-path** cap. A creator may still set anything up to the flat
-      ceiling at any tier; membership governs the payout, not the field. So this is not a straight
-      revert — set and earn are now separate axes.
+- [x] `effectiveLicensingFee` loses its `recipientTier` argument and stops clamping. This takes a
+      tier lookup off the per-generation billing path.
 - [x] `maxFeeBuzzForRatio`, `feeImageOptionsForCap`, `monetizationLimits`, `resolveCapTier` — drop
       the tier axis where it no longer varies anything. `resolveCapTier` may survive only for the
       allowance.
@@ -261,14 +250,21 @@ that have to happen, or be decided, before it reaches creators.
       Buzz more. The fee rise is spread thin over 1,283 people paying a couple more per generation;
       this is 27 people paying 4,000 more each.
 
-      **Resolved 2026-08-25 by restoring the charge-time clamp instead.** There is no price rise to
-      manage: `effectiveLicensingFee` and `cappedTerms` lower a stored price to the owner's tier cap
-      at charge time, exactly as before, so nothing goes live at deploy and no stored value is touched.
-      A grandfather backfill was written and then deleted — rewriting a number a creator set, with no
-      explanation they would ever see, is worse than the problem it solved.
+      **Decided 2026-08-25: the article stands — the rise ships.** No clamp, no backfill. Both were
+      built and both were reverted, because each contradicted
+      [article 33749](https://civitai.com/articles/33749): *"Everyone gets the top-tier price cap… the
+      tier now limits how many new fees you add per month, not the price"*, and *"a free creator can
+      charge top-tier prices on their best work"*. A tier-based payout clamp is that cap by another
+      name, and rewriting a creator's stored price to dodge the rise changes a number they set with no
+      explanation they would ever see.
 
-      For the record, the dry run that backfill produced: 612 fee versions across 68 owners (max 1000x)
-      and 11 permanent gates. That is the population the clamp is protecting.
+      So a lapsed creator who set 100 now genuinely earns 100. That is the feature, not a side effect.
+
+      **What ships as a price rise, unannounced unless someone announces it:** 612 fee versions across
+      68 owners (median 2.0x, max 1000x), served to 1,283 distinct generators in 30 days; and 11
+      permanent gates (3 bronze owners, all exactly 5x, 1,000 → 5,000) bought by 27 people in 30 days.
+      The fee half is invisible to the people paying it — billed per generation as they work. The gate
+      half is not: a buyer reads the price off the button before paying.
 
 - [x] **A slot now comes back when the last price comes off an untransacted version** (2026-08-24).
       This was the sharper half of "setting and then removing does not return the allowance": a creator
