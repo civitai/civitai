@@ -1195,6 +1195,7 @@ const entryIsVisible = (levels: number, host: Prisma.Sql) => Prisma.sql`
         AND i."needsReview" IS NULL
         AND NOT i."tosViolation"
         AND NOT i.minor
+        AND NOT i."acceptableMinor"
         AND NOT i.poi
         AND (i."nsfwLevel" & ${levels}) != 0
         AND i."nsfwLevel" != 0${minorHostCeiling(host)}`;
