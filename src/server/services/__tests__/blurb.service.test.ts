@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import {
@@ -7,6 +8,13 @@ import {
   softDeleteBlurb,
   updateBlurbContent,
 } from '~/server/services/blurb.service';
+
+const p2002 = (target: string[]) =>
+  new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+    code: 'P2002',
+    clientVersion: '1',
+    meta: { target },
+  });
 
 const mockDbWrite = dbMock.dbWrite;
 const mockDbRead = dbMock.dbRead;
@@ -32,9 +40,9 @@ describe('createBlurb', () => {
 
   it('refuses past the per-creator cap', async () => {
     mockDbWrite.blurb.count.mockResolvedValue(MAX_BLURBS_PER_USER);
-    await expect(createBlurb({ userId: 10, name: 'x', content: 'y' })).rejects.toThrow(
-      /limit of 20/i
-    );
+    const promise = createBlurb({ userId: 10, name: 'x', content: 'y' });
+    await expect(promise).rejects.toThrow(/limit of 20/i);
+    await expect(promise).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     expect(mockDbWrite.blurb.create).not.toHaveBeenCalled();
   });
 
@@ -43,6 +51,19 @@ describe('createBlurb', () => {
     expect(mockDbWrite.blurb.count).toHaveBeenCalledWith({
       where: { userId: 10, deletedAt: null },
     });
+  });
+
+  it('turns a duplicate name into a friendly conflict, not the raw Prisma text', async () => {
+    mockDbWrite.blurb.create.mockRejectedValue(p2002(['userId', 'name']));
+    const promise = createBlurb({ userId: 10, name: 'footer', content: 'y' });
+    await expect(promise).rejects.toMatchObject({ code: 'CONFLICT' });
+    await expect(promise).rejects.toThrow(/already have a blurb named "footer"/i);
+  });
+
+  it('leaves an unrelated unique violation to surface as-is', async () => {
+    const error = p2002(['id']);
+    mockDbWrite.blurb.create.mockRejectedValue(error);
+    await expect(createBlurb({ userId: 10, name: 'footer', content: 'y' })).rejects.toBe(error);
   });
 });
 
@@ -69,9 +90,9 @@ describe('updateBlurbContent', () => {
 
   it('refuses a blurb belonging to someone else', async () => {
     mockDbWrite.blurb.findFirst.mockResolvedValue(null);
-    await expect(updateBlurbContent({ userId: 99, id: 1, content: 'x' })).rejects.toThrow(
-      /not found/i
-    );
+    const promise = updateBlurbContent({ userId: 99, id: 1, content: 'x' });
+    await expect(promise).rejects.toThrow(/not found/i);
+    await expect(promise).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 });
 
@@ -91,7 +112,9 @@ describe('softDeleteBlurb', () => {
 
   it('refuses a blurb belonging to someone else', async () => {
     mockDbWrite.blurb.findFirst.mockResolvedValue(null);
-    await expect(softDeleteBlurb({ userId: 99, id: 1 })).rejects.toThrow(/not found/i);
+    const promise = softDeleteBlurb({ userId: 99, id: 1 });
+    await expect(promise).rejects.toThrow(/not found/i);
+    await expect(promise).rejects.toMatchObject({ code: 'NOT_FOUND' });
     expect(mockDbWrite.blurb.update).not.toHaveBeenCalled();
   });
 });

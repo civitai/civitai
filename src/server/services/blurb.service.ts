@@ -1,7 +1,22 @@
+import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { hashContent } from '~/server/services/entity-moderation.service';
+import {
+  throwBadRequestError,
+  throwConflictError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 
 export const MAX_BLURBS_PER_USER = 20;
+
+function isUniqueNameViolation(error: unknown) {
+  return (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    error.code === 'P2002' &&
+    Array.isArray(error.meta?.target) &&
+    (error.meta.target as string[]).includes('name')
+  );
+}
 
 // Names are immutable by design: a blurb's name is how a creator refers to it,
 // and there is no update path that writes it. See "Names cannot be changed" in
@@ -17,11 +32,17 @@ export async function createBlurb({
 }) {
   const existing = await dbWrite.blurb.count({ where: { userId, deletedAt: null } });
   if (existing >= MAX_BLURBS_PER_USER)
-    throw new Error(`You have reached the limit of ${MAX_BLURBS_PER_USER} blurbs.`);
+    throw throwBadRequestError(`You have reached the limit of ${MAX_BLURBS_PER_USER} blurbs.`);
 
-  return dbWrite.blurb.create({
-    data: { userId, name, content, contentHash: hashContent(content), updatedAt: new Date() },
-  });
+  try {
+    return await dbWrite.blurb.create({
+      data: { userId, name, content, contentHash: hashContent(content), updatedAt: new Date() },
+    });
+  } catch (error) {
+    if (isUniqueNameViolation(error))
+      throw throwConflictError(`You already have a blurb named "${name}".`);
+    throw error;
+  }
 }
 
 export async function updateBlurbContent({
@@ -34,7 +55,7 @@ export async function updateBlurbContent({
   content: string;
 }) {
   const blurb = await dbWrite.blurb.findFirst({ where: { id, userId, deletedAt: null } });
-  if (!blurb) throw new Error('Blurb not found.');
+  if (!blurb) throw throwNotFoundError('Blurb not found.');
 
   return dbWrite.blurb.update({
     where: { id },
@@ -44,7 +65,7 @@ export async function updateBlurbContent({
 
 export async function softDeleteBlurb({ userId, id }: { userId: number; id: number }) {
   const blurb = await dbWrite.blurb.findFirst({ where: { id, userId, deletedAt: null } });
-  if (!blurb) throw new Error('Blurb not found.');
+  if (!blurb) throw throwNotFoundError('Blurb not found.');
 
   // Soft, because BlurbReference cascades: a hard delete destroys the rows naming
   // the entities whose spans still need unwrapping. The fan-out job does that work
