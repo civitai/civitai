@@ -114,6 +114,10 @@ export enum FLIPT_FEATURE_FLAGS {
   // a bare `isFlipt(EARLY_ADOPTER)` as "is the programme switched on at all", never as
   // "is this user an early adopter".
   EARLY_ADOPTER = 'early-adopter',
+  // Gates the blurb editor control, the save-path expansion and the fan-out job.
+  // DEFAULT-OFF — isFlipt returns false for an unknown flag, and not expanding is
+  // the safe failure for a feature that rewrites published content.
+  TEXT_BLURBS = 'text-blurbs',
 }
 
 // Flags exempt from caching: incident kill-switches where an operator expects a

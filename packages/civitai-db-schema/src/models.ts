@@ -640,6 +640,7 @@ export interface User {
   voidedStrikes?: UserStrike[];
   generationPresets?: GenerationPreset[];
   ownedWildcardSets?: WildcardSet[];
+  blurbs?: Blurb[];
   model3ds?: Model3D[];
   deletedModel3Ds?: Model3D[];
   model3dEngagements?: Model3DEngagement[];
@@ -5412,6 +5413,28 @@ export interface UserHubSource {
   alias: string | null;
   enabled: boolean;
   index: number;
+}
+
+export interface Blurb {
+  id: number;
+  userId: number;
+  user?: User;
+  name: string;
+  content: string;
+  contentHash: string;
+  createdAt: Date;
+  updatedAt: Date;
+  deletedAt: Date | null;
+  references?: BlurbReference[];
+}
+
+export interface BlurbReference {
+  blurbId: number;
+  blurb?: Blurb;
+  entityType: string;
+  entityId: number;
+  materializedHash: string;
+  materializedAt: Date;
 }
 
 type JsonValue = string | number | boolean | { [key in string]?: JsonValue } | Array<JsonValue> | null;

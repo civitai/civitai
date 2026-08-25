@@ -569,6 +569,7 @@ model User {
   voidedStrikes               UserStrike[]                    @relation("strikeVoidedBy")
   generationPresets           GenerationPreset[]
   ownedWildcardSets           WildcardSet[]                   @relation("WildcardSetOwner")
+  blurbs                      Blurb[]
 
   // 3D Models
   model3ds                    Model3D[]                       @relation("model3dCreator")
@@ -8175,4 +8176,33 @@ model UserHubSource {
   @@unique([hubId, type, targetId])
   @@index([hubId])
   @@index([type, targetId])
+}
+
+model Blurb {
+  id          Int       @id @default(autoincrement())
+  userId      Int
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String    @db.Citext
+  content     String
+  contentHash String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  references BlurbReference[]
+
+  @@unique([userId, name])
+  @@index([updatedAt])
+}
+
+model BlurbReference {
+  blurbId          Int
+  blurb            Blurb    @relation(fields: [blurbId], references: [id], onDelete: Cascade)
+  entityType       String
+  entityId         Int
+  materializedHash String
+  materializedAt   DateTime
+
+  @@id([blurbId, entityType, entityId])
+  @@index([entityType, entityId])
 }

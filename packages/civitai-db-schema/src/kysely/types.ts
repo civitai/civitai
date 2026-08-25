@@ -1128,6 +1128,23 @@ export type BlockUserSubscription = {
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 };
+export type Blurb = {
+  id: Generated<number>;
+  userId: number;
+  name: string;
+  content: string;
+  contentHash: string;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
+  deletedAt: Timestamp | null;
+};
+export type BlurbReference = {
+  blurbId: number;
+  entityType: string;
+  entityId: number;
+  materializedHash: string;
+  materializedAt: Timestamp;
+};
 export type Bounty = {
   id: Generated<number>;
   userId: number | null;
@@ -4314,6 +4331,8 @@ export type DB = {
   block_user_subscriptions: BlockUserSubscription;
   BlockedImage: BlockedImage;
   Blocklist: Blocklist;
+  Blurb: Blurb;
+  BlurbReference: BlurbReference;
   Bounty: Bounty;
   BountyBenefactor: BountyBenefactor;
   BountyEngagement: BountyEngagement;
