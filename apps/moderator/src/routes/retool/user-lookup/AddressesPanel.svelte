@@ -26,14 +26,6 @@
     <p class="text-sm text-dark-2">Checking addresses…</p>
   {:then result}
     {#if result}
-      {#if result.commentBurst > 2}
-        <div
-          class="mb-3 rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-sm text-amber-200"
-        >
-          {num(result.commentBurst)} comments in the last 48 hours — possible spam burst.
-        </div>
-      {/if}
-
       <div class="grid gap-5 lg:grid-cols-2">
         <div>
           <h4 class="mb-2 text-xs tracking-wide text-dark-2 uppercase">

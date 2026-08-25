@@ -120,8 +120,6 @@ export type UserLookupResult = {
   subscription: UserSubscription | null;
   curator: CuratorStatus;
   ranks: LeaderboardRank[];
-  /** Retool-era strikes, from the moderator database. Historical: the main app's strike system does
-   *  NOT write here, so this alone reads 0 on an account carrying active strikes. */
   /** Every strike the account has ever had, across both stores and all statuses — NOT the active
    *  count beside it. `strikeCountsByUserIds` spans both by design; since the 2026-08-21 import the
    *  legacy half is empty, so in practice this is the all-time `UserStrike` total. */

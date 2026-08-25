@@ -91,8 +91,14 @@
 
   // `getReportItemUrl`, not `entityUrl`: a chat has no page on the site (its transcript is Chat Audit,
   // in this app) and a comment hangs off a parent, so neither is derivable from the entity id.
+  // 'other' is what `Report` looks like when it joins none of the fifteen report tables — the row it
+  // named is gone, or was never written. "unknown" read as a rendering bug rather than a fact about
+  // the report, which is what the mod team asked about.
   const entityLabel = (row: Reported) =>
-    row.entity === 'other' ? 'unknown' : reportEntityLabels[row.entity];
+    row.entity === 'other' ? 'no linked content' : reportEntityLabels[row.entity];
+
+  const UNLINKED_HINT =
+    'This report is not attached to any content — no row exists in any report table for it. Nothing to open.';
 
   const contentUrl = (row: Reported) =>
     row.entity === 'other'
@@ -296,7 +302,12 @@
                   {entityLabel(row)} {row.entityId}
                 </a>
               {:else}
-                <span class="text-dark-2">{entityLabel(row)} {row.entityId ?? ''}</span>
+                <span
+                  class="text-dark-2"
+                  title={row.entity === 'other' ? UNLINKED_HINT : undefined}
+                >
+                  {entityLabel(row)} {row.entityId ?? ''}
+                </span>
               {/if}
             </TableCell>
             <TableCell class="text-sm">{row.reason}</TableCell>

@@ -89,11 +89,12 @@ tighter loop adds Discord noise without shortening the detection window meaningf
 
 ## Open questions
 
-1. **Is the 24h "not started" window right for us?** It is Retool's number, kept as-is. If system
-   challenges can legitimately go more than 24h between starts — a deliberate pause, a schedule gap —
-   this will alert on healthy states. Nobody has confirmed the intended cadence.
-2. **Should this page rather than post?** The Retool version paged PagerDuty. Discord is what this repo
-   can do today. If challenge downtime is genuinely page-worthy, that is an infra request.
+1. ~~**Is the 24h "not started" window right for us?**~~ **Settled 2026-08-24 (@briant): keep Retool's
+   number.** If system challenges ever gain a deliberate multi-day pause, revisit `RECENT_WINDOW_HOURS`.
+2. ~~**Should this page rather than post?**~~ **Settled 2026-08-24 (@briant): a Discord alert is
+   sufficient — no PagerDuty, no infra request.** It posts to the mod-alerts channel, the only Discord
+   webhook this repo has. A dev-alerts channel was considered and declined: it would need a new secret
+   set per environment before it delivered anything.
 3. **`challenge-auto-queue` swallowing `result.failed`** is a real gap this job only detects
    *downstream*, and days later. Alerting at the source would be better and is out of scope here.
 

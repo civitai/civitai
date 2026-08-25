@@ -48,7 +48,10 @@ tracker only ever listed nine of the parent's **thirteen** subtasks. Export pull
       `GetEmail`/`getEmails`, `UserNotes`. That is how a list of accounts is assembled in the first
       place.
 - [x] `deleteComments` runs against `Prod` as part of the flow — confirm whether banning here is
-      expected to remove comments too.
+      expected to remove comments too. **Answered 2026-08-24: yes, opt-in.** Bulk Ban and the User
+      Lookup ban panel both carry "Also remove their comments", which flags `tosViolation` on `Comment`
+      and `CommentV2` through `/api/mod/ban-user` — never a delete, so an appeal can still read what was
+      taken down.
 - [ ] 🎥 **Restricted today, and that is a decision to revisit**: *"limited to only some mods… that's
       good for other mods to have access to this too."* Gate it, then widen deliberately.
 
@@ -129,8 +132,9 @@ Open, with the evidence each audit produced:
 - [x] **Strikes write a second, disconnected ledger** (2026-08-12 — decision: the main app owns strikes,
       Retool only ever gave mods manual give/revoke on top of it). `addUserStrike` inserted into the
       moderator database's legacy `UserStrikes`, which gets none of what a strike does. Issuing now calls
-      `retool/strike → create`, so escalation, points, expiry, the typed `strike-issued` notification and
-      the void path all apply. The legacy table stays as Retool-era history: read and shown, never written.
+      `/api/mod/strike/create`, so escalation, points, expiry, the typed `strike-issued` notification and
+      the void path all apply. The legacy table was Retool-era history — read and shown, never written —
+      until it was migrated into `UserStrike` 2026-08-21 and the second read retired (`2b7639a3ab`).
       `ManualModAction` is the reason on purpose — it is both the right classification and the one value
       the endpoint exempts from the 1-auto-strike-per-day limit; any other value silently returns
       `{ skipped: true }` on a moderator's second strike of the day, which a 200 would have hidden. The
@@ -138,7 +142,7 @@ Open, with the evidence each audit produced:
       🔴 **This uncovered a live production outage, fixed in the same change.**
       `evaluateStrikeEscalation` ran `SELECT SUM(points) … FOR UPDATE`, which Postgres refuses outright
       (`0A000: FOR UPDATE is not allowed with aggregate functions`). It is called by `createStrike`,
-      `voidStrike`, `expireStrikes` (daily) and `processTimedUnmutes` (hourly) — so **no strike could be
+      `voidStrike`, `expireStrikes` (daily) and `processTimedUnmutes` (daily) — so **no strike could be
       issued or voided, no strike ever expired, and no timed mute ever lifted**. The two crons catch per
       user and log, so it failed silently: **679 `strike-expired-escalation-failed` events in the last 30
       days of `civitai-prod`**, every one this error. Fixed by locking the rows and aggregating in a
@@ -407,13 +411,17 @@ browser as user 1290051, not by reading the code.
       before anything here can call it, and is tracked there rather than duplicated.
 - [x] **Browsing level shown** (2026-08-11 — a `Viewing: <label>` header chip off `User.browsingLevel`,
       labelled with the shared `getBrowsingLevelLabel` so it matches the rest of the site).
-- [ ] **Comment Spammer alert** in Quick Info — **parked 2026-08-12: nobody is sure what it should
-      measure.** Nothing computes this signal today, and Retool's own definition is not in the export, so
-      building one would be inventing a moderation heuristic rather than porting it. Needs a rule from
-      the mod team (rate? duplicate text? ratio to other activity?) before it means anything.
+- [x] **Comment Spammer alert** in Quick Info — **rebuilt 2026-08-24, on a measured rule.**
+      `PotentialSpammerV2` had been ported as `getCommentBurst` all along; it was parked as "nobody is
+      sure what it should measure" because **Retool's alert never rendered** — its `hidden` expression
+      (`!count < 20`) is a tautology, so it has been invisible since 2023. The replacement is ≥10
+      comments in an hour from an account under two days old (98.9% banned over 90 days, against 1.2%
+      for the same volume from an older account), on the Basic section where Retool placed it, plus a
+      list at `/users/newest?view=spam`. See
+      [`mod-studio-feedback-2026-08-24.md`](mod-studio-feedback-2026-08-24.md) § This round.
 - [ ] **Timed mutes: Mute Start / Notify User** — **still parked, new reasoning 2026-08-20.** The
       `TimedMutes` table is gone; a timed mute is `User.muteExpiresAt`, and expiry works
-      (`processTimedUnmutesJob`, hourly). Mute *start* needs a `muteStartsAt` column plus a second job —
+      (`processTimedUnmutesJob`, daily 03:00). Mute *start* needs a `muteStartsAt` column plus a second job —
       a schema change, not a control. Notify User is a wiring job now that `issueStrike`/`notify` exist.
       Neither is worth doing until someone confirms the feature is wanted.
 - [x] **Banned for CSAM** (2026-08-11). The ban badge now carries its reason code, and a separate
@@ -482,8 +490,9 @@ browser as user 1290051, not by reading the code.
       The panel's strike LIST had the mirror-image bug: it read that same legacy table, so it showed
       **`Strikes (0)` on an account carrying ten live ones** — the worst possible number to be wrong
       about on the screen where the next strike is issued. It now lists the main app's rows with points,
-      expiry, and voided/expired badged distinctly from active, with the legacy count kept as a
-      one-line footnote.
+      expiry, and voided/expired badged distinctly from active. (The legacy count it originally kept as
+      a one-line footnote was retired 2026-08-21 with the import — see
+      [`legacy-strike-migration.md`](legacy-strike-migration.md).)
 - [x] 🔴 **`violationType` / `violationDetails` are never sent on removal.** `/api/mod/remove-images`
       accepts a `violationType` **enum** plus a details string and forwards both to the ClickHouse
       `DeleteTOS` event; the port sends only free-text `reason`. **Every removal from this page is
@@ -1148,8 +1157,9 @@ Filed against the page ported in §0, by the mod who uses it on bot chains.
       target is never implied). Verified: 6 accounts → 4 with it ticked.
 - [x] **The per-account note section is redundant** (2026-08-13 — removed). It wrote the same string to
       every account in the run, which is what `detailsInternal` beside it already does. The endpoint
-      takes `note` as optional, so nothing else changed. Verified: the ban form now posts `userIds`,
-      `removeMedia`, `reasonCode`, `detailsInternal` and nothing else.
+      takes `note` as optional, so nothing else changed. Verified: the ban form posts `userIds`,
+      `removeMedia`, `reasonCode` and `detailsInternal`, with no per-account note. (`removeComments`
+      joined them 2026-08-24.)
 - [x] **The paste boxes grow without bound instead of scrolling.** (2026-08-13.) **The cause is one
       class on the shared `Textarea`** — `field-sizing-content`, which grows the element with its
       content and has no ceiling. Capped per-box here (`max-h-40 overflow-y-auto`) rather than removed

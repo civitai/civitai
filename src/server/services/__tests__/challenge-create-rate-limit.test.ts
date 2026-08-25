@@ -26,7 +26,7 @@ function mockGoodStanding() {
     muted: false,
     deletedAt: null,
   });
-  mockDbRead.userStrike.count.mockResolvedValue(0);
+  mockDbRead.userStrike.aggregate.mockResolvedValue({ _sum: { points: 0 } });
   mockGetHighestTierSubscription.mockResolvedValue({ tier: 'gold' });
 }
 

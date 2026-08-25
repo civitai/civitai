@@ -12,9 +12,12 @@ import { describe, expect, it } from 'vitest';
  * failing. Fails closed, but silently. Keep the copy in step with the original.
  */
 function formatError(shape: Record<string, unknown>, error: { cause?: unknown }) {
-  const cause = error.cause as { softBlock?: boolean } | undefined;
+  const cause = error.cause as { softBlock?: boolean; tosReacceptRequired?: boolean } | undefined;
   if (cause?.softBlock === true) {
     return { ...shape, data: { ...(shape.data as object), softBlock: true } };
+  }
+  if (cause?.tosReacceptRequired === true) {
+    return { ...shape, data: { ...(shape.data as object), tosReacceptRequired: true } };
   }
   return shape;
 }

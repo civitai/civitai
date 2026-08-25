@@ -92,6 +92,9 @@ export type DomainAccount = { id: number; username: string | null; email: string
  * never grow one. This takes a domain and returns accounts not yet on the list.
  *
  * Already-banned accounts are excluded, matching Retool — the output is a candidate list, not a census.
+ *
+ * The domain expression and both null checks are matched character-for-character by
+ * `User_email_domain_idx`; reword any of the three and this seq-scans `User` again.
  */
 export async function getAccountsOnDomains(
   domains: string[],

@@ -3792,6 +3792,7 @@ model Comment {
 
   @@index([modelId], type: Hash)
   @@index([parentId], type: Hash)
+  @@index([userId])
 }
 
 model CommentReaction {
@@ -3923,6 +3924,7 @@ model CommentV2 {
 
   @@index([threadId], type: Hash)
   @@index([reactionCount(sort: Desc), id(sort: Desc)])
+  @@index([userId])
 }
 
 model Thread {

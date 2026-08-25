@@ -9,7 +9,12 @@ import {
   parseQuery,
   checkboxField,
 } from '$lib/server/query';
-import { BAN_REASON_CODES, setBanned } from '$lib/server/user-actions.service';
+import {
+  BAN_REASON_CODES,
+  alreadyBannedError,
+  banConfirmed,
+  setBanned,
+} from '$lib/server/user-actions.service';
 import { addUserNote } from '$lib/server/moderation-memory.service';
 import {
   getAccountsOnDomains,
@@ -117,11 +122,24 @@ export const load: PageServerLoad = async ({ url, locals }) => {
 
 const actionFail = (message: string) => fail(400, { error: message });
 
+/**
+ * NOT a concurrency bound, though it paces the loop. `toggleBan` writes `bannedAt` first and runs its
+ * fan-out (model unpublish, media block, comment flagging, search-index removal, subscription cancels)
+ * afterwards, so `banConfirmed` returns while all of it is still in flight. Bounding that overlap needs
+ * the endpoint to report completion, which it does not.
+ */
+const CONFIRM_EVERY = 25;
+
 export const actions: Actions = {
   /**
    * Retool's `BanUsers`: sequential, retrying the SAME id on failure, aborting the whole run after 5
    * consecutive failures. The cap is the safety property — without it a bad token or a downed endpoint
    * retries every account in the list rather than stopping after the first few.
+   *
+   * "Sequential" is weaker than it looks, which is why the checkpoint below exists. `/api/mod/ban-user`
+   * answers 200 before doing any of the work, so awaiting it acknowledges a REQUEST rather than a ban,
+   * and a wedged endpoint reports every account banned. Confirming every id would take the run to ~8
+   * minutes; confirming every `CONFIRM_EVERY`th catches that within one checkpoint.
    */
   banAll: requiresGrant('bulk-ban.execute', async ({ request, locals }) => {
     const input = parseForm(
@@ -131,6 +149,7 @@ export const actions: Actions = {
         detailsInternal: z.string().trim().max(500).optional(),
         note: z.string().trim().max(1000).optional(),
         removeMedia: checkboxField,
+        removeComments: checkboxField,
       }),
       await request.formData()
     );
@@ -143,6 +162,7 @@ export const actions: Actions = {
     const banned: number[] = [];
     const failed: number[] = [];
     let consecutiveFailures = 0;
+    let sinceCheckpoint = 0;
 
     for (const userId of userIds) {
       let ok = false;
@@ -155,9 +175,14 @@ export const actions: Actions = {
           reasonCode: input.reasonCode,
           detailsInternal: input.detailsInternal,
           removeMedia: input.removeMedia,
+          removeComments: input.removeComments,
           moderatorId: locals.user.id,
         });
-        ok = result.ok;
+        // On a RETRY, "already banned" means the first attempt landed and its response was lost — the
+        // endpoint writes `bannedAt` before anything else, and `callMainApp` cannot tell a dropped
+        // response from a request that never arrived. Counting that as a failure printed accounts that
+        // are banned under "could not be banned", and five in a row aborted the run.
+        ok = result.ok || (attempt > 0 && result.error === alreadyBannedError(true));
       }
 
       if (ok) {
@@ -165,6 +190,18 @@ export const actions: Actions = {
         consecutiveFailures = 0;
         if (input.note && locals.user.username) {
           await addUserNote({ userId, notes: input.note, author: locals.user.username });
+        }
+
+        if (++sinceCheckpoint >= CONFIRM_EVERY) {
+          sinceCheckpoint = 0;
+          if (!(await banConfirmed(userId)))
+            return fail(502, {
+              error:
+                `${banned.length} accounts were accepted, but the most recent has not taken effect — ` +
+                'the ban endpoint may be failing silently. The rest were not attempted; reload and ' +
+                'check before re-running.',
+              banned: banned.length,
+            });
         }
       } else {
         failed.push(userId);

@@ -10,6 +10,7 @@ import {
   shouldRateLimitStrike,
   type EscalationAction,
 } from '~/server/services/strike.service';
+import { STRIKE_MUTE_REASON } from '~/server/common/tos-reacceptance';
 import type { UserMeta } from '~/server/schema/user.schema';
 import { StrikeStatus } from '~/shared/utils/prisma/enums';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
@@ -87,13 +88,13 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
       let predictedAction: EscalationAction = 'none';
       if (user) {
         const currentMeta = (user.meta as UserMeta) ?? {};
-        if (totalPoints >= 3) {
-          predictedAction = 'muted-and-flagged';
-        } else if (totalPoints >= 2) {
-          predictedAction = 'muted';
-        } else if (
+        // A dry run cannot predict a MUTE: only `createStrike` passes `allowMute`, so an evaluation
+        // triggered from here can release and nothing else.
+        const strikeMuted = currentMeta.muteReason === STRIKE_MUTE_REASON;
+        if (
+          totalPoints < 2 &&
           user.muted &&
-          (user.muteExpiresAt !== null || currentMeta.strikeFlaggedForReview)
+          (user.muteExpiresAt !== null || currentMeta.strikeFlaggedForReview || strikeMuted)
         ) {
           predictedAction = 'unmuted';
         }
@@ -145,10 +146,15 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
   // ── Process timed unmutes ──────────────────────────────────────────
   if (action === 'unmute') {
     if (dryRun) {
+      // Both arms the job sweeps: strike mutes (no expiry — found by their reason) and moderator
+      // mutes whose own expiry has passed.
       const usersWithExpiredMutes = await dbRead.user.findMany({
         where: {
           muted: true,
-          muteExpiresAt: { not: null, lte: new Date() },
+          OR: [
+            { mutedAt: null, meta: { path: ['muteReason'], equals: STRIKE_MUTE_REASON } },
+            { muteExpiresAt: { not: null, lte: new Date() } },
+          ],
         },
         select: { id: true, username: true, muteExpiresAt: true },
       });

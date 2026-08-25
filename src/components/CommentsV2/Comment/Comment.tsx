@@ -24,6 +24,7 @@ import {
   IconLink,
   IconPinned,
   IconPinnedOff,
+  IconShieldOff,
   IconTrash,
 } from '@tabler/icons-react';
 import { useClipboard } from '@mantine/hooks';
@@ -50,6 +51,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { type Comment } from '~/server/services/commentsv2.service';
+import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { constants } from '../../../server/common/constants';
@@ -115,13 +117,33 @@ export function CommentContent({
   const currentUser = useCurrentUser();
   const clipboard = useClipboard();
 
-  const { toggleHide, togglePinned } = useMutateComment();
+  const { toggleHide, togglePinned, setTosViolation, settingTosViolation } = useMutateComment();
 
   const handleCopyLink = () => {
     const url = new URL(window.location.href);
     url.searchParams.set('highlight', String(comment.id));
     clipboard.copy(url.toString());
     showSuccessNotification({ message: 'Comment link copied to clipboard' });
+  };
+
+  const handleRemoveAsTos = () => {
+    openConfirmModal({
+      title: 'Remove as ToS violation',
+      children: (
+        <Text size="sm">
+          This flags the comment as a Terms of Service violation, actions any matching reports and
+          notifies the author. Are you sure?
+        </Text>
+      ),
+      centered: true,
+      labels: { confirm: 'Remove as ToS violation', cancel: 'Cancel' },
+      confirmProps: { color: 'red', loading: settingTosViolation },
+      closeOnConfirm: false,
+      onConfirm: () =>
+        setTosViolation({ id: comment.id })
+          .catch(() => null)
+          .finally(() => closeAllModals()),
+    });
   };
 
   const handleCopyId = () => {
@@ -298,6 +320,15 @@ export function CommentContent({
               {currentUser?.isModerator && (
                 <Menu.Item leftSection={<IconId size={14} stroke={1.5} />} onClick={handleCopyId}>
                   Copy comment ID
+                </Menu.Item>
+              )}
+              {currentUser?.isModerator && !comment.tosViolation && (
+                <Menu.Item
+                  color="red"
+                  leftSection={<IconShieldOff size={14} stroke={1.5} />}
+                  onClick={handleRemoveAsTos}
+                >
+                  Remove as ToS violation
                 </Menu.Item>
               )}
             </Menu.Dropdown>

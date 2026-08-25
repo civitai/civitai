@@ -68,10 +68,10 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
 
 - [x] **`/moderator/blocklists`** — `src/pages/moderator/blocklists.tsx` — flag: `blocklists` — **Migrated** (first Redis page; spoke writes the same `system:blocklist:${type}` cache the main-app validators + cron read — no callback)
   - Procedures: `blocklist.getBlocklist` (query); `blocklist.upsertBlocklist`, `blocklist.removeItems` (mutations)
-  - Services (`src/server/services/blocklist.service.ts`): `getBlocklistDTO`, `getBlocklistData`, `upsertBlocklist`, `removeBlocklistItems` (+ utilities `throwOnBlockedLinkDomain`, `throwOnBlockedMessagePattern`, `getBlockedEmailDomains`)
+  - Services (`src/server/services/blocklist.service.ts`): `getBlocklistDTO`, `getBlocklistData`, `upsertBlocklist`, `removeBlocklistItems` (+ utilities `throwOnBlockedLinkDomain`, `findBlockedMessagePattern` / `throwOnBlockedMessagePattern`, `getBlockedEmailDomains`)
   - Schemas: `blocklist.schema.ts` + `BlocklistType` enum (`server/common/enums.ts`)
   - Infra: **Postgres + Redis** (1-month TTL, fail-open reads, key `SYSTEM.BLOCKLIST:${type}`)
-  - Notes: types = LinkDomain / MessagePattern / EmailDomain; case-insensitive; no cross-pod bust (TTL + lazy refresh)
+  - Notes: types = LinkDomain / MessagePattern / EmailDomain; case-insensitive; no cross-pod bust (TTL + lazy refresh). `MessagePattern` has two enforcement surfaces with different behaviour — chat **refuses** the message, a comment is accepted and **reported** (`message-pattern.service.ts`). The operator-facing wording lives in `apps/moderator/src/lib/blocklist.ts`'s `BLOCKLIST_DESCRIPTIONS`.
 
 - [x] **`/moderator/auditor`** — `src/pages/moderator/auditor.tsx` — flag: none — **Migrated.** The prompt tester
   runs the audit **server-side** (a form `action` calling `@civitai/mod-utils/prompt-audit`

@@ -13,8 +13,17 @@ export type LinkedAccount = {
   strikes: number;
 };
 
+/** The busiest hour of commenting in the last 30 days. Mirrors `CommentBurst` in
+ *  `user-signals.service.ts`; declared rather than imported for the reason above. */
+export type CommentBurst = {
+  comments: number;
+  hour: string;
+  ageAtBurstHours: number;
+  matchesSignature: boolean;
+};
+
 export type Signals = {
-  commentBurst: number;
+  commentBurst: CommentBurst | null;
   ips: {
     addresses: { ip: string; type: string; first: string; last: string; events: number }[];
     accounts: (LinkedAccount & { ip: string; type: string; last: string })[];

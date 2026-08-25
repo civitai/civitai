@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { canAccess, requiresGrant } from '$lib/server/access';
 import { parseForm, userIdSchema } from '$lib/server/query';
-import { banFieldsSchema, rejectUnexplainedOther } from '$lib/server/ban-input';
+import { banFieldsSchema, banRemovalArgs, rejectUnexplainedOther } from '$lib/server/ban-input';
 import { RETIRED_SECTIONS, isSection } from '../sections';
 import {
   addUserNote,
@@ -524,15 +524,22 @@ export const actions: Actions = {
     if (input.kind === 'comments') {
       if (input.op !== 'delete' && input.op !== 'tos')
         return contentFail('Unsupported action for comments.');
+      const commentIds = ids('commentIds');
+      const commentV2Ids = ids('commentV2Ids');
       const result = await bulkCommentAction({
         action: input.op === 'delete' ? 'bulkDelete' : 'removeAsTos',
-        commentIds: ids('commentIds'),
-        commentV2Ids: ids('commentV2Ids'),
+        commentIds,
+        commentV2Ids,
         userId: input.userId,
         moderatorId: locals.user.id,
       });
       if (!result.ok) return contentFail(result.error);
-      return { success: true };
+      return {
+        success: true,
+        op: input.op,
+        affected: result.affected ?? 0,
+        requested: commentIds.length + commentV2Ids.length,
+      };
     }
 
     if (input.op === 'tos') return contentFail('Unsupported action for reviews.');
@@ -586,8 +593,7 @@ export const actions: Actions = {
       reasonCode: input.reasonCode,
       detailsInternal: input.detailsInternal || undefined,
       detailsExternal: input.detailsExternal || undefined,
-      removeMedia: input.removeMedia,
-      removeModels: input.ban === 'true' ? input.removeModels : undefined,
+      ...banRemovalArgs(input, input.ban === 'true'),
       moderatorId: locals.user.id,
     });
     if (!result.ok) return accountFail(result.error);

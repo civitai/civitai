@@ -685,7 +685,7 @@ function IssueStrikeModal({
       points: 1,
       description: '',
       internalNotes: '',
-      expiresInDays: 30,
+      expiresInDays: 365,
     },
   });
 
@@ -698,7 +698,7 @@ function IssueStrikeModal({
         points: 1,
         description: '',
         internalNotes: '',
-        expiresInDays: 30,
+        expiresInDays: 365,
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -780,7 +780,7 @@ function IssueStrikeModal({
           <InputNumber
             name="expiresInDays"
             label="Expires In (days)"
-            description="Default: 30 days"
+            description="Default: 365 days"
             min={1}
             max={365}
           />

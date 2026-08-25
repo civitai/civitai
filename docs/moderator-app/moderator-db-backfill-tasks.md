@@ -48,7 +48,7 @@ Subject columns — the account the row is *about*:
 | --- | --- | --- | --- |
 | `UserNotes` | `userId` | `integer` | ✅ joins to `User.id` |
 | `UserStrikes` | `userId` | `integer` | ✅ joins to `User.id` |
-| `TimedMutes` | `userId` | **`text`** | ✅ **moot — drop the table.** Nothing reads or writes it since 2026-08-20; timed mutes are `User.muteExpiresAt`, drained hourly by `processTimedUnmutesJob`. 0 rows, so nothing to migrate. |
+| `TimedMutes` | `userId` | **`text`** | ✅ **moot — drop the table.** Nothing reads or writes it since 2026-08-20; timed mutes are `User.muteExpiresAt`, drained daily by `processTimedUnmutesJob` (see [strike-rules.md](strike-rules.md) §8). 0 rows, so nothing to migrate. |
 | `ReToolActions` | — | — | 🔴 **no subject column at all**; the account is embedded in `ActionType` prose |
 
 `FrontPageTimers.username` is a third case: it is usually an operator, but the Split control writes the
@@ -81,7 +81,7 @@ literal sentinel `splitQueue` there. Any name→id backfill must skip it — see
 ### C. Fix the subject columns
 
 - [x] ~~**`TimedMutes.userId` is `text`.** Migrate to `integer`.~~ **Superseded — drop the table
-      instead.** It duplicated `User.muteExpiresAt`, which the main app already drains hourly via
+      instead.** It duplicated `User.muteExpiresAt`, which the main app already drains daily via
       `processTimedUnmutesJob` and which is strike-aware; the side table had no consumer, so a mute
       recorded only there never lifted. As of 2026-08-20 nothing in the spoke reads or writes it. It is
       still typed — introspection takes every table — so the ban on reading it lives in a `///` comment on

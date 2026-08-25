@@ -80,9 +80,11 @@ provenance is the only reason it differs from the standard at all.
   [`moderator-page-migration`](../../.claude/skills/moderator-page-migration/SKILL.md) (from
   `src/pages/moderator/**` — which also deletes the legacy page and trims what it orphans).
 
-- ⚠️ **The suite is narrow.** Nine files, 129 tests: the report queue and its actions (five files,
-  111 of them), plus the orchestrator workflow reader, the legacy-strike marker protocol, the
-  `RatingChanges` upsert and one emitted-SQL guard on Bulk Image Manager. So for work anywhere else in this app a green
+- ⚠️ **The suite is narrow, and lopsided.** The report queue and its actions are the largest single
+  block — just under half — with abuse detection next; everything else is a thin scattering of
+  single-purpose readers and guards. `pnpm exec vitest list --filesOnly` is the only honest inventory:
+  any list written here goes stale the next time someone adds a file, and this one did — it said "nine
+  files, 129 tests" for long enough to be wrong by eight files. So for work anywhere else in this app a green
   `pnpm test` says only that those still pass, and `typecheck` remains the whole of what was verified. Say which of the two
   you mean when reporting: a typecheck cannot see a wrong predicate, a mis-attributed row or a mute
   that never lifts, all of which have shipped here and been found later by reading the code.
@@ -122,8 +124,8 @@ standard is one link away**. Each of these has cost real time when broken. Full 
   the dev server's watcher; that collision froze an editor for a full day. Read `svelte-check`'s
   **WARNING** lines too: `state_referenced_locally` is a real bug and appears nowhere else.
 - **`typecheck` stops at `src/`.** It extends `.svelte-kit/tsconfig.json`, so the standalone scripts
-  under `moderator-db/` and `xguard-lab/` are invisible to it — including the one that writes to two
-  production databases. Run `pnpm run typecheck:scripts` (`tsconfig.scripts.json`) when you touch either.
+  under `moderator-db/` and `xguard-lab/` are invisible to it — including the two that read and write
+  two production databases at once. Run `pnpm run typecheck:scripts` (`tsconfig.scripts.json`) when you touch either.
 - **Before calling a segment done**, run `svelte-correctness-review`, `svelte-idiom-review` and
   `svelte-abstraction-review` (or the `/svelte-review` skill) — then **look at the page**. Typecheck
   passes on plenty of pages that render blank.

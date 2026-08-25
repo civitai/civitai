@@ -14,7 +14,7 @@
   import { FormState } from '$lib/form-state.svelte';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import { userLookupUrl } from '$lib/entity-url';
-  import { BAN_REASONS } from '$lib/enforcement';
+  import { BAN_REASONS, BAN_REASONS_REMOVING_CONTENT, type BanReasonCode } from '$lib/enforcement';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -48,6 +48,21 @@
   // highest-blast-radius action makes an unconsidered `Other` the permanent record of why.
   let reasonCode = $state('');
   let removeMedia = $state(false);
+  let removeComments = $state(false);
+
+  // Only presets a toggle the moderator has not touched, and undoes its own preset when they switch to
+  // a reason that does not remove content — these are page-level state that outlives a completed run,
+  // so a latched tick would arm the NEXT, unrelated cohort.
+  let mediaTouched = $state(false);
+  let commentsTouched = $state(false);
+
+  const pickReason = (value: string) => {
+    reasonCode = value;
+    const removesContent = BAN_REASONS_REMOVING_CONTENT.includes(value as BanReasonCode);
+    if (!mediaTouched) removeMedia = removesContent;
+    if (!commentsTouched) removeComments = removesContent;
+  };
+
   let confirming = $state(false);
   const onSubmit = new FormState({ reload: true, onSuccess: () => (confirming = false) });
 
@@ -320,15 +335,20 @@
                 its own notification. The run stops after 5 consecutive failures.
               </p>
               <!-- The endpoint blocks media only for `SexualMinor` unless this is set, so without it a
-                   Nudify or Harassment ban leaves every image up. -->
+                   Nudify or Harassment ban leaves every image up. MODELS are not covered by this box:
+                   `banAll` sends no `removeModels`, and the endpoint treats absent as ON. -->
               <label class="mb-2 flex items-center gap-2 text-xs text-dark-2">
-                <input type="checkbox" name="removeMedia" value="true" bind:checked={removeMedia} />
-                Also remove their images and models
+                <input type="checkbox" name="removeMedia" value="true" bind:checked={() => removeMedia, (v) => ((mediaTouched = true), (removeMedia = v))} />
+                Also remove their images
+              </label>
+              <label class="mb-2 flex items-center gap-2 text-xs text-dark-2">
+                <input type="checkbox" name="removeComments" value="true" bind:checked={() => removeComments, (v) => ((commentsTouched = true), (removeComments = v))} />
+                Also remove their comments
               </label>
               <div class="flex flex-wrap items-end gap-2">
                 <label class="flex flex-col gap-1 text-xs text-dark-2">
                   Reason
-                  <Select.Root type="single" bind:value={reasonCode}>
+                  <Select.Root type="single" bind:value={() => reasonCode, pickReason}>
                     <Select.Trigger class="w-56">{reasonCode || 'Select a reason'}</Select.Trigger>
                     <Select.Content>
                       {#each BAN_REASONS as r (r)}
@@ -338,6 +358,13 @@
                   </Select.Root>
                 </label>
                 <input type="hidden" name="reasonCode" value={reasonCode} />
+                <p class="mb-2 w-full rounded border border-red-500/50 bg-red-500/15 p-2 text-xs text-white">
+                  <strong>Confirming unpublishes every model on all {num(bannable.length)} accounts</strong>
+                  — that happens on every bulk ban and there is no opt-out here.{#if removeMedia || removeComments}
+                    Their {[removeMedia ? 'images' : null, removeComments ? 'comments' : null]
+                      .filter(Boolean)
+                      .join(' and ')} go too; untick above to leave those up.{/if}
+                </p>
                 <!-- Retool had a second free-text box here for a per-account note. It wrote the same
                      string to every account in the run, which is what `detailsInternal` beside it
                      already does, and the mod team called it redundant. Notes on a cohort you have not
