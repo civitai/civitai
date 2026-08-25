@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { untrack } from "svelte";
+  import { tick, untrack } from "svelte";
   import { page } from "$app/state";
   import { enhance } from '$app/forms';
   import { goto } from '$app/navigation';
@@ -12,6 +12,7 @@
   import { num } from '$lib/format';
   import { BLOCKLIST_TYPES, BLOCKLIST_DESCRIPTIONS, humanizeBlocklistType } from '$lib/blocklist';
   import { visibleBlocklistItems } from './filter';
+  import { chipFocusTarget, confirmDismissTarget, type RemovalFocusGuards } from './focus';
   import type { ActionData, PageData } from './$types';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
 
@@ -22,6 +23,7 @@
   let filters = $state<Record<string, string>>({});
   let removing = $state<string | null>(null);
   let confirming = $state<string | null>(null);
+  let panel = $state<HTMLElement | null>(null);
 
   // EmailDomain is 8295 entries in production. Rendering the whole list is both unusable and
   // enough DOM to stall the tab, so the list is filtered first and then capped.
@@ -75,8 +77,22 @@
   // write restores what the earlier one dropped.
   const submitChip =
     (item: string): SubmitFunction =>
-    () => {
+    ({ formElement }) => {
       removing = item;
+      // All three captured BEFORE the submit, because the invalidation unmounts this chip:
+      // afterwards `document.activeElement` is <body>, and the list being indexed may not even be
+      // this blocklist any more.
+      const position = shown.visible.indexOf(item);
+      // Focus is only moved if it was already inside THIS chip's form. That is true for keyboard
+      // activation, and also for a pointer in browsers that focus a button on click — which is
+      // fine, since those get no visible ring under `:focus-visible`. What it excludes is the
+      // case that would be an unasked-for scroll: focus sitting somewhere else on the page.
+      const restoreFocus = formElement.contains(document.activeElement);
+      // A removal can outlive the tab. Clicking another tab mid-flight swaps `data.blocklist` for
+      // a different type's entries, and focusing "the entry at that index" would then land on an
+      // unrelated blocklist — precisely the unpredictable movement this is supposed to avoid.
+      const submittedType = data.type;
+
       return async ({ update }) => {
         // `finally`, not a bare sequence. Every chip's control is disabled while `removing` is set,
         // so a submit that throws — a rejected fetch, a cross-origin refusal — would otherwise leave
@@ -92,15 +108,74 @@
           // the submit never fires and "Remove" behaves exactly like "Cancel", silently. Same trap
           // as `ConfirmSubmit.svelte`.
           confirming = null;
+
+          // Inside the `finally`, so a rejected submit does not leave focus on <body> — the worst
+          // case to lose it in, since nothing changed and the chip is still there to return to.
+          // After `removing` is cleared, never before: every chip control is `disabled` while a
+          // removal is in flight, and a disabled button silently refuses focus. One `tick` covers
+          // both the re-rendered chips and that re-enable (it drains cascading batches), and would
+          // stop being enough only under `compilerOptions.experimental.async`, which this app does
+          // not set.
+          await tick();
+          focusAfterRemoval(position, item, {
+            focusWasInForm: restoreFocus,
+            sameType: data.type === submittedType,
+          });
         }
       };
     };
+
+  /** The remove control of a chip, if it is on screen. */
+  const chipControl = (entry: string) =>
+    panel?.querySelector<HTMLElement>(`[data-chip-remove="${CSS.escape(entry)}"]`) ?? null;
+
+  /**
+   * Returns focus to the chip a confirm was opened on. Dismissing unmounts the popover, so a
+   * keyboard user who opens a confirm and changes their mind otherwise lands on <body> — the same
+   * failure this file exists to fix, one keystroke off the path that was fixed.
+   *
+   * Resolved BEFORE `confirming` is cleared, since afterwards there is nothing to look up. The X
+   * itself lives outside the `{#if}`, so it survives the dismissal either way and the flush timing
+   * does not matter.
+   */
+  function dismissConfirm() {
+    const control = confirming ? chipControl(confirming) : null;
+    // Escape comes from a window handler, so it fires with focus anywhere on the page — including
+    // the filter box with the popover still open, which is a reflex rather than an edge case.
+    const target = confirmDismissTarget(
+      confirming,
+      !!control?.closest('form')?.contains(document.activeElement)
+    );
+    confirming = null;
+    if (target.kind === 'chip') control?.focus();
+  }
+
+  /**
+   * Where focus lands once the removed chip is gone. `chipFocusTarget` decides WHICH entry; this
+   * resolves it to a node and degrades when it cannot.
+   *
+   * The fallback chain runs whenever the chip node is missing, not only when there is no entry to
+   * look for — a resolved entry whose node is absent used to leave `target` null and focus on
+   * <body>, which is the outcome the whole function exists to prevent. The filter bar unmounts with
+   * the chips when the LIST is empty rather than merely filtered to nothing, so the textarea is the
+   * last resort.
+   */
+  function focusAfterRemoval(position: number, item: string, guards: RemovalFocusGuards) {
+    if (!panel) return;
+    const next = chipFocusTarget(shown.visible, position, item, guards);
+    if (next.kind === 'none') return;
+    const target =
+      (next.kind === 'chip' ? chipControl(next.entry) : null) ??
+      panel.querySelector<HTMLElement>('[data-blocklist-filter] input') ??
+      panel.querySelector<HTMLElement>('textarea');
+    target?.focus();
+  }
 </script>
 
 <!-- One window listener rather than one per chip: at CHIP_LIMIT that would be 200 of them. -->
 <svelte:window
   onkeydown={(e) => {
-    if (e.key === 'Escape') confirming = null;
+    if (e.key === 'Escape') dismissConfirm();
   }}
 />
 
@@ -146,7 +221,7 @@
   </div>
 {/if}
 
-<div class="flex max-w-xl flex-col gap-4">
+<div class="flex max-w-xl flex-col gap-4" bind:this={panel}>
   <div class="flex flex-col gap-2 rounded-xl border p-3">
     {#if data.blocklist.id}
       <div class="flex gap-1">
@@ -189,12 +264,14 @@
   {:else}
     <div class="flex flex-col gap-2">
       <span class="text-sm font-medium">{humanizeBlocklistType(data.type)}</span>
-      <ListFilterBar
-        fields={[{ kind: 'search', key: 'q', label: 'Filter entries' }]}
-        bind:values={filters}
-        matched={shown.matches.length}
-        total={sortedItems.length}
-      />
+      <div data-blocklist-filter>
+        <ListFilterBar
+          fields={[{ kind: 'search', key: 'q', label: 'Filter entries' }]}
+          bind:values={filters}
+          matched={shown.matches.length}
+          total={sortedItems.length}
+        />
+      </div>
       {#if shown.matches.length === 0}
         <p class="text-sm text-dark-2">Nothing on this list matches "{(filters.q ?? '').trim()}".</p>
       {:else}
@@ -221,6 +298,7 @@
                   size="icon"
                   class="size-4"
                   disabled={removing !== null}
+                  data-chip-remove={item}
                   aria-label="Remove {item}"
                   title="Remove {item}"
                   aria-haspopup="true"
@@ -254,7 +332,7 @@
                     size="sm"
                     variant="outline"
                     disabled={removing !== null}
-                    onclick={() => (confirming = null)}
+                    onclick={dismissConfirm}
                   >
                     Cancel
                   </Button>
