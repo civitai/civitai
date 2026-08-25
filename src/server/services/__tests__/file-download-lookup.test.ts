@@ -90,7 +90,6 @@ vi.mock('~/utils/delivery-worker', () => ({
   resolveDownloadUrl: resolveDownloadUrlMock,
 }));
 
-
 function publishedModelVersion(overrides: Record<string, unknown> = {}) {
   return {
     id: 1,

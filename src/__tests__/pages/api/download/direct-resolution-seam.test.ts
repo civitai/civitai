@@ -25,14 +25,12 @@ const {
   mockGetFileForModelVersion,
   mockHasExceededLimit,
   mockIncrement,
-  mockLogToAxiom,
   mockEnv,
 } = vi.hoisted(() => ({
   mockGetServerAuthSession: vi.fn(),
   mockGetFileForModelVersion: vi.fn(),
   mockHasExceededLimit: vi.fn(),
   mockIncrement: vi.fn(),
-  mockLogToAxiom: vi.fn(),
   mockEnv: { STORAGE_RESOLVER_DIRECT_USER_AGENTS: [] as string[] },
 }));
 
@@ -55,14 +53,6 @@ vi.mock('~/server/clickhouse/client', () => ({
   },
 }));
 
-vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
-
-vi.mock('~/server/redis/client', () => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const make = (): any => new Proxy(() => 'k', { get: () => make() });
-  return { REDIS_SYS_KEYS: make(), REDIS_KEYS: make(), redis: {}, sysRedis: {} };
-});
-
 vi.mock('~/server/utils/rate-limiting', () => ({
   createLimiter: () => ({
     hasExceededLimit: mockHasExceededLimit,
@@ -81,6 +71,8 @@ vi.mock('~/env/server', () => ({ env: mockEnv }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import handler from '~/pages/api/download/models/[modelVersionId]';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockLogToAxiom = loggingMock.logToAxiom;
 
 const mockFindUnique = dbMock.dbRead.keyValue.findUnique;
 const REDIRECT_URL = 'https://example.invalid/signed/model.safetensors';
