@@ -12,7 +12,7 @@
   import { num } from '$lib/format';
   import { BLOCKLIST_TYPES, BLOCKLIST_DESCRIPTIONS, humanizeBlocklistType } from '$lib/blocklist';
   import { visibleBlocklistItems } from './filter';
-  import { chipFocusTarget } from './focus';
+  import { chipFocusTarget, confirmDismissTarget, type RemovalFocusGuards } from './focus';
   import type { ActionData, PageData } from './$types';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
 
@@ -116,10 +116,11 @@
           // both the re-rendered chips and that re-enable (it drains cascading batches), and would
           // stop being enough only under `compilerOptions.experimental.async`, which this app does
           // not set.
-          if (restoreFocus) {
-            await tick();
-            if (data.type === submittedType) focusAfterRemoval(position, item);
-          }
+          await tick();
+          focusAfterRemoval(position, item, {
+            focusWasInForm: restoreFocus,
+            sameType: data.type === submittedType,
+          });
         }
       };
     };
@@ -129,15 +130,24 @@
     panel?.querySelector<HTMLElement>(`[data-chip-remove="${CSS.escape(entry)}"]`) ?? null;
 
   /**
-   * Returns focus to the chip a confirm was opened on. Cancel and Escape both unmount the popover
-   * that holds `document.activeElement`, and Svelte flushes that teardown synchronously — so
-   * without this the keyboard user who opens a confirm and changes their mind lands on <body>,
-   * which is the same failure this file exists to fix, one keystroke off the path that was fixed.
+   * Returns focus to the chip a confirm was opened on. Dismissing unmounts the popover, so a
+   * keyboard user who opens a confirm and changes their mind otherwise lands on <body> — the same
+   * failure this file exists to fix, one keystroke off the path that was fixed.
+   *
+   * Resolved BEFORE `confirming` is cleared, since afterwards there is nothing to look up. The X
+   * itself lives outside the `{#if}`, so it survives the dismissal either way and the flush timing
+   * does not matter.
    */
   function dismissConfirm() {
     const control = confirming ? chipControl(confirming) : null;
+    // Escape comes from a window handler, so it fires with focus anywhere on the page — including
+    // the filter box with the popover still open, which is a reflex rather than an edge case.
+    const target = confirmDismissTarget(
+      confirming,
+      !!control?.closest('form')?.contains(document.activeElement)
+    );
     confirming = null;
-    control?.focus();
+    if (target.kind === 'chip') control?.focus();
   }
 
   /**
@@ -150,9 +160,10 @@
    * the chips when the LIST is empty rather than merely filtered to nothing, so the textarea is the
    * last resort.
    */
-  function focusAfterRemoval(position: number, item: string) {
+  function focusAfterRemoval(position: number, item: string, guards: RemovalFocusGuards) {
     if (!panel) return;
-    const next = chipFocusTarget(shown.visible, position, item);
+    const next = chipFocusTarget(shown.visible, position, item, guards);
+    if (next.kind === 'none') return;
     const target =
       (next.kind === 'chip' ? chipControl(next.entry) : null) ??
       panel.querySelector<HTMLElement>('[data-blocklist-filter] input') ??
