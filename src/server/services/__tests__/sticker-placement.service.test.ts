@@ -1814,6 +1814,13 @@ describe('getMyStickerPlacements', () => {
 
     await getMyStickerPlacements({ placerId: PLACER, ...LEVELS });
 
+    // ONE read, asserted before the argument is. Both assertions here read
+    // `calls.at(-1)`, so a second unfiltered `image.findMany` added ahead of
+    // this one — its rows merged into the same map — leaves the last call
+    // compliant and every argument check green while the urls it fetched flow
+    // out. The count is what makes that unwritable.
+    expect(imageFindMany).toHaveBeenCalledTimes(1);
+
     const { where } = imageFindMany.mock.calls.at(-1)?.[0] as {
       where: { post?: Record<string, unknown> };
     };
