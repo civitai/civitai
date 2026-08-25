@@ -2,8 +2,6 @@
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import type { Signals } from './signals';
 
-  // Retool showed this in Quick Info, on the first screen. It spent the migration on the Addresses
-  // panel, where the accounts it describes are not what anyone is looking at.
   let { signals, civitaiUrl, username }: {
     signals: Promise<Signals> | null;
     civitaiUrl: string;
@@ -17,13 +15,12 @@
     <div class="mb-4 rounded-xl border border-red-500/40 bg-red-500/10 p-4" role="status">
       <p class="text-sm font-semibold text-red-200">Comment spam signature</p>
       <p class="mt-1 text-sm text-dark-0">
-        {num(burst.comments)} comments on {num(burst.targets)} different things in the hour of
-        {dateTime(burst.hour)}.
+        {num(burst.comments)} comments in the hour of {dateTime(burst.hour)}, when the account was
+        {burst.ageAtBurstHours < 1 ? 'under an hour' : `${Math.round(burst.ageAtBurstHours)} hours`} old.
       </p>
       <p class="mt-1 text-xs text-dark-2">
-        One comment per target in a single hour is what a script does — a conversation revisits a
-        thread. Weigh it against how old the account is; established accounts comment in bursts
-        legitimately.
+        That volume from an account this young was banned 98.9% of the time over the last 90 days; the
+        same volume from an older account, 1.2%.
         {#if username}
           <a
             href="{civitaiUrl}/user/{username}"

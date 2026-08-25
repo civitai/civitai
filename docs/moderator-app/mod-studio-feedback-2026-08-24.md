@@ -125,55 +125,46 @@ accurate, but four of the seven have a cause that is not what the symptom sugges
       the wiring — that last one exists because the helper's own tests stay green if the call site is
       removed.
 
-- [ ] **"Comment Spam Identifier" from Retool.** **It exists, it is in the export, and it is already
-      ported — the earlier entry here was wrong on all three counts.** It is Retool's **"Comment
-      Spammer"** alert in User Lookup's Quick Info, backed by `PotentialSpammerV2`, and it lives in this
-      repo as `getCommentBurst` (`user-signals.service.ts`), rendered as an amber line on the
-      **Addresses** panel: "N comments in the last 48 hours — possible spam burst."
+- [x] **"Comment Spam Identifier" from Retool.** It is Retool's **"Comment Spammer"** alert in User
+      Lookup's Quick Info, backed by `PotentialSpammerV2`, and it was ported here as `getCommentBurst`
+      — so the earlier claim in this file that it "is not in anything we have" was wrong. What replaced
+      it is a rule measured against the wave rather than Retool's.
 
-      **Retool's rule was "more than 2 comments in 48 hours", and its threshold was broken.** The alert's
-      visibility expression was `!total_comment_count < 20`, which evaluates `!x` to a boolean first —
-      so the 20 never gated anything and the only real gate was the query's own `> 2`. Measured on prod
-      2026-08-24: that rule matches **367 accounts right now, 3 of them banned.** So the reason nobody
-      could say what it measured is that it measured almost nothing — which is worth knowing before
-      rebuilding it faithfully.
+      🔴 **Retool's alert never fired, in any state.** Its visibility expression was
+      `!total_comment_count < 20`, and `!x` evaluates to a boolean first — so both branches yield
+      `true` and `hidden` was a tautology. It has been invisible since 2023. That is the actual answer
+      to "nobody is sure what it should measure": nobody had seen it. There is no Retool behaviour here
+      to be faithful to, which is what licensed replacing the rule outright.
 
-      **What the current wave actually looks like** (1,002 accounts banned 2026-08-24, measured from
-      ClickHouse `comments` events, which survive the comment deletion that follows a ban):
+      **The rule, measured over 90 days of comment events against ban outcomes:**
 
-      | | |
-      | --- | --- |
-      | account age at ban | p50 **1.1 h**, p90 5.5 h |
-      | comments posted | p50 **11**, and 11 is also the p90 — a script that stops |
-      | distinct targets | **11** — one comment each, no thread twice |
-      | first to last comment | **2 minutes** |
+      | rule | accounts | banned |
+      | --- | --- | --- |
+      | ≥10 comments in an hour, any age | 1,086 | 76.5% |
+      | **≥10 comments in an hour, account < 2 days old** | **837** | **98.9%** |
+      | ≥10 comments in an hour, account ≥ 2 days old | 249 | **1.2%** |
 
-      A candidate rule falls straight out: **≥10 comments on ≥10 distinct targets within one hour.**
-      Over 90 days that matches 1,071 accounts, **831 already banned**; of the 240 it matches that are
-      not banned, only **4** are recent signups. Adding "account younger than 2 days" is what separates
-      the wave from established power users — note the accounts posting *20–39* comments an hour are
-      almost all legitimate (1.6% banned), so raw volume alone points the wrong way.
+      **The account's age is the rule, not a refinement.** A volume-only version points at 249
+      established accounts having an argument.
 
-      🔴 **Build it on ClickHouse, not Postgres, and make it a LIST.** `getCommentBurst` reads Postgres,
-      and moderators delete the comments when they ban: of the 1,002 accounts in this wave, **2 comments
-      remain**. The Postgres signal is therefore blind to any account already actioned, and useless for
-      "show me who else did this". The ClickHouse events persist, which also turns the signal from a
-      per-account badge into the thing the round actually asked for — a queue of accounts to look at.
+      🔴 **An earlier version of this entry claimed the wave posted "11 comments on 11 distinct targets,
+      no thread twice". That was an artifact, not a measurement.** The ClickHouse `comments` table
+      records `entityId` as the COMMENT's own id for every type except `Model` — verified over 7 days:
+      Image 18,717 rows / 18,700 "distinct", Comment 5,950 / 5,943, against Model 8,987 / 3,261. So a
+      distinct-target count is the comment count restated, and `targets >= 10` was `comments >= 10`
+      written twice. It has been removed from the rule and from both screens, which were stating it to
+      moderators as fact. Recovering a real distinct-target signal needs the tracker fixed — filed in
+      [`post-migration-backlog.md`](post-migration-backlog.md).
 
-      **Decided 2026-08-24, both yes — and built.** The signal is ≥10 comments on ≥10 distinct targets
-      within an hour from an account under two days old, read from ClickHouse; Retool's ">2 in 48h" is
-      retired rather than kept alongside, since it fires on 367 accounts a day and would drown the new
-      one. The badge sits at the top of Basic where Retool had it.
+      **Built, and the same rule on both surfaces:** a badge at the top of User Lookup's Basic section
+      (where Retool had it), and a list at `/users/newest?view=spam` covering 24h / 7d / 30d, with
+      already-banned and deleted accounts left out because it is a queue of things to do. Both read
+      ClickHouse — moderators delete the comments when they ban, so Postgres cannot answer for anyone
+      already actioned: of the 1,002 accounts in the 2026-08-24 wave, **two comments survive**.
 
-      It is also a **list**, which is what the round asked for and what Retool never had:
-      `/users/newest?view=spam` is the same page as the newest-accounts list — same question, same
-      grant, one query each — showing every account matching the signature in the last 24h / 7d / 30d,
-      with already-banned and deleted accounts left out because the list is a queue of things to do.
-      Each row carries the burst, how old the account was when it happened, and a link to every other
-      account on its email domain.
-
-      The thresholds live in `$lib/comment-spam.ts` so the sentence a moderator reads on the page and
-      the rule that built the list are the same constant.
+      The cap is applied **after** the exclusions, which is not a detail: capping first returned 200
+      rows that were all already-banned wave accounts, so the page said "nothing matches" during the
+      wave it exists for.
 
 - [x] **A "newest users" page, for catching fresh spam accounts and ban evaders.** Built at
       **`/users/newest`**, a new `NAVIGATION` entry beside `/users` — which is untouched and still

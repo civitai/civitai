@@ -39,12 +39,18 @@
   let removeComments = $state(false);
   const uid = $props.id();
 
+  // A toggle the moderator touched is theirs and survives a reason change; one this preset ticked is
+  // undone when they pick a reason that does not remove content. Latching both alike is how a SpamBot
+  // pick followed by a switch to Harassment silently blocks every image on a reason that never asked to.
+  // `removeModels` is absent on purpose: it defaults on for every ban already.
+  let mediaTouched = $state(false);
+  let commentsTouched = $state(false);
+
   const pickReason = (value: string) => {
     reasonCode = value;
-    if (!BAN_REASONS_REMOVING_CONTENT.includes(value as BanReasonCode)) return;
-    removeModels = true;
-    removeMedia = true;
-    removeComments = true;
+    const removesContent = BAN_REASONS_REMOVING_CONTENT.includes(value as BanReasonCode);
+    if (!mediaTouched) removeMedia = removesContent;
+    if (!commentsTouched) removeComments = removesContent;
   };
 
   const removesAnything = $derived(removeModels || removeMedia || removeComments);
@@ -111,7 +117,7 @@
       <Checkbox
         id="ban-remove-media-{uid}"
         name="removeMedia"
-        bind:checked={() => removeMedia, (v) => (removeMedia = v)}
+        bind:checked={() => removeMedia, (v) => ((mediaTouched = true), (removeMedia = v))}
       />
       <Label for="ban-remove-media-{uid}" class="font-normal text-dark-0">
         Also remove their images
@@ -131,7 +137,7 @@
       <Checkbox
         id="ban-remove-comments-{uid}"
         name="removeComments"
-        bind:checked={() => removeComments, (v) => (removeComments = v)}
+        bind:checked={() => removeComments, (v) => ((commentsTouched = true), (removeComments = v))}
       />
       <Label for="ban-remove-comments-{uid}" class="font-normal text-dark-0">
         Remove their comments
@@ -151,6 +157,8 @@
               .filter(Boolean)
               .join(', ')} will be removed.
           {/if}
+        {:catch}
+          <!-- The count failing must not take the warning with it: what is ticked still goes. -->
         {/await}
         Untick anything you want left up.
       </p>

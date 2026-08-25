@@ -277,6 +277,17 @@ findings are done — see the parity checklist.
       reason that call site interpolates with `sql.raw`. Measured 2026-08-24: node-postgres declares no
       parameter types, so the server infers int4 and resolution succeeds. The comment is what makes the
       next person reach for `sql.raw` on a value — which is the shape that turns a value into SQL.
+- [ ] **ClickHouse `comments.entityId` is the comment's own id, not the thing commented on.**
+      `commentv2.controller.ts` tracks `entityId: result.id` (the new `CommentV2` row), while the legacy
+      `comment.controller.ts` tracks `entityId: comment.modelId` (a real target). So for Image, Post,
+      Comment, Review, Bounty and BountyEntry — ~73% of comment volume — `uniq(entityId)` equals
+      `count()` and any "distinct targets" measure is meaningless. Verified over 7 days: Image 18,717
+      rows / 18,700 "distinct" against Model 8,987 / 3,261. It cost the comment-spam signature a
+      condition (2026-08-24) and would silently mislead anything else that groups on it. Fixing it is a
+      one-line tracker change, and only helps from that point forward — the history stays wrong.
+      Two further gaps found at the same time: **article and challenge comments are never tracked at
+      all** (`commentv2.controller.ts` guards them out), and **editing a model comment emits a second
+      event**, inflating counts.
 - [ ] **`getJudgeCommentForImage` returns comment content with no ToS predicate.**
       `commentsv2.service.ts` reads a challenge judge's comment by raw SQL and returns the body. Every
       other v2 read filters `tosViolation` for non-moderators as of 2026-08-24; this one does not. The

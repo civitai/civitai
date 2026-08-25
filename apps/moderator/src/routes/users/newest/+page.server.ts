@@ -50,12 +50,15 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     view === 'newest'
       ? getNewestUsers({ days, limit, cursor, username, email })
       : Promise.resolve([]),
-    view === 'spam' ? getCommentSpamAccounts({ days: spamDays }) : Promise.resolve([]),
+    view === 'spam'
+      ? getCommentSpamAccounts({ days: spamDays })
+      : Promise.resolve({ accounts: [], truncated: false }),
   ]);
 
   return {
     view,
-    spam,
+    spam: spam.accounts,
+    spamTruncated: spam.truncated,
     spamDays,
     spamWindows: COMMENT_SPAM_WINDOWS,
     days,

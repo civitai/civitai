@@ -277,56 +277,54 @@ export async function getSharedSocialAccounts(
   };
 }
 
-/**
- * The comment-spam signature, measured 2026-08-24 against the wave that prompted it: 1,002 accounts, a
- * median age of 1.1 hours at ban, **11 comments on 11 distinct targets inside 2 minutes**, then silence.
- *
- * Thresholds confirmed by the mod team. Over 90 days they match 1,071 accounts of which 831 were already
- * banned, and only 4 of the unbanned remainder were recent signups. Volume ALONE points the wrong way —
- * accounts posting 20-39 comments an hour are 98% legitimate — so the spread across distinct targets and
- * the account's age are doing the work, not the count.
- */
-export { COMMENT_SPAM } from '$lib/comment-spam';
-
 export type CommentBurst = {
   comments: number;
-  /** Distinct entities commented on in that hour. A script hits each target once; a conversation does not. */
-  targets: number;
+  /** Normalised to ISO. ClickHouse hands back `YYYY-MM-DD HH:MM:SS` with no zone, which renders shifted
+   *  by the viewer's offset — putting the burst on a different clock from the IP events beside it. */
   hour: string;
-  /** Whether it clears `COMMENT_SPAM`. Account age is applied by the caller, which has the User row. */
+  /** Hours between signup and the burst. This is the condition that does the discriminating. */
+  ageAtBurstHours: number;
   matchesSignature: boolean;
 };
 
 /**
- * Retool's PotentialSpammer/V2 measured "more than 2 comments in 48 hours" over Postgres. Both halves of
- * that are retired:
+ * Retool's PotentialSpammer/V2 measured "more than 2 comments in 48 hours" over Postgres. All of that
+ * is retired: the threshold detected nothing in particular, and Postgres cannot answer after a ban
+ * because moderators delete the comments — of the 1,002 accounts in the 2026-08-24 wave, TWO comments
+ * survived. ClickHouse keeps the events, which is also what lets one rule drive the list.
  *
- * - The threshold fired on 367 accounts and 3 bans on an ordinary day, and its own Retool visibility
- *   expression (`!count < 20`) never gated anything, so nobody could say what it detected.
- * - Postgres cannot answer the question after a ban. Moderators delete the comments: of the 1,002
- *   accounts in the 2026-08-24 wave, TWO comments survived. ClickHouse keeps the events, which is also
- *   what lets the same rule drive a list of accounts rather than one badge.
+ * The busiest hour, and how old the account was when it happened. Both halves of `COMMENT_SPAM` are
+ * applied HERE rather than by the caller, so this badge and `/users/newest?view=spam` cannot drift
+ * into two rules.
  */
 export async function getCommentBurst(userId: number): Promise<CommentBurst | null> {
-  const rows = await getClickhouse().$query<{ comments: string; targets: string; hour: string }>(`
-    SELECT count() AS comments, uniq(entityId) AS targets, toString(toStartOfHour(time)) AS hour
-    FROM comments
-    WHERE userId = ${Number(userId)} AND time >= now() - INTERVAL 30 DAY
-    GROUP BY toStartOfHour(time)
-    ORDER BY comments DESC
-    LIMIT 1
-  `);
+  const [rows, account] = await Promise.all([
+    getClickhouse().$query<{ comments: string; hour: string }>(`
+      SELECT count() AS comments, toString(toStartOfHour(time)) AS hour
+      FROM comments
+      WHERE userId = ${Number(userId)} AND time >= now() - INTERVAL 30 DAY
+      GROUP BY toStartOfHour(time)
+      ORDER BY comments DESC
+      LIMIT 1
+    `),
+    dbRead.selectFrom('User').select('createdAt').where('id', '=', userId).executeTakeFirst(),
+  ]);
   const row = rows[0];
-  if (!row) return null;
+  if (!row || !account) return null;
 
+  const hour = clickhouseDate(row.hour);
   const comments = Number(row.comments);
-  const targets = Number(row.targets);
+  const ageAtBurstHours = Math.max(
+    0,
+    (new Date(hour).getTime() - new Date(account.createdAt).getTime()) / 3_600_000
+  );
   return {
     comments,
-    targets,
-    hour: row.hour,
+    hour,
+    ageAtBurstHours,
     matchesSignature:
-      comments >= COMMENT_SPAM.minComments && targets >= COMMENT_SPAM.minTargets,
+      comments >= COMMENT_SPAM.minComments &&
+      ageAtBurstHours <= COMMENT_SPAM.maxAccountAgeDays * 24,
   };
 }
 

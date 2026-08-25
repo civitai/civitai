@@ -30,8 +30,10 @@ export type BanReasonCode = (typeof BAN_REASONS)[number];
  * Reasons where leaving the content up is never the intent, so every removal toggle is pre-ticked.
  * The moderator can still untick, and each ban form warns what will go before it is confirmed.
  *
- * Shared by the single- and bulk-ban forms; the main app's `UserBanModal` keeps its own copy of this
- * rule because it cannot import across the app boundary — change both.
+ * Shared by the single- and bulk-ban forms. The main app's `UserBanModal` has its own list because it
+ * cannot import across the app boundary, and it is deliberately NOT identical: it also pre-ticks media
+ * for `SexualMinor`, which this list leaves out because `toggleBan` already defaults that server-side.
+ * A new code that should take content down belongs in both.
  */
 export const BAN_REASONS_REMOVING_CONTENT: BanReasonCode[] = ['SpamBot'];
 

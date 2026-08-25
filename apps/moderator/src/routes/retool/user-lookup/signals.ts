@@ -17,8 +17,8 @@ export type LinkedAccount = {
  *  `user-signals.service.ts`; declared rather than imported for the reason above. */
 export type CommentBurst = {
   comments: number;
-  targets: number;
   hour: string;
+  ageAtBurstHours: number;
   matchesSignature: boolean;
 };
 
