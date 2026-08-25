@@ -1865,8 +1865,20 @@ export const getAllImages = async (
     AND.push(Prisma.sql`(p."publishedAt" IS NULL)`);
   } else if (!effectivePending) {
     // Strict published-only, with the owner carve-out gated on the `scheduled`
-    // opt-in — the same rule the two Meili builders and the BitDex merge apply,
-    // so all three backends now answer this question identically.
+    // opt-in — the same rule the two Meili builders and the BitDex merge apply
+    // FOR A NON-MODERATOR.
+    //
+    // Deliberately not claiming full parity, because there isn't any. A
+    // moderator's `scheduled` request diverges: Meili emits `publishedAtUnix >
+    // now` (scheduled content from every creator), while this path emits the
+    // ordinary published feed plus that one moderator's own scheduled posts. So
+    // a moderator on a collection or any other DB-pinned view sees a different
+    // population than they would on the index. Pre-existing and out of scope
+    // here; recorded so the next person checking parity does not read a
+    // three-backend claim and stop looking.
+    //
+    // A fourth site is out of step too: `getImage` (~:6452) still carries the old
+    // permissive `OR p."userId" = <viewer>` with no publish predicate.
     //
     // The carve-out used to be a bare `p."userId" = <viewer>` with no publish
     // predicate and no opt-in, so every signed-in caller got their own drafts,
@@ -1875,8 +1887,14 @@ export const getAllImages = async (
     // than unpublished; drafts have a NULL publish time and are reached through
     // the Draft toggle instead (`notPublished`, handled above).
     //
-    // userId is bound into the SQL, so each user gets their own cache key —
-    // safe to cache, lower hit rate but no cross-user leakage.
+    // Cache keying is NOT carried by this clause — measured, because the obvious
+    // reading is that removing the bare owner match widened the key. It does not:
+    // the availability carve-out a few lines below binds `userId` into the SQL
+    // for every non-moderator, and `queryCacheRaw` hashes the whole statement
+    // including its values. So the key stays per-user for the same viewers it
+    // always was. A moderator's key does widen — they skip the availability
+    // clause too — which shares one key across moderators rather than one each,
+    // and cannot collide with a non-moderator's differently-shaped SQL.
     if (userId && !publishedOnly && scheduled) {
       AND.push(
         Prisma.sql`(p."publishedAt" < now() OR (p."userId" = ${userId} AND p."publishedAt" > now()))`

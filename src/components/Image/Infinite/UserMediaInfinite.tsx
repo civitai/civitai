@@ -6,6 +6,7 @@ import React from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { SortFilter } from '~/components/Filters';
 import { FeedContentToggle } from '~/components/FeedContentToggle/FeedContentToggle';
+import type { MediaFilterKey } from '~/components/Image/Filters/media-filter-keys';
 import { MediaFiltersDropdown } from '~/components/Image/Filters/MediaFiltersDropdown';
 import type { ImageSections } from '~/components/Image/image.utils';
 import { useImageQueryParams } from '~/components/Image/image.utils';
@@ -21,6 +22,13 @@ import { trpc } from '~/utils/trpc';
 import classes from './UserMediaInfinite.module.css';
 
 const availableReactions = Object.keys(constants.availableReactions) as ReviewReactions[];
+
+// Module constant, not an inline literal. It is a dep of `excluded`'s useMemo in
+// MediaFiltersDropdown, which feeds `shows`, which this PR made a dep of
+// `handleClear` — so a fresh array each render un-memoises `handleClear`,
+// `showResources` and `showModerator`. `HubFeedFilters` already hoists its own
+// for the same reason.
+const PROFILE_EXCLUDED_FILTERS: MediaFilterKey[] = ['notPublished'];
 
 export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType }) {
   const currentUser = useCurrentUser();
@@ -78,7 +86,16 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
                     size="xs"
                     value={section}
                     type={type}
-                    onChange={(section) => replace({ section })}
+                    // Clears `notPublished` on the way into Reactions. `replace`
+                    // merges, and the Draft toggle hides itself there — so for a
+                    // moderator, whose grant needs no creator scope, the tab
+                    // silently became "unpublished images I reacted to" with the
+                    // only control that could undo it no longer on screen.
+                    onChange={(section) =>
+                      replace(
+                        section === 'reactions' ? { section, notPublished: undefined } : { section }
+                      )
+                    }
                   />
                 )}
                 {/* Drafts are the creator's own unpublished work, so the toggle
@@ -152,7 +169,7 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
                   // state. Dropped HERE only — the chip is the sole way to reach
                   // unpublished content on /images, /videos, collections, tool
                   // feeds and model galleries, none of which have a toggle.
-                  exclude={['notPublished']}
+                  exclude={PROFILE_EXCLUDED_FILTERS}
                   isSameUser={isSameUser}
                 />
               </Group>
@@ -181,7 +198,7 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
                   reactions: viewingReactions ? reactions ?? availableReactions : undefined,
                   userId: viewingReactions ? undefined : user.id,
                   username: viewingReactions ? undefined : username,
-                  notPublished,
+                  notPublished: viewingReactions ? undefined : notPublished,
                   scheduled,
                   followed,
                   baseModels,

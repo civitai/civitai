@@ -385,9 +385,35 @@ describe('BitDex primary feed — content is not served before its publish time'
     });
 
     expect(result.source).toBe('meili');
-    // 101 is the published doc. Its presence would mean BitDex answered with the
-    // published feed — the exact failure this decline exists to prevent.
-    expect(result.data.map((i: { id: number }) => i.id)).not.toContain(101);
+    // Asserted on the MOCK, not on `data`. `data` is `[]` by construction whenever
+    // source is meili — this file stubs `metricsSearchClient: null` and the Meili
+    // builders early-return an empty page — so a `not.toContain(101)` here could
+    // never fail. It read as proof that BitDex had not answered with the published
+    // feed and proved nothing.
+    //
+    // The mock also separates the two ways source can be 'meili': the decline
+    // firing (no BitDex query at all) versus BitDex throwing and falling through.
+    expect(queryBitdexMock).not.toHaveBeenCalled();
+  });
+
+  it('declines when the creator is addressed by USERNAME rather than id', async () => {
+    // 🔴 The decline sits AFTER the username→userId resolution precisely so this
+    // works. Every other case here passes `userId` explicitly, so the check reads
+    // the same value at either position and none of them can tell whether the
+    // placement is right. Move the block above the resolution and only this case
+    // fails — which matters because the profile page addresses creators by handle.
+    routeByShape();
+
+    const result = await getImagesFromSearch({
+      ...baseInput,
+      currentUserId: OWNER_ID,
+      username: 'owner-handle',
+      isModerator: false,
+      notPublished: true,
+    });
+
+    expect(result.source).toBe('meili');
+    expect(queryBitdexMock).not.toHaveBeenCalled();
   });
 
   it('does NOT decline a non-moderator asking about SOMEONE ELSE', async () => {
@@ -407,6 +433,7 @@ describe('BitDex primary feed — content is not served before its publish time'
     });
 
     expect(result.source).toBe('bitdex');
+    expect(queryBitdexMock).toHaveBeenCalled();
   });
 
   it('declines a moderator’s `notPublished` request so Meili answers it', async () => {
