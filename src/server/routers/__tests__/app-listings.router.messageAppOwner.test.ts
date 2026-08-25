@@ -1,7 +1,7 @@
 import { readFileSync } from 'fs';
 import path from 'path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { TRPCError } from '@trpc/server';
+import type { TRPCError } from '@trpc/server';
 
 /**
  * `appListings.messageAppOwner` — the moderator → app-developer message proc.

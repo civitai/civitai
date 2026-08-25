@@ -34,10 +34,13 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
  */
 
 const { mockActorQuota, mockListingQuota, mockBlockedLink, mockNotify } = vi.hoisted(() => ({
-  mockActorQuota: vi.fn(async (_id: number) => ({ allowed: true } as unknown)),
-  mockListingQuota: vi.fn(async (_id: string) => ({ allowed: true } as unknown)),
-  mockBlockedLink: vi.fn(async (_v: string) => undefined),
-  mockNotify: vi.fn(async (_o: unknown) => undefined),
+  // No declared parameters: `vi.fn` records the arguments it is CALLED with regardless,
+  // so `toHaveBeenCalledWith(...)` below is unaffected — and a named-but-unused
+  // parameter is what `@typescript-eslint/no-unused-vars` flags.
+  mockActorQuota: vi.fn(async () => ({ allowed: true } as unknown)),
+  mockListingQuota: vi.fn(async () => ({ allowed: true } as unknown)),
+  mockBlockedLink: vi.fn(async () => undefined),
+  mockNotify: vi.fn(async () => undefined),
 }));
 
 vi.mock('~/server/utils/app-moderator-message-rate-limit', () => ({

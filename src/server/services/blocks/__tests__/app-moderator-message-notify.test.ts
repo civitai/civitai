@@ -9,7 +9,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  */
 
 const { mockCreateNotification } = vi.hoisted(() => ({
-  mockCreateNotification: vi.fn(async (..._a: unknown[]) => undefined),
+  mockCreateNotification: vi.fn(async () => undefined),
 }));
 
 vi.mock('~/server/services/notification.service', () => ({
