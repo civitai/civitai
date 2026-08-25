@@ -7,6 +7,7 @@ import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { stripBenignPhrases } from '~/server/services/blocklist.service';
 import { applyPendingReviewMute } from '~/server/services/user-restriction.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { normalizeText } from '~/utils/normalize-text';
 import {
   auditPromptEnriched,
   isSoftBlock,
@@ -246,9 +247,14 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
     // generation gate and the post-generation scan audit agree on what's benign.
     // Only the audited copy is cleaned — the original prompt is what gets generated,
     // reported to ClickHouse, and stored on the blocked-prompt entry below.
+    //
+    // 🔴 Strip the NORMALIZED copy. `auditPromptEnriched` folds accents before the
+    // detector runs, so stripping raw text matches one alphabet while the detector
+    // reads another and a whitelisted `emma stone` still blocks `émma stone`. The
+    // scan paths in image-scan-result.service.ts already normalize first.
     const [auditedPrompt, auditedNegativePrompt] = await Promise.all([
-      stripBenignPhrases(prompt, BlocklistType.PromptBenignPhrase),
-      stripBenignPhrases(negativePrompt, BlocklistType.NegativeBenignPhrase),
+      stripBenignPhrases(normalizeText(prompt), BlocklistType.PromptBenignPhrase),
+      stripBenignPhrases(normalizeText(negativePrompt), BlocklistType.NegativeBenignPhrase),
     ]);
 
     // Run regex-based audit (enriched to capture structured trigger data)
