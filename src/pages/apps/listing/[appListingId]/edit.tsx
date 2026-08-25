@@ -2,7 +2,9 @@ import { Anchor, Center, Container, Group, Loader, Stack, Tabs } from '@mantine/
 import {
   IconArrowLeft,
   IconCoin,
+  IconHistory,
   IconPhoto,
+  IconRocket,
   IconSettings,
   IconUsers,
   IconWriting,
@@ -20,6 +22,8 @@ import {
   resolveEditorTab,
 } from '~/components/Apps/appListingEditorTabs';
 import { APPS_PAGE_WIDTHS } from '~/components/Apps/appsPageWidths';
+import { ListingHistoryPanel } from '~/components/Apps/ListingHistoryPanel';
+import { ListingPublishingPanel } from '~/components/Apps/ListingPublishingPanel';
 import { AppsListingDetailsEditor } from '~/components/Apps/AppsSubmitEditView';
 import { goBackOrFallback } from '~/components/Apps/listingEditNav';
 import { ListingMediaEditor } from '~/components/Apps/ListingMediaEditor';
@@ -40,9 +44,19 @@ import { trpc } from '~/utils/trpc';
  * kinds. That route now 302s here whenever its block has a listing, `?tab=` preserved.
  *
  * 🔴 THE TAB SET IS DERIVED, NEVER HARDCODED — `editorTabsFor(kind, appBlockId, role,
- * capabilities)`. Rendering a tab whose query will 403/404 is the failure mode this page
- * exists to avoid, so the allowed set and the `?tab=` parse both come from one function
+ * status, capabilities)`. Rendering a tab whose query will 403/404 is the failure mode this
+ * page exists to avoid, so the allowed set and the `?tab=` parse both come from one function
  * and an out-of-set `?tab=` falls back rather than mounting a doomed panel.
+ *
+ * 🔴 AND THE SET IS NOW STATUS-KEYED, WHICH MAKES IT A SECURITY SURFACE. This route used to
+ * refuse a `removed` or `rejected` listing outright, because leaving it open left a LIVE
+ * Collaborators tab on a delisted app and accepting an invite there still mints Forgejo
+ * `write`. That refusal also put an owner's own Republish out of reach — an owner Unpublish
+ * writes the same `status='removed'` a moderator takedown does — i.e. a one-way door only a
+ * moderator could reopen. The route now opens in a NARROWED mode instead: at most Publishing
+ * (owner) + History, with every content tab withheld. The Collaborators hazard is closed at
+ * its own enforcement point (`inviteCollaborator` / `respondToInvite` refuse a non-authorable
+ * listing), because a tab set is a UI narrowing and never a gate.
  *
  * Access is single-sourced at the tRPC layer: `appListings.getAuthoringContext` resolves
  * the caller's role (owner OR accepted editor) and throws FORBIDDEN/NOT_FOUND otherwise
@@ -67,6 +81,8 @@ const TAB_ICONS: Record<EditorTab, typeof IconSettings> = {
   manifest: IconSettings,
   earnings: IconCoin,
   collaborators: IconUsers,
+  publishing: IconRocket,
+  history: IconHistory,
 };
 
 /**
@@ -135,6 +151,10 @@ export default function AppListingEditPage() {
     kind: context.kind,
     appBlockId: context.appBlockId,
     role: context.role,
+    // 🔴 THE SECURITY INPUT. A non-authorable listing (`removed`/`rejected`) collapses the
+    // set to at most Publishing + History — no Details, and above all no Collaborators.
+    // See `editorTabsFor`; the page must never hardcode a tab past this derivation.
+    status: context.status,
     capabilities: context.capabilities,
   });
   const tab = resolveEditorTab(router.query.tab, tabs);
@@ -209,6 +229,31 @@ export default function AppListingEditPage() {
             {tabs.includes('earnings') ? (
               <Tabs.Panel value="earnings" pt="md" data-testid="apps-edit-panel-earnings">
                 <AppEarningsPanel appListingId={context.appListingId} />
+              </Tabs.Panel>
+            ) : null}
+
+            {/* 🔴 OWNER-ONLY AND STATUS-KEYED — `editorTabsFor` offers this tab only where a
+                publishing control actually exists (`approved` ⇒ Unpublish, `removed` ⇒
+                Republish) and only to the owner, because both procs are owner-scoped
+                server-side. It is the tab that makes an owner Unpublish reversible. */}
+            {tabs.includes('publishing') ? (
+              <Tabs.Panel value="publishing" pt="md" data-testid="apps-edit-panel-publishing">
+                <ListingPublishingPanel
+                  appListingId={context.appListingId}
+                  slug={context.slug}
+                  kind={context.kind}
+                  role={context.role}
+                  status={context.status}
+                  lastModerationAction={context.lastModerationAction}
+                />
+              </Tabs.Panel>
+            ) : null}
+
+            {/* Moved off the `/apps/mine` row — see `ListingHistoryPanel`'s header for what
+                that move could have stranded and why it does not. */}
+            {tabs.includes('history') ? (
+              <Tabs.Panel value="history" pt="md" data-testid="apps-edit-panel-history">
+                <ListingHistoryPanel appListingId={context.appListingId} />
               </Tabs.Panel>
             ) : null}
 

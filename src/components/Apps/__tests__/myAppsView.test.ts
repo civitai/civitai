@@ -9,6 +9,7 @@ import {
   listingMediaShots,
   MY_APPS_CONTAINER_SIZE,
   myAppListingHref,
+  myAppsRowLinkable,
   orphanGroupStartsOpen,
   pageCount,
   pageSlice,
@@ -224,6 +225,7 @@ describe('myAppListingHref — per-row, per-kind, never one flat link', () => {
         kind: 'onsite',
         appBlockId: 'ab_9',
         role: 'owner',
+        status: 'approved',
         capabilities: capabilitiesForKind('onsite'),
       })
     ).toBe('/apps/listing/apl_on/edit?tab=details');
@@ -238,6 +240,7 @@ describe('myAppListingHref — per-row, per-kind, never one flat link', () => {
         kind: 'offsite',
         appBlockId: null,
         role: 'editor',
+        status: 'draft',
         capabilities: capabilitiesForKind('offsite'),
       })
     ).toBe('/apps/listing/apl_off/edit?tab=details');
@@ -250,9 +253,80 @@ describe('myAppListingHref — per-row, per-kind, never one flat link', () => {
         kind: 'onsite',
         appBlockId: 'ab_1',
         role: 'owner',
+        status: 'pending',
         capabilities: capabilitiesForKind('onsite'),
       })
     ).toContain('/apps/listing/apl%20a%2Fb/edit');
+  });
+});
+
+/**
+ * 🔴 THE ROW'S FIRST TAB IS NO LONGER ALWAYS `details`, and that is this PR.
+ *
+ * `/apps/mine` no longer carries the History disclosure or the Unpublish/Republish pair, so
+ * the row's link is the author's only route to either. It therefore has to land on a tab
+ * that EXISTS for that row — `editorTabsFor` is what decides, and these cases pin that the
+ * href follows it rather than hardcoding a default the destination would silently rewrite.
+ */
+describe('🔴 myAppListingHref follows the STATUS-narrowed tab set', () => {
+  const base = {
+    appListingId: 'apl_h',
+    kind: 'onsite',
+    appBlockId: 'ab_h',
+    role: 'owner',
+    capabilities: capabilitiesForKind('onsite'),
+  } as const;
+
+  it('an owner on a REMOVED listing lands on Publishing — their route back', () => {
+    expect(myAppListingHref({ ...base, status: 'removed' })).toBe(
+      '/apps/listing/apl_h/edit?tab=publishing'
+    );
+  });
+
+  it('an owner on a REJECTED listing lands on History — a different answer, same branch', () => {
+    expect(myAppListingHref({ ...base, status: 'rejected' })).toBe(
+      '/apps/listing/apl_h/edit?tab=history'
+    );
+  });
+
+  it('an EDITOR on a removed listing lands on History — Publishing is owner-only', () => {
+    expect(myAppListingHref({ ...base, status: 'removed', role: 'editor' })).toBe(
+      '/apps/listing/apl_h/edit?tab=history'
+    );
+  });
+});
+
+/**
+ * 🔴 BOTH CLAUSES OF THE LINK PREDICATE, each with a case where it is the SOLE cause.
+ */
+describe('myAppsRowLinkable — may THIS caller open the authoring page for THIS row?', () => {
+  it('every authorable status links, for either role', () => {
+    for (const status of ['draft', 'pending', 'approved']) {
+      expect(myAppsRowLinkable({ status, role: 'owner' })).toBe(true);
+      // 🔴 THE EDITOR ARM IS WHAT MAKES THE STATUS CLAUSE THE SOLE CAUSE HERE: an editor is
+      // linked on these statuses, so the role clause cannot be what allowed it.
+      expect(myAppsRowLinkable({ status, role: 'editor' })).toBe(true);
+    }
+  });
+
+  it('🔴 an OWNER links on removed and rejected — the narrowed surface is theirs', () => {
+    expect(myAppsRowLinkable({ status: 'removed', role: 'owner' })).toBe(true);
+    expect(myAppsRowLinkable({ status: 'rejected', role: 'owner' })).toBe(true);
+  });
+
+  it('🔴 an EDITOR does NOT — `getAppListingAuthoringContext` refuses them there', () => {
+    // Same statuses as the case above, different role: this pair is the sole cause of a
+    // `false`, so dropping the role clause reddens exactly here and nowhere else.
+    expect(myAppsRowLinkable({ status: 'removed', role: 'editor' })).toBe(false);
+    expect(myAppsRowLinkable({ status: 'rejected', role: 'editor' })).toBe(false);
+  });
+
+  it('🔴 an UNKNOWN status never links, for either role — fail closed', () => {
+    // `'quarantined'` is not a prefix or suffix of any real status, so it cannot match one
+    // by accident. This is the sole cause of a `false` for an OWNER, which is what makes the
+    // `canOpenListingAuthoringPage` clause individually killable.
+    expect(myAppsRowLinkable({ status: 'quarantined', role: 'owner' })).toBe(false);
+    expect(myAppsRowLinkable({ status: 'quarantined', role: 'editor' })).toBe(false);
   });
 });
 

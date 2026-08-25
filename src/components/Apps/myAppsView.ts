@@ -7,6 +7,10 @@ import type {
   ListingCapability,
   ListingKind,
 } from '~/shared/constants/app-capabilities.constants';
+import {
+  canOpenListingAuthoringPage,
+  isAuthorableListingStatus,
+} from '~/shared/constants/app-capabilities.constants';
 
 /**
  * `/apps/mine` — the pure view-model behind the ONE merged author table.
@@ -289,24 +293,52 @@ export function orphanGroupStartsOpen(
  * `/edit` link. `editorTabsFor` is the single derivation, so a row can never deep-link an
  * off-site listing at `?tab=manifest`.
  *
- * 🔴 STATED HONESTLY, as it was before: `tabs[0]` is `'details'` for every shape today,
- * because Details is the one tab every kind and role can always open. So this call cannot
- * currently produce a kind-specific href, and a test asserting "never `?tab=manifest` for
- * off-site" would pass whatever the capability table said. It is written this way so it
- * STAYS correct if the first tab ever becomes conditional. The real kind-derivation guard
- * is `appListingEditorTabs.test.ts`.
+ * 🔴 THE "STAYS CORRECT IF THE FIRST TAB EVER BECOMES CONDITIONAL" NOTE HAS COME TRUE, and
+ * the old caveat under it is retired. `tabs[0]` was `'details'` for every shape while the
+ * set was kind-derived only; now that `editorTabsFor` takes the listing's STATUS, a
+ * non-authorable listing has no Details tab at all and this href resolves to
+ * `?tab=publishing` (owner on a `removed` listing) or `?tab=history`. That is the point:
+ * `/apps/mine` no longer carries the History disclosure or the Unpublish/Republish pair,
+ * so the row's link is how the author reaches them, and it must land on the tab that
+ * exists rather than on a `?tab=details` the destination will silently rewrite.
  */
+/**
+ * May THIS caller open the authoring page for THIS row?
+ *
+ * 🔴 IT IS BOTH CLAUSES, AND EACH ONE IS THE SOLE CAUSE OF A `false` SOMEWHERE.
+ *
+ *   - STATUS. `canOpenListingAuthoringPage` fails closed on a status this code has never
+ *     heard of. It admits `removed` and `rejected` — the narrowed publishing/history mode —
+ *     which is the whole reason this predicate replaced the old `isAuthorableListingStatus`
+ *     test at the row's link: those two statuses are exactly the ones whose History used to
+ *     be reachable ONLY from the row, and the row is where it stopped being.
+ *   - ROLE. On a non-authorable status the narrowed surface is OWNER-ONLY server-side
+ *     (`getAppListingAuthoringContext` refuses a seated editor there), so an editor looking
+ *     at a removed app gets no link rather than a link to a 403.
+ *
+ * The two disagree in opposite directions and neither is redundant: an editor on an
+ * `approved` listing is `true` by the first clause alone, and an owner on a `removed` one
+ * is `true` only because the first clause admits the status — so dropping either flips a
+ * different case. `myAppsView.test.ts` pins one per direction.
+ */
+export function myAppsRowLinkable(row: { status: string; role: AppRole }): boolean {
+  if (!canOpenListingAuthoringPage(row.status)) return false;
+  return isAuthorableListingStatus(row.status) || row.role === 'owner';
+}
+
 export function myAppListingHref(row: {
   appListingId: string;
   kind: ListingKind;
   appBlockId: string | null;
   role: AppRole;
+  status: string;
   capabilities: Readonly<Record<ListingCapability, boolean>>;
 }): string {
   const tabs: EditorTab[] = editorTabsFor({
     kind: row.kind,
     appBlockId: row.appBlockId,
     role: row.role,
+    status: row.status,
     capabilities: row.capabilities,
   });
   return listingEditHref(row.appListingId, tabs[0]);

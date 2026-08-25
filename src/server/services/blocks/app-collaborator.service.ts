@@ -5,6 +5,7 @@ import { constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   ACCEPTED,
+  isAuthorableListingStatus,
   listingKindSupports,
   resolveCanonicalListingOwner,
   resolveListingAccess,
@@ -182,6 +183,13 @@ type SeatListing = {
   blockSlug: string | null;
   /** Canonical owner: the OauthClient owner for onsite, the listing column for offsite. */
   ownerUserId: number;
+  /**
+   * The PARENT listing's own `status` — `draft|pending|approved|rejected|removed`.
+   *
+   * 🔴 CARRIED SO THE SEAT-GRANT PATHS CAN REFUSE A DELISTED APP. See
+   * {@link assertSeatGrantable}.
+   */
+  status: string;
   /** True when the id handed in was a SHADOW revision (already hopped to the parent). */
   wasShadow: boolean;
 };
@@ -190,6 +198,7 @@ const seatListingSelect = {
   id: true,
   slug: true,
   kind: true,
+  status: true,
   userId: true,
   appBlockId: true,
   revisionOfId: true,
@@ -200,6 +209,7 @@ type RawSeatListing = {
   id: string;
   slug: string;
   kind: string;
+  status: string;
   userId: number;
   appBlockId: string | null;
   revisionOfId: string | null;
@@ -211,6 +221,10 @@ function toSeatListing(row: RawSeatListing, wasShadow: boolean): SeatListing {
     appListingId: row.id,
     slug: row.slug,
     kind: row.kind as ListingKind,
+    // A narrow test fake that ignores `select` yields `undefined` here. `''` is not an
+    // authorable status, so the seat-grant guard below FAILS CLOSED on such a fixture
+    // rather than silently permitting the grant it exists to refuse.
+    status: row.status ?? '',
     appBlockId: row.appBlockId,
     blockSlug: row.appBlock?.blockId ?? null,
     // 🔴 KIND-AWARE, through the SHARED resolver — not a second spelling of it. This used
@@ -299,6 +313,42 @@ async function loadSeatListing(appListingId: string): Promise<SeatListing> {
   })) as RawSeatListing | null;
   if (!parent) throw new AppCollaboratorError('NOT_FOUND', 'App listing not found');
   return toSeatListing(parent, true);
+}
+
+/**
+ * 🔴 THE SEAT-GRANT STATUS GUARD — the ENFORCEMENT POINT behind the authoring page's
+ * narrowed tab set, not a mirror of it.
+ *
+ * A seat is not a passive label: accepting one grants the holder Forgejo `write` on
+ * `civitai-apps/<slug>` (see {@link respondToInvite}). Until this guard existed, NOTHING on
+ * the server looked at the listing's status on the way to that grant — measured on this
+ * tree, `inviteCollaborator`, `respondToInvite` and `listCollaborators` all read only
+ * ownership/seat state. The ONLY thing standing between a moderator-removed app and a
+ * fresh repo grant was `getAppListingAuthoringContext` refusing to open the authoring
+ * page, i.e. a UI reachability accident.
+ *
+ * That was already thin, and civitai/civitai#4218's fix makes it thinner: the authoring
+ * route now OPENS on `removed` so an owner can reach their own Republish. `editorTabsFor`
+ * withholds the Collaborators tab there — but a tab set is a UI narrowing and never a
+ * gate, and a tRPC procedure is callable without any page at all. So the refusal lives
+ * here, where the grant does.
+ *
+ * 🔴 IT GUARDS THE TWO GRANT PATHS ONLY — `invite` and an ACCEPT. `remove`, `leave`,
+ * `setDisplayed` and `list` are deliberately NOT guarded: each either REDUCES access or is
+ * a read, and refusing them on a removed listing would strand an owner who wants to revoke
+ * a seat on the app that was just taken down — the opposite of the property being
+ * protected. `list` in particular must keep working for moderators reviewing a takedown.
+ *
+ * 🔴 IT USES THE AUTHORABLE SET, NOT THE ROUTE SET. `removed` and `rejected` are both
+ * refused, and an unknown status is refused too (`isAuthorableListingStatus` fails closed).
+ */
+function assertSeatGrantable(listing: SeatListing): void {
+  if (!isAuthorableListingStatus(listing.status)) {
+    throw new AppCollaboratorError(
+      'INVALID_TARGET',
+      'This listing is not accepting collaborators — it is no longer live in the store'
+    );
+  }
 }
 
 /**
@@ -429,6 +479,8 @@ export async function inviteCollaborator(opts: {
   }
 
   const listing = await assertOwner(opts.appListingId, opts.actorUserId);
+  // 🔴 A DELISTED APP MAY NOT GAIN A SEAT — see {@link assertSeatGrantable}.
+  assertSeatGrantable(listing);
 
   if (opts.targetUserId === listing.ownerUserId) {
     throw new AppCollaboratorError(
@@ -566,6 +618,10 @@ export async function respondToInvite(opts: {
   const listing = await loadSeatListing(opts.appListingId);
 
   if (opts.accept) {
+    // 🔴 ACCEPT ONLY. A DECLINE must always be possible: refusing it would trap an invitee
+    // with a standing invitation on an app whose listing was removed after the invite was
+    // sent, and declining grants nothing. See {@link assertSeatGrantable}.
+    assertSeatGrantable(listing);
     const user = await dbRead.user.findUnique({
       where: { id: opts.userId },
       select: { bannedAt: true },

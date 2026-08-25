@@ -38,6 +38,10 @@ const { mockDb, mockWriteDb } = vi.hoisted(() => {
     // reads as a broken mock rather than as the one-line fixture change that caused it.
     appListingModerationEvent: {
       findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
+      // `getAppListingAuthoringContext` reads the SAME fact for its one listing, with
+      // `findFirst` rather than a batched `findMany` — the Publishing tab has to separate an
+      // owner self-unpublish (Republish is allowed) from a moderator takedown (it is not).
+      findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
     },
     // `hydrateMyAppListings` also resolves the SCAN dimension of the completeness
     // advisory (`blocked-media` / `scanning-media`) through
@@ -455,10 +459,18 @@ describe('getAppListingAuthoringContext', () => {
   });
 
   /**
-   * 🔴 STATUS GATE. Before it, a moderator-REMOVED listing opened the canonical authoring
-   * page with every tab live — including Collaborators, so an owner could invite someone
-   * onto a delisted app and the acceptance would mint Forgejo `write` on its repo. The
-   * content procs would have refused the edits; nothing refused the PAGE.
+   * 🔴 THE STATUS GATE, AFTER civitai/civitai#4218's SUCCESSOR. It used to refuse every
+   * non-authorable status outright, because leaving the page open on a delisted app left a
+   * LIVE Collaborators tab and accepting an invite there still mints Forgejo `write`. That
+   * refusal ALSO put an owner's own Republish out of reach — an owner Unpublish writes the
+   * same `status='removed'` a moderator takedown does — i.e. a one-way door only a moderator
+   * could reopen.
+   *
+   * So the gate is now a KNOWN-STATUS gate and the narrowing moved to the tab set:
+   * `editorTabsFor` withholds `details`/`media`/`manifest`/`earnings`/`collaborators` on any
+   * non-authorable status (`appListingEditorTabs.test.ts`, one negative case per tab), and
+   * the Collaborators hazard is closed at its own enforcement point
+   * (`app-collaborator.seat-grant-status.test.ts`). An UNKNOWN status still refuses here.
    */
   describe('the listing STATUS gate', () => {
     function withStatus(status: string) {
@@ -469,17 +481,18 @@ describe('getAppListingAuthoringContext', () => {
       );
     }
 
-    for (const status of ['removed', 'rejected', 'withdrawn']) {
-      it(`refuses a \`${status}\` listing with FORBIDDEN`, async () => {
-        withStatus(status);
-        await expect(
-          getAppListingAuthoringContext({ appListingId: 'apl_1', userId: OWNER })
-        ).rejects.toMatchObject({
-          code: 'FORBIDDEN',
-          message: 'This listing can no longer be edited',
-        });
+    it('🔴 still refuses an UNKNOWN status with FORBIDDEN — the gate FAILS CLOSED', async () => {
+      // `withdrawn` is a publish-REQUEST status and is not in the listing lifecycle at all,
+      // so it stands in for any value this code has never heard of. It must not fall into
+      // the narrowed branch by default.
+      withStatus('withdrawn');
+      await expect(
+        getAppListingAuthoringContext({ appListingId: 'apl_1', userId: OWNER })
+      ).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+        message: 'This listing can no longer be edited',
       });
-    }
+    });
 
     for (const status of ['draft', 'pending', 'approved']) {
       it(`ADMITS a \`${status}\` listing (the control)`, async () => {
@@ -490,15 +503,99 @@ describe('getAppListingAuthoringContext', () => {
       });
     }
 
-    it('🔴 the refusal is DISTINCT from the no-role refusal', async () => {
-      // Both are FORBIDDEN, so only the message separates "you may not edit this" from
-      // "this can no longer be edited" — and a mutant that routes one into the other
-      // would otherwise be unattributable.
+    for (const status of ['removed', 'rejected']) {
+      it(`🔴 now ADMITS a \`${status}\` listing — the narrowing moved to the TAB SET`, async () => {
+        // 🔴 THE REVERSAL, and the reason it is safe is NOT in this file. What this asserts
+        // is only that the context resolves; that the resolved context yields at most
+        // Publishing + History — and NEVER Collaborators — is
+        // `appListingEditorTabs.test.ts`, and that the seat-grant procs refuse independently
+        // of any tab is `app-collaborator.seat-grant-status.test.ts`. Reading this case as
+        // "removed listings are editable again" is exactly the misreading to avoid.
+        withStatus(status);
+        await expect(
+          getAppListingAuthoringContext({ appListingId: 'apl_1', userId: OWNER })
+        ).resolves.toMatchObject({ appListingId: 'apl_1', status });
+      });
+    }
+
+    it('🔴 the no-role refusal is DISTINCT and still fires on a removed listing', async () => {
+      // Both refusals are FORBIDDEN, so only the message separates "you may not open this"
+      // from "this can no longer be edited" — and a mutant that routed one into the other
+      // would be unattributable. Opening the route on `removed` must not weaken the ACCESS
+      // check that runs before it.
       withStatus('removed');
       mockDb.appCollaborator.findFirst.mockImplementation(async () => null);
       await expect(
         getAppListingAuthoringContext({ appListingId: 'apl_1', userId: STRANGER })
-      ).rejects.toMatchObject({ message: 'You do not have access to this app' });
+      ).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+        message: 'You do not have access to this app',
+      });
+    });
+  });
+
+  /**
+   * 🔴 `lastModerationAction` — the ONE bit that separates "I unpublished this and may put
+   * it back" from "a moderator removed this". `status` reads `removed` for both, so the
+   * Publishing tab cannot decide whether to offer Republish without it.
+   */
+  describe('the moderation-event read behind the Publishing tab', () => {
+    function withStatus(status: string) {
+      mockDb.appListing.findUnique.mockImplementation(async (...a: unknown[]) =>
+        (a[0] as { select?: { connectClientId?: boolean } }).select?.connectClientId
+          ? { id: 'apl_1', slug: 'my-app', name: 'My App', status }
+          : listingFixture()
+      );
+    }
+
+    it('carries the OWNER-UNPUBLISH action through, keyed to the SEAT listing id', async () => {
+      withStatus('removed');
+      mockDb.appListingModerationEvent.findFirst.mockImplementation(async () => ({
+        action: 'owner-unpublish',
+      }));
+      const ctx = await getAppListingAuthoringContext({ appListingId: 'apl_1', userId: OWNER });
+      expect(ctx.lastModerationAction).toBe('owner-unpublish');
+      const call = mockDb.appListingModerationEvent.findFirst.mock.calls.at(-1)?.[0] as {
+        where: { appListingId: string };
+      };
+      expect(call.where.appListingId).toBe('apl_1');
+    });
+
+    it('🔴 NORMALISES every other verb to `other` — a seated editor never gets the real one', async () => {
+      // Four pairwise-distinct real moderator verbs, none of which may reach the client.
+      // Widening this back to the raw string re-opens the editor-disclosure hole the
+      // projection exists to close.
+      for (const verb of ['delist', 'purge', 'claim', 'report-dismiss']) {
+        withStatus('removed');
+        mockDb.appListingModerationEvent.findFirst.mockImplementation(async () => ({
+          action: verb,
+        }));
+        const ctx = await getAppListingAuthoringContext({ appListingId: 'apl_1', userId: OWNER });
+        expect(ctx.lastModerationAction, verb).toBe('other');
+      }
+    });
+
+    it('a removed listing with NO event carries null — read as a moderator removal', async () => {
+      withStatus('removed');
+      mockDb.appListingModerationEvent.findFirst.mockImplementation(async () => null);
+      const ctx = await getAppListingAuthoringContext({ appListingId: 'apl_1', userId: OWNER });
+      expect(ctx.lastModerationAction).toBeNull();
+    });
+
+    it('🔴 does NOT query at all on a non-removed listing — the value is meaningless there', async () => {
+      // A stale `owner-unpublish` on a listing that is approved again must not re-open
+      // Republish next to a live app, and the read is a round trip this page should not pay
+      // on the overwhelmingly common status. The call COUNT is the assertion; the resolved
+      // context above it is the positive control that the read really ran.
+      withStatus('approved');
+      mockDb.appListingModerationEvent.findFirst.mockClear();
+      mockDb.appListingModerationEvent.findFirst.mockImplementation(async () => ({
+        action: 'owner-unpublish',
+      }));
+      const ctx = await getAppListingAuthoringContext({ appListingId: 'apl_1', userId: OWNER });
+      expect(ctx.status).toBe('approved');
+      expect(ctx.lastModerationAction).toBeNull();
+      expect(mockDb.appListingModerationEvent.findFirst).not.toHaveBeenCalled();
     });
   });
 

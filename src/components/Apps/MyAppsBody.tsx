@@ -20,18 +20,12 @@ import {
   IconApps,
   IconChevronDown,
   IconChevronRight,
-  IconEye,
-  IconEyeOff,
 } from '@tabler/icons-react';
 import Link from 'next/link';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 
 import { ListingProblemsIndicator } from '~/components/Apps/ListingProblemsIndicator';
-import {
-  showModRemovedNotice,
-  showRepublish,
-  showUnpublish,
-} from '~/components/Apps/myAppsAuthorActions';
+import { showModRemovedNotice } from '~/components/Apps/listingPublishingActions';
 import { AppListingScreenshotViewer } from '~/components/Apps/AppListingScreenshotViewer';
 import {
   NO_BROKEN_SCREENSHOTS,
@@ -42,6 +36,7 @@ import type { MyAppMediaKind, MyAppRow } from '~/components/Apps/myAppsView';
 import {
   historyStatusColor,
   listingMediaIndex,
+  myAppsRowLinkable,
   listingMediaShots,
   listingStatusColor,
   myAppListingHref,
@@ -52,12 +47,7 @@ import {
   sortByRecentlyUpdated,
 } from '~/components/Apps/myAppsView';
 import { ownerListingState, ownerStateChip } from '~/components/Apps/offsiteOwnerControls';
-import {
-  OwnerUnpublishModal,
-  type OwnerUnpublishVariant,
-} from '~/components/Apps/ownerListingModals';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { isAuthorableListingStatus } from '~/shared/constants/app-capabilities.constants';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -76,31 +66,17 @@ import { trpc } from '~/utils/trpc';
  * it from a submissions query is the regression, and it is silent — the page still renders,
  * just without the apps those two populations own.
  *
- * Row identity is one row per APP. A publish request is an EVENT on an app, not a thing an
- * author manages, so the request stream is nested history inside the row and is fetched
- * only when a row is opened.
+ * Row identity is one row per APP.
+ *
+ * 🔴 A ROW IS A LISTING AND ITS LINK — the History disclosure and the owner
+ * Unpublish/Republish pair BOTH MOVED to the canonical authoring page's History and
+ * Publishing tabs. Do not bring either back here: two homes for one control is how the two
+ * come to disagree, and a publish request is an EVENT on an app, which belongs on the app's
+ * own page rather than nested in a list row. What stays is the row's LINK, which now points
+ * at the tab that exists for that row (`myAppListingHref` → `editorTabsFor`), and the
+ * "Submissions without a listing" group — the one population with no listing and therefore
+ * no authoring page to move to.
  */
-
-/** One entry from `appListings.listingHistory` — see that service for the two streams. */
-export type MyAppHistoryEntry = {
-  id: string;
-  source: 'version' | 'listing';
-  status: string;
-  version: string | null;
-  submittedAt: string | Date;
-  reviewedAt: string | Date | null;
-  rejectionReason: string | null;
-  approvalNotes: string | null;
-  changelog: string | null;
-  deployState: string | null;
-  /**
-   * The SERVER's verdict on whether this caller may withdraw this request. Both withdraw
-   * procs are submitter-scoped, so a collaborator / transfer recipient / mod-claimed owner
-   * offered the button gets a guaranteed red toast. Optional on the type only so a fixture
-   * need not spell it; treated as `false` when absent, which is the safe direction.
-   */
-  canWithdraw?: boolean;
-};
 
 /** One row of `appListings.listMyOrphanedSubmissions` — a submission with no listing. */
 export type OrphanedSubmissionRow = {
@@ -273,18 +249,25 @@ function ListingCover({
 }
 
 /**
- * The app's NAME — a link to the authoring page, or plain text when the editor would
- * refuse.
+ * The app's NAME — a link to the authoring page.
  *
- * 🔴 NO LINK ON A NON-AUTHORABLE STATUS, carried over unchanged from the panel this
- * replaces. `getAppListingAuthoringContext` throws FORBIDDEN on a moderator-REMOVED or
- * REJECTED listing, so linking there offers a guaranteed 403 — and on a removed listing
- * the page used to open with a fully live Collaborators tab. The row still LISTS: an owner
- * needs to see the app exists and what became of it. Since every INACTIVE row is exactly
- * one of those two statuses, this is also why the Inactive collapse has no edit affordance.
+ * 🔴 IT IS NOW A LINK ON EVERY ROW THIS CALLER CAN OPEN, INCLUDING A REMOVED OR REJECTED
+ * ONE, and that reversal is load-bearing rather than cosmetic. It used to be plain text on
+ * any non-authorable status because `getAppListingAuthoringContext` refused those with
+ * FORBIDDEN — linking there offered a guaranteed 403. That route now opens on them in a
+ * NARROWED mode (at most Publishing + History; no Details, no Collaborators), and this PR
+ * moved BOTH the History disclosure and the Unpublish/Republish pair off this row and into
+ * that page. So the link is the only way the author reaches either one, and leaving these
+ * rows unlinked would strand exactly the population — a rejected or removed app — that
+ * needs its history most.
+ *
+ * 🔴 THE PREDICATE READS ROLE AS WELL AS STATUS. The narrowed surface is owner-only
+ * server-side, so a seated EDITOR on a removed listing still gets no link — the page would
+ * refuse them. `myAppsRowLinkable` in `myAppsView.ts` is the single derivation and is
+ * pinned in the blocking `unit` tier.
  */
 function ListingName({ row }: { row: MyAppRow }) {
-  if (isAuthorableListingStatus(row.status)) {
+  if (myAppsRowLinkable(row)) {
     return (
       <Link href={myAppListingHref(row)} data-testid={`apps-mine-link-${row.appListingId}`}>
         <Text fw={600}>{row.name}</Text>
@@ -369,145 +352,6 @@ function StatusBadges({ row }: { row: MyAppRow }) {
 }
 
 /**
- * The expand control.
- *
- * 🔴 `aria-expanded` READS THE LIVE STATE and `aria-controls` NAMES A REAL ELEMENT ID.
- * Both are derived from the same `expanded` boolean the panel renders from, so they cannot
- * report a state the DOM does not have — a toggle whose `aria-expanded` stays `false`
- * reads to assistive tech (and to a test) as "the element is missing", which is an
- * expensive way to look broken.
- */
-function HistoryToggle({
-  row,
-  expanded,
-  onToggle,
-}: {
-  row: MyAppRow;
-  expanded: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <UnstyledButton
-      onClick={onToggle}
-      aria-expanded={expanded}
-      aria-controls={historyPanelId(row.appListingId)}
-      data-testid={`apps-mine-expand-${row.appListingId}`}
-      data-author-action="history"
-    >
-      <Group gap={4} wrap="nowrap">
-        {expanded ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
-        <Text size="xs" c="dimmed">
-          History
-        </Text>
-      </Group>
-    </UnstyledButton>
-  );
-}
-
-export function historyPanelId(appListingId: string): string {
-  return `apps-mine-history-${appListingId}`;
-}
-
-/** The container the action ledger enumerates. See {@link RowActions}. */
-export function rowActionsTestId(appListingId: string): string {
-  return `apps-mine-actions-${appListingId}`;
-}
-
-/**
- * The row's ACTIONS CELL — the owner takedown controls plus the History disclosure.
- *
- * 🔴 SCOPE, STATED EXACTLY, BECAUSE THE OVERCLAIM IS THE DANGEROUS PART. This is **not**
- * every interactive control on the row, and the ledger does not see the ones outside it:
- * `ListingName`'s edit link and the Withdraw buttons inside the expanded `HistoryPanel` both
- * live elsewhere in the row and are invisible to it. An earlier draft of this comment said
- * "every author-facing control on a row", which is false — and false in the worst direction,
- * because it is exactly the sentence a future consolidation would cite as proof of coverage
- * it does not have. That is how the bug this PR fixes happened in the first place.
- *
- * 🔴 THE CONTAINER IS PART OF THE GUARD, not layout tidiness. `myAppsAuthorActions.ts`
- * declares the exact set of controls each row state offers *in this cell*, and the ledger
- * test enumerates `button`/`a[href]` inside THIS element to compare against it. That
- * comparison fails when the set shrinks — which is the regression this whole file is
- * answering: PR #4154 dropped Unpublish and Republish from this page and three audits
- * passed, because an absent control has nothing to assert on. It also fails when the set
- * grows, and refuses any control here that omits `data-author-action`, so the enumeration
- * cannot be walked by forgetting the attribute.
- *
- * Kept scoped to the cell rather than widened to the whole row deliberately: the Withdraw
- * buttons only exist once a row is expanded AND its history has loaded, so a row-wide ledger
- * would have to model per-expansion, per-fetch action sets — turning a deterministic
- * structural guard into one whose expected value depends on a query resolving. Widening it
- * is a real improvement and worth doing; it is not a one-line change, and a ledger that goes
- * intermittently red is worth less than none.
- *
- * 🔴 WHICH CONTROLS APPEAR IS DECIDED BY `myAppsAuthorActions`, NOT BY LOCAL BRANCHING. A
- * second copy of the predicate would let the DOM and the ledger drift while both stayed
- * green — the ledger would then be pinning itself.
- */
-function RowActions({
-  row,
-  expanded,
-  onToggle,
-  onUnpublish,
-  onRepublish,
-  republishing,
-}: {
-  row: MyAppRow;
-  expanded: boolean;
-  onToggle: () => void;
-  onUnpublish?: (row: MyAppRow) => void;
-  onRepublish?: (row: MyAppRow) => void;
-  republishing: boolean;
-}) {
-  /**
-   * 🔴 THE HANDLER IS PART OF THE CONDITION. Rendering Unpublish with no `onUnpublish`
-   * would give the author a button that does nothing — indistinguishable, from the outside,
-   * from the bug being fixed here. The View is used directly in tests and in principle by
-   * any caller, so "the container always passes one" is an assumption, not a guarantee.
-   */
-  const canUnpublish = showUnpublish(row) && !!onUnpublish;
-  const canRepublish = showRepublish(row) && !!onRepublish;
-  return (
-    <Group
-      gap={6}
-      wrap="nowrap"
-      justify="flex-end"
-      data-testid={rowActionsTestId(row.appListingId)}
-    >
-      {canUnpublish && (
-        <Button
-          size="compact-xs"
-          variant="default"
-          color="orange"
-          leftSection={<IconEyeOff size={12} />}
-          onClick={() => onUnpublish?.(row)}
-          data-testid={`apps-mine-unpublish-${row.appListingId}`}
-          data-author-action="unpublish"
-        >
-          Unpublish
-        </Button>
-      )}
-      {canRepublish && (
-        <Button
-          size="compact-xs"
-          variant="default"
-          color="green"
-          leftSection={<IconEye size={12} />}
-          disabled={republishing}
-          loading={republishing}
-          onClick={() => onRepublish?.(row)}
-          data-testid={`apps-mine-republish-${row.appListingId}`}
-          data-author-action="republish"
-        >
-          Republish
-        </Button>
-      )}
-      <HistoryToggle row={row} expanded={expanded} onToggle={onToggle} />
-    </Group>
-  );
-}
-
-/**
  * "Removed by a moderator" — a STATEMENT, not an action, which is why it is not in the
  * ledger's action set and why it renders for a collaborator too.
  *
@@ -538,125 +382,16 @@ function ModRemovedNotice({ row }: { row: MyAppRow }) {
   );
 }
 
-function HistoryPanel({
-  row,
-  expanded,
-  entries,
-  loading,
-  errorMessage,
-  onWithdraw,
-  withdrawing,
-  withdrawEnabled,
-}: {
-  row: MyAppRow;
-  expanded: boolean;
-  entries: MyAppHistoryEntry[];
-  loading: boolean;
-  errorMessage: string | null;
-  onWithdraw?: (entry: MyAppHistoryEntry) => void;
-  withdrawing: boolean;
-  withdrawEnabled: boolean;
-}) {
-  return (
-    <div id={historyPanelId(row.appListingId)} data-testid={historyPanelId(row.appListingId)}>
-      {!expanded ? null : errorMessage ? (
-        <Alert
-          color="red"
-          variant="light"
-          data-testid={`apps-mine-history-error-${row.appListingId}`}
-        >
-          {errorMessage}
-        </Alert>
-      ) : loading ? (
-        <Group gap="xs" data-testid={`apps-mine-history-loading-${row.appListingId}`}>
-          <Loader size="xs" />
-          <Text size="xs" c="dimmed">
-            Loading history…
-          </Text>
-        </Group>
-      ) : entries.length === 0 ? (
-        <Text size="xs" c="dimmed" data-testid={`apps-mine-history-empty-${row.appListingId}`}>
-          No submissions yet for this app.
-        </Text>
-      ) : (
-        <Stack gap={6}>
-          {entries.map((e) => (
-            <Group
-              key={e.id}
-              gap="xs"
-              wrap="wrap"
-              data-testid={`apps-mine-history-entry-${e.id}`}
-              data-history-source={e.source}
-            >
-              <Badge size="xs" variant="light" color={e.source === 'version' ? 'blue' : 'grape'}>
-                {e.source === 'version' ? `v${e.version ?? '?'}` : 'Listing edit'}
-              </Badge>
-              <Badge
-                size="xs"
-                variant="outline"
-                color={historyStatusColor(e.status)}
-                data-testid={`apps-mine-history-status-${e.id}`}
-              >
-                {e.status}
-              </Badge>
-              <Text size="xs" c="dimmed">
-                {formatWhen(e.submittedAt)}
-              </Text>
-              {e.deployState ? (
-                <Text size="xs" c="dimmed">
-                  · {e.deployState}
-                </Text>
-              ) : null}
-              {e.rejectionReason ? (
-                <Text size="xs" c="red" data-testid={`apps-mine-history-notes-${e.id}`}>
-                  {e.rejectionReason}
-                </Text>
-              ) : e.approvalNotes ? (
-                <Text size="xs" c="dimmed" data-testid={`apps-mine-history-notes-${e.id}`}>
-                  {e.approvalNotes}
-                </Text>
-              ) : null}
-              {/*
-                🔴 THREE CONDITIONS, and each one removes a button that could only fail.
-                `canWithdraw` is the server restating its own submitter-scoped refusal;
-                `withdrawEnabled` covers the FLAG mismatch (the version-withdraw mutation
-                carries `enforceAppBlocksFlag` while this page and its reads gate on
-                `appBlocksAuthor` only, so with the store flag off that half 403s).
-              */}
-              {e.canWithdraw && onWithdraw && (e.source === 'listing' || withdrawEnabled) ? (
-                <Button
-                  size="compact-xs"
-                  variant="subtle"
-                  color="gray"
-                  disabled={withdrawing}
-                  onClick={() => onWithdraw(e)}
-                  data-testid={`apps-mine-history-withdraw-${e.id}`}
-                >
-                  Withdraw
-                </Button>
-              ) : null}
-            </Group>
-          ))}
-        </Stack>
-      )}
-    </div>
-  );
-}
-
+/**
+ * 🔴 A ROW IS NOW A LISTING AND ITS LINK — NOTHING ELSE. The History disclosure and the
+ * Unpublish/Republish pair both moved to `/apps/listing/<id>/edit`, so a row carries no
+ * per-row query, no expansion state and no mutation. That is why `expanded`/`onToggle`/
+ * `history*`/`onWithdraw`/`onUnpublish`/`onRepublish` are gone from this type rather than
+ * being threaded through unused.
+ */
 type RowRenderProps = {
   row: MyAppRow;
   group: 'active' | 'inactive';
-  expanded: boolean;
-  onToggle: () => void;
-  history: MyAppHistoryEntry[];
-  historyLoading: boolean;
-  historyError: string | null;
-  onWithdraw?: (entry: MyAppHistoryEntry) => void;
-  withdrawing: boolean;
-  withdrawEnabled: boolean;
-  onUnpublish?: (row: MyAppRow) => void;
-  onRepublish?: (row: MyAppRow) => void;
-  republishing: boolean;
   /** Open the row's image viewer at the image that was clicked. */
   onOpenMedia?: (row: MyAppRow, which: MyAppMediaKind) => void;
 };
@@ -667,9 +402,9 @@ function rowTestId(group: 'active' | 'inactive', appListingId: string): string {
     : `apps-mine-inactive-row-${appListingId}`;
 }
 
-/** Desktop: one `<tr>` pair (the row, then its history row). */
+/** Desktop: one `<tr>`. */
 function AppTableRow(props: RowRenderProps) {
-  const { row, group, expanded } = props;
+  const { row, group } = props;
   return (
     <>
       <Table.Tr data-testid={rowTestId(group, row.appListingId)}>
@@ -698,30 +433,6 @@ function AppTableRow(props: RowRenderProps) {
             {formatWhen(row.updatedAt)}
           </Text>
         </Table.Td>
-        <Table.Td>
-          <RowActions
-            row={row}
-            expanded={expanded}
-            onToggle={props.onToggle}
-            onUnpublish={props.onUnpublish}
-            onRepublish={props.onRepublish}
-            republishing={props.republishing}
-          />
-        </Table.Td>
-      </Table.Tr>
-      <Table.Tr>
-        <Table.Td colSpan={5} p={expanded ? undefined : 0} style={{ borderTop: 'none' }}>
-          <HistoryPanel
-            row={row}
-            expanded={expanded}
-            entries={props.history}
-            loading={props.historyLoading}
-            errorMessage={props.historyError}
-            onWithdraw={props.onWithdraw}
-            withdrawing={props.withdrawing}
-            withdrawEnabled={props.withdrawEnabled}
-          />
-        </Table.Td>
       </Table.Tr>
     </>
   );
@@ -737,7 +448,7 @@ function AppTableRow(props: RowRenderProps) {
  * there is never a duplicate copy of a row in the DOM.
  */
 function AppCardRow(props: RowRenderProps) {
-  const { row, group, expanded } = props;
+  const { row, group } = props;
   return (
     <Paper withBorder p="sm" radius="md" data-testid={rowTestId(group, row.appListingId)}>
       <Stack gap="xs">
@@ -753,29 +464,9 @@ function AppCardRow(props: RowRenderProps) {
         </Group>
         <StatusBadges row={row} />
         <ModRemovedNotice row={row} />
-        <Group justify="space-between" wrap="wrap" gap="xs">
-          <Text size="xs" c="dimmed">
-            Updated {formatWhen(row.updatedAt)}
-          </Text>
-          <RowActions
-            row={row}
-            expanded={expanded}
-            onToggle={props.onToggle}
-            onUnpublish={props.onUnpublish}
-            onRepublish={props.onRepublish}
-            republishing={props.republishing}
-          />
-        </Group>
-        <HistoryPanel
-          row={row}
-          expanded={expanded}
-          entries={props.history}
-          loading={props.historyLoading}
-          errorMessage={props.historyError}
-          onWithdraw={props.onWithdraw}
-          withdrawing={props.withdrawing}
-          withdrawEnabled={props.withdrawEnabled}
-        />
+        <Text size="xs" c="dimmed">
+          Updated {formatWhen(row.updatedAt)}
+        </Text>
       </Stack>
     </Paper>
   );
@@ -812,7 +503,6 @@ function AppGroup({
             <Table.Th>Cover</Table.Th>
             <Table.Th>Status</Table.Th>
             <Table.Th>Updated</Table.Th>
-            <Table.Th />
           </Table.Tr>
         </Table.Thead>
         <Table.Tbody>
@@ -831,50 +521,20 @@ export type MyAppsBodyViewProps = {
   errorMessage?: string | null;
   /** Render the card layout. Injected rather than measured so tests are deterministic. */
   compact?: boolean;
-  /** The open row, if any. Controlled so the container can key its lazy query off it. */
-  expandedId?: string | null;
-  onToggleExpand?: (appListingId: string | null) => void;
-  history?: MyAppHistoryEntry[];
-  historyLoading?: boolean;
-  historyError?: string | null;
-  onWithdraw?: (entry: MyAppHistoryEntry) => void;
-  withdrawing?: boolean;
   /**
    * Is the VERSION-withdraw mutation reachable for this viewer? Defaults to `true`; the
    * container passes `features.appBlocks`, because `blocks.withdrawPublishRequest` carries
-   * `enforceAppBlocksFlag` while this page does not. Listing-source entries are unaffected
-   * — `appListings.withdrawExternalRequest` has no such gate.
+   * `enforceAppBlocksFlag` while this page does not.
+   *
+   * 🔴 IT SURVIVES THE HISTORY MOVE BECAUSE THE ORPHAN GROUP STILL NEEDS IT. Every other
+   * withdraw affordance on this page went with the History panel; the orphaned-submission
+   * rows are submission-keyed, have no listing and therefore no authoring page, so their
+   * Withdraw button stays here — and it is a BLOCK publish request, i.e. exactly the half
+   * this flag gates.
    */
   withdrawEnabled?: boolean;
-  /**
-   * OWNER TAKEDOWN CONTROLS — the pair PR #4154 dropped when it consolidated
-   * `/apps/my-submissions` into this page.
-   *
-   * 🔴 THEY ARE A PAIR, and shipping only the first is worse than shipping neither. An
-   * unpublish with no way back is a one-way door for the author: `republishOwnListing` is
-   * the only owner-reachable route from `removed` to `approved`, and without it the app can
-   * be restored only by a moderator `relistListing`. The row-state routing that decides
-   * which of the two a row offers lives in `myAppsAuthorActions.ts`.
-   */
-  onUnpublish?: (row: MyAppRow) => void;
-  onRepublish?: (row: MyAppRow) => void;
-  /** Is a republish in flight? Disables the button rather than allowing a double-fire. */
-  republishing?: boolean;
-  /**
-   * Bumped by the container after a SUCCESSFUL unpublish, to open the Inactive collapse.
-   *
-   * 🔴 THE ROW LEAVES THE VIEWPORT AT THE MOMENT THE AUTHOR ACTS, and without this nothing
-   * says where it went. `partitionMyAppRows` files every `removed` listing under Inactive,
-   * which is collapsed by default, so a successful unpublish moves the app — and its
-   * Republish button — out of sight in the same instant the success toast appears. Opening
-   * the section is the cheap half of the fix; the underlying disagreement about what
-   * `removed` MEANS is recorded as open in the PR body and is deliberately not resolved here.
-   *
-   * A counter rather than a boolean because the trigger is an EVENT, not a state: two
-   * unpublishes in a row must each re-open a section the author may have closed in between,
-   * and a boolean that is already `true` fires no effect the second time.
-   */
-  revealInactive?: number;
+  /** Is an orphan withdraw in flight? Disables the button rather than double-firing. */
+  withdrawing?: boolean;
   /** Submissions whose listing was deleted — see `listMyOrphanedSubmissions`. */
   orphanedSubmissions?: OrphanedSubmissionRow[];
   /** Message from a FAILED orphan read. Never conflate with an empty one. */
@@ -889,18 +549,8 @@ export function MyAppsBodyView({
   isLoading = false,
   errorMessage = null,
   compact = false,
-  expandedId = null,
-  onToggleExpand,
-  history = [],
-  historyLoading = false,
-  historyError = null,
-  onWithdraw,
-  withdrawing = false,
   withdrawEnabled = true,
-  onUnpublish,
-  onRepublish,
-  republishing = false,
-  revealInactive = 0,
+  withdrawing = false,
   orphanedSubmissions = [],
   orphanedError = null,
   orphanedLoading = false,
@@ -940,12 +590,6 @@ export function MyAppsBodyView({
     []
   );
 
-  // 🔴 GUARDED ON `> 0` so the initial render does not open the section — the prop defaults
-  // to 0 and only a real unpublish bumps it. See `revealInactive` on the props type.
-  useEffect(() => {
-    if (revealInactive > 0) setInactiveOpen(true);
-  }, [revealInactive]);
-
   const { active, inactive } = useMemo(
     () => partitionMyAppRows(sortByRecentlyUpdated(rows)),
     [rows]
@@ -960,39 +604,12 @@ export function MyAppsBodyView({
     : null;
 
   const renderRow = useCallback(
-    (row: MyAppRow, group: 'active' | 'inactive'): RowRenderProps => {
-      const expanded = expandedId === row.appListingId;
-      return {
-        row,
-        group,
-        expanded,
-        onToggle: () => onToggleExpand?.(expanded ? null : row.appListingId),
-        history: expanded ? history : [],
-        historyLoading: expanded ? historyLoading : false,
-        historyError: expanded ? historyError : null,
-        onWithdraw,
-        withdrawing,
-        withdrawEnabled,
-        onUnpublish,
-        onRepublish,
-        republishing,
-        onOpenMedia: openMedia,
-      };
-    },
-    [
-      expandedId,
-      history,
-      historyLoading,
-      historyError,
-      onToggleExpand,
-      onWithdraw,
-      withdrawing,
-      withdrawEnabled,
-      onUnpublish,
-      onRepublish,
-      republishing,
-      openMedia,
-    ]
+    (row: MyAppRow, group: 'active' | 'inactive'): RowRenderProps => ({
+      row,
+      group,
+      onOpenMedia: openMedia,
+    }),
+    [openMedia]
   );
 
   /**
@@ -1338,25 +955,16 @@ function OrphanedSubmissionsSection({
   );
 }
 
-/** The container: `listMine` for the rows, and ONE lazy history query keyed to the open row. */
+/**
+ * The container.
+ *
+ * 🔴 TWO READS, NO MUTATIONS EXCEPT THE ORPHAN WITHDRAW. The lazy per-row `listingHistory`
+ * query, the `unpublishOwnListing` modal and the `republishOwnListing` mutation all moved
+ * to the authoring page's Publishing / History tabs. What is left here is the row list and
+ * the orphan group — the one population with no listing, and therefore no authoring page to
+ * move to.
+ */
 export function MyAppsBody() {
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-  /**
-   * The row the unpublish confirmation is open for, plus its COPY VARIANT.
-   *
-   * 🔴 THE VARIANT IS PER-ROW BECAUSE THIS TABLE IS DUAL-KIND, and that is the one thing a
-   * straight lift from either source page would get wrong. `/apps/my-submissions` was two
-   * separate lists: the on-site one always passed `offline` (unpublishing an on-site app is a
-   * FULL takedown — it stops serving at its app page) and the off-site one always passed
-   * `store` (a delist; the author's own site keeps running). `/apps/mine` merges both kinds
-   * into one table, so a fixed variant would tell half the authors something untrue about
-   * what the button is about to do.
-   */
-  const [unpublishTarget, setUnpublishTarget] = useState<{
-    id: string;
-    slug: string;
-    variant: OwnerUnpublishVariant;
-  } | null>(null);
   // 🔴 `48em` is Mantine's `sm` breakpoint. `useMediaQuery` returns `undefined` before it
   // has measured, so the `=== true` keeps the first paint on the table rather than
   // flashing the card layout on desktop.
@@ -1366,128 +974,30 @@ export function MyAppsBody() {
    * `appBlocksAuthor` ONLY — deliberately, because `appBlocks` is store VISIBILITY and an
    * author must be able to see their own apps when the store narrows. But
    * `blocks.withdrawPublishRequest` carries `.use(enforceAppBlocksFlag)`, so with
-   * `appBlocksAuthor` on and `appBlocks` off the page renders, history loads, and the
-   * version-Withdraw 403s. Its off-site sibling `appListings.withdrawExternalRequest` has
-   * no such gate, so the two halves of one button disagree.
-   *
-   * 🔴 THE UI IS GATED RATHER THAN THE MUTATION LOOSENED. Removing `enforceAppBlocksFlag`
-   * from a mutation is an authorization change and is not mine to make in passing; hiding
-   * a control the server would refuse is strictly an improvement over the page this
-   * replaced, where the whole submissions read was `appBlocks`-gated and the button did
-   * not exist at all in this cohort. Recorded in the PR body as the open question.
+   * `appBlocksAuthor` on and `appBlocks` off the page renders and the orphan Withdraw 403s.
    */
   const features = useFeatureFlags();
 
   const rowsQuery = trpc.appListings.listMine.useQuery(undefined, { retry: false });
 
   /**
-   * 🔴 LAZY. `enabled` is false until a row is opened, so the initial render issues ONE
-   * query (the rows) rather than a per-row fan-out. The page this replaced fetched every
-   * submission for every app up front.
-   */
-  const historyQuery = trpc.appListings.listingHistory.useQuery(
-    { appListingId: expandedId ?? '' },
-    { enabled: !!expandedId, retry: false }
-  );
-
-  /**
    * Submissions whose listing was deleted. One flat, bounded read alongside the rows —
-   * NOT lazy, because unlike history there is no row to expand: this group IS the only
-   * surface these records have.
+   * this group IS the only surface these records have, so it is not lazy.
    */
   const orphansQuery = trpc.appListings.listMyOrphanedSubmissions.useQuery(undefined, {
     retry: false,
   });
 
   const utils = trpc.useUtils();
-  const refetchHistory = useCallback(() => {
-    void utils.appListings.listingHistory.invalidate();
-    void utils.appListings.listMine.invalidate();
-    void utils.appListings.listMyOrphanedSubmissions.invalidate();
-  }, [utils]);
-
-  const onWithdrawError = useCallback((message: string) => {
-    showErrorNotification({ title: 'Withdraw failed', error: new Error(message) });
-  }, []);
-
   const withdrawVersion = trpc.blocks.withdrawPublishRequest.useMutation({
     onSuccess: () => {
       showSuccessNotification({ message: 'Submission withdrawn.' });
-      refetchHistory();
+      void utils.appListings.listMine.invalidate();
+      void utils.appListings.listMyOrphanedSubmissions.invalidate();
     },
-    onError: (e) => onWithdrawError(e.message),
-  });
-  const withdrawListing = trpc.appListings.withdrawExternalRequest.useMutation({
-    onSuccess: () => {
-      showSuccessNotification({ message: 'Submission withdrawn.' });
-      refetchHistory();
-    },
-    onError: (e) => onWithdrawError(e.message),
-  });
-
-  /**
-   * 🔴 THE WITHDRAW MUTATION IS CHOSEN BY THE ENTRY'S OWN `source`, because the two
-   * streams live in different tables with different procs — see
-   * `app-listing-history.service`. Sending a listing-revision id to the block proc (or the
-   * reverse) is a guaranteed NOT_FOUND.
-   */
-  const onWithdraw = useCallback(
-    (entry: MyAppHistoryEntry) => {
-      if (entry.source === 'version') withdrawVersion.mutate({ publishRequestId: entry.id });
-      else withdrawListing.mutate({ publishRequestId: entry.id });
-    },
-    [withdrawVersion, withdrawListing]
-  );
-
-  /**
-   * 🔴 BOTH WRITES INVALIDATE `listMine`, because both change `AppListing.status` — the very
-   * column the row's state routing reads. Without it the button stays on screen after a
-   * successful unpublish and the author's next click hits a listing that is already removed.
-   */
-  const refetchRows = useCallback(() => {
-    void utils.appListings.listMine.invalidate();
-  }, [utils]);
-
-  /**
-   * Bumped only on a SUCCESSFUL unpublish — see `revealInactive` on the props type. It is
-   * wired to the modal's `onDone`, which `OwnerUnpublishModal` calls in its mutation's
-   * `onSuccess`, so a cancelled or refused unpublish does not move the page around.
-   */
-  const [revealInactive, setRevealInactive] = useState(0);
-  const onUnpublished = useCallback(() => {
-    refetchRows();
-    setRevealInactive((n) => n + 1);
-  }, [refetchRows]);
-
-  const republish = trpc.appListings.republishOwnListing.useMutation({
-    onSuccess: () => {
-      showSuccessNotification({ message: 'App republished — it is live again.' });
-      refetchRows();
-    },
-    /**
-     * 🔴 THE SERVER STAYS AUTHORITATIVE. `showRepublish` is a CLIENT MIRROR of the
-     * last-event guard, so a listing a moderator took down between the render and the click
-     * still 403s ("This listing was removed by a moderator and cannot be restored by its
-     * owner."). Surfacing that message rather than swallowing it is what makes the mirror
-     * safe to have.
-     */
     onError: (e) =>
-      showErrorNotification({ title: 'Republish failed', error: new Error(e.message) }),
+      showErrorNotification({ title: 'Withdraw failed', error: new Error(e.message) }),
   });
-
-  const onUnpublish = useCallback((row: MyAppRow) => {
-    setUnpublishTarget({
-      id: row.appListingId,
-      slug: row.slug,
-      // On-site apps go OFFLINE; an off-site listing is only delisted from the store.
-      variant: row.kind === 'onsite' ? 'offline' : 'store',
-    });
-  }, []);
-
-  const onRepublish = useCallback(
-    (row: MyAppRow) => republish.mutate({ appListingId: row.appListingId }),
-    [republish]
-  );
 
   // An orphan is by construction a BLOCK publish request, so it only ever has one proc.
   const onWithdrawOrphan = useCallback(
@@ -1498,42 +1008,17 @@ export function MyAppsBody() {
   );
 
   return (
-    <>
-      <MyAppsBodyView
-        rows={(rowsQuery.data ?? []) as MyAppRow[]}
-        isLoading={rowsQuery.isLoading}
-        errorMessage={rowsQuery.error?.message ?? null}
-        compact={isCompact}
-        expandedId={expandedId}
-        onToggleExpand={setExpandedId}
-        history={(historyQuery.data ?? []) as MyAppHistoryEntry[]}
-        historyLoading={!!expandedId && historyQuery.isLoading}
-        historyError={historyQuery.error?.message ?? null}
-        onWithdraw={onWithdraw}
-        withdrawing={withdrawVersion.isPending || withdrawListing.isPending}
-        withdrawEnabled={!!features?.appBlocks}
-        orphanedSubmissions={(orphansQuery.data ?? []) as OrphanedSubmissionRow[]}
-        orphanedError={orphansQuery.error?.message ?? null}
-        orphanedLoading={orphansQuery.isLoading}
-        onWithdrawOrphan={onWithdrawOrphan}
-        onUnpublish={onUnpublish}
-        onRepublish={onRepublish}
-        republishing={republish.isPending}
-        revealInactive={revealInactive}
-      />
-      {/*
-        🔴 CONFIRM-GATED, REUSING THE EXISTING MODAL RATHER THAN A FRESH `confirm()`.
-        `OwnerUnpublishModal` already owns the `unpublishOwnListing` mutation, the optional
-        reason field and the two copy variants; a second implementation would be the place
-        the two surfaces come to disagree about what unpublishing does.
-      */}
-      <OwnerUnpublishModal
-        target={unpublishTarget}
-        onClose={() => setUnpublishTarget(null)}
-        onDone={onUnpublished}
-        testIdPrefix="apps-mine"
-        variant={unpublishTarget?.variant ?? 'store'}
-      />
-    </>
+    <MyAppsBodyView
+      rows={(rowsQuery.data ?? []) as MyAppRow[]}
+      isLoading={rowsQuery.isLoading}
+      errorMessage={rowsQuery.error?.message ?? null}
+      compact={isCompact}
+      orphanedSubmissions={(orphansQuery.data ?? []) as OrphanedSubmissionRow[]}
+      orphanedError={orphansQuery.error?.message ?? null}
+      orphanedLoading={orphansQuery.isLoading}
+      onWithdrawOrphan={onWithdrawOrphan}
+      withdrawing={withdrawVersion.isPending}
+      withdrawEnabled={!!features?.appBlocks}
+    />
   );
 }

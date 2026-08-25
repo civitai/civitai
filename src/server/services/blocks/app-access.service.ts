@@ -16,10 +16,14 @@ import type {
 } from '~/shared/constants/app-capabilities.constants';
 import {
   AUTHORABLE_LISTING_STATUSES,
+  canOpenListingAuthoringPage,
   CAPABILITIES_BY_KIND,
   capabilitiesForKind,
   isAuthorableListingStatus,
+  isPublishableListingStatus,
+  LISTING_AUTHORING_ROUTE_STATUSES,
   listingKindSupports,
+  PUBLISHABLE_LISTING_STATUSES,
 } from '~/shared/constants/app-capabilities.constants';
 
 /**
@@ -118,6 +122,12 @@ import {
 export type { AppRole, ListingKind, ListingCapability };
 export { CAPABILITIES_BY_KIND, capabilitiesForKind, listingKindSupports };
 export { AUTHORABLE_LISTING_STATUSES, isAuthorableListingStatus };
+export {
+  LISTING_AUTHORING_ROUTE_STATUSES,
+  canOpenListingAuthoringPage,
+  PUBLISHABLE_LISTING_STATUSES,
+  isPublishableListingStatus,
+};
 
 export type AppAccess = {
   appBlockId: string;
@@ -898,15 +908,22 @@ export type MyAppListing = {
  * table is the consumer, and `app-access.my-app-listings-media.test.ts` pins them.)
  *
  * 🔴 AND THE SAME RULE RUNS THE OTHER WAY, which is why this is an `Omit` and not a bare
- * `&`. The authoring page reads `kind`/`appBlockId`/`role`/`capabilities`/`name` and
- * nothing else; it has no consumer for the three LIST-only fields, and inheriting them
- * would oblige `getAppListingAuthoringContext` to join `Image` twice per page load to
- * populate columns nobody renders. Narrowing here keeps each read carrying exactly what
- * its own surface uses.
+ * `&`. The authoring page has no consumer for the LIST-only media/advisory fields, and
+ * inheriting them would oblige `getAppListingAuthoringContext` to join `Image` twice per
+ * page load to populate columns nobody renders. Narrowing here keeps each read carrying
+ * exactly what its own surface uses.
+ *
+ * 🔴 `lastModerationAction` IS NO LONGER OMITTED, and it is here under exactly the rule
+ * above: it now has a consumer. The Publishing tab has to tell an owner-unpublished
+ * listing (Republish, which the server permits) from a moderator takedown (no way back
+ * that the owner can walk) — `status` reads `removed` for both, so it is the ONLY bit that
+ * separates them. It arrives NORMALISED (`owner-unpublish` | `other` | `null`) via the
+ * same {@link normalizeLastModerationAction} the list read uses, so a seated editor never
+ * receives the moderator's actual verb.
  */
 export type AppListingAuthoringContext = Omit<
   MyAppListing,
-  'iconUrl' | 'coverUrl' | 'updatedAt' | 'problems' | 'lastModerationAction'
+  'iconUrl' | 'coverUrl' | 'updatedAt' | 'problems'
 > & {
   /**
    * The listing's linked OAuth `client_id`, or `null`. PUBLIC, not a secret — the same
@@ -1289,20 +1306,55 @@ export async function getAppListingAuthoringContext(opts: {
   if (!row) {
     throw new TRPCError({ code: 'NOT_FOUND', message: 'App listing not found' });
   }
-  // 🔴 STATUS GATE — see {@link AUTHORABLE_LISTING_STATUSES}. A moderator-removed listing
-  // must not open the authoring page at all; leaving it open left a live Collaborators tab
-  // on a delisted app, where accepting an invite still mints repo write.
-  if (!isAuthorableListingStatus(row.status)) {
+  /**
+   * 🔴 STATUS GATE — NOW A KNOWN-STATUS GATE, NOT THE AUTHORABLE ONE, and the difference
+   * is deliberate rather than a relaxation.
+   *
+   * The old gate refused every non-authorable status outright. Its stated reason was that
+   * leaving the page open on a delisted app left a LIVE Collaborators tab, where accepting
+   * an invite still mints repo write — and that reason is untouched and still correct. But
+   * refusing the whole page also put an owner's own Republish out of reach, because an
+   * owner Unpublish writes the SAME `status='removed'` a moderator takedown does. That made
+   * an owner unpublish a one-way door only a moderator could reopen — the exact defect
+   * civitai/civitai#4218 exists to prevent.
+   *
+   * So the page opens and the TABS narrow instead: `editorTabsFor` withholds `details`,
+   * `media`, `manifest`, `earnings` AND `collaborators` on any non-authorable status,
+   * leaving at most Publishing (owner) + History. The Collaborators hazard is additionally
+   * closed at its own enforcement point — `inviteCollaborator` / `respondToInvite` refuse a
+   * non-authorable listing — because a tab set is a UI narrowing and never a gate.
+   *
+   * An UNKNOWN status still refuses here: {@link canOpenListingAuthoringPage} fails closed.
+   */
+  if (!canOpenListingAuthoringPage(row.status)) {
     throw new TRPCError({
       code: 'FORBIDDEN',
       message: 'This listing can no longer be edited',
     });
   }
+  /**
+   * The listing's most-recent moderation-event action, for the Publishing tab's
+   * owner-hidden-vs-mod-removed split.
+   *
+   * 🔴 ONLY QUERIED FOR A `removed` LISTING, which is the only status the value means
+   * anything on — every other status keeps this read at the two round trips it already
+   * did. Same keyset (`orderBy desc` + `take 1`) the batched list read uses, and the same
+   * NORMALISATION on the way out.
+   */
+  const lastEvent =
+    row.status === 'removed'
+      ? await dbRead.appListingModerationEvent.findFirst({
+          where: { appListingId: access.seatListingId },
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          select: { action: true },
+        })
+      : null;
   return {
     appListingId: access.seatListingId,
     slug: row.slug,
     name: row.name,
     status: row.status,
+    lastModerationAction: normalizeLastModerationAction(lastEvent?.action ?? null),
     // 🔴 KIND AND BLOCK COME FROM `access` (the PARENT), never from the row asked for —
     // a shadow carries `appBlockId: null` by construction, so reading them off it would
     // make an in-flight revision look off-site and silently strip the block-only tabs.
