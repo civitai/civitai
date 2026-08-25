@@ -77,9 +77,17 @@ const KEY_PROPERTY = /(?:^|[\s,{])['"]?REDIS_(?:SYS_|SUB_)?KEYS['"]?\s*:/;
 function filesHandTypingKeyConstants(): string[] {
   const pattern = mockPattern(SPECIFIER);
   const found: string[] = [];
-  // Matches the `unit` project's own include (`src/**` and `scripts/**`) rather than a subset,
-  // so a guarded mock cannot hide simply by living in a directory this walk forgot.
-  const globs = ['src/**/*.test.{ts,tsx}', 'scripts/**/*.test.{ts,tsx}'];
+  // 🔴 EVERY vitest project's test root, not just the `unit` one. An earlier revision walked
+  // `src/**` + `scripts/**` and its comment claimed that matched "the project's own include" —
+  // but `packages/*` and `apps/*` are SEPARATE vitest projects carrying 175 more test files
+  // that the walk simply forgot. That gap is empty today (measured: 0 of the 175 mock this
+  // specifier), which is exactly why it would have gone unnoticed until it wasn't.
+  const globs = [
+    'src/**/*.test.{ts,tsx}',
+    'scripts/**/*.test.{ts,tsx}',
+    'packages/*/src/**/*.test.{ts,tsx}',
+    'apps/*/src/**/*.test.{ts,tsx}',
+  ];
   for (const g of globs) {
     for (const rel of globSync(g, { cwd: REPO_ROOT })) {
       // 🔴 Node's glob joins with the platform separator, so this is `src\…` on Windows and
@@ -109,6 +117,9 @@ function filesHandTypingKeyConstants(): string[] {
  * spread the package AND override that one key, which keeps every other constant real.
  */
 const HAND_TYPED_BASELINE: string[] = [
+  'src/__tests__/pages/api/download/download-quota-seam.test.ts',
+  'src/__tests__/pages/api/download/model-version-blocklist.test.ts',
+  'src/__tests__/pages/api/download/split-query-repair.test.ts',
   'src/server/auth/__tests__/ban-session-revocation.test.ts',
   'src/server/auth/__tests__/session-client.test.ts',
   'src/server/events/__tests__/base-event.sysredis-soft.test.ts',
@@ -150,17 +161,14 @@ const HAND_TYPED_BASELINE: string[] = [
   'src/tests/api/internal/blocks/build-callback.test.ts',
   'src/tests/api/internal/blocks/review-build-callback.test.ts',
   'src/tests/api/tier1-public-route-disclosure.test.ts',
-  'src/tests/api/v1/blocks/dev-token.test.ts',
-  'src/tests/api/v1/blocks/submissions.test.ts',
-  'src/tests/api/v1/blocks/withdraw.test.ts',
   'src/tests/api/v1/block-tokens/dev-tunnel-mint.test.ts',
   'src/tests/api/v1/block-tokens/dev-tunnel-owned-nonapproved-mint.test.ts',
   'src/tests/api/v1/block-tokens/index.test.ts',
   'src/tests/api/v1/block-tokens/page-mint.test.ts',
+  'src/tests/api/v1/blocks/dev-token.test.ts',
+  'src/tests/api/v1/blocks/submissions.test.ts',
+  'src/tests/api/v1/blocks/withdraw.test.ts',
   'src/tests/api/webhooks/resource-training-v2.service-contract.test.ts',
-  'src/__tests__/pages/api/download/download-quota-seam.test.ts',
-  'src/__tests__/pages/api/download/model-version-blocklist.test.ts',
-  'src/__tests__/pages/api/download/split-query-repair.test.ts',
   'src/tests/server/utils/apps-catalog-rate-limit.test.ts',
 ];
 
@@ -198,7 +206,10 @@ describe('no hand-typed Redis key constants in a guarded mock', () => {
       'These files hand-type REDIS_KEYS / REDIS_SYS_KEYS / REDIS_SUB_KEYS alongside a mock of\n' +
         `${SPECIFIER}. Hand-typed constants drift from production silently — 15 of them had,\n` +
         "before #4400. Spread the real package instead: ...(await import('@civitai/redis/client')).\n" +
-        'Do NOT add the file to HAND_TYPED_BASELINE; that list may only shrink.'
+        'That list may only shrink, so do NOT append a real violation to it. The one exception\n' +
+        'is a FALSE POSITIVE — a file that mocks correctly and only mentions the constant in a\n' +
+        'comment or a type. Reword the mention if you can; if not, add the entry and raise the\n' +
+        'count in `the baseline is exactly the recorded size` in the same commit, saying why.'
     ).toEqual([]);
   });
 
@@ -212,10 +223,21 @@ describe('no hand-typed Redis key constants in a guarded mock', () => {
     ).toEqual([]);
   });
 
-  // 🔴 Makes "may only shrink" mechanical instead of social. Without it a future PR can append
-  // an entry and both tests above stay green, which is the whole failure mode a ratchet exists
-  // to prevent. Lower this number when you convert a file; never raise it.
-  it('the baseline only ever shrinks', () => {
-    expect(HAND_TYPED_BASELINE.length).toBeLessThanOrEqual(53);
+  // 🔴 `toBe`, NOT `toBeLessThanOrEqual`, and the difference is the whole point. A `<=` cap
+  // stops ratcheting the moment the baseline drops below it: convert five files without
+  // editing the literal and a later PR can append five new violations with every test green.
+  // That is the same "remember to lower it" social contract the cap was added to replace —
+  // it just moved. An exact count forces the edit in BOTH directions, so the number can never
+  // silently accumulate headroom.
+  //
+  // 🔴 WHEN IT IS LEGITIMATE TO RAISE THIS. The detector scans the whole file and is
+  // deliberately loose, so a file that mocks the specifier CORRECTLY and merely mentions
+  // `REDIS_KEYS:` in a comment or a type is a false positive. That is the accepted cost of not
+  // parsing — but it needs a sanctioned remedy, and the failure message's "do NOT add to the
+  // baseline" is wrong for that one case. Prefer rewording the comment; if the mention is
+  // load-bearing, add the entry AND raise this number in the same commit, with a note saying
+  // which it is. A raise is then a visible, reviewable claim rather than a silent one.
+  it('the baseline is exactly the recorded size', () => {
+    expect(HAND_TYPED_BASELINE.length).toBe(53);
   });
 });
