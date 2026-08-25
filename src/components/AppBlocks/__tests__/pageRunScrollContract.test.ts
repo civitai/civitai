@@ -236,7 +236,10 @@ describe('the run page and its host agree on who owns the height', () => {
           // without reopening that hole.)
           if (!/\bPageBlockHost\b/.test(src)) continue;
           if (/\bfit=(["']fill["']|\{\s*['"]fill['"]\s*\})/.test(src))
-            offenders.push(path.relative(REPO_ROOT, full));
+            // Posix separators, so the expectation below reads the same on every
+            // platform. Without this the walk yields `src\pages\…` on Windows and
+            // the guard fails there while staying green on Linux CI.
+            offenders.push(path.relative(REPO_ROOT, full).split(path.sep).join('/'));
         }
       }
     };
