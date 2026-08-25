@@ -31,7 +31,7 @@ const isType = (t: string): t is (typeof BLOCKLIST_TYPES)[number] =>
   (BLOCKLIST_TYPES as readonly string[]).includes(t);
 
 export const actions: Actions = {
-  add: async ({ request }) => {
+  add: async ({ request, locals }) => {
     const form = await request.formData();
     const type = String(form.get('type') ?? '');
     const id = parseRowId(form.get('id'));
@@ -45,7 +45,7 @@ export const actions: Actions = {
     // statement itself rather than here — see `upsertBlocklist`.
     let result;
     try {
-      result = await upsertBlocklist({ id, type, blocklist: items });
+      result = await upsertBlocklist({ id, type, blocklist: items, userId: locals.user.id });
     } catch (error) {
       if (error instanceof BlocklistRowMismatchError)
         return fail(409, {
@@ -64,7 +64,7 @@ export const actions: Actions = {
 
     return { success: true, action: 'add', count: result.count, cacheStale: result.cacheStale };
   },
-  remove: async ({ request }) => {
+  remove: async ({ request, locals }) => {
     const form = await request.formData();
     const type = String(form.get('type') ?? '');
     const id = parseRowId(form.get('id'));
@@ -74,7 +74,7 @@ export const actions: Actions = {
     if (!id) return fail(400, { error: 'Nothing to remove from.' });
     if (items.length === 0) return fail(400, { error: 'No items to remove.' });
 
-    const result = await removeBlocklistItems({ id, type, items });
+    const result = await removeBlocklistItems({ id, type, items, userId: locals.user.id });
     // A submitted-but-unmatched removal is a failure, not a quiet "Removed 0 items." The list is
     // served from a month-long Redis cache, so the likeliest cause is that this page is stale. An
     // id belonging to another type lands here too.
