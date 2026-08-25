@@ -571,6 +571,7 @@ export interface User {
   engagedImages?: ImageEngagement[];
   collections?: Collection[];
   hubs?: UserHub[];
+  hubFollows?: UserHubFollow[];
   collectionItems?: CollectionItem[];
   reviewedCollectionItems?: CollectionItem[];
   contributingCollections?: CollectionContributor[];
@@ -5400,7 +5401,18 @@ export interface UserHub {
   period: MetricTimeframe;
   mediaTypes: MediaType[];
   metadata: JsonValue;
+  availability: Availability;
+  forcedBrowsingLevel: number;
   sources?: UserHubSource[];
+  followers?: UserHubFollow[];
+}
+
+export interface UserHubFollow {
+  userId: number;
+  hubId: number;
+  createdAt: Date;
+  user?: User;
+  hub?: UserHub;
 }
 
 export interface UserHubSource {

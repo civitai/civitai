@@ -1,9 +1,18 @@
 import * as z from 'zod';
 import { ImageSort } from '~/server/common/enums';
-import { MediaType, MetricTimeframe, UserHubSourceType } from '~/shared/utils/prisma/enums';
+import {
+  Availability,
+  MediaType,
+  MetricTimeframe,
+  UserHubSourceType,
+} from '~/shared/utils/prisma/enums';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 export const hubLimits = {
   hubsPerUser: 20,
+  // Bounds the followed-hubs read as well as the write: the sidebar renders the
+  // whole list, and the follow button decides its own state from it.
+  followedHubs: 50,
   sourcesPerHub: 50,
   nameLength: 60,
   aliasLength: 60,
@@ -116,7 +125,42 @@ export const upsertUserHubSchema = z.object({
   // Same "omitted means leave alone" rule as `sources`; stored on
   // `metadata.filters`, like `description`.
   filters: hubFeedFiltersSchema.optional(),
+  // Private or Public, and nothing else. `Unsearchable` is the member that literally
+  // means "public but not listed", which is what a hub is — it is not used because
+  // hubs have no index and no listing to be absent from, so the distinction would
+  // encode nothing. The cost is that a future sweep over `Availability.Public`
+  // content picks hubs up as listed; change this the day hubs gain a directory.
+  availability: z.enum([Availability.Private, Availability.Public]).optional(),
+  // A browsing-level bitmask, 0 for "no cap". Masked rather than rejected on the
+  // way in: an unknown bit is a level this deployment does not have, and storing it
+  // would let a later release widen an existing hub by adding one.
+  forcedBrowsingLevel: z
+    .number()
+    .int()
+    .min(0)
+    .transform((value) => value & allBrowsingLevelsFlag)
+    .optional(),
 });
+
+// What a viewer switched off for their own session. Sent with the feed query rather
+// than written anywhere: on a hub you do not own, a toggle is a view, not an edit.
+export const hubSourceExclusionSchema = z.object({
+  type: z.enum(UserHubSourceType),
+  targetId: z.number().int().positive(),
+});
+
+export type HubSourceExclusionInput = z.infer<typeof hubSourceExclusionSchema>;
+
+// The client builds its exclusion set with this and the service subtracts with it.
+// One spelling, in the module both sides already import from.
+export const hubSourceKey = (source: HubSourceExclusionInput) =>
+  `${source.type}:${source.targetId}`;
+
+export const userHubFollowSchema = z.object({
+  hubId: z.number().int().positive(),
+});
+
+export type UserHubFollowInput = z.infer<typeof userHubFollowSchema>;
 
 export const setUserHubOrderSchema = z.object({
   ids: z.array(z.number()).max(hubLimits.hubsPerUser),

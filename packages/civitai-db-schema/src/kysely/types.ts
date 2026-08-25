@@ -4020,6 +4020,13 @@ export type UserHub = {
   period: Generated<MetricTimeframe>;
   mediaTypes: MediaType[];
   metadata: Generated<unknown>;
+  availability: Generated<Availability>;
+  forcedBrowsingLevel: Generated<number>;
+};
+export type UserHubFollow = {
+  userId: number;
+  hubId: number;
+  createdAt: Generated<Timestamp>;
 };
 export type UserHubSource = {
   id: Generated<number>;
@@ -4558,6 +4565,7 @@ export type DB = {
   UserCosmeticShopPurchases: UserCosmeticShopPurchases;
   UserEngagement: UserEngagement;
   UserHub: UserHub;
+  UserHubFollow: UserHubFollow;
   UserHubSource: UserHubSource;
   UserLink: UserLink;
   UserMembershipOverride: UserMembershipOverride;

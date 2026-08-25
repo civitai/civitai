@@ -16,7 +16,13 @@ vi.mock('~/server/services/collection.service', () => ({
 
 import {
   addUserHubSource,
+  getUserHubs,
+  getUserHubForRoute,
   getHubSourceSuggestions,
+  deleteUserHub,
+  hubBrowsingLevel,
+  hubViewerWhere,
+  hubWriterWhere,
   removeUserHubSource,
   getUserHubById,
   resolveHubSourceFromUrl,
@@ -65,32 +71,159 @@ beforeEach(() => {
   stubVersions({});
   // The service maps whatever the write returns before handing it back, so the
   // fakes have to return a row rather than undefined.
-  dbMock.dbWrite.userHub.create.mockResolvedValue({ id: 7, metadata: {} });
-  dbMock.dbWrite.userHub.update.mockResolvedValue({ id: 9, metadata: {} });
+  dbMock.dbWrite.userHub.create.mockResolvedValue({ id: 7, metadata: {}, sources: [] });
+  dbMock.dbWrite.userHub.update.mockResolvedValue({ id: 9, metadata: {}, sources: [] });
+});
+
+/**
+ * Who may open a hub. Every hub read in this service goes through this fragment, so
+ * a mistake here is a private hub readable by strangers rather than an error
+ * anywhere. Asserted on the fragment itself, and again on what the reads emit.
+ */
+describe('hubViewerWhere', () => {
+  it('lets a signed-in viewer reach their own hubs and public ones, and nothing else', () => {
+    expect(hubViewerWhere({ userId: 5 })).toStrictEqual({
+      OR: [{ userId: 5 }, { availability: Availability.Public }],
+    });
+  });
+
+  it('gives a signed-out viewer the public arm ONLY', () => {
+    // A stray `{ userId: undefined }` arm would be `WHERE "userId" IS NULL`, which
+    // matches no hub today — but it is a leak the moment userId becomes nullable,
+    // and it reads as harmless.
+    expect(hubViewerWhere({})).toStrictEqual({ OR: [{ availability: Availability.Public }] });
+  });
+
+  it('lets a moderator reach every hub regardless of visibility', () => {
+    // Strict: `toEqual({})` also passes for `{ OR: undefined }`, which is a
+    // different query and would be a moderator seeing nothing.
+    expect(hubViewerWhere({ userId: 5, isModerator: true })).toStrictEqual({});
+  });
 });
 
 describe('resolveHubSources', () => {
-  it('returns null for a hub the viewer does not own', async () => {
-    // The service scopes by userId in the where clause, so a non-owner's read
-    // finds nothing rather than finding-then-checking.
+  it('scopes a signed-in viewer to their own hubs plus public ones', async () => {
     findFirstHub.mockResolvedValue(null);
 
     const result = await resolveHubSources({ hubId: 1, userId: 999 });
 
     expect(result).toBeNull();
     expect(findFirstHub).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: 1, userId: 999 } })
+      expect.objectContaining({
+        where: { id: 1, OR: [{ userId: 999 }, { availability: Availability.Public }] },
+      })
     );
   });
 
-  it('returns null when there is no viewer at all', async () => {
+  it('scopes a signed-out viewer to public hubs', async () => {
+    // Anonymous viewers used to be refused before the query ran. A public hub opens
+    // for anyone holding the link now, so the refusal has to come from the WHERE.
+    findFirstHub.mockResolvedValue(null);
+
     const result = await resolveHubSources({ hubId: 1, userId: undefined });
 
     expect(result).toBeNull();
-    // Must not even reach the database — an anonymous request has no hub to resolve.
-    expect(findFirstHub).not.toHaveBeenCalled();
+    expect(findFirstHub).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 1, OR: [{ availability: Availability.Public }] },
+      })
+    );
   });
 
+  it('puts no visibility restriction on a moderator', async () => {
+    findFirstHub.mockResolvedValue({ forcedBrowsingLevel: 0, sources: [] });
+
+    await resolveHubSources({ hubId: 1, userId: 999, isModerator: true });
+
+    expect(findFirstHub).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 1 } }));
+  });
+
+  it('subtracts the sources this viewer switched off for their session', async () => {
+    findFirstHub.mockResolvedValue({
+      forcedBrowsingLevel: 0,
+      sources: [
+        { type: UserHubSourceType.User, targetId: 10 },
+        { type: UserHubSourceType.User, targetId: 11 },
+      ],
+    });
+
+    const result = await resolveHubSources({
+      hubId: 1,
+      userId: 5,
+      excludedSources: [{ type: UserHubSourceType.User, targetId: 11 }],
+    });
+
+    // The id, not the count: a length assertion passes when the WRONG source is
+    // dropped, which is the same feed with the wrong creator missing.
+    expect(result?.userIds).toEqual([10]);
+  });
+
+  it('ignores an exclusion naming a different source TYPE with the same id', async () => {
+    // The key is the pair. Matching on targetId alone would silently drop a creator
+    // whenever a model happened to share its id.
+    findFirstHub.mockResolvedValue({
+      forcedBrowsingLevel: 0,
+      sources: [{ type: UserHubSourceType.User, targetId: 10 }],
+    });
+
+    const result = await resolveHubSources({
+      hubId: 1,
+      userId: 5,
+      excludedSources: [{ type: UserHubSourceType.Model, targetId: 10 }],
+    });
+
+    expect(result?.userIds).toEqual([10]);
+  });
+
+  it('carries the hub stored level out to the filter builders', async () => {
+    findFirstHub.mockResolvedValue({ forcedBrowsingLevel: 3, sources: [] });
+
+    const result = await resolveHubSources({ hubId: 1, userId: 5 });
+
+    expect(result?.forcedBrowsingLevel).toBe(3);
+  });
+});
+
+describe('hubBrowsingLevel', () => {
+  const sources = (forcedBrowsingLevel: number) =>
+    ({
+      userIds: [],
+      modelVersionIds: [],
+      collectionIds: [],
+      truncated: false,
+      forcedBrowsingLevel,
+    } as const);
+
+  it('narrows the viewer level to what the hub allows', () => {
+    // PG|PG-13|R asked for, PG|PG-13 allowed.
+    expect(hubBrowsingLevel(1 | 2 | 4, sources(1 | 2))).toBe(1 | 2);
+  });
+
+  it('never widens past what the viewer was already allowed', () => {
+    // The direction that would matter: a hub allowing R must not hand R to a viewer
+    // whose own level (already capped by domain and account) is PG.
+    expect(hubBrowsingLevel(1, sources(1 | 4))).toBe(1);
+  });
+
+  it('treats an absent viewer level as PG rather than as everything', () => {
+    // A request carrying no level at all reaches the filter builders on red, where
+    // nothing backfills it. Reading that as "no restriction" and intersecting the
+    // hub's cap into it would turn an R-only hub into an R feed for a caller who
+    // asked for nothing — the cap widening a request instead of narrowing it.
+    expect(hubBrowsingLevel(undefined, sources(4))).toBe(0);
+    expect(hubBrowsingLevel(undefined, sources(1 | 4))).toBe(1);
+  });
+
+  it('returns 0 when the two do not overlap, so the caller can serve nothing', () => {
+    expect(hubBrowsingLevel(1, sources(4))).toBe(0);
+  });
+
+  it('leaves the viewer level untouched when the hub sets no cap', () => {
+    expect(hubBrowsingLevel(1 | 2 | 4, sources(0))).toBe(1 | 2 | 4);
+  });
+});
+
+describe('resolveHubSources source expansion', () => {
   it('expands a model source into its versions alongside explicit versions', async () => {
     findFirstHub.mockResolvedValue({
       sources: [
@@ -175,7 +308,14 @@ describe('resolveHubSources', () => {
 
     expect(findFirstHub).toHaveBeenCalledWith(
       expect.objectContaining({
-        select: { sources: expect.objectContaining({ where: { enabled: true } }) },
+        select: expect.objectContaining({
+          // Named, not just `objectContaining` around `sources`: a mocked Prisma call
+          // ignores `select`, so dropping this key returns `undefined` in production,
+          // `hubBrowsingLevel` reads it as "no cap", and every cap test stays green
+          // over a hub serving uncapped.
+          forcedBrowsingLevel: true,
+          sources: expect.objectContaining({ where: { enabled: true } }),
+        }),
       })
     );
   });
@@ -188,7 +328,7 @@ describe('upsertUserHub', () => {
     // `if (!collectionIds.length) return` -> `< 0` kills the shipped feature and
     // the suite still prints all-green.
     dbMock.dbRead.userHub.count.mockResolvedValue(0);
-    dbMock.dbWrite.userHub.create.mockResolvedValue({ id: 7 });
+    dbMock.dbWrite.userHub.create.mockResolvedValue({ id: 7, sources: [] });
 
     await upsertUserHub({
       name: 'creators only',
@@ -207,7 +347,7 @@ describe('upsertUserHub', () => {
     // silently overwrote fields the caller had not sent, which reset the user's
     // sort every time they toggled a source. Create must still get real values.
     dbMock.dbRead.userHub.count.mockResolvedValue(0);
-    dbMock.dbWrite.userHub.create.mockResolvedValue({ id: 8 });
+    dbMock.dbWrite.userHub.create.mockResolvedValue({ id: 8, sources: [] });
 
     await upsertUserHub({ name: 'defaults', sources: [], userId: 5 });
 
@@ -220,7 +360,12 @@ describe('upsertUserHub', () => {
     // The half the title used to claim and never exercised: the same call shape
     // against an existing hub must not carry those values, or toggling a source
     // resets the user's sort.
-    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({ id: 9, metadata: {} });
+    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({
+      id: 9,
+      userId: 5,
+      metadata: {},
+      sources: [],
+    });
 
     await upsertUserHub({ id: 9, name: 'defaults', sources: [], userId: 5 });
 
@@ -233,7 +378,12 @@ describe('upsertUserHub', () => {
     // A rename and a sort change both used to resend their own cached copy of the
     // whole list, so either could revert a source edit made in between. With the
     // list omitted the update must not touch UserHubSource at all.
-    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({ id: 9, metadata: {} });
+    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({
+      id: 9,
+      userId: 5,
+      metadata: {},
+      sources: [],
+    });
 
     await upsertUserHub({ id: 9, name: 'renamed', userId: 5 });
 
@@ -246,7 +396,12 @@ describe('upsertUserHub', () => {
   it('still replaces the sources when the input carries them', async () => {
     // Negative control for the test above: without it, an update branch that
     // dropped source writes entirely would pass.
-    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({ id: 9, metadata: {} });
+    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({
+      id: 9,
+      userId: 5,
+      metadata: {},
+      sources: [],
+    });
 
     await upsertUserHub({
       id: 9,
@@ -520,7 +675,12 @@ describe('persisting the feed filters', () => {
   });
 
   it('writes both keys when a save carries description and filters together', async () => {
-    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({ id: 9, metadata: {} });
+    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({
+      id: 9,
+      userId: 5,
+      metadata: {},
+      sources: [],
+    });
 
     await upsertUserHub({
       id: 9,
@@ -740,7 +900,7 @@ describe('addUserHubSource', () => {
 
     expect(result).toEqual({ hubId: 1, added: false });
     expect(dbMock.dbWrite.userHubSource.create).not.toHaveBeenCalled();
-    expect(dbMock.dbWrite.userHubSource.update).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.userHubSource.updateMany).not.toHaveBeenCalled();
   });
 
   it('re-enables a source the owner had switched off, rather than reporting a no-op', async () => {
@@ -754,8 +914,10 @@ describe('addUserHubSource', () => {
     const result = await addUserHubSource({ userId: 5, hubId: 1, ...source });
 
     expect(result).toEqual({ hubId: 1, added: true });
-    expect(dbMock.dbWrite.userHubSource.update).toHaveBeenCalledWith({
-      where: { id: 9 },
+    // Owner-scoped on the write, not only in the SELECT above: id-addressing is safe
+    // only while a source row cannot change hubs, and nothing enforces that.
+    expect(dbMock.dbWrite.userHubSource.updateMany).toHaveBeenCalledWith({
+      where: { id: 9, hub: { userId: 5 } },
       data: { enabled: true },
     });
     expect(dbMock.dbWrite.userHubSource.create).not.toHaveBeenCalled();
@@ -862,5 +1024,230 @@ describe('removeUserHubSource', () => {
     expect(dbMock.dbWrite.userHubSource.deleteMany).toHaveBeenCalledWith({
       where: { hubId: 1, type: UserHubSourceType.User, targetId: 42, hub: { userId: 5 } },
     });
+  });
+});
+
+describe('getUserHubs', () => {
+  it('asks the database for the list in alphabetical order', async () => {
+    // Ordering above a read decides WHICH rows come back once there is a limit, and
+    // sorting in the component would leave the rail and the server disagreeing.
+    dbMock.dbRead.userHub.findMany.mockResolvedValue([]);
+
+    await getUserHubs({ userId: 5 });
+
+    expect(dbMock.dbRead.userHub.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ orderBy: { name: 'asc' } })
+    );
+  });
+
+  it('marks the caller as the owner of their own hubs', async () => {
+    dbMock.dbRead.userHub.findMany.mockResolvedValue([{ id: 1, userId: 5, metadata: {} }]);
+
+    const [hub] = await getUserHubs({ userId: 5 });
+
+    expect(hub.isOwner).toBe(true);
+  });
+});
+
+describe('getUserHubById', () => {
+  it('scopes the read to what this viewer may open', async () => {
+    findFirstHub.mockResolvedValue({ id: 1, userId: 5, metadata: {}, sources: [] });
+
+    await getUserHubById({ id: 1, userId: 5 });
+
+    expect(findFirstHub).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 1, OR: [{ userId: 5 }, { availability: Availability.Public }] },
+      })
+    );
+  });
+
+  it('is a not-found for a hub the viewer may not open', async () => {
+    // Revoking Public makes every shared link 404 by this route and no other: there
+    // is no separate list of issued links to keep in step.
+    findFirstHub.mockResolvedValue(null);
+
+    await expect(getUserHubById({ id: 1, userId: 999 })).rejects.toThrow(/not found/i);
+  });
+
+  it('reports a moderator as NOT the owner, so the client renders it read-only', async () => {
+    // "View only" is the whole scope of moderator access. `isOwner` is what every
+    // write affordance branches on, so a moderator reading as owner would hand them
+    // an edit UI nobody agreed to.
+    findFirstHub.mockResolvedValue({ id: 1, userId: 5, metadata: {}, sources: [] });
+
+    const hub = await getUserHubById({ id: 1, userId: 999, isModerator: true });
+
+    expect(hub.isOwner).toBe(false);
+  });
+
+  it('reports a signed-out viewer as NOT the owner even if the row carries no userId', async () => {
+    // The row shape that makes `hub.userId === viewerId` come out TRUE for a
+    // stranger: `undefined === undefined`. One dropped key in `hubSelect` reaches
+    // it, and the mistake grants an edit UI on someone else's hub rather than
+    // erroring. A row with a real userId cannot tell this test from a broken one,
+    // which is why it is written against the nullish row.
+    findFirstHub.mockResolvedValue({ id: 1, userId: undefined, metadata: {}, sources: [] });
+
+    const hub = await getUserHubById({ id: 1 });
+
+    expect(hub.isOwner).toBe(false);
+  });
+});
+
+describe('hubWriterWhere', () => {
+  it('scopes an ordinary caller to their own hubs', () => {
+    expect(hubWriterWhere({ userId: 5 })).toStrictEqual({ userId: 5 });
+  });
+
+  it('does NOT let Public grant writing', () => {
+    // The whole reason this is a second fragment rather than `hubViewerWhere`:
+    // Public means anyone holding the link can READ. Reusing the read fragment here
+    // would let any viewer of a shared hub rename or delete it.
+    expect(JSON.stringify(hubWriterWhere({ userId: 5 }))).not.toContain('availability');
+  });
+
+  it('lets a moderator manage any hub', () => {
+    expect(hubWriterWhere({ userId: 5, isModerator: true })).toStrictEqual({});
+  });
+});
+
+describe('deleteUserHub', () => {
+  it('scopes the delete to the caller by default', async () => {
+    dbMock.dbWrite.userHub.deleteMany.mockResolvedValue({ count: 1 });
+
+    await deleteUserHub({ id: 9, userId: 5 });
+
+    expect(dbMock.dbWrite.userHub.deleteMany).toHaveBeenCalledWith({
+      where: { id: 9, userId: 5 },
+    });
+  });
+
+  it('lets a moderator delete a hub that is not theirs', async () => {
+    dbMock.dbWrite.userHub.deleteMany.mockResolvedValue({ count: 1 });
+
+    await deleteUserHub({ id: 9, userId: 5, isModerator: true });
+
+    expect(dbMock.dbWrite.userHub.deleteMany).toHaveBeenCalledWith({ where: { id: 9 } });
+  });
+});
+
+describe('the moderator write line is enforced, not just described', () => {
+  it('refuses a moderator replacing another user’s source list', async () => {
+    // `hubWriterWhere` opens the ROW to a moderator, and `upsert` is how a source
+    // list is written — so without an explicit refusal here, one API call replaces
+    // someone's whole curation. The client never offers it; that is not a control.
+    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({ id: 9, userId: 42, metadata: {} });
+
+    await expect(
+      upsertUserHub({ id: 9, userId: 5, isModerator: true, sources: [] })
+    ).rejects.toThrow(/only the owner/i);
+  });
+
+  it('refuses a moderator setting another user’s content level', async () => {
+    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({ id: 9, userId: 42, metadata: {} });
+
+    await expect(
+      upsertUserHub({ id: 9, userId: 5, isModerator: true, forcedBrowsingLevel: 1 })
+    ).rejects.toThrow(/only the owner/i);
+  });
+
+  it('still lets a moderator rename and re-describe it', async () => {
+    // The control. Without it the two refusals above pass for a service that refuses
+    // every moderator write, which is not what Justin asked for.
+    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({ id: 9, userId: 42, metadata: {} });
+
+    await expect(
+      upsertUserHub({ id: 9, userId: 5, isModerator: true, name: 'renamed by a mod' })
+    ).resolves.toBeDefined();
+  });
+
+  it('leaves the OWNER able to change both', async () => {
+    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({ id: 9, userId: 5, metadata: {} });
+
+    await expect(
+      upsertUserHub({ id: 9, userId: 5, sources: [], forcedBrowsingLevel: 1 })
+    ).resolves.toBeDefined();
+  });
+});
+
+describe('getUserHubForRoute', () => {
+  it('scopes the route read the same way the tRPC read is scoped', async () => {
+    // The SSR 404 and the client query must not be able to disagree — they share
+    // `hubViewerWhere`, and this is what pins that they do.
+    findFirstHub.mockResolvedValue({ id: 1, name: 'Cute Models' });
+
+    await getUserHubForRoute({ id: 1, userId: 5 });
+
+    expect(findFirstHub).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 1, OR: [{ userId: 5 }, { availability: Availability.Public }] },
+      })
+    );
+  });
+
+  it('returns the name, which the canonical slug redirect needs', async () => {
+    findFirstHub.mockResolvedValue({ id: 1, name: 'Cute Models' });
+
+    expect(await getUserHubForRoute({ id: 1, userId: 5 })).toMatchObject({ name: 'Cute Models' });
+  });
+
+  it('returns null for a hub this viewer may not open', async () => {
+    // Null is what the route turns into a real 404 rather than a 200 carrying a
+    // not-found component. Returning a truthy value here restores exactly the
+    // behaviour the function exists to remove.
+    findFirstHub.mockResolvedValue(null);
+
+    expect(await getUserHubForRoute({ id: 1, userId: 999 })).toBeNull();
+  });
+});
+
+describe('upsertUserHub visibility and level', () => {
+  it('writes the visibility and the level the owner chose', async () => {
+    // Both, in one assertion: the schema mask is tested separately, and a masked
+    // value that never reaches the UPDATE is a cap the owner set and the hub does
+    // not have. Dropping either from the service's destructure leaves every cap test
+    // green, because those mock `resolveHubSources`.
+    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({
+      id: 9,
+      userId: 5,
+      metadata: {},
+      sources: [],
+    });
+
+    await upsertUserHub({
+      id: 9,
+      userId: 5,
+      availability: Availability.Public,
+      forcedBrowsingLevel: 1 | 2,
+    });
+
+    expect(dbMock.dbWrite.userHub.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 9, userId: 5 },
+        data: expect.objectContaining({
+          availability: Availability.Public,
+          forcedBrowsingLevel: 1 | 2,
+        }),
+      })
+    );
+  });
+
+  it('masks a level bit this deployment does not have', () => {
+    // Stored unmasked, a bit for a level that does not exist yet would WIDEN the
+    // hub the day that level ships, silently and without the owner touching it.
+    const parsed = upsertUserHubSchema.parse({ id: 9, forcedBrowsingLevel: 1 | 2 | 4096 });
+
+    expect(parsed.forcedBrowsingLevel).toBe(1 | 2);
+  });
+
+  it('leaves visibility and level alone when the caller omits them', () => {
+    // Same "omitted means leave alone" rule the sort and the source list follow: a
+    // source toggle resending its own cached copy must not republish a hub the
+    // owner just made private.
+    const parsed = upsertUserHubSchema.parse({ id: 9, sort: 'Newest' });
+
+    expect('availability' in parsed).toBe(false);
+    expect('forcedBrowsingLevel' in parsed).toBe(false);
   });
 });

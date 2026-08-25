@@ -22,6 +22,7 @@ export function HubSourceEditor({
   maxSources = hubLimits.sourcesPerHub,
   disabled,
   hideAdd,
+  readOnly,
   emptyMessage = 'Nothing here yet. Add a creator or a model to start filling it.',
 }: {
   value: HubSourceValue[];
@@ -30,6 +31,11 @@ export function HubSourceEditor({
   disabled?: boolean;
   /** Drop the add affordance, for surfaces too small to hold it open. */
   hideAdd?: boolean;
+  /**
+   * A hub you do not own: no add, no remove. Toggles stay live — the caller decides
+   * where they land, and on someone else's hub that is session state, not a write.
+   */
+  readOnly?: boolean;
   emptyMessage?: string;
 }) {
   const [adding, setAdding] = useState(false);
@@ -50,7 +56,7 @@ export function HubSourceEditor({
 
   return (
     <Stack gap="sm">
-      {!hideAdd && (
+      {!hideAdd && !readOnly && (
         <>
           <Button
             size="compact-sm"
@@ -102,6 +108,7 @@ export function HubSourceEditor({
                   )
                 )
               }
+              hideRemove={readOnly}
               onRemove={() =>
                 onChange(
                   value.filter((s) => !(s.type === source.type && s.targetId === source.targetId))

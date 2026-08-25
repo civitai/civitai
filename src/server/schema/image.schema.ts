@@ -10,6 +10,7 @@ import {
   periodModeSchema,
 } from '~/server/schema/base.schema';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { hubLimits, hubSourceExclusionSchema } from '~/server/schema/user-hub.schema';
 import {
   ImageGenerationProcess,
   MediaType,
@@ -406,6 +407,10 @@ export const getInfiniteImagesSchema = baseQuerySchema
     // this id — the client never sends them. An arbitrary client-supplied OR
     // group would be an unbounded-cost query anyone could post.
     hubId: z.number().optional(),
+    // Sources the VIEWER switched off for this session, on a hub they do not own.
+    // Read only as a subtraction from what `hubId` resolves to, so a forged entry
+    // narrows the forger's own feed and can widen nobody's.
+    hubExcludedSources: z.array(hubSourceExclusionSchema).max(hubLimits.sourcesPerHub).optional(),
     // Restrict the feed to creators currently on the "new & upcoming" board. The
     // board id is resolved server-side from this flag plus the request domain —
     // the client never supplies a user list.
