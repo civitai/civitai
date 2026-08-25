@@ -1,4 +1,5 @@
 import type { NextApiRequest } from 'next';
+import { env } from '~/env/server';
 
 // List of common browser user agents
 const browserUserAgents = ['mozilla', 'chrome', 'safari', 'firefox', 'opera', 'edge'];
@@ -7,6 +8,68 @@ export function isRequestFromBrowser(req: NextApiRequest): boolean {
   if (!userAgent) return false;
 
   return browserUserAgents.some((browser) => userAgent.includes(browser));
+}
+
+/**
+ * Should this caller's model download resolve to an origin-direct URL rather than
+ * the CDN-fronted one?
+ *
+ * Some internal clients download the same file with many parallel connections,
+ * which the CDN does not speed up and the storage origin does. Serving them
+ * directly is measurably faster for those clients and measurably more expensive
+ * for us, so it is an allowlist keyed on user agent, empty by default.
+ *
+ * 🔴 This is NOT an access control and must never be used as one. A user agent is
+ * caller-supplied and trivially spoofed. It is safe here only because of what it
+ * gates: the caller receives the SAME file it was already entitled to, resolved
+ * moments earlier by the route's own auth, ownership, paid-access and blocklist
+ * checks — spoofing it changes which host serves those bytes, not whether the
+ * caller may have them. There is no exposure in a wrong `true`.
+ *
+ * 🔴 There IS a cost in one. A wrong `true` does not merely use more bandwidth: it
+ * moves that download from zero-rated CDN egress to billed origin egress. And the
+ * incentive runs the wrong way — direct is SLOWER single-stream, so it rewards
+ * precisely the high-volume parallel downloader who would benefit from copying an
+ * allowlisted agent string. This allowlist names a string, not a population; it is
+ * a routing hint for clients we operate, and it contains no one who does not
+ * choose to be contained. Treat the entries as a cost decision, keep them narrow,
+ * and if containment ever needs to be real, replace this with an authenticated
+ * signal rather than hardening the string match.
+ */
+
+/**
+ * Shortest allowlist entry that is meaningful. A one- or two-character entry
+ * matches essentially every real user agent — `"c"` is inside
+ * `Mozilla/5.0 (Macintosh…)` — so a truncated paste would silently roll direct
+ * resolution out to everyone.
+ *
+ * Three is not a magic number, and it is not a guarantee either: a 3-character
+ * fragment like `"moz"` or `"mac"` still matches essentially every browser. What
+ * this closes is the accident — a 1-2 character truncation — not a deliberately
+ * broad entry, which no length check can catch. Keep the entries specific.
+ */
+const MIN_ALLOWLIST_ENTRY_LENGTH = 3;
+
+export function shouldResolveDirect(req: NextApiRequest): boolean {
+  const allowlist = env.STORAGE_RESOLVER_DIRECT_USER_AGENTS;
+  // Redundant with the length check below, and kept for readability: it states
+  // that an absent allowlist is the off switch.
+  //
+  // 🔴 It does NOT catch the off switch an operator is most likely to reach for.
+  // `STORAGE_RESOLVER_DIRECT_USER_AGENTS=""` parses to `['']`, not `[]` — the
+  // schema's `.default([])` applies only when the key is ABSENT, and the
+  // comma-splitter does not drop empty segments. So an empty-string value lands
+  // one entry long and survives this line; what actually disables it is the
+  // per-entry length floor. A trailing comma produces the same shape.
+  if (!allowlist?.length) return false;
+
+  const userAgent = req.headers['user-agent']?.toLowerCase();
+  if (!userAgent) return false;
+
+  return allowlist.some((entry) => {
+    const needle = entry.trim().toLowerCase();
+    return needle.length >= MIN_ALLOWLIST_ENTRY_LENGTH && userAgent.includes(needle);
+  });
 }
 
 type Protocol = 'https' | 'http';
