@@ -401,7 +401,47 @@ jobs:
     # If the suite proves too noisy there, the fix is to de-flake the tests or to
     # narrow what runs on push — NOT to hide the result behind continue-on-error.
     continue-on-error: ${{ github.event_name == 'pull_request' }}
-    timeout-minutes: 30
+    # ── SHARDED ACROSS 4 RUNNERS ────────────────────────────────────────────
+    #
+    # Measured before the change, n=12 runs of this job, from the Actions API:
+    #
+    #   Unit tests step   555.5s   <- variable, scales with 1/shards
+    #   Install            30.0s   |
+    #   checkout           21.0s   |  fixed overhead, paid by EVERY shard
+    #   setup-node         13.0s   |
+    #   set up job + pnpm   2.5s   |  = 66.5s
+    #   -------------------------
+    #   total             622.0s   = the 10.4m job median
+    #
+    # So T(N) = 66.5 + 555.5/N:  1 -> 10.4m, 2 -> 5.7m, 3 -> 4.2m, 4 -> 3.4m,
+    # 6 -> 2.7m, 8 -> 2.3m. Runner-minutes go 10.4 -> 13.7 at N=4 (+32%).
+    #
+    # 🔴 WHY 4 AND NOT MORE. `App unit tests + typecheck` is 2.9m. At N=4 this
+    # job lands at ~3.4m and at N=5 it reaches parity, so past N=5 sharding
+    # optimises something that is NO LONGER THE BOTTLENECK — the PR's critical
+    # path floors at ~2.9m however far you go. Raising this number without
+    # first making the other jobs faster buys wall-clock nothing and costs
+    # runner-minutes linearly.
+    #
+    # ⚠️ BALANCE IS ASSUMED, NOT GUARANTEED. `--shard` is not cost-aware, and
+    # this suite's cost is bimodal: p50 66 modules per file, p75 1088, with 411
+    # of 1065 files carrying 96% of all module executions
+    # (claudedocs/test-perf-measurement-envelope-2026-08-15.md and
+    # scripts/test-perf/README.md). At N=4 each shard draws ~266 files incl.
+    # ~103 heavy ones, so chance balancing should be adequate — but READ THE
+    # FOUR SHARD DURATIONS. If one dominates, assign files by measured per-file
+    # cost (scripts/test-perf/reporter.mjs emits it) rather than raising N.
+    #
+    # `fail-fast: false` is load-bearing: the default cancels the sibling shards
+    # the moment one goes red, which throws away three quarters of the signal
+    # from a job whose entire purpose is to report.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    # Per-shard, not the whole suite: 555.5/4 + overhead is ~3.4m, so 15m is
+    # ~4x headroom. It is NOT 30/4 — the fixed 66.5s does not shard.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -417,8 +457,23 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      # `scripts/test-unit-run.mjs` forwards process.argv.slice(2) straight into
+      # `vitest run --project unit* ...args`, and its queueDecision() returns
+      # early on CI, so the dev-server queue never sees this. Verified before
+      # shipping: if the wrapper did NOT forward the flag, every shard would run
+      # the ENTIRE suite — 4x the cost, four green checks, and no error anywhere.
       - name: Unit tests
-        run: pnpm run test:unit:run
+        run: pnpm run test:unit:run -- --shard=${{ matrix.shard }}/4 --reporter=default --reporter=json --outputFile=unit-report.json
+
+      # 🔴 POSITIVE CONTROL. A `--shard` expression that matches no files exits 0
+      # and reports a green check — the same silent-zero class this repo has been
+      # bitten by before (a suite that fails to IMPORT reports "no tests", not a
+      # failure). A per-shard test count is the cheapest thing that can tell
+      # "this shard passed" apart from "this shard ran nothing", and it must run
+      # even when the suite above went red, or a red shard hides a zero shard.
+      - name: Assert this shard actually ran tests
+        if: always()
+        run: node scripts/ci/assert-shard-ran.mjs unit-report.json ${{ matrix.shard }} 4
 
   packages:
     name: Package unit tests
