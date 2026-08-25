@@ -23,7 +23,6 @@ export function HubSourceEditor({
   disabled,
   hideAdd,
   readOnly,
-  footer,
   emptyMessage = 'Nothing here yet. Add a creator or a model to start filling it.',
 }: {
   value: HubSourceValue[];
@@ -37,8 +36,6 @@ export function HubSourceEditor({
    * where they land, and on someone else's hub that is session state, not a write.
    */
   readOnly?: boolean;
-  /** Rendered under the list. The duplicate prompt on a hub you do not own. */
-  footer?: React.ReactNode;
   emptyMessage?: string;
 }) {
   const [adding, setAdding] = useState(false);
@@ -121,8 +118,6 @@ export function HubSourceEditor({
           ))}
         </Stack>
       )}
-
-      {footer}
     </Stack>
   );
 }

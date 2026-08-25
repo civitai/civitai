@@ -31,12 +31,15 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { ImageSort, NsfwLevel } from '~/server/common/enums';
 import { getUserCollectionPermissionsByIds } from '~/server/services/collection.service';
-import { simpleUserSelect } from '~/server/selectors/user.selector';
+import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import { getAllServerHosts } from '~/server/utils/server-domain';
 import { parseCivitaiUrlSafe } from '~/utils/civitai-url';
 
-const hubSelect = {
+// Everything a hub carries EXCEPT its owner. `getUserHubs` is `where: { userId }`,
+// so the joined owner would always be the caller — a row the client already holds —
+// and no consumer of the list reads it. Two round trips per rail render, for nothing.
+const hubListSelect = {
   id: true,
   userId: true,
   name: true,
@@ -47,16 +50,27 @@ const hubSelect = {
   availability: true,
   forcedBrowsingLevel: true,
   metadata: true,
-  // A hub arriving by a shared link says nothing about whose curation it is unless
-  // the owner comes with it.
-  user: { select: simpleUserSelect },
+
   sources: {
     select: { id: true, type: true, targetId: true, alias: true, enabled: true, index: true },
     orderBy: { index: 'asc' },
   },
 } as const;
 
-type HubRow = { metadata: Prisma.JsonValue; userId: number };
+// One hub, where the owner IS read: a hub arriving by a shared link says nothing
+// about whose curation it is unless they come with it. Cosmetics included, like
+// every other attribution surface — without them a creator's equipped badge is
+// missing on their own hub and nothing in the types says why.
+const hubSelect = {
+  ...hubListSelect,
+  user: { select: userWithCosmeticsSelect },
+} as const;
+
+type HubRow = {
+  metadata: Prisma.JsonValue;
+  userId: number;
+  sources: { enabled: boolean }[];
+};
 
 export type HubViewer = { userId?: number; isModerator?: boolean };
 
@@ -87,12 +101,17 @@ function readMetadata(metadata: Prisma.JsonValue | undefined) {
 function toHubDetail<T extends HubRow>({ metadata, ...hub }: T, viewerId?: number) {
   const stored = readMetadata(metadata);
   const description = stored.description;
+  const isOwner = !!viewerId && hub.userId === viewerId;
   return {
     ...hub,
     // What the client branches its whole chrome on. Computed here rather than
     // compared client-side, because the client's idea of who it is and the row the
     // server just authorised are two different facts.
-    isOwner: !!viewerId && hub.userId === viewerId,
+    isOwner,
+    // A source the owner switched off contributes nothing to the feed and is not
+    // shown, so shipping it to a viewer publishes part of their curation for no
+    // reason. The owner still gets the whole list, which is the one they edit.
+    sources: isOwner ? hub.sources : hub.sources.filter((source) => source.enabled),
     description: typeof description === 'string' ? description : null,
     // Re-validated on the way out: what is on the row was written by an older
     // shape of this schema, and the feed refuses some combinations outright.
@@ -105,7 +124,7 @@ export type UserHubDetail = Awaited<ReturnType<typeof getUserHubs>>[number];
 export async function getUserHubs({ userId }: { userId: number }) {
   const hubs = await dbRead.userHub.findMany({
     where: { userId },
-    select: hubSelect,
+    select: hubListSelect,
     // Alphabetical, not by `index` — subtask 868kwp5m9. `index` is still written by
     // `setUserHubOrder` and still what a hub is created with; nothing reads it for
     // display any more.
@@ -181,7 +200,7 @@ export async function upsertUserHub({ userId, ...input }: UpsertUserHubInput & {
         index: count,
         sources: { create: (sources ?? []).map(({ id: _, ...source }) => source) },
       },
-      select: hubSelect,
+      select: hubListSelect,
     });
     return toHubDetail(hub, userId);
   }
@@ -211,7 +230,7 @@ export async function upsertUserHub({ userId, ...input }: UpsertUserHubInput & {
     const hub = await dbWrite.userHub.update({
       where: { id, userId },
       data: { ...data, ...(metadata ? { metadata } : {}) },
-      select: hubSelect,
+      select: hubListSelect,
     });
     return toHubDetail(hub, userId);
   }
@@ -229,7 +248,7 @@ export async function upsertUserHub({ userId, ...input }: UpsertUserHubInput & {
         ...(metadata ? { metadata } : {}),
         sources: { create: sources.map(({ id: _, ...source }) => source) },
       },
-      select: hubSelect,
+      select: hubListSelect,
     });
   });
   return toHubDetail(updated, userId);

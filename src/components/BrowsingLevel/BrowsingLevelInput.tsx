@@ -14,11 +14,18 @@ type BrowsingLevelInput = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   /** The levels to offer. Defaults to all of them; a hub offers only what its owner allows. */
   levels?: readonly BrowsingLevel[];
   /**
-   * Report clearing the last level as 0. Off by default because the original caller
-   * (a collection's forced level) has always swallowed it, and starting to send 0
-   * there would change what that form saves.
+   * Report clearing the last level as 0. Off by default, which means the collection
+   * forced-level form this input was written for cannot UNSET a level once set —
+   * that is a bug in that form, not a property it relies on. The default stays off
+   * so fixing it stays a deliberate change to what that form saves; delete this prop
+   * once it is fixed.
    */
   allowEmpty?: boolean;
+  /**
+   * Wrap and shrink the chips. The default row is `nowrap` at full size, which is
+   * right in a modal and overflows a 300px sidebar.
+   */
+  compact?: boolean;
 };
 
 export function BrowsingLevelsInput({
@@ -26,6 +33,7 @@ export function BrowsingLevelsInput({
   onChange,
   levels = browsingLevels,
   allowEmpty,
+  compact,
   ...props
 }: BrowsingLevelInput) {
   const [browsingLevel, setBrowsingLevel] = useState<number>(value || 0);
@@ -51,13 +59,14 @@ export function BrowsingLevelsInput({
 
   return (
     <Input.Wrapper {...props} error={props.error}>
-      <Group gap="xs" mt="md" wrap="nowrap">
+      <Group gap={compact ? 4 : 'xs'} mt={compact ? 4 : 'md'} wrap={compact ? 'wrap' : 'nowrap'}>
         {levels.map((level) => (
           <BrowsingLevelLabel
             key={level}
             level={level}
             browsingLevel={browsingLevel}
             onToggle={onToggle}
+            compact={compact}
           />
         ))}
       </Group>
@@ -69,10 +78,12 @@ function BrowsingLevelLabel({
   level,
   browsingLevel,
   onToggle,
+  compact,
 }: {
   level: BrowsingLevel;
   browsingLevel: number;
   onToggle: (value: number) => void;
+  compact?: boolean;
 }) {
   const isSelected = Flags.hasFlag(browsingLevel, level);
   // const browsingLevel = useStore((x) => x.browsingLevel);
@@ -81,6 +92,7 @@ function BrowsingLevelLabel({
     <Chip
       classNames={classes}
       checked={isSelected}
+      size={compact ? 'xs' : undefined}
       onChange={() => onToggle(level)}
       variant={'outline'}
     >

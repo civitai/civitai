@@ -1,7 +1,9 @@
-import { Alert, Button, Stack, Switch, Text } from '@mantine/core';
+import { Button, ScrollArea, Stack } from '@mantine/core';
 import { IconCopy } from '@tabler/icons-react';
 import { useState } from 'react';
 import { BrowsingLevelsInput } from '~/components/BrowsingLevel/BrowsingLevelInput';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { FilterChip } from '~/components/Filters/FilterChip';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import type { HubSourceValue } from '~/components/Hubs/HubSourceEditor';
 import { HubSourceEditor } from '~/components/Hubs/HubSourceEditor';
@@ -16,6 +18,7 @@ import {
   useToggleHubSessionSource,
 } from '~/components/Hubs/hub-session.store';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useDomainColor } from '~/hooks/useDomainColor';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { hubSourceKey } from '~/server/schema/user-hub.schema';
@@ -38,10 +41,23 @@ export type HubPanelHub = {
 const levelHint = (level: number) =>
   level ? 'Only these levels show in this hub.' : 'No limit — your own browsing settings decide.';
 
-export function HubSourcePanel({ hub, hideAdd }: { hub: HubPanelHub; hideAdd?: boolean }) {
+export function HubSourcePanel({
+  hub,
+  hideAdd,
+  listMaxHeight,
+}: {
+  hub: HubPanelHub;
+  hideAdd?: boolean;
+  /** Cap the source list so the duplicate button below it stays in view. */
+  listMaxHeight?: number;
+}) {
   const invalidateHub = useInvalidateHub();
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
+  const domainColor = useDomainColor();
+  // The viewer's own ceiling: account setting intersected with the domain cap. Read
+  // here rather than inside the feed's provider, so it is the UNoverridden value.
+  const viewerAllowedLevel = useBrowsingLevelDebounced();
   const [pending, setPending] = useState<HubSourceValue[] | null>(null);
 
   const excluded = useHubExcludedSources(hub.id);
@@ -68,6 +84,7 @@ export function HubSourcePanel({ hub, hideAdd }: { hub: HubPanelHub; hideAdd?: b
   // PG-13 in the first place. Anonymous viewers are capped to PG server-side on
   // every domain, so offering them the picker would be offering them a lie.
   const showLevels = features.canViewNsfw && !!currentUser;
+  const isGreen = domainColor === 'green';
 
   if (hub.isOwner) {
     const current = pending ?? hub.sources;
@@ -76,6 +93,7 @@ export function HubSourcePanel({ hub, hideAdd }: { hub: HubPanelHub; hideAdd?: b
       <Stack gap="sm">
         {showLevels && (
           <BrowsingLevelsInput
+            compact
             label="Content levels"
             description={levelHint(hub.forcedBrowsingLevel)}
             value={hub.forcedBrowsingLevel}
@@ -111,15 +129,30 @@ export function HubSourcePanel({ hub, hideAdd }: { hub: HubPanelHub; hideAdd?: b
   // Under the hub's own cap, never above it: the owner's level is what the server
   // enforces, so offering a level it would strip back out would be a control that
   // does nothing.
-  const offeredLevels: readonly BrowsingLevel[] = hub.forcedBrowsingLevel
-    ? browsingLevels.filter((level) => Flags.hasFlag(hub.forcedBrowsingLevel, level))
-    : browsingLevels;
+  //
+  // Intersected with the viewer's OWN allowed level as well, which is the half that
+  // matters: this picker feeds `BrowsingLevelProvider` as a `browsingLevelOverride`,
+  // and that outranks `userBrowsingLevel` — the value where "Enable mature content"
+  // lives. Without the intersection, a viewer who has mature content switched off
+  // could tick X and be served it. The only other level picker on the site sits
+  // under the over-18 confirmation in account settings; this one has to earn its
+  // ceiling instead.
+  const offeredLevels: readonly BrowsingLevel[] = browsingLevels.filter(
+    (level) =>
+      (!hub.forcedBrowsingLevel || Flags.hasFlag(hub.forcedBrowsingLevel, level)) &&
+      Flags.hasFlag(viewerAllowedLevel, level)
+  );
   const viewerLevel = sessionLevel ?? hub.forcedBrowsingLevel;
 
   return (
     <Stack gap="sm">
-      {showLevels ? (
+      {/* Only on a hub whose owner actually set a level. Without one the feed already
+          follows the viewer's own global settings, so a picker here would be a second
+          place to change the same thing. Also hidden when the intersection leaves one
+          level, where a single locked chip reads as a control that does nothing. */}
+      {showLevels && !!hub.forcedBrowsingLevel && offeredLevels.length > 1 && (
         <BrowsingLevelsInput
+          compact
           label="Content levels"
           description={levelHint(viewerLevel)}
           value={viewerLevel}
@@ -127,57 +160,62 @@ export function HubSourcePanel({ hub, hideAdd }: { hub: HubPanelHub; hideAdd?: b
           allowEmpty
           onChange={(level) => setSessionLevel(hub.id, level)}
         />
-      ) : (
-        // Green has no level picker by design — the domain caps everyone at PG-13 —
-        // but it does have the PG-13 opt-in, and a viewer must get their own rather
-        // than inherit whatever the owner saved on their hub.
-        !!currentUser && (
-          <Switch
-            size="xs"
-            label="Include PG-13"
-            checked={sessionIncludePG13}
-            onChange={(event) => setSessionIncludePG13(hub.id, event.currentTarget.checked)}
-          />
-        )
       )}
 
-      <HubSourceEditor
-        readOnly
-        value={view}
-        emptyMessage="This hub has no sources switched on."
-        onChange={(next) => {
-          for (const source of next) {
-            const was = !excludedKeys.has(hubSourceKey(source));
-            if (was !== source.enabled) toggleSessionSource(hub.id, source, source.enabled);
-          }
-        }}
-        footer={
-          // Duplicating copies the owner's whole source list into an account of your
-          // own, which is a write, not a view — so it is offered on a hub anyone can
-          // already open, and not on a private one a moderator opened to look at it.
-          hub.availability === Availability.Public ? (
-            <Alert p="xs" radius="md" variant="light">
-              <Stack gap={6} align="flex-start">
-                <Text size="xs">Want to customize sources? Duplicate this hub.</Text>
-                <LoginRedirect reason="duplicate-hub">
-                  <Button
-                    size="compact-xs"
-                    leftSection={<IconCopy size={14} />}
-                    onClick={() =>
-                      dialogStore.trigger({
-                        component: HubUpsertModal,
-                        props: { duplicateOf: buildDuplicateHubInput(hub) },
-                      })
-                    }
-                  >
-                    Duplicate this hub
-                  </Button>
-                </LoginRedirect>
-              </Stack>
-            </Alert>
-          ) : null
-        }
-      />
+      {/* Green has no level picker by design — the domain caps everyone at PG-13 —
+          but it does have the PG-13 opt-in, and a viewer must get their own rather
+          than inherit whatever the owner saved on their hub. Gated on the DOMAIN,
+          not on `canViewNsfw`: that flag is also false for a region-restricted user
+          on blue/red, and the feed only reads `includePG13` on green, so they would
+          get a switch that does nothing. Same control the filter menu offers. */}
+      {isGreen && !!currentUser && (
+        <FilterChip
+          checked={sessionIncludePG13}
+          onChange={(checked) => setSessionIncludePG13(hub.id, checked)}
+        >
+          <span>Include PG-13</span>
+        </FilterChip>
+      )}
+
+      <ScrollArea.Autosize mah={listMaxHeight}>
+        <HubSourceEditor
+          readOnly
+          value={view}
+          emptyMessage="This hub has no sources switched on."
+          onChange={(next) => {
+            for (const source of next) {
+              const was = !excludedKeys.has(hubSourceKey(source));
+              if (was !== source.enabled) toggleSessionSource(hub.id, source, source.enabled);
+            }
+          }}
+        />
+      </ScrollArea.Autosize>
+
+      {
+        // Duplicating copies the owner's whole source list into an account of your
+        // own, which is a write, not a view — so it is offered on a hub anyone can
+        // already open, and not on a private one a moderator opened to look at it.
+        //
+        // Outside the scroller on purpose: it is the answer to "these are not mine to
+        // change", and a long source list would bury it.
+        hub.availability === Availability.Public && (
+          <LoginRedirect reason="duplicate-hub">
+            <Button
+              fullWidth
+              size="compact-sm"
+              leftSection={<IconCopy size={14} />}
+              onClick={() =>
+                dialogStore.trigger({
+                  component: HubUpsertModal,
+                  props: { duplicateOf: buildDuplicateHubInput(hub) },
+                })
+              }
+            >
+              Duplicate this hub
+            </Button>
+          </LoginRedirect>
+        )
+      }
     </Stack>
   );
 }

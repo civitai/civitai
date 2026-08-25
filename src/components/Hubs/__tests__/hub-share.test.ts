@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { buildDuplicateHubInput, hubUrl } from '~/components/Hubs/hub.utils';
+import { buildDuplicateHubInput, hubLocksViewerOut, hubUrl } from '~/components/Hubs/hub.utils';
+import { getCanonicalSlugDestination } from '~/utils/canonical-slug';
 import { hubLimits } from '~/server/schema/user-hub.schema';
 import { UserHubSourceType } from '~/shared/utils/prisma/enums';
 
@@ -14,6 +15,44 @@ describe('hubUrl', () => {
     // A hub named entirely in a script `slugit` strips would otherwise produce
     // `/hubs/12/`, which is a different route and 404s.
     expect(hubUrl({ id: 12, name: '???' })).toBe('/hubs/12');
+  });
+});
+
+describe('hubUrl agrees with the canonical redirect', () => {
+  // Two independent spellings of the same URL: `hubUrl` builds every internal link,
+  // and the route redirects to `getCanonicalSlugDestination`. Give either one a
+  // normalisation of its own and every hub link 307s on arrival, forever, with both
+  // suites green.
+  for (const name of ['Cute Models', 'Ellie & Co.', '???']) {
+    it(`does not redirect a link it built itself: ${name}`, () => {
+      const hub = { id: 12, name };
+
+      expect(
+        getCanonicalSlugDestination({
+          basePath: '/hubs',
+          id: hub.id,
+          title: hub.name,
+          currentSlug: hubUrl(hub).split('/')[3],
+        })
+      ).toBeNull();
+    });
+  }
+});
+
+describe('hubLocksViewerOut', () => {
+  it('is false when the hub sets no cap', () => {
+    expect(hubLocksViewerOut(0, 1)).toBe(false);
+  });
+
+  it('is false while anything the hub allows is something the viewer can see', () => {
+    expect(hubLocksViewerOut(1 | 2, 1)).toBe(false);
+  });
+
+  it('is true when the two do not overlap at all', () => {
+    // The state Justin reviewed: a hub capped to X, a PG viewer. The banner and the
+    // feed must be computed from this one function, or the banner can claim a lockout
+    // over a feed with results.
+    expect(hubLocksViewerOut(8, 1)).toBe(true);
   });
 });
 

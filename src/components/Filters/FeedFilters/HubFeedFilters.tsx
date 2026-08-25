@@ -1,5 +1,5 @@
 import type { GroupProps } from '@mantine/core';
-import { Center, Group, Loader, Popover, ScrollArea } from '@mantine/core';
+import { Center, Group, Loader, Popover } from '@mantine/core';
 import { IconWorld } from '@tabler/icons-react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
@@ -10,10 +10,15 @@ import { SortFilter } from '~/components/Filters/SortFilter';
 import { buildHubFilterSave } from '~/components/Hubs/hub-filter-save';
 import { toPanelHub, useInvalidateHub } from '~/components/Hubs/hub.utils';
 import { useHubSort } from '~/components/Hubs/useHubSort';
+import {
+  useHubSessionFeedFilters,
+  useSetHubSessionFeedFilters,
+} from '~/components/Hubs/hub-session.store';
 import { hubExcludedFilterKeys } from '~/components/Image/Filters/media-filter-keys';
 import { MediaFiltersDropdown } from '~/components/Image/Filters/MediaFiltersDropdown';
 import type { HubSort } from '~/server/schema/user-hub.schema';
-import { hubSortSchema } from '~/server/schema/user-hub.schema';
+import { hubFeedFiltersSchema, hubSortSchema } from '~/server/schema/user-hub.schema';
+import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -48,7 +53,20 @@ export function HubFeedFilters({ ...groupProps }: GroupProps) {
     { id: hubId },
     { enabled: Number.isInteger(hubId) }
   );
-  const sort = useHubSort(hub?.sort);
+  const sessionFilters = useHubSessionFeedFilters(hubId);
+  const setSessionFilters = useSetHubSessionFeedFilters();
+
+  // The owner's stored values are the starting point for everyone; a viewer's own
+  // choices sit on top for this session only.
+  const effective = {
+    sort: (hub?.isOwner ? hub.sort : sessionFilters.sort ?? hub?.sort) as string | undefined,
+    period: (hub?.isOwner ? hub.period : sessionFilters.period ?? hub?.period) as
+      | MetricTimeframe
+      | undefined,
+    types: hub?.isOwner ? hub.mediaTypes : sessionFilters.types ?? hub?.mediaTypes,
+    filters: hub?.isOwner ? hub.filters : sessionFilters.filters ?? hub?.filters,
+  };
+  const sort = useHubSort(effective.sort);
 
   const upsert = trpc.userHub.upsert.useMutation({
     onSuccess: () => invalidateHub(hubId),
@@ -87,46 +105,54 @@ export function HubFeedFilters({ ...groupProps }: GroupProps) {
           </FilterButton>
         </Popover.Target>
         <Popover.Dropdown p="sm">
-          <ScrollArea.Autosize mah={400}>
-            <HubSourcePanel
-              hub={toPanelHub(hub)}
-              // Opening the picker in here pushes the popover past its own height
-              // and it starts scrolling inside a scroll. Adding lives in the rail.
-              hideAdd
-            />
-          </ScrollArea.Autosize>
+          {/* The panel scrolls its own source list and pins what follows, so the
+              duplicate button reads as a footer instead of sitting at the bottom of a
+              list that can be fifty rows long. */}
+          <HubSourcePanel
+            hub={toPanelHub(hub)}
+            // Opening the picker in here pushes the popover past its own height and
+            // it starts scrolling inside a scroll. Adding lives in the rail.
+            hideAdd
+            listMaxHeight={340}
+          />
         </Popover.Dropdown>
       </Popover>
 
-      {/* Sort and the filter menu write straight to the hub, and `upsert` is
-          owner-scoped — so on someone else's hub they would be controls that error.
-          Content level and source toggles are the two things a viewer changes here,
-          and both live in the sources panel above. */}
-      {hub.isOwner && (
-        <>
-          <SortFilter
-            type="images"
-            value={sort}
-            options={hubSortSchema.options.map((value) => ({ label: value, value }))}
-            onChange={(value) =>
-              upsert.mutate({ id: hub.id, sort: value as HubSort, period: hub.period })
-            }
-          />
-          <MediaFiltersDropdown
-            w="100%"
-            filterType="images"
-            isFeed
-            size="compact-sm"
-            exclude={hubExcludedFilterKeys}
-            query={{
-              ...hub.filters,
-              period: hub.period,
-              types: hub.mediaTypes,
-            }}
-            onChange={(next) => upsert.mutate(buildHubFilterSave(hub.id, next))}
-          />
-        </>
-      )}
+      {/* Shown on a hub you do not own as well: these narrow the feed in front of
+          you, they are not source controls and not the owner's curation. The owner's
+          choices persist; a viewer's are session state, because `upsert` is
+          owner-scoped and would refuse them. */}
+      <SortFilter
+        type="images"
+        value={sort}
+        options={hubSortSchema.options.map((value) => ({ label: value, value }))}
+        onChange={(value) =>
+          hub.isOwner
+            ? upsert.mutate({ id: hub.id, sort: value as HubSort, period: hub.period })
+            : setSessionFilters(hub.id, { sort: value })
+        }
+      />
+      <MediaFiltersDropdown
+        w="100%"
+        filterType="images"
+        isFeed
+        size="compact-sm"
+        exclude={hubExcludedFilterKeys}
+        query={{
+          ...effective.filters,
+          period: effective.period,
+          types: effective.types,
+        }}
+        onChange={(next) =>
+          hub.isOwner
+            ? upsert.mutate(buildHubFilterSave(hub.id, next))
+            : setSessionFilters(hub.id, {
+                period: (next.period ?? MetricTimeframe.AllTime) as MetricTimeframe,
+                types: (next.types ?? []) as MediaType[],
+                filters: hubFeedFiltersSchema.parse(next),
+              })
+        }
+      />
     </Group>
   );
 }

@@ -32,6 +32,7 @@ vi.mock('~/server/services/user-hub.service', () => ({
   removeUserHubSource: vi.fn().mockResolvedValue({ hubId: 1, removed: true }),
 }));
 
+import { getUserHubById } from '~/server/services/user-hub.service';
 import { userHubRouter } from '~/server/routers/user-hub.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
@@ -69,6 +70,23 @@ const anonymousCaller = () =>
 describe('a signed-out visitor can open a hub and do nothing else', () => {
   beforeEach(() => {
     getFeatureFlagsMock.mockReturnValue({ userHubs: true });
+  });
+
+  it('hands the service the viewer it was given, and nothing invented', async () => {
+    // The line this branch changed, and the one nothing else can see: the gate suite
+    // mocks the service wholesale, and the service suite never sees the router.
+    // `userId: ctx.user?.id` -> `undefined` 404s every private hub for its own owner;
+    // dropping `isModerator` silently removes moderator access. Both stay green
+    // everywhere else.
+    await anonymousCaller().getById({ id: 1 });
+    expect(getUserHubById).toHaveBeenLastCalledWith({
+      id: 1,
+      userId: undefined,
+      isModerator: undefined,
+    });
+
+    await caller().getById({ id: 1 });
+    expect(getUserHubById).toHaveBeenLastCalledWith({ id: 1, userId: 7, isModerator: false });
   });
 
   it('getById serves a signed-out caller', async () => {

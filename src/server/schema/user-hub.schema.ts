@@ -122,9 +122,11 @@ export const upsertUserHubSchema = z.object({
   // Same "omitted means leave alone" rule as `sources`; stored on
   // `metadata.filters`, like `description`.
   filters: hubFeedFiltersSchema.optional(),
-  // Private or Public, and nothing else: the other two `Availability` members mean
-  // things a hub has no surface for. There is no discovery, so Public is "anyone
-  // with the link", and flipping back to Private is what 404s those links.
+  // Private or Public, and nothing else. `Unsearchable` is the member that literally
+  // means "public but not listed", which is what a hub is — it is not used because
+  // hubs have no index and no listing to be absent from, so the distinction would
+  // encode nothing. The cost is that a future sweep over `Availability.Public`
+  // content picks hubs up as listed; change this the day hubs gain a directory.
   availability: z.enum([Availability.Private, Availability.Public]).optional(),
   // A browsing-level bitmask, 0 for "no cap". Masked rather than rejected on the
   // way in: an unknown bit is a level this deployment does not have, and storing it

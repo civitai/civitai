@@ -3,6 +3,7 @@ import type { HubPanelHub } from '~/components/Hubs/HubSourcePanel';
 import { hubLimits } from '~/server/schema/user-hub.schema';
 import type { Availability } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
+import { Flags } from '~/shared/utils/flags';
 import { slugit } from '~/utils/string-helpers';
 
 /**
@@ -26,6 +27,17 @@ export function useInvalidateHub() {
 export function hubUrl(hub: { id: number; name: string }) {
   const slug = slugit(hub.name);
   return slug ? `/hubs/${hub.id}/${slug}` : `/hubs/${hub.id}`;
+}
+
+/**
+ * Whether this hub's own cap leaves this viewer nothing at all. Lifted out of the
+ * page so it can be tested, and so the banner and the feed are computed from the
+ * SAME number — they were not, and the banner could claim a lockout over a feed
+ * with results.
+ */
+export function hubLocksViewerOut(forcedBrowsingLevel: number, viewerLevel: number) {
+  if (!forcedBrowsingLevel) return false;
+  return !Flags.intersects(forcedBrowsingLevel, viewerLevel);
 }
 
 /**

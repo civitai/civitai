@@ -69,8 +69,8 @@ beforeEach(() => {
   stubVersions({});
   // The service maps whatever the write returns before handing it back, so the
   // fakes have to return a row rather than undefined.
-  dbMock.dbWrite.userHub.create.mockResolvedValue({ id: 7, metadata: {} });
-  dbMock.dbWrite.userHub.update.mockResolvedValue({ id: 9, metadata: {} });
+  dbMock.dbWrite.userHub.create.mockResolvedValue({ id: 7, metadata: {}, sources: [] });
+  dbMock.dbWrite.userHub.update.mockResolvedValue({ id: 9, metadata: {}, sources: [] });
 });
 
 /**
@@ -80,7 +80,7 @@ beforeEach(() => {
  */
 describe('hubViewerWhere', () => {
   it('lets a signed-in viewer reach their own hubs and public ones, and nothing else', () => {
-    expect(hubViewerWhere({ userId: 5 })).toEqual({
+    expect(hubViewerWhere({ userId: 5 })).toStrictEqual({
       OR: [{ userId: 5 }, { availability: Availability.Public }],
     });
   });
@@ -89,7 +89,7 @@ describe('hubViewerWhere', () => {
     // A stray `{ userId: undefined }` arm would be `WHERE "userId" IS NULL`, which
     // matches no hub today — but it is a leak the moment userId becomes nullable,
     // and it reads as harmless.
-    expect(hubViewerWhere({})).toEqual({ OR: [{ availability: Availability.Public }] });
+    expect(hubViewerWhere({})).toStrictEqual({ OR: [{ availability: Availability.Public }] });
   });
 
   it('lets a moderator reach every hub regardless of visibility', () => {
@@ -326,7 +326,7 @@ describe('upsertUserHub', () => {
     // `if (!collectionIds.length) return` -> `< 0` kills the shipped feature and
     // the suite still prints all-green.
     dbMock.dbRead.userHub.count.mockResolvedValue(0);
-    dbMock.dbWrite.userHub.create.mockResolvedValue({ id: 7 });
+    dbMock.dbWrite.userHub.create.mockResolvedValue({ id: 7, sources: [] });
 
     await upsertUserHub({
       name: 'creators only',
@@ -345,7 +345,7 @@ describe('upsertUserHub', () => {
     // silently overwrote fields the caller had not sent, which reset the user's
     // sort every time they toggled a source. Create must still get real values.
     dbMock.dbRead.userHub.count.mockResolvedValue(0);
-    dbMock.dbWrite.userHub.create.mockResolvedValue({ id: 8 });
+    dbMock.dbWrite.userHub.create.mockResolvedValue({ id: 8, sources: [] });
 
     await upsertUserHub({ name: 'defaults', sources: [], userId: 5 });
 
@@ -358,7 +358,7 @@ describe('upsertUserHub', () => {
     // The half the title used to claim and never exercised: the same call shape
     // against an existing hub must not carry those values, or toggling a source
     // resets the user's sort.
-    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({ id: 9, metadata: {} });
+    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({ id: 9, metadata: {}, sources: [] });
 
     await upsertUserHub({ id: 9, name: 'defaults', sources: [], userId: 5 });
 
@@ -371,7 +371,7 @@ describe('upsertUserHub', () => {
     // A rename and a sort change both used to resend their own cached copy of the
     // whole list, so either could revert a source edit made in between. With the
     // list omitted the update must not touch UserHubSource at all.
-    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({ id: 9, metadata: {} });
+    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({ id: 9, metadata: {}, sources: [] });
 
     await upsertUserHub({ id: 9, name: 'renamed', userId: 5 });
 
@@ -384,7 +384,7 @@ describe('upsertUserHub', () => {
   it('still replaces the sources when the input carries them', async () => {
     // Negative control for the test above: without it, an update branch that
     // dropped source writes entirely would pass.
-    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({ id: 9, metadata: {} });
+    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({ id: 9, metadata: {}, sources: [] });
 
     await upsertUserHub({
       id: 9,
@@ -658,7 +658,7 @@ describe('persisting the feed filters', () => {
   });
 
   it('writes both keys when a save carries description and filters together', async () => {
-    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({ id: 9, metadata: {} });
+    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({ id: 9, metadata: {}, sources: [] });
 
     await upsertUserHub({
       id: 9,
@@ -1029,7 +1029,7 @@ describe('getUserHubs', () => {
 
 describe('getUserHubById', () => {
   it('scopes the read to what this viewer may open', async () => {
-    findFirstHub.mockResolvedValue({ id: 1, userId: 5, metadata: {} });
+    findFirstHub.mockResolvedValue({ id: 1, userId: 5, metadata: {}, sources: [] });
 
     await getUserHubById({ id: 1, userId: 5 });
 
@@ -1052,7 +1052,7 @@ describe('getUserHubById', () => {
     // "View only" is the whole scope of moderator access. `isOwner` is what every
     // write affordance branches on, so a moderator reading as owner would hand them
     // an edit UI nobody agreed to.
-    findFirstHub.mockResolvedValue({ id: 1, userId: 5, metadata: {} });
+    findFirstHub.mockResolvedValue({ id: 1, userId: 5, metadata: {}, sources: [] });
 
     const hub = await getUserHubById({ id: 1, userId: 999, isModerator: true });
 
@@ -1065,7 +1065,7 @@ describe('getUserHubById', () => {
     // it, and the mistake grants an edit UI on someone else's hub rather than
     // erroring. A row with a real userId cannot tell this test from a broken one,
     // which is why it is written against the nullish row.
-    findFirstHub.mockResolvedValue({ id: 1, userId: undefined, metadata: {} });
+    findFirstHub.mockResolvedValue({ id: 1, userId: undefined, metadata: {}, sources: [] });
 
     const hub = await getUserHubById({ id: 1 });
 
@@ -1110,7 +1110,7 @@ describe('upsertUserHub visibility and level', () => {
     // value that never reaches the UPDATE is a cap the owner set and the hub does
     // not have. Dropping either from the service's destructure leaves every cap test
     // green, because those mock `resolveHubSources`.
-    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({ id: 9, metadata: {} });
+    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({ id: 9, metadata: {}, sources: [] });
 
     await upsertUserHub({
       id: 9,

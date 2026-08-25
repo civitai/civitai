@@ -1,8 +1,9 @@
-import { Badge, Button, Center, Group, Loader, Menu, Stack, Text, Title } from '@mantine/core';
+import { Badge, Button, Card, Center, Group, Loader, Menu, Text, Title } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { IconCopy, IconDotsVertical, IconPencil, IconShare3, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import {
   BrowsingLevelProviderOptional,
   useBrowsingLevelDebounced,
@@ -14,24 +15,25 @@ import HubUpsertModal from '~/components/Hubs/HubUpsertModal';
 import {
   useHubExcludedSources,
   useHubSessionBrowsingLevel,
+  useHubSessionFeedFilters,
   useHubSessionIncludePG13,
 } from '~/components/Hubs/hub-session.store';
-import { buildDuplicateHubInput, hubUrl } from '~/components/Hubs/hub.utils';
+import { buildDuplicateHubInput, hubLocksViewerOut, hubUrl } from '~/components/Hubs/hub.utils';
 import { useHubSort } from '~/components/Hubs/useHubSort';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
+import { NoContent } from '~/components/NoContent/NoContent';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { Flags } from '~/shared/utils/flags';
-import { env } from '~/env/client';
 import { getUserHubForRoute } from '~/server/services/user-hub.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { Availability } from '~/shared/utils/prisma/enums';
 import { getCanonicalSlugDestination } from '~/utils/canonical-slug';
+import { buildPassthroughQuery } from '~/utils/query-string-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -64,10 +66,25 @@ export const getServerSideProps = createServerSideProps({
       id,
       title: hub.name,
       currentSlug: Array.isArray(slug) ? slug.join('/') : slug,
+      // Every other `[[...slug]]` route passes this. Without it the redirect strips
+      // whatever a share surface appended to the link it just handed out.
+      queryString: buildPassthroughQuery(ctx.query),
     });
     if (destination) return { redirect: { destination, permanent: false } };
   },
 });
+
+// Centred in the feed's own column, on a card, so an empty hub reads as a state
+// rather than as a page that failed to load.
+function HubEmptyState({ message, children }: { message: string; children?: React.ReactNode }) {
+  return (
+    <Card withBorder radius="md" py="xl" className="my-6">
+      <NoContent message={message} iconSize={72}>
+        {children}
+      </NoContent>
+    </Card>
+  );
+}
 
 export default Page(
   function HubFeedPage() {
@@ -80,11 +97,21 @@ export default Page(
       { enabled: Number.isInteger(hubId) }
     );
 
-    const sort = useHubSort(hub?.sort);
     const excludedSources = useHubExcludedSources(hubId);
     const sessionBrowsingLevel = useHubSessionBrowsingLevel(hubId);
     const sessionIncludePG13 = useHubSessionIncludePG13(hubId);
+    const sessionFilters = useHubSessionFeedFilters(hubId);
     const currentUser = useCurrentUser();
+
+    // A viewer's sort and filter choices are session state; the owner's are the row.
+    const isOwner = !!hub?.isOwner;
+    const feed = {
+      sort: isOwner ? hub?.sort : sessionFilters.sort ?? hub?.sort,
+      period: isOwner ? hub?.period : sessionFilters.period ?? hub?.period,
+      types: isOwner ? hub?.mediaTypes : sessionFilters.types ?? hub?.mediaTypes,
+      filters: isOwner ? hub?.filters : sessionFilters.filters ?? hub?.filters,
+    };
+    const sort = useHubSort(feed.sort);
     // What this viewer is actually allowed, after their account setting and the
     // domain cap. Compared against the hub's own cap below so a viewer who would see
     // an empty feed is told why rather than shown nothing.
@@ -114,8 +141,11 @@ export default Page(
     const viewerBrowsingLevel = hub.isOwner ? undefined : sessionBrowsingLevel;
     // The hub allows only levels this viewer cannot see. The feed would come back
     // empty and read as broken, so say what is actually happening.
-    const levelLocksViewerOut =
-      !!hub.forcedBrowsingLevel && !Flags.intersects(hub.forcedBrowsingLevel, viewerAllowedLevel);
+    // The level the FEED will actually run at — session override if the viewer set
+    // one, otherwise their own. Computing the banner from a different number than
+    // the query is how it ends up disagreeing with what is on screen.
+    const effectiveLevel = viewerBrowsingLevel || viewerAllowedLevel;
+    const levelLocksViewerOut = hubLocksViewerOut(hub.forcedBrowsingLevel, effectiveLevel);
 
     return (
       <>
@@ -142,15 +172,20 @@ export default Page(
                   </Text>
                 )}
                 {!hub.isOwner && !!hub.user && (
-                  <div className="mt-1">
+                  <Group gap={8} wrap="nowrap" mt={4}>
                     <UserAvatar user={hub.user} withUsername linkToProfile size="sm" />
-                  </div>
+                    <Badge size="xs" variant="light" color="orange">
+                      OWNER
+                    </Badge>
+                  </Group>
                 )}
               </div>
 
               <Group gap={4} wrap="nowrap">
+                {/* ShareButton is given a PATH, not an absolute URL: it prefixes
+                    `location.protocol//location.host` itself. */}
                 {isPublic && (
-                  <ShareButton url={`${env.NEXT_PUBLIC_BASE_URL}${hubUrl(hub)}`} title={hub.name}>
+                  <ShareButton url={hubUrl(hub)} title={hub.name}>
                     <Button
                       size="compact-sm"
                       variant="default"
@@ -227,25 +262,27 @@ export default Page(
             </Group>
 
             {levelLocksViewerOut ? (
-              <Stack gap="xs" align="flex-start">
-                <Text c="dimmed">
-                  Nothing in this hub matches your content settings — its owner limited it to
-                  ratings you have not enabled.
-                </Text>
-                {!currentUser && (
+              <HubEmptyState message="Its owner limited this hub to content ratings you have not enabled.">
+                {currentUser ? (
+                  <Button component={Link} href="/user/account#content-moderation" variant="light">
+                    Adjust your content settings
+                  </Button>
+                ) : (
                   <LoginRedirect reason="view-content">
-                    <Button size="compact-sm">Sign in to change your content settings</Button>
+                    <Button>Sign in to change your content settings</Button>
                   </LoginRedirect>
                 )}
-              </Stack>
+              </HubEmptyState>
             ) : !hasSources ? (
-              <Text c="dimmed">
-                {hub.sources.length === 0
-                  ? hub.isOwner
-                    ? 'This hub is empty. Add a creator or a model from the rail to start filling it.'
-                    : 'This hub has no sources yet.'
-                  : 'Every source in this hub is switched off.'}
-              </Text>
+              <HubEmptyState
+                message={
+                  hub.sources.length === 0
+                    ? hub.isOwner
+                      ? 'This hub is empty. Add a creator or a model from the rail to start filling it.'
+                      : 'This hub has no sources yet.'
+                    : 'Every source in this hub is switched off.'
+                }
+              />
             ) : (
               // The same mechanism a collection uses for its forced level
               // (Collection.tsx) — an entity carrying a content level for its own feed
@@ -260,25 +297,25 @@ export default Page(
                   filters={{
                     hubId: hub.id,
                     sort,
-                    period: hub.period,
+                    period: feed.period,
                     // Enumerated so a key added to `hubFeedFiltersSchema` is a
                     // deliberate addition here too — `hubId` may only be combined
                     // with filters the index can serve (`requiresImageDbPath`).
-                    baseModels: hub.filters.baseModels,
-                    tools: hub.filters.tools,
-                    techniques: hub.filters.techniques,
-                    withMeta: hub.filters.withMeta,
-                    fromPlatform: hub.filters.fromPlatform,
-                    remixesOnly: hub.filters.remixesOnly,
-                    nonRemixesOnly: hub.filters.nonRemixesOnly,
-                    hideChallenges: hub.filters.hideChallenges,
+                    baseModels: feed.filters?.baseModels,
+                    tools: feed.filters?.tools,
+                    techniques: feed.filters?.techniques,
+                    withMeta: feed.filters?.withMeta,
+                    fromPlatform: feed.filters?.fromPlatform,
+                    remixesOnly: feed.filters?.remixesOnly,
+                    nonRemixesOnly: feed.filters?.nonRemixesOnly,
+                    hideChallenges: feed.filters?.hideChallenges,
                     // The owner's PG-13 opt-in is theirs. Handing it to a viewer lifts
                     // that viewer's own green-domain cap on the owner's say-so, so a
                     // viewer brings their own.
                     includePG13: hub.isOwner ? hub.filters.includePG13 : sessionIncludePG13,
                     // Omitted rather than sent empty: the hub stores [] to mean
                     // "no restriction", and the feed's filter does not.
-                    types: hub.mediaTypes.length ? hub.mediaTypes : undefined,
+                    types: feed.types?.length ? feed.types : undefined,
                     // This viewer's session state on a hub they do not own, which never
                     // reaches the owner's row. Omitted for the owner, whose toggles are
                     // writes. The session LEVEL is not here — `ImagesInfinite` computes
