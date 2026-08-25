@@ -1,5 +1,6 @@
 import { createContext, useContext, useMemo } from 'react';
 import type { RemixGalleryCardSummary } from '~/server/services/remix-gallery.service';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '~/utils/trpc';
 
@@ -34,6 +35,14 @@ export function RemixGalleryBatchProvider({
 }) {
   const features = useFeatureFlags();
   const enabled = !!features.remixGallery;
+  // 🔴 The viewer's level has to travel with the request, exactly as it does on
+  // `getRemixGallery`. Omitting it is not a narrower request, it is the widest
+  // one: `applyDomainFeature` only rewrites the input when it has a cap to
+  // apply, and a signed-in viewer on a mature-allowed domain has none — so zod
+  // filled in `allBrowsingLevelsFlag` and the thumbnails, which render as bare
+  // `EdgeMedia` with no ImageGuard, came back at every level the viewer had
+  // turned off.
+  const browsingLevel = useBrowsingLevelDebounced();
 
   const chunks = useMemo(() => {
     if (!enabled) return [] as number[][];
@@ -47,7 +56,10 @@ export function RemixGalleryBatchProvider({
 
   const queries = trpc.useQueries((t) =>
     chunks.map((chunk) =>
-      t.placement.getRemixGalleryCardSummaries({ imageIds: chunk }, { staleTime: 60_000 })
+      t.placement.getRemixGalleryCardSummaries(
+        { imageIds: chunk, browsingLevel },
+        { staleTime: 60_000 }
+      )
     )
   );
 

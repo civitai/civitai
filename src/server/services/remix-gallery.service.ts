@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import type { MediaType } from '~/shared/utils/prisma/enums';
-import { MetricTimeframe } from '~/shared/utils/prisma/enums';
+import { Availability, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { ImageSort, NsfwLevel } from '~/server/common/enums';
 import type { SessionUser } from '~/types/session';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -1178,6 +1178,19 @@ const entryIsVisible = (levels: number, host: Prisma.Sql) => Prisma.sql`
         AND pl.status = 'approved'
         AND p."publishedAt" IS NOT NULL
         AND p."publishedAt" < now()
+        -- 🔴 Published is not the same as public. A post inherits its
+        -- availability from the model version, so it can be published AND
+        -- private, and nothing on the submission path reads the column — such an
+        -- image submits and approves normally. The ordering read never needed
+        -- this because hydration went through getAllImages, which carries its
+        -- own private guard and quietly dropped the row; the batched read does
+        -- not hydrate, so without this it hands back the URL of an image its
+        -- owner marked not-public.
+        --
+        -- No owner arm, deliberately: getAllImages re-admits a private image
+        -- to its own author, which is right for their own feed and wrong on
+        -- somebody else's public gallery.
+        AND p."availability" != ${Availability.Private}
         AND i.ingestion = 'Scanned'
         AND i."needsReview" IS NULL
         AND NOT i."tosViolation"
