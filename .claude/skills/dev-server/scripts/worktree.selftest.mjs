@@ -64,6 +64,18 @@ check(
 );
 check('and the count is stated', pruned[2], 'note: 1 of those registration(s) were stale before this command ran - prune is repo-wide');
 check('no collateral note when there is none', describePrune('Removing worktrees/mine: x', TARGET).length, 1);
+
+// A prefix match would call this one the target's own — the direction that HIDES collateral.
+check(
+  'a tree whose name merely starts with the target is collateral',
+  describePrune('Removing worktrees/mine-2: gone', TARGET)[0],
+  'pruned (ALSO, not your target): Removing worktrees/mine-2: gone'
+);
+check(
+  'and a line git worded some other way still falls back to the full path',
+  describePrune('Pruned C:/Dev/Repos/work/worktrees/mine', TARGET)[0],
+  'pruned: Pruned C:/Dev/Repos/work/worktrees/mine'
+);
 check('empty prune output says so', describePrune('', TARGET)[0], 'pruned: no stale worktree registrations');
 
 console.log(failures ? `\n${failures} FAILURES` : '\nall green');

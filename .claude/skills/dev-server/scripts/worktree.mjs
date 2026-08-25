@@ -363,12 +363,16 @@ export function describePrune(raw, target) {
   if (!lines.length) return ['pruned: no stale worktree registrations'];
 
   const slashes = (p) => String(p).split('\\').join('/').toLowerCase();
+  const basename = (p) => slashes(p).split('/').filter(Boolean).pop() || slashes(p);
   const needle = slashes(target);
-  const base = needle.split('/').filter(Boolean).pop() || needle;
+  const base = basename(target);
   const out = [];
   for (const line of lines) {
-    const hay = slashes(line);
-    const mine = hay.includes(needle) || hay.includes(base);
+    // Segment equality, not substring: `worktrees/mine` is a substring of `worktrees/mine-2`, and
+    // erring that way marks somebody else's tree as yours — the failure this whole function exists
+    // to prevent. A line git worded differently falls through to the full path.
+    const named = slashes(line).match(/removing\s+(.+?):/);
+    const mine = named ? basename(named[1]) === base : slashes(line).includes(needle);
     out.push(mine ? `pruned: ${line}` : `pruned (ALSO, not your target): ${line}`);
   }
   const collateral = out.filter((l) => l.includes('ALSO')).length;
