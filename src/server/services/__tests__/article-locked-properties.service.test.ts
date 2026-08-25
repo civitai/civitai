@@ -63,8 +63,11 @@ function mockStored({
   mockDbWrite.article.findFirst.mockResolvedValue(row);
 }
 
+// The FIRST article.update is the form write from the transaction — the one these
+// assertions are about. It is no longer the last: `applyArticleContentChange` rewrites the
+// content column afterwards.
 function updateData() {
-  return mockDbWrite.article.update.mock.calls.at(-1)?.[0]?.data ?? {};
+  return mockDbWrite.article.update.mock.calls[0]?.[0]?.data ?? {};
 }
 
 const upsert = (input: Record<string, unknown>) =>

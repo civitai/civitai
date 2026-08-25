@@ -36,6 +36,10 @@ import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { deriveArticleIngestionState } from '~/server/services/article-ingestion.helpers';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import {
+  expandBlurbs,
+  reconcileBlurbReferences,
+} from '~/server/services/blurb-materialize.service';
+import {
   getAvailableCollectionItemsFilterForUser,
   getUserCollectionPermissionsById,
 } from '~/server/services/collection.service';
@@ -841,6 +845,16 @@ export const upsertArticle = async ({
       delete data.moderatorNsfwLevel;
     }
 
+    // Re-expanded from the owner's rows rather than trusted from the client, and before
+    // the write so what is stored is what the blurb actually says. Keyed on the OWNER,
+    // not the actor: a moderator saving someone else's article resolves none of their
+    // blurbs and would strip every span.
+    const { html: expandedContent, uses: blurbUses } = await expandBlurbs({
+      userId: article?.userId ?? userId,
+      html: data.content,
+    });
+    data.content = expandedContent;
+
     // TODO make coverImage required here and in db
     // create image entity to be attached to article
     // Stays `undefined` when there is no cover — Prisma reads that as "don't write this
@@ -973,6 +987,12 @@ export const upsertArticle = async ({
           }).catch();
         });
       }
+
+      await reconcileBlurbReferences({
+        entityType: 'Article',
+        entityId: result.id,
+        uses: blurbUses,
+      });
 
       return result;
     }
@@ -1166,9 +1186,6 @@ export const upsertArticle = async ({
     // Count-cache refresh hits Redis — run after commit, off the txn budget.
     await userArticleCountCache.refresh(result.userId);
 
-    await preventReplicationLag('article', result.id);
-    await preventReplicationLag('userArticles', result.userId);
-
     // remove old cover image
     if (article.coverId !== coverId && article.coverId) {
       const isImgOwner = await isImageOwner({ userId, isModerator, imageId: article.coverId });
@@ -1177,102 +1194,20 @@ export const upsertArticle = async ({
       }
     }
 
-    // Link content images (creates Image entities and ImageConnections)
-    if (data.content) {
-      // OPTIMIZATION: Only process images if content actually changed
-      const hasContentChanged = article.content !== data.content;
+    await applyArticleContentChange({
+      id,
+      userId,
+      content: data.content,
+      scanContent: !!scanContent,
+      context: {
+        ownerId: result.userId,
+        title: data.title ?? article.title ?? '',
+        previousContent: article.content,
+        coverId: coverId ?? article.coverId,
+      },
+    });
 
-      if (hasContentChanged) {
-        try {
-          const { orphanedImageIds } = await linkArticleContentImages({
-            articleId: id,
-            content: data.content,
-            userId,
-            coverId: coverId ?? article.coverId,
-            cleanupOnly: !scanContent,
-          });
-
-          // Delete truly orphaned images (DB + S3 + cache) post-transaction
-          for (const imageId of orphanedImageIds) {
-            await deleteImageById({ id: imageId }).catch((error) => {
-              handleLogError(error, 'article-orphaned-image-cleanup', {
-                articleId: id,
-                imageId,
-              });
-            });
-          }
-
-          if (scanContent) {
-            // Content changed and images need re-scanning — use Rescan to distinguish
-            // user-edit-triggered rescans from initial pending scans.
-            await dbWrite.article.update({
-              where: { id },
-              data: { scanRequestedAt: new Date(), ingestion: ArticleIngestionStatus.Rescan },
-            });
-          }
-        } catch (e) {
-          // Non-blocking: continue even if image linking fails, but log the error
-          const error = e as Error;
-          logToAxiom({
-            type: 'error',
-            name: 'article-image-linking',
-            message: error.message,
-            cause: error.cause,
-            stack: error.stack,
-            articleId: id,
-          }).catch();
-        }
-      }
-    }
-
-    // Submit for text moderation (non-blocking). `submitTextModeration` →
-    // `createXGuardModerationRequest` handles contentHash dedup internally,
-    // so a save that doesn't change `title` or `content` is a no-op
-    // orchestrator-wise. If the article's text was emptied out entirely,
-    // drop any stale EntityModeration row — otherwise the retry cron would
-    // keep re-submitting and `recomputeArticleIngestion` could still read
-    // the old blocked/error state.
-    {
-      const currentTitle = data.title ?? article.title ?? '';
-      const currentContent = data.content ?? article.content ?? '';
-      const hasText = articleHasText(currentTitle, currentContent);
-
-      if (!hasText) {
-        await dbWrite.entityModeration.deleteMany({
-          where: { entityType: 'Article', entityId: id },
-        });
-      } else {
-        const textForModeration = [currentTitle, removeTags(currentContent)]
-          .filter(Boolean)
-          .join(' ');
-
-        submitTextModeration({
-          entityType: 'Article',
-          entityId: id,
-          content: textForModeration,
-          labels: ['nsfw'],
-          recordForReview: true,
-        }).catch((e) => {
-          logToAxiom({
-            type: 'error',
-            name: 'article-text-moderation',
-            message: (e as Error).message,
-            articleId: id,
-          }).catch();
-        });
-      }
-    }
-
-    // Lock ingestion state, recompute nsfwLevel from current cover/content
-    // signals, and queue the search-index update. Running the full
-    // `updateArticleImageScanStatus` (rather than bare `recomputeArticleIngestion`)
-    // guarantees that any edit or publish/republish re-derives
-    // `Article.nsfwLevel` from ground truth — otherwise a cover whose scan
-    // finished between save and republish would leak at its stale
-    // author-declared level. Dispatches the search-index update internally.
-    await updateArticleImageScanStatus([id]).catch((e) =>
-      handleLogError(e, 'article-update-recompute', { articleId: id })
-    );
+    await reconcileBlurbReferences({ entityType: 'Article', entityId: id, uses: blurbUses });
 
     // If it was published, process it.
     if (result.publishedAt && result.publishedAt <= new Date()) {
@@ -1297,6 +1232,150 @@ export const upsertArticle = async ({
     throw throwDbError(error);
   }
 };
+
+type ArticleContentChangeContext = {
+  ownerId: number;
+  title: string | null;
+  previousContent: string | null;
+  coverId: number | null;
+};
+
+/**
+ * The one path for "an article's body changed": the column write plus the follow-up
+ * work that change implies. `upsertArticle` calls it, and so does the blurb fan-out —
+ * which is what stops the two drifting.
+ *
+ * Deliberately narrow. The full upsert is form-shaped, so a caller holding only new
+ * HTML cannot use it without clearing title, tags, attachments and cover.
+ */
+export async function applyArticleContentChange({
+  id,
+  userId,
+  content,
+  scanContent = true,
+  context,
+}: {
+  id: number;
+  userId: number;
+  content: string;
+  scanContent?: boolean;
+  /** Read from the row when the caller doesn't already hold the pre-write values. */
+  context?: ArticleContentChangeContext;
+}) {
+  let resolved = context;
+  if (!resolved) {
+    const stored = await dbWrite.article.findUnique({
+      where: { id },
+      select: { userId: true, title: true, content: true, coverId: true },
+    });
+    if (!stored) throw throwNotFoundError(`No article with id ${id}`);
+    resolved = {
+      ownerId: stored.userId,
+      title: stored.title,
+      previousContent: stored.content,
+      coverId: stored.coverId,
+    };
+  }
+  const { ownerId, title, previousContent, coverId } = resolved;
+
+  await dbWrite.article.update({ where: { id }, data: { content } });
+
+  await preventReplicationLag('article', id);
+  await preventReplicationLag('userArticles', ownerId);
+
+  // Link content images (creates Image entities and ImageConnections)
+  if (content) {
+    const hasContentChanged = previousContent !== content;
+
+    if (hasContentChanged) {
+      try {
+        const { orphanedImageIds } = await linkArticleContentImages({
+          articleId: id,
+          content,
+          userId,
+          coverId,
+          cleanupOnly: !scanContent,
+        });
+
+        // Delete truly orphaned images (DB + S3 + cache) post-transaction
+        for (const imageId of orphanedImageIds) {
+          await deleteImageById({ id: imageId }).catch((error) => {
+            handleLogError(error, 'article-orphaned-image-cleanup', {
+              articleId: id,
+              imageId,
+            });
+          });
+        }
+
+        if (scanContent) {
+          // Content changed and images need re-scanning — use Rescan to distinguish
+          // user-edit-triggered rescans from initial pending scans.
+          await dbWrite.article.update({
+            where: { id },
+            data: { scanRequestedAt: new Date(), ingestion: ArticleIngestionStatus.Rescan },
+          });
+        }
+      } catch (e) {
+        // Non-blocking: continue even if image linking fails, but log the error
+        const error = e as Error;
+        logToAxiom({
+          type: 'error',
+          name: 'article-image-linking',
+          message: error.message,
+          cause: error.cause,
+          stack: error.stack,
+          articleId: id,
+        }).catch();
+      }
+    }
+  }
+
+  // Submit for text moderation (non-blocking). `submitTextModeration` →
+  // `createXGuardModerationRequest` handles contentHash dedup internally,
+  // so a save that doesn't change `title` or `content` is a no-op
+  // orchestrator-wise. If the article's text was emptied out entirely,
+  // drop any stale EntityModeration row — otherwise the retry cron would
+  // keep re-submitting and `recomputeArticleIngestion` could still read
+  // the old blocked/error state.
+  {
+    const currentTitle = title ?? '';
+    const hasText = articleHasText(currentTitle, content);
+
+    if (!hasText) {
+      await dbWrite.entityModeration.deleteMany({
+        where: { entityType: 'Article', entityId: id },
+      });
+    } else {
+      const textForModeration = [currentTitle, removeTags(content)].filter(Boolean).join(' ');
+
+      submitTextModeration({
+        entityType: 'Article',
+        entityId: id,
+        content: textForModeration,
+        labels: ['nsfw'],
+        recordForReview: true,
+      }).catch((e) => {
+        logToAxiom({
+          type: 'error',
+          name: 'article-text-moderation',
+          message: (e as Error).message,
+          articleId: id,
+        }).catch();
+      });
+    }
+  }
+
+  // Lock ingestion state, recompute nsfwLevel from current cover/content
+  // signals, and queue the search-index update. Running the full
+  // `updateArticleImageScanStatus` (rather than bare `recomputeArticleIngestion`)
+  // guarantees that any edit or publish/republish re-derives
+  // `Article.nsfwLevel` from ground truth — otherwise a cover whose scan
+  // finished between save and republish would leak at its stale
+  // author-declared level. Dispatches the search-index update internally.
+  await updateArticleImageScanStatus([id]).catch((e) =>
+    handleLogError(e, 'article-update-recompute', { articleId: id })
+  );
+}
 
 export const deleteArticleById = async ({
   id,
