@@ -38,6 +38,22 @@ describe('findBlurbSpans', () => {
       '<span data-type="blurb" data-id="1">a</span>mid<span data-type="blurb" data-id="2">b</span>';
     expect(findBlurbSpans(html).map((s) => s.blurbId)).toEqual([1, 2]);
   });
+
+  it('orders a nested pair outer-first', () => {
+    const html =
+      '<span data-type="blurb" data-id="1">outer<span data-type="blurb" data-id="2">inner</span>tail</span>';
+    expect(findBlurbSpans(html).map((s) => s.blurbId)).toEqual([1, 2]);
+  });
+
+  it('accepts an id at int4 max', () => {
+    const html = '<span data-type="blurb" data-id="2147483647">x</span>';
+    expect(findBlurbSpans(html).map((s) => s.blurbId)).toEqual([2147483647]);
+  });
+
+  it('rejects an id past int4 max', () => {
+    const html = '<span data-type="blurb" data-id="2147483648">x</span>';
+    expect(findBlurbSpans(html)).toHaveLength(0);
+  });
 });
 
 describe('replaceBlurbSpans', () => {
@@ -70,6 +86,24 @@ describe('replaceBlurbSpans', () => {
     const html = '<span data-type="blurb" data-id="7">same</span>';
     expect(replaceBlurbSpans(html, new Map([[7, 'same']]))).toBe(html);
   });
+
+  it('lets the outer replacement win over a nested blurb span', () => {
+    const html =
+      '<span data-type="blurb" data-id="1">outer<span data-type="blurb" data-id="2">inner</span>tail</span>';
+    const out = replaceBlurbSpans(
+      html,
+      new Map([
+        [1, 'OUTER'],
+        [2, 'INNER'],
+      ])
+    );
+    expect(out).toBe('<span data-type="blurb" data-id="1">OUTER</span>');
+  });
+
+  it('does not duplicate trailing content after a self-closed blurb span', () => {
+    const html = '<span data-type="blurb" data-id="7"/>after';
+    expect(replaceBlurbSpans(html, new Map([[7, 'X']]))).toBe(html);
+  });
 });
 
 describe('unwrapBlurbSpans', () => {
@@ -84,6 +118,13 @@ describe('unwrapBlurbSpans', () => {
     expect(unwrapBlurbSpans(html, new Set([7]))).toBe(
       'a<span data-type="blurb" data-id="8">b</span>'
     );
+  });
+
+  it('unwraps the outer span of a nested pair without corrupting the inner one', () => {
+    const html =
+      '<span data-type="blurb" data-id="1">outer<span data-type="blurb" data-id="2">inner</span>tail</span>';
+    const out = unwrapBlurbSpans(html, new Set([1, 2]));
+    expect(out).toBe('outer<span data-type="blurb" data-id="2">inner</span>tail');
   });
 });
 
