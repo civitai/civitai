@@ -55,6 +55,17 @@ export function RenderRichText({
             timestamp: ({ node }) => (
               <LocalTimestamp value={node.attrs.value} style={node.attrs.style} />
             ),
+            // The static renderer's default output puts `node.attrs.text` in as an escaped
+            // text child, but it's markup (bold/italic/link/list) already sanitized once by
+            // blurbContentSchema at blurb-save time and again by the host surface's own
+            // allowBlurbs sanitizer at article-save time — inject it as markup, not text.
+            blurb: ({ node }) => (
+              <span
+                data-type="blurb"
+                data-id={node.attrs.id}
+                dangerouslySetInnerHTML={{ __html: node.attrs.text ?? '' }}
+              />
+            ),
             // For unconsented CA visitors, replace third-party embed nodes with a
             // placeholder so the iframe is never inserted in the DOM.
             ...(!allowed && {
