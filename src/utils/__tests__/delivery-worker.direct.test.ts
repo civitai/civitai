@@ -9,7 +9,11 @@ vi.mock('~/env/server', () => ({
       DELIVERY_WORKER_ENDPOINT: 'https://delivery.example.com/',
       DELIVERY_WORKER_TOKEN: 'tok',
       STORAGE_RESOLVER_ENDPOINT: 'https://resolver.example.com',
-      STORAGE_RESOLVER_AUTH: '',
+      STORAGE_RESOLVER_AUTH: 'user:pass',
+      // Required for `direct`: the resolver refuses an origin-direct ask that does
+      // not carry this. See delivery-worker.direct-unauthenticated.test.ts for the
+      // arm where it is absent.
+      STORAGE_RESOLVER_INTERNAL_TOKEN: 'internal-tok',
       // Required: delivery-worker imports s3-utils, which parses these at module
       // load and throws on an undefined URL before any test runs.
       S3_UPLOAD_ENDPOINT: 'https://abcd1234.r2.cloudflarestorage.com',
@@ -35,6 +39,9 @@ const OK = {
 const bodyOf = (fetchMock: ReturnType<typeof vi.fn>, call = 0) =>
   JSON.parse(fetchMock.mock.calls[call][1].body as string);
 
+const headersOf = (fetchMock: ReturnType<typeof vi.fn>, call = 0) =>
+  fetchMock.mock.calls[call][1].headers as Record<string, string>;
+
 describe('the direct flag reaches the resolver', () => {
   const fetchMock = vi.fn();
   beforeEach(() => {
@@ -47,6 +54,26 @@ describe('the direct flag reaches the resolver', () => {
   it('sends direct:true when asked', async () => {
     await getDownloadUrlByFileId(1, 'model.safetensors', { direct: true });
     expect(bodyOf(fetchMock)).toMatchObject({ fileId: 1, direct: true });
+  });
+
+  // 🔴 The resolver gates `direct` on the internal bearer token, because /resolve
+  // is publicly reachable and `direct` spends our egress allowance. A request that
+  // carries the flag but not the credential is refused there and silently served
+  // from the CDN — so asserting the body alone would pass while the feature was
+  // dead in production. Pin the header.
+  it('authenticates a direct ask with the internal bearer token', async () => {
+    await getDownloadUrlByFileId(1, 'model.safetensors', { direct: true });
+    expect(headersOf(fetchMock).Authorization).toBe('Bearer internal-tok');
+  });
+
+  // The negative control for the header: an ordinary resolve is unchanged and
+  // still sends the Basic credential. Without this, swapping every request to
+  // Bearer would pass the test above.
+  it('leaves an ordinary resolve on the Basic credential', async () => {
+    await getDownloadUrlByFileId(1, 'model.safetensors');
+    expect(headersOf(fetchMock).Authorization).toBe(
+      `Basic ${Buffer.from('user:pass').toString('base64')}`
+    );
   });
 
   // 🔴 Omitted, not `false`. An older resolver that does not know the field must
