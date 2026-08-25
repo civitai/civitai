@@ -413,7 +413,7 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
   const entries = demoRemixEntries(imageId, shown);
   const side = layout === 'side';
   const label = count === 1 ? '1 remix' : `${count} remixes`;
-  const body = (
+  const body = (tile: number | undefined) => (
     <>
       <div className={clsx('flex items-center px-2 pb-1 pt-1.5', side ? 'gap-1' : 'gap-1.5')}>
         <IconHierarchy size={13} className="shrink-0 text-yellow-5" />
@@ -446,7 +446,7 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
           <button
             key={index}
             className={clsx('min-w-0', side ? 'mx-auto' : 'max-w-16 flex-1')}
-            style={side ? { width: place.tile, height: place.tile } : undefined}
+            style={side ? { width: tile, height: tile } : undefined}
             aria-label={`Open ${entry.username}'s remix`}
             onClick={(event) => {
               event.preventDefault();
@@ -469,7 +469,7 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
               'flex min-w-0 items-center justify-center rounded bg-gray-2 dark:bg-dark-5',
               side ? 'mx-auto' : 'aspect-square max-w-16 flex-1'
             )}
-            style={side ? { width: place.tile, height: place.tile } : undefined}
+            style={side ? { width: tile, height: tile } : undefined}
           >
             <Text size="xs" fw={600}>
               +{count - entries.length}
@@ -521,7 +521,7 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
                   paddingRight: place.from === 'left' ? TUCK : 0,
                 }}
               >
-                {body}
+                {body(place.tile)}
               </div>
             </div>
           ),
