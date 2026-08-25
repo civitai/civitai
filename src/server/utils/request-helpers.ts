@@ -1,4 +1,5 @@
 import type { NextApiRequest } from 'next';
+import { env } from '~/env/server';
 
 // List of common browser user agents
 const browserUserAgents = ['mozilla', 'chrome', 'safari', 'firefox', 'opera', 'edge'];
@@ -7,6 +8,42 @@ export function isRequestFromBrowser(req: NextApiRequest): boolean {
   if (!userAgent) return false;
 
   return browserUserAgents.some((browser) => userAgent.includes(browser));
+}
+
+/**
+ * Should this caller's model download resolve to an origin-direct URL rather than
+ * the CDN-fronted one?
+ *
+ * Some internal clients download the same file with many parallel connections,
+ * which the CDN does not speed up and the storage origin does. Serving them
+ * directly is measurably faster for those clients and measurably more expensive
+ * for us, so it is an allowlist keyed on user agent, empty by default.
+ *
+ * 🔴 This is NOT an access control and must never be used as one. A user agent is
+ * caller-supplied and trivially spoofed. It is safe here only because of what it
+ * gates: the caller receives the SAME file it was already entitled to, resolved
+ * moments earlier by the route's own auth, ownership, paid-access and blocklist
+ * checks — spoofing it changes which host serves those bytes, not whether the
+ * caller may have them. The cost of a wrong `true` is bandwidth, not exposure.
+ * If that ever stops being true, replace this with an authenticated signal rather
+ * than hardening the string match.
+ */
+export function shouldResolveDirect(req: NextApiRequest): boolean {
+  const allowlist = env.STORAGE_RESOLVER_DIRECT_USER_AGENTS;
+  // Empty allowlist is the off switch, and it is the default. Checked explicitly
+  // so the disabled path cannot depend on `''.includes()` semantics: `.some()`
+  // over an empty array is already false, but an entry that is itself an empty
+  // string would match EVERY user agent, turning a stray trailing comma in
+  // config into a fleet-wide direct rollout.
+  if (!allowlist?.length) return false;
+
+  const userAgent = req.headers['user-agent']?.toLowerCase();
+  if (!userAgent) return false;
+
+  return allowlist.some((entry) => {
+    const needle = entry.trim().toLowerCase();
+    return needle.length > 0 && userAgent.includes(needle);
+  });
 }
 
 type Protocol = 'https' | 'http';

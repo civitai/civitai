@@ -103,9 +103,27 @@ export type DeliveryWorkerStatus = {
  * Get download URL via the storage-resolver microservice.
  * The resolver handles multi-backend storage (Cloudflare, Backblaze, MinIO).
  */
+/**
+ * Options that only the storage resolver understands. The delivery-worker
+ * fallback silently ignores them, which is correct: it is the legacy path keyed
+ * off `ModelFile.url` and has no notion of which host serves the bytes.
+ */
+export type ResolveOptions = {
+  /**
+   * Ask for a URL addressing the storage origin rather than the CDN in front of
+   * it. Only honoured for backends that have a second address; ignored otherwise.
+   *
+   * Serving a file directly costs more than serving it through the CDN, so this
+   * should be set only for callers that measurably benefit. See
+   * `shouldResolveDirect`.
+   */
+  direct?: boolean;
+};
+
 export async function getDownloadUrlByFileId(
   fileId: number,
-  fileName?: string
+  fileName?: string,
+  options?: ResolveOptions
 ): Promise<DownloadInfo> {
   if (!storageResolverEndpoint) {
     throw new Error('STORAGE_RESOLVER_ENDPOINT is not configured');
@@ -114,6 +132,9 @@ export async function getDownloadUrlByFileId(
   const body = JSON.stringify({
     fileId,
     fileName: fileName ? safeDecodeURIComponent(fileName) : undefined,
+    // Omitted rather than sent as `false` so an older resolver, which does not
+    // know the field, receives a byte-identical request to the one it does today.
+    ...(options?.direct ? { direct: true } : {}),
   });
 
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -216,12 +237,13 @@ export function isStorageResolverEnabled(): boolean {
 export async function resolveDownloadUrl(
   fileId: number,
   fileUrl: string,
-  fileName?: string
+  fileName?: string,
+  options?: ResolveOptions
 ): Promise<DownloadInfo> {
   if (isStorageResolverEnabled()) {
     let resolverError: unknown;
     try {
-      return await getDownloadUrlByFileId(fileId, fileName);
+      return await getDownloadUrlByFileId(fileId, fileName, options);
     } catch (err) {
       // Fall back to delivery worker when the storage resolver doesn't have
       // this file (e.g. File table records like BountyEntry attachments that
