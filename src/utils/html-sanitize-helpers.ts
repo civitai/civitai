@@ -76,6 +76,32 @@ export const DEFAULT_ALLOWED_ATTRIBUTES = {
   'edge-media': ['url', 'type', 'filename', 'className'],
 };
 
+// Everything the blurb mini-editor's toolbar can produce (`includeControls={['formatting', 'link',
+// 'list']}` in BlurbManagerModal — bold/italic/underline/strikethrough/code block, link, list).
+// Deliberately narrower than DEFAULT_ALLOWED_TAGS/DEFAULT_ALLOWED_ATTRIBUTES: `blurbContentSchema`
+// sanitizes a blurb's own `content` at SAVE time with the wider default set, so a direct
+// `blurb.update` call (no toolbar in the way) can still write `iframe`, `span[style]`, or
+// `edge-media` into stored content. No `span` at all, so mention/sticker/nested-blurb spoofing and
+// the `style` vector both close the same way: the tag that would carry them isn't allowed.
+export const BLURB_INTERIOR_ALLOWED_TAGS = [
+  'p',
+  'strong',
+  'em',
+  'u',
+  's',
+  'a',
+  'ul',
+  'ol',
+  'li',
+  'br',
+  'pre',
+  'code',
+];
+
+export const BLURB_INTERIOR_ALLOWED_ATTRIBUTES = {
+  a: DEFAULT_ALLOWED_ATTRIBUTES.a,
+};
+
 // Stickers are paid goods. `span` and its data-* attributes are in the default
 // allowlist (mentions need them), so sticker markup would otherwise survive on
 // every rich-text surface — model descriptions, bounties, reviews, changelogs —

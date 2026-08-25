@@ -37,8 +37,12 @@ export const BlurbNode = Node.create({
   renderHTML({ node, HTMLAttributes }) {
     // The text is emitted as children, which is what puts the materialised form in
     // editor.getHTML() and therefore in the stored column.
-    // Order is deliberate: `data-type` first so it wins the stored attribute order even
-    // if a future attribute's renderHTML ever emits a colliding key via HTMLAttributes.
+    // Order only controls EMITTED ATTRIBUTE ORDER (mergeAttributes puts first-argument keys
+    // first, which is why `data-type` precedes `data-id` here, matching the stored round-trip
+    // test) — it does NOT protect `data-type`'s value: mergeAttributes lets the LATER argument
+    // win a key collision, so a future attribute whose renderHTML emits `data-type` would
+    // silently override this literal. No current attribute collides; that's a known gap, not a
+    // guarantee this order provides.
     return [
       'span',
       mergeAttributes({ 'data-type': 'blurb' }, HTMLAttributes),

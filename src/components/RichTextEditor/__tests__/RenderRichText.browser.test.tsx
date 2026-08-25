@@ -105,4 +105,103 @@ describe('RenderRichText', () => {
     expect(document.querySelector('[data-testid="second"] strong')?.textContent).toBe('bold');
     expect(document.querySelector('[data-testid="second"]')?.innerHTML).not.toContain('&lt;');
   });
+
+  test('a blurb containing an iframe renders without a live iframe', async () => {
+    const doc = {
+      type: 'doc',
+      content: [
+        {
+          type: 'paragraph',
+          content: [
+            {
+              type: 'blurb',
+              attrs: {
+                id: 7,
+                text: '<strong>bold</strong><iframe src="https://www.youtube.com/embed/x"></iframe>',
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    renderWithProviders(
+      <div data-testid="host">
+        <RenderRichText content={doc} />
+      </div>
+    );
+
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-testid="host"] strong')).not.toBeNull()
+    );
+    expect(document.querySelector('[data-testid="host"] strong')?.textContent).toBe('bold');
+    expect(document.querySelector('[data-testid="host"] iframe')).toBeNull();
+  });
+
+  test('a blurb containing a styled span renders without the style attribute reaching the DOM', async () => {
+    const doc = {
+      type: 'doc',
+      content: [
+        {
+          type: 'paragraph',
+          content: [
+            {
+              type: 'blurb',
+              attrs: {
+                id: 7,
+                text: '<span style="background:url(javascript:alert(1))">styled</span> text',
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    renderWithProviders(
+      <div data-testid="host">
+        <RenderRichText content={doc} />
+      </div>
+    );
+
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-testid="host"]')?.textContent).toContain('styled')
+    );
+    const blurbSpan = document.querySelector('[data-testid="host"] span[data-type="blurb"]');
+    expect(blurbSpan?.querySelector('span')).toBeNull();
+    expect(blurbSpan?.innerHTML).not.toContain('style=');
+  });
+
+  test("a blurb's emphasis and link formatting survive the render-time sanitize", async () => {
+    const doc = {
+      type: 'doc',
+      content: [
+        {
+          type: 'paragraph',
+          content: [
+            {
+              type: 'blurb',
+              attrs: {
+                id: 7,
+                text: '<em>emphasis</em> and <a href="https://example.com">a link</a>',
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    renderWithProviders(
+      <div data-testid="host">
+        <RenderRichText content={doc} />
+      </div>
+    );
+
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-testid="host"] em')).not.toBeNull()
+    );
+    expect(document.querySelector('[data-testid="host"] em')?.textContent).toBe('emphasis');
+    const link = document.querySelector<HTMLAnchorElement>('[data-testid="host"] a');
+    expect(link?.textContent).toBe('a link');
+    expect(link?.getAttribute('href')).toBe('https://example.com');
+  });
 });
