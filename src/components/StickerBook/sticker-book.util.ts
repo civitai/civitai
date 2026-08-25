@@ -6,6 +6,17 @@ export function isStickerBookSide(value: unknown): value is StickerBookSide {
 }
 
 /**
+ * The absolute book URL, for the three places that build one.
+ *
+ * Deliberately not the profile nav's `${baseUrl}/sticker-book` — that row is
+ * built like all ten tabs beside it, and pulling one out to call this would
+ * make that table worse, not better.
+ */
+export function stickerBookUrl(username: string) {
+  return `/user/${username}/sticker-book`;
+}
+
+/**
  * Every string a section is described by, in one place.
  *
  * The row on the tab and the page behind its "View all" are the same section,
