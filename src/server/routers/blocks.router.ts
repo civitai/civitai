@@ -114,7 +114,10 @@ import {
   validateBlockCheckpoint,
 } from '~/server/services/blocks/checkpoint.service';
 import { getModelShowcaseImages } from '~/server/services/blocks/showcase.service';
-import { computeListingProblems } from '~/server/services/blocks/listing-problems';
+import {
+  computeListingProblems,
+  type ListingProblemKind,
+} from '~/server/services/blocks/listing-problems';
 import { getRequestDomainColor, isHostForColor } from '~/server/utils/server-domain';
 // Type-only: the runtime `resolveCanGenerateForVersions` is loaded via a
 // dynamic import() inside assertViewerCanGeneratePageResources so the heavy
@@ -2259,6 +2262,17 @@ export const blocksRouter = router({
         tagline: string | null;
         category: string | null;
         screenshotCount: number;
+        /**
+         * The listing's kind, threaded into `computeListingProblems` so the three
+         * empty-text problems name the right remedy.
+         *
+         * 🔴 PROJECTED, NOT ASSUMED, even though the `where` below filters
+         * `kind: 'onsite'`. A literal `'onsite'` at the call site would be a SECOND
+         * place that has to stay in step with that filter, and it would go wrong
+         * SILENTLY (wrong advice, no error) if the filter is ever widened. Reading
+         * the column costs nothing and cannot drift.
+         */
+        kind: string;
       }
     >();
     if (appBlockIds.length) {
@@ -2268,6 +2282,7 @@ export const blocksRouter = router({
           id: true,
           appBlockId: true,
           status: true,
+          kind: true,
           iconId: true,
           coverId: true,
           description: true,
@@ -2287,6 +2302,9 @@ export const blocksRouter = router({
           listingByBlockId.set(l.appBlockId, {
             id: l.id,
             status: l.status,
+            // A narrow test fake that ignores `select` yields `undefined`; the `where`
+            // clause above admits only on-site rows, so that is the honest fallback.
+            kind: l.kind ?? 'onsite',
             iconId: l.iconId,
             coverId: l.coverId,
             description: l.description,
@@ -2349,6 +2367,7 @@ export const blocksRouter = router({
         // version) — nothing to flag until a listing row exists.
         problems: listing
           ? computeListingProblems({
+              kind: listing.kind as ListingProblemKind,
               iconId: listing.iconId,
               coverId: listing.coverId,
               screenshotCount: listing.screenshotCount,

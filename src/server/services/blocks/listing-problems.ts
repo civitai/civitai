@@ -16,6 +16,13 @@ import {
  * publish/approve; it only drives the warning icon + popover on the submissions
  * list. Both the on-site (`listMyPublishRequests`) and off-site
  * (`listMySubmissions`) procs project the needed fields and call this per row.
+ *
+ * 🔴 KIND-AWARE. `empty-description` / `empty-tagline` / `empty-category` name a
+ * DIFFERENT remedy on an on-site listing than on an off-site one, because on-site
+ * copy has no author surface other than `block.manifest.json`. `kind` is a REQUIRED
+ * input for that reason — see {@link ListingProblemInput.kind} and
+ * {@link TEXT_PROBLEM}. The codes and severities are kind-INVARIANT (a released CLI
+ * branches on `code`).
  */
 
 /** The scan state of a single ATTACHED asset — feeds the scan dimension below. */
@@ -25,7 +32,29 @@ export type ListingAssetScan = {
   status: 'scanned' | 'pending' | 'blocked';
 };
 
+/**
+ * Which STORE LISTING this advisory is about. `onsite` = a hosted App Block whose
+ * copy is manifest-governed; `offsite` = an external-link listing whose copy the
+ * author typed into the submit wizard / listing editor.
+ *
+ * 🔴 STRUCTURALLY IDENTICAL TO `ListingKind` (app-listing-read.schema) and
+ * deliberately re-declared here rather than imported: this module is PURE and is
+ * imported by `app-access.service` at the top of its import graph — see the note
+ * at that import. Widening either side without the other is caught by
+ * `listing-problems.kind.test.ts`, which pins the two as assignable.
+ */
+export type ListingProblemKind = 'onsite' | 'offsite';
+
 export type ListingProblemInput = {
+  /**
+   * The listing's kind. 🔴 REQUIRED, NOT OPTIONAL-WITH-A-DEFAULT, and that is the
+   * whole enforcement mechanism: the three text problems below give DIFFERENT advice
+   * per kind, so a caller that forgets to thread it would silently emit the wrong
+   * remedy on a whole surface. A default would fail OPEN — the exact defect this
+   * function is being fixed for. Making it required turns "a caller was missed" into
+   * a compile error at every one of the three call sites.
+   */
+  kind: ListingProblemKind;
   /** Image FK for the listing icon (null ⇒ missing). */
   iconId: number | null;
   /** Image FK for the listing cover (null ⇒ missing). */
@@ -81,7 +110,11 @@ export type ListingProblemsResult = { problems: ListingProblem[] };
  * screenshots are optional → `advisory` ("recommended").
  */
 const ASSET_PROBLEM: Record<MissingAsset, ListingProblem> = {
-  icon: { code: 'missing-icon', label: 'Missing icon (required before publishing)', severity: 'blocking' },
+  icon: {
+    code: 'missing-icon',
+    label: 'Missing icon (required before publishing)',
+    severity: 'blocking',
+  },
   cover: {
     code: 'missing-cover',
     label: 'Missing cover image (required before publishing)',
@@ -91,6 +124,53 @@ const ASSET_PROBLEM: Record<MissingAsset, ListingProblem> = {
     code: 'no-screenshots',
     label: 'No screenshots (recommended, optional)',
     severity: 'advisory',
+  },
+};
+
+/**
+ * The three EMPTY-TEXT problems, per listing kind — the kind-aware half of this
+ * surface.
+ *
+ * 🔴 WHY THE LABELS DIFFER BUT THE CODES DO NOT. An on-site listing's
+ * `name`/`tagline`/`description`/`category` have NO author surface other than
+ * `block.manifest.json`: the `/apps/<appBlockId>/edit` Listing tab is media-only
+ * ("ONSITE = ASSETS-ONLY"), and `approveRequest`'s (3b-sync) MANIFEST-GOVERNED COPY
+ * RE-SYNC re-derives all four from the manifest on EVERY subsequent-version approve
+ * (`publish-request.service.ts`, scoped `kind: 'onsite'`). So the off-site advice
+ * — "go fill this field in" — is not merely unhelpful on an on-site listing, it is
+ * WRONG: any value set some other way is reverted at the next approve. Off-site copy
+ * IS author-supplied through the wizard, so its labels are the original text and must
+ * stay that way.
+ *
+ * 🔴 THE CODES ARE A WIRE CONTRACT AND ARE UNCHANGED. `problems[]` ships over tRPC to
+ * a RELEASED `@civitai/cli` (`civitai app doctor`) which branches on `code`. Renaming
+ * or dropping one would break it silently, and SUPPRESSING these three on the on-site
+ * arm would be the same break wearing a different hat — the CLI's on-site branch would
+ * simply stop firing. Correcting the label is the only change that improves every
+ * consumer without moving the contract.
+ *
+ * 🔴 `category` IS MANIFEST-FIXABLE **IN THE CASE THAT FIRES**, which is not obvious:
+ * (3b-sync) sources it from `AppBlock.category`, not the manifest, so a moderator's
+ * curated category survives a version bump. But step (3a) writes the manifest
+ * `category` onto that column whenever it is still NULL — so an on-site listing can
+ * only be missing a category when `AppBlock.category` is null, which means no manifest
+ * declared one either. The manifest is therefore the correct remedy exactly when this
+ * problem exists.
+ */
+const TEXT_PROBLEM: Record<
+  ListingProblemKind,
+  Record<'empty-description' | 'empty-tagline' | 'empty-category', string>
+> = {
+  offsite: {
+    'empty-description': 'Missing description',
+    'empty-tagline': 'Missing tagline',
+    'empty-category': 'Missing category',
+  },
+  onsite: {
+    'empty-description':
+      'Missing description — set "description" in block.manifest.json and resubmit',
+    'empty-tagline': 'Missing tagline — set "tagline" in block.manifest.json and resubmit',
+    'empty-category': 'Missing category — set "category" in block.manifest.json and resubmit',
   },
 };
 
@@ -118,12 +198,34 @@ export function computeListingProblems(listing: ListingProblemInput): ListingPro
     for (const missing of assets.missing) problems.push(ASSET_PROBLEM[missing]);
   }
 
+  // Kind-aware LABELS; codes + severities are identical across kinds (see TEXT_PROBLEM).
+  //
+  // 🔴 AN EXPLICIT EQUALITY BRANCH, NOT A `TEXT_PROBLEM[kind] ?? default` LOOKUP. `kind`
+  // reaches us from the `app_listings.kind` COLUMN as a `string` the services CAST — it is
+  // never parsed — so the index expression is effectively untrusted. Indexing a plain
+  // object literal with an inherited key (`'constructor'`, `'toString'`) returns something
+  // TRUTHY, which `??` happily accepts; the next lookup then yields `undefined` and the
+  // author is shown a listing problem with NO label at all. Branching on equality has no
+  // such hole, and it needs no `Object.create(null)` ceremony to be safe.
+  //
+  // 🔴 THE `else` IS A NEVER-THROWS GUARD, NOT A DEFAULT FOR CALLERS. `kind` is REQUIRED,
+  // so a caller that forgets it is a COMPILE error — that is the real enforcement. This
+  // branch exists so one anomalous row cannot take down the whole `/apps/mine` page,
+  // breaking the header's "Never throws" contract. It degrades to the ORIGINAL, pre-kind
+  // labels rather than inventing manifest advice for a listing that may not be
+  // manifest-governed — the actively harmful direction, and the exact defect this
+  // kind-awareness exists to fix.
+  const text = listing.kind === 'onsite' ? TEXT_PROBLEM.onsite : TEXT_PROBLEM.offsite;
   if (isEmpty(listing.description))
-    problems.push({ code: 'empty-description', label: 'Missing description', severity: 'advisory' });
+    problems.push({
+      code: 'empty-description',
+      label: text['empty-description'],
+      severity: 'advisory',
+    });
   if (isEmpty(listing.tagline))
-    problems.push({ code: 'empty-tagline', label: 'Missing tagline', severity: 'advisory' });
+    problems.push({ code: 'empty-tagline', label: text['empty-tagline'], severity: 'advisory' });
   if (isEmpty(listing.category))
-    problems.push({ code: 'empty-category', label: 'Missing category', severity: 'advisory' });
+    problems.push({ code: 'empty-category', label: text['empty-category'], severity: 'advisory' });
 
   // Scan dimension (Item 1): a still-`pending` asset is advisory (it will resolve);
   // a `blocked` asset is BLOCKING — the listing can't go live until it's replaced

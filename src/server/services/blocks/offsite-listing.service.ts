@@ -44,7 +44,10 @@ import { assertOffsiteListingActionable } from '~/server/services/blocks/app-lis
 // TYPE-ONLY (erased at compile time) — the runtime reach into `app-access.service` stays
 // a dynamic import, so this adds nothing to the module graph. See `resolveListingRole`.
 import type { AppRole } from '~/server/services/blocks/app-access.service';
-import { computeListingProblems } from '~/server/services/blocks/listing-problems';
+import {
+  computeListingProblems,
+  type ListingProblemKind,
+} from '~/server/services/blocks/listing-problems';
 import { measureUploadedImage } from '~/server/services/blocks/measure-uploaded-image';
 import { storedObjectEtagMetadata } from '~/server/services/blocks/stored-object-integrity';
 import { notifyAppListingOwner } from '~/server/services/blocks/app-listing-notify';
@@ -3164,6 +3167,18 @@ const mySubmissionSelect = {
   appListing: {
     select: {
       ...submissionSelect.appListing.select,
+      /**
+       * The LISTING's kind, feeding `computeListingProblems`' kind-aware empty-text
+       * labels.
+       *
+       * 🔴 THE LISTING'S KIND, NOT THE REQUEST'S, even though `submissionSelect`
+       * already carries `kind` on the REQUEST and the two agree today. They are
+       * different columns on different tables, and the advisory is a statement about
+       * the LISTING — reusing the request's would be a derived surface standing in for
+       * the defining one. Selected only on `mySubmissionSelect` (the author-facing
+       * read); the mod queues that spread the base `submissionSelect` are untouched.
+       */
+      kind: true,
       iconId: true,
       coverId: true,
       description: true,
@@ -3342,6 +3357,13 @@ export async function listMySubmissions(opts: { userId: number } & ListOffsiteRe
     // was deleted) — nothing to flag.
     problems: r.appListing
       ? computeListingProblems({
+          // 🔴 `listMySubmissions` IS NOT AN OFF-SITE-ONLY READ despite this file's name:
+          // its `where` has an explicit `{ kind: 'onsite' }` OR-branch so on-site MEDIA
+          // REVISIONS appear on /apps/my-submissions. A hardcoded 'offsite' here would
+          // therefore give manifest-governed listings the author-surface advice — exactly
+          // the defect being fixed. A fake that ignores `select` degrades to the original
+          // labels rather than throwing.
+          kind: (r.appListing.kind ?? 'offsite') as ListingProblemKind,
           iconId: r.appListing.iconId,
           coverId: r.appListing.coverId,
           screenshotCount: r.appListing._count.screenshots,

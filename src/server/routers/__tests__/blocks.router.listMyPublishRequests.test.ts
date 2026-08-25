@@ -323,3 +323,157 @@ describe('listMyPublishRequests — OWNER-ONLY scoping (guards the build-failure
     expect(args.select.reviewedAt).toBe(true); // the STRANDED-detection anchor
   });
 });
+
+// ---------------------------------------------------------------------------
+// The KIND seam of the completeness advisory.
+// ---------------------------------------------------------------------------
+
+/**
+ * 🔴 `computeListingProblems` now gives DIFFERENT advice per listing kind for
+ * `empty-description` / `empty-tagline` / `empty-category`, because an ON-SITE listing's
+ * copy has no author surface other than `block.manifest.json` — `approveRequest`'s
+ * (3b-sync) re-sync overwrites those scalars from the manifest on every subsequent-version
+ * approve. This router is one of THREE call sites that must thread the kind; a call site
+ * that is missed keeps the old, wrong advice on its surface and NOTHING else goes red.
+ *
+ * 🔴 THE OFF-SITE CASE HERE IS THE DISCRIMINATING CONTROL, and it is deliberately an
+ * ANOMALOUS row. This query's `where` filters `kind: 'onsite'`, so in production every row
+ * is on-site — which means an assertion that on-site rows get the manifest label passes
+ * EQUALLY against a hardcoded literal `'onsite'` at the call site. Feeding a row whose
+ * `kind` COLUMN says `offsite` is the only case that can tell "reads the column" from
+ * "spells the constant": it fails iff the value is hardcoded. That is why the router
+ * projects the column instead of restating the filter's conclusion.
+ *
+ * 🔴 WHICH CASES ARE REGRESSION COVERAGE. Measured at `origin/main` d345b654a2: 3 of the
+ * 5 cases below go RED — the on-site label, the `kind` projection, and the narrow-fake
+ * degrade. The other 2 PASS at base and are INVARIANT GUARDS, not coverage of this bug:
+ * at base EVERY listing got the original label, so the off-site discriminating control
+ * and the code-invariance case were green by construction. The discriminating control
+ * still earns its place — it is the ONLY case that kills a hardcoded `'onsite'` at the
+ * call site (M10 in the sweep), which no on-site assertion can do.
+ */
+describe('listMyPublishRequests — the advisory is KIND-AWARE', () => {
+  const MANIFEST_TAGLINE = 'Missing tagline — set "tagline" in block.manifest.json and resubmit';
+  const ORIGINAL_TAGLINE = 'Missing tagline';
+
+  /** A request row whose backing listing has every asset but NO tagline. */
+  const requestRow = (id: string, blockId: string) => ({
+    id,
+    appBlockId: null,
+    slug: `app-${id}`,
+    version: '1.0.0',
+    status: 'approved',
+    submittedAt: new Date('2026-01-01'),
+    reviewedAt: new Date('2026-01-02'),
+    rejectionReason: null,
+    approvalNotes: null,
+    deployState: 'live',
+    deployDetail: null,
+    deployUpdatedAt: new Date('2026-01-02'),
+    fileSummary: null,
+    manifestDiffSummary: null,
+    appBlock: { id: blockId, manifest: PAGE_MANIFEST, _count: { userSubscriptions: 0 } },
+  });
+
+  /**
+   * The listing row as the (select-honouring) query would return it. Assets present and
+   * pairwise distinct (icon 41, cover 53, screenshots 7) so only the TEXT problem fires
+   * and no expected value can be produced by reading a neighbouring field. `kind` has no
+   * default — every call states it.
+   */
+  const listingRow = (id: string, blockId: string, kind: string) => ({
+    id,
+    appBlockId: blockId,
+    status: 'approved',
+    kind,
+    iconId: 41,
+    coverId: 53,
+    description: 'A description.',
+    tagline: null,
+    category: 'utility',
+    _count: { screenshots: 7 },
+  });
+
+  const taglineLabelOf = (row: { problems: { code: string; label: string }[] }) =>
+    row.problems.find((p) => p.code === 'empty-tagline')?.label;
+
+  it('an ON-SITE backing listing names block.manifest.json', async () => {
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([requestRow('req-on', 'blk-on')]);
+    mockDbRead.appListing.findMany.mockResolvedValue([listingRow('l-on', 'blk-on', 'onsite')]);
+
+    const caller = blocksRouter.createCaller(fakeCtx(owner) as never);
+    const rows = await caller.listMyPublishRequests();
+
+    // Positive control: exactly the one text problem, so the label assertion is not
+    // reading whichever problem happened to land first.
+    expect(rows[0].problems.map((p) => p.code)).toEqual(['empty-tagline']);
+    expect(taglineLabelOf(rows[0])).toBe(MANIFEST_TAGLINE);
+  });
+
+  it('🔴 DISCRIMINATING CONTROL — a row whose kind COLUMN says offsite gets the ORIGINAL label', async () => {
+    // Fails iff the call site hardcodes 'onsite' instead of reading the projected column.
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
+      requestRow('req-off', 'blk-off'),
+    ]);
+    mockDbRead.appListing.findMany.mockResolvedValue([listingRow('l-off', 'blk-off', 'offsite')]);
+
+    const caller = blocksRouter.createCaller(fakeCtx(owner) as never);
+    const rows = await caller.listMyPublishRequests();
+
+    expect(rows[0].problems.map((p) => p.code)).toEqual(['empty-tagline']);
+    expect(taglineLabelOf(rows[0])).toBe(ORIGINAL_TAGLINE);
+  });
+
+  it('the CODE is identical either way (wire contract — a released CLI branches on `code`)', async () => {
+    for (const kind of ['onsite', 'offsite']) {
+      vi.clearAllMocks();
+      mockIsAppBlocksEnabled.mockResolvedValue(true);
+      mockDbRead.blockUserSubscription.groupBy.mockResolvedValue([]);
+      mockDbRead.appListingModerationEvent.findMany.mockResolvedValue([]);
+      mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([requestRow('req-k', 'blk-k')]);
+      mockDbRead.appListing.findMany.mockResolvedValue([listingRow('l-k', 'blk-k', kind)]);
+
+      const caller = blocksRouter.createCaller(fakeCtx(owner) as never);
+      const rows = await caller.listMyPublishRequests();
+      expect(
+        rows[0].problems.map((p) => p.code),
+        `kind=${kind}`
+      ).toEqual(['empty-tagline']);
+    }
+  });
+
+  it('the listing query PROJECTS `kind` (a dropped projection silently reverts this)', async () => {
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([requestRow('req-p', 'blk-p')]);
+    mockDbRead.appListing.findMany.mockResolvedValue([listingRow('l-p', 'blk-p', 'onsite')]);
+
+    const caller = blocksRouter.createCaller(fakeCtx(owner) as never);
+    await caller.listMyPublishRequests();
+
+    const args = mockDbRead.appListing.findMany.mock.calls[0][0] as {
+      select: Record<string, unknown>;
+      where: Record<string, unknown>;
+    };
+    expect(args.select.kind).toBe(true);
+    // The filter this projection deliberately does NOT restate at the call site.
+    expect(args.where.kind).toBe('onsite');
+  });
+
+  it('a narrow fake omitting `kind` degrades to the on-site labels (this query only admits on-site rows)', async () => {
+    // The pre-existing cases in this file use exactly such a fake; this pins that the
+    // fallback is the honest one for THIS caller rather than an accident.
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([requestRow('req-n', 'blk-n')]);
+    mockDbRead.appListing.findMany.mockResolvedValue([
+      {
+        id: 'l-n',
+        appBlockId: 'blk-n',
+        status: 'approved',
+        tagline: null,
+        _count: { screenshots: 7 },
+      },
+    ]);
+
+    const caller = blocksRouter.createCaller(fakeCtx(owner) as never);
+    const rows = await caller.listMyPublishRequests();
+    expect(taglineLabelOf(rows[0])).toBe(MANIFEST_TAGLINE);
+  });
+});
