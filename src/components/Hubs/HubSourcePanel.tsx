@@ -3,7 +3,6 @@ import { IconCopy } from '@tabler/icons-react';
 import { useState } from 'react';
 import { BrowsingLevelsInput } from '~/components/BrowsingLevel/BrowsingLevelInput';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
-import { FilterChip } from '~/components/Filters/FilterChip';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import type { HubSourceValue } from '~/components/Hubs/HubSourceEditor';
 import { HubSourceEditor } from '~/components/Hubs/HubSourceEditor';
@@ -12,13 +11,10 @@ import { buildDuplicateHubInput, useInvalidateHub } from '~/components/Hubs/hub.
 import {
   useHubExcludedSources,
   useHubSessionBrowsingLevel,
-  useHubSessionIncludePG13,
   useSetHubSessionBrowsingLevel,
-  useSetHubSessionIncludePG13,
   useToggleHubSessionSource,
 } from '~/components/Hubs/hub-session.store';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useDomainColor } from '~/hooks/useDomainColor';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { hubSourceKey } from '~/server/schema/user-hub.schema';
@@ -65,7 +61,6 @@ export function HubSourcePanel({
   const invalidateHub = useInvalidateHub();
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
-  const domainColor = useDomainColor();
   // The viewer's own ceiling: account setting intersected with the domain cap. Read
   // here rather than inside the feed's provider, so it is the UNoverridden value.
   const viewerAllowedLevel = useBrowsingLevelDebounced();
@@ -75,8 +70,6 @@ export function HubSourcePanel({
   const toggleSessionSource = useToggleHubSessionSource();
   const sessionLevel = useHubSessionBrowsingLevel(hub.id);
   const setSessionLevel = useSetHubSessionBrowsingLevel();
-  const sessionIncludePG13 = useHubSessionIncludePG13(hub.id);
-  const setSessionIncludePG13 = useSetHubSessionIncludePG13();
 
   const upsert = trpc.userHub.upsert.useMutation({
     onSuccess: async () => {
@@ -95,7 +88,6 @@ export function HubSourcePanel({
   // PG-13 in the first place. Anonymous viewers are capped to PG server-side on
   // every domain, so offering them the picker would be offering them a lie.
   const showLevels = features.canViewNsfw && !!currentUser;
-  const isGreen = domainColor === 'green';
 
   if (hub.isOwner) {
     const current = pending ?? hub.sources;
@@ -184,25 +176,6 @@ export function HubSourcePanel({
         />
       )}
 
-      {/* Green has no level picker by design — the domain caps everyone at PG-13 —
-          but it does have the PG-13 opt-in, and a viewer must get their own rather
-          than inherit whatever the owner saved on their hub. Gated on the DOMAIN,
-          not on `canViewNsfw`: that flag is also false for a region-restricted user
-          on blue/red, and the feed only reads `includePG13` on green, so they would
-          get a switch that does nothing. Same control the filter menu offers. */}
-      {isGreen && !!currentUser && (
-        <FilterChip
-          checked={sessionIncludePG13}
-          onChange={(checked) => setSessionIncludePG13(hub.id, checked)}
-        >
-          <span>Include PG-13</span>
-        </FilterChip>
-      )}
-
-      {/* Scrolled ONLY where a caller asked for it — the popover. The rail already
-          renders inside a `ScrollArea.Autosize`, and nesting a second one there gives
-          the rail a scroller measuring a width nothing shows, which drags the whole
-          sidebar out of the layout. */}
       <MaybeScrollArea maxHeight={listMaxHeight}>
         <HubSourceEditor
           readOnly

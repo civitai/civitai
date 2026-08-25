@@ -28,7 +28,6 @@ import {
   useHubExcludedSources,
   useHubSessionBrowsingLevel,
   useHubSessionFeedFilters,
-  useHubSessionIncludePG13,
 } from '~/components/Hubs/hub-session.store';
 import { FollowHubButton } from '~/components/Hubs/FollowHubButton';
 import {
@@ -153,7 +152,6 @@ export default Page(
 
     const excludedSources = useHubExcludedSources(hubId);
     const sessionBrowsingLevel = useHubSessionBrowsingLevel(hubId);
-    const sessionIncludePG13 = useHubSessionIncludePG13(hubId);
     const sessionFilters = useHubSessionFeedFilters(hubId);
     const currentUser = useCurrentUser();
     const invalidateHub = useInvalidateHub();
@@ -396,10 +394,11 @@ export default Page(
                     remixesOnly: feed.filters?.remixesOnly,
                     nonRemixesOnly: feed.filters?.nonRemixesOnly,
                     hideChallenges: feed.filters?.hideChallenges,
-                    // The owner's PG-13 opt-in is theirs. Handing it to a viewer lifts
-                    // that viewer's own green-domain cap on the owner's say-so, so a
-                    // viewer brings their own.
-                    includePG13: hub.isOwner ? hub.filters.includePG13 : sessionIncludePG13,
+                    // Through `feed`, like every other filter: for the owner that is
+                    // their stored value, for a viewer it is their own session choice
+                    // and never the owner's. Handing a viewer the owner's opt-in would
+                    // lift that viewer's green-domain cap on someone else's say-so.
+                    includePG13: feed.filters?.includePG13,
                     // Omitted rather than sent empty: the hub stores [] to mean
                     // "no restriction", and the feed's filter does not.
                     types: feed.types?.length ? feed.types : undefined,
