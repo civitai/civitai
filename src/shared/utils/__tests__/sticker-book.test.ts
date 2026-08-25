@@ -1,3 +1,10 @@
+import {
+  STICKER_BOOK_MAX_COLUMNS,
+  STICKER_BOOK_OVERFETCH,
+  STICKER_BOOK_PAGE_LIMIT,
+  STICKER_BOOK_TAB_LIMIT,
+  STICKER_BOOK_TAB_ROWS,
+} from '~/shared/utils/sticker-book';
 import { describe, expect, it } from 'vitest';
 import { stickerBookAccess } from '~/shared/utils/sticker-book';
 
@@ -101,5 +108,29 @@ describe('stickerBookAccess', () => {
 
     expect(access.canViewBook).toBe(true);
     expect(access.canViewStickers).toBe(true);
+  });
+});
+
+describe('the grid constants, which are load-bearing on each other', () => {
+  it('fetches WHOLE ROWS of the grid, so the tab never draws a short last row', () => {
+    // 🔴 Written as the product, not as 14. The tab's fetch is a row COUNT: a
+    // limit that is not a whole multiple of the column ceiling leaves the last
+    // row short, which is the report this pair was written for (Ellie,
+    // 2026-08-24: "what's the two blank image spots for?").
+    expect(STICKER_BOOK_TAB_LIMIT).toBe(STICKER_BOOK_MAX_COLUMNS * STICKER_BOOK_TAB_ROWS);
+    expect(STICKER_BOOK_TAB_LIMIT % STICKER_BOOK_MAX_COLUMNS).toBe(0);
+  });
+
+  it("keeps the tab's candidate window inside the drill-in's first page", () => {
+    // 🔴 The tab overfetches; the drill-in does not. While the tab's window is a
+    // subset of page 1, "View all" always shows a superset of the row it was
+    // clicked from. Break this and the page can come back EMPTY under a row
+    // showing a full grid — and nothing else in the repo checks it, because the
+    // page size moves with none of the constants that would break it.
+    // Bare, because the failure already names both numbers:
+    // `expected 43 to be less than or equal to 30`.
+    expect(STICKER_BOOK_TAB_LIMIT * STICKER_BOOK_OVERFETCH + 1).toBeLessThanOrEqual(
+      STICKER_BOOK_PAGE_LIMIT
+    );
   });
 });

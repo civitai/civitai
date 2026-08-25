@@ -8,6 +8,7 @@ import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import type { StickerBookSide } from '~/components/StickerBook/sticker-book.util';
+import { wholeRows } from '~/components/StickerBook/sticker-book.util';
 import { constants } from '~/server/common/constants';
 import type { RouterOutput } from '~/types/router';
 
@@ -21,8 +22,7 @@ type BookItems = RouterOutput['stickerBook']['get']['placed'];
  *
  * The height is that width at the 7:9 the profile sections use, so the grid
  * keeps its rhythm whatever each picture's own aspect is.
- */
-/**
+ *
  * 🔴 320 and 16 are NOT free numbers — they are what makes `MasonryContainer`
  * usable here.
  *
@@ -92,12 +92,10 @@ export function StickerBookGrid({
 
   // From the same container that lays the grid out, so the two cannot disagree.
   const { columnCount } = useMasonryContext();
-  const shown = useMemo(() => {
-    // `columnCount` is 0 until the container has measured, and a partial row is
-    // better than an empty section while that resolves.
-    if (!wholeRowsOnly || !columnCount || survived.length < columnCount) return survived;
-    return survived.slice(0, Math.floor(survived.length / columnCount) * columnCount);
-  }, [survived, columnCount, wholeRowsOnly]);
+  const shown = useMemo(
+    () => (wholeRowsOnly ? wholeRows(survived, columnCount) : survived),
+    [survived, columnCount, wholeRowsOnly]
+  );
 
   if (!shown.length)
     return (
@@ -116,6 +114,10 @@ export function StickerBookGrid({
     // stickers, so the count it was carrying says nothing new here — and
     // `revealStickers` is what draws them, so removing the chip removes no
     // control.
+    // `visible`, not `shown`: the card dialog's gallery is the SECTION, and the
+    // whole-rows trim is a layout tidy rather than a visibility decision — an
+    // image it left off the last row is one this viewer may see, so paging into
+    // it is correct. Withheld and hidden images are already gone from `visible`.
     <ImagesProvider images={visible} hideStickerBadge revealStickers>
       <div
         className="grid items-start"

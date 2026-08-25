@@ -7,13 +7,19 @@ import type { StickerBookSettings } from '~/shared/utils/sticker-book';
 import { getStickerBalances } from '~/server/services/sticker.service';
 import { getBlockedPairIds } from '~/server/services/user-preferences.service';
 import { PLACEMENT_OWNER_PAYOUT_KINDS } from '~/shared/utils/placement';
-import { stickerBookAccess, STICKER_BOOK_TAB_LIMIT } from '~/shared/utils/sticker-book';
+import {
+  stickerBookAccess,
+  STICKER_BOOK_OVERFETCH,
+  STICKER_BOOK_PAGE_LIMIT,
+  STICKER_BOOK_TAB_LIMIT,
+} from '~/shared/utils/sticker-book';
 
 const SURFACE = 'sticker' as const;
 const TARGET_TYPE = 'image' as const;
 
 /**
- * How many placement rows a section may consider before it stops.
+ * The largest page a caller may ask a section for. NOT how many rows it reads —
+ * the overfetch below means a section considers up to `limit * OVERFETCH + 1`.
  */
 const MAX_SECTION_LIMIT = 60;
 
@@ -37,7 +43,7 @@ const MAX_SECTION_LIMIT = 60;
  * empty answer on an account whose images were all unpublished, so a section
  * whose overfetch is exhausted still comes back short rather than walking.
  */
-const SECTION_OVERFETCH = 2;
+const SECTION_OVERFETCH = STICKER_BOOK_OVERFETCH;
 
 /**
  * The most ids `imagesForBook` may hand the feed in one call.
@@ -167,10 +173,19 @@ async function getPlacementSection({
   if (resolveVisible) {
     const visible = await resolveVisible(groups.map((group) => group.targetId));
     const chosen: typeof groups = [];
-    // Walk in order, taking what survives until the page is full. `overran` is
-    // the honest `hasMore`: rows were left unconsumed, so there is definitely
-    // another page. Exhausting the whole overfetch without filling the page also
-    // means more, since the window itself was the limit.
+    // Walk in order, taking what survives until the page is full.
+    //
+    // 🔴 `hasMore` ON THIS BRANCH HAS NO READER, so nothing verifies it. The tab
+    // is the only caller that overfetches and it discards `hasMore`; the paged
+    // drill-in never takes this path. The reasoning below is why it is written
+    // this way, NOT a tested guarantee — anyone giving the tab a "load more"
+    // should write the test before trusting it. Kept rather than deleted because
+    // that caller is the obvious next step and the arithmetic is easy to get
+    // subtly wrong.
+    //
+    // `overran` means rows were left unconsumed, so there is definitely another
+    // page. Exhausting the whole window without filling the page also means
+    // more, since the window itself was the limit.
     let overran = false;
     for (const group of groups) {
       if (chosen.length >= limit) {
@@ -423,7 +438,7 @@ export async function getStickerBookSection({
   username,
   side,
   page = 1,
-  limit = 30,
+  limit = STICKER_BOOK_PAGE_LIMIT,
   browsingLevel,
   user,
   isModerator = false,

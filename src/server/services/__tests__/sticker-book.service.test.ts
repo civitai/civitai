@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as ImageService from '~/server/services/image.service';
 import type * as UserPreferences from '~/server/services/user-preferences.service';
-import { STICKER_BOOK_MAX_COLUMNS, STICKER_BOOK_TAB_LIMIT } from '~/shared/utils/sticker-book';
+import { STICKER_BOOK_TAB_LIMIT } from '~/shared/utils/sticker-book';
 
 const blockedPairIds = vi.fn(async () => [] as number[]);
 /**
@@ -137,7 +137,13 @@ const manyStickeredImages = (count: number) => {
   // `attach` finds nothing — an empty row.
   placementGroupBy.mockImplementation(
     async (args: { take?: number; skip?: number; where?: { placerId?: number } }) => {
-      const all = rows(args?.where?.placerId ? PLACED_BASE : RECEIVED_BASE);
+      // 🔴 `typeof === 'number'`, NOT truthiness. On the owner side the service
+      // builds `placerId: blocked`, and `blocked` is `{ notIn: [...] }` — an
+      // object, so truthy — the moment the viewer has any block. A truthy test
+      // would hand both sections the same rows again and silently un-observe the
+      // isolation the tests below exist to hold.
+      const placedSide = typeof args?.where?.placerId === 'number';
+      const all = rows(placedSide ? PLACED_BASE : RECEIVED_BASE);
       const from = args?.skip ?? 0;
       return all.slice(from, from + (args?.take ?? all.length));
     }
@@ -430,36 +436,17 @@ describe('getStickerBook — what leaves the server', () => {
   it('bounds the section limit rather than passing a caller number through', async () => {
     await getStickerBook({ username: 'creator', ...viewer(CREATOR), limit: 5000, ...levels });
 
-    // The cap, overfetched, plus the one row that decides `hasMore`. Asserted as
-    // the cap it came from rather than as 241, so raising the cap fails here
-    // rather than silently letting a caller ask for 5000.
+    // The cap, overfetched, plus the lookahead row. Written as arithmetic over
+    // the two literals rather than as 121, so raising either fails here rather
+    // than silently letting a caller ask for 5000.
     for (const call of placementGroupBy.mock.calls) expect(call[0].take).toBe(60 * 2 + 1);
-  });
 
-  it('asks the tab for WHOLE ROWS of the grid, not a round number', async () => {
-    // 🔴 Do not "simplify" this to a literal. The tab's fetch is two full rows at
-    // the grid's seven-column ceiling, and the two are multiplied in
-    // `shared/utils/sticker-book` precisely so they cannot drift. A limit that
-    // is not a whole multiple of the ceiling leaves the last row short on a wide
-    // window, which is the bug this replaced (Ellie, 2026-08-24: "what's the two
-    // blank image spots for?"). If you change the column ceiling, this moves
-    // with it on its own; if you hardcode either number, it stops protecting
-    // anything.
-    // Twenty stickered images, all visible — more than the tab draws, so the
-    // count below is the tab's decision rather than the fixture running out.
-    manyStickeredImages(20);
-
-    const book = await getStickerBook({ username: 'creator', ...viewer(CREATOR), ...levels });
-
-    // Asserted on what the tab RECEIVES, not on the query's `take`, which is now
-    // the overfetch window and says nothing about how many cards get drawn.
-    // As an object so a failure prints the numbers that disagree: asserted bare
-    // it reads `expected 5 to be +0`, naming neither the count nor the ceiling.
-    expect({
-      columns: STICKER_BOOK_MAX_COLUMNS,
-      shown: book.placed.length,
-      shortInLastRow: book.placed.length % STICKER_BOOK_MAX_COLUMNS,
-    }).toMatchObject({ shown: STICKER_BOOK_TAB_LIMIT, shortInLastRow: 0 });
+    // 🔴 The invariant the clamp exists for, which the clamp itself cannot show:
+    // `imagesForBook` passes `ids.length` as `getInfiniteImagesSchema`'s limit,
+    // and that schema caps at 200. Today's window is 121 so this passes without
+    // the clamp — it goes red only when someone raises `MAX_SECTION_LIMIT`
+    // WITHOUT it, which is the 500 that takes stickers and earnings down too.
+    for (const call of placementGroupBy.mock.calls) expect(call[0].take).toBeLessThanOrEqual(200);
   });
 
   it('overfetches so images the feed withholds cannot leave the tab short', async () => {
