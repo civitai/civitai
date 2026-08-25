@@ -211,22 +211,33 @@ Use a top-level `import type * as PromClient` — an inline `typeof import('...'
 **Before widening a mock, check whether the import edge is needed at all.** A failing suite may be telling you the code pulled in a dependency it doesn't want, not that the mock is too narrow, and widening it would hide that. (Bit us twice in one day, Aug 2026, on two branches; one of those three suites was fixed by extracting the helpers into their own module instead.)
 
 #### Convention guards run as tests
-Several repo conventions are enforced by tests, not by eslint. Fourteen live in
+Several repo conventions are enforced by tests, not by eslint. 17 live in
 `src/server/services/__tests__/no-*.test.ts` — `no-agent-ground-truth-write`, `no-coerce-boolean-in-api`,
 `no-direct-shared-module-mock` (the shared-mock ratchet, see `docs/testing/shared-module-mocks.md`),
-`no-io-in-transaction`, `no-module-scope-cache`, `no-pk-addressed-engagement-write`,
-`no-server-infra-in-app-graph`, `no-sharp-outside-native-project`, `no-stale-moderator-route-probe`,
-`no-static-html2canvas-import`, `no-unbounded-paging-fake`, `no-unloadable-image-fixture`,
-`no-unverified-provenance-write`, `no-wholesale-module-mock` (the `importOriginal` rule above) — plus
-`hub-filter-parity` beside them, `src/server/schema/__tests__/track.addView.schema.test.ts` and
-`src/server/notifications/__tests__/notification-settings-polarity.test.ts`. If one fails, fix the code —
+`no-doubled-free-slot-noun`, `no-io-in-transaction`, `no-lint-rules-script-drift`,
+`no-module-scope-cache`, `no-pk-addressed-engagement-write`, `no-server-infra-in-app-graph`,
+`no-sharp-outside-native-project`, `no-stale-moderator-route-probe`, `no-static-html2canvas-import`,
+`no-unbounded-paging-fake`, `no-unloadable-image-fixture`, `no-unverified-provenance-write`,
+`no-unwrapped-knob-rotation`, `no-wholesale-module-mock` (the `importOriginal` rule above) — plus
+`hub-filter-parity` beside them, `src/server/schema/__tests__/track.addView.schema.test.ts`,
+`src/server/notifications/__tests__/notification-settings-polarity.test.ts` and
+`src/server/services/__tests__/video-leaderboard-badge-staging.test.ts`. If one fails, fix the code —
 don't add an exemption without saying why.
 
 🔴 **`pnpm run test:lint-rules` is a hand-maintained file list, not a glob**, so a guard missing from it fails
 only in a full-suite run — hours later, in a file you weren't looking at. Five were missing at once when this
-was last audited (2026-08-24; all now wired in, 17 files). **Add a new guard to the script in the same commit
+was last audited, on 2026-08-24, and were wired in then. **Add a new guard to the script in the same commit
 you write it**, and don't read a green `test:lint-rules` as "all guards passed" without checking the directory
 against the script.
+
+`test:lint-rules` names 21 files today.
+
+The count above, the count in the list, and the list itself are what went stale three times, so
+`no-lint-rules-script-drift` fails when they disagree with the directory or the script. It reads two exact
+phrasings — `<n> live in \`src/server/services/__tests__/no-*.test.ts\`` and
+`` `test:lint-rules` names <n> files today `` — plus the backticked names in the list paragraph, so keep those
+shapes when you edit the numbers. The same paragraph pair in `.claude/agents/civitai-test-review.md` is
+covered too.
 
 `test:lint-rules` is a convenience selector, not the enforcement point: these files match the `unit` project's
 `include`, so they already run in `pnpm run test:unit:run` and in CI's `Unit tests` job. No workflow invokes
