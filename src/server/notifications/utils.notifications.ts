@@ -5,6 +5,7 @@ import { articleUnpublishNotifications } from '~/server/notifications/article-un
 import { appBlockNotifications } from '~/server/notifications/app-block.notifications';
 import { appCollaboratorNotifications } from '~/server/notifications/app-collaborator.notifications';
 import { appListingNotifications } from '~/server/notifications/app-listing.notifications';
+import { appModeratorMessageNotifications } from '~/server/notifications/app-moderator-message.notifications';
 import { auctionNotifications } from '~/server/notifications/auction.notifications';
 import type { BareNotification } from '~/server/notifications/base.notifications';
 import { bountyNotifications } from '~/server/notifications/bounty.notifications';
@@ -50,6 +51,7 @@ export const notificationProcessors = {
   ...appListingNotifications,
   ...appBlockNotifications,
   ...appCollaboratorNotifications,
+  ...appModeratorMessageNotifications,
   ...articleRatingReviewNotifications,
   ...reportNotifications,
   ...featuredNotifications,

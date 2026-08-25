@@ -104,6 +104,14 @@ const MOD_ACTION_CHIPS: Record<string, Chip> = {
   'reset-to-pending': { label: 'Reset to pending', color: 'yellow' },
   'owner-unpublish': { label: 'Unpublished by you', color: 'gray' },
   'owner-republish': { label: 'Republished by you', color: 'green' },
+  // 🔴 The one action that changed NO listing state — it records that a moderator sent
+  // the owner a free-text message. The label must read correctly in BOTH views this map
+  // serves: the mod queue (`OffsiteReviewQueue`) and the OWNER's own history
+  // (`ownerListingModals`, via `listMyListingModerationEvents`). "Message from
+  // moderation" is true from either side; "Messaged the owner" would be wrong in the
+  // owner's own view, and every `owner-*` label above shows the map is already read
+  // second-person there. Blue, matching `claim` — informational, not a takedown.
+  'message-owner': { label: 'Message from moderation', color: 'blue' },
 };
 
 /** Chip for a moderation-event action, for the per-listing history view. */

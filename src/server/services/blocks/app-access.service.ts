@@ -1423,7 +1423,30 @@ export async function listAppInsiderUserIds(appBlockId: string): Promise<number[
   const ids = new Set<number>([block.app.userId]);
   const appListingId = block.appListing?.id;
   if (!appListingId) return [...ids];
-  const seats = await safeCollaboratorQuery(
+  for (const userId of await listAcceptedCollaboratorUserIds(appListingId)) ids.add(userId);
+  return [...ids];
+}
+
+/**
+ * Every ACCEPTED collaborator on `appListingId`, REGARDLESS of `displayed` — i.e. the
+ * people who can actually EDIT this listing, minus the owner.
+ *
+ * 🔴 THE ONE SPELLING OF `{ status: ACCEPTED }`-without-`displayed`, extracted because
+ * it now has two callers and the pair must not drift. {@link listAppInsiderUserIds}
+ * (the self-review gate) and the moderator-message fan-out ask the SAME question —
+ * "who, other than the owner, is on the inside of this app" — and an answer that
+ * diverged between them would mean an editor who cannot 5-star the app they co-author
+ * silently stops receiving the moderation notice telling them what to fix, or the
+ * reverse. The predicate that must never be added here is `displayed`, for the reason
+ * {@link listDisplayedCollaboratorUserIds}'s header gives: it is PUBLIC-CREDIT
+ * preference, not capability.
+ *
+ * 🔴 `appListingId` MUST be a PARENT listing id — a shadow revision holds no seats
+ * (nothing may create one), so a shadow id returns an empty set rather than an error.
+ * Callers reach the parent via `resolveListingAccess`'s `seatListingId`.
+ */
+export async function listAcceptedCollaboratorUserIds(appListingId: string): Promise<number[]> {
+  const rows = await safeCollaboratorQuery(
     () =>
       dbRead.appCollaborator.findMany({
         where: { appListingId, status: ACCEPTED },
@@ -1431,6 +1454,5 @@ export async function listAppInsiderUserIds(appBlockId: string): Promise<number[
       }),
     [] as { userId: number }[]
   );
-  for (const s of seats) ids.add(s.userId);
-  return [...ids];
+  return rows.map((r: { userId: number }) => r.userId);
 }
