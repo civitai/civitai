@@ -46,6 +46,23 @@ describe('canSeePostDrafts', () => {
     ).toBe(false);
   });
 
+  it('is spelled so that the tags/query split cannot be folded into it', () => {
+    // 🔴 Pins the mistake I actually made. My first attempt widened
+    // `isOwnerRequest` itself instead of adding this predicate beside it — which
+    // ALSO gates the `tags` and `query` filters in `getPostsInfinite`, so
+    // moderators would have silently lost tag and title filtering on every
+    // profile. The predicate below returns true for a moderator; if a future
+    // refactor makes `canSeePostDrafts` and `isOwnerRequest` interchangeable,
+    // this is the assertion that says they are not.
+    //
+    // Stated as a property rather than asserted on the SQL because the two
+    // consumers live in one function: the publication branch reads this, the
+    // discovery filters read `isOwnerRequest`, and they disagree for exactly one
+    // cohort — a scoped moderator.
+    expect(canSeePostDrafts(moderator)).toBe(true);
+    expect(moderator.isOwnerRequest).toBe(false);
+  });
+
   it('grants the creator even when the scope has not been resolved', () => {
     // The control for the moderator case above. `isOwnerRequest` is computed from
     // the username comparison directly and does not depend on the `targetUser`

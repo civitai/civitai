@@ -111,7 +111,7 @@ function UserPostsPage() {
                 <PostFiltersDropdown
                   query={{ ...query, period, followed, scheduled: effectiveScheduled }}
                   onChange={(filters) => replace(filters)}
-                  showScheduled={selfView}
+                  showScheduled={canViewDrafts}
                   size="compact-sm"
                 />
               </Group>

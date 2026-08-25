@@ -188,9 +188,16 @@ const getPostStatsObject = async (data: { id: number }[]) => {
  *
  * 🔴 `targetUser` is the authorization, not decoration. Without it a moderator
  * on the global posts feed takes the owner branch and receives every draft on
- * the site — the same shape as `canRequestUnpublished` in `image.service.ts`,
- * and refused for the same reason: a missing creator scope must refuse rather
- * than default.
+ * the site.
+ *
+ * ⚠️ This is STRICTER than `canRequestUnpublished` in `image.service.ts`, and
+ * the divergence is real rather than an oversight: that one returns true for a
+ * moderator before looking at the scope at all, so an unscoped moderator request
+ * is refused here and granted there. Recorded because the two are otherwise the
+ * same shape and a reader reconciling them will assume they agree. If they are
+ * ever unified, this is the direction to unify towards — the images side has no
+ * test for the unscoped-moderator case, so nothing there is pinning that
+ * behaviour deliberately.
  *
  * Extracted so it can be tested without a database, and kept deliberately apart
  * from `isOwnerRequest`, which also gates the `tags` and `query` filters.
@@ -426,7 +433,17 @@ export const getPostsInfinite = async ({
     isOwnerRequest ||
     (!!user && followed) ||
     !env.POST_QUERY_CACHING ||
-    (collectionId && !!user?.id)
+    (collectionId && !!user?.id) ||
+    // The moderator draft view. Unpublished rows have never entered this cache
+    // before — the only path that produced them was the owner one, which already
+    // zeroes the TTL — and `posts-user:<id>` is busted nowhere in src, so a post
+    // that gets published, deleted or taken down would keep showing in a
+    // moderation surface for the 60s TTL. Not a leak (the statement differs from
+    // a non-moderator's in both the publication and availability clauses, so the
+    // hashed key cannot collide) — just the wrong freshness for the one view
+    // whose job is acting on what is there right now. Costs nothing: this is not
+    // a hot path.
+    (canSeeUnpublished && !isOwnerRequest)
   ) {
     cacheTime = 0;
   }
