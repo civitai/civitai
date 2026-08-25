@@ -82,33 +82,83 @@ function norm(src: string): string {
 
 /**
  * The chain of `{`-blocks enclosing `index`, outermost first, each labelled by the
- * text that introduced it (a selector or an at-rule).
+ * selector or at-rule that introduced it.
  *
- * Deliberately a brace count, not a CSS parser — this only has to be right about
- * the stylesheets in this repo, and a parser would be a dependency to keep
- * correct. It is fooled by an unbalanced brace inside a string (`content: '}'`),
- * so callers must report the chain they computed rather than asserting a cause
- * from it; a chain that does not end in `:root` might mean the declaration moved,
- * or it might mean this walk got confused, and the failure message must not
- * pretend to know which.
+ * Deliberately a brace walk, not a CSS parser — it only has to be right about the
+ * stylesheets in this repo, and a parser would be a dependency to keep correct.
+ * Two things it MUST get right, because both were measured producing a false PASS
+ * (a conditional declaration reported as unconditional), which is the direction
+ * that matters:
+ *
+ *   - 🔴 A label is the text since the last brace, which includes any STATEMENTS
+ *     that preceded the introducer — `--footer-height: 45px; @media (max-width:
+ *     768px)`, or `@tailwind components; @tailwind utilities; @media …`. An
+ *     anchored `^@media` test then misses, and the guard reports no conditional
+ *     at-rule. That is the house style here: 175 at-rules in this repo's own
+ *     stylesheets sit in exactly that position. A selector or at-rule prelude
+ *     cannot legally contain `;`, so keeping only the text after the last `;` is
+ *     safe and is what makes the label the introducer alone.
+ *   - 🔴 Braces inside STRINGS (`content: '}'`) pop the stack and hoist the
+ *     declaration out of its enclosing at-rule. Quoted spans are skipped.
+ *
+ * It is still not a parser: it does not know about escapes beyond `\`, comments
+ * (callers pass comment-stripped source), or SCSS interpolation. Report the chain
+ * in any failure message rather than asserting a cause from it.
  */
 function enclosingBlocks(src: string, index: number): string[] {
   const stack: string[] = [];
   let last = 0;
+  let quote: string | null = null;
   for (let i = 0; i < index; i++) {
-    if (src[i] === '{') {
-      stack.push(
-        norm(src.slice(last, i))
-          .replace(/^[;}]+/, '')
-          .trim()
-      );
+    const ch = src[i];
+    if (quote) {
+      if (ch === '\\') i++;
+      else if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === '`') {
+      quote = ch;
+    } else if (ch === '{') {
+      // Keep only the text after the last `;` — the introducer itself.
+      const label = norm(src.slice(last, i)).split(';').pop() ?? '';
+      stack.push(label.trim());
       last = i + 1;
-    } else if (src[i] === '}') {
+    } else if (ch === '}') {
       stack.pop();
       last = i + 1;
     }
   }
   return stack;
+}
+
+/**
+ * The full text of an element's opening tag, from `<name` to the `>` that closes
+ * it — brace/paren/bracket aware, so a `>` inside a prop expression (an arrow
+ * function, a comparison, a generic) does not end the tag early.
+ *
+ * 🔴 A non-greedy `/<header[\s\S]*?>/` truncates at the first such `>`, and that
+ * failure is SILENT: it still yields exactly one match, so a caller's
+ * exactly-one-match guard cannot see it, and everything after the arrow becomes
+ * invisible to whatever the caller asserts on the tag.
+ */
+function openTag(src: string, name: string): string {
+  const start = src.indexOf(`<${name}`);
+  expect(start, `<${name}> open tag not found`).toBeGreaterThanOrEqual(0);
+  let depth = 0;
+  let quote: string | null = null;
+  for (let i = start; i < src.length; i++) {
+    const ch = src[i];
+    if (quote) {
+      if (ch === '\\') i++;
+      else if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === '`') quote = ch;
+    else if (ch === '{' || ch === '(' || ch === '[') depth++;
+    else if (ch === '}' || ch === ')' || ch === ']') depth--;
+    else if (ch === '>' && depth === 0) return norm(src.slice(start, i + 1));
+  }
+  expect.fail(`<${name}> open tag never closed — the scan ran to end of file`);
 }
 
 /**
@@ -466,13 +516,21 @@ describe('the run page and its host agree on who owns the height', () => {
         `${chainText}. Outside that condition the property is UNDEFINED, and every ` +
         '`calc(… - var(--header-height))` call site collapses at computed-value time.'
     ).toHaveLength(0);
+    // 🔴 The INNERMOST block, and every comma-separated selector in it, must be
+    // exactly `:root` or `html`. A substring test is not enough: `:root .app-shell`
+    // and `html.dark` both contain the token while scoping the property to a
+    // subtree or a theme, so it is undefined everywhere else — the same collapse.
+    // Checking the innermost block (rather than `some()` over the chain) also stops
+    // an outer `:root` vouching for a declaration nested deeper inside it.
+    const innermost = chain.length ? chain[chain.length - 1] : '';
+    const selectors = innermost.split(',').map((s) => s.trim());
     expect(
-      chain.some((b) => /(^|,|\s):root\b/.test(b) || /^html\b/.test(b)),
-      `the \`--header-height\` declaration is not on \`:root\` (or \`html\`). Enclosing chain: ` +
-        `${chainText}. An element-scoped declaration leaves the property undefined everywhere ` +
-        'outside that subtree, which is the same collapse. NOTE: this chain is computed by ' +
-        'counting braces, so an unbalanced brace inside a string earlier in the file can also ' +
-        'produce a wrong chain — check the file before assuming the declaration moved.'
+      selectors.every((s) => s === ':root' || s === 'html'),
+      `the \`--header-height\` declaration is not on a bare \`:root\`/\`html\`. Innermost block: ` +
+        `"${innermost}". Full chain: ${chainText}. A declaration scoped to a subtree or a theme ` +
+        'leaves the property undefined everywhere else, which is the same computed-value-time ' +
+        'collapse. NOTE: this chain comes from a brace walk — it skips quoted strings, but it is ' +
+        'still not a CSS parser, so check the file before concluding the declaration moved.'
     ).toBe(true);
     expect(
       cssDecls[0].value,
@@ -515,7 +573,27 @@ describe('the run page and its host agree on who owns the height', () => {
     const header = code(
       read(path.join(REPO_ROOT, 'src/components/AppLayout/AppHeader/AppHeader.tsx'))
     );
-    const headerTag = region(header, /<header[\s\S]*?>/, 'AppHeader open tag');
+    const headerTag = openTag(header, 'header');
+    // 🔴 A height can reach this element three ways, and the ledger below only sees
+    // one of them. `max-h-[40px]` in `className` sets a DIFFERENT property, so there
+    // is no specificity contest — it just clamps the header to 40px while every
+    // consumer keeps subtracting the constant. A spread of a variable hides the same
+    // thing behind a name this file cannot resolve. Both are refused outright, so
+    // the ledger's claim ("exactly one height property on the header") is true of the
+    // ELEMENT and not merely of one spelling.
+    expect(
+      /(?:^|[\s'"([{])(?:max-|min-)?h-[[\d]/.test(headerTag),
+      `the <header> sets a height through a utility CLASS (\`h-…\`/\`max-h-…\`/\`min-h-…\`). ` +
+        'That is invisible to the inline-style ledger below and does not contend with it — it ' +
+        'silently clamps the real header while every consumer still subtracts HEADER_HEIGHT_PX. ' +
+        `Tag: ${headerTag}`
+    ).toBe(false);
+    expect(
+      /style=\{\{[^}]*\.\.\./.test(headerTag),
+      'the <header> style object SPREADS something. This file cannot resolve what it contains, ' +
+        'so a `maxHeight` hidden in it would pass the ledger below. Inline the properties, or ' +
+        `re-point this guard deliberately. Tag: ${headerTag}`
+    ).toBe(false);
     // Every height-family property on the tag, as a ledger. Exactly one, and it is
     // the shared constant applied unmodified.
     const heightProps = [...headerTag.matchAll(/([A-Za-z]*[Hh]eight)\s*:\s*([^,}]+)/g)].map(
