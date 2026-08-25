@@ -4,7 +4,8 @@ import { GET_ALL_IMAGES_PER_MODEL_SLIM } from '~/server/utils/model-getall-image
 // Module scope, never a test body: from a body this graph's transform is charged to ONE test's
 // 60s budget (39.7s running the file alone on a 32-core Windows box, past 60s inside a full
 // suite — that is how it reddened main). At module scope it moves to collection, which nothing
-// bounds, so a real hang here has no timeout to name it. See vitest.config.mts.
+// bounds, so a real hang here has no timeout to name it. See vitest.config.mts; the
+// measurements behind these numbers are in PR #4363.
 import { getHomeBlockData, resolveFeedFetchLimit } from '~/server/services/home-block.service';
 import type * as ModelService from '~/server/services/model.service';
 

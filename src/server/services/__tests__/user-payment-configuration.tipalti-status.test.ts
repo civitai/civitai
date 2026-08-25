@@ -5,7 +5,8 @@ import { Tipalti } from '~/server/http/tipalti/tipalti.schema';
 // Module scope, never a test body: from a body this graph's transform is charged to ONE test's
 // 60s budget (42.8s running the file alone on a 32-core Windows box, 53-67s recorded inside full
 // suites, and it has already timed out on main). At module scope it moves to collection, which
-// nothing bounds, so a real hang here has no timeout to name it. See vitest.config.mts.
+// nothing bounds, so a real hang here has no timeout to name it. See vitest.config.mts;
+// the measurements behind these numbers are in PR #4363.
 import { updateByTipaltiAccount } from '~/server/services/user-payment-configuration.service';
 import type * as NotificationService from '~/server/services/notification.service';
 
