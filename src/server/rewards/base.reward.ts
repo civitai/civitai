@@ -202,9 +202,7 @@ export function createBuzzEvent<T>({
     await withRetries(() =>
       createBuzzTransactionMany(
         events
-          .filter((x) => x.awardAmount > 0)
           .map((event) => {
-            if (event.multiplier === 0) event.multiplier = 1;
             return {
               type: TransactionType.Reward,
               toAccountId: event.toUserId,
@@ -224,6 +222,10 @@ export function createBuzzEvent<T>({
               toAccountType: buzzEvent.toAccountType ?? 'yellow',
             };
           })
+          // A zero multiplier is `getMultipliersForUser` reporting rewards-ineligibility, not a
+          // missing value, so the amount it produces is the intended one. Filtering on the amount
+          // rather than on `awardAmount` also keeps a 0-Buzz transaction off the ledger.
+          .filter((transaction) => transaction.amount > 0)
       )
     );
   };
@@ -453,6 +455,15 @@ export function createBuzzEvent<T>({
 
     // prepare awards for allocation
     for (const event of targeted) {
+      // `getMultipliersForUser` zeroes the multiplier for a rewards-ineligible user, and `apply`
+      // stored that decision on the pending row. Recording this as `awarded` would put a payout
+      // the fold deliberately removed into the audit trail as one that happened.
+      if (event.multiplier === 0) {
+        event.status = 'unqualified';
+        event.awardAmount = 0;
+        continue;
+      }
+
       // check against caps
       const prevAwardKeys = new Set<string>();
       if (buzzEvent.caps) {
