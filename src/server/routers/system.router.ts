@@ -44,9 +44,13 @@ export const systemRouter = router({
     .query(async ({ ctx }) => {
       const lists = await getClientBenignLists();
       // A fail-open result is a 200 the edge would otherwise hold for an hour, pinning empty
-      // whitelists site-wide off one transient error. `ctx.cache.skip` does NOT work from
-      // here: `edgeCacheIt` reads it to compute the TTL BEFORE it calls this resolver, so it
-      // is only usable by something upstream of the procedure. `canCache` is read after.
+      // whitelists site-wide off one transient error.
+      //
+      // `ctx.cache.skip = true` would now also work from here — `edgeCacheIt` re-reads it
+      // after the resolver returns. `canCache: false` is kept because it is the stronger
+      // statement: it is the one flag that also suppresses the sibling `cacheIt`
+      // middleware's Redis write, so a resolver marking its own result uncacheable does not
+      // have to know which cache middlewares its procedure happens to carry.
       //
       // All three, not just `canCache`: with `canCache: false` the middleware skips the block
       // that assigns the TTLs, so they keep the context defaults — which for an ANONYMOUS
