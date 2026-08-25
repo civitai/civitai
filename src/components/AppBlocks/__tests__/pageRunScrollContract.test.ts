@@ -301,7 +301,16 @@ describe('the run page and its host agree on who owns the height', () => {
    * applying `HEADER_HEIGHT_PX - 4`, and a consumer that kept only the IMPORT.
    * A description that reads as coverage while providing none is worse than no
    * guard, because it stops the next person looking. Hence the walk below, and
-   * the verbatim application pin rather than a token-presence check.
+   * an application check that rejects arithmetic rather than a token-presence one.
+   *
+   * 🔴 WHAT IT STILL DOES NOT SEE, stated so this docstring is not the same lie in
+   * a smaller size. It scans `.css/.scss/.ts/.tsx` only, so a copy in `.js/.jsx/.mjs`
+   * escapes it. It matches a `const|let|var` binding, so a copy declared as an
+   * object property, a class static, or a destructured re-export escapes it. A
+   * `.ts` STRING containing a CSS snippet counts as a declaration (`code()` strips
+   * comments, not strings) — a false ALARM, which is the safe direction. And a
+   * declaration disabled with a TRAILING `//` is still counted, for the same
+   * fail-safe reason. Everything here fails toward noise, never toward silence.
    */
   it('the header height has ONE declaration under `src/`, and CSS and TS agree', () => {
     const constants = code(
@@ -335,15 +344,47 @@ describe('the run page and its host agree on who owns the height', () => {
     // semicolon, is still a declaration and still shadows. Capture the raw value
     // and judge it explicitly rather than letting a non-matching spelling read as
     // "no second declaration".
-    const cssDecls: { file: string; value: string }[] = [];
+    const cssDecls: { file: string; value: string; depth: number }[] = [];
     const tsDecls: { file: string; text: string }[] = [];
     for (const file of files) {
-      // `code()` strips comments: a commented-out declaration must count as ABSENT
-      // (the audited draft read the raw text, so commenting the only declaration
-      // out — undefining the var for every call site — kept the guard green).
+      // `code()` removes WHOLE-LINE (`^\s*//`) and BLOCK comments, so a declaration
+      // commented out either of those ways counts as ABSENT — which it must, since
+      // the audited draft read raw text and stayed green when the only declaration
+      // was commented out. 🔴 It does NOT strip a TRAILING `//` comment (the rule is
+      // anchored), so a declaration disabled that way is still counted. That
+      // direction is fail-safe — a spurious FAILURE, never a spurious pass — and
+      // stripping trailing `//` from CSS is not safe anyway (`url(https://…)`).
       const src = code(fs.readFileSync(file, 'utf8'));
-      for (const m of src.matchAll(/--header-height\s*:\s*([^;}\n]+)/g)) {
-        cssDecls.push({ file: path.relative(REPO_ROOT, file), value: m[1].trim() });
+
+      // Two spellings, because this repo uses both. Plain CSS (`--x: 60px`) and the
+      // CSS-in-JS object form (`'--x': '60px'`), which is how ~240 custom-property
+      // declarations under src/ are actually written — including a whole theme in
+      // `src/shared/constants/chat-theme.ts` — plus the imperative `setProperty`.
+      // Matching only the plain form made the test's title ("ONE declaration under
+      // src/") wider than what it enforced.
+      const patterns = [
+        /(?<!['"])--header-height\s*:\s*([^;}\n]+)/g,
+        /['"]--header-height['"]\s*:\s*([^,;}\n]+)/g,
+        /setProperty\(\s*['"]--header-height['"]\s*,\s*([^)]+)\)/g,
+      ];
+      for (const re of patterns) {
+        for (const m of src.matchAll(re)) {
+          // Nesting depth of the match, so a declaration hidden inside `@media`
+          // or `@supports` is distinguishable from a top-level `:root` one. A
+          // conditional declaration leaves the property UNDEFINED outside its
+          // breakpoint — the invalid-at-computed-value-time collapse this whole
+          // change documents — while still counting as exactly one.
+          let depth = 0;
+          for (const ch of src.slice(0, m.index)) {
+            if (ch === '{') depth++;
+            else if (ch === '}') depth--;
+          }
+          cssDecls.push({
+            file: path.relative(REPO_ROOT, file),
+            value: m[1].trim().replace(/^['"]|['"]$/g, ''),
+            depth,
+          });
+        }
       }
       // Any TS/TSX constant that looks like a private header-height copy.
       // 🔴 Skip THIS file: it necessarily contains the pattern it searches for
@@ -368,6 +409,13 @@ describe('the run page and its host agree on who owns the height', () => {
       'src/styles/globals.css'
     );
     expect(
+      cssDecls[0].depth,
+      'the `--header-height` declaration is nested inside a conditional block (`@media`, ' +
+        '`@supports`, …). Outside that condition the property is UNDEFINED, and every ' +
+        '`calc(… - var(--header-height))` call site then collapses at computed-value time. It ' +
+        'must sit in a top-level `:root`, where it is unconditional.'
+    ).toBe(1);
+    expect(
       cssDecls[0].value,
       'globals.css `--header-height` and `HEADER_HEIGHT_PX` have DIVERGED (or the unit changed). ' +
         'CSS cannot import the constant, so these two are kept in step by this assertion and ' +
@@ -380,20 +428,36 @@ describe('the run page and its host agree on who owns the height', () => {
       'expected exactly ONE header-height constant under src/ — the exported HEADER_HEIGHT_PX. ' +
         'A second one is the duplication this consolidation removed; import the shared constant.'
     ).toHaveLength(1);
-    expect(tsDecls[0].file).toBe('src/shared/constants/app-layout.constants.ts');
+    expect(
+      tsDecls[0].file,
+      'the header-height constant moved out of app-layout.constants.ts. That is fine as a ' +
+        'deliberate relocation — re-point this guard and the doc comment on the constant — but ' +
+        'it must stay a SINGLE exported declaration.'
+    ).toBe('src/shared/constants/app-layout.constants.ts');
 
     // ---- Consumers must APPLY it, not merely import it. A token-presence check
     // is satisfied by the import line alone, so renaming the constant or applying
     // `HEADER_HEIGHT_PX - 4` both survived the audited draft.
-    const header = code(
-      read(path.join(REPO_ROOT, 'src/components/AppLayout/AppHeader/AppHeader.tsx'))
+    //
+    // 🔴 Deliberately NOT a `region()` verbatim pin. A pin anchored on
+    // `style={{ height: … }}` breaks on a property reorder, on a nested `}` from a
+    // conditional spread, and on ANY second inline height style added anywhere in
+    // this 160-line component — all of which are innocent edits, and all of which
+    // would fail inside `region()`'s own anchor assertion WITHOUT `PIN_HELP`, so
+    // the maintainer would be told "the anchor rotted" and not what it protects.
+    // This asserts the thing that actually matters instead: the constant is
+    // applied to a height UNMODIFIED. `[,}]` is what rejects arithmetic, and
+    // matching against the normalised source keeps it immune to reformatting.
+    const header = norm(
+      code(read(path.join(REPO_ROOT, 'src/components/AppLayout/AppHeader/AppHeader.tsx')))
     );
     expect(
-      region(header, /style=\{\{\s*height:[^}]*\}\}/, 'AppHeader height style'),
-      `${PIN_HELP} AppHeader must set its height from the shared constant UNMODIFIED — an ` +
-        'arithmetic tweak here silently desynchronises the real header from every consumer ' +
-        'that subtracts the constant.'
-    ).toBe("style={{ height: HEADER_HEIGHT_PX, borderBottomStyle: 'solid' }}");
+      /height:\s*HEADER_HEIGHT_PX\s*[,}]/.test(header),
+      'AppHeader must set its height from the shared constant UNMODIFIED. Not found — either it ' +
+        'hardcodes a number again, keeps only the import, the constant was renamed, or it applies ' +
+        'arithmetic (`HEADER_HEIGHT_PX - 4`). Any of those silently desynchronises the real header ' +
+        'from every consumer that subtracts the constant.'
+    ).toBe(true);
 
     // The surviving `viewport` surfaces (dev tunnel, mod review) subtract it.
     const host = code(read(HOST));
