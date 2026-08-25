@@ -53,9 +53,13 @@ function UserPostsPage() {
     !!currentUser &&
     !!query.username &&
     postgresSlugify(currentUser.username) === postgresSlugify(query.username);
+  // A moderator sees anything the creator can see of their own. Matches the
+  // images and videos tabs; the server authorizes this independently in
+  // `post.service.ts` and does not trust the control being rendered.
+  const canViewDrafts = selfView || (currentUser?.isModerator ?? false);
 
   const [section, setSection] = useState<'published' | 'draft'>(
-    selfView ? querySection ?? 'published' : 'published'
+    canViewDrafts ? querySection ?? 'published' : 'published'
   );
   const viewingDraft = section === 'draft';
   const effectiveScheduled = viewingDraft ? query.scheduled ?? true : query.scheduled;
@@ -75,7 +79,7 @@ function UserPostsPage() {
         <MasonryContainer p={0}>
           <Stack gap="xs">
             <Group gap={8} justify="space-between">
-              {selfView && (
+              {canViewDrafts && (
                 <FeedContentToggle
                   size="xs"
                   value={section}
@@ -101,15 +105,13 @@ function UserPostsPage() {
                   value={sort}
                   onChange={(x) => replace({ sort: x as PostSort })}
                   options={
-                    viewingDraft
-                      ? draftSorts.map((value) => ({ label: value, value }))
-                      : undefined
+                    viewingDraft ? draftSorts.map((value) => ({ label: value, value })) : undefined
                   }
                 />
                 <PostFiltersDropdown
                   query={{ ...query, period, followed, scheduled: effectiveScheduled }}
                   onChange={(filters) => replace(filters)}
-                  showScheduled={selfView}
+                  showScheduled={canViewDrafts}
                   size="compact-sm"
                 />
               </Group>

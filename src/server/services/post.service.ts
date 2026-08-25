@@ -182,6 +182,40 @@ const getPostStatsObject = async (data: { id: number }[]) => {
  * - poiOnly: Mod-only filter - not exposed to frontend
  * - minorOnly: Mod-only filter - not exposed to frontend
  */
+/**
+ * Who may see a creator's unpublished posts: the creator themselves, or a
+ * moderator viewing a SPECIFIC creator's profile.
+ *
+ * 🔴 `targetUser` is the authorization, not decoration. Without it a moderator
+ * on the global posts feed takes the owner branch and receives every draft on
+ * the site.
+ *
+ * ⚠️ This is STRICTER than `canRequestUnpublished` in `image.service.ts`, and
+ * the divergence is real rather than an oversight: that one returns true for a
+ * moderator before looking at the scope at all, so an unscoped moderator request
+ * is refused here and granted there. Recorded because the two are otherwise the
+ * same shape and a reader reconciling them will assume they agree. If they are
+ * ever unified, this is the direction to unify towards — the images side has no
+ * test for the unscoped-moderator case, so nothing there is pinning that
+ * behaviour deliberately.
+ *
+ * Extracted so it can be tested without a database, and kept deliberately apart
+ * from `isOwnerRequest`, which also gates the `tags` and `query` filters.
+ * Widening that instead would silently drop tag and title filtering for
+ * moderators.
+ */
+export function canSeePostDrafts({
+  isOwnerRequest,
+  isModerator,
+  targetUser,
+}: {
+  isOwnerRequest: boolean;
+  isModerator: boolean;
+  targetUser?: number | null;
+}) {
+  return isOwnerRequest || (isModerator && !!targetUser);
+}
+
 export const getPostsInfinite = async ({
   limit,
   cursor,
@@ -265,8 +299,10 @@ export const getPostsInfinite = async ({
     cacheTags.push(`posts-modelVersion:${modelVersionId}`);
   }
 
+  const canSeeUnpublished = canSeePostDrafts({ isOwnerRequest, isModerator, targetUser });
+
   const joins: string[] = [];
-  if (!isOwnerRequest) {
+  if (!canSeeUnpublished) {
     if (scheduled && userId) {
       // Surface own scheduled posts alongside the public published feed. Mirrors
       // the image service carve-out (image.service.ts ~line 4060).
@@ -276,7 +312,20 @@ export const getPostsInfinite = async ({
     } else {
       AND.push(Prisma.sql`p."publishedAt" <= NOW()`);
     }
+  } else {
+    if (draftOnly) {
+      if (scheduled) AND.push(Prisma.sql`(p."publishedAt" IS NULL OR p."publishedAt" > NOW())`);
+      else AND.push(Prisma.sql`p."publishedAt" IS NULL`);
+    } else if (scheduled) AND.push(Prisma.sql`p."publishedAt" IS NOT NULL`);
+    else AND.push(Prisma.sql`p."publishedAt" <= NOW() AND p."publishedAt" IS NOT NULL`);
+  }
 
+  // Still keyed on `isOwnerRequest`, NOT on `canSeeUnpublished`. These are
+  // discovery filters, not publication ones — an owner browsing their own
+  // profile has never had them applied, and folding them into the publication
+  // gate above would have silently dropped tag and title filtering for
+  // moderators, who do get them today.
+  if (!isOwnerRequest) {
     if (!!tags?.length)
       AND.push(Prisma.sql`EXISTS (
         SELECT 1 FROM "TagsOnPost" top
@@ -286,12 +335,6 @@ export const getPostsInfinite = async ({
     if (query) {
       AND.push(Prisma.sql`p.title ILIKE ${query + '%'}`);
     }
-  } else {
-    if (draftOnly) {
-      if (scheduled) AND.push(Prisma.sql`(p."publishedAt" IS NULL OR p."publishedAt" > NOW())`);
-      else AND.push(Prisma.sql`p."publishedAt" IS NULL`);
-    } else if (scheduled) AND.push(Prisma.sql`p."publishedAt" IS NOT NULL`);
-    else AND.push(Prisma.sql`p."publishedAt" <= NOW() AND p."publishedAt" IS NOT NULL`);
   }
 
   if (period !== 'AllTime') {
@@ -390,7 +433,17 @@ export const getPostsInfinite = async ({
     isOwnerRequest ||
     (!!user && followed) ||
     !env.POST_QUERY_CACHING ||
-    (collectionId && !!user?.id)
+    (collectionId && !!user?.id) ||
+    // The moderator draft view. Unpublished rows have never entered this cache
+    // before — the only path that produced them was the owner one, which already
+    // zeroes the TTL — and `posts-user:<id>` is busted nowhere in src, so a post
+    // that gets published, deleted or taken down would keep showing in a
+    // moderation surface for the 60s TTL. Not a leak (the statement differs from
+    // a non-moderator's in both the publication and availability clauses, so the
+    // hashed key cannot collide) — just the wrong freshness for the one view
+    // whose job is acting on what is there right now. Costs nothing: this is not
+    // a hot path.
+    (canSeeUnpublished && !isOwnerRequest)
   ) {
     cacheTime = 0;
   }
@@ -1465,7 +1518,9 @@ export const addResourceToPostImage = async ({
     throw throwNotFoundError(`Image${imageIds.length > 1 ? 's' : ''} not found.`);
   }
   // TODO technically this can be called with a combo of on/off site imgs
-  if (images.some((i) => i.type !== MediaType.video && isImageMetaOnSite(i.meta as ImageMetaProps))) {
+  if (
+    images.some((i) => i.type !== MediaType.video && isImageMetaOnSite(i.meta as ImageMetaProps))
+  ) {
     throw throwBadRequestError('Cannot add resources to on-site generations.');
   }
 
