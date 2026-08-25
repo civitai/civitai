@@ -226,12 +226,18 @@ don't add an exemption without saying why.
 
 🔴 **`pnpm run test:lint-rules` is a hand-maintained file list, not a glob**, so a guard missing from it fails
 only in a full-suite run — hours later, in a file you weren't looking at. Five were missing at once when this
-was last audited (2026-08-24; all now wired in, 21 files). **Add a new guard to the script in the same commit
+was last audited, on 2026-08-24, and were wired in then. **Add a new guard to the script in the same commit
 you write it**, and don't read a green `test:lint-rules` as "all guards passed" without checking the directory
 against the script.
 
-The two counts and the list above are what went stale three times, so `no-lint-rules-script-drift` now fails
-when the directory, the script and this paragraph disagree. Update all three together or it goes red.
+`test:lint-rules` names 21 files today.
+
+The count above, the count in the list, and the list itself are what went stale three times, so
+`no-lint-rules-script-drift` fails when they disagree with the directory or the script. It reads two exact
+phrasings — `<n> live in \`src/server/services/__tests__/no-*.test.ts\`` and
+`` `test:lint-rules` names <n> files today `` — plus the backticked names in the list paragraph, so keep those
+shapes when you edit the numbers. The same paragraph pair in `.claude/agents/civitai-test-review.md` is
+covered too.
 
 `test:lint-rules` is a convenience selector, not the enforcement point: these files match the `unit` project's
 `include`, so they already run in `pnpm run test:unit:run` and in CI's `Unit tests` job. No workflow invokes

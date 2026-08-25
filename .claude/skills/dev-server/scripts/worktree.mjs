@@ -131,16 +131,20 @@ function prStatus(branch, cwd) {
  * cases a person deciding whether to delete a tree most needs told apart.
  */
 export function describePrRows(rows) {
-  if (!Array.isArray(rows)) return { merged: null, label: 'PR state unknown (gh returned unparseable JSON)' };
+  if (!Array.isArray(rows))
+    return { merged: null, label: 'PR state unknown (gh returned unparseable JSON)' };
+  const num = (r) => (typeof r.number === 'number' ? `#${r.number}` : 'of unknown number');
   const merged = rows.find((r) => r.state === 'MERGED');
-  if (merged) return { merged: merged.number, label: `PR #${merged.number} merged` };
-  if (!rows.length) return { merged: null, label: 'no PR opened for this branch' };
+  if (merged) return { merged: merged.number ?? null, label: `PR ${num(merged)} merged` };
+  // Deliberately not "no PR exists": `gh` here has been seen switching itself to an account with no
+  // visibility of this repo, which returns an empty list and exit 0. Saying none was FOUND keeps the
+  // four states apart without inviting anyone to delete a tree on the strength of an empty answer.
+  if (!rows.length) return { merged: null, label: 'gh found no PR for this branch' };
   const open = rows.find((r) => r.state === 'OPEN');
   if (open) {
-    return { merged: null, label: `PR #${open.number} still OPEN${open.isDraft ? ' (draft)' : ''}` };
+    return { merged: null, label: `PR ${num(open)} still OPEN${open.isDraft ? ' (draft)' : ''}` };
   }
-  const closed = rows[0];
-  return { merged: null, label: `PR #${closed.number} closed WITHOUT merging` };
+  return { merged: null, label: `PR ${num(rows[0])} closed WITHOUT merging` };
 }
 
 function spawnGh(args, cwd) {
@@ -301,6 +305,10 @@ export async function cmdRemove(primary, targetArg, opts, daemonRequest) {
 
   const unpushed = entry.branch ? unpushedCount(entry.branch, primary) : null;
 
+  // Read before the delete: afterwards there is no way to learn which `.git/worktrees/<name>` was
+  // this tree's, and that name is what prune reports.
+  const adminDir = gitQuiet(['rev-parse', '--absolute-git-dir'], target);
+
   if (!existsSync(target)) {
     console.log('directory already gone; pruning');
   } else {
@@ -330,7 +338,7 @@ export async function cmdRemove(primary, targetArg, opts, daemonRequest) {
     console.log('directory deleted');
   }
 
-  const pruned = describePrune(git(['worktree', 'prune', '-v'], primary), target);
+  const pruned = describePrune(git(['worktree', 'prune', '-v'], primary), adminDir);
   for (const line of pruned) console.log(line);
 
   if (!entry.branch) return;
@@ -352,33 +360,53 @@ export async function cmdRemove(primary, targetArg, opts, daemonRequest) {
 /**
  * `git worktree prune` is repo-wide: it drops every stale registration it finds, not only the one
  * this command removed. Printing its `-v` output raw made another agent's already-deleted tree read
- * as something `wt rm <path>` had just done, and produced two false alarms in one night. Anything
- * that does not name the target is marked as collateral.
+ * as something `wt rm <path>` had just done, and produced two false alarms in one night.
+ *
+ * `adminName` is the directory under `.git/worktrees/`, NOT the worktree's own basename, because
+ * those differ: `git worktree add` de-duplicates a colliding basename by appending a digit, so two
+ * live trees both called `mine` register as `mine` and `mine1`. Matching on the basename cannot tell
+ * them apart and labels one agent's tree as the other's — the direction this function exists to
+ * prevent (measured in a scratch repo, 2026-08-25). It has to be read before the delete, and when it
+ * could not be read this says so rather than guessing.
  */
-export function describePrune(raw, target) {
+export function describePrune(raw, adminName) {
   const lines = String(raw ?? '')
     .split(/\r?\n/)
     .map((l) => l.trim())
     .filter(Boolean);
   if (!lines.length) return ['pruned: no stale worktree registrations'];
 
-  const slashes = (p) => String(p).split('\\').join('/').toLowerCase();
-  const basename = (p) => slashes(p).split('/').filter(Boolean).pop() || slashes(p);
-  const needle = slashes(target);
-  const base = basename(target);
+  const leaf = (p) =>
+    String(p ?? '')
+      .split(/[\\/]/)
+      .filter(Boolean)
+      .pop() || null;
+  const mineName = leaf(adminName)?.toLowerCase() ?? null;
+
   const out = [];
+  let collateral = 0;
+  let unknown = 0;
   for (const line of lines) {
-    // Segment equality, not substring: `worktrees/mine` is a substring of `worktrees/mine-2`, and
-    // erring that way marks somebody else's tree as yours — the failure this whole function exists
-    // to prevent. A line git worded differently falls through to the full path.
-    const named = slashes(line).match(/removing\s+(.+?):/);
-    const mine = named ? basename(named[1]) === base : slashes(line).includes(needle);
-    out.push(mine ? `pruned: ${line}` : `pruned (ALSO, not your target): ${line}`);
+    // git's only wording here is `Removing worktrees/<admin>: <reason>` (git/worktree.c).
+    const named = line.match(/^Removing\s+worktrees\/(.+?):/i);
+    if (!mineName || !named) {
+      unknown++;
+      out.push(`pruned (could not tell whose): ${line}`);
+    } else if (named[1].toLowerCase() === mineName) {
+      out.push(`pruned: ${line}`);
+    } else {
+      collateral++;
+      out.push(`pruned (ALSO, not your target): ${line}`);
+    }
   }
-  const collateral = out.filter((l) => l.includes('ALSO')).length;
   if (collateral) {
     out.push(
       `note: ${collateral} of those registration(s) were stale before this command ran - prune is repo-wide`
+    );
+  }
+  if (unknown) {
+    out.push(
+      `note: ${unknown} line(s) could not be attributed - prune is repo-wide, so do not read them as this removal`
     );
   }
   return out;
