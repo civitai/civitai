@@ -64,6 +64,21 @@ describe('expandBlurbs', () => {
     expect(uses).toEqual([]);
     expect(dbWrite.blurb.findMany).not.toHaveBeenCalled();
   });
+
+  it('resolves one span and unwraps another in the same document, on both sides of it', async () => {
+    dbWrite.blurb.findMany.mockResolvedValue([{ id: 7, contentHash: 'h7', content: 'REAL' }]);
+    const { html, uses } = await expandBlurbs({
+      userId: 10,
+      html:
+        '<p>a</p><span data-type="blurb" data-id="99">orphan-before</span>' +
+        '<span data-type="blurb" data-id="7">ATTACKER</span>' +
+        '<span data-type="blurb" data-id="99">orphan-after</span><p>b</p>',
+    });
+    expect(html).toBe(
+      '<p>a</p>orphan-before<span data-type="blurb" data-id="7">REAL</span>orphan-after<p>b</p>'
+    );
+    expect(uses).toEqual([{ blurbId: 7, contentHash: 'h7' }]);
+  });
 });
 
 describe('reconcileBlurbReferences', () => {
@@ -87,6 +102,9 @@ describe('reconcileBlurbReferences', () => {
     });
     expect(dbWrite.blurbReference.upsert).toHaveBeenCalledTimes(1);
     const call = dbWrite.blurbReference.upsert.mock.calls[0][0];
+    expect(call.where).toEqual({
+      blurbId_entityType_entityId: { blurbId: 7, entityType: 'Article', entityId: 1 },
+    });
     expect(call.create.materializedHash).toBe('h7');
     expect(call.update.materializedHash).toBe('h7');
   });

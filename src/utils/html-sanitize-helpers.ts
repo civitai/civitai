@@ -90,15 +90,27 @@ export const DEFAULT_ALLOWED_ATTRIBUTES = {
 const isStickerSpan = (frame: { tag: string; attribs: Record<string, string> }) =>
   frame.tag === 'span' && frame.attribs['data-type']?.trim().toLowerCase() === 'sticker';
 
+// Blurb spans carry text the fan-out job later rewrites. `span` and its data-* attributes are in
+// the default allowlist, so without this the markup would survive on every rich-text surface —
+// and the job would then rewrite content on a surface nobody registered. Denied by default so a
+// surface added later fails closed.
+// Normalised deliberately: the matcher here must stay strictly BROADER than every consumer, all
+// of which are exact-lowercase today.
+const isBlurbAttribs = (attribs: Record<string, string>) =>
+  attribs['data-type']?.trim().toLowerCase() === 'blurb';
+
 export type santizeHtmlOptions = sanitize.IOptions & {
   stripEmpty?: boolean;
   /** Opt-in for surfaces that gate sticker ownership (chat, comments). */
   allowStickers?: boolean;
+  /** Opt-in for surfaces registered with the blurb fan-out. */
+  allowBlurbs?: boolean;
 };
 export function sanitizeHtml(html: string, args?: santizeHtmlOptions) {
   const {
     stripEmpty = false,
     allowStickers = false,
+    allowBlurbs = false,
     transformTags,
     // Composed rather than passed through: `...options` spreads last, so a
     // caller-supplied filter would otherwise silently drop the sticker strip.
@@ -129,6 +141,21 @@ export function sanitizeHtml(html: string, args?: santizeHtmlOptions) {
         };
       } as Transformer,
       ...transformTags,
+      // After the spread on purpose: a caller-supplied span transform must not be able to
+      // reinstate the attributes. Mirrors why exclusiveFilter is composed rather than passed
+      // through, and the sticker suite already pins that property.
+      span: (tagName, attribs) => {
+        const applied =
+          typeof transformTags?.span === 'string'
+            ? { tagName: transformTags.span, attribs }
+            : transformTags?.span
+            ? (transformTags.span as Transformer)(tagName, attribs)
+            : { tagName, attribs };
+        const next = applied.attribs ?? {};
+        if (allowBlurbs || !isBlurbAttribs(next)) return applied;
+        const { 'data-type': _type, 'data-id': _id, ...rest } = next;
+        return { ...applied, attribs: rest };
+      },
     },
     ...options,
   });
