@@ -123,6 +123,8 @@ docs/working/
 docs/incidents/
 .claude/*.local.*
 .claude/skills/cloudflare/.port-tmp-path
+# Also holds the XGuard tuning harness: scanner policy prose and corpora extracted
+# from prod. This repo is public; a policy file here would be an evasion guide.
 local/
 .eslintcache
 nul

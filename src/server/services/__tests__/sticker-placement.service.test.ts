@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
+import { Availability } from '~/shared/utils/prisma/enums';
 import {
   allBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
@@ -1781,7 +1782,10 @@ describe('getMyStickerPlacements', () => {
     // `publishedAt: { not: null }` check that has been here all along.
     expect(where).toEqual({
       id: { in: [IMAGE] },
-      post: { publishedAt: { not: null, lte: expect.any(Date) } },
+      post: {
+        publishedAt: { not: null, lte: expect.any(Date) },
+        availability: { not: Availability.Private },
+      },
       ingestion: 'Scanned',
       tosViolation: false,
       minor: false,
@@ -1789,6 +1793,38 @@ describe('getMyStickerPlacements', () => {
       needsReview: null,
       acceptableMinor: false,
     });
+  });
+
+  /**
+   * 🔴 Named for the decision so it is not refactored away as a duplicate of the
+   * assertion above. Published and public are different columns: a post inherits
+   * its availability from its model version, so a sticker is placed and approved
+   * on an image that is live, and the owner turns the post private afterwards.
+   * Nothing on the placement path reads the column, and this read does not go
+   * through `getAllImages`, so this clause is the only thing standing between
+   * the placer's list and a url its owner marked not-public.
+   *
+   * Asserted on the ARGUMENT because the Prisma mock ignores `where` entirely —
+   * a row filter written over the returned fixtures would pass with the clause
+   * deleted. Deliberately no owner arm; see the selector's docblock.
+   */
+  it('excludes a private host post from the placer list', async () => {
+    placementFindMany.mockResolvedValue([sentRow(1)]);
+    imageFindMany.mockResolvedValue([hostImage()]);
+
+    await getMyStickerPlacements({ placerId: PLACER, ...LEVELS });
+
+    // ONE read, asserted before the argument is. Both assertions here read
+    // `calls.at(-1)`, so a second unfiltered `image.findMany` added ahead of
+    // this one — its rows merged into the same map — leaves the last call
+    // compliant and every argument check green while the urls it fetched flow
+    // out. The count is what makes that unwritable.
+    expect(imageFindMany).toHaveBeenCalledTimes(1);
+
+    const { where } = imageFindMany.mock.calls.at(-1)?.[0] as {
+      where: { post?: Record<string, unknown> };
+    };
+    expect(where.post?.availability).toEqual({ not: Availability.Private });
   });
 
   it('keeps the row when the host image fails those rules', async () => {

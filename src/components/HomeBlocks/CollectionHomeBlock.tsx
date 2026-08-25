@@ -22,6 +22,7 @@ import {
 } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { ImageCard } from '~/components/Cards/ImageCard';
+import { RemixFlyoutLayoutProvider } from '~/components/RemixGallery/remix-flyout-layout';
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { ITEMS_PER_ROW } from '~/components/HomeBlocks/homeBlockItems';
@@ -237,27 +238,29 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
         </div>
       ) : (
         <div className={classes.grid}>
-          <ImagesProvider
-            hideReactionCount={collection?.mode === CollectionMode.Contest}
-            images={type === 'image' ? (items as any) : undefined}
-          >
-            <ReactionSettingsProvider
-              settings={{
-                hideReactionCount: collection?.mode === CollectionMode.Contest,
-                hideReactions: collection && contestCollectionReactionsHidden(collection),
-              }}
+          <RemixFlyoutLayoutProvider layout="side">
+            <ImagesProvider
+              hideReactionCount={collection?.mode === CollectionMode.Contest}
+              images={type === 'image' ? (items as any) : undefined}
             >
-              {useGrid && <div className={classes.gridMeta}>{MetaDataGrid}</div>}
-              {items.map((item) => (
-                <div key={item.id} className="p-2">
-                  {type === 'model' && <ModelCard data={item as any} forceInView />}
-                  {type === 'image' && <ImageCard data={item as any} />}
-                  {type === 'post' && <PostCard data={item as any} />}
-                  {type === 'article' && <ArticleCard data={item as any} />}
-                </div>
-              ))}
-            </ReactionSettingsProvider>
-          </ImagesProvider>
+              <ReactionSettingsProvider
+                settings={{
+                  hideReactionCount: collection?.mode === CollectionMode.Contest,
+                  hideReactions: collection && contestCollectionReactionsHidden(collection),
+                }}
+              >
+                {useGrid && <div className={classes.gridMeta}>{MetaDataGrid}</div>}
+                {items.map((item) => (
+                  <div key={item.id} className="p-2">
+                    {type === 'model' && <ModelCard data={item as any} forceInView />}
+                    {type === 'image' && <ImageCard data={item as any} />}
+                    {type === 'post' && <PostCard data={item as any} />}
+                    {type === 'article' && <ArticleCard data={item as any} />}
+                  </div>
+                ))}
+              </ReactionSettingsProvider>
+            </ImagesProvider>
+          </RemixFlyoutLayoutProvider>
         </div>
       )}
 

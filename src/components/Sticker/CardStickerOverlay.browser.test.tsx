@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
+import type * as RevealStore from '~/store/sticker-reveal.store';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 
@@ -35,9 +36,16 @@ vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 7 }) }))
 // The store's default is `revealed: false`, which renders no placements at all —
 // so without this the overlay never measures and every assertion below would be
 // asserting an empty card.
-vi.mock('~/store/sticker-reveal.store', () => ({
-  useStickerRevealStore: (select: (state: { revealed: boolean }) => unknown) =>
-    select({ revealed: true }),
+type RevealState = { revealed: boolean; forced: boolean };
+
+// Spreads the real module so the REAL `stickersRevealed` runs against the fake
+// state. A hand-written copy of the selector here would keep these tests green
+// against a selector that had stopped working — `revealed && forced` would
+// render nothing in the shipped overlay and nothing here would notice.
+vi.mock('~/store/sticker-reveal.store', async (importOriginal) => ({
+  ...(await importOriginal<typeof RevealStore>()),
+  useStickerRevealStore: (select: (state: RevealState) => unknown) =>
+    select({ revealed: true, forced: false }),
 }));
 
 vi.mock('~/components/Sticker/StickerPlacementBatchProvider', () => ({

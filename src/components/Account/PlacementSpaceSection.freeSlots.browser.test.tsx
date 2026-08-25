@@ -111,6 +111,38 @@ describe('PlacementSpaceSection — what a save sends for freeSlots', () => {
     expect(lastPayload().freeSlots).toBeUndefined();
   });
 
+  // The slider supplies "Free" and the caller was passing "free stickers" as the
+  // noun, so this page shipped "Free free stickers you'll accept".
+  test('names the control once, not twice', async () => {
+    givenSpace(null);
+    renderWithProviders(<PlacementSpaceSection />);
+
+    // Found loosely, then asserted exactly, and both halves are deliberate.
+    // `name` matches as a case-insensitive SUBSTRING, so locating by the whole
+    // correct string finds the broken one too — this test passed with the bug
+    // reintroduced until it read the attribute instead (verified by reverting
+    // the caller). Reading it also fails in milliseconds with both strings in
+    // the message, where a locator that matches nothing spends the 15s budget
+    // and reports only that it found nothing.
+    const slider = page.getByRole('slider', { name: /accept/i });
+    await expect.element(slider).toBeInTheDocument();
+
+    expect(slider.element().getAttribute('aria-label')).toBe("Free stickers you'll accept");
+
+    // And the string people actually read. The assertion above is on the thumb's
+    // `aria-label`; the visible label is a sibling `Text`. Both interpolate the
+    // same noun today, so a fix applied to only one of them would pass here.
+    //
+    // `exact` for the same reason the attribute is read above: `getByText` also
+    // matches as a case-insensitive substring, so without it this finds the
+    // doubled string too. It costs the 15s budget on failure — but only in the
+    // narrow case where the attribute assertion above already passed, since that
+    // one fails first and fails fast.
+    await expect
+      .element(page.getByText("Free stickers you'll accept", { exact: true }))
+      .toBeInTheDocument();
+  });
+
   // The negative control. Without it, "never send freeSlots" would pass every
   // assertion above and the creator could never change the number at all.
   test('moving the control sends the number', async () => {

@@ -86,9 +86,9 @@ async function isDaemonRunning() {
 }
 
 async function startDaemon() {
-  const command = `"${process.execPath}" "${serverScript}"`;
-  const child = spawn(command, [], {
-    detached: true, stdio: 'ignore', cwd: projectRoot, windowsHide: true, shell: true,
+  // No shell — see cli.mjs startDaemon.
+  const child = spawn(process.execPath, [serverScript], {
+    detached: true, stdio: 'ignore', cwd: projectRoot, windowsHide: true,
   });
   child.unref();
   writeFileSync(pidFile, String(child.pid));

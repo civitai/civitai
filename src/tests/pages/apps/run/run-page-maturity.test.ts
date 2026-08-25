@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+// Module scope, not a test body: from a body this transform is charged to one test's 60s
+// budget. See vitest.config.mts.
+import '~/pages/apps/run/[slug]/[[...path]]';
 
 /**
  * NSFW-APP-RED-ONLY — run-page SSR gate (`/apps/run/<slug>`).
@@ -72,7 +75,6 @@ function makeCtx(host: string, slug = 'cool-app') {
 }
 
 async function loadResolver() {
-  await import('~/pages/apps/run/[slug]/[[...path]]');
   if (!capturedResolver.fn) throw new Error('resolver not captured');
   return capturedResolver.fn;
 }

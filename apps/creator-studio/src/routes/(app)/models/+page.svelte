@@ -1,6 +1,6 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
-  import { goto, invalidateAll } from '$app/navigation';
+  import { goto, invalidateAll, replaceState } from '$app/navigation';
   import { page } from '$app/state';
   import { SvelteSet } from 'svelte/reactivity';
   import { toast } from '@civitai/ui/components/ui/sonner/index.js';
@@ -57,9 +57,21 @@
   } from '@tabler/icons-svelte';
   import { modelUrl } from '$lib/model-url';
   import type { PageData } from './$types';
+  import type { ModelsView } from '$lib/server/models-view';
   import type { CreatorModel, CreatorModelVersion } from '$lib/server/models';
 
   let { data }: { data: PageData } = $props();
+
+  // Filter-as-you-type swaps only the query-dependent slice (CU 868kv6ejd); the caps, scores and sale
+  // windows beside it in `data` are per-creator and no search term can move them.
+  let live = $state<ModelsView | null>(null);
+  const view = $derived<ModelsView>(live ?? data);
+  // A completed navigation or an invalidateAll is authoritative: drop the live slice so the two can
+  // never disagree about what the URL is showing.
+  $effect(() => {
+    data;
+    live = null;
+  });
 
   // Arrived from Sales via "New sale": the page is here to collect a selection and hand it back.
   const pickingForSale = $derived(page.url.searchParams.get('for') === 'sale' && data.salesEnabled);
@@ -85,7 +97,7 @@
   // CU 868kn7zu4 set a fee before caps existed and had no reason to look again.
   const overCapVersions = $derived.by(() => {
     const out: { name: string; stored: number; effective: number }[] = [];
-    for (const m of data.models)
+    for (const m of view.models)
       for (const v of m.versions) {
         const fee = v.licensingFee ?? 0;
         if (fee <= 0) continue;
@@ -169,11 +181,11 @@
   ];
   // Count only non-default filters (an empty status is the default, so it doesn't count).
   const activeFilterCount = $derived(
-    (data.query.status ? 1 : 0) +
-      (data.query.bm ? 1 : 0) +
-      (data.query.mt ? 1 : 0) +
-      (data.query.access ? 1 : 0) +
-      (data.query.fee ? 1 : 0)
+    (view.query.status ? 1 : 0) +
+      (view.query.bm ? 1 : 0) +
+      (view.query.mt ? 1 : 0) +
+      (view.query.access ? 1 : 0) +
+      (view.query.fee ? 1 : 0)
   );
 
   // --- URL-driven table state (search / fee filter / sort / pagination) ---
@@ -181,23 +193,87 @@
     goto(buildHref(params), { keepFocus: true, noScroll: true, replaceState: true });
   }
 
-  // Build an href off the current URL, applying overrides — so links (bulk mode on/off) preserve the active
+  // Build off the current URL, applying overrides — so links (bulk mode on/off) preserve the active
   // filters/sort/page instead of resetting them (868ke491x bulk-edit-clears-filters bug).
-  function buildHref(overrides: Record<string, string | null>): string {
+  function buildParams(overrides: Record<string, string | null>): URLSearchParams {
     const params = new URLSearchParams(page.url.searchParams);
     for (const [k, v] of Object.entries(overrides)) {
       if (v) params.set(k, v);
       else params.delete(k);
     }
-    const qs = params.toString();
+    return params;
+  }
+
+  function buildHref(overrides: Record<string, string | null>): string {
+    const qs = buildParams(overrides).toString();
     return qs ? `${page.url.pathname}?${qs}` : page.url.pathname;
   }
 
-  // Search fires on Enter, on blur, and via the button — all no-op if the term is unchanged.
-  function runSearch(raw: FormDataEntryValue | string | null) {
-    const q = String(raw ?? '').trim();
-    if (q === (data.query.q ?? '')) return;
-    navigate({ q: q || null, page: null });
+  // --- Live search ---
+  // Staged locally rather than mirrored from the view: a bulk action reloads the page, and binding the
+  // input to server state would wipe a term the creator had typed but not yet settled.
+  let draftTerm = $state<string | null>(null);
+  const term = $derived(draftTerm ?? view.query.q);
+  // Drop the draft only once the view AGREES with it. Clearing unconditionally discards characters typed
+  // while a search is still in flight, and the pending timer then searches the reverted value.
+  $effect(() => {
+    if (draftTerm === view.query.q) draftTerm = null;
+  });
+
+  let searchTimer: ReturnType<typeof setTimeout>;
+  let inFlight: AbortController | null = null;
+  let searchSeq = 0;
+  let searching = $state(false);
+  // Both outlive this component: navigating away mid-type would otherwise fire a search against a page
+  // the creator has left.
+  $effect(() => () => {
+    clearTimeout(searchTimer);
+    inFlight?.abort();
+  });
+
+  // The whole point of the endpoint over a navigation: one query set per settled keystroke instead of
+  // the entire load. The URL still gets the term — shallow, so `buildHref` (filters, paging, the CSV
+  // link) reads it and a reload or a bulk action's invalidateAll lands on the same results.
+  async function search(raw: string) {
+    const q = raw.trim();
+    if (q === view.query.q) return;
+    const params = buildParams({ q: q || null, page: null });
+    const qs = params.toString();
+    replaceState(qs ? `${page.url.pathname}?${qs}` : page.url.pathname, page.state);
+
+    inFlight?.abort();
+    const controller = new AbortController();
+    inFlight = controller;
+    const seq = ++searchSeq;
+    searching = true;
+    try {
+      const res = await fetch(`/models/search?${qs}`, { signal: controller.signal });
+      if (!res.ok) throw new Error(String(res.status));
+      const next = (await res.json()) as ModelsView;
+      if (seq === searchSeq) live = next;
+    } catch {
+      if (controller.signal.aborted || seq !== searchSeq) return;
+      // Leaving the previous results up under a term that no longer produced them reads as "no matches
+      // for what you typed", which is a wrong answer rather than a failure. `invalidateAll` rather than
+      // a goto: the URL already carries the term, and goto to the URL you are on does not re-run loads.
+      toast.error('Search failed.');
+      await invalidateAll();
+    } finally {
+      if (seq === searchSeq) searching = false;
+    }
+  }
+
+  function typed(value: string) {
+    draftTerm = value;
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => search(value), 400);
+  }
+
+  // Enter and the button skip the wait; they don't do anything the debounce wouldn't.
+  function submitSearch(e: SubmitEvent) {
+    e.preventDefault();
+    clearTimeout(searchTimer);
+    search(term);
   }
 
   // --- Bulk selection ---
@@ -215,7 +291,7 @@
   // countPermanentAccessVersionsExcluding baseline, so re-pricing stays possible even at the cap.
   const alreadyPermanentIds = $derived(
     new Set(
-      data.models
+      view.models
         .flatMap((m) => m.versions)
         .filter((v) => v.paidAccessConfig?.permanent)
         .map((v) => v.id)
@@ -229,7 +305,7 @@
   });
   const affirmedIds = $derived(
     new Set(
-      data.models
+      view.models
         .flatMap((m) => m.versions)
         .filter((v) => v.rightsAffirmed)
         .map((v) => v.id)
@@ -242,7 +318,7 @@
     return false;
   });
   const selectedIds = $derived([...selected]);
-  const matchingIds = $derived(new Set(data.matchingVersionIds));
+  const matchingIds = $derived(new Set(view.matchingVersionIds));
   // Selected versions the current filters no longer return — usually because a bulk write just moved
   // them out of the filter that found them. They stay selected and actionable; the bar names the count
   // so it never claims rows the table isn't showing.
@@ -252,12 +328,12 @@
     return n;
   });
   const allMatchingSelected = $derived(
-    data.matchingVersionIds.length > 0 && selected.size >= data.matchingVersionIds.length
+    view.matchingVersionIds.length > 0 && selected.size >= view.matchingVersionIds.length
   );
   // Suggested fee is per model type, so it's only unambiguous when the type filter pins one. It lives in
   // the fee form now rather than the bar — it's an input default, not an operation.
   const bulkSuggested = $derived(
-    data.query.mt ? suggestedFee({ modelType: data.query.mt, baseModel: data.query.bm }) : undefined
+    view.query.mt ? suggestedFee({ modelType: view.query.mt, baseModel: view.query.bm }) : undefined
   );
 
   // One fee is applied to every picked version, so the input is capped by the STRICTEST cap in the
@@ -267,7 +343,7 @@
   // Parameterised by tier so the cap upsell can ask "what would Gold allow for this same selection?"
   function strictestLimits(t: CapTier): MonetizationLimits {
     const loaded = new Map<number, { modelType: string; baseModel: string }>();
-    for (const m of data.models)
+    for (const m of view.models)
       for (const v of m.versions) loaded.set(v.id, { modelType: m.type, baseModel: v.baseModel });
     let strictest: MonetizationLimits | null = null;
     for (const id of selected) {
@@ -289,7 +365,7 @@
   // Grouped by the two axes that move the cap: model type and the media type of the base model.
   const selectionFeeCaps = $derived.by(() => {
     const byKey = new Map<string, { label: string; cap: number }>();
-    for (const m of data.models)
+    for (const m of view.models)
       for (const v of m.versions) {
         if (!selected.has(v.id)) continue;
         const cap = monetizationLimits({ tier, modelType: m.type, baseModel: v.baseModel }).fee
@@ -330,7 +406,7 @@
         await invalidateAll();
         if (editing) {
           const id = editing.id;
-          editing = data.models.flatMap((m) => m.versions).find((v) => v.id === id) ?? editing;
+          editing = view.models.flatMap((m) => m.versions).find((v) => v.id === id) ?? editing;
         }
       } else if (event.result.type === 'failure') {
         toast.error(String(event.result.data?.error ?? 'Failed to save'));
@@ -347,11 +423,11 @@
     return `/models/export${qs ? `?${qs}` : ''}`;
   });
   const filterActive = $derived(
-    !!data.query.q ||
-      !!data.query.fee ||
-      !!data.query.bm ||
-      !!data.query.status ||
-      data.query.access
+    !!view.query.q ||
+      !!view.query.fee ||
+      !!view.query.bm ||
+      !!view.query.status ||
+      view.query.access
   );
 
   // --- Early/paid-access editor (per-version drawer) ---
@@ -481,20 +557,8 @@
 
 <!-- Search / filter / sort -->
 <div class="mb-4 flex flex-wrap items-center gap-2">
-  <form
-    class="flex items-center gap-1"
-    onsubmit={(e) => {
-      e.preventDefault();
-      runSearch(new FormData(e.currentTarget).get('q'));
-    }}
-  >
-    <Input
-      name="q"
-      value={data.query.q}
-      placeholder="Search models…"
-      onblur={(e) => runSearch(e.currentTarget.value)}
-      class="w-56"
-    />
+  <form class="flex items-center gap-1" onsubmit={submitSearch}>
+    <Input name="q" bind:value={() => term, typed} placeholder="Search models…" class="w-56" />
     <Button type="submit" variant="outline" size="icon" aria-label="Search" title="Search">
       <IconSearch size={16} />
     </Button>
@@ -513,7 +577,7 @@
       <fieldset>
         <legend class="mb-2 text-xs font-medium uppercase tracking-wide text-dark-2">Status</legend>
         <RadioGroup
-          value={data.query.status ?? ''}
+          value={view.query.status ?? ''}
           onValueChange={(v) => navigate({ status: v || null, page: null })}
         >
           {#each statusOptions as opt (opt.value)}
@@ -531,7 +595,7 @@
         </Label>
         <Select.Root
           type="single"
-          value={data.query.mt ?? ''}
+          value={view.query.mt ?? ''}
           onValueChange={(v: string) => navigate({ mt: v || null, page: null })}
         >
           <Select.Trigger
@@ -540,11 +604,11 @@
             class="w-full text-white"
             aria-label="Model type"
           >
-            {data.query.mt || 'All types'}
+            {view.query.mt || 'All types'}
           </Select.Trigger>
           <Select.Content>
             <Select.Item value="" label="All types" />
-            {#each data.modelTypes as mt (mt)}
+            {#each view.modelTypes as mt (mt)}
               <Select.Item value={mt} label={mt} />
             {/each}
           </Select.Content>
@@ -556,7 +620,7 @@
         </Label>
         <Select.Root
           type="single"
-          value={data.query.bm ?? ''}
+          value={view.query.bm ?? ''}
           onValueChange={(v: string) => navigate({ bm: v || null, page: null })}
         >
           <Select.Trigger
@@ -565,11 +629,11 @@
             class="w-full text-white"
             aria-label="Base model"
           >
-            {data.query.bm || 'All base models'}
+            {view.query.bm || 'All base models'}
           </Select.Trigger>
           <Select.Content>
             <Select.Item value="" label="All base models" />
-            {#each data.baseModels as bm (bm)}
+            {#each view.baseModels as bm (bm)}
               <Select.Item value={bm} label={bm} />
             {/each}
           </Select.Content>
@@ -578,7 +642,7 @@
       <div class="flex items-center gap-2">
         <Checkbox
           id="filter-access"
-          checked={data.query.access}
+          checked={view.query.access}
           onCheckedChange={(c) => navigate({ access: c ? '1' : null, page: null })}
         />
         <Label for="filter-access" class="cursor-pointer font-normal">Has early / paid access</Label
@@ -589,7 +653,7 @@
           >Licensing fee</legend
         >
         <RadioGroup
-          value={data.query.fee ?? ''}
+          value={view.query.fee ?? ''}
           onValueChange={(v) => navigate({ fee: v || null, page: null })}
         >
           {#each feeOptions as opt (opt.value)}
@@ -616,13 +680,13 @@
   </Popover.Root>
   <Select.Root
     type="single"
-    value={data.query.sort}
+    value={view.query.sort}
     onValueChange={(v: string) => {
       if (v) navigate({ sort: v, page: null });
     }}
   >
     <Select.Trigger size="default" class="w-44 text-white" aria-label="Sort">
-      {data.query.sort === 'name' ? 'Name' : 'Recently updated'}
+      {view.query.sort === 'name' ? 'Name' : 'Recently updated'}
     </Select.Trigger>
     <Select.Content>
       <Select.Item value="recent" label="Recently updated" />
@@ -632,18 +696,18 @@
 </div>
 
 <div class="mb-4 flex items-center justify-between gap-2">
-  <p class="text-xs text-dark-2">{data.total} model{data.total === 1 ? '' : 's'}</p>
+  <p class="text-xs text-dark-2">{view.total} model{view.total === 1 ? '' : 's'}</p>
   <label class="flex items-center gap-1.5 text-xs text-dark-2">
     Per page
     <Select.Root
       type="single"
-      value={String(data.perPage)}
+      value={String(view.perPage)}
       onValueChange={(v: string) => {
         if (v) navigate({ ps: v, page: null });
       }}
     >
       <Select.Trigger size="sm" class="w-16 text-white" aria-label="Models per page">
-        {data.perPage}
+        {view.perPage}
       </Select.Trigger>
       <Select.Content>
         {#each data.pageSizeOptions as n (n)}
@@ -677,10 +741,10 @@
   </div>
 {/if}
 
-{#if data.total > 0 || selected.size > 0}
+{#if view.total > 0 || selected.size > 0}
   <BulkBar
     count={selected.size}
-    matchingCount={data.matchingVersionIds.length}
+    matchingCount={view.matchingVersionIds.length}
     {allMatchingSelected}
     {offViewCount}
     {exportHref}
@@ -688,7 +752,7 @@
     onStartSale={() => goto(`/sales?versions=${selectedIds.join(',')}`)}
     salesEnabled={data.salesEnabled}
     onSelectAllMatching={() => {
-      for (const id of data.matchingVersionIds) selected.add(id);
+      for (const id of view.matchingVersionIds) selected.add(id);
     }}
     onClear={() => selected.clear()}
   />
@@ -708,158 +772,167 @@
   permanentSlotsLeft={remainingPermanentSlots - newSlotsUsed + selected.size}
 />
 
-{#if data.models.length === 0}
-  <div class="placeholder">
-    {#if filterActive}
-      No models match your filters. <button
-        class="underline"
-        onclick={() =>
-          navigate({ q: null, fee: null, bm: null, status: null, access: null, page: null })}
-        >Clear</button
-      >
-    {:else}
-      You have no models yet. <a href="https://civitai.com/models/create"
-        >Upload one on civitai.com</a
-      > to get started.
-    {/if}
-  </div>
-{:else}
-  <div class="flex flex-col gap-5">
-    {#each data.models as model (model.id)}
-      <Card>
-        <CardHeader>
-          <div class="flex items-center gap-3">
-            {#if model.versions.length > 0}
-              {@const mId = `m-${model.id}`}
-              {@const picked = selectedCount(model)}
-              <Checkbox
-                id={mId}
-                checked={picked === model.versions.length}
-                indeterminate={picked > 0 && picked < model.versions.length}
-                onCheckedChange={() => toggleModel(model)}
-                aria-label="Select all versions of {model.name}"
-              />
-              <Label for={mId} class="cursor-pointer">
+<!-- Dimmed rather than emptied while a search settles: replacing results with a spinner makes every
+     keystroke flash the whole list, and the previous rows are still the honest answer until new ones land. -->
+<div aria-busy={searching} class={searching ? 'opacity-60 transition-opacity' : undefined}>
+  {#if view.models.length === 0}
+    <div class="placeholder">
+      {#if filterActive}
+        No models match your filters. <button
+          class="underline"
+          onclick={() =>
+            navigate({ q: null, fee: null, bm: null, status: null, access: null, page: null })}
+          >Clear</button
+        >
+      {:else}
+        You have no models yet. <a href="https://civitai.com/models/create"
+          >Upload one on civitai.com</a
+        > to get started.
+      {/if}
+    </div>
+  {:else}
+    <div class="flex flex-col gap-5">
+      {#each view.models as model (model.id)}
+        <Card>
+          <CardHeader>
+            <div class="flex items-center gap-3">
+              {#if model.versions.length > 0}
+                {@const mId = `m-${model.id}`}
+                {@const picked = selectedCount(model)}
+                <Checkbox
+                  id={mId}
+                  checked={picked === model.versions.length}
+                  indeterminate={picked > 0 && picked < model.versions.length}
+                  onCheckedChange={() => toggleModel(model)}
+                  aria-label="Select all versions of {model.name}"
+                />
+                <Label for={mId} class="cursor-pointer">
+                  <CardTitle class="text-base text-white">{model.name}</CardTitle>
+                </Label>
+              {:else}
                 <CardTitle class="text-base text-white">{model.name}</CardTitle>
-              </Label>
+              {/if}
+              <Badge variant="secondary">{model.type}</Badge>
+              <Badge variant={model.status === 'Published' ? 'default' : 'outline'} class="ml-auto">
+                {model.status}
+              </Badge>
+              {#if model.versions.length > 0}
+                <a
+                  href={modelUrl(model.id, model)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title="View on Civitai"
+                  aria-label="View {model.name} on Civitai"
+                  class="shrink-0 rounded-md p-1 text-dark-2 hover:bg-dark-6 hover:text-white"
+                >
+                  <IconExternalLink size={16} />
+                </a>
+              {/if}
+            </div>
+          </CardHeader>
+          <CardContent class="p-0">
+            {#if model.versions.length === 0}
+              <p class="px-5 py-4 text-sm text-dark-2">No versions.</p>
             {:else}
-              <CardTitle class="text-base text-white">{model.name}</CardTitle>
-            {/if}
-            <Badge variant="secondary">{model.type}</Badge>
-            <Badge variant={model.status === 'Published' ? 'default' : 'outline'} class="ml-auto">
-              {model.status}
-            </Badge>
-            {#if model.versions.length > 0}
-              <a
-                href={modelUrl(model.id, model)}
-                target="_blank"
-                rel="noopener noreferrer"
-                title="View on Civitai"
-                aria-label="View {model.name} on Civitai"
-                class="shrink-0 rounded-md p-1 text-dark-2 hover:bg-dark-6 hover:text-white"
-              >
-                <IconExternalLink size={16} />
-              </a>
-            {/if}
-          </div>
-        </CardHeader>
-        <CardContent class="p-0">
-          {#if model.versions.length === 0}
-            <p class="px-5 py-4 text-sm text-dark-2">No versions.</p>
-          {:else}
-            <ul class="divide-y divide-dark-4 border-t border-dark-4">
-              {#each model.versions as version (version.id)}
-                {@const chip = feeChip(version.licensingFee, model.type, version.baseModel)}
-                {@const cbId = `v-${version.id}`}
-                <li>
-                  <div
-                    class="flex w-full items-center gap-3 px-5 hover:bg-dark-6/40"
-                    class:bg-dark-6={selected.has(version.id)}
-                  >
-                    <Checkbox
-                      id={cbId}
-                      checked={selected.has(version.id)}
-                      onCheckedChange={() => toggleVersion(version.id)}
-                      aria-label="Select {version.name}"
-                      class="shrink-0"
-                    />
-                    <button
-                      type="button"
-                      onclick={() => openEditor(version, model.type)}
-                      class="flex min-w-0 flex-1 cursor-pointer flex-col gap-1.5 py-3 text-left sm:flex-row sm:items-center sm:gap-3"
+              <ul class="divide-y divide-dark-4 border-t border-dark-4">
+                {#each model.versions as version (version.id)}
+                  {@const chip = feeChip(version.licensingFee, model.type, version.baseModel)}
+                  {@const cbId = `v-${version.id}`}
+                  <li>
+                    <div
+                      class="flex w-full items-center gap-3 px-5 hover:bg-dark-6/40"
+                      class:bg-dark-6={selected.has(version.id)}
                     >
-                      <span class="flex min-w-0 items-center gap-2 sm:flex-1">
-                        <span class="truncate text-sm font-medium text-white">{version.name}</span>
-                        <Badge variant="secondary" class="shrink-0 text-[10px]"
-                          >{version.baseModel}</Badge
-                        >
-                        <Badge
-                          variant="outline"
-                          class="{statusBadgeCls(
-                            version.status
-                          )} ml-auto shrink-0 text-[10px] uppercase tracking-wide sm:ml-0"
-                        >
-                          {version.status}
-                        </Badge>
-                      </span>
-                      <span class="flex shrink-0 items-center gap-2">
-                        {#if version.paidAccessConfig}
-                          {@const ab = accessBadge(version.paidAccessConfig)}
-                          <Badge variant="outline" class={ab.cls} title={ab.title}>{ab.label}</Badge
+                      <Checkbox
+                        id={cbId}
+                        checked={selected.has(version.id)}
+                        onCheckedChange={() => toggleVersion(version.id)}
+                        aria-label="Select {version.name}"
+                        class="shrink-0"
+                      />
+                      <button
+                        type="button"
+                        onclick={() => openEditor(version, model.type)}
+                        class="flex min-w-0 flex-1 cursor-pointer flex-col gap-1.5 py-3 text-left sm:flex-row sm:items-center sm:gap-3"
+                      >
+                        <span class="flex min-w-0 items-center gap-2 sm:flex-1">
+                          <span class="truncate text-sm font-medium text-white">{version.name}</span
                           >
-                        {/if}
-                        <Badge variant="outline" class={chip.cls}>{chip.label}</Badge>
-                        <IconChevronRight size={16} class="ml-auto shrink-0 text-dark-2 sm:ml-0" />
-                      </span>
-                    </button>
-                  </div>
-                </li>
-              {/each}
-            </ul>
-          {/if}
-        </CardContent>
-      </Card>
-    {/each}
-  </div>
-
-  {#if data.pageCount > 1}
-    <Pagination.Root
-      count={data.total}
-      perPage={data.perPage}
-      page={data.page}
-      onPageChange={(p) => navigate({ page: String(p) })}
-      class="mt-6"
-    >
-      {#snippet children({ pages, currentPage })}
-        <Pagination.Content>
-          <Pagination.Item>
-            <Pagination.PrevButton aria-label="Previous page">
-              <IconChevronLeft size={16} />
-            </Pagination.PrevButton>
-          </Pagination.Item>
-          {#each pages as p (p.key)}
-            {#if p.type === 'ellipsis'}
-              <Pagination.Item>
-                <Pagination.Ellipsis />
-              </Pagination.Item>
-            {:else}
-              <Pagination.Item>
-                <Pagination.Link page={p} isActive={currentPage === p.value}>
-                  {p.value}
-                </Pagination.Link>
-              </Pagination.Item>
+                          <Badge variant="secondary" class="shrink-0 text-[10px]"
+                            >{version.baseModel}</Badge
+                          >
+                          <Badge
+                            variant="outline"
+                            class="{statusBadgeCls(
+                              version.status
+                            )} ml-auto shrink-0 text-[10px] uppercase tracking-wide sm:ml-0"
+                          >
+                            {version.status}
+                          </Badge>
+                        </span>
+                        <span class="flex shrink-0 items-center gap-2">
+                          {#if version.paidAccessConfig}
+                            {@const ab = accessBadge(version.paidAccessConfig)}
+                            <Badge variant="outline" class={ab.cls} title={ab.title}
+                              >{ab.label}</Badge
+                            >
+                          {/if}
+                          <Badge variant="outline" class={chip.cls}>{chip.label}</Badge>
+                          <IconChevronRight
+                            size={16}
+                            class="ml-auto shrink-0 text-dark-2 sm:ml-0"
+                          />
+                        </span>
+                      </button>
+                    </div>
+                  </li>
+                {/each}
+              </ul>
             {/if}
-          {/each}
-          <Pagination.Item>
-            <Pagination.NextButton aria-label="Next page">
-              <IconChevronRight size={16} />
-            </Pagination.NextButton>
-          </Pagination.Item>
-        </Pagination.Content>
-      {/snippet}
-    </Pagination.Root>
+          </CardContent>
+        </Card>
+      {/each}
+    </div>
+
+    {#if view.pageCount > 1}
+      <Pagination.Root
+        count={view.total}
+        perPage={view.perPage}
+        page={view.page}
+        onPageChange={(p) => navigate({ page: String(p) })}
+        class="mt-6"
+      >
+        {#snippet children({ pages, currentPage })}
+          <Pagination.Content>
+            <Pagination.Item>
+              <Pagination.PrevButton aria-label="Previous page">
+                <IconChevronLeft size={16} />
+              </Pagination.PrevButton>
+            </Pagination.Item>
+            {#each pages as p (p.key)}
+              {#if p.type === 'ellipsis'}
+                <Pagination.Item>
+                  <Pagination.Ellipsis />
+                </Pagination.Item>
+              {:else}
+                <Pagination.Item>
+                  <Pagination.Link page={p} isActive={currentPage === p.value}>
+                    {p.value}
+                  </Pagination.Link>
+                </Pagination.Item>
+              {/if}
+            {/each}
+            <Pagination.Item>
+              <Pagination.NextButton aria-label="Next page">
+                <IconChevronRight size={16} />
+              </Pagination.NextButton>
+            </Pagination.Item>
+          </Pagination.Content>
+        {/snippet}
+      </Pagination.Root>
+    {/if}
   {/if}
-{/if}
+</div>
 
 <Sheet
   open={editing != null}
@@ -925,7 +998,7 @@
             version={editing}
             onClose={() => (editing = null)}
             caps={data.caps}
-            sales={data.salesByVersion[editing.id]}
+            sales={view.salesByVersion[editing.id]}
           />
         {/key}
       </div>

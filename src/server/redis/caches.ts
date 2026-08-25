@@ -47,6 +47,8 @@ import { getModelClient } from '~/server/services/orchestrator/models';
 import type { CachedObject } from '~/server/utils/cache-helpers';
 import { createCachedObject } from '~/server/utils/cache-helpers';
 import { L1_CACHE_BYTE_BUDGETS } from '~/server/redis/l1-cache-budget';
+import type { UserMultiplierRow, UserMultipliers } from '~/server/redis/user-multipliers';
+import { foldUserMultipliers } from '~/server/redis/user-multipliers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { stringifyAIR } from '~/shared/utils/air';
@@ -332,12 +334,7 @@ export const cosmeticEntityCaches = Object.fromEntries(
   ])
 ) as Record<CosmeticEntity, CachedObject<WithClaimKey<ContentDecorationCosmetic>>>;
 
-type CachedUserMultiplier = {
-  userId: number;
-  rewardsMultiplier: number;
-  purchasesMultiplier: number;
-  rewardsIneligible: boolean;
-};
+type CachedUserMultiplier = UserMultipliers;
 export const userMultipliersCache = createCachedObject<CachedUserMultiplier>({
   key: REDIS_KEYS.CACHES.MULTIPLIERS_FOR_USER,
   idKey: 'userId',
@@ -347,63 +344,20 @@ export const userMultipliersCache = createCachedObject<CachedUserMultiplier>({
     if (!goodIds.length) return {};
 
     const db = fromWrite ? dbWrite : dbRead;
-    // Get the highest tier subscription for each user
-    // Tier priority: founder > gold > silver > bronze > free
-    const multipliers = await db.$queryRaw<CachedUserMultiplier[]>`
-      WITH ranked_subscriptions AS (
-        SELECT
-          cs."userId",
-          cs.status,
-          p.metadata,
-          CASE (p.metadata->>'tier')::text
-            WHEN 'gold' THEN 4
-            WHEN 'silver' THEN 3
-            WHEN 'bronze' THEN 2
-            WHEN 'founder' THEN 2
-            ELSE 1
-          END as tier_rank,
-          ROW_NUMBER() OVER (
-            PARTITION BY cs."userId"
-            ORDER BY
-              -- Active/trialing subs take priority so a stale expired_claimable
-              -- record can't out-rank a current sub at the same tier.
-              CASE WHEN cs.status IN ('active', 'trialing') THEN 0 ELSE 1 END,
-              CASE (p.metadata->>'tier')::text
-                WHEN 'gold' THEN 4
-                WHEN 'silver' THEN 3
-                WHEN 'bronze' THEN 2
-                WHEN 'founder' THEN 2
-                ELSE 1
-              END DESC,
-              cs."currentPeriodEnd" DESC NULLS LAST
-          ) as rn
-        FROM "CustomerSubscription" cs
-        JOIN "Product" p ON p.id = cs."productId"
-        WHERE cs."userId" IN (${Prisma.join(goodIds)})
-          AND cs.status NOT IN ('canceled', 'expired_claimable', 'paused')
-      )
+    const rows = await db.$queryRaw<UserMultiplierRow[]>`
       SELECT
         u.id as "userId",
-        CASE
-          WHEN u."rewardsEligibility" = 'Ineligible'::"RewardsEligibility" THEN 0
-          WHEN rs.status IS NULL OR rs.status NOT IN ('active', 'trialing') THEN 1
-          ELSE COALESCE((rs.metadata->>'rewardsMultiplier')::float, 1)
-        END as "rewardsMultiplier",
-        CASE
-          WHEN rs.status IS NULL OR rs.status NOT IN ('active', 'trialing') THEN 1
-          ELSE COALESCE((rs.metadata->>'purchasesMultiplier')::float, 1)
-        END as "purchasesMultiplier",
-        (u."rewardsEligibility" = 'Ineligible'::"RewardsEligibility") as "rewardsIneligible"
+        (u."rewardsEligibility" = 'Ineligible'::"RewardsEligibility") as "rewardsIneligible",
+        (p.metadata->>'rewardsMultiplier')::float as "rewardsMultiplier",
+        (p.metadata->>'purchasesMultiplier')::float as "purchasesMultiplier"
       FROM "User" u
-      LEFT JOIN ranked_subscriptions rs ON u.id = rs."userId" AND rs.rn = 1
+      LEFT JOIN "CustomerSubscription" cs
+        ON cs."userId" = u.id AND cs.status IN ('active', 'trialing')
+      LEFT JOIN "Product" p ON p.id = cs."productId"
       WHERE u.id IN (${Prisma.join(goodIds)});
     `;
 
-    const records: Record<number, CachedUserMultiplier> = Object.fromEntries(
-      multipliers.map((m) => [m.userId, m])
-    );
-
-    return records;
+    return foldUserMultipliers(rows);
   },
 });
 

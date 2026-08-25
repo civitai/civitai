@@ -51,7 +51,7 @@ describe('/api/metrics registers + seeds the BitDex serve-outcome counters at mo
     expect(client.register.getSingleMetric(FAILURES_METRIC)).toBeUndefined();
   });
 
-  it('🔴 after loading the page module, all 8 outcome × mode series exist at 0', async () => {
+  it('🔴 after loading the page module, all 14 outcome × mode series exist at 0', async () => {
     await import('~/pages/api/metrics');
 
     const metric = client.register.getSingleMetric(RESULT_METRIC) as unknown as
@@ -60,7 +60,7 @@ describe('/api/metrics registers + seeds the BitDex serve-outcome counters at mo
     expect(metric).toBeDefined();
 
     const { values } = await metric!.get();
-    // Derived from the unions, not hardcoded: a 5th outcome or a 3rd mode must
+    // Derived from the unions, not hardcoded: an 8th outcome or a 3rd mode must
     // be seeded too, and this must fail until it is.
     const { BITDEX_SERVE_MODES, BITDEX_SERVE_OUTCOMES } = await import(
       '~/server/metrics/bitdex-feed-serve.metrics'

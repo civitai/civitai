@@ -24,6 +24,72 @@
       "field": "judgingEngine"
     },
     {
+      "fingerprint": "missing-column|Chat|isGroup|Chat|isGroup",
+      "kind": "missing-column",
+      "tier": "pending",
+      "table": "Chat",
+      "columns": [
+        "isGroup"
+      ],
+      "model": "Chat",
+      "field": "isGroup"
+    },
+    {
+      "fingerprint": "missing-column|Chat|name|Chat|name",
+      "kind": "missing-column",
+      "tier": "pending",
+      "table": "Chat",
+      "columns": [
+        "name"
+      ],
+      "model": "Chat",
+      "field": "name"
+    },
+    {
+      "fingerprint": "missing-column|ChatMember|clearedAt|ChatMember|clearedAt",
+      "kind": "missing-column",
+      "tier": "pending",
+      "table": "ChatMember",
+      "columns": [
+        "clearedAt"
+      ],
+      "model": "ChatMember",
+      "field": "clearedAt"
+    },
+    {
+      "fingerprint": "missing-column|ChatMember|filteredAt|ChatMember|filteredAt",
+      "kind": "missing-column",
+      "tier": "pending",
+      "table": "ChatMember",
+      "columns": [
+        "filteredAt"
+      ],
+      "model": "ChatMember",
+      "field": "filteredAt"
+    },
+    {
+      "fingerprint": "missing-column|ChatMember|pinnedAt|ChatMember|pinnedAt",
+      "kind": "missing-column",
+      "tier": "pending",
+      "table": "ChatMember",
+      "columns": [
+        "pinnedAt"
+      ],
+      "model": "ChatMember",
+      "field": "pinnedAt"
+    },
+    {
+      "fingerprint": "missing-column|ChatMessage|deletedAt|ChatMessage|deletedAt",
+      "kind": "missing-column",
+      "tier": "pending",
+      "table": "ChatMessage",
+      "columns": [
+        "deletedAt"
+      ],
+      "model": "ChatMessage",
+      "field": "deletedAt"
+    },
+    {
       "fingerprint": "missing-column|ModelFlag|sfwOnly|ModelFlag|sfwOnly",
       "kind": "missing-column",
       "tier": "pending",
@@ -550,6 +616,17 @@
       ],
       "model": "ChallengeEvent",
       "field": "createdById"
+    },
+    {
+      "fingerprint": "nullability|Chat|hash|Chat|hash|optional",
+      "kind": "nullability",
+      "tier": "enforced",
+      "table": "Chat",
+      "columns": [
+        "hash"
+      ],
+      "model": "Chat",
+      "field": "hash"
     },
     {
       "fingerprint": "nullability|CollectionMetric|updatedAt|CollectionMetric|updatedAt|required",

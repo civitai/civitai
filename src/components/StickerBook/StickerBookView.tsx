@@ -23,10 +23,14 @@ import { useState } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
+import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { StickerBookBand, StickerBookSection } from '~/components/StickerBook/StickerBookSection';
+import { constants } from '~/server/common/constants';
 import { StickerBookSettingsModal } from '~/components/StickerBook/StickerBookSettingsModal';
 import { StickerBookStickers } from '~/components/StickerBook/StickerBookStickers';
-import { stickerBookSectionCopy } from '~/components/StickerBook/sticker-book.util';
+import { stickerBookSectionCopy, stickerBookUrl } from '~/components/StickerBook/sticker-book.util';
+import { STICKER_BOOK_MAX_COLUMNS } from '~/shared/utils/sticker-book';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
@@ -76,68 +80,80 @@ export function StickerBookView({ username }: { username: string }) {
     );
 
   const nothingYet = !data.placed.length && !data.received.length && !data.stickers.length;
-  const bookHref = `/user/${username}/sticker-book`;
+  const bookHref = stickerBookUrl(username);
   const placedCopy = stickerBookSectionCopy('placer', { username, isOwner });
   const receivedCopy = stickerBookSectionCopy('owner', { username, isOwner });
 
   return (
-    <div className="flex flex-col">
+    // 🔴 `MasonryContainer` reads this context and THROWS without it, and the
+    // profile layout supplies none. Same props the profile's own image tab uses,
+    // so the two tabs lay out identically.
+    <MasonryProvider
+      columnWidth={constants.cardSizes.image}
+      maxColumnCount={STICKER_BOOK_MAX_COLUMNS}
+      maxSingleColumnWidth={450}
+      className="flex flex-col"
+    >
       {access.moderatorOverride && (
-        <Alert color="yellow" icon={<IconShieldCheck size={18} />} mb="md">
-          <Text size="sm">
-            {username} has hidden some or all of this. You can see it because you&rsquo;re a
-            moderator; other visitors cannot.
-          </Text>
-        </Alert>
+        <MasonryContainer p={0}>
+          <Alert color="yellow" icon={<IconShieldCheck size={18} />} mb="md">
+            <Text size="sm">
+              {username} has hidden some or all of this. You can see it because you&rsquo;re a
+              moderator; other visitors cannot.
+            </Text>
+          </Alert>
+        </MasonryContainer>
       )}
 
       {/* The shop page's header shape: an icon, the creator's name for the thing,
           and the one number worth stating — with no page title above it, because
           no other profile tab carries one. */}
-      <Group justify="space-between" align="flex-start" wrap="nowrap" py="md">
-        <Group gap="md" align="center" wrap="nowrap" className="min-w-0">
-          <ThemeIcon size={48} radius="xl" variant="light" color="yellow">
-            <IconSticker size={28} />
-          </ThemeIcon>
-          <Stack gap={2} className="min-w-0">
-            <Title order={1} size="h2">
-              {username}&apos;s Sticker Book
-            </Title>
-            {access.canViewEarnings && data.earnedBuzz !== null ? (
-              <Group gap={4} wrap="nowrap">
-                <CurrencyIcon currency={Currency.BUZZ} size={16} />
-                <Text size="sm">
-                  <Text span fw={700}>
-                    {numberWithCommas(data.earnedBuzz)} Buzz
-                  </Text>{' '}
-                  earned from stickers on {isOwner ? 'your' : 'their'} images
+      <MasonryContainer p={0}>
+        <Group justify="space-between" align="flex-start" wrap="nowrap" py="md">
+          <Group gap="md" align="center" wrap="nowrap" className="min-w-0">
+            <ThemeIcon size={48} radius="xl" variant="light" color="yellow">
+              <IconSticker size={28} />
+            </ThemeIcon>
+            <Stack gap={2} className="min-w-0">
+              <Title order={1} size="h2">
+                {username}&apos;s Sticker Book
+              </Title>
+              {access.canViewEarnings && data.earnedBuzz !== null ? (
+                <Group gap={4} wrap="nowrap">
+                  <CurrencyIcon currency={Currency.BUZZ} size={16} />
+                  <Text size="sm">
+                    <Text span fw={700}>
+                      {numberWithCommas(data.earnedBuzz)} Buzz
+                    </Text>{' '}
+                    earned from stickers on {isOwner ? 'your' : 'their'} images
+                  </Text>
+                </Group>
+              ) : (
+                <Text size="sm" c="dimmed">
+                  {isOwner
+                    ? 'Your stickers, where you have put them, and what people have put on your work.'
+                    : `Stickers ${username} owns and the images they have been part of.`}
                 </Text>
-              </Group>
-            ) : (
-              <Text size="sm" c="dimmed">
-                {isOwner
-                  ? 'Your stickers, where you have put them, and what people have put on your work.'
-                  : `Stickers ${username} owns and the images they have been part of.`}
-              </Text>
-            )}
-          </Stack>
-        </Group>
+              )}
+            </Stack>
+          </Group>
 
-        <Group gap="xs" wrap="nowrap">
-          {isOwner && (
-            <Tooltip label="Sticker settings">
-              <ActionIcon
-                variant="default"
-                size="lg"
-                onClick={() => setSettingsOpen(true)}
-                aria-label="Manage sticker placement settings"
-              >
-                <IconSettings size={18} />
-              </ActionIcon>
-            </Tooltip>
-          )}
+          <Group gap="xs" wrap="nowrap">
+            {isOwner && (
+              <Tooltip label="Sticker settings">
+                <ActionIcon
+                  variant="default"
+                  size="lg"
+                  onClick={() => setSettingsOpen(true)}
+                  aria-label="Manage sticker placement settings"
+                >
+                  <IconSettings size={18} />
+                </ActionIcon>
+              </Tooltip>
+            )}
+          </Group>
         </Group>
-      </Group>
+      </MasonryContainer>
 
       {access.canViewStickers && !!data.stickers.length && (
         <StickerBookBand
@@ -193,20 +209,22 @@ export function StickerBookView({ username }: { username: string }) {
       />
 
       {nothingYet && isOwner && (
-        <Alert color="blue" mt="md">
-          <Text size="sm">
-            Nothing in your book yet. Buy a sticker in the{' '}
-            <Text component={Link} href="/shop" c="blue.4" inherit>
-              shop
-            </Text>{' '}
-            and put one on an image, or turn stickers on for your own images from the gear above.
-          </Text>
-        </Alert>
+        <MasonryContainer p={0}>
+          <Alert color="blue" mt="md">
+            <Text size="sm">
+              Nothing in your book yet. Buy a sticker in the{' '}
+              <Text component={Link} href="/shop" c="blue.4" inherit>
+                shop
+              </Text>{' '}
+              and put one on an image, or turn stickers on for your own images from the gear above.
+            </Text>
+          </Alert>
+        </MasonryContainer>
       )}
 
       {isOwner && (
         <StickerBookSettingsModal opened={settingsOpen} onClose={() => setSettingsOpen(false)} />
       )}
-    </div>
+    </MasonryProvider>
   );
 }

@@ -67,6 +67,13 @@ const moveAsset = async ({ url, modelVersionId }) => {
 
 ## Status & Monitoring
 
+Training state is written to Postgres and re-derived from the orchestrator in three places (submit,
+webhook, reconcile cron + a user-facing recheck button). Behind the `trainingOrchestratorState` flag
+the training list and the epoch-selection screen read their status and epochs from the live workflow
+instead, falling back to the stored copy past the orchestrator's 30-day retention. For why the split
+exists and what cannot move, see
+[training-orchestrator-source-of-truth.md](training-orchestrator-source-of-truth.md).
+
 ### Training Service Status
 ```typescript
 interface TrainingServiceStatus {

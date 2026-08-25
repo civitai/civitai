@@ -1,4 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
+// Module scope, not a test body: from a body this transform is charged to one test's 60s
+// budget. See vitest.config.mts.
+import { getServerSideProps } from '~/pages/comments/v2/[id]';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
@@ -76,7 +79,6 @@ const row = (entity: Record<string, unknown>) => ({
 });
 
 const run = async () => {
-  const { getServerSideProps } = await import('~/pages/comments/v2/[id]');
   return (await (getServerSideProps as any)({
     params: { id: String(COMMENT_ID) },
     req: { url: `/comments/v2/${COMMENT_ID}`, headers: {}, cookies: {} },

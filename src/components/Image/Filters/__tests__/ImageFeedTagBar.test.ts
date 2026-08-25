@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type * as HiddenPreferences from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import type * as TrackUtils from '~/components/TrackView/track.utils';
+import type * as FeatureFlagsProvider from '~/providers/FeatureFlagsProvider';
 import type * as TrpcModule from '~/utils/trpc';
 
 const mocks = vi.hoisted(() => ({
@@ -18,6 +19,10 @@ const mocks = vi.hoisted(() => ({
   loadingPreferences: false,
   maxNsfwLevel: 1,
   trackAction: vi.fn(() => Promise.resolve()),
+  // Sparse, exactly as FeatureAccess is: an off flag is ABSENT, so it reads `undefined`.
+  // Driving the off case with `false` would test a state production never produces.
+  feedTagBar: true as boolean | undefined,
+  getFeedTagBar: vi.fn(),
 }));
 
 vi.mock('next/router', () => ({
@@ -26,7 +31,25 @@ vi.mock('next/router', () => ({
 
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcModule>()),
-  trpc: { tag: { getFeedTagBar: { useQuery: () => ({ data: mocks.tags }) } } },
+  trpc: {
+    tag: {
+      getFeedTagBar: {
+        // Records the options so a test can assert the request is SKIPPED when the flag
+        // is off. It returns the tags either way, which is deliberately unlike
+        // react-query (a disabled query yields no data) — a gate that only hid the
+        // markup would still be caught here rather than looking like a skipped fetch.
+        useQuery: (input: unknown, options?: { enabled?: boolean }) => {
+          mocks.getFeedTagBar(input, options);
+          return { data: mocks.tags };
+        },
+      },
+    },
+  },
+}));
+
+vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof FeatureFlagsProvider>()),
+  useFeatureFlags: () => ({ feedTagBar: mocks.feedTagBar }),
 }));
 
 // Stands in for the real hidden-preferences provider, which needs a session + query
@@ -106,6 +129,8 @@ describe('ImageFeedTagBar', () => {
   beforeEach(() => {
     mocks.replace.mockClear();
     mocks.trackAction.mockClear();
+    mocks.getFeedTagBar.mockClear();
+    mocks.feedTagBar = true;
     mocks.pathname = '/images';
     mocks.query = {};
     mocks.hiddenTagIds = [];
@@ -120,6 +145,38 @@ describe('ImageFeedTagBar', () => {
   it('renders the All chip plus every tag, in the order the server sent them', () => {
     const container = render();
     expect(buttonLabels(container)).toEqual(['All', 'anime', 'realistic']);
+  });
+
+  // Gated so the bar can be switched off without a deploy, after its click-through came
+  // in under the floor it shipped on (868kv1b9m). `feedTagBar` fails OPEN, so the case
+  // that needs pinning is that OFF actually removes it.
+  it('renders nothing when the feedTagBar flag is off', () => {
+    mocks.feedTagBar = undefined;
+    const container = render();
+
+    expect(buttonLabels(container)).toEqual([]);
+    // The reserved row too, not just the chips: the bar holds height while its tags load,
+    // so a gate that only emptied the chip list would still push the feed down by 26px.
+    expect(reservedRows(container)).toHaveLength(0);
+  });
+
+  it('does not request the chip list when the flag is off, and does when it is on', () => {
+    // `undefined`, not `false` — see the note on `mocks.feedTagBar`.
+    mocks.feedTagBar = undefined;
+    render();
+    // Strictly `false`, not merely falsy: react-query reads `enabled: undefined` as
+    // ENABLED, so a gate that forwarded the sparse flag straight through would fetch.
+    // Zero calls satisfies this too, so hoisting the gate above the hook stays green.
+    for (const [, options] of mocks.getFeedTagBar.mock.calls) {
+      expect(options?.enabled).toBe(false);
+    }
+
+    mocks.getFeedTagBar.mockClear();
+    mocks.feedTagBar = true;
+    render();
+    // The control. Without it the arm above passes for a bar that can never fetch.
+    expect(mocks.getFeedTagBar).toHaveBeenCalledTimes(1);
+    expect(mocks.getFeedTagBar).toHaveBeenCalledWith(undefined, { enabled: true });
   });
 
   it('writes ?tags=<id> on select, preserving the rest of the query', () => {
@@ -270,6 +327,8 @@ describe('ImageFeedTagBar click-through instrumentation', () => {
   beforeEach(() => {
     mocks.replace.mockClear();
     mocks.trackAction.mockClear();
+    mocks.getFeedTagBar.mockClear();
+    mocks.feedTagBar = true;
     mocks.pathname = '/images';
     mocks.query = {};
     mocks.hiddenTagIds = [];

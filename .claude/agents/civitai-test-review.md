@@ -178,18 +178,23 @@ Worked examples of both fixes: the two retry tests in
 
 ### Convention guards
 
-Fourteen guards live in `src/server/services/__tests__/no-*.test.ts`:
+17 live in `src/server/services/__tests__/no-*.test.ts`:
 `no-agent-ground-truth-write`, `no-coerce-boolean-in-api`, `no-direct-shared-module-mock`,
-`no-io-in-transaction`, `no-module-scope-cache`, `no-pk-addressed-engagement-write`,
-`no-server-infra-in-app-graph`, `no-sharp-outside-native-project`, `no-stale-moderator-route-probe`,
-`no-static-html2canvas-import`, `no-unbounded-paging-fake`, `no-unloadable-image-fixture`,
-`no-unverified-provenance-write`, `no-wholesale-module-mock`.
+`no-doubled-free-slot-noun`, `no-io-in-transaction`, `no-lint-rules-script-drift`,
+`no-module-scope-cache`, `no-pk-addressed-engagement-write`, `no-server-infra-in-app-graph`,
+`no-sharp-outside-native-project`, `no-stale-moderator-route-probe`, `no-static-html2canvas-import`,
+`no-unbounded-paging-fake`, `no-unloadable-image-fixture`, `no-unverified-provenance-write`,
+`no-unwrapped-knob-rotation`, `no-wholesale-module-mock`.
 
 ⚠️ **`pnpm run test:lint-rules` is a hand-maintained file list**, so a guard can be missing from it and
-fail only in a full-suite run. Five were missing when this was last audited (2026-08-24) and are now
-wired in — all fourteen are named. Re-derive both numbers from the directory and `package.json` rather
-than trusting this line: if the diff adds a guard, check it was wired into the script, and don't treat
-a green `test:lint-rules` as "all guards passed".
+fail only in a full-suite run. Five were missing when this was last audited, on 2026-08-24, and were
+wired in then. If the diff adds a guard, check it was wired into the script, and don't treat a green
+`test:lint-rules` as "all guards passed".
+
+`test:lint-rules` names 22 files today.
+
+Both numbers and the list are checked by `no-lint-rules-script-drift`, which reads the two phrasings
+above literally — edit the numbers, not the shapes.
 
 If a guard fails, the code gets fixed. An added exemption needs a stated reason in the diff.
 

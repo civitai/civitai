@@ -874,9 +874,14 @@ export async function assertAssetsScanClean(
   const blocked = new Set<string>();
   const pending = new Set<string>();
   for (const { kind, id } of tagged) {
-    const ingestion = ingestionById.get(id) ?? null;
-    if (ingestion === ImageIngestionStatus.Scanned) continue;
-    if (ingestion === ImageIngestionStatus.Blocked) blocked.add(kind);
+    // A MISSING Image row is `pending` on THIS path (the strictest reading — an asset we
+    // cannot see the scan state of has not been shown to be clean, and this gate guards
+    // go-live). That is this site's answer to the absence question; the shared predicate
+    // reports absence as `null` and leaves the decision here. See
+    // {@link assetScanStatusFromIngestion}.
+    const status = assetScanStatusFromIngestion(ingestionById.get(id)) ?? 'pending';
+    if (status === 'scanned') continue;
+    if (status === 'blocked') blocked.add(kind);
     else pending.add(kind);
   }
   if (blocked.size === 0 && pending.size === 0) return;
@@ -990,6 +995,32 @@ export async function resolveListingRatingFloorInTx(
 export type AssetScanStatus = 'scanned' | 'pending' | 'blocked';
 
 /**
+ * THE `Image.ingestion` → {@link AssetScanStatus} MAPPING, in one place.
+ *
+ * 🔴 IT IS A FUNCTION RATHER THAN THREE INLINE TERNARIES BECAUSE THERE WERE THREE.
+ * `getListingAssets`'s `scanOf`, `getAssetScanStatuses`'s ternary and
+ * `assertAssetsScanClean`'s branch each open-coded "Scanned ⇒ clean, Blocked ⇒ blocked,
+ * everything else ⇒ still resolving", and a fourth was about to be written for the
+ * `/apps/mine` list read. A predicate at N sites is the shape that ends up wrong at N−1
+ * of them; consolidating is what makes a disagreement audible.
+ *
+ * ABSENCE IS THE CALLER'S QUESTION, NOT THIS ONE'S. A null/undefined `ingestion` means
+ * "no Image row" (deleted, or not selected), and the three call sites genuinely disagree
+ * about what that means — `getListingAssets` reports `null` (nothing to show a badge
+ * for), `getAssetScanStatuses` reports `pending` (still resolving), `assertAssetsScanClean`
+ * refuses as `pending`. So this returns `null` for absent and each caller states its own
+ * rule at its own site, in one visible `??`.
+ */
+export function assetScanStatusFromIngestion(
+  ingestion: string | null | undefined
+): AssetScanStatus | null {
+  if (ingestion == null) return null;
+  if (ingestion === ImageIngestionStatus.Scanned) return 'scanned';
+  if (ingestion === ImageIngestionStatus.Blocked) return 'blocked';
+  return 'pending';
+}
+
+/**
  * Read the scan status of a set of Image ids the caller owns (mods: any), from the
  * PRIMARY (`dbWrite`) so a just-completed scan is visible promptly. Maps `ingestion`
  * → `scanned` (Scanned) / `blocked` (Blocked) / `pending` (everything else, incl. a
@@ -1008,14 +1039,118 @@ export async function getAssetScanStatuses(
   });
   const statuses = rows.map((r) => ({
     imageId: r.id,
-    status:
-      r.ingestion === ImageIngestionStatus.Scanned
-        ? ('scanned' as const)
-        : r.ingestion === ImageIngestionStatus.Blocked
-        ? ('blocked' as const)
-        : ('pending' as const),
+    // A row with a NULL `ingestion` column reads as `pending` here — the pre-existing
+    // behaviour of the ternary this replaces, restated as the explicit `??` the shared
+    // predicate's contract asks each caller for.
+    status: assetScanStatusFromIngestion(r.ingestion) ?? ('pending' as const),
   }));
   return { statuses };
+}
+
+/**
+ * One attached asset's scan state, tagged with the slot it occupies.
+ *
+ * 🔴 STRUCTURALLY IDENTICAL TO `listing-problems::ListingAssetScan`, and deliberately
+ * declared HERE rather than imported from there: `listing-problems` already imports
+ * `checkListingAssetsComplete` from this module, so importing back would close a cycle.
+ * The two are pinned mutually-assignable by
+ * `app-listing-assets.scan-batch.test.ts` — a compile-time seam guard, because a
+ * structural match is exactly the kind of agreement that decays silently.
+ *
+ * `kind` reuses the SCHEMA's `ListingAssetKind` (already imported above for the per-kind
+ * size caps) rather than restating the union — one slot vocabulary, one declaration.
+ */
+export type ListingAssetScanEntry = { kind: ListingAssetKind; status: AssetScanStatus };
+
+/** The per-listing asset ids a batched scan read starts from. */
+export type ListingScanSubject = { id: string; iconId: number | null; coverId: number | null };
+
+/** A minimal reader satisfying the two batched queries below (`dbRead` / `dbWrite` / a `tx`). */
+type ListingScanBatchReader = {
+  appListingScreenshot: {
+    findMany: (args: {
+      where: { appListingId: { in: string[] }; imageId: { not: null } };
+      select: { appListingId: true; imageId: true };
+    }) => Promise<{ appListingId: string; imageId: number | null }[]>;
+  };
+  image: {
+    findMany: (args: {
+      where: { id: { in: number[] } };
+      select: { id: true; ingestion: true };
+    }) => Promise<{ id: number; ingestion: string | null }[]>;
+  };
+};
+
+/**
+ * Resolve every listing's attached-asset scan states for a WHOLE PAGE of listings, in
+ * TWO batched queries — regardless of how many listings the page holds.
+ *
+ * 🔴 THE BATCHING IS THE ENTIRE POINT, and it is why this exists instead of calling
+ * {@link getListingAssets} per row. That function is the single-listing read: it does two
+ * queries PER LISTING, so driving `/apps/mine` through it would be a per-row fan-out —
+ * exactly the cost `hydrateMyAppListings` refused to pay when it left `assetScans`
+ * unwired. Here the screenshot ids for all N listings come back in ONE
+ * `appListingScreenshot.findMany`, every asset Image id across the page is collected into
+ * ONE `image.findMany`, and the grouping is done in memory. N listings ⇒ 2 queries, not
+ * 2N.
+ *
+ * 🔴 READS THE REPLICA BY DEFAULT, unlike {@link getAssetScanStatuses} (which reads the
+ * PRIMARY because it backs a poll the author is watching tick over in real time). This
+ * backs a LIST read whose whole purpose is to be cheap; a few seconds of replica lag on
+ * "is this icon still scanning" is the correct trade, and sending a page-sized `IN (…)`
+ * to the primary is not.
+ *
+ * The `imageId: { not: null }` screenshot filter matches the authoritative asset gate
+ * (`buildAssetStatus`) and the `_count` the completeness advisory uses: a screenshot row
+ * whose Image was deleted has nothing to scan and nothing to display.
+ *
+ * A `null` icon/cover id contributes NO entry — presence is the completeness gate's job
+ * ({@link checkListingAssetsComplete}), not this one's; and an Image row that has gone
+ * missing likewise contributes none, so a deleted asset cannot masquerade as a scan
+ * problem. Every listing in `subjects` gets a key in the returned Map (possibly an empty
+ * array), so a caller can tell "no problems" from "not looked at".
+ */
+export async function loadListingAssetScansBatch(
+  subjects: ListingScanSubject[],
+  db: ListingScanBatchReader = dbRead
+): Promise<Map<string, ListingAssetScanEntry[]>> {
+  const byListing = new Map<string, ListingAssetScanEntry[]>(subjects.map((s) => [s.id, []]));
+  if (subjects.length === 0) return byListing;
+
+  const shots = await db.appListingScreenshot.findMany({
+    where: { appListingId: { in: subjects.map((s) => s.id) }, imageId: { not: null } },
+    select: { appListingId: true, imageId: true },
+  });
+
+  // (listingId, kind, imageId) for every attached asset on the page.
+  const tagged: { listingId: string; kind: ListingAssetKind; imageId: number }[] = [];
+  for (const s of subjects) {
+    if (s.iconId != null) tagged.push({ listingId: s.id, kind: 'icon', imageId: s.iconId });
+    if (s.coverId != null) tagged.push({ listingId: s.id, kind: 'cover', imageId: s.coverId });
+  }
+  for (const s of shots) {
+    // Defensive: the query already filters `imageId: { not: null }`, but the filter lives
+    // in the DB and this narrowing lives in the type system — they are different claims.
+    if (s.imageId == null) continue;
+    if (!byListing.has(s.appListingId)) continue;
+    tagged.push({ listingId: s.appListingId, kind: 'screenshot', imageId: s.imageId });
+  }
+  if (tagged.length === 0) return byListing;
+
+  const images = await db.image.findMany({
+    where: { id: { in: [...new Set(tagged.map((t) => t.imageId))] } },
+    select: { id: true, ingestion: true },
+  });
+  const ingestionById = new Map(images.map((i) => [i.id, i.ingestion]));
+
+  for (const { listingId, kind, imageId } of tagged) {
+    // Absent Image row ⇒ no entry (see the doc above), NOT a `pending` invented out of a
+    // deleted row — that would make `scanning-media` latch forever on a dead FK.
+    const status = assetScanStatusFromIngestion(ingestionById.get(imageId));
+    if (status == null) continue;
+    byListing.get(listingId)?.push({ kind, status });
+  }
+  return byListing;
 }
 
 /**
@@ -1497,14 +1632,11 @@ export async function getListingAssets(
   );
   const levelOf = (id: number | null): number | null =>
     id == null ? null : levelById.get(id) ?? null;
-  const scanOf = (id: number | null): AssetScanStatus | null => {
-    if (id == null) return null;
-    const ingestion = ingestionById.get(id);
-    if (ingestion == null) return null; // Image deleted / not found.
-    if (ingestion === ImageIngestionStatus.Scanned) return 'scanned';
-    if (ingestion === ImageIngestionStatus.Blocked) return 'blocked';
-    return 'pending';
-  };
+  // `null` id ⇒ nothing attached; absent `ingestion` ⇒ Image deleted / not found. Both
+  // report `null` here (no badge), which is this site's own answer to the absence
+  // question the shared predicate deliberately leaves to its callers.
+  const scanOf = (id: number | null): AssetScanStatus | null =>
+    id == null ? null : assetScanStatusFromIngestion(ingestionById.get(id));
 
   const iconScanStatus = scanOf(listing.iconId);
   const coverScanStatus = scanOf(listing.coverId);

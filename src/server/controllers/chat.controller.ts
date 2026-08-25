@@ -17,6 +17,7 @@ import type {
   DeleteMessageInput,
   MarkChatReadInput,
   ModifyUserInput,
+  UpdateChatInput,
   UpdateMessageInput,
   UserSettingsChat,
 } from '~/server/schema/chat.schema';
@@ -36,7 +37,21 @@ import {
   singleChatSelect,
 } from '~/server/selectors/chat.selector';
 import { profileImageSelect } from '~/server/selectors/image.selector';
-import { createMessage, maxUsersPerChat, upsertChat } from '~/server/services/chat.service';
+import {
+  assertChatNameAllowed,
+  createMessage,
+  maxUsersPerChat,
+  resolveChatRecipients,
+  upsertChat,
+} from '~/server/services/chat.service';
+import {
+  assertCanPromote,
+  assertGroupAdmin,
+  assertRoomForMembers,
+  isActiveMember,
+  normalizeChatName,
+  selectNextOwner,
+} from '~/server/utils/chat-group';
 import { getUserSettings, patchUserSettings } from '~/server/services/user.service';
 import { withSignals } from '~/server/signals/wrapper';
 import {
@@ -282,6 +297,8 @@ export const createChatHandler = async ({
     const chat = await upsertChat({
       userId,
       userIds: dedupedUserIds,
+      isGroup: input.isGroup,
+      name: input.name,
       isModerator,
       isSupporter,
     });
@@ -294,7 +311,73 @@ export const createChatHandler = async ({
 };
 
 /**
- * Add a user to an existing chat
+ * Rename a group. Passing a blank name clears it, so the title falls back to the
+ * member list.
+ */
+export const updateChatHandler = async ({
+  input,
+  ctx,
+}: {
+  input: UpdateChatInput;
+  ctx: ProtectedContext;
+}) => {
+  try {
+    const { id: userId, bannedAt, isModerator } = ctx.user;
+    if (bannedAt) throw throwAuthorizationError('You are banned from performing this action');
+
+    const existing = await dbWrite.chat.findFirst({
+      where: { id: input.chatId },
+      select: { id: true, isGroup: true, ownerId: true, name: true },
+    });
+
+    if (!existing) {
+      throw throwNotFoundError(`Could not find chat with id: (${input.chatId})`);
+    }
+
+    assertGroupAdmin({ chat: existing, actorId: userId, isModerator });
+
+    const name = normalizeChatName(input.name);
+    await assertChatNameAllowed(name);
+
+    const updated = await dbWrite.chat.update({
+      where: { id: existing.id },
+      data: { name },
+      select: {
+        ...singleChatSelect,
+        ...latestChat,
+      },
+    });
+
+    // Renaming to the name it already has should not announce itself.
+    if (name === existing.name) return updated;
+
+    withSignals(() =>
+      fetch(
+        `${env.SIGNALS_ENDPOINT}/groups/chat:${existing.id}/signals/${SignalMessages.ChatRoomUpdated}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: existing.id, name }),
+        }
+      )
+    ).catch(() => undefined);
+
+    await createMessage({
+      chatId: existing.id,
+      contentType: ChatMessageType.Markdown,
+      content: name ? `Group renamed to "${name}"` : 'Group name removed',
+      userId: -1,
+    });
+
+    return updated;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+/**
+ * Add members to an existing group chat.
  */
 export const addUsersHandler = async ({
   input,
@@ -304,71 +387,94 @@ export const addUsersHandler = async ({
   ctx: ProtectedContext;
 }) => {
   try {
-    const { id: userId } = ctx.user;
+    const { id: userId, bannedAt, isModerator } = ctx.user;
+    if (bannedAt) throw throwAuthorizationError('You are banned from performing this action');
 
     const existing = await dbWrite.chat.findFirst({
       where: { id: input.chatId },
       select: {
+        id: true,
+        isGroup: true,
         ownerId: true,
         chatMembers: {
-          select: {
-            userId: true,
-          },
+          select: { id: true, userId: true, status: true },
         },
       },
     });
 
     if (!existing) {
-      throw throwBadRequestError(`Could not find chat with id: (${input.chatId})`);
+      throw throwNotFoundError(`Could not find chat with id: (${input.chatId})`);
     }
 
-    if (existing.ownerId !== userId) {
-      throw throwBadRequestError(`Cannot add users to a chat you are not the owner of`);
-    }
+    assertGroupAdmin({ chat: existing, actorId: userId, isModerator });
 
-    const dedupedUserIds = uniq(input.userIds);
-    const existingChatMemberIds = existing.chatMembers.map((cm) => cm.userId);
-    let usersToAdd = dedupedUserIds.filter((uid) => !existingChatMemberIds.includes(uid));
-
-    // don't pull users who have disabled chat into a chat (mods bypass)
-    if (!ctx.user.isModerator && usersToAdd.length) {
-      const settings = await Promise.all(usersToAdd.map((id) => getUserSettings(id)));
-      usersToAdd = usersToAdd.filter((_, i) => settings[i]?.features?.chat !== false);
-      if (!usersToAdd.length) {
-        throw throwBadRequestError('The requested users are not accepting chat requests');
-      }
-    }
-
-    const mergedUsers = [...existingChatMemberIds, ...usersToAdd];
-    if (mergedUsers.length >= maxUsersPerChat) {
-      throw throwBadRequestError(`Must choose fewer than ${maxUsersPerChat - 1} users`);
-    }
-
-    const usersExist = await dbRead.user.count({
-      where: { id: { in: usersToAdd } },
+    const membersByUserId = new Map(existing.chatMembers.map((cm) => [cm.userId, cm]));
+    const requested = uniq(input.userIds).filter((uid) => {
+      const member = membersByUserId.get(uid);
+      // A member who left or was removed can be invited back; one who is still
+      // in the group is a no-op rather than an error.
+      return !member || !isActiveMember(member);
     });
 
-    if (usersExist !== usersToAdd.length) {
-      // could probably tell them which users here
+    if (!requested.length) {
+      throw throwBadRequestError('Those users are already in this chat');
+    }
+
+    const { allowed, filteredIds } = await resolveChatRecipients({
+      userId,
+      recipientIds: requested,
+      isModerator,
+    });
+
+    if (!allowed.length) {
+      throw throwBadRequestError('The requested users are not accepting chat requests');
+    }
+
+    assertRoomForMembers({
+      members: existing.chatMembers,
+      adding: allowed.length,
+      limit: maxUsersPerChat,
+    });
+
+    const users = await dbRead.user.findMany({
+      where: { id: { in: allowed } },
+      select: { id: true, username: true },
+    });
+
+    if (users.length !== allowed.length) {
       throw throwBadRequestError(
-        `Some requested users do not exist (${usersExist}/${usersToAdd.length})`
+        `Some requested users do not exist (${users.length}/${allowed.length})`
       );
     }
 
-    mergedUsers.sort((a, b) => a - b);
-    const hash = mergedUsers.join('-');
+    const toReinvite = allowed.map((uid) => membersByUserId.get(uid)).filter(isDefined);
+    const toCreate = allowed.filter((uid) => !membersByUserId.has(uid));
 
     const insertedChat = await dbWrite.$transaction(async (tx) => {
-      await tx.chatMember.createMany({
-        data: usersToAdd.map((uta) => ({
-          userId: uta,
-          chatId: input.chatId,
-          status: ChatMemberStatus.Invited,
-        })),
-      });
-      return tx.chat.update({
-        where: { id: input.chatId },
-        data: { hash },
+      if (toCreate.length) {
+        await tx.chatMember.createMany({
+          data: toCreate.map((uid) => ({
+            userId: uid,
+            chatId: existing.id,
+            status: ChatMemberStatus.Invited,
+            filteredAt: filteredIds.has(uid) ? new Date() : undefined,
+          })),
+        });
+      }
+      for (const member of toReinvite) {
+        await tx.chatMember.update({
+          where: { id: member.id },
+          data: {
+            status: ChatMemberStatus.Invited,
+            kickedAt: null,
+            leftAt: null,
+            ignoredAt: null,
+            filteredAt: filteredIds.has(member.userId) ? new Date() : null,
+          },
+        });
+      }
+      return tx.chat.findFirstOrThrow({
+        where: { id: existing.id },
         select: {
           ...singleChatSelect,
           ...latestChat,
@@ -376,7 +482,7 @@ export const addUsersHandler = async ({
       });
     });
 
-    for (const cmId of usersToAdd) {
+    for (const cmId of allowed) {
       withSignals(() =>
         fetch(`${env.SIGNALS_ENDPOINT}/users/${cmId}/signals/${SignalMessages.ChatNewRoom}`, {
           method: 'POST',
@@ -386,15 +492,20 @@ export const addUsersHandler = async ({
       ).catch(() => undefined);
     }
 
-    // TODO return data?
-    return;
+    const addedNames = users.map((u) => u.username ?? `User ${u.id}`);
+    await createMessage({
+      chatId: existing.id,
+      contentType: ChatMessageType.Markdown,
+      content: `${addedNames.join(', ')} ${addedNames.length > 1 ? 'were' : 'was'} added`,
+      userId: -1,
+    });
+
+    return insertedChat;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
   }
 };
-
-// TODO when owner leaves chat, select new owner
 
 /**
  * Update a member of a chat
@@ -409,9 +520,9 @@ export const modifyUserHandler = async ({
   try {
     const { id: userId } = ctx.user;
 
-    const { chatMemberId, status, isPinned, isMuted, notifyLevel, ...rest } = input;
+    const { chatMemberId, status, isPinned, isMuted, notifyLevel, isOwner, ...rest } = input;
 
-    const definedValues = { status, isPinned, isMuted, notifyLevel, ...rest };
+    const definedValues = { status, isPinned, isMuted, notifyLevel, isOwner, ...rest };
     const definedValuesLength = Object.values(definedValues).filter(
       (val) => val !== undefined
     ).length;
@@ -423,8 +534,10 @@ export const modifyUserHandler = async ({
     const existing = await dbWrite.chatMember.findFirst({
       where: { id: chatMemberId },
       select: {
+        id: true,
         userId: true,
         status: true,
+        isOwner: true,
         user: {
           select: {
             username: true,
@@ -435,15 +548,20 @@ export const modifyUserHandler = async ({
           select: {
             id: true,
             ownerId: true,
+            isGroup: true,
             owner: {
               select: {
                 isModerator: true,
               },
             },
             chatMembers: {
-              where: { isOwner: true },
               select: {
+                id: true,
+                userId: true,
+                isOwner: true,
                 status: true,
+                createdAt: true,
+                joinedAt: true,
               },
             },
           },
@@ -455,7 +573,16 @@ export const modifyUserHandler = async ({
       throw throwBadRequestError(`Could not find chat member`);
     }
 
-    if (status === ChatMemberStatus.Kicked) {
+    const ownerMember = existing.chat.chatMembers.find((cm) => cm.isOwner);
+
+    if (isOwner) {
+      assertCanPromote({
+        chat: existing.chat,
+        target: existing,
+        actorId: userId,
+        isModerator: ctx.user.isModerator,
+      });
+    } else if (status === ChatMemberStatus.Kicked) {
       // I guess owners can kick themselves out :/
       if (existing.chat.ownerId !== userId) {
         throw throwBadRequestError(`Cannot modify users for a chat you are not the owner of`);
@@ -469,10 +596,35 @@ export const modifyUserHandler = async ({
     if (
       status === ChatMemberStatus.Left &&
       existing.chat.owner.isModerator &&
-      existing.chat.chatMembers[0]?.status === ChatMemberStatus.Joined &&
+      ownerMember?.status === ChatMemberStatus.Joined &&
       !existing.user.isModerator
     ) {
       throw throwBadRequestError(`Cannot leave a moderator chat while they are still present`);
+    }
+
+    // Handing the group over is a two-row move, so it does not go through the
+    // single-column update below.
+    if (isOwner) {
+      const [, promoted] = await dbWrite.$transaction([
+        dbWrite.chatMember.updateMany({
+          where: { chatId: existing.chat.id, isOwner: true },
+          data: { isOwner: false },
+        }),
+        dbWrite.chatMember.update({ where: { id: chatMemberId }, data: { isOwner: true } }),
+        dbWrite.chat.update({
+          where: { id: existing.chat.id },
+          data: { ownerId: existing.userId },
+        }),
+      ]);
+
+      await createMessage({
+        chatId: existing.chat.id,
+        contentType: ChatMessageType.Markdown,
+        content: `${existing.user.username} is now the group admin`,
+        userId: -1,
+      });
+
+      return promoted;
     }
 
     // TODO if a moderator rejoins, auto-rejoin other users
@@ -495,6 +647,33 @@ export const modifyUserHandler = async ({
     });
 
     const statusChanged = !!status && status !== existing.status;
+
+    // An owner who leaves takes the only account that can administer the group
+    // with them, so the group is handed to the longest-joined member who stays.
+    let successor: { userId: number; username: string | null } | undefined;
+    if (
+      statusChanged &&
+      existing.chat.isGroup &&
+      existing.isOwner &&
+      (status === ChatMemberStatus.Left || status === ChatMemberStatus.Kicked)
+    ) {
+      const next = selectNextOwner(existing.chat.chatMembers, chatMemberId);
+      if (next) {
+        await dbWrite.$transaction([
+          dbWrite.chatMember.update({ where: { id: chatMemberId }, data: { isOwner: false } }),
+          dbWrite.chatMember.update({ where: { id: next.id }, data: { isOwner: true } }),
+          dbWrite.chat.update({
+            where: { id: existing.chat.id },
+            data: { ownerId: next.userId },
+          }),
+        ]);
+        const nextUser = await dbRead.user.findUnique({
+          where: { id: next.userId },
+          select: { username: true },
+        });
+        successor = { userId: next.userId, username: nextUser?.username ?? null };
+      }
+    }
 
     if (statusChanged && status !== ChatMemberStatus.Invited) {
       // Awaited to order the group change before the system message below, but
@@ -523,6 +702,15 @@ export const modifyUserHandler = async ({
           userId: -1,
         });
       }
+    }
+
+    if (successor) {
+      await createMessage({
+        chatId: existing.chat.id,
+        contentType: ChatMessageType.Markdown,
+        content: `${successor.username ?? `User ${successor.userId}`} is now the group admin`,
+        userId: -1,
+      });
     }
 
     return resp;

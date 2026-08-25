@@ -114,11 +114,19 @@ function labUrl(): string {
 
 // `sslNoVerify` turns SSL ON while skipping cert verification, which is what the cnpg cluster
 // needs and what a plain local docker Postgres rejects outright ("The server does not support SSL
-// connections"). Decide from the host so the same code works in both places.
-function isLocalHost(url: string): boolean {
+// connections").
+//
+// An explicit `sslmode` in the URL decides it; the hostname is only consulted when the URL says
+// nothing. Reading the hostname first is wrong because the cluster is reached in dev through a
+// local port-forward, so a cnpg tunnel and the docker-compose Postgres are both `localhost` and
+// the two need opposite answers.
+function wantsSsl(url: string): boolean {
   try {
-    const { hostname } = new URL(url);
-    return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+    const parsed = new URL(url);
+    const sslmode = parsed.searchParams.get('sslmode');
+    if (sslmode) return sslmode !== 'disable';
+    const { hostname } = parsed;
+    return !(hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1');
   } catch {
     return false;
   }
@@ -134,7 +142,7 @@ function createLabDb(): Kysely<LabDB> {
   const { dbWrite } = createKyselyClients<LabDB>({
     connectionString: url,
     replicaConnectionString: url,
-    sslNoVerify: !isLocalHost(url),
+    sslNoVerify: wantsSsl(url),
   });
   return dbWrite;
 }

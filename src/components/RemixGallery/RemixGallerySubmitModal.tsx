@@ -74,10 +74,14 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
     { enabled: !!currentUser && selected != null }
   );
 
-  const { images, isLoading, fetchNextPage, hasNextPage, isRefetching } = useQueryImages(
-    remixSubmitPickerFilters(currentUser?.id),
-    { enabled: !!currentUser }
-  );
+  const {
+    images,
+    isLoading,
+    fetchNextPage,
+    hasNextPage,
+    isRefetching,
+    isError: imagesFailed,
+  } = useQueryImages(remixSubmitPickerFilters(currentUser?.id), { enabled: !!currentUser });
 
   const price = visibility?.price ?? null;
 
@@ -381,9 +385,15 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
                 ))}
               </div>
 
-              {/* Scroll-to-load, which is what a populated grid should do. */}
+              {/* Scroll-to-load, which is what a populated grid should do.
+
+                  `!imagesFailed` is load-bearing: `hasNextPage` is derived from the last
+                  SUCCESSFUL page, so it stays true after a failed fetch and this loader
+                  would otherwise stay mounted in view and re-fire every ~500ms with no
+                  backoff. The feed proper swaps in SearchRetryBanner on error; this
+                  surface has no such affordance, so it must simply stop. */}
               {hasNextPage && (
-                <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching}>
+                <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching && !imagesFailed}>
                   <Group justify="center" py="md">
                     <Loader size="sm" />
                   </Group>

@@ -253,7 +253,7 @@ describe('(b) two fast filter clicks must not drop one', () => {
     renderWithProviders(<StatefulRouterHarness latencyMs={ROUTER_LATENCY_MS} />);
     await openFilters();
 
-    await userEvent.click(page.getByRole('button', { name: 'On-site' }));
+    await userEvent.click(page.getByRole('button', { name: 'Embedded' }));
     await userEvent.click(page.getByRole('button', { name: 'Generation' }));
 
     await vi.waitFor(() => {
@@ -262,7 +262,7 @@ describe('(b) two fast filter clicks must not drop one', () => {
     // …and the panel, which now renders FROM the url, shows both as pressed
     // rather than visibly reverting the first one.
     await expect
-      .element(page.getByRole('button', { name: 'On-site' }))
+      .element(page.getByRole('button', { name: 'Embedded' }))
       .toHaveAttribute('aria-pressed', 'true');
     await expect
       .element(page.getByRole('button', { name: 'Generation' }))

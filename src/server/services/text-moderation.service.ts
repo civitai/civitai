@@ -1,4 +1,5 @@
 import { createXGuardModerationRequest } from '~/server/services/orchestrator/orchestrator.service';
+import type { XGuardLabelOverride } from '~/server/services/orchestrator/orchestrator.service';
 import type { Priority } from '@civitai/client';
 
 // EntityModeration upsert is owned by `createXGuardModerationRequest` —
@@ -10,6 +11,7 @@ export async function submitTextModeration({
   entityId,
   content,
   labels,
+  labelOverrides,
   priority,
   wait,
   recordForReview = false,
@@ -19,6 +21,12 @@ export async function submitTextModeration({
   entityId: number;
   content: string;
   labels?: string[];
+  /**
+   * Per-label policy, threshold and action for this request only. Lets one
+   * surface scan under a policy tuned for it; the alternative is editing the
+   * global text registry, which every text consumer shares.
+   */
+  labelOverrides?: XGuardLabelOverride[];
   priority?: Priority;
   wait?: number;
   recordForReview?: boolean;
@@ -35,6 +43,7 @@ export async function submitTextModeration({
     entityId,
     content,
     labels,
+    labelOverrides,
     priority,
     wait,
     recordForReview,

@@ -74,6 +74,7 @@ vi.mock('~/shared/constants/buzz.constants', () => ({
 
 vi.mock('~/utils/string-helpers', () => ({
   hashifyObject: (o: any) => `hash:${JSON.stringify(o)}`,
+  hashify: (str: string) => str.length,
 }));
 
 // Import AFTER mocks are registered.

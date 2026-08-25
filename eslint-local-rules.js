@@ -140,6 +140,7 @@ const IO_CALL_NAMES = new Set([
   'bust', // bustMvCache etc.
   'bustUserSettings',
   'getUserSettings',
+  'bustCache',
   'bustMvCache',
   'invalidateManyImageExistence',
   // email

@@ -2,6 +2,7 @@ import { AspectRatio, Box, Skeleton } from '@mantine/core';
 import { useMemo } from 'react';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
 import { ImageCard } from '~/components/Cards/ImageCard';
+import { RemixFlyoutLayoutProvider } from '~/components/RemixGallery/remix-flyout-layout';
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { PostCard } from '~/components/Cards/PostCard';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
@@ -110,26 +111,28 @@ function FeaturedCollectionSection({ pick, isLoading, order }: SectionProps) {
         </div>
       ) : (
         <div className={classes.grid}>
-          <ImagesProvider
-            hideReactionCount={collection?.mode === CollectionMode.Contest}
-            images={type === 'image' ? (items as any) : undefined}
-          >
-            <ReactionSettingsProvider
-              settings={{
-                hideReactionCount: collection?.mode === CollectionMode.Contest,
-                hideReactions: collection ? contestCollectionReactionsHidden(collection) : false,
-              }}
+          <RemixFlyoutLayoutProvider layout="side">
+            <ImagesProvider
+              hideReactionCount={collection?.mode === CollectionMode.Contest}
+              images={type === 'image' ? (items as any) : undefined}
             >
-              {(items as any[]).map((item: any, idx: number) => (
-                <div key={item.id ?? idx} className="p-2">
-                  {type === 'model' && <ModelCard data={item} forceInView />}
-                  {type === 'image' && <ImageCard data={item} />}
-                  {type === 'post' && <PostCard data={item} />}
-                  {type === 'article' && <ArticleCard data={item} />}
-                </div>
-              ))}
-            </ReactionSettingsProvider>
-          </ImagesProvider>
+              <ReactionSettingsProvider
+                settings={{
+                  hideReactionCount: collection?.mode === CollectionMode.Contest,
+                  hideReactions: collection ? contestCollectionReactionsHidden(collection) : false,
+                }}
+              >
+                {(items as any[]).map((item: any, idx: number) => (
+                  <div key={item.id ?? idx} className="p-2">
+                    {type === 'model' && <ModelCard data={item} forceInView />}
+                    {type === 'image' && <ImageCard data={item} />}
+                    {type === 'post' && <PostCard data={item} />}
+                    {type === 'article' && <ArticleCard data={item} />}
+                  </div>
+                ))}
+              </ReactionSettingsProvider>
+            </ImagesProvider>
+          </RemixFlyoutLayoutProvider>
         </div>
       )}
     </div>

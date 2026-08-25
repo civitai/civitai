@@ -142,7 +142,15 @@ describe('the free notification reaches the creator, about the right image', () 
 
     // The queue is the OWNER's surface. Sending the placer there would show them
     // a list of other people's placements waiting on their own images.
-    expect(message.url).toBe('/images/74');
+    //
+    // With the reveal param, because placed stickers are hidden by default and
+    // the bare image is indistinguishable from one the sticker was removed from.
+    // 🔴 The literal, not `imageWithStickersUrl(74)`. This and its twin in
+    // `placement-resolved-notification.test.ts` are the only places the param's
+    // spelling is pinned to something other than itself — the helper, the
+    // reader and the store test all resolve through the same two constants, so
+    // "tidying" this into the helper unpins the whole chain.
+    expect(message.url).toBe('/images/74?stickers=1');
   });
 });
 
