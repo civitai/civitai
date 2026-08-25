@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+// Module scope, not a test body: from a body this transform is charged to one test's 60s
+// budget. See vitest.config.mts.
+import { purchaseCanBeRetriedFresh } from '~/components/Sticker/sticker.util';
 import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.store';
 
 /**
@@ -90,8 +93,6 @@ const trpcError = (httpStatus: number) => ({ data: { httpStatus } });
 
 describe('classifying a failed purchase', () => {
   it('releases on anything the server declined', async () => {
-    const { purchaseCanBeRetriedFresh } = await import('~/components/Sticker/sticker.util');
-
     // 400 covers every refusal in the purchase path now that they are TRPCErrors;
     // the others are here because the rule is the class, not the number.
     for (const status of [400, 401, 403, 404, 409, 422])
@@ -103,8 +104,6 @@ describe('classifying a failed purchase', () => {
    * which is exactly the case the old string matching could not see.
    */
   it('holds the key on anything that might have gone through', async () => {
-    const { purchaseCanBeRetriedFresh } = await import('~/components/Sticker/sticker.util');
-
     for (const error of [
       trpcError(500),
       trpcError(502),
