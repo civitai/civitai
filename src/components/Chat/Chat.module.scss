@@ -24,7 +24,9 @@
   --chat-panel-strong: light-dark(var(--mantine-color-white), var(--mantine-color-dark-7));
   --chat-selected: light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-5));
 
-  /* Body copy, and the quieter grade used for quoted text and inline labels. */
+  /* Body copy, and the quieter grade used for quoted text and inline labels.
+     --chat-text is also what the window inherits from, so a fixed palette is
+     not left reading the app's own light/dark text colour. */
   --chat-text: inherit;
   --chat-text-dim: light-dark(var(--mantine-color-gray-7), var(--mantine-color-dark-1));
 
@@ -57,6 +59,7 @@
   background-color: var(--chat-bg);
   background-image: var(--chat-bg-image);
   font-family: var(--chat-ui-font);
+  color: var(--chat-text);
 }
 
 /* The rail, the conversation header and the composer are the chrome around the
