@@ -76,9 +76,20 @@ type Stats = {
   idsSkipped: number;
   rescuedByPrimary: number;
   indexingAtStart: boolean | null;
+  passCovered: number;
+  resumedFrom: number | null;
+  cursorPersisted: number | null;
+  cursorDiscardReason: string | null;
+  emptyPageRetries: number;
 };
 
-/** A healthy, complete pass by default; each test overrides only what it means. */
+/**
+ * A healthy, complete pass by default; each test overrides only what it means.
+ *
+ * `passCovered` defaults to this run's `idsScanned`, which is what a pass that never
+ * resumed reports. A resumed run is the case where the two differ, and the tests that
+ * care about it set it explicitly.
+ */
 function stats(over: Partial<Stats> & { key: string }): Stats {
   return {
     indexName: `${over.key}_v1`,
@@ -92,6 +103,11 @@ function stats(over: Partial<Stats> & { key: string }): Stats {
     idsSkipped: 0,
     rescuedByPrimary: 0,
     indexingAtStart: false,
+    passCovered: over.idsScanned ?? 0,
+    resumedFrom: null,
+    cursorPersisted: null,
+    cursorDiscardReason: null,
+    emptyPageRetries: 0,
     ...over,
   };
 }
@@ -509,6 +525,129 @@ describe('search-index-cleanup: the requested scan batch', () => {
     const opts = cleanupAllIndexes.mock.calls[0][1] as { batch: number; apply: boolean };
     expect(opts.batch).toBe(10000);
     expect(opts.apply).toBe(true);
+  });
+
+  it('opts the nightly run into the shared cross-run cursor', async () => {
+    // The cron is the only caller that owns the cursor. Without this flag the scan
+    // restarts at the bottom every night and a pass it cannot finish in one run
+    // makes zero cumulative progress — the defect, unchanged, with a store sitting
+    // beside it doing nothing.
+    cleanupAllIndexes.mockResolvedValue([]);
+
+    await searchIndexCleanupJob.run({}).result;
+
+    const opts = cleanupAllIndexes.mock.calls[0][1] as { resumable?: boolean };
+    expect(opts.resumable).toBe(true);
+  });
+});
+
+describe('search-index-cleanup: a resumed run is judged on the PASS, not on the run', () => {
+  it('does not call a resumed run truncated for scanning only the remainder', async () => {
+    // A run that picked up at a stored cursor scans what is LEFT. Reading coverage
+    // off its own `idsScanned` files every such run as a 3%-coverage failure —
+    // which would make the resume mechanism look like a regression in the very log
+    // line built to detect truncation, and train people to ignore it.
+    // Pairwise-distinct: 30000 / 950000 / 1000000 / 41 / 17 share no value.
+    cleanupAllIndexes.mockResolvedValue([
+      stats({
+        key: 'users',
+        idsScanned: 30000,
+        passCovered: 950000,
+        staleFound: 41,
+        deleted: 17,
+        totalInIndex: 1000000,
+        stoppedEarly: false,
+        resumedFrom: 8123456,
+      }),
+    ]);
+
+    await searchIndexCleanupJob.run({}).result;
+
+    const payload = payloadFor('users');
+    expect(payload?.type).toBe('info');
+    expect(payload?.incomplete).toBe(false);
+    // `scanned` still reports THIS run; `covered` and `coverage` report the pass.
+    expect(payload?.scanned).toBe(30000);
+    expect(payload?.covered).toBe(950000);
+    expect(payload?.coverage).toBe(0.95);
+    expect(payload?.message).toBe(
+      'users: scanned 30000, stale 41, deleted 17, resumed from id 8123456'
+    );
+  });
+
+  it('still flags a pass whose CUMULATIVE coverage is implausibly low', async () => {
+    // The other side: resuming must not become a way to never be called truncated.
+    // Two runs into the pass and still at 15% of the index — the shape of the real
+    // incident — stays an error.
+    cleanupAllIndexes.mockResolvedValue([
+      stats({
+        key: 'users',
+        idsScanned: 900000,
+        passCovered: 1803688,
+        staleFound: 25,
+        deleted: 25,
+        totalInIndex: 11610246,
+        stoppedEarly: false,
+        resumedFrom: 903688,
+        cursorPersisted: 1903688,
+      }),
+    ]);
+
+    await searchIndexCleanupJob.run({}).result;
+
+    const payload = payloadFor('users');
+    expect(payload?.type).toBe('error');
+    expect(payload?.incomplete).toBe(true);
+    expect(payload?.message).toBe(
+      'users: scan reached the end of the index but covered only 1803688 of 11610246 document(s) — ' +
+        'scanned 900000, stale 25, deleted 25, resumed from id 903688, ' +
+        'cursor saved at id 1903688 for the next run'
+    );
+  });
+
+  it('says so when a stored cursor was discarded and the run silently restarted', async () => {
+    // A run that restarted from the bottom because the stored value could not be
+    // trusted is safe, but it is NOT the same event as a completed pass rolling
+    // over — and the two are indistinguishable in the scan itself.
+    cleanupAllIndexes.mockResolvedValue([
+      stats({
+        key: 'articles',
+        idsScanned: 640,
+        staleFound: 19,
+        deleted: 11,
+        totalInIndex: 700,
+        cursorDiscardReason: 'stale',
+      }),
+    ]);
+
+    await searchIndexCleanupJob.run({}).result;
+
+    const payload = payloadFor('articles');
+    expect(payload?.cursorDiscardReason).toBe('stale');
+    expect(payload?.message).toBe(
+      'articles: scanned 640, stale 19, deleted 11, ' +
+        'stored cursor discarded (stale) — restarted from id 0'
+    );
+  });
+
+  it('stays quiet about the ordinary case of nothing being stored', async () => {
+    // `missing` is what every run after a completed pass reports. A line for it
+    // would appear nightly on every index and mean nothing.
+    cleanupAllIndexes.mockResolvedValue([
+      stats({
+        key: 'tools',
+        idsScanned: 55,
+        staleFound: 4,
+        deleted: 2,
+        totalInIndex: 55,
+        cursorDiscardReason: 'missing',
+      }),
+    ]);
+
+    await searchIndexCleanupJob.run({}).result;
+
+    expect(payloadFor('tools')?.message).toBe('tools: scanned 55, stale 4, deleted 2');
+    expect(payloadFor('tools')?.cursorDiscardReason).toBe('missing');
   });
 });
 

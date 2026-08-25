@@ -1895,6 +1895,16 @@ export const REDIS_SYS_KEYS = {
     LEGACY_UPGRADE_LOCK: 'session:legacy-upgrade-lock',
   },
   JOB: 'job',
+  SEARCH_INDEX_CLEANUP: {
+    // Per-index keyset scan cursor for the nightly search-index cleanup, so a pass
+    // that could not walk a whole index in one run RESUMES next run instead of
+    // restarting from the bottom and re-walking the same prefix forever.
+    // Hash: field = cleanup index key ('models', 'users', …), value = JSON
+    // { lastId, startedAt, covered }. No TTL — staleness is bounded in code by
+    // `startedAt`, and an expiry would silently look identical to a completed pass.
+    // See src/server/meilisearch/cleanup-cursor.ts.
+    CURSORS: 'search-index-cleanup:cursors',
+  },
   METRIC_RECONCILIATION: {
     // Last completed nightly reaction-exactness result, so the hourly job can
     // re-publish its gauges after a pod roll. See metric-reconciliation-audit.ts.

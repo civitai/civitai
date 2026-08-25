@@ -47,8 +47,12 @@ import type * as MeiliClient from '~/server/meilisearch/client';
 // mock it itself — a per-file mock object freezes that file's shape for every
 // later file that shares the worker. See docs/testing/shared-module-mocks.md.
 import { dbMock } from '~/__tests__/mocks/db.mock';
+// `~/server/redis/client` is a CANONICAL shared-module mock too — same rule, same reason.
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { REDIS_SYS_KEYS } from '~/server/redis/client';
 
 import { CLEANUP_INDEXES, cleanupIndex } from '~/server/meilisearch/cleanup';
+import { MAX_CURSOR_AGE_MS, readScanCursor } from '~/server/meilisearch/cleanup-cursor';
 
 // The two eligibility lookups the code makes, and they are DIFFERENT questions:
 //   dbRead  — the cheap filter run over every scanned page.
@@ -89,8 +93,14 @@ function makeFakeIndex(opts: {
   frozenPage?: number[];
   isIndexing?: boolean;
   onSearch?: (call: number) => void;
+  /** Override the document count the engine reports, when it must differ from `docs`. */
+  totalOverride?: number;
 }) {
   const searchCalls: { filter: string; limit: number }[] = [];
+  // Every id the engine actually handed back, page by page. The cumulative-progress
+  // test asserts on the UNION of these across two runs — a per-run count cannot tell
+  // "run 2 covered nine documents" from "run 2 re-covered the same three, twice".
+  const served: number[][] = [];
   const deleted: number[][] = [];
   // How many searches had been issued at the moment each delete was made. This
   // is what distinguishes "deleted while scanning" from "deleted after the
@@ -101,7 +111,7 @@ function makeFakeIndex(opts: {
 
   const index = {
     getStats: async () => ({
-      numberOfDocuments: opts.docs.length,
+      numberOfDocuments: opts.totalOverride ?? opts.docs.length,
       isIndexing: opts.isIndexing ?? false,
     }),
     getSettings: async () => ({
@@ -115,8 +125,14 @@ function makeFakeIndex(opts: {
       calls += 1;
       searchCalls.push({ filter: params.filter, limit: params.limit });
       opts.onSearch?.(calls);
-      if (opts.frozenPage) return { hits: rows(opts.frozenPage) };
-      if (opts.emptyOnCalls?.includes(calls)) return { hits: [] as { id: number }[] };
+      if (opts.frozenPage) {
+        served.push([...opts.frozenPage]);
+        return { hits: rows(opts.frozenPage) };
+      }
+      if (opts.emptyOnCalls?.includes(calls)) {
+        served.push([]);
+        return { hits: [] as { id: number }[] };
+      }
       const match = /^id > (-?\d+)$/.exec(params.filter);
       if (!match) throw new Error(`unexpected filter: ${params.filter}`);
       const cursor = Number(match[1]);
@@ -125,7 +141,9 @@ function makeFakeIndex(opts: {
         opts.maxTotalHits ?? Number.POSITIVE_INFINITY,
         opts.pageCap ?? Number.POSITIVE_INFINITY
       );
-      return { hits: rows(opts.docs.filter((d) => d > cursor).slice(0, cap)) };
+      const hits = opts.docs.filter((d) => d > cursor).slice(0, cap);
+      served.push([...hits]);
+      return { hits: rows(hits) };
     },
     deleteDocuments: async (ids: number[]) => {
       deleted.push([...ids]);
@@ -134,7 +152,7 @@ function makeFakeIndex(opts: {
     },
   };
 
-  return { index, searchCalls, deleted, deletedAfterSearches };
+  return { index, searchCalls, deleted, deletedAfterSearches, served };
 }
 
 function setFakeIndex(fake: { index: unknown }) {
@@ -158,7 +176,63 @@ function makeJobContext() {
 const modelsCfg = CLEANUP_INDEXES.find((c) => c.key === 'models');
 if (!modelsCfg) throw new Error('models cleanup config missing');
 
+// ─── Cursor store ───────────────────────────────────────────────────────────
+
+/**
+ * A real in-memory hash behind the canonical `sysRedis` node, so the cursor tests run
+ * the PRODUCTION store module — its JSON encoding, its validation and its staleness
+ * bound — instead of a hand-written stand-in that could agree with a wrong
+ * implementation. The seam replaced is the redis command, which is the lowest one
+ * available; everything above it is the code under test.
+ */
+const cursorHash = new Map<string, string>();
+const CURSORS_KEY = REDIS_SYS_KEYS.SEARCH_INDEX_CLEANUP.CURSORS;
+
+function installCursorStore() {
+  cursorHash.clear();
+  // Call history pools across a whole file (the canonical mocks reset per FILE, not per
+  // test), so the "never touched the store" case would otherwise read every earlier
+  // test's calls as its own.
+  redisMock.sysRedis.hGet.mockClear();
+  redisMock.sysRedis.hSet.mockClear();
+  redisMock.sysRedis.hDel.mockClear();
+  redisMock.sysRedis.hGet.mockImplementation(async (key: string, field: string) =>
+    key === CURSORS_KEY ? cursorHash.get(field) ?? null : null
+  );
+  redisMock.sysRedis.hSet.mockImplementation(async (key: string, field: string, value: string) => {
+    if (key === CURSORS_KEY) cursorHash.set(field, String(value));
+    return 1;
+  });
+  redisMock.sysRedis.hDel.mockImplementation(async (key: string, field: string) => {
+    if (key !== CURSORS_KEY) return 0;
+    return cursorHash.delete(field) ? 1 : 0;
+  });
+}
+
+/** Write a stored cursor exactly as production would, without going through a scan. */
+function seedCursor(key: string, cursor: { lastId: number; startedAt: number; covered: number }) {
+  cursorHash.set(key, JSON.stringify(cursor));
+}
+
+function storedCursor(key: string) {
+  const raw = cursorHash.get(key);
+  return raw === undefined ? undefined : (JSON.parse(raw) as Record<string, number>);
+}
+
+/**
+ * Records the delays the scan ASKS for and resolves immediately.
+ *
+ * The escalation is the property under test and it is 30 s of real waiting — a suite
+ * that actually spent it could not run, and one that shrank the constants would be
+ * asserting against its own fixture rather than the shipped schedule.
+ */
+function makeDelayRecorder() {
+  const delays: number[] = [];
+  return { delays, delay: async (ms: number) => void delays.push(ms) };
+}
+
 beforeEach(() => {
+  installCursorStore();
   // MUTATE the canonical nodes, never replace them: consumer modules captured
   // these exact function identities when they were first evaluated and will not
   // re-read them. `mockClear` drops call history but keeps the implementation,
@@ -505,5 +579,535 @@ describe('cleanupIndex: deletions are flushed incrementally', () => {
     expect(batchesSeen).toBe(2);
     expect(fake.deleted).toEqual([[1, 2]]);
     expect(stats.deleted).toBe(2);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Cross-run cursor persistence
+//
+// The defect: the scan always restarted at the bottom of the index. A pass that
+// cannot walk a multi-million-document index inside one nightly run therefore
+// re-walked the same already-clean prefix every night and could never reach the
+// region past its stopping point — measured in production, the boundary of the
+// un-scanned region did not move by a single id across two consecutive runs.
+//
+// 🔴 No page size fixes this. A from-scratch scan that cannot finish in one run
+// makes ZERO cumulative progress by construction, whatever the page size.
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('cleanupIndex: a truncated pass RESUMES rather than restarting', () => {
+  it('starts the next page from the stored cursor, not from the bottom of the index', async () => {
+    // Stored: lastId 6, covered 5. Deliberately DIFFERENT numbers — an
+    // implementation that seeded the carried coverage from the cursor id (or vice
+    // versa) would be invisible if they matched. `covered` is legitimately lower
+    // than `lastId` here: ids are not dense, and documents are deleted from under
+    // the cursor while a pass runs.
+    seedCursor('models', { lastId: 6, startedAt: Date.now() - 60_000, covered: 5 });
+    // The engine reports 8 documents against ten real ones: `totalInIndex` is a
+    // pre-scan snapshot of an index other jobs delete from continuously, and one
+    // index has legitimately reported coverage slightly ABOVE 1 for that reason.
+    // Every number in this fixture is distinct from every other.
+    const fake = makeFakeIndex({ docs: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], totalOverride: 8 });
+    setFakeIndex(fake);
+    const rec = makeDelayRecorder();
+
+    const stats = await cleanupIndex(modelsCfg, {
+      apply: false,
+      batch: 3,
+      resumable: true,
+      delay: rec.delay,
+    });
+
+    // 🔴 The first request is `id > 6`, NOT `id > -1` (the un-fixed behaviour),
+    // `id > 7` (resume-past-the-cursor, which skips one document every run,
+    // permanently) or `id > 5` (resume-before-it, which re-walks one document).
+    expect(fake.searchCalls.map((c) => c.filter)).toEqual([
+      'id > 6',
+      'id > 9',
+      'id > 10',
+      'id > 10',
+    ]);
+    expect(stats.resumedFrom).toBe(6);
+    expect(stats.cursorDiscardReason).toBe(null);
+    // Four ids scanned this run (7,8,9,10); the pass has now covered 5 + 4 = 9.
+    // Every number here is distinct from every other, and from the index total.
+    expect(stats.idsScanned).toBe(4);
+    expect(stats.passCovered).toBe(9);
+    expect(stats.totalInIndex).toBe(8);
+    expect(stats.stoppedEarly).toBe(false);
+  });
+
+  it('RESETS the cursor when the pass genuinely reaches the end, so the next run starts over', async () => {
+    // Without the reset the cursor sits at the top of the index forever and the
+    // low-id region — where a document that was eligible when indexed and has
+    // since gone stale actually lives — is never re-examined again.
+    seedCursor('models', { lastId: 4, startedAt: Date.now() - 60_000, covered: 4 });
+    const first = makeFakeIndex({ docs: [1, 2, 3, 4, 5, 6, 7, 8] });
+    setFakeIndex(first);
+    const rec = makeDelayRecorder();
+
+    const one = await cleanupIndex(modelsCfg, {
+      apply: false,
+      batch: 8,
+      resumable: true,
+      delay: rec.delay,
+    });
+
+    expect(one.resumedFrom).toBe(4);
+    expect(one.cursorPersisted).toBe(null);
+    expect(storedCursor('models')).toBeUndefined();
+
+    // Stated behaviourally, not just as an empty map: the very next run walks the
+    // whole index from the bottom again.
+    const second = makeFakeIndex({ docs: [1, 2, 3, 4, 5, 6, 7, 8] });
+    setFakeIndex(second);
+    const two = await cleanupIndex(modelsCfg, {
+      apply: false,
+      batch: 8,
+      resumable: true,
+      delay: rec.delay,
+    });
+
+    expect(two.resumedFrom).toBe(null);
+    expect(two.cursorDiscardReason).toBe('missing');
+    expect(second.searchCalls[0].filter).toBe('id > -1');
+    expect(two.idsScanned).toBe(8);
+  });
+
+  it('does NOT reset the cursor when a confirmed-empty page arrives at low coverage', async () => {
+    // The trap this exists for: an empty page is the exact signal the engine
+    // produces transiently under write load, so treating it as "reached the end"
+    // and clearing the cursor would carry the original defect straight into the
+    // new mechanism — every truncated pass would clear and restart at the bottom,
+    // and cumulative progress would still be zero, now with a cursor bolted on.
+    //
+    // 24 documents reported by the engine; the scan is fed one page then nothing.
+    const fake = makeFakeIndex({
+      docs: [2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24],
+      totalOverride: 24,
+      emptyOnCalls: [2, 3, 4, 5, 6, 7],
+    });
+    setFakeIndex(fake);
+    const rec = makeDelayRecorder();
+
+    const stats = await cleanupIndex(modelsCfg, {
+      apply: false,
+      batch: 3,
+      resumable: true,
+      delay: rec.delay,
+    });
+
+    // The loop DID exit through its terminator — that is not in dispute and the
+    // reporting is unchanged.
+    expect(stats.stoppedEarly).toBe(false);
+    // But 3 of 24 is not a pass that reached the end, so the cursor is kept.
+    expect(stats.passCovered).toBe(3);
+    expect(stats.cursorPersisted).toBe(6);
+    expect(storedCursor('models')).toMatchObject({ lastId: 6, covered: 3 });
+  });
+
+  it('persists where it got to when the scan STOPS EARLY', async () => {
+    // A run killed by the job lock, a cancellation or an unrecoverable engine
+    // error is the commonest truncation of all, and it must not throw its
+    // position away either.
+    const fake = makeFakeIndex({ docs: [1, 2, 3, 4, 5, 6, 7, 8, 9] });
+    setFakeIndex(fake);
+    const jobContext = makeJobContext();
+    const rec = makeDelayRecorder();
+    let batchesSeen = 0;
+
+    const stats = await cleanupIndex(modelsCfg, {
+      apply: false,
+      batch: 3,
+      resumable: true,
+      delay: rec.delay,
+      jobContext: jobContext as never,
+      onBatch: () => {
+        batchesSeen += 1;
+        if (batchesSeen === 2) jobContext.status = 'canceled';
+      },
+    });
+
+    expect(stats.stoppedEarly).toBe(true);
+    expect(stats.idsScanned).toBe(6);
+    expect(stats.cursorPersisted).toBe(6);
+    expect(storedCursor('models')).toMatchObject({ lastId: 6, covered: 6 });
+  });
+
+  it('counts ids the cursor walked past WITHOUT judging toward the pass coverage', async () => {
+    // A batch whose eligibility lookup failed is skipped, but the cursor advances
+    // past it — so those ids were covered by the scan's POSITION even though they
+    // were not examined. Leaving them out understates coverage, which then refutes
+    // completion on a pass that really did reach the end, and the cursor is held
+    // when it should have rolled over.
+    //
+    // Pairwise-distinct: 6 / 4 / 9 / 3 / 16 / 18 share no value.
+    seedCursor('models', { lastId: 6, startedAt: Date.now() - 60_000, covered: 4 });
+    const fake = makeFakeIndex({
+      docs: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18],
+    });
+    setFakeIndex(fake);
+    const rec = makeDelayRecorder();
+    // Three consecutive rejections exhaust the retry envelope for the first page.
+    readQuery
+      .mockRejectedValueOnce(new Error('replica blip'))
+      .mockRejectedValueOnce(new Error('replica blip'))
+      .mockRejectedValueOnce(new Error('replica blip'))
+      .mockResolvedValue([]);
+
+    const stats = await cleanupIndex(modelsCfg, {
+      apply: false,
+      batch: 3,
+      resumable: true,
+      delay: rec.delay,
+    });
+
+    expect(stats.idsScanned).toBe(9);
+    expect(stats.idsSkipped).toBe(3);
+    expect(stats.passCovered).toBe(16);
+    expect(stats.stoppedEarly).toBe(false);
+    // 16 of 18 is a pass that reached the end, so it rolls over.
+    expect(storedCursor('models')).toBeUndefined();
+  });
+
+  it('makes CUMULATIVE progress: two truncated runs together cover the whole index', async () => {
+    // 🔴 The claim the whole change exists for, and it cannot be made by either run
+    // on its own. Asserted on the UNION of the ids the engine actually served, not
+    // on per-run counts: a run that re-walked the same prefix produces identical
+    // counts and a very different union.
+    const docs = [2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24];
+    const rec = makeDelayRecorder();
+
+    // Run 1: one page, then the engine answers empty for the whole confirmation
+    // schedule. 3 of 12 covered, so the pass is not credited and the cursor is kept.
+    const runOne = makeFakeIndex({ docs, emptyOnCalls: [2, 3, 4, 5, 6, 7] });
+    setFakeIndex(runOne);
+    const one = await cleanupIndex(modelsCfg, {
+      apply: false,
+      batch: 3,
+      resumable: true,
+      delay: rec.delay,
+    });
+
+    expect(one.idsScanned).toBe(3);
+    expect(one.cursorPersisted).toBe(6);
+
+    // Run 2: same index, engine healthy. It must pick up at 6, not at the bottom.
+    const runTwo = makeFakeIndex({ docs });
+    setFakeIndex(runTwo);
+    const two = await cleanupIndex(modelsCfg, {
+      apply: false,
+      batch: 3,
+      resumable: true,
+      delay: rec.delay,
+    });
+
+    expect(two.resumedFrom).toBe(6);
+    expect(runTwo.searchCalls[0].filter).toBe('id > 6');
+    expect(two.idsScanned).toBe(9);
+    // The pass total carries run 1's 3 forward, which is what lets run 2 be judged
+    // complete despite scanning only nine of the twelve documents itself.
+    expect(two.passCovered).toBe(12);
+    expect(two.cursorPersisted).toBe(null);
+    expect(storedCursor('models')).toBeUndefined();
+
+    const servedOne = runOne.served.flat();
+    const servedTwo = runTwo.served.flat();
+    // Union: every document, exactly once across the two runs.
+    expect([...servedOne, ...servedTwo].sort((a, b) => a - b)).toEqual(docs);
+    // Stated separately and positively: run 2 re-walked nothing run 1 had covered.
+    for (const id of servedOne) expect(servedTwo).not.toContain(id);
+  });
+});
+
+describe('cleanupIndex: a stored cursor cannot be carried indefinitely', () => {
+  it('pins the bound at seven days', async () => {
+    // The boundary cases below are written against the SYMBOL, which is what makes
+    // them independent of the value — and therefore blind to the value changing.
+    // The choice is load-bearing and argued from the job's cadence: nightly, so
+    // seven consecutive resumes, which at the rate the largest index was observed
+    // to scan is enough for one full sweep. Widening it silently is how an index
+    // drifts into never re-checking early ids.
+    expect(MAX_CURSOR_AGE_MS).toBe(7 * 24 * 60 * 60 * 1000);
+  });
+
+  it('resumes from a cursor that is just inside the staleness bound', async () => {
+    // Boundary, lower side. Paired with the case below so the bound is observable
+    // in BOTH directions — either one alone is satisfied by an implementation that
+    // ignores the age entirely, or by one that ignores the cursor entirely.
+    seedCursor('models', {
+      lastId: 6,
+      startedAt: Date.now() - MAX_CURSOR_AGE_MS,
+      covered: 5,
+    });
+    const fake = makeFakeIndex({ docs: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] });
+    setFakeIndex(fake);
+    const rec = makeDelayRecorder();
+
+    const stats = await cleanupIndex(modelsCfg, {
+      apply: false,
+      batch: 10,
+      resumable: true,
+      delay: rec.delay,
+    });
+
+    expect(stats.resumedFrom).toBe(6);
+    expect(fake.searchCalls[0].filter).toBe('id > 6');
+    // The pass covered 5 + 4 = 9 of 10, so it is credited and rolls over. Pins the
+    // completion threshold from ABOVE — raising it toward 1 holds a cursor on a pass
+    // that plainly finished, and the un-scanned tail of a shrinking index would then
+    // wedge the rollover permanently.
+    expect(stats.passCovered).toBe(9);
+    expect(storedCursor('models')).toBeUndefined();
+  });
+
+  it('forces a from-the-bottom pass once a cursor is older than the bound', async () => {
+    // Boundary, upper side: one millisecond past. Without this an index that
+    // truncates every single night would carry one cursor forever and drift into
+    // never re-checking early ids at all.
+    seedCursor('models', {
+      lastId: 6,
+      startedAt: Date.now() - (MAX_CURSOR_AGE_MS + 1),
+      covered: 5,
+    });
+    const fake = makeFakeIndex({ docs: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] });
+    setFakeIndex(fake);
+    const rec = makeDelayRecorder();
+
+    const stats = await cleanupIndex(modelsCfg, {
+      apply: false,
+      batch: 10,
+      resumable: true,
+      delay: rec.delay,
+    });
+
+    expect(stats.resumedFrom).toBe(null);
+    expect(stats.cursorDiscardReason).toBe('stale');
+    expect(fake.searchCalls[0].filter).toBe('id > -1');
+    expect(stats.idsScanned).toBe(10);
+  });
+
+  it('treats a FUTURE-dated cursor as stale rather than as one that can never expire', async () => {
+    // Clock skew (or a hand-edited value) makes the age negative, which passes an
+    // upper-bound test forever — the one way the bound could be defeated silently.
+    seedCursor('models', { lastId: 6, startedAt: Date.now() + 60_000, covered: 5 });
+
+    const { cursor, reason } = await readScanCursor('models');
+
+    expect(cursor).toBe(null);
+    expect(reason).toBe('stale');
+  });
+});
+
+describe('cleanupIndex: an unusable stored cursor fails SAFE', () => {
+  // 🔴 The direction matters more than the detection. Restarting re-examines
+  // documents that were already examined, which costs time. Skipping ahead on a
+  // value nobody could validate leaves a region of the index unexamined with
+  // nothing to indicate it — and this job bulk-deletes.
+
+  const unusable: [string, string, string][] = [
+    ['is not JSON at all', 'not json', 'unparseable'],
+    ['is JSON but not an object', '42', 'invalid'],
+    ['is null', 'null', 'invalid'],
+    ['is missing startedAt', '{"lastId":6,"covered":5}', 'invalid'],
+    ['carries a non-numeric lastId', '{"lastId":"6","startedAt":1,"covered":5}', 'invalid'],
+    ['carries a NaN startedAt', '{"lastId":6,"startedAt":null,"covered":5}', 'invalid'],
+    ['carries a negative lastId', '{"lastId":-3,"startedAt":1,"covered":5}', 'invalid'],
+  ];
+
+  for (const [label, raw, reason] of unusable) {
+    it(`starts from the beginning when the stored value ${label}`, async () => {
+      cursorHash.set('models', raw);
+      const fake = makeFakeIndex({ docs: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] });
+      setFakeIndex(fake);
+      const rec = makeDelayRecorder();
+
+      const stats = await cleanupIndex(modelsCfg, {
+        apply: false,
+        batch: 10,
+        resumable: true,
+        delay: rec.delay,
+      });
+
+      expect(stats.resumedFrom).toBe(null);
+      expect(stats.cursorDiscardReason).toBe(reason);
+      expect(fake.searchCalls[0].filter).toBe('id > -1');
+      // The whole index, not a suffix of it.
+      expect(stats.idsScanned).toBe(10);
+    });
+  }
+
+  it('starts from the beginning when the store itself cannot be read', async () => {
+    redisMock.sysRedis.hGet.mockRejectedValue(new Error('sysRedis unavailable'));
+    const fake = makeFakeIndex({ docs: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] });
+    setFakeIndex(fake);
+    const rec = makeDelayRecorder();
+
+    const stats = await cleanupIndex(modelsCfg, {
+      apply: false,
+      batch: 10,
+      resumable: true,
+      delay: rec.delay,
+    });
+
+    expect(stats.resumedFrom).toBe(null);
+    expect(stats.cursorDiscardReason).toBe('unreadable');
+    expect(fake.searchCalls[0].filter).toBe('id > -1');
+    expect(stats.idsScanned).toBe(10);
+  });
+
+  it('completes the scan even when the cursor cannot be written back', async () => {
+    redisMock.sysRedis.hSet.mockRejectedValue(new Error('sysRedis unavailable'));
+    const fake = makeFakeIndex({
+      docs: [2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24],
+      emptyOnCalls: [2, 3, 4, 5, 6, 7],
+    });
+    setFakeIndex(fake);
+    const rec = makeDelayRecorder();
+
+    const stats = await cleanupIndex(modelsCfg, {
+      apply: false,
+      batch: 3,
+      resumable: true,
+      delay: rec.delay,
+    });
+
+    // The scan's own results are intact; only the hand-off to the next run is lost,
+    // and it says so rather than claiming a cursor was saved.
+    expect(stats.idsScanned).toBe(3);
+    expect(stats.staleFound).toBe(3);
+    expect(stats.cursorPersisted).toBe(null);
+  });
+
+  it('INVARIANT GUARD (green on unfixed code): a scan without `resumable` never touches the store', async () => {
+    // Not a regression test — the un-fixed code had no store at all. It pins the
+    // opt-in, so a dry run or the one-off script cannot move the position the
+    // nightly job resumes from.
+    seedCursor('models', { lastId: 6, startedAt: Date.now(), covered: 5 });
+    const fake = makeFakeIndex({ docs: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] });
+    setFakeIndex(fake);
+    const rec = makeDelayRecorder();
+
+    const stats = await cleanupIndex(modelsCfg, { apply: false, batch: 10, delay: rec.delay });
+
+    expect(fake.searchCalls[0].filter).toBe('id > -1');
+    expect(stats.resumedFrom).toBe(null);
+    expect(stats.cursorPersisted).toBe(null);
+    expect(redisMock.sysRedis.hGet).not.toHaveBeenCalled();
+    expect(redisMock.sysRedis.hSet).not.toHaveBeenCalled();
+    expect(redisMock.sysRedis.hDel).not.toHaveBeenCalled();
+    // And the seeded cursor is exactly as it was.
+    expect(storedCursor('models')).toMatchObject({ lastId: 6, covered: 5 });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// An empty page is evidence, weighed against coverage — not a terminator
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('cleanupIndex: an empty page is re-asked harder when coverage says it cannot be the end', () => {
+  it('escalates the backoff and carries on when documents reappear', async () => {
+    // 20 documents, 5 per page. The engine answers empty at calls 2, 3 and 4 —
+    // three consecutive empties at 25% coverage, which one 500 ms retry cannot
+    // clear. The write batch the real engine was applying took far longer than that.
+    const fake = makeFakeIndex({
+      docs: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
+      emptyOnCalls: [2, 3, 4],
+    });
+    setFakeIndex(fake);
+    const rec = makeDelayRecorder();
+
+    const stats = await cleanupIndex(modelsCfg, {
+      apply: false,
+      batch: 5,
+      resumable: true,
+      delay: rec.delay,
+    });
+
+    // Every document, not the five the first page happened to carry.
+    expect(stats.idsScanned).toBe(20);
+    expect(stats.stoppedEarly).toBe(false);
+    expect(stats.passCovered).toBe(20);
+    // 🔴 The schedule itself, in order: the delays ESCALATE. A constant-delay
+    // implementation retries just as many times and produces [1000,1000,1000,…].
+    // The trailing 500 is the cheap single confirm of the genuine end, taken
+    // because coverage by then agrees the scan is there.
+    expect(rec.delays).toEqual([1000, 2000, 4000, 500]);
+    expect(stats.emptyPageRetries).toBe(4);
+    // The pass completed, so nothing is carried into the next run.
+    expect(storedCursor('models')).toBeUndefined();
+  });
+
+  it('gives up after a BOUNDED number of escalating re-asks rather than looping', async () => {
+    // The job holds a 2 h lock; the confirmation must not become an unbounded
+    // retry loop inside it. Five attempts, 30 s of waiting for one empty page.
+    const fake = makeFakeIndex({
+      docs: [2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24],
+      emptyOnCalls: [2, 3, 4, 5, 6, 7, 8, 9, 10],
+    });
+    setFakeIndex(fake);
+    const rec = makeDelayRecorder();
+
+    const stats = await cleanupIndex(modelsCfg, {
+      apply: false,
+      batch: 3,
+      resumable: true,
+      delay: rec.delay,
+    });
+
+    expect(rec.delays).toEqual([1000, 2000, 4000, 8000, 15000]);
+    expect(rec.delays.reduce((a, b) => a + b, 0)).toBe(30_000);
+    expect(stats.emptyPageRetries).toBe(5);
+    // Six searches after page 1: the empty one, then five confirmations.
+    expect(fake.searchCalls.length).toBe(7);
+    expect(stats.cursorPersisted).toBe(6);
+  });
+
+  it('INVARIANT GUARD (green on unfixed code): a genuinely exhausted index still ends on one cheap confirm', async () => {
+    // Not a regression test — the un-fixed code already confirmed once at 500 ms.
+    // It pins the other side of the trade: escalation is conditional on coverage,
+    // so the common case (the scan really is at the end) pays nothing extra and a
+    // seven-index run is not lengthened by 30 s per index for no reason.
+    const fake = makeFakeIndex({ docs: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] });
+    setFakeIndex(fake);
+    const rec = makeDelayRecorder();
+
+    const stats = await cleanupIndex(modelsCfg, {
+      apply: false,
+      batch: 10,
+      resumable: true,
+      delay: rec.delay,
+    });
+
+    expect(rec.delays).toEqual([500]);
+    expect(stats.emptyPageRetries).toBe(1);
+    expect(fake.searchCalls.map((c) => c.filter)).toEqual(['id > -1', 'id > 10', 'id > 10']);
+    expect(stats.stoppedEarly).toBe(false);
+  });
+
+  it('still confirms once when the index total is unknown', async () => {
+    // `getStats` failing leaves coverage unknowable. The scan must neither invent a
+    // verdict nor spend 30 s per empty page on every index it cannot measure.
+    const fake = makeFakeIndex({ docs: [1, 2, 3, 4, 5, 6] });
+    (fake.index as { getStats: () => Promise<unknown> }).getStats = async () => {
+      throw new Error('stats unavailable');
+    };
+    setFakeIndex(fake);
+    const rec = makeDelayRecorder();
+
+    const stats = await cleanupIndex(modelsCfg, {
+      apply: false,
+      batch: 6,
+      resumable: true,
+      delay: rec.delay,
+    });
+
+    expect(stats.totalInIndex).toBe(null);
+    expect(rec.delays).toEqual([500]);
+    // Coverage refutes nothing when there is nothing to compare against, so the
+    // pass is credited and the cursor is cleared rather than held on a judgement
+    // that could not be made.
+    expect(stats.cursorPersisted).toBe(null);
+    expect(storedCursor('models')).toBeUndefined();
   });
 });

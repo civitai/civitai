@@ -43,6 +43,12 @@ export const searchIndexCleanupJob = createJob(
     const results = await cleanupAllIndexes(null, {
       apply: true,
       batch: SCAN_BATCH,
+      // 🔴 The cron is the ONLY caller that owns the shared cursor. A pass that cannot
+      // walk an index inside one run resumes here next run instead of restarting at the
+      // bottom and re-walking the same clean prefix forever. Dry runs and the one-off
+      // script leave it alone, so an ad-hoc invocation cannot move the nightly job's
+      // position.
+      resumable: true,
       jobContext,
       onError: ({ key, offset, error }) => {
         // `offset === -1` is the sentinel for preflight or delete-phase
@@ -77,8 +83,16 @@ export const searchIndexCleanupJob = createJob(
       //    lookup failed. The cursor advanced past them, so this can be
       //    non-zero on a scan that DID reach the end.
       //  - lowCoverage: the loop finished, but covered implausibly little.
-      const coverage = r.totalInIndex && r.totalInIndex > 0 ? r.idsScanned / r.totalInIndex : null;
-      const shortfall = r.totalInIndex === null ? null : r.totalInIndex - r.idsScanned;
+      //
+      // 🔴 Coverage is measured over the PASS, not the run. A run that resumed from a
+      // stored cursor scans only the remainder of the index, so its own `idsScanned` is
+      // legitimately a fraction of `totalInIndex` — reading coverage off it would file
+      // every resumed run as truncated, which is precisely the signal this reporting
+      // exists to make trustworthy. `passCovered` carries the ids earlier runs of the
+      // same pass already walked past.
+      const covered = r.passCovered;
+      const coverage = r.totalInIndex && r.totalInIndex > 0 ? covered / r.totalInIndex : null;
+      const shortfall = r.totalInIndex === null ? null : r.totalInIndex - covered;
       const lowCoverage =
         !r.stoppedEarly &&
         shortfall !== null &&
@@ -106,7 +120,7 @@ export const searchIndexCleanupJob = createJob(
         );
       } else if (lowCoverage) {
         problems.push(
-          `scan reached the end of the index but covered only ${r.idsScanned} of ` +
+          `scan reached the end of the index but covered only ${covered} of ` +
             `${r.totalInIndex} document(s)`
         );
       }
@@ -115,17 +129,37 @@ export const searchIndexCleanupJob = createJob(
       }
       if (r.errors > 0) problems.push(`${r.errors} error(s)`);
 
+      // Where this run started and where it left the cursor. Without them a resumed
+      // run and a from-the-bottom run produce identical-looking lines, and the defect
+      // this whole mechanism fixes — a cursor that never moves between nights — is
+      // only visible by comparing them across runs.
+      const cursorNotes: string[] = [];
+      if (r.resumedFrom !== null) cursorNotes.push(`resumed from id ${r.resumedFrom}`);
+      if (r.cursorPersisted !== null)
+        cursorNotes.push(`cursor saved at id ${r.cursorPersisted} for the next run`);
+      // A discarded cursor means the run silently restarted from the bottom. `missing`
+      // is the normal aftermath of a completed pass and is not worth a line.
+      if (r.cursorDiscardReason !== null && r.cursorDiscardReason !== 'missing')
+        cursorNotes.push(
+          `stored cursor discarded (${r.cursorDiscardReason}) — restarted from id 0`
+        );
+
+      const tail =
+        `scanned ${r.idsScanned}, stale ${r.staleFound}, deleted ${r.deleted}` +
+        (cursorNotes.length > 0 ? `, ${cursorNotes.join(', ')}` : '');
+
       logToAxiom({
         type: level,
         name: 'search-index-cleanup',
         message:
-          problems.length > 0
-            ? `${r.key}: ${problems.join('; ')} — scanned ${r.idsScanned}, stale ${
-                r.staleFound
-              }, deleted ${r.deleted}`
-            : `${r.key}: scanned ${r.idsScanned}, stale ${r.staleFound}, deleted ${r.deleted}`,
+          problems.length > 0 ? `${r.key}: ${problems.join('; ')} — ${tail}` : `${r.key}: ${tail}`,
         key: r.key,
         scanned: r.idsScanned,
+        covered,
+        resumedFrom: r.resumedFrom,
+        cursorPersisted: r.cursorPersisted,
+        cursorDiscardReason: r.cursorDiscardReason,
+        emptyPageRetries: r.emptyPageRetries,
         stale: r.staleFound,
         deleted: r.deleted,
         errors: r.errors,

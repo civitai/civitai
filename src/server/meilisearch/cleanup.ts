@@ -10,6 +10,12 @@ import {
   USERS_SEARCH_INDEX,
 } from '~/server/common/constants';
 import { searchClient } from '~/server/meilisearch/client';
+import {
+  clearScanCursor,
+  readScanCursor,
+  writeScanCursor,
+  type CursorDiscardReason,
+} from '~/server/meilisearch/cleanup-cursor';
 import { userSearchIndexEligibilitySql } from '~/server/search-index/user-index-eligibility';
 import type { JobContext } from '~/server/jobs/job';
 import {
@@ -173,6 +179,18 @@ export type CleanupOptions = {
   maxBatches?: number;
   /** Max ids per delete call. Meili accepts large bodies; keep chunks sane. */
   deleteChunkSize?: number;
+  /**
+   * Read/write the shared cross-run scan cursor. OFF by default so a dry run or an
+   * ad-hoc invocation of the one-off script cannot move the position the nightly job
+   * resumes from; the cron opts in.
+   */
+  resumable?: boolean;
+  /**
+   * How the scan waits. Overridable so a test can assert the empty-page backoff
+   * SCHEDULE without spending it — the escalation is the property under test, and a
+   * suite that really slept through it could not run. Defaults to real time.
+   */
+  delay?: (ms: number) => Promise<void>;
   onBatch?: (info: { key: string; offset: number; scanned: number; stale: number }) => void;
   onError?: (info: { key: string; offset: number; error: Error }) => void;
   onDelete?: (info: { key: string; chunk: number; ids: number }) => void;
@@ -212,6 +230,25 @@ export type CleanupIndexStats = {
   rescuedByPrimary: number;
   /** `isIndexing` as reported alongside the document count, or null if unread. */
   indexingAtStart: boolean | null;
+  /**
+   * Ids walked past by the whole PASS — this run plus every earlier run it resumed
+   * from. A resumed run scans only the remainder of the index, so its own `idsScanned`
+   * is legitimately a fraction of `totalInIndex`; any coverage verdict has to be
+   * computed from this instead, or every resumed run reads as truncated.
+   */
+  passCovered: number;
+  /** The stored cursor this run resumed from, or null if it started from the bottom. */
+  resumedFrom: number | null;
+  /** The cursor left behind for the next run, or null if the pass completed. */
+  cursorPersisted: number | null;
+  /**
+   * Why a stored cursor was NOT used, or null if one was. `missing` after a completed
+   * pass is normal; `unparseable`/`invalid`/`unreadable` mean the run silently restarted
+   * from the bottom, which is safe but is not the same event and should not look like one.
+   */
+  cursorDiscardReason: CursorDiscardReason | null;
+  /** How many times an empty page was re-asked before the scan believed it. */
+  emptyPageRetries: number;
 };
 
 /**
@@ -263,6 +300,11 @@ export async function cleanupIndex(
     idsSkipped: 0,
     rescuedByPrimary: 0,
     indexingAtStart: null,
+    passCovered: 0,
+    resumedFrom: null,
+    cursorPersisted: null,
+    cursorDiscardReason: null,
+    emptyPageRetries: 0,
   };
 
   try {
@@ -317,7 +359,36 @@ export async function cleanupIndex(
   // Keyset (cursor) pagination over `id`. Per-call cost is O(batch) on
   // Meilisearch regardless of depth — replaces offset pagination where
   // deep pages were saturating LMDB read I/O on the search host.
+  //
+  // 🔴 The starting point is READ FROM DURABLE STATE, not hardcoded to the bottom.
+  // A scan that cannot walk a multi-million-document index inside one nightly run
+  // and then restarts at the bottom re-examines the same already-clean prefix every
+  // night and can NEVER reach the region past where it stopped — measured, the
+  // boundary of the unscanned region did not move by a single id across two
+  // consecutive nightly runs. No page size fixes that: a from-scratch scan that
+  // cannot finish in one run makes zero cumulative progress by construction.
+  const resumable = opts.resumable === true;
   let lastId = -1;
+  // When the pass that owns this cursor first started, and how much of the index it
+  // has walked past in total. Both are carried across runs; both are reset here when
+  // the run starts a fresh pass.
+  let passStartedAt = Date.now();
+  let carriedCovered = 0;
+
+  if (resumable) {
+    const { cursor, reason } = await readScanCursor(cfg.key);
+    stats.cursorDiscardReason = reason === 'none' ? null : reason;
+    if (cursor) {
+      // Resume AT the stored id, not one past it: the page filter is `id > lastId`,
+      // so the stored value is the last id already walked past and the next page
+      // begins with the one after it. Storing-then-incrementing here would skip
+      // exactly one document per run, permanently.
+      lastId = cursor.lastId;
+      passStartedAt = cursor.startedAt;
+      carriedCovered = cursor.covered;
+      stats.resumedFrom = cursor.lastId;
+    }
+  }
 
   // Stale ids awaiting deletion. Deliberately NOT an accumulator for the whole
   // index: deletions are flushed as the scan runs, so a run that is cancelled
@@ -338,6 +409,7 @@ export async function cleanupIndex(
   // inner try/catch would treat the cancellation as a transient error and
   // burn through the backoff before bailing.
   const MAX_ATTEMPTS = 3;
+  const delay = opts.delay ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const withRetries = async <T>(fn: () => Promise<T>): Promise<T> => {
     let lastErr: unknown;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -357,7 +429,7 @@ export async function cleanupIndex(
         lastErr = err;
         if (attempt < MAX_ATTEMPTS) {
           // Linear backoff: 1000ms, 1500ms.
-          await new Promise((r) => setTimeout(r, attempt * 500 + 500));
+          await delay(attempt * 500 + 500);
         }
       }
     }
@@ -384,9 +456,82 @@ export async function cleanupIndex(
     return page.hits.map((r) => r.id).filter((n): n is number => Number.isFinite(n));
   };
 
-  // How long to wait before re-asking the same cursor after an empty page.
-  // See the confirmation below for why an empty page is not trusted first time.
+  // How long to wait before re-asking the same cursor after an empty page that
+  // COVERAGE ALREADY AGREES IS THE END. See `confirmEmptyPage` below.
   const EMPTY_PAGE_CONFIRM_DELAY_MS = 500;
+
+  /**
+   * Escalating re-asks for an empty page arriving while coverage says the scan is
+   * nowhere near the end. Measured: the engine's task queue was about an hour behind
+   * and applying writes in large batches when it answered empty at 15.5% coverage,
+   * and replaying the identical query off-peak walked 400 pages without ever hitting
+   * an end. One retry at 500 ms cannot clear a write batch that takes far longer.
+   *
+   * Five attempts, 30 s of waiting for one empty page.
+   */
+  const EMPTY_PAGE_BACKOFF_MS = [1000, 2000, 4000, 8000, 15000];
+
+  /**
+   * Coverage at or above which an empty page is taken at close to face value and gets
+   * only the cheap single confirmation. Deliberately generous and NOT exact:
+   * `totalInIndex` is a pre-scan snapshot that drifts while the scan runs, and one
+   * index has legitimately reported coverage slightly ABOVE 1 because documents were
+   * added mid-scan.
+   */
+  const EMPTY_PAGE_TRUST_COVERAGE = 0.9;
+
+  /**
+   * Hard ceiling on time spent re-asking empty pages for THIS index in THIS run:
+   * 5 minutes, so all seven configured indexes together cannot spend more than ~35
+   * minutes of the job's 2 h lock on backoff. The first confirmation of any empty
+   * page is always taken — the budget only gates escalation past it — so an exhausted
+   * budget degrades to the previous behaviour rather than to no confirmation at all.
+   */
+  const EMPTY_PAGE_BACKOFF_BUDGET_MS = 5 * 60 * 1000;
+  let emptyPageBackoffSpentMs = 0;
+
+  /**
+   * Coverage of the whole PASS so far, or null when the index total is unknown.
+   * Includes ids carried from earlier runs of the same pass, and ids the cursor walked
+   * past without judging — both were covered by the scan's position even though only
+   * one of them was examined.
+   */
+  const passCoverageSoFar = (): number | null => {
+    if (stats.totalInIndex === null || stats.totalInIndex <= 0) return null;
+    return (carriedCovered + stats.idsScanned + stats.idsSkipped) / stats.totalInIndex;
+  };
+
+  /**
+   * Re-ask `cursor` after an empty page and return whatever the last attempt saw.
+   *
+   * 🔴 An empty page is EVIDENCE, weighed against coverage — not a terminator. When the
+   * scan has covered nearly the whole index, an empty page is what the end of the index
+   * looks like and one cheap confirm is enough. When it has covered a fraction, an empty
+   * page contradicts the index's own document count, and the thing most likely to
+   * produce it is the engine being mid-write — so it is re-asked with escalating
+   * backoff before being believed.
+   */
+  const confirmEmptyPage = async (cursor: number): Promise<number[]> => {
+    const coverage = passCoverageSoFar();
+    const schedule =
+      coverage === null || coverage >= EMPTY_PAGE_TRUST_COVERAGE
+        ? [EMPTY_PAGE_CONFIRM_DELAY_MS]
+        : EMPTY_PAGE_BACKOFF_MS;
+
+    let page: number[] = [];
+    for (let i = 0; i < schedule.length; i++) {
+      const ms = schedule[i];
+      // `i > 0`: the first confirmation is unconditional, so the budget can never
+      // reduce this below the single confirm the scan already did.
+      if (i > 0 && emptyPageBackoffSpentMs + ms > EMPTY_PAGE_BACKOFF_BUDGET_MS) break;
+      emptyPageBackoffSpentMs += ms;
+      stats.emptyPageRetries += 1;
+      await delay(ms);
+      page = await fetchPage(cursor);
+      if (page.length > 0) return page;
+    }
+    return page;
+  };
 
   let chunkIdx = 0;
 
@@ -475,17 +620,13 @@ export async function cleanupIndex(
     try {
       docIds = await fetchPage(lastId);
 
-      // An empty page is the ONLY terminator, and it is not trusted on its
-      // first appearance. The engine can be concurrently applying document
-      // additions and deletions while we scan, and a transient empty reply
-      // at a cursor that still has documents past it would otherwise end the
-      // scan early — silently, and reported as success. Re-ask the SAME
-      // cursor once after a short pause; only a second empty reply ends the
-      // scan. Costs one extra query per index per run.
-      if (docIds.length === 0) {
-        await new Promise((r) => setTimeout(r, EMPTY_PAGE_CONFIRM_DELAY_MS));
-        docIds = await fetchPage(lastId);
-      }
+      // An empty page is the ONLY terminator, and it is not trusted on sight.
+      // The engine can be concurrently applying document additions and deletions
+      // while we scan, and a transient empty reply at a cursor that still has
+      // documents past it would otherwise end the scan early — silently, and
+      // reported as success. `confirmEmptyPage` re-asks the SAME cursor, escalating
+      // when the index's own document count says we cannot possibly be at the end.
+      if (docIds.length === 0) docIds = await confirmEmptyPage(lastId);
     } catch (err) {
       // Cancellation surfaced from withRetries is a clean stop, not a failure.
       if (opts.jobContext && opts.jobContext.status !== 'running') break;
@@ -600,6 +741,53 @@ export async function cleanupIndex(
   // Whatever is left over after the loop, including the tail of a scan that
   // stopped early. A cancelled run returns from inside the flush instead.
   await flushDeletions(true);
+
+  stats.passCovered = carriedCovered + stats.idsScanned + stats.idsSkipped;
+
+  if (resumable) {
+    /**
+     * 🔴 "Genuinely reached the end" is NOT "we saw an empty page".
+     *
+     * The empty page is the very signal the engine produces transiently under write
+     * load, and trusting it here is what would carry the original defect into the
+     * cursor: a pass truncated at 15% would clear its cursor, restart at the bottom
+     * next run, and cumulative progress would stay at zero with a cursor bolted on.
+     *
+     * So completion needs BOTH: the loop exited through its terminator (rather than
+     * an error, a cancellation or the non-advancing-cursor guard), AND the pass
+     * covered a plausible share of the index the engine said was there.
+     *
+     * The share is deliberately loose. `totalInIndex` is a pre-scan snapshot against
+     * an index other jobs delete from every few minutes, so it drifts; the number
+     * that has to be separable from it is the 0.155 the real truncation produced,
+     * an order of magnitude below this. And when the count was taken mid-ingest, or
+     * could not be read at all, coverage refutes nothing — the pass is credited,
+     * because the alternative is holding a cursor on a judgement we cannot make.
+     */
+    const COMPLETION_MIN_COVERAGE = 0.5;
+    const coverageRefutesCompletion =
+      stats.totalInIndex !== null &&
+      stats.totalInIndex > 0 &&
+      stats.indexingAtStart !== true &&
+      stats.passCovered < stats.totalInIndex * COMPLETION_MIN_COVERAGE;
+
+    const completed = !stats.stoppedEarly && !coverageRefutesCompletion;
+
+    if (completed) {
+      // Start the next run from the bottom. Without this the cursor sits at the top
+      // of the index forever and the low-id region — where a document that was
+      // eligible when it was indexed and has since gone stale actually lives — is
+      // never re-examined.
+      await clearScanCursor(cfg.key);
+    } else if (lastId >= 0) {
+      const persisted = await writeScanCursor(cfg.key, {
+        lastId,
+        startedAt: passStartedAt,
+        covered: stats.passCovered,
+      });
+      if (persisted) stats.cursorPersisted = lastId;
+    }
+  }
 
   return stats;
 }
