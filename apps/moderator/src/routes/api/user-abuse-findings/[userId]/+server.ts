@@ -34,7 +34,14 @@ export const GET: RequestHandler = async ({ params, locals }) => {
   try {
     return json(await getAbuseFindingsForUser(userId));
   } catch (e) {
-    // 🔴 THE SAME DISCRIMINATION THE /abuse PAGES ALREADY DO, for the same reason: a flat 500 sends
+    // 🔴 THE SAME DISCRIMINATION THE /abuse PAGES DO — but NOT the same delivery, and the
+    // difference matters to whoever reads this next. Those pages render the discriminated copy as
+    // visible page text; this panel's {:catch} takes no error binding and shows one fixed string
+    // for all four states. What actually lands here is the 503 STATUS and the console.error line —
+    // enough for an operator reading logs, not for a moderator reading the screen. Surfacing the
+    // message in the panel is a further change, deliberately not made here.
+    //
+    // The reason for discriminating at all is unchanged: a flat 500 sends
     // an operator hunting a database outage when the tables have simply never been created, or were
     // created by the WRONG ROLE — two states that are likely, distinct, and otherwise
     // indistinguishable from a real outage. Without this, an environment missing schema.sql answers

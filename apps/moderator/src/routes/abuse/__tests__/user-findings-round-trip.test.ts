@@ -153,14 +153,34 @@ describe('the endpoint is guarded like its siblings', () => {
     expect(layout).toMatch(/canSeeAbuse = canAccess\(locals\.user, '\/abuse'\)/);
     expect(layout, 'the flag must actually reach the page').toMatch(/canSeeAbuse[,}]/);
 
+    // 🔴 CONTAINMENT, NOT ORDERING. This was
+    // `/\{#if data\.canSeeAbuse\}[\s\S]*?<AbuseFindingsPanel[\s\S]*?\{\/if\}/`, whose lazy spans assert
+    // only that the three tokens appear in that ORDER somewhere in the file. An empty
+    // `{#if data.canSeeAbuse}{/if}` placed earlier, with the panel mounted UNGUARDED in the
+    // mod-activity branch, satisfied it — the panel mounted for every moderator, suite green. Walk
+    // the block to its matching `{/if}` and require the mount inside it; pin the mount count so a
+    // second unguarded copy cannot hide behind the guarded one.
     const section = read(SECTION_PAGE);
-    const guarded = /\{#if data\.canSeeAbuse\}[\s\S]*?<AbuseFindingsPanel[\s\S]*?\{\/if\}/.exec(
-      section
-    );
+    const open = section.indexOf('{#if data.canSeeAbuse}');
+    expect(open, 'the panel must be mounted behind the grant').toBeGreaterThan(-1);
+    let depth = 0;
+    let end = -1;
+    for (const m of section.slice(open).matchAll(/\{#if\b|\{\/if\}/g)) {
+      depth += m[0] === '{/if}' ? -1 : 1;
+      if (depth === 0) {
+        end = open + (m.index as number) + m[0].length;
+        break;
+      }
+    }
+    expect(end, 'the guard block must be closed').toBeGreaterThan(open);
     expect(
-      guarded,
-      'the panel must be mounted behind the grant, not mounted then denied'
-    ).toBeTruthy();
+      section.slice(open, end),
+      'the mount must be INSIDE the grant block, not merely after it'
+    ).toMatch(/<AbuseFindingsPanel\b/);
+    expect(
+      section.match(/<AbuseFindingsPanel\b/g)?.length,
+      'exactly one mount — a second, unguarded copy would hide behind the guarded one'
+    ).toBe(1);
 
     // Assert the absence of a CODE PATH, not of the digits — the panel's comment explains the 403
     // history on purpose, and a guard that forbids the number punishes the documentation it
@@ -175,7 +195,13 @@ describe('the endpoint is guarded like its siblings', () => {
     expect(panel).toMatch(/capped=\{truncated\}/);
     const service = read('lib/server/abuse-detection.service.ts');
     const fn = /export async function getAbuseFindingsForUser[\s\S]*?\n\}/.exec(service)?.[0];
-    expect(fn, 'the service must SIGNAL truncation, not silently cap').toMatch(/truncated/);
+    // 🔴 THE FOURTH PROSE MATCH IN THIS FILE, and the narrowest miss: `/truncated/` matched the
+    // return-TYPE annotation and the comment explaining the flag, so deleting the key from the
+    // returned object left this green. (svelte-check catches that particular mutant via the declared
+    // type — which is the point: the assertion contributed nothing while reading as coverage.)
+    expect(fn, 'the service must SIGNAL truncation, not silently cap').toMatch(
+      /return \{[^}]*truncated:/
+    );
     // 🔴 MATCH THE CALL, NOT THE PROSE. `/limit \+ 1/` also matches the comment above the query
     // that SAYS "same `limit + 1` probe" — so removing the probe from the code left this green.
     // Caught by the mutant surviving; the fix is to assert the expression that does the work.
@@ -201,6 +227,49 @@ describe('the endpoint is guarded like its siblings', () => {
   });
 });
 
+// 🔴 THE DISCRIMINATION WAS IMPLEMENTED AND WHOLLY UNGUARDED — deleting the 42P01 branch, or the
+// entire try/catch, both survived a green suite. It exists so an environment that never ran
+// schema.sql does not send an operator hunting a database outage; unguarded, the next
+// simplification silently restores exactly that. Same table shape as the list page's
+// `load-status.test.ts`, which has covered this for the pages since they shipped.
+describe('the endpoint discriminates database states', () => {
+  const load = async (rejection: unknown) => {
+    vi.resetModules();
+    vi.doMock('$lib/server/abuse-detection.service', () => ({
+      getAbuseFindingsForUser: vi.fn().mockRejectedValue(rejection),
+    }));
+    vi.doMock('$lib/server/api-guard', () => ({ requireUserIdParam: () => 7 }));
+    const { GET } = await import('../../api/user-abuse-findings/[userId]/+server');
+    return (GET as (e: unknown) => Promise<Response>)({ params: { userId: '7' }, locals: {} });
+  };
+
+  it.each([
+    ['42P01', /do not exist yet/],
+    ['42501', /cannot read them/],
+  ])('maps pg %s to its own explanation', async (code, expected) => {
+    await expect(load(Object.assign(new Error('pg'), { code }))).rejects.toMatchObject({
+      status: 503,
+      body: { message: expect.stringMatching(expected) },
+    });
+  });
+
+  it('names the missing connection string rather than reporting an outage', async () => {
+    await expect(load(new Error('MODERATOR_DATABASE_URL is not configured'))).rejects.toMatchObject(
+      {
+        status: 503,
+        body: { message: expect.stringMatching(/DATABASE_URL/) },
+      }
+    );
+  });
+
+  it('falls back to unreachable for anything else', async () => {
+    await expect(load(Object.assign(new Error('boom'), { code: '57P01' }))).rejects.toMatchObject({
+      status: 503,
+      body: { message: expect.stringMatching(/Could not reach/) },
+    });
+  });
+});
+
 // Kept out of the source-level block on purpose: this one executes the handler.
 describe('the endpoint returns what the panel expects', () => {
   it('answers { findings: [...] } from the service', async () => {
@@ -216,6 +285,11 @@ describe('the endpoint returns what the panel expects', () => {
         createdAt: new Date(),
       },
     ];
+    // 🔴 OWNS ITS MOCK, including the reset. The discrimination block above calls
+    // `vi.resetModules()` per case, so a test that relied on registry state left by an earlier
+    // `doMock` started resolving the REJECTING mock and failed — a test whose verdict depended on
+    // the order it ran in. Resetting here makes this case independent of what ran before it.
+    vi.resetModules();
     vi.doMock('$lib/server/abuse-detection.service', () => ({
       getAbuseFindingsForUser: vi.fn().mockResolvedValue({ findings, truncated: false }),
     }));

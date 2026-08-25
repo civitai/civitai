@@ -196,6 +196,25 @@ describe('compiled SQL — column names and shape', () => {
       expect(truncated).toBe(false);
       expect(findings).toHaveLength(1);
     });
+
+    // 🔴 THE PER-USER READ NEEDS THE SAME TWO CASES, and for a while it did not have them. It was
+    // given the identical `limit + 1` / slice / `>` treatment as its sibling above, but only the
+    // over-fetch PARAMETER was pinned — so hardcoding `truncated: false`, or dropping the `.slice`,
+    // both survived a fully green suite. The consequence is specific: this function feeds the
+    // account panel, which renders `capped` from `truncated`, so a silent `false` makes an account
+    // with 300 findings read "Abuse detections (50)" and a moderator conclude they have seen the
+    // whole record. Same harness, same asymmetry-closing pair.
+    it('reports truncated for the per-user read when the query came back over the limit', async () => {
+      const { findings, truncated } = await service.getAbuseFindingsForUser(99, 0);
+      expect(truncated).toBe(true);
+      expect(findings).toHaveLength(0); // the probe row is dropped, never rendered
+    });
+
+    it('does not report truncated for the per-user read at exactly the limit', async () => {
+      const { findings, truncated } = await service.getAbuseFindingsForUser(99, 1);
+      expect(truncated).toBe(false);
+      expect(findings).toHaveLength(1);
+    });
   });
 
   it('getAbuseFindingsForUser is ordered newest-first and NOT filtered on actioned', async () => {
