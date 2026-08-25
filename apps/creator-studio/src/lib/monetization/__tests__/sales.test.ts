@@ -21,6 +21,7 @@ const days = (n: number) => new Date(NOW.getTime() + n * 24 * 60 * 60 * 1000);
 
 const base = {
   selectedCount: 5,
+  eligibleCount: 5,
   earlyAccessCount: 0,
   unpricedCount: 0,
   creatorScore: 25_000,
@@ -116,13 +117,14 @@ describe('resolveSaleEligibility', () => {
   });
 
   it('blocks when every selected version is early access, and speaks in the singular for one', () => {
-    const all = resolveSaleEligibility({ ...base, earlyAccessCount: 5 });
+    const all = resolveSaleEligibility({ ...base, eligibleCount: 0, earlyAccessCount: 5 });
     expect(all.canSchedule).toBe(false);
     expect(all.blockedReason).toMatch(/Every selected version is in early access/);
 
     const one = resolveSaleEligibility({
       ...base,
       selectedCount: 1,
+      eligibleCount: 0,
       earlyAccessCount: 1,
     });
     expect(one.blockedReason).toMatch(/This version is in early access/);
@@ -137,13 +139,20 @@ describe('resolveSaleEligibility', () => {
   // the ids reach this form through the URL. A bookmark, a back button or a price cleared between
   // picking and submitting all arrive here with a selection the list would no longer show.
   it('blocks a sale over versions with no access price to discount', () => {
-    const all = resolveSaleEligibility({ ...base, type: 'Percent', amount: 20, unpricedCount: 5 });
+    const all = resolveSaleEligibility({
+      ...base,
+      type: 'Percent',
+      amount: 20,
+      eligibleCount: 0,
+      unpricedCount: 5,
+    });
     expect(all.canSchedule).toBe(false);
     expect(all.blockedReason).toMatch(/None of the selected versions has a permanent access price/);
 
     const one = resolveSaleEligibility({
       ...base,
       selectedCount: 1,
+      eligibleCount: 0,
       unpricedCount: 1,
     });
     expect(one.blockedReason).toMatch(/This version has no permanent access price/);
@@ -152,11 +161,21 @@ describe('resolveSaleEligibility', () => {
   // Both counts come off the same total, so adding them rather than taking the larger is what keeps a
   // selection that is entirely unschedulable from reporting versions it would cover.
   it('counts unpriced and early-access versions as separate shortfalls', () => {
-    const mixed = resolveSaleEligibility({ ...base, earlyAccessCount: 2, unpricedCount: 3 });
+    const mixed = resolveSaleEligibility({
+      ...base,
+      eligibleCount: 0,
+      earlyAccessCount: 2,
+      unpricedCount: 3,
+    });
     expect(mixed.canSchedule).toBe(false);
     expect(mixed.eligibleVersions).toBe(0);
 
-    const partial = resolveSaleEligibility({ ...base, earlyAccessCount: 1, unpricedCount: 1 });
+    const partial = resolveSaleEligibility({
+      ...base,
+      eligibleCount: 3,
+      earlyAccessCount: 1,
+      unpricedCount: 1,
+    });
     expect(partial.canSchedule).toBe(true);
     // Kept APART, not summed. The notice names one reason per count, and a single `skipped` forced it to
     // pick one — it told the creator three unpriced versions were in early access.
@@ -166,17 +185,47 @@ describe('resolveSaleEligibility', () => {
   // The two arms are one keystroke apart and every count stays correct when they are swapped, so the
   // MESSAGE is what has to be asserted.
   it('names the reason that actually applies, including when both do', () => {
-    const allEarly = resolveSaleEligibility({ ...base, earlyAccessCount: 5, unpricedCount: 0 });
+    const allEarly = resolveSaleEligibility({
+      ...base,
+      eligibleCount: 0,
+      earlyAccessCount: 5,
+      unpricedCount: 0,
+    });
     expect(allEarly.blockedReason).toMatch(/early access/);
     expect(allEarly.blockedReason).not.toMatch(/permanent access price/);
 
-    const allUnpriced = resolveSaleEligibility({ ...base, earlyAccessCount: 0, unpricedCount: 5 });
+    const allUnpriced = resolveSaleEligibility({
+      ...base,
+      eligibleCount: 0,
+      earlyAccessCount: 0,
+      unpricedCount: 5,
+    });
     expect(allUnpriced.blockedReason).toMatch(/permanent access price/);
     expect(allUnpriced.blockedReason).not.toMatch(/early access/);
 
-    const mixed = resolveSaleEligibility({ ...base, earlyAccessCount: 2, unpricedCount: 3 });
+    const mixed = resolveSaleEligibility({
+      ...base,
+      eligibleCount: 0,
+      earlyAccessCount: 2,
+      unpricedCount: 3,
+    });
     expect(mixed.blockedReason).toMatch(/early access/);
     expect(mixed.blockedReason).toMatch(/permanent access price/);
+  });
+
+  // 🔴 The server's own count, never `selected - skipped`. A selected id the creator no longer owns —
+  // deleted, transferred, never theirs — is in neither skip count, so subtracting reports it as covered
+  // and the form names a coverage the write does not deliver.
+  it('takes the covered count from the server rather than subtracting', () => {
+    const stale = resolveSaleEligibility({
+      ...base,
+      selectedCount: 3,
+      eligibleCount: 1,
+      earlyAccessCount: 0,
+      unpricedCount: 1,
+    });
+    expect(stale.eligibleVersions).toBe(1);
+    expect(stale.partialNotice).toEqual({ earlyAccess: 0, unpriced: 1, applies: 1 });
   });
 
   // 🔴 A preview that FAILED is not a preview that found nothing in the way. Resetting the counts to 0
@@ -187,6 +236,7 @@ describe('resolveSaleEligibility', () => {
       ...base,
       type: 'Percent',
       amount: 20,
+      eligibleCount: undefined,
       earlyAccessCount: undefined,
       unpricedCount: undefined,
     });
@@ -197,13 +247,13 @@ describe('resolveSaleEligibility', () => {
   });
 
   it('still schedules a partly-early-access selection and reports the shortfall', () => {
-    const r = resolveSaleEligibility({ ...base, earlyAccessCount: 2 });
+    const r = resolveSaleEligibility({ ...base, eligibleCount: 3, earlyAccessCount: 2 });
     expect(r.canSchedule).toBe(true);
     expect(r.partialNotice).toEqual({ earlyAccess: 2, unpriced: 0, applies: 3 });
   });
 
   it('carries no partial notice once it is blocked outright — the reason says it', () => {
-    const r = resolveSaleEligibility({ ...base, earlyAccessCount: 5 });
+    const r = resolveSaleEligibility({ ...base, eligibleCount: 0, earlyAccessCount: 5 });
     expect(r.partialNotice).toBeUndefined();
   });
 
@@ -306,6 +356,7 @@ describe('resolveSaleEligibility — a sale may never take a version to zero', (
 describe('resolveSaleDraft', () => {
   const ctx = {
     selectedCount: 5,
+    eligibleCount: 5,
     earlyAccessCount: 0,
     unpricedCount: 0,
     minCoveredPrice: 500,
@@ -496,6 +547,7 @@ describe('the offered last day and the budget agree', () => {
   // because the picker told them it was allowed.
   const ctx = {
     selectedCount: 1,
+    eligibleCount: 1,
     earlyAccessCount: 0,
     unpricedCount: 0,
     minCoveredPrice: 500,
@@ -596,6 +648,15 @@ describe('parseSalePreview', () => {
 
   it('treats a null floor as "none priced", not as missing', () => {
     expect(parseSalePreview({ ...payload, minCoveredPrice: null })?.minCoveredPrice).toBeNull();
+  });
+
+  // 🔴 `null` is the value that SKIPS the Fixed zero-floor check, so a garbage floor must not degrade
+  // into it — that waves through any fixed discount rather than blocking on an unknown.
+  it('refuses a floor that is neither a number nor null', () => {
+    expect(parseSalePreview({ ...payload, minCoveredPrice: '500' })).toBeUndefined();
+    const dropped: Record<string, unknown> = { ...payload };
+    delete dropped.minCoveredPrice;
+    expect(parseSalePreview(dropped)).toBeUndefined();
   });
 
   // 🔴 undefined, never zeroes. A renamed or dropped key is an answer we did not get, and the form

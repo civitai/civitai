@@ -97,9 +97,9 @@ describe('bustMvCache', () => {
     expect(bustPaidAccessCache).toHaveBeenCalledWith('ModelVersion', [11]);
   });
 
-  // And the other direction. The search-index enqueue at the end of this function is the one leg that
-  // does NOT self-heal — every cache here expires on a TTL, the Meilisearch document does not — so a
-  // Redis fault on the cheapest bust must not be what stops it running.
+  // And the other direction. Note what this does NOT establish: the five busts between this one and the
+  // enqueue are unguarded, so any of them throwing still loses it. This pins only that the two sale
+  // busts are not what stops it.
   it('still reaches the search-index enqueue when the gate-row bust throws', async () => {
     vi.mocked(bustPaidAccessCache).mockRejectedValueOnce(new Error('redis down'));
 

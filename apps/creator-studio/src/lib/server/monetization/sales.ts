@@ -190,10 +190,15 @@ export async function scheduleSale(
     if (!eligible.length)
       return {
         ok: false as const,
+        // Three arms, matching resolveSaleEligibility's. Reachable only by a forged POST or by the
+        // selection changing between preview and submit — but a refusal that names the wrong reason is
+        // worse than the generic one, and the client already had the mixed case.
         error:
-          skippedUnpriced > 0
-            ? 'None of the selected versions can go on sale — a sale discounts a permanent access price, and none of them has one.'
-            : "None of the selected versions can go on sale — a sale can't run on early access.",
+          skippedUnpriced > 0 && skippedEarlyAccess > 0
+            ? 'None of the selected versions can go on sale — some are in early access, and the rest have no permanent access price.'
+            : skippedUnpriced > 0
+              ? 'None of the selected versions can go on sale — a sale discounts a permanent access price, and none of them has one.'
+              : "None of the selected versions can go on sale — a sale can't run on early access.",
       };
 
     const refusal = await zeroFloorRefusal(

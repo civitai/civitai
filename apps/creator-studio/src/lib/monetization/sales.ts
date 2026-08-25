@@ -76,17 +76,30 @@ export function parseSalePreview(data: unknown): SalePreview | undefined {
   const unpriced = count(d.unpriced);
   if (eligible === undefined || earlyAccess === undefined || unpriced === undefined)
     return undefined;
-  const min = count(d.minCoveredPrice);
-  return { eligible, earlyAccess, unpriced, minCoveredPrice: min ?? null };
+  // `null` is an answer — "nothing in the selection is priced". Anything else non-numeric is not, and
+  // must not degrade to it: `null` is the value that SKIPS the Fixed zero-floor check entirely.
+  if (d.minCoveredPrice !== null && count(d.minCoveredPrice) === undefined) return undefined;
+  return {
+    eligible,
+    earlyAccess,
+    unpriced,
+    minCoveredPrice: d.minCoveredPrice === null ? null : (count(d.minCoveredPrice) as number),
+  };
 }
 
 export type SaleEligibilityInput = {
   selectedCount: number;
   /**
-   * Selected versions gated as Early Access — a sale can't cover those. `undefined` = NOT KNOWN, which
-   * blocks: the preview can fail, and a failure that reset the counts to 0 read as "everything you
-   * selected is covered" and offered Apply on a sale the server would refuse.
+   * Versions the WRITE would cover, as the server counted them. `undefined` = NOT KNOWN, which blocks:
+   * the preview can fail, and a failure that reset this to a number read as "everything you selected is
+   * covered" and offered Apply on a sale the server would refuse.
+   *
+   * 🔴 Not `selectedCount - skipped`. A selected id the creator no longer owns — deleted, transferred,
+   * never theirs — is in neither skip count, so subtracting counts it as covered and the form names a
+   * coverage the write does not deliver.
    */
+  eligibleCount: number | undefined;
+  /** Selected versions gated as Early Access — a sale can't cover those. */
   earlyAccessCount: number | undefined;
   /**
    * Selected versions with no permanent access price. A sale composes over that price and nothing else,
@@ -147,6 +160,7 @@ const allEarlyAccessReason = (selectedCount: number) =>
 
 export function resolveSaleEligibility({
   selectedCount,
+  eligibleCount,
   earlyAccessCount,
   unpricedCount,
   creatorScore,
@@ -161,10 +175,8 @@ export function resolveSaleEligibility({
   now,
   resolving,
 }: SaleEligibilityInput): SaleEligibility {
-  const coverageKnown = earlyAccessCount != null && unpricedCount != null;
-  const eligibleVersions = coverageKnown
-    ? Math.max(0, selectedCount - earlyAccessCount - unpricedCount)
-    : 0;
+  const coverageKnown = eligibleCount != null && earlyAccessCount != null && unpricedCount != null;
+  const eligibleVersions = coverageKnown ? eligibleCount : 0;
   const daysAllowed = maxSaleDays(tier, overrides);
   const daysLeft = Math.max(0, daysAllowed - daysUsedInMonth);
   const leadDays = (startsAt.getTime() - now.getTime()) / DAY_MS;
@@ -265,6 +277,7 @@ export function resolveSaleDraft(
   input: SaleDraftInput,
   ctx: {
     selectedCount: number;
+    eligibleCount: number | undefined;
     earlyAccessCount: number | undefined;
     unpricedCount: number | undefined;
     /** Cheapest buyer-facing price; null = none priced, undefined = not known (blocks). */
@@ -295,6 +308,7 @@ export function resolveSaleDraft(
     daysUsedInMonth,
     eligibility: resolveSaleEligibility({
       selectedCount: ctx.selectedCount,
+      eligibleCount: ctx.eligibleCount,
       earlyAccessCount: ctx.earlyAccessCount,
       unpricedCount: ctx.unpricedCount,
       creatorScore: ctx.creatorScore,

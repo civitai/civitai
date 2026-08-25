@@ -144,6 +144,7 @@
   // What the form can't see about a selection this page never listed: how much of it a sale would
   // cover, why the rest is out, and the cheapest price among the covered ones. undefined = not known,
   // which blocks rather than waves through — a failed preview must not read as full coverage.
+  let eligibleCount = $state<number | undefined>(undefined);
   let earlyAccessCount = $state<number | undefined>(undefined);
   let unpricedCount = $state<number | undefined>(undefined);
   let minCoveredPrice = $state<number | null | undefined>(undefined);
@@ -156,6 +157,9 @@
       // Bump first: an in-flight preview for the previous selection would otherwise still pass the
       // sequence guard and write its counts back over this reset.
       previewRequest++;
+      // The bump orphans any in-flight request, so its `finally` will not clear this.
+      loadingPreview = false;
+      eligibleCount = 0;
       earlyAccessCount = 0;
       unpricedCount = 0;
       minCoveredPrice = undefined;
@@ -172,17 +176,20 @@
         const parsed = deserialize(r);
         const preview = parsed.type === 'success' ? parseSalePreview(parsed.data) : undefined;
         if (!preview) {
+          eligibleCount = undefined;
           earlyAccessCount = undefined;
           unpricedCount = undefined;
           minCoveredPrice = undefined;
           return;
         }
+        eligibleCount = preview.eligible;
         earlyAccessCount = preview.earlyAccess;
         unpricedCount = preview.unpriced;
         minCoveredPrice = preview.minCoveredPrice;
       })
       .catch(() => {
         if (seq !== previewRequest) return;
+        eligibleCount = undefined;
         earlyAccessCount = undefined;
         unpricedCount = undefined;
         minCoveredPrice = undefined;
@@ -201,6 +208,7 @@
       sale,
       {
         selectedCount: draftVersionIds.length,
+        eligibleCount,
         earlyAccessCount,
         unpricedCount,
         minCoveredPrice,
