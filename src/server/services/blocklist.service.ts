@@ -21,29 +21,44 @@ function getBlocklistKey(type: string) {
   return `${REDIS_KEYS.SYSTEM.BLOCKLIST}:${type}` as RedisKeyTemplateCache;
 }
 
+/**
+ * A CEILING on staleness, not a cache lifetime. Writers delete this key, so an edit normally takes
+ * effect on the next read; this bounds the case the delete cannot reach. The populate below is
+ * read-then-write, so a reader that read the row before a write commits can land its pre-write
+ * snapshot after that write's delete, and only another write to the same type clears it. Measured
+ * 2026-08-25: three of the eight lists in production had gone 8, 46 and 676 days without a write,
+ * so "the next write" is not a bound at all and the expiry was the only one.
+ *
+ * The moderator spoke and the auth hub populate this same key and carry the same value. They have
+ * to agree — a shorter one anywhere is harmless, a longer one reinstates the window for whichever
+ * app wrote it.
+ */
+const BLOCKLIST_CACHE_TTL = 5 * 60;
+
 // No in-process cache: pod-local copies can't be invalidated cross-pod on upsert.
 async function setCache({ type, data }: { type: string; data: BlocklistDTO }) {
   await redis.set(getBlocklistKey(type), JSON.stringify(data), {
-    EX: CacheTTL.month,
+    EX: BLOCKLIST_CACHE_TTL,
   });
 }
 
 /**
  * 🔴 DELETE, never a re-read written back. Writing a snapshot is itself a read-modify-write with no
  * lock over it, so two WRITERS the row lock correctly serialised could still land their cache writes
- * in the other order, leaving the LOSER's list under a month TTL. Deletes commute with each other,
+ * in the other order, leaving the LOSER's list cached until it expires. Deletes commute with each other,
  * so that ordering no longer decides anything.
  *
  * ⚠️ What this does NOT close: a DELETE does not commute with the POPULATE in `getBlocklistDTO`,
  * which is plain cache-aside. A reader that missed and read the row before the commit can `set` its
- * pre-write snapshot AFTER the bust, pinning it for the month TTL.
+ * pre-write snapshot AFTER the bust, pinning it until the key expires.
  *
  * The causation runs to the NEXT write, not this one: a bust guarantees the following read misses,
  * so a reader is typically mid-fill when the write AFTER this one commits — and back-to-back writes
  * are ordinary here, a moderator removing chips one at a time. This write's own bust cannot put a
  * reader into this write's window, because a miss it caused reads a row that is already updated.
- * Closing it needs a lease, a version, or a TTL short enough to bound the staleness; none of those
- * is in this change.
+ * `BLOCKLIST_CACHE_TTL` is the TTL-short-enough option: it bounds that window rather than closing
+ * it. A lease or a version would close it outright, at the cost of the same rule existing in three
+ * separately-released apps.
  *
  * The moderator spoke busts the same key the same way. The two must agree.
  *
@@ -138,7 +153,7 @@ export async function upsertBlocklist({ id, type, blocklist }: UpsertBlocklistSc
       // Unreachable while the locking read above holds: a row it returned is locked to commit,
       // so nothing can delete or re-type it underneath. Asserted anyway so the guarantee is
       // local — anyone who later moves either statement out of this transaction gets a failure
-      // instead of a silent zero-row success that then caches a stale row for a month.
+      // instead of a silent zero-row success that then caches a stale row.
       if (count !== 1) throw new Error(`blocklist update matched ${count} rows under a row lock`);
       return next;
     },
@@ -162,7 +177,7 @@ export async function upsertBlocklist({ id, type, blocklist }: UpsertBlocklistSc
  *
  * No writer calls this any more. Its one caller is the cache-aside populate in `getBlocklistDTO` —
  * so this is what decides which row the whole system enforces, and a write busts the key, making
- * the next read a post-write read that pins a value for a month.
+ * the next read a post-write read whose value then serves every pod until it expires.
  *
  * This picks the lowest id, always, and reports the duplicate. It deliberately does NOT
  * union the rows: for a deny-list a union blocks more, but for the benign lists a union

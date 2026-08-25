@@ -11,20 +11,29 @@ import { getRedis } from './redis';
 
 export type BlocklistDTO = { id?: number; type: string; data: string[] };
 
-const MONTH_TTL = 60 * 60 * 24 * 30; // matches the main app's CacheTTL.month
+/**
+ * A CEILING on staleness, not a cache lifetime — writers delete this key, so an edit normally takes
+ * effect on the next read. The populate below is read-then-write, so a reader that read the row
+ * before a write commits can land its pre-write snapshot after that write's delete, and only
+ * another write to the same type clears it. Three of the eight lists in production had gone 8, 46
+ * and 676 days without a write (measured 2026-08-25), so the expiry was the only bound there was.
+ *
+ * The main app and the auth hub populate this same key with the same value; they have to agree.
+ */
+const CACHE_TTL = 5 * 60;
 
 const blocklistKey = (type: string) =>
   `${REDIS_KEYS.SYSTEM.BLOCKLIST}:${type}` as RedisKeyTemplateCache;
 
 /** The cache-aside populate, and the ONLY `set` in this file — see `bustCache` for why writers never. */
 async function setCache(data: BlocklistDTO) {
-  await getRedis().set(blocklistKey(data.type), JSON.stringify(data), { EX: MONTH_TTL });
+  await getRedis().set(blocklistKey(data.type), JSON.stringify(data), { EX: CACHE_TTL });
 }
 
 /**
  * 🔴 DELETE, never a re-read written back. Writing a snapshot is itself a read-modify-write with no
  * lock over it, so two WRITERS the row lock correctly serialised could still land their cache
- * writes in the other order and leave the LOSER's list under a month TTL. Deletes commute with each
+ * writes in the other order and leave the LOSER's list cached until it expires. Deletes commute with each
  * other, so that ordering no longer decides anything.
  *
  * ⚠️ What this does NOT close, stated because the obvious reading of "deletes commute" is that it
@@ -36,8 +45,7 @@ async function setCache(data: BlocklistDTO) {
  * and the page reloads through `load` on every submit, so a reader is typically mid-fill when the
  * write AFTER this one commits — two moderators submitting seconds apart is enough. This write's
  * own bust cannot put a reader into this write's window, because a miss it caused reads a row that
- * is already updated. Closing it needs a lease, a version, or a TTL short enough that the staleness
- * is bounded; none of those is in this change.
+ * is already updated. `CACHE_TTL` is the TTL-short-enough option: it bounds that window rather than closing it.
  *
  * Returns false rather than throwing. The row is already committed by the time this runs, and a
  * throw here reports failure for a write that succeeded — on the remove path the operator's retry
@@ -76,8 +84,8 @@ async function bustCache(type: string): Promise<boolean> {
 async function readBlocklistRow(type: string): Promise<BlocklistDTO> {
   // `dbWrite`, not `dbRead`, and this is MORE load-bearing since the writers stopped calling this:
   // its one caller is the cache-aside populate in `getBlocklistDTO`, and a write busts the key, so
-  // the very next read is a post-write read that pins a value for a MONTH. Off the replica that
-  // read races replication and caches the PRE-EDIT row for 30 days — a moderator's change silently
+  // the very next read is a post-write read whose value then serves every pod until it expires. Off
+  // the replica that read races replication and caches the PRE-EDIT row — a moderator's change silently
   // undone. Do not "optimise" this to `dbRead` because no write path reaches it any more.
   const rows = await dbWrite
     .selectFrom('Blocklist')
