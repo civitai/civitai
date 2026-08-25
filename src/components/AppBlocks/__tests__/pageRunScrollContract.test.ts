@@ -305,8 +305,22 @@ describe('the run page and its host agree on who owns the height', () => {
 
     // The CSS half of the pair — what most consumers across the repo actually read.
     const globals = read(path.join(REPO_ROOT, 'src/styles/globals.css'));
-    const cssVar = /--header-height:\s*(\d+)px;/.exec(globals)?.[1];
-    expect(cssVar, '--header-height declaration not found in globals.css').toBeDefined();
+
+    // 🔴 COUNT the declarations before reading one. A second `--header-height`
+    // (a media query, a theme block, a `:root` override further down the file)
+    // would shadow or be shadowed by the first depending on order, and a
+    // first-match read would grade the wrong one while still reporting agreement
+    // with the TS constant. "Exactly one" is the claim this guard actually needs;
+    // anything else must be looked at by a human rather than silently averaged.
+    const cssDecls = [...globals.matchAll(/--header-height:\s*(\d+)px;/g)];
+    expect(
+      cssDecls.length,
+      `expected exactly ONE \`--header-height\` declaration in globals.css, found ${cssDecls.length}. ` +
+        'Zero means it was renamed or removed — re-point this guard rather than deleting it. ' +
+        'More than one means the header height is conditional, and binding it to a single TS ' +
+        'constant is no longer a truthful claim.'
+    ).toBe(1);
+    const cssVar = cssDecls[0][1];
     expect(
       cssVar,
       'globals.css `--header-height` and `HEADER_HEIGHT_PX` have DIVERGED. CSS cannot import ' +
