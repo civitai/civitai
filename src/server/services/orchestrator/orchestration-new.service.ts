@@ -85,6 +85,9 @@ import { Availability } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { WORKFLOW_TAGS, VID_QUANTITY_BY_TIER } from '~/shared/constants/generation.constants';
 import { includesPoi } from '~/utils/metadata/audit';
+import { BlocklistType } from '~/server/common/enums';
+import { stripBenignPhrases } from '~/server/services/blocklist.service';
+import { normalizeText } from '~/utils/normalize-text';
 import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
 import { toStepMetadata } from '~/shared/utils/resource.utils';
 import { randomInt } from 'crypto';
@@ -1040,8 +1043,20 @@ export async function createWorkflowStepsFromGraph({
 
   // Check for POI in prompt
   const prompt = 'prompt' in data ? (data.prompt as string) : undefined;
-  const hasPoi = (prompt && includesPoi(prompt)) || hasPoiResource;
-  if (hasPoi && 'disablePoi' in data && data.disablePoi) {
+  // Gate first: the refusal below is the only reader, and the strip is a redis/DB read that
+  // rejects on failure. Computing it unconditionally would put that read — and a new way to
+  // fail — on `whatIfFromGraph` and the App Blocks path, neither of which audits the prompt.
+  const poiGateActive = 'disablePoi' in data && !!data.disablePoi;
+  const hasPoi =
+    poiGateActive &&
+    (hasPoiResource ||
+      (!!prompt &&
+        !!includesPoi(
+          // Normalize before stripping, as the image-scan POI taggers do. Stripping raw text
+          // leaves the detector reading a different alphabet than the strip matched against.
+          await stripBenignPhrases(normalizeText(prompt), BlocklistType.PromptBenignPhrase)
+        )));
+  if (hasPoi) {
     throw throwBadRequestError(
       'Your request contains or attempts to use the likeness of a real person. Generating these type of content while viewing X-XXX ratings is not allowed.'
     );
