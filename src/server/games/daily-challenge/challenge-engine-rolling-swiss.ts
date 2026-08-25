@@ -141,7 +141,14 @@ export const rollingSwissEngine: ChallengeJudgingEngine = {
     if (eligible.length < 2) return eligible;
 
     let calls = 0;
+    let passes = 0;
+    // The close stage has NO wall-clock bound, only `MAX_SETTLE_PASSES`, and it can outlast the
+    // 10-minute completion claim (see `pickWinnersForChallenge`). Leaving it unbounded is a
+    // deliberate call — a timeout trades a measured podium for a faster one — so the duration is
+    // measured instead of capped, and it is on the close event below.
+    const settleStartedAt = Date.now();
     for (let pass = 0; pass < MAX_SETTLE_PASSES; pass++) {
+      passes++;
       // The spend ceiling has to be re-read each pass and applied here too. Settling at close was
       // originally unbounded, which would have made the budget a limit on ticks only — the one
       // moment a runaway is most likely is the moment it was exempt.
@@ -166,20 +173,34 @@ export const rollingSwissEngine: ChallengeJudgingEngine = {
 
       const pass = await runGroups(ctx, eligible, affordable, 1);
       calls += pass.calls;
-      // 🔴 A pass that PLANNED work and completed none of it is a provider outage, not a settled
-      // field, and the two must not both end the loop. Ranking an unmeasured field is not a
-      // degraded ranking: with no comparison rows every entry scores the same 0.5 in `strength`,
-      // so `swissStandings` falls through to its `imageId` tiebreak and the caller pays prizes on
-      // upload order. Throwing leaves the challenge in 'Completing' for a later run to judge
-      // properly — which is what the whole tick did before groups were caught individually.
-      // `advance` deliberately keeps the tolerant behaviour; it is only at close that giving up
-      // quietly costs money.
-      if (pass.calls === 0 && pass.failed > 0) {
+      // Nothing left to compare. The only clean way out of this loop.
+      if (pass.planned === 0) break;
+      // 🔴 Keyed on ROWS RECORDED, never on calls made. A call that resolved and then failed to
+      // write, and a call that came back unparseable, both leave the field exactly as unmeasured as
+      // a call that never happened — and neither increments `failed`. Keying on calls let those two
+      // run the loop to its bound, billing every pass, and then rank on nothing.
+      if (pass.recorded > 0) continue;
+
+      // A pass planned work and recorded none of it. Whether that is fatal depends on the FIELD,
+      // not on this pass: refusing whenever one last transient group fails would abort the close of
+      // a fully measured challenge, and 37% of ticks see a provider failure.
+      //
+      // The bar is not a threshold anyone picked. With no comparison rows at all, every entry
+      // scores the same 0.5 in `strength` and `swissStandings` falls through to its `imageId`
+      // tiebreak — so the podium is upload order, carrying no information, and the caller pays real
+      // prizes on it. Throwing leaves the challenge in 'Completing' for a later run to judge
+      // properly, which is what the whole tick did before groups were caught individually. With any
+      // rows, the ranking is evidence-based but short, which is what `shortOfBudget` below reports.
+      // `advance` keeps the tolerant behaviour throughout; only at close does giving up cost money.
+      const measured = await store.getSwissState(ctx.challengeId);
+      if (measured.games.size === 0) {
         throw new Error(
-          `swiss close: ${pass.failed} of ${pass.planned} groups failed and none succeeded`
+          `swiss close: ${pass.planned} groups planned, no comparison recorded, field unmeasured ` +
+            `(failed ${pass.failed}, malformed ${pass.malformed}, writeFailed ${pass.writeFailed}, ` +
+            `unloadable ${pass.unloadable})`
         );
       }
-      if (pass.calls === 0) break;
+      break;
     }
 
     const state = await store.getSwissState(ctx.challengeId);
@@ -196,6 +217,8 @@ export const rollingSwissEngine: ChallengeJudgingEngine = {
       challengeId: ctx.challengeId,
       field: eligible.length,
       closeCalls: calls,
+      passes,
+      settleMs: Date.now() - settleStartedAt,
       shortOfBudget,
       minGames: Math.min(...eligible.map((e) => state.games.get(e.imageId) ?? 0)),
     }).catch(() => undefined);
@@ -228,7 +251,16 @@ export const rollingSwissEngine: ChallengeJudgingEngine = {
  * mid-flight would let two lanes pick the same pair before either had recorded it, which is the
  * third concurrency race this subsystem has had.
  */
-type GroupPass = { calls: number; planned: number; failed: number };
+type GroupPass = {
+  /** Relation ROWS actually inserted. The only counter that says the field got measured. */
+  recorded: number;
+  calls: number;
+  planned: number;
+  failed: number;
+  malformed: number;
+  writeFailed: number;
+  unloadable: number;
+};
 
 async function runGroups(
   ctx: JudgingEngineContext,
@@ -247,7 +279,16 @@ async function runGroups(
     budget: DEFAULT_BOUT_BUDGET,
     maxGroups: maxCalls,
   });
-  if (!groups.length) return { calls: 0, planned: 0, failed: 0 };
+  if (!groups.length)
+    return {
+      recorded: 0,
+      calls: 0,
+      planned: 0,
+      failed: 0,
+      malformed: 0,
+      writeFailed: 0,
+      unloadable: 0,
+    };
 
   const images = await loadComparisonImages(groups.flat().map((entry) => entry.imageId));
   const systemPrompt = buildGroupComparisonPrompt({
@@ -259,12 +300,14 @@ async function runGroups(
   });
 
   let calls = 0;
+  let recorded = 0;
   let malformed = 0;
   let unloadable = 0;
   let failed = 0;
   let refused = 0;
   let writeFailed = 0;
   const failedGroups: string[] = [];
+  const writeFailedGroups: string[] = [];
   let firstError: string | undefined;
   let firstWriteError: string | undefined;
   let buzz = 0;
@@ -343,9 +386,14 @@ async function runGroups(
               buzzCost: index === 0 ? verdict.buzzCost : 0,
             },
           });
+          recorded++;
         }
       } catch (error) {
         writeFailed++;
+        // The ids go on THIS event, not only on the provider one: these are the groups left with
+        // some of their six rows committed, and finding those rows needs their membership.
+        if (writeFailedGroups.length < MAX_LOGGED_FAILED_GROUPS)
+          writeFailedGroups.push(groupImages.map((image) => image.imageId).join(','));
         firstWriteError ??= describeError(error);
       }
     });
@@ -384,7 +432,9 @@ async function runGroups(
       challengeId: ctx.challengeId,
       planned: groups.length,
       calls,
+      recorded,
       writeFailed,
+      writeFailedGroups,
       message: firstWriteError,
     }).catch(() => undefined);
   }
@@ -409,7 +459,7 @@ async function runGroups(
       malformed,
     }).catch(() => undefined);
   }
-  return { calls, planned: groups.length, failed };
+  return { recorded, calls, planned: groups.length, failed, malformed, writeFailed, unloadable };
 }
 
 /**

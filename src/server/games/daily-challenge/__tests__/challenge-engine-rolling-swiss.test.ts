@@ -40,7 +40,14 @@ vi.mock('~/server/logging/client', () => ({
 }));
 
 import { rollingSwissEngine } from '~/server/games/daily-challenge/challenge-engine-rolling-swiss';
-import { GROUP_SIZE, RELATIONS_PER_CALL } from '~/server/games/daily-challenge/challenge-swiss';
+import {
+  DEFAULT_BOUT_BUDGET,
+  GROUP_SIZE,
+  RELATIONS_PER_CALL,
+} from '~/server/games/daily-challenge/challenge-swiss';
+
+/** Mirrors the engine's own private backstop, so the close tests can assert they did not hit it. */
+const MAX_SETTLE_PASSES = DEFAULT_BOUT_BUDGET + 2;
 
 const ctx = {
   challengeId: 1,
@@ -76,6 +83,50 @@ function stubQueries(imageCount: number) {
     );
   });
 }
+
+/**
+ * 🔴 `getSwissState` returning a CONSTANT makes the close loop untestable: the engine's view of the
+ * field never changes, `planGroups` re-plans the same groups every pass, and the settle loop can
+ * only exit by exhausting `MAX_SETTLE_PASSES`. A test then reaches pass 11 while reading as though
+ * it reached pass 2, and "the field is measured" and "the field is not" are the same fixture — which
+ * is exactly the distinction the close-time money guard turns on.
+ *
+ * This derives the tallies from what `recordComparison` was actually given, so the loop terminates
+ * the way production's does: entries reach their budget and stop being planned.
+ */
+function useAccumulatingState() {
+  getSwissState.mockImplementation(() => {
+    const wins = new Map<number, number>();
+    const games = new Map<number, number>();
+    const played = new Set<string>();
+    for (const [arg] of recordComparison.mock.calls) {
+      const { imageIdA, imageIdB, winnerImageId } = (
+        arg as { verdict: { imageIdA: number; imageIdB: number; winnerImageId: number } }
+      ).verdict;
+      // Mirrors the engine's own `pairKey`, which is module-private.
+      played.add(imageIdA < imageIdB ? `${imageIdA}:${imageIdB}` : `${imageIdB}:${imageIdA}`);
+      games.set(imageIdA, (games.get(imageIdA) ?? 0) + 1);
+      games.set(imageIdB, (games.get(imageIdB) ?? 0) + 1);
+      wins.set(winnerImageId, (wins.get(winnerImageId) ?? 0) + 1);
+    }
+    return Promise.resolve({ wins, games, played });
+  });
+}
+
+/** The one `challenge-swiss-close` event a close emits. */
+function closeEvent(): { passes: number; shortOfBudget: number } | undefined {
+  return logToAxiom.mock.calls
+    .map(([arg]) => arg as { name: string; passes: number; shortOfBudget: number })
+    .find((arg) => arg.name === 'challenge-swiss-close');
+}
+
+const closeField = (n: number) =>
+  Array.from({ length: n }, (_, i) => ({
+    imageId: i + 1,
+    userId: i + 1,
+    username: `u${i}`,
+    weightedRating: 0,
+  }));
 
 /** The `failedGroups` payload of the one `challenge-swiss-group-failed` event a tick emits. */
 function failedGroupsFrom(log: typeof logToAxiom): string[] {
@@ -198,7 +249,9 @@ describe('advance and rankField', () => {
     // Attribution is the whole point of logging membership, and with four groups "the right group"
     // is a claim that can be wrong. The failed group must be exactly the entries that recorded
     // nothing — logging `groups[0]`, or every planned group, makes the field actively misleading.
-    const failedIds = failedGroupsFrom(logToAxiom)[0].split(',').sort();
+    const failedIds = failedGroupsFrom(logToAxiom)[0]
+      .split(',')
+      .sort((a, b) => Number(a) - Number(b));
     const recordedIds = new Set(
       recordComparison.mock.calls.flatMap(([arg]) => {
         const { imageIdA, imageIdB } = (arg as { verdict: { imageIdA: number; imageIdB: number } })
@@ -291,6 +344,28 @@ describe('advance and rankField', () => {
     );
   });
 
+  /**
+   * The id list is capped, so on a field-wide outage it stops being the count. Without
+   * `failedGroupsTruncated` beside it a reader takes 20 as the number of failed groups.
+   */
+  it('caps the logged ids on a field-wide outage and SAYS the list was cut', async () => {
+    const field = GROUP_SIZE * 21;
+    getStandings.mockResolvedValue(standings(field));
+    stubQueries(field);
+    compareGroup.mockRejectedValue(new Error('Provider returned error'));
+
+    await expect(rollingSwissEngine.advance!(ctx, Date.now() + 60_000)).resolves.toBe(0);
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'challenge-swiss-group-failed',
+        planned: 21,
+        failed: 21,
+        failedGroupsTruncated: true,
+      })
+    );
+    expect(failedGroupsFrom(logToAxiom)).toHaveLength(20);
+  });
+
   it('reports a group skipped for missing images under its OWN name, not as a failure', async () => {
     getStandings.mockResolvedValue(standings(GROUP_SIZE * 4));
     // One image of the sixteen does not load, so exactly one group is short whichever band it lands
@@ -358,7 +433,11 @@ describe('advance and rankField', () => {
     // A group fails as a UNIT, and its membership is what makes attribution possible across ticks.
     // Compared as a set: the entries are logged in PRESENTATION order, which the band shuffle
     // deliberately varies, so asserting the literal order would pin the shuffle rather than the log.
-    expect(failedGroupsFrom(logToAxiom)[0].split(',').sort()).toEqual(['1', '2', '3', '4']);
+    expect(
+      failedGroupsFrom(logToAxiom)[0]
+        .split(',')
+        .sort((a, b) => Number(a) - Number(b))
+    ).toEqual(['1', '2', '3', '4']);
     // Nothing was billed: the provider never returned a usage figure to bill from.
     expect(incrementOperationSpent).not.toHaveBeenCalled();
   });
@@ -366,6 +445,34 @@ describe('advance and rankField', () => {
   // Passes against the UNFIXED engine too — it is not a revert control, it is the third arm of the
   // three-way distinction: success emits neither warning. It fails if either log is ever moved out
   // of its `if`, which is the edit it exists to stop.
+  /**
+   * The guards exist because `isContentRefusal` and the message read both touch properties of a
+   * thrown value, INSIDE the catch that stops a failure escaping. A throwing accessor there escapes
+   * `runPool` and abandons the tick — the exact bug this file was changed to remove, re-entering
+   * through the recovery path. Without the wrappers this test rejects instead of resolving.
+   */
+  it('survives an error whose own message THROWS when read', async () => {
+    getStandings.mockResolvedValue(standings(GROUP_SIZE));
+    stubQueries(GROUP_SIZE);
+    const hostile = new Error('unused');
+    Object.defineProperty(hostile, 'message', {
+      get() {
+        throw new Error('boom');
+      },
+    });
+    compareGroup.mockRejectedValue(hostile);
+
+    await expect(rollingSwissEngine.advance!(ctx, Date.now() + 60_000)).resolves.toBe(0);
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'challenge-swiss-group-failed',
+        failed: 1,
+        refused: 0,
+        message: 'unserializable error',
+      })
+    );
+  });
+
   it('reports NEITHER warning on a clean tick', async () => {
     getStandings.mockResolvedValue(standings(GROUP_SIZE));
     stubQueries(GROUP_SIZE);
@@ -462,25 +569,92 @@ describe('advance and rankField', () => {
     stubQueries(field);
     compareGroup.mockRejectedValue(new Error('Provider returned error'));
 
-    await expect(
-      rollingSwissEngine.rankField(
-        ctx,
-        Array.from({ length: field }, (_, i) => ({
-          imageId: i + 1,
-          userId: i + 1,
-          username: `u${i}`,
-          weightedRating: 0,
-        }))
-      )
-    ).rejects.toThrow(/none succeeded/);
+    await expect(rollingSwissEngine.rankField(ctx, closeField(field))).rejects.toThrow(
+      /field unmeasured/
+    );
 
     // No standings written means no ranking for the caller to pay out against.
     expect(replaceStandings).not.toHaveBeenCalled();
   });
 
-  it('still finalizes at close when SOME groups succeeded', async () => {
+  /**
+   * The same payout as the test above, reached by a different door. A call that RESOLVED and then
+   * failed to write leaves the field exactly as unmeasured as a call that never happened — and it
+   * increments `calls`, not `failed`. A guard keyed on calls waves it through, bills eleven settle
+   * passes on the way, and ranks on nothing. Keyed on rows recorded, it stops on the first pass.
+   */
+  it('REFUSES to finalize when every close-time relation WRITE failed', async () => {
     const field = GROUP_SIZE * 4;
     stubQueries(field);
+    compareGroup.mockImplementation((input: unknown) => {
+      const { group } = input as { group: { imageId: number }[] };
+      return Promise.resolve({
+        order: group.map((image) => image.imageId),
+        malformed: false,
+        model: 'openai/gpt-5.6-luna',
+        usage: {},
+        buzzCost: 12,
+      });
+    });
+    recordComparison.mockRejectedValue(new Error('no unique constraint matching ON CONFLICT'));
+
+    await expect(rollingSwissEngine.rankField(ctx, closeField(field))).rejects.toThrow(
+      /field unmeasured/
+    );
+    expect(replaceStandings).not.toHaveBeenCalled();
+  });
+
+  /** The third door: the provider answers every group, and every answer is unparseable. */
+  it('REFUSES to finalize when every close-time ranking was malformed', async () => {
+    const field = GROUP_SIZE * 4;
+    stubQueries(field);
+    compareGroup.mockResolvedValue({
+      order: null,
+      malformed: true,
+      model: 'openai/gpt-5.6-luna',
+      usage: {},
+      buzzCost: 12,
+    });
+
+    await expect(rollingSwissEngine.rankField(ctx, closeField(field))).rejects.toThrow(
+      /field unmeasured/
+    );
+    expect(replaceStandings).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 🔴 The other half of the decision, and the reason the guard reads the FIELD rather than the
+   * pass. A settled challenge's last pass plans one group; 37% of ticks see a provider failure. If
+   * one transient group could abort the close, a fully measured challenge would sit in 'Completing'
+   * for up to ~70 minutes waiting on the hourly recovery job, for nothing.
+   */
+  it('still finalizes when a last group fails but the field IS measured', async () => {
+    const field = GROUP_SIZE * 4;
+    stubQueries(field);
+    // Twelve entries have their full budget and are filtered out of planning; four are untouched,
+    // so exactly one group is planned — and the tallies prove the field was measured.
+    const games = new Map<number, number>(
+      Array.from({ length: field }, (_, i) => [i + 1, i < 12 ? 9 : 0])
+    );
+    getSwissState.mockResolvedValue({ wins: new Map(), games, played: new Set() });
+    compareGroup.mockRejectedValue(new Error('Provider returned error'));
+
+    const ranked = await rollingSwissEngine.rankField(ctx, closeField(field));
+
+    expect(ranked).toHaveLength(field);
+    expect(replaceStandings).toHaveBeenCalledTimes(1);
+    // Exactly one pass: it planned, recorded nothing, found the field measured and stopped. The
+    // close stage is deliberately unbounded by wall clock, so `passes` and `settleMs` on this event
+    // are the only record of how long it took.
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'challenge-swiss-close', passes: 1 })
+    );
+  });
+
+  it('still finalizes at close when SOME groups succeeded, and settles by running OUT of work', async () => {
+    const field = GROUP_SIZE * 4;
+    stubQueries(field);
+    useAccumulatingState();
     let call = 0;
     compareGroup.mockImplementation((input: unknown) => {
       call++;
@@ -496,17 +670,13 @@ describe('advance and rankField', () => {
     });
 
     // The guard above must not have made close brittle: a partially-failing provider still settles.
-    const ranked = await rollingSwissEngine.rankField(
-      ctx,
-      Array.from({ length: field }, (_, i) => ({
-        imageId: i + 1,
-        userId: i + 1,
-        username: `u${i}`,
-        weightedRating: 0,
-      }))
-    );
+    const ranked = await rollingSwissEngine.rankField(ctx, closeField(field));
     expect(ranked).toHaveLength(field);
     expect(replaceStandings).toHaveBeenCalledTimes(1);
+    // The loop ended because the field ran out of work, NOT because it hit its backstop. Against a
+    // frozen state fake this reads identically while actually reaching pass 11, and the one failed
+    // group would be silently re-attempted ten more times.
+    expect(closeEvent()?.passes).toBeLessThan(MAX_SETTLE_PASSES);
   });
 
   it('applies the spend ceiling at close too, not only on ticks', async () => {
