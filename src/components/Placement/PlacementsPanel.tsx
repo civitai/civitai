@@ -1,8 +1,8 @@
 import { Anchor, Container, Group, SegmentedControl, Stack, Text, Title } from '@mantine/core';
 import { IconSticker } from '@tabler/icons-react';
-import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { Meta } from '~/components/Meta/Meta';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useQueryNotificationsCount } from '~/components/Notifications/notifications.utils';
 import { QueueCountBadge } from '~/components/Placement/QueueCountBadge';
 import { RemixSubmissionQueue } from '~/components/Placement/RemixSubmissionQueue';
@@ -12,6 +12,7 @@ import {
   PLACEMENT_SURFACE_TABS,
   type PlacementSurfaceTab,
 } from '~/components/Placement/queue-routes';
+import { stickerBookUrl } from '~/components/StickerBook/sticker-book.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
@@ -59,7 +60,7 @@ export function PlacementsPanel() {
   // redirects a flag-less viewer away rather than rendering.
   const stickerBookHref =
     features.stickerBook && currentUser?.username
-      ? `/user/${currentUser.username}/sticker-book`
+      ? stickerBookUrl(currentUser.username)
       : undefined;
 
   const counts: Record<PlacementSurfaceTab, number> = {

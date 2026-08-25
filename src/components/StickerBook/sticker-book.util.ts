@@ -6,6 +6,16 @@ export function isStickerBookSide(value: unknown): value is StickerBookSide {
 }
 
 /**
+ * The book's route, written once.
+ *
+ * Beside the copy below for the same reason: a rename gets fixed in the spellings
+ * someone greps and missed in the one they don't.
+ */
+export function stickerBookUrl(username: string) {
+  return `/user/${username}/sticker-book`;
+}
+
+/**
  * Every string a section is described by, in one place.
  *
  * The row on the tab and the page behind its "View all" are the same section,

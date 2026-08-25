@@ -21,7 +21,7 @@ import { renderWithProviders } from '../../../../test/component-setup';
 const { sticker, remix, viewer } = vi.hoisted(() => ({
   sticker: { value: 0 },
   remix: { value: 0 },
-  viewer: { username: 'zippy' as string | null, stickerBook: true },
+  viewer: { signedIn: true, username: 'zippy' as string | undefined, stickerBook: true },
 }));
 
 // `next/router` is stubbed by the shared harness (test/component-setup), and a
@@ -38,7 +38,9 @@ vi.mock('~/components/Notifications/notifications.utils', () => ({
 }));
 vi.mock('~/components/Meta/Meta', () => ({ Meta: () => null }));
 vi.mock('~/hooks/useCurrentUser', () => ({
-  useCurrentUser: () => (viewer.username ? { id: 7, username: viewer.username } : null),
+  // Signed-in-ness and having a username are separate states: `username` is
+  // optional on the session, so a signed-in account can carry none.
+  useCurrentUser: () => (viewer.signedIn ? { id: 7, username: viewer.username } : null),
 }));
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ stickerBook: viewer.stickerBook }),
@@ -57,6 +59,7 @@ beforeEach(() => {
   useRouter().query = {};
   sticker.value = 0;
   remix.value = 0;
+  viewer.signedIn = true;
   viewer.username = 'zippy';
   viewer.stickerBook = true;
 });
@@ -165,8 +168,21 @@ describe('the way out to the sticker book', () => {
     expect(bookLink().elements()).toHaveLength(0);
   });
 
-  test('is gone when there is no signed-in username to build it from', async () => {
-    viewer.username = null;
+  test('is gone when nobody is signed in', async () => {
+    viewer.signedIn = false;
+    renderWithProviders(<Placements />);
+
+    await expect.element(page.getByText('sticker queue')).toBeInTheDocument();
+    expect(bookLink().elements()).toHaveLength(0);
+  });
+
+  test('is gone for a signed-in account that has no username yet', async () => {
+    // 🔴 This is what the `?.username` gate is FOR, and it is not the test above.
+    // `username` is optional on the session, so a pre-onboarding account is
+    // signed in with none. Gate on the USER instead of the USERNAME and every
+    // other test here still passes while this one renders
+    // `/user/undefined/sticker-book`. Do not merge these two cases back together.
+    viewer.username = undefined;
     renderWithProviders(<Placements />);
 
     await expect.element(page.getByText('sticker queue')).toBeInTheDocument();
