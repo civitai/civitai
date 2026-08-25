@@ -172,8 +172,14 @@ vi.mock('~/components/Image/ContextMenu/ImagesAsPostsContextMenu', () => ({
 }));
 vi.mock('~/components/Image/Meta/ImageMetaPopover', () => ({ ImageMetaPopover2: () => null }));
 vi.mock('~/components/Cards/components/HoverActionButton', () => ({ default: () => null }));
+// A whole-module factory REPLACES the module, so it must carry every export the
+// import graph reaches — not just the one this test renders. #4364 pulled
+// RemixedCardFlyout into ImagesAsPostsCard, and that component imports
+// `triggerRoutedDialog` from here, so a factory listing only RoutedDialogLink turns
+// into an import-time SyntaxError for the whole file.
 vi.mock('~/components/Dialog/RoutedDialogLink', () => ({
   RoutedDialogLink: ({ children }: any) => <a>{children}</a>,
+  triggerRoutedDialog: vi.fn(),
 }));
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ imageGeneration: false }),
