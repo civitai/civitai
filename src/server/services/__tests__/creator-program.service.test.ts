@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterAll, beforeAll } from 'vites
 import { REDIS_KEYS } from '~/server/redis/client';
 import { OnboardingSteps } from '~/server/common/enums';
 import { MIN_CREATOR_SCORE } from '~/shared/constants/creator-program.constants';
-import { TransactionType } from '~/shared/constants/buzz.constants';
+import { TransactionType, buzzBankTypes } from '~/shared/constants/buzz.constants';
 
 // ── Hoisted mocks ──────────────────────────────────────────────────────────────
 const {
@@ -183,7 +183,7 @@ describe('userCapCache peak-earning query', () => {
     const [parts, ...values] = call as [string[], ...any[]];
     const sql = parts.reduce((acc, part, i) => acc + part + (values[i] ?? ''), '');
 
-    return { sql, result };
+    return { sql, values, result };
   }
 
   beforeEach(() => {
@@ -201,6 +201,15 @@ describe('userCapCache peak-earning query', () => {
 
     expect(sql).toMatch(/type IN \('compensation'\)/);
     expect(sql).toMatch(/type = 'purchase' AND fromAccountId != 0/);
+  });
+
+  // The interpolated list decides which Buzz counts toward Peak Earning Month, and so toward a
+  // creator's Cap; a wrong list returns a plausible wrong number rather than an error. Pinned to
+  // the derivation, not to a literal, so re-hardcoding the list fails here.
+  it('interpolates the bankable-type list derived from buzzBankTypes', async () => {
+    const { values } = await runLookup([userId]);
+
+    expect(values).toContain(buzzBankTypes.map((type) => `'${type}'`).join(', '));
   });
 
   it('derives the cap from the peak month returned by ClickHouse', async () => {

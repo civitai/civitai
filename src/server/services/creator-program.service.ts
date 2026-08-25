@@ -12,7 +12,11 @@ import { dbWrite } from '~/server/db/client';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
 import type { BuzzCreatorProgramType, BuzzSpendType } from '~/shared/constants/buzz.constants';
-import { TransactionType, buzzBankTypes } from '~/shared/constants/buzz.constants';
+import {
+  TransactionType,
+  buzzBankTypes,
+  buzzBankTypesSql,
+} from '~/shared/constants/buzz.constants';
 import type {
   CashWithdrawalMetadataSchema,
   CompensationPoolInput,
@@ -71,8 +75,6 @@ type UserCapCacheItem = {
   cap: number;
 };
 
-const BANKABLE_BUZZ_TYPES_STRING = `'yellow', 'green'`;
-
 const getBankAccountType = (_buzzType?: BuzzSpendType): BuzzCreatorProgramType => {
   return 'creatorProgramBank';
 };
@@ -123,7 +125,7 @@ const createUserCapCache = () => {
           (type IN ('compensation')) -- Generation Comp
           OR (type = 'purchase' AND fromAccountId != 0) -- Early Access
         )
-        AND toAccountType IN (${BANKABLE_BUZZ_TYPES_STRING})
+        AND toAccountType IN (${buzzBankTypesSql})
         AND toAccountId IN (${ids})
         AND toStartOfMonth(date) >= toStartOfMonth(subtractMonths(now(), ${PEAK_EARNING_WINDOW}))
         AND toStartOfMonth(date) < toStartOfMonth(now())
@@ -325,7 +327,7 @@ async function getPoolValue(month?: Date) {
     SELECT
         SUM(amount) / 1000 AS balance
     FROM buzzTransactions
-    WHERE toAccountType IN (${BANKABLE_BUZZ_TYPES_STRING})
+    WHERE toAccountType IN (${buzzBankTypesSql})
     AND (
       type = 'purchase'
       OR (type = 'redeemable' AND description LIKE 'Redeemed code SH-%')
@@ -362,7 +364,7 @@ async function getPoolForecast(month?: Date) {
     SELECT
       SUM(amount) AS balance
     FROM buzzTransactions
-    WHERE toAccountType IN (${BANKABLE_BUZZ_TYPES_STRING})
+    WHERE toAccountType IN (${buzzBankTypesSql})
     AND (
       (type IN ('compensation','tip')) -- Generation
       OR (type = 'purchase' AND fromAccountId != 0) -- Early Access
@@ -902,12 +904,12 @@ export async function getPoolParticipants(month?: Date, includeNegativeAmounts =
       -- Banks
       toAccountType = '${bankAccountType}'
       AND toAccountId = ${monthAccount}
-      AND fromAccountType IN (${BANKABLE_BUZZ_TYPES_STRING})
+      AND fromAccountType IN (${buzzBankTypesSql})
     ) OR (
       -- Extracts
       fromAccountType = '${bankAccountType}'
       AND fromAccountId = ${monthAccount}
-      AND toAccountType IN (${BANKABLE_BUZZ_TYPES_STRING})
+      AND toAccountType IN (${buzzBankTypesSql})
     )
     GROUP BY userId
     ${includeNegativeAmounts ? '' : 'HAVING amount > 0'};
