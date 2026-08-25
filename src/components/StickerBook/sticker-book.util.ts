@@ -36,3 +36,23 @@ export function stickerBookSectionCopy(
       : 'Nothing here yet.',
   };
 }
+
+/**
+ * The prefix of `items` that fills COMPLETE rows of a `columnCount`-wide grid.
+ *
+ * Extracted from the grid so it can be tested without a DOM: the column count
+ * arrives from a ResizeObserver behind a 100ms debounce, and component tests
+ * load no stylesheet, so any "at this viewport, expect N cards" assertion is
+ * measuring an unstyled width. The contract has no width in it — given a column
+ * count, draw `floor(n / c) * c`.
+ *
+ * 🔴 Both guards are load-bearing, and both fail the same alarming way. Fewer
+ * items than columns must return them ALL, and a column count of 0 — which is
+ * what the provider reports until it has measured — must pass through. Either
+ * one removed returns an empty array, and the grid then tells a viewer who has
+ * hidden nobody that "Everything here is from creators you have hidden."
+ */
+export function wholeRows<T>(items: T[], columnCount: number): T[] {
+  if (!columnCount || items.length < columnCount) return items;
+  return items.slice(0, Math.floor(items.length / columnCount) * columnCount);
+}
