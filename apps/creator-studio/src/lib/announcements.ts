@@ -61,8 +61,8 @@ export function toDomainArray(value: unknown): string[] {
   const list = Array.isArray(value)
     ? value
     : typeof value === 'string'
-    ? value.replace(/^\{|\}$/g, '').split(',')
-    : [];
+      ? value.replace(/^\{|\}$/g, '').split(',')
+      : [];
 
   return [...new Set(list.map((entry) => String(entry).trim()).filter(Boolean))];
 }
