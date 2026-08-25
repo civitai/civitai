@@ -47,54 +47,60 @@ import globalsCss from '~/styles/globals.css?raw';
  * The values come from `globals.css` itself, so there is nothing to keep in step.
  */
 {
-  // 🔴 EXACTLY ONE `:root` — refuse to guess, rather than silently grading the
-  // wrong block. The extraction takes the first match, so a SECOND `:root`
-  // anywhere earlier in the file (inside an `@media`, say) would be injected
-  // UNCONDITIONALLY and would drop every property the real block declares. That
-  // failure is invisible from the outside: components would lay out against a
-  // header height no user ever sees, with the whole suite green. There is no
-  // cheap way to know which block was meant, so this stops and says so.
-  const rootBlocks = globalsCss.match(/:root\s*\{/g) ?? [];
-  if (rootBlocks.length !== 1) {
-    throw new Error(
-      `component-setup: expected exactly ONE \`:root {\` block in src/styles/globals.css, ` +
-        `found ${rootBlocks.length}. The extraction below takes the FIRST match, so more than ` +
-        'one means it may inject a conditional block unconditionally and drop the real ' +
-        'properties. Decide deliberately which block the component harness should use.'
-    );
-  }
-  const rootBlock = /:root\s*\{([^}]*)\}/.exec(globalsCss)?.[1];
+  // 🔴 STRIP COMMENTS ONCE, FROM THE WHOLE FILE, BEFORE ANYTHING ELSE LOOKS AT IT.
+  // Doing it later — to the already-extracted block — leaves three silent failures,
+  // all measured: a comment between `;` and the next property glues onto it and the
+  // property vanishes; a `}` inside a comment TRUNCATES the `[^}]*` capture and
+  // drops everything after it; and prose that merely mentions `:root {` is counted
+  // as a real block. Comments are the most ordinary edit in a stylesheet, and every
+  // one of those failures ends with components laying out against properties that
+  // are missing, with the suite green.
+  const css = globalsCss.replace(/\/\*[\s\S]*?\*\//g, '');
+
+  const rootBlock = /:root\s*\{([^}]*)\}/.exec(css)?.[1];
   if (!rootBlock) {
     // Loud, not silent: if this stops matching, every component test goes back to
     // laying out against undefined custom properties, and nothing else would say so.
     throw new Error(
-      'component-setup: no `:root { … }` block found in src/styles/globals.css — the ' +
-        'custom-property injection below is inert. Fix the extraction rather than deleting it.'
+      'component-setup: no `:root { … }` block found in src/styles/globals.css (after ' +
+        'stripping comments) — the custom-property injection below is inert. Note the ' +
+        'extraction wants a bare `:root {`; a grouped or qualified selector (`:root, html {`) ' +
+        'will not match and must be handled deliberately, not by deleting this.'
     );
   }
-  // 🔴 Strip CSS comments BEFORE splitting. `split(';')` leaves a commented line
-  // glued to the declaration that follows it (`/* … */\n  --footer-height: 45px`),
-  // which then fails `startsWith('--')` and is dropped — silently, because the
-  // other properties still survive so no count reaches zero. Measured: documenting
-  // a variable in `globals.css` dropped `--footer-height` with all 190 files green,
-  // and it is read inside `calc()` by the auctions page and CollectionsLayout.
-  // Commenting a variable is the most ordinary edit imaginable; it must not
-  // silently reintroduce the divergence this whole block exists to remove.
-  const declarations = rootBlock.replace(/\/\*[\s\S]*?\*\//g, '');
-  const customProps = declarations
+  const customProps = rootBlock
     .split(';')
     .map((d) => d.trim())
     .filter((d) => d.startsWith('--'));
-  // The parse must account for every property the block declares. A count that
-  // drops is the partial-parse case above; only zero was checked before, and zero
-  // is the one shape that cannot happen while any property survives.
-  const declared = declarations.match(/(?:^|[;{])\s*--[\w-]+\s*:/g) ?? [];
-  if (customProps.length !== declared.length) {
+
+  // 🔴 THE COVERAGE CHECK IS DERIVED FROM THE FILE, NOT FROM THE CAPTURED BLOCK.
+  // An earlier version compared the parsed count against a count taken from the
+  // same captured substring — so it graded a truncated string against itself and
+  // could not see a truncation at all, and a comment-glued property vanished from
+  // BOTH sides symmetrically, leaving the counts equal. Comparing against every
+  // property NAME declared by any `:root` block in the file removes both blind
+  // spots, and needs no brace-counting or block-ordering logic:
+  //
+  //   - the FIRST `:root` being a conditional one (inside `@media`) is caught,
+  //     because the real block's other properties are then missing from the set;
+  //   - a truncated capture is caught, for the same reason;
+  //   - a legitimate later override (a dark-mode `:root`) declares the SAME names,
+  //     so it is NOT a false failure — which a "refuse more than one `:root`" rule
+  //     got wrong, blacking out all 2079 component tests on an ordinary edit.
+  const declaredNames = new Set(
+    [...css.matchAll(/:root[^{]*\{([^}]*)\}/g)].flatMap((block) =>
+      [...block[1].matchAll(/(?:^|[;{])\s*(--[\w-]+)\s*:/g)].map((d) => d[1])
+    )
+  );
+  const injectedNames = new Set(customProps.map((d) => d.slice(0, d.indexOf(':')).trim()));
+  const missing = [...declaredNames].filter((n) => !injectedNames.has(n));
+  if (missing.length > 0) {
     throw new Error(
-      `component-setup: parsed ${customProps.length} custom propert(ies) from the \`:root\` ` +
-        `block in globals.css but it declares ${declared.length}. Something in that block is ` +
-        'not being parsed — the missing ones would be UNDEFINED in every component test, which ' +
-        'is exactly the divergence this injection removes.'
+      `component-setup: ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} declared ` +
+        'on `:root` in globals.css but did not survive extraction, so it would be UNDEFINED in ' +
+        'every component test — the exact divergence this injection removes. Likely causes: the ' +
+        'first `:root` in the file is a conditional block, or a `}` / `;` inside a value ' +
+        'truncated the capture.'
     );
   }
   if (customProps.length === 0) {

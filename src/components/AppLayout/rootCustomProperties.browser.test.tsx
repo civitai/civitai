@@ -43,11 +43,14 @@ describe("the app's :root custom properties reach the component-test document", 
     // because it grades the injection against itself. That is the
     // self-referential-assertion trap, and this line is what closes it.
     //
-    // NOT circular: `HEADER_HEIGHT_PX` is bound to `globals.css` INDEPENDENTLY by
-    // the ledger in `src/components/AppBlocks/__tests__/pageRunScrollContract.test.ts`
-    // (the GATING tier), which walks `src/` and fails if the CSS and TS values
-    // diverge. So this compares the INJECTED value against a constant that a
-    // different guard already ties to the stylesheet — two independent paths.
+    // NOT circular, but state the composition precisely rather than claiming "two
+    // independent paths": the ledger in
+    // `src/components/AppBlocks/__tests__/pageRunScrollContract.test.ts` (GATING
+    // tier) binds CSS↔TS; this binds INJECTED↔TS; together they bind INJECTED↔CSS,
+    // which is the property that matters. Given a green ledger the pin below is
+    // close to tautological, and its residual live coverage is `--header-height`'s
+    // own value being mangled inside the block (a `;` or `}` in a value). That is
+    // worth keeping, and it is less than "independent confirmation".
     expect(
       raw,
       'the injected --header-height does not match HEADER_HEIGHT_PX. Either the extraction in ' +
@@ -68,7 +71,10 @@ describe("the app's :root custom properties reach the component-test document", 
     // real break. The thing under test is "the var resolved and the calc computed",
     // and a 1px window says that unambiguously (the failure mode it must catch is
     // `0px`, not a rounding difference).
-    const expected = window.innerHeight - parseInt(raw, 10);
+    // `raw` is pinned to `${HEADER_HEIGHT_PX}px` above, so say that plainly instead
+    // of re-parsing it. `toBeCloseTo(…, 0)` is ±0.5px — it cannot admit a wrong
+    // header height, only a sub-pixel layout-viewport rounding.
+    const expected = window.innerHeight - HEADER_HEIGHT_PX;
     expect(
       parseFloat(computed),
       `a calc() reading --header-height did not compute (got "${computed}", expected about ` +
