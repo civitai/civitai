@@ -15,16 +15,24 @@ const MONTH_TTL = 60 * 60 * 24 * 30; // matches the main app's CacheTTL.month
 const blocklistKey = (type: string) =>
   `${REDIS_KEYS.SYSTEM.BLOCKLIST}:${type}` as RedisKeyTemplateCache;
 
+/** The cache-aside populate, and the ONLY `set` in this file — see `bustCache` for why writers never. */
 async function setCache(data: BlocklistDTO) {
   await getRedis().set(blocklistKey(data.type), JSON.stringify(data), { EX: MONTH_TTL });
 }
 
 /**
  * 🔴 DELETE, never a re-read written back. Writing a snapshot is itself a read-modify-write with no
- * lock over it, so two edits that the row lock correctly serialised could still land their cache
- * writes in the other order and leave the LOSER's list under a month TTL — with every enforcement
- * path reading Redis first, that is the lost update the row lock exists to prevent, moved to the
- * artifact that actually gates. Deletes commute; the next read repopulates.
+ * lock over it, so two WRITERS the row lock correctly serialised could still land their cache
+ * writes in the other order and leave the LOSER's list under a month TTL. Deletes commute with each
+ * other, so that ordering no longer decides anything.
+ *
+ * ⚠️ What this does NOT close, stated because the obvious reading of "deletes commute" is that it
+ * does: a DELETE does not commute with the POPULATE in `getBlocklistDTO`, which is plain
+ * cache-aside. A reader that missed and read the row before the commit can `set` its pre-write
+ * snapshot AFTER the bust, pinning it for the whole month TTL — and since a write guarantees the
+ * next read misses, and the page reloads through `load` on every submit, two moderators submitting
+ * seconds apart is enough. Closing it needs a lease, a version, or a TTL short enough that the
+ * staleness is bounded; none of those is in this change.
  *
  * Returns false rather than throwing. The row is already committed by the time this runs, and a
  * throw here reports failure for a write that succeeded — on the remove path the operator's retry
@@ -61,11 +69,11 @@ async function bustCache(type: string): Promise<boolean> {
  * both must agree, because they read and write the SAME Redis key.
  */
 async function readBlocklistRow(type: string): Promise<BlocklistDTO> {
-  // `dbWrite`, not `dbRead`, and this is load-bearing: both writers below re-read through here
-  // and then cache the result for a MONTH. Off the replica, a write-then-read races replication
-  // and would pin the PRE-EDIT row into a key the main app also reads — a moderator's change
-  // silently undone for 30 days, which is the failure this function exists to prevent. The
-  // writers already read writer-side for the same reason.
+  // `dbWrite`, not `dbRead`, and this is MORE load-bearing since the writers stopped calling this:
+  // its one caller is the cache-aside populate in `getBlocklistDTO`, and a write busts the key, so
+  // the very next read is a post-write read that pins a value for a MONTH. Off the replica that
+  // read races replication and caches the PRE-EDIT row for 30 days — a moderator's change silently
+  // undone. Do not "optimise" this to `dbRead` because no write path reaches it any more.
   const rows = await dbWrite
     .selectFrom('Blocklist')
     .select(['id', 'type', 'data'])
@@ -228,10 +236,17 @@ export async function removeBlocklistItems({
  * it takes the LOWEST row of the type, the same one `readBlocklistRow` enforces, so an add from a
  * tab whose type has no row yet cannot append to a row nobody reads.
  *
- * ⚠️ What this still cannot serialise: two adds for a type with NO row at all. There is no row to
- * lock, so both insert and the type ends up with two rows — enforced deterministically by
- * `readBlocklistRow`, and reported to Axiom, but with one row's entries inert. Closing that needs a
- * unique index on `Blocklist.type`, which is a migration.
+ * ⚠️ What this still cannot serialise: two adds for a type with NO row at all. `FOR UPDATE` locks
+ * NOTHING when it matches nothing (same trap as `app-listing-review.service.ts`), so both insert and
+ * the type ends up with two rows — enforced deterministically by `readBlocklistRow` and reported to
+ * Axiom, but with one row's entries inert. `UsernameExact` is a tab with no row in production, so
+ * the window is the initial seeding of a new tab, which is when two people are most likely to both
+ * be in it.
+ *
+ * Two closes, neither taken here: a unique index on `Blocklist.type` (a migration, and the honest
+ * one), or `pg_advisory_xact_lock` on the type as the transaction's first statement (no migration,
+ * but it introduces a blocking primitive with no `lock_timeout` into both apps for a window this
+ * narrow). Filed rather than folded in — do not read this as "unfixable without a migration".
  */
 function readRowForWrite(trx: Transaction<DB>, type: string, id?: number) {
   const scoped = trx.selectFrom('Blocklist').select(['id', 'data']).where('type', '=', type);

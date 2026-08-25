@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { parseQuery } from '$lib/server/query';
 import { BLOCKLIST_TYPES } from '$lib/blocklist';
+import { parseRowId } from './form';
 import {
   BlocklistRowMismatchError,
   getBlocklistDTO,
@@ -33,11 +34,11 @@ export const actions: Actions = {
   add: async ({ request }) => {
     const form = await request.formData();
     const type = String(form.get('type') ?? '');
-    const idRaw = form.get('id');
-    const id = idRaw ? Number(idRaw) : undefined;
+    const id = parseRowId(form.get('id'));
     const items = parseItems(form.get('blocklist'));
 
     if (!isType(type)) return fail(400, { error: 'Invalid blocklist type.' });
+    if (id === null) return fail(400, { error: 'Invalid blocklist row.' });
     if (items.length === 0) return fail(400, { error: 'No items to add.' });
 
     // `type` and `id` arrive as two independent form fields, so the pair is checked in the
@@ -66,7 +67,7 @@ export const actions: Actions = {
   remove: async ({ request }) => {
     const form = await request.formData();
     const type = String(form.get('type') ?? '');
-    const id = Number(form.get('id'));
+    const id = parseRowId(form.get('id'));
     const items = parseItems(form.get('blocklist'));
 
     if (!isType(type)) return fail(400, { error: 'Invalid blocklist type.' });

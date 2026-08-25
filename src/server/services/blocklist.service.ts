@@ -30,10 +30,15 @@ async function setCache({ type, data }: { type: string; data: BlocklistDTO }) {
 
 /**
  * 🔴 DELETE, never a re-read written back. Writing a snapshot is itself a read-modify-write with no
- * lock over it, so two edits the row lock correctly serialised could still land their cache writes
- * in the other order, leaving the LOSER's list under a month TTL. Every enforcement path reads this
- * key first, so that is the lost update the row lock exists to prevent, moved to the artifact that
- * actually gates. Deletes commute; the next read repopulates.
+ * lock over it, so two WRITERS the row lock correctly serialised could still land their cache writes
+ * in the other order, leaving the LOSER's list under a month TTL. Deletes commute with each other,
+ * so that ordering no longer decides anything.
+ *
+ * ⚠️ What this does NOT close: a DELETE does not commute with the POPULATE in `getBlocklistDTO`,
+ * which is plain cache-aside. A reader that missed and read the row before the commit can `set` its
+ * pre-write snapshot AFTER the bust, pinning it for the month TTL. A write guarantees the next read
+ * misses, so a bust actively drives readers into that window. Closing it needs a lease, a version,
+ * or a TTL short enough to bound the staleness; none of those is in this change.
  *
  * The moderator spoke busts the same key the same way. The two must agree.
  *
@@ -79,8 +84,14 @@ export async function upsertBlocklist({ id, type, blocklist }: UpsertBlocklistSc
     async (tx) => {
       // Scoped to `type` always, and to `id` only when one was given — the same rule as the
       // spoke's `readRowForWrite`, and the two have to agree because they write one Redis key.
-      // With no id it locks the LOWEST row of the type, which is the row `readBlocklistRow`
-      // enforces, so an add can never append to a duplicate row nobody reads.
+      // With no id it locks the rows of the type in id order and takes the FIRST, which is the row
+      // `readBlocklistRow` enforces — so an add can never append to an EXISTING duplicate row
+      // nobody reads. It does not stop one being created; see the create branch below.
+      //
+      // 🔴 `ORDER BY id ASC` and `locked[0]` are one decision, not two. Reading `locked.at(-1)`
+      // here merges into the highest-id row while the SQL still says ASC, which is the
+      // duplicate-row promotion this file exists to prevent, with the ordering still in the
+      // statement to reassure whoever greps for it.
       //
       // Verified against dev Postgres 18 through Prisma 6.13 rather than assumed: a `text[]`
       // column comes back from `$queryRaw` as a real JS array, so the spread below merges
@@ -97,6 +108,12 @@ export async function upsertBlocklist({ id, type, blocklist }: UpsertBlocklistSc
       if (!locked.length) {
         // An `id` naming no row of this type is refused, never turned into an insert: a second row
         // for a type is the state `readBlocklistRow` exists to survive.
+        //
+        // ⚠️ The create below is NOT serialised. `FOR UPDATE` locks nothing when it matches
+        // nothing, so two concurrent no-id upserts for a type with no row both reach it and the
+        // type ends up with two. Unreachable from this app — the only caller always passes an id —
+        // but the spoke's twin is reachable, and the closes are a unique index on `Blocklist.type`
+        // or an advisory lock on the type, not this predicate.
         if (id !== undefined) return undefined;
         await tx.blocklist.create({ data: { data: blocklistData, type }, select: { id: true } });
         return blocklistData;
@@ -132,13 +149,15 @@ export async function upsertBlocklist({ id, type, blocklist }: UpsertBlocklistSc
 }
 
 /**
- * Nothing stops a type having more than one row, and `EmailDomain` has two in production
- * — 8292 entries against 3, with the 3 present in neither the other row nor anything
- * else. The old read took `findFirst` with no `orderBy`, so which set was live was up to
- * Postgres; worse, `upsertBlocklist` wrote the row it had just touched into a cache key
- * scoped to the TYPE, so the last row a moderator edited won for a month regardless. The
- * loser's entries were simply not enforced, and the winner could change on an unrelated
- * edit.
+ * Nothing stops a type having more than one row. `EmailDomain` had two in production when this
+ * was written — 8292 entries against 3, the 3 present nowhere else — and the old `findFirst` with
+ * no `orderBy` let Postgres decide which set was enforced. (Re-checked 2026-08-24: every type now
+ * has exactly one row, so the guard is currently inert. It is kept because nothing PREVENTS a
+ * duplicate; see the first-insert race in `upsertBlocklist`.)
+ *
+ * No writer calls this any more. Its one caller is the cache-aside populate in `getBlocklistDTO` —
+ * so this is what decides which row the whole system enforces, and a write busts the key, making
+ * the next read a post-write read that pins a value for a month.
  *
  * This picks the lowest id, always, and reports the duplicate. It deliberately does NOT
  * union the rows: for a deny-list a union blocks more, but for the benign lists a union

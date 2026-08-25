@@ -27,6 +27,8 @@ let lockedReads: On[] = [];
 let transactions = 0;
 /** An UPDATE whose predicates resolved no row — recorded, never asserted inside the resolver. */
 let unscopedUpdates = 0;
+/** Every `orderBy` the code emitted, so the ordering is pinned rather than supplied by the fake. */
+let orderBys: unknown[][] = [];
 
 const wheres = (calls: Call[]) => calls.filter(([m]) => m === 'where').map(([, a]) => a);
 const scope = (calls: Call[]) => ({
@@ -61,24 +63,34 @@ function chain(record: (calls: Call[]) => void, resolve: (calls: Call[]) => unkn
 }
 
 /**
- * Rows the emitted SQL would match: ONLY the predicates actually present apply, in id order. A fake
- * that refused a row for some other reason would let a dropped predicate pass for the wrong cause.
+ * Rows the emitted SQL would match: ONLY the predicates actually present apply. A fake that refused
+ * a row for some other reason would let a dropped predicate pass for the wrong cause.
+ *
+ * 🔴 Ordering is applied ONLY when `orderBy('id','asc')` was actually recorded. Sorting
+ * unconditionally hands the code a guarantee it may not have emitted — deleting the `orderBy` then
+ * passes every test while Postgres is free to return any row of the type, which on a duplicate is
+ * the "the edit went to the row nobody reads" bug this file exists to prevent. Unordered, the fake
+ * returns rows HIGHEST id first, so the wrong element surfaces as a wrong value.
  */
 function matching(calls: Call[]): [number, { type: string; data: string[] }][] {
   const { id, type } = scope(calls);
-  return Object.entries(rows)
+  const ordersById = calls.some(
+    ([m, args]) => m === 'orderBy' && args[0] === 'id' && args[1] === 'asc'
+  );
+  const matched = Object.entries(rows)
     .map(([rowId, row]) => [Number(rowId), row] as [number, { type: string; data: string[] }])
     .filter(
       ([rowId, row]) =>
         (id === undefined || rowId === id) && (type === undefined || row.type === type)
-    )
-    .sort((a, b) => a[0] - b[0]);
+    );
+  return matched.sort((a, b) => (ordersById ? a[0] - b[0] : b[0] - a[0]));
 }
 
 const selectFrom = (on: On) =>
   chain(
     (calls) => {
       if (calls.some(([m]) => m === 'forUpdate')) lockedReads.push(on);
+      for (const [method, args] of calls) if (method === 'orderBy') orderBys.push(args);
     },
     (calls) => {
       const [first] = matching(calls);
@@ -153,13 +165,13 @@ vi.mock('../redis', () => ({
 }));
 vi.mock('../axiom', () => ({ logToAxiom: vi.fn() }));
 
-const { removeBlocklistItems, upsertBlocklist, BlocklistRowMismatchError } = await import(
-  '../blocklist.service'
-);
+const { removeBlocklistItems, upsertBlocklist, getBlocklistDTO, BlocklistRowMismatchError } =
+  await import('../blocklist.service');
 
 beforeEach(() => {
   vi.clearAllMocks();
   lockedReads = [];
+  orderBys = [];
   transactions = 0;
   unscopedUpdates = 0;
   rows = {
@@ -167,6 +179,11 @@ beforeEach(() => {
     4: { type: 'MessagePattern', data: ['unfreeze your funds'] },
   };
 });
+
+/** A second row for a type. Nothing prevents one, and which row wins is the whole question. */
+const addDuplicateEmailDomainRow = () => {
+  rows[9] = { type: 'EmailDomain', data: ['duplicate-row-nobody-reads.example'] };
+};
 
 /** Both writers must satisfy these, so they are asserted for each rather than for one. */
 const expectLockedInsideOneTransaction = () => {
@@ -321,15 +338,57 @@ describe('upsertBlocklist', () => {
     expect(Object.keys(rows)).toHaveLength(2);
   });
 
-  it('inserts only when the type genuinely has no row', async () => {
-    const { count } = await upsertBlocklist({ type: 'UsernameExact', blocklist: ['Scammer'] });
+  it('merges into the LOWEST row of the type, the one readBlocklistRow enforces', async () => {
+    // 🔴 Needs a type with TWO rows. With one, every ordering picks the same row, so dropping the
+    // `orderBy` — or reading the wrong end of the result — passes while an add lands on a row
+    // nobody reads: banner says "Added 1 item", cache busted, page reloads unchanged.
+    addDuplicateEmailDomainRow();
 
-    expect(count).toBe(1);
+    await upsertBlocklist({ type: 'EmailDomain', blocklist: ['new.example'] });
+
+    expect(rows[1].data, 'the lowest row is the one that must gain the entry').toContain(
+      'new.example'
+    );
+    expect(rows[9].data).toEqual(['duplicate-row-nobody-reads.example']);
+  });
+
+  it('asks for id order rather than relying on the row it happens to get back', async () => {
+    addDuplicateEmailDomainRow();
+
+    await upsertBlocklist({ type: 'EmailDomain', blocklist: ['new.example'] });
+
+    expect(orderBys, 'the locking read must order by id ASC').toContainEqual(['id', 'asc']);
+  });
+
+  it('inserts only when the type genuinely has no row, and counts every entry inserted', async () => {
+    // More than one item, because `return items.length` and `return 1` are indistinguishable on a
+    // single-entry insert — and seeding a brand-new tab from a pasted list is exactly that case.
+    const { count } = await upsertBlocklist({
+      type: 'UsernameExact',
+      blocklist: ['Scammer', 'Phisher', 'Spammer'],
+    });
+
+    expect(count).toBe(3);
     expect(insertSpy).toHaveBeenCalledWith({
       on: 'trx',
       type: 'UsernameExact',
-      data: ['scammer'],
+      data: ['scammer', 'phisher', 'spammer'],
     });
+  });
+});
+
+describe('which row the system enforces', () => {
+  // `readBlocklistRow` decides this for every reader in three apps, and after this change it is the
+  // ONLY caller of the cache populate — so a write busts the key and the very next read through
+  // here pins a value for a month. Dropping its `orderBy` was invisible before this test.
+  it('reads the LOWEST row of the type', async () => {
+    addDuplicateEmailDomainRow();
+
+    const dto = await getBlocklistDTO({ type: 'EmailDomain' });
+
+    expect(dto.id).toBe(1);
+    expect(dto.data).toEqual(['spam.example', 'junk.example', 'trash.example']);
+    expect(orderBys, 'the read must order by id ASC').toContainEqual(['id', 'asc']);
   });
 });
 
