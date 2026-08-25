@@ -28,7 +28,7 @@ export function ProfileHeader({ username }: { username: string }) {
     username,
   });
   const isMobile = useContainerSmallerThan('sm');
-  const { announcements } = useQueryCreatorAnnouncements(user?.id);
+  const { announcements, isLoading: announcementsLoading } = useQueryCreatorAnnouncements(user?.id);
 
   const cover = user?.profile?.coverImage;
   const images = useMemo(
@@ -137,7 +137,13 @@ export function ProfileHeader({ username }: { username: string }) {
     return (
       <div className="flex flex-col gap-3">
         {!user.muted && <CreatorAnnouncementsCarousel userId={user.id} className="container" />}
-        <CreatorAnnouncementsEntry userId={user.id} userMuted={user.muted} className="container" />
+        <CreatorAnnouncementsEntry
+          userId={user.id}
+          userMuted={user.muted}
+          announcementCount={announcements.length}
+          announcementsLoading={announcementsLoading}
+          className="container"
+        />
         {renderMessage()}
         <div className="flex flex-col">
           {renderCoverImage()}
@@ -157,7 +163,13 @@ export function ProfileHeader({ username }: { username: string }) {
     <Stack>
       {renderCoverImage()}
       {!user.muted && <CreatorAnnouncementsCarousel userId={user.id} className="container" />}
-      <CreatorAnnouncementsEntry userId={user.id} userMuted={user.muted} className="container" />
+      <CreatorAnnouncementsEntry
+        userId={user.id}
+        userMuted={user.muted}
+        announcementCount={announcements.length}
+        announcementsLoading={announcementsLoading}
+        className="container"
+      />
       {renderMessage()}
     </Stack>
   );

@@ -10,16 +10,22 @@ export function creatorAnnouncementsEntryVariant({
   profileUserId,
   profileUserMuted,
   announcementCount,
+  announcementsLoading,
 }: {
   featureEnabled: boolean;
   currentUserId?: number | null;
   profileUserId: number;
   profileUserMuted: boolean;
   announcementCount: number;
+  announcementsLoading: boolean;
 }): CreatorAnnouncementsEntryVariant | null {
   if (!featureEnabled) return null;
   if (profileUserMuted) return null;
-  if (currentUserId == null || currentUserId !== profileUserId) return null;
+  if (currentUserId !== profileUserId) return null;
+
+  // An unsettled count reads as zero, which would show the "post your first one" prompt to a creator
+  // who already has announcements — the one state the carousel above deliberately renders nothing in.
+  if (announcementsLoading) return null;
 
   return announcementCount > 0 ? 'manage' : 'empty';
 }

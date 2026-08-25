@@ -6,31 +6,32 @@ import {
   CREATOR_ANNOUNCEMENTS_URL,
   creatorAnnouncementsEntryVariant,
 } from '~/components/Announcements/creator-announcements-entry';
-import {
-  useCreatorAnnouncementsFeature,
-  useQueryCreatorAnnouncements,
-} from '~/components/Announcements/creator-announcements.utils';
+import { useCreatorAnnouncementsFeature } from '~/components/Announcements/creator-announcements.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export function CreatorAnnouncementsEntry({
   userId,
   userMuted,
+  announcementCount,
+  announcementsLoading,
   className,
 }: {
   userId: number;
   userMuted: boolean;
+  announcementCount: number;
+  announcementsLoading: boolean;
   className?: string;
 }) {
   const currentUser = useCurrentUser();
   const featureEnabled = useCreatorAnnouncementsFeature();
-  const { announcements } = useQueryCreatorAnnouncements(userId);
 
   const variant = creatorAnnouncementsEntryVariant({
     featureEnabled,
     currentUserId: currentUser?.id,
     profileUserId: userId,
     profileUserMuted: userMuted,
-    announcementCount: announcements.length,
+    announcementCount,
+    announcementsLoading,
   });
 
   if (!variant) return null;
