@@ -18,7 +18,8 @@ import { hubExcludedFilterKeys } from '~/components/Image/Filters/media-filter-k
 import { MediaFiltersDropdown } from '~/components/Image/Filters/MediaFiltersDropdown';
 import type { HubSort } from '~/server/schema/user-hub.schema';
 import { hubFeedFiltersSchema, hubSortSchema } from '~/server/schema/user-hub.schema';
-import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
+import type { MediaType } from '~/shared/utils/prisma/enums';
+import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 

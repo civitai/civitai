@@ -14,7 +14,12 @@ const { followMutate, unfollowMutate, currentUser, followedHubs } = vi.hoisted((
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => currentUser.value }));
 
-vi.mock('~/utils/trpc', () => ({
+// Spread the real module and override only `trpc`: a wholesale factory replaces
+// `~/utils/trpc` with a hand-written object, so the day it gains an export this
+// factory omits, every importer in this file's graph gets `undefined` and the FILE
+// fails to load — 0 tests collected, no failing assertion.
+vi.mock('~/utils/trpc', async (importOriginal) => ({
+  ...(await importOriginal<typeof Trpc>()),
   trpc: {
     useUtils: () => ({ userHub: { getFollowed: { invalidate: vi.fn() } } }),
     userHub: {
@@ -25,6 +30,7 @@ vi.mock('~/utils/trpc', () => ({
   },
 }));
 
+import type * as Trpc from '~/utils/trpc';
 import { FollowHubButton } from '~/components/Hubs/FollowHubButton';
 import { FollowedHubsSection } from '~/components/Hubs/FollowedHubsSection';
 
