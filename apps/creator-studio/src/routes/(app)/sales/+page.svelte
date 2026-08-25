@@ -19,7 +19,12 @@
   import SaleFields from '$lib/components/monetization/SaleFields.svelte';
   import { resolveSaleDraft, type SaleDraftInput } from '$lib/monetization/sales';
   import { isSaleActive, remainingSaleDays, type ModelVersionSaleWindow } from '@civitai/buzz';
-  import { budgetMonthOf, minCreatorScoreForSale, shortenBounds } from '$lib/monetization/sales';
+  import {
+    budgetMonthOf,
+    minCreatorScoreForSale,
+    parseSalePreview,
+    shortenBounds,
+  } from '$lib/monetization/sales';
   import type { PageData } from './$types';
 
   // Scheduled sales, listed and managed. Starting one lives on the Models tab, where the selection is;
@@ -69,10 +74,16 @@
         await invalidateAll();
         if (result.data?.cancelled) selectedId = null;
         if (result.data?.scheduled) {
-          const skipped = Number(result.data?.skippedEarlyAccess ?? 0);
+          const earlyAccess = Number(result.data?.skippedEarlyAccess ?? 0);
+          const unpriced = Number(result.data?.skippedUnpriced ?? 0);
+          const covered = Number(result.data?.covered ?? 0);
+          const reasons = [
+            earlyAccess > 0 ? `${earlyAccess} already in early access` : null,
+            unpriced > 0 ? `${unpriced} with no access price` : null,
+          ].filter(Boolean);
           toast.success(
-            skipped > 0
-              ? `Sale scheduled on ${result.data?.covered} version${result.data?.covered === 1 ? '' : 's'} — ${skipped} skipped, already in early access.`
+            reasons.length > 0
+              ? `Sale scheduled on ${covered} version${covered === 1 ? '' : 's'} — skipped ${reasons.join(' and ')}.`
               : 'Sale scheduled.'
           );
           await closeCreate();
@@ -98,6 +109,9 @@
       .map((v) => Number(v.trim()))
       .filter((n) => Number.isInteger(n) && n > 0)
   );
+  // The preview depends on WHICH versions, not on the array's identity. `draftVersionIds` rebuilds on
+  // every `page.url` change, so depending on it re-POSTed the preview for an unchanged selection.
+  const draftVersionKey = $derived(draftVersionIds.join(','));
   // Flag-gated as well as URL-driven: a ?versions= link must not open a form whose submit would be
   // refused with a 403 the creator can do nothing about.
   const creating = $derived(draftVersionIds.length > 0 && data.salesEnabled);
@@ -127,40 +141,57 @@
     sale.endDate = isoDay(new Date(start.getTime() + (span - 1) * 86_400_000));
   });
 
-  // What the form can't see about a selection this page never listed: how much of it is early access,
-  // and the cheapest price among the rest. undefined = not known, which blocks rather than waves through.
-  let earlyAccessCount = $state(0);
+  // What the form can't see about a selection this page never listed: how much of it a sale would
+  // cover, why the rest is out, and the cheapest price among the covered ones. undefined = not known,
+  // which blocks rather than waves through — a failed preview must not read as full coverage.
+  let eligibleCount = $state<number | undefined>(undefined);
+  let earlyAccessCount = $state<number | undefined>(undefined);
+  let unpricedCount = $state<number | undefined>(undefined);
   let minCoveredPrice = $state<number | null | undefined>(undefined);
   let loadingPreview = $state(false);
   let previewRequest = 0;
   $effect(() => {
-    const ids = draftVersionIds;
+    const key = draftVersionKey;
+    const ids = key ? key.split(',') : [];
     if (ids.length === 0) {
+      // Bump first: an in-flight preview for the previous selection would otherwise still pass the
+      // sequence guard and write its counts back over this reset.
+      previewRequest++;
+      // The bump orphans any in-flight request, so its `finally` will not clear this.
+      loadingPreview = false;
+      eligibleCount = 0;
       earlyAccessCount = 0;
+      unpricedCount = 0;
       minCoveredPrice = undefined;
       return;
     }
     const seq = ++previewRequest;
     const body = new FormData();
-    body.set('versionIds', ids.join(','));
+    body.set('versionIds', key);
     loadingPreview = true;
     fetch('?/salePreview', { method: 'POST', body })
       .then((r) => r.text())
       .then((r) => {
         if (seq !== previewRequest) return;
         const parsed = deserialize(r);
-        if (parsed.type !== 'success') {
-          earlyAccessCount = 0;
+        const preview = parsed.type === 'success' ? parseSalePreview(parsed.data) : undefined;
+        if (!preview) {
+          eligibleCount = undefined;
+          earlyAccessCount = undefined;
+          unpricedCount = undefined;
           minCoveredPrice = undefined;
           return;
         }
-        earlyAccessCount = Number(parsed.data?.earlyAccess ?? 0);
-        const min = parsed.data?.minCoveredPrice;
-        minCoveredPrice = min == null ? null : Number(min);
+        eligibleCount = preview.eligible;
+        earlyAccessCount = preview.earlyAccess;
+        unpricedCount = preview.unpriced;
+        minCoveredPrice = preview.minCoveredPrice;
       })
       .catch(() => {
         if (seq !== previewRequest) return;
-        earlyAccessCount = 0;
+        eligibleCount = undefined;
+        earlyAccessCount = undefined;
+        unpricedCount = undefined;
         minCoveredPrice = undefined;
       })
       .finally(() => {
@@ -177,7 +208,9 @@
       sale,
       {
         selectedCount: draftVersionIds.length,
+        eligibleCount,
         earlyAccessCount,
+        unpricedCount,
         minCoveredPrice,
         creatorScore: data.creatorScore,
         tier: data.capTier,
