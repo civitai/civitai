@@ -203,13 +203,15 @@ describe('userCapCache peak-earning query', () => {
     expect(sql).toMatch(/type = 'purchase' AND fromAccountId != 0/);
   });
 
-  // The interpolated list decides which Buzz counts toward Peak Earning Month, and so toward a
-  // creator's Cap; a wrong list returns a plausible wrong number rather than an error. Pinned to
-  // the derivation, not to a literal, so re-hardcoding the list fails here.
-  it('interpolates the bankable-type list derived from buzzBankTypes', async () => {
-    const { values } = await runLookup([userId]);
+  // This clause decides which Buzz counts toward Peak Earning Month, and so toward a creator's Cap;
+  // both halves of it return a plausible wrong number rather than an error. Asserted as column AND
+  // list together: on the list alone, narrowing `toAccountType` to `fromAccountType` sums Buzz
+  // leaving the account instead of arriving and every test in this block still passes.
+  it('narrows the peak-earning sum to the bankable types arriving in the account', async () => {
+    const { sql } = await runLookup([userId]);
 
-    expect(values).toContain(buzzBankTypes.map((type) => `'${type}'`).join(', '));
+    const bankable = buzzBankTypes.map((type) => `'${type}'`).join(', ');
+    expect(sql).toContain(`toAccountType IN (${bankable})`);
   });
 
   it('derives the cap from the peak month returned by ClickHouse', async () => {
