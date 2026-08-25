@@ -295,6 +295,12 @@ export function edgeCacheIt({ ttl = 60 * 3, expireAt, tags }: EdgeCacheItProps =
     if (expireAt) reqTTL = Math.floor((expireAt().getTime() - Date.now()) / 1000);
 
     const result = await next();
+    // Re-read `skip` now that the resolver has run. The read above happens before
+    // `next()`, so a resolver that only knows its response is uncacheable once it has
+    // produced it (e.g. `home-block.getHomeBlock` on an Announcement block) sets a flag
+    // nothing looks at again. `canCache` is already read on the line below, after the
+    // resolver, and this puts `skip` on the same footing.
+    if (ctx.cache?.skip) reqTTL = 0;
     if (result.ok && ctx.cache?.canCache) {
       ctx.cache.browserTTL = isProd ? Math.min(60, reqTTL) : 0;
       ctx.cache.edgeTTL = reqTTL;

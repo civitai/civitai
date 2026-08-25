@@ -174,7 +174,14 @@ export const getHomeBlockById = async ({
   id,
   domain,
 }: GetHomeBlockByIdInputSchema & {
-  // SessionUser required because it's passed down to getHomeBlockData
+  // Accepted and deliberately NOT read. The body destructures `id` and `domain` only;
+  // the block is resolved through `getHomeBlockCached`, whose entry is keyed on the
+  // block row and the domain, so the result is identical for every caller.
+  //
+  // Keep it that way. `homeBlock.getHomeBlock` is edge-cached, which means one caller's
+  // response body is served to every other caller that hits the same URL. Reading `user`
+  // here to personalize the result would make a shared cache entry caller-specific and
+  // leak it across users.
   user?: SessionUser;
 }) => {
   const homeBlockFindArgs = {
