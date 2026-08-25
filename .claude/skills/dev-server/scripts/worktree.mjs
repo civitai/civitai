@@ -381,18 +381,20 @@ export function describePrune(raw, adminName) {
       .split(/[\\/]/)
       .filter(Boolean)
       .pop() || null;
-  const mineName = leaf(adminName)?.toLowerCase() ?? null;
+  // Case-SENSITIVE: both sides are git's own spelling of the same directory (one from `rev-parse`,
+  // one from prune), and on a case-sensitive filesystem `Mine` and `mine` are two different trees.
+  const mineName = leaf(adminName);
 
   const out = [];
   let collateral = 0;
   let unknown = 0;
   for (const line of lines) {
     // git's only wording here is `Removing worktrees/<admin>: <reason>` (git/worktree.c).
-    const named = line.match(/^Removing\s+worktrees\/(.+?):/i);
+    const named = line.match(/^Removing\s+worktrees\/(.+?):/);
     if (!mineName || !named) {
       unknown++;
       out.push(`pruned (could not tell whose): ${line}`);
-    } else if (named[1].toLowerCase() === mineName) {
+    } else if (named[1] === mineName) {
       out.push(`pruned: ${line}`);
     } else {
       collateral++;

@@ -84,6 +84,14 @@ check(
   `pruned: Removing worktrees/mine1: ${REASON}`
 );
 
+// On a case-sensitive filesystem `Mine` and `mine` are two different trees, and both sides here are
+// git's own spelling of one directory, so the comparison must not fold case.
+check(
+  'a tree differing only in case is somebody else\u2019s',
+  describePrune(`Removing worktrees/mine1: ${REASON}`, 'C:/x/.git/worktrees/Mine1')[0],
+  `pruned (ALSO, not your target): Removing worktrees/mine1: ${REASON}`
+);
+
 // Unattributable rather than guessed: a line is never credited to the target on a hunch.
 check(
   'no admin name means no attribution',
