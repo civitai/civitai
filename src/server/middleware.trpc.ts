@@ -300,6 +300,18 @@ export function edgeCacheIt({ ttl = 60 * 3, expireAt, tags }: EdgeCacheItProps =
     // produced it (e.g. `home-block.getHomeBlock` on an Announcement block) sets a flag
     // nothing looks at again. `canCache` is already read on the line below, after the
     // resolver, and this puts `skip` on the same footing.
+    //
+    // PRECEDENCE, deliberate and now pinned by test: `skip` BEATS `expireAt`. Sitting
+    // after the `expireAt` assignment above, this line overrides a scheduled expiry
+    // rather than being overridden by it. That is the intended ordering — `expireAt`
+    // says "this content goes stale at time T", which is a statement about content that
+    // IS cacheable, whereas `skip` says "this particular response must not be cached at
+    // all". A response the resolver has declared uncacheable does not become cacheable
+    // because someone also scheduled when it should expire; the stronger claim wins.
+    // (Before this line existed the ordering was the other way round and nothing said
+    // so, so it was accidental rather than chosen.) Reintroducing an `expireAt` guard
+    // here — `if (ctx.cache?.skip && !expireAt)` — is caught by
+    // `middleware.trpc.edge-cache-precedence.test.ts`.
     if (ctx.cache?.skip) reqTTL = 0;
     if (result.ok && ctx.cache?.canCache) {
       ctx.cache.browserTTL = isProd ? Math.min(60, reqTTL) : 0;

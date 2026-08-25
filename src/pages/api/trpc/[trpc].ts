@@ -14,6 +14,7 @@ import { isClientAbortError } from '~/server/utils/errorHandling';
 import { appRouter } from '~/server/routers';
 import { runWithSerializeCtx, serializeCtxFromRequest } from '~/server/logging/trpc-serialize-log';
 import { getTrpcMaxBatchSize } from '~/server/trpc/batch-cap';
+import { willEdgeCache } from '~/server/trpc/edge-cache-headers';
 
 export const config = {
   api: {
@@ -51,16 +52,18 @@ const trpcHandler = createNextApiHandler({
   maxBatchSize: getTrpcMaxBatchSize(),
   responseMeta: ({ ctx, type, errors }) => {
     const headers: Record<string, string> = {};
-    const willEdgeCache = ctx?.cache && !!ctx?.cache.edgeTTL && ctx?.cache.edgeTTL > 0;
-    if (willEdgeCache && type === 'query' && errors.length === 0) {
-      ctx.res?.removeHeader('Set-Cookie');
+    // Single-sourced in `~/server/trpc/edge-cache-headers` so that tests asserting a
+    // middleware chain's cache outcome import THIS predicate instead of re-declaring it.
+    const cache = ctx?.cache;
+    if (willEdgeCache(cache) && type === 'query' && errors.length === 0) {
+      ctx?.res?.removeHeader('Set-Cookie');
       headers['Cache-Control'] = [
         'public',
-        `max-age=${ctx.cache.browserTTL ?? 0}`,
-        `s-maxage=${ctx.cache.edgeTTL ?? 0}`,
-        `stale-while-revalidate=${ctx.cache.staleWhileRevalidate ?? 0}`,
+        `max-age=${cache.browserTTL ?? 0}`,
+        `s-maxage=${cache.edgeTTL ?? 0}`,
+        `stale-while-revalidate=${cache.staleWhileRevalidate ?? 0}`,
       ].join(', ');
-      if (ctx.cache.tags) headers['Cache-Tag'] = ctx.cache.tags.join(', ');
+      if (cache.tags) headers['Cache-Tag'] = cache.tags.join(', ');
     }
 
     return Object.keys(headers).length > 0 ? { headers } : {};
