@@ -118,22 +118,36 @@ const oneStickeredImage = () => {
  * a test can withhold the odd half and still have enough left to fill the page.
  */
 const manyStickeredImages = (count: number) => {
-  const all = Array.from({ length: count }, (_, i) => ({
-    targetId: 900 + i,
-    _max: { createdAt: new Date(2026, 0, 1, 0, count - i) },
-  }));
+  const rows = (base: number) =>
+    Array.from({ length: count }, (_, i) => ({
+      targetId: base + i,
+      _max: { createdAt: new Date(2026, 0, 1, 0, count - i) },
+    }));
 
-  // 🔴 HONOURS `take` AND `skip`. A flat `mockResolvedValue` hands back every row
-  // whatever the query asked for, which makes the overfetch invisible: the walk
-  // sees all 40 candidates even with the overfetch removed, and a test named for
-  // it passes over code that does not do it. Caught by reverting
-  // `SECTION_OVERFETCH` and watching this stay green.
-  placementGroupBy.mockImplementation(async (args: { take?: number; skip?: number }) => {
-    const from = args?.skip ?? 0;
-    return all.slice(from, from + (args?.take ?? all.length));
-  });
+  // 🔴 HONOURS `take` AND `skip`, and DISPATCHES ON `where`.
+  //
+  // `take`: a flat `mockResolvedValue` hands back every row whatever the query
+  // asked for, which makes the overfetch invisible — the walk sees all the
+  // candidates even with the overfetch removed, and a test named for it passes
+  // over code that does not do it. Caught by reverting `SECTION_OVERFETCH`.
+  //
+  // `where`: without this the two sections return IDENTICAL rows, so the two
+  // per-section hydrations hold the same map and sharing one between them is
+  // unobservable. In production their image sets are disjoint and the loser's
+  // `attach` finds nothing — an empty row.
+  placementGroupBy.mockImplementation(
+    async (args: { take?: number; skip?: number; where?: { placerId?: number } }) => {
+      const all = rows(args?.where?.placerId ? PLACED_BASE : RECEIVED_BASE);
+      const from = args?.skip ?? 0;
+      return all.slice(from, from + (args?.take ?? all.length));
+    }
+  );
   placementFindMany.mockResolvedValue([]);
 };
+
+/** Disjoint id ranges, so a section drawing the other one's images is visible. */
+const PLACED_BASE = 900;
+const RECEIVED_BASE = 5000;
 
 const EARNED = 1234;
 
@@ -419,7 +433,7 @@ describe('getStickerBook — what leaves the server', () => {
     // The cap, overfetched, plus the one row that decides `hasMore`. Asserted as
     // the cap it came from rather than as 241, so raising the cap fails here
     // rather than silently letting a caller ask for 5000.
-    for (const call of placementGroupBy.mock.calls) expect(call[0].take).toBe(60 * 4 + 1);
+    for (const call of placementGroupBy.mock.calls) expect(call[0].take).toBe(60 * 2 + 1);
   });
 
   it('asks the tab for WHOLE ROWS of the grid, not a round number', async () => {
@@ -460,10 +474,35 @@ describe('getStickerBook — what leaves the server', () => {
 
     const book = await getStickerBook({ username: 'creator', ...viewer(CREATOR), ...levels });
 
-    expect(book.placed).toHaveLength(STICKER_BOOK_TAB_LIMIT);
-    // The survivors, not the first fourteen candidates — a walk that ignored the
-    // filter would return odd ids too and still have the right length.
-    for (const row of book.placed) expect(row.imageId % 2).toBe(0);
+    // 🔴 The exact ids in order, not a length and a parity check.
+    //
+    // A parity loop here CANNOT FAIL: `attach` drops any row whose id is absent
+    // from the hydration map, and that map holds only the evens — so every row
+    // reaching the assertion is even whatever the walk did. Length alone is just
+    // as weak: it stays green under a walk that reverses the candidates (oldest
+    // first), or pushes `groups[0]` fourteen times. Only the id list sees those.
+    expect(book.placed.map((row) => row.imageId)).toEqual(
+      Array.from({ length: STICKER_BOOK_TAB_LIMIT }, (_, i) => PLACED_BASE + i * 2)
+    );
+  });
+
+  it('keeps the two sections hydrated apart', async () => {
+    // One `sectionImages` per section. Shared, the second hydration erases the
+    // first and the losing section renders empty — and with a fixture whose two
+    // sections return the same rows, that mutation is invisible.
+    manyStickeredImages(20);
+
+    const book = await getStickerBook({ username: 'creator', ...viewer(CREATOR), ...levels });
+
+    expect(book.placed.map((row) => row.imageId)).toEqual(
+      Array.from({ length: STICKER_BOOK_TAB_LIMIT }, (_, i) => PLACED_BASE + i)
+    );
+    expect(book.received.map((row) => row.imageId)).toEqual(
+      Array.from({ length: STICKER_BOOK_TAB_LIMIT }, (_, i) => RECEIVED_BASE + i)
+    );
+    // One feed query per section. A regression to hydrating twice would still
+    // return the right rows, so the count is the only thing that sees it.
+    expect(allImages).toHaveBeenCalledTimes(2);
   });
 });
 

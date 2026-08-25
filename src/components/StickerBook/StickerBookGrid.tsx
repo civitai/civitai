@@ -4,10 +4,11 @@ import { useMemo } from 'react';
 import { ImagesCard } from '~/components/Image/Infinite/ImagesCard';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import type { StickerBookSide } from '~/components/StickerBook/sticker-book.util';
-import { STICKER_BOOK_MAX_COLUMNS } from '~/shared/utils/sticker-book';
+import { constants } from '~/server/common/constants';
 import type { RouterOutput } from '~/types/router';
 
 type BookItems = RouterOutput['stickerBook']['get']['placed'];
@@ -21,17 +22,23 @@ type BookItems = RouterOutput['stickerBook']['get']['placed'];
  * The height is that width at the 7:9 the profile sections use, so the grid
  * keeps its rhythm whatever each picture's own aspect is.
  */
-const CARD_WIDTH = 280;
-const CARD_HEIGHT = Math.round((CARD_WIDTH * 9) / 7);
-const GRID_GAP = 12;
-
 /**
- * Centred and capped, because uncapped `auto-fill` was the one grid on the
- * profile that kept adding columns to the edge of the window — every other one
- * goes through `MasonryContainer`, which stops at seven and centres itself.
+ * 🔴 320 and 16 are NOT free numbers — they are what makes `MasonryContainer`
+ * usable here.
+ *
+ * That component snaps its width to an exact column multiple and centres it, and
+ * it computes those steps in SCSS from hard-coded `$width: 320; $gap: 16`. There
+ * is no prop path. At any other pair its container is the wrong size — at 280 it
+ * leaves room for an eighth card, defeating the seven-column ceiling. Change
+ * either number and the grid silently stops lining up with its own container.
+ *
+ * (It also sidesteps a bug rather than tripping it: `MasonryProvider` shadows
+ * its own `gap` prop with a local `const gap = 16` when computing column count.
+ * At 16 the shadow is a no-op.)
  */
-export const STICKER_BOOK_MAX_WIDTH =
-  STICKER_BOOK_MAX_COLUMNS * CARD_WIDTH + (STICKER_BOOK_MAX_COLUMNS - 1) * GRID_GAP;
+const CARD_WIDTH = constants.cardSizes.image;
+const CARD_HEIGHT = Math.round((CARD_WIDTH * 9) / 7);
+const GRID_GAP = 16;
 
 /**
  * The images in one section, drawn with the standard feed card.
@@ -50,6 +57,7 @@ export function StickerBookGrid({
   items,
   side,
   emptyMessage,
+  wholeRowsOnly,
 }: {
   items: BookItems;
   side: StickerBookSide;
@@ -60,15 +68,36 @@ export function StickerBookGrid({
    * blank space.
    */
   emptyMessage?: string;
+  /**
+   * Draw only COMPLETE rows — the tab's preview, where a part-filled last row is
+   * the reported defect ("what's the two blank image spots for?").
+   *
+   * 🔴 Trimming here rather than on the server is the only place it can be
+   * correct: the column count is a property of the viewport, and the viewer's
+   * own hides drop rows AFTER the server has counted. A fetch size cannot know
+   * either. The remainder is not lost — "View all" is the whole section.
+   *
+   * Off for the drill-in page, which is the full list and must not hide its tail.
+   */
+  wholeRowsOnly?: boolean;
 }) {
   const images = useMemo(() => items.map((item) => item.image), [items]);
   // The viewer's own hides, the same way every other grid applies them. Blocks
   // are enforced on the server; hides are a preference and live here.
   const { items: visible } = useApplyHiddenPreferences({ type: 'images', data: images });
-  const shown = useMemo(() => {
+  const survived = useMemo(() => {
     const ids = new Set(visible.map((image) => image.id));
     return items.filter((item) => ids.has(item.imageId));
   }, [items, visible]);
+
+  // From the same container that lays the grid out, so the two cannot disagree.
+  const { columnCount } = useMasonryContext();
+  const shown = useMemo(() => {
+    // `columnCount` is 0 until the container has measured, and a partial row is
+    // better than an empty section while that resolves.
+    if (!wholeRowsOnly || !columnCount || survived.length < columnCount) return survived;
+    return survived.slice(0, Math.floor(survived.length / columnCount) * columnCount);
+  }, [survived, columnCount, wholeRowsOnly]);
 
   if (!shown.length)
     return (
@@ -82,8 +111,8 @@ export function StickerBookGrid({
     );
 
   return (
-    // 🔴 `hideStickerBadge`: the chip shares the reaction row, and at a 280px
-    // card it squeezes the reaction counts until they clip. This page is about
+    // 🔴 `hideStickerBadge`: the chip shares the reaction row and squeezes the
+    // reaction counts until they clip. This page is about
     // stickers, so the count it was carrying says nothing new here — and
     // `revealStickers` is what draws them, so removing the chip removes no
     // control.
