@@ -2,6 +2,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { Prisma } from '@prisma/client';
 import type {
   AddUserHubSourceInput,
+  HubSourceExclusionInput,
   GetHubSourceSuggestionsInput,
   ResolveHubSourceInput,
   SetUserHubOrderInput,
@@ -27,7 +28,7 @@ import {
   UserEngagementType,
   UserHubSourceType,
 } from '~/shared/utils/prisma/enums';
-import { ImageSort } from '~/server/common/enums';
+import { ImageSort, NsfwLevel } from '~/server/common/enums';
 import { getUserCollectionPermissionsByIds } from '~/server/services/collection.service';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import { getAllServerHosts } from '~/server/utils/server-domain';
@@ -35,11 +36,14 @@ import { parseCivitaiUrlSafe } from '~/utils/civitai-url';
 
 const hubSelect = {
   id: true,
+  userId: true,
   name: true,
   index: true,
   sort: true,
   period: true,
   mediaTypes: true,
+  availability: true,
+  nsfwLevel: true,
   metadata: true,
   sources: {
     select: { id: true, type: true, targetId: true, alias: true, enabled: true, index: true },
@@ -47,7 +51,25 @@ const hubSelect = {
   },
 } as const;
 
-type HubRow = { metadata: Prisma.JsonValue };
+type HubRow = { metadata: Prisma.JsonValue; userId: number };
+
+export type HubViewer = { userId?: number; isModerator?: boolean };
+
+/**
+ * The single answer to "may this viewer open this hub", expressed as a `where`
+ * fragment rather than a check after the fetch: an id the viewer cannot open is a
+ * not-found, never a row plus a refusal.
+ *
+ * A moderator may open any hub — subtask 868kwp5kc, view only. Everyone else gets
+ * their own hubs plus whatever is Public. There is no discovery surface, so Public
+ * means "anyone holding the link", not "listed".
+ */
+export function hubViewerWhere({ userId, isModerator }: HubViewer) {
+  if (isModerator) return {};
+  return {
+    OR: [...(userId ? [{ userId }] : []), { availability: Availability.Public }],
+  };
+}
 
 function readMetadata(metadata: Prisma.JsonValue | undefined) {
   return metadata && typeof metadata === 'object' && !Array.isArray(metadata)
@@ -57,11 +79,15 @@ function readMetadata(metadata: Prisma.JsonValue | undefined) {
 
 // `metadata` never leaves the service: callers get the fields it carries, so a key
 // added to it later is not published to every client by default.
-function toHubDetail<T extends HubRow>({ metadata, ...hub }: T) {
+function toHubDetail<T extends HubRow>({ metadata, ...hub }: T, viewerId?: number) {
   const stored = readMetadata(metadata);
   const description = stored.description;
   return {
     ...hub,
+    // What the client branches its whole chrome on. Computed here rather than
+    // compared client-side, because the client's idea of who it is and the row the
+    // server just authorised are two different facts.
+    isOwner: !!viewerId && hub.userId === viewerId,
     description: typeof description === 'string' ? description : null,
     // Re-validated on the way out: what is on the row was written by an older
     // shape of this schema, and the feed refuses some combinations outright.
@@ -75,17 +101,38 @@ export async function getUserHubs({ userId }: { userId: number }) {
   const hubs = await dbRead.userHub.findMany({
     where: { userId },
     select: hubSelect,
-    orderBy: { index: 'asc' },
+    // Alphabetical, not by `index` — subtask 868kwp5m9. `index` is still written by
+    // `setUserHubOrder` and still what a hub is created with; nothing reads it for
+    // display any more.
+    orderBy: { name: 'asc' },
   });
-  return hubs.map(toHubDetail);
+  return hubs.map((hub) => toHubDetail(hub, userId));
 }
 
-// Every read is scoped by userId rather than checked after the fetch, so an id
-// belonging to someone else is a not-found rather than a leak.
-export async function getUserHubById({ id, userId }: { id: number; userId: number }) {
-  const hub = await dbRead.userHub.findFirst({ where: { id, userId }, select: hubSelect });
+// Scoped in the `where` rather than checked after the fetch, so a hub this viewer
+// may not open is a not-found rather than a leak. Revoking `Public` therefore makes
+// every link anyone was given 404 on the next read — subtask 868kwp5g8 — with no
+// separate revocation list to keep in step.
+export async function getUserHubById({ id, userId, isModerator }: { id: number } & HubViewer) {
+  const hub = await dbRead.userHub.findFirst({
+    where: { id, ...hubViewerWhere({ userId, isModerator }) },
+    select: hubSelect,
+  });
   if (!hub) throw throwNotFoundError('Hub not found');
-  return toHubDetail(hub);
+  return toHubDetail(hub, userId);
+}
+
+/**
+ * Whether the page should render at all, asked before the client query runs so that
+ * a revoked link is a real HTTP 404 rather than a 200 carrying a not-found
+ * component (subtask 868kwp5g8). A count on the primary key, not a second fetch of
+ * the row the client is about to ask for anyway.
+ */
+export async function userHubIsViewable({ id, userId, isModerator }: { id: number } & HubViewer) {
+  const count = await dbRead.userHub.count({
+    where: { id, ...hubViewerWhere({ userId, isModerator }) },
+  });
+  return count > 0;
 }
 
 export async function upsertUserHub({ userId, ...input }: UpsertUserHubInput & { userId: number }) {
@@ -128,7 +175,7 @@ export async function upsertUserHub({ userId, ...input }: UpsertUserHubInput & {
       },
       select: hubSelect,
     });
-    return toHubDetail(hub);
+    return toHubDetail(hub, userId);
   }
 
   // Read through the WRITER, not the replica: this is a read-modify-write of one
@@ -158,7 +205,7 @@ export async function upsertUserHub({ userId, ...input }: UpsertUserHubInput & {
       data: { ...data, ...(metadata ? { metadata } : {}) },
       select: hubSelect,
     });
-    return toHubDetail(hub);
+    return toHubDetail(hub, userId);
   }
 
   const updated = await dbWrite.$transaction(async (tx) => {
@@ -177,7 +224,7 @@ export async function upsertUserHub({ userId, ...input }: UpsertUserHubInput & {
       select: hubSelect,
     });
   });
-  return toHubDetail(updated);
+  return toHubDetail(updated, userId);
 }
 
 export async function addUserHubSource({
@@ -289,28 +336,46 @@ export type ResolvedHubSources = {
   collectionIds: number[];
   /** True when a Model source expanded past the id cap and was trimmed. */
   truncated: boolean;
+  /** The hub's stored browsing-level cap. 0 means the hub imposes none. */
+  nsfwLevel: number;
 };
 
 // Resolves a hub to the id sets its feed filter is built from. Returns null when
-// the hub does not exist or is not the viewer's — callers must treat that as
-// "return nothing", never as "no filter", the same way `newCreators` does with an
-// unpopulated board.
+// the hub does not exist or this viewer may not open it — callers must treat that
+// as "return nothing", never as "no filter", the same way `newCreators` does with
+// an unpopulated board.
 export async function resolveHubSources({
   hubId,
   userId,
+  isModerator,
+  excludedSources,
 }: {
   hubId: number;
-  userId?: number;
-}): Promise<ResolvedHubSources | null> {
-  if (!userId) return null;
+  excludedSources?: HubSourceExclusionInput[];
+} & HubViewer): Promise<ResolvedHubSources | null> {
   const hub = await dbRead.userHub.findFirst({
-    where: { id: hubId, userId },
-    select: { sources: { where: { enabled: true }, select: { type: true, targetId: true } } },
+    where: { id: hubId, ...hubViewerWhere({ userId, isModerator }) },
+    select: {
+      nsfwLevel: true,
+      sources: { where: { enabled: true }, select: { type: true, targetId: true } },
+    },
   });
   if (!hub) return null;
 
+  // A viewer of someone else's hub toggles sources off for their own session, and
+  // that never reaches the owner's row — subtask 868kwp5gt. Applied here rather
+  // than in the filter builders because this is the one place the id sets exist,
+  // and because subtracting can only ever NARROW the feed: a forged exclusion
+  // removes content from the forger, and can add none.
+  const excluded = new Set(
+    (excludedSources ?? []).map((source) => `${source.type}:${source.targetId}`)
+  );
+  const sources = excluded.size
+    ? hub.sources.filter((s) => !excluded.has(`${s.type}:${s.targetId}`))
+    : hub.sources;
+
   const byType = (type: UserHubSourceType) =>
-    hub.sources.filter((s) => s.type === type).map((s) => s.targetId);
+    sources.filter((s) => s.type === type).map((s) => s.targetId);
 
   const modelIds = byType(UserHubSourceType.Model);
   const explicitVersionIds = byType(UserHubSourceType.ModelVersion);
@@ -358,7 +423,26 @@ export async function resolveHubSources({
     modelVersionIds,
     truncated,
     collectionIds: byType(UserHubSourceType.Collection),
+    nsfwLevel: hub.nsfwLevel,
   };
+}
+
+/**
+ * The hub's own content cap, intersected with whatever the viewer was already
+ * allowed. Returns 0 for "this viewer can see nothing in this hub", which callers
+ * must serve as an empty page rather than as an uncapped one.
+ *
+ * Extracted because three filter builders apply it — the two Meilisearch paths and
+ * BitDex — and a cap missing from one of them is a hub quietly serving past its
+ * own setting on whichever backend that request happened to take.
+ */
+export function hubBrowsingLevel(browsingLevel: number | undefined, sources: ResolvedHubSources) {
+  if (!sources.nsfwLevel) return browsingLevel;
+  // An absent level means PG here, exactly as it does in the level block each
+  // caller runs next. Defaulting to "every level" instead would let a hub's cap
+  // WIDEN a request that asked for no level at all, which is the opposite of what
+  // a cap is for.
+  return (browsingLevel || NsfwLevel.PG) & sources.nsfwLevel;
 }
 
 export function hubSourcesAreEmpty(sources: ResolvedHubSources) {

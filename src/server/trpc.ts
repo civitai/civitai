@@ -477,6 +477,9 @@ export const appDeveloperProcedure = protectedProcedure.use(hasAppBlocksAuthor);
 // carries no static availability, so an absent flag / Flipt-down leaves every hub
 // procedure refusing, which is the pre-hubs behaviour.
 export const userHubProcedure = protectedProcedure.use(isFlagProtected('userHubs'));
+// Reading one hub, which a public hub allows to anyone holding the link — signed
+// out included. Every other hub verb stays on `userHubProcedure`.
+export const publicUserHubProcedure = publicProcedure.use(isFlagProtected('userHubs'));
 
 /**
  * Verified procedure to prevent users from making actions

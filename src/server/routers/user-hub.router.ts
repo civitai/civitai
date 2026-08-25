@@ -18,17 +18,23 @@ import {
   setUserHubOrder,
   upsertUserHub,
 } from '~/server/services/user-hub.service';
-import { router, userHubProcedure } from '~/server/trpc';
+import { publicUserHubProcedure, router, userHubProcedure } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 export const userHubRouter = router({
   getAll: userHubProcedure
     .meta({ requiredScope: TokenScope.UserRead })
     .query(({ ctx }) => getUserHubs({ userId: ctx.user.id })),
-  getById: userHubProcedure
+  getById: publicUserHubProcedure
     .meta({ requiredScope: TokenScope.UserRead })
     .input(getByIdSchema)
-    .query(({ input, ctx }) => getUserHubById({ id: input.id, userId: ctx.user.id })),
+    .query(({ input, ctx }) =>
+      getUserHubById({
+        id: input.id,
+        userId: ctx.user?.id,
+        isModerator: ctx.user?.isModerator,
+      })
+    ),
   upsert: userHubProcedure
     .meta({ requiredScope: TokenScope.UserWrite })
     .input(upsertUserHubSchema)

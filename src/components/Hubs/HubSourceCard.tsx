@@ -12,6 +12,8 @@ export type HubSourceCardProps = {
     index: number;
   };
   disabled?: boolean;
+  /** A hub you do not own — the source list is not yours to change. */
+  hideRemove?: boolean;
   onToggle: (enabled: boolean) => void;
   onRemove: () => void;
 };
@@ -26,7 +28,13 @@ const sourceMeta: Record<
   [UserHubSourceType.Collection]: { label: 'Collection', color: 'orange', Icon: IconFolder },
 };
 
-export function HubSourceCard({ source, disabled, onToggle, onRemove }: HubSourceCardProps) {
+export function HubSourceCard({
+  source,
+  disabled,
+  hideRemove,
+  onToggle,
+  onRemove,
+}: HubSourceCardProps) {
   const { label, color, Icon } = sourceMeta[source.type];
   const name = source.alias ?? `#${source.targetId}`;
   const on = source.enabled;
@@ -83,18 +91,20 @@ export function HubSourceCard({ source, disabled, onToggle, onRemove }: HubSourc
             onChange={(event) => onToggle(event.currentTarget.checked)}
           />
         </Tooltip>
-        <Tooltip label="Remove from hub">
-          <ActionIcon
-            size="sm"
-            variant="subtle"
-            color="red"
-            disabled={disabled}
-            aria-label={`Remove ${name}`}
-            onClick={onRemove}
-          >
-            <IconTrash size={16} />
-          </ActionIcon>
-        </Tooltip>
+        {!hideRemove && (
+          <Tooltip label="Remove from hub">
+            <ActionIcon
+              size="sm"
+              variant="subtle"
+              color="red"
+              disabled={disabled}
+              aria-label={`Remove ${name}`}
+              onClick={onRemove}
+            >
+              <IconTrash size={16} />
+            </ActionIcon>
+          </Tooltip>
+        )}
       </Group>
     </Paper>
   );

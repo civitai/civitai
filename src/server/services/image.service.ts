@@ -4461,7 +4461,7 @@ export async function getImagesFromFeedSearch(
 }
 
 import type { ResolvedHubSources } from '~/server/services/user-hub.service';
-import { resolveHubSources } from '~/server/services/user-hub.service';
+import { hubBrowsingLevel, resolveHubSources } from '~/server/services/user-hub.service';
 import { HUB_COLLECTION_SOURCES_ENABLED } from '~/server/schema/user-hub.schema';
 
 // The OR-group a hub's sources become. Mirrors the single-`modelVersionId`
@@ -4489,7 +4489,12 @@ function hubCreatorScope(sources: ResolvedHubSources | null) {
 async function resolvedHubSources(input: ImageSearchInput) {
   if (!input.hubId) return null;
   if (input.resolvedHub !== undefined) return input.resolvedHub;
-  const sources = await resolveHubSources({ hubId: input.hubId, userId: input.currentUserId });
+  const sources = await resolveHubSources({
+    hubId: input.hubId,
+    userId: input.currentUserId,
+    isModerator: input.isModerator,
+    excludedSources: input.hubExcludedSources,
+  });
   input.resolvedHub = sources;
   return sources;
 }
@@ -4686,6 +4691,15 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     const hubFilter = sources && buildHubFilter(sources, input);
     if (!hubFilter) return { data: [], nextCursor: undefined };
     filters.push(hubFilter);
+
+    // The hub's own content cap, applied before the browsing-level block below
+    // reads `browsingLevel`. An empty intersection is served as an empty page, not
+    // as the uncapped feed the block's `if (!browsingLevel)` fallback would give it.
+    const capped = hubBrowsingLevel(browsingLevel, sources);
+    if (capped !== undefined) {
+      if (!capped) return { data: [], nextCursor: undefined };
+      browsingLevel = capped;
+    }
   }
 
   // nb: commenting this out while we try checking existence in the db
@@ -5361,6 +5375,15 @@ export async function getImagesFromBitdexPreFilter(
     const arms = hubFilterArms(sources, { hideAutoResources, hideManualResources });
     if (!arms) return null;
     filters.push(_or(...arms.map((arm) => _in(arm.field, arm.ids.map(_int)))));
+
+    // Same cap as the Meili paths. `null` here means "BitDex cannot serve this",
+    // which falls through to Meili — where the identical clamp produces the empty
+    // page — rather than serving the hub past its own level.
+    const capped = hubBrowsingLevel(browsingLevel, sources);
+    if (capped !== undefined) {
+      if (!capped) return null;
+      browsingLevel = capped;
+    }
   }
 
   // --- NSFW Browsing Level ---
@@ -5624,6 +5647,15 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     const hubFilter = sources && buildHubFilter(sources, input);
     if (!hubFilter) return { data: [], nextCursor: undefined };
     filters.push(hubFilter);
+
+    // The hub's own content cap, applied before the browsing-level block below
+    // reads `browsingLevel`. An empty intersection is served as an empty page, not
+    // as the uncapped feed the block's `if (!browsingLevel)` fallback would give it.
+    const capped = hubBrowsingLevel(browsingLevel, sources);
+    if (capped !== undefined) {
+      if (!capped) return { data: [], nextCursor: undefined };
+      browsingLevel = capped;
+    }
   }
 
   // nb: commenting this out while we try checking existence in the db

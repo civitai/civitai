@@ -33,6 +33,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import HubUpsertModal from '~/components/Hubs/HubUpsertModal';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { hubLimits } from '~/server/schema/user-hub.schema';
+import { hubUrl, toPanelHub } from '~/components/Hubs/hub.utils';
 const HubSourcePanel = dynamic(
   () => import('~/components/Hubs/HubSourcePanel').then((m) => m.HubSourcePanel),
   { ssr: false }
@@ -99,10 +100,14 @@ function HubsSidebarContent({
   activeHubId?: number;
   onNewHub: () => void;
 }) {
+  const currentUser = useCurrentUser();
   const [search, setSearch] = useState('');
-  const [sourcesOpen, setSourcesOpen] = useState(false);
+  // Open by default on a hub you do not own: the panel is where the read-only source
+  // list and the "duplicate this hub" prompt live, and a viewer who arrived from a
+  // shared link has no reason to know to go looking for them.
+  const [sourcesOpenOverride, setSourcesOpenOverride] = useState<boolean>();
 
-  const { data: hubs = [] } = trpc.userHub.getAll.useQuery();
+  const { data: hubs = [] } = trpc.userHub.getAll.useQuery(undefined, { enabled: !!currentUser });
 
   // The sources belong to the hub you are on, so they live beside it rather than
   // above the feed — the position the 2026-08-19 meeting moved away from, because
@@ -111,6 +116,8 @@ function HubsSidebarContent({
     { id: activeHubId as number },
     { enabled: !!activeHubId }
   );
+
+  const sourcesOpen = sourcesOpenOverride ?? (activeHub ? !activeHub.isOwner : false);
 
   const term = search.trim().toLowerCase();
   const visible = term ? hubs.filter((hub) => hub.name.toLowerCase().includes(term)) : hubs;
@@ -127,10 +134,12 @@ function HubsSidebarContent({
           <SectionHeader
             label={`Sources for ${activeHub.name}`}
             expanded={sourcesOpen}
-            onClick={() => setSourcesOpen((value) => !value)}
+            onClick={() => setSourcesOpenOverride(!sourcesOpen)}
             right={
               <Text size="xs" c="dimmed" className="shrink-0">
-                {activeHub.sources.length} / {hubLimits.sourcesPerHub}
+                {activeHub.isOwner
+                  ? `${activeHub.sources.length} / ${hubLimits.sourcesPerHub}`
+                  : `${activeHub.sources.filter((source) => source.enabled).length}`}
               </Text>
             }
           />
@@ -141,11 +150,7 @@ function HubsSidebarContent({
           <Collapse in={sourcesOpen}>
             {sourcesOpen && (
               <div className="px-3 pb-3">
-                <HubSourcePanel
-                  hubId={activeHub.id}
-                  maxSources={hubLimits.sourcesPerHub}
-                  sources={activeHub.sources.map(({ id: _id, ...source }) => source)}
-                />
+                <HubSourcePanel hub={toPanelHub(activeHub)} />
               </div>
             )}
           </Collapse>
@@ -153,73 +158,77 @@ function HubsSidebarContent({
         </>
       )}
 
-      <SectionHeader
-        label="My Hubs"
-        right={
-          <LegacyActionIcon
-            size="sm"
-            variant="subtle"
-            aria-label="New hub"
-            onClick={onNewHub}
-            className="shrink-0"
-          >
-            <IconPlus size={16} />
-          </LegacyActionIcon>
-        }
-      />
-
-      <Stack gap="xs" px="sm" pb="sm">
-        {hubs.length > 3 && (
-          <TextInput
-            size="xs"
-            placeholder="Search your hubs"
-            leftSection={<IconSearch size={14} />}
-            value={search}
-            onChange={(event) => setSearch(event.currentTarget.value)}
-          />
-        )}
-
-        {hubs.length === 0 ? (
-          <Card withBorder p="sm" radius="md">
-            <Stack gap="xs" align="flex-start">
-              <Text size="xs" c="dimmed">
-                You don&apos;t have any hubs yet. Create one and it shows up here.
-              </Text>
-              <Button size="compact-xs" leftSection={<IconPlus size={14} />} onClick={onNewHub}>
-                Create a hub
-              </Button>
-            </Stack>
-          </Card>
-        ) : visible.length === 0 ? (
-          <Text size="xs" c="dimmed">
-            No hubs match that.
-          </Text>
-        ) : (
-          <Stack gap={4}>
-            {visible.map((hub) => (
-              <Link
-                key={hub.id}
-                href={`/hubs/${hub.id}`}
-                className={clsx(
-                  'rounded-md px-2 py-1.5',
-                  hub.id === activeHubId
-                    ? 'bg-gray-2 dark:bg-dark-5'
-                    : 'hover:bg-gray-1 dark:hover:bg-dark-6'
-                )}
+      {!!currentUser && (
+        <>
+          <SectionHeader
+            label="My Hubs"
+            right={
+              <LegacyActionIcon
+                size="sm"
+                variant="subtle"
+                aria-label="New hub"
+                onClick={onNewHub}
+                className="shrink-0"
               >
-                <Text size="sm" fw={700} lineClamp={1}>
-                  {hub.name}
-                </Text>
-                <Text size="xs" c="dimmed">
-                  {hub.sources.length === 0
-                    ? 'No sources'
-                    : `${hub.sources.length} source${hub.sources.length === 1 ? '' : 's'}`}
-                </Text>
-              </Link>
-            ))}
+                <IconPlus size={16} />
+              </LegacyActionIcon>
+            }
+          />
+
+          <Stack gap="xs" px="sm" pb="sm">
+            {hubs.length > 3 && (
+              <TextInput
+                size="xs"
+                placeholder="Search your hubs"
+                leftSection={<IconSearch size={14} />}
+                value={search}
+                onChange={(event) => setSearch(event.currentTarget.value)}
+              />
+            )}
+
+            {hubs.length === 0 ? (
+              <Card withBorder p="sm" radius="md">
+                <Stack gap="xs" align="flex-start">
+                  <Text size="xs" c="dimmed">
+                    You don&apos;t have any hubs yet. Create one and it shows up here.
+                  </Text>
+                  <Button size="compact-xs" leftSection={<IconPlus size={14} />} onClick={onNewHub}>
+                    Create a hub
+                  </Button>
+                </Stack>
+              </Card>
+            ) : visible.length === 0 ? (
+              <Text size="xs" c="dimmed">
+                No hubs match that.
+              </Text>
+            ) : (
+              <Stack gap={4}>
+                {visible.map((hub) => (
+                  <Link
+                    key={hub.id}
+                    href={hubUrl(hub)}
+                    className={clsx(
+                      'rounded-md px-2 py-1.5',
+                      hub.id === activeHubId
+                        ? 'bg-gray-2 dark:bg-dark-5'
+                        : 'hover:bg-gray-1 dark:hover:bg-dark-6'
+                    )}
+                  >
+                    <Text size="sm" fw={700} lineClamp={1}>
+                      {hub.name}
+                    </Text>
+                    <Text size="xs" c="dimmed">
+                      {hub.sources.length === 0
+                        ? 'No sources'
+                        : `${hub.sources.length} source${hub.sources.length === 1 ? '' : 's'}`}
+                    </Text>
+                  </Link>
+                ))}
+              </Stack>
+            )}
           </Stack>
-        )}
-      </Stack>
+        </>
+      )}
     </Stack>
   );
 }
@@ -242,7 +251,7 @@ export function HubsLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <Container fluid className={classes.container}>
-      {!!currentUser && !isMobile && (
+      {(!!currentUser || !!activeHubId) && !isMobile && (
         <Card
           className={classes.sidebar}
           w={300}
@@ -270,7 +279,7 @@ export function HubsLayout({ children }: { children: React.ReactNode }) {
       )}
 
       <div className={classes.content}>
-        {!!currentUser && isMobile && (
+        {(!!currentUser || !!activeHubId) && isMobile && (
           <>
             <Button
               className={classes.drawerButton}
@@ -280,7 +289,7 @@ export function HubsLayout({ children }: { children: React.ReactNode }) {
               onClick={() => setDrawerOpen(true)}
               mb="xs"
             >
-              My hubs
+              {currentUser ? 'My hubs' : 'Sources'}
             </Button>
             <Drawer
               opened={drawerOpen}

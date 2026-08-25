@@ -17,6 +17,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as BitdexClient from '~/server/bitdex/client';
 import type * as MeiliClient from '~/server/meilisearch/client';
 import type * as FliptClient from '~/server/flipt/client';
+import type * as UserHubService from '~/server/services/user-hub.service';
 
 const { fetchDocumentsMock, resolveHubSourcesMock, queryBitdexMock } = vi.hoisted(() => ({
   fetchDocumentsMock: vi.fn(),
@@ -71,7 +72,10 @@ vi.mock('~/server/bitdex/client', async (importOriginal) => ({
   queryBitdex: queryBitdexMock,
 }));
 
-vi.mock('~/server/services/user-hub.service', () => ({
+// `hubBrowsingLevel` is a pure function over the resolved sources and is spread
+// through unmocked: replacing it would be replacing the very cap these tests check.
+vi.mock('~/server/services/user-hub.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof UserHubService>()),
   resolveHubSources: resolveHubSourcesMock,
 }));
 
@@ -124,6 +128,7 @@ describe('hub filter reaches the search backend', () => {
       modelVersionIds: [20, 21],
       collectionIds: [],
       truncated: false,
+      nsfwLevel: 0,
     });
 
     await getImagesFromSearchPreFilter(input(1));
@@ -143,6 +148,7 @@ describe('hub filter reaches the search backend', () => {
       modelVersionIds: [20],
       collectionIds: [],
       truncated: false,
+      nsfwLevel: 0,
     });
 
     await getImagesFromSearchPreFilter({ ...input(1), hideAutoResources: true });
@@ -171,6 +177,7 @@ describe('hub filter reaches the search backend', () => {
       modelVersionIds: [],
       collectionIds: [],
       truncated: false,
+      nsfwLevel: 0,
     });
 
     const result = await getImagesFromSearchPreFilter(input(1));
@@ -200,6 +207,7 @@ describe('the post-filter builder has the same guard', () => {
       modelVersionIds: [],
       collectionIds: [],
       truncated: false,
+      nsfwLevel: 0,
     });
 
     await getImagesFromSearchPostFilter(input(1));
@@ -255,6 +263,7 @@ describe('the BitDex builder carries the same hub arm', () => {
       modelVersionIds: [20],
       collectionIds: [],
       truncated: false,
+      nsfwLevel: 0,
     });
 
     await getImagesFromBitdexPreFilter(input(1));
@@ -272,6 +281,7 @@ describe('the BitDex builder carries the same hub arm', () => {
       modelVersionIds: [20],
       collectionIds: [],
       truncated: false,
+      nsfwLevel: 0,
     });
 
     await getImagesFromBitdexPreFilter({
@@ -303,6 +313,7 @@ describe('the BitDex builder carries the same hub arm', () => {
       modelVersionIds: [],
       collectionIds: [],
       truncated: false,
+      nsfwLevel: 0,
     });
 
     const result = await getImagesFromBitdexPreFilter(input(1));
@@ -318,5 +329,76 @@ describe('the BitDex builder carries the same hub arm', () => {
 
     expect(queryBitdexMock).toHaveBeenCalled();
     expect(resolveHubSourcesMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The hub's own content cap (subtask 868kwp5f2). Three builders apply it and each
+ * emits its own clause syntax, so a cap missing from one is a hub serving past its
+ * own setting on whichever backend that request happened to take — with nothing
+ * red anywhere. Asserted on the EMITTED level list rather than on the call, because
+ * the call is identical with and without the cap.
+ *
+ * PG = 1, PG-13 = 2, R = 4. Viewer asks for PG|PG13|R, the hub allows PG|PG13.
+ */
+describe('a hub caps its own feed to the level the owner set', () => {
+  const cappedSources = {
+    userIds: [10],
+    modelVersionIds: [],
+    collectionIds: [],
+    truncated: false,
+    nsfwLevel: 1 | 2,
+  };
+
+  const viewerWantsR = (hubId?: number) => ({ ...input(hubId), browsingLevel: 1 | 2 | 4 });
+
+  it('the pre-filter builder emits only the levels the hub allows', async () => {
+    resolveHubSourcesMock.mockResolvedValue(cappedSources);
+
+    await getImagesFromSearchPreFilter(viewerWantsR(1));
+
+    expect(emittedFilter()).toContain('nsfwLevel IN [1,2]');
+    expect(emittedFilter()).not.toContain('nsfwLevel IN [1,2,4]');
+  });
+
+  it('the post-filter builder emits only the levels the hub allows', async () => {
+    resolveHubSourcesMock.mockResolvedValue(cappedSources);
+
+    await getImagesFromSearchPostFilter(viewerWantsR(1));
+
+    expect(emittedFilter()).toContain('nsfwLevel IN [1,2]');
+    expect(emittedFilter()).not.toContain('nsfwLevel IN [1,2,4]');
+  });
+
+  it('the BitDex builder emits only the levels the hub allows', async () => {
+    resolveHubSourcesMock.mockResolvedValue(cappedSources);
+
+    await getImagesFromBitdexPreFilter(viewerWantsR(1));
+
+    const filters = bitdexFilters();
+    expect(filters).toContain('{"In":["nsfwLevel",[{"Integer":1},{"Integer":2}]]}');
+    expect(filters).not.toContain('{"Integer":4}');
+  });
+
+  it('leaves the viewer alone when the hub sets no cap', async () => {
+    // The negative control. Without it every assertion above passes for a builder
+    // that hard-codes PG|PG-13 and never reads the viewer's level at all.
+    resolveHubSourcesMock.mockResolvedValue({ ...cappedSources, nsfwLevel: 0 });
+
+    await getImagesFromSearchPreFilter(viewerWantsR(1));
+
+    expect(emittedFilter()).toContain('nsfwLevel IN [1,2,4]');
+  });
+
+  it('serves nothing rather than everything when the viewer and the hub do not overlap', async () => {
+    // The dangerous direction: an empty intersection reaching the level block's
+    // `if (!browsingLevel) browsingLevel = PG` fallback would show PG images from a
+    // hub whose owner allowed only R.
+    resolveHubSourcesMock.mockResolvedValue({ ...cappedSources, nsfwLevel: 4 });
+
+    const result = await getImagesFromSearchPreFilter({ ...input(1), browsingLevel: 1 });
+
+    expect(fetchDocumentsMock).not.toHaveBeenCalled();
+    expect(result.data).toEqual([]);
   });
 });

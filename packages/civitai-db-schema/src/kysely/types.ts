@@ -4020,6 +4020,8 @@ export type UserHub = {
   period: Generated<MetricTimeframe>;
   mediaTypes: MediaType[];
   metadata: Generated<unknown>;
+  availability: Generated<Availability>;
+  nsfwLevel: Generated<number>;
 };
 export type UserHubSource = {
   id: Generated<number>;

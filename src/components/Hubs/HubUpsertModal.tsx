@@ -1,4 +1,14 @@
-import { Button, Divider, Group, Modal, Stack, Text, Textarea, TextInput } from '@mantine/core';
+import {
+  Button,
+  Divider,
+  Group,
+  Modal,
+  Stack,
+  Switch,
+  Text,
+  Textarea,
+  TextInput,
+} from '@mantine/core';
 import { useRouter } from 'next/router';
 import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
@@ -6,16 +16,29 @@ import type { HubSourceValue } from '~/components/Hubs/HubSourceEditor';
 import { HubSourceEditor } from '~/components/Hubs/HubSourceEditor';
 import { useSortAvailability } from '~/components/Filters/useSortAvailability';
 import { defaultHubSort } from '~/components/Hubs/hub-sort';
-import { useInvalidateHub } from '~/components/Hubs/hub.utils';
+import { hubUrl, useInvalidateHub } from '~/components/Hubs/hub.utils';
 import { hubLimits } from '~/server/schema/user-hub.schema';
+import { Availability } from '~/shared/utils/prisma/enums';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 export default function HubUpsertModal({
   hub,
+  duplicateOf,
 }: {
   /** Omitted to create. */
-  hub?: { id: number; name: string; description?: string | null };
+  hub?: {
+    id: number;
+    name: string;
+    description?: string | null;
+    availability: Availability;
+  };
+  /**
+   * Creating a copy of someone else's hub. Prefills the name and the sources so the
+   * copier renames before saving (subtask 868kwp5j3); nothing is written until they
+   * do, and the copy has no link back to the original.
+   */
+  duplicateOf?: { name: string; sources: HubSourceValue[] };
 }) {
   const dialog = useDialogContext();
   const router = useRouter();
@@ -23,9 +46,10 @@ export default function HubUpsertModal({
   const editing = !!hub;
   const defaultSort = defaultHubSort(useSortAvailability());
 
-  const [name, setName] = useState(hub?.name ?? '');
+  const [name, setName] = useState(hub?.name ?? duplicateOf?.name ?? '');
   const [description, setDescription] = useState(hub?.description ?? '');
-  const [sources, setSources] = useState<HubSourceValue[]>([]);
+  const [sources, setSources] = useState<HubSourceValue[]>(duplicateOf?.sources ?? []);
+  const [isPublic, setIsPublic] = useState(hub?.availability === Availability.Public);
 
   const upsert = trpc.userHub.upsert.useMutation({
     onSuccess: async (saved) => {
@@ -33,7 +57,7 @@ export default function HubUpsertModal({
       // modal saves is something the feed reads.
       dialog.onClose();
       await invalidateHub(saved.id);
-      if (!editing) await router.push(`/hubs/${saved.id}`);
+      if (!editing) await router.push(hubUrl(saved));
     },
     onError: (error) =>
       showErrorNotification({
@@ -50,6 +74,7 @@ export default function HubUpsertModal({
       id: hub?.id,
       name: trimmed,
       description: description.trim(),
+      availability: isPublic ? Availability.Public : Availability.Private,
       // Editing leaves the source list alone: the rail owns it, and resending an
       // empty array here would wipe it. The sort goes with creation for the same
       // reason it is resolved on read — storing one this viewer cannot pick would
@@ -61,7 +86,13 @@ export default function HubUpsertModal({
   };
 
   return (
-    <Modal {...dialog} title={<Text fw={600}>{editing ? 'Edit hub' : 'New hub'}</Text>} size="lg">
+    <Modal
+      {...dialog}
+      title={
+        <Text fw={600}>{editing ? 'Edit hub' : duplicateOf ? 'Duplicate hub' : 'New hub'}</Text>
+      }
+      size="lg"
+    >
       <Stack gap="md">
         <TextInput
           label="Name"
@@ -82,6 +113,14 @@ export default function HubUpsertModal({
           maxLength={hubLimits.descriptionLength}
           disabled={upsert.isPending}
           onChange={(event) => setDescription(event.currentTarget.value)}
+        />
+
+        <Switch
+          label="Anyone with the link can view this hub"
+          description="Hubs are private until you turn this on. Turning it back off makes every link you shared stop working."
+          checked={isPublic}
+          disabled={upsert.isPending}
+          onChange={(event) => setIsPublic(event.currentTarget.checked)}
         />
 
         {!editing && (

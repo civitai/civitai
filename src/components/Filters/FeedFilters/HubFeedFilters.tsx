@@ -8,12 +8,12 @@ import { FilterButton } from '~/components/Buttons/FilterButton';
 import classes from '~/components/Filters/FeedFilters/FeedFilters.module.scss';
 import { SortFilter } from '~/components/Filters/SortFilter';
 import { buildHubFilterSave } from '~/components/Hubs/hub-filter-save';
-import { useInvalidateHub } from '~/components/Hubs/hub.utils';
+import { toPanelHub, useInvalidateHub } from '~/components/Hubs/hub.utils';
 import { useHubSort } from '~/components/Hubs/useHubSort';
 import { hubExcludedFilterKeys } from '~/components/Image/Filters/media-filter-keys';
 import { MediaFiltersDropdown } from '~/components/Image/Filters/MediaFiltersDropdown';
 import type { HubSort } from '~/server/schema/user-hub.schema';
-import { hubLimits, hubSortSchema } from '~/server/schema/user-hub.schema';
+import { hubSortSchema } from '~/server/schema/user-hub.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -58,7 +58,11 @@ export function HubFeedFilters({ ...groupProps }: GroupProps) {
 
   if (!hub) return null;
 
-  const sourceCount = hub.sources.length;
+  // On a hub you do not own, the only source count that means anything is the one
+  // contributing to the feed: the owner's switched-off rows are not shown.
+  const sourceCount = hub.isOwner
+    ? hub.sources.length
+    : hub.sources.filter((source) => source.enabled).length;
 
   return (
     <Group className={classes.filtersWrapper} gap={8} wrap="nowrap" {...groupProps}>
@@ -85,38 +89,44 @@ export function HubFeedFilters({ ...groupProps }: GroupProps) {
         <Popover.Dropdown p="sm">
           <ScrollArea.Autosize mah={400}>
             <HubSourcePanel
-              hubId={hub.id}
+              hub={toPanelHub(hub)}
               // Opening the picker in here pushes the popover past its own height
               // and it starts scrolling inside a scroll. Adding lives in the rail.
               hideAdd
-              maxSources={hubLimits.sourcesPerHub}
-              sources={hub.sources.map(({ id: _id, ...source }) => source)}
             />
           </ScrollArea.Autosize>
         </Popover.Dropdown>
       </Popover>
 
-      <SortFilter
-        type="images"
-        value={sort}
-        options={hubSortSchema.options.map((value) => ({ label: value, value }))}
-        onChange={(value) =>
-          upsert.mutate({ id: hub.id, sort: value as HubSort, period: hub.period })
-        }
-      />
-      <MediaFiltersDropdown
-        w="100%"
-        filterType="images"
-        isFeed
-        size="compact-sm"
-        exclude={hubExcludedFilterKeys}
-        query={{
-          ...hub.filters,
-          period: hub.period,
-          types: hub.mediaTypes,
-        }}
-        onChange={(next) => upsert.mutate(buildHubFilterSave(hub.id, next))}
-      />
+      {/* Sort and the filter menu write straight to the hub, and `upsert` is
+          owner-scoped — so on someone else's hub they would be controls that error.
+          Content level and source toggles are the two things a viewer changes here,
+          and both live in the sources panel above. */}
+      {hub.isOwner && (
+        <>
+          <SortFilter
+            type="images"
+            value={sort}
+            options={hubSortSchema.options.map((value) => ({ label: value, value }))}
+            onChange={(value) =>
+              upsert.mutate({ id: hub.id, sort: value as HubSort, period: hub.period })
+            }
+          />
+          <MediaFiltersDropdown
+            w="100%"
+            filterType="images"
+            isFeed
+            size="compact-sm"
+            exclude={hubExcludedFilterKeys}
+            query={{
+              ...hub.filters,
+              period: hub.period,
+              types: hub.mediaTypes,
+            }}
+            onChange={(next) => upsert.mutate(buildHubFilterSave(hub.id, next))}
+          />
+        </>
+      )}
     </Group>
   );
 }

@@ -5400,6 +5400,8 @@ export interface UserHub {
   period: MetricTimeframe;
   mediaTypes: MediaType[];
   metadata: JsonValue;
+  availability: Availability;
+  nsfwLevel: number;
   sources?: UserHubSource[];
 }
 

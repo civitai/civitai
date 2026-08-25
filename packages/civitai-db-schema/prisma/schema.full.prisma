@@ -8154,6 +8154,10 @@ model UserHub {
   period    MetricTimeframe @default(AllTime)
   mediaTypes MediaType[]
   metadata  Json            @default("{}")
+  availability Availability @default(Private)
+  // A browsing-level bitmask the hub's own feed is capped to. 0 means uncapped —
+  // the viewer's own level decides, as it did before hubs could be shared.
+  nsfwLevel Int             @default(0)
 
   sources   UserHubSource[]
 

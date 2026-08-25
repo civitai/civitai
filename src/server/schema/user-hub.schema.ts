@@ -1,6 +1,12 @@
 import * as z from 'zod';
 import { ImageSort } from '~/server/common/enums';
-import { MediaType, MetricTimeframe, UserHubSourceType } from '~/shared/utils/prisma/enums';
+import {
+  Availability,
+  MediaType,
+  MetricTimeframe,
+  UserHubSourceType,
+} from '~/shared/utils/prisma/enums';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 export const hubLimits = {
   hubsPerUser: 20,
@@ -116,7 +122,29 @@ export const upsertUserHubSchema = z.object({
   // Same "omitted means leave alone" rule as `sources`; stored on
   // `metadata.filters`, like `description`.
   filters: hubFeedFiltersSchema.optional(),
+  // Private or Public, and nothing else: the other two `Availability` members mean
+  // things a hub has no surface for. There is no discovery, so Public is "anyone
+  // with the link", and flipping back to Private is what 404s those links.
+  availability: z.enum([Availability.Private, Availability.Public]).optional(),
+  // A browsing-level bitmask, 0 for "no cap". Masked rather than rejected on the
+  // way in: an unknown bit is a level this deployment does not have, and storing it
+  // would let a later release widen an existing hub by adding one.
+  nsfwLevel: z
+    .number()
+    .int()
+    .min(0)
+    .transform((value) => value & allBrowsingLevelsFlag)
+    .optional(),
 });
+
+// What a viewer switched off for their own session. Sent with the feed query rather
+// than written anywhere: on a hub you do not own, a toggle is a view, not an edit.
+export const hubSourceExclusionSchema = z.object({
+  type: z.enum(UserHubSourceType),
+  targetId: z.number().int().positive(),
+});
+
+export type HubSourceExclusionInput = z.infer<typeof hubSourceExclusionSchema>;
 
 export const setUserHubOrderSchema = z.object({
   ids: z.array(z.number()).max(hubLimits.hubsPerUser),
