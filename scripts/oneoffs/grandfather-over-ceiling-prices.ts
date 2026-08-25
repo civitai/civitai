@@ -14,14 +14,23 @@
  * behaviour goes with it — there are no tier caps left to restore from. A creator who wants the
  * higher price sets it again.
  *
- * Usage:
- *   npm run tsscript scripts/oneoffs/grandfather-over-ceiling-prices.ts            # dry run (default)
- *   npm run tsscript scripts/oneoffs/grandfather-over-ceiling-prices.ts --apply
- *   npm run tsscript scripts/oneoffs/grandfather-over-ceiling-prices.ts --json
+ * Usage — `pnpm exec tsx` rather than `npm run tsscript`, because that alias prefixes an inline
+ * `NODE_ENV=` assignment that cmd.exe rejects. The script does not need it.
  *
- * 🔴 ORDERING: run this BEFORE the revamp deploys. Between the deploy and this script, buyers are
- * charged the un-clamped price. Running it after still stops the bleeding, but does not un-charge
- * anyone.
+ *   pnpm exec tsx scripts/oneoffs/grandfather-over-ceiling-prices.ts            # dry run (default)
+ *   pnpm exec tsx scripts/oneoffs/grandfather-over-ceiling-prices.ts --apply
+ *   pnpm exec tsx scripts/oneoffs/grandfather-over-ceiling-prices.ts --json
+ *
+ * 🔴 ORDERING: run this immediately BEFORE the revamp deploys, and NEVER after.
+ *
+ * Before is safe and idempotent: the old code clamps at charge time, so a stored value already equal
+ * to its cap bills identically either way. The window to keep small is a creator LAPSING between this
+ * run and the deploy — their cap drops, and the price this left them at is above the new one.
+ *
+ * ⚠️ After the deploy this script becomes DESTRUCTIVE. There are no tier caps any more, so a creator
+ * may legitimately raise a fee to the flat ceiling — and this cannot tell that new price apart from a
+ * grandfathered one. It would clamp a deliberate 50 back to the old free cap of 0.1. Once the revamp
+ * is live, do not run it again.
  *
  * Scope is deliberately NOT limited to published versions. The clamp this reproduces ran at charge
  * time and never looked at status, so a draft carrying an over-cap fee would otherwise be left to bill

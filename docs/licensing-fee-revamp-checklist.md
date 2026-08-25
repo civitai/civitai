@@ -254,8 +254,17 @@ that have to happen, or be decided, before it reaches creators.
       `scripts/oneoffs/grandfather-over-ceiling-prices.ts` writes the price buyers were actually being
       charged into the stored field, so the deploy changes nothing for them and the rise becomes opt-in
       — under the new rules any tier may raise to the flat ceiling whenever they choose. Dry run by
-      default, `--apply` to write, idempotent (it only ever lowers to a cap). **Run it BEFORE the
-      deploy**: in the window between, buyers are charged the un-clamped price.
+      default, `--apply` to write.
+
+      **Run it immediately BEFORE the deploy, and never after.** Before is safe: the old code clamps at
+      charge time, so a stored value already at its cap bills identically either way. After, there are
+      no tier caps left and the script cannot tell a newly-legitimate price from a grandfathered one —
+      it would clamp a deliberate 50 back to the old free cap of 0.1.
+
+      Dry run against prod 2026-08-25: **612 fee versions across 68 owners** (max 1000x) and **11
+      permanent gates**. The gate count and max multiple match the earlier independent measurement
+      exactly; the fee count is 23 higher because that one counted published versions only and this
+      deliberately does not.
 
       Note what this gives up: the old "re-subscribe and your original price returns" behaviour goes
       with the tier caps, so a creator who wants the higher number sets it again.
