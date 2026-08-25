@@ -211,6 +211,27 @@ describe('a type with more than one Blocklist row', () => {
     const result = await getBlocklistDTO({ type: BlocklistType.EmailDomain });
     expect(result.data).toEqual([]);
   });
+
+  /**
+   * The populate is read-then-write, so a reader that read the row before a write commits can land
+   * its pre-write snapshot after that write's DELETE. Only another write to the same type clears
+   * it, and three of the eight lists in production had gone 8, 46 and 676 days without one — so
+   * this expiry is the only bound on how long a moderator's edit can go unenforced.
+   *
+   * A ceiling rather than an exact number: tuning the value should not need a test edit, restoring
+   * the month it used to be should.
+   */
+  it('caches for minutes, not a month — the expiry bounds how long a stale copy serves', async () => {
+    respectOrderBy([{ id: 1, type: BlocklistType.EmailDomain, data: ['a.example'] }]);
+
+    await getBlocklistDTO({ type: BlocklistType.EmailDomain });
+
+    const options = redisMock.redis.set.mock.calls.at(-1)?.[2] as { EX?: number } | undefined;
+    expect(options?.EX, 'the populate must set an expiry').toBeGreaterThan(0);
+    expect(options?.EX, 'a stale copy must not be able to serve for hours').toBeLessThanOrEqual(
+      15 * 60
+    );
+  });
 });
 
 describe('what an edit does to the shared cache key', () => {
@@ -228,7 +249,7 @@ describe('what an edit does to the shared cache key', () => {
    * This used to cache a re-read of the winning row, which fixed one bug and left another: the
    * re-read and the `SET` are themselves an unserialised read-modify-write over the key, so two
    * edits the row lock correctly serialised could still land their cache writes in the other
-   * order and leave the LOSER's list under a month TTL. Every enforcement path reads this key
+   * order and leave the LOSER's list cached until it expires. Every enforcement path reads this key
    * first, so that is the lost update the row lock exists to prevent, moved to the artifact that
    * actually gates. A delete commutes; the next read repopulates from the table.
    *
