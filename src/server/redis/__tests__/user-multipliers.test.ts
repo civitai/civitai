@@ -156,4 +156,19 @@ describe('userMultipliersCache wiring', () => {
   it('resolves multipliers through foldUserMultipliers', () => {
     expect(lookup).toContain('foldUserMultipliers(');
   });
+
+  // 🔴 ALSO A TRIPWIRE. `status` alone let a subscription whose period ended keep paying perks
+  // indefinitely — 17 of 5,588 active rows on 2026-08-25, all carrying a multiplier above 1, the
+  // oldest expired in February (ClickUp 868kw98pv). Whether the guard WORKS is a database question
+  // and this cannot answer it; the A/B against the prod replica in the PR is that evidence.
+  //
+  // The comparison is pinned WITH its direction on purpose: asserting the column name alone passes
+  // against `<= now()`, which restores the bug and inverts it for everyone else.
+  it('gates the subscription join on the period still being open', () => {
+    expect(lookup).toMatch(/"currentPeriodEnd"\s*>=\s*now\(\)/);
+  });
+
+  // The row an expired subscription now produces — every multiplier null — is the same shape a
+  // perkless grant produces, and `falls back to 1 when the only active row carries no perks` above
+  // already pins that it folds to 1 rather than to 0. Not repeated here.
 });

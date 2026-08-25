@@ -353,6 +353,7 @@ export const userMultipliersCache = createCachedObject<CachedUserMultiplier>({
       FROM "User" u
       LEFT JOIN "CustomerSubscription" cs
         ON cs."userId" = u.id AND cs.status IN ('active', 'trialing')
+        AND cs."currentPeriodEnd" >= now()
       LEFT JOIN "Product" p ON p.id = cs."productId"
       WHERE u.id IN (${Prisma.join(goodIds)});
     `;
