@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { HomeBlockType } from '~/shared/utils/prisma/enums';
 import { GET_ALL_IMAGES_PER_MODEL_SLIM } from '~/server/utils/model-getall-images';
+// Imported at module scope, never lazily from a test body. This module's graph pulls
+// image.service, model.service, collection.service and leaderboard.service; loading it measured
+// 39.7s against a 60s testTimeout. From a test body that whole cost is charged to ONE test's
+// budget, so the file reds on ambient load alone — it did, repeatedly, on main. At module scope
+// it lands in collection, which no timeout bounds. See vitest.config.mts.
+import { getHomeBlockData, resolveFeedFetchLimit } from '~/server/services/home-block.service';
 import type * as ModelService from '~/server/services/model.service';
 
 const { getModelsWithImagesAndModelVersionsMock, getFeaturedModelsMock } = vi.hoisted(() => ({
@@ -13,10 +19,6 @@ vi.mock('~/server/services/model.service', async (importOriginal) => ({
   getModelsWithImagesAndModelVersions: getModelsWithImagesAndModelVersionsMock,
   getFeaturedModels: getFeaturedModelsMock,
 }));
-
-async function loadService() {
-  return import('~/server/services/home-block.service');
-}
 
 const callArgs = () =>
   getModelsWithImagesAndModelVersionsMock.mock.calls[0]?.[0] as unknown as {
@@ -40,16 +42,12 @@ beforeEach(() => {
 // homepage feeds shipped 3x what anyone had chosen.
 describe('feed fetch size', () => {
   it('fetches exactly the configured limit', async () => {
-    const { getHomeBlockData } = await loadService();
-
     await getHomeBlockData({ input: {}, homeBlock: modelsFeed({ limit: 42 }) });
 
     expect(callArgs().input.limit).toBe(42);
   });
 
   it('still fetches exactly the configured limit when maxPerUser is set', async () => {
-    const { getHomeBlockData } = await loadService();
-
     await getHomeBlockData({ input: {}, homeBlock: modelsFeed({ limit: 42, maxPerUser: 2 }) });
 
     expect(callArgs().input.limit).toBe(42);
@@ -59,23 +57,17 @@ describe('feed fetch size', () => {
   // the images branch too without mocking `image.service` — which is on the shared-mock
   // migration ratchet, and a new direct mock there moves that count the wrong way.
   it('does not scale the configured limit', async () => {
-    const { resolveFeedFetchLimit } = await loadService();
-
     expect(resolveFeedFetchLimit(42)).toBe(42);
     expect(resolveFeedFetchLimit(7)).toBe(7);
   });
 
   it('clamps a mistyped limit to the ceiling', async () => {
-    const { resolveFeedFetchLimit } = await loadService();
-
     expect(resolveFeedFetchLimit(5000)).toBe(100);
   });
 
   // `Math.min(undefined, n)` is NaN, which would reach the fetch unchecked — the metadata is
   // cast, never parsed, so the schema default cannot rescue it.
   it('falls back to the schema default when limit is missing', async () => {
-    const { resolveFeedFetchLimit } = await loadService();
-
     expect(resolveFeedFetchLimit(undefined)).toBe(28);
   });
 });
@@ -85,8 +77,6 @@ describe('feed fetch size', () => {
 // shorter block for some viewers. These pin the pair at both call sites.
 describe('per-model image cap', () => {
   it('caps and bias-slices the models Feed block', async () => {
-    const { getHomeBlockData } = await loadService();
-
     await getHomeBlockData({ input: {}, homeBlock: modelsFeed({ limit: 42 }) });
 
     expect(getModelsWithImagesAndModelVersionsMock).toHaveBeenCalledTimes(1);
@@ -95,8 +85,6 @@ describe('per-model image cap', () => {
   });
 
   it('caps and bias-slices the FeaturedModelVersion block', async () => {
-    const { getHomeBlockData } = await loadService();
-
     await getHomeBlockData({
       input: {},
       homeBlock: { id: 2, type: HomeBlockType.FeaturedModelVersion, metadata: {} },
