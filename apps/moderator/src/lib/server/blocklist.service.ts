@@ -132,7 +132,9 @@ export class BlocklistRowMismatchError extends Error {
 /** What a write did, and whether readers will see it before the month TTL expires. */
 export type BlocklistWriteResult = { count: number; cacheStale: boolean };
 
-/** What the transaction changed, and which row it changed — `recordModActivity` needs the row id. */
+/** What the transaction changed, and which row it changed — `recordModActivity` needs the row id.
+ *  Absent when no row matched at all: the submitted id names no row of this type there, so it must
+ *  not be reached for as a stand-in. */
 type Written = { count: number; rowId: number };
 
 /**
@@ -228,9 +230,9 @@ export async function removeBlocklistItems({
 
   // Same lock and the same reason as `upsertBlocklist`: without it two chips removed in quick
   // succession each filtered the same pre-state and the second write put the first one back.
-  const removed = await dbWrite.transaction().execute(async (trx): Promise<Written> => {
+  const removed = await dbWrite.transaction().execute(async (trx): Promise<Written | undefined> => {
     const row = await readRowForWrite(trx, type, id);
-    if (!row) return { count: 0, rowId: id };
+    if (!row) return undefined;
 
     const filtered = row.data.filter((item) => !lower.includes(item));
     const count = row.data.length - filtered.length;
@@ -245,7 +247,7 @@ export async function removeBlocklistItems({
     return { count, rowId: row.id };
   });
 
-  if (removed.count === 0) return { count: 0, cacheStale: false };
+  if (!removed || removed.count === 0) return { count: 0, cacheStale: false };
 
   const cacheStale = !(await bustCache(type));
   await recordModActivity({
