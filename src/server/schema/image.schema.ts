@@ -492,14 +492,40 @@ export const removeImageResourceSchema = z.object({
   modelVersionId: z.number(),
 });
 
+/**
+ * Ceiling on the `entities` list `getEntitiesCoverImage` will accept.
+ *
+ * Sized off what the callers can actually produce, with room to spare. The two UI
+ * callers are a profile showcase and the notification panel; neither has a fixed
+ * ceiling of its own that this could narrow:
+ *
+ * - `addEntityToShowcase` truncates the showcase it writes to
+ *   `constants.profile.showcaseItemsLimit` (32). That is the only write path that
+ *   truncates — `userProfile.update` takes `showcaseItems` unbounded and the service
+ *   stores it as given, so a stored showcase is not guaranteed to be at or under 32.
+ * - The notification panel dedupes image ids out of a 30-per-page infinite list, so
+ *   500 is ~16 pages deep, and in practice more, since only notifications naming an
+ *   image contribute an id.
+ *
+ * Each caller clamps its own list to this before querying, so exceeding it is a caller
+ * bug rather than something a session can walk into — which matters because a refused
+ * query has no error branch in any of them.
+ *
+ * An empty array is deliberately still accepted: `getEntityCoverImage` returns [] for
+ * it, and this is a token-reachable read where that is a valid no-op.
+ */
+export const MAX_ENTITIES_COVER_IMAGE = 500;
+
 export type GetEntitiesCoverImage = z.infer<typeof getEntitiesCoverImage>;
 export const getEntitiesCoverImage = z.object({
-  entities: z.array(
-    z.object({
-      entityType: z.union([z.enum(SearchIndexEntityTypes), z.enum(['ModelVersion', 'Post'])]),
-      entityId: z.number(),
-    })
-  ),
+  entities: z
+    .array(
+      z.object({
+        entityType: z.union([z.enum(SearchIndexEntityTypes), z.enum(['ModelVersion', 'Post'])]),
+        entityId: z.number(),
+      })
+    )
+    .max(MAX_ENTITIES_COVER_IMAGE),
 });
 
 export type ScanJobsOutput = z.output<typeof scanJobsSchema>;

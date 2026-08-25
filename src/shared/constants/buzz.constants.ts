@@ -124,6 +124,8 @@ export const buzzBankTypes = buzzSpendTypes.filter((type) => {
   const config = buzzTypeConfig[type];
   return config.type === 'spend' && config.bankable;
 }) as BuzzSpendType[];
+/** Quoted list for `IN (...)` in the ClickHouse buzzTransactions queries. */
+export const buzzBankTypesSql = buzzBankTypes.map((type) => `'${type}'`).join(', ');
 export const buzzPurchaseTypes = buzzSpendTypes.filter((type) => {
   const config = buzzTypeConfig[type];
   return config.type === 'spend' && config.purchasable;

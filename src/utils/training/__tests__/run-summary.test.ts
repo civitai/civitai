@@ -33,9 +33,11 @@ describe('trainingArchitectureKey', () => {
 });
 
 describe('summarizeTrainingRun', () => {
-  it('prefers epochs over maxTrainEpochs when a run carries both', () => {
+  it('labels the AI Toolkit checkpoint count the way the submit screen does', () => {
     const d = details({ params: { engine: 'ai-toolkit', epochs: 10, maxTrainEpochs: 99 } });
-    expect(valueOf(d, 'Epochs')).toBe('10');
+
+    expect(valueOf(d, 'Checkpoints')).toBe('10');
+    expect(labels(d)).not.toContain('Epochs');
   });
 
   it('reads the AI Toolkit parameter names', () => {
@@ -46,9 +48,9 @@ describe('summarizeTrainingRun', () => {
     });
 
     expect(valueOf(d, 'Steps')).toBe('2000');
-    expect(valueOf(d, 'Epochs')).toBe('10');
-    expect(valueOf(d, 'Batch size')).toBe('1');
-    expect(valueOf(d, 'Learning rate')).toBe('0.0001');
+    expect(valueOf(d, 'Checkpoints')).toBe('10');
+    expect(valueOf(d, 'Train Batch Size')).toBe('1');
+    expect(valueOf(d, 'Unet LR')).toBe('0.0001');
   });
 
   it('reads the Kohya parameter names for the same rows', () => {
@@ -66,8 +68,8 @@ describe('summarizeTrainingRun', () => {
 
     expect(valueOf(d, 'Steps')).toBe('1500');
     expect(valueOf(d, 'Epochs')).toBe('20');
-    expect(valueOf(d, 'Batch size')).toBe('4');
-    expect(valueOf(d, 'Learning rate')).toBe('0.0005');
+    expect(valueOf(d, 'Train Batch Size')).toBe('4');
+    expect(valueOf(d, 'Unet LR')).toBe('0.0005');
   });
 
   it('prefers the human-readable base model name over the key', () => {
@@ -79,9 +81,12 @@ describe('summarizeTrainingRun', () => {
     expect(architecture).not.toBe('sdxl');
   });
 
-  it('falls back to the type key when the base model is a custom AIR', () => {
+  it('names a custom-AIR base the way the training list does', () => {
     const d = details({ baseModel: 'civitai:123@456', baseModelType: 'flux' });
-    expect(summarizeTrainingRun(d).architecture).toBe('flux');
+
+    expect(summarizeTrainingRun(d).architecture).toBe('Custom');
+    // The KEY still falls back to the family — that is what the filename segment uses.
+    expect(summarizeTrainingRun(d).architectureKey).toBe('flux');
   });
 
   it('omits rows the run has no value for', () => {
@@ -107,5 +112,22 @@ describe('summarizeTrainingRun', () => {
     });
 
     expect(summarizeTrainingRun(d).continuedFromEpoch).toBe(10);
+  });
+
+  it('surfaces which run a continuation came from, when the run recorded it', () => {
+    const continueFromEpoch = {
+      air: 'urn:air:sdxl:lora:civitai:1@2',
+      epochNumber: 10,
+      sourceModelVersionId: 9,
+    };
+
+    expect(
+      summarizeTrainingRun(
+        details({ continueFromEpoch: { ...continueFromEpoch, sourceVersionName: 'MyLoRA v2' } })
+      ).continuedFromVersionName
+    ).toBe('MyLoRA v2');
+    expect(
+      summarizeTrainingRun(details({ continueFromEpoch })).continuedFromVersionName
+    ).toBeNull();
   });
 });

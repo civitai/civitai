@@ -1,5 +1,8 @@
 import { z } from 'zod';
-import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  allBrowsingLevelsFlag,
+  publicBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import { PLACEMENT_SURFACES, placementSurfaces } from '~/shared/utils/placement';
 import { REMIX_GALLERY_MAX_PINNED } from '~/shared/utils/remix-gallery';
 import {
@@ -195,6 +198,34 @@ export const getRemixGallerySchema = z.object({
 export const getRemixGalleryVisibilitySchema = z.object({
   imageId: z.number().int().positive(),
   browsingLevel: z.number().min(0).default(allBrowsingLevelsFlag),
+});
+
+/**
+ * Counts and preview thumbnails for the host images on one surface.
+ *
+ * Capped at 100 to match the sticker batch, which is what sets a feed's cost at
+ * one query per 100 cards rather than one per card.
+ */
+export const getRemixGalleryCardSummariesSchema = z.object({
+  imageIds: z.array(z.number().int().positive()).min(1).max(100),
+  /**
+   * 🔴 Defaults to PG, not to every level.
+   *
+   * An omitted level is not a narrower request, it is the widest one:
+   * `applyDomainFeature` only narrows where the DOMAIN has a cap, so a signed-in
+   * viewer on blue or red gets every level. That is exactly how this shipped wide
+   * once. Failing closed costs a client that forgets the prop some missing
+   * frames, which is visible; failing open costs someone content they asked not
+   * to see.
+   *
+   * The two schemas above still default wide, and `getRemixGallery` is fine
+   * because its only caller passes the level. `getRemixGalleryVisibility` was
+   * NOT — its caller omitted it, which made it a boolean oracle for whether
+   * entries exist above the asker's level. Fixed at the call site rather than
+   * here, because narrowing that default would hide the gallery card from
+   * viewers entitled to see it.
+   */
+  browsingLevel: z.number().min(0).default(publicBrowsingLevelsFlag),
 });
 
 export const submitToRemixGallerySchema = z

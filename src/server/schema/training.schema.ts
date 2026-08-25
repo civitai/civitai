@@ -117,3 +117,8 @@ export const trainingServiceStatusSchema = z.object({
   blockedModels: z.array(z.string()).optional().default(blockedCustomModels),
 });
 export type TrainingServiceStatus = z.infer<typeof trainingServiceStatusSchema>;
+
+export type GetTrainingRunStateInput = z.infer<typeof getTrainingRunStateSchema>;
+export const getTrainingRunStateSchema = z.object({
+  modelVersionId: z.number().positive(),
+});

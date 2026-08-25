@@ -18,6 +18,7 @@
  *     request) → off-site only, and only when a pending request exists.
  */
 
+import { LISTING_KIND_LABELS } from '~/components/Apps/listingKindLabels';
 import type { ModerationListingRow } from '~/server/services/blocks/app-listing.service';
 
 /**
@@ -124,6 +125,6 @@ export type ListingKindChip = { label: string; color: string };
 /** Chip for a listing's `kind` (the per-row kind badge). */
 export function listingKindChip(kind: string): ListingKindChip {
   return kind === 'offsite'
-    ? { label: 'external', color: 'grape' }
-    : { label: 'on-site', color: 'blue' };
+    ? { label: LISTING_KIND_LABELS.offsite, color: 'grape' }
+    : { label: LISTING_KIND_LABELS.onsite, color: 'blue' };
 }

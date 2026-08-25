@@ -73,8 +73,12 @@ function offsiteCard(externalUrl: string | null): ListingCard {
 }
 
 describe('getListingBadge', () => {
-  it('on-site → "App"', () => {
-    expect(getListingBadge(onsiteCard({ hasPage: true }))).toEqual({ label: 'App', kind: 'onsite' });
+  // 🔴 PINNED LITERALLY, not derived from the constant it renders — writing
+  // `toBe(EMBEDDED_KIND_LABEL)` would pass for every possible value of that constant.
+  // The word a human reads, typed out. (Was `'App'` before the kind rename: not a
+  // retired wording, just a word that was not the kind's name at all.)
+  it('on-site → "Embedded"', () => {
+    expect(getListingBadge(onsiteCard({ hasPage: true }))).toEqual({ label: 'Embedded', kind: 'onsite' });
   });
   /**
    * 🔴 NEW BEHAVIOUR (not regression coverage): off-site used to badge as

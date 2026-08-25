@@ -133,4 +133,12 @@ describe('updateTrainingWorkflowRecords epoch numbering', () => {
 
     expect(epochNumbersFrom(await ingest([-1]))).toEqual([-1]);
   });
+
+  // Epoch 0 sits on the shifted side of the sentinel boundary: a `> 0` guard instead of `>= 0`
+  // swallows it into -1.
+  it('shifts epoch 0 rather than treating it as the sentinel', async () => {
+    givenModelFile({ version: 2, epochOffset: 10, epochs: [] });
+
+    expect(epochNumbersFrom(await ingest([0, 1]))).toEqual([10, 11]);
+  });
 });

@@ -1,4 +1,5 @@
 import {
+  addUsersHandler,
   clearChatHandler,
   createChatHandler,
   createMessageHandler,
@@ -6,6 +7,7 @@ import {
   getChatAuditHandler,
   getModeratorChatHandler,
   getChatsForUserHandler,
+  updateChatHandler,
   updateMessageHandler,
   getInfiniteMessagesHandler,
   getMessageByIdHandler,
@@ -18,10 +20,12 @@ import {
   setUserSettingsHandler,
 } from '~/server/controllers/chat.controller';
 import {
+  addUsersInput,
   clearChatInput,
   createChatInput,
   createMessageInput,
   deleteMessageInput,
+  updateChatInput,
   updateMessageInput,
   getInfiniteMessagesInput,
   getMessageByIdInput,
@@ -51,7 +55,14 @@ export const chatRouter = router({
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(createChatInput)
     .mutation(createChatHandler),
-  // addUser: guardedProcedure.input(addUsersInput).mutation(addUsersHandler),
+  addUser: guardedProcedure
+    .meta({ requiredScope: TokenScope.SocialWrite })
+    .input(addUsersInput)
+    .mutation(addUsersHandler),
+  updateChat: guardedProcedure
+    .meta({ requiredScope: TokenScope.SocialWrite })
+    .input(updateChatInput)
+    .mutation(updateChatHandler),
   modifyUser: protectedProcedure
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(modifyUserInput)

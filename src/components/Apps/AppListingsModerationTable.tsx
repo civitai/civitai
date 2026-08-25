@@ -19,6 +19,7 @@ import type { OffsitePendingRow } from '~/components/Apps/OffsiteReviewQueue';
 import { ModQueryError, isModAuthzError } from '~/components/Apps/ModQuerySurface';
 import { ReasonGatedActionModal } from '~/components/Apps/ReasonGatedActionModal';
 import { listingStatusChip } from '~/components/Apps/appListingModerationView';
+import { LISTING_KIND_LABELS } from '~/components/Apps/listingKindLabels';
 import {
   effectiveModerationStatus,
   isDestructiveListingModAction,
@@ -415,9 +416,11 @@ export function AppListingsModerationTable({
             value={kind}
             onChange={(v) => onKindChange(v as KindFilter)}
             data={[
+              // 🔴 The `value`s are STORED VALUES and are untouched; only the `label`s
+              // resolve from the one source. This control carried BOTH retired words.
               { label: 'All', value: 'all' },
-              { label: 'On-site', value: 'onsite' },
-              { label: 'External', value: 'offsite' },
+              { label: LISTING_KIND_LABELS.onsite, value: 'onsite' },
+              { label: LISTING_KIND_LABELS.offsite, value: 'offsite' },
             ]}
             aria-label="Filter by kind"
           />

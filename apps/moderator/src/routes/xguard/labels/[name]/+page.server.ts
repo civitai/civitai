@@ -2,7 +2,7 @@ import { error, fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { requireAccess } from '$lib/server/access';
 import { getLabDb } from '$lib/server/xguard-lab';
-import { env } from '$env/dynamic/private';
+import { labConnectionString, orchestratorEnv } from '$lib/server/xguard-api';
 import { runEvaluation } from '../../../../../xguard-lab/eval-core';
 
 // Policy editor. Every save is a NEW version, never an update in place: `eval_run.policy_id`
@@ -106,16 +106,16 @@ export const actions: Actions = {
     const version = Number(form.get('version'));
     if (!Number.isFinite(version)) return fail(400, { message: 'Pick a version to evaluate' });
 
-    const connectionString = env.MODERATOR_DATABASE_URL;
-    if (!connectionString)
-      return fail(500, { message: 'MODERATOR_DATABASE_URL is not configured' });
-
     try {
+      // `labConnectionString()` rather than the raw env var: this opens a bare `pg.Client`, which
+      // verifies the certificate chain the cnpg pooler cannot satisfy. No `mode` — it is derived
+      // from the samples, so clicking Evaluate cannot measure a batch against the wrong scanner.
       const summary = await runEvaluation({
-        connectionString,
+        connectionString: labConnectionString(),
         label: params.name,
         policyVersion: version,
         note: `from the policy editor`,
+        orchestrator: orchestratorEnv(),
       });
       return { evaluated: summary };
     } catch (err) {

@@ -173,6 +173,10 @@ export const ActionType = [
 ] as const;
 export type ActionType = (typeof ActionType)[number];
 
+// No deviceId here. The browser fingerprint that populated the ClickHouse `deviceId`
+// columns was removed in ab6d406f1e (2026-05-11); every row written since 2026-05-14
+// carries an empty string, so `uniqExact(deviceId)` returns 1 and a per-device
+// denominator yields a nonsense rate rather than an error.
 export type TrackRequest = {
   userId: number;
   ip: string;

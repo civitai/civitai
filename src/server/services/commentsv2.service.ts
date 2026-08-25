@@ -10,8 +10,7 @@ import type {
   CommentConnectorInput,
   GetCommentsInfiniteInput,
 } from './../schema/commentv2.schema';
-import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
-import { reportBlockedMessagePattern } from '~/server/services/message-pattern.service';
+import { throwOnBlockedCommentContent } from '~/server/services/blocklist.service';
 import {
   getBlockCheckOwnerIdsForComment,
   throwIfBlockedByEntityOwner,
@@ -270,7 +269,7 @@ export const upsertComment = async ({
   isModerator?: boolean;
   track?: Parameters<typeof recordStickerUsage>[0]['track'];
 }) => {
-  await throwOnBlockedLinkDomain(data.content);
+  await throwOnBlockedCommentContent(data.content, { isModerator });
   // Edits too, not just creates — a comment written before the block would otherwise stay editable
   // into anything afterwards. An edit resolves its target from the stored comment rather than from
   // `entityType`/`entityId`: those are client-supplied and never checked against the comment being
@@ -341,13 +340,6 @@ export const upsertComment = async ({
       return created;
     });
 
-    await reportBlockedMessagePattern({
-      type: 'CommentV2',
-      entityId: created.id,
-      userId,
-      content: data.content,
-      isModerator,
-    });
     return created;
   }
   // Wrapped so the edit's charge and the edit itself commit together.
@@ -368,13 +360,6 @@ export const upsertComment = async ({
     entityId: updated.id,
   });
 
-  await reportBlockedMessagePattern({
-    type: 'CommentV2',
-    entityId: updated.id,
-    userId,
-    content: data.content,
-    isModerator,
-  });
   return updated;
 };
 

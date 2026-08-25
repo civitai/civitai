@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { MAX_ENTITIES_COVER_IMAGE } from '~/server/schema/image.schema';
 import { trpc } from '~/utils/trpc';
 
 type WithDetails = { details?: Record<string, unknown> | null };
@@ -55,9 +56,24 @@ export function notificationImageIds(items: WithDetails[]) {
 export function useNotificationThumbnails(items: WithDetails[]) {
   const imageIds = useMemo(() => notificationImageIds(items), [items]);
 
+  // The panel is an infinite list with no `maxPages`, so `items` — and with it
+  // `imageIds` — grows with scroll depth and has no ceiling of its own. Clamping to
+  // the schema's own bound here, rather than letting the query be refused, is what
+  // keeps a deep scroll from blanking the whole panel: a refused query leaves `data`
+  // undefined, there is no error branch, and every re-render sends the same over-cap
+  // list, so the thumbnails would stay gone — including the ones under the cap — for
+  // the rest of the session. Clamped, they simply stop past the cap.
+  const entities = useMemo(
+    () =>
+      imageIds
+        .slice(0, MAX_ENTITIES_COVER_IMAGE)
+        .map((entityId) => ({ entityType: 'Image' as const, entityId })),
+    [imageIds]
+  );
+
   const { data } = trpc.image.getEntitiesCoverImage.useQuery(
-    { entities: imageIds.map((entityId) => ({ entityType: 'Image' as const, entityId })) },
-    { enabled: imageIds.length > 0, trpc: { context: { skipBatch: true } } }
+    { entities },
+    { enabled: entities.length > 0, trpc: { context: { skipBatch: true } } }
   );
 
   const withTagIds = useMemo(

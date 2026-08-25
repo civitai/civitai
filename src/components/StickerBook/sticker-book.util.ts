@@ -6,6 +6,17 @@ export function isStickerBookSide(value: unknown): value is StickerBookSide {
 }
 
 /**
+ * The absolute book URL, for the three places that build one.
+ *
+ * Deliberately not the profile nav's `${baseUrl}/sticker-book` — that row is
+ * built like all ten tabs beside it, and pulling one out to call this would
+ * make that table worse, not better.
+ */
+export function stickerBookUrl(username: string) {
+  return `/user/${username}/sticker-book`;
+}
+
+/**
  * Every string a section is described by, in one place.
  *
  * The row on the tab and the page behind its "View all" are the same section,
@@ -35,4 +46,24 @@ export function stickerBookSectionCopy(
       ? 'Nobody has put a sticker on your work yet. Accepted placements show up here.'
       : 'Nothing here yet.',
   };
+}
+
+/**
+ * The prefix of `items` that fills COMPLETE rows of a `columnCount`-wide grid.
+ *
+ * Extracted from the grid so it can be tested without a DOM: the column count
+ * arrives from a ResizeObserver behind a 100ms debounce, and component tests
+ * load no stylesheet, so any "at this viewport, expect N cards" assertion is
+ * measuring an unstyled width. The contract has no width in it — given a column
+ * count, draw `floor(n / c) * c`.
+ *
+ * 🔴 Both guards are load-bearing, and both fail the same alarming way. Fewer
+ * items than columns must return them ALL, and a column count of 0 — which is
+ * what the provider reports until it has measured — must pass through. Either
+ * one removed returns an empty array, and the grid then tells a viewer who has
+ * hidden nobody that "Everything here is from creators you have hidden."
+ */
+export function wholeRows<T>(items: T[], columnCount: number): T[] {
+  if (!columnCount || items.length < columnCount) return items;
+  return items.slice(0, Math.floor(items.length / columnCount) * columnCount);
 }

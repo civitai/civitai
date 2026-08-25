@@ -13,6 +13,7 @@ import {
 import { IconArrowRight, IconInfoCircle } from '@tabler/icons-react';
 import { useMemo } from 'react';
 import { ImageCard } from '~/components/Cards/ImageCard';
+import { RemixFlyoutLayoutProvider } from '~/components/RemixGallery/remix-flyout-layout';
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
@@ -205,13 +206,15 @@ function ImageFeedGrid({
 
   return (
     <div className={classes.grid} style={{ '--count': visible.length } as React.CSSProperties}>
-      <ImagesProvider images={visible}>
-        {visible.map((item) => (
-          <div key={item.id} className="p-2">
-            <ImageCard data={item} />
-          </div>
-        ))}
-      </ImagesProvider>
+      <RemixFlyoutLayoutProvider layout="side">
+        <ImagesProvider images={visible}>
+          {visible.map((item) => (
+            <div key={item.id} className="p-2">
+              <ImageCard data={item} />
+            </div>
+          ))}
+        </ImagesProvider>
+      </RemixFlyoutLayoutProvider>
     </div>
   );
 }

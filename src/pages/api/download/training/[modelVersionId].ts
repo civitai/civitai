@@ -41,7 +41,6 @@ export default AuthedEndpoint(
       where: { id: modelVersionId },
       select: {
         id: true,
-        name: true,
         trainingDetails: true,
         model: { select: { id: true, userId: true, name: true } },
         files: {
@@ -138,7 +137,6 @@ export default AuthedEndpoint(
 
     const fileName = trainingEpochModelFileName({
       modelName: modelVersion.model.name,
-      versionName: modelVersion.name,
       versionId: modelVersion.id,
       architecture: trainingArchitectureKey(
         modelVersion.trainingDetails as TrainingDetailsObj | null

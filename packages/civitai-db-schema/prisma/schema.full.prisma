@@ -5326,8 +5326,14 @@ model ClubMetric {
 model Chat {
   id        Int      @id @default(autoincrement())
   createdAt DateTime @default(now())
-  hash      String   @unique // hash of asc-sorted userIds
+  // Hash of asc-sorted userIds, and the dedupe key for 1:1 conversations. Null
+  // for groups: a group is identified by its row id, so two groups may hold the
+  // same people. Postgres treats nulls as distinct, so the unique index still
+  // holds for the 1:1 rows it applies to.
+  hash      String?  @unique
   ownerId   Int
+  isGroup   Boolean  @default(false)
+  name      String?
 
   owner User @relation(fields: [ownerId], references: [id])
 

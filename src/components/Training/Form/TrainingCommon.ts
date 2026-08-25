@@ -158,6 +158,10 @@ export const useTrainingSignals = () => {
         })
       );
 
+      // The epoch-selection screen reads the live workflow rather than this cache, so it needs
+      // its own nudge when a training update lands.
+      queryUtils.training.getRunState.invalidate({ modelVersionId: updated.modelVersionId }).then();
+
       // Update select file page
       queryUtils.model.getById.setData(
         { id: updated.modelId },

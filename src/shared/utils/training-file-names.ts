@@ -1,33 +1,22 @@
 /**
  * Names are scoped by model VERSION, not model: each training run gets its own version and numbers
- * its epochs from its own start, so `<model>_epoch_3` is ambiguous within a model. The version id
- * is what makes that a guarantee — version names are not unique within a model — and the name is
- * kept beside it only because it is the half a user recognises ("from epoch 10").
+ * its epochs from its own start, so `<model>_epoch_3` is ambiguous within a model. The id carries
+ * that, not the version name — version names are not unique within a model.
  */
 
 /**
- * Names are user-supplied and unbounded; most filesystems reject a path component over 255 bytes.
- * The version id is never truncated — it is what makes the name unique, and two versions of one
- * model truncate their shared model name identically.
+ * Model names reach 664 chars in prod; most filesystems reject a path component over 255 bytes.
+ * The version id is never truncated — it is what makes the name unique.
  */
 const MODEL_NAME_MAX = 80;
-const VERSION_NAME_MAX = 40;
 const ARCHITECTURE_MAX = 20;
 
 function sanitize(value: string, maxLength: number) {
   return value.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, maxLength);
 }
 
-/** `-` survives sanitising, so it reads as a separator between the name and the id rather than
- * running into the underscores the name itself decays into. */
-function versionScope({ versionName, versionId }: { versionName: string; versionId: number }) {
-  const name = sanitize(versionName, VERSION_NAME_MAX).replace(/^_+|_+$/g, '');
-  return name ? `${name}-${versionId}` : `${versionId}`;
-}
-
 export type TrainingRunNameParts = {
   modelName: string;
-  versionName: string;
   versionId: number;
   /** Short base-model key from `trainingArchitectureKey`, e.g. `pony`, `krea2`. Absent on older runs. */
   architecture?: string | null;
@@ -35,14 +24,11 @@ export type TrainingRunNameParts = {
 
 export function trainingRunFilePrefix({
   modelName,
-  versionName,
   versionId,
   architecture,
 }: TrainingRunNameParts) {
   const arch = architecture ? sanitize(architecture, ARCHITECTURE_MAX).replace(/^_+|_+$/g, '') : '';
-  return [sanitize(modelName, MODEL_NAME_MAX), arch, versionScope({ versionName, versionId })]
-    .filter(Boolean)
-    .join('_');
+  return [sanitize(modelName, MODEL_NAME_MAX), arch, String(versionId)].filter(Boolean).join('_');
 }
 
 export function trainingEpochModelFileName(args: TrainingRunNameParts & { epochNumber: number }) {

@@ -10,6 +10,37 @@
  * the positive ("showStickerBook") would make every account that predates this
  * feature read as hidden.
  */
+/**
+ * Where the grid stops widening, and how much of it the profile tab shows.
+ *
+ * Seven is the ceiling every other grid on the site uses — `MasonryProvider`
+ * defaults `maxColumnCount` to 7 — and the tab's fetch is two full rows of it.
+ *
+ * 🔴 They live together because the fetch is a ROW COUNT wearing a number: a
+ * limit that is not a whole multiple of the ceiling leaves the tab's last row
+ * short, which is the report this pair was written for. Multiplied rather than
+ * written as 14 so the two cannot drift apart.
+ *
+ * 🔴 AND the tab's candidate window must stay inside the drill-in's first page:
+ * `TAB_LIMIT * OVERFETCH + 1 <= PAGE_LIMIT`. Today that is 29 <= 30 — one row of
+ * headroom. Break it and the tab can show cards that "View all" page 1 does not,
+ * which surfaces as "nothing here yet" under a full row. Raising the columns or
+ * the rows does NOT carry the page size with it; there is a test on this.
+ */
+export const STICKER_BOOK_MAX_COLUMNS = 7;
+export const STICKER_BOOK_TAB_ROWS = 2;
+export const STICKER_BOOK_TAB_LIMIT = STICKER_BOOK_MAX_COLUMNS * STICKER_BOOK_TAB_ROWS;
+
+/** One page of the "View all" drill-in. */
+export const STICKER_BOOK_PAGE_LIMIT = 30;
+
+/**
+ * How far past the page a section looks so the image filter cannot under-fill
+ * it. Lives here rather than in the service so the containment invariant below
+ * can be asserted against the drill-in's page size.
+ */
+export const STICKER_BOOK_OVERFETCH = 2;
+
 export type StickerBookSettings = {
   hideStickerBook?: boolean;
   hidePurchasedStickers?: boolean;

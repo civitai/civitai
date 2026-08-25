@@ -18,9 +18,6 @@ vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BlocklistService>()),
   throwOnBlockedLinkDomain: vi.fn(async () => undefined),
 }));
-vi.mock('~/server/services/message-pattern.service', () => ({
-  reportBlockedMessagePattern: vi.fn(async () => undefined),
-}));
 vi.mock('~/server/utils/otel-helpers', () => ({
   withSpan: (_name: string, fn: () => unknown) => fn(),
 }));

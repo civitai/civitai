@@ -7,20 +7,60 @@ import type { StickerBookSettings } from '~/shared/utils/sticker-book';
 import { getStickerBalances } from '~/server/services/sticker.service';
 import { getBlockedPairIds } from '~/server/services/user-preferences.service';
 import { PLACEMENT_OWNER_PAYOUT_KINDS } from '~/shared/utils/placement';
-import { stickerBookAccess } from '~/shared/utils/sticker-book';
+import {
+  stickerBookAccess,
+  STICKER_BOOK_OVERFETCH,
+  STICKER_BOOK_PAGE_LIMIT,
+  STICKER_BOOK_TAB_LIMIT,
+} from '~/shared/utils/sticker-book';
 
 const SURFACE = 'sticker' as const;
 const TARGET_TYPE = 'image' as const;
 
 /**
- * How many placement rows a section may consider before it stops.
- *
- * The window is on the PLACEMENTS, and the images are filtered afterwards, so a
- * section can come back shorter than its limit. That is the honest shape: the
- * alternative is looping until the page is full, which on an account whose
- * images were all unpublished is an unbounded scan for an empty answer.
+ * The largest page a caller may ask a section for. NOT how many rows it reads —
+ * the overfetch below means a section considers up to `limit * OVERFETCH + 1`.
  */
 const MAX_SECTION_LIMIT = 60;
+
+/**
+ * How far past the page to look so the image filter cannot under-fill it.
+ *
+ * The window is on the PLACEMENTS and the images are filtered afterwards, so
+ * without this a section comes back short whenever any of its images are
+ * unpublished — on the tab that lands as a ragged last row under a grid sized
+ * for whole ones. `limit * N + 1` is the shape `api/v1/collections` uses; the
+ * `+ 1` is the row that proves there is a next page.
+ *
+ * 🔴 TWO, not four, and measured rather than picked. Across all 1,463 placement
+ * targets in production, 97.3% survive the feed filter at full browsing level —
+ * so a 4x window multiplied the hydration ~3.8x to recover an average of 0.4
+ * rows. Under the SFW clamp survival is 33.4% and some sections cannot be
+ * filled by any multiplier, which is a short row to tolerate rather than a
+ * number to raise.
+ *
+ * Bounded on purpose. Looping until the page is full is an unbounded scan for an
+ * empty answer on an account whose images were all unpublished, so a section
+ * whose overfetch is exhausted still comes back short rather than walking.
+ */
+const SECTION_OVERFETCH = STICKER_BOOK_OVERFETCH;
+
+/**
+ * The most ids `imagesForBook` may hand the feed in one call.
+ *
+ * 🔴 NOT a tuning number. `getInfiniteImagesSchema` caps its `limit` at 200
+ * (`server/schema/image.schema.ts`), and `imagesForBook` passes `ids.length` as
+ * that limit — so a longer array does not fetch more, it throws a ZodError out
+ * of the section and 500s the whole `stickerBook.get` query, stickers and
+ * earnings included, because the sections sit in one `Promise.all`.
+ *
+ * Reachable from the wire: `limit` is caller-supplied up to 60 on a public
+ * procedure. At the overfetch above the window tops out at 121, so this does
+ * not bind today and no account is near it either — the largest section in
+ * production is 98. It is here because the product of two constants going over
+ * 200 is a 500, and neither constant looks dangerous on its own.
+ */
+const MAX_HYDRATED_IDS = 200;
 
 /**
  * One section of the book: images carrying approved sticker placements, one card
@@ -51,6 +91,7 @@ async function getPlacementSection({
   limit,
   skip = 0,
   blockedIds,
+  resolveVisible,
 }: {
   userId: number;
   side: 'placer' | 'owner';
@@ -74,6 +115,18 @@ async function getPlacementSection({
    * because the two are one word apart and only one of them is a safety control.
    */
   blockedIds: number[];
+  /**
+   * Which of a set of image ids the viewer may actually be shown, as a lookup.
+   *
+   * Passed in rather than called here so the overfetch is filtered against the
+   * SAME hydration the cards are drawn from — a second `getAllImages` beside it
+   * is a second answer to "may this be seen", and the two can disagree.
+   *
+   * Omitted by the paged drill-in, which cannot overfetch: its `skip` counts
+   * GROUPS, so consuming a variable number of them per page would repeat or
+   * skip rows across the boundary.
+   */
+  resolveVisible?: (ids: number[]) => Promise<Map<number, unknown>>;
 }) {
   const blocked = blockedIds.length ? { notIn: blockedIds } : undefined;
   // Written out per side rather than with a computed key. A computed key that
@@ -96,22 +149,54 @@ async function getPlacementSection({
           placerId: blocked,
         };
 
+  const windowSize = resolveVisible
+    ? Math.min(limit * SECTION_OVERFETCH + 1, MAX_HYDRATED_IDS)
+    : limit + 1;
+
   const groups = await dbRead.placement.groupBy({
     by: ['targetId'],
     where,
     _max: { createdAt: true },
     orderBy: { _max: { createdAt: 'desc' } },
-    take: limit + 1,
+    take: windowSize,
     skip,
   });
 
   if (!groups.length) return { items: [], hasMore: false };
 
+  let page = groups.slice(0, limit);
   // Read off the row past the page, BEFORE the image filter drops anything. A
   // page that came back short because its images were unpublished still has a
   // next page, and deciding from what survived would end the walk early.
-  const hasMore = groups.length > limit;
-  const page = groups.slice(0, limit);
+  let hasMore = groups.length > limit;
+
+  if (resolveVisible) {
+    const visible = await resolveVisible(groups.map((group) => group.targetId));
+    const chosen: typeof groups = [];
+    // Walk in order, taking what survives until the page is full.
+    //
+    // 🔴 `hasMore` ON THIS BRANCH HAS NO READER, so nothing verifies it. The tab
+    // is the only caller that overfetches and it discards `hasMore`; the paged
+    // drill-in never takes this path. The reasoning below is why it is written
+    // this way, NOT a tested guarantee — anyone giving the tab a "load more"
+    // should write the test before trusting it. Kept rather than deleted because
+    // that caller is the obvious next step and the arithmetic is easy to get
+    // subtly wrong.
+    //
+    // `overran` means rows were left unconsumed, so there is definitely another
+    // page. Exhausting the whole window without filling the page also means
+    // more, since the window itself was the limit.
+    let overran = false;
+    for (const group of groups) {
+      if (chosen.length >= limit) {
+        overran = true;
+        break;
+      }
+      if (visible.has(group.targetId)) chosen.push(group);
+    }
+    page = chosen;
+    hasMore = overran || groups.length === windowSize;
+  }
 
   const targetIds = page.map((group) => group.targetId);
 
@@ -246,29 +331,56 @@ async function imagesForBook({
 }
 
 /**
- * The section's rows with their image attached, and rows whose image the feed
- * withheld dropped.
+ * One section's hydration, done once and read twice.
  *
- * Dropped rather than sent without a picture: a book is a browse surface and
- * nobody has to act on a row here, unlike the review queues, which keep a
- * withheld row so its escrow can still be answered.
+ * `resolveVisible` decides which of the overfetched rows survive; `attach` then
+ * dresses the chosen ones. Both read the SAME map, so the rows the section kept
+ * and the images it draws cannot come from two different answers to "may this be
+ * seen" — and it is one `getAllImages` per section rather than two.
+ *
+ * `attach` drops a row whose image the feed withheld rather than sending it
+ * without a picture: a book is a browse surface and nobody has to act on a row
+ * here, unlike the review queues, which keep a withheld row so its escrow can
+ * still be answered.
+ *
+ * 🔴 One instance per SECTION. `byId` is overwritten on each `resolveVisible`,
+ * so two sections sharing an instance would have the second hydration erase the
+ * first and `attach` would find nothing for the loser — an empty row, not an
+ * error.
+ */
+function sectionImages(browsingLevel: number, user?: SessionUser) {
+  let byId = new Map<number, Awaited<ReturnType<typeof imagesForBook>>[number]>();
+
+  return {
+    resolveVisible: async (ids: number[]) => {
+      const images = await imagesForBook({ ids, browsingLevel, user });
+      byId = new Map(images.map((image) => [image.id, image]));
+      return byId;
+    },
+    attach: <T extends { imageId: number }>(rows: T[]) =>
+      rows.flatMap((row) => {
+        const image = byId.get(row.imageId);
+        return image ? [{ ...row, image }] : [];
+      }),
+  };
+}
+
+/**
+ * Hydrate rows that were already chosen — the paged drill-in, which does not
+ * overfetch and so has nothing to filter against first.
+ *
+ * Built on `sectionImages` rather than repeating its body: the decision to DROP
+ * a withheld row rather than keep it is a product call, and encoded twice it
+ * gets changed once and the tab and its drill-in start disagreeing.
  */
 async function withImages<T extends { imageId: number }>(
   rows: T[],
   browsingLevel: number,
   user?: SessionUser
 ) {
-  const images = await imagesForBook({
-    ids: rows.map((row) => row.imageId),
-    browsingLevel,
-    user,
-  });
-  const byId = new Map(images.map((image) => [image.id, image]));
-
-  return rows.flatMap((row) => {
-    const image = byId.get(row.imageId);
-    return image ? [{ ...row, image }] : [];
-  });
+  const section = sectionImages(browsingLevel, user);
+  await section.resolveVisible(rows.map((row) => row.imageId));
+  return section.attach(rows);
 }
 
 /**
@@ -326,7 +438,7 @@ export async function getStickerBookSection({
   username,
   side,
   page = 1,
-  limit = 30,
+  limit = STICKER_BOOK_PAGE_LIMIT,
   browsingLevel,
   user,
   isModerator = false,
@@ -365,7 +477,7 @@ export async function getStickerBook({
   browsingLevel,
   user,
   isModerator = false,
-  limit = 12,
+  limit = STICKER_BOOK_TAB_LIMIT,
 }: {
   username: string;
   browsingLevel: number;
@@ -391,6 +503,12 @@ export async function getStickerBook({
   const sectionLimit = Math.min(Math.max(limit, 1), MAX_SECTION_LIMIT);
   const blockedIds = viewerId ? await getBlockedPairIds(viewerId) : [];
 
+  // One per section, and NOT shared: each holds the map its own overfetch was
+  // filtered against, and a shared one would be overwritten by whichever section
+  // hydrated last.
+  const placedImages = sectionImages(browsingLevel, user);
+  const receivedImages = sectionImages(browsingLevel, user);
+
   const [holdings, placed, received, earnedBuzz] = await Promise.all([
     // Newest acquisition first — the order the placement tray presents the same
     // collection in.
@@ -402,12 +520,14 @@ export async function getStickerBook({
       side: 'placer',
       limit: sectionLimit,
       blockedIds,
+      resolveVisible: placedImages.resolveVisible,
     }),
     getPlacementSection({
       userId: subject.id,
       side: 'owner',
       limit: sectionLimit,
       blockedIds,
+      resolveVisible: receivedImages.resolveVisible,
     }),
     access.canViewEarnings ? getEarnedBuzz(subject.id) : Promise.resolve(null),
   ]);
@@ -424,8 +544,12 @@ export async function getStickerBook({
     })),
     // The row's items only. `hasMore` belongs to the drill-in page, which asks
     // for its own pages; on the tab the "View all" link is there either way.
-    placed: await withImages(placed.items, browsingLevel, user),
-    received: await withImages(received.items, browsingLevel, user),
+    //
+    // Attached from the hydration the overfetch was already filtered against —
+    // re-fetching here would ask "may this be seen" a second time and could
+    // answer differently.
+    placed: placedImages.attach(placed.items),
+    received: receivedImages.attach(received.items),
     earnedBuzz,
   };
 }

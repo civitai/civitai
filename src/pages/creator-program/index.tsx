@@ -57,6 +57,7 @@ import {
 } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { CreatorProgramCapsInfo } from '~/components/Buzz/CreatorProgramV2/CreatorProgramV2.modals';
+import { MIN_CAP, PEAK_EARNING_WINDOW } from '~/shared/constants/creator-program.constants';
 import { getCreatorProgramAvailability } from '~/server/utils/creator-program.utils';
 import { Flags } from '~/shared/utils/flags';
 import { OnboardingSteps } from '~/server/common/enums';
@@ -740,6 +741,20 @@ const faq: { q: string; a: string | React.ReactNode }[] = [
   {
     q: 'Would buying a higher Membership Tier (Silver or Gold) increase my earnings?',
     a: 'Not your earnings, as such, but it does increase the maximum you can Bank each month.',
+  },
+  {
+    q: 'How is my Banking Cap calculated?',
+    a: `Your Cap is your Peak Earning Month multiplied by your membership tier's percentage, up to that tier's ceiling where it has one. Your Peak Earning Month is the single best month of generation compensation and Buzz other people spent on your work that you have had in the last ${PEAK_EARNING_WINDOW} completed months; Tips and rewards can still be Banked, but they do not set your peak. Tiers with a fixed Cap stay at that number, and every member has a minimum Cap of ${abbreviateNumber(
+      MIN_CAP
+    )} Buzz, however small their peak.`,
+  },
+  {
+    q: "Why doesn't this month's earning count toward my Cap?",
+    a: `Only completed months are eligible, so a great month raises your Cap the month after it finishes rather than while it is still running. That way your Peak Earning Month is settled before it is used, and it stays fixed for the whole month while every creator is banking against the same pool. If you are earning more than ever this month, your Cap will reflect it next month with nothing for you to claim or apply for.`,
+  },
+  {
+    q: `Why does the Cap look at the last ${PEAK_EARNING_WINDOW} months?`,
+    a: `Because the Cap is meant to track what you are earning now, not what you earned once. The Compensation Pool is split between everyone who banks into it that month, so a rolling window keeps it shared between creators who are actively earning. The window rolls forward with you, so beating your current peak inside it raises your Cap again.`,
   },
   {
     q: 'Will I get my Banked Buzz back?',

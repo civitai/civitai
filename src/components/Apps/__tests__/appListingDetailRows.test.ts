@@ -53,7 +53,9 @@ describe('buildListingDetailRows — order', () => {
   it('labels and values are the display strings, not the raw fields', () => {
     const rows = buildListingDetailRows(detail(), { formatDate: fmt });
     const by = Object.fromEntries(rows.map((r) => [r.key, r]));
-    expect(by.kind).toMatchObject({ label: 'Kind', value: 'On-site app' });
+    // The `… app` form, not the bare word: the noun is what disambiguates "Embedded"
+    // from the `Embedding` model type. See `listingKindLabels`' header.
+    expect(by.kind).toMatchObject({ label: 'Kind', value: 'Embedded app' });
     // 🔴 DISPLAY labels, not the stored enum. The fixture stores `utility` / `pg`.
     expect(by.category).toMatchObject({ label: 'Category', value: 'Utility' });
     expect(by.rating).toMatchObject({ label: 'Rating', value: 'PG' });

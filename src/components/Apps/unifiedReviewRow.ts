@@ -1,3 +1,4 @@
+import { STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
 import type { AnyRequest } from '~/components/Apps/OnsiteReviewModal';
 import type { OffsitePendingRow } from '~/components/Apps/OffsiteReviewQueue';
 
@@ -57,7 +58,10 @@ export type UnifiedReviewRow = {
   kind: UnifiedReviewKind;
   /** Kind-column display badge — DECOUPLED from the routing `kind` so an on-site
    *  listing-media revision (routing `offsite`) can show a "Listing media" badge
-   *  distinct from an external listing's "External" badge. Adapter-controlled. */
+   *  distinct from an off-site listing's kind badge. 🔴 THE KIND WORD IS NOT SPELLED
+   *  HERE: it resolves from `listingKindLabels` (this site used to emit a bare
+   *  hardcoded "External" — a LIVE instance of the retired wording that the ledger's
+   *  `/external app/i` regex could not see). Adapter-controlled. */
   badge: string;
   badgeColor: string;
   /** App / listing display name (falls back to the slug). */
@@ -245,7 +249,7 @@ export function offsiteRequestToUnifiedRow(
     key: isOnsiteListing ? `onsite-listing:${req.id}` : `offsite:${req.id}`,
     // Routing kind is `offsite` for BOTH (they open the same listing modal).
     kind: 'offsite',
-    badge: isOnsiteListing ? 'Listing media' : 'External',
+    badge: isOnsiteListing ? 'Listing media' : STANDALONE_KIND_LABEL,
     badgeColor: isOnsiteListing ? 'teal' : 'grape',
     title: req.appListing?.name ?? req.slug,
     slug: req.slug,

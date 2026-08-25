@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import type * as MessagePatternService from '~/server/services/message-pattern.service';
 
 /**
  * What "Remove as ToS" reports back is the number of rows it actually flagged.
@@ -11,10 +10,6 @@ import type * as MessagePatternService from '~/server/services/message-pattern.s
  * a branch that is unreachable while the count is the input length.
  */
 
-vi.mock('~/server/services/message-pattern.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof MessagePatternService>()),
-  reportBlockedMessagePattern: vi.fn(async () => undefined),
-}));
 vi.mock('~/server/utils/otel-helpers', () => ({
   withSpan: (_name: string, fn: () => unknown) => fn(),
 }));

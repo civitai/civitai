@@ -195,7 +195,11 @@ describe('the payload fake honours its input (positive control)', () => {
     const card = page.getByTestId('apps-transfer-aot_1');
     await expect.element(card).toBeInTheDocument();
     await expect.element(card).toHaveTextContent('Shiny Thing');
-    await expect.element(card).toHaveTextContent(/On-site app/i);
+    // The kind badge, on the store's own word (see `listingKindLabels`). This assertion
+    // is the one the kind rename broke, and it broke INVISIBLY: it lives under
+    // `src/tests/**`, which no rule in `standaloneWordingCallSites.test.ts` reached until
+    // that ledger grew a test sweep. See TEST_SCAN_ROOTS there.
+    await expect.element(card).toHaveTextContent(/Embedded app/i);
   });
 
   test('…and a different payload renders differently (same assertion, other shape)', async () => {

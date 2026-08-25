@@ -17,6 +17,12 @@ import {
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
+import { getTrainingWorkflowOverlay } from '~/server/services/orchestrator/training/training-state';
+import {
+  applyTrainingWorkflowOverlay,
+  collectTrainingWorkflowRefs,
+  emptyTrainingOverlay,
+} from '~/server/services/orchestrator/training/workflow-state';
 import { eventEngine } from '~/server/events';
 import {
   getValidCreatorMembershipMap,
@@ -1366,10 +1372,24 @@ export const getMyTrainingModelsHandler = async ({
       db
     );
 
+    // Live state for every run still inside the orchestrator's 30-day retention window; older
+    // rows, and every row when the flag is off or the orchestrator is unreachable, fall through
+    // to the stored copy. Note the asymmetry this creates: `trainingStatus` filtering and the
+    // total count are still computed in SQL from the stored value, so a row whose live status
+    // has moved on can display a status outside the active filter. Fixing that needs
+    // orchestrator-side filtering — see docs/features/training-orchestrator-source-of-truth.md.
+    const overlay = ctx.features.trainingOrchestratorState
+      ? await getTrainingWorkflowOverlay({
+          userId,
+          ctx,
+          refs: collectTrainingWorkflowRefs(results.items),
+        })
+      : emptyTrainingOverlay();
+
     return {
       ...results,
       items: results.items.map((item) => ({
-        ...item,
+        ...applyTrainingWorkflowOverlay(item, overlay),
         model: {
           ...item.model,
           _count: { modelVersions: versionCountByModelId.get(item.model.id) ?? 0 },

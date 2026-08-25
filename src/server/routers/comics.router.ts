@@ -11,6 +11,9 @@ import {
   isFlagProtected,
 } from '~/server/trpc';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { throwOnBlockedCommentContent } from '~/server/services/blocklist.service';
+import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
+import { COMMENT_ALLOWED_TAGS } from '~/utils/html-sanitize-helpers';
 import { fetchTimeoutSignal } from '~/server/utils/fetch-timeout';
 import { regionProxyMiddleware } from '~/server/orchestrator/region-proxy.middleware';
 import {
@@ -52,8 +55,6 @@ import { WorkflowData } from '~/shared/orchestrator/workflow-data';
 import { colorDomainNames, type ColorDomain } from '~/shared/constants/domain.constants';
 import { rateLimit } from '~/server/middleware.trpc';
 import { commentRateLimits } from '~/server/schema/comment.schema';
-import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
-import { reportBlockedMessagePattern } from '~/server/services/message-pattern.service';
 import { enhanceComicPrompt } from '~/server/services/comics/prompt-enhance';
 import { orchestratorChatCompletionCost } from '~/server/services/comics/orchestrator-chat';
 import { resolveReferenceMentions } from '~/server/services/comics/mention-resolver';
@@ -6295,10 +6296,23 @@ export const comicsRouter = router({
       z.object({
         projectId: z.number().int(),
         chapterPosition: z.number().int().min(0),
-        content: z.string().min(1).max(10000),
+        // Sanitised like every other comment write. Without this the row reached both the
+        // blocklist guard and the database as raw HTML, so an entity-escaped host
+        // (`blocked&#46;example`) carried no literal dot for the link matcher to see and then
+        // decoded back to a live URL in `RenderHtml` at read time — a bypass the other two
+        // paths do not have, because their zod schema decodes entities before the guard runs.
+        //
+        // No `allowStickers`: this path does not charge for sticker uses the way `upsertComment`
+        // does, so permitting the markup here would make paid stickers free.
+        content: getSanitizedStringSchema({ allowedTags: COMMENT_ALLOWED_TAGS })
+          .refine((v) => v.length > 0, 'Cannot be empty')
+          .refine((v) => v.length <= 10000, 'Comment content too long'),
       })
     )
     .mutation(async ({ ctx, input }) => {
+      // Before the thread upsert: a rejected comment must not leave a Thread row behind.
+      await throwOnBlockedCommentContent(input.content, { isModerator: ctx.user.isModerator });
+
       // Find or create thread for this chapter (upsert avoids race condition)
       const thread = await dbWrite.thread.upsert({
         where: {
@@ -6319,22 +6333,12 @@ export const comicsRouter = router({
         throw throwBadRequestError('Comments are locked for this chapter');
       }
 
-      await throwOnBlockedLinkDomain(input.content);
-
       const comment = await dbWrite.commentV2.create({
         data: {
           userId: ctx.user.id,
           content: input.content,
           threadId: thread.id,
         },
-      });
-
-      await reportBlockedMessagePattern({
-        type: 'CommentV2',
-        entityId: comment.id,
-        userId: ctx.user.id,
-        content: input.content,
-        isModerator: ctx.user.isModerator,
       });
 
       // Increment comment count

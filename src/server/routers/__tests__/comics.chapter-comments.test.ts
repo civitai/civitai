@@ -19,9 +19,10 @@ describe('comic chapter comments', () => {
     expect(router()).toContain(`{ hidden: false, tosViolation: false }`);
   });
 
-  it('runs the two content guards every other comment surface has', () => {
-    expect(router()).toContain('await throwOnBlockedLinkDomain(input.content)');
-    expect(router()).toContain('await reportBlockedMessagePattern({');
+  it('runs the content guard every other comment surface has, before the thread upsert', () => {
+    expect(router()).toContain(
+      'await throwOnBlockedCommentContent(input.content, { isModerator: ctx.user.isModerator })'
+    );
   });
 
   it('is guarded and rate limited, so a muted account cannot comment here', () => {

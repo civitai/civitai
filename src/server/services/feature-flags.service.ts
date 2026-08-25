@@ -173,6 +173,16 @@ const featureFlags = createFeatureFlags({
   // and part count; instant rollback = set the cohort to 0, which stops the
   // browser observing at all rather than merely dropping rows server-side.
   feedImpressions: { availability: [], fliptKey: 'feed-impressions' },
+  // Kill switch for the /images and /videos tag bar, whose click-through was measured at
+  // 3.1% of feed pageviews and 7.3% of daily feed viewers against a 10% floor it had to
+  // clear to stay (868kv1b9m). `['public']` and NOT `[]`, which is the usual shape for a
+  // new flag: this gates something already shipped and visible to everyone, so it must
+  // fail OPEN. Dark-by-default would hide the bar the moment this deploys and again on
+  // any Flipt outage, turning a pending product decision into an accidental removal.
+  // Flipt's result overrides role checks in both directions, so a `feed-tag-bar` boolean
+  // with `enabled: false` and no rollout hides the bar for everyone, moderators included.
+  // Until that flag exists, evaluation returns null and static evaluation keeps it on.
+  feedTagBar: { availability: ['public'], fliptKey: 'feed-tag-bar' },
   articles: ['public'],
   articleCreate: ['public'],
   articleRatingDispute: { availability: ['user'], fliptKey: 'article-rating-dispute' },
@@ -215,6 +225,9 @@ const featureFlags = createFeatureFlags({
     fliptKey: 'training-auto-label-orchestrator',
   },
   imageTrainingResults: { availability: ['user'], fliptKey: 'image-training-results' },
+  // Training list reads its status/epochs/cost from the orchestrator workflow instead of the
+  // stored copy. Default off; ramp via Flipt. Flipping it off restores the DB read with no deploy.
+  trainingOrchestratorState: { availability: ['mod'], fliptKey: 'training-orchestrator-state' },
   trainingAutoCaption: { availability: ['public'], fliptKey: 'training-auto-caption2' },
   trainingAutoTag: { availability: ['public'], fliptKey: 'training-auto-tag2' },
   wan22MultiStep: { availability: ['public'], fliptKey: 'wan22-multi-step' },

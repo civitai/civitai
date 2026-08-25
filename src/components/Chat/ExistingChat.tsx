@@ -59,6 +59,8 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
 import { SignalMessages } from '~/server/common/enums';
 import type { isTypingOutput } from '~/server/schema/chat.schema';
+import { ChatMemberMenu } from '~/components/Chat/ChatMemberMenu';
+import { activeMemberStatuses } from '~/shared/utils/chat';
 import { ChatMemberStatus, ChatMessageType } from '~/shared/utils/prisma/enums';
 import type { ChatAllMessages } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
@@ -191,6 +193,12 @@ export function ExistingChat() {
     () => thisChat?.chatMembers.filter((cm) => cm.userId !== currentUser?.id),
     [thisChat, currentUser]
   );
+  // `chatMembers.length` is the fallback for threads that predate `Chat.isGroup`
+  // and have not been backfilled.
+  const isGroupAdmin =
+    (!!thisChat?.isGroup || (thisChat?.chatMembers.length ?? 0) > 2) &&
+    !!currentUser &&
+    thisChat?.ownerId === currentUser.id;
   // const lastViewed = myMember?.lastViewedMessageId;
   const modSender = useMemo(
     () => thisChat?.chatMembers.find((cm) => cm.isOwner === true && cm.user.isModerator === true),
@@ -448,49 +456,54 @@ export function ExistingChat() {
               {/* TODO online status (later), blocked users, etc */}
 
               {otherMembers?.map((cm) => (
-                <Button key={cm.userId} variant="light" color="gray" size="compact-sm">
-                  <UserAvatar
-                    user={cm.user}
-                    size="xs"
-                    withUsername
-                    linkToProfile
-                    badge={
-                      <Group gap={6} ml={4} align="center">
-                        {cm.user.isModerator ? (
-                          <Image
-                            src="/images/civ-c.png"
-                            title="Moderator"
-                            alt="Moderator"
-                            className="size-4"
-                          />
-                        ) : undefined}
-                        {cm.isOwner === true ? (
-                          <Box title="Creator" display="flex">
-                            <IconCrown size={16} fill="currentColor" />
+                <Group key={cm.userId} gap={2} wrap="nowrap">
+                  <Button variant="light" color="gray" size="compact-sm">
+                    <UserAvatar
+                      user={cm.user}
+                      size="xs"
+                      withUsername
+                      linkToProfile
+                      badge={
+                        <Group gap={6} ml={4} align="center">
+                          {cm.user.isModerator ? (
+                            <Image
+                              src="/images/civ-c.png"
+                              title="Moderator"
+                              alt="Moderator"
+                              className="size-4"
+                            />
+                          ) : undefined}
+                          {cm.isOwner === true ? (
+                            <Box title="Creator" display="flex">
+                              <IconCrown size={16} fill="currentColor" />
+                            </Box>
+                          ) : undefined}
+                          <Box
+                            title={
+                              cm.status === ChatMemberStatus.Invited ||
+                              cm.status === ChatMemberStatus.Ignored
+                                ? 'Invited'
+                                : cm.status
+                            }
+                            display="flex"
+                          >
+                            {cm.status === ChatMemberStatus.Joined ? (
+                              <IconCircleCheck size={16} color="green" />
+                            ) : cm.status === ChatMemberStatus.Left ||
+                              cm.status === ChatMemberStatus.Kicked ? (
+                              <IconCircleX size={16} color="orangered" />
+                            ) : (
+                              <IconCircleMinus size={16} />
+                            )}
                           </Box>
-                        ) : undefined}
-                        <Box
-                          title={
-                            cm.status === ChatMemberStatus.Invited ||
-                            cm.status === ChatMemberStatus.Ignored
-                              ? 'Invited'
-                              : cm.status
-                          }
-                          display="flex"
-                        >
-                          {cm.status === ChatMemberStatus.Joined ? (
-                            <IconCircleCheck size={16} color="green" />
-                          ) : cm.status === ChatMemberStatus.Left ||
-                            cm.status === ChatMemberStatus.Kicked ? (
-                            <IconCircleX size={16} color="orangered" />
-                          ) : (
-                            <IconCircleMinus size={16} />
-                          )}
-                        </Box>
-                      </Group>
-                    }
-                  />
-                </Button>
+                        </Group>
+                      }
+                    />
+                  </Button>
+                  {isGroupAdmin && !!thisChat && activeMemberStatuses.includes(cm.status) && (
+                    <ChatMemberMenu chatObj={thisChat} member={cm} />
+                  )}
+                </Group>
               ))}
             </Group>
           )}

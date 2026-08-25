@@ -103,7 +103,10 @@ function StickerTile({
             src={art.url}
             alt={`:${art.slug}:`}
             options={{ height: 144, anim: art.animated, optimized: true }}
-            style={{ height: 72, width: 'auto' }}
+            // Boxed square and contained, the way jumbo boxes a wide sticker.
+            // With the width left to the artwork, a 2:1 sticker overflowed the
+            // tile and the resulting max-width clamp squashed it.
+            style={{ height: 72, width: 72, objectFit: 'contain' }}
           />
           {showQuantity && (
             <Text size="xs" c="dimmed">
