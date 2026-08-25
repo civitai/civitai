@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as ImageService from '~/server/services/image.service';
 import type * as UserPreferences from '~/server/services/user-preferences.service';
+import { STICKER_BOOK_TAB_LIMIT } from '~/shared/utils/sticker-book';
 
 const blockedPairIds = vi.fn(async () => [] as number[]);
 /**
@@ -110,6 +111,49 @@ const oneStickeredImage = () => {
     },
   ]);
 };
+
+/**
+ * A section with more images than the tab draws, so a count assertion is about
+ * the tab's own limit rather than about the fixture running out. Ids are even so
+ * a test can withhold the odd half and still have enough left to fill the page.
+ */
+const manyStickeredImages = (count: number) => {
+  const rows = (base: number) =>
+    Array.from({ length: count }, (_, i) => ({
+      targetId: base + i,
+      _max: { createdAt: new Date(2026, 0, 1, 0, count - i) },
+    }));
+
+  // 🔴 HONOURS `take` AND `skip`, and DISPATCHES ON `where`.
+  //
+  // `take`: a flat `mockResolvedValue` hands back every row whatever the query
+  // asked for, which makes the overfetch invisible — the walk sees all the
+  // candidates even with the overfetch removed, and a test named for it passes
+  // over code that does not do it. Caught by reverting `SECTION_OVERFETCH`.
+  //
+  // `where`: without this the two sections return IDENTICAL rows, so the two
+  // per-section hydrations hold the same map and sharing one between them is
+  // unobservable. In production their image sets are disjoint and the loser's
+  // `attach` finds nothing — an empty row.
+  placementGroupBy.mockImplementation(
+    async (args: { take?: number; skip?: number; where?: { placerId?: number } }) => {
+      // 🔴 `typeof === 'number'`, NOT truthiness. On the owner side the service
+      // builds `placerId: blocked`, and `blocked` is `{ notIn: [...] }` — an
+      // object, so truthy — the moment the viewer has any block. A truthy test
+      // would hand both sections the same rows again and silently un-observe the
+      // isolation the tests below exist to hold.
+      const placedSide = typeof args?.where?.placerId === 'number';
+      const all = rows(placedSide ? PLACED_BASE : RECEIVED_BASE);
+      const from = args?.skip ?? 0;
+      return all.slice(from, from + (args?.take ?? all.length));
+    }
+  );
+  placementFindMany.mockResolvedValue([]);
+};
+
+/** Disjoint id ranges, so a section drawing the other one's images is visible. */
+const PLACED_BASE = 900;
+const RECEIVED_BASE = 5000;
 
 const EARNED = 1234;
 
@@ -392,10 +436,60 @@ describe('getStickerBook — what leaves the server', () => {
   it('bounds the section limit rather than passing a caller number through', async () => {
     await getStickerBook({ username: 'creator', ...viewer(CREATOR), limit: 5000, ...levels });
 
-    // The cap plus the one row that decides `hasMore`. Asserted as the cap it
-    // came from rather than as 61, so raising the cap fails here rather than
-    // silently letting a caller ask for 5000.
-    for (const call of placementGroupBy.mock.calls) expect(call[0].take).toBe(60 + 1);
+    // The cap, overfetched, plus the lookahead row. Written as arithmetic over
+    // the two literals rather than as 121, so raising either fails here rather
+    // than silently letting a caller ask for 5000.
+    for (const call of placementGroupBy.mock.calls) expect(call[0].take).toBe(60 * 2 + 1);
+
+    // 🔴 The invariant the clamp exists for, which the clamp itself cannot show:
+    // `imagesForBook` passes `ids.length` as `getInfiniteImagesSchema`'s limit,
+    // and that schema caps at 200. Today's window is 121 so this passes without
+    // the clamp — it goes red only when someone raises `MAX_SECTION_LIMIT`
+    // WITHOUT it, which is the 500 that takes stickers and earnings down too.
+    for (const call of placementGroupBy.mock.calls) expect(call[0].take).toBeLessThanOrEqual(200);
+  });
+
+  it('overfetches so images the feed withholds cannot leave the tab short', async () => {
+    // Forty candidates with every other one withheld. Without the overfetch the
+    // tab asks for exactly its 14, loses half of them to the feed, and draws the
+    // half-empty last row this was reported for.
+    manyStickeredImages(40);
+    allImages.mockImplementation(async ({ ids }: { ids?: number[] }) => ({
+      items: (ids ?? []).filter((id) => id % 2 === 0).map((id) => ({ id, url: `url-${id}` })),
+      nextCursor: undefined,
+    }));
+
+    const book = await getStickerBook({ username: 'creator', ...viewer(CREATOR), ...levels });
+
+    // 🔴 The exact ids in order, not a length and a parity check.
+    //
+    // A parity loop here CANNOT FAIL: `attach` drops any row whose id is absent
+    // from the hydration map, and that map holds only the evens — so every row
+    // reaching the assertion is even whatever the walk did. Length alone is just
+    // as weak: it stays green under a walk that reverses the candidates (oldest
+    // first), or pushes `groups[0]` fourteen times. Only the id list sees those.
+    expect(book.placed.map((row) => row.imageId)).toEqual(
+      Array.from({ length: STICKER_BOOK_TAB_LIMIT }, (_, i) => PLACED_BASE + i * 2)
+    );
+  });
+
+  it('keeps the two sections hydrated apart', async () => {
+    // One `sectionImages` per section. Shared, the second hydration erases the
+    // first and the losing section renders empty — and with a fixture whose two
+    // sections return the same rows, that mutation is invisible.
+    manyStickeredImages(20);
+
+    const book = await getStickerBook({ username: 'creator', ...viewer(CREATOR), ...levels });
+
+    expect(book.placed.map((row) => row.imageId)).toEqual(
+      Array.from({ length: STICKER_BOOK_TAB_LIMIT }, (_, i) => PLACED_BASE + i)
+    );
+    expect(book.received.map((row) => row.imageId)).toEqual(
+      Array.from({ length: STICKER_BOOK_TAB_LIMIT }, (_, i) => RECEIVED_BASE + i)
+    );
+    // One feed query per section. A regression to hydrating twice would still
+    // return the right rows, so the count is the only thing that sees it.
+    expect(allImages).toHaveBeenCalledTimes(2);
   });
 });
 

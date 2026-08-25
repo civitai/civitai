@@ -145,7 +145,19 @@ export const getHomeBlocksByIdHandler = async ({
       user: ctx.user,
     });
 
-    if (homeBlock?.type === 'Announcement') ctx.cache.skip = true;
+    // `&& ctx.cache` because `ctx.cache` really is null on the SSG prefetch path —
+    // `createServerSideHelpers` builds the context with `cache: null as any`
+    // (`~/server/utils/server-side-helpers.ts`), and that `as any` is why `strict: true`
+    // does not flag the unguarded form. Today only `getHomeBlocks` (the list) is
+    // prefetched (`src/pages/index.tsx`), so this line is not reachable from there and
+    // the guard is precautionary; it is here so that reachability stops being the thing
+    // holding it up.
+    //
+    // Sibling writers of `ctx.cache` from inside a resolver are INCONSISTENT about this,
+    // so do not take any single one as the convention: `system.router.getBenignPhrases`
+    // and `model.controller.getModelsPagedSimpleHandler` both guard, while
+    // `model.controller.getModelsInfiniteHandler` does not.
+    if (homeBlock?.type === HomeBlockType.Announcement && ctx.cache) ctx.cache.skip = true;
 
     if (!homeBlock) {
       throw throwNotFoundError('Home block not found');

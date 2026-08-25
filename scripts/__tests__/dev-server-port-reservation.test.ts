@@ -260,6 +260,7 @@ describe('dev-server restart wiring', () => {
       if (process.platform === 'win32') {
         expect(spawnMock).toHaveBeenCalledWith('taskkill', ['/pid', '6161', '/f', '/t'], {
           shell: true,
+          windowsHide: true,
         });
       } else {
         expect(killSpy).toHaveBeenCalledWith(-6161, 'SIGKILL');
@@ -507,6 +508,7 @@ describe('dev-server session process lifecycle', () => {
       if (process.platform === 'win32') {
         expect(spawnMock).toHaveBeenCalledWith('taskkill', ['/pid', '31337', '/f', '/t'], {
           shell: true,
+          windowsHide: true,
         });
       } else {
         expect(killSpy).toHaveBeenCalledWith(-31337, 'SIGKILL');

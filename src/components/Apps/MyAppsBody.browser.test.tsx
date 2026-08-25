@@ -5,7 +5,7 @@ import { page, userEvent } from 'vitest/browser';
 import { LOADABLE_IMAGE_DATA_URI, renderWithProviders } from '../../../test/component-setup';
 import type * as MantineHooks from '@mantine/hooks';
 import type { MyAppRow } from '~/components/Apps/myAppsView';
-import type { MyAppHistoryEntry, OrphanedSubmissionRow } from './MyAppsBody';
+import type { OrphanedSubmissionRow } from './MyAppsBody';
 import type * as TrpcModule from '~/utils/trpc';
 import { capabilitiesForKind } from '~/shared/constants/app-capabilities.constants';
 
@@ -14,9 +14,12 @@ import { capabilitiesForKind } from '~/shared/constants/app-capabilities.constan
  *
  * 🔴 SCOPE, STATED HONESTLY BECAUSE THE MOCKS ARE HEAVY. What these tests exercise for
  * real: the active/inactive partition, the collapse's a11y state + count + pagination
- * boundary, the placeholder-vs-image branch, the link-vs-no-link status gate, the per-row
- * href derivation, and — in the container block at the bottom — whether the history query
- * is issued at all. What is mock-shadowed: the data layer entirely, and every visual
+ * boundary, the placeholder-vs-image branch, the link-vs-no-link ROLE×STATUS gate and the
+ * per-row href derivation. The nested history panel and the owner takedown pair have MOVED
+ * to the authoring page and are covered by `ListingHistoryPanel.browser.test.tsx` and
+ * `ListingPublishingPanel.browser.test.tsx`; nothing about them is asserted here any more,
+ * which is why this file no longer mounts a history query at all.
+ * What is mock-shadowed: the data layer entirely, and every visual
  * property (the `component` project loads NO CSS, so nothing here is a claim about
  * layout). The mobile card layout is exercised by passing `compact`, which is the SAME
  * boolean the container derives from `useMediaQuery` — the derivation itself is pinned in
@@ -104,7 +107,7 @@ vi.mock('~/utils/notifications', () => ({
   showSuccessNotification: vi.fn(),
 }));
 
-const { MyAppsBody, MyAppsBodyView, historyPanelId } = await import('./MyAppsBody');
+const { MyAppsBody, MyAppsBodyView } = await import('./MyAppsBody');
 
 /**
  * Fixtures are pairwise distinct on every dimension an assertion names — id, slug, status,
@@ -127,24 +130,6 @@ function row(over: Partial<MyAppRow> & { appListingId: string }): MyAppRow {
     ...over,
     // `capabilities` must follow the FINAL kind, not the default one.
     ...(over.capabilities ? {} : { capabilities: capabilitiesForKind(over.kind ?? kind) }),
-  };
-}
-
-function entry(over: Partial<MyAppHistoryEntry> & { id: string }): MyAppHistoryEntry {
-  return {
-    source: 'version',
-    status: 'approved',
-    version: '1.0.0',
-    submittedAt: '2026-07-01T00:00:00Z',
-    reviewedAt: null,
-    rejectionReason: null,
-    approvalNotes: null,
-    changelog: null,
-    deployState: null,
-    // Default to the SUBMITTER's view so the fixture is not silently unwithdrawable; the
-    // cases that care about the collaborator/flag branches set it explicitly.
-    canWithdraw: over.status === 'pending',
-    ...over,
   };
 }
 
@@ -340,26 +325,20 @@ describe('🔴 the active/inactive partition is LISTING-level and terminal-only'
    * app; it is not a listing state and must not move the app anywhere. The app stays in the
    * main table AND the withdrawn request is visible in its nested history.
    */
-  test('🔴 a WITHDRAWN submission on an APPROVED app keeps the app ACTIVE, with the request in its history', async () => {
+  test('🔴 a WITHDRAWN submission on an APPROVED app keeps the app ACTIVE', async () => {
     renderWithProviders(
       <MyAppsBodyView
         rows={[row({ appListingId: 'apl_live', status: 'approved', kind: 'offsite' })]}
-        expandedId="apl_live"
-        history={[
-          entry({ id: 'req_wd', source: 'listing', status: 'withdrawn', version: null }),
-          entry({ id: 'req_ok', source: 'version', status: 'approved', version: '2.1.0' }),
-        ]}
       />
     );
     // ACTIVE — in the main table, and NOT in the inactive namespace.
     await expect.element(page.getByTestId('apps-mine-row-apl_live')).toBeInTheDocument();
     expect(page.getByTestId('apps-mine-inactive-row-apl_live').elements()).toHaveLength(0);
     expect(page.getByTestId('apps-mine-inactive-toggle').elements()).toHaveLength(0);
-    // …and the withdrawn request is still visible, as history.
-    await expect
-      .element(page.getByTestId('apps-mine-history-status-req_wd'))
-      .toHaveTextContent(/withdrawn/i);
-    await expect.element(page.getByTestId('apps-mine-history-entry-req_ok')).toBeInTheDocument();
+    // 🔴 THE OTHER HALF OF THIS CASE MOVED, IT WAS NOT DROPPED. That the withdrawn REQUEST
+    // is still visible as history is now asserted in `ListingHistoryPanel.browser.test.tsx`
+    // ("a withdrawn request on a live app is still in the stream"), because the stream is
+    // no longer on this row.
   });
 });
 
@@ -743,40 +722,111 @@ describe('🔴 the row images open the shared listing image viewer', () => {
  * Per-row capability / href gating
  * ------------------------------------------------------------------ */
 
-describe('🔴 per-row gating survives the merge', () => {
+describe('🔴 per-row gating survives the merge, and now reads ROLE as well as STATUS', () => {
   /**
    * The edit affordance is the NAME LINK, and it is withheld exactly when
-   * `getAppListingAuthoringContext` would throw FORBIDDEN — a `removed` or `rejected`
-   * listing. Flattening every row to an unconditional `/edit` link would offer a
-   * guaranteed 403, and on a removed listing that page used to open with a fully live
-   * Collaborators tab.
+   * `getAppListingAuthoringContext` would refuse the caller.
+   *
+   * 🔴 THE RULE INVERTED FOR A REMOVED/REJECTED APP, and that inversion is this PR. Those
+   * rows used to be dimmed text because the authoring route refused any non-authorable
+   * status. The route now opens on them in a NARROWED mode — at most Publishing + History,
+   * never Collaborators — and this PR moved BOTH the History disclosure and the
+   * Unpublish/Republish pair off this row and onto that page. So an unlinked removed row
+   * would now strand whoever is looking at it with no route to either.
+   *
+   * 🔴 IT DOES NOT READ `role`, AND AN EARLIER DRAFT DID — on a false premise. That draft
+   * withheld the link from a seated EDITOR on a removed listing, and the test name said
+   * "the page would refuse them". It does not: `resolveListingAccess` returns `role:'editor'`
+   * for any accepted seat regardless of the listing's status, so the authoring context is
+   * served and `editorTabsFor` hands that editor `['history']`. The clause was therefore not
+   * a mirror of a server gate but an unannounced REGRESSION — the pre-PR row rendered its
+   * History toggle unconditionally, so an editor could already open a removed app's history
+   * here. The case below is that one, corrected and inverted.
    */
-  test('a REMOVED row has no edit link, only dimmed text', async () => {
+  test('🔴 a REMOVED row DOES link for its owner — and lands on Publishing, not Details', async () => {
     renderWithProviders(
-      <MyAppsBodyView rows={[row({ appListingId: 'apl_rm', status: 'removed' })]} />
+      <MyAppsBodyView rows={[row({ appListingId: 'apl_rm', status: 'removed', role: 'owner' })]} />
     );
     // 🔴 AWAIT THE ELEMENT BEFORE CLICKING. `renderWithProviders` commits
     // asynchronously in browser mode, so a synchronous `.element()` here races the
     // mount and reports "Cannot find element" against an empty <body>.
     await expect.element(page.getByTestId('apps-mine-inactive-toggle')).toBeInTheDocument();
     await userEvent.click(page.getByTestId('apps-mine-inactive-toggle').element());
-    await expect.element(page.getByTestId('apps-mine-unlinked-apl_rm')).toBeInTheDocument();
-    expect(page.getByTestId('apps-mine-link-apl_rm').elements()).toHaveLength(0);
+    const a = page.getByTestId('apps-mine-link-apl_rm');
+    await expect.element(a).toBeInTheDocument();
+    // 🔴 THE TAB IS THE ASSERTION, not merely that a link exists. `?tab=details` here would
+    // mean the href was built from a set that still contains Details on a removed listing —
+    // i.e. the security branch in `editorTabsFor` had been lost — and the destination would
+    // silently rewrite it, hiding the regression.
+    expect(a.element().getAttribute('href')).toBe('/apps/listing/apl_rm/edit?tab=publishing');
+    expect(page.getByTestId('apps-mine-unlinked-apl_rm').elements()).toHaveLength(0);
   });
 
-  test('a REJECTED row has no edit link either', async () => {
+  test('🔴 a REJECTED row links its owner to HISTORY — a FAIL-SAFE branch, not a live cohort', async () => {
     renderWithProviders(
       <MyAppsBodyView
-        rows={[row({ appListingId: 'apl_rj', status: 'rejected', kind: 'offsite' })]}
+        rows={[row({ appListingId: 'apl_rj', status: 'rejected', kind: 'offsite', role: 'owner' })]}
       />
     );
-    // 🔴 AWAIT THE ELEMENT BEFORE CLICKING. `renderWithProviders` commits
-    // asynchronously in browser mode, so a synchronous `.element()` here races the
-    // mount and reports "Cannot find element" against an empty <body>.
     await expect.element(page.getByTestId('apps-mine-inactive-toggle')).toBeInTheDocument();
     await userEvent.click(page.getByTestId('apps-mine-inactive-toggle').element());
-    await expect.element(page.getByTestId('apps-mine-unlinked-apl_rj')).toBeInTheDocument();
-    expect(page.getByTestId('apps-mine-link-apl_rj').elements()).toHaveLength(0);
+    const a = page.getByTestId('apps-mine-link-apl_rj');
+    await expect.element(a).toBeInTheDocument();
+    // 🔴 NOT `publishing`: a rejected listing never reached the store, so there is no
+    // control to offer and `editorTabsFor` withholds that tab too. A different first tab
+    // from the removed case above, so a mutant that hardcodes either literal fails once.
+    //
+    // 🔴 SCOPE OF THIS CASE, STATED SO IT IS NOT MIS-CITED: nothing writes
+    // `AppListing.status = 'rejected'` today — an on-site reject deletes the draft listing,
+    // an off-site reject writes `removed`. This pins a FAIL-SAFE for a value the DB CHECK
+    // permits and legacy rows may carry. It is not evidence that a live cohort was rescued;
+    // rejected first versions are served by the orphan group, which this PR left alone.
+    expect(a.element().getAttribute('href')).toBe('/apps/listing/apl_rj/edit?tab=history');
+  });
+
+  test('🔴 a seated EDITOR on a REMOVED row DOES link — to History, which the page serves them', async () => {
+    renderWithProviders(
+      <MyAppsBodyView
+        rows={[row({ appListingId: 'apl_seat_rm', status: 'removed', role: 'editor' })]}
+      />
+    );
+    await expect.element(page.getByTestId('apps-mine-inactive-toggle')).toBeInTheDocument();
+    await userEvent.click(page.getByTestId('apps-mine-inactive-toggle').element());
+    const a = page.getByTestId('apps-mine-link-apl_seat_rm');
+    await expect.element(a).toBeInTheDocument();
+    // 🔴 `?tab=history`, NOT `?tab=publishing`. Same status as `apl_rm` above, different
+    // role: the link exists for both, and what `role` narrows is the TAB, not the link. A
+    // regression that re-added a role clause to the link predicate turns this red; a
+    // regression that offered an editor Publishing turns it red on the tab instead.
+    expect(a.element().getAttribute('href')).toBe('/apps/listing/apl_seat_rm/edit?tab=history');
+    expect(page.getByTestId('apps-mine-unlinked-apl_seat_rm').elements()).toHaveLength(0);
+  });
+
+  test('🔴 an UNKNOWN status is the ONLY shape left unlinked — fail closed', async () => {
+    // The negative arm the role clause used to supply. Without a case here the link
+    // predicate would have no `false` at all, and "everything links" is satisfied by
+    // deleting the predicate entirely. `quarantined` is not a prefix or suffix of any real
+    // status, and it is NOT one of the two the Inactive collapse owns, so it renders in the
+    // main table — no disclosure click, which keeps this case free of that dependency.
+    renderWithProviders(
+      <MyAppsBodyView rows={[row({ appListingId: 'apl_unknown_v9', status: 'quarantined' })]} />
+    );
+    await expect.element(page.getByTestId('apps-mine-unlinked-apl_unknown_v9')).toBeInTheDocument();
+    expect(page.getByTestId('apps-mine-link-apl_unknown_v9').elements()).toHaveLength(0);
+  });
+
+  test('a seated EDITOR on an APPROVED row DOES link — the control arm for the role clause', async () => {
+    renderWithProviders(
+      <MyAppsBodyView
+        rows={[row({ appListingId: 'apl_seat_ok', status: 'approved', role: 'editor' })]}
+      />
+    );
+    const a = page.getByTestId('apps-mine-link-apl_seat_ok');
+    await expect.element(a).toBeInTheDocument();
+    // 🔴 AND NO `publishing` TAB IN THE HREF. Both takedown procs are owner-scoped, so an
+    // editor is never offered the tab — `?tab=details` is the proof that `role` narrows the
+    // set rather than merely reordering it.
+    expect(a.element().getAttribute('href')).toBe('/apps/listing/apl_seat_ok/edit?tab=details');
   });
 
   test('an APPROVED row does link, and the href is derived PER ROW', async () => {
@@ -938,258 +988,6 @@ describe('empty, error and the card layout', () => {
 
 /* ------------------------------------------------------------------ *
  * The nested history panel
- * ------------------------------------------------------------------ */
-
-describe('nested history', () => {
-  test('the toggle reports its own row state, and the panel id is row-scoped', async () => {
-    renderWithProviders(
-      <MyAppsBodyView
-        rows={[row({ appListingId: 'apl_h1' }), row({ appListingId: 'apl_h2', kind: 'offsite' })]}
-        expandedId="apl_h1"
-        history={[entry({ id: 'req_1', version: '3.0.0' })]}
-      />
-    );
-    await expect
-      .element(page.getByTestId('apps-mine-expand-apl_h1'))
-      .toHaveAttribute('aria-expanded', 'true');
-    await expect
-      .element(page.getByTestId('apps-mine-expand-apl_h2'))
-      .toHaveAttribute('aria-expanded', 'false');
-    expect(
-      page.getByTestId('apps-mine-expand-apl_h1').element().getAttribute('aria-controls')
-    ).toBe(historyPanelId('apl_h1'));
-    // The OPEN row shows its entries; the closed one shows none.
-    await expect.element(page.getByTestId('apps-mine-history-entry-req_1')).toBeInTheDocument();
-    expect(
-      page
-        .getByTestId(historyPanelId('apl_h2'))
-        .element()
-        .querySelectorAll('[data-testid^="apps-mine-history-entry-"]')
-    ).toHaveLength(0);
-  });
-
-  test('BOTH publish-request streams appear, tagged by source, without duplication', async () => {
-    // The two tables are disjoint event streams over one app — see
-    // `app-listing-history.service`'s header. A version bump and a listing edit are
-    // different events and must BOTH show.
-    renderWithProviders(
-      <MyAppsBodyView
-        rows={[row({ appListingId: 'apl_hist' })]}
-        expandedId="apl_hist"
-        history={[
-          entry({ id: 'blk_1', source: 'version', status: 'approved', version: '4.2.0' }),
-          entry({ id: 'lst_1', source: 'listing', status: 'pending', version: null }),
-        ]}
-      />
-    );
-    const blk = page.getByTestId('apps-mine-history-entry-blk_1');
-    await expect.element(blk).toBeInTheDocument();
-    expect(blk.element().getAttribute('data-history-source')).toBe('version');
-    await expect.element(blk).toHaveTextContent('4.2.0');
-    const lst = page.getByTestId('apps-mine-history-entry-lst_1');
-    expect(lst.element().getAttribute('data-history-source')).toBe('listing');
-    await expect.element(lst).toHaveTextContent(/listing edit/i);
-    // One element each — a merged read that failed to distinguish the streams would
-    // render the same event twice.
-    expect(blk.elements()).toHaveLength(1);
-    expect(lst.elements()).toHaveLength(1);
-  });
-
-  test('an app with no history says so rather than rendering an empty box', async () => {
-    renderWithProviders(
-      <MyAppsBodyView
-        rows={[row({ appListingId: 'apl_none' })]}
-        expandedId="apl_none"
-        history={[]}
-      />
-    );
-    await expect.element(page.getByTestId('apps-mine-history-empty-apl_none')).toBeInTheDocument();
-  });
-
-  test('a failed history read shows an error scoped to that row', async () => {
-    renderWithProviders(
-      <MyAppsBodyView
-        rows={[row({ appListingId: 'apl_err' })]}
-        expandedId="apl_err"
-        historyError="nope"
-      />
-    );
-    await expect.element(page.getByTestId('apps-mine-history-error-apl_err')).toBeInTheDocument();
-  });
-
-  test('Withdraw is offered only on a PENDING entry', async () => {
-    const withdrawn: MyAppHistoryEntry[] = [
-      entry({ id: 'pend_1', status: 'pending', canWithdraw: true }),
-      entry({ id: 'appr_1', status: 'approved', canWithdraw: false }),
-    ];
-    const seen: string[] = [];
-    renderWithProviders(
-      <MyAppsBodyView
-        rows={[row({ appListingId: 'apl_w' })]}
-        expandedId="apl_w"
-        history={withdrawn}
-        onWithdraw={(e) => seen.push(e.id)}
-      />
-    );
-    const btn = page.getByTestId('apps-mine-history-withdraw-pend_1');
-    await expect.element(btn).toBeInTheDocument();
-    expect(page.getByTestId('apps-mine-history-withdraw-appr_1').elements()).toHaveLength(0);
-    await userEvent.click(btn.element());
-    expect(seen).toEqual(['pend_1']);
-  });
-});
-
-/* ------------------------------------------------------------------ *
- * The container — the LAZY history query
- * ------------------------------------------------------------------ */
-
-describe('MyAppsBody (container) — history is fetched on EXPAND, not up front', () => {
-  /**
-   * 🔴 THE COST THE MERGE WAS SUPPOSED TO REMOVE. `/apps/my-submissions` issued TWO
-   * unbounded per-user reads on mount — `blocks.listMyPublishRequests` (which itself fans
-   * out to four more queries) and `appListings.listMySubmissions` — to render history
-   * nobody had asked to see. The merged page renders from `listMine` alone.
-   *
-   * 🔴 GATE CAVEAT, stated because it is the honest limit of this technique: the stub
-   * returns data regardless of `enabled`, so the laziness is pinned by reading the
-   * `enabled` ARGUMENT off the recorded calls, not by observing that no fetch happened.
-   * A behavioural version would need a real query client and a real transport.
-   */
-  test('🔴 on first render the history query is DISABLED — nothing is fetched', async () => {
-    mocks.rows = [row({ appListingId: 'apl_lazy1' }), row({ appListingId: 'apl_lazy2' })];
-    renderWithProviders(<MyAppsBody />);
-    await expect.element(page.getByTestId('apps-mine-row-apl_lazy1')).toBeInTheDocument();
-
-    // Read `.mock`-style state only AFTER an awaited element — render is async-committed.
-    expect(mocks.historyCalls.length).toBeGreaterThan(0); // positive control: the hook ran
-    expect(mocks.historyCalls.every((c) => c.enabled === false)).toBe(true);
-    // …and ONE hook for the whole table, not one per row — the fan-out this replaces.
-    expect(new Set(mocks.historyCalls.map((c) => c.input.appListingId))).toEqual(new Set(['']));
-  });
-
-  test('🔴 expanding a row enables the query FOR THAT ROW', async () => {
-    mocks.rows = [row({ appListingId: 'apl_lazy1' }), row({ appListingId: 'apl_lazy2' })];
-    renderWithProviders(<MyAppsBody />);
-    await expect.element(page.getByTestId('apps-mine-expand-apl_lazy2')).toBeInTheDocument();
-    const before = mocks.historyCalls.length;
-
-    await userEvent.click(page.getByTestId('apps-mine-expand-apl_lazy2').element());
-    await expect
-      .element(page.getByTestId('apps-mine-expand-apl_lazy2'))
-      .toHaveAttribute('aria-expanded', 'true');
-
-    const after = mocks.historyCalls.slice(before);
-    expect(after.length).toBeGreaterThan(0);
-    const enabled = after.filter((c) => c.enabled);
-    expect(enabled.length).toBeGreaterThan(0);
-    // The id is the row that was opened — not the first row, and not the other one.
-    expect(new Set(enabled.map((c) => c.input.appListingId))).toEqual(new Set(['apl_lazy2']));
-  });
-
-  test('collapsing the row disables it again', async () => {
-    mocks.rows = [row({ appListingId: 'apl_lazy1' })];
-    renderWithProviders(<MyAppsBody />);
-    await expect.element(page.getByTestId('apps-mine-expand-apl_lazy1')).toBeInTheDocument();
-    await userEvent.click(page.getByTestId('apps-mine-expand-apl_lazy1').element());
-    await expect
-      .element(page.getByTestId('apps-mine-expand-apl_lazy1'))
-      .toHaveAttribute('aria-expanded', 'true');
-    await userEvent.click(page.getByTestId('apps-mine-expand-apl_lazy1').element());
-    await expect
-      .element(page.getByTestId('apps-mine-expand-apl_lazy1'))
-      .toHaveAttribute('aria-expanded', 'false');
-    expect(mocks.historyCalls.at(-1)?.enabled).toBe(false);
-  });
-
-  /**
-   * 🔴 THE ROW SOURCE IS `appListings.listMine`. This is the single most load-bearing
-   * property of the consolidation: the trpc mock supplies ONLY `listMine` as a row source,
-   * so a container re-derived from `listMySubmissions` / `listMyPublishRequests` would
-   * render the empty state here rather than the rows.
-   */
-  test('🔴 rows come from listMine — the ownership∪seat read', async () => {
-    mocks.rows = [row({ appListingId: 'apl_from_listmine', role: 'editor', kind: 'offsite' })];
-    renderWithProviders(<MyAppsBody />);
-    await expect.element(page.getByTestId('apps-mine-row-apl_from_listmine')).toBeInTheDocument();
-    expect(page.getByTestId('apps-mine-empty').elements()).toHaveLength(0);
-  });
-});
-
-/* ------------------------------------------------------------------ *
- * Withdraw is only offered to someone who can actually use it
- * ------------------------------------------------------------------ */
-
-describe('🔴 Withdraw is not offered to people the server will refuse', () => {
-  /**
-   * Both withdraw procs are SUBMITTER-scoped (`withdrawExternalRequest` and
-   * `withdrawRequest` each throw NOT_OWNED unless `submittedByUserId === userId`). An
-   * accepted collaborator, a transfer recipient and a moderator-claimed owner — the three
-   * populations this page exists to serve — would otherwise get a button that only ever
-   * red-toasts. The server sends its own verdict as `canWithdraw`.
-   */
-  test('a PENDING entry the viewer did not submit shows NO button', async () => {
-    renderWithProviders(
-      <MyAppsBodyView
-        rows={[row({ appListingId: 'apl_seat', role: 'editor' })]}
-        expandedId="apl_seat"
-        history={[entry({ id: 'req_theirs', status: 'pending', canWithdraw: false })]}
-        onWithdraw={() => undefined}
-      />
-    );
-    await expect
-      .element(page.getByTestId('apps-mine-history-entry-req_theirs'))
-      .toBeInTheDocument();
-    expect(page.getByTestId('apps-mine-history-withdraw-req_theirs').elements()).toHaveLength(0);
-  });
-
-  test('the same entry DOES show it for the submitter', async () => {
-    renderWithProviders(
-      <MyAppsBodyView
-        rows={[row({ appListingId: 'apl_own' })]}
-        expandedId="apl_own"
-        history={[entry({ id: 'req_mine', status: 'pending', canWithdraw: true })]}
-        onWithdraw={() => undefined}
-      />
-    );
-    await expect
-      .element(page.getByTestId('apps-mine-history-withdraw-req_mine'))
-      .toBeInTheDocument();
-  });
-
-  /**
-   * 🔴 THE FLAG MISMATCH. `blocks.withdrawPublishRequest` carries `enforceAppBlocksFlag`;
-   * this page and both of its reads gate on `appBlocksAuthor` only. With the author flag
-   * on and the store flag off the page renders, history loads, and the VERSION half of the
-   * button 403s — while the off-site half (`withdrawExternalRequest`, no flag) is fine.
-   */
-  test('🔴 with the store flag off, the VERSION withdraw is hidden and the LISTING one is not', async () => {
-    renderWithProviders(
-      <MyAppsBodyView
-        rows={[row({ appListingId: 'apl_flag' })]}
-        expandedId="apl_flag"
-        withdrawEnabled={false}
-        history={[
-          entry({ id: 'ver_1', source: 'version', status: 'pending', canWithdraw: true }),
-          entry({
-            id: 'lst_1',
-            source: 'listing',
-            status: 'pending',
-            version: null,
-            canWithdraw: true,
-          }),
-        ]}
-        onWithdraw={() => undefined}
-      />
-    );
-    await expect.element(page.getByTestId('apps-mine-history-entry-ver_1')).toBeInTheDocument();
-    expect(page.getByTestId('apps-mine-history-withdraw-ver_1').elements()).toHaveLength(0);
-    // The off-site sibling proc has no such gate, so its control stays.
-    await expect.element(page.getByTestId('apps-mine-history-withdraw-lst_1')).toBeInTheDocument();
-  });
-});
-
-/* ------------------------------------------------------------------ *
- * The completeness advisory
  * ------------------------------------------------------------------ */
 
 describe('🔴 the listing-completeness advisory has a home', () => {
@@ -1540,6 +1338,37 @@ describe('🔴 submissions without a listing', () => {
 });
 
 describe('MyAppsBody (container) — the orphan read and the write flag', () => {
+  /**
+   * 🔴 THE ROW SOURCE IS `appListings.listMine`. This is the single most load-bearing
+   * property of the consolidation: the trpc mock supplies ONLY `listMine` as a row source,
+   * so a container re-derived from `listMySubmissions` / `listMyPublishRequests` would
+   * render the empty state here rather than the rows. (Carried over from the container
+   * block that held the lazy-history cases, which this PR removed along with the query.)
+   */
+  test('🔴 rows come from listMine — the ownership∪seat read', async () => {
+    mocks.rows = [row({ appListingId: 'apl_from_listmine', role: 'editor', kind: 'offsite' })];
+    renderWithProviders(<MyAppsBody />);
+    await expect.element(page.getByTestId('apps-mine-row-apl_from_listmine')).toBeInTheDocument();
+    expect(page.getByTestId('apps-mine-empty').elements()).toHaveLength(0);
+  });
+
+  test('🔴 the container issues NO listingHistory query at all — the panel MOVED', async () => {
+    mocks.rows = [row({ appListingId: 'apl_nohist', status: 'approved' })];
+    renderWithProviders(<MyAppsBody />);
+    await expect.element(page.getByTestId('apps-mine-row-apl_nohist')).toBeInTheDocument();
+
+    // 🔴 THE MOVE, ASSERTED AS A NEGATIVE — and a zero needs its positive control, which is
+    // the awaited row above: the page really did mount and really did render this row, so
+    // the empty call list is a fact about the container rather than about a render that
+    // never happened. On `origin/main` this row's history query is issued (disabled, but
+    // issued), so `historyCalls` is length 1 there and this assertion is red.
+    expect(mocks.historyCalls).toEqual([]);
+
+    // …and the row's own expand control is gone with it. The stream lives on the authoring
+    // page now; a leftover toggle here would be the second home this move exists to avoid.
+    expect(page.getByTestId('apps-mine-expand-apl_nohist').elements()).toHaveLength(0);
+  });
+
   test('renders orphaned submissions from their own query', async () => {
     mocks.rows = [row({ appListingId: 'apl_c1' })];
     mocks.orphans = [

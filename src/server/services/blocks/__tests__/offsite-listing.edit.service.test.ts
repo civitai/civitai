@@ -255,9 +255,9 @@ describe('updateListing', () => {
       where: { id: 'apl_new_1' },
       data: { contentRating: 'g' },
     });
-    expect(updateCalls.every((c) => (c as { where: { id: string } }).where.id !== 'apl_parent')).toBe(
-      true
-    );
+    expect(
+      updateCalls.every((c) => (c as { where: { id: string } }).where.id !== 'apl_parent')
+    ).toBe(true);
   });
 
   it('DRAFT + contentRating change → edits IN PLACE (no shadow — pre-approval, no gate to bypass)', async () => {
@@ -300,16 +300,20 @@ describe('updateListing', () => {
     expect(res.shadowId).toBe('apl_new_1');
     // The shadow was created as a draft revision of the parent.
     const shadowData = mockWrite.appListing.create.mock.calls[0][0].data as Row;
-    expect(shadowData).toMatchObject({ status: 'draft', revisionOfId: 'apl_parent', appBlockId: null });
+    expect(shadowData).toMatchObject({
+      status: 'draft',
+      revisionOfId: 'apl_parent',
+      appBlockId: null,
+    });
     // The FULL patch was written to the SHADOW, never the live parent.
     const updateCalls = mockWrite.appListing.update.mock.calls.map((c) => c[0]);
     expect(updateCalls).toContainEqual({
       where: { id: 'apl_new_1' },
       data: { name: 'Brand New Name', tagline: 'also this' },
     });
-    expect(updateCalls.every((c) => (c as { where: { id: string } }).where.id !== 'apl_parent')).toBe(
-      true
-    );
+    expect(
+      updateCalls.every((c) => (c as { where: { id: string } }).where.id !== 'apl_parent')
+    ).toBe(true);
   });
 
   it('approved + externalUrl change → treated as MATERIAL → shadow path', async () => {
@@ -433,8 +437,18 @@ describe('beginListingRevision', () => {
     // Screenshots were copied (imageId/order/caption preserved) onto the shadow.
     const shots = mockWrite.appListingScreenshot.createMany.mock.calls[0][0].data as Row[];
     expect(shots).toHaveLength(2);
-    expect(shots[0]).toMatchObject({ appListingId: 'apl_new_1', imageId: 10, order: 0, caption: 'a' });
-    expect(shots[1]).toMatchObject({ appListingId: 'apl_new_1', imageId: 11, order: 1, caption: null });
+    expect(shots[0]).toMatchObject({
+      appListingId: 'apl_new_1',
+      imageId: 10,
+      order: 0,
+      caption: 'a',
+    });
+    expect(shots[1]).toMatchObject({
+      appListingId: 'apl_new_1',
+      imageId: 11,
+      order: 1,
+      caption: null,
+    });
   });
 
   it('idempotent: an existing shadow is returned as-is (no second clone)', async () => {
@@ -471,9 +485,9 @@ describe('beginListingRevision', () => {
     mockWrite.appListing.create.mockRejectedValueOnce(
       Object.assign(new Error('deadlock detected'), { code: 'P2034' })
     );
-    await expect(
-      beginListingRevision({ listingId: 'apl_parent', userId: OWNER })
-    ).rejects.toThrow('deadlock detected');
+    await expect(beginListingRevision({ listingId: 'apl_parent', userId: OWNER })).rejects.toThrow(
+      'deadlock detected'
+    );
   });
 
   it('non-approved parent → INVALID_REVISION', async () => {
@@ -614,7 +628,10 @@ describe('submitListingRevision', () => {
     mockRead.appListingPublishRequest.findFirst.mockResolvedValue(null);
     await expect(
       submitListingRevision({ shadowId: 'apl_shadow', userId: OWNER })
-    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('externalUrl') });
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('externalUrl'),
+    });
     expect(mockWrite.appListingPublishRequest.create).not.toHaveBeenCalled();
   });
 });
@@ -701,7 +718,11 @@ describe('approveExternalRequest (revision apply)', () => {
       approvalNotes: 'nice edit',
     });
     // Returns the LIVE parent id + slug (not the shadow).
-    expect(res).toEqual({ publishRequestId: 'alpr_rev', listingId: 'apl_parent', slug: 'cool-app' });
+    expect(res).toEqual({
+      publishRequestId: 'alpr_rev',
+      listingId: 'apl_parent',
+      slug: 'cool-app',
+    });
 
     // The request flip re-points appListingId at the PARENT + marks approved.
     const reqCall = mockWrite.appListingPublishRequest.updateMany.mock.calls[0][0] as {
@@ -969,14 +990,24 @@ describe('listMySubmissions (lastModerationAction for removed listings)', () => 
     appListingId: 'apl_removed',
     slug: 'gone-app',
     status: 'approved',
-    appListing: { name: 'Gone App', revisionOfId: null, status: 'removed', _count: { screenshots: 3 } },
+    appListing: {
+      name: 'Gone App',
+      revisionOfId: null,
+      status: 'removed',
+      _count: { screenshots: 3 },
+    },
   };
   const liveRequestRow = {
     id: 'alpr_live',
     appListingId: 'apl_live',
     slug: 'live-app',
     status: 'approved',
-    appListing: { name: 'Live App', revisionOfId: null, status: 'approved', _count: { screenshots: 3 } },
+    appListing: {
+      name: 'Live App',
+      revisionOfId: null,
+      status: 'approved',
+      _count: { screenshots: 3 },
+    },
   };
 
   it('attaches the latest moderation-event action for a REMOVED listing (owner-unpublish → eligible)', async () => {
@@ -1011,5 +1042,236 @@ describe('listMySubmissions (lastModerationAction for removed listings)', () => 
     const res = await listMySubmissions({ userId: OWNER });
     expect(mockRead.$queryRaw).not.toHaveBeenCalled();
     expect(res.items[0]).toMatchObject({ lastModerationAction: null });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// listMySubmissions — the KIND seam of the completeness advisory
+// ---------------------------------------------------------------------------
+
+/**
+ * 🔴 `listMySubmissions` IS NOT AN OFF-SITE-ONLY READ, despite living in
+ * `offsite-listing.service`. Its `where` carries an explicit `{ kind: 'onsite' }`
+ * OR-branch (pinned by the shadow-handling describe above) so ON-SITE MEDIA REVISIONS
+ * appear on /apps/my-submissions — an on-site listing is auto-created and has no own
+ * publish request, so its only representation IS the revision request. That makes this
+ * the one caller of `computeListingProblems` where BOTH kinds genuinely arrive on the
+ * same page, and where a hardcoded `'offsite'` would be wrong in production rather than
+ * merely fragile.
+ *
+ * The three empty-text problems now name a different remedy per kind: an on-site
+ * listing's name/tagline/description/category have NO author surface other than
+ * `block.manifest.json`, and `approveRequest`'s (3b-sync) re-sync overwrites them from
+ * the manifest on every subsequent-version approve.
+ *
+ * 🔴 EVERY CASE IS PAIRED and the OFF-SITE arm is the POSITIVE CONTROL — an on-site-only
+ * assertion would pass equally against an implementation that gave BOTH kinds the
+ * manifest label, which is the same defect pointing the other way.
+ *
+ * 🔴 WHICH CASES ARE REGRESSION COVERAGE. Measured at `origin/main` 4bfd4c16d: 4 of the
+ * 10 cases below go RED — the on-site media revision, "BOTH KINDS ON ONE PAGE diverge",
+ * the listing-kind projection, and "request.kind and listing.kind DISAGREE". The other 6
+ * PASS at base and are INVARIANT GUARDS (the fixture guard, the off-site positive
+ * control, code invariance, the degrade path, and the disagreement MIRROR). They pin
+ * what must NOT move; they are not evidence the defect was fixed.
+ */
+describe('listMySubmissions (the advisory is KIND-AWARE)', () => {
+  const MANIFEST_TAGLINE = 'Missing tagline — set "tagline" in block.manifest.json and resubmit';
+  const ORIGINAL_TAGLINE = 'Missing tagline';
+
+  /**
+   * A request row whose backing listing has every asset but NO tagline, so exactly ONE
+   * problem fires and a whole-list assertion can be exact. Asset ids are pairwise
+   * distinct (icon 41, cover 53) and distinct from the screenshot count (7), so an
+   * operand swap changes the ANSWER rather than the argument. `kind` has NO default —
+   * every call states it, so a fixture cannot quietly inherit one arm.
+   */
+  const requestRow = (
+    id: string,
+    listingId: string,
+    kind: string,
+    /**
+     * The REQUEST's kind, which defaults to matching the listing's.
+     *
+     * 🔴 IT IS A SEPARATE PARAMETER SO THE TWO CAN BE MADE TO DISAGREE. They are
+     * different columns on different tables and they agree at every request-create
+     * site today — which is exactly why a fixture that always sets them equal cannot
+     * tell `r.appListing.kind` from `r.kind`. An audit mutant that read the REQUEST's
+     * kind SURVIVED all 132 tests for that reason. The stated rationale for reading
+     * the listing's is that they MIGHT diverge, so one fixture has to make them.
+     */
+    requestKind: string = kind
+  ) => ({
+    id,
+    appListingId: listingId,
+    slug: `app-${id}`,
+    kind: requestKind,
+    status: 'approved',
+    appListing: {
+      name: `App ${id}`,
+      revisionOfId: null,
+      status: 'approved',
+      kind,
+      iconId: 41,
+      coverId: 53,
+      description: 'A description.',
+      tagline: null,
+      category: 'utility',
+      screenshots: [],
+      _count: { screenshots: 7 },
+    },
+  });
+
+  const taglineLabelOf = (item: { problems: { code: string; label: string }[] }) =>
+    item.problems.find((p) => p.code === 'empty-tagline')?.label;
+
+  it('🔴 fixture guard — the two fixtures declare DIFFERENT, known LISTING kinds', () => {
+    const on = requestRow('r_on', 'apl_on', 'onsite');
+    const off = requestRow('r_off', 'apl_off', 'offsite');
+    for (const r of [on, off]) {
+      expect(Object.prototype.hasOwnProperty.call(r.appListing, 'kind')).toBe(true);
+      expect(['onsite', 'offsite']).toContain(r.appListing.kind);
+    }
+    expect(on.appListing.kind).not.toBe(off.appListing.kind);
+  });
+
+  it('an ON-SITE media revision names block.manifest.json', async () => {
+    mockRead.appListingPublishRequest.findMany
+      .mockResolvedValueOnce([requestRow('r_on', 'apl_on', 'onsite')])
+      .mockResolvedValueOnce([]);
+    const res = await listMySubmissions({ userId: OWNER });
+    // Positive control: exactly the one text problem.
+    expect(res.items[0].problems.map((p) => p.code)).toEqual(['empty-tagline']);
+    expect(taglineLabelOf(res.items[0])).toBe(MANIFEST_TAGLINE);
+  });
+
+  it('POSITIVE CONTROL — an OFF-SITE submission still produces the ORIGINAL label, verbatim', async () => {
+    mockRead.appListingPublishRequest.findMany
+      .mockResolvedValueOnce([requestRow('r_off', 'apl_off', 'offsite')])
+      .mockResolvedValueOnce([]);
+    const res = await listMySubmissions({ userId: OWNER });
+    expect(res.items[0].problems.map((p) => p.code)).toEqual(['empty-tagline']);
+    expect(taglineLabelOf(res.items[0])).toBe(ORIGINAL_TAGLINE);
+  });
+
+  it('🔴 BOTH KINDS ON ONE PAGE diverge — each row reads its OWN listing kind', async () => {
+    mockRead.appListingPublishRequest.findMany
+      .mockResolvedValueOnce([
+        requestRow('r_on', 'apl_on', 'onsite'),
+        requestRow('r_off', 'apl_off', 'offsite'),
+      ])
+      .mockResolvedValueOnce([]);
+    const res = await listMySubmissions({ userId: OWNER });
+
+    expect(res.items.map((i) => i.id)).toEqual(['r_on', 'r_off']);
+    const labels = Object.fromEntries(res.items.map((i) => [i.id, taglineLabelOf(i)]));
+    expect(labels['r_on']).toBe(MANIFEST_TAGLINE);
+    expect(labels['r_off']).toBe(ORIGINAL_TAGLINE);
+    expect(labels['r_on']).not.toBe(labels['r_off']);
+  });
+
+  it('the CODE is identical either way (wire contract — a released CLI branches on `code`)', async () => {
+    mockRead.appListingPublishRequest.findMany
+      .mockResolvedValueOnce([
+        requestRow('r_on', 'apl_on', 'onsite'),
+        requestRow('r_off', 'apl_off', 'offsite'),
+      ])
+      .mockResolvedValueOnce([]);
+    const res = await listMySubmissions({ userId: OWNER });
+    for (const item of res.items) {
+      expect(
+        item.problems.map((p) => p.code),
+        item.id
+      ).toEqual(['empty-tagline']);
+    }
+  });
+
+  it("the query PROJECTS the LISTING's kind, not only the REQUEST's", async () => {
+    mockRead.appListingPublishRequest.findMany
+      .mockResolvedValueOnce([requestRow('r_on', 'apl_on', 'onsite')])
+      .mockResolvedValueOnce([]);
+    await listMySubmissions({ userId: OWNER });
+    // The mock's arg is typed `unknown`; cast the ARG, not a property of it — reaching
+    // through an `unknown` is a type error even in this (root-typecheck-excluded)
+    // directory, and this file should not add to that backlog.
+    const args = mockRead.appListingPublishRequest.findMany.mock.calls[0][0] as {
+      select: { kind?: boolean; appListing: { select: Record<string, unknown> } };
+    };
+    const select = args.select;
+    // 🔴 BOTH, and the nested one is the load-bearing half: they are different columns on
+    // different tables, and the advisory is a statement about the LISTING. Reading the
+    // request's kind would be a derived surface standing in for the defining one.
+    expect(select.appListing.select.kind).toBe(true);
+    expect(select.kind).toBe(true);
+  });
+
+  /**
+   * 🔴 THE DISCRIMINATING CASE FOR LISTING-KIND-vs-REQUEST-KIND, and the ONLY one.
+   *
+   * Every other fixture in this describe sets `request.kind === appListing.kind`,
+   * because that is what production does at all three request-create sites. The
+   * consequence, found by an adversarial audit of #4370: a mutant changing the call
+   * site from `r.appListing.kind` to `r.kind` SURVIVED the entire 132-test battery.
+   * Not a live hole — the two genuinely agree today — but the stated rationale for
+   * reading the LISTING's column is precisely that they are independent and might
+   * diverge, and a rationale nothing can falsify is not a tested claim.
+   *
+   * This fixture makes them disagree in the direction that matters: an OFF-SITE
+   * request row pointing at an ON-SITE listing. The advisory is a statement about the
+   * LISTING, so the manifest label must win. Reading `r.kind` yields the original
+   * label and fails here — which is what turns the comment into a guard.
+   */
+  it('🔴 request.kind and listing.kind DISAGREE — the LISTING wins', async () => {
+    mockRead.appListingPublishRequest.findMany
+      .mockResolvedValueOnce([requestRow('r_split', 'apl_split', 'onsite', 'offsite')])
+      .mockResolvedValueOnce([]);
+    const res = await listMySubmissions({ userId: OWNER });
+
+    // Positive control on the fixture itself: the two really do disagree, so this case
+    // cannot quietly degrade into another copy of the aligned ones.
+    const row = mockRead.appListingPublishRequest.findMany.mock.results[0].value as Promise<
+      Array<{ kind: string; appListing: { kind: string } }>
+    >;
+    const [first] = await row;
+    expect(first.kind).toBe('offsite');
+    expect(first.appListing.kind).toBe('onsite');
+
+    expect(res.items[0].problems.map((p) => p.code)).toEqual(['empty-tagline']);
+    expect(taglineLabelOf(res.items[0])).toBe(MANIFEST_TAGLINE);
+  });
+
+  it('the MIRROR — an on-site request pointing at an off-site listing takes the OFF-SITE label', async () => {
+    // Both directions, so the case cannot pass by the arms having been swapped.
+    mockRead.appListingPublishRequest.findMany
+      .mockResolvedValueOnce([requestRow('r_split2', 'apl_split2', 'offsite', 'onsite')])
+      .mockResolvedValueOnce([]);
+    const res = await listMySubmissions({ userId: OWNER });
+    expect(taglineLabelOf(res.items[0])).toBe(ORIGINAL_TAGLINE);
+  });
+
+  it('a fake that omits the listing kind degrades to the ORIGINAL labels, and never throws', async () => {
+    mockRead.appListingPublishRequest.findMany
+      .mockResolvedValueOnce([
+        {
+          id: 'r_bare',
+          appListingId: 'apl_bare',
+          slug: 'bare',
+          status: 'approved',
+          appListing: {
+            name: 'Bare',
+            revisionOfId: null,
+            status: 'approved',
+            iconId: 41,
+            coverId: 53,
+            description: 'A description.',
+            tagline: null,
+            category: 'utility',
+            _count: { screenshots: 7 },
+          },
+        },
+      ])
+      .mockResolvedValueOnce([]);
+    const res = await listMySubmissions({ userId: OWNER });
+    expect(taglineLabelOf(res.items[0])).toBe(ORIGINAL_TAGLINE);
   });
 });

@@ -1,4 +1,5 @@
 import { createContext, useContext, useMemo, useRef } from 'react';
+import { RemixGalleryBatchProvider } from '~/components/RemixGallery/RemixGalleryBatchProvider';
 import { StickerPlacementBatchProvider } from '~/components/Sticker/StickerPlacementBatchProvider';
 import type { ImageGetInfinite } from '~/types/router';
 import type { ProfileImage } from '~/server/selectors/image.selector';
@@ -101,7 +102,7 @@ export function ImagesProvider({
   return (
     <ImagesContext.Provider value={state}>
       <StickerPlacementBatchProvider imageIds={imageIds} alwaysFetch={revealStickers}>
-        {children}
+        <RemixGalleryBatchProvider imageIds={imageIds}>{children}</RemixGalleryBatchProvider>
       </StickerPlacementBatchProvider>
     </ImagesContext.Provider>
   );

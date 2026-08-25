@@ -247,6 +247,10 @@ const scanToEntry: ListingAssetScanEntry = { kind: 'cover', status: 'pending' } 
 describe('🔴 the batch output is what computeListingProblems consumes', () => {
   it('both type directions round-trip through the advisory', () => {
     const { problems } = computeListingProblems({
+      // Scan codes are kind-INVARIANT; `offsite` is the arm whose labels this file's
+      // sibling suites already pin. Declared explicitly so the case cannot silently
+      // run against the implementation's unrecognised-kind fallback.
+      kind: 'offsite',
       iconId: 7,
       coverId: 9,
       screenshotCount: 1,
@@ -274,6 +278,7 @@ describe('🔴 the batch output is what computeListingProblems consumes', () => 
     );
     const byListing = await loadListingAssetScansBatch([{ id: 'a', iconId: 10, coverId: 20 }], db);
     const { problems } = computeListingProblems({
+      kind: 'offsite',
       iconId: 10,
       coverId: 20,
       screenshotCount: 1,

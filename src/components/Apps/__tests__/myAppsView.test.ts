@@ -15,7 +15,18 @@ import {
   partitionMyAppRows,
   sortByRecentlyUpdated,
 } from '~/components/Apps/myAppsView';
-import { capabilitiesForKind } from '~/shared/constants/app-capabilities.constants';
+import {
+  canOpenListingAuthoringPage,
+  capabilitiesForKind,
+  LISTING_AUTHORING_ROUTE_STATUSES,
+} from '~/shared/constants/app-capabilities.constants';
+// 🔴 FROM ITS OWN MODULE, NOT RE-EXPORTED THROUGH THE ONE UNDER TEST. Importing it from
+// `app-capabilities.constants` (which imports but does not re-export it) yields `undefined`,
+// and `new Set(undefined)` is an EMPTY set — so the equality below would have been comparing
+// the route list against nothing. It failed loudly here only because the other side is
+// non-empty; written as `toContain` it would have passed vacuously forever. `tsconfig.json`
+// excludes `src/**/__tests__/**`, so a green typecheck could not have caught the bad import.
+import { APP_LISTING_STATUSES } from '~/server/services/blocks/app-listing-status.constants';
 
 /**
  * `/apps/mine` view-model — the merged author table's partition, order and pagination.
@@ -224,6 +235,7 @@ describe('myAppListingHref — per-row, per-kind, never one flat link', () => {
         kind: 'onsite',
         appBlockId: 'ab_9',
         role: 'owner',
+        status: 'approved',
         capabilities: capabilitiesForKind('onsite'),
       })
     ).toBe('/apps/listing/apl_on/edit?tab=details');
@@ -238,6 +250,7 @@ describe('myAppListingHref — per-row, per-kind, never one flat link', () => {
         kind: 'offsite',
         appBlockId: null,
         role: 'editor',
+        status: 'draft',
         capabilities: capabilitiesForKind('offsite'),
       })
     ).toBe('/apps/listing/apl_off/edit?tab=details');
@@ -250,9 +263,92 @@ describe('myAppListingHref — per-row, per-kind, never one flat link', () => {
         kind: 'onsite',
         appBlockId: 'ab_1',
         role: 'owner',
+        status: 'pending',
         capabilities: capabilitiesForKind('onsite'),
       })
     ).toContain('/apps/listing/apl%20a%2Fb/edit');
+  });
+});
+
+/**
+ * 🔴 THE ROW'S FIRST TAB IS NO LONGER ALWAYS `details`, and that is this PR.
+ *
+ * `/apps/mine` no longer carries the History disclosure or the Unpublish/Republish pair, so
+ * the row's link is the author's only route to either. It therefore has to land on a tab
+ * that EXISTS for that row — `editorTabsFor` is what decides, and these cases pin that the
+ * href follows it rather than hardcoding a default the destination would silently rewrite.
+ */
+describe('🔴 myAppListingHref follows the STATUS-narrowed tab set', () => {
+  const base = {
+    appListingId: 'apl_h',
+    kind: 'onsite',
+    appBlockId: 'ab_h',
+    role: 'owner',
+    capabilities: capabilitiesForKind('onsite'),
+  } as const;
+
+  it('an owner on a REMOVED listing lands on Publishing — their route back', () => {
+    expect(myAppListingHref({ ...base, status: 'removed' })).toBe(
+      '/apps/listing/apl_h/edit?tab=publishing'
+    );
+  });
+
+  it('an owner on a REJECTED listing lands on History — a different answer, same branch', () => {
+    expect(myAppListingHref({ ...base, status: 'rejected' })).toBe(
+      '/apps/listing/apl_h/edit?tab=history'
+    );
+  });
+
+  it('🔴 an EDITOR on a removed listing lands on History — the page SERVES them, owner-only is only Publishing', () => {
+    expect(myAppListingHref({ ...base, status: 'removed', role: 'editor' })).toBe(
+      '/apps/listing/apl_h/edit?tab=history'
+    );
+  });
+});
+
+/**
+ * 🔴 THE ROW'S LINK PREDICATE IS `canOpenListingAuthoringPage` AND NOTHING ELSE — no role
+ * clause. An earlier draft of this PR had one, withholding the link from a seated EDITOR on
+ * a removed listing and justifying it in a TEST NAME as "`getAppListingAuthoringContext`
+ * refuses them there". It does not. `resolveListingAccess` returns `role:'editor'` for any
+ * accepted seat regardless of the listing's status, and the authoring context refuses only
+ * on a missing role or a status outside the route set. The server serves that editor a
+ * History-only page.
+ *
+ * That test name is the reason this note is long: a name asserting a server refusal that
+ * does not exist is worse than no test, because the next person to simplify the predicate
+ * reasons from it. The role clause was also an unannounced regression — the pre-PR row
+ * rendered its History toggle unconditionally, so a seated editor could reach a removed
+ * app's history from `/apps/mine`. The predicate below restores that.
+ */
+describe('canOpenListingAuthoringPage — the row link rule, and the only rule', () => {
+  it('opens on every listing status the lifecycle can mint', () => {
+    for (const status of ['draft', 'pending', 'approved', 'removed', 'rejected']) {
+      expect(canOpenListingAuthoringPage(status), status).toBe(true);
+    }
+  });
+
+  it('🔴 an UNKNOWN status never opens — fail closed', () => {
+    // `'quarantined'` is not a prefix or suffix of any real status, so it cannot match one
+    // by accident. This is the sole cause of a `false`, which is what makes the membership
+    // test individually killable.
+    expect(canOpenListingAuthoringPage('quarantined')).toBe(false);
+    expect(canOpenListingAuthoringPage('')).toBe(false);
+  });
+
+  /**
+   * 🔴 THE CONSTANT IS A HAND-COPY OF THE DB CHECK'S VALUE SPACE, so it is pinned to the
+   * one that already has a migration-agreement test rather than restated a third time.
+   * Without this, adding a sixth lifecycle status silently FORBIDs the authoring page for
+   * that whole cohort — fail-closed, but a total outage for it, with nothing going red.
+   *
+   * The set-equality direction matters both ways: a status missing here is that outage, and
+   * a status here that the DB cannot store is a branch no fixture can reach.
+   */
+  it('🔴 covers EXACTLY the app_listings.status value space', () => {
+    expect(new Set<string>(LISTING_AUTHORING_ROUTE_STATUSES)).toEqual(
+      new Set<string>(APP_LISTING_STATUSES)
+    );
   });
 });
 

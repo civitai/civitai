@@ -24,6 +24,7 @@ import {
 } from '@tabler/icons-react';
 import { memo, useCallback, useMemo, useState } from 'react';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
+import { RemixedCardFlyout } from '~/components/RemixGallery/RemixedCardFlyout';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
@@ -299,6 +300,7 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
               )}
             </div>
           )}
+          {safe && <RemixedCardFlyout imageId={image.id} />}
           <RoutedDialogLink
             name="imageDetail"
             state={{ imageId: image.id, images: [image] }}
@@ -418,6 +420,7 @@ function PostCarouselSlide({
               )}
             </div>
           )}
+          {safe && <RemixedCardFlyout imageId={image.id} />}
           <RoutedDialogLink
             name="imageDetail"
             state={{ imageId: image.id }}

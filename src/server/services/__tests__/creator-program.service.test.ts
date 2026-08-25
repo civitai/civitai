@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterAll, beforeAll } from 'vites
 import { REDIS_KEYS } from '~/server/redis/client';
 import { OnboardingSteps } from '~/server/common/enums';
 import { MIN_CREATOR_SCORE } from '~/shared/constants/creator-program.constants';
-import { TransactionType } from '~/shared/constants/buzz.constants';
+import { TransactionType, buzzBankTypes } from '~/shared/constants/buzz.constants';
 
 // ── Hoisted mocks ──────────────────────────────────────────────────────────────
 const {
@@ -201,6 +201,20 @@ describe('userCapCache peak-earning query', () => {
 
     expect(sql).toMatch(/type IN \('compensation'\)/);
     expect(sql).toMatch(/type = 'purchase' AND fromAccountId != 0/);
+  });
+
+  // This clause decides which Buzz counts toward Peak Earning Month, and so toward a creator's Cap,
+  // and a wrong one returns a plausible number rather than an error. Column and list are asserted
+  // together, anchored to the line: asserting the list alone left `toAccountType` free, and
+  // narrowing it to `fromAccountType` passed every test in this block. The anchor is what makes
+  // commenting the clause out fail, since the text would otherwise still be present in the query.
+  it('narrows the peak-earning sum to the bankable types arriving in the account', async () => {
+    const { sql } = await runLookup([userId]);
+
+    const bankable = buzzBankTypes.map((type) => `'${type}'`).join(', ');
+    // String.raw, not a plain template: `\s` in one is the letter s, which cannot consume the
+    // query's indentation, so the pattern matches nothing and this test fails outright.
+    expect(sql).toMatch(new RegExp(String.raw`\n\s*AND toAccountType IN \(${bankable}\)`));
   });
 
   it('derives the cap from the peak month returned by ClickHouse', async () => {

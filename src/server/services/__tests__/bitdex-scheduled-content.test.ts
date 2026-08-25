@@ -363,6 +363,79 @@ describe('BitDex primary feed — content is not served before its publish time'
     expect(result.data.map((i: { id: number }) => i.id)).not.toContain(101);
   });
 
+  it('declines a CREATOR’s own-drafts request so Meili answers it', async () => {
+    // The Draft toggle on the profile images/videos tabs sends `notPublished`
+    // from a non-moderator. `wantsUnpublished` reads `scheduled` alone for a
+    // non-moderator, so without the decline BitDex answers a drafts request with
+    // the PUBLISHED feed — and a non-empty result suppresses the Meili fallback,
+    // so the creator is shown a population that is not the one they asked for,
+    // with nothing signalling it.
+    //
+    // Scoped: `userId === currentUserId`. The decline sits AFTER the
+    // username→userId resolution, so a request addressed by handle reaches it
+    // with a resolved id rather than `undefined`.
+    routeByShape();
+
+    const result = await getImagesFromSearch({
+      ...baseInput,
+      currentUserId: OWNER_ID,
+      userId: OWNER_ID,
+      isModerator: false,
+      notPublished: true,
+    });
+
+    expect(result.source).toBe('meili');
+    // Asserted on the MOCK, not on `data`. `data` is `[]` by construction whenever
+    // source is meili — this file stubs `metricsSearchClient: null` and the Meili
+    // builders early-return an empty page — so a `not.toContain(101)` here could
+    // never fail. It read as proof that BitDex had not answered with the published
+    // feed and proved nothing.
+    //
+    // The mock also separates the two ways source can be 'meili': the decline
+    // firing (no BitDex query at all) versus BitDex throwing and falling through.
+    expect(queryBitdexMock).not.toHaveBeenCalled();
+  });
+
+  it('declines when the creator is addressed by USERNAME rather than id', async () => {
+    // 🔴 The decline sits AFTER the username→userId resolution precisely so this
+    // works. Every other case here passes `userId` explicitly, so the check reads
+    // the same value at either position and none of them can tell whether the
+    // placement is right. Move the block above the resolution and only this case
+    // fails — which matters because the profile page addresses creators by handle.
+    routeByShape();
+
+    const result = await getImagesFromSearch({
+      ...baseInput,
+      currentUserId: OWNER_ID,
+      username: 'owner-handle',
+      isModerator: false,
+      notPublished: true,
+    });
+
+    expect(result.source).toBe('meili');
+    expect(queryBitdexMock).not.toHaveBeenCalled();
+  });
+
+  it('does NOT decline a non-moderator asking about SOMEONE ELSE', async () => {
+    // The control. Without it the test above passes against a build that declines
+    // every `notPublished` request from anyone, which would quietly route an
+    // unauthorized request to Meili instead of refusing it — and would make the
+    // decline look like authorization, which it is not. The filter builders are
+    // what refuse; this only chooses which backend answers.
+    routeByShape();
+
+    const result = await getImagesFromSearch({
+      ...baseInput,
+      currentUserId: OWNER_ID + 99,
+      userId: OWNER_ID,
+      isModerator: false,
+      notPublished: true,
+    });
+
+    expect(result.source).toBe('bitdex');
+    expect(queryBitdexMock).toHaveBeenCalled();
+  });
+
   it('declines a moderator’s `notPublished` request so Meili answers it', async () => {
     // Same class as `scheduled`. BitDex's query pushes `isPublished = false`,
     // which covers scheduled AND never-published with no separate signal, so it

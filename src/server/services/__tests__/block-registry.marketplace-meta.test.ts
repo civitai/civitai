@@ -308,3 +308,73 @@ describe('BlockRegistry.getMarketplaceMeta — mod seed read (F-E E4)', () => {
     expect(await BlockRegistry.getMarketplaceMeta('missing')).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// The curation/advisory SEAM: curation writes the BLOCK, never the LISTING.
+// ---------------------------------------------------------------------------
+
+/**
+ * 🔴 THIS PINS A FACT ANOTHER MODULE'S USER-FACING COPY IS DERIVED FROM.
+ * `computeListingProblems` (`listing-problems.ts`) tells an on-site author how to clear
+ * `empty-category`, and its wording depends entirely on WHERE a curated category lands.
+ *
+ * `setMarketplaceMeta` writes `AppBlock.category` and nothing else — it never touches
+ * `app_listings`. That is what makes this state reachable by DESIGN, not by accident:
+ *
+ *   author omits `category`      → listing minted with `category: null`
+ *   moderator curates            → `AppBlock.category` set, `AppListing.category` STILL null
+ *   ⇒ the advisory fires, and the store card genuinely shows no category
+ *
+ * The listing column is only rewritten at an APPROVE — `mapAppBlockToListing` (first
+ * approve / backfill) and `buildListingScalarSync` (3b-sync, subsequent-version), both
+ * of which read `AppBlock.category`. So the remedy that ALWAYS clears the problem is
+ * "get a new version approved"; editing the manifest is inert once a moderator has
+ * curated, because (3a)'s null-gate no longer fires. The advisory's label says exactly
+ * that, in that order.
+ *
+ * 🔴 IF THIS TEST EVER GOES RED because curation started writing the listing row too,
+ * the divergence is CLOSED and `listing-problems.ts`'s `empty-category` label should be
+ * revisited — the manifest-first wording would become correct again. That is the whole
+ * reason this guard is here rather than a comment: a comment claiming a relationship
+ * cannot notice when the relationship stops holding.
+ *
+ * 🔴 THIS IS AN INVARIANT GUARD, NOT REGRESSION COVERAGE — it passes at `origin/main`
+ * and always has, because `setMarketplaceMeta` never wrote the listing row. It is not
+ * evidence that anything was fixed. Its job is to make a fact that USER-FACING COPY IN
+ * ANOTHER MODULE depends on fail loudly if it ever stops being true, so label it as
+ * such rather than counting it toward the bug's coverage.
+ */
+describe('🔴 setMarketplaceMeta writes the BLOCK only — the listing row is untouched', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockDbWrite.appBlock.findUnique.mockResolvedValue({ id: 'ab_c', status: 'approved' });
+    mockDbWrite.appBlock.update.mockResolvedValue({
+      id: 'ab_c',
+      status: 'approved',
+      category: 'utility',
+      featured: false,
+      featuredOrder: null,
+    });
+  });
+
+  it('curating a category updates appBlock and NEVER appListing', async () => {
+    const { BlockRegistry } = await import('../block-registry.service');
+    await BlockRegistry.setMarketplaceMeta({ appBlockId: 'ab_c', category: 'utility' });
+
+    // POSITIVE CONTROL FIRST: the write we DO expect actually happened, and carried the
+    // category. Without this, the two `not.toHaveBeenCalled()` below would pass just as
+    // well against a method that wrote nothing at all.
+    expect(mockDbWrite.appBlock.update).toHaveBeenCalledTimes(1);
+    const data = mockDbWrite.appBlock.update.mock.calls[0][0].data as { category?: unknown };
+    expect(data.category).toBe('utility');
+
+    // The claim itself: no listing write, on EITHER client. `dbRead`/`dbWrite` are
+    // distinct in the canonical mock, so this cannot be satisfied by checking one.
+    for (const client of [mockDbWrite, mockDbRead]) {
+      expect(client.appListing.update).not.toHaveBeenCalled();
+      expect(client.appListing.updateMany).not.toHaveBeenCalled();
+      expect(client.appListing.create).not.toHaveBeenCalled();
+      expect(client.appListing.upsert).not.toHaveBeenCalled();
+    }
+  });
+});

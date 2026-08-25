@@ -2,7 +2,11 @@ import { Alert, Button, Group, Loader, Text, Title } from '@mantine/core';
 import { BackButton } from '~/components/BackButton/BackButton';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useState } from 'react';
+import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
+import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { StickerBookGrid } from '~/components/StickerBook/StickerBookGrid';
+import { constants } from '~/server/common/constants';
+import { STICKER_BOOK_MAX_COLUMNS } from '~/shared/utils/sticker-book';
 import type { StickerBookSide } from '~/components/StickerBook/sticker-book.util';
 import { stickerBookSectionCopy } from '~/components/StickerBook/sticker-book.util';
 import { trpc } from '~/utils/trpc';
@@ -57,52 +61,61 @@ export function StickerBookSectionPage({
   const copy = stickerBookSectionCopy(side, { username, isOwner: data.isOwner });
 
   return (
-    <div className="flex flex-col gap-4">
-      {/* The shared back button rather than a link with an arrow glyph in it:
+    // Its own provider: this is a separate route, not rendered inside the tab.
+    <MasonryProvider
+      columnWidth={constants.cardSizes.image}
+      maxColumnCount={STICKER_BOOK_MAX_COLUMNS}
+      maxSingleColumnWidth={450}
+    >
+      <MasonryContainer p={0}>
+        <div className="flex flex-col gap-4">
+          {/* The shared back button rather than a link with an arrow glyph in it:
           it also goes back through history when there is history, so arriving
           from the tab returns to the scroll position it was left at. */}
-      <div>
-        <BackButton url={`/user/${username}/sticker-book`}>
-          <Text size="sm">Back to the sticker book</Text>
-        </BackButton>
-        <Title order={2} mt={4}>
-          {copy.title}
-        </Title>
-      </div>
+          <div>
+            <BackButton url={`/user/${username}/sticker-book`}>
+              <Text size="sm">Back to the sticker book</Text>
+            </BackButton>
+            <Title order={2} mt={4}>
+              {copy.title}
+            </Title>
+          </div>
 
-      <StickerBookGrid items={data.items} side={side} emptyMessage={copy.empty} />
+          <StickerBookGrid items={data.items} side={side} emptyMessage={copy.empty} />
 
-      {/* Two different empty states, because `hasMore` is decided before the
+          {/* Two different empty states, because `hasMore` is decided before the
           image filter runs: page 3 of a walk whose images were all unpublished
           is legitimately empty with a working Next button, and the
           nothing-here-yet copy would tell a creator with hundreds that they have
           none. */}
-      {/* Page 2 and beyond only. The first page's empty states belong to the
+          {/* Page 2 and beyond only. The first page's empty states belong to the
           grid, which is the one that knows whether the viewer's own hides
           emptied it — this page counts the server's rows and would contradict
           it. */}
-      {!data.items.length && page > 1 && (
-        <Text size="sm" c="dimmed">
-          Nothing on this page. Try the next one.
-        </Text>
-      )}
+          {!data.items.length && page > 1 && (
+            <Text size="sm" c="dimmed">
+              Nothing on this page. Try the next one.
+            </Text>
+          )}
 
-      <Group>
-        {page > 1 && (
-          <Button variant="default" onClick={() => setPage((current) => current - 1)}>
-            Previous
-          </Button>
-        )}
-        {data.hasMore && (
-          <Button
-            variant="default"
-            loading={isFetching}
-            onClick={() => setPage((current) => current + 1)}
-          >
-            Next
-          </Button>
-        )}
-      </Group>
-    </div>
+          <Group>
+            {page > 1 && (
+              <Button variant="default" onClick={() => setPage((current) => current - 1)}>
+                Previous
+              </Button>
+            )}
+            {data.hasMore && (
+              <Button
+                variant="default"
+                loading={isFetching}
+                onClick={() => setPage((current) => current + 1)}
+              >
+                Next
+              </Button>
+            )}
+          </Group>
+        </div>
+      </MasonryContainer>
+    </MasonryProvider>
   );
 }

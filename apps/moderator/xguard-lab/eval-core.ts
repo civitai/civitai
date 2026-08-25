@@ -13,7 +13,7 @@
  * both, which is what the types here claim.
  */
 import pg from 'pg';
-import { scan, type LabelPolicy, type OrchestratorConfig } from './xguard-client';
+import { scan, type LabelPolicy, type OrchestratorConfig, type XGuardMode } from './xguard-client';
 
 export type EvalOptions = {
   connectionString: string;
@@ -22,6 +22,12 @@ export type EvalOptions = {
   policyVersion?: number;
   /** Restrict to one sampling batch. Omit for every sample with ground truth. */
   batch?: string;
+  /**
+   * Which scanner to measure against. Must match how the content is scanned in production, or the
+   * run reports a number for a registry the content never passes through — model listings are
+   * `text`, generation prompts are `prompt`.
+   */
+  mode?: XGuardMode;
   thresholdOverride?: number;
   concurrency?: number;
   limit?: number;
@@ -39,6 +45,8 @@ export type EvalOptions = {
 export type EvalSummary = {
   runId: string;
   label: string;
+  /** Scanner this run actually measured against, after resolution. Never assume it. */
+  mode: XGuardMode;
   policyLabel: string;
   threshold: number;
   total: number;
@@ -59,6 +67,7 @@ type GroundTruthRow = {
   sample_id: string;
   positive_prompt: string;
   negative_prompt: string | null;
+  source: string;
   expected: boolean;
   reviewers: string;
 };
@@ -72,6 +81,7 @@ const GROUND_TRUTH_SQL = `
   SELECT h.sample_id::text AS sample_id,
          s.positive_prompt,
          s.negative_prompt,
+         s.source,
          count(*) FILTER (WHERE h.verdict) > count(*) FILTER (WHERE NOT h.verdict) AS expected,
          count(*) AS reviewers
     FROM human_judgement h
@@ -79,10 +89,51 @@ const GROUND_TRUTH_SQL = `
    WHERE h.label = $1
      AND h.excluded_reason IS NULL
      AND ($2::text IS NULL OR s.batch = $2)
-   GROUP BY h.sample_id, s.positive_prompt, s.negative_prompt
+   GROUP BY h.sample_id, s.positive_prompt, s.negative_prompt, s.source
   HAVING count(*) FILTER (WHERE h.verdict) <> count(*) FILTER (WHERE NOT h.verdict)
    ORDER BY h.sample_id
 `;
+
+/**
+ * Which scanner a sample belongs to, by where it came from.
+ *
+ * Derived rather than defaulted, because a default is silent and wrong half the time: an operator
+ * clicking Evaluate has no reason to know that `prompt` and `text` are different registries, and a
+ * run measured against the wrong one still returns a confident-looking number.
+ *
+ * An unknown source throws instead of falling back. A new sampler is one line here; a silent
+ * fallback is a number nobody can trust.
+ */
+const MODE_BY_SOURCE: Record<string, XGuardMode> = {
+  xguardPromptResults: 'prompt',
+  // Every entity that flows through EntityModeration is scanned in text mode. The sampler writes
+  // `source` as the entity type lowercased, so a new one is a line here, not a code change.
+  model: 'text',
+  article: 'text',
+  challenge: 'text',
+  wildcardsetcategory: 'text',
+};
+
+function resolveMode(sources: string[], override?: XGuardMode): XGuardMode {
+  if (override) return override;
+  const distinct = [...new Set(sources)];
+  const modes = new Set(
+    distinct.map((s) => {
+      const mode = MODE_BY_SOURCE[s];
+      if (!mode)
+        throw new Error(
+          `sample source "${s}" has no scanner mapping — add it to MODE_BY_SOURCE in eval-core.ts, or pass an explicit mode`
+        );
+      return mode;
+    })
+  );
+  // Two scanners averaged into one precision number is not a measurement of either.
+  if (modes.size > 1)
+    throw new Error(
+      `this ground truth mixes scanner modes (${[...modes].join(', ')}) — evaluate one batch at a time, or pass an explicit mode`
+    );
+  return [...modes][0];
+}
 
 export async function runEvaluation(opts: EvalOptions): Promise<EvalSummary> {
   const client = new pg.Client({ connectionString: opts.connectionString });
@@ -117,7 +168,17 @@ export async function runEvaluation(opts: EvalOptions): Promise<EvalSummary> {
       policyLabel = `v${opts.policyVersion}`;
     } else {
       // Empty policy = don't send an override = measure the live registry.
-      policy = { label: opts.label, policy: '', threshold: opts.thresholdOverride ?? 0.4 };
+      //
+      // The threshold is REQUIRED here rather than defaulted. A baseline exists to say what
+      // production does today, and production's threshold lives in the orchestrator registry, not
+      // in this file — a default silently measures a different operating point and records it as
+      // "live". That has happened, and the resulting number was believed for a day.
+      if (opts.thresholdOverride === undefined)
+        throw new Error(
+          `a live baseline needs an explicit threshold — read the label's real one with ` +
+            `\`xguard-manager get <prompt|text>\` and pass it, so the number describes production`
+        );
+      policy = { label: opts.label, policy: '', threshold: opts.thresholdOverride };
       policyLabel = 'live';
     }
 
@@ -134,6 +195,14 @@ export async function runEvaluation(opts: EvalOptions): Promise<EvalSummary> {
       );
     }
 
+    // Resolved from the samples themselves, before anything is scanned. `eval_run` has no column
+    // for it, so it is prefixed onto the note — a run whose mode you cannot recover is a number you
+    // cannot compare against any other run.
+    const mode = resolveMode(
+      rows.map((r) => r.source),
+      opts.mode
+    );
+
     const { rows: runRows } = await client.query<{ id: string }>(
       `INSERT INTO eval_run (label, policy_id, policy_label, threshold, batch, total, note)
        VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id::text`,
@@ -144,14 +213,14 @@ export async function runEvaluation(opts: EvalOptions): Promise<EvalSummary> {
         policy.threshold,
         opts.batch ?? null,
         rows.length,
-        opts.note ?? null,
+        `[${mode}] ${opts.note ?? ''}`.trim(),
       ]
     );
     const runId = runRows[0].id;
     opts.onRunCreated?.(runId);
 
     try {
-      return await score(client, runId, rows, policy, policyId, policyLabel, opts);
+      return await score(client, runId, rows, policy, policyId, policyLabel, mode, opts);
     } catch (err) {
       // A run left on `status = 'running'` is indistinguishable from one still working, so a caller polling
       // for completion would wait forever on a run that died. Record the death.
@@ -178,6 +247,7 @@ async function score(
   policy: LabelPolicy,
   policyId: string | null,
   policyLabel: string,
+  mode: XGuardMode,
   opts: EvalOptions
 ): Promise<EvalSummary> {
   let next = 0;
@@ -199,6 +269,7 @@ async function score(
           const results = await scan({
             input: { positivePrompt: row.positive_prompt, negativePrompt: row.negative_prompt },
             policies: [policy],
+            mode,
             orchestrator: opts.orchestrator,
           });
           const hit = results.find((r) => r.label?.toLowerCase() === opts.label.toLowerCase());
@@ -273,6 +344,7 @@ async function score(
   return {
     runId,
     label: opts.label,
+    mode,
     policyLabel,
     threshold: policy.threshold,
     total: rows.length,

@@ -41,6 +41,15 @@ export const placementImageSelect = Prisma.validator<Prisma.ImageSelect>()({
  *
  * Not a browsing-level rule: levels are the viewer's and the domain's, applied
  * per request by `toQueueImage`.
+ *
+ * 🔴 This is no longer the only copy. `entryIsVisible` in
+ * `remix-gallery.service.ts` states the same rule in raw SQL, because a
+ * `Prisma.sql` predicate and a `where` object cannot share code. An exclusion
+ * added here does NOT reach the remix gallery and has to be added there too —
+ * `acceptableMinor`, the clause this docblock calls out, was already missing
+ * from that copy once. The two also differ deliberately today: the SQL copy
+ * excludes private posts, level 0, and licence-restricted images, and this one
+ * leaves those to its caller.
  */
 export const publishedPlacementImageWhere = (): Prisma.ImageWhereInput => ({
   post: { publishedAt: { not: null, lte: new Date() } },

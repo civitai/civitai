@@ -4,7 +4,7 @@ Infrastructure for developing XGuard labels: sample live prompts, have a model r
 
 The point is the loop, not any one label. Adding a label is adding an entry to `labels.ts` and running the rater again over samples you already have.
 
-Scoping doc: `_local/docs/plans/xguard-regex-retirement-scoping.md`. Tuning harness: `_local/docs/plans/xguard-age-labels/`.
+Scoping doc: `local/xguard-regex-retirement-scoping.md`. Tuning harness: `local/xguard-tuning-harness/`.
 
 ## Which database
 

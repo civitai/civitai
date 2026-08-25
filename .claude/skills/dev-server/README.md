@@ -89,6 +89,7 @@ node .claude/skills/dev-server/scripts/db-host.selftest.mjs        # the DB host
 node .claude/skills/dev-server/scripts/cli-verbs.selftest.mjs      # every dispatch target in cli.mjs exists
 node .claude/skills/dev-server/scripts/branch-watch.selftest.mjs
 node .claude/skills/dev-server/scripts/probe.selftest.mjs
+node .claude/skills/dev-server/scripts/worktree.selftest.mjs       # PR state and prune collateral, as reported
 ```
 
 If you change any of this, mutate it and check the test goes red.

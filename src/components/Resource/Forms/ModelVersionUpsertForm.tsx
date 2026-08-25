@@ -875,15 +875,12 @@ export function ModelVersionUpsertForm({
   // Keeps the Paid Access section visible/editable for a published permanent-gated version.
   const atEarlyAccess = !!version?.paidAccess;
   const isPublished = version?.status === 'Published';
-  // A gen-only version ratchets on its generation price, having no download tier. The stored price is a
-  // floor: the server allows resubmitting over-cap, so clamping down would silently cut it.
-  const accessPriceMax = Math.max(
-    Math.min(
-      isPublished ? storedAccessPrice || MAX_DONATION_GOAL : MAX_DONATION_GOAL,
-      paidAccessCap
-    ),
-    storedAccessPrice
-  );
+  // The stored price is a FLOOR, never a ceiling: the server allows resubmitting over-cap, so clamping
+  // down would silently cut a grandfathered price. Keying the ceiling to `isPublished` made the stored
+  // price its own maximum on every released version — Mantine clamps to `max` on blur, so a raise
+  // reverted on save with nothing on screen (CU 868kwjc13). Raises are the server's call
+  // (assertPaidAccessCaps), and it blocks only what exceeds the tier cap.
+  const accessPriceMax = Math.max(Math.min(MAX_DONATION_GOAL, paidAccessCap), storedAccessPrice);
   const isPrivateModel = model?.availability === Availability.Private;
   // A timed Early Access window can't be *started* after publish; only a version already on one keeps it.
   // Permanent Paid Access has no window, so it stays available post-publish.
