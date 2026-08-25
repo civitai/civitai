@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { untrack } from "svelte";
+  import { tick, untrack } from "svelte";
   import { page } from "$app/state";
   import { enhance } from '$app/forms';
   import { goto } from '$app/navigation';
@@ -12,6 +12,7 @@
   import { num } from '$lib/format';
   import { BLOCKLIST_TYPES, BLOCKLIST_DESCRIPTIONS, humanizeBlocklistType } from '$lib/blocklist';
   import { visibleBlocklistItems } from './filter';
+  import { chipFocusTarget } from './focus';
   import type { ActionData, PageData } from './$types';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
 
@@ -22,6 +23,7 @@
   let filters = $state<Record<string, string>>({});
   let removing = $state<string | null>(null);
   let confirming = $state<string | null>(null);
+  let panel = $state<HTMLElement | null>(null);
 
   // EmailDomain is 8295 entries in production. Rendering the whole list is both unusable and
   // enough DOM to stall the tab, so the list is filtered first and then capped.
@@ -75,8 +77,18 @@
   // write restores what the earlier one dropped.
   const submitChip =
     (item: string): SubmitFunction =>
-    () => {
+    ({ formElement }) => {
       removing = item;
+      // Both captured BEFORE the submit, because the invalidation unmounts this chip: afterwards
+      // the item is gone from the list and `document.activeElement` is <body>, so neither question
+      // can still be answered.
+      const position = shown.visible.indexOf(item);
+      // Focus is only moved if it was already inside THIS chip's form. That is true for keyboard
+      // activation, and also for a pointer in browsers that focus a button on click — which is
+      // fine, since those get no visible ring under `:focus-visible`. What it excludes is the
+      // case that would be an unasked-for scroll: focus sitting somewhere else on the page.
+      const restoreFocus = formElement.contains(document.activeElement);
+
       return async ({ update }) => {
         // `finally`, not a bare sequence. Every chip's control is disabled while `removing` is set,
         // so a submit that throws — a rejected fetch, a cross-origin refusal — would otherwise leave
@@ -93,8 +105,35 @@
           // as `ConfirmSubmit.svelte`.
           confirming = null;
         }
+
+        if (restoreFocus) {
+          // After `removing` is cleared, not before: every chip control is `disabled` while a
+          // removal is in flight, and a disabled button silently refuses focus. `tick` waits for
+          // both the re-rendered chips and that re-enable to reach the DOM.
+          await tick();
+          focusAfterRemoval(position);
+        }
       };
     };
+
+  /**
+   * Where focus lands once the removed chip is gone. The chip that TOOK its place, so holding the
+   * key removes down the list; the previous one when the removal took the last chip; and the filter
+   * input when it emptied the list. Landing on the filter is why it is worth being deliberate: it
+   * is the one control that can bring chips back, and `{#each}` is keyed by the entry, so there is
+   * no stable node to return to.
+   */
+  function focusAfterRemoval(position: number) {
+    if (!panel) return;
+    const next = chipFocusTarget(shown.visible, position);
+    const target = next
+      ? panel.querySelector<HTMLElement>(`[data-chip-remove="${CSS.escape(next)}"]`)
+      : // The filter bar unmounts with the chips when the LIST is empty rather than merely
+        // filtered to nothing, so the textarea is the last resort — never <body>.
+        (panel.querySelector<HTMLElement>('[data-blocklist-filter] input') ??
+        panel.querySelector<HTMLElement>('textarea'));
+    target?.focus();
+  }
 </script>
 
 <!-- One window listener rather than one per chip: at CHIP_LIMIT that would be 200 of them. -->
@@ -138,7 +177,7 @@
   </div>
 {/if}
 
-<div class="flex max-w-xl flex-col gap-4">
+<div class="flex max-w-xl flex-col gap-4" bind:this={panel}>
   <div class="flex flex-col gap-2 rounded-xl border p-3">
     {#if data.blocklist.id}
       <div class="flex gap-1">
@@ -181,12 +220,14 @@
   {:else}
     <div class="flex flex-col gap-2">
       <span class="text-sm font-medium">{humanizeBlocklistType(data.type)}</span>
-      <ListFilterBar
-        fields={[{ kind: 'search', key: 'q', label: 'Filter entries' }]}
-        bind:values={filters}
-        matched={shown.matches.length}
-        total={sortedItems.length}
-      />
+      <div data-blocklist-filter>
+        <ListFilterBar
+          fields={[{ kind: 'search', key: 'q', label: 'Filter entries' }]}
+          bind:values={filters}
+          matched={shown.matches.length}
+          total={sortedItems.length}
+        />
+      </div>
       {#if shown.matches.length === 0}
         <p class="text-sm text-dark-2">Nothing on this list matches "{(filters.q ?? '').trim()}".</p>
       {:else}
@@ -212,6 +253,7 @@
                   size="icon"
                   class="size-4"
                   disabled={removing !== null}
+                  data-chip-remove={item}
                   aria-label="Remove {item}"
                   title="Remove {item}"
                   aria-haspopup="true"
