@@ -154,6 +154,14 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
   // card honours that through ImageGuard — these tiles are outside it, so they
   // have to read the same preference or the strip hands out unblurred what the
   // card underneath is blurring.
+  //
+  // This restates `useImageGuard`'s decision rather than mounting `ImageGuard2`,
+  // and diverges from it in three ways, all fail-closed: the level is the one in
+  // the cached payload rather than the live `useImageStore` value; there is no
+  // `showUnprocessed` carve-out, so a moderator or the owner sees the placeholder
+  // too; and an unrated entry (level 0) is covered rather than shown. A change to
+  // what "blurred" means will land in ImageGuard2 and NOT reach here — see the
+  // follow-up ticket.
   const { blurLevels } = useBrowsingLevelContext();
   const layout = useRemixFlyoutLayout();
 
@@ -400,6 +408,15 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
   }, [open, count, fine, measure]);
+
+  // The pointer tracker is the only thing that calls `close()`, and it is torn
+  // down when `count` drops — so a panel whose entries vanish under it stays
+  // "open" in the store with nothing rendered. The next hover then toggles it
+  // OFF rather than on, and re-widening the level makes it reappear un-hovered
+  // at whatever position the stopped measure loop left behind.
+  useEffect(() => {
+    if (open && !count) close();
+  }, [open, count, close]);
 
   useEffect(() => {
     if (!open) return;

@@ -159,7 +159,7 @@ export function RemixGalleryCard({ imageId }: { imageId: number }) {
   const browsingLevel = useBrowsingLevelDebounced();
 
   const { data: visibility } = trpc.placement.getRemixGalleryVisibility.useQuery(
-    { imageId },
+    { imageId, browsingLevel },
     { enabled }
   );
 

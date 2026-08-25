@@ -211,14 +211,19 @@ export const getRemixGalleryCardSummariesSchema = z.object({
   /**
    * 🔴 Defaults to PG, not to every level.
    *
-   * The sibling reads default to `allBrowsingLevelsFlag` because they are opened
-   * deliberately, by a viewer who is already looking at the gallery. This one
-   * runs unattended on every feed surface, and its thumbnails render outside
-   * ImageGuard — so an omitted level here is not a narrower request, it is the
-   * widest one, and `applyDomainFeature` only narrows it where the DOMAIN has a
-   * cap. That is exactly how it shipped wide once. Failing closed costs a client
-   * that forgets the prop some missing frames, which is visible; failing open
-   * costs someone content they asked not to see.
+   * An omitted level is not a narrower request, it is the widest one:
+   * `applyDomainFeature` only narrows where the DOMAIN has a cap, so a signed-in
+   * viewer on blue or red gets every level. That is exactly how this shipped wide
+   * once. Failing closed costs a client that forgets the prop some missing
+   * frames, which is visible; failing open costs someone content they asked not
+   * to see.
+   *
+   * The two schemas above still default wide, and `getRemixGallery` is fine
+   * because its only caller passes the level. `getRemixGalleryVisibility` was
+   * NOT — its caller omitted it, which made it a boolean oracle for whether
+   * entries exist above the asker's level. Fixed at the call site rather than
+   * here, because narrowing that default would hide the gallery card from
+   * viewers entitled to see it.
    */
   browsingLevel: z.number().min(0).default(publicBrowsingLevelsFlag),
 });

@@ -17,8 +17,8 @@ import type { MediaType } from '~/shared/utils/prisma/enums';
  * behaviour, never for how busy a real feed would look.
  *
  * It is gated on the remix-gallery feature flag in `useRemixCardData`, not on
- * the query string alone — the thumbnails carry real usernames, so an ungated
- * demo attributes remixes to people who never made them.
+ * the query string alone — an ungated demo puts a "this was remixed" frame on
+ * other people's work for anyone who guesses the query string.
  */
 const DEFAULT_MODULUS = 9;
 
@@ -51,8 +51,9 @@ export const useRemixDemoDensity = () => {
     //
     // 🔴 Only when it changes. `setState` builds a fresh object, so `Object.is`
     // never matches and EVERY subscriber is notified — and this hook runs once
-    // per card. Unconditionally, a 500-card feed fired 500 no-op notifications
-    // into several subscriptions each, on mount and on every page of scroll.
+    // per card. Unconditionally, every mounted card fired a no-op notification into
+    // several subscriptions each — ~50 at a time, which is what the masonry
+    // virtualiser keeps mounted, not the length of the feed.
     if (useRemixPeelStore.getState().demoActive !== valid)
       useRemixPeelStore.setState({ demoActive: valid });
   }, [modulus, setModulus]);
@@ -60,15 +61,19 @@ export const useRemixDemoDensity = () => {
   return modulus;
 };
 
-/** Verified-live assets used as stand-in gallery entries. */
+/** Verified-live assets used as stand-in gallery entries.
+ *
+ * No usernames: they were real people's, bound to images they had nothing to do
+ * with, in a permanently public history. The one consumer is an `aria-label`
+ * that already carries a fallback. */
 const DEMO_THUMBS = [
-  { imageId: 140554938, url: '31c35265-587b-4170-b7fe-44ba5e21b7ba', username: 'Escorwn' },
-  { imageId: 140554932, url: '1fc08b9b-462b-4ffb-9227-8a42c0310a82', username: 'signalofsolarum' },
-  { imageId: 140554931, url: '51c9d355-a2ab-4f47-bb39-e58b9a82268d', username: 'kaelthas_art' },
-  { imageId: 140554927, url: 'ed5b1dce-602c-4143-befe-5bf17f362853', username: 'Nonamedgg' },
-  { imageId: 140554924, url: '4ffac08a-f686-48da-b149-e9224706c3f6', username: 'chamo9009' },
-  { imageId: 140554923, url: 'ea3af848-a01b-453b-9c95-b56adb495c11', username: 'take3tu' },
-  { imageId: 140555502, url: '0134d13b-0151-46ff-ab19-d3953096dc82', username: 'LaffyGaffy2089' },
+  { imageId: 140554938, url: '31c35265-587b-4170-b7fe-44ba5e21b7ba' },
+  { imageId: 140554932, url: '1fc08b9b-462b-4ffb-9227-8a42c0310a82' },
+  { imageId: 140554931, url: '51c9d355-a2ab-4f47-bb39-e58b9a82268d' },
+  { imageId: 140554927, url: 'ed5b1dce-602c-4143-befe-5bf17f362853' },
+  { imageId: 140554924, url: '4ffac08a-f686-48da-b149-e9224706c3f6' },
+  { imageId: 140554923, url: 'ea3af848-a01b-453b-9c95-b56adb495c11' },
+  { imageId: 140555502, url: '0134d13b-0151-46ff-ab19-d3953096dc82' },
 ];
 
 export const demoRemixEntries = (imageId: number, count: number) =>
@@ -79,6 +84,7 @@ export const demoRemixEntries = (imageId: number, count: number) =>
     // measured against was a video.
     type: 'image' as MediaType,
     nsfwLevel: 1,
+    username: null,
   }));
 
 /**
@@ -97,10 +103,6 @@ export const REMIX_FRAME = {
   glow: true,
   cssFrame: 'linear-gradient(45deg, #ffd24a 5%, #f5a524 50%, #ffe9a8 95%)',
 } as const;
-
-/** The remix frame for an image, or nothing when it has no entries. */
-export const remixFrame = (imageId: number, modulus?: number) =>
-  demoRemixCount(imageId, modulus) ? REMIX_FRAME : undefined;
 
 /**
  * Which card has its preview open, site-wide.
