@@ -204,12 +204,19 @@ describe('process() does not pay out a disabled reward’s backlog', () => {
     expect(toProcess.map((x) => x.status)).toEqual(['unqualified', 'unqualified']);
     expect(toProcess.map((x) => x.awardAmount)).toEqual([0, 0]);
     expect(h.createBuzzTransactionMany).not.toHaveBeenCalled();
-    // The rows are written back, or the sweep is a local mutation nobody sees.
+    // The rows are written back, or the sweep is a local mutation nobody sees. `unqualified` is
+    // not in the buzzEvents Enum8, and an async insert drops the whole chunk over it without an
+    // error — so it goes over the wire as the nearest legal value with its own name preserved
+    // (ClickUp 868ktbnjh). Asserting `status: 'unqualified'` here pinned a write nobody received.
     expect(h.insertImpl).toHaveBeenCalledWith(
       expect.objectContaining({
-        values: toProcess.map(() => expect.objectContaining({ status: 'unqualified' })),
+        values: toProcess.map(() => expect.objectContaining({ status: 'capped' })),
       })
     );
+    const written = h.insertImpl.mock.calls.at(-1)?.[0] as { values: BuzzEventLog[] };
+    expect(JSON.parse(written.values[0].transactionDetails ?? '{}')).toMatchObject({
+      statusRaw: 'unqualified',
+    });
   });
 
   it('holds for a real processable reward, not only the local fixture', async () => {
