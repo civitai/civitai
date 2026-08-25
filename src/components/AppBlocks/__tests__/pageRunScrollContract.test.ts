@@ -81,6 +81,37 @@ function norm(src: string): string {
 }
 
 /**
+ * The chain of `{`-blocks enclosing `index`, outermost first, each labelled by the
+ * text that introduced it (a selector or an at-rule).
+ *
+ * Deliberately a brace count, not a CSS parser — this only has to be right about
+ * the stylesheets in this repo, and a parser would be a dependency to keep
+ * correct. It is fooled by an unbalanced brace inside a string (`content: '}'`),
+ * so callers must report the chain they computed rather than asserting a cause
+ * from it; a chain that does not end in `:root` might mean the declaration moved,
+ * or it might mean this walk got confused, and the failure message must not
+ * pretend to know which.
+ */
+function enclosingBlocks(src: string, index: number): string[] {
+  const stack: string[] = [];
+  let last = 0;
+  for (let i = 0; i < index; i++) {
+    if (src[i] === '{') {
+      stack.push(
+        norm(src.slice(last, i))
+          .replace(/^[;}]+/, '')
+          .trim()
+      );
+      last = i + 1;
+    } else if (src[i] === '}') {
+      stack.pop();
+      last = i + 1;
+    }
+  }
+  return stack;
+}
+
+/**
  * Pull one balanced-looking source region out of a file by anchor regex, and
  * fail loudly if the anchor stops matching.
  *
@@ -304,13 +335,20 @@ describe('the run page and its host agree on who owns the height', () => {
    * an application check that rejects arithmetic rather than a token-presence one.
    *
    * 🔴 WHAT IT STILL DOES NOT SEE, stated so this docstring is not the same lie in
-   * a smaller size. It scans `.css/.scss/.ts/.tsx` only, so a copy in `.js/.jsx/.mjs`
-   * escapes it. It matches a `const|let|var` binding, so a copy declared as an
-   * object property, a class static, or a destructured re-export escapes it. A
-   * `.ts` STRING containing a CSS snippet counts as a declaration (`code()` strips
-   * comments, not strings) — a false ALARM, which is the safe direction. And a
-   * declaration disabled with a TRAILING `//` is still counted, for the same
-   * fail-safe reason. Everything here fails toward noise, never toward silence.
+   * a smaller size — and stated as MISSES, because an earlier version of this
+   * paragraph closed with "everything here fails toward noise, never toward
+   * silence", which an audit refuted with seven surviving mutants. These are
+   * silence:
+   *   - `.js/.jsx/.mjs` are not scanned (the extension filter below).
+   *   - A TS copy declared as an object property, a class static or a destructured
+   *     re-export: the scan matches a `const|let|var` binding only.
+   *   - `setProperty(K, …)` where `K` is a variable rather than a literal.
+   *   - `@property --header-height { initial-value: … }`, which is a declaration
+   *     the CSS patterns do not model.
+   * And these are noise (a false FAILURE, the safe direction): a CSS snippet
+   * inside a TS string or a `type` key — `code()` strips comments, not strings —
+   * and a declaration disabled with a TRAILING line comment, which `code()`'s
+   * start-of-line-anchored rule does not strip.
    */
   it('the header height has ONE declaration under `src/`, and CSS and TS agree', () => {
     const constants = code(
@@ -344,7 +382,7 @@ describe('the run page and its host agree on who owns the height', () => {
     // semicolon, is still a declaration and still shadows. Capture the raw value
     // and judge it explicitly rather than letting a non-matching spelling read as
     // "no second declaration".
-    const cssDecls: { file: string; value: string; depth: number }[] = [];
+    const cssDecls: { file: string; value: string; blocks: string[] }[] = [];
     const tsDecls: { file: string; text: string }[] = [];
     for (const file of files) {
       // `code()` removes WHOLE-LINE (`^\s*//`) and BLOCK comments, so a declaration
@@ -362,27 +400,37 @@ describe('the run page and its host agree on who owns the height', () => {
       // `src/shared/constants/chat-theme.ts` — plus the imperative `setProperty`.
       // Matching only the plain form made the test's title ("ONE declaration under
       // src/") wider than what it enforced.
+      // 🔴 No `(?<!['"])` lookbehind on the plain form. An earlier draft had one to
+      // stop the object form double-counting — but the object form cannot match
+      // this pattern anyway (the quote sits between the name and the colon), so the
+      // lookbehind bought nothing and silently DROPPED two real shapes: a style
+      // attribute string (`style="--header-height: 80px"`) and a CSS snippet in a
+      // string constant. Both are genuine shadowing declarations.
       const patterns = [
-        /(?<!['"])--header-height\s*:\s*([^;}\n]+)/g,
-        /['"]--header-height['"]\s*:\s*([^,;}\n]+)/g,
-        /setProperty\(\s*['"]--header-height['"]\s*,\s*([^)]+)\)/g,
+        /--header-height\s*:\s*([^;}\n]+)/g,
+        // `\]?` so a COMPUTED key matches too — `['--header-height']: v` is the
+        // standard TS idiom here, because `CSSProperties` rejects the plain key.
+        /['"`]--header-height['"`]\s*\]?\s*:\s*([^,;}\n]+)/g,
+        /setProperty\(\s*['"`]--header-height['"`]\s*,\s*([^)]+)\)/g,
       ];
-      for (const re of patterns) {
+      // 🔴 Skip THIS file on the CSS side too, for the same reason as the TS side
+      // below: the patterns above are widened enough that a future failure message
+      // quoting `--header-height: 60px` would match one of them and mint a phantom
+      // second declaration inside the very file being edited. It self-matches zero
+      // times today; that is one message-edit away from being untrue.
+      const isSelf = path.resolve(file) === path.resolve(__filename);
+      for (const re of isSelf ? [] : patterns) {
         for (const m of src.matchAll(re)) {
-          // Nesting depth of the match, so a declaration hidden inside `@media`
-          // or `@supports` is distinguishable from a top-level `:root` one. A
-          // conditional declaration leaves the property UNDEFINED outside its
-          // breakpoint — the invalid-at-computed-value-time collapse this whole
-          // change documents — while still counting as exactly one.
-          let depth = 0;
-          for (const ch of src.slice(0, m.index)) {
-            if (ch === '{') depth++;
-            else if (ch === '}') depth--;
-          }
           cssDecls.push({
             file: path.relative(REPO_ROOT, file),
-            value: m[1].trim().replace(/^['"]|['"]$/g, ''),
-            depth,
+            value: m[1].trim().replace(/^['"`]|['"`]$/g, ''),
+            // The chain of blocks enclosing this declaration, outermost first.
+            // 🔴 NOT a brace-depth number: depth alone cannot tell `@layer theme`
+            // (unconditional, and already used in this repo's globals.css) apart
+            // from `@media` (conditional), and it calls a top-level `.some-scope`
+            // block correct when the property is undefined everywhere outside it.
+            // What matters is WHICH blocks enclose it, so record them and judge.
+            blocks: enclosingBlocks(src, m.index),
           });
         }
       }
@@ -408,13 +456,24 @@ describe('the run page and its host agree on who owns the height', () => {
     expect(cssDecls[0].file, 'the `--header-height` declaration moved out of globals.css').toBe(
       'src/styles/globals.css'
     );
+    const chain = cssDecls[0].blocks;
+    const chainText = chain.length ? chain.join(' > ') : '(no enclosing block)';
+    // Conditional at-rules only. `@layer` is NOT one — it orders the cascade, it
+    // does not gate it — and this repo already wraps rules in `@layer theme`.
     expect(
-      cssDecls[0].depth,
-      'the `--header-height` declaration is nested inside a conditional block (`@media`, ' +
-        '`@supports`, …). Outside that condition the property is UNDEFINED, and every ' +
-        '`calc(… - var(--header-height))` call site then collapses at computed-value time. It ' +
-        'must sit in a top-level `:root`, where it is unconditional.'
-    ).toBe(1);
+      chain.filter((b) => /^@(media|supports|container|scope)\b/.test(b)),
+      `the \`--header-height\` declaration is inside a CONDITIONAL at-rule. Enclosing chain: ` +
+        `${chainText}. Outside that condition the property is UNDEFINED, and every ` +
+        '`calc(… - var(--header-height))` call site collapses at computed-value time.'
+    ).toHaveLength(0);
+    expect(
+      chain.some((b) => /(^|,|\s):root\b/.test(b) || /^html\b/.test(b)),
+      `the \`--header-height\` declaration is not on \`:root\` (or \`html\`). Enclosing chain: ` +
+        `${chainText}. An element-scoped declaration leaves the property undefined everywhere ` +
+        'outside that subtree, which is the same collapse. NOTE: this chain is computed by ' +
+        'counting braces, so an unbalanced brace inside a string earlier in the file can also ' +
+        'produce a wrong chain — check the file before assuming the declaration moved.'
+    ).toBe(true);
     expect(
       cssDecls[0].value,
       'globals.css `--header-height` and `HEADER_HEIGHT_PX` have DIVERGED (or the unit changed). ' +
@@ -439,25 +498,37 @@ describe('the run page and its host agree on who owns the height', () => {
     // is satisfied by the import line alone, so renaming the constant or applying
     // `HEADER_HEIGHT_PX - 4` both survived the audited draft.
     //
-    // 🔴 Deliberately NOT a `region()` verbatim pin. A pin anchored on
-    // `style={{ height: … }}` breaks on a property reorder, on a nested `}` from a
-    // conditional spread, and on ANY second inline height style added anywhere in
-    // this 160-line component — all of which are innocent edits, and all of which
-    // would fail inside `region()`'s own anchor assertion WITHOUT `PIN_HELP`, so
-    // the maintainer would be told "the anchor rotted" and not what it protects.
-    // This asserts the thing that actually matters instead: the constant is
-    // applied to a height UNMODIFIED. `[,}]` is what rejects arithmetic, and
-    // matching against the normalised source keeps it immune to reformatting.
-    const header = norm(
-      code(read(path.join(REPO_ROOT, 'src/components/AppLayout/AppHeader/AppHeader.tsx')))
+    // 🔴 SCOPED TO THE `<header>` OPEN TAG, and it must be. Two earlier drafts got
+    // this wrong in opposite directions. A `region()` pin anchored on
+    // `style={{ height: … }}` was too brittle: a property reorder, a nested `}`
+    // from a conditional spread, or ANY second inline height style anywhere in the
+    // file broke it, reported through `region()`'s anchor assertion without
+    // `PIN_HELP`. Relaxing it to an unanchored substring test over the whole file
+    // then went too far the other way — `maxHeight: 40` added beside the constant
+    // renders the header at 40px while every consumer still subtracts 60, and the
+    // check stayed GREEN. One innocent-looking edit, silently wrong.
+    //
+    // Anchoring on `<header …>` keeps what was load-bearing — the height styles
+    // that matter are the ones ON the header element, and there must be no other
+    // height property fighting the constant — while staying immune to reordering
+    // and to unrelated inline styles elsewhere in the component.
+    const header = code(
+      read(path.join(REPO_ROOT, 'src/components/AppLayout/AppHeader/AppHeader.tsx'))
+    );
+    const headerTag = region(header, /<header[\s\S]*?>/, 'AppHeader open tag');
+    // Every height-family property on the tag, as a ledger. Exactly one, and it is
+    // the shared constant applied unmodified.
+    const heightProps = [...headerTag.matchAll(/([A-Za-z]*[Hh]eight)\s*:\s*([^,}]+)/g)].map(
+      (m) => `${m[1]}: ${m[2].trim()}`
     );
     expect(
-      /height:\s*HEADER_HEIGHT_PX\s*[,}]/.test(header),
-      'AppHeader must set its height from the shared constant UNMODIFIED. Not found — either it ' +
-        'hardcodes a number again, keeps only the import, the constant was renamed, or it applies ' +
-        'arithmetic (`HEADER_HEIGHT_PX - 4`). Any of those silently desynchronises the real header ' +
-        'from every consumer that subtracts the constant.'
-    ).toBe(true);
+      heightProps,
+      `${PIN_HELP} The <header> element must carry exactly ONE height property, set from the ` +
+        'shared constant UNMODIFIED. Anything else — a hardcoded number, arithmetic ' +
+        '(`HEADER_HEIGHT_PX - 4`), or a sibling `maxHeight`/`minHeight` clamping it — ' +
+        'desynchronises the real header from every consumer that subtracts the constant, and ' +
+        'the page-level double scrollbar comes back on the `viewport` surfaces.'
+    ).toEqual(['height: HEADER_HEIGHT_PX']);
 
     // The surviving `viewport` surfaces (dev tunnel, mod review) subtract it.
     const host = code(read(HOST));
