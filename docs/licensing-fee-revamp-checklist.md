@@ -250,8 +250,15 @@ that have to happen, or be decided, before it reaches creators.
       Buzz more. The fee rise is spread thin over 1,283 people paying a couple more per generation;
       this is 27 people paying 4,000 more each.
 
-      Nothing in the diff sweeps or notifies the affected versions. **That is a product call, not a
-      code change** — decide before ship whether these are grandfathered, clamped, or announced.
+      **Decided 2026-08-25: grandfather them.**
+      `scripts/oneoffs/grandfather-over-ceiling-prices.ts` writes the price buyers were actually being
+      charged into the stored field, so the deploy changes nothing for them and the rise becomes opt-in
+      — under the new rules any tier may raise to the flat ceiling whenever they choose. Dry run by
+      default, `--apply` to write, idempotent (it only ever lowers to a cap). **Run it BEFORE the
+      deploy**: in the window between, buyers are charged the un-clamped price.
+
+      Note what this gives up: the old "re-subscribe and your original price returns" behaviour goes
+      with the tier caps, so a creator who wants the higher number sets it again.
 - [x] **A slot now comes back when the last price comes off an untransacted version** (2026-08-24).
       This was the sharper half of "setting and then removing does not return the allowance": a creator
       pricing a draft to see what it looked like paid a month's allowance for nothing. Clearing the last
