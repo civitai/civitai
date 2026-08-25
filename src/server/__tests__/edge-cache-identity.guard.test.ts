@@ -401,7 +401,10 @@ export function analyzeIdentityUse(text: string): { forwards: Forward[]; directU
 /** First parameter's shape. */
 export function paramShape(
   fnSource: string
-): { kind: 'destructured'; keys: string[]; rest: string | null } | { kind: 'named'; name: string } | { kind: 'unknown' } {
+):
+  | { kind: 'destructured'; keys: string[]; rest: string | null }
+  | { kind: 'named'; name: string }
+  | { kind: 'unknown' } {
   const open = fnSource.indexOf('(');
   if (open === -1) return { kind: 'unknown' };
   const params = balancedFrom(fnSource, open);
@@ -573,7 +576,9 @@ export function deriveEdgeCachedProcedures(): { all: Derived[]; missingKey: stri
       const handlerImports = importMap(readSource(handlerFile), handlerFile);
       const resolvedForwards = forwards.map((fw) => {
         const target = handlerImports[fw.callee];
-        const src = target ? findFunctionSource(target, fw.callee) : findFunctionSource(handlerFile, fw.callee);
+        const src = target
+          ? findFunctionSource(target, fw.callee)
+          : findFunctionSource(handlerFile, fw.callee);
         return {
           ...fw,
           resolved: !!src,
@@ -751,7 +756,9 @@ describe('parsing primitives (instrument validation)', () => {
     const aliases = edgeCacheAliases(content);
     expect([...aliases]).toEqual(['lbCache']);
     // POSITIVE: an aliased .use is wrapping…
-    expect(procedureWrapsEdgeCache('  x: p\n    .use(lbCache)\n    .query(f),', aliases)).toBe(true);
+    expect(procedureWrapsEdgeCache('  x: p\n    .use(lbCache)\n    .query(f),', aliases)).toBe(
+      true
+    );
     // NEGATIVE: …and an unrelated .use is not.
     expect(procedureWrapsEdgeCache('  y: p\n    .use(other)\n    .query(f),', aliases)).toBe(false);
   });
@@ -796,12 +803,15 @@ describe('parsing primitives (instrument validation)', () => {
 
   it('calleeUsesProp distinguishes ignored / used / destructured-but-unused / unknown', () => {
     // Dropped at the boundary — the homeBlock shape.
-    expect(calleeUsesProp('const f = async ({ id, domain }) => { return q(id, domain); }', 'user')).toBe(
-      'ignores'
-    );
+    expect(
+      calleeUsesProp('const f = async ({ id, domain }) => { return q(id, domain); }', 'user')
+    ).toBe('ignores');
     // Destructured AND referenced.
     expect(
-      calleeUsesProp('const f = async ({ id, isModerator }) => { return q(id, isModerator); }', 'isModerator')
+      calleeUsesProp(
+        'const f = async ({ id, isModerator }) => { return q(id, isModerator); }',
+        'isModerator'
+      )
     ).toBe('uses');
     // Destructured and NEVER referenced — "binds" is not "uses"; the getUserCreator shape.
     expect(
@@ -922,7 +932,8 @@ describe('edgeCacheIt derivation', () => {
       // newline-specific pattern double-counts every multi-line application.
       applications += (content.match(/\.use\(\s*edgeCacheIt\(/g) ?? []).length;
       for (const alias of edgeCacheAliases(content)) {
-        applications += (content.match(new RegExp(`\\.use\\(\\s*${alias}\\s*\\)`, 'g')) ?? []).length;
+        applications += (content.match(new RegExp(`\\.use\\(\\s*${alias}\\s*\\)`, 'g')) ?? [])
+          .length;
       }
     }
     // The raw text over-counts (commented-out calls + the hoisted alias definition);
@@ -984,13 +995,18 @@ describe('an edge-cached procedure must not vary its body by caller', () => {
     for (const [path, entry] of Object.entries(LEDGER)) {
       if (entry.status !== 'callee-ignores-identity') continue;
       const d = all.find((x) => x.path === path);
-      expect(d, `${path} is ledgered as callee-ignores-identity but is no longer derived`).toBeTruthy();
+      expect(
+        d,
+        `${path} is ledgered as callee-ignores-identity but is no longer derived`
+      ).toBeTruthy();
       expect(
         { path, directUses: d!.directUses },
         `${path} claims its identity is only forwarded, but the resolver uses identity directly`
       ).toEqual({ path, directUses: 0 });
-      expect(d!.forwards.length, `${path} claims a callee ignores identity but forwards none`)
-        .toBeGreaterThan(0);
+      expect(
+        d!.forwards.length,
+        `${path} claims a callee ignores identity but forwards none`
+      ).toBeGreaterThan(0);
       for (const fw of d!.forwards) {
         expect(
           { path, callee: fw.callee, prop: fw.prop, resolved: fw.resolved, verdict: fw.verdict },
