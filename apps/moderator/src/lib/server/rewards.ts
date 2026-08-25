@@ -1,3 +1,4 @@
+import { clampBuzzEventMultiplier } from '@civitai/clickhouse';
 import { REDIS_KEYS, type RedisKeyTemplateCache } from '@civitai/redis';
 import { getClickhouse } from './clickhouse';
 import { getRedis } from './redis';
@@ -21,6 +22,11 @@ export async function rewardReportReporters(input: {
     const rows = await Promise.all(
       input.reporterIds.map(async (reporterId) => {
         const base = await getBaseRewardsMultiplier(reporterId);
+        // A value past the column's ceiling is not a rounding problem: the insert is fire-and-forget
+        // (`wait_for_async_insert: 0`), so ClickHouse accepts the request and drops the unparseable row
+        // afterwards, with nothing raised here. `reportAccepted` is processable, so that row IS the
+        // payment — the reporter is never paid rather than merely unaudited.
+        const multiplier = clampBuzzEventMultiplier(base * globalBonus);
         // toUserId === byUserId (an accepted report rewards its reporter); ip omitted for localhost/empty
         // so the ClickHouse column falls back to its '' default.
         return {
@@ -29,9 +35,14 @@ export async function rewardReportReporters(input: {
           forId: input.reportId,
           byUserId: reporterId,
           awardAmount: REPORT_ACCEPTED_AWARD,
-          multiplier: base * globalBonus,
+          multiplier,
           status: 'pending',
-          transactionDetails: '{}',
+          // Keep the value we meant to write when the ceiling trimmed it, so a clamped row stays
+          // traceable — the main app's own writer records the raw value the same way.
+          transactionDetails:
+            multiplier === base * globalBonus
+              ? '{}'
+              : JSON.stringify({ multiplierRaw: base * globalBonus }),
           ...(input.ip && input.ip !== '::1' ? { ip: input.ip } : {}),
         };
       })
@@ -48,7 +59,11 @@ async function getBaseRewardsMultiplier(userId: number): Promise<number> {
     const cached = await getRedis().packed.get<{ rewardsMultiplier?: number; notFound?: boolean }>(
       `${REDIS_KEYS.CACHES.MULTIPLIERS_FOR_USER}:${userId}` as RedisKeyTemplateCache
     );
-    if (cached && !cached.notFound && cached.rewardsMultiplier) return cached.rewardsMultiplier;
+    // `foldUserMultipliers` writes 0 for a rewards-ineligible user, and 0 is falsy — a truthiness test
+    // here read that decision as a missing value and paid the reporter in full. Test for the absence of
+    // a number instead. The main app had the same bug in `sendAward` (ClickUp 868kw9kfk).
+    if (cached && !cached.notFound && typeof cached.rewardsMultiplier === 'number')
+      return cached.rewardsMultiplier;
   } catch {
     // Shared-cache read is best-effort; fall back to the base multiplier.
   }
