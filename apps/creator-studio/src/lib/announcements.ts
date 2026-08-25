@@ -3,7 +3,7 @@ import type { DomainColor } from '@civitai/db-schema/enums';
 // Mirrors upsertCreatorAnnouncementSchema in the main app (src/server/schema/announcement.schema.ts).
 // The endpoint rejects anything longer, so these must not drift upward without it.
 export const TITLE_MAX = 120;
-export const CONTENT_MAX = 5000;
+export const CONTENT_MAX = 500;
 export const LINK_TEXT_MAX = 40;
 
 export const DOMAIN_COLORS = [

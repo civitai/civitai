@@ -86,10 +86,28 @@ export const getCurrentAnnouncementsSchema = z.object({
  *
  * `domain` IS creator-settable: DomainColor selects an audience, it does not widen reach.
  */
+/**
+ * An announcement is a short pointer at something else, and the card that renders it has no line
+ * clamp (`AnnouncementCard`) — whatever is stored is drawn in full, in a 710px drawer or a 540px
+ * `Container size="sm"`. 500 is about 7-11 lines there.
+ */
+export const CREATOR_ANNOUNCEMENT_CONTENT_MAX = 500;
+
+/**
+ * The schema's hard bound, deliberately ABOVE the limit above.
+ *
+ * The pending profile-banner backfill inserts 25,655 rows from `UserProfile.message`, and 8,757 of
+ * those are longer than 500 (measured on prod: p50 152, p99 1200, max 1232). Capping the schema at
+ * 500 would mean a creator opening their own migrated banner to fix a typo cannot save it at all.
+ * `assertContentLength` in the service enforces 500 on anything NEW or LENGTHENED instead, so an
+ * over-long legacy row can still be edited and shortened, just never grown.
+ */
+export const CREATOR_ANNOUNCEMENT_CONTENT_CEILING = 1500;
+
 export const upsertCreatorAnnouncementSchema = z.object({
   id: z.number().optional(),
   title: z.string().trim().min(1).max(120),
-  content: z.string().trim().min(1).max(5000),
+  content: z.string().trim().min(1).max(CREATOR_ANNOUNCEMENT_CONTENT_CEILING),
   emoji: z.string().max(8).optional(),
   color: z.string().max(32).optional(),
   domain: z.array(domainColorEnum).nonempty().default([DomainColor.all]),

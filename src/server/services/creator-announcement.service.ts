@@ -4,6 +4,7 @@ import type {
   AnnouncementMetaSchema,
   UpsertCreatorAnnouncementSchema,
 } from '~/server/schema/announcement.schema';
+import { CREATOR_ANNOUNCEMENT_CONTENT_MAX } from '~/server/schema/announcement.schema';
 import { getAnnouncementAllowance } from '~/server/services/announcement-allowance.service';
 import { resolveCoverImageId } from '~/server/services/cover-image.service';
 import { isImageOwner } from '~/server/services/util.service';
@@ -203,7 +204,7 @@ export async function getFollowedAnnouncements({
 async function assertOwnedAnnouncement(id: number, userId: number, isModerator = false) {
   const existing = await dbRead.announcement.findFirst({
     where: isModerator ? { id, userId: { not: null } } : { id, userId },
-    select: { id: true, coverId: true, profileOnly: true, startsAt: true },
+    select: { id: true, coverId: true, profileOnly: true, startsAt: true, content: true },
   });
   if (!existing) throw throwAuthorizationError('Announcement not found');
   return existing;
@@ -239,6 +240,22 @@ export function toDomainRelativeLink(link: string) {
  * Shortest announcement we will store. Mirrored in apps/creator-studio/src/lib/announcements.ts,
  * where the picker enforces the same floor while the creator is choosing.
  */
+/**
+ * Enforces the content limit on new writing without trapping the rows that predate it.
+ *
+ * A migrated profile banner can be longer than the limit through no act of its owner, and
+ * refusing every save would leave them unable to edit their own card at all. Shortening is
+ * always allowed; growing past the limit never is.
+ */
+export function assertContentLength(content: string, previousContent?: string) {
+  if (content.length <= CREATOR_ANNOUNCEMENT_CONTENT_MAX) return;
+  if (previousContent && content.length <= previousContent.length) return;
+
+  throw throwBadRequestError(
+    `Announcements are limited to ${CREATOR_ANNOUNCEMENT_CONTENT_MAX} characters.`
+  );
+}
+
 export const MIN_ANNOUNCEMENT_DURATION_MS = 60 * 60 * 1000;
 
 /**
@@ -315,6 +332,8 @@ export async function upsertCreatorAnnouncement({
         }
       : {}),
   };
+
+  assertContentLength(input.content, existing?.content);
 
   const schedule = clampAnnouncementWindow({
     startsAt: input.startsAt,
