@@ -8,6 +8,22 @@ import { env } from '$env/dynamic/private';
 export function labConnectionString(): string {
   const url = env.MODERATOR_DATABASE_URL;
   if (!url) error(500, 'MODERATOR_DATABASE_URL is not configured');
+
+  // Consumers of this string build a bare `pg.Client`, which verifies the certificate chain. The
+  // cnpg pooler presents a self-signed one, so `sslmode=require` fails there with
+  // SELF_SIGNED_CERT_IN_CHAIN — encrypted-but-unverified is what this host needs. Rewriting it here
+  // rather than at each call site because eval-core and rate-core each open their own connection.
+  // An explicit `sslmode=disable` (a plain local docker Postgres) is left alone.
+  try {
+    const parsed = new URL(url);
+    const sslmode = parsed.searchParams.get('sslmode');
+    if (sslmode && sslmode !== 'disable' && sslmode !== 'no-verify') {
+      parsed.searchParams.set('sslmode', 'no-verify');
+      return parsed.toString();
+    }
+  } catch {
+    // Not a parseable URL — hand it back untouched and let pg report the real problem.
+  }
   return url;
 }
 

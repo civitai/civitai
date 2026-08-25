@@ -10,7 +10,7 @@
  * can both call it without agreeing on a database library.
  */
 import pg from 'pg';
-import { LABELS, type LabName } from './labels';
+import { LABELS, domainForSource, rubricFor, type DomainKey, type LabName } from './labels';
 
 export type RateOptions = {
   connectionString: string;
@@ -59,19 +59,15 @@ async function rate(args: {
   positivePrompt: string;
   negativePrompt: string | null;
   label: LabName;
+  domain: DomainKey;
   model: string;
   key: string;
 }): Promise<Rating> {
-  const def = LABELS[args.label];
+  // What the text is, the judgement, and any convention specific to this surface — composed in
+  // `labels.ts` so the rater does not carry a hardcoded idea of what it is reading.
+  const system = `${rubricFor(args.label, args.domain)}
 
-  const system = `You judge image-generation prompts for a single label. Answer only for the label described; ignore every other concern.
-
-LABEL: ${args.label}
-${def.rubric}
-
-The prompt may be hundreds of tokens of style boilerplate with the deciding term buried in it, in a non-English section, or inside a LoRA or embedding filename. Read all of it.
-
-A term appearing ONLY in the negative prompt is an exclusion. The user is asking to avoid it, so it must never make the verdict true.
+Answer only for the label described; ignore every other concern.
 
 Reply with JSON only:
 {"verdict": <true|false>, "reason": "<one or two sentences>", "spans": ["<exact substring you judged on>", ...]}
@@ -160,8 +156,9 @@ export async function rateBatch(opts: RateOptions): Promise<RateSummary> {
       id: string;
       positive_prompt: string;
       negative_prompt: string | null;
+      source: string;
     }>(
-      `SELECT s.id::text, s.positive_prompt, s.negative_prompt
+      `SELECT s.id::text, s.positive_prompt, s.negative_prompt, s.source
          FROM sample s
         WHERE s.batch = $1
           AND NOT EXISTS (
@@ -194,6 +191,7 @@ export async function rateBatch(opts: RateOptions): Promise<RateSummary> {
                   positivePrompt: row.positive_prompt,
                   negativePrompt: row.negative_prompt,
                   label: opts.label,
+                  domain: domainForSource(row.source),
                   model: m,
                   key,
                 });
