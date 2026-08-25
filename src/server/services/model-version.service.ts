@@ -83,6 +83,7 @@ import {
   getPaidAccess,
   getFreshSalesForPermanentGate,
   bustModelSaleCache,
+  bustPaidAccessCache,
   materializePaidAccessEndsAt,
   writePaidAccessForModelVersion,
 } from '~/server/services/paid-access.service';
@@ -2570,6 +2571,10 @@ export const bustMvCache = async (
   } catch {
     // Best-effort, like the busts around it: a stale badge is not worth failing an unpublish over.
   }
+  // Not covered by the badge bust above: the gate row caches the sale windows too, and it is what the
+  // model page prices from. Busting one and not the other left the card and the page disagreeing about
+  // the same sale for the rest of the hour (868kwp6ne).
+  await bustPaidAccessCache('ModelVersion', versionIds);
   await bustOrchestratorModelCache(versionIds, userId);
   await modelVersionAccessCache.refresh(versionIds);
   // Refresh imagesForModelVersionsCache too — TTL is up to 1 day on Datapacket,

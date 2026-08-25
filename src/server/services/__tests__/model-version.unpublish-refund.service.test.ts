@@ -52,6 +52,7 @@ vi.mock('~/server/services/paid-access.service', () => ({
   assertPaidAccessInput: vi.fn(),
   getFreshSalesForPermanentGate: vi.fn().mockResolvedValue([]),
   bustModelSaleCache: vi.fn(),
+  bustPaidAccessCache: vi.fn(),
 }));
 vi.mock('~/server/services/auction.service', () => ({ deleteBidsForModelVersion: vi.fn() }));
 vi.mock('~/server/services/blocklist.service', () => ({ throwOnBlockedLinkDomain: vi.fn() }));

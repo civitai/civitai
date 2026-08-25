@@ -20,6 +20,8 @@ const modelsQuerySchema = z.object({
   status: z.enum(['all', 'published', 'draft']).optional().catch(undefined),
   access: z.enum(['1']).optional().catch(undefined),
   usage: z.enum(['download', 'generation']).optional().catch(undefined),
+  // Set by "New sale", which sends the creator here to pick what the sale covers.
+  for: z.enum(['sale']).optional().catch(undefined),
   sort: z.enum(['recent', 'name']).catch('recent'),
   page: z.coerce.number().int().min(1).catch(1),
   // Page-size selector value (868ke493p); persisted to a cookie so it applies on later loads.
@@ -49,6 +51,8 @@ export type ModelsView = CreatorModelsResult & {
     access: boolean;
     usage: string;
     sort: 'recent' | 'name';
+    /** Picking versions for a sale: the list is narrowed to what a sale could discount. */
+    saleOnly: boolean;
   };
 };
 
@@ -70,6 +74,11 @@ export async function getModelsView(
   const baseModel = parsed.bm?.trim() || undefined;
   const type = parsed.mt?.trim() || undefined;
   const access = parsed.access === '1';
+  // The list a sale is picked from must only offer versions a sale can actually discount — a version
+  // with no permanent paid-access price takes the sale and shows nothing anywhere (CU 868kwp6mp).
+  // Independent of the flag on purpose: narrowing a list is safe, and pairing it with the flag would
+  // serialise the two queries below for no gain.
+  const saleOnly = parsed.for === 'sale';
 
   // Page size: an explicit ?ps= updates the shared cookie; otherwise fall back to the cookie, then the default.
   const perPage = resolvePageSize(parsed.ps, cookies.get(PAGE_SIZE_COOKIE));
@@ -87,6 +96,7 @@ export async function getModelsView(
       status: parsed.status,
       access,
       usage: parsed.usage,
+      saleEligible: saleOnly,
       sort: parsed.sort,
       page: parsed.page,
       perPage,
@@ -122,6 +132,7 @@ export async function getModelsView(
       access,
       usage: parsed.usage ?? '',
       sort: parsed.sort,
+      saleOnly,
     },
   };
 }

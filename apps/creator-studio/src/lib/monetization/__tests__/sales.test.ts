@@ -21,6 +21,7 @@ const days = (n: number) => new Date(NOW.getTime() + n * 24 * 60 * 60 * 1000);
 const base = {
   selectedCount: 5,
   earlyAccessCount: 0,
+  unpricedCount: 0,
   creatorScore: 25_000,
   tier: 'bronze',
   daysUsedInMonth: 0,
@@ -124,6 +125,39 @@ describe('resolveSaleEligibility', () => {
       earlyAccessCount: 1,
     });
     expect(one.blockedReason).toMatch(/This version is in early access/);
+  });
+
+  // CU 868kwp6cx. A sale composes over a permanent access price and nothing else, so one scheduled over
+  // versions that have no such price is created, reports itself as covering them, and then discounts
+  // nothing on the card, the model page or the charge. This is the exact shape of the sale a creator
+  // scheduled on 2026-08-25 — 20% off, five versions, no gate on any of them.
+  //
+  // 🔴 If you are removing this because the picker already filters the list: the picker is a list, and
+  // the ids reach this form through the URL. A bookmark, a back button or a price cleared between
+  // picking and submitting all arrive here with a selection the list would no longer show.
+  it('blocks a sale over versions with no access price to discount', () => {
+    const all = resolveSaleEligibility({ ...base, type: 'Percent', amount: 20, unpricedCount: 5 });
+    expect(all.canSchedule).toBe(false);
+    expect(all.blockedReason).toMatch(/None of the selected versions has a permanent access price/);
+
+    const one = resolveSaleEligibility({
+      ...base,
+      selectedCount: 1,
+      unpricedCount: 1,
+    });
+    expect(one.blockedReason).toMatch(/This version has no permanent access price/);
+  });
+
+  // Both counts come off the same total, so adding them rather than taking the larger is what keeps a
+  // selection that is entirely unschedulable from reporting versions it would cover.
+  it('counts unpriced and early-access versions as separate shortfalls', () => {
+    const mixed = resolveSaleEligibility({ ...base, earlyAccessCount: 2, unpricedCount: 3 });
+    expect(mixed.canSchedule).toBe(false);
+    expect(mixed.eligibleVersions).toBe(0);
+
+    const partial = resolveSaleEligibility({ ...base, earlyAccessCount: 1, unpricedCount: 1 });
+    expect(partial.canSchedule).toBe(true);
+    expect(partial.partialNotice).toEqual({ skipped: 2, applies: 3 });
   });
 
   it('still schedules a partly-early-access selection and reports the shortfall', () => {
@@ -237,6 +271,7 @@ describe('resolveSaleDraft', () => {
   const ctx = {
     selectedCount: 5,
     earlyAccessCount: 0,
+    unpricedCount: 0,
     minCoveredPrice: 500,
     creatorScore: 25_000,
     tier: 'bronze',
@@ -426,6 +461,7 @@ describe('the offered last day and the budget agree', () => {
   const ctx = {
     selectedCount: 1,
     earlyAccessCount: 0,
+    unpricedCount: 0,
     minCoveredPrice: 500,
     creatorScore: 25_000,
     tier: 'bronze',

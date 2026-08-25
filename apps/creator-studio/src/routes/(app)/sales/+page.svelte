@@ -69,10 +69,16 @@
         await invalidateAll();
         if (result.data?.cancelled) selectedId = null;
         if (result.data?.scheduled) {
-          const skipped = Number(result.data?.skippedEarlyAccess ?? 0);
+          const earlyAccess = Number(result.data?.skippedEarlyAccess ?? 0);
+          const unpriced = Number(result.data?.skippedUnpriced ?? 0);
+          const covered = Number(result.data?.covered ?? 0);
+          const reasons = [
+            earlyAccess > 0 ? `${earlyAccess} already in early access` : null,
+            unpriced > 0 ? `${unpriced} with no access price` : null,
+          ].filter(Boolean);
           toast.success(
-            skipped > 0
-              ? `Sale scheduled on ${result.data?.covered} version${result.data?.covered === 1 ? '' : 's'} — ${skipped} skipped, already in early access.`
+            reasons.length > 0
+              ? `Sale scheduled on ${covered} version${covered === 1 ? '' : 's'} — skipped ${reasons.join(' and ')}.`
               : 'Sale scheduled.'
           );
           await closeCreate();
@@ -127,9 +133,11 @@
     sale.endDate = isoDay(new Date(start.getTime() + (span - 1) * 86_400_000));
   });
 
-  // What the form can't see about a selection this page never listed: how much of it is early access,
-  // and the cheapest price among the rest. undefined = not known, which blocks rather than waves through.
+  // What the form can't see about a selection this page never listed: how much of it a sale would
+  // cover, why the rest is out, and the cheapest price among the covered ones. undefined = not known,
+  // which blocks rather than waves through.
   let earlyAccessCount = $state(0);
+  let unpricedCount = $state(0);
   let minCoveredPrice = $state<number | null | undefined>(undefined);
   let loadingPreview = $state(false);
   let previewRequest = 0;
@@ -137,6 +145,7 @@
     const ids = draftVersionIds;
     if (ids.length === 0) {
       earlyAccessCount = 0;
+      unpricedCount = 0;
       minCoveredPrice = undefined;
       return;
     }
@@ -151,16 +160,19 @@
         const parsed = deserialize(r);
         if (parsed.type !== 'success') {
           earlyAccessCount = 0;
+          unpricedCount = 0;
           minCoveredPrice = undefined;
           return;
         }
         earlyAccessCount = Number(parsed.data?.earlyAccess ?? 0);
+        unpricedCount = Number(parsed.data?.unpriced ?? 0);
         const min = parsed.data?.minCoveredPrice;
         minCoveredPrice = min == null ? null : Number(min);
       })
       .catch(() => {
         if (seq !== previewRequest) return;
         earlyAccessCount = 0;
+        unpricedCount = 0;
         minCoveredPrice = undefined;
       })
       .finally(() => {
@@ -178,6 +190,7 @@
       {
         selectedCount: draftVersionIds.length,
         earlyAccessCount,
+        unpricedCount,
         minCoveredPrice,
         creatorScore: data.creatorScore,
         tier: data.capTier,

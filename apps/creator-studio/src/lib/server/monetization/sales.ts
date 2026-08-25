@@ -11,6 +11,7 @@ import {
   type SaleLimitOverrides,
 } from '@civitai/buzz';
 import { dbRead, dbWrite } from '$lib/server/db';
+import { isSaleEligibleGate } from '$lib/server/monetization/sale-eligibility';
 import { saleLengthInDays } from '$lib/monetization/sales';
 
 // Scheduled sales — server reads and every write that changes a sale. Spec: CU 868ktk1ku.
@@ -34,29 +35,25 @@ const BUDGET_LOOKBACK_MONTHS = 2;
 const SALE_BUDGET_LOCK_CLASS = 4109;
 
 /**
- * Selected versions gated as Early Access, which a sale can't cover. `timeframeDays IS NOT NULL` is the
- * test, NOT `endsAt`: an unpublished timed gate also carries a null `endsAt` until publish materializes
- * it, so `endsAt` cannot tell a timed gate from a permanent one.
- *
- * Ownership-scoped like its siblings — an unscoped read would let the count report on versions the
- * caller doesn't own.
+ * What the sale form needs about a selection it can't see: how much of it a sale would actually cover,
+ * and why the rest is out. Same classification the write applies, so the form cannot offer a sale the
+ * write is going to refuse.
  */
-export async function countEarlyAccessVersions(
+export async function summarizeSaleSelection(
   userId: number,
   versionIds: number[]
-): Promise<number> {
-  if (!versionIds.length) return 0;
-  const row = await dbRead
-    .selectFrom('PaidAccess as pa')
-    .innerJoin('ModelVersion as mv', 'mv.id', 'pa.entityId')
-    .innerJoin('Model as m', 'm.id', 'mv.modelId')
-    .select(({ fn }) => fn.countAll<string>().as('count'))
-    .where('pa.entityType', '=', 'ModelVersion')
-    .where('pa.entityId', 'in', versionIds)
-    .where('pa.timeframeDays', 'is not', null)
-    .where('m.userId', '=', userId)
-    .executeTakeFirst();
-  return Number(row?.count ?? 0);
+): Promise<{ eligible: number; earlyAccess: number; unpriced: number }> {
+  if (!versionIds.length) return { eligible: 0, earlyAccess: 0, unpriced: 0 };
+  const { eligible, skippedEarlyAccess, skippedUnpriced } = await classifySelection(
+    dbRead,
+    userId,
+    versionIds
+  );
+  return {
+    eligible: eligible.length,
+    earlyAccess: skippedEarlyAccess,
+    unpriced: skippedUnpriced,
+  };
 }
 
 /**
@@ -144,7 +141,14 @@ export type ScheduleSaleInput = {
 };
 
 export type ScheduleSaleResult =
-  | { ok: true; saleId: number; covered: number; skippedEarlyAccess: number; versionIds: number[] }
+  | {
+      ok: true;
+      saleId: number;
+      covered: number;
+      skippedEarlyAccess: number;
+      skippedUnpriced: number;
+      versionIds: number[];
+    }
   | { ok: false; error: string };
 
 /** UTC midnight today — the earliest a sale may start. */
@@ -189,11 +193,18 @@ export async function scheduleSale(
 
     // Ownership and eligibility resolved on the primary too: a version that just changed hands or just
     // took an early-access gate must not slip in behind a stale replica.
-    const eligible = await eligibleVersionIds(trx, userId, versionIds);
+    const { eligible, skippedEarlyAccess, skippedUnpriced } = await classifySelection(
+      trx,
+      userId,
+      versionIds
+    );
     if (!eligible.length)
       return {
         ok: false as const,
-        error: "None of the selected versions can go on sale — a sale can't run on early access.",
+        error:
+          skippedUnpriced > 0
+            ? 'None of the selected versions can go on sale — a sale discounts a permanent access price, and none of them has one.'
+            : "None of the selected versions can go on sale — a sale can't run on early access.",
       };
 
     const refusal = await zeroFloorRefusal(trx, userId, eligible, tier, {
@@ -242,7 +253,8 @@ export async function scheduleSale(
       ok: true as const,
       saleId: sale.id,
       covered: eligible.length,
-      skippedEarlyAccess: versionIds.length - eligible.length,
+      skippedEarlyAccess,
+      skippedUnpriced,
       // Returned rather than re-read after the commit: these are the rows just written, and a fresh
       // lookup for the cache bust is a replica read that can come back empty.
       versionIds: eligible,
@@ -389,30 +401,44 @@ export async function deepenSale(
 }
 
 /**
- * Versions of `versionIds` the creator owns that are NOT early access. A version with no `PaidAccess`
- * row at all is included: it is ungated today, and a sale on it simply has nothing to discount until
- * they price it — refusing here would make "select all, schedule a sale" fail on a mixed selection.
+ * Splits a selection into the versions a sale can actually discount and the reasons the rest can't.
+ *
+ * A version with no permanent access price used to be eligible, on the reasoning that a sale over it
+ * simply discounts nothing until the creator prices it. That is the bug in CU 868kwp6cx: the sale is
+ * created, reports itself as covering the version, and then shows nothing on the card, the model page
+ * or the charge — because there is no price for `discountedTerms` to compose over. Every one of the 13
+ * sale items in production on 2026-08-25 was in that state.
+ *
+ * Versions the creator does not own are absent from the rows and silently dropped, as before.
  */
-async function eligibleVersionIds(
-  trx: typeof dbWrite,
+async function classifySelection(
+  trx: typeof dbRead | typeof dbWrite,
   userId: number,
   versionIds: number[]
-): Promise<number[]> {
+): Promise<{ eligible: number[]; skippedEarlyAccess: number; skippedUnpriced: number }> {
   const rows = await trx
     .selectFrom('ModelVersion as mv')
     .innerJoin('Model as m', 'm.id', 'mv.modelId')
     .leftJoin('PaidAccess as pa', (join) =>
-      join
-        .onRef('pa.entityId', '=', 'mv.id')
-        .on('pa.entityType', '=', 'ModelVersion')
-        .on('pa.timeframeDays', 'is not', null)
+      join.onRef('pa.entityId', '=', 'mv.id').on('pa.entityType', '=', 'ModelVersion')
     )
-    .select('mv.id')
+    .select(['mv.id', 'pa.timeframeDays', 'pa.endsAt', 'pa.terms'])
     .where('mv.id', 'in', versionIds)
     .where('m.userId', '=', userId)
-    .where('pa.entityId', 'is', null)
     .execute();
-  return rows.map((r) => r.id);
+
+  const eligible: number[] = [];
+  let skippedEarlyAccess = 0;
+  let skippedUnpriced = 0;
+  for (const row of rows) {
+    // A LEFT JOIN miss and a permanent gate both leave `timeframeDays` null, so the row is only a gate
+    // when `terms` came back — otherwise every ungated version reads as permanent.
+    const gate = row.terms == null ? null : row;
+    if (isSaleEligibleGate(gate)) eligible.push(row.id);
+    else if (gate && gate.timeframeDays != null) skippedEarlyAccess++;
+    else skippedUnpriced++;
+  }
+  return { eligible, skippedEarlyAccess, skippedUnpriced };
 }
 
 async function salesInMonth(

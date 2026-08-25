@@ -53,6 +53,11 @@ export type SaleEligibilityInput = {
   selectedCount: number;
   /** Selected versions gated as Early Access — a sale can't cover those. */
   earlyAccessCount: number;
+  /**
+   * Selected versions with no permanent access price. A sale composes over that price and nothing else,
+   * so one laid over these covers a version and then discounts nothing anywhere (CU 868kwp6cx).
+   */
+  unpricedCount: number;
   creatorScore: number;
   tier: string | null | undefined;
   /** Sale-days already committed in the budget month the draft starts in. */
@@ -86,9 +91,22 @@ export type SaleEligibility = {
   partialNotice?: { skipped: number; applies: number };
 };
 
+// Named by what is wrong with the SELECTION, not by what the creator did: "nothing here is priced" is
+// actionable, "sales need paid access" is a rule they then have to apply themselves.
+const nothingPricedReason = (selectedCount: number) =>
+  selectedCount === 1
+    ? 'This version has no permanent access price, so a sale has nothing to take Buzz off.'
+    : 'None of the selected versions has a permanent access price, so a sale has nothing to take Buzz off.';
+
+const allEarlyAccessReason = (selectedCount: number) =>
+  selectedCount === 1
+    ? "This version is in early access, and a sale can't run on early access."
+    : "Every selected version is in early access, and a sale can't run on early access.";
+
 export function resolveSaleEligibility({
   selectedCount,
   earlyAccessCount,
+  unpricedCount,
   creatorScore,
   tier,
   daysUsedInMonth,
@@ -101,7 +119,7 @@ export function resolveSaleEligibility({
   now,
   resolving,
 }: SaleEligibilityInput): SaleEligibility {
-  const eligibleVersions = Math.max(0, selectedCount - earlyAccessCount);
+  const eligibleVersions = Math.max(0, selectedCount - earlyAccessCount - unpricedCount);
   const daysAllowed = maxSaleDays(tier, overrides);
   const daysLeft = Math.max(0, daysAllowed - daysUsedInMonth);
   const leadDays = (startsAt.getTime() - now.getTime()) / DAY_MS;
@@ -122,9 +140,7 @@ export function resolveSaleEligibility({
   else if (draftDays <= 0) blockedReason = 'Choose the days the sale runs.';
   else if (eligibleVersions <= 0)
     blockedReason =
-      selectedCount === 1
-        ? "This version is in early access, and a sale can't run on early access."
-        : "Every selected version is in early access, and a sale can't run on early access.";
+      unpricedCount > 0 ? nothingPricedReason(selectedCount) : allEarlyAccessReason(selectedCount);
   else if (leadDays > maxLead) blockedReason = `A sale can start at most ${maxLead} days from now.`;
   // Backdating is not a cosmetic problem: the budget buckets by START month, so a sale backdated into a
   // past month spends an untouched budget and runs concurrently with this month's.
@@ -155,8 +171,8 @@ export function resolveSaleEligibility({
     daysLeft,
     blockedReason,
     partialNotice:
-      !blockedReason && earlyAccessCount > 0
-        ? { skipped: earlyAccessCount, applies: eligibleVersions }
+      !blockedReason && earlyAccessCount + unpricedCount > 0
+        ? { skipped: earlyAccessCount + unpricedCount, applies: eligibleVersions }
         : undefined,
   };
 }
@@ -197,6 +213,7 @@ export function resolveSaleDraft(
   ctx: {
     selectedCount: number;
     earlyAccessCount: number;
+    unpricedCount: number;
     /** Cheapest buyer-facing price; null = none priced, undefined = not known (blocks). */
     minCoveredPrice: number | null | undefined;
     overrides?: SaleLimitOverrides;
@@ -226,6 +243,7 @@ export function resolveSaleDraft(
     eligibility: resolveSaleEligibility({
       selectedCount: ctx.selectedCount,
       earlyAccessCount: ctx.earlyAccessCount,
+      unpricedCount: ctx.unpricedCount,
       creatorScore: ctx.creatorScore,
       tier: ctx.tier,
       daysUsedInMonth,

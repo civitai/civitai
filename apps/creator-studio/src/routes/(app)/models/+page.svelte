@@ -478,6 +478,10 @@
         <p class="text-sm text-dark-1">
           Choose the versions to put on sale, then continue to set the discount and dates.
         </p>
+        <p class="text-sm text-dark-2">
+          Only versions sold with a permanent access price are listed — a sale takes Buzz off that
+          price, so there is nothing for it to discount anywhere else.
+        </p>
       </div>
       <div class="flex items-center gap-2">
         <span
@@ -777,7 +781,19 @@
 <div aria-busy={searching} class={searching ? 'opacity-60 transition-opacity' : undefined}>
   {#if view.models.length === 0}
     <div class="placeholder">
-      {#if filterActive}
+      {#if view.query.saleOnly}
+        Nothing here can go on sale. A sale discounts a permanent access price, so price a version
+        first — early access and licensing fees aren't what a sale takes Buzz off.
+        {#if filterActive}
+          <button
+            class="underline"
+            onclick={() =>
+              navigate({ q: null, fee: null, bm: null, status: null, access: null, page: null })}
+            >Clear filters</button
+          >
+        {/if}
+        <a href="/models">Set a price</a>
+      {:else if filterActive}
         No models match your filters. <button
           class="underline"
           onclick={() =>
