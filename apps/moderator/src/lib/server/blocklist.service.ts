@@ -2,6 +2,7 @@ import type { Transaction } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { REDIS_KEYS, type RedisKeyTemplateCache } from '@civitai/redis';
 import { dbWrite } from './db';
+import { recordModActivity } from './mod-activity';
 import { logToAxiom } from './axiom';
 import { getRedis } from './redis';
 
@@ -131,6 +132,9 @@ export class BlocklistRowMismatchError extends Error {
 /** What a write did, and whether readers will see it before the month TTL expires. */
 export type BlocklistWriteResult = { count: number; cacheStale: boolean };
 
+/** What the transaction changed, and which row it changed — `recordModActivity` needs the row id. */
+type Written = { count: number; rowId: number };
+
 /**
  * Adds entries, returning how many the row actually GAINED — not how many were submitted. Since
  * both branches dedupe, re-adding entries that are already on the list changes nothing, and the
@@ -143,10 +147,12 @@ export async function upsertBlocklist({
   id,
   type,
   blocklist,
+  userId,
 }: {
   id?: number;
   type: string;
   blocklist: string[];
+  userId: number;
 }): Promise<BlocklistWriteResult> {
   const items = [
     ...new Set(blocklist.map((item) => item.toLowerCase()).filter((x) => x.length > 0)),
@@ -157,24 +163,24 @@ export async function upsertBlocklist({
   // write restored what the earlier one dropped, both reporting success. The other writer is the
   // main app's weekly cron, editing this same column through its own client, so the lock has to be
   // in the database rather than in either app.
-  const added = await dbWrite.transaction().execute(async (trx) => {
+  const added = await dbWrite.transaction().execute(async (trx): Promise<Written | undefined> => {
     const existing = await readRowForWrite(trx, type, id);
 
     if (!existing) {
       // An `id` that names no row of this type is a stale tab or a hand-crafted post. Refuse; do
       // NOT fall through to an insert, which would add a second row for the type.
       if (id !== undefined) return undefined;
-      await trx
+      const inserted = await trx
         .insertInto('Blocklist')
         .values({ type, data: items, updatedAt: new Date() })
         .returning(['id'])
         .executeTakeFirstOrThrow();
-      return items.length;
+      return { count: items.length, rowId: inserted.id };
     }
 
     const next = [...new Set([...existing.data, ...items])];
     const gained = next.length - existing.data.length;
-    if (gained === 0) return 0;
+    if (gained === 0) return { count: 0, rowId: existing.id };
 
     await trx
       .updateTable('Blocklist')
@@ -184,11 +190,20 @@ export async function upsertBlocklist({
       .where('id', '=', existing.id)
       .where('type', '=', type)
       .executeTakeFirstOrThrow();
-    return gained;
+    return { count: gained, rowId: existing.id };
   });
 
   if (added === undefined) throw new BlocklistRowMismatchError();
-  return { count: added, cacheStale: added > 0 ? !(await bustCache(type)) : false };
+  if (added.count === 0) return { count: 0, cacheStale: false };
+
+  const cacheStale = !(await bustCache(type));
+  await recordModActivity({
+    userId,
+    entityType: 'blocklist',
+    entityId: added.rowId,
+    activity: 'add',
+  });
+  return { count: added.count, cacheStale };
 }
 
 /**
@@ -202,22 +217,24 @@ export async function removeBlocklistItems({
   id,
   type,
   items,
+  userId,
 }: {
   id: number;
   type: string;
   items: string[];
+  userId: number;
 }): Promise<BlocklistWriteResult> {
   const lower = items.map((x) => x.toLowerCase());
 
   // Same lock and the same reason as `upsertBlocklist`: without it two chips removed in quick
   // succession each filtered the same pre-state and the second write put the first one back.
-  const removed = await dbWrite.transaction().execute(async (trx) => {
+  const removed = await dbWrite.transaction().execute(async (trx): Promise<Written> => {
     const row = await readRowForWrite(trx, type, id);
-    if (!row) return 0;
+    if (!row) return { count: 0, rowId: id };
 
     const filtered = row.data.filter((item) => !lower.includes(item));
     const count = row.data.length - filtered.length;
-    if (count === 0) return 0;
+    if (count === 0) return { count: 0, rowId: row.id };
 
     await trx
       .updateTable('Blocklist')
@@ -225,10 +242,19 @@ export async function removeBlocklistItems({
       .where('id', '=', row.id)
       .where('type', '=', type)
       .executeTakeFirstOrThrow();
-    return count;
+    return { count, rowId: row.id };
   });
 
-  return { count: removed, cacheStale: removed > 0 ? !(await bustCache(type)) : false };
+  if (removed.count === 0) return { count: 0, cacheStale: false };
+
+  const cacheStale = !(await bustCache(type));
+  await recordModActivity({
+    userId,
+    entityType: 'blocklist',
+    entityId: removed.rowId,
+    activity: 'remove',
+  });
+  return { count: removed.count, cacheStale };
 }
 
 /**
