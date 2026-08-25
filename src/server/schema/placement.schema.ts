@@ -1,5 +1,8 @@
 import { z } from 'zod';
-import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  allBrowsingLevelsFlag,
+  publicBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import { PLACEMENT_SURFACES, placementSurfaces } from '~/shared/utils/placement';
 import { REMIX_GALLERY_MAX_PINNED } from '~/shared/utils/remix-gallery';
 import {
@@ -205,7 +208,19 @@ export const getRemixGalleryVisibilitySchema = z.object({
  */
 export const getRemixGalleryCardSummariesSchema = z.object({
   imageIds: z.array(z.number().int().positive()).min(1).max(100),
-  browsingLevel: z.number().min(0).default(allBrowsingLevelsFlag),
+  /**
+   * 🔴 Defaults to PG, not to every level.
+   *
+   * The sibling reads default to `allBrowsingLevelsFlag` because they are opened
+   * deliberately, by a viewer who is already looking at the gallery. This one
+   * runs unattended on every feed surface, and its thumbnails render outside
+   * ImageGuard — so an omitted level here is not a narrower request, it is the
+   * widest one, and `applyDomainFeature` only narrows it where the DOMAIN has a
+   * cap. That is exactly how it shipped wide once. Failing closed costs a client
+   * that forgets the prop some missing frames, which is visible; failing open
+   * costs someone content they asked not to see.
+   */
+  browsingLevel: z.number().min(0).default(publicBrowsingLevelsFlag),
 });
 
 export const submitToRemixGallerySchema = z
