@@ -21,7 +21,10 @@ import type { QueueImage as SharedQueueImage } from '~/server/utils/queue-image'
 import { toQueueImage } from '~/server/utils/queue-image';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
-import { onlySelectableLevels } from '~/shared/constants/browsingLevel.constants';
+import {
+  nsfwBrowsingLevelsFlag,
+  onlySelectableLevels,
+} from '~/shared/constants/browsingLevel.constants';
 import {
   declineFeeAmount,
   encodePlacementQueueCursor,
@@ -1198,7 +1201,18 @@ const entryIsVisible = (levels: number, host: Prisma.Sql) => Prisma.sql`
         AND NOT i."acceptableMinor"
         AND NOT i.poi
         AND (i."nsfwLevel" & ${levels}) != 0
-        AND i."nsfwLevel" != 0${minorHostCeiling(host)}`;
+        AND i."nsfwLevel" != 0
+        -- Licensing, not moderation: an image built on a restricted base model
+        -- may not be shown at R or above. Copied from getAllImages verbatim
+        -- rather than simplified to NOT i."modelRestricted" - the column is not
+        -- in the Prisma schema and the backfill that writes it uses
+        -- IS DISTINCT FROM true, so a bare NOT would drop every SFW row the
+        -- moment a NULL appears, emptying galleries rather than over-showing.
+        -- The first arm settles SFW rows before nullability can matter.
+        AND (
+          (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
+          OR NOT i."modelRestricted"
+        )${minorHostCeiling(host)}`;
 
 export function parseGalleryCursor(cursor?: string | null) {
   if (!cursor) return null;
