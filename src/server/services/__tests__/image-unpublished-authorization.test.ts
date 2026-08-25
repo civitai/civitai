@@ -89,6 +89,23 @@ const filterFor = async (
 // on a count of returned rows.
 const DRAFTS_ONLY = 'publishedAtUnix NOT EXISTS';
 
+/**
+ * Is the query scoped to this creator by the top-level creator filter?
+ *
+ * A plain `toContain('userId = N')` is NOT enough, and this is not hypothetical:
+ * the filter carries a SECOND own-content clause — `(nsfwLevel = 0 AND userId =
+ * <viewer>)` — so for a creator viewing their own profile the viewer id appears
+ * whether or not the creator scope was applied. Deleting the scope filter left
+ * that assertion green in the creator case and only failed the moderator one,
+ * where the two ids differ.
+ *
+ * The creator scope is pushed as its own term and joined with ' AND ', so an
+ * EXACT term match distinguishes it from the same id nested inside another
+ * clause's parentheses.
+ */
+const scopedToCreator = (filter: string, id: number) =>
+  filter.split(' AND ').some((term) => term.trim() === `userId = ${id}`);
+
 beforeEach(() => {
   vi.clearAllMocks();
   fetchDocumentsAbortableMock.mockRejectedValue(new Error('stop here'));
@@ -98,7 +115,7 @@ describe.each([
   ['getImagesFromSearchPreFilter', getImagesFromSearchPreFilter],
   ['getImagesFromSearchPostFilter', getImagesFromSearchPostFilter],
 ])('%s — who may ask for unpublished content', (_name, fn) => {
-  it('grants a creator their own drafts on their own profile', async () => {
+  it('grants a creator their own drafts on their own profile, SCOPED to them', async () => {
     const filter = await filterFor(fn, {
       ...baseInput,
       currentUserId: CREATOR,
@@ -108,9 +125,14 @@ describe.each([
     });
 
     expect(filter).toContain(DRAFTS_ONLY);
+    // The scoping is what makes the grant safe, and it is a DIFFERENT line from
+    // the one granting it. Without this assertion, deleting or conditioning the
+    // creator filter turns own-drafts into every draft on the site for any
+    // signed-in caller, with every other case here still green.
+    expect(scopedToCreator(filter, CREATOR), `not scoped in: ${filter}`).toBe(true);
   });
 
-  it('grants a moderator any creator’s drafts', async () => {
+  it('grants a moderator any creator’s drafts, SCOPED to that creator', async () => {
     const filter = await filterFor(fn, {
       ...baseInput,
       currentUserId: MODERATOR,
@@ -120,6 +142,7 @@ describe.each([
     });
 
     expect(filter).toContain(DRAFTS_ONLY);
+    expect(scopedToCreator(filter, SOMEONE_ELSE), `not scoped in: ${filter}`).toBe(true);
   });
 
   it('REFUSES a non-moderator asking for someone else’s drafts', async () => {
@@ -144,6 +167,28 @@ describe.each([
     const filter = await filterFor(fn, {
       ...baseInput,
       currentUserId: CREATOR,
+      isModerator: false,
+      notPublished: true,
+    });
+
+    expect(filter).not.toContain(DRAFTS_ONLY);
+  });
+
+  it('REFUSES an anonymous caller with no creator scope at all', async () => {
+    // 🔴 The worst case, and the one the other five do not cover between them.
+    // Every other REFUSES case has exactly ONE of the two ids present, so both
+    // truthiness guards in `canRequestUnpublished` are individually redundant
+    // against them — and `return targetUserId === currentUserId` on its own
+    // leaves all of them green while answering `undefined === undefined` with
+    // TRUE here. `image.getInfinite` is a public procedure (`heavyProcedure` is
+    // `publicProcedure` + bulkhead), so that mutant serves every unpublished
+    // image on the site to anyone, unauthenticated.
+    //
+    // The simplification that produces it is one a reviewer would reasonably
+    // propose — "the `!!` checks are redundant with the `===`". This is the
+    // assertion that says no.
+    const filter = await filterFor(fn, {
+      ...baseInput,
       isModerator: false,
       notPublished: true,
     });

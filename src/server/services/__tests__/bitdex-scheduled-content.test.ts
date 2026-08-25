@@ -363,6 +363,52 @@ describe('BitDex primary feed — content is not served before its publish time'
     expect(result.data.map((i: { id: number }) => i.id)).not.toContain(101);
   });
 
+  it('declines a CREATOR’s own-drafts request so Meili answers it', async () => {
+    // The Draft toggle on the profile images/videos tabs sends `notPublished`
+    // from a non-moderator. `wantsUnpublished` reads `scheduled` alone for a
+    // non-moderator, so without the decline BitDex answers a drafts request with
+    // the PUBLISHED feed — and a non-empty result suppresses the Meili fallback,
+    // so the creator is shown a population that is not the one they asked for,
+    // with nothing signalling it.
+    //
+    // Scoped: `userId === currentUserId`. The decline sits AFTER the
+    // username→userId resolution, so a request addressed by handle reaches it
+    // with a resolved id rather than `undefined`.
+    routeByShape();
+
+    const result = await getImagesFromSearch({
+      ...baseInput,
+      currentUserId: OWNER_ID,
+      userId: OWNER_ID,
+      isModerator: false,
+      notPublished: true,
+    });
+
+    expect(result.source).toBe('meili');
+    // 101 is the published doc. Its presence would mean BitDex answered with the
+    // published feed — the exact failure this decline exists to prevent.
+    expect(result.data.map((i: { id: number }) => i.id)).not.toContain(101);
+  });
+
+  it('does NOT decline a non-moderator asking about SOMEONE ELSE', async () => {
+    // The control. Without it the test above passes against a build that declines
+    // every `notPublished` request from anyone, which would quietly route an
+    // unauthorized request to Meili instead of refusing it — and would make the
+    // decline look like authorization, which it is not. The filter builders are
+    // what refuse; this only chooses which backend answers.
+    routeByShape();
+
+    const result = await getImagesFromSearch({
+      ...baseInput,
+      currentUserId: OWNER_ID + 99,
+      userId: OWNER_ID,
+      isModerator: false,
+      notPublished: true,
+    });
+
+    expect(result.source).toBe('bitdex');
+  });
+
   it('declines a moderator’s `notPublished` request so Meili answers it', async () => {
     // Same class as `scheduled`. BitDex's query pushes `isPublished = false`,
     // which covers scheduled AND never-published with no separate signal, so it
