@@ -173,7 +173,7 @@ export const rollingSwissEngine: ChallengeJudgingEngine = {
 
       const pass = await runGroups(ctx, eligible, affordable, 1);
       calls += pass.calls;
-      // Nothing left to compare. The only clean way out of this loop.
+      // Nothing left to compare — the field is settled.
       if (pass.planned === 0) break;
       // 🔴 Keyed on ROWS RECORDED, never on calls made. A call that resolved and then failed to
       // write, and a call that came back unparseable, both leave the field exactly as unmeasured as
@@ -192,6 +192,9 @@ export const rollingSwissEngine: ChallengeJudgingEngine = {
       // properly, which is what the whole tick did before groups were caught individually. With any
       // rows, the ranking is evidence-based but short, which is what `shortOfBudget` below reports.
       // `advance` keeps the tolerant behaviour throughout; only at close does giving up cost money.
+      // Strictly fresher than the snapshot the pass planned from, so it can only ever hold MORE
+      // rows — which makes the guard more permissive, the safe direction for one that refuses to
+      // finalize. Reached only when a pass recorded nothing, so at most once per close.
       const measured = await store.getSwissState(ctx.challengeId);
       if (measured.games.size === 0) {
         throw new Error(

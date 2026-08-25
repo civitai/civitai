@@ -171,7 +171,7 @@ describe('advance and rankField', () => {
     expect(incrementOperationSpent).toHaveBeenCalledExactlyOnceWith(1, 12);
   });
 
-  it('counts a malformed ranking as a failure and records nothing for it', async () => {
+  it('bills a malformed ranking as a CALL and records nothing for it', async () => {
     getStandings.mockResolvedValue(standings(GROUP_SIZE));
     stubQueries(GROUP_SIZE);
     compareGroup.mockResolvedValue({
@@ -649,6 +649,43 @@ describe('advance and rankField', () => {
     expect(logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'challenge-swiss-close', passes: 1 })
     );
+  });
+
+  /**
+   * 🔴 A DELIBERATE decision, pinned here because the argument for undoing it is a good one.
+   *
+   * A close where every group's images fail to load throws like any other unmeasured field — and a
+   * review correctly pointed out that this arm has NO path to success: a deleted image does not come
+   * back, so the hourly recovery re-plans the same groups and fails identically, forever. The
+   * suggested fix was to exempt the pure-unloadable case from the throw.
+   *
+   * Not taken. Exempting it means finalizing on a field with no comparison rows, which is the payout
+   * on `imageId` order this whole branch exists to prevent — and the entries' authors are still paid
+   * even though their images are gone. A challenge that never finalizes pays nobody and warns on
+   * every cycle; a challenge that finalizes wrongly pays the wrong creators, irreversibly. The
+   * throw message names `unloadable`, so the two are distinguishable in Axiom.
+   *
+   * If this ever needs revisiting, the fix is an attempt cap on the hourly recovery, NOT an
+   * exemption here.
+   */
+  it('REFUSES to finalize when the whole field failed to LOAD', async () => {
+    const field = GROUP_SIZE * 4;
+    // The images query returns nothing, so no group can be assembled.
+    queryRaw.mockImplementation((strings: TemplateStringsArray) => {
+      const sql = Array.isArray(strings) ? strings.join('') : String(strings);
+      if (sql.includes('startsAt'))
+        return Promise.resolve([
+          { startsAt: new Date(Date.now() - 60_000), endsAt: new Date(Date.now() + 60_000) },
+        ]);
+      if (sql.includes('COUNT(*)')) return Promise.resolve([{ relations: BigInt(0) }]);
+      return Promise.resolve([]);
+    });
+
+    await expect(rollingSwissEngine.rankField(ctx, closeField(field))).rejects.toThrow(
+      /field unmeasured/
+    );
+    expect(compareGroup).not.toHaveBeenCalled();
+    expect(replaceStandings).not.toHaveBeenCalled();
   });
 
   it('still finalizes at close when SOME groups succeeded, and settles by running OUT of work', async () => {
