@@ -230,7 +230,7 @@ was last audited, on 2026-08-24, and were wired in then. **Add a new guard to th
 you write it**, and don't read a green `test:lint-rules` as "all guards passed" without checking the directory
 against the script.
 
-`test:lint-rules` names 21 files today.
+`test:lint-rules` names 22 files today.
 
 The count above, the count in the list, and the list itself are what went stale three times, so
 `no-lint-rules-script-drift` fails when they disagree with the directory or the script. It reads two exact
