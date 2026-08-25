@@ -30,6 +30,9 @@ vi.mock('~/server/services/user-hub.service', () => ({
   resolveHubSourceFromUrl: vi.fn().mockResolvedValue(null),
   addUserHubSource: vi.fn().mockResolvedValue({ hubId: 1, added: true }),
   removeUserHubSource: vi.fn().mockResolvedValue({ hubId: 1, removed: true }),
+  getFollowedHubs: vi.fn().mockResolvedValue([]),
+  followUserHub: vi.fn().mockResolvedValue({ hubId: 1, followed: true }),
+  unfollowUserHub: vi.fn().mockResolvedValue({ hubId: 1, followed: false }),
 }));
 
 import { getUserHubById } from '~/server/services/user-hub.service';
@@ -49,6 +52,9 @@ const inputs: Record<string, unknown> = {
   resolveSource: { url: 'https://civitai.com/user/someone' },
   addSource: { hubId: 1, type: 'User', targetId: 2 },
   removeSource: { hubId: 1, type: 'User', targetId: 2 },
+  getFollowed: undefined,
+  follow: { hubId: 1 },
+  unfollow: { hubId: 1 },
 };
 
 const procedureNames = Object.keys(
@@ -168,6 +174,9 @@ const requiredScopes: Record<string, number> = {
   removeSource: TokenScope.UserWrite,
   delete: TokenScope.UserWrite,
   setOrder: TokenScope.UserWrite,
+  getFollowed: TokenScope.UserRead,
+  follow: TokenScope.UserWrite,
+  unfollow: TokenScope.UserWrite,
 };
 
 // `UserRead` and `UserWrite` are independent bits, so each is the other's negative
