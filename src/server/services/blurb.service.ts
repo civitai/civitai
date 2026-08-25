@@ -4,7 +4,8 @@ import { hashContent } from '~/server/services/entity-moderation.service';
 export const MAX_BLURBS_PER_USER = 20;
 
 // Names are immutable by design: a blurb's name is how a creator refers to it,
-// and there is no update path that writes it. See the spec's rationale.
+// and there is no update path that writes it. See "Names cannot be changed" in
+// docs/features/reusable-text-blurbs.md.
 export async function createBlurb({
   userId,
   name,
