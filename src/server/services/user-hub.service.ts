@@ -14,6 +14,7 @@ import {
   HUB_COLLECTION_SOURCES_ENABLED,
   hubFeedFiltersSchema,
   hubLimits,
+  hubSourceKey,
 } from '~/server/schema/user-hub.schema';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import {
@@ -30,6 +31,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { ImageSort, NsfwLevel } from '~/server/common/enums';
 import { getUserCollectionPermissionsByIds } from '~/server/services/collection.service';
+import { simpleUserSelect } from '~/server/selectors/user.selector';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import { getAllServerHosts } from '~/server/utils/server-domain';
 import { parseCivitaiUrlSafe } from '~/utils/civitai-url';
@@ -43,8 +45,11 @@ const hubSelect = {
   period: true,
   mediaTypes: true,
   availability: true,
-  nsfwLevel: true,
+  forcedBrowsingLevel: true,
   metadata: true,
+  // A hub arriving by a shared link says nothing about whose curation it is unless
+  // the owner comes with it.
+  user: { select: simpleUserSelect },
   sources: {
     select: { id: true, type: true, targetId: true, alias: true, enabled: true, index: true },
     orderBy: { index: 'asc' },
@@ -123,16 +128,16 @@ export async function getUserHubById({ id, userId, isModerator }: { id: number }
 }
 
 /**
- * Whether the page should render at all, asked before the client query runs so that
- * a revoked link is a real HTTP 404 rather than a 200 carrying a not-found
- * component (subtask 868kwp5g8). A count on the primary key, not a second fetch of
- * the row the client is about to ask for anyway.
+ * What the route needs before it renders: null when this viewer may not open the
+ * hub, so a revoked link is a real HTTP 404 rather than a 200 carrying a not-found
+ * component (subtask 868kwp5g8). The name comes back with it because the canonical
+ * slug redirect needs it, and two facts off one primary-key read beats two reads.
  */
-export async function userHubIsViewable({ id, userId, isModerator }: { id: number } & HubViewer) {
-  const count = await dbRead.userHub.count({
+export async function getUserHubForRoute({ id, userId, isModerator }: { id: number } & HubViewer) {
+  return dbRead.userHub.findFirst({
     where: { id, ...hubViewerWhere({ userId, isModerator }) },
+    select: { id: true, name: true },
   });
-  return count > 0;
 }
 
 export async function upsertUserHub({ userId, ...input }: UpsertUserHubInput & { userId: number }) {
@@ -152,7 +157,10 @@ export async function upsertUserHub({ userId, ...input }: UpsertUserHubInput & {
   if (!id) {
     if (!data.name) throw throwBadRequestError('A new hub needs a name');
 
-    const count = await dbRead.userHub.count({ where: { userId } });
+    // Through the WRITER, like every other read-then-write in this file: replica lag
+    // lets a burst of creates overshoot the cap, and Duplicate makes creating a hub
+    // one click.
+    const count = await dbWrite.userHub.count({ where: { userId } });
     if (count >= hubLimits.hubsPerUser)
       throw throwBadRequestError(`You can have at most ${hubLimits.hubsPerUser} hubs`);
 
@@ -253,7 +261,13 @@ export async function addUserHubSource({
     // success message for nothing happening.
     if (existing.enabled) return { hubId, added: false };
 
-    await dbWrite.userHubSource.update({ where: { id: existing.id }, data: { enabled: true } });
+    // Owner-scoped on the write as well as in the read above, per the argument this
+    // file makes for `removeUserHubSource`: id-addressing is safe only while a source
+    // row cannot change hubs, and that is not a property anything enforces.
+    await dbWrite.userHubSource.updateMany({
+      where: { id: existing.id, hub: { userId } },
+      data: { enabled: true },
+    });
     return { hubId, added: true };
   }
 
@@ -337,7 +351,7 @@ export type ResolvedHubSources = {
   /** True when a Model source expanded past the id cap and was trimmed. */
   truncated: boolean;
   /** The hub's stored browsing-level cap. 0 means the hub imposes none. */
-  nsfwLevel: number;
+  forcedBrowsingLevel: number;
 };
 
 // Resolves a hub to the id sets its feed filter is built from. Returns null when
@@ -356,7 +370,7 @@ export async function resolveHubSources({
   const hub = await dbRead.userHub.findFirst({
     where: { id: hubId, ...hubViewerWhere({ userId, isModerator }) },
     select: {
-      nsfwLevel: true,
+      forcedBrowsingLevel: true,
       sources: { where: { enabled: true }, select: { type: true, targetId: true } },
     },
   });
@@ -367,11 +381,9 @@ export async function resolveHubSources({
   // than in the filter builders because this is the one place the id sets exist,
   // and because subtracting can only ever NARROW the feed: a forged exclusion
   // removes content from the forger, and can add none.
-  const excluded = new Set(
-    (excludedSources ?? []).map((source) => `${source.type}:${source.targetId}`)
-  );
+  const excluded = new Set((excludedSources ?? []).map(hubSourceKey));
   const sources = excluded.size
-    ? hub.sources.filter((s) => !excluded.has(`${s.type}:${s.targetId}`))
+    ? hub.sources.filter((s) => !excluded.has(hubSourceKey(s)))
     : hub.sources;
 
   const byType = (type: UserHubSourceType) =>
@@ -423,7 +435,7 @@ export async function resolveHubSources({
     modelVersionIds,
     truncated,
     collectionIds: byType(UserHubSourceType.Collection),
-    nsfwLevel: hub.nsfwLevel,
+    forcedBrowsingLevel: hub.forcedBrowsingLevel,
   };
 }
 
@@ -437,12 +449,12 @@ export async function resolveHubSources({
  * own setting on whichever backend that request happened to take.
  */
 export function hubBrowsingLevel(browsingLevel: number | undefined, sources: ResolvedHubSources) {
-  if (!sources.nsfwLevel) return browsingLevel;
+  if (!sources.forcedBrowsingLevel) return browsingLevel;
   // An absent level means PG here, exactly as it does in the level block each
   // caller runs next. Defaulting to "every level" instead would let a hub's cap
   // WIDEN a request that asked for no level at all, which is the opposite of what
   // a cap is for.
-  return (browsingLevel || NsfwLevel.PG) & sources.nsfwLevel;
+  return (browsingLevel || NsfwLevel.PG) & sources.forcedBrowsingLevel;
 }
 
 export function hubSourcesAreEmpty(sources: ResolvedHubSources) {

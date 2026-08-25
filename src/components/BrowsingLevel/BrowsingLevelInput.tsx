@@ -11,9 +11,23 @@ import classes from './BrowsingLevelInput.module.scss';
 type BrowsingLevelInput = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?: number;
   onChange?: (value: number) => void;
+  /** The levels to offer. Defaults to all of them; a hub offers only what its owner allows. */
+  levels?: readonly BrowsingLevel[];
+  /**
+   * Report clearing the last level as 0. Off by default because the original caller
+   * (a collection's forced level) has always swallowed it, and starting to send 0
+   * there would change what that form saves.
+   */
+  allowEmpty?: boolean;
 };
 
-export function BrowsingLevelsInput({ value, onChange, ...props }: BrowsingLevelInput) {
+export function BrowsingLevelsInput({
+  value,
+  onChange,
+  levels = browsingLevels,
+  allowEmpty,
+  ...props
+}: BrowsingLevelInput) {
   const [browsingLevel, setBrowsingLevel] = useState<number>(value || 0);
   const onToggle = useCallback(
     (level: number) => {
@@ -23,7 +37,7 @@ export function BrowsingLevelsInput({ value, onChange, ...props }: BrowsingLevel
   );
 
   useDidUpdate(() => {
-    if (browsingLevel) {
+    if (browsingLevel || allowEmpty) {
       onChange?.(browsingLevel);
     }
   }, [browsingLevel]);
@@ -38,7 +52,7 @@ export function BrowsingLevelsInput({ value, onChange, ...props }: BrowsingLevel
   return (
     <Input.Wrapper {...props} error={props.error}>
       <Group gap="xs" mt="md" wrap="nowrap">
-        {browsingLevels.map((level) => (
+        {levels.map((level) => (
           <BrowsingLevelLabel
             key={level}
             level={level}

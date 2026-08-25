@@ -8157,7 +8157,11 @@ model UserHub {
   availability Availability @default(Private)
   // A browsing-level bitmask the hub's own feed is capped to. 0 means uncapped —
   // the viewer's own level decides, as it did before hubs could be shared.
-  nsfwLevel Int             @default(0)
+  //
+  // Named like Collection's and Challenge's, NOT `nsfwLevel`: every `nsfwLevel`
+  // column in this schema is a DERIVED content level that nsfwLevels.service.ts
+  // owns and overwrites. This one is a setting its owner chose.
+  forcedBrowsingLevel Int   @default(0)
 
   sources   UserHubSource[]
 

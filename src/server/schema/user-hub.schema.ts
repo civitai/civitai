@@ -129,7 +129,7 @@ export const upsertUserHubSchema = z.object({
   // A browsing-level bitmask, 0 for "no cap". Masked rather than rejected on the
   // way in: an unknown bit is a level this deployment does not have, and storing it
   // would let a later release widen an existing hub by adding one.
-  nsfwLevel: z
+  forcedBrowsingLevel: z
     .number()
     .int()
     .min(0)
@@ -145,6 +145,11 @@ export const hubSourceExclusionSchema = z.object({
 });
 
 export type HubSourceExclusionInput = z.infer<typeof hubSourceExclusionSchema>;
+
+// The client builds its exclusion set with this and the service subtracts with it.
+// One spelling, in the module both sides already import from.
+export const hubSourceKey = (source: HubSourceExclusionInput) =>
+  `${source.type}:${source.targetId}`;
 
 export const setUserHubOrderSchema = z.object({
   ids: z.array(z.number()).max(hubLimits.hubsPerUser),

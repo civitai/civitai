@@ -1,6 +1,7 @@
 import type { HubSourceValue } from '~/components/Hubs/HubSourceEditor';
 import type { HubPanelHub } from '~/components/Hubs/HubSourcePanel';
 import { hubLimits } from '~/server/schema/user-hub.schema';
+import type { Availability } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
 import { slugit } from '~/utils/string-helpers';
 
@@ -37,8 +38,11 @@ export function hubUrl(hub: { id: number; name: string }) {
  * a hub that does not match what they were looking at.
  */
 export function buildDuplicateHubInput(hub: {
+  id?: number;
   name: string;
+  forcedBrowsingLevel?: number;
   sources: {
+    id?: number;
     type: HubSourceValue['type'];
     targetId: number;
     alias?: string | null;
@@ -47,6 +51,13 @@ export function buildDuplicateHubInput(hub: {
 }) {
   return {
     name: `${hub.name} (copy)`.slice(0, hubLimits.nameLength),
+    // Carried, because the level is the reason the level exists: the hub Ellie
+    // described collects creators whose other work is porn, and a copy without the
+    // cap hands the copier that list uncapped. It cannot widen anything — the
+    // copier's own level still intersects it.
+    forcedBrowsingLevel: hub.forcedBrowsingLevel ?? 0,
+    // Fields picked one by one rather than spread: `getById` rows carry a row `id`,
+    // and passing one through would address the ORIGINAL's source rows.
     sources: hub.sources
       .filter((source) => source.enabled)
       .slice(0, hubLimits.sourcesPerHub)
@@ -65,7 +76,8 @@ export function buildDuplicateHubInput(hub: {
 export function toPanelHub(hub: {
   id: number;
   name: string;
-  nsfwLevel: number;
+  forcedBrowsingLevel: number;
+  availability: Availability;
   isOwner: boolean;
   sources: {
     id: number;
@@ -79,7 +91,8 @@ export function toPanelHub(hub: {
   return {
     id: hub.id,
     name: hub.name,
-    nsfwLevel: hub.nsfwLevel,
+    forcedBrowsingLevel: hub.forcedBrowsingLevel,
+    availability: hub.availability,
     isOwner: hub.isOwner,
     sources: hub.sources.map(({ id: _id, ...source }) => source),
   };

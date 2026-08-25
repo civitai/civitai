@@ -14,7 +14,9 @@ import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import type { HubSourceValue } from '~/components/Hubs/HubSourceEditor';
 import { HubSourceEditor } from '~/components/Hubs/HubSourceEditor';
+import { BrowsingLevelsInput } from '~/components/BrowsingLevel/BrowsingLevelInput';
 import { useSortAvailability } from '~/components/Filters/useSortAvailability';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { defaultHubSort } from '~/components/Hubs/hub-sort';
 import { hubUrl, useInvalidateHub } from '~/components/Hubs/hub.utils';
 import { hubLimits } from '~/server/schema/user-hub.schema';
@@ -38,18 +40,24 @@ export default function HubUpsertModal({
    * copier renames before saving (subtask 868kwp5j3); nothing is written until they
    * do, and the copy has no link back to the original.
    */
-  duplicateOf?: { name: string; sources: HubSourceValue[] };
+  duplicateOf?: { name: string; forcedBrowsingLevel: number; sources: HubSourceValue[] };
 }) {
   const dialog = useDialogContext();
   const router = useRouter();
   const invalidateHub = useInvalidateHub();
   const editing = !!hub;
   const defaultSort = defaultHubSort(useSortAvailability());
+  const features = useFeatureFlags();
 
   const [name, setName] = useState(hub?.name ?? duplicateOf?.name ?? '');
   const [description, setDescription] = useState(hub?.description ?? '');
   const [sources, setSources] = useState<HubSourceValue[]>(duplicateOf?.sources ?? []);
   const [isPublic, setIsPublic] = useState(hub?.availability === Availability.Public);
+  // Creation only. Once a hub exists the level lives in its Sources panel, beside the
+  // sources it applies to — the edit modal deliberately does not carry it.
+  const [forcedBrowsingLevel, setForcedBrowsingLevel] = useState(
+    duplicateOf?.forcedBrowsingLevel ?? 0
+  );
 
   const upsert = trpc.userHub.upsert.useMutation({
     onSuccess: async (saved) => {
@@ -81,7 +89,11 @@ export default function HubUpsertModal({
       // strand them on it.
       ...(editing
         ? {}
-        : { sort: defaultSort, sources: sources.map((s, index) => ({ ...s, index })) }),
+        : {
+            sort: defaultSort,
+            forcedBrowsingLevel,
+            sources: sources.map((s, index) => ({ ...s, index })),
+          }),
     });
   };
 
@@ -122,6 +134,20 @@ export default function HubUpsertModal({
           disabled={upsert.isPending}
           onChange={(event) => setIsPublic(event.currentTarget.checked)}
         />
+
+        {!editing && features.canViewNsfw && (
+          <BrowsingLevelsInput
+            label="Content levels"
+            description={
+              forcedBrowsingLevel
+                ? 'Only these levels show in this hub.'
+                : 'No limit — the browsing settings of whoever is looking decide.'
+            }
+            value={forcedBrowsingLevel}
+            allowEmpty
+            onChange={setForcedBrowsingLevel}
+          />
+        )}
 
         {!editing && (
           <>

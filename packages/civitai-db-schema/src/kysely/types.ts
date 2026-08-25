@@ -4021,7 +4021,7 @@ export type UserHub = {
   mediaTypes: MediaType[];
   metadata: Generated<unknown>;
   availability: Generated<Availability>;
-  nsfwLevel: Generated<number>;
+  forcedBrowsingLevel: Generated<number>;
 };
 export type UserHubSource = {
   id: Generated<number>;

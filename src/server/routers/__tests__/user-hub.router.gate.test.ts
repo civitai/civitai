@@ -54,6 +54,41 @@ const procedureNames = Object.keys(
   (userHubRouter as unknown as { _def: { procedures: Record<string, unknown> } })._def.procedures
 );
 
+// Signed out. The whole point of a shareable hub link is that someone who is not
+// logged in can open it, and `getById` is the only verb that may serve them.
+const anonymousCaller = () =>
+  userHubRouter.createCaller({
+    user: undefined,
+    ip: '1.2.3.4',
+    acceptableOrigin: true,
+    tokenScope: TokenScope.Full,
+    apiKeyId: null,
+    features: {},
+  } as never) as unknown as Record<string, (input?: unknown) => Promise<unknown>>;
+
+describe('a signed-out visitor can open a hub and do nothing else', () => {
+  beforeEach(() => {
+    getFeatureFlagsMock.mockReturnValue({ userHubs: true });
+  });
+
+  it('getById serves a signed-out caller', async () => {
+    // Reverting `getById` to `userHubProcedure` UNAUTHORIZEDs every shared link, and
+    // reading `ctx.user.id` instead of `ctx.user?.id` throws on the same request.
+    // Both are one-token edits and nothing else in the repo sees either.
+    await expect(anonymousCaller().getById({ id: 1 })).resolves.not.toThrow();
+  });
+
+  for (const name of procedureNames.filter((n) => n !== 'getById')) {
+    it(`${name} still refuses a signed-out caller`, async () => {
+      // The control on the line above: opening ONE read to the public must not have
+      // opened the rest of the router with it.
+      await expect(anonymousCaller()[name](inputs[name])).rejects.toMatchObject({
+        code: 'UNAUTHORIZED',
+      });
+    });
+  }
+});
+
 const caller = (tokenScope: number = TokenScope.Full, apiKeyId: number | null = null) =>
   userHubRouter.createCaller({
     user: { id: 7, isModerator: false },

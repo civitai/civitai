@@ -5401,7 +5401,7 @@ export interface UserHub {
   mediaTypes: MediaType[];
   metadata: JsonValue;
   availability: Availability;
-  nsfwLevel: number;
+  forcedBrowsingLevel: number;
   sources?: UserHubSource[];
 }
 

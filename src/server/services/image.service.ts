@@ -4722,10 +4722,17 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   const nsfwFilters = [
     makeMeiliImageSearchFilter(nsfwLevelField, `IN [${browsingLevels.join(',')}]`) as string,
   ];
-  const nsfwUserFilters = [makeMeiliImageSearchFilter(nsfwLevelField, `= 0`)];
-  if (currentUserId)
-    nsfwUserFilters.push(makeMeiliImageSearchFilter('userId', `= ${currentUserId}`));
-  nsfwFilters.push(`(${nsfwUserFilters.join(' AND ')})`);
+  // The caller's own unscanned uploads. Added only when there IS a caller: with no
+  // `userId` clause to pair it with, this arm is every unscanned image on the site,
+  // ORed past the browsing level, for anyone logged out. Signed-in behaviour is
+  // unchanged.
+  if (currentUserId) {
+    const nsfwUserFilters = [
+      makeMeiliImageSearchFilter(nsfwLevelField, `= 0`),
+      makeMeiliImageSearchFilter('userId', `= ${currentUserId}`),
+    ];
+    nsfwFilters.push(`(${nsfwUserFilters.join(' AND ')})`);
+  }
   filters.push(`(${nsfwFilters.join(' OR ')})`);
 
   // NSFW License Restrictions Filter
