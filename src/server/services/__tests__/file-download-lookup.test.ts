@@ -1,5 +1,11 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+// Type-only: erased at runtime, so the dynamic-import warm-up in each describe
+// (which is what keeps the heavy module graph off the per-test timeout) still
+// does the actual loading. Replaces inline `typeof import(...)` annotations,
+// which this repo's eslint config forbids.
+import type * as FileService from '../file.service';
+import type * as ModelHelpers from '~/server/common/model-helpers';
 
 // file.service.ts imports `@prisma/client` (type-only) plus a wide graph that
 // calls Prisma runtime helpers at module load. Mirror the house stub pattern
@@ -137,7 +143,7 @@ describe('getFileForModelVersion — orphan model relation + unresolvable URL', 
   // box that transform can exceed a per-test timeout (a 30s describe override
   // flaked here under contention). Pay it ONCE in beforeAll with a generous hook
   // timeout, then every test uses the warm reference — no per-test import race.
-  let getFileForModelVersion: typeof import('../file.service')['getFileForModelVersion'];
+  let getFileForModelVersion: typeof FileService.getFileForModelVersion;
   beforeAll(async () => {
     ({ getFileForModelVersion } = await import('../file.service'));
   }, 60000);
@@ -371,8 +377,8 @@ describe('getFileForModelVersion — orphan model relation + unresolvable URL', 
  * clauses. `not-found` here IS the production 404.
  */
 describe('serialized downloadUrl → getFileForModelVersion (the pair actually resolves)', () => {
-  let getFileForModelVersion: typeof import('../file.service')['getFileForModelVersion'];
-  let createSerializedFileDownloadUrl: typeof import('~/server/common/model-helpers')['createSerializedFileDownloadUrl'];
+  let getFileForModelVersion: typeof FileService.getFileForModelVersion;
+  let createSerializedFileDownloadUrl: typeof ModelHelpers.createSerializedFileDownloadUrl;
   type RouteInput = Omit<Parameters<typeof getFileForModelVersion>[0], 'user' | 'noAuth'>;
   beforeAll(async () => {
     ({ getFileForModelVersion } = await import('../file.service'));
@@ -552,5 +558,69 @@ describe('serialized downloadUrl → getFileForModelVersion (the pair actually r
     });
     const where = modelFileFindFirst.mock.calls[0][0].where;
     expect(where).toMatchObject({ id: 21, modelVersionId: 4242 });
+  });
+});
+
+/**
+ * The SEAM between `getFileForModelVersion` and `resolveDownloadUrl`.
+ *
+ * 🔴 Measured before these existed: hardcoding `{ direct: true }` at the
+ * `resolveDownloadUrl` call site, and dropping the 4th argument entirely, BOTH
+ * passed the full download-path suite. The caller's `direct` had no observable
+ * consequence anywhere in the tests — the option was threaded through code that
+ * nothing asserted on.
+ *
+ * `direct` decides whether a download is served from a CDN or from the storage
+ * origin, and those are billed differently. An always-on mutant is therefore a
+ * silent cost regression, which is precisely the shape a test suite should not
+ * be blind to.
+ */
+describe('getFileForModelVersion — the direct flag reaches resolveDownloadUrl', () => {
+  let getFileForModelVersion: typeof FileService.getFileForModelVersion;
+  beforeAll(async () => {
+    ({ getFileForModelVersion } = await import('../file.service'));
+  }, 60000);
+
+  beforeEach(() => {
+    modelVersionFindFirst.mockReset();
+    modelFileFindMany.mockReset();
+    hasEntityAccessMock.mockReset();
+    resolveDownloadUrlMock.mockReset();
+    getPaidAccessMock.mockReset();
+
+    hasEntityAccessMock.mockResolvedValue([{ hasAccess: true, permissions: 0 }]);
+    getPaidAccessMock.mockResolvedValue({});
+    modelFileFindMany.mockResolvedValue([aFile]);
+    modelVersionFindFirst.mockResolvedValue(publishedModelVersion());
+    resolveDownloadUrlMock.mockResolvedValue({ url: 'https://cdn/ok', urlExpiryDate: new Date() });
+  });
+
+  // `requireAuth` defaults on when UNAUTHENTICATED_DOWNLOAD is unset, so a
+  // user-less call returns `unauthorized` before it ever resolves a URL — which
+  // would make every assertion below vacuous rather than failing.
+  const A_USER = { id: 1, isModerator: true };
+
+  // The 4th argument is the options bag. Asserting on it by index rather than
+  // with objectContaining is deliberate: a dropped argument is `undefined`
+  // there, and an objectContaining assertion cannot tell that from a present one.
+  const optionsArg = () => resolveDownloadUrlMock.mock.calls[0][3];
+
+  it.each([
+    ['true', true],
+    ['false', false],
+  ])('forwards direct:%s exactly as given', async (_label, direct) => {
+    await getFileForModelVersion({ modelVersionId: 1, noAuth: true, user: A_USER, direct });
+
+    expect(resolveDownloadUrlMock).toHaveBeenCalledTimes(1);
+    expect(optionsArg()).toEqual({ direct });
+  });
+
+  // A caller that omits `direct` must not be upgraded to a direct resolve. This
+  // is the default every pre-existing call site takes.
+  it('passes direct:undefined when the caller omits it, never true', async () => {
+    await getFileForModelVersion({ modelVersionId: 1, noAuth: true, user: A_USER });
+
+    expect(optionsArg()).toEqual({ direct: undefined });
+    expect(optionsArg()?.direct).not.toBe(true);
   });
 });

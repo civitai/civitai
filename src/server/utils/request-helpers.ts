@@ -24,17 +24,40 @@ export function isRequestFromBrowser(req: NextApiRequest): boolean {
  * gates: the caller receives the SAME file it was already entitled to, resolved
  * moments earlier by the route's own auth, ownership, paid-access and blocklist
  * checks — spoofing it changes which host serves those bytes, not whether the
- * caller may have them. The cost of a wrong `true` is bandwidth, not exposure.
- * If that ever stops being true, replace this with an authenticated signal rather
- * than hardening the string match.
+ * caller may have them. There is no exposure in a wrong `true`.
+ *
+ * 🔴 There IS a cost in one. A wrong `true` does not merely use more bandwidth: it
+ * moves that download from zero-rated CDN egress to billed origin egress. And the
+ * incentive runs the wrong way — direct is SLOWER single-stream, so it rewards
+ * precisely the high-volume parallel downloader who would benefit from copying an
+ * allowlisted agent string. This allowlist names a string, not a population; it is
+ * a routing hint for clients we operate, and it contains no one who does not
+ * choose to be contained. Treat the entries as a cost decision, keep them narrow,
+ * and if containment ever needs to be real, replace this with an authenticated
+ * signal rather than hardening the string match.
  */
+
+/**
+ * Shortest allowlist entry that is meaningful. A one- or two-character entry
+ * matches essentially every real user agent — `"c"` is inside
+ * `Mozilla/5.0 (Macintosh…)` — so a truncated paste would silently roll direct
+ * resolution out to everyone. Three is not a magic number; it is simply short
+ * enough to admit any real product token and long enough that no plausible
+ * fragment of one matches the whole population.
+ */
+const MIN_ALLOWLIST_ENTRY_LENGTH = 3;
+
 export function shouldResolveDirect(req: NextApiRequest): boolean {
   const allowlist = env.STORAGE_RESOLVER_DIRECT_USER_AGENTS;
-  // Empty allowlist is the off switch, and it is the default. Checked explicitly
-  // so the disabled path cannot depend on `''.includes()` semantics: `.some()`
-  // over an empty array is already false, but an entry that is itself an empty
-  // string would match EVERY user agent, turning a stray trailing comma in
-  // config into a fleet-wide direct rollout.
+  // Redundant with the length check below, and kept for readability: it states
+  // that an absent allowlist is the off switch.
+  //
+  // 🔴 It does NOT catch the off switch an operator is most likely to reach for.
+  // `STORAGE_RESOLVER_DIRECT_USER_AGENTS=""` parses to `['']`, not `[]` — the
+  // schema's `.default([])` applies only when the key is ABSENT, and the
+  // comma-splitter does not drop empty segments. So an empty-string value lands
+  // one entry long and survives this line; what actually disables it is the
+  // per-entry length floor. A trailing comma produces the same shape.
   if (!allowlist?.length) return false;
 
   const userAgent = req.headers['user-agent']?.toLowerCase();
@@ -42,7 +65,7 @@ export function shouldResolveDirect(req: NextApiRequest): boolean {
 
   return allowlist.some((entry) => {
     const needle = entry.trim().toLowerCase();
-    return needle.length > 0 && userAgent.includes(needle);
+    return needle.length >= MIN_ALLOWLIST_ENTRY_LENGTH && userAgent.includes(needle);
   });
 }
 

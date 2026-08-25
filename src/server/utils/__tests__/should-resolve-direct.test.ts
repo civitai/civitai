@@ -67,4 +67,28 @@ describe('shouldResolveDirect', () => {
     mockEnv.STORAGE_RESOLVER_DIRECT_USER_AGENTS = ['some-internal-client'];
     expect(shouldResolveDirect(reqWithUA(undefined))).toBe(false);
   });
+
+  // 🔴 The empty-string case is only the most extreme member of a family. A one-
+  // or two-character entry — a truncated paste — matches essentially every real
+  // user agent, producing the same fleet-wide rollout as an empty one. Guarding
+  // only length 0 closes the tidiest member and leaves the rest open.
+  it.each(['', 'c', 'in'])('ignores an allowlist entry too short to be a real token: %o', (entry) => {
+    mockEnv.STORAGE_RESOLVER_DIRECT_USER_AGENTS = [entry];
+    expect(shouldResolveDirect(reqWithUA('Mozilla/5.0 (Macintosh; Intel Mac OS X)'))).toBe(false);
+    expect(shouldResolveDirect(reqWithUA('curl/8.0'))).toBe(false);
+  });
+
+  it('still honours a short-but-plausible entry at the floor', () => {
+    // Three characters is the floor, not a rejection: an entry this short is
+    // admitted, so the guard cannot be read as "we quietly dropped your config".
+    mockEnv.STORAGE_RESOLVER_DIRECT_USER_AGENTS = ['abc'];
+    expect(shouldResolveDirect(reqWithUA('abc-client/1.0'))).toBe(true);
+    expect(shouldResolveDirect(reqWithUA('Mozilla/5.0'))).toBe(false);
+  });
+
+  it('a too-short entry does not disable the valid entries beside it', () => {
+    mockEnv.STORAGE_RESOLVER_DIRECT_USER_AGENTS = ['c', 'some-internal-client'];
+    expect(shouldResolveDirect(reqWithUA('some-internal-client/1.2.3'))).toBe(true);
+    expect(shouldResolveDirect(reqWithUA('Mozilla/5.0'))).toBe(false);
+  });
 });
