@@ -344,7 +344,7 @@ describe('listMyPublishRequests — OWNER-ONLY scoping (guards the build-failure
  * "spells the constant": it fails iff the value is hardcoded. That is why the router
  * projects the column instead of restating the filter's conclusion.
  *
- * 🔴 WHICH CASES ARE REGRESSION COVERAGE. Measured at `origin/main` d345b654a2: 3 of the
+ * 🔴 WHICH CASES ARE REGRESSION COVERAGE. Measured at `origin/main` 4bfd4c16d: 3 of the
  * 5 cases below go RED — the on-site label, the `kind` projection, and the narrow-fake
  * degrade. The other 2 PASS at base and are INVARIANT GUARDS, not coverage of this bug:
  * at base EVERY listing got the original label, so the off-site discriminating control

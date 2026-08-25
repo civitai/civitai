@@ -1,0 +1,272 @@
+{
+  "baselineTotal": 154,
+  "results": [
+    {
+      "id": "M0-CTRL",
+      "file": "src/server/services/blocks/listing-problems.ts",
+      "why": "POSITIVE CONTROL: off-site tagline label is garbage. Must die loudly.",
+      "verdict": "KILLED",
+      "failed": 10,
+      "total": 154,
+      "killers": [
+        "\u00d7 POSITIVE CONTROL \u2014 an OFF-SITE row still produces the ORIGINAL labels, verbatim",
+        "\u00d7 \ud83d\udd34 BOTH KINDS ON ONE PAGE diverge \u2014 the service reads EACH row's own kind, not a constant",
+        "\u00d7 POSITIVE CONTROL \u2014 an OFF-SITE submission still produces the ORIGINAL label, verbatim",
+        "\u00d7 \ud83d\udd34 BOTH KINDS ON ONE PAGE diverge \u2014 each row reads its OWN listing kind",
+        "\u00d7 the MIRROR \u2014 an on-site request pointing at an off-site listing takes the OFF-SITE label",
+        "\u00d7 a fake that omits the listing kind degrades to the ORIGINAL labels, and never throws",
+        "\u00d7 empty-tagline reads \"Missing tagline\"",
+        "\u00d7 yields the ORIGINAL (off-site) label, not the manifest one",
+        "\u00d7 a PROTOTYPE key is not mistaken for a known kind (the table must not fail open)",
+        "\u00d7 \ud83d\udd34 DISCRIMINATING CONTROL \u2014 a row whose kind COLUMN says offsite gets the ORIGINAL label"
+      ]
+    },
+    {
+      "id": "M1",
+      "file": "src/server/services/blocks/listing-problems.ts",
+      "why": "the kind comparison names the WRONG literal (arms swapped).",
+      "verdict": "KILLED",
+      "failed": 20,
+      "total": 154,
+      "killers": [
+        "\u00d7 empty-description reads \"Missing description\"",
+        "\u00d7 empty-tagline reads \"Missing tagline\"",
+        "\u00d7 empty-category reads \"Missing category\"",
+        "\u00d7 empty-description reads \"Missing description \u2014 set \"description\" in block.manifest.json and resubmit\"",
+        "\u00d7 empty-tagline reads \"Missing tagline \u2014 set \"tagline\" in block.manifest.json and resubmit\"",
+        "\u00d7 empty-category reads \"Missing category \u2014 resubmit to apply it; set \"category\" in block.manifest.json first if your app has none\"",
+        "\u00d7 \ud83d\udd34 the ON-SITE category label leads with RESUBMIT and marks the manifest CONDITIONAL",
+        "\u00d7 \ud83d\udd34 description/tagline are the MIRROR \u2014 manifest FIRST, because for them it IS the whole remedy",
+        "\u00d7 an ON-SITE row names block.manifest.json for all three text problems",
+        "\u00d7 POSITIVE CONTROL \u2014 an OFF-SITE row still produces the ORIGINAL labels, verbatim",
+        "\u00d7 \ud83d\udd34 BOTH KINDS ON ONE PAGE diverge \u2014 the service reads EACH row's own kind, not a constant",
+        "\u00d7 an ON-SITE media revision names block.manifest.json",
+        "\u00d7 POSITIVE CONTROL \u2014 an OFF-SITE submission still produces the ORIGINAL label, verbatim",
+        "\u00d7 \ud83d\udd34 BOTH KINDS ON ONE PAGE diverge \u2014 each row reads its OWN listing kind",
+        "\u00d7 \ud83d\udd34 request.kind and listing.kind DISAGREE \u2014 the LISTING wins",
+        "\u00d7 the MIRROR \u2014 an on-site request pointing at an off-site listing takes the OFF-SITE label",
+        "\u00d7 a fake that omits the listing kind degrades to the ORIGINAL labels, and never throws",
+        "\u00d7 an ON-SITE backing listing names block.manifest.json",
+        "\u00d7 \ud83d\udd34 DISCRIMINATING CONTROL \u2014 a row whose kind COLUMN says offsite gets the ORIGINAL label",
+        "\u00d7 a narrow fake omitting `kind` degrades to the on-site labels (this query only admits on-site rows)"
+      ]
+    },
+    {
+      "id": "M2",
+      "file": "src/server/services/blocks/listing-problems.ts",
+      "why": "the ON-SITE arm collapses to off-site == THE ORIGINAL DEFECT, exactly.",
+      "verdict": "KILLED",
+      "failed": 13,
+      "total": 154,
+      "killers": [
+        "\u00d7 empty-description reads \"Missing description \u2014 set \"description\" in block.manifest.json and resubmit\"",
+        "\u00d7 empty-tagline reads \"Missing tagline \u2014 set \"tagline\" in block.manifest.json and resubmit\"",
+        "\u00d7 empty-category reads \"Missing category \u2014 resubmit to apply it; set \"category\" in block.manifest.json first if your app has none\"",
+        "\u00d7 the two arms DIFFER for all three codes (guards against both arms collapsing to one table)",
+        "\u00d7 \ud83d\udd34 the ON-SITE category label leads with RESUBMIT and marks the manifest CONDITIONAL",
+        "\u00d7 \ud83d\udd34 description/tagline are the MIRROR \u2014 manifest FIRST, because for them it IS the whole remedy",
+        "\u00d7 an ON-SITE row names block.manifest.json for all three text problems",
+        "\u00d7 \ud83d\udd34 BOTH KINDS ON ONE PAGE diverge \u2014 the service reads EACH row's own kind, not a constant",
+        "\u00d7 an ON-SITE media revision names block.manifest.json",
+        "\u00d7 \ud83d\udd34 BOTH KINDS ON ONE PAGE diverge \u2014 each row reads its OWN listing kind",
+        "\u00d7 \ud83d\udd34 request.kind and listing.kind DISAGREE \u2014 the LISTING wins",
+        "\u00d7 an ON-SITE backing listing names block.manifest.json",
+        "\u00d7 a narrow fake omitting `kind` degrades to the on-site labels (this query only admits on-site rows)"
+      ]
+    },
+    {
+      "id": "M3",
+      "file": "src/server/services/blocks/listing-problems.ts",
+      "why": "the OFF-SITE arm gets manifest advice (the defect pointing the other way).",
+      "verdict": "KILLED",
+      "failed": 13,
+      "total": 154,
+      "killers": [
+        "\u00d7 empty-description reads \"Missing description\"",
+        "\u00d7 empty-tagline reads \"Missing tagline\"",
+        "\u00d7 empty-category reads \"Missing category\"",
+        "\u00d7 the two arms DIFFER for all three codes (guards against both arms collapsing to one table)",
+        "\u00d7 yields the ORIGINAL (off-site) label, not the manifest one",
+        "\u00d7 a PROTOTYPE key is not mistaken for a known kind (the table must not fail open)",
+        "\u00d7 POSITIVE CONTROL \u2014 an OFF-SITE row still produces the ORIGINAL labels, verbatim",
+        "\u00d7 \ud83d\udd34 BOTH KINDS ON ONE PAGE diverge \u2014 the service reads EACH row's own kind, not a constant",
+        "\u00d7 POSITIVE CONTROL \u2014 an OFF-SITE submission still produces the ORIGINAL label, verbatim",
+        "\u00d7 \ud83d\udd34 BOTH KINDS ON ONE PAGE diverge \u2014 each row reads its OWN listing kind",
+        "\u00d7 the MIRROR \u2014 an on-site request pointing at an off-site listing takes the OFF-SITE label",
+        "\u00d7 a fake that omits the listing kind degrades to the ORIGINAL labels, and never throws",
+        "\u00d7 \ud83d\udd34 DISCRIMINATING CONTROL \u2014 a row whose kind COLUMN says offsite gets the ORIGINAL label"
+      ]
+    },
+    {
+      "id": "M4",
+      "file": "src/server/services/blocks/listing-problems.ts",
+      "why": "ONE on-site label regresses to the original; the others stay correct.",
+      "verdict": "KILLED",
+      "failed": 10,
+      "total": 154,
+      "killers": [
+        "\u00d7 empty-tagline reads \"Missing tagline \u2014 set \"tagline\" in block.manifest.json and resubmit\"",
+        "\u00d7 the two arms DIFFER for all three codes (guards against both arms collapsing to one table)",
+        "\u00d7 \ud83d\udd34 description/tagline are the MIRROR \u2014 manifest FIRST, because for them it IS the whole remedy",
+        "\u00d7 an ON-SITE row names block.manifest.json for all three text problems",
+        "\u00d7 \ud83d\udd34 BOTH KINDS ON ONE PAGE diverge \u2014 the service reads EACH row's own kind, not a constant",
+        "\u00d7 an ON-SITE media revision names block.manifest.json",
+        "\u00d7 \ud83d\udd34 BOTH KINDS ON ONE PAGE diverge \u2014 each row reads its OWN listing kind",
+        "\u00d7 \ud83d\udd34 request.kind and listing.kind DISAGREE \u2014 the LISTING wins",
+        "\u00d7 an ON-SITE backing listing names block.manifest.json",
+        "\u00d7 a narrow fake omitting `kind` degrades to the on-site labels (this query only admits on-site rows)"
+      ]
+    },
+    {
+      "id": "M5",
+      "file": "src/server/services/blocks/listing-problems.ts",
+      "why": "an on-site label names the WRONG manifest key.",
+      "verdict": "KILLED",
+      "failed": 3,
+      "total": 154,
+      "killers": [
+        "\u00d7 empty-description reads \"Missing description \u2014 set \"description\" in block.manifest.json and resubmit\"",
+        "\u00d7 an ON-SITE row names block.manifest.json for all three text problems",
+        "\u00d7 \ud83d\udd34 BOTH KINDS ON ONE PAGE diverge \u2014 the service reads EACH row's own kind, not a constant"
+      ]
+    },
+    {
+      "id": "M6",
+      "file": "src/server/services/blocks/listing-problems.ts",
+      "why": "the label lookup uses the WRONG key at one push site.",
+      "verdict": "KILLED",
+      "failed": 17,
+      "total": 154,
+      "killers": [
+        "\u00d7 empty-tagline reads \"Missing tagline\"",
+        "\u00d7 empty-tagline reads \"Missing tagline \u2014 set \"tagline\" in block.manifest.json and resubmit\"",
+        "\u00d7 the three ON-SITE labels are distinct from each other (no copy-paste of one field name)",
+        "\u00d7 yields the ORIGINAL (off-site) label, not the manifest one",
+        "\u00d7 a PROTOTYPE key is not mistaken for a known kind (the table must not fail open)",
+        "\u00d7 an ON-SITE row names block.manifest.json for all three text problems",
+        "\u00d7 POSITIVE CONTROL \u2014 an OFF-SITE row still produces the ORIGINAL labels, verbatim",
+        "\u00d7 \ud83d\udd34 BOTH KINDS ON ONE PAGE diverge \u2014 the service reads EACH row's own kind, not a constant",
+        "\u00d7 an ON-SITE media revision names block.manifest.json",
+        "\u00d7 POSITIVE CONTROL \u2014 an OFF-SITE submission still produces the ORIGINAL label, verbatim",
+        "\u00d7 \ud83d\udd34 BOTH KINDS ON ONE PAGE diverge \u2014 each row reads its OWN listing kind",
+        "\u00d7 \ud83d\udd34 request.kind and listing.kind DISAGREE \u2014 the LISTING wins",
+        "\u00d7 the MIRROR \u2014 an on-site request pointing at an off-site listing takes the OFF-SITE label",
+        "\u00d7 a fake that omits the listing kind degrades to the ORIGINAL labels, and never throws",
+        "\u00d7 an ON-SITE backing listing names block.manifest.json",
+        "\u00d7 \ud83d\udd34 DISCRIMINATING CONTROL \u2014 a row whose kind COLUMN says offsite gets the ORIGINAL label",
+        "\u00d7 a narrow fake omitting `kind` degrades to the on-site labels (this query only admits on-site rows)"
+      ]
+    },
+    {
+      "id": "M7",
+      "file": "src/server/services/blocks/listing-problems.ts",
+      "why": "one code stays kind-BLIND while the other two are fixed (a PARTIAL fix).",
+      "verdict": "KILLED",
+      "failed": 5,
+      "total": 154,
+      "killers": [
+        "\u00d7 empty-category reads \"Missing category \u2014 resubmit to apply it; set \"category\" in block.manifest.json first if your app has none\"",
+        "\u00d7 the two arms DIFFER for all three codes (guards against both arms collapsing to one table)",
+        "\u00d7 \ud83d\udd34 the ON-SITE category label leads with RESUBMIT and marks the manifest CONDITIONAL",
+        "\u00d7 an ON-SITE row names block.manifest.json for all three text problems",
+        "\u00d7 \ud83d\udd34 BOTH KINDS ON ONE PAGE diverge \u2014 the service reads EACH row's own kind, not a constant"
+      ]
+    },
+    {
+      "id": "M8",
+      "file": "src/server/services/blocks/app-access.service.ts",
+      "why": "CALLER 1 (listMine) hardcodes offsite instead of threading the row's kind.",
+      "verdict": "KILLED",
+      "failed": 2,
+      "total": 154,
+      "killers": [
+        "\u00d7 an ON-SITE row names block.manifest.json for all three text problems",
+        "\u00d7 \ud83d\udd34 BOTH KINDS ON ONE PAGE diverge \u2014 the service reads EACH row's own kind, not a constant"
+      ]
+    },
+    {
+      "id": "M9",
+      "file": "src/server/services/blocks/app-access.service.ts",
+      "why": "CALLER 1 hardcodes onsite (the mirror of M8).",
+      "verdict": "KILLED",
+      "failed": 2,
+      "total": 154,
+      "killers": [
+        "\u00d7 POSITIVE CONTROL \u2014 an OFF-SITE row still produces the ORIGINAL labels, verbatim",
+        "\u00d7 \ud83d\udd34 BOTH KINDS ON ONE PAGE diverge \u2014 the service reads EACH row's own kind, not a constant"
+      ]
+    },
+    {
+      "id": "M10",
+      "file": "src/server/routers/blocks.router.ts",
+      "why": "CALLER 2 spells its where-clause's conclusion instead of reading the column.",
+      "verdict": "KILLED",
+      "failed": 1,
+      "total": 154,
+      "killers": [
+        "\u00d7 \ud83d\udd34 DISCRIMINATING CONTROL \u2014 a row whose kind COLUMN says offsite gets the ORIGINAL label"
+      ]
+    },
+    {
+      "id": "M11",
+      "file": "src/server/routers/blocks.router.ts",
+      "why": "CALLER 2 stops PROJECTING kind (the silent-revert route).",
+      "verdict": "KILLED",
+      "failed": 1,
+      "total": 154,
+      "killers": [
+        "\u00d7 the listing query PROJECTS `kind` (a dropped projection silently reverts this)"
+      ]
+    },
+    {
+      "id": "M12",
+      "file": "src/server/services/blocks/offsite-listing.service.ts",
+      "why": "CALLER 3 hardcodes offsite \u2014 wrong for the on-site media revisions it returns.",
+      "verdict": "KILLED",
+      "failed": 3,
+      "total": 154,
+      "killers": [
+        "\u00d7 an ON-SITE media revision names block.manifest.json",
+        "\u00d7 \ud83d\udd34 BOTH KINDS ON ONE PAGE diverge \u2014 each row reads its OWN listing kind",
+        "\u00d7 \ud83d\udd34 request.kind and listing.kind DISAGREE \u2014 the LISTING wins"
+      ]
+    },
+    {
+      "id": "M13",
+      "file": "src/server/services/blocks/offsite-listing.service.ts",
+      "why": "CALLER 3 stops PROJECTING the listing's kind.",
+      "verdict": "KILLED",
+      "failed": 1,
+      "total": 154,
+      "killers": [
+        "\u00d7 the query PROJECTS the LISTING's kind, not only the REQUEST's"
+      ]
+    },
+    {
+      "id": "M14",
+      "file": "src/server/services/blocks/offsite-listing.service.ts",
+      "why": "CALLER 3 reads the REQUEST's kind instead of the LISTING's. SURVIVED the pre-audit battery, because every fixture set the two equal \u2014 the audit found it. Killed now by the one fixture that makes them disagree.",
+      "verdict": "KILLED",
+      "failed": 2,
+      "total": 154,
+      "killers": [
+        "\u00d7 \ud83d\udd34 request.kind and listing.kind DISAGREE \u2014 the LISTING wins",
+        "\u00d7 the MIRROR \u2014 an on-site request pointing at an off-site listing takes the OFF-SITE label"
+      ]
+    },
+    {
+      "id": "M15",
+      "file": "src/server/services/blocks/listing-problems.ts",
+      "why": "the on-site category label reverts to MANIFEST-FIRST \u2014 the wrong diagnosis the audit caught: inert once a moderator has curated, because (3a)'s null-gate no longer fires.",
+      "verdict": "KILLED",
+      "failed": 4,
+      "total": 154,
+      "killers": [
+        "\u00d7 empty-category reads \"Missing category \u2014 resubmit to apply it; set \"category\" in block.manifest.json first if your app has none\"",
+        "\u00d7 \ud83d\udd34 the ON-SITE category label leads with RESUBMIT and marks the manifest CONDITIONAL",
+        "\u00d7 an ON-SITE row names block.manifest.json for all three text problems",
+        "\u00d7 \ud83d\udd34 BOTH KINDS ON ONE PAGE diverge \u2014 the service reads EACH row's own kind, not a constant"
+      ]
+    }
+  ]
+}

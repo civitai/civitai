@@ -33,7 +33,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
  * family has twice been bitten by aliasing them. This LIST read must never touch the
  * primary, and the last case says so.
  *
- * 🔴 WHICH CASES ARE REGRESSION COVERAGE. Measured at `origin/main` d345b654a2: 2 of the
+ * 🔴 WHICH CASES ARE REGRESSION COVERAGE. Measured at `origin/main` 4bfd4c16d: 2 of the
  * 7 cases here go RED — "an ON-SITE row names block.manifest.json" and "BOTH KINDS ON ONE
  * PAGE diverge". The other 5 PASS at base and are INVARIANT GUARDS, NOT coverage of this
  * bug. Two of them earn their place a different way: `listMine` ALREADY selected `kind`
@@ -63,7 +63,8 @@ const MANIFEST_LABEL = {
   'empty-description':
     'Missing description — set "description" in block.manifest.json and resubmit',
   'empty-tagline': 'Missing tagline — set "tagline" in block.manifest.json and resubmit',
-  'empty-category': 'Missing category — set "category" in block.manifest.json and resubmit',
+  'empty-category':
+    'Missing category — resubmit to apply it; set "category" in block.manifest.json first if your app has none',
 } as const;
 
 type Stored = {

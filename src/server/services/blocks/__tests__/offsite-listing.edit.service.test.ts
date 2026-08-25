@@ -1068,11 +1068,12 @@ describe('listMySubmissions (lastModerationAction for removed listings)', () => 
  * assertion would pass equally against an implementation that gave BOTH kinds the
  * manifest label, which is the same defect pointing the other way.
  *
- * 🔴 WHICH CASES ARE REGRESSION COVERAGE. Measured at `origin/main` d345b654a2: 3 of the
- * 8 cases below go RED — the on-site media revision, "BOTH KINDS ON ONE PAGE diverge",
- * and the listing-kind projection. The other 5 PASS at base and are INVARIANT GUARDS
- * (the fixture guard, the off-site positive control, code invariance, the degrade path).
- * They pin what must NOT move; they are not evidence the defect was fixed.
+ * 🔴 WHICH CASES ARE REGRESSION COVERAGE. Measured at `origin/main` 4bfd4c16d: 4 of the
+ * 10 cases below go RED — the on-site media revision, "BOTH KINDS ON ONE PAGE diverge",
+ * the listing-kind projection, and "request.kind and listing.kind DISAGREE". The other 6
+ * PASS at base and are INVARIANT GUARDS (the fixture guard, the off-site positive
+ * control, code invariance, the degrade path, and the disagreement MIRROR). They pin
+ * what must NOT move; they are not evidence the defect was fixed.
  */
 describe('listMySubmissions (the advisory is KIND-AWARE)', () => {
   const MANIFEST_TAGLINE = 'Missing tagline — set "tagline" in block.manifest.json and resubmit';
@@ -1085,11 +1086,26 @@ describe('listMySubmissions (the advisory is KIND-AWARE)', () => {
    * operand swap changes the ANSWER rather than the argument. `kind` has NO default —
    * every call states it, so a fixture cannot quietly inherit one arm.
    */
-  const requestRow = (id: string, listingId: string, kind: string) => ({
+  const requestRow = (
+    id: string,
+    listingId: string,
+    kind: string,
+    /**
+     * The REQUEST's kind, which defaults to matching the listing's.
+     *
+     * 🔴 IT IS A SEPARATE PARAMETER SO THE TWO CAN BE MADE TO DISAGREE. They are
+     * different columns on different tables and they agree at every request-create
+     * site today — which is exactly why a fixture that always sets them equal cannot
+     * tell `r.appListing.kind` from `r.kind`. An audit mutant that read the REQUEST's
+     * kind SURVIVED all 132 tests for that reason. The stated rationale for reading
+     * the listing's is that they MIGHT diverge, so one fixture has to make them.
+     */
+    requestKind: string = kind
+  ) => ({
     id,
     appListingId: listingId,
     slug: `app-${id}`,
-    kind: kind === 'onsite' ? 'onsite' : 'offsite',
+    kind: requestKind,
     status: 'approved',
     appListing: {
       name: `App ${id}`,
@@ -1187,6 +1203,50 @@ describe('listMySubmissions (the advisory is KIND-AWARE)', () => {
     // request's kind would be a derived surface standing in for the defining one.
     expect(select.appListing.select.kind).toBe(true);
     expect(select.kind).toBe(true);
+  });
+
+  /**
+   * 🔴 THE DISCRIMINATING CASE FOR LISTING-KIND-vs-REQUEST-KIND, and the ONLY one.
+   *
+   * Every other fixture in this describe sets `request.kind === appListing.kind`,
+   * because that is what production does at all three request-create sites. The
+   * consequence, found by an adversarial audit of #4370: a mutant changing the call
+   * site from `r.appListing.kind` to `r.kind` SURVIVED the entire 132-test battery.
+   * Not a live hole — the two genuinely agree today — but the stated rationale for
+   * reading the LISTING's column is precisely that they are independent and might
+   * diverge, and a rationale nothing can falsify is not a tested claim.
+   *
+   * This fixture makes them disagree in the direction that matters: an OFF-SITE
+   * request row pointing at an ON-SITE listing. The advisory is a statement about the
+   * LISTING, so the manifest label must win. Reading `r.kind` yields the original
+   * label and fails here — which is what turns the comment into a guard.
+   */
+  it('🔴 request.kind and listing.kind DISAGREE — the LISTING wins', async () => {
+    mockRead.appListingPublishRequest.findMany
+      .mockResolvedValueOnce([requestRow('r_split', 'apl_split', 'onsite', 'offsite')])
+      .mockResolvedValueOnce([]);
+    const res = await listMySubmissions({ userId: OWNER });
+
+    // Positive control on the fixture itself: the two really do disagree, so this case
+    // cannot quietly degrade into another copy of the aligned ones.
+    const row = mockRead.appListingPublishRequest.findMany.mock.results[0].value as Promise<
+      Array<{ kind: string; appListing: { kind: string } }>
+    >;
+    const [first] = await row;
+    expect(first.kind).toBe('offsite');
+    expect(first.appListing.kind).toBe('onsite');
+
+    expect(res.items[0].problems.map((p) => p.code)).toEqual(['empty-tagline']);
+    expect(taglineLabelOf(res.items[0])).toBe(MANIFEST_TAGLINE);
+  });
+
+  it('the MIRROR — an on-site request pointing at an off-site listing takes the OFF-SITE label', async () => {
+    // Both directions, so the case cannot pass by the arms having been swapped.
+    mockRead.appListingPublishRequest.findMany
+      .mockResolvedValueOnce([requestRow('r_split2', 'apl_split2', 'offsite', 'onsite')])
+      .mockResolvedValueOnce([]);
+    const res = await listMySubmissions({ userId: OWNER });
+    expect(taglineLabelOf(res.items[0])).toBe(ORIGINAL_TAGLINE);
   });
 
   it('a fake that omits the listing kind degrades to the ORIGINAL labels, and never throws', async () => {

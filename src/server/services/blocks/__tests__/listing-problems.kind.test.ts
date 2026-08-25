@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -6,6 +9,28 @@ import {
   type ListingProblemInput,
   type ListingProblemKind,
 } from '~/server/services/blocks/listing-problems';
+import type { ListingKind } from '~/server/schema/blocks/app-listing-read.schema';
+
+/**
+ * 🔴 ASSIGNABILITY PIN between `ListingKind` (the schema's) and `ListingProblemKind`
+ * (this module's deliberate re-declaration). Widening one without the other breaks the
+ * `listMine` call site, and this states the relationship where a reader of the type
+ * will look for it.
+ *
+ * 🔴 IT IS NOT THE LOAD-BEARING GUARD, AND SAYING SO IS THE POINT. `tsconfig.json`
+ * EXCLUDES `src/**\/__tests__/**`, so these two lines are checked only by the
+ * deliberate test-typecheck pass, never by the root `pnpm typecheck` or by CI's
+ * typecheck gate. What actually catches a one-sided widening is
+ * `app-access.service.ts` passing a `ListingKind` into this type's parameter slot.
+ * A previous version of the type's own docblock claimed THIS FILE held the pin while
+ * the file contained no reference to `ListingKind` at all — a comment reading as
+ * coverage while providing none. Both halves are now true.
+ */
+const _kindWidensBothWays: [ListingProblemKind, ListingKind] = [
+  'onsite' as ListingKind,
+  'offsite' as ListingProblemKind,
+];
+void _kindWidensBothWays;
 
 /**
  * `computeListingProblems` — THE KIND DIMENSION of the three empty-text problems.
@@ -40,13 +65,15 @@ import {
  * tested claim rather than a sentence in a PR body.
  *
  * 🔴 WHICH CASES ARE REGRESSION COVERAGE, AND WHICH ARE MERELY INVARIANT GUARDS.
- * Measured at `origin/main` d345b654a2: 4 of the 18 cases here go RED — the three
- * ON-SITE label cases and "the two arms DIFFER". Those are the regression coverage.
- * The other 14 PASS at base and are INVARIANT GUARDS: they pin behaviour the defect
- * never violated (the off-site labels, the code list, the severities, the never-throws
- * degrade). They are not evidence that anything was fixed — they are evidence that
- * nothing ELSE moved, which is the whole wire-contract claim. Both are worth having;
- * only the first four should be counted as coverage of the bug.
+ * Measured at `origin/main` 4bfd4c16d: 6 of the 23 cases here go RED — the three
+ * ON-SITE label cases, "the two arms DIFFER", and the two label-SHAPE cases (category
+ * leads with RESUBMIT; description/tagline are the mirror). Those are the regression
+ * coverage. The other 17 PASS at base and are INVARIANT GUARDS: they pin behaviour the
+ * defect never violated (the off-site labels, the code list, the severities, the
+ * never-throws degrade, and the source scanner's own controls). They are not evidence
+ * that anything was fixed — they are evidence that nothing ELSE moved, which is the
+ * whole wire-contract claim. Both are worth having; only the six should be counted as
+ * coverage of the bug.
  */
 
 /** The EXACT pre-change labels. An off-site listing must still produce these, verbatim. */
@@ -61,7 +88,8 @@ const MANIFEST_LABEL = {
   'empty-description':
     'Missing description — set "description" in block.manifest.json and resubmit',
   'empty-tagline': 'Missing tagline — set "tagline" in block.manifest.json and resubmit',
-  'empty-category': 'Missing category — set "category" in block.manifest.json and resubmit',
+  'empty-category':
+    'Missing category — resubmit to apply it; set "category" in block.manifest.json first if your app has none',
 } as const;
 
 type TextCode = keyof typeof ORIGINAL_LABEL;
@@ -144,6 +172,89 @@ describe('🔴 fixture guard — every fixture in this file carries an EXPLICIT,
   it('the fixtures cover BOTH kinds (a single-arm suite would prove nothing)', () => {
     expect(new Set(everyFixture.map((f) => f.kind))).toEqual(new Set(['onsite', 'offsite']));
   });
+
+  /**
+   * 🔴 THE THREE CASES ABOVE ONLY SEE THE FACTORY, AND THAT IS A REAL GAP.
+   * `everyFixture` enumerates what `complete()`/`missingOne()` produce — 8 objects. The
+   * WIRE CONTRACT describe below builds its inputs as INLINE OBJECT LITERALS instead,
+   * and those are invisible to a runtime enumeration. There is no live gap today (every
+   * inline literal does carry `kind`), but a future one that forgot it would silently
+   * run the unrecognised-kind fallback with the guard above still green — which is
+   * precisely the failure this whole describe exists to prevent, arriving through the
+   * door the guard does not watch.
+   *
+   * So this scans THIS FILE'S OWN SOURCE and requires every inline literal handed to
+   * `computeListingProblems(` / `problemsOf(` to declare `kind` (directly, or by
+   * spreading a factory that does). A literal is anything whose first non-space
+   * character after `(` is `{`; a call passing a variable is skipped, because the
+   * variable was built by the factory this guard already covers.
+   */
+  const FIXTURE_SPREADS = ['...complete(', '...missingOne('];
+
+  /** Returns the offending literals — empty means clean. Exported shape kept simple so
+   *  the positive control below can drive it with synthetic source. */
+  function kindlessLiterals(source: string): string[] {
+    const bad: string[] = [];
+    for (const fn of ['computeListingProblems(', 'problemsOf(']) {
+      let from = 0;
+      for (;;) {
+        const at = source.indexOf(fn, from);
+        if (at === -1) break;
+        from = at + fn.length;
+        let i = from;
+        while (i < source.length && /\s/.test(source[i])) i++;
+        if (source[i] !== '{') continue; // a variable, not an inline literal
+        // Brace-match the literal.
+        let depth = 0;
+        let end = i;
+        for (; end < source.length; end++) {
+          if (source[end] === '{') depth++;
+          else if (source[end] === '}' && --depth === 0) break;
+        }
+        // A literal we cannot brace-match is reported, never silently skipped.
+        if (depth !== 0) {
+          bad.push('<unparseable literal>');
+          continue;
+        }
+        const literal = source.slice(i, end + 1);
+        const declaresKind = /[{,]\s*kind\s*[:,]/.test(literal);
+        const spreadsFixture = FIXTURE_SPREADS.some((s) => literal.includes(s));
+        if (!declaresKind && !spreadsFixture) bad.push(literal.replace(/\s+/g, ' ').slice(0, 90));
+      }
+    }
+    return bad;
+  }
+
+  const ownSource = readFileSync(fileURLToPath(import.meta.url), 'utf8');
+
+  it('🔴 POSITIVE CONTROL — the scanner CAN see a kindless literal', () => {
+    // Validate the instrument before reading its verdict. Without this, the clean
+    // result below is indistinguishable from a scanner wired to nothing.
+    //
+    // 🔴 ASSEMBLED FROM PIECES, NOT WRITTEN VERBATIM. The scanner reads this file's own
+    // source, so a literal bad example spelled out here would be found by the real scan
+    // and fail the clean-file case below — which is exactly what happened on the first
+    // run. That is the scanner working; keeping the pieces apart is the fix. (The two
+    // GOOD examples below can stay verbatim: they declare `kind` / spread a factory, so
+    // the real scan passes over them.)
+    const planted = ['problemsOf', '({ iconId: 1, coverId: 2, screenshotCount: 0 });'].join('');
+    expect(kindlessLiterals(planted)).toHaveLength(1);
+    // ...and does NOT flag the two legitimate shapes.
+    expect(kindlessLiterals(`problemsOf({ kind: 'onsite', iconId: 1 });`)).toEqual([]);
+    expect(kindlessLiterals(`problemsOf({ ...complete('offsite'), tagline: null });`)).toEqual([]);
+  });
+
+  it('🔴 the scanner actually READ this file (a zero over empty input proves nothing)', () => {
+    // The other half of the control: a non-zero count of literals was examined.
+    expect(ownSource.length).toBeGreaterThan(2000);
+    const inlineCalls = (ownSource.match(/(computeListingProblems|problemsOf)\(\s*\{/g) ?? [])
+      .length;
+    expect(inlineCalls).toBeGreaterThanOrEqual(6);
+  });
+
+  it('every INLINE literal passed to the advisory declares a kind', () => {
+    expect(kindlessLiterals(ownSource)).toEqual([]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -178,6 +289,47 @@ describe('empty-text labels are KIND-AWARE — one case per kind per code', () =
   it('the three ON-SITE labels are distinct from each other (no copy-paste of one field name)', () => {
     const labels = TEXT_CODES.map((c) => labelOf(missingOne('onsite', c), c));
     expect(new Set(labels).size).toBe(3);
+  });
+
+  /**
+   * 🔴 `empty-category` IS DELIBERATELY ASYMMETRIC WITH THE OTHER TWO, AND THE
+   * ASYMMETRY IS THE CORRECTED REASONING — pin it, or a later "let's make these
+   * consistent" tidy-up silently restores a wrong diagnosis.
+   *
+   * `description` and `tagline` are re-derived FROM THE MANIFEST on every sync
+   * (`resolveListingDescription` / `resolveListingTagline`), so for those two the
+   * manifest genuinely is the whole remedy and the label leads with it.
+   *
+   * `category` is NOT. It reaches `app_listings.category` only from
+   * `AppBlock.category` at an APPROVE, and `setMarketplaceMeta` (moderator curation)
+   * writes the BLOCK without touching the LISTING — a state the advisory cannot see.
+   * In it, editing the manifest is INERT ((3a)'s null-gate does not fire) while
+   * resubmitting is what clears the problem. So this label must lead with the action
+   * that always works and mark the manifest key conditional.
+   * `block-registry.marketplace-meta.test.ts` pins the curation-write fact this rests on.
+   */
+  it('🔴 the ON-SITE category label leads with RESUBMIT and marks the manifest CONDITIONAL', () => {
+    const label = labelOf(missingOne('onsite', 'empty-category'), 'empty-category')!;
+    const resubmitAt = label.toLowerCase().indexOf('resubmit');
+    const manifestAt = label.indexOf('block.manifest.json');
+    expect(resubmitAt).toBeGreaterThan(-1);
+    expect(manifestAt).toBeGreaterThan(-1);
+    // Order is the claim: the always-works action comes first.
+    expect(resubmitAt).toBeLessThan(manifestAt);
+    // ...and the manifest half is hedged, not stated as the remedy.
+    expect(label).toMatch(/\bif\b/);
+  });
+
+  it('🔴 description/tagline are the MIRROR — manifest FIRST, because for them it IS the whole remedy', () => {
+    for (const code of ['empty-description', 'empty-tagline'] as const) {
+      const label = labelOf(missingOne('onsite', code), code)!;
+      const manifestAt = label.indexOf('block.manifest.json');
+      const resubmitAt = label.toLowerCase().indexOf('resubmit');
+      expect(manifestAt).toBeGreaterThan(-1);
+      expect(resubmitAt).toBeGreaterThan(manifestAt);
+      // Unhedged: no conditional, unlike category.
+      expect(label).not.toMatch(/\bif\b/);
+    }
   });
 });
 

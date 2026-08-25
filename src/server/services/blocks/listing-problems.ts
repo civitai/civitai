@@ -40,8 +40,17 @@ export type ListingAssetScan = {
  * 🔴 STRUCTURALLY IDENTICAL TO `ListingKind` (app-listing-read.schema) and
  * deliberately re-declared here rather than imported: this module is PURE and is
  * imported by `app-access.service` at the top of its import graph — see the note
- * at that import. Widening either side without the other is caught by
- * `listing-problems.kind.test.ts`, which pins the two as assignable.
+ * at that import.
+ *
+ * 🔴 WHAT ACTUALLY CATCHES A ONE-SIDED WIDENING: the `listMine` CALL SITE in
+ * `app-access.service.ts`, which passes a `ListingKind`-typed value straight into
+ * this type's parameter slot. Adding a member to `ListingKind` alone is therefore a
+ * `tsc` error there, under the ROOT typecheck. (An earlier version of this comment
+ * claimed the pin lived in `listing-problems.kind.test.ts`; it did not — that file
+ * held no assignability assertion at all. There is now a belt-and-braces one there,
+ * but it sits under `src/**\/__tests__/**`, which `tsconfig.json` EXCLUDES, so it is
+ * only checked by the deliberate test-typecheck pass. The call site is the load-
+ * bearing half; the test is the documentation.)
  */
 export type ListingProblemKind = 'onsite' | 'offsite';
 
@@ -149,13 +158,38 @@ const ASSET_PROBLEM: Record<MissingAsset, ListingProblem> = {
  * simply stop firing. Correcting the label is the only change that improves every
  * consumer without moving the contract.
  *
- * 🔴 `category` IS MANIFEST-FIXABLE **IN THE CASE THAT FIRES**, which is not obvious:
- * (3b-sync) sources it from `AppBlock.category`, not the manifest, so a moderator's
- * curated category survives a version bump. But step (3a) writes the manifest
- * `category` onto that column whenever it is still NULL — so an on-site listing can
- * only be missing a category when `AppBlock.category` is null, which means no manifest
- * declared one either. The manifest is therefore the correct remedy exactly when this
- * problem exists.
+ * 🔴 `category` IS THE ODD ONE OUT — ITS LABEL LEADS WITH "RESUBMIT", NOT WITH THE
+ * MANIFEST, AND THAT ASYMMETRY IS LOAD-BEARING. `description` and `tagline` are
+ * re-derived from the manifest on every sync (`resolveListingDescription` /
+ * `resolveListingTagline` in `buildListingScalarSync`), so for those two the manifest
+ * genuinely IS the whole remedy. `category` is NOT: (3b-sync) sources it from
+ * `AppBlock.category`, and step (3a) copies the manifest value onto that column ONLY
+ * while it is still NULL, so that a moderator's curation survives a version bump.
+ *
+ * Enumerating every writer of `app_listings.category` for an on-site row — all THREE
+ * of them — is what makes the divergence visible:
+ *   1. `publish-request.service` (submit-draft, ~:1307) — FIRST-VERSION SUBMIT ONLY.
+ *      Mints the pre-approval draft and is the one path that takes `category`
+ *      straight off the manifest, because no `AppBlock` exists yet.
+ *   2. `mapAppBlockToListing` — first approve / backfill. Reads `AppBlock.category`.
+ *   3. `buildListingScalarSync` — (3b-sync), SUBSEQUENT-VERSION approve. Same source.
+ *
+ * 🔴 `setMarketplaceMeta` — the moderator curation path — writes `AppBlock.category`
+ * and NOTHING ELSE; it never touches the listing row. So the designed curation flow
+ * reaches a state this advisory cannot distinguish: author omits `category` ⇒ listing
+ * minted null ⇒ moderator curates ⇒ `AppBlock.category` set, `AppListing.category`
+ * STILL null ⇒ this problem fires. If the author then "sets it in the manifest",
+ * (3a)'s null-gate does NOT fire, their value is DISCARDED, and (3b-sync) writes the
+ * moderator's. The problem clears — but the manifest edit was inert, and an author who
+ * wanted a DIFFERENT category can never get it that way.
+ *
+ * The problem firing is correct either way (the store card reads the listing column,
+ * which genuinely has none). What was wrong was the DIAGNOSIS: the thing that always
+ * clears it is an approved new version; the manifest key matters only when no category
+ * is set anywhere. The label says exactly that, in that order. Pinned by
+ * `listing-problems.kind.test.ts` (the whole string) and by
+ * `block-registry.marketplace-meta.test.ts` (that `setMarketplaceMeta` writes only the
+ * block) — if that ever changes, this wording should be revisited.
  */
 const TEXT_PROBLEM: Record<
   ListingProblemKind,
@@ -170,7 +204,12 @@ const TEXT_PROBLEM: Record<
     'empty-description':
       'Missing description — set "description" in block.manifest.json and resubmit',
     'empty-tagline': 'Missing tagline — set "tagline" in block.manifest.json and resubmit',
-    'empty-category': 'Missing category — set "category" in block.manifest.json and resubmit',
+    // 🔴 LEADS WITH THE ACTION THAT ALWAYS WORKS, and marks the manifest key
+    // CONDITIONAL — see the `category` note above. A moderator-curated category lives
+    // on `AppBlock.category` and reaches the listing only at the next approve, so
+    // "set it in the manifest" is inert in that state while "resubmit" is not.
+    'empty-category':
+      'Missing category — resubmit to apply it; set "category" in block.manifest.json first if your app has none',
   },
 };
 
