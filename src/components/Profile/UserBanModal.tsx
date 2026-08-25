@@ -34,8 +34,6 @@ export default function UserBanModal({ username, userId, onSuccess }: Props) {
   const [detailsInternal, setDetailsInternal] = useState<string | undefined>('');
   const [detailsExternal, setDetailsExternal] = useState<string | undefined>('');
   // Unpublishing models happens on every ban historically, so default it on.
-  // Blocking media defaults on only for SexualMinor (kept in sync as the reason
-  // changes, but a mod can still override either toggle).
   const [removeModels, setRemoveModels] = useState(true);
   const [removeMedia, setRemoveMedia] = useState(false);
 
@@ -100,7 +98,9 @@ export default function UserBanModal({ username, userId, onSuccess }: Props) {
   const handleReasonChange = (value: string | null) => {
     const nextReason = value as BanReasonCode;
     setReasonCode(nextReason);
-    setRemoveMedia(nextReason === BanReasonCode.SexualMinor);
+    setRemoveMedia(
+      nextReason === BanReasonCode.SexualMinor || nextReason === BanReasonCode.SpamBot
+    );
   };
 
   return (

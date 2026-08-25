@@ -6,17 +6,17 @@ import { bustVersionCache } from '$lib/server/monetization/bust-cache';
 import { getSaleLimitOverrides } from '$lib/server/monetization/sale-limits';
 import {
   cancelSale,
-  cheapestCoveredPrice,
-  countEarlyAccessVersions,
   deepenSale,
   getCreatorSales,
   getManageableSales,
   getSaleVersionsBySale,
   scheduleSale,
   shortenSale,
+  summarizeSaleSelection,
 } from '$lib/server/monetization/sales';
 import { resolveCreatorScore, TEST_CREATOR_SCORE_COOKIE } from '$lib/server/creator-score';
 import { minCreatorScoreForSale } from '@civitai/buzz';
+import { salePreviewPayload } from '$lib/monetization/sales';
 import type { SessionUser } from '@civitai/auth';
 import { getFlipt, fliptContext } from '$lib/server/flipt';
 
@@ -116,23 +116,22 @@ export const load: PageServerLoad = async ({ locals, parent, cookies }) => {
 };
 
 export const actions: Actions = {
-  // What the sale form needs about a selection it can't see: how much of it is early access (a sale
-  // can't cover that) and the cheapest price among the rest (a fixed discount must stay under it).
+  // What the sale form needs about a selection it can't see: how much of it a sale would cover, why
+  // the rest is out, and the cheapest price among the covered ones (a fixed discount must stay under it).
   salePreview: async ({ request, locals, cookies }) => {
     if (await salesOff(locals.user))
       return fail(403, { error: 'Scheduled sales are not available yet.' });
     const form = await request.formData();
     const parsed = versionIdsSchema.safeParse(form.get('versionIds'));
     if (!parsed.success) return fail(400, { error: firstError(parsed.error) });
-    const [earlyAccess, minCoveredPrice] = await Promise.all([
-      countEarlyAccessVersions(locals.user.id, parsed.data),
-      cheapestCoveredPrice(
-        locals.user.id,
-        parsed.data,
-        cappedTier(resolveMembership(locals.user, cookies.get(TEST_MEMBERSHIP_COOKIE)))
-      ),
-    ]);
-    return { earlyAccess, minCoveredPrice };
+    // cappedTier, not the display label: the floor is measured against what a buyer is charged, and a
+    // lapsed membership keeps its name but is capped at free.
+    const selection = await summarizeSaleSelection(
+      locals.user.id,
+      parsed.data,
+      cappedTier(resolveMembership(locals.user, cookies.get(TEST_MEMBERSHIP_COOKIE)))
+    );
+    return salePreviewPayload(selection);
   },
 
   scheduleSale: async ({ request, locals, cookies }) => {
@@ -183,6 +182,7 @@ export const actions: Actions = {
       scheduled: true,
       covered: result.covered,
       skippedEarlyAccess: result.skippedEarlyAccess,
+      skippedUnpriced: result.skippedUnpriced,
     };
   },
 

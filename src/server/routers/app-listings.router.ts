@@ -58,6 +58,7 @@ import {
   resolveReportSchema,
   unpublishOwnListingSchema,
 } from '~/server/schema/blocks/offsite-moderation.schema';
+import { messageAppOwnerSchema } from '~/server/schema/blocks/app-moderator-message.schema';
 import { rateLimit } from '~/server/middleware.trpc';
 import {
   recordStoreScopeApplied,
@@ -340,7 +341,15 @@ function mapOffsiteError(err: unknown): TRPCError {
   if (err instanceof TRPCError) return err;
   if (
     err instanceof Error &&
-    (err.name === 'OffsiteRequestError' || err.name === 'OffsiteModerationError') &&
+    (err.name === 'OffsiteRequestError' ||
+      err.name === 'OffsiteModerationError' ||
+      // Moderator → developer messaging. Duck-typed like its two siblings so the
+      // service stays out of this router's STATIC import graph, and mapped HERE
+      // rather than in a second mapper — a private `mapModMessageError` would be a
+      // fourth spelling of the same code→TRPCError table, and the shapes that drift
+      // between such copies are exactly the ones nobody re-reads (an unmapped code
+      // silently becomes BAD_REQUEST).
+      err.name === 'AppModeratorMessageError') &&
     typeof (err as { code?: unknown }).code === 'string'
   ) {
     const code = (err as { code?: unknown }).code as string;
@@ -351,6 +360,13 @@ function mapOffsiteError(err: unknown): TRPCError {
         ? 'FORBIDDEN'
         : code === 'ALREADY_REPORTED'
         ? 'CONFLICT'
+        : // 🔴 An exhausted quota must NOT fall through to the BAD_REQUEST default.
+        // BAD_REQUEST reads to a caller as "your input was wrong" and carries no
+        // retry semantics, so a mod who hit the hourly ceiling would be told to fix
+        // a message that is fine. TOO_MANY_REQUESTS is the honest code and is what
+        // the sibling mod-only limiter (`blocks.retriggerBuild`) already returns.
+        code === 'RATE_LIMITED'
+        ? 'TOO_MANY_REQUESTS'
         : 'BAD_REQUEST';
     return new TRPCError({ code: trpcCode, message: err.message, cause: err });
   }
@@ -1285,6 +1301,45 @@ export const appListingsRouter = router({
       throw mapOffsiteError(err);
     }
   }),
+
+  /**
+   * MOD send the app's OWNER a free-text message, delivered as a notification.
+   *
+   * The only mod action here that changes no listing state — it exists because the
+   * eleven app notification types are all event-triggered with fixed copy, so a
+   * moderator who needed to tell a developer something the platform has no event for
+   * had no in-product route at all (see `app-moderator-message.service.ts`).
+   *
+   * Same boundary as its neighbours: `moderatorProcedure` + the inner `isModerator`
+   * recheck, `moderatorUserId` bound to `ctx.user.id` (never client-supplied), one
+   * `AppListingModerationEvent` per send, and `mapOffsiteError` for typed failures
+   * (NOT_FOUND→NOT_FOUND, RATE_LIMITED→TOO_MANY_REQUESTS, BLOCKED_LINK/INVALID_TEXT→
+   * BAD_REQUEST, infra→INTERNAL with no leak).
+   *
+   * 🔴 NO `rateLimit()` MIDDLEWARE HERE ON PURPOSE — it short-circuits for moderators
+   * and would cap nothing while looking like a limit. The real ceilings are the two
+   * Redis windows spent inside the service
+   * (`~/server/utils/app-moderator-message-rate-limit`).
+   *
+   * DUAL-KIND: works for an on-site or an off-site listing, and accepts a shadow
+   * revision id (resolved to its parent), because the owner resolver handles all three
+   * and a moderator should not have to know which they pasted.
+   */
+  messageAppOwner: moderatorProcedure
+    .input(messageAppOwnerSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Messaging app owners is restricted to civitai team');
+      }
+      const { messageAppOwner } = await import(
+        '~/server/services/blocks/app-moderator-message.service'
+      );
+      try {
+        return await messageAppOwner({ input, moderatorUserId: ctx.user.id });
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
+    }),
 
   /** MOD relist a removed off-site listing (removed → approved). Reversibility. */
   relistListing: moderatorProcedure.input(relistListingSchema).mutation(async ({ ctx, input }) => {

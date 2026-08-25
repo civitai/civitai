@@ -45,13 +45,19 @@ vi.mock('~/server/search-index', () => ({
   imagesSearchIndex: { queueUpdate: vi.fn() },
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
 }));
-vi.mock('~/server/services/paid-access.service', () => ({
+// Spread the real module rather than listing its exports: a hand-listed mock couples this file to
+// model-version.service's whole import graph, and the next export it reaches for fails to LOAD here
+// rather than failing an assertion. That is what happened when `bustPaidAccessCache` was added — only a
+// full-suite run found it, hours later.
+vi.mock('~/server/services/paid-access.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   materializePaidAccessEndsAt: vi.fn(),
   writePaidAccessForModelVersion: vi.fn(),
   getPaidAccess: vi.fn(),
   assertPaidAccessInput: vi.fn(),
   getFreshSalesForPermanentGate: vi.fn().mockResolvedValue([]),
   bustModelSaleCache: vi.fn(),
+  bustPaidAccessCache: vi.fn(),
 }));
 vi.mock('~/server/services/auction.service', () => ({ deleteBidsForModelVersion: vi.fn() }));
 vi.mock('~/server/services/blocklist.service', () => ({ throwOnBlockedLinkDomain: vi.fn() }));

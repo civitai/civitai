@@ -4,8 +4,8 @@ import type { Actions, PageServerLoad } from './$types';
 import { parseForm, parseQuery } from '$lib/server/query';
 import { dbWrite } from '$lib/server/db';
 import { requiresGrant } from '$lib/server/access';
-import { banFieldsSchema, rejectUnexplainedOther } from '$lib/server/ban-input';
-import { resolveRestriction, setBanned } from '$lib/server/user-actions.service';
+import { banFieldsSchema, banRemovalArgs, rejectUnexplainedOther } from '$lib/server/ban-input';
+import { banConfirmed, resolveRestriction, setBanned } from '$lib/server/user-actions.service';
 import {
   getGenerationRestrictions,
   saveSuspiciousMatches,
@@ -52,21 +52,6 @@ export const load: PageServerLoad = async ({ url }) => {
     wide: true,
   };
 };
-
-/** The endpoint is fire-and-forget, so this polls rather than reads once. Short, because a moderator is
- *  waiting on it, and a false negative only withholds the automatic ruling — it never bans twice. */
-async function banConfirmed(userId: number): Promise<boolean> {
-  for (let attempt = 0; attempt < 6; attempt++) {
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    const row = await dbWrite
-      .selectFrom('User')
-      .select('bannedAt')
-      .where('id', '=', userId)
-      .executeTakeFirst();
-    if (row?.bannedAt) return true;
-  }
-  return false;
-}
 
 async function restrictionById(id: number): Promise<RestrictionRow | null> {
   const { items } = await getGenerationRestrictions({ page: 1, limit: 1, restrictionId: id });
@@ -119,8 +104,7 @@ export const actions: Actions = {
       reasonCode: input.reasonCode,
       detailsInternal: input.detailsInternal || undefined,
       detailsExternal: input.detailsExternal || undefined,
-      removeMedia: input.removeMedia,
-      removeModels: input.removeModels,
+      ...banRemovalArgs(input, true),
       moderatorId: locals.user.id,
     });
     if (!banned.ok) return fail(400, { error: banned.error });

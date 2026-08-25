@@ -1950,7 +1950,21 @@ export async function getMyRemixGallerySubmissions({
         JOIN "Post" p ON p.id = i."postId"
         WHERE i.id IN (${Prisma.join(targetIds)})
           AND p."publishedAt" IS NOT NULL
+          -- Four clauses the public rules carry and this copy did not. Each
+          -- admitted a host the submitter could still see after its owner had
+          -- stopped showing it to anybody else. (No backticks below: a template
+          -- literal ends at the first one.)
+          --   now() - a scheduled post carries a non-null FUTURE publishedAt,
+          --   so IS NOT NULL served it ahead of its own publish time;
+          --   availability - a post inherits it from the model version, so it
+          --   can be published AND private;
+          --   needsReview / acceptableMinor - a moderator flag leaves ingestion
+          --   at 'Scanned', so neither is implied by the ingestion clause below.
+          AND p."publishedAt" < now()
+          AND p."availability" != ${Availability.Private}
           AND i.ingestion = 'Scanned'
+          AND i."needsReview" IS NULL
+          AND NOT i."acceptableMinor"
           AND NOT i."tosViolation"
           AND NOT i.minor
           AND NOT i.poi

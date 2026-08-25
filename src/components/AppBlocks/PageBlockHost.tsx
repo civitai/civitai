@@ -66,6 +66,7 @@ import {
 import { env } from '~/env/client';
 import { effectiveSandboxIsOpaque, intersectSandbox } from './sandbox';
 import { PAGE_SLOT_ID } from '~/shared/constants/slot-registry';
+import { HEADER_HEIGHT_PX } from '~/shared/constants/app-layout.constants';
 import { usePostMessage } from './usePostMessage';
 import type { BlockInitPayload, PageContext } from './types';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -400,7 +401,8 @@ export interface PageBlockHostProps {
    * it is spelled out rather than inferred from `surface`.
    *
    *   'viewport' (DEFAULT, the historical behaviour) — the host claims
-   *     `min-height: calc(100dvh - 60px)` and lets whatever is above it scroll.
+   *     `min-height: calc(100dvh - HEADER_HEIGHT_PX)` and lets whatever is above
+   *     it scroll.
    *     Correct ONLY for a mounter sitting inside a SCROLLING ancestor that does
    *     not otherwise bound its height: the dev tunnel (`/apps/dev/<blockId>`,
    *     default `AppLayout` → `ScrollArea`) and the mod-review preview (inside a
@@ -417,7 +419,7 @@ export interface PageBlockHostProps {
    *     `flex-1 overflow-hidden` all the way down.
    *
    * 🔴 WHY THE DEFAULT IS WRONG FOR A FULL-PAGE APP, and why 'fill' exists.
-   * `calc(100dvh - 60px)` subtracts ONLY the site header. Inside the default
+   * `calc(100dvh - HEADER_HEIGHT_PX)` subtracts ONLY the site header. Inside the default
    * scrolling layout the actual space left to the page is
    * `100dvh − header − subNav − its mb-3 − RewardsBonusBanner − AppFooter −
    * AdhesiveAd`, every term of which is ≥ 0 and several of which are > 0 on a
@@ -428,10 +430,23 @@ export interface PageBlockHostProps {
    * arithmetic, not a race: there is no viewport size at which the two heights
    * agree. `'fill'` removes the magic number instead of re-tuning it.
    *
-   * 🔴 The `60` is also a SECOND COPY of `HEADER_HEIGHT` (private to
-   * `AppHeader.tsx`), so a header resize silently re-opens this on any surface
-   * still on `'viewport'`. Prefer moving a mounter to `'fill'` over teaching
-   * this file a new constant.
+   * The header term is `HEADER_HEIGHT_PX` from
+   * `~/shared/constants/app-layout.constants`, which `AppHeader` also sets itself
+   * from — it used to be a private `HEADER_HEIGHT = 60` there and a bare `60`
+   * here, so a header resize re-opened this bug on any surface still on
+   * `'viewport'`. One source now, and a guard in `pageRunScrollContract.test.ts`
+   * binds it to the `--header-height` custom property that CSS call sites use.
+   *
+   * 🔴 Do NOT rewrite this to `calc(100dvh - var(--header-height))`. `globals.css`
+   * is NOT loaded in the component-test environment, so the custom property reads
+   * as `""` there, the declaration is invalid at computed-value time, and this
+   * host stops claiming a viewport-derived height (as a column flex item its
+   * `min-height` computes to `auto` and it clamps to its parent). Measured: the
+   * browser suite's RED ARM then FAILS with `expected 716 to be greater than 716`
+   * — loudly, not silently. Interpolating the constant is about keeping test and
+   * production identical, not about rescuing a missing net.
+   *
+   * Still prefer moving a mounter to `'fill'` over re-tuning this calc.
    */
   fit?: 'viewport' | 'fill';
 }
@@ -3581,7 +3596,7 @@ export function PageBlockHost({
               // Full viewport under the global header. The host chrome sits on
               // top; the iframe fills the rest.
               height: '100%',
-              minHeight: 'calc(100dvh - 60px)',
+              minHeight: `calc(100dvh - ${HEADER_HEIGHT_PX}px)`,
             }),
       }}
       data-testid="app-page-frame"

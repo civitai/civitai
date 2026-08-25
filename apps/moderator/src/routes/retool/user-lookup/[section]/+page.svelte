@@ -10,12 +10,14 @@
   import BuzzHistoryPanel from '../BuzzHistoryPanel.svelte';
   import BuzzTransactionPanel from '../BuzzTransactionPanel.svelte';
   import ChatContactPanel from '../ChatContactPanel.svelte';
+  import CommentBurstAlert from '../CommentBurstAlert.svelte';
   import CommentsPanel from '../CommentsPanel.svelte';
   import ContentCounts from '../ContentCounts.svelte';
   import CosmeticsPanel from '../CosmeticsPanel.svelte';
   import GenerationPanel from '../GenerationPanel.svelte';
   import IdentityPanel from '../IdentityPanel.svelte';
   import ModActivityPanel from '../ModActivityPanel.svelte';
+  import AbuseFindingsPanel from '../AbuseFindingsPanel.svelte';
   import ModerationMemoryPanel from '../ModerationMemoryPanel.svelte';
   import NotificationsPanel from '../NotificationsPanel.svelte';
   import PromptAuditPanel from '../PromptAuditPanel.svelte';
@@ -53,6 +55,11 @@
        would survive and end up pointed at a different account. -->
   {#key result.identity.id}
     {#if section === 'basic'}
+      <CommentBurstAlert
+        {signals}
+        civitaiUrl={data.civitaiUrl}
+        username={result.identity.username}
+      />
       <IdentityPanel
         identity={result.identity}
         profile={result.profile}
@@ -121,16 +128,16 @@
     {:else if section === 'generation'}
       <GenerationPanel {signals} userId={result.identity.id} civitaiUrl={data.civitaiUrl} />
     {:else if section === 'training'}
-      <TrainingsPanel {account} civitaiUrl={data.civitaiUrl} />
+      <TrainingsPanel {account} userId={result.identity.id} civitaiUrl={data.civitaiUrl} />
     {:else if section === 'bounties'}
       <BountiesPanel {account} civitaiUrl={data.civitaiUrl} />
     {:else if section === 'comments'}
+      <!-- No `onSuccess`: the panel keeps its own rows in step, and a refresh here would discard them. -->
       <CommentsPanel
         {account}
         userId={result.identity.id}
         canAct={data.canAct}
         civitaiUrl={data.civitaiUrl}
-        onSuccess={() => (version += 1)}
       />
     {:else if section === 'leaderboard' || section === 'score'}
       <ReputationPanel stats={result.stats} scores={result.scores} ranks={result.ranks} />
@@ -153,6 +160,12 @@
       <ReactionsPanel {account} />
     {:else if section === 'mod-activity'}
       <ModActivityPanel userId={result.identity.id} civitaiUrl={data.civitaiUrl} />
+      <!-- Beside the human record, not in a section of its own: "what did WE do about this account"
+           and "what did the DETECTORS say about it" are the same question a moderator is asking, and
+           /abuse deep-links here so the two arrive together. -->
+      {#if data.canSeeAbuse}
+        <AbuseFindingsPanel userId={result.identity.id} />
+      {/if}
     {:else if section === 'chat'}
       <ChatContactPanel modContact={result.modContact} username={result.identity.username} />
     {:else if section === 'notes'}

@@ -8,6 +8,15 @@ export const dateTime = (value: Date | string | null) =>
 export const num = (value: number) => value.toLocaleString();
 
 /**
+ * Milliseconds for a UTC timestamp that may or may not carry its zone marker.
+ *
+ * 🔴 ClickHouse returns `YYYY-MM-DD HH:MM:SS` unzoned and means UTC; `Date.parse` reads that shape as
+ * LOCAL. Never call `Date.parse` on a ClickHouse timestamp directly — both shapes come through here.
+ */
+export const utcMs = (value: string): number =>
+  Date.parse(value.includes('T') ? value : `${value.replace(' ', 'T')}Z`);
+
+/**
  * "3 hours ago" / "11 months ago". An absolute timestamp is precise and says nothing about whether a
  * value is fresh: a resume point reading "Sep 8, 2025" is a year stale, and no one reads that off the
  * date while working. Retool put the same phrasing on its own sweep button.

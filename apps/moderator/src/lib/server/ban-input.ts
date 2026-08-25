@@ -26,9 +26,18 @@ export const banFieldsSchema = z.object({
   detailsExternal: z.string().trim().max(2000).optional(),
   removeMedia: checkboxField,
   removeModels: checkboxField,
+  removeComments: checkboxField,
 });
 
 export type BanFields = z.infer<typeof banFieldsSchema>;
+
+/** `removeModels` is sent only on a ban: the endpoint DEFAULTS IT ON when absent, so an unban must
+ *  not pass it at all. */
+export const banRemovalArgs = (input: BanFields, ban: boolean) => ({
+  removeMedia: input.removeMedia,
+  removeModels: ban ? input.removeModels : undefined,
+  removeComments: input.removeComments,
+});
 
 /** `Other` says nothing on its own, and the appeal reviewer reads it months later with no other
  *  context. Returns the refusal, or null when the ban may proceed. */

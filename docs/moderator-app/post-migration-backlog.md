@@ -28,6 +28,9 @@ improvement gets moved down here rather than copied.
       **Do not "fix" a `.red` link back to `.com`.**
 - [ ] **Model Notes on civitai.com**: they were exported from Retool; show them on `/models/`, and let
       mods add notes and edit their own. The table is `ModelNotes` in the Retool database.
+      ⚠️ **"Edit their own" has no owner key today.** `ModelNotes.createdBy` is a `String`, not a userId
+      (`apps/moderator/prisma/schema.prisma:284`), so ownership can only be matched on a display name.
+      Decide that before scoping the UI.
 - [ ] **Per-mod app permissions**: *"Allow admin to give access to apps to individual mods instead of
       only relying on roles."* `AppPageAccess` grants per page **per role** today — individual grants
       are the delta.
@@ -49,17 +52,48 @@ Re-read off the live ticket 2026-08-21; the section above had captured the middl
       *"No reason to show image reports here, they're listed under images."* Both are real queues
       (`/reports/image` is the report; `/images/reported` is the triage grid), so this is a decision
       about which one the dashboard should carry, not a removal anyone should make unilaterally.
-- [ ] **Move the user-reports count next to the User Reports app.** *"We have a user reports app, move
-      the number to be next to that instead."* Same shape as above and the same open question: the count
-      currently hangs off `/reports/reportedUser`, and `/retool/user-reports` has no `countKey`.
+      **They are not the same number** (checked 2026-08-24): `report:image` counts *reports* over open
+      statuses filtered to `DEFAULT_REPORT_REASONS`; `reported` counts *distinct images* with a Pending
+      `ImageReport`, unfiltered by reason. Three images reported four times each reads 12 and 3. So
+      dropping either one loses information — the premise "no reason to show it" does not hold.
+- [x] **Move the user-reports count next to the User Reports app.** *"We have a user reports app, move
+      the number to be next to that instead… **Or** make the post/user text link to the user/post report
+      apps."* **Closed 2026-08-24 by the second alternative**, which the ask offered and which shipped —
+      see the ticked item above. If the *number* is ever wanted too it is one line, not a project:
+      `countFor` (`+layout.svelte:72`) is a plain map lookup and `report:reportedUser` is already in the
+      counts map, so a `countKey` on the nav entry needs no new query. One caveat if you do it:
+      `rollupFor` sums a group's children, so the same number would then appear in two group badges
+      unless it is also dropped from `/reports/reportedUser`.
 - [ ] **"Fix" / "unknown" on the urgent rows is not self-explanatory** — *"what does it mean?"*.
       `unknown` is `entityLabel`'s output when a report has no row in ANY of the fifteen report tables
-      (`entity: 'other'`). Needs a label that says that, and someone to say what "Fix" was.
+      (`entity: 'other'`). **The label half is done** — Built 2026-08-24 on `moderator-feedback-3` — not merged or deployed. The dashboard now reads
+      **"no linked content"** with a `title` explaining that no row exists in any report table and there
+      is nothing to open. "unknown" read as a rendering bug rather than a fact about the report, which
+      is what was actually being asked. **Left unticked for the "Fix" half only.**
+      **"Fix" has now been searched for and does not exist** (2026-08-24): not in the moderator app, not
+      in the main app's report UI, not in the `ReportReason` enum, and not in any Retool raw export —
+      the only "Fix" anywhere in the exports is a `Fix Paddle Connection` heading in User Lookup's Paddle
+      panel. There is nothing in code to find, so this still needs whoever wrote it. Do not re-search.
 
 ### Not in any checklist before 2026-08-21, and not buildable here
 
-- [ ] **CommentV2 has no ToS field**, so moderators cannot ToS article comments etc. on the site. Main-app
-      schema change.
+- [x] **Moderators cannot ToS article comments *on the site*.** **Built 2026-08-24 on `moderator-feedback-3` — not merged or deployed.** A red "Remove as ToS
+      violation" item in the comment menu's existing moderator block (`Comment.tsx`), behind a confirm
+      modal naming its three consequences, hidden once `comment.tosViolation` is set. It calls a new
+      `commentv2.setTosViolation` `moderatorProcedure` (`getByIdSchema`, matching the `comment.` and
+      `image.` procedures of the same name) which delegates to the **existing**
+      `bulkSetCommentV2TosViolation`, so it inherits report actioning, reporter rewards and the owner
+      notification instead of re-deriving them the way the legacy v1 handler does. A tRPC procedure
+      rather than a `fetch` to `/api/mod/comment/remove-as-tos`: no main-app component calls an
+      `/api/mod/*` endpoint today, and the two precedents are both procedures.
+      ⚠️ **Built but not clicked** — this needs a signed-in moderator session in a browser before it
+      counts as done by `apps/moderator/CLAUDE.md`'s own standard.
+
+      *Filed until 2026-08-24 as "CommentV2 has no ToS field — main-app schema change", which sent
+      three status passes past it as blocked. It had one: `CommentV2.tosViolation`
+      (`schema.full.prisma:3910`) and `bulkSetCommentV2TosViolation` (`commentsv2.service.ts:412`) were
+      both already there, doing the flag, the report actioning, the reward and the notification. Only
+      the control the ask actually named — one on civitai.com — was missing.*
 - [x] **Unpublishing toggle — the MINOR half.** `UnpublishModal` offers "Also mark this model as
       depicting a minor" on the two minor reasons (`mature-underage`, `photo-real-underage`), ticked by
       default, and runs `model.setMinor` **before** the unpublish: that mutation snapshots the model's
@@ -68,23 +102,34 @@ Re-read off the live ticket 2026-08-21; the section above had captured the middl
       unflagged. Model-level only — `setMinor` flags the whole model, so offering it on a *version*
       unpublish would act wider than the button says.
 
-- [ ] 🔴 **Unpublishing toggle — the POI half needs a decision, and this is the first time anyone has
-      looked.** It was filed as one item with the minor half; it is not.
+- [ ] **Unpublishing toggle — the POI half.** **Re-checked 2026-08-24: the earlier note here was
+      wrong.** It said `poi` has "no cascade" and that marking a model poi first needs its semantics
+      invented. The cascade exists and is shared with `minor`.
 
-      `minor` has a whole subsystem: `setModelMinor` (snapshot, `MINOR_LOCKED_PROPERTIES`, forces
-      `sfwOnly`, rewrites gallery level, propagates to images), a `moderatorProcedure`, and four
-      `minor-flag/*` mod endpoints. **`poi` has none of it.** `Model.poi` is a plain optional field on
-      the model upsert schema, with no setter, no cascade, no endpoint and no snapshot.
+      `applyModelFlagSideEffects` (`model.service.ts:2097`) treats `poiChanged` symmetrically with
+      `minorChanged`: it refreshes the tag cache, queues the model search-index update, and propagates to
+      every gallery image via `UPDATE "Image" SET minor = …, poi = …`, queueing those ids into the image
+      index. `poi` is on `modelUpsertSchema` beside `minor` and `upsertModel` calls that fan-out, so
+      flipping poi today already does all of it. Image-level `poi` also excludes from the image search
+      index and is re-derived from the parent model at scan time (`image-scan-result.service.ts:1089`).
 
-      So "mark it poi in the same gesture" cannot be built without first deciding what marking a model
-      poi is supposed to DO — cascade to its images? lock properties? force a rating? notify? Writing
-      `poi: true` from a modal would invent those answers silently, which is the failure mode that flag
-      exists to prevent. Needs the same treatment `minor` got, or an explicit "it is just a column".
-- [ ] **When are users notified that their model was marked as a minor?** — automated marks vs manual.
-      A question to answer, not work to do.
+      What `poi` genuinely lacks against `minor` is narrower, and is a build list rather than a question:
+      **no dedicated setter / `moderatorProcedure`**, **no snapshot** (so no rollback), **absent from
+      `MINOR_LOCKED_PROPERTIES`** (the creator can flip it back), and **no notification**. Mirror
+      `setModelMinor` minus the SFW rewrite — `poi` should not force `sfwOnly`/`nsfw`, which is the one
+      place the two flags genuinely differ.
+
+- [x] **When are users notified that their model was marked as a minor?** — **automated only**
+      (answered 2026-08-24). `minor-flag.notifications.ts` fires `model-flagged-minor` where
+      `COALESCE(confirmedFrom, source) = 'auto'`, so it covers auto-flags *including* ones a moderator
+      later confirmed — `confirmMinorHashAutoFlag` rewrites `source` to `'manual'` but preserves the
+      origin in `confirmedFrom`, which is why the query reads both. **A purely manual moderator flag
+      notifies nobody.** Also excludes `userId = -1` and requires `m.minor` to still be true.
 - [ ] **Data collection: the REASON for a rating change.** Distinct from the before/after pair
       `RatingChanges` now records (2026-08-21) — this asks for why, which needs a reason on the rating
-      control itself.
+      control itself. `RatingChanges` has **no `reason` column** (`apps/moderator/prisma/schema.prisma:367`),
+      so this needs a moderator-DB migration applied by hand as well as the control, plus a call on free
+      text vs a canned list.
 - [ ] **Creator Shop: cosmetics created by a user**, with status, created date, history, icon and current
       cost — plus who purchased each. *(From the ticket's comment thread, 08-13.)* Currently unanswerable
       without going to a person.
@@ -92,11 +137,39 @@ Re-read off the live ticket 2026-08-21; the section above had captured the middl
 ### Low priority, "to discuss" (same ticket)
 
 - [ ] ToS'd images should not be deletable by the user — removal is sometimes discussed afterwards.
+      Still a policy call, but not an open *effort* question: `image.delete` is `verifiedProcedure` +
+      `isOwnerOrModerator` (`image.router.ts:103`) with no `tosViolation` check anywhere in the path.
+      One guard in `deleteImageHandler`.
 - [ ] Show `userId` instead of `[deleted]` for deleted accounts, for mods.
 - [ ] Article comment reports are hard to action — threading takes you somewhere unhelpful.
 - [ ] Merge reports on one entity filed under different reasons (AdminAttention vs ToSViolation).
+      The mechanism is `report.service.ts:140-184`, which dedupes on **(reason, entity)** — keying on
+      `reason` is exactly why two reasons on one entity become two rows. Relaxing that key touches
+      `previouslyReviewedCount` escalation, the reporter notification (`report.notifications.ts:43`), and
+      the `reportId @unique` 1:1 on every `*Report` table.
 - [ ] Real-person reports should require a comment.
-- [ ] Multiple reports on the same `entityId` should keep every reporter's comment, not just the first.
+- [x] 🔴 **Multiple reports on the same `entityId` kept only the first reporter's comment.** **Built 2026-08-24 on `moderator-feedback-3` — not merged or deployed.**
+      This was silent data loss, not a UI gap: `report.service.ts` folds a second report on the same
+      `(reason, entity)` into the existing row, appending the userId to `Report.alsoReportedBy` while
+      **their `details` — their comment — was never written anywhere.** It collided with a shipped item,
+      since real-person reports now *require* a comment, so that reporter was made to type one that
+      nothing would ever read.
+
+      `withAdditionalReport` (`src/server/services/report-details.ts`) now appends
+      `{ userId, createdAt, details }` to `details.additionalReports` on the surviving row. No migration.
+      Applied in **both** update branches — the escalation one and the ordinary one — because covering
+      only the second would drop comments on exactly the reports that got re-escalated.
+
+      Two things a later reader needs. `createReport` stamps `reportType` onto **every** report, so
+      "does this duplicate carry anything?" cannot be an emptiness check: the helper strips that key
+      first and returns `undefined` when nothing remains, which is what keeps a comment-less duplicate
+      from growing the row. And `additionalReports` is deliberately **uncapped** — a cap re-creates this
+      bug on the most-reported entities, which are the ones that matter, and the `alsoReportedBy Int[]`
+      beside it is already unbounded.
+
+      Extracted to its own module rather than left inline so its test needs **no mocks at all**; inline,
+      it would have pulled `report.service`'s graph (buzz, rewards, search-index) into the suite. Five
+      tests in `report-details.test.ts`; a simulated revert fails four of them by name.
       (Related: report `details` is dropped everywhere in the app today — see the parity list.)
 
 ## Permissions
@@ -119,7 +192,7 @@ findings are done — see the parity checklist.
 
 - [x] ~~🔴 **Timed mutes never expire / provenance is not enforced.**~~ **Both halves closed 2026-08-20.**
 
-      Expiry: the spoke writes `User.muteExpiresAt`, drained hourly by `processTimedUnmutesJob`.
+      Expiry: the spoke writes `User.muteExpiresAt`, drained daily by `processTimedUnmutesJob` (see [strike-rules.md](strike-rules.md) §8).
 
       Provenance: **`mutedAt` is the marker, and `meta.manualMute` is gone.** The flag was written by
       two apps and read by none, while `mutedAt` already carried exactly this meaning for
@@ -129,10 +202,12 @@ findings are done — see the parity checklist.
       cannot go stale and mislabel the next automatic mute. Two tests cover the guard and both fail on
       a revert.
 - [x] ~~**Strikes write a second, disconnected ledger.**~~ **Closed** — `issueStrike` writes the main
-      app's `UserStrike` through `retool/strike → create`, so escalation, points, expiry, the
+      app's `UserStrike` through `/api/mod/strike/create`, so escalation, points, expiry, the
       `StrikeReason` enum, `reportId`, the typed notification and its email, and the void path all come
-      with it. Legacy `UserStrikes` rows are still read alongside so history is not lost. Same item as
-      the ticked one in `retool-parity-checklist.md`.
+      with it. The legacy `UserStrikes` rows were migrated into `UserStrike` 2026-08-21 and the second
+      read retired the same day (`2b7639a3ab`) — see
+      [`legacy-strike-migration.md`](legacy-strike-migration.md). Same item as the ticked one in
+      `retool-parity-checklist.md`.
 - [ ] **Nobody has looked at the page.** `apps/moderator/CLAUDE.md` is explicit that a segment which
       only typechecks is not done. Every component here has been compiled through Vite, but no
       moderator-app page in this slice has been rendered in a browser — and the two worst bugs found
@@ -152,12 +227,84 @@ findings are done — see the parity checklist.
       `identity.edit`, seeded to senior. The form itself already existed; what it lacked was the gate.
 - [ ] **Display name from the user table** (distinct from username).
 - [ ] **Longer mod notes don't wrap** — a rendering fix carried over from Retool's own complaint.
-- [ ] **LoRA training metadata**, plus a clickthrough to the orchestrator dashboard
-      (`orchestration-dashboard.civitai.com/job-search?workflow=…`).
+- [x] **LoRA training metadata.** **Built 2026-08-24 on `moderator-feedback-3` — not merged or
+      deployed.** Surviving runs already carried theirs; the gap was the runs the
+      30-day draft reap hard-deleted. `/api/user-training-orchestration` recovers those from
+      `orchestration.jobs` — epochs, real GPU cost, provider, base checkpoint, and whether a training
+      job ever ran — joined on the submit second, since that table carries no workflow column. Beside
+      them the Buzz ledger's `refund` rows, which join on workflow id exactly and answer what the panel
+      is usually open for: did the account get its Buzz back. `orchestration.workflowSteps` is behind a
+      click because it costs 5-9s where the rest is under one; it adds the status word, the failure
+      class and the ecosystem name, and it is the only thing that surfaces a run whose job rows are
+      already gone. The list pages ten at a time; that bound is what keeps the scanned
+      window the size of what is on screen.
+
+      The clickthrough to the orchestrator dashboard
+      (`orchestration-dashboard.civitai.com/job-search?workflow=…`) was asked for and **deliberately
+      not built**: the orchestrator flushes at 30 days, the same horizon whose draft reap deletes these
+      runs, so the link would be dead on almost every row it appeared on. The workflow id is not
+      displayed at all — it is a join key here, not something a moderator can act on.
 - [ ] **Blocked prompts** alongside the prompt list. 🎥 *"You can check their blocked prompts."*
 - [x] **Grant cosmetic items** from the shop panel — `grantCosmetic`, behind `user.cosmetics.grant`.
       🎥 *"Check their cosmetic shop, potentially grant them items."*
-- [ ] **Multi-select comments to ToS/delete them.** The ask is a selection UI; the bulk endpoints exist.
+- [x] **Multi-select comments to ToS/delete them.** **Built 2026-08-24 on `moderator-feedback-3` — not
+      merged or deployed.** Both lists in User Lookup → Comments carry a select-all over the *filtered*
+      rows, and the ids post from the selection rather than the rendered checkboxes, so it reaches past
+      the card's "Show more" fold. Actioned rows drop in place instead of refetching the account.
+- [ ] **`/users` page grant doubles as the ban / purge / bulk-comment permission.** `contentAction`,
+      `purgeContent` and `setBanned` in User Lookup all gate on `canAccess(user, '/users')`. Page grants
+      and permissions are meant to be independent axes here; these are welded, so granting a page is
+      granting enforcement. Wants `user.ban`, `user.purge` and `user.comments.bulk` in
+      `$lib/permissions.ts`, resolved through `locals.grants`. Surfaced 2026-08-24 by the newest-users
+      page, which was moved to `/users/newest` to avoid widening it in the meantime.
+
+      ⚠️ **Ship it when someone can tick `/admin` the same hour.** There are no default roles here, so
+      the moment it deploys nobody holds the three new permissions and every enforcement action in User
+      Lookup is off until they are granted. That is a coordinated change, not a quiet one.
+- [ ] **A comment thread over ~1000 comments costs ~1 s and 1.4M buffers per first page.** Pre-existing:
+      `fetchCommentsPaginated` orders by `c.id`, so above that size the planner leaves
+      `CommentV2_threadId` for a full primary-key walk (measured: 2333-comment thread, 953 ms,
+      `Rows Removed by Filter: 1447307`). Ordering by `c."createdAt", c.id` would use the existing
+      `idx_commentv2_thread_created_asc`, or a `(threadId, id)` index would give ordering and
+      selectivity together. Found 2026-08-24 while measuring the ToS-visibility change, which does not
+      affect the plan either way.
+- [ ] **~1.6 GB of duplicate indexes on `User`.** `User_email_idx` duplicates `User_email_key` (911 MB),
+      `User_username_idx` duplicates `User_username_key` (685 MB), and `User_id_idx1` is byte-identical
+      to `User_id_idx`. Maintained on every non-HOT update of the table and read by nothing. Found
+      2026-08-24; unrelated to any moderator work.
+- [ ] **`minor-hash.service.ts` documents a `make_interval` failure that does not happen.** The comment
+      says a bound JS number reaches `make_interval` as int8 and 500s the query, and it is the stated
+      reason that call site interpolates with `sql.raw`. Measured 2026-08-24: node-postgres declares no
+      parameter types, so the server infers int4 and resolution succeeds. The comment is what makes the
+      next person reach for `sql.raw` on a value — which is the shape that turns a value into SQL.
+- [ ] **ClickHouse `comments.entityId` is the comment's own id, not the thing commented on.**
+      `commentv2.controller.ts` tracks `entityId: result.id` (the new `CommentV2` row), while the legacy
+      `comment.controller.ts` tracks `entityId: comment.modelId` (a real target). So for Image, Post,
+      Comment, Review, Bounty and BountyEntry — ~73% of comment volume — `uniq(entityId)` equals
+      `count()` and any "distinct targets" measure is meaningless. Verified over 7 days: Image 18,717
+      rows / 18,700 "distinct" against Model 8,987 / 3,261. It cost the comment-spam signature a
+      condition (2026-08-24) and would silently mislead anything else that groups on it. Fixing it is a
+      one-line tracker change, and only helps from that point forward — the history stays wrong.
+      Two further gaps found at the same time: **article and challenge comments are never tracked at
+      all** (`commentv2.controller.ts` guards them out), and **editing a model comment emits a second
+      event**, inflating counts.
+- [ ] **`getJudgeCommentForImage` returns comment content with no ToS predicate.**
+      `commentsv2.service.ts` reads a challenge judge's comment by raw SQL and returns the body. Every
+      other v2 read filters `tosViolation` for non-moderators as of 2026-08-24; this one does not. The
+      authors are challenge judges, so the exposure is small — filed rather than fixed, and it is the
+      one v2 content read left unfiltered.
+- [ ] **Comic chapter comments are written outside `upsertComment`.** `createChapterComment` builds the
+      `CommentV2` row itself, so every comment guard has to be hand-copied onto it — the link-domain
+      check, the message-pattern report and (2026-08-24) the mute check and rate limit were all added
+      one at a time, after the fact. Routing it through the service would delete the copies and inherit
+      `commentsv2.blockCheck.service.test.ts`; the obstacle is that a chapter thread is keyed on
+      (project, chapter position) rather than a single entity id.
+- [ ] **No way back from a ToS flag on a comment.** Setting it is a one-way door: nothing in the main
+      app or the spoke clears `tosViolation` on `Comment` or `CommentV2`, and there is no comment
+      equivalent of `restoreImages`. That was survivable while the flag did nothing on v2 threads; as of
+      2026-08-24 it is what removes the comment, and a ban purge can set it across an account in one
+      action. Wants the mirror of the flag — a moderator-only unflag that also reopens the reports the
+      ToS action closed.
 - [ ] **More than 50 buzz entries.** *"Only showing 50 buzz entries will be too few for support to
       troubleshoot issues."* (The Payments/Receipts split and filters are parity; raising the cap is not.)
 - [ ] 🎥 **Ban-evasion view**: other accounts sharing an ISP, and whether action has been taken on each.

@@ -22,7 +22,9 @@ export const getUserBanDetails = ({
   return removeEmpty({
     banReasonCode: isModerator ? banDetails?.reasonCode : undefined,
     banReason: banDetails?.reasonCode
-      ? banReasonDetails[banDetails.reasonCode].publicBanReasonLabel
+      ? // `meta` is JSON, never parsed against the enum, so a build predating a reason code reads one
+        // it has no entry for — unguarded that throws inside `getUserWithProfile` and 500s the profile.
+        banReasonDetails[banDetails.reasonCode]?.publicBanReasonLabel
       : undefined,
     bannedReasonDetails: banDetails?.detailsExternal,
   });

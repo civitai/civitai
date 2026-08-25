@@ -332,6 +332,7 @@ export enum BanReasonCode {
   Scat = 'Scat',
   Nudify = 'Nudify',
   Harassment = 'Harassment',
+  SpamBot = 'SpamBot',
   LeaderboardCheating = 'LeaderboardCheating',
   BuzzCheating = 'BuzzCheating',
   RRDViolation = 'RRDViolation',
@@ -449,6 +450,7 @@ export enum NewOrderSignalActions {
 
 export enum ExternalModerationType {
   Clavata = 'Clavata',
+  MessagePattern = 'MessagePattern',
 }
 
 export enum MarketplacePaymentMethod {

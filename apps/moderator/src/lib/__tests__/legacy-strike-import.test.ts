@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { LEGACY_STRIKE_MARKER, legacyStrikeId, legacyStrikeNotes } from '$lib/legacy-strike-import';
+import {
+  FIRST_PASS_STRIKE_PREFIX,
+  firstPassStrikeId,
+  IMPORT_MARKER_PREFIXES,
+  importedLegacyStrikeId,
+  LEGACY_STRIKE_MARKER,
+  legacyStrikeId,
+  legacyStrikeNotes,
+} from '$lib/legacy-strike-import';
 
 /**
  * This protocol is what lets the import run at any time without a second deploy behind it: the writer
@@ -39,5 +47,74 @@ describe('legacy strike import marker', () => {
     // Both readers filter `internalNotes LIKE '<marker>%'` in SQL before parsing. A marker that did not
     // sit at the head would parse fine here and select nothing there.
     expect(legacyStrikeNotes(1, 'x').startsWith(LEGACY_STRIKE_MARKER)).toBe(true);
+  });
+});
+
+/**
+ * The FIRST import pass. Its rows landed Active with a point each, so failing to recognise one re-imports
+ * a years-old strike back onto the escalation ladder.
+ */
+describe('first-pass import marker', () => {
+  it('reads the id out of what the first pass wrote', () => {
+    expect(firstPassStrikeId('Imported from Retool strike #123. Issued by: Sebastian')).toBe(123);
+    expect(firstPassStrikeId('Imported from Retool strike #3979. Issued by: ')).toBe(3979);
+  });
+
+  it('does not confuse the two markers', () => {
+    expect(firstPassStrikeId(legacyStrikeNotes(9, 'x'))).toBeNull();
+    expect(legacyStrikeId('Imported from Retool strike #9. Issued by: x')).toBeNull();
+  });
+
+  it('ignores notes that are not first-pass markers', () => {
+    expect(firstPassStrikeId(null)).toBeNull();
+    expect(firstPassStrikeId('')).toBeNull();
+    expect(firstPassStrikeId('Escalated after appeal')).toBeNull();
+    expect(firstPassStrikeId(`prefixed ${FIRST_PASS_STRIKE_PREFIX}12`)).toBeNull();
+    // `Number('')` is 0, not NaN — so `id > 0`, not `Number.isInteger`, is the guard doing the work.
+    // Without it every malformed row collapses into one bucket and marks an arbitrary strike imported.
+    expect(firstPassStrikeId(`${FIRST_PASS_STRIKE_PREFIX}abc`)).toBeNull();
+    expect(firstPassStrikeId(FIRST_PASS_STRIKE_PREFIX)).toBeNull();
+  });
+
+  it('still reads the id when a moderator has appended to the note', () => {
+    // The rows this cleanup KEEPS are the odd ones, and an appended note is the likeliest shape.
+    expect(firstPassStrikeId('Imported from Retool strike #55. Issued by: X\nAppealed 2024')).toBe(
+      55
+    );
+  });
+
+  it('sits at the head, so the LIKE predicate the readers use will match', () => {
+    // `alreadyImported` and the cleanup script both filter `LIKE '<prefix>%'` in SQL before parsing.
+    expect(
+      'Imported from Retool strike #1. Issued by: x'.startsWith(FIRST_PASS_STRIKE_PREFIX)
+    ).toBe(true);
+  });
+});
+
+/**
+ * The union is the question every caller asks, and the one place it can be got wrong for all of them
+ * at once.
+ */
+describe('importedLegacyStrikeId', () => {
+  it('answers for either pass', () => {
+    expect(importedLegacyStrikeId(legacyStrikeNotes(4211, 'mod'))).toBe(4211);
+    expect(importedLegacyStrikeId('Imported from Retool strike #123. Issued by: Sebastian')).toBe(
+      123
+    );
+  });
+
+  it('returns null for a note that is not an import marker', () => {
+    // The negative control: a moderator's own note must never read as "already imported", which would
+    // hide a real strike from the import.
+    expect(importedLegacyStrikeId('Escalated after appeal')).toBeNull();
+    expect(importedLegacyStrikeId(null)).toBeNull();
+  });
+
+  it('covers every prefix the SQL filters on', () => {
+    // The predicate is built from IMPORT_MARKER_PREFIXES; if a prefix were added there without teaching
+    // the parser, rows would be selected and then silently dropped as unparseable.
+    for (const prefix of IMPORT_MARKER_PREFIXES) {
+      expect(importedLegacyStrikeId(`${prefix}77 by mod`)).toBe(77);
+    }
   });
 });

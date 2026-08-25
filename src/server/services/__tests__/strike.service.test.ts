@@ -9,12 +9,16 @@ const {
   mockInvalidateSession,
   mockRefreshSession,
   mockStrikeIssuedEmailSend,
+  mockSetUserSetting,
+  mockGetStaticContent,
 } = vi.hoisted(() => ({
   mockCreateNotification: vi.fn().mockResolvedValue(undefined),
   mockUpdateUserById: vi.fn().mockResolvedValue(undefined),
   mockInvalidateSession: vi.fn().mockResolvedValue(undefined),
   mockRefreshSession: vi.fn().mockResolvedValue(undefined),
   mockStrikeIssuedEmailSend: vi.fn().mockResolvedValue(undefined),
+  mockSetUserSetting: vi.fn().mockResolvedValue(undefined),
+  mockGetStaticContent: vi.fn(),
 }));
 
 // The db and logging clients come from the canonical shared mocks. Property
@@ -41,6 +45,14 @@ vi.mock('~/server/services/notification.service', () => ({
 
 vi.mock('~/server/services/user.service', () => ({
   updateUserById: mockUpdateUserById,
+  setUserSetting: mockSetUserSetting,
+}));
+
+// The accept path reads the deployed ToS to record the hash it accepted; the content itself is not
+// what this suite is about.
+vi.mock('~/server/services/content.service', () => ({
+  getStaticContent: mockGetStaticContent,
+  resolveTosHash: (h: string) => h,
 }));
 
 vi.mock('~/server/auth/session-invalidation', () => ({
@@ -76,6 +88,7 @@ import {
   getStrikeHistoryForMod,
   getUserStandings,
   evaluateStrikeEscalation,
+  acceptTosAfterMute,
   createStrike,
   voidStrike,
   expireStrikes,
@@ -86,8 +99,23 @@ import { StrikeReason, StrikeStatus } from '~/shared/utils/prisma/enums';
 // Helper: mock evaluateStrikeEscalation's transaction. The returned mocks are the transaction
 // client's, so a test asserting on `userUpdate` is asserting the write happened INSIDE the
 // transaction — which is the whole point of taking the lock.
-function mockTransactionForEscalation(pointsSum: number | null, user: any) {
-  const queryRaw = vi.fn().mockResolvedValue([{ sum: pointsSum }]);
+/**
+ * @param opts.lastStrikeAt when the account was last struck. Defaults to a date the fixture user has
+ *   NOT accepted the Terms after, which is the state that holds the 2-point mute — pass an older date
+ *   (or set a `tos*LastSeenDate` on `user.settings`) to model a user who has accepted since.
+ */
+function mockTransactionForEscalation(
+  pointsSum: number | null,
+  user: any,
+  opts: { lastStrikeAt?: Date | null } = {}
+) {
+  const { lastStrikeAt = new Date('2026-06-01') } = opts;
+  // Two reads in the transaction now: the locked point sum, then the last strike date the acceptance
+  // check compares against. `mockResolvedValue` for both would answer the second with the first.
+  const queryRaw = vi
+    .fn()
+    .mockResolvedValueOnce([{ sum: pointsSum }])
+    .mockResolvedValueOnce([{ last: lastStrikeAt }]);
   const userUpdate = vi.fn().mockResolvedValue(user);
   mockDbWrite.$transaction.mockImplementation(async (fn: any) =>
     fn({
@@ -103,7 +131,10 @@ const sqlOf = (call: any[]) => (call[0] as string[]).join(' ');
 
 describe('strike.service', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    // `reset`, not `clear`: an unconsumed `mockResolvedValueOnce` survives `clearAllMocks` and is
+    // served to the next test. It also wipes factory-declared implementations, so re-arm them.
+    vi.resetAllMocks();
+    mockGetStaticContent.mockResolvedValue({ hash: 'deadbeef' });
   });
 
   // ==========================================================================
@@ -496,7 +527,7 @@ describe('strike.service', () => {
         meta: {},
       });
 
-      const result = await evaluateStrikeEscalation(1);
+      const result = await evaluateStrikeEscalation(1, { allowMute: true });
 
       expect(result).toEqual({ totalPoints: 3, action: 'muted-and-flagged' });
       expect(userUpdate).toHaveBeenCalledWith(
@@ -525,55 +556,46 @@ describe('strike.service', () => {
         meta: { strikeFlaggedForReview: true },
       });
 
-      const result = await evaluateStrikeEscalation(1);
+      const result = await evaluateStrikeEscalation(1, { allowMute: true });
 
       expect(result.action).toBe('muted-and-flagged');
       expect(userUpdate).toHaveBeenCalled();
       expect(mockCreateNotification).not.toHaveBeenCalled();
     });
 
-    it('2 points: 3-day mute, invalidates session', async () => {
+    it('2 points: muted with NO expiry — this tier ends on acceptance, not on a timer', async () => {
       const { userUpdate } = mockTransactionForEscalation(2, {
         muted: false,
         muteExpiresAt: null,
         meta: {},
       });
 
-      const result = await evaluateStrikeEscalation(1);
+      const result = await evaluateStrikeEscalation(1, { allowMute: true });
 
       expect(result).toEqual({ totalPoints: 2, action: 'muted' });
       expect(userUpdate).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: 1 },
-          data: expect.objectContaining({
-            muted: true,
-            muteExpiresAt: expect.any(Date),
-          }),
+          data: expect.objectContaining({ muted: true, muteExpiresAt: null }),
         })
       );
-      // Pin the window itself, not just the number quoted in the notification — the literal 3 here is
-      // deliberate, so the test still fails if TIMED_MUTE_DAYS is changed without meaning to.
-      const { muteExpiresAt } = userUpdate.mock.calls[0][0].data;
-      const days = (muteExpiresAt.getTime() - Date.now()) / (24 * 60 * 60 * 1000);
-      expect(days).toBeGreaterThan(2.99);
-      expect(days).toBeLessThan(3.01);
+      // A date here would put it back on the 3-day renewal loop, which is what the notification used
+      // to promise and never delivered.
+      expect(userUpdate.mock.calls[0][0].data.muteExpiresAt).toBeNull();
       expect(mockInvalidateSession).toHaveBeenCalledWith(1, 'strike');
       expect(mockCreateNotification).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: 'strike-escalation-muted',
-          details: { muteDays: 3 },
-        })
+        expect.objectContaining({ type: 'strike-escalation-muted' })
       );
     });
 
-    it('2 points, already timed-muted: updates user but skips duplicate notification', async () => {
+    it('2 points, already held: updates user but skips duplicate notification', async () => {
       const { userUpdate } = mockTransactionForEscalation(2, {
         muted: true,
-        muteExpiresAt: new Date('2099-01-01'),
+        muteExpiresAt: null,
         meta: {},
       });
 
-      const result = await evaluateStrikeEscalation(1);
+      const result = await evaluateStrikeEscalation(1, { allowMute: true });
 
       expect(result.action).toBe('muted');
       expect(userUpdate).toHaveBeenCalled();
@@ -587,7 +609,7 @@ describe('strike.service', () => {
         meta: { strikeFlaggedForReview: true },
       });
 
-      const result = await evaluateStrikeEscalation(1);
+      const result = await evaluateStrikeEscalation(1, { allowMute: true });
 
       expect(result.action).toBe('muted');
       expect(userUpdate).toHaveBeenCalledWith(
@@ -606,21 +628,21 @@ describe('strike.service', () => {
         meta: {},
       });
 
-      const result = await evaluateStrikeEscalation(1);
+      const result = await evaluateStrikeEscalation(1, { allowMute: true });
 
       expect(result).toEqual({ totalPoints: 1, action: 'none' });
       expect(userUpdate).not.toHaveBeenCalled();
       expect(mockCreateNotification).not.toHaveBeenCalled();
     });
 
-    it('<2 points, user strike-muted (has muteExpiresAt): unmutes and sends notification', async () => {
+    it('<2 points, strike-muted: unmutes and sends notification', async () => {
       const { userUpdate } = mockTransactionForEscalation(1, {
         muted: true,
         muteExpiresAt: new Date('2099-01-01'),
         meta: {},
       });
 
-      const result = await evaluateStrikeEscalation(1);
+      const result = await evaluateStrikeEscalation(1, { allowMute: true });
 
       expect(result).toEqual({ totalPoints: 1, action: 'unmuted' });
       expect(userUpdate).toHaveBeenCalledWith(
@@ -638,14 +660,14 @@ describe('strike.service', () => {
       expect(mockRefreshSession).toHaveBeenCalledWith(1, { caller: 'strike' });
     });
 
-    it('<2 points, user flagged (has strikeFlaggedForReview): unmutes and clears flag', async () => {
+    it('<2 points, flagged AND accepted since: unmutes and clears flag', async () => {
       const { userUpdate } = mockTransactionForEscalation(0, {
         muted: true,
         muteExpiresAt: null,
         meta: { strikeFlaggedForReview: true },
       });
 
-      const result = await evaluateStrikeEscalation(1);
+      const result = await evaluateStrikeEscalation(1, { allowMute: true });
 
       expect(result).toEqual({ totalPoints: 0, action: 'unmuted' });
       expect(userUpdate).toHaveBeenCalledWith(
@@ -670,7 +692,7 @@ describe('strike.service', () => {
         meta: {},
       });
 
-      const result = await evaluateStrikeEscalation(1);
+      const result = await evaluateStrikeEscalation(1, { allowMute: true });
 
       expect(result).toEqual({ totalPoints: 1, action: 'none' });
       expect(userUpdate).not.toHaveBeenCalled();
@@ -689,7 +711,7 @@ describe('strike.service', () => {
         meta: {},
       });
 
-      await evaluateStrikeEscalation(1);
+      await evaluateStrikeEscalation(1, { allowMute: true });
 
       expect(mockLogToAxiom).toHaveBeenCalledWith(
         expect.objectContaining({ name: 'strike-de-escalation-skipped', userId: 1 })
@@ -706,7 +728,7 @@ describe('strike.service', () => {
         meta: { muteReason: 'older moderator mute', mutedBy: 55, keepMe: true },
       });
 
-      await evaluateStrikeEscalation(1);
+      await evaluateStrikeEscalation(1, { allowMute: true });
 
       const data = userUpdate.mock.calls[0][0].data;
       expect(data).toMatchObject({ muted: false, mutedAt: null, muteExpiresAt: null });
@@ -716,7 +738,9 @@ describe('strike.service', () => {
       expect(data.meta).toMatchObject({ keepMe: true });
     });
 
-    it('escalating to a timed mute does not SHORTEN a longer moderator mute', async () => {
+    // Nulling it would turn their 30-day mute into a permanent one — an extension nobody asked for,
+    // and the mirror of the shortening bug this test was originally written for.
+    it('escalating leaves a moderator mute expiry alone, neither shortening nor extending', async () => {
       const moderatorExpiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
       const { userUpdate } = mockTransactionForEscalation(2, {
         muted: true,
@@ -725,24 +749,27 @@ describe('strike.service', () => {
         meta: {},
       });
 
-      await evaluateStrikeEscalation(1);
+      await evaluateStrikeEscalation(1, { allowMute: true });
 
       expect(userUpdate).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ muted: true, muteExpiresAt: moderatorExpiry }),
-        })
+        expect.objectContaining({ data: expect.objectContaining({ muted: true }) })
       );
+      // Absent, not overwritten: their expiry stands untouched and `process-timed-unmutes` still ends
+      // it on schedule.
+      expect(userUpdate.mock.calls[0][0].data).not.toHaveProperty('muteExpiresAt');
     });
 
-    it('<2 points, user manually muted (no muteExpiresAt, no flag): does NOT unmute', async () => {
+    it('<2 points, muted with no expiry, no flag and no strike reason: left alone', async () => {
       const { userUpdate } = mockTransactionForEscalation(0, {
         muted: true,
         muteExpiresAt: null,
         meta: {},
       });
 
-      const result = await evaluateStrikeEscalation(1);
+      const result = await evaluateStrikeEscalation(1, { allowMute: true });
 
+      // Not this system's mute to lift: no expiry, no review flag and no strike reason means something
+      // else muted this account, and clearing it here would release a scam or restriction mute.
       expect(result).toEqual({ totalPoints: 0, action: 'none' });
       expect(userUpdate).not.toHaveBeenCalled();
     });
@@ -750,7 +777,7 @@ describe('strike.service', () => {
     it('user not found: returns none', async () => {
       const { userUpdate } = mockTransactionForEscalation(3, null);
 
-      const result = await evaluateStrikeEscalation(999);
+      const result = await evaluateStrikeEscalation(999, { allowMute: true });
 
       expect(result).toEqual({ totalPoints: 3, action: 'none' });
       expect(userUpdate).not.toHaveBeenCalled();
@@ -763,7 +790,7 @@ describe('strike.service', () => {
         meta: {},
       });
 
-      await evaluateStrikeEscalation(1);
+      await evaluateStrikeEscalation(1, { allowMute: true });
 
       expect(mockDbWrite.$transaction).toHaveBeenCalledTimes(1);
       // Postgres rejects `FOR UPDATE` on an aggregate query (0A000, "not allowed with aggregate
@@ -992,14 +1019,16 @@ describe('strike.service', () => {
       );
     });
 
-    it('re-evaluates escalation after voiding', async () => {
+    it('re-evaluates escalation after voiding, and the void releases the mute', async () => {
       mockDbWrite.userStrike.updateMany.mockResolvedValue({ count: 1 });
       mockDbRead.userStrike.findUniqueOrThrow.mockResolvedValue(mockVoidedStrike);
-      const { userUpdate } = mockTransactionForEscalation(0, {
-        muted: true,
-        muteExpiresAt: new Date('2099-01-01'),
-        meta: {},
-      });
+      // `lastStrikeAt: null` models what the query returns once the only strike is voided — voided rows
+      // are excluded, so a moderator taking a strike back unmutes without the user accepting anything.
+      const { userUpdate } = mockTransactionForEscalation(
+        0,
+        { muted: true, muteExpiresAt: new Date('2099-01-01'), meta: {} },
+        { lastStrikeAt: null }
+      );
 
       await voidStrike(voidInput);
 
@@ -1081,24 +1110,118 @@ describe('strike.service', () => {
   });
 
   // ==========================================================================
+  // acceptTosAfterMute
+  // ==========================================================================
+  describe('acceptTosAfterMute', () => {
+    const strikeMuted = {
+      muted: true,
+      mutedAt: null,
+      meta: { muteReason: 'strike-escalation' },
+    };
+
+    function mockAcceptTransaction(user: any, pointsSum: number) {
+      const userUpdate = vi.fn().mockResolvedValue(user);
+      mockDbWrite.$transaction.mockImplementation(async (fn: any) =>
+        fn({
+          $queryRaw: vi.fn().mockResolvedValue([{ sum: pointsSum }]),
+          user: { findUnique: vi.fn().mockResolvedValue(user), update: userUpdate },
+        })
+      );
+      return { userUpdate };
+    }
+
+    it('records the acceptance and lifts the mute', async () => {
+      const { userUpdate } = mockAcceptTransaction(strikeMuted, 2);
+
+      const result = await acceptTosAfterMute({ userId: 1 });
+
+      expect(result).toEqual({ unmuted: true });
+      // The modal's own settings write is not awaited, so this call owns the acceptance record.
+      expect(mockSetUserSetting).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({ tosLastSeenDate: expect.any(Date) })
+      );
+      expect(userUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ muted: false }) })
+      );
+      expect(mockRefreshSession).toHaveBeenCalledWith(1, { caller: 'strike' });
+    });
+
+    it('records against the domain the user accepted on', async () => {
+      mockAcceptTransaction(strikeMuted, 2);
+
+      await acceptTosAfterMute({ userId: 1, domain: 'green' });
+
+      expect(mockSetUserSetting).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({ tosGreenLastSeenDate: expect.any(Date) })
+      );
+    });
+
+    it('refuses an account muted for something OTHER than strikes', async () => {
+      // 🔴 The exploit this closes: the mutation is `protectedProcedure`, so any signed-in account can
+      // call it. Without the reason check a spam bot the scam job muted unmutes itself by accepting
+      // the Terms — never being shown the modal is not a control.
+      const { userUpdate } = mockAcceptTransaction(
+        { muted: true, mutedAt: null, meta: { muteReason: 'auto-mute-scam' } },
+        2
+      );
+
+      const result = await acceptTosAfterMute({ userId: 1 });
+
+      expect(result).toEqual({ unmuted: false, reason: 'not-eligible' });
+      expect(userUpdate).not.toHaveBeenCalled();
+      expect(mockRefreshSession).not.toHaveBeenCalled();
+    });
+
+    it('refuses a moderator-set mute', async () => {
+      const { userUpdate } = mockAcceptTransaction(
+        { muted: true, mutedAt: new Date('2026-01-01'), meta: { muteReason: 'strike-escalation' } },
+        2
+      );
+
+      const result = await acceptTosAfterMute({ userId: 1 });
+
+      expect(result).toEqual({ unmuted: false, reason: 'moderator' });
+      expect(userUpdate).not.toHaveBeenCalled();
+    });
+
+    it('refuses the review tier — a moderator decides that one', async () => {
+      const { userUpdate } = mockAcceptTransaction(strikeMuted, 3);
+
+      const result = await acceptTosAfterMute({ userId: 1 });
+
+      expect(result).toEqual({ unmuted: false, reason: 'review' });
+      expect(userUpdate).not.toHaveBeenCalled();
+    });
+
+    it('decides on state read INSIDE the transaction, not before it', async () => {
+      // Pins the eligibility read to the transaction: reverted to a pre-transaction `dbRead` read,
+      // this decides on state that may already be stale.
+      const escalated = {
+        muted: true,
+        mutedAt: null,
+        meta: { muteReason: 'strike-escalation', strikeFlaggedForReview: true },
+      };
+      const { userUpdate } = mockAcceptTransaction(escalated, 3);
+
+      const result = await acceptTosAfterMute({ userId: 1 });
+
+      expect(result).toEqual({ unmuted: false, reason: 'review' });
+      expect(userUpdate).not.toHaveBeenCalled();
+    });
+  });
+
+  // ==========================================================================
   // processTimedUnmutes
   // ==========================================================================
   describe('processTimedUnmutes', () => {
-    it('returns { unmutedCount: 0 } when no users with expired mutes', async () => {
-      mockDbRead.user.findMany.mockResolvedValue([]);
-
-      const result = await processTimedUnmutes();
-
-      expect(result).toEqual({ unmutedCount: 0 });
-    });
-
-    it('unmutes user when escalation returns none (points < 2)', async () => {
-      mockDbRead.user.findMany.mockResolvedValue([{ id: 100 }]);
-      mockTransactionForEscalation(0, {
-        muted: true,
-        muteExpiresAt: null,
-        meta: {},
-      });
+    it("releases a moderator's timed mute once its expiry passes", async () => {
+      // 🔴 The regression this guards: filtering the sweep to `mutedAt IS NULL` excluded moderator
+      // mutes entirely, and escalation refuses to lift one — so a 24h Mod Studio mute became
+      // permanent. Nothing else in the system ends it.
+      mockDbRead.$queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([{ id: 100 }]);
+      mockDbRead.user.findUnique.mockResolvedValue({ meta: {} });
 
       const result = await processTimedUnmutes();
 
@@ -1106,19 +1229,41 @@ describe('strike.service', () => {
       expect(mockUpdateUserById).toHaveBeenCalledWith(
         expect.objectContaining({
           id: 100,
-          data: expect.objectContaining({ muted: false, muteExpiresAt: null }),
+          data: expect.objectContaining({ muted: false, mutedAt: null }),
           updateSource: 'timed-unmute',
         })
       );
       expect(mockRefreshSession).toHaveBeenCalledWith(100, { caller: 'strike' });
     });
 
-    it('counts user when escalation returns unmuted', async () => {
-      mockDbRead.user.findMany.mockResolvedValue([{ id: 100 }]);
+    it('asks for both kinds of mute, by the predicate each needs', async () => {
+      mockDbRead.$queryRaw.mockResolvedValue([]);
+
+      await processTimedUnmutes();
+
+      const [strikeArm, moderatorArm] = mockDbRead.$queryRaw.mock.calls.map(sqlOf);
+      // Strike mutes have no expiry to find them by, so the reason is the only handle.
+      expect(strikeArm).toContain('"mutedAt" IS NULL');
+      expect(strikeArm).toContain(`'muteReason'`);
+      // A moderator's mute is found by its own expiry and released outright.
+      expect(moderatorArm).toContain('"mutedAt" IS NOT NULL');
+      expect(moderatorArm).toContain('"muteExpiresAt" <= NOW()');
+    });
+
+    it('returns { unmutedCount: 0 } when nothing is held', async () => {
+      mockDbRead.$queryRaw.mockResolvedValue([]);
+
+      const result = await processTimedUnmutes();
+
+      expect(result).toEqual({ unmutedCount: 0 });
+    });
+
+    it('releases a strike mute once the points have fallen below the threshold', async () => {
+      mockDbRead.$queryRaw.mockResolvedValueOnce([{ id: 100 }]).mockResolvedValueOnce([]);
       mockTransactionForEscalation(1, {
         muted: true,
-        muteExpiresAt: new Date('2024-01-01'),
-        meta: {},
+        muteExpiresAt: null,
+        meta: { muteReason: 'strike-escalation' },
       });
 
       const result = await processTimedUnmutes();
@@ -1126,9 +1271,11 @@ describe('strike.service', () => {
       expect(result).toEqual({ unmutedCount: 1 });
     });
 
-    it('does NOT unmute when escalation re-applies mute (points still >= 2)', async () => {
-      mockDbRead.user.findMany.mockResolvedValue([{ id: 100 }]);
-      mockTransactionForEscalation(2, {
+    it('does NOT re-mute an account whose points still stand', async () => {
+      // The job passes no `allowMute`, so escalation can only release — otherwise every nightly run
+      // undoes a moderator's manual unmute.
+      mockDbRead.$queryRaw.mockResolvedValueOnce([{ id: 100 }]).mockResolvedValueOnce([]);
+      const { userUpdate } = mockTransactionForEscalation(2, {
         muted: false,
         muteExpiresAt: null,
         meta: {},
@@ -1136,8 +1283,56 @@ describe('strike.service', () => {
 
       const result = await processTimedUnmutes();
 
-      // User should NOT be counted as unmuted
       expect(result).toEqual({ unmutedCount: 0 });
+      expect(userUpdate).not.toHaveBeenCalled();
+    });
+
+    it('leaves a moderator mute whose expiry has NOT passed alone', async () => {
+      // Neither arm selects it — the strike arm excludes `mutedAt`, the moderator arm wants a lapsed
+      // expiry — and escalation would refuse it anyway.
+      mockDbRead.$queryRaw.mockResolvedValue([]);
+      const { userUpdate } = mockTransactionForEscalation(0, {
+        muted: true,
+        mutedAt: new Date('2026-01-01'),
+        muteExpiresAt: new Date('2099-01-01'),
+        meta: {},
+      });
+
+      const result = await processTimedUnmutes();
+
+      expect(result).toEqual({ unmutedCount: 0 });
+      expect(userUpdate).not.toHaveBeenCalled();
+    });
+
+    it('continues after one account fails', async () => {
+      mockDbRead.$queryRaw
+        .mockResolvedValueOnce([{ id: 100 }, { id: 200 }])
+        .mockResolvedValueOnce([]);
+      mockDbWrite.$transaction
+        .mockRejectedValueOnce(new Error('boom'))
+        .mockImplementationOnce(async (fn: any) =>
+          fn({
+            $queryRaw: vi
+              .fn()
+              .mockResolvedValueOnce([{ sum: 0 }])
+              .mockResolvedValueOnce([{ last: null }]),
+            user: {
+              findUnique: vi.fn().mockResolvedValue({
+                muted: true,
+                muteExpiresAt: null,
+                meta: { muteReason: 'strike-escalation' },
+              }),
+              update: vi.fn().mockResolvedValue({}),
+            },
+          })
+        );
+
+      const result = await processTimedUnmutes();
+
+      expect(result).toEqual({ unmutedCount: 1 });
+      expect(mockLogToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'strike-timed-unmute-failed' })
+      );
     });
   });
 });

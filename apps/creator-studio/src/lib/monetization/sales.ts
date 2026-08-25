@@ -49,10 +49,63 @@ export function budgetMonthOf(startsAt: Date): Date {
   return new Date(Date.UTC(startsAt.getUTCFullYear(), startsAt.getUTCMonth(), 1));
 }
 
+/**
+ * What `?/salePreview` answers. Both sides of that action go through this module — the route builds the
+ * payload with `salePreviewPayload` and the page reads it with `parseSalePreview` — because the wire is
+ * string-keyed and untyped: renaming a key on the server left the page reading `undefined ?? 0`, which
+ * says "everything you selected is covered" and offers a sale the write refuses.
+ */
+export type SalePreview = {
+  /** Versions a sale would actually cover. */
+  eligible: number;
+  earlyAccess: number;
+  unpriced: number;
+  /** Cheapest buyer-facing price among the covered ones; null = none priced. */
+  minCoveredPrice: number | null;
+};
+
+export const salePreviewPayload = (p: SalePreview): SalePreview => p;
+
+/** `undefined` when the action did not answer — never coerced to zeroes, which read as full coverage. */
+export function parseSalePreview(data: unknown): SalePreview | undefined {
+  if (!data || typeof data !== 'object') return undefined;
+  const d = data as Record<string, unknown>;
+  const count = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
+  const eligible = count(d.eligible);
+  const earlyAccess = count(d.earlyAccess);
+  const unpriced = count(d.unpriced);
+  if (eligible === undefined || earlyAccess === undefined || unpriced === undefined)
+    return undefined;
+  // `null` is an answer — "nothing in the selection is priced". Anything else non-numeric is not, and
+  // must not degrade to it: `null` is the value that SKIPS the Fixed zero-floor check entirely.
+  if (d.minCoveredPrice !== null && count(d.minCoveredPrice) === undefined) return undefined;
+  return {
+    eligible,
+    earlyAccess,
+    unpriced,
+    minCoveredPrice: d.minCoveredPrice === null ? null : (count(d.minCoveredPrice) as number),
+  };
+}
+
 export type SaleEligibilityInput = {
   selectedCount: number;
+  /**
+   * Versions the WRITE would cover, as the server counted them. `undefined` = NOT KNOWN, which blocks:
+   * the preview can fail, and a failure that reset this to a number read as "everything you selected is
+   * covered" and offered Apply on a sale the server would refuse.
+   *
+   * 🔴 Not `selectedCount - skipped`. A selected id the creator no longer owns — deleted, transferred,
+   * never theirs — is in neither skip count, so subtracting counts it as covered and the form names a
+   * coverage the write does not deliver.
+   */
+  eligibleCount: number | undefined;
   /** Selected versions gated as Early Access — a sale can't cover those. */
-  earlyAccessCount: number;
+  earlyAccessCount: number | undefined;
+  /**
+   * Selected versions with no permanent access price. A sale composes over that price and nothing else,
+   * so one laid over these covers a version and then discounts nothing anywhere (CU 868kwp6cx).
+   */
+  unpricedCount: number | undefined;
   creatorScore: number;
   tier: string | null | undefined;
   /** Sale-days already committed in the budget month the draft starts in. */
@@ -82,13 +135,34 @@ export type SaleEligibility = {
   daysLeft: number;
   /** Why the creator can't schedule this at all. Absent when they can. */
   blockedReason?: string;
-  /** Set when the sale is schedulable but won't reach the whole selection. */
-  partialNotice?: { skipped: number; applies: number };
+  /**
+   * Set when the sale is schedulable but won't reach the whole selection. The two reasons stay
+   * SEPARATE: a summed count forces the notice to name one of them, and it named the wrong one for
+   * every selection that mixed them (CU 868kwp6mp).
+   */
+  partialNotice?: { earlyAccess: number; unpriced: number; applies: number };
 };
+
+// Named by what is wrong with the SELECTION, not by what the creator did: "nothing here is priced" is
+// actionable, "sales need paid access" is a rule they then have to apply themselves.
+const mixedBlockedReason =
+  'None of the selected versions can go on sale — some are in early access, and the rest have no permanent access price.';
+
+const nothingPricedReason = (selectedCount: number) =>
+  selectedCount === 1
+    ? 'This version has no permanent access price, so a sale has nothing to take Buzz off.'
+    : 'None of the selected versions has a permanent access price, so a sale has nothing to take Buzz off.';
+
+const allEarlyAccessReason = (selectedCount: number) =>
+  selectedCount === 1
+    ? "This version is in early access, and a sale can't run on early access."
+    : "Every selected version is in early access, and a sale can't run on early access.";
 
 export function resolveSaleEligibility({
   selectedCount,
+  eligibleCount,
   earlyAccessCount,
+  unpricedCount,
   creatorScore,
   tier,
   daysUsedInMonth,
@@ -101,7 +175,8 @@ export function resolveSaleEligibility({
   now,
   resolving,
 }: SaleEligibilityInput): SaleEligibility {
-  const eligibleVersions = Math.max(0, selectedCount - earlyAccessCount);
+  const coverageKnown = eligibleCount != null && earlyAccessCount != null && unpricedCount != null;
+  const eligibleVersions = coverageKnown ? eligibleCount : 0;
   const daysAllowed = maxSaleDays(tier, overrides);
   const daysLeft = Math.max(0, daysAllowed - daysUsedInMonth);
   const leadDays = (startsAt.getTime() - now.getTime()) / DAY_MS;
@@ -113,6 +188,10 @@ export function resolveSaleEligibility({
   if (creatorScore < minScore)
     blockedReason = `Sales unlock at a creator score of ${minScore.toLocaleString()}.`;
   else if (resolving) blockedReason = 'Checking which versions can go on sale…';
+  // Distinct from `resolving`: the check finished and failed. Same rule the floor below applies — an
+  // answer we could not get is never "nothing is in the way".
+  else if (!coverageKnown)
+    blockedReason = "Couldn't check which versions can go on sale. Try again.";
   // A floor we could not resolve is NOT "no floor". The preview can fail, and treating an unknown as
   // "nothing to clear" would offer Apply on a discount nothing has evaluated.
   else if (type === 'Fixed' && amount != null && minCoveredPrice === undefined)
@@ -122,9 +201,11 @@ export function resolveSaleEligibility({
   else if (draftDays <= 0) blockedReason = 'Choose the days the sale runs.';
   else if (eligibleVersions <= 0)
     blockedReason =
-      selectedCount === 1
-        ? "This version is in early access, and a sale can't run on early access."
-        : "Every selected version is in early access, and a sale can't run on early access.";
+      unpricedCount && earlyAccessCount
+        ? mixedBlockedReason
+        : unpricedCount
+          ? nothingPricedReason(selectedCount)
+          : allEarlyAccessReason(selectedCount);
   else if (leadDays > maxLead) blockedReason = `A sale can start at most ${maxLead} days from now.`;
   // Backdating is not a cosmetic problem: the budget buckets by START month, so a sale backdated into a
   // past month spends an untouched budget and runs concurrently with this month's.
@@ -155,8 +236,8 @@ export function resolveSaleEligibility({
     daysLeft,
     blockedReason,
     partialNotice:
-      !blockedReason && earlyAccessCount > 0
-        ? { skipped: earlyAccessCount, applies: eligibleVersions }
+      !blockedReason && coverageKnown && earlyAccessCount + unpricedCount > 0
+        ? { earlyAccess: earlyAccessCount, unpriced: unpricedCount, applies: eligibleVersions }
         : undefined,
   };
 }
@@ -196,7 +277,9 @@ export function resolveSaleDraft(
   input: SaleDraftInput,
   ctx: {
     selectedCount: number;
-    earlyAccessCount: number;
+    eligibleCount: number | undefined;
+    earlyAccessCount: number | undefined;
+    unpricedCount: number | undefined;
     /** Cheapest buyer-facing price; null = none priced, undefined = not known (blocks). */
     minCoveredPrice: number | null | undefined;
     overrides?: SaleLimitOverrides;
@@ -225,7 +308,9 @@ export function resolveSaleDraft(
     daysUsedInMonth,
     eligibility: resolveSaleEligibility({
       selectedCount: ctx.selectedCount,
+      eligibleCount: ctx.eligibleCount,
       earlyAccessCount: ctx.earlyAccessCount,
+      unpricedCount: ctx.unpricedCount,
       creatorScore: ctx.creatorScore,
       tier: ctx.tier,
       daysUsedInMonth,

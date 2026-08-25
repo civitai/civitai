@@ -8,7 +8,7 @@ import { StickerBookGrid } from '~/components/StickerBook/StickerBookGrid';
 import { constants } from '~/server/common/constants';
 import { STICKER_BOOK_MAX_COLUMNS } from '~/shared/utils/sticker-book';
 import type { StickerBookSide } from '~/components/StickerBook/sticker-book.util';
-import { stickerBookSectionCopy } from '~/components/StickerBook/sticker-book.util';
+import { stickerBookSectionCopy, stickerBookUrl } from '~/components/StickerBook/sticker-book.util';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -73,7 +73,7 @@ export function StickerBookSectionPage({
           it also goes back through history when there is history, so arriving
           from the tab returns to the scroll position it was left at. */}
           <div>
-            <BackButton url={`/user/${username}/sticker-book`}>
+            <BackButton url={stickerBookUrl(username)}>
               <Text size="sm">Back to the sticker book</Text>
             </BackButton>
             <Title order={2} mt={4}>

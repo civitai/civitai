@@ -1872,6 +1872,7 @@ export const toggleBan = async ({
   force,
   removeMedia,
   removeModels,
+  removeComments,
 }: ToggleBanUser & { userId: number; isModerator?: boolean; force?: boolean }) => {
   // Get user with username for search index deletion
   const user = await getUserById({
@@ -1983,6 +1984,30 @@ export const toggleBan = async ({
         logToAxiom({
           type: 'error',
           name: 'ban-user-remove-content',
+          message: (error as Error).message,
+          error,
+        });
+      }
+    }
+
+    // Flagged, not deleted, and the ToS flag rather than `hidden` — `hidden` is a fold any viewer can
+    // reopen. See `bulkSetCommentV2TosViolation`.
+    if (removeComments) {
+      try {
+        await Promise.all([
+          dbWrite.comment.updateMany({
+            where: { userId: id, tosViolation: false },
+            data: { tosViolation: true },
+          }),
+          dbWrite.commentV2.updateMany({
+            where: { userId: id, tosViolation: false },
+            data: { tosViolation: true },
+          }),
+        ]);
+      } catch (error) {
+        logToAxiom({
+          type: 'error',
+          name: 'ban-user-remove-comments',
           message: (error as Error).message,
           error,
         });

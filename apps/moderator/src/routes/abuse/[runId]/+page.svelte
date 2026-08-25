@@ -79,9 +79,13 @@
       {#each rows as f (f.id)}
         <TableRow>
           <TableCell>
-            <!-- `?q=`, not `?userId=` — the bare route redirects to the default section carrying `q`
-                 forward, and an unknown param is dropped, landing the moderator on an empty search. -->
-            <a class={LINK_CLASS} href="/retool/user-lookup?q={f.userId}">{f.userId}</a>
+            <!-- `?q=`, not `?userId=` — an unknown param is dropped, landing the moderator on an
+                 empty search.
+                 🔴 And the SECTION is named rather than left to the bare route's redirect, which
+                 lands on Basic. Following this link used to arrive at a page with ~20 panels and
+                 nothing about abuse detection; mod-activity is where AbuseFindingsPanel renders, so
+                 the finding a moderator clicked is on the page they land on. -->
+            <a class={LINK_CLASS} href="/retool/user-lookup/mod-activity?q={f.userId}">{f.userId}</a>
           </TableCell>
           <TableCell>{confidence(f.confidence)}</TableCell>
           <!-- "No" is the common and important case: detected, scored, deliberately left alone. It is

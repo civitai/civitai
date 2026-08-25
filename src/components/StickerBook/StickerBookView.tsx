@@ -29,7 +29,7 @@ import { StickerBookBand, StickerBookSection } from '~/components/StickerBook/St
 import { constants } from '~/server/common/constants';
 import { StickerBookSettingsModal } from '~/components/StickerBook/StickerBookSettingsModal';
 import { StickerBookStickers } from '~/components/StickerBook/StickerBookStickers';
-import { stickerBookSectionCopy } from '~/components/StickerBook/sticker-book.util';
+import { stickerBookSectionCopy, stickerBookUrl } from '~/components/StickerBook/sticker-book.util';
 import { STICKER_BOOK_MAX_COLUMNS } from '~/shared/utils/sticker-book';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { numberWithCommas } from '~/utils/number-helpers';
@@ -80,7 +80,7 @@ export function StickerBookView({ username }: { username: string }) {
     );
 
   const nothingYet = !data.placed.length && !data.received.length && !data.stickers.length;
-  const bookHref = `/user/${username}/sticker-book`;
+  const bookHref = stickerBookUrl(username);
   const placedCopy = stickerBookSectionCopy('placer', { username, isOwner });
   const receivedCopy = stickerBookSectionCopy('owner', { username, isOwner });
 

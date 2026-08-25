@@ -9,14 +9,14 @@
  * would write. Nothing is written without the flag.
  *
  * 🔴 Imported rows are INERT, and that is the whole design. `evaluateStrikeEscalation` sums points over
- *    `status = 'Active' AND "expiresAt" > NOW()` and mutes indefinitely at `INDEFINITE_MUTE_POINTS`.
+ *    `status = 'Active' AND "expiresAt" > NOW()` and mutes indefinitely at `REVIEW_MUTE_POINTS`.
  *    Importing ~12.9k historical strikes as Active would hand out mutes nobody decided on, off evidence
  *    up to four years old, each with its own notification. So every row lands `Expired`, `points = 0`,
  *    `expiresAt = createdAt`: visible in a strike list, countable by nothing. `verify()` re-reads the
  *    rows and fails the run if that is ever untrue.
  *
  * Idempotent: each imported row carries `retool:UserStrikes:<id>` at the head of `internalNotes`, and a
- * run imports only what is not already marked. Re-running after a partial failure resumes.
+ * run imports only what neither marker already claims. Re-running after a partial failure resumes.
  */
 import { Kysely, PostgresDialect } from 'kysely';
 import pg from 'pg';
@@ -29,8 +29,9 @@ import type { DB as ModeratorDB } from '../src/lib/server/moderator-db/types';
 // A VALUE import, and it resolves because this path is outside `node_modules` — the marker protocol has
 // exactly one definition, shared with the reader in `moderation-memory.service.ts`.
 import {
+  IMPORT_MARKER_PREFIXES,
+  importedLegacyStrikeId,
   LEGACY_STRIKE_MARKER as MARKER,
-  legacyStrikeId,
   legacyStrikeNotes,
 } from '../src/lib/legacy-strike-import';
 
@@ -77,16 +78,19 @@ async function resolveModerators(names: string[]): Promise<Map<string, number>> 
   return new Map(rows.flatMap((r) => (r.username ? [[r.username, r.id] as const] : [])));
 }
 
+/** Legacy ids already present in `UserStrike`, under either import marker. */
 async function alreadyImported(): Promise<Set<number>> {
   const rows = await main
     .selectFrom('UserStrike')
     .select('internalNotes')
-    .where('internalNotes', 'like', `${MARKER}%`)
+    .where((eb) =>
+      eb.or(IMPORT_MARKER_PREFIXES.map((prefix) => eb('internalNotes', 'like', `${prefix}%`)))
+    )
     .execute();
 
   return new Set(
     rows.flatMap((r) => {
-      const id = legacyStrikeId(r.internalNotes);
+      const id = importedLegacyStrikeId(r.internalNotes);
       return id === null ? [] : [id];
     })
   );
@@ -174,10 +178,15 @@ async function migrate() {
 
 /** The gate. Re-reads what landed rather than trusting what was sent. */
 async function verify() {
+  // Across BOTH markers: `alreadyImported()` will not write a second copy over a first-pass row, and
+  // those are Active with a point — scoped to this pass's marker the gate prints "Verified" over one
+  // still sitting on the ladder.
   const countable = await main
     .selectFrom('UserStrike')
     .select((eb) => eb.fn.countAll<string>().as('c'))
-    .where('internalNotes', 'like', `${MARKER}%`)
+    .where((eb) =>
+      eb.or(IMPORT_MARKER_PREFIXES.map((prefix) => eb('internalNotes', 'like', `${prefix}%`)))
+    )
     .where((eb) =>
       eb.or([
         eb('status', '!=', 'Expired'),
@@ -192,24 +201,32 @@ async function verify() {
       `FAIL: ${countable?.c} imported strikes are countable and could mute an account.`
     );
 
+  // A legacy strike present once under each marker is still present twice.
   const dupes = await main
     .selectFrom('UserStrike')
     .select('internalNotes')
-    .where('internalNotes', 'like', `${MARKER}%`)
+    .where((eb) =>
+      eb.or(IMPORT_MARKER_PREFIXES.map((prefix) => eb('internalNotes', 'like', `${prefix}%`)))
+    )
     .execute()
     .then((rows) => {
-      const seen = new Set<string>();
-      const repeated = new Set<string>();
+      const seen = new Set<number>();
+      const repeated = new Set<number>();
       for (const r of rows) {
-        const marker = r.internalNotes?.split(' ')[0] ?? '';
-        if (seen.has(marker)) repeated.add(marker);
-        seen.add(marker);
+        const id = importedLegacyStrikeId(r.internalNotes);
+        if (id === null) continue;
+        if (seen.has(id)) repeated.add(id);
+        seen.add(id);
       }
       return repeated.size;
     });
 
-  if (dupes > 0) throw new Error(`FAIL: ${dupes} legacy strikes were imported more than once.`);
-  console.log('Verified: every imported strike is expired, zero-point, and imported once.');
+  if (dupes > 0)
+    throw new Error(
+      `FAIL: ${dupes} legacy strikes exist twice. Some may be Active and counting — see` +
+        ` remove-duplicate-legacy-strikes.ts.`
+    );
+  console.log('Verified: every imported strike is expired, zero-point, and present once.');
 }
 
 try {

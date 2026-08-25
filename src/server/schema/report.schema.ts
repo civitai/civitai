@@ -102,7 +102,8 @@ export const reportStickerPlacementDetailsSchema = baseDetailSchema.extend({
 });
 
 export const reportAutomatedDetailsSchema = baseDetailSchema.extend({
-  externalId: z.string(),
+  /** The scanner's own job id. Absent when the flag came from a list we hold ourselves. */
+  externalId: z.string().optional(),
   externalType: z.enum(ExternalModerationType),
   entityId: z.number(),
   tags: z.array(z.string()),

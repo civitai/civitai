@@ -1092,30 +1092,49 @@ describe('cleanupIndex: a stored cursor cannot be carried indefinitely', () => {
     // Boundary, lower side. Paired with the case below so the bound is observable
     // in BOTH directions — either one alone is satisfied by an implementation that
     // ignores the age entirely, or by one that ignores the cursor entirely.
-    seedCursor('models', {
-      lastId: 6,
-      startedAt: Date.now() - MAX_CURSOR_AGE_MS,
-      covered: 5,
-    });
-    const fake = makeFakeIndex({ docs: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] });
-    setFakeIndex(fake);
-    const rec = makeDelayRecorder();
+    //
+    // 🔴 The clock is frozen because this seed sits EXACTLY on the bound: `age` is
+    // `MAX_CURSOR_AGE_MS` and the guard rejects on `age > MAX`, so it is inside by
+    // one millisecond. Against a live clock, any time elapsed between seeding here
+    // and the read tips it to stale — which made the test a function of how loaded
+    // the box was, passing alone and failing inside a full suite.
+    //
+    // Frozen rather than given slack: slack would stop pinning `>` against `>=`,
+    // which is the one distinction this pair exists to make.
+    //
+    // Restored in `finally` — this file has no `afterEach` and the vitest config
+    // sets no `restoreMocks`, so a spy that leaked would freeze every test after it.
+    const frozenNow = Date.now();
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(frozenNow);
 
-    const stats = await cleanupIndex(modelsCfg, {
-      apply: false,
-      batch: 10,
-      resumable: true,
-      delay: rec.delay,
-    });
+    try {
+      seedCursor('models', {
+        lastId: 6,
+        startedAt: frozenNow - MAX_CURSOR_AGE_MS,
+        covered: 5,
+      });
+      const fake = makeFakeIndex({ docs: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] });
+      setFakeIndex(fake);
+      const rec = makeDelayRecorder();
 
-    expect(stats.resumedFrom).toBe(6);
-    expect(fake.searchCalls[0].filter).toBe('id > 6');
-    // The pass covered 5 + 4 = 9 of 10, so it is credited and rolls over. Pins the
-    // completion threshold from ABOVE — raising it toward 1 holds a cursor on a pass
-    // that plainly finished, and the un-scanned tail of a shrinking index would then
-    // wedge the rollover permanently.
-    expect(stats.passCovered).toBe(9);
-    expect(storedCursor('models')).toBeUndefined();
+      const stats = await cleanupIndex(modelsCfg, {
+        apply: false,
+        batch: 10,
+        resumable: true,
+        delay: rec.delay,
+      });
+
+      expect(stats.resumedFrom).toBe(6);
+      expect(fake.searchCalls[0].filter).toBe('id > 6');
+      // The pass covered 5 + 4 = 9 of 10, so it is credited and rolls over. Pins the
+      // completion threshold from ABOVE — raising it toward 1 holds a cursor on a pass
+      // that plainly finished, and the un-scanned tail of a shrinking index would then
+      // wedge the rollover permanently.
+      expect(stats.passCovered).toBe(9);
+      expect(storedCursor('models')).toBeUndefined();
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 
   it('forces a from-the-bottom pass once a cursor is older than the bound', async () => {

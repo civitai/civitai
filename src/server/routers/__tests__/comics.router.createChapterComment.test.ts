@@ -28,13 +28,16 @@ vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
 
 import { comicsRouter } from '../comics.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { OnboardingSteps } from '~/server/common/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const USER_ID = 7;
 
 function fakeCtx({ isModerator = false }: { isModerator?: boolean } = {}) {
   return {
-    user: { id: USER_ID, isModerator },
+    // `comicGuardedProcedure` runs isOnboarded then isMuted, so a bare `{ id }` is refused
+    // before the handler with an onboarding error the assertions below would misread.
+    user: { id: USER_ID, isModerator, onboarding: OnboardingSteps.Buzz, muted: false },
     // `isAcceptableOrigin` rejects with "Please use the public API instead" without this, which
     // would make the rejection assertions below pass on the wrong error.
     acceptableOrigin: true,

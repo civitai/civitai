@@ -83,6 +83,7 @@ import {
   getPaidAccess,
   getFreshSalesForPermanentGate,
   bustModelSaleCache,
+  bustPaidAccessCache,
   materializePaidAccessEndsAt,
   writePaidAccessForModelVersion,
 } from '~/server/services/paid-access.service';
@@ -2567,8 +2568,22 @@ export const bustMvCache = async (
   // endpoint that calls this, so without it a cancelled sale stayed advertised for the whole TTL.
   try {
     await bustModelSaleCache(versionIds);
-  } catch {
+  } catch (error) {
     // Best-effort, like the busts around it: a stale badge is not worth failing an unpublish over.
+    // Logged rather than silent — a sustained Redis fault otherwise advertises stale sales for a full
+    // TTL with nothing recorded anywhere.
+    logToAxiom({ type: 'error', name: 'bust-model-sale-cache', message: 'sale badge', error });
+  }
+  // Not covered by the badge bust above: the gate row caches the sale windows too, and it is what the
+  // model page prices from. Busting one and not the other left the card and the page disagreeing about
+  // the same sale for the rest of the hour (868kwp6ne). Guarded like the badge for the same reason, and
+  // separately from it so one Redis fault cannot take both — this row self-heals on its TTL, while the
+  // search-index enqueue at the end of this function does not.
+  try {
+    await bustPaidAccessCache('ModelVersion', versionIds);
+  } catch (error) {
+    // Best-effort: a stale price on the model page is not worth failing an unpublish over.
+    logToAxiom({ type: 'error', name: 'bust-paid-access-cache', message: 'gate row', error });
   }
   await bustOrchestratorModelCache(versionIds, userId);
   await modelVersionAccessCache.refresh(versionIds);

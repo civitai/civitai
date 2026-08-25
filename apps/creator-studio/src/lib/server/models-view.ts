@@ -20,6 +20,8 @@ const modelsQuerySchema = z.object({
   status: z.enum(['all', 'published', 'draft']).optional().catch(undefined),
   access: z.enum(['1']).optional().catch(undefined),
   usage: z.enum(['download', 'generation']).optional().catch(undefined),
+  // Set by "New sale", which sends the creator here to pick what the sale covers.
+  for: z.enum(['sale']).optional().catch(undefined),
   sort: z.enum(['recent', 'name']).catch('recent'),
   page: z.coerce.number().int().min(1).catch(1),
   // Page-size selector value (868ke493p); persisted to a cookie so it applies on later loads.
@@ -49,6 +51,8 @@ export type ModelsView = CreatorModelsResult & {
     access: boolean;
     usage: string;
     sort: 'recent' | 'name';
+    /** Picking versions for a sale: the list is narrowed to what a sale could discount. */
+    saleOnly: boolean;
   };
 };
 
@@ -70,6 +74,20 @@ export async function getModelsView(
   const baseModel = parsed.bm?.trim() || undefined;
   const type = parsed.mt?.trim() || undefined;
   const access = parsed.access === '1';
+  // The list a sale is picked from must only offer versions a sale can actually discount — a version
+  // with no permanent paid-access price takes the sale and shows nothing anywhere (CU 868kwp6mp).
+  //
+  // Gated on the flag, which costs a serial await before the models query: the page keys its whole
+  // sale-preparation mode off `saleOnly`, so leaving it flag-independent meant a creator without the
+  // feature could land on `?for=sale` from a link, get the banner and a narrowed list, and be walked to
+  // a Continue button into a page that tells them the feature is off. `isEnabled` memoises, so the cost
+  // is a cached read, not a round trip per load.
+  const salesEnabled = await getFlipt().isEnabled(
+    'scheduled-model-sales',
+    String(user.id),
+    fliptContext(user)
+  );
+  const saleOnly = parsed.for === 'sale' && salesEnabled;
 
   // Page size: an explicit ?ps= updates the shared cookie; otherwise fall back to the cookie, then the default.
   const perPage = resolvePageSize(parsed.ps, cookies.get(PAGE_SIZE_COOKIE));
@@ -77,26 +95,22 @@ export async function getModelsView(
     cookies.set(PAGE_SIZE_COOKIE, String(perPage), { path: '/', maxAge: PAGE_SIZE_MAX_AGE });
   }
 
-  const [result, salesEnabled] = await Promise.all([
-    getCreatorModels({
-      userId: user.id,
-      q,
-      fee: parsed.fee,
-      baseModel,
-      type,
-      status: parsed.status,
-      access,
-      usage: parsed.usage,
-      sort: parsed.sort,
-      page: parsed.page,
-      perPage,
-      // Selection is always available, so "select all matching filters" always needs the full id set.
-      withMatchingVersionIds: true,
-    }),
-    // Per-user entityId so the feature can open to a few creators before everyone. `isEnabled` rather
-    // than `getBoolean`: only the former honours FLIPT_LOCAL_OVERRIDES, so this is togglable locally.
-    getFlipt().isEnabled('scheduled-model-sales', String(user.id), fliptContext(user)),
-  ]);
+  const result = await getCreatorModels({
+    userId: user.id,
+    q,
+    fee: parsed.fee,
+    baseModel,
+    type,
+    status: parsed.status,
+    access,
+    usage: parsed.usage,
+    saleEligible: saleOnly,
+    sort: parsed.sort,
+    page: parsed.page,
+    perPage,
+    // Selection is always available, so "select all matching filters" always needs the full id set.
+    withMatchingVersionIds: true,
+  });
 
   // Sales are read ONLY when the feature is on. Migrations here are applied by hand, so on any
   // environment where the sale tables have not been created yet an unconditional read makes /models
@@ -122,6 +136,7 @@ export async function getModelsView(
       access,
       usage: parsed.usage ?? '',
       sort: parsed.sort,
+      saleOnly,
     },
   };
 }
