@@ -12,6 +12,12 @@ import { describe, expect, it } from 'vitest';
  *
  * The two phrasings below are read literally, so the failure messages name them — a guard whose
  * easiest fix is deleting it is not a guard.
+ *
+ * That literal match pins the SPELLING of those two sentences and of the headings, deliberately: a
+ * legitimate reword goes red for a non-defect, and the trade is worth it because the failure mode it
+ * replaces is a doc that quietly disagrees with the directory for months. If you are here because a
+ * reword broke this, edit the numbers or the phrasing back — do not loosen the match, which is how it
+ * stops being able to fail.
  */
 const COUNT_PHRASE = '<n> live in `src/server/services/__tests__/no-*.test.ts`';
 const FILES_PHRASE = '`test:lint-rules` names <n> files today';
