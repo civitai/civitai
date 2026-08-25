@@ -8,8 +8,9 @@
  * 🔴 The GUARDS live here too, not just the choice of entry. Moving focus when it was not ours to
  * move is worse than leaving it: it yanks a moderator out of the filter box or a half-typed bulk
  * paste and into a button, where the next Space or Enter opens a confirm they did not ask for.
- * Those guards were previously plain `if`s at the call site, where nothing could see them — and one
- * of them shipped inverted. In here, hardcoding either to `true` fails a test.
+ * Those guards were previously plain `if`s at the call site, where nothing could see them — and a
+ * third guard of exactly this kind shipped MISSING altogether, which is how Escape came to yank
+ * focus out of the filter box. In here, hardcoding any of them to `true` fails a test.
  */
 export type ChipFocusTarget =
   /** Leave focus where it is. */

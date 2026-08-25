@@ -65,8 +65,8 @@ describe('chipFocusTarget', () => {
     /**
      * 🔴 Moving focus that was not ours to move is WORSE than leaving it. A moderator part-way
      * through typing a bulk list into the textarea gets yanked into the chip grid, where the next
-     * Space or Enter opens a remove confirm they did not ask for. Nothing observed this while it
-     * was an `if` in the component, and one of the two shipped inverted.
+     * Space or Enter opens a remove confirm they did not ask for. Nothing observed these while they
+     * were `if`s in the component, and a third guard of the same kind shipped missing entirely.
      */
     it('leaves focus alone when it was not inside the removed chip’s form', () => {
       expect(
