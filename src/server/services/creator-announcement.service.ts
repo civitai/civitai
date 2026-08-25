@@ -254,6 +254,10 @@ export function assertContentLength(content: string, previousContent?: string) {
 
 export const MIN_ANNOUNCEMENT_DURATION_MS = 60 * 60 * 1000;
 
+const MINUTE_MS = 60_000;
+const sameMinute = (a: Date, b: Date) =>
+  Math.floor(a.getTime() / MINUTE_MS) === Math.floor(b.getTime() / MINUTE_MS);
+
 /**
  * The picker is wall-clock: a creator who selects "in two minutes" then spends five writing submits
  * a start that is already past. Refusing that is a dead end, so the start moves up to now and the
@@ -262,20 +266,17 @@ export const MIN_ANNOUNCEMENT_DURATION_MS = 60 * 60 * 1000;
  * 🔴 A start the creator did not touch is left alone even when past. Re-stamping it would
  * republish a running announcement to the top of every follower's feed on a typo fix —
  * `getFollowedAnnouncements` orders by `startsAt` desc.
- */
-/**
- * `datetime-local` cannot express seconds, so the composer round-trips a stored start through
- * `YYYY-MM-DDTHH:mm` and hands back a value truncated to the minute. Comparing exact timestamps
- * therefore reported "changed" for every row whose start carried seconds — which is precisely the
- * rows this protects, since a row crossing into notifying is stamped with `new Date()`.
  *
- * The picker cannot produce a sub-minute edit, so a real reschedule always differs by a whole
- * minute and this cannot mask one.
+ * "Did not touch" is compared at MINUTE granularity, not by exact timestamp. The composer
+ * round-trips a stored start through a `datetime-local`, whose `YYYY-MM-DDTHH:mm` IS a
+ * floor-to-the-minute — so a value derived that way always lands in the same bucket as the value it
+ * came from, whatever produced the original. That is a property of the transform, not of the
+ * widget, and it is what stops a row stamped `new Date()` (every row crossing into notifying) from
+ * reading as rescheduled on an edit that changed nothing.
+ *
+ * REST and tRPC accept arbitrary instants, so two starts under a minute apart CAN read as
+ * unchanged there. That direction leaves the start alone, which is the safe one.
  */
-const MINUTE_MS = 60_000;
-const sameMinute = (a: Date, b: Date) =>
-  Math.floor(a.getTime() / MINUTE_MS) === Math.floor(b.getTime() / MINUTE_MS);
-
 export function clampAnnouncementWindow({
   startsAt,
   endsAt,

@@ -359,6 +359,8 @@ describe('the allowance cannot be walked around', () => {
       id: 9,
       coverId: null,
       profileOnly: true,
+      startsAt: null,
+      content: validInput.content,
     } as never);
 
     await upsertCreatorAnnouncement({ ...validInput, id: 9, profileOnly: false, userId: AUTHOR });
@@ -437,6 +439,8 @@ describe('the allowance cannot be walked around', () => {
       id: 9,
       coverId: null,
       profileOnly: true,
+      startsAt: null,
+      content: validInput.content,
     } as never);
     // The writer knows better: this row already flipped and already paid.
     tx.announcement.findUnique.mockResolvedValue({ profileOnly: false, spends: [{ id: 1 }] });
@@ -547,6 +551,8 @@ describe('a row crossing into notifying starts its life then', () => {
       id: 9,
       coverId: null,
       profileOnly: true,
+      startsAt: null,
+      content: validInput.content,
     } as never);
 
     const before = Date.now();
@@ -565,8 +571,12 @@ describe('a row crossing into notifying starts its life then', () => {
       id: 9,
       coverId: null,
       profileOnly: true,
+      startsAt: null,
+      content: validInput.content,
     } as never);
-    const scheduled = new Date('2026-12-01T00:00:00.000Z');
+    // Relative, not a literal: wiring clampAnnouncementWindow into the write path made this date
+    // live, and a fixed one silently becomes a past date that the clamp slides forward.
+    const scheduled = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
 
     await upsertCreatorAnnouncement({
       ...validInput,
@@ -706,12 +716,18 @@ describe('the write path actually applies the guards', () => {
 
     await upsertCreatorAnnouncement({ ...validInput, id: 9, content: legacy, userId: AUTHOR });
 
-    expect(dbMock.dbWrite.announcement.update).toHaveBeenCalled();
+    const data = (
+      dbMock.dbWrite.announcement.update.mock.calls[0][0] as { data: { content: string } }
+    ).data;
+    expect(data.content).toBe(legacy);
   });
 
   // The regression the unit test could not see: the composer round-trips a stored start through a
   // `datetime-local`, which truncates to the minute. Passing the SAME Date object on both sides
   // (as creator-announcement-window.test.ts does) never exercises that.
+  //
+  // This one pins the COMPARISON, not the wiring — with the clamp call deleted it still passes,
+  // because the unclamped value is the same. The three above are what catch an unwired guard.
   it('does not reschedule a running announcement the creator did not touch', async () => {
     const stored = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
     stored.setSeconds(37, 123);

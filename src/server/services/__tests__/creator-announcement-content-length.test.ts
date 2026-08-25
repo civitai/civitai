@@ -67,7 +67,7 @@ describe('the limit itself', () => {
 
   // The spoke form must accept anything the main app might still allow, or a legacy over-limit row
   // is refused before it ever reaches the grandfather branch above.
-  it('is matched by a creator-studio ceiling no lower than ours', async () => {
+  it('is the same ceiling the creator-studio form bounds at', async () => {
     const { readFileSync } = await import('fs');
     const { fileURLToPath } = await import('url');
     const source = readFileSync(

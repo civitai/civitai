@@ -118,7 +118,10 @@ describe('announcementFormSchema', () => {
     if (result.success) expect(result.data.content).toBe(legacy);
   });
 
-  it('still refuses a body past the hard ceiling', () => {
+  it('accepts a body at the ceiling and refuses one past it', () => {
+    // Both sides: `too long fails` alone is also true of a schema capped back at CONTENT_MAX,
+    // which is the regression this pair exists to catch.
+    expect(parse({ content: 'y'.repeat(CONTENT_CEILING) }).success).toBe(true);
     expect(parse({ content: 'y'.repeat(CONTENT_CEILING + 1) }).success).toBe(false);
   });
 

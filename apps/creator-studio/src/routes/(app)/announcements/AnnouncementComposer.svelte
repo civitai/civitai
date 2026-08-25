@@ -11,7 +11,6 @@
   import { ToggleGroup, ToggleGroupItem } from '@civitai/ui/components/ui/toggle-group/index.js';
   import { IconCheck } from '@tabler/icons-svelte';
   import {
-    CONTENT_CEILING,
     CONTENT_MAX,
     DEFAULT_DOMAINS,
     DOMAIN_CHIPS,
@@ -145,6 +144,10 @@
   // The migrated profile banners carry no subject, and the server requires one on every write.
   const needsTitle = $derived(!!seed && seed.title.trim() === '' && title.trim() === '');
 
+  // The ceiling is only for a row that was ALREADY over the limit when it was seeded. Raising the
+  // input's own bound for everyone replaces a keystroke-level stop with a round-trip that fails.
+  const contentMax = $derived(Math.max(CONTENT_MAX, seed?.content?.length ?? 0));
+
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
   function setDomains(next: string[]) {
@@ -215,7 +218,7 @@
         id="announcement-content"
         name="content"
         bind:value={content}
-        maxlength={CONTENT_CEILING}
+        maxlength={contentMax}
         rows={5}
         placeholder="Tell your followers what is happening."
         required
