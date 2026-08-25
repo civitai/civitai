@@ -92,7 +92,14 @@ vi.mock('~/server/services/vault.service', async (importOriginal) => ({
 vi.mock('~/server/notifications/client', () => ({
   notifications: {
     queryNotifications: vi.fn(async () => [
-      { id: 1, type: 'comment', category: 'Comment', details: {}, createdAt: new Date(), read: false },
+      {
+        id: 1,
+        type: 'comment',
+        category: 'Comment',
+        details: {},
+        createdAt: new Date(),
+        read: false,
+      },
     ]),
   },
 }));

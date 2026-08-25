@@ -91,7 +91,9 @@ describe('rehypeTosSectionIds', () => {
   });
 
   it('falls back to the intro sentence when the numbering changes', () => {
-    const tree = render(withoutAnchor().replace('- 9.6 **Content Moderation.**', '- 9.7 **Content Moderation.**'));
+    const tree = render(
+      withoutAnchor().replace('- 9.6 **Content Moderation.**', '- 9.7 **Content Moderation.**')
+    );
 
     const anchored = findId(tree, TOS_PROHIBITED_CONTENT_ID);
     expect(anchored).not.toBeNull();
