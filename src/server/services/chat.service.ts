@@ -151,6 +151,43 @@ export const assertChatNameAllowed = async (name: string | null) => {
   await throwOnBlockedMessagePattern(name);
 };
 
+/**
+ * Tell every side of a conversation that its membership moved.
+ *
+ * The payload is the chat id and nothing else. Member rows are per-recipient —
+ * `scopeMemberPrivacy` scrubs another member's `filteredAt`, `pinnedAt` and
+ * read receipt out of a query result — and a group broadcast has one body for
+ * everyone, so shipping the rows here would hand each member the fields the
+ * query deliberately withholds. Recipients refetch instead.
+ *
+ * `userIds` names people the group broadcast cannot reach: someone just removed
+ * (their signals group membership is already gone) or just invited (they only
+ * join the group on accept).
+ */
+export const signalChatMembersUpdated = async ({
+  chatId,
+  userIds = [],
+}: {
+  chatId: number;
+  userIds?: number[];
+}) => {
+  const body = JSON.stringify({ chatId });
+  const urls = [
+    `${env.SIGNALS_ENDPOINT}/groups/chat:${chatId}/signals/${SignalMessages.ChatMembersUpdated}`,
+    ...uniq(userIds).map(
+      (uid) => `${env.SIGNALS_ENDPOINT}/users/${uid}/signals/${SignalMessages.ChatMembersUpdated}`
+    ),
+  ];
+
+  await Promise.all(
+    urls.map((url) =>
+      withSignals(() =>
+        fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body })
+      ).catch(() => undefined)
+    )
+  );
+};
+
 export const upsertChat = async ({
   userIds,
   isGroup,

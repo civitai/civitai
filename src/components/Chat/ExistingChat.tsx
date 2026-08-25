@@ -60,7 +60,7 @@ import { constants } from '~/server/common/constants';
 import { SignalMessages } from '~/server/common/enums';
 import type { isTypingOutput } from '~/server/schema/chat.schema';
 import { ChatMemberMenu } from '~/components/Chat/ChatMemberMenu';
-import { activeMemberStatuses } from '~/shared/utils/chat';
+import { activeMemberStatuses, formatChatSystemMessage } from '~/shared/utils/chat';
 import { ChatMemberStatus, ChatMessageType } from '~/shared/utils/prisma/enums';
 import type { ChatAllMessages } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
@@ -1312,7 +1312,10 @@ function DisplayMessages({
                 ) : isSystemChat ? (
                   <Text className={classes.systemNote} component="div" size="xs">
                     <CustomMarkdown allowedElements={['a', 'p', 'strong']} unwrapDisallowed>
-                      {c.content.replace(currentUser?.username ?? '', 'You')}
+                      {formatChatSystemMessage({
+                        content: c.content,
+                        username: currentUser?.username,
+                      })}
                     </CustomMarkdown>
                   </Text>
                 ) : (

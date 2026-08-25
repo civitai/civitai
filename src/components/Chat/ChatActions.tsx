@@ -19,6 +19,7 @@ import {
 } from '@tabler/icons-react';
 import produce from 'immer';
 import React, { useState } from 'react';
+import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
 import { ChatAddMembersModal } from '~/components/Chat/ChatAddMembersModal';
 import { ChatRenameModal } from '~/components/Chat/ChatRenameModal';
 import { useChatStore } from '~/components/Chat/ChatProvider';
@@ -46,6 +47,11 @@ export const ChatActions = ({ chatObj }: { chatObj?: ChatListMessage }) => {
   // and have not been backfilled.
   const isGroup = !!chatObj?.isGroup || (chatObj?.chatMembers.length ?? 0) > 2;
   const isAdmin = isGroup && !!currentUser && chatObj?.ownerId === currentUser.id;
+  // Moderators are left out: blocking one severs the conversation the
+  // `cantLeave` guard exists to hold open.
+  const blockable =
+    chatObj?.chatMembers.filter((cm) => cm.userId !== currentUser?.id && !cm.user.isModerator) ??
+    [];
   const isMuted = myMember?.notifyLevel === ChatNotifyLevel.None;
   const isPinned = !!myMember?.pinnedAt;
 
@@ -221,6 +227,22 @@ export const ChatActions = ({ chatObj }: { chatObj?: ChatListMessage }) => {
             <Menu.Item leftSection={<IconFlag size={18} />} color="orange" onClick={reportModal}>
               Report
             </Menu.Item>
+            {blockable.length === 1 ? (
+              <BlockUserButton as="menu-item" userId={blockable[0].userId} />
+            ) : blockable.length > 1 ? (
+              <>
+                <Menu.Label>Block a member</Menu.Label>
+                {blockable.map((cm) => (
+                  <BlockUserButton
+                    key={cm.userId}
+                    as="menu-item"
+                    userId={cm.userId}
+                    label={`Block ${cm.user.username ?? `user ${cm.userId}`}`}
+                    unblockLabel={`Unblock ${cm.user.username ?? `user ${cm.userId}`}`}
+                  />
+                ))}
+              </>
+            ) : null}
             {isJoined && !isGroup && (
               <Menu.Item
                 leftSection={<IconArchive size={18} />}
@@ -264,9 +286,6 @@ export const ChatActions = ({ chatObj }: { chatObj?: ChatListMessage }) => {
                 {myMember.status === ChatMemberStatus.Ignored ? 'Unarchive' : 'Rejoin'}
               </Menu.Item>
             ) : undefined}
-
-            {/* TODO blocklist here? */}
-            {/*<Menu.Item>Manage blocklist</Menu.Item>*/}
           </Menu.Dropdown>
         </Menu>
       )}

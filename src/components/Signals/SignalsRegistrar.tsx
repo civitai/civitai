@@ -4,6 +4,7 @@ import { useBuzzSignalUpdate } from '~/components/Buzz/useBuzz';
 import { useCryptoDepositSignal } from '~/components/Signals/CryptoDepositSignal';
 import { useReferralSignals } from '~/components/Referrals/ReferralSignals';
 import {
+  useChatMembersUpdatedSignal,
   useChatMessageDeletedSignal,
   useChatMessageUpdatedSignal,
   useChatNewMessageSignal,
@@ -43,6 +44,7 @@ export function SignalsRegistrar() {
   useChatNewMessageSignal();
   useChatNewRoomSignal();
   useChatRoomUpdatedSignal();
+  useChatMembersUpdatedSignal();
   useChatMessageDeletedSignal();
   useChatMessageUpdatedSignal();
 
