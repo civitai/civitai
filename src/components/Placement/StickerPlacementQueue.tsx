@@ -184,7 +184,7 @@ function StickerArt({
           src={art.url}
           alt={`:${art.slug}:`}
           options={{ height: 96, anim: art.animated, optimized: true }}
-          style={{ height: 48, width: 'auto', ...stickerArtworkStyle(data) }}
+          style={{ height: 48, width: 48, objectFit: 'contain', ...stickerArtworkStyle(data) }}
         />
       </div>
       <Text size="10px" c="dimmed" className="max-w-[80px] truncate">
