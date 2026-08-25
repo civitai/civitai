@@ -36,6 +36,8 @@
   } from '$lib/monetization/fee';
   import {
     capMediaType,
+    formatFeeRatio,
+    maxLicensingFee,
     formatPricingAllowance,
     pricingAllowanceState,
     pricingFloorMessage,
@@ -337,6 +339,12 @@
   let feeAffirmed = $state(false);
   // Clearing a fee earns nothing, so only a non-zero fee needs the affirmation.
   const feeNeedsAffirmation = $derived(!!editing && !editing.rightsAffirmed && (feeBuzz ?? 0) > 0);
+  // What this creator's tier actually EARNS per generation, as opposed to what they may set. The
+  // charge path lowers a stored fee to this, so an editor that shows only the stored number leaves a
+  // creator with no way to know the two differ. Same figure the onsite version form shows.
+  const feeEarnCap = $derived(maxLicensingFee(tier, editingType, capMediaType(editing?.baseModel)));
+  const feeIsClamped = $derived(!!editing && Number(editing.licensingFee ?? 0) > feeEarnCap);
+
   // Only a NEW price is floored: editing one the version already carries is exempt.
   const feeBlockedByFloor = $derived(
     !data.caps.pricingFloor.eligible && !!editing && !alreadyPricedIds.has(editing.id)
@@ -843,6 +851,13 @@
               {suggested}
               ariaLabelSuffix=" for {editing.name}"
             />
+            {#if feeIsClamped}
+              <p class="w-full text-xs text-yellow-5">
+                You've set {formatFeeRatio(editing.licensingFee)}, but your membership earns up to
+                {formatFeeRatio(feeEarnCap)} for this model type — that is what buyers are charged. The
+                full amount applies if you upgrade; your saved fee is never rewritten.
+              </p>
+            {/if}
             {#if feeBlockedByFloor}
               <p class="w-full text-xs text-yellow-5">
                 {pricingFloorMessage(data.caps.pricingFloor.score)}

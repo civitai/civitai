@@ -89,6 +89,7 @@ import {
   pricingAllowanceState,
   ratioToFee,
   capMediaType,
+  formatFeeRatio,
   maxLicensingFee,
   resolveCapTier,
   separateGenerationPriceMissing,
@@ -1867,10 +1868,10 @@ export function ModelVersionUpsertForm({
                             )}
                             {feeIsClamped && (
                               <Text size="xs" c="yellow.5">
-                                You&apos;ve set {currentLicensingFee} Buzz, but your membership
-                                earns up to {feeEarnCap} per generation for this model type — buyers
-                                are charged {feeEarnCap}. The full amount applies if you upgrade;
-                                nothing is rewritten either way.
+                                You&apos;ve set {formatFeeRatio(currentLicensingFee)}, but your
+                                membership earns up to {formatFeeRatio(feeEarnCap)} for this model
+                                type — that is what buyers are charged. The full amount applies if
+                                you upgrade; your saved fee is never rewritten.
                               </Text>
                             )}
                             {showLicensingFeeSettlementCurrency && (
