@@ -31,7 +31,13 @@ import {
   useHubSessionIncludePG13,
 } from '~/components/Hubs/hub-session.store';
 import { FollowHubButton } from '~/components/Hubs/FollowHubButton';
-import { hubLocksViewerOut, hubUrl, useInvalidateHub } from '~/components/Hubs/hub.utils';
+import {
+  canPublishHub,
+  hubEffectiveLevel,
+  hubLocksViewerOut,
+  hubUrl,
+  useInvalidateHub,
+} from '~/components/Hubs/hub.utils';
 import { useHubSort } from '~/components/Hubs/useHubSort';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
@@ -210,7 +216,7 @@ export default Page(
     // The level the FEED will actually run at — session override if the viewer set
     // one, otherwise their own. Computing the banner from a different number than
     // the query is how it ends up disagreeing with what is on screen.
-    const effectiveLevel = viewerBrowsingLevel || viewerAllowedLevel;
+    const effectiveLevel = hubEffectiveLevel(viewerBrowsingLevel, viewerAllowedLevel);
     const levelLocksViewerOut = hubLocksViewerOut(hub.forcedBrowsingLevel, effectiveLevel);
 
     return (
@@ -259,7 +265,7 @@ export default Page(
                   // Sharing is the point of the button, so it is here rather than
                   // behind Edit. On a private hub it asks first, because pressing it
                   // is what makes the hub readable by anyone holding the link.
-                  hub.isOwner && (
+                  canPublishHub(hub) && (
                     <Tooltip label="Share" withinPortal>
                       <LegacyActionIcon
                         variant="subtle"

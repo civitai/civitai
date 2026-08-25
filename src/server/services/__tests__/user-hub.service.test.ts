@@ -360,7 +360,12 @@ describe('upsertUserHub', () => {
     // The half the title used to claim and never exercised: the same call shape
     // against an existing hub must not carry those values, or toggling a source
     // resets the user's sort.
-    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({ id: 9, metadata: {}, sources: [] });
+    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({
+      id: 9,
+      userId: 5,
+      metadata: {},
+      sources: [],
+    });
 
     await upsertUserHub({ id: 9, name: 'defaults', sources: [], userId: 5 });
 
@@ -373,7 +378,12 @@ describe('upsertUserHub', () => {
     // A rename and a sort change both used to resend their own cached copy of the
     // whole list, so either could revert a source edit made in between. With the
     // list omitted the update must not touch UserHubSource at all.
-    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({ id: 9, metadata: {}, sources: [] });
+    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({
+      id: 9,
+      userId: 5,
+      metadata: {},
+      sources: [],
+    });
 
     await upsertUserHub({ id: 9, name: 'renamed', userId: 5 });
 
@@ -386,7 +396,12 @@ describe('upsertUserHub', () => {
   it('still replaces the sources when the input carries them', async () => {
     // Negative control for the test above: without it, an update branch that
     // dropped source writes entirely would pass.
-    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({ id: 9, metadata: {}, sources: [] });
+    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({
+      id: 9,
+      userId: 5,
+      metadata: {},
+      sources: [],
+    });
 
     await upsertUserHub({
       id: 9,
@@ -660,7 +675,12 @@ describe('persisting the feed filters', () => {
   });
 
   it('writes both keys when a save carries description and filters together', async () => {
-    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({ id: 9, metadata: {}, sources: [] });
+    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({
+      id: 9,
+      userId: 5,
+      metadata: {},
+      sources: [],
+    });
 
     await upsertUserHub({
       id: 9,
@@ -1112,6 +1132,45 @@ describe('deleteUserHub', () => {
   });
 });
 
+describe('the moderator write line is enforced, not just described', () => {
+  it('refuses a moderator replacing another user’s source list', async () => {
+    // `hubWriterWhere` opens the ROW to a moderator, and `upsert` is how a source
+    // list is written — so without an explicit refusal here, one API call replaces
+    // someone's whole curation. The client never offers it; that is not a control.
+    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({ id: 9, userId: 42, metadata: {} });
+
+    await expect(
+      upsertUserHub({ id: 9, userId: 5, isModerator: true, sources: [] })
+    ).rejects.toThrow(/only the owner/i);
+  });
+
+  it('refuses a moderator setting another user’s content level', async () => {
+    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({ id: 9, userId: 42, metadata: {} });
+
+    await expect(
+      upsertUserHub({ id: 9, userId: 5, isModerator: true, forcedBrowsingLevel: 1 })
+    ).rejects.toThrow(/only the owner/i);
+  });
+
+  it('still lets a moderator rename and re-describe it', async () => {
+    // The control. Without it the two refusals above pass for a service that refuses
+    // every moderator write, which is not what Justin asked for.
+    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({ id: 9, userId: 42, metadata: {} });
+
+    await expect(
+      upsertUserHub({ id: 9, userId: 5, isModerator: true, name: 'renamed by a mod' })
+    ).resolves.toBeDefined();
+  });
+
+  it('leaves the OWNER able to change both', async () => {
+    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({ id: 9, userId: 5, metadata: {} });
+
+    await expect(
+      upsertUserHub({ id: 9, userId: 5, sources: [], forcedBrowsingLevel: 1 })
+    ).resolves.toBeDefined();
+  });
+});
+
 describe('getUserHubForRoute', () => {
   it('scopes the route read the same way the tRPC read is scoped', async () => {
     // The SSR 404 and the client query must not be able to disagree — they share
@@ -1149,7 +1208,12 @@ describe('upsertUserHub visibility and level', () => {
     // value that never reaches the UPDATE is a cap the owner set and the hub does
     // not have. Dropping either from the service's destructure leaves every cap test
     // green, because those mock `resolveHubSources`.
-    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({ id: 9, metadata: {}, sources: [] });
+    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({
+      id: 9,
+      userId: 5,
+      metadata: {},
+      sources: [],
+    });
 
     await upsertUserHub({
       id: 9,

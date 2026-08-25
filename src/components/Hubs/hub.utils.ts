@@ -1,7 +1,7 @@
 import type { HubSourceValue } from '~/components/Hubs/HubSourceEditor';
 import type { HubPanelHub } from '~/components/Hubs/HubSourcePanel';
 import { hubLimits } from '~/server/schema/user-hub.schema';
-import type { Availability } from '~/shared/utils/prisma/enums';
+import { Availability } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
 import { Flags } from '~/shared/utils/flags';
 import { slugit } from '~/utils/string-helpers';
@@ -27,6 +27,25 @@ export function useInvalidateHub() {
 export function hubUrl(hub: { id: number; name: string }) {
   const slug = slugit(hub.name);
   return slug ? `/hubs/${hub.id}/${slug}` : `/hubs/${hub.id}`;
+}
+
+/**
+ * Who may turn sharing ON. The OWNER only — publishing someone's private hub is a
+ * different act from editing one, and moderators were granted the second and not the
+ * first. Lifted out of the page so that boundary is a testable thing rather than a
+ * `&&` in JSX.
+ */
+export function canPublishHub(hub: { isOwner: boolean; availability: Availability }) {
+  return hub.isOwner && hub.availability !== Availability.Public;
+}
+
+/**
+ * The level the FEED will run at: a viewer's session override if they set one, else
+ * their own. The lock-out banner must be computed from THIS and not from the account
+ * level, or it claims a lockout over a feed with results.
+ */
+export function hubEffectiveLevel(sessionLevel: number | undefined, viewerLevel: number) {
+  return sessionLevel || viewerLevel;
 }
 
 /**

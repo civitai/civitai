@@ -16,7 +16,11 @@ import {
   hubLimits,
   hubSourceKey,
 } from '~/server/schema/user-hub.schema';
-import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
+import {
+  throwAuthorizationError,
+  throwBadRequestError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import {
   Availability,
   CollectionContributorPermission,
@@ -227,9 +231,19 @@ export async function upsertUserHub({
   // description back over a newer one.
   const existing = await dbWrite.userHub.findFirst({
     where: { id, ...writable },
-    select: { id: true, metadata: true },
+    select: { id: true, userId: true, metadata: true },
   });
   if (!existing) throw throwNotFoundError('Hub not found');
+
+  // The moderator line, ENFORCED here rather than only described. `hubWriterWhere`
+  // opens the row to a moderator, and this mutation is how a source list and a
+  // content cap are written — so without this a moderator could replace another
+  // user's whole curation in one call, which is the incidental half the grant
+  // deliberately excludes. The client never offers it; that is not a control.
+  if (existing.userId !== userId && (sources || input.forcedBrowsingLevel !== undefined))
+    throw throwAuthorizationError(
+      'Only the owner can change the sources or the content level of a hub'
+    );
 
   // Merged rather than replaced, and only ever with the one key this schema names
   // — `metadata` holds more than the description, and an omitted `description`

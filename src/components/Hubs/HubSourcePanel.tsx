@@ -153,7 +153,14 @@ export function HubSourcePanel({
       (!hub.forcedBrowsingLevel || Flags.hasFlag(hub.forcedBrowsingLevel, level)) &&
       Flags.hasFlag(viewerAllowedLevel, level)
   );
-  const viewerLevel = sessionLevel ?? hub.forcedBrowsingLevel;
+  // Intersected on the VALUE as well as on `offeredLevels`. `BrowsingLevelsInput`
+  // seeds its state from `value` and toggles bits on it, so a level that was
+  // deliberately not offered stays set in that state and rides out on the next
+  // click — which is the exact leak the offer list exists to stop.
+  const viewerLevel = Flags.intersection(
+    sessionLevel ?? hub.forcedBrowsingLevel,
+    viewerAllowedLevel
+  );
 
   return (
     <Stack gap="sm">
@@ -169,7 +176,11 @@ export function HubSourcePanel({
           value={viewerLevel}
           levels={offeredLevels}
           allowEmpty
-          onChange={(level) => setSessionLevel(hub.id, level)}
+          // And again on the way out: the input can only emit bits it was seeded or
+          // offered, but neither of those is a guarantee this component makes.
+          onChange={(level) =>
+            setSessionLevel(hub.id, Flags.intersection(level, viewerAllowedLevel))
+          }
         />
       )}
 

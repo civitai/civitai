@@ -34,6 +34,7 @@ export default function HubUpsertModal({
     name: string;
     description?: string | null;
     availability: Availability;
+    isOwner: boolean;
   };
   /**
    * Creating a copy of someone else's hub. Prefills the name and the sources so the
@@ -82,7 +83,11 @@ export default function HubUpsertModal({
       id: hub?.id,
       name: trimmed,
       description: description.trim(),
-      availability: isPublic ? Availability.Public : Availability.Private,
+      // Omitted rather than resent when the viewer may not change it: a moderator's
+      // save must not carry a visibility they were never shown a control for.
+      ...(!editing || hub.isOwner
+        ? { availability: isPublic ? Availability.Public : Availability.Private }
+        : {}),
       // Editing leaves the source list alone: the rail owns it, and resending an
       // empty array here would wipe it. The sort goes with creation for the same
       // reason it is resolved on read — storing one this viewer cannot pick would
@@ -127,13 +132,19 @@ export default function HubUpsertModal({
           onChange={(event) => setDescription(event.currentTarget.value)}
         />
 
-        <Switch
-          label="Anyone with the link can view this hub"
-          description="Hubs are private until you turn this on. Turning it back off makes every link you shared stop working."
-          checked={isPublic}
-          disabled={upsert.isPending}
-          onChange={(event) => setIsPublic(event.currentTarget.checked)}
-        />
+        {/* Owner only. Moderators may rename, re-describe and delete a hub, but
+            publishing someone's private curation is a different act from editing
+            it — and the Share button is gated the same way, so the two surfaces
+            cannot disagree. */}
+        {(!editing || hub.isOwner) && (
+          <Switch
+            label="Anyone with the link can view this hub"
+            description="Hubs are private until you turn this on. Turning it back off makes every link you shared stop working."
+            checked={isPublic}
+            disabled={upsert.isPending}
+            onChange={(event) => setIsPublic(event.currentTarget.checked)}
+          />
+        )}
 
         {!editing && features.canViewNsfw && (
           <BrowsingLevelsInput
