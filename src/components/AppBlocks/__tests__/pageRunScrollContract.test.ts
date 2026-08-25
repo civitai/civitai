@@ -60,11 +60,19 @@ const RUN_PAGE = path.join(REPO_ROOT, 'src/pages/apps/run/[slug]/[[...path]].tsx
 const HOST = path.join(REPO_ROOT, 'src/components/AppBlocks/PageBlockHost.tsx');
 const APP_LAYOUT = path.join(REPO_ROOT, 'src/components/AppLayout/AppLayout.tsx');
 
+/**
+ * A repo-relative path with forward slashes, on every platform. `path.relative` returns the
+ * platform separator, so on Windows a raw result compares unequal to the `src/...` literals below
+ * and the guard fails for the platform rather than for the thing it guards. Every assertion here
+ * that names a file goes through this.
+ */
+const repoPath = (file: string) => path.relative(REPO_ROOT, file).split(path.sep).join('/');
+
 function read(file: string): string {
   // Prove the path before trusting a "no match": a comparison against an absent
   // operand reports SAME, not MISSING, and a renamed route would otherwise turn
   // every assertion below into a vacuous pass on an empty string.
-  expect(fs.existsSync(file), `${path.relative(REPO_ROOT, file)} does not exist`).toBe(true);
+  expect(fs.existsSync(file), `${repoPath(file)} does not exist`).toBe(true);
   return fs.readFileSync(file, 'utf8');
 }
 
@@ -239,7 +247,7 @@ describe('the run page and its host agree on who owns the height', () => {
             // Posix separators, so the expectation below reads the same on every
             // platform. Without this the walk yields `src\pages\…` on Windows and
             // the guard fails there while staying green on Linux CI.
-            offenders.push(path.relative(REPO_ROOT, full).split(path.sep).join('/'));
+            offenders.push(repoPath(full));
         }
       }
     };
@@ -362,14 +370,14 @@ describe('the run page and its host agree on who owns the height', () => {
       for (const re of patterns) {
         for (const m of src.matchAll(re)) {
           cssDecls.push({
-            file: path.relative(REPO_ROOT, file),
+            file: repoPath(file),
             value: m[1].trim().replace(/^['"`]|['"`]$/g, ''),
           });
         }
       }
       if (/\.tsx?$/.test(file)) {
         for (const m of src.matchAll(/(?:const|let|var)\s+(HEADER_HEIGHT(?:_PX)?)\s*=/g)) {
-          tsDecls.push({ file: path.relative(REPO_ROOT, file), text: m[1] });
+          tsDecls.push({ file: repoPath(file), text: m[1] });
         }
       }
     }
