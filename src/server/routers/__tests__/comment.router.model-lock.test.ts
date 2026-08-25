@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { TRPCError } from '@trpc/server';
+
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import type * as CommentController from '~/server/controllers/comment.controller';
@@ -57,22 +57,28 @@ beforeEach(() => {
 });
 
 describe('comment.upsert — model lock', () => {
+  // The refusal is asserted by its code AND message. `rejects.toBeInstanceOf(TRPCError)` alone is
+  // satisfied by every other guard in this chain — authorization, the rate limiter — so it would
+  // stay green if the lock check were deleted and something else happened to refuse.
+  const expectModelLocked = async (promise: Promise<unknown>) => {
+    await expect(promise).rejects.toMatchObject({ code: 'FORBIDDEN', message: 'Model is locked' });
+    expect(upsertCommentV2Handler).not.toHaveBeenCalled();
+  };
+
   it('refuses an edit under a locked model even when the request names an unlocked one', async () => {
     lockedModelIds.add(10);
 
-    await expect(
+    await expectModelLocked(
       callerFor(author).upsert({ id: 5, modelId: 20, content: '<p>edited</p>' })
-    ).rejects.toBeInstanceOf(TRPCError);
-    expect(upsertCommentV2Handler).not.toHaveBeenCalled();
+    );
   });
 
   it('refuses when the model the request names is locked', async () => {
     lockedModelIds.add(20);
 
-    await expect(
+    await expectModelLocked(
       callerFor(author).upsert({ id: 5, modelId: 20, content: '<p>edited</p>' })
-    ).rejects.toBeInstanceOf(TRPCError);
-    expect(upsertCommentV2Handler).not.toHaveBeenCalled();
+    );
   });
 
   it('allows an ordinary edit when neither model is locked', async () => {
@@ -80,6 +86,13 @@ describe('comment.upsert — model lock', () => {
       callerFor(author).upsert({ id: 5, modelId: 10, content: '<p>edited</p>' })
     ).resolves.toBeDefined();
     expect(upsertCommentV2Handler).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a create on a locked model', async () => {
+    read.comment.findFirst.mockResolvedValue(null);
+    lockedModelIds.add(10);
+
+    await expectModelLocked(callerFor(author).upsert({ modelId: 10, content: '<p>hello</p>' }));
   });
 
   it('allows a new comment on an unlocked model', async () => {
