@@ -20,6 +20,11 @@ export type PaidAccessContext = {
   permBlocked: boolean;
   /** Why timed is unavailable, in the caller's own words — publish state for one version, a count for many. */
   timedBlockedReason?: string;
+  /**
+   * Why a PERMANENT gate is unavailable when the reason is the eligibility floor rather than the
+   * allowance. The two are different refusals and only one of them is fixed by buying a membership.
+   */
+  permBlockedReason?: string;
   maxEarlyAccessDays: number;
   /** Prices applied this calendar month, and how many the tier allows (null = unlimited). */
   pricingUsed: number;

@@ -145,6 +145,7 @@
     canChoosePermanent,
     permBlocked,
     timedBlockedReason: canChooseTimed ? undefined : eligibility.timedBlockedReason,
+    permBlockedReason: eligibility.permBlockedReason,
     maxEarlyAccessDays,
     pricingUsed,
     pricingLimit,

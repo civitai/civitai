@@ -186,7 +186,7 @@ describe('applyPaidAccessGating — the gate rows it asks for', () => {
 
     expect(mockGetViewerMonetization).toHaveBeenCalledWith({
       versions: [{ id: 1 }],
-      viewer: expect.anything(),
+      viewer: { id: OWNER, isModerator: false },
     });
   });
 
@@ -208,7 +208,7 @@ describe('applyPaidAccessGating — the gate rows it asks for', () => {
 
     expect(mockGetViewerMonetization).toHaveBeenCalledWith({
       versions: [{ id: 1 }],
-      viewer: expect.anything(),
+      viewer: { id: 2 },
     });
   });
 });

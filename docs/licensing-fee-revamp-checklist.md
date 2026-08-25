@@ -321,6 +321,34 @@ that have to happen, or be decided, before it reaches creators.
       spoke becomes a way around it, which is the same shape as the POI guard. Five cases now, incl.
       the media axis and the raise-only carve-out.
 
+### The two apps read the creator's tier from different places
+
+Not a divergence to fix, but worth writing down because a review flagged it as one and the answer is
+non-obvious.
+
+The main app resolves the tier with `getCapTier` — uncached, against the primary, so a change takes
+effect immediately. Creator Studio reads `user.tier` off the resolved session and never queries. The
+session-user entry (`session:data2:{userId}`) has a **4h TTL**, so on the face of it the spoke could
+grant a lapsed creator their old allowance for four hours — and its fee writes are direct SQL that
+never reach the main app's check, so the spoke's answer would be final.
+
+It does not, because `invalidateSubscriptionCaches` already calls `refreshSession` as its first step
+and every subscription writer goes through it: Paddle, Stripe, redeemable codes, gifts, referrals and
+`subscriptions.service`. Its own comment names this hazard.
+
+- [x] **Checked writer by writer, 2026-08-25: no gap.** Stripe is the live provider and every one of
+      its subscription writes pairs with an invalidation
+      ([stripe.service.ts](../src/server/services/stripe.service.ts) 524/527, 636/637, 644/652,
+      685/734, 1143). Two writers invalidate nothing, and neither matters:
+      `process-subscriptions-requiring-renewal.ts` writes only `metadata` (no tier change), and the
+      Paddle `cancelSubscriptionHandler` does change status but is **not routed** — the procedure is
+      commented out in [paddle.router.ts](../src/server/routers/paddle.router.ts) and nothing else
+      reaches it.
+- [ ] **Residual, accepted:** the bust is `Promise.allSettled` and fails open by design, logging each
+      rejection. A failed bust leaves the spoke on the old tier until the TTL expires. That is the
+      intended trade — a subscription webhook must not fail because Redis did — and it is bounded at
+      four hours and cannot charge anyone more.
+
 ### Opened by the merge with scheduled sales
 
 - [x] **The two 10k creator-score floors are one constant.** `MIN_CREATOR_SCORE_FOR_SALE` is gone;

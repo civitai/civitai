@@ -67,6 +67,12 @@ describe('releasePricingSlot', () => {
     expect(mockDeleteMany).toHaveBeenCalledWith({
       where: { entityType: 'ModelVersion', entityId: VERSION, ownerId: OWNER },
     });
+    // The owner's own access row is not a sale. Asserted on the ARGS, because stubbing only the count
+    // lets the `not: ownerId` exclusion be deleted with every test still green — and then any
+    // owner-held row makes the version look sold and the slot is never returned.
+    expect(mockAccessCount).toHaveBeenCalledWith({
+      where: { accessToId: VERSION, accessToType: 'ModelVersion', accessorId: { not: OWNER } },
+    });
   });
 
   // The slot's own createdAt bounds the charge lookup, so a fee earned BEFORE the owner priced the
@@ -81,7 +87,16 @@ describe('releasePricingSlot', () => {
     await release();
 
     expect(mockChQuery).toHaveBeenCalledTimes(1);
-    expect(mockChQuery.mock.calls[0][1]).toContain(SLOT_CREATED);
+    // Asserted on the emitted SQL and the values POSITIONALLY, not with toContain: a position-blind
+    // check passes when the two interpolations are swapped, and says nothing about the two literal
+    // predicates. Without the version bound the query asks "has ANYONE been charged since this date",
+    // which is true on prod essentially always — so every release would be refused.
+    const [strings, values] = mockChQuery.mock.calls[0] as [string[], unknown[]];
+    const sql = strings.join('?');
+    expect(sql).toContain('date >= toDate(');
+    expect(sql).toContain('modelVersionId = ');
+    expect(sql).toContain("source = 'licenseFee'");
+    expect(values).toEqual([SLOT_CREATED, VERSION]);
   });
 
   it('refuses when a fee was charged since the slot was spent', async () => {
@@ -357,6 +372,55 @@ describe('assertPricingAllowed', () => {
     ).resolves.toEqual({ spendsSlot: false, releasesSlot: true });
     // Neither rule is consulted: a creator below the floor may always stop charging.
     expect(mockCount).not.toHaveBeenCalled();
+  });
+
+  // Every production caller passes a THUNK, not a string — the controller and the REST endpoint both
+  // defer the tier lookup so it only runs when a write actually prices something. Every other test
+  // here passes a string, so the shape that ships was the one shape unexercised: drop the
+  // `typeof tier === 'function'` handling and the record becomes MONTHLY_PRICING_ALLOWANCE_BY_TIER[fn],
+  // i.e. undefined, i.e. the free allowance for everyone including gold.
+  it('resolves a tier passed as a thunk, which is what every caller passes', async () => {
+    mockCount.mockResolvedValue(50 as never);
+
+    await expect(
+      assertPricingAllowed({
+        userId: 1,
+        wasPriced: false,
+        willBePriced: true,
+        tier: async () => 'gold',
+        userMeta: { scores: { models: 50000 } },
+      })
+    ).resolves.toEqual({ spendsSlot: true, releasesSlot: false });
+  });
+
+  it('gives a thunk resolving to null the free allowance, not none', async () => {
+    mockCount.mockResolvedValue(3 as never);
+
+    await expect(
+      assertPricingAllowed({
+        userId: 1,
+        wasPriced: false,
+        willBePriced: true,
+        tier: async () => null,
+        userMeta: { scores: { models: 50000 } },
+      })
+    ).rejects.toThrow(/3 of 3/);
+  });
+
+  // The thunk exists to keep a three-query tier lookup off saves that price nothing. Awaiting it on a
+  // write that is exempt would give that back silently.
+  it('never calls the thunk for a write that prices nothing', async () => {
+    const tier = vi.fn(async () => 'gold');
+
+    await assertPricingAllowed({
+      userId: 1,
+      wasPriced: true,
+      willBePriced: true,
+      tier,
+      userMeta: { scores: { models: 50000 } },
+    });
+
+    expect(tier).not.toHaveBeenCalled();
   });
 
   it('refuses one point below the floor and allows exactly the floor', async () => {

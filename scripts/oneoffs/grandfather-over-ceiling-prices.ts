@@ -23,6 +23,10 @@
  * charged the un-clamped price. Running it after still stops the bleeding, but does not un-charge
  * anyone.
  *
+ * Scope is deliberately NOT limited to published versions. The clamp this reproduces ran at charge
+ * time and never looked at status, so a draft carrying an over-cap fee would otherwise be left to bill
+ * in full the moment it publishes.
+ *
  * Idempotent: it only ever lowers a price to a cap, so a second run finds nothing over cap and
  * writes nothing. Safe to resume after a partial failure by running it again.
  */
@@ -86,6 +90,7 @@ const TIER_SQL = `
 
 type FeeRow = {
   id: number;
+  ownerId: number;
   licensingFee: string;
   modelType: string | null;
   baseModel: string | null;
@@ -95,13 +100,12 @@ type GateRow = { entityId: number; terms: unknown; baseModel: string | null; tie
 
 async function main() {
   const feeRows = await prisma.$queryRawUnsafe<FeeRow[]>(`
-    SELECT mv.id, mv."licensingFee"::text AS "licensingFee", m.type::text AS "modelType",
-           mv."baseModel", t.tier
+    SELECT mv.id, m."userId" AS "ownerId", mv."licensingFee"::text AS "licensingFee",
+           m.type::text AS "modelType", mv."baseModel", t.tier
     FROM "ModelVersion" mv
     JOIN "Model" m ON m.id = mv."modelId"
     ${TIER_SQL}
     WHERE mv."licensingFee" IS NOT NULL AND mv."licensingFee" > 0
-      AND mv.status = 'Published'::"ModelStatus"
       AND m."deletedAt" IS NULL`);
 
   const feeClamps = feeRows
@@ -143,7 +147,7 @@ async function main() {
   const summary = {
     fees: {
       affected: feeClamps.length,
-      owners: new Set(feeClamps.map((r) => r.id)).size,
+      owners: new Set(feeClamps.map((r) => r.ownerId)).size,
       maxMultiple: feeClamps.reduce((m, r) => Math.max(m, r.stored / r.cap), 0),
     },
     gates: { affected: gateClamps.length },

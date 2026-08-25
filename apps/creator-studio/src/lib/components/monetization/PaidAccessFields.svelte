@@ -88,8 +88,12 @@
   {/if}
   {#if !ctx.canChoosePermanent}
     <span class="text-xs text-dark-2">
-      You've used this month's pricing allowance ({formatPricingAllowance(allowanceState)}) —
-      upgrade your membership to price more models.
+      {#if ctx.permBlockedReason}
+        {ctx.permBlockedReason}
+      {:else}
+        You've used this month's pricing allowance ({formatPricingAllowance(allowanceState)}) —
+        upgrade your membership to price more models.
+      {/if}
     </span>
   {/if}
   {#if !ea.permanent && gateNotice}

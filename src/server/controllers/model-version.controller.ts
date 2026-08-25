@@ -508,7 +508,12 @@ export const upsertModelVersionHandler = async ({
       // an id present, so reading the stored price off it would let one already-priced version vouch
       // for unlimited new priced ones — the trap the usage-control gate above documents.
       versionId: updatesExistingVersion ? input.id : undefined,
-      paidAccess: policyKeepsGate ? input.paidAccess : null,
+      // `?? null` because that is literally what the write does: both upsert branches call
+      // writeModelVersionGateAndGoal unconditionally, which passes `paidAccess ?? null` on to
+      // writePaidAccessForModelVersion — and null DELETES the row. Passing undefined through would
+      // have the ledger read "gate unchanged" for a save that removes it, so the version ends up
+      // unpriced with its slot never returned.
+      paidAccess: policyKeepsGate ? input.paidAccess ?? null : null,
       licensingFee: policyKeepsFee ? input.licensingFee : 0,
       storedLicensingFee: storedFee,
       tier: actingOnOwnModel ? actorTier : () => getCapTier(ownerId),

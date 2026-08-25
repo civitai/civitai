@@ -185,6 +185,39 @@
         )
       : null
   );
+  // Only the server knows which of a select-all are already priced — `alreadyPricedIds` on the page is
+  // built from the loaded rows alone, so off-page versions read as new and inflate the count.
+  const unpricedPreview = $derived(
+    browser && (action === 'paidAccess' || action === 'fee') && versionIds.length > 0
+      ? preview<number | null>(
+          '?/unpricedPreview',
+          versionIds,
+          (d) => (d?.unpriced == null ? null : Number(d.unpriced)),
+          null
+        )
+      : null
+  );
+
+  let unpricedCount = $state<number | null>(null);
+  $effect(() => {
+    const pending = unpricedPreview;
+    if (!pending) {
+      unpricedCount = null;
+      return;
+    }
+    let current = true;
+    pending
+      .then((n) => {
+        if (current) unpricedCount = n;
+      })
+      .catch(() => {
+        if (current) unpricedCount = null;
+      });
+    return () => {
+      current = false;
+    };
+  });
+
   const publishedPreview = $derived(
     browser && action === 'paidAccess' && versionIds.length > 0
       ? preview<number>('?/publishedPreview', versionIds, (d) => Number(d?.published ?? 0), 0)
@@ -245,6 +278,7 @@
     canChoosePermanent: eligibility.canChoosePermanent,
     permBlocked: eligibility.permBlocked,
     timedBlockedReason: eligibility.timedBlockedReason,
+    permBlockedReason: eligibility.permBlockedReason,
     maxEarlyAccessDays: caps.maxEarlyAccessDays,
     pricingUsed: caps.pricingUsed,
     pricingLimit: caps.pricingLimit,
@@ -262,9 +296,11 @@
 
   // Both a fee and a permanent gate spend allowance, so both need the warning — the fee path is
   // all-or-nothing, so without it a 20-version selection just returns 403 with nothing on screen first.
+  const remainingAllowance = $derived(pricingSlotsLeft - count);
   const overSlots = $derived(
     (action === 'paidAccess' || action === 'fee') &&
-      (count > pricingSlotsLeft || !!eligibility.permBlockedReason)
+      ((unpricedCount !== null && unpricedCount > remainingAllowance) ||
+        !!eligibility.permBlockedReason)
   );
 
   const submit = () => {
@@ -416,10 +452,9 @@
           {:else}
             <Alert.Title>Over this month's pricing allowance</Alert.Title>
             <Alert.Description>
-              You can price {pricingSlotsLeft} more model{pricingSlotsLeft === 1 ? '' : 's'} this month,
-              but
-              {count} are selected. Deselect some, or the save will be rejected. Versions you already
-              charge for don't count.
+              You can price {remainingAllowance} more model{remainingAllowance === 1 ? '' : 's'} this
+              month, but this selection would price {unpricedCount}. Deselect some, or the save will
+              be rejected. Versions you already charge for don't count.
             </Alert.Description>
           {/if}
         </Alert.Root>

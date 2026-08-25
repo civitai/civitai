@@ -28,7 +28,9 @@ export type PricingGateResult = { ok: true } | { ok: false; status: 400 | 403; e
 // Ownership is re-enforced here: the ids come from an owner-scoped read, but this decides a money rule.
 export async function unpricedVersionIds(userId: number, versionIds: number[]): Promise<number[]> {
   if (versionIds.length === 0) return [];
-  const rows = await dbRead
+  // Primary: this decides whether a write is exempt from the floor and the allowance, and a stale
+  // replica reads an already-priced version as new — refusing an edit the creator is entitled to.
+  const rows = await dbWrite
     .selectFrom('ModelVersion as mv')
     .innerJoin('Model as m', 'm.id', 'mv.modelId')
     .leftJoin('PaidAccess as pa', (join) =>
@@ -89,7 +91,10 @@ export async function releasableVersionIds(
   versionIds: number[]
 ): Promise<number[]> {
   if (versionIds.length === 0) return [];
-  const rows = await dbRead
+  // Primary, not the replica: this runs immediately after the write that cleared the price, and a
+  // replica still showing the old row makes the release refuse — silently costing the creator the
+  // slot it was called to give back. Mirrors releasePricingSlot in the main app.
+  const rows = await dbWrite
     .selectFrom('ModelVersion as mv')
     .innerJoin('Model as m', 'm.id', 'mv.modelId')
     .leftJoin('PaidAccess as pa', (join) =>

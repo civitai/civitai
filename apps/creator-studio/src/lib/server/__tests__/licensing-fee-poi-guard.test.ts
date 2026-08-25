@@ -327,6 +327,19 @@ describe('returning the slot when a fee is cleared', () => {
     expect(state.chargeQueries[0]).not.toContain('userId');
   });
 
+  // state.releaseFilters was recorded and never asserted, so the delete's owner scoping could be
+  // deleted with the whole suite green — and then a transferred model's new owner reclaims the
+  // previous owner's slot. The main app has this assertion; the mirror did not.
+  it('scopes the delete to the owner as well as the key', async () => {
+    state.rows = [version({ currentFee: 5 })];
+
+    await setLicensingFee(7, GOLD, 1, null, true);
+
+    expect(state.releaseFilters).toEqual(
+      expect.arrayContaining(['entityType', 'entityId', 'ownerId'])
+    );
+  });
+
   it('releases only the untransacted half of a bulk clear', async () => {
     state.rows = [version({ id: 1, currentFee: 5 }), version({ id: 2, currentFee: 5, sold: true })];
 

@@ -85,18 +85,24 @@ const isOwnerOrModerator = middleware(async ({ ctx, input, next }) => {
   const { id: userId } = ctx.user;
   const { id, modelId: inputModelId } = input as { id?: number; modelId?: number };
 
-  // Both shapes name a model: an edit through its version id, a create through modelId directly.
-  // Ownership is proven against whichever the caller supplied, so every write reaching the handler
-  // has had its model checked.
-  const modelId = id
-    ? (await getVersionById({ id, select: { modelId: true } }))?.modelId ?? 0
-    : inputModelId ?? 0;
+  // EVERY model the input names has to be owned, not just one of them. `id` names the version's
+  // current model; `modelId` names the one the write will actually land on — upsertModelVersion reads
+  // `data.modelId` on both its create and update branches, so a request carrying both moves the
+  // version between them. Authorizing either alone leaves the other unchecked.
+  const modelIds = new Set<number>();
+  if (id) {
+    const fromVersion = (await getVersionById({ id, select: { modelId: true } }))?.modelId;
+    if (fromVersion) modelIds.add(fromVersion);
+  }
+  if (inputModelId) modelIds.add(inputModelId);
 
-  const ownerId = modelId
-    ? (await getModel({ id: modelId, select: { userId: true } }))?.userId ?? -1
-    : -1;
+  // No resolvable model means nothing to authorize against, which is a refusal rather than a pass.
+  if (modelIds.size === 0) throw throwAuthorizationError();
 
-  if (userId !== ownerId) throw throwAuthorizationError();
+  for (const modelId of modelIds) {
+    const ownerId = (await getModel({ id: modelId, select: { userId: true } }))?.userId ?? -1;
+    if (userId !== ownerId) throw throwAuthorizationError();
+  }
 
   return next({
     ctx: {
