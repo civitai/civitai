@@ -65,7 +65,7 @@ describe('createCounter().reset — empty id array guard', () => {
   it('ordered counter: reset with non-empty ids still calls zRem', async () => {
     await fervorCounter.reset({ id: [1, 2] });
     expect(mockSysRedis.zRem).toHaveBeenCalledTimes(1);
-    expect(mockSysRedis.zRem).toHaveBeenCalledWith('new-order:fervor', ['1', '2']);
+    expect(mockSysRedis.zRem).toHaveBeenCalledWith(REDIS_SYS_KEYS.NEW_ORDER.FERVOR, ['1', '2']);
   });
 
   it('unordered counter: reset with non-empty ids still calls hDel', async () => {
