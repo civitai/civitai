@@ -521,6 +521,54 @@ describe('BitDex primary feed — content is not served before its publish time'
     expect(ids).toContain(202);
   });
 
+  it('opting in with `scheduled` surfaces scheduled work and STILL holds back drafts', async () => {
+    // ClickUp 868kt9y1w, BitDex half. `scheduled` sets `wantsUnpublished`, which
+    // skips the publication guard on this merge entirely — so a creator who asked
+    // for their scheduled posts also received every never-published draft they own.
+    // Same symptom the Meili builders had.
+    //
+    // Both docs arrive through the own-excluded pass together, which is the point:
+    // the opt-in has to separate them rather than admit or refuse the pair. 202 is
+    // scheduled (future `sortAt`), 404 is a draft (`publishedAt: null`).
+    queryBitdexMock.mockImplementation(async (_index: string, filters: unknown) =>
+      isOwnExcludedQuery(filters) ? page([rescheduledDoc, neverPublishedDoc]) : page([publishedDoc])
+    );
+
+    const result = await getImagesFromSearch({
+      ...baseInput,
+      currentUserId: OWNER_ID,
+      scheduled: true,
+    });
+    const ids = result.data.map((i: { id: number }) => i.id);
+
+    // Asserted on IDs rather than a count: `getInfinite({ids})` is known to drop
+    // its ids and return the global feed, so a count here could pass against a
+    // result that is not this query's at all.
+    expect(ids).toContain(101);
+    expect(ids).toContain(202);
+    expect(ids).not.toContain(404);
+  });
+
+  it('a moderator’s own-excluded merge is unchanged by that rule', async () => {
+    // The control. The fix is scoped to non-moderators — a moderator's `scheduled`
+    // request is declined outright so Meili answers it (see the tests above), and
+    // their own unpublished content still arrives through this pass. Without this,
+    // narrowing the moderator branch too would keep the test above green while
+    // silently changing what #4148 deliberately built.
+    queryBitdexMock.mockImplementation(async (_index: string, filters: unknown) =>
+      isOwnExcludedQuery(filters) ? page([neverPublishedDoc]) : page([publishedDoc])
+    );
+
+    const result = await getImagesFromSearch({
+      ...baseInput,
+      currentUserId: OWNER_ID,
+      isModerator: true,
+    });
+    const ids = result.data.map((i: { id: number }) => i.id);
+
+    expect(ids).toContain(404);
+  });
+
   it('stops skipping emptied pages at the bound instead of walking forever', async () => {
     // The pagination test above proves the ALLOWANCE; this proves the BOUND.
     // Without it, deleting the `emptiedPages < MAX_EMPTIED_PAGES` condition
