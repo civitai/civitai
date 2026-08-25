@@ -22,6 +22,7 @@
  * `60` is read back from the custom property itself rather than restated.
  */
 import { describe, expect, test } from 'vitest';
+import { HEADER_HEIGHT_PX } from '~/shared/constants/app-layout.constants';
 
 describe("the app's :root custom properties reach the component-test document", () => {
   test('--header-height is defined, and a calc() that reads it computes', () => {
@@ -35,19 +36,44 @@ describe("the app's :root custom properties reach the component-test document", 
         'that reads it lays out against an invalid declaration'
     ).toMatch(/^\d+px$/);
 
+    // 🔴 PIN THE VALUE, not just its shape. Deriving everything else from the
+    // property we just read makes a wrong VALUE undetectable: if the extraction
+    // captures the wrong `:root` block — a conditional one earlier in the file —
+    // it injects a header height no user ever sees, and this test still passes,
+    // because it grades the injection against itself. That is the
+    // self-referential-assertion trap, and this line is what closes it.
+    //
+    // NOT circular: `HEADER_HEIGHT_PX` is bound to `globals.css` INDEPENDENTLY by
+    // the ledger in `src/components/AppBlocks/__tests__/pageRunScrollContract.test.ts`
+    // (the GATING tier), which walks `src/` and fails if the CSS and TS values
+    // diverge. So this compares the INJECTED value against a constant that a
+    // different guard already ties to the stylesheet — two independent paths.
+    expect(
+      raw,
+      'the injected --header-height does not match HEADER_HEIGHT_PX. Either the extraction in ' +
+        'test/component-setup.tsx captured the wrong `:root` block, or the CSS and TS values ' +
+        'have diverged (which pageRunScrollContract.test.ts would also fail on).'
+    ).toBe(`${HEADER_HEIGHT_PX}px`);
+
     const probe = document.createElement('div');
     document.body.appendChild(probe);
     probe.style.minHeight = 'calc(100dvh - var(--header-height))';
     const computed = getComputedStyle(probe).minHeight;
     probe.remove();
 
-    // Derived, never hardcoded: the header height comes from the property we just
-    // read, and the viewport from the runner.
-    const expected = `${window.innerHeight - parseInt(raw, 10)}px`;
+    // Derived from the runner's viewport, never hardcoded — but compared with a
+    // sub-pixel tolerance rather than as an exact string. `100dvh` resolves to the
+    // layout viewport, which is fractional on a non-integer device-scale factor, so
+    // an exact `===` would flake on a differently-configured runner and read as a
+    // real break. The thing under test is "the var resolved and the calc computed",
+    // and a 1px window says that unambiguously (the failure mode it must catch is
+    // `0px`, not a rounding difference).
+    const expected = window.innerHeight - parseInt(raw, 10);
     expect(
-      computed,
-      'a calc() reading --header-height did not compute — an unresolvable ' +
-        'var() is invalid at computed-value time and collapses the declaration'
-    ).toBe(expected);
+      parseFloat(computed),
+      `a calc() reading --header-height did not compute (got "${computed}", expected about ` +
+        `${expected}px) — an unresolvable var() is invalid at computed-value time and collapses ` +
+        'the declaration, which shows up as 0px'
+    ).toBeCloseTo(expected, 0);
   });
 });

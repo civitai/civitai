@@ -47,6 +47,22 @@ import globalsCss from '~/styles/globals.css?raw';
  * The values come from `globals.css` itself, so there is nothing to keep in step.
  */
 {
+  // 🔴 EXACTLY ONE `:root` — refuse to guess, rather than silently grading the
+  // wrong block. The extraction takes the first match, so a SECOND `:root`
+  // anywhere earlier in the file (inside an `@media`, say) would be injected
+  // UNCONDITIONALLY and would drop every property the real block declares. That
+  // failure is invisible from the outside: components would lay out against a
+  // header height no user ever sees, with the whole suite green. There is no
+  // cheap way to know which block was meant, so this stops and says so.
+  const rootBlocks = globalsCss.match(/:root\s*\{/g) ?? [];
+  if (rootBlocks.length !== 1) {
+    throw new Error(
+      `component-setup: expected exactly ONE \`:root {\` block in src/styles/globals.css, ` +
+        `found ${rootBlocks.length}. The extraction below takes the FIRST match, so more than ` +
+        'one means it may inject a conditional block unconditionally and drop the real ' +
+        'properties. Decide deliberately which block the component harness should use.'
+    );
+  }
   const rootBlock = /:root\s*\{([^}]*)\}/.exec(globalsCss)?.[1];
   if (!rootBlock) {
     // Loud, not silent: if this stops matching, every component test goes back to
@@ -56,10 +72,31 @@ import globalsCss from '~/styles/globals.css?raw';
         'custom-property injection below is inert. Fix the extraction rather than deleting it.'
     );
   }
-  const customProps = rootBlock
+  // 🔴 Strip CSS comments BEFORE splitting. `split(';')` leaves a commented line
+  // glued to the declaration that follows it (`/* … */\n  --footer-height: 45px`),
+  // which then fails `startsWith('--')` and is dropped — silently, because the
+  // other properties still survive so no count reaches zero. Measured: documenting
+  // a variable in `globals.css` dropped `--footer-height` with all 190 files green,
+  // and it is read inside `calc()` by the auctions page and CollectionsLayout.
+  // Commenting a variable is the most ordinary edit imaginable; it must not
+  // silently reintroduce the divergence this whole block exists to remove.
+  const declarations = rootBlock.replace(/\/\*[\s\S]*?\*\//g, '');
+  const customProps = declarations
     .split(';')
     .map((d) => d.trim())
     .filter((d) => d.startsWith('--'));
+  // The parse must account for every property the block declares. A count that
+  // drops is the partial-parse case above; only zero was checked before, and zero
+  // is the one shape that cannot happen while any property survives.
+  const declared = declarations.match(/(?:^|[;{])\s*--[\w-]+\s*:/g) ?? [];
+  if (customProps.length !== declared.length) {
+    throw new Error(
+      `component-setup: parsed ${customProps.length} custom propert(ies) from the \`:root\` ` +
+        `block in globals.css but it declares ${declared.length}. Something in that block is ` +
+        'not being parsed — the missing ones would be UNDEFINED in every component test, which ' +
+        'is exactly the divergence this injection removes.'
+    );
+  }
   if (customProps.length === 0) {
     throw new Error(
       'component-setup: the `:root` block in globals.css declares no custom properties. ' +
