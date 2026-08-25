@@ -86,6 +86,16 @@ vi.mock('~/server/services/vault.service', async (importOriginal) => ({
   getOrCreateVault: mockGetOrCreateVault,
   toggleModelVersionOnVault: mockToggleModelVersionOnVault,
 }));
+// The endpoint now resolves the caller's OWN notification before enriching it, so without this the
+// throwing path under test would be the notifications client rather than `populateNotificationDetails`
+// — the assertions would still pass, on a different error.
+vi.mock('~/server/notifications/client', () => ({
+  notifications: {
+    queryNotifications: vi.fn(async () => [
+      { id: 1, type: 'comment', category: 'Comment', details: {}, createdAt: new Date(), read: false },
+    ]),
+  },
+}));
 vi.mock('~/server/notifications/detail-fetchers', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   populateNotificationDetails: mockPopulateNotificationDetails,
