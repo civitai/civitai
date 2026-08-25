@@ -33,16 +33,16 @@ No schema change, no migration, no backfill.
 - **Permanent toggle onsite**, settable after publish (permanent has no publish-anchored window), with the tier
   allowance shown. Timeframe control hides when permanent; donation goals correctly key on `isPublished`.
 - **Canonical read helper** — `@civitai/buzz/paid-access.ts` (`paidAccessMode`, `isPaidAccessActive`,
-  `isTimedWindowOver`, `paidAccessSql`), with tests whose permanent cases encode what every ad-hoc check got
-  wrong.
+  `isTimedWindowOver`), with tests whose permanent cases encode what every ad-hoc check got wrong.
+  `paidAccessSql` was part of this and **no longer exists** — see the rule below.
 - **Five review bugs fixed**, including one data-loss bug (the form nulled any config whose `timeframe` was
   falsy — i.e. every permanent config — so re-saving destroyed the paid gate).
 
 ### Blocking — do before shipping
 
 - [ ] **Exercise in a browser.** Nothing here has been clicked through; typecheck + unit tests only. Cover:
-      set a fee ratio, set permanent on an unpublished version, set permanent on a *published* version, hit the
-      tier cap, and round-trip a fee between Studio and onsite.
+      set a fee ratio, set permanent on an unpublished version, set permanent on a *published* version, exhaust
+      the monthly pricing allowance, and round-trip a fee between Studio and onsite.
 - [x] **Feature flag — decided (2026-07-24): no flag.** Permanent access releases with Creator Studio.
 - [ ] **Targeted mini-sweep of user-visible "is this paid" surfaces.** Not the full sweep (see Track 2) — just
       the badges/filters/labels a creator or buyer will see for a *permanent* version. Use
@@ -544,7 +544,7 @@ participates in **selecting, ordering, or counting** rows — those must run in 
 - **`EXISTS` in a larger entity query** — "does this model have *any* gated version", pushed down instead of
   loading every version to check in app.
 
-**Rule: decorate known ids → `getPaidAccess`; select / sort / count by access state → `paidAccessSql`.** The
+**Rule: decorate known ids → `getPaidAccess`; select / sort / count by access state → SQL.** The
 two do not compete — the predicate cases are exactly the dynamic, query-specific result sets a per-entity cache
 cannot serve anyway, so joining there does not defeat the cache.
 

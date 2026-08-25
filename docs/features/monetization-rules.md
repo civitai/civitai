@@ -104,10 +104,19 @@ Every creator gets the same fee ceiling — `maxLicensingFeeCeiling`, 100 per ge
 video model. Paid access has no ceiling at all. What a tier buys is **allowance**:
 `monthlyPricingAllowance` — free 3, bronze 10, silver 25, gold unlimited.
 
-**A lapse cannot change any price.** It lowers next month's allowance and nothing else; an unknown or
-absent tier resolves to the FREE allowance rather than zero, so losing a membership never takes away
-the ability to price anything at all. This is why no read path resolves a subscription tier any more —
-`getViewerMonetization` reads the gate rows and returns the stored numbers.
+**A lapse cannot change any price, but it lowers the allowance immediately.** `getCapTier` reads live
+subscription state at write time, and `past_due`/`unpaid` count as lapsed, so a membership ending
+mid-month drops that month's allowance to free's from that moment. Slots already spent stand and
+nothing already priced is undone — but a creator who spent 8 as bronze and lapses on the 8th sets
+nothing new until the month turns. An unknown or absent tier resolves to the FREE allowance rather than
+zero, so losing a membership never takes away the ability to price at all. This is why no read path
+resolves a subscription tier any more — `getViewerMonetization` reads the gate rows and returns the
+stored numbers.
+
+Considered and declined (2026-08-25): granting the lapsed tier's allowance for the whole calendar month
+it lapsed in, which would fix the involuntary case (a failed card is the most common mid-month drop).
+Gold is **unlimited**, so "held it at any point this month" would mean unlimited pricing for that month
+off one payment. Left as-is deliberately; revisit with that cost in view.
 
 **Membership tier does not unlock early access.** The ladder reads `User.meta.scores.models` and starts at
 40,000, so simulating a tier will never reach it — the studio has a separate moderator-only score simulator
@@ -116,6 +125,11 @@ itself confers the top rung (30 days, 30 concurrent) at any score.
 
 The fee ceiling blocks **raises only** (`raisesOverCap`): a stored price above it stays chargeable, so a
 max must never clamp below the stored value or an unrelated edit silently cuts a grandfathered price.
+
+One exception: a write that moves the version onto a **stricter media axis**. 500 is legal on a video
+model and 5x the ceiling on an image one, so that write faces the ceiling outright even though the
+number did not rise. The test is the fee the write *leaves behind*, not the one it names — an upsert
+that omits `licensingFee` keeps the stored one, and the base model can still move under it.
 
 #### R3a. Both rules turn on ONE question: is this version newly priced?
 
@@ -151,6 +165,10 @@ calendar month. Removing one of two prices returns nothing — the version is st
 cleared and re-applied inside one month spends a second slot when the release succeeded, and nothing
 when it did not.
 
+Clearing a price set in an **earlier** month deletes the row but returns nothing — the count is of rows
+created this month, and that one was not. Nothing is lost either: this month's allowance was never
+reduced by it. Refunding across the boundary is exactly what would let allowance carry forward.
+
 The transaction test reads `orchestration.resourceCompensations` in ClickHouse, bounded on the slot's
 own `createdAt` and raced against a 3s timeout, falling back to the daily
 `ModelVersionMetric.earnedAmount` mirror when ClickHouse cannot answer. Both fail **closed** — an
@@ -160,6 +178,13 @@ entirely: no buyer could reach it and no generation could charge for it.
 There is deliberately **no foreign key to the entity**. The key is polymorphic, so there is nothing to
 point at, and the consequence is wanted — deleting a version does not refund its slot. Rows that outlive
 their entity are inert, because the count is scoped to the current month.
+
+**A model transfer deletes the slots on its versions** rather than moving them, and it is the one case
+where a stranded row would *not* go inert — the entity outlives it. Moving `ownerId` would charge the
+recipient for a pricing they never made (what #4309 rejected for `PaidAccess` in the other direction);
+leaving it makes the row unreleasable (release refuses on an owner mismatch) *and* un-insertable (the
+key is the entity alone), which would let the recipient re-price that version forever without it ever
+counting against their allowance.
 
 **Moderators are not exempt** from either the floor or the allowance. That is the one creator-score gate
 in the codebase they do not bypass: the floor is a statement about who may sell, not a permission level.

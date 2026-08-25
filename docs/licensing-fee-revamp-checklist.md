@@ -328,6 +328,24 @@ that have to happen, or be decided, before it reaches creators.
       spoke becomes a way around it, which is the same shape as the POI guard. Five cases now, incl.
       the media axis and the raise-only carve-out.
 
+### Closed in the final review, 2026-08-25
+
+- [x] **The fee ceiling was skippable by omitting the fee.** The media-axis half sat inside a branch
+      requiring the write to carry a fee, but `licensingFee` is nullish on the upsert schema while
+      `baseModel` is required, and an absent fee means unchanged. A write moving a version from a video
+      base model to an image one without restating the fee left it billing at 5x the image ceiling, per
+      generation, indefinitely. The guard now tests the fee the write LEAVES BEHIND. Not reachable from
+      the onsite form, which always resubmits the fee.
+- [x] **A model transfer stranded the PricingSlot.** The key is the entity alone while release refuses
+      on an owner mismatch, so a row left behind was unreleasable AND un-insertable — the recipient
+      could re-price that version forever without it counting against their allowance. Transfer now
+      deletes the slots rather than moving them; moving `ownerId` would charge the recipient for a
+      pricing they never made. Transfer is the one case where a stranded row does not go inert at the
+      month turn.
+- [x] **Comments describing the reverted clamp.** Six referenced `cappedTerms` or tier ceilings as
+      current, one instructed a reader to compose over a function that no longer exists, and the
+      migration header stated the old release rule then retracted it two lines later.
+
 ### The two apps read the creator's tier from different places
 
 Not a divergence to fix, but worth writing down because a review flagged it as one and the answer is

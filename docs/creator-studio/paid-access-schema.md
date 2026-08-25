@@ -74,12 +74,18 @@ Schema file: `packages/civitai-db-schema/prisma/schema.full.prisma` (the only tr
   owner-scoped queries need no join to the entity.
 - No `donationGoalId`, no `anchorAt` — see §3 and §4.
 - **Read through the accessor, not ad-hoc joins.** `getPaidAccess(entityType, entityIds)` (cached, batch) to
-  *decorate* known ids on hot paths; `paidAccessSql()` *only* to filter/sort/count in-query. See
+  *decorate* known ids on hot paths; go to SQL *only* to filter/sort/count in-query. See
   [caching `getPaidAccess`](onsite-monetization-parity.md#caching-getpaidaccess).
-- **Cap-count index is partial.** The tier cap counts an owner's *permanent* rows, so the tightest index is
-  `(ownerId, entityType) WHERE "endsAt" IS NULL` — created via **raw SQL** (Prisma can't express a partial index
-  in-schema). The general `@@index([ownerId, entityType, endsAt])` above stays for owner-scoped *range* queries
-  (active / ending-soon), which `IS NULL` alone can't serve.
+
+  ⚠️ **`paidAccessSql()` no longer exists** — it shipped in `ba2b7fb1d4` and was removed since. The handful
+  of sites that need the predicate hand-write it to the shape below, so the rest of this doc naming
+  `paidAccessSql` describes the plan, not the tree. Anything centralising it again has to cover every one.
+- **`PaidAccess_permanent_cap_idx` no longer has a consumer.** The partial index
+  `(ownerId, entityType) WHERE "endsAt" IS NULL` was built for a per-owner cap on permanent rows; that cap was
+  replaced by the monthly allowance, which counts `PricingSlot` instead, and `countUserPermanentAccessVersions`
+  is gone. Nothing queries `PaidAccess` by `ownerId` today. Left in place — an unused index costs writes, not
+  correctness — but drop it if you are already writing a migration here. The general
+  `@@index([ownerId, entityType, endsAt])` stays for owner-scoped *range* queries (active / ending-soon).
 
 ## 2. `ModelVersion` — add the anchor, retire the tangle
 
