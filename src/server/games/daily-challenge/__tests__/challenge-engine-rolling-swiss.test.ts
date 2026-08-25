@@ -77,6 +77,14 @@ function stubQueries(imageCount: number) {
   });
 }
 
+/** The `failedGroups` payload of the one `challenge-swiss-group-failed` event a tick emits. */
+function failedGroupsFrom(log: typeof logToAxiom): string[] {
+  const event = log.mock.calls
+    .map(([arg]) => arg as { name: string; failedGroups?: string[] })
+    .find((arg) => arg.name === 'challenge-swiss-group-failed');
+  return event?.failedGroups ?? [];
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   operationBudgetRemaining.mockResolvedValue({ remaining: null, spent: 0 });
@@ -147,19 +155,21 @@ describe('advance and rankField', () => {
   it('loses ONE group to a provider failure, not the tick', async () => {
     getStandings.mockResolvedValue(standings(GROUP_SIZE * 4));
     stubQueries(GROUP_SIZE * 4);
-    const verdict = {
-      order: [1, 2, 3, 4],
-      malformed: false,
-      model: 'openai/gpt-5.6-luna',
-      usage: {},
-      buzzCost: 12,
-    };
+    // The ranking is derived from the group it was ASKED about, as the real one is — a fixed
+    // `[1, 2, 3, 4]` would have every group record relations among the same four images, and the
+    // attribution assertion below would then be reading the mock rather than the engine.
     let call = 0;
-    compareGroup.mockImplementation(() => {
+    compareGroup.mockImplementation((input: unknown) => {
       call++;
-      return call === 2
-        ? Promise.reject(new Error('Provider returned error'))
-        : Promise.resolve(verdict);
+      if (call === 2) return Promise.reject(new Error('Provider returned error'));
+      const { group } = input as { group: { imageId: number }[] };
+      return Promise.resolve({
+        order: group.map((image) => image.imageId),
+        malformed: false,
+        model: 'openai/gpt-5.6-luna',
+        usage: {},
+        buzzCost: 12,
+      });
     });
 
     const calls = await rollingSwissEngine.advance!(ctx, Date.now() + 60_000);
@@ -175,11 +185,109 @@ describe('advance and rankField', () => {
         type: 'warning',
         failed: 1,
         calls: 3,
+        // The NEGATIVE arm of the refusal classification. Without it `refused` is pinned in one
+        // direction only, and `if (isContentRefusal(error)) refused++` reduced to `refused++` passes.
+        refused: 0,
         message: 'Provider returned error',
       })
     );
     expect(logToAxiom).not.toHaveBeenCalledWith(
       expect.objectContaining({ name: 'challenge-swiss-group-unloadable' })
+    );
+
+    // Attribution is the whole point of logging membership, and with four groups "the right group"
+    // is a claim that can be wrong. The failed group must be exactly the entries that recorded
+    // nothing — logging `groups[0]`, or every planned group, makes the field actively misleading.
+    const failedIds = failedGroupsFrom(logToAxiom)[0].split(',').sort();
+    const recordedIds = new Set(
+      recordComparison.mock.calls.flatMap(([arg]) => {
+        const { imageIdA, imageIdB } = (arg as { verdict: { imageIdA: number; imageIdB: number } })
+          .verdict;
+        return [String(imageIdA), String(imageIdB)];
+      })
+    );
+    expect(failedIds).toHaveLength(GROUP_SIZE);
+    expect(failedIds.filter((id) => recordedIds.has(id))).toEqual([]);
+  });
+
+  /**
+   * The failure mode the fix is NAMED for, which a four-group fixture cannot reach: `runPool`'s
+   * concurrency is 16, so with four groups every one is dispatched before any rejection is seen and
+   * the old code made the same four calls. Only past the lane count does `runPool`'s `failed` flag
+   * have a next item to refuse — 17 groups, a rejection on the first, and group 17 is the one
+   * production was losing. 68 standings at the stubbed progress plan 17 groups: `tickCallBudget` is
+   * ceil(68*9/2/6)=51 due, halved to 26 by progress, and `planGroups` cuts floor(68/4)=17 from them.
+   *
+   * The second rejection is not decoration: it is what pins `firstError ??=` as FIRST rather than
+   * last, and gives `failedGroups` more than one entry to get wrong.
+   */
+  it('still dispatches the groups a failure used to abandon', async () => {
+    const field = 68;
+    getStandings.mockResolvedValue(standings(field));
+    stubQueries(field);
+    let call = 0;
+    compareGroup.mockImplementation(() => {
+      call++;
+      if (call === 1) return Promise.reject(new Error('first failure'));
+      if (call === 5) return Promise.reject(new Error('second failure'));
+      return Promise.resolve({
+        order: [1, 2, 3, 4],
+        malformed: false,
+        model: 'openai/gpt-5.6-luna',
+        usage: {},
+        buzzCost: 12,
+      });
+    });
+
+    const calls = await rollingSwissEngine.advance!(ctx, Date.now() + 60_000);
+
+    // 17, not 16. Under the old code the 17th group was never dispatched — `runPool` stops taking
+    // items once a worker has rejected — and the tick threw on top of it.
+    expect(compareGroup).toHaveBeenCalledTimes(17);
+    expect(calls).toBe(15);
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'challenge-swiss-group-failed',
+        planned: 17,
+        failed: 2,
+        calls: 15,
+        message: 'first failure',
+      })
+    );
+    expect(failedGroupsFrom(logToAxiom)).toHaveLength(2);
+  });
+
+  /**
+   * The catch covers the relation WRITES as well as the comparison. A dropped connection on the
+   * write is at least as likely as a provider 5xx, and under the old code it abandoned the tick the
+   * same way. The call is still counted and still billed: the provider was already paid.
+   */
+  it('loses one group to a failed relation write, and still bills the call', async () => {
+    getStandings.mockResolvedValue(standings(GROUP_SIZE * 4));
+    stubQueries(GROUP_SIZE * 4);
+    compareGroup.mockResolvedValue({
+      order: [1, 2, 3, 4],
+      malformed: false,
+      model: 'openai/gpt-5.6-luna',
+      usage: {},
+      buzzCost: 12,
+    });
+    recordComparison.mockRejectedValueOnce(new Error('write conflict'));
+
+    await expect(rollingSwissEngine.advance!(ctx, Date.now() + 60_000)).resolves.toBe(4);
+    expect(incrementOperationSpent).toHaveBeenCalledExactlyOnceWith(1, 48);
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'challenge-swiss-write-failed',
+        writeFailed: 1,
+        calls: 4,
+        message: 'write conflict',
+      })
+    );
+    // A database failure must not be filed as a provider failure. They point at different systems,
+    // and `refused` — the count of provider content refusals — must never be fed a Postgres error.
+    expect(logToAxiom).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'challenge-swiss-group-failed' })
     );
   });
 
@@ -250,10 +358,7 @@ describe('advance and rankField', () => {
     // A group fails as a UNIT, and its membership is what makes attribution possible across ticks.
     // Compared as a set: the entries are logged in PRESENTATION order, which the band shuffle
     // deliberately varies, so asserting the literal order would pin the shuffle rather than the log.
-    const logged = logToAxiom.mock.calls
-      .map(([arg]) => arg as { name: string; failedGroups?: string[] })
-      .find((arg) => arg.name === 'challenge-swiss-group-failed');
-    expect(logged?.failedGroups?.[0].split(',').sort()).toEqual(['1', '2', '3', '4']);
+    expect(failedGroupsFrom(logToAxiom)[0].split(',').sort()).toEqual(['1', '2', '3', '4']);
     // Nothing was billed: the provider never returned a usage figure to bill from.
     expect(incrementOperationSpent).not.toHaveBeenCalled();
   });
@@ -339,6 +444,69 @@ describe('advance and rankField', () => {
     expect(logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'challenge-swiss-budget-exhausted', type: 'warning' })
     );
+  });
+
+  /**
+   * 🔴 THE MONEY CASE. Do not relax this into a `break` without reading why it is a `throw`.
+   *
+   * Per-group catching means a close-time pass where EVERY group fails returns 0 calls, which is
+   * the same number a settled field returns. If those two end the loop the same way, `rankField`
+   * ranks a field nothing measured: with no comparison rows every entry scores 0.5 in `strength`,
+   * so `swissStandings` falls through to its `imageId` tiebreak and the caller pays real prizes on
+   * upload order. Before groups were caught individually the provider error propagated and left the
+   * challenge in 'Completing' for a later run to judge properly; this keeps that behaviour for the
+   * close path only.
+   */
+  it('REFUSES to finalize a field when every close-time group failed', async () => {
+    const field = GROUP_SIZE * 4;
+    stubQueries(field);
+    compareGroup.mockRejectedValue(new Error('Provider returned error'));
+
+    await expect(
+      rollingSwissEngine.rankField(
+        ctx,
+        Array.from({ length: field }, (_, i) => ({
+          imageId: i + 1,
+          userId: i + 1,
+          username: `u${i}`,
+          weightedRating: 0,
+        }))
+      )
+    ).rejects.toThrow(/none succeeded/);
+
+    // No standings written means no ranking for the caller to pay out against.
+    expect(replaceStandings).not.toHaveBeenCalled();
+  });
+
+  it('still finalizes at close when SOME groups succeeded', async () => {
+    const field = GROUP_SIZE * 4;
+    stubQueries(field);
+    let call = 0;
+    compareGroup.mockImplementation((input: unknown) => {
+      call++;
+      if (call === 2) return Promise.reject(new Error('Provider returned error'));
+      const { group } = input as { group: { imageId: number }[] };
+      return Promise.resolve({
+        order: group.map((image) => image.imageId),
+        malformed: false,
+        model: 'openai/gpt-5.6-luna',
+        usage: {},
+        buzzCost: 12,
+      });
+    });
+
+    // The guard above must not have made close brittle: a partially-failing provider still settles.
+    const ranked = await rollingSwissEngine.rankField(
+      ctx,
+      Array.from({ length: field }, (_, i) => ({
+        imageId: i + 1,
+        userId: i + 1,
+        username: `u${i}`,
+        weightedRating: 0,
+      }))
+    );
+    expect(ranked).toHaveLength(field);
+    expect(replaceStandings).toHaveBeenCalledTimes(1);
   });
 
   it('applies the spend ceiling at close too, not only on ticks', async () => {
