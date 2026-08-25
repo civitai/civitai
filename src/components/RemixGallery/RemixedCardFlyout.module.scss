@@ -40,9 +40,39 @@
   }
 }
 
+/* The same drawer, pulled sideways. Home-block shelves clip vertically, so the
+ * strip leaves through the card's left or right edge instead. */
+.slideRight {
+  animation: remixSlideRight 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.slideLeft {
+  animation: remixSlideLeft 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes remixSlideRight {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes remixSlideLeft {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .slideDown,
-  .slideUp {
+  .slideUp,
+  .slideRight,
+  .slideLeft {
     animation-duration: 1ms;
   }
 }

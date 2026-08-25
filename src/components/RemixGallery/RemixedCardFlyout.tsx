@@ -12,6 +12,7 @@ import {
   useRemixDemoDensity,
   useRemixPeelStore,
 } from '~/components/RemixGallery/remix-card-demo';
+import { useRemixFlyoutLayout } from '~/components/RemixGallery/remix-flyout-layout';
 import styles from './RemixedCardFlyout.module.scss';
 
 /** Dwell before the flyout opens, in ms. */
@@ -78,12 +79,42 @@ const panelHeight = (width: number, tiles: number) => {
   return HEADER_H + tile + ROW_PAD;
 };
 
+/** How much shorter than the card a side panel is, total. The width twin of `NARROWER_BY`. */
+const SHORTER_BY = 28;
+
+/**
+ * Content width of a side strip.
+ *
+ * Set by the header, not by the tiles: at 78px the icon and `4 remixes` both fit
+ * on one line, which is what the strip is for. Sizing it to a tile instead left
+ * room for a bare number, and a strip that says `4` next to four pictures is not
+ * telling anyone what they are.
+ */
+const SIDE_W = 78;
+
+/**
+ * The side panel's box for this many tiles within this much height.
+ *
+ * The mirror of `panelHeight`: there the card fixes the width and the height
+ * follows, here the width is fixed and the height follows from stacked tiles.
+ * Tiles fill the strip until the card runs out of height, then shrink and centre
+ * — so five entries stay inside a card the four-tile size would overflow.
+ */
+const sidePanel = (tiles: number, maxHeight: number) => {
+  const available = maxHeight - HEADER_H - ROW_PAD - TILE_GAP * Math.max(0, tiles - 1);
+  const tile = Math.min(SIDE_W, Math.floor(available / Math.max(1, tiles)));
+  const height = HEADER_H + tile * tiles + TILE_GAP * Math.max(0, tiles - 1) + ROW_PAD;
+  return { tile, width: SIDE_W + SIDE_PAD, height };
+};
+
 type Placement = {
   left: number;
   top: number;
   width: number;
   height: number;
-  from: 'below' | 'above';
+  from: 'below' | 'above' | 'left' | 'right';
+  /** Side strips only: the square each tile is drawn at, which the height derives from. */
+  tile?: number;
 };
 
 /**
@@ -116,8 +147,11 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
   const itemRef = useRef<HTMLElement | null>(null);
   const openTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** The nearest ancestor that clips, whose edges bound where the panel may go. */
+  const clipRef = useRef<HTMLElement | null>(null);
   const [place, setPlace] = useState<Placement | null>(null);
   const fine = useFinePointer();
+  const layout = useRemixFlyoutLayout();
 
   // How many boxes the row will hold: the tiles, plus the `+N` box when the
   // gallery has more than fits.
@@ -129,19 +163,41 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
     if (!card || !host) return;
     const r = card.getBoundingClientRect();
     const h = host.getBoundingClientRect();
-    const width = Math.round(r.width) - NARROWER_BY;
-    const height = panelHeight(width, tiles);
-    const room = window.innerHeight - r.bottom;
-    const from: Placement['from'] = room >= height + 8 ? 'below' : 'above';
     // Offsets are relative to the host, because the panel is absolutely
     // positioned inside it rather than fixed to the viewport.
-    const next: Placement = {
-      left: Math.round(r.left - h.left + NARROWER_BY / 2),
-      top: Math.round((from === 'below' ? r.bottom : r.top - height) - h.top),
-      width,
-      height,
-      from,
-    };
+    let next: Placement;
+    if (layout === 'side') {
+      const clip = clipRef.current?.getBoundingClientRect();
+      const { width, height, tile } = sidePanel(tiles, Math.round(r.height) - SHORTER_BY);
+      // 🔴 Bounded by the CLIPPER, not the viewport. On a home shelf the viewport
+      // has hundreds of spare pixels while the shelf itself ends a few px past
+      // the card, and choosing a side on the viewport's say-so put 76% of the
+      // panel outside `overflow: hidden`.
+      const right = Math.min(clip?.right ?? window.innerWidth, window.innerWidth);
+      const left = Math.max(clip?.left ?? 0, 0);
+      const from: Placement['from'] =
+        r.right + width <= right ? 'right' : r.left - width >= left ? 'left' : 'right';
+      next = {
+        left: Math.round((from === 'right' ? r.right : r.left - width) - h.left),
+        top: Math.round(r.top + (r.height - height) / 2 - h.top),
+        width,
+        height,
+        from,
+        tile,
+      };
+    } else {
+      const width = Math.round(r.width) - NARROWER_BY;
+      const height = panelHeight(width, tiles);
+      const room = window.innerHeight - r.bottom;
+      const from: Placement['from'] = room >= height + 8 ? 'below' : 'above';
+      next = {
+        left: Math.round(r.left - h.left + NARROWER_BY / 2),
+        top: Math.round((from === 'below' ? r.bottom : r.top - height) - h.top),
+        width,
+        height,
+        from,
+      };
+    }
     // 🔴 Only set state when the position actually moved. This runs from a
     // requestAnimationFrame loop, and a fresh object every frame is a state
     // update every frame — an open flyout re-rendering ~60 times a second
@@ -153,11 +209,12 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
       prev.top === next.top &&
       prev.width === next.width &&
       prev.height === next.height &&
+      prev.tile === next.tile &&
       prev.from === next.from
         ? prev
         : next
     );
-  }, [host, tiles]);
+  }, [host, tiles, layout]);
 
   // Find the card: the nearest ancestor that clips, which is the card box on
   // every surface this renders in.
@@ -198,6 +255,28 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
       item = item.parentElement;
     }
     itemRef.current = item;
+
+    // 🔴 Fall back to the grid cell when that walk finds nothing.
+    //
+    // Home-block shelves have no virtualiser item, so the walk runs off the top
+    // of the document and returns null — and every effect keyed on it then did
+    // nothing at all, silently. The panel was left unlifted and painted under
+    // the neighbouring cards: measured 0 of 3 hit-test points reachable on home
+    // against 3 of 3 in the feed. The cell is the shelf-side equivalent, being
+    // the box that sits beside the other cards.
+    if (!itemRef.current) itemRef.current = cardRef.current?.parentElement?.parentElement ?? null;
+
+    // The clipper bounds where the panel may go. Walked from the card's PARENT:
+    // the card itself is `overflow-hidden`, and so is the panel, which is why
+    // `closest('[class*="overflow-hidden"]')` cannot be used for this — it
+    // matches both and reports the panel as its own bound.
+    let clip: HTMLElement | null = cardRef.current?.parentElement ?? null;
+    while (clip) {
+      const cs = getComputedStyle(clip);
+      if (cs.overflowX !== 'visible' || cs.overflowY !== 'visible') break;
+      clip = clip.parentElement;
+    }
+    clipRef.current = clip;
     // 🔴 Mounted INSIDE the item, as the card's sibling — not outside it.
     //
     // The panel has to paint above the content frame and below the card, and
@@ -223,16 +302,21 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
       cv: item.style.contentVisibility,
       contain: item.style.contain,
       z: item.style.zIndex,
+      position: item.style.position,
     };
     const card0 = card.style.zIndex;
     item.style.contentVisibility = 'visible';
     item.style.contain = 'none';
+    // A static element ignores `z-index` entirely, so lifting a home shelf's
+    // grid cell without this is a no-op that reads exactly like a working lift.
+    if (getComputedStyle(item).position === 'static') item.style.position = 'relative';
     item.style.zIndex = String(ITEM_Z);
     card.style.zIndex = String(CARD_Z);
     return () => {
       item.style.contentVisibility = item0.cv;
       item.style.contain = item0.contain;
       item.style.zIndex = item0.z;
+      item.style.position = item0.position;
       card.style.zIndex = card0;
     };
   }, [open]);
@@ -327,35 +411,42 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
   // At most four thumbnails; `+N` carries the rest. More than that and the tiles
   // shrink to the point of being unreadable at feed card widths.
   const entries = demoRemixEntries(imageId, shown);
+  const side = layout === 'side';
+  const label = count === 1 ? '1 remix' : `${count} remixes`;
   const body = (
     <>
-      <div className="flex items-center gap-1.5 px-2 pb-1 pt-1.5">
+      <div className={clsx('flex items-center px-2 pb-1 pt-1.5', side ? 'gap-1' : 'gap-1.5')}>
         <IconHierarchy size={13} className="shrink-0 text-yellow-5" />
         <Text size="xs" fw={600} className="truncate">
-          {count === 1 ? '1 remix' : `${count} remixes`}
+          {label}
         </Text>
-        <button
-          className="ml-auto rounded-full p-0.5 text-gray-6 hover:bg-gray-2 hover:text-dark-9 dark:text-dark-2 dark:hover:bg-dark-5 dark:hover:text-gray-0"
-          aria-label="Close remixes"
-          onClick={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            close();
-          }}
-        >
-          <IconX size={14} />
-        </button>
+        {/* No close button on a side strip: it costs the width the word needs,
+            and pointer-leave and Escape both still close. */}
+        {!side && (
+          <button
+            className="ml-auto rounded-full p-0.5 text-gray-6 hover:bg-gray-2 hover:text-dark-9 dark:text-dark-2 dark:hover:bg-dark-5 dark:hover:text-gray-0"
+            aria-label={`Close ${label}`}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              close();
+            }}
+          >
+            <IconX size={14} />
+          </button>
+        )}
       </div>
       {/* No scroller. Four 64px tiles plus gaps and padding come to 284px, which
           is wider than the panel on a 308px card — so the row scrolled by a few
           pixels on some widths and not others. The tiles flex instead: they cap
           at 64px and shrink to fit anything narrower, so the row always fits
           exactly and there is nothing to scroll. */}
-      <div className="flex gap-1 px-2 pb-2">
+      <div className={clsx('flex gap-1 px-2 pb-2', side && 'flex-col')}>
         {entries.map((entry, index) => (
           <button
             key={index}
-            className="min-w-0 max-w-16 flex-1"
+            className={clsx('min-w-0', side ? 'mx-auto' : 'max-w-16 flex-1')}
+            style={side ? { width: place.tile, height: place.tile } : undefined}
             aria-label={`Open ${entry.username}'s remix`}
             onClick={(event) => {
               event.preventDefault();
@@ -373,7 +464,13 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
           </button>
         ))}
         {count > entries.length && (
-          <div className="flex aspect-square min-w-0 max-w-16 flex-1 items-center justify-center rounded bg-gray-2 dark:bg-dark-5">
+          <div
+            className={clsx(
+              'flex min-w-0 items-center justify-center rounded bg-gray-2 dark:bg-dark-5',
+              side ? 'mx-auto' : 'aspect-square max-w-16 flex-1'
+            )}
+            style={side ? { width: place.tile, height: place.tile } : undefined}
+          >
             <Text size="xs" fw={600}>
               +{count - entries.length}
             </Text>
@@ -397,10 +494,10 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
               data-remix-flyout={place.from}
               className="absolute"
               style={{
-                left: place.left,
+                left: place.from === 'right' ? place.left - TUCK : place.left,
                 top: place.from === 'below' ? place.top - TUCK : place.top,
-                width: place.width,
-                height: place.height + TUCK,
+                width: side ? place.width + TUCK : place.width,
+                height: side ? place.height : place.height + TUCK,
                 zIndex: PANEL_Z,
               }}
               ref={panelRef}
@@ -412,13 +509,16 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
               <div
                 className={clsx(
                   'size-full overflow-hidden border border-gray-3 bg-gray-0 shadow-md shadow-gray-4 dark:border-dark-4 dark:bg-dark-6 dark:shadow-dark-8',
-                  place.from === 'below'
-                    ? ['rounded-b-md border-t-0', styles.slideDown]
-                    : ['rounded-t-md border-b-0', styles.slideUp]
+                  place.from === 'below' && ['rounded-b-md border-t-0', styles.slideDown],
+                  place.from === 'above' && ['rounded-t-md border-b-0', styles.slideUp],
+                  place.from === 'right' && ['rounded-r-md border-l-0', styles.slideRight],
+                  place.from === 'left' && ['rounded-l-md border-r-0', styles.slideLeft]
                 )}
                 style={{
                   paddingTop: place.from === 'below' ? TUCK : 0,
-                  paddingBottom: place.from === 'below' ? 0 : TUCK,
+                  paddingBottom: place.from === 'above' ? TUCK : 0,
+                  paddingLeft: place.from === 'right' ? TUCK : 0,
+                  paddingRight: place.from === 'left' ? TUCK : 0,
                 }}
               >
                 {body}
