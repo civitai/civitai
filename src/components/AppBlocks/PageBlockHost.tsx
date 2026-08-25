@@ -437,11 +437,14 @@ export interface PageBlockHostProps {
    * `'viewport'`. One source now, and a guard in `pageRunScrollContract.test.ts`
    * binds it to the `--header-height` custom property that CSS call sites use.
    *
-   * 🔴 Do NOT rewrite this to `calc(100dvh - var(--header-height))`. Measured:
-   * where that custom property is undefined the declaration is invalid at
-   * computed-value time and `min-height` silently becomes `0px` — and
-   * `globals.css` is NOT loaded in the component-test environment, so the browser
-   * suite's RED ARM would stop reproducing and pass for the wrong reason.
+   * 🔴 Do NOT rewrite this to `calc(100dvh - var(--header-height))`. `globals.css`
+   * is NOT loaded in the component-test environment, so the custom property reads
+   * as `""` there, the declaration is invalid at computed-value time, and this
+   * host stops claiming a viewport-derived height (as a column flex item its
+   * `min-height` computes to `auto` and it clamps to its parent). Measured: the
+   * browser suite's RED ARM then FAILS with `expected 716 to be greater than 716`
+   * — loudly, not silently. Interpolating the constant is about keeping test and
+   * production identical, not about rescuing a missing net.
    *
    * Still prefer moving a mounter to `'fill'` over re-tuning this calc.
    */

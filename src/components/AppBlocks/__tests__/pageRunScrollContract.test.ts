@@ -278,20 +278,32 @@ describe('the run page and its host agree on who owns the height', () => {
   });
 
   /**
-   * 🔴 THE HEADER HEIGHT HAS ONE SOURCE — THIS PINS THE LEDGER, NOT A NUMBER.
+   * 🔴 THE HEADER HEIGHT HAS ONE SOURCE — THIS ENUMERATES THE LEDGER.
    *
-   * This replaces the old `HEADER_HEIGHT is still 60` tripwire, which asserted a
-   * VALUE and so had to be re-tuned by hand every time the header moved. The
-   * defect it guarded was duplication, so what is asserted now is the RELATIONSHIP:
-   * exactly one TS declaration, every consumer reading it, and the CSS custom
-   * property agreeing with it. It fails when the set of declarations GROWS (a
-   * second copy reappears) or when the two representations DIVERGE — and it does
-   * not care what the number is.
+   * What the previous guard (`HEADER_HEIGHT is still 60`) actually did: it
+   * extracted the number from `AppHeader.tsx` and from the host's calc and
+   * asserted they were equal. That was already a RELATIONSHIP, not a hardcoded
+   * value, and it needed no retuning when the header moved — only its TITLE named
+   * 60. An earlier draft of this comment claimed otherwise; that was wrong, and
+   * the honest justification for replacing it is narrower: it could only ever see
+   * TWO files, so it was blind to `globals.css` — the declaration that most of the
+   * repo actually reads — and to a copy reappearing in any third file.
    *
-   * The CSS var cannot import the constant, so it is the one unavoidable second
-   * representation; binding it here is what makes it safe.
+   * So this walks the tree instead of opening four files by name. It fails when
+   * the set of declarations GROWS (a second copy anywhere under `src/`), when it
+   * SHRINKS to zero, or when the CSS and TS representations DIVERGE. It does not
+   * care what the number is.
+   *
+   * 🔴 An earlier draft ASSERTED this ledger in prose while implementing spot
+   * checks on four named files; an audit killed eight mutants against it —
+   * a second declaration without a trailing `;`, one in `rem`, one in another
+   * stylesheet, one in another `.ts`, the only one commented out, a consumer
+   * applying `HEADER_HEIGHT_PX - 4`, and a consumer that kept only the IMPORT.
+   * A description that reads as coverage while providing none is worse than no
+   * guard, because it stops the next person looking. Hence the walk below, and
+   * the verbatim application pin rather than a token-presence check.
    */
-  it('the header height has ONE TS source, and `globals.css` agrees with it', () => {
+  it('the header height has ONE declaration under `src/`, and CSS and TS agree', () => {
     const constants = code(
       read(path.join(REPO_ROOT, 'src/shared/constants/app-layout.constants.ts'))
     );
@@ -303,44 +315,85 @@ describe('the run page and its host agree on who owns the height', () => {
         'the TS constant to the `--header-height` custom property.'
     ).toBeDefined();
 
-    // The CSS half of the pair — what most consumers across the repo actually read.
-    const globals = read(path.join(REPO_ROOT, 'src/styles/globals.css'));
+    // ---- Walk `src/` once. Spot-checking named files is what the audited draft
+    // did, and a copy reappearing in a file this test does not happen to open is
+    // exactly the defect the consolidation removed.
+    const SRC = path.join(REPO_ROOT, 'src');
+    const files = fs
+      .readdirSync(SRC, { recursive: true, encoding: 'utf8' })
+      .filter((f) => /\.(css|scss|ts|tsx)$/.test(f))
+      .map((f) => path.join(SRC, f))
+      // `readdirSync` yields directories too, and this repo has directories whose
+      // names end in a matching extension — reading one throws EISDIR.
+      .filter((f) => fs.statSync(f).isFile());
+    // Guard the walk itself: a glob that matches nothing makes every assertion
+    // below vacuously true, which is the reassuring-zero failure mode.
+    expect(files.length, 'the src/ walk matched no stylesheets or TS files').toBeGreaterThan(1000);
 
-    // 🔴 COUNT the declarations before reading one. A second `--header-height`
-    // (a media query, a theme block, a `:root` override further down the file)
-    // would shadow or be shadowed by the first depending on order, and a
-    // first-match read would grade the wrong one while still reporting agreement
-    // with the TS constant. "Exactly one" is the claim this guard actually needs;
-    // anything else must be looked at by a human rather than silently averaged.
-    const cssDecls = [...globals.matchAll(/--header-height:\s*(\d+)px;/g)];
+    // ---- CSS side: exactly one `--header-height` declaration, anywhere.
+    // Deliberately NOT anchored to `px;` — a value in `rem`, or with no trailing
+    // semicolon, is still a declaration and still shadows. Capture the raw value
+    // and judge it explicitly rather than letting a non-matching spelling read as
+    // "no second declaration".
+    const cssDecls: { file: string; value: string }[] = [];
+    const tsDecls: { file: string; text: string }[] = [];
+    for (const file of files) {
+      // `code()` strips comments: a commented-out declaration must count as ABSENT
+      // (the audited draft read the raw text, so commenting the only declaration
+      // out — undefining the var for every call site — kept the guard green).
+      const src = code(fs.readFileSync(file, 'utf8'));
+      for (const m of src.matchAll(/--header-height\s*:\s*([^;}\n]+)/g)) {
+        cssDecls.push({ file: path.relative(REPO_ROOT, file), value: m[1].trim() });
+      }
+      // Any TS/TSX constant that looks like a private header-height copy.
+      // 🔴 Skip THIS file: it necessarily contains the pattern it searches for
+      // (the extraction regex above is a literal `const HEADER_HEIGHT_PX = …`),
+      // so it matches itself. Excluded by path rather than by exempting tests
+      // generally, so a copy in any OTHER test file is still caught.
+      if (/\.tsx?$/.test(file) && path.resolve(file) !== path.resolve(__filename)) {
+        for (const m of src.matchAll(/(?:const|let|var)\s+(HEADER_HEIGHT(?:_PX)?)\s*=/g)) {
+          tsDecls.push({ file: path.relative(REPO_ROOT, file), text: m[1] });
+        }
+      }
+    }
+
     expect(
-      cssDecls.length,
-      `expected exactly ONE \`--header-height\` declaration in globals.css, found ${cssDecls.length}. ` +
-        'Zero means it was renamed or removed — re-point this guard rather than deleting it. ' +
-        'More than one means the header height is conditional, and binding it to a single TS ' +
+      cssDecls.map((d) => `${d.file}: ${d.value}`),
+      'expected exactly ONE `--header-height` declaration under src/. Zero means it was renamed ' +
+        'or removed (or commented out) — re-point this guard rather than deleting it. More than ' +
+        'one means the header height is conditional or duplicated, and binding it to a single TS ' +
         'constant is no longer a truthful claim.'
-    ).toBe(1);
-    const cssVar = cssDecls[0][1];
+    ).toHaveLength(1);
+    expect(cssDecls[0].file, 'the `--header-height` declaration moved out of globals.css').toBe(
+      'src/styles/globals.css'
+    );
     expect(
-      cssVar,
-      'globals.css `--header-height` and `HEADER_HEIGHT_PX` have DIVERGED. CSS cannot import ' +
-        'the constant, so these two are kept in step by this assertion and nothing else.'
-    ).toBe(declared);
+      cssDecls[0].value,
+      'globals.css `--header-height` and `HEADER_HEIGHT_PX` have DIVERGED (or the unit changed). ' +
+        'CSS cannot import the constant, so these two are kept in step by this assertion and ' +
+        'nothing else.'
+    ).toBe(`${declared}px`);
 
-    // No consumer may re-declare it. These are the two that historically did.
+    // ---- TS side: exactly one declaration, and it is the exported constant.
+    expect(
+      tsDecls.map((d) => `${d.file}: ${d.text}`),
+      'expected exactly ONE header-height constant under src/ — the exported HEADER_HEIGHT_PX. ' +
+        'A second one is the duplication this consolidation removed; import the shared constant.'
+    ).toHaveLength(1);
+    expect(tsDecls[0].file).toBe('src/shared/constants/app-layout.constants.ts');
+
+    // ---- Consumers must APPLY it, not merely import it. A token-presence check
+    // is satisfied by the import line alone, so renaming the constant or applying
+    // `HEADER_HEIGHT_PX - 4` both survived the audited draft.
     const header = code(
       read(path.join(REPO_ROOT, 'src/components/AppLayout/AppHeader/AppHeader.tsx'))
     );
     expect(
-      /const HEADER_HEIGHT\s*=/.test(header),
-      'AppHeader.tsx has re-declared a private HEADER_HEIGHT. That is the duplication this ' +
-        'guard exists to prevent — import HEADER_HEIGHT_PX instead.'
-    ).toBe(false);
-    expect(
-      header.includes('HEADER_HEIGHT_PX'),
-      'AppHeader.tsx no longer reads HEADER_HEIGHT_PX — it must set the header from the shared ' +
-        'constant, or the constant stops describing the real header.'
-    ).toBe(true);
+      region(header, /style=\{\{\s*height:[^}]*\}\}/, 'AppHeader height style'),
+      `${PIN_HELP} AppHeader must set its height from the shared constant UNMODIFIED — an ` +
+        'arithmetic tweak here silently desynchronises the real header from every consumer ' +
+        'that subtracts the constant.'
+    ).toBe("style={{ height: HEADER_HEIGHT_PX, borderBottomStyle: 'solid' }}");
 
     // The surviving `viewport` surfaces (dev tunnel, mod review) subtract it.
     const host = code(read(HOST));

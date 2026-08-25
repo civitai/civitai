@@ -15,7 +15,7 @@ import type * as TrpcMod from '~/utils/trpc';
  * iframe had another. Only one of them scrolled anything the viewer wanted.
  *
  * THE MECHANISM, and why it was unconditional rather than a race. `PageBlockHost`
- * claimed `min-height: calc(100dvh - HEADER_HEIGHT_PX)` — the viewport minus the site header
+ * claimed `min-height: calc(100dvh - 60px)` — the viewport minus the site header
  * ONLY. But in the default (`scrollable: true`) layout the space actually
  * available to the page is
  *
@@ -144,15 +144,20 @@ const baseProps = {
  *     `viewport − header`, then further reduced by the sub-nav / banner / footer
  *     rendered inside it.
  *
- * `containerHeight` is deliberately SMALLER than `calc(100dvh - HEADER_HEIGHT_PX)` would be
+ * `containerHeight` is deliberately SMALLER than `calc(100dvh - 60px)` would be
  * in this browser, because that gap IS the bug: it is the space the site chrome
  * takes that the old calc never subtracted. Derived from the live viewport at
  * run time rather than hardcoded, so the fixture cannot drift away from the
  * window the runner actually opened.
  */
 function layoutChainHeights() {
-  // What the OLD host claimed. 60 is `HEADER_HEIGHT`, restated by the old style
-  // exactly as the bug did.
+  // What the OLD host claimed, restated by the old style exactly as the bug did.
+  // 🔴 The 60 is a DELIBERATE historical literal, intentionally NOT
+  // `HEADER_HEIGHT_PX`: this arm reproduces the bug as it shipped, so it must not
+  // move when the live header is resized. Importing the constant here would make
+  // the reproduction track the header and quietly stop reproducing the original
+  // defect. (The red arm holds for any header height below ~180; the fixture
+  // subtracts a further 120 of chrome from a real viewport.)
   const oldClaimedMinHeight = window.innerHeight - 60;
   // What a real run page has left after the site chrome inside the scroll area.
   // 120px stands in for sub-nav + mb-3 + banner + footer; any positive value
