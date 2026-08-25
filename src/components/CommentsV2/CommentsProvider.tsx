@@ -328,7 +328,14 @@ export function CommentsProvider({
     [created, comments]
   );
 
-  const isLocked = threadDetails?.locked ?? false;
+  // A lock closes the conversation, not one row of it. `getThreadDetails` answers only about this
+  // provider's own thread, and a reply thread is never the row a moderator locked — so a nested
+  // provider inherits the enclosing lock. Read through `useContext` rather than
+  // `useCommentsContext`, which throws at level 1 where there is no enclosing provider. Without
+  // this the server refuses the write (it resolves the whole chain) while the button is still
+  // offered, which is a dead end no one can explain from the UI.
+  const enclosingLocked = useContext(CommentsCtx)?.isLocked ?? false;
+  const isLocked = (threadDetails?.locked ?? false) || enclosingLocked;
   const isReadonly = !features.canWrite;
   const isMuted = currentUser?.muted ?? false;
   const shouldHideComments = hideWhenLocked && isLocked;

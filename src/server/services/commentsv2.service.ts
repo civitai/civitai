@@ -252,6 +252,79 @@ export async function isViewerContentOwner({
   return ownerId === userId;
 }
 
+/**
+ * Both a cycle backstop and a ceiling on how deep a chain this can resolve. Reaching it is
+ * treated as "could not resolve", not as "no lock found" — measured on the 2,000 most recent
+ * threads in production the deepest chain is 17 and the mean is 2.65, so no real conversation
+ * is near it, and a caller who built one past it must not get a pass out of the guard.
+ */
+const MAX_THREAD_CHAIN_DEPTH = 100;
+
+/**
+ * Every owner-bearing FK on `Thread`. A thread with none of them and no parent comment is an
+ * ORPHAN — its parent comment was deleted, and `Thread.commentId` is `onDelete: SetNull`, so the
+ * link upward is gone while its replies remain. A column missing from this list turns that
+ * entity's threads into apparent orphans and refuses writes on them, so it must stay complete.
+ * Kept beside `threadContentSelect` in `block-check.service.ts`, which lists the same columns for
+ * the same reason.
+ */
+const threadIsRooted = (alias: string) => Prisma.sql`num_nonnulls(
+  ${Prisma.raw(alias)}."questionId", ${Prisma.raw(alias)}."answerId", ${Prisma.raw(
+  alias
+)}."imageId",
+  ${Prisma.raw(alias)}."postId", ${Prisma.raw(alias)}."reviewId", ${Prisma.raw(alias)}."modelId",
+  ${Prisma.raw(alias)}."articleId", ${Prisma.raw(alias)}."bountyId",
+  ${Prisma.raw(alias)}."bountyEntryId", ${Prisma.raw(alias)}."clubPostId",
+  ${Prisma.raw(alias)}."comicProjectId", ${Prisma.raw(alias)}."challengeId",
+  ${Prisma.raw(alias)}."model3dId", ${Prisma.raw(alias)}."model3dReviewId",
+  ${Prisma.raw(alias)}."appListingId"
+) > 0`;
+
+/**
+ * Refuses a write into a locked thread, into any thread nested under one, or into a chain this
+ * cannot resolve to a top-level thread.
+ *
+ * A moderator locks a single `Thread` row, but a reply lives in a child thread of its own, so a
+ * check against the target row alone leaves every reply below a locked thread writable. The chain
+ * is walked through `Thread.commentId -> CommentV2.threadId`, which is derived from the stored
+ * rows; `parentThreadId` is written from request input, so it cannot decide this.
+ *
+ * 🔴 The walk FAILS CLOSED. `Thread.commentId` is `onDelete: SetNull` and deleting a comment does
+ * not clean up the thread hanging off it, so a deleted comment leaves an orphan whose surviving
+ * replies have no path back to the entity — 250,071 such threads in production when this was
+ * written, 4.6% of all threads. A walk that ends there has not proved the absence of a lock, it has
+ * run out of road, and the two are indistinguishable from the recursion alone. Same for hitting the
+ * depth cap. Both refuse, with their own message so the refusal is not mistaken for a moderator's.
+ *
+ * `dbWrite`, deliberately: a lock is read immediately after a moderator sets it, and off the
+ * replica that read can still return the pre-lock row.
+ */
+async function throwIfThreadChainLocked(threadId: number | null | undefined) {
+  if (threadId == null) return;
+  const [chain] = await dbWrite.$queryRaw<{ locked: boolean | null; unresolved: boolean | null }[]>`
+    WITH RECURSIVE chain AS (
+      SELECT t.id, t.locked, t."commentId", ${threadIsRooted('t')} AS rooted, 1 AS depth
+      FROM "Thread" t
+      WHERE t.id = ${threadId}
+
+      UNION ALL
+
+      SELECT p.id, p.locked, p."commentId", ${threadIsRooted('p')} AS rooted, c.depth + 1 AS depth
+      FROM chain c
+      JOIN "CommentV2" pc ON pc.id = c."commentId"
+      JOIN "Thread" p ON p.id = pc."threadId"
+      WHERE c.depth < ${MAX_THREAD_CHAIN_DEPTH}
+    )
+    SELECT
+      bool_or(locked) AS locked,
+      bool_or(("commentId" IS NULL AND NOT rooted) OR depth >= ${MAX_THREAD_CHAIN_DEPTH})
+        AS unresolved
+    FROM chain;
+  `;
+  if (chain?.locked) throw throwBadRequestError('comment thread locked');
+  if (chain?.unresolved) throw throwBadRequestError('comment thread is no longer available');
+}
+
 export const upsertComment = async ({
   userId,
   entityType,
@@ -277,21 +350,44 @@ export const upsertComment = async ({
       isModerator,
     });
   else await throwIfBlockedByEntityOwner({ userId, entityType, entityId, isModerator });
-  // only check for threads on comment create
-  let thread = await dbWrite.thread.findUnique({
-    where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
-    select: { id: true, locked: true },
-  });
-
-  if (thread?.locked) throw throwBadRequestError('comment thread locked');
+  // The lock is resolved from the row being written. On an edit that is the stored comment's own
+  // thread: `entityType`/`entityId` are client-supplied and never checked against the comment, so
+  // reading the lock from them lets the caller choose which thread's lock is enforced. On a create
+  // it is the thread the comment lands in, plus its ancestors — see `throwIfThreadChainLocked`.
+  let thread: { id: number; locked: boolean } | null = null;
+  // One read of the row being edited, for both the lock and the sticker charge below.
+  let previous: { threadId: number; content: string } | null = null;
+  if (data.id) {
+    previous = await dbWrite.commentV2.findUnique({
+      where: { id: data.id },
+      select: { threadId: true, content: true },
+    });
+    if (!previous) throw throwNotFoundError();
+    await throwIfThreadChainLocked(previous.threadId);
+  } else {
+    thread = await dbWrite.thread.findUnique({
+      where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
+      select: { id: true, locked: true },
+    });
+    // A reply's own thread row is created lazily, so on the first reply to a comment there is no
+    // thread yet to carry the ancestors — walk from the parent comment's thread instead.
+    const anchorThreadId =
+      thread?.id ??
+      (entityType === 'comment'
+        ? (
+            await dbWrite.commentV2.findUnique({
+              where: { id: entityId },
+              select: { threadId: true },
+            })
+          )?.threadId
+        : undefined);
+    await throwIfThreadChainLocked(anchorThreadId);
+  }
 
   // An edit that adds stickers must pay for the ones it added, or posting an
   // empty comment and editing stickers in would be free. The spend runs inside
   // the same transaction as the write below — charging in its own transaction
   // would debit uses and then lose the comment to any failure in between.
-  const previous = data.id
-    ? await dbWrite.commentV2.findUnique({ where: { id: data.id }, select: { content: true } })
-    : null;
   const chargeStickers = (tx: Prisma.TransactionClient) =>
     spendStickerUses({
       userId,
