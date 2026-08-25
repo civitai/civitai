@@ -19,8 +19,18 @@ import { getAbuseFindingsForUser } from '$lib/server/abuse-detection.service';
 // point of the panel. "We looked at this account twice and did nothing" is a real answer to "why
 // is this creator complaining", and it is the most common one. Filtering to actioned findings
 // would turn a record of restraint into a record of enforcement.
+// 🔴 GRANTED ON `/abuse`, NOT ON THE PAGE THIS RENDERS IN. The panel lives inside User Lookup, so
+// gating it on `/retool/user-lookup` is the obvious choice and it is WRONG: measured against the
+// live grants, User Lookup is held by {senior, community-manager, staff, payroll} while `/abuse` is
+// held by {senior, community-manager} only. The narrower set is deliberate — that page shows
+// per-account evidence that feeds ban decisions — so gating on the container would have handed
+// exactly that evidence to two roles it was withheld from, through a side door, with no page of
+// their own ever showing it.
+//
+// ⚠️ `requireIdParam` takes an ARRAY, but it is `.some()` — passing both paths would be OR, i.e.
+// WIDER. The data's own page is the only correct gate.
 export const GET: RequestHandler = async ({ params, locals }) => {
-  const userId = requireUserIdParam(locals, params, '/retool/user-lookup');
+  const userId = requireUserIdParam(locals, params, '/abuse');
   const findings = await getAbuseFindingsForUser(userId);
   return json({ findings });
 };

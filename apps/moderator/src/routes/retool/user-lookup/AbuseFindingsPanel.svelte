@@ -30,7 +30,13 @@
   const findings = $derived(
     browser
       ? fetch(`/api/user-abuse-findings/${userId}`).then(
-          (r): Promise<{ findings: AbuseFindingRow[] }> => {
+          (r): Promise<{ findings: AbuseFindingRow[] } | null> => {
+            // 🔴 403 IS NOT AN ERROR HERE, it is "this panel is not yours". User Lookup is granted
+            // more widely than /abuse, so staff and payroll moderators legitimately land on this
+            // section without rights to abuse findings. Showing them a red failure banner would
+            // report a permission boundary as a broken page — and invite a support ticket about an
+            // outage that is not one. Render nothing instead.
+            if (r.status === 403) return Promise.resolve(null);
             if (!r.ok) throw new Error(String(r.status));
             return r.json();
           }
@@ -42,7 +48,9 @@
 {#if findings}
   {#await findings}
     <p class="text-dark-2">Loading abuse detections…</p>
-  {:then { findings: rows }}
+  {:then payload}
+    {#if payload}
+      {@const rows = payload.findings}
     <ListCard
       title="Abuse detections"
       total={rows.length}
@@ -78,6 +86,7 @@
         {/each}
       </ul>
     </ListCard>
+    {/if}
   {:catch}
     <!-- An error must not read as "this account is clean" — the two are opposite conclusions and a
          moderator acts differently on each. -->

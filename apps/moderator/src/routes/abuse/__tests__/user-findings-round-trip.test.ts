@@ -108,6 +108,30 @@ describe('the endpoint is guarded like its siblings', () => {
     expect(src).toMatch(/requireUserIdParam\(locals, params/);
   });
 
+  it('is granted on /abuse — NOT on the page it renders inside', () => {
+    // 🔴 THE MISTAKE THIS PINS, which was live in the first commit of this PR. The panel renders
+    // inside User Lookup, so gating on '/retool/user-lookup' is the natural choice — and it widens
+    // access: measured against the live grants, User Lookup is held by
+    // {senior, community-manager, staff, payroll} and /abuse by {senior, community-manager}. The
+    // narrower set is deliberate; that evidence feeds ban decisions. Gating on the CONTAINER hands
+    // it to two roles it was withheld from, via a panel, with no page of their own showing it.
+    //
+    // Asserted as an exact argument rather than "mentions /abuse somewhere", because the guard's
+    // pagePath is an ARRAY with `.some()` semantics — adding a second path is OR, i.e. wider, and
+    // would read like tightening.
+    const src = read(API);
+    expect(src).toMatch(/requireUserIdParam\(locals, params, '\/abuse'\)/);
+    expect(src, 'gating on the container page would widen access to staff and payroll').not.toMatch(
+      /requireUserIdParam\([^)]*'\/retool\/user-lookup'/
+    );
+  });
+
+  it('a caller without that grant gets nothing, not an error banner', () => {
+    // 403 here means "not yours", not "broken". Staff and payroll legitimately reach this section.
+    const src = read(PANEL);
+    expect(src).toMatch(/status === 403/);
+  });
+
   it('is a plain RequestHandler, not a WebhookEndpoint — there IS a user behind this call', () => {
     // A token-callable route has no user and can attribute nothing. This one is read by a signed-in
     // moderator and must go through the session guard, like every other user-lookup panel feed.
