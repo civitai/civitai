@@ -1,10 +1,12 @@
+import type { Transaction } from 'kysely';
+import type { DB } from '@civitai/db-schema/kysely';
 import { REDIS_KEYS, type RedisKeyTemplateCache } from '@civitai/redis';
 import { dbWrite } from './db';
 import { logToAxiom } from './axiom';
 import { getRedis } from './redis';
 
-// Writes BOTH the Blocklist table AND the shared Redis cache (same key/shape/TTL the main app reads), so
-// main-app validators see edits with no callback.
+// Owns the Blocklist table AND the shared Redis key the main app reads. Writers BUST that key rather
+// than rewriting it, so a main-app validator repopulates from the table on its next read.
 
 export type BlocklistDTO = { id?: number; type: string; data: string[] };
 
@@ -15,6 +17,36 @@ const blocklistKey = (type: string) =>
 
 async function setCache(data: BlocklistDTO) {
   await getRedis().set(blocklistKey(data.type), JSON.stringify(data), { EX: MONTH_TTL });
+}
+
+/**
+ * 🔴 DELETE, never a re-read written back. Writing a snapshot is itself a read-modify-write with no
+ * lock over it, so two edits that the row lock correctly serialised could still land their cache
+ * writes in the other order and leave the LOSER's list under a month TTL — with every enforcement
+ * path reading Redis first, that is the lost update the row lock exists to prevent, moved to the
+ * artifact that actually gates. Deletes commute; the next read repopulates.
+ *
+ * Returns false rather than throwing. The row is already committed by the time this runs, and a
+ * throw here reports failure for a write that succeeded — on the remove path the operator's retry
+ * then finds the entry gone, gets "Nothing was removed", reloads, and sees the chip still there
+ * because the stale cache is what serves the page. Same rule as `a04fa6a608` on the session cache.
+ */
+async function bustCache(type: string): Promise<boolean> {
+  try {
+    await getRedis().del(blocklistKey(type));
+    return true;
+  } catch (error) {
+    void logToAxiom({
+      name: 'blocklist-cache-bust-failed',
+      type: 'error',
+      message: 'Blocklist row was written but its cache key was not cleared; readers stay stale',
+      details: {
+        blocklistType: type,
+        error: error instanceof Error ? error.message : String(error),
+      },
+    });
+    return false;
+  }
 }
 
 /**
@@ -84,6 +116,17 @@ export class BlocklistRowMismatchError extends Error {
   }
 }
 
+/** What a write did, and whether readers will see it before the month TTL expires. */
+export type BlocklistWriteResult = { count: number; cacheStale: boolean };
+
+/**
+ * Adds entries, returning how many the row actually GAINED — not how many were submitted. Since
+ * both branches dedupe, re-adding entries that are already on the list changes nothing, and the
+ * page reporting the submitted count is the same "the screen says it happened" defect the removal
+ * count was fixed for.
+ *
+ * Throws `BlocklistRowMismatchError` when `id` names no row of `type`.
+ */
 export async function upsertBlocklist({
   id,
   type,
@@ -92,57 +135,48 @@ export async function upsertBlocklist({
   id?: number;
   type: string;
   blocklist: string[];
-}): Promise<void> {
+}): Promise<BlocklistWriteResult> {
   const items = [
     ...new Set(blocklist.map((item) => item.toLowerCase()).filter((x) => x.length > 0)),
   ];
 
-  if (!id) {
-    await dbWrite
-      .insertInto('Blocklist')
-      .values({ type, data: items, updatedAt: new Date() })
-      .returning(['id'])
-      .executeTakeFirstOrThrow();
-  } else {
-    // The read and the write share one transaction and the read takes a row lock, because the
-    // merge below is read-modify-write over the WHOLE array: two overlapping edits each computed
-    // their merge from the same pre-state and the later write restored what the earlier one
-    // dropped, both reporting success. The lock also covers the cron in the main app, which edits
-    // this same column.
-    const merged = await dbWrite.transaction().execute(async (trx) => {
-      const existing = await trx
-        .selectFrom('Blocklist')
-        .select(['data'])
-        // `type` as well as `id`, and it is a SECURITY predicate rather than a tidiness one: the
-        // posted id and the posted type are two independent form fields, so without it a
-        // hand-crafted post (or a stale tab) merges one type's entries into another type's row —
-        // benign phrases into a deny list, phishing patterns into the email-domain list.
-        .where('id', '=', id)
-        .where('type', '=', type)
-        .forUpdate()
-        .executeTakeFirst();
-      if (!existing) return undefined;
+  // One transaction with a locked read, because the merge is read-modify-write over the WHOLE
+  // array: two overlapping edits each computed their merge from the same pre-state and the later
+  // write restored what the earlier one dropped, both reporting success. The other writer is the
+  // main app's weekly cron, editing this same column through its own client, so the lock has to be
+  // in the database rather than in either app.
+  const added = await dbWrite.transaction().execute(async (trx) => {
+    const existing = await readRowForWrite(trx, type, id);
 
-      const next = [...new Set([...existing.data, ...items])];
+    if (!existing) {
+      // An `id` that names no row of this type is a stale tab or a hand-crafted post. Refuse; do
+      // NOT fall through to an insert, which would add a second row for the type.
+      if (id !== undefined) return undefined;
       await trx
-        .updateTable('Blocklist')
-        .set({ data: next, updatedAt: new Date() })
-        .where('id', '=', id)
-        .where('type', '=', type)
+        .insertInto('Blocklist')
+        .values({ type, data: items, updatedAt: new Date() })
+        .returning(['id'])
         .executeTakeFirstOrThrow();
-      return next;
-    });
+      return items.length;
+    }
 
-    // Refusing beats falling back to an insert: an id that matches no row of this type means the
-    // operator is acting on a list they are not looking at, and creating a second row for the type
-    // is the duplicate-row state `readBlocklistRow` exists to work around.
-    if (!merged) throw new BlocklistRowMismatchError();
-  }
+    const next = [...new Set([...existing.data, ...items])];
+    const gained = next.length - existing.data.length;
+    if (gained === 0) return 0;
 
-  // Cache the row that WINS the read, not the one just written. Caching the written row is what let
-  // an edit to a duplicate row silently promote it to the live answer for the whole month TTL — and
-  // this key is shared with the main app, so it would poison that read too.
-  await setCache(await readBlocklistRow(type));
+    await trx
+      .updateTable('Blocklist')
+      .set({ data: next, updatedAt: new Date() })
+      // `type` here as well as on the read. It is redundant while both run under one lock, and it
+      // is the predicate that still holds if anyone later moves either statement out.
+      .where('id', '=', existing.id)
+      .where('type', '=', type)
+      .executeTakeFirstOrThrow();
+    return gained;
+  });
+
+  if (added === undefined) throw new BlocklistRowMismatchError();
+  return { count: added, cacheStale: added > 0 ? !(await bustCache(type)) : false };
 }
 
 /**
@@ -160,19 +194,13 @@ export async function removeBlocklistItems({
   id: number;
   type: string;
   items: string[];
-}): Promise<number> {
+}): Promise<BlocklistWriteResult> {
   const lower = items.map((x) => x.toLowerCase());
 
   // Same lock and the same reason as `upsertBlocklist`: without it two chips removed in quick
   // succession each filtered the same pre-state and the second write put the first one back.
   const removed = await dbWrite.transaction().execute(async (trx) => {
-    const row = await trx
-      .selectFrom('Blocklist')
-      .select(['data'])
-      .where('id', '=', id)
-      .where('type', '=', type)
-      .forUpdate()
-      .executeTakeFirst();
+    const row = await readRowForWrite(trx, type, id);
     if (!row) return 0;
 
     const filtered = row.data.filter((item) => !lower.includes(item));
@@ -182,14 +210,33 @@ export async function removeBlocklistItems({
     await trx
       .updateTable('Blocklist')
       .set({ data: filtered, updatedAt: new Date() })
-      .where('id', '=', id)
+      .where('id', '=', row.id)
       .where('type', '=', type)
       .executeTakeFirstOrThrow();
     return count;
   });
 
-  if (removed === 0) return 0;
+  return { count: removed, cacheStale: removed > 0 ? !(await bustCache(type)) : false };
+}
 
-  await setCache(await readBlocklistRow(type));
-  return removed;
+/**
+ * The row a write is about to edit, locked until the transaction commits.
+ *
+ * Scoped to `type` always, and to `id` only when one was submitted. Both arrive as independent
+ * form fields, so filtering on the id alone let one type's entries be merged into another type's
+ * row — benign phrases into a deny list, phishing patterns into the email-domain list. With no id
+ * it takes the LOWEST row of the type, the same one `readBlocklistRow` enforces, so an add from a
+ * tab whose type has no row yet cannot append to a row nobody reads.
+ *
+ * ⚠️ What this still cannot serialise: two adds for a type with NO row at all. There is no row to
+ * lock, so both insert and the type ends up with two rows — enforced deterministically by
+ * `readBlocklistRow`, and reported to Axiom, but with one row's entries inert. Closing that needs a
+ * unique index on `Blocklist.type`, which is a migration.
+ */
+function readRowForWrite(trx: Transaction<DB>, type: string, id?: number) {
+  const scoped = trx.selectFrom('Blocklist').select(['id', 'data']).where('type', '=', type);
+  return (id === undefined ? scoped : scoped.where('id', '=', id))
+    .orderBy('id', 'asc')
+    .forUpdate()
+    .executeTakeFirst();
 }

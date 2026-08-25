@@ -135,6 +135,14 @@
 {:else if form?.success}
   <div class="mb-4 max-w-xl rounded-md border border-teal-500/30 bg-teal-500/10 p-2 text-sm text-teal-300">
     {form.action === 'add' ? 'Added' : 'Removed'} {form.count} item{form.count === 1 ? '' : 's'}.
+    {#if form.cacheStale}
+      <!-- The row is written; only the cache clear failed. Saying so beats both alternatives: a
+           bare success above a list that still shows the old entries reads as the write being lost,
+           and an error reads as a write that never happened and invites a retry. -->
+      <span class="text-amber-300">
+        The cached copy could not be refreshed, so this list may keep showing its previous contents.
+      </span>
+    {/if}
   </div>
 {/if}
 

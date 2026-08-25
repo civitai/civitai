@@ -1,23 +1,32 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
- * Two properties of the blocklist writers, neither visible from the page:
+ * Four properties of the blocklist writers, none of them visible from the page:
  *
- * 1. The count reported is what the row actually LOST, not what was submitted. It used to return
- *    void while the caller reported `items.length`, so a removal that matched nothing still
- *    rendered "Removed 1 item." above a chip that was still there.
+ * 1. The count reported is what the row actually GAINED or LOST, not what was submitted.
  * 2. Every statement is scoped to (id, type), not to id alone. The posted id and the posted type
  *    are independent form fields; without the type predicate a hand-crafted post merges one type's
  *    entries into another type's row.
+ * 3. The locked read and the write run inside ONE transaction. A lock taken by a transaction that
+ *    has already committed is inert.
+ * 4. The write BUSTS the shared Redis key rather than rewriting it, because writing a snapshot is
+ *    itself an unserialised read-modify-write over the artifact every reader enforces from.
  */
 
 type Call = [string, unknown[]];
+type On = 'dbWrite' | 'trx';
 
 let rows: Record<number, { type: string; data: string[] }>;
-const updateSpy = vi.fn();
+const updateSpy = vi.fn<(arg: { on: On; wheres: unknown[][] }) => void>();
+const insertSpy = vi.fn<(arg: { on: On; type: string; data: string[] }) => void>();
 const setSpy = vi.fn();
-/** Set by the SELECT chain, so a read that stops taking the row lock is visible here. */
-let lockedReads = 0;
+const delSpy = vi.fn();
+/** Which client each locked read ran on. Empty means a read stopped taking the row lock at all. */
+let lockedReads: On[] = [];
+/** How many transactions were opened. Zero means the statements ran outside one. */
+let transactions = 0;
+/** An UPDATE whose predicates resolved no row — recorded, never asserted inside the resolver. */
+let unscopedUpdates = 0;
 
 const wheres = (calls: Call[]) => calls.filter(([m]) => m === 'where').map(([, a]) => a);
 const scope = (calls: Call[]) => ({
@@ -46,51 +55,56 @@ function chain(record: (calls: Call[]) => void, resolve: (calls: Call[]) => unkn
   builder.executeTakeFirstOrThrow = settle;
   builder.execute = async () => {
     record(calls);
-    const { id, type } = scope(calls);
-    // `readBlocklistRow` selects by TYPE with no id, and expects an array.
-    if (id !== undefined) return [];
-    return Object.entries(rows)
-      .filter(([, row]) => row.type === type)
-      .map(([rowId, row]) => ({ id: Number(rowId), type: row.type, data: row.data }));
+    return matching(calls).map(([id, row]) => ({ id, type: row.type, data: row.data }));
   };
   return builder;
 }
 
-/** Resolves a row the way the emitted SQL would: only the predicates actually present apply. */
-const findRow = (calls: Call[]) => {
+/**
+ * Rows the emitted SQL would match: ONLY the predicates actually present apply, in id order. A fake
+ * that refused a row for some other reason would let a dropped predicate pass for the wrong cause.
+ */
+function matching(calls: Call[]): [number, { type: string; data: string[] }][] {
   const { id, type } = scope(calls);
-  if (id === undefined) return undefined;
-  const row = rows[id];
-  if (!row) return undefined;
-  if (type !== undefined && row.type !== type) return undefined;
-  return row;
-};
+  return Object.entries(rows)
+    .map(([rowId, row]) => [Number(rowId), row] as [number, { type: string; data: string[] }])
+    .filter(
+      ([rowId, row]) =>
+        (id === undefined || rowId === id) && (type === undefined || row.type === type)
+    )
+    .sort((a, b) => a[0] - b[0]);
+}
 
-const selectFrom = () =>
+const selectFrom = (on: On) =>
   chain(
     (calls) => {
-      if (calls.some(([m]) => m === 'forUpdate')) lockedReads += 1;
+      if (calls.some(([m]) => m === 'forUpdate')) lockedReads.push(on);
     },
     (calls) => {
-      const row = findRow(calls);
-      return row ? { data: row.data } : undefined;
+      const [first] = matching(calls);
+      return first ? { id: first[0], data: first[1].data } : undefined;
     }
   );
 
-const updateTable = () =>
+const updateTable = (on: On) =>
   chain(
-    (calls) => updateSpy(calls),
+    (calls) => updateSpy({ on, wheres: wheres(calls) }),
     (calls) => {
-      const { id } = scope(calls);
-      const row = findRow(calls);
-      expect(row, 'an UPDATE here must resolve to exactly one row').toBeDefined();
+      const [first] = matching(calls);
+      // Counted, not asserted: an `expect` inside a resolver throws THROUGH the service, so the
+      // failure surfaces as a service error at an unrelated call site instead of as an assertion.
+      if (!first) {
+        unscopedUpdates += 1;
+        return undefined;
+      }
+      const [id, row] = first;
       const set = calls.find(([m]) => m === 'set')?.[1][0] as { data: string[] };
-      rows[id as number] = { type: (row as { type: string }).type, data: set.data };
-      return { id, type: (row as { type: string }).type, data: set.data };
+      rows[id] = { type: row.type, data: set.data };
+      return { id, type: row.type, data: set.data };
     }
   );
 
-const insertInto = () =>
+const insertInto = (on: On) =>
   chain(
     () => undefined,
     (calls) => {
@@ -98,25 +112,45 @@ const insertInto = () =>
         type: string;
         data: string[];
       };
+      insertSpy({ on, type: values.type, data: values.data });
       const id = Math.max(0, ...Object.keys(rows).map(Number)) + 1;
       rows[id] = { type: values.type, data: values.data };
       return { id, type: values.type, data: values.data };
     }
   );
 
-const client = { selectFrom, updateTable, insertInto };
+/**
+ * 🔴 The transaction client is a DISTINCT object from `dbWrite`, and every statement records which
+ * one it ran on. With ONE shared object the fake cannot tell `trx.selectFrom` from
+ * `dbWrite.selectFrom` — so deleting the `dbWrite.transaction().execute(...)` wrapper and running
+ * the same statements on the bare client left every test green with the atomicity fix fully
+ * reverted. A lock held by a transaction that has already committed is inert, and that is exactly
+ * the shape that reads as fixed and is not.
+ */
+const clientFor = (on: On) => ({
+  selectFrom: () => selectFrom(on),
+  updateTable: () => updateTable(on),
+  insertInto: () => insertInto(on),
+});
+
+const trxClient = clientFor('trx');
 
 vi.mock('../db', () => ({
   dbRead: {},
   dbWrite: {
-    ...client,
+    ...clientFor('dbWrite'),
     transaction: () => ({
-      execute: async (cb: (trx: typeof client) => unknown) => cb(client),
+      execute: async (cb: (trx: unknown) => unknown) => {
+        transactions += 1;
+        return cb(trxClient);
+      },
     }),
   },
 }));
 
-vi.mock('../redis', () => ({ getRedis: () => ({ get: async () => null, set: setSpy }) }));
+vi.mock('../redis', () => ({
+  getRedis: () => ({ get: async () => null, set: setSpy, del: delSpy }),
+}));
 vi.mock('../axiom', () => ({ logToAxiom: vi.fn() }));
 
 const { removeBlocklistItems, upsertBlocklist, BlocklistRowMismatchError } = await import(
@@ -125,88 +159,137 @@ const { removeBlocklistItems, upsertBlocklist, BlocklistRowMismatchError } = awa
 
 beforeEach(() => {
   vi.clearAllMocks();
-  lockedReads = 0;
+  lockedReads = [];
+  transactions = 0;
+  unscopedUpdates = 0;
   rows = {
     1: { type: 'EmailDomain', data: ['spam.example', 'junk.example', 'trash.example'] },
     4: { type: 'MessagePattern', data: ['unfreeze your funds'] },
   };
 });
 
+/** Both writers must satisfy these, so they are asserted for each rather than for one. */
+const expectLockedInsideOneTransaction = () => {
+  expect(transactions, 'the statements must run inside a transaction').toBe(1);
+  expect(lockedReads, 'the read must be FOR UPDATE, on the transaction client').toEqual(['trx']);
+  expect(unscopedUpdates, 'no UPDATE may resolve a row its predicates should exclude').toBe(0);
+  expect(updateSpy.mock.calls.map(([arg]) => arg.on)).not.toContain('dbWrite');
+};
+
 describe('removeBlocklistItems', () => {
   it('returns how many entries the row actually lost', async () => {
-    const removed = await removeBlocklistItems({
+    const { count } = await removeBlocklistItems({
       id: 1,
       type: 'EmailDomain',
       items: ['spam.example'],
     });
 
-    expect(removed).toBe(1);
+    expect(count).toBe(1);
     expect(rows[1].data).toEqual(['junk.example', 'trash.example']);
+    expectLockedInsideOneTransaction();
+  });
+
+  it('scopes the UPDATE to the type as well as the id', async () => {
+    await removeBlocklistItems({ id: 1, type: 'EmailDomain', items: ['spam.example'] });
+
+    // The UPDATE runs only after the scoped SELECT already matched, so the fake resolves the same
+    // row with or without this predicate. Nothing but reading the statement can see it.
+    expect(updateSpy.mock.calls[0][0].wheres).toEqual([
+      ['id', '=', 1],
+      ['type', '=', 'EmailDomain'],
+    ]);
   });
 
   it('returns 0 for an entry that is not on the list, and writes nothing', async () => {
-    const removed = await removeBlocklistItems({
+    const { count } = await removeBlocklistItems({
       id: 1,
       type: 'EmailDomain',
       items: ['never-added.example'],
     });
 
-    expect(removed).toBe(0);
+    expect(count).toBe(0);
     expect(updateSpy).not.toHaveBeenCalled();
     expect(rows[1].data).toHaveLength(3);
   });
 
   it('returns 0 for a stale row id rather than reporting the submitted count', async () => {
-    const removed = await removeBlocklistItems({
+    const { count } = await removeBlocklistItems({
       id: 999,
       type: 'EmailDomain',
       items: ['spam.example'],
     });
 
-    expect(removed).toBe(0);
+    expect(count).toBe(0);
     expect(updateSpy).not.toHaveBeenCalled();
   });
 
   it('counts only the entries that were present, not the whole submission', async () => {
-    const removed = await removeBlocklistItems({
+    const { count } = await removeBlocklistItems({
       id: 1,
       type: 'EmailDomain',
       items: ['spam.example', 'never-added.example'],
     });
 
-    expect(removed).toBe(1);
-  });
-
-  it('does not re-cache when nothing was removed', async () => {
-    await removeBlocklistItems({ id: 1, type: 'EmailDomain', items: ['never-added.example'] });
-
-    expect(setSpy).not.toHaveBeenCalled();
+    expect(count).toBe(1);
   });
 
   it('refuses an id that belongs to a different type, leaving that row untouched', async () => {
-    const removed = await removeBlocklistItems({
+    const { count } = await removeBlocklistItems({
       id: 1,
       type: 'MessagePattern',
       items: ['spam.example'],
     });
 
-    expect(removed).toBe(0);
+    expect(count).toBe(0);
     expect(rows[1].data).toEqual(['spam.example', 'junk.example', 'trash.example']);
     expect(updateSpy).not.toHaveBeenCalled();
-  });
-
-  it('reads the row under a lock, so an overlapping removal cannot restore what it dropped', async () => {
-    await removeBlocklistItems({ id: 1, type: 'EmailDomain', items: ['spam.example'] });
-
-    expect(lockedReads, 'the read before the filtered write must be FOR UPDATE').toBe(1);
   });
 });
 
 describe('upsertBlocklist', () => {
-  it('merges into the row when the id and type agree', async () => {
-    await upsertBlocklist({ id: 1, type: 'EmailDomain', blocklist: ['New.Example'] });
+  it('merges into the row when the id and type agree, and counts what it gained', async () => {
+    const { count } = await upsertBlocklist({
+      id: 1,
+      type: 'EmailDomain',
+      blocklist: ['New.Example'],
+    });
 
+    expect(count).toBe(1);
     expect(rows[1].data).toEqual(['spam.example', 'junk.example', 'trash.example', 'new.example']);
+    expectLockedInsideOneTransaction();
+  });
+
+  it('reports what the row GAINED, not what was submitted', async () => {
+    // Two of the three are already on the list. Reporting 3 is the "the screen says it happened"
+    // defect the removal count was fixed for, on the other half of the same page.
+    const { count } = await upsertBlocklist({
+      id: 1,
+      type: 'EmailDomain',
+      blocklist: ['spam.example', 'junk.example', 'new.example'],
+    });
+
+    expect(count).toBe(1);
+  });
+
+  it('reports 0 and writes nothing when every entry is already on the list', async () => {
+    const { count } = await upsertBlocklist({
+      id: 1,
+      type: 'EmailDomain',
+      blocklist: ['spam.example'],
+    });
+
+    expect(count).toBe(0);
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect(delSpy).not.toHaveBeenCalled();
+  });
+
+  it('scopes the UPDATE to the type as well as the id', async () => {
+    await upsertBlocklist({ id: 1, type: 'EmailDomain', blocklist: ['new.example'] });
+
+    expect(updateSpy.mock.calls[0][0].wheres).toEqual([
+      ['id', '=', 1],
+      ['type', '=', 'EmailDomain'],
+    ]);
   });
 
   it('refuses an id belonging to another type instead of merging across lists', async () => {
@@ -220,11 +303,70 @@ describe('upsertBlocklist', () => {
       'trash.example',
     ]);
     expect(updateSpy).not.toHaveBeenCalled();
+    expect(delSpy).not.toHaveBeenCalled();
   });
 
-  it('reads the row under a lock before merging', async () => {
-    await upsertBlocklist({ id: 1, type: 'EmailDomain', blocklist: ['new.example'] });
+  it('merges into the existing row of the type when no id was posted', async () => {
+    // `UsernameExact` is a tab with no row in production, so its adds arrive with no `id` — and an
+    // unconditional insert there gives the type a second row whose entries are never enforced.
+    // The same shape reaches every other tab from a stale form.
+    const { count } = await upsertBlocklist({ type: 'EmailDomain', blocklist: ['new.example'] });
 
-    expect(lockedReads, 'the read before the merged write must be FOR UPDATE').toBe(1);
+    expect(count).toBe(1);
+    expect(
+      insertSpy,
+      'a type that already has a row must not gain a second'
+    ).not.toHaveBeenCalled();
+    expect(rows[1].data).toContain('new.example');
+    expect(Object.keys(rows)).toHaveLength(2);
+  });
+
+  it('inserts only when the type genuinely has no row', async () => {
+    const { count } = await upsertBlocklist({ type: 'UsernameExact', blocklist: ['Scammer'] });
+
+    expect(count).toBe(1);
+    expect(insertSpy).toHaveBeenCalledWith({
+      on: 'trx',
+      type: 'UsernameExact',
+      data: ['scammer'],
+    });
+  });
+});
+
+describe('the shared cache key', () => {
+  it('is DELETED, never rewritten with a snapshot', async () => {
+    // A snapshot write is an unserialised read-modify-write over the artifact every reader
+    // enforces from, so two edits the row lock correctly serialised can still land their cache
+    // writes in the other order and leave the loser's list under a month TTL. Deletes commute.
+    await removeBlocklistItems({ id: 1, type: 'EmailDomain', items: ['spam.example'] });
+
+    expect(delSpy).toHaveBeenCalledWith('system:blocklist:EmailDomain');
+    expect(
+      setSpy,
+      'a write must not repopulate the key it just invalidated'
+    ).not.toHaveBeenCalled();
+  });
+
+  it('reports a failed bust instead of throwing over a committed write', async () => {
+    // The row is already written. Throwing here tells the operator the write failed, and their
+    // retry then finds the entry gone, gets "Nothing was removed", and reloads onto the stale
+    // cache showing the chip still present.
+    delSpy.mockRejectedValueOnce(new Error('redis down'));
+
+    const { count, cacheStale } = await removeBlocklistItems({
+      id: 1,
+      type: 'EmailDomain',
+      items: ['junk.example'],
+    });
+
+    expect(count).toBe(1);
+    expect(cacheStale).toBe(true);
+    expect(rows[1].data, 'the row still lost the entry').not.toContain('junk.example');
+  });
+
+  it('is not busted when the write changed nothing', async () => {
+    await removeBlocklistItems({ id: 1, type: 'EmailDomain', items: ['never-added.example'] });
+
+    expect(delSpy).not.toHaveBeenCalled();
   });
 });

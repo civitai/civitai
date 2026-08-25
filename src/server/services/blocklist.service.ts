@@ -28,6 +28,35 @@ async function setCache({ type, data }: { type: string; data: BlocklistDTO }) {
   });
 }
 
+/**
+ * 🔴 DELETE, never a re-read written back. Writing a snapshot is itself a read-modify-write with no
+ * lock over it, so two edits the row lock correctly serialised could still land their cache writes
+ * in the other order, leaving the LOSER's list under a month TTL. Every enforcement path reads this
+ * key first, so that is the lost update the row lock exists to prevent, moved to the artifact that
+ * actually gates. Deletes commute; the next read repopulates.
+ *
+ * The moderator spoke busts the same key the same way. The two must agree.
+ *
+ * Never throws: the row is already committed by the time this runs, and the caller reporting
+ * failure for a write that succeeded invites a retry of a write that already landed — the rule
+ * `a04fa6a608` established for the session cache.
+ */
+async function bustCache(type: string) {
+  try {
+    await redis.del(getBlocklistKey(type));
+  } catch (error) {
+    logToAxiom({
+      name: 'blocklist-cache-bust-failed',
+      type: 'error',
+      message: 'Blocklist row was written but its cache key was not cleared; readers stay stale',
+      details: {
+        blocklistType: type,
+        error: error instanceof Error ? error.message : String(error),
+      },
+    }).catch(() => undefined);
+  }
+}
+
 /** An `id` that belongs to no row of the submitted `type`. Twin of the moderator spoke's. */
 export class BlocklistRowMismatchError extends Error {
   constructor() {
@@ -41,37 +70,65 @@ export async function upsertBlocklist({ id, type, blocklist }: UpsertBlocklistSc
     ...new Set(blocklist.map((item) => item.toLowerCase()).filter((x) => x.length > 0)),
   ];
 
-  if (!id) {
-    await dbWrite.blocklist.create({ data: { data: blocklistData, type }, select: { id: true } });
-  } else {
-    // The read and the write share one transaction and the read takes a row lock. The merge is
-    // read-modify-write over the whole array, so two overlapping edits each computed their merge
-    // from the same pre-state and the later write restored what the earlier one dropped, both
-    // reporting success. The other writer is the moderator spoke, editing the same column through
-    // its own client — which is why the lock has to be in the database rather than in either app.
-    const merged = await dbWrite.$transaction(async (tx) => {
-      const locked = await tx.$queryRaw<{ data: string[] }[]>`
-        SELECT data FROM "Blocklist" WHERE id = ${id} AND type = ${type} FOR UPDATE
-      `;
-      if (!locked.length) return undefined;
+  // The read and the write share one transaction and the read takes a row lock. The merge is
+  // read-modify-write over the whole array, so two overlapping edits each computed their merge
+  // from the same pre-state and the later write restored what the earlier one dropped, both
+  // reporting success. The other writer is the moderator spoke, editing the same column through
+  // its own client — which is why the lock has to be in the database rather than in either app.
+  const merged = await dbWrite.$transaction(
+    async (tx) => {
+      // Scoped to `type` always, and to `id` only when one was given — the same rule as the
+      // spoke's `readRowForWrite`, and the two have to agree because they write one Redis key.
+      // With no id it locks the LOWEST row of the type, which is the row `readBlocklistRow`
+      // enforces, so an add can never append to a duplicate row nobody reads.
+      //
+      // Verified against dev Postgres 18 through Prisma 6.13 rather than assumed: a `text[]`
+      // column comes back from `$queryRaw` as a real JS array, so the spread below merges
+      // entries and not characters.
+      const locked =
+        id === undefined
+          ? await tx.$queryRaw<{ id: number; data: string[] }[]>`
+              SELECT id, data FROM "Blocklist" WHERE type = ${type} ORDER BY id ASC FOR UPDATE
+            `
+          : await tx.$queryRaw<{ id: number; data: string[] }[]>`
+              SELECT id, data FROM "Blocklist" WHERE id = ${id} AND type = ${type} FOR UPDATE
+            `;
+
+      if (!locked.length) {
+        // An `id` naming no row of this type is refused, never turned into an insert: a second row
+        // for a type is the state `readBlocklistRow` exists to survive.
+        if (id !== undefined) return undefined;
+        await tx.blocklist.create({ data: { data: blocklistData, type }, select: { id: true } });
+        return blocklistData;
+      }
 
       const next = [...new Set([...locked[0].data, ...blocklistData])];
-      // `updateMany`, not `update`: it is the only Prisma write that takes a non-unique `where`,
-      // and `type` has to be in it. The posted id and the posted type are independent inputs, so
-      // without that predicate an id from another type merges these entries into that row —
-      // benign phrases into a deny list, phishing patterns into the email-domain list.
-      await tx.blocklist.updateMany({ where: { id, type }, data: { data: next } });
+      // `updateMany`, not `update`: it is the only Prisma UPDATE that takes a non-unique
+      // `where`, and `type` has to be in it. The posted id and the posted type are independent
+      // inputs, so without that predicate an id from another type merges these entries into that
+      // row — benign phrases into a deny list, phishing patterns into the email-domain list.
+      // (`@updatedAt` still applies here; measured, because `updateMany` skipping it would have
+      // been invisible.)
+      const { count } = await tx.blocklist.updateMany({
+        where: { id: locked[0].id, type },
+        data: { data: next },
+      });
+      // Unreachable while the locking read above holds: a row it returned is locked to commit,
+      // so nothing can delete or re-type it underneath. Asserted anyway so the guarantee is
+      // local — anyone who later moves either statement out of this transaction gets a failure
+      // instead of a silent zero-row success that then caches a stale row for a month.
+      if (count !== 1) throw new Error(`blocklist update matched ${count} rows under a row lock`);
       return next;
-    });
+    },
+    // Prisma's defaults are maxWait 2s / timeout 5s, and this path had no transaction before, so
+    // both ceilings are new. The one caller is a weekly cron with no retry: a 2s wait for a
+    // connection on a busy pool would cost a week's worth of disposable-domain additions.
+    { maxWait: 10_000, timeout: 30_000 }
+  );
 
-    // Refusing beats falling back to an insert: creating a second row for the type is the
-    // duplicate-row state `readBlocklistRow` exists to work around.
-    if (!merged) throw new BlocklistRowMismatchError();
-  }
+  if (!merged) throw new BlocklistRowMismatchError();
 
-  // Refresh from the deterministic read, not from the row just written: caching that is what let
-  // an edit to a duplicate row silently promote it to the live one.
-  await setCache({ type, data: await readBlocklistRow(type as BlocklistType) });
+  await bustCache(type);
 }
 
 /**

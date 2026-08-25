@@ -42,8 +42,9 @@ export const actions: Actions = {
 
     // `type` and `id` arrive as two independent form fields, so the pair is checked in the
     // statement itself rather than here — see `upsertBlocklist`.
+    let result;
     try {
-      await upsertBlocklist({ id, type, blocklist: items });
+      result = await upsertBlocklist({ id, type, blocklist: items });
     } catch (error) {
       if (error instanceof BlocklistRowMismatchError)
         return fail(409, {
@@ -51,7 +52,16 @@ export const actions: Actions = {
         });
       throw error;
     }
-    return { success: true, action: 'add', count: items.length };
+
+    // The count the row GAINED, not the count submitted. Re-adding entries already on the list is
+    // a no-op, and reporting the submission as if it landed is the defect the removal count was
+    // fixed for.
+    if (result.count === 0)
+      return fail(409, {
+        error: 'Nothing was added — every one of those entries is already on this list.',
+      });
+
+    return { success: true, action: 'add', count: result.count, cacheStale: result.cacheStale };
   },
   remove: async ({ request }) => {
     const form = await request.formData();
@@ -63,15 +73,15 @@ export const actions: Actions = {
     if (!id) return fail(400, { error: 'Nothing to remove from.' });
     if (items.length === 0) return fail(400, { error: 'No items to remove.' });
 
-    const count = await removeBlocklistItems({ id, type, items });
+    const result = await removeBlocklistItems({ id, type, items });
     // A submitted-but-unmatched removal is a failure, not a quiet "Removed 0 items." The list is
     // served from a month-long Redis cache, so the likeliest cause is that this page is stale. An
     // id belonging to another type lands here too.
-    if (count === 0)
+    if (result.count === 0)
       return fail(409, {
         error: 'Nothing was removed — those entries are no longer on this list. Reload the page.',
       });
 
-    return { success: true, action: 'remove', count };
+    return { success: true, action: 'remove', count: result.count, cacheStale: result.cacheStale };
   },
 };
