@@ -436,6 +436,11 @@ describe('claimListing (PR4) is exposed as moderator-only — NO self-service en
       'resolveReport',
       'dismissReport',
       'listModerationEvents',
+      // The message proc shares this boundary exactly — moderatorProcedure + the inner
+      // isModerator recheck, actor bound to ctx.user.id, one AppListingModerationEvent
+      // per call — so it belongs in the same enumeration. Its own matrix, bounds and
+      // error mapping live in `app-listings.router.messageAppOwner.test.ts`.
+      'messageAppOwner',
     ]) {
       expect(procs).toContain(p);
     }
