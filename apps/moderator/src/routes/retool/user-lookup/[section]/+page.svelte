@@ -16,6 +16,7 @@
   import GenerationPanel from '../GenerationPanel.svelte';
   import IdentityPanel from '../IdentityPanel.svelte';
   import ModActivityPanel from '../ModActivityPanel.svelte';
+  import AbuseFindingsPanel from '../AbuseFindingsPanel.svelte';
   import ModerationMemoryPanel from '../ModerationMemoryPanel.svelte';
   import NotificationsPanel from '../NotificationsPanel.svelte';
   import PromptAuditPanel from '../PromptAuditPanel.svelte';
@@ -153,6 +154,10 @@
       <ReactionsPanel {account} />
     {:else if section === 'mod-activity'}
       <ModActivityPanel userId={result.identity.id} civitaiUrl={data.civitaiUrl} />
+      <!-- Beside the human record, not in a section of its own: "what did WE do about this account"
+           and "what did the DETECTORS say about it" are the same question a moderator is asking, and
+           /abuse deep-links here so the two arrive together. -->
+      <AbuseFindingsPanel userId={result.identity.id} />
     {:else if section === 'chat'}
       <ChatContactPanel modContact={result.modContact} username={result.identity.username} />
     {:else if section === 'notes'}
