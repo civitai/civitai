@@ -5,6 +5,7 @@ import { addOnDemandRunStrategiesJob } from '~/server/jobs/add-on-demand-run-str
 import { announcementMediaCheckJob } from '~/server/jobs/announcement-media-check';
 import { auditBitdexConsistency } from '~/server/jobs/audit-bitdex-consistency';
 import { auditRemixSourcesJob } from '~/server/jobs/audit-remix-sources';
+import { blurbFanoutJob } from '~/server/jobs/blurb-fanout';
 import { dedupeOfficialUploadsJob } from '~/server/jobs/dedupe-official-uploads';
 import { applyContestTags } from '~/server/jobs/apply-contest-tags';
 import { applyDiscordRoles } from '~/server/jobs/apply-discord-roles';
@@ -238,6 +239,7 @@ export const jobs: Job[] = [
   auditRemixSourcesJob,
   dedupeOfficialUploadsJob,
   announcementMediaCheckJob,
+  blurbFanoutJob,
 ];
 
 const log = createLogger('jobs', 'green');
