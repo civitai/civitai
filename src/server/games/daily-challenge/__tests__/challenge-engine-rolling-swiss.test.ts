@@ -690,8 +690,10 @@ describe('advance and rankField', () => {
       return Promise.resolve([]);
     });
 
+    // Matches the ARM, not just the refusal: every arm of that throw says "field unmeasured", so a
+    // future edit routing the unloadable case through a different counter would still satisfy it.
     await expect(rollingSwissEngine.rankField(ctx, closeField(field))).rejects.toThrow(
-      /field unmeasured/
+      /unloadable 4/
     );
     expect(compareGroup).not.toHaveBeenCalled();
     expect(replaceStandings).not.toHaveBeenCalled();
