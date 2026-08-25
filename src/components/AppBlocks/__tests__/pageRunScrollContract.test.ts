@@ -34,7 +34,7 @@ import { describe, expect, it } from 'vitest';
  *     floor existed, false the moment `FILL_MIN_HEIGHT_PX` was added in the same
  *     PR). Re-derive from the `fill` branch before touching this line.
  *   - `scrollable: false` WITHOUT `fit="fill"` → the host claims
- *     `100dvh - 60px` again. The `overflow-hidden` chain sits ABOVE the run
+ *     `100dvh - HEADER_HEIGHT_PX` again. The `overflow-hidden` chain sits ABOVE the run
  *     page's own wrapper, and that wrapper is `overflowY: 'auto'`, so the excess
  *     is SCROLLED, not clipped: a page scrollbar beside the block's own — the
  *     exact bug this PR removes. Measured 708px of host in a 600px wrapper,
@@ -169,7 +169,7 @@ describe('the run page and its host agree on who owns the height', () => {
     const src = code(read(HOST));
     expect(region(src, /\.\.\.\(fit === 'fill'[\s\S]*?\}\),/, 'fit ternary'), PIN_HELP).toBe(
       "...(fit === 'fill' ? { flex: 1, minHeight: FILL_MIN_HEIGHT_PX, } " +
-        ": { height: '100%', minHeight: 'calc(100dvh - 60px)', }),"
+        ": { height: '100%', minHeight: `calc(100dvh - ${HEADER_HEIGHT_PX}px)`, }),"
     );
   });
 
@@ -277,20 +277,168 @@ describe('the run page and its host agree on who owns the height', () => {
     expect(mainClasses).toContainEqual(['flex', 'flex-1', 'flex-col', 'overflow-hidden'].sort());
   });
 
-  it('`HEADER_HEIGHT` is still 60, so the surviving `viewport` calc is not silently stale', () => {
-    // `PageBlockHost` hardcodes `60` as a SECOND COPY of a constant private to
-    // `AppHeader.tsx`. The run page no longer depends on it, but the dev tunnel
-    // and mod review still do — and a header resize would re-open this bug there
-    // with nothing to notice. One rule, two places: this is the tripwire until
-    // they are consolidated.
-    const header = read(path.join(REPO_ROOT, 'src/components/AppLayout/AppHeader/AppHeader.tsx'));
-    const declared = /const HEADER_HEIGHT = (\d+);/.exec(code(header))?.[1];
-    expect(declared, 'HEADER_HEIGHT declaration not found in AppHeader.tsx').toBeDefined();
+  /**
+   * 🔴 THE HEADER HEIGHT HAS ONE SOURCE — THIS ENUMERATES THE LEDGER.
+   *
+   * What the previous guard (`HEADER_HEIGHT is still 60`) actually did: it
+   * extracted the number from `AppHeader.tsx` and from the host's calc and
+   * asserted they were equal. That was already a RELATIONSHIP, not a hardcoded
+   * value. Its real weakness was narrower: it could only ever see TWO files, so it
+   * was blind to `globals.css` — the declaration most of the repo actually reads —
+   * and to a copy reappearing in any third file. So this walks the tree instead.
+   *
+   * 🔴 DELIBERATELY KEPT SIMPLE, and that is a decision with history. Earlier
+   * drafts grew a CSS at-rule/selector analyser and a JSX tag parser to close
+   * ever-narrower holes. Five audit rounds found a false PASS in every one of
+   * them — each parser added to fix a false pass shipped its own. A guard whose
+   * own complexity is a defect source is not protecting anything. What survives
+   * here is only what a reader can check by eye:
+   *
+   *   1. exactly one `HEADER_HEIGHT_PX` declaration under `src/`
+   *   2. exactly one `--header-height` declaration under `src/`, in `globals.css`
+   *   3. the two values agree
+   *   4. `AppHeader` applies the constant to a height, unmodified
+   *
+   * 🔴 WHAT IT DOES NOT SEE — stated so this docstring is not an overclaim.
+   * SILENCE: `.js/.jsx/.mjs` are unscanned; a TS copy declared as an object
+   * property, class static or destructured re-export; `setProperty(K, …)` with a
+   * variable key; `@property --header-height { … }`; a declaration scoped to a
+   * conditional at-rule or to a subtree rather than `:root` (that analysis was
+   * removed — see above); a height reaching the header through a utility class or
+   * a spread. NOISE (a false FAILURE, the safe direction): a CSS snippet inside a
+   * TS string or a `type` key, and a declaration disabled with a trailing line
+   * comment, which `code()`'s start-of-line-anchored rule does not strip.
+   */
+  it('the header height has ONE declaration under `src/`, and CSS and TS agree', () => {
+    const constants = code(
+      read(path.join(REPO_ROOT, 'src/shared/constants/app-layout.constants.ts'))
+    );
+    const declared = /export const HEADER_HEIGHT_PX = (\d+);/.exec(constants)?.[1];
+    expect(
+      declared,
+      'HEADER_HEIGHT_PX declaration not found in app-layout.constants.ts — if it was renamed ' +
+        'or derived, re-point this guard rather than deleting it: it is the only check binding ' +
+        'the TS constant to the `--header-height` custom property.'
+    ).toBeDefined();
 
-    const hostCalc = /minHeight:\s*'calc\(100dvh - (\d+)px\)'/.exec(code(read(HOST)))?.[1];
-    expect(hostCalc, 'the viewport-fit calc not found in PageBlockHost.tsx').toBeDefined();
+    // Walk `src/` once. Spot-checking named files is what an audited draft did, and
+    // a copy reappearing in a file this test does not happen to open is exactly the
+    // defect the consolidation removed.
+    const SRC = path.join(REPO_ROOT, 'src');
+    const files = fs
+      .readdirSync(SRC, { recursive: true, encoding: 'utf8' })
+      .filter((f) => /\.(css|scss|ts|tsx)$/.test(f))
+      .map((f) => path.join(SRC, f))
+      // `readdirSync` yields directories too, and this repo has directories whose
+      // names end in a matching extension — reading one throws EISDIR.
+      .filter((f) => fs.statSync(f).isFile());
+    // Guard the walk itself: a glob matching nothing makes everything below
+    // vacuously true, which is the reassuring-zero failure mode.
+    expect(files.length, 'the src/ walk matched no stylesheets or TS files').toBeGreaterThan(1000);
 
-    expect(hostCalc).toBe(declared);
+    const cssDecls: { file: string; value: string }[] = [];
+    const tsDecls: { file: string; text: string }[] = [];
+    for (const file of files) {
+      // `code()` removes whole-line and block comments, so a declaration commented
+      // out either way counts as ABSENT — which it must, since an audited draft read
+      // raw text and stayed green when the only declaration was commented out.
+      const src = code(fs.readFileSync(file, 'utf8'));
+      // 🔴 Skip THIS file: it necessarily contains the patterns it searches for.
+      // By path, not by exempting tests generally, so a copy in any OTHER test file
+      // is still caught.
+      if (path.resolve(file) === path.resolve(__filename)) continue;
+
+      // Three spellings, because this repo uses all three: plain CSS, the CSS-in-JS
+      // object form (including a computed key — `CSSProperties` rejects the plain
+      // one), and the imperative setter.
+      const patterns = [
+        /--header-height\s*:\s*([^;}\n]+)/g,
+        /['"`]--header-height['"`]\s*\]?\s*:\s*([^,;}\n]+)/g,
+        /setProperty\(\s*['"`]--header-height['"`]\s*,\s*([^)]+)\)/g,
+      ];
+      for (const re of patterns) {
+        for (const m of src.matchAll(re)) {
+          cssDecls.push({
+            file: path.relative(REPO_ROOT, file),
+            value: m[1].trim().replace(/^['"`]|['"`]$/g, ''),
+          });
+        }
+      }
+      if (/\.tsx?$/.test(file)) {
+        for (const m of src.matchAll(/(?:const|let|var)\s+(HEADER_HEIGHT(?:_PX)?)\s*=/g)) {
+          tsDecls.push({ file: path.relative(REPO_ROOT, file), text: m[1] });
+        }
+      }
+    }
+
+    expect(
+      cssDecls.map((d) => `${d.file}: ${d.value}`),
+      'expected exactly ONE `--header-height` declaration under src/. Zero means it was renamed, ' +
+        'removed or commented out — re-point this guard rather than deleting it. More than one ' +
+        'means the header height is duplicated or conditional, and binding it to a single TS ' +
+        'constant is no longer a truthful claim.'
+    ).toHaveLength(1);
+    expect(cssDecls[0].file, 'the `--header-height` declaration moved out of globals.css').toBe(
+      'src/styles/globals.css'
+    );
+    expect(
+      cssDecls[0].value,
+      'globals.css `--header-height` and `HEADER_HEIGHT_PX` have DIVERGED (or the unit changed). ' +
+        'CSS cannot import the constant, so these two are kept in step by this assertion and ' +
+        'nothing else.'
+    ).toBe(`${declared}px`);
+
+    expect(
+      tsDecls.map((d) => `${d.file}: ${d.text}`),
+      'expected exactly ONE header-height constant under src/ — the exported HEADER_HEIGHT_PX. ' +
+        'A second one is the duplication this consolidation removed; import the shared constant.'
+    ).toHaveLength(1);
+    expect(
+      tsDecls[0].file,
+      'the header-height constant moved out of app-layout.constants.ts. Fine as a deliberate ' +
+        'relocation — re-point this guard and the constant’s doc comment — but it must stay a ' +
+        'SINGLE exported declaration.'
+    ).toBe('src/shared/constants/app-layout.constants.ts');
+
+    // ---- Consumers must APPLY it, not merely import it. A token-presence check is
+    // satisfied by the import line alone, so a rename and `HEADER_HEIGHT_PX - 4`
+    // both survived an audited draft.
+    //
+    // 🔴 A LEDGER OF EVERY INLINE HEIGHT IN THE FILE, not a pin on one attribute.
+    // A pin anchored on `style={{ height: … }}` broke on a property reorder; scoping
+    // it to the `<header>` tag needed a JSX parser that then truncated at a `>`
+    // inside an arrow function, silently. This is neither: collect every inline
+    // height property in the component and require the set to be exactly the
+    // constant. It catches a sibling `maxHeight` clamping the real header, a
+    // hardcoded number, and arithmetic — the cases that matter — with no parsing.
+    // The accepted cost: an unrelated inline height anywhere in this component
+    // fails it, and must be added here deliberately. That is noise, not silence.
+    const header = norm(
+      code(read(path.join(REPO_ROOT, 'src/components/AppLayout/AppHeader/AppHeader.tsx')))
+    );
+    const heightProps = [...header.matchAll(/([A-Za-z]*[Hh]eight)\s*:\s*([^,}]+)/g)].map(
+      (m) => `${m[1]}: ${m[2].trim()}`
+    );
+    expect(
+      heightProps,
+      'AppHeader must carry exactly ONE inline height property, set from the shared constant ' +
+        'UNMODIFIED. Anything else — a hardcoded number, arithmetic (`HEADER_HEIGHT_PX - 4`), a ' +
+        'sibling `maxHeight`/`minHeight` clamping it, or the import kept without applying it — ' +
+        'desynchronises the real header from every consumer that subtracts the constant, and the ' +
+        'page-level double scrollbar returns on the `viewport` surfaces. An unrelated inline ' +
+        'height here is not wrong, but it must be added to this expectation deliberately.'
+    ).toEqual(['height: HEADER_HEIGHT_PX']);
+
+    // The surviving `viewport` surfaces (dev tunnel, mod review) subtract it.
+    const host = code(read(HOST));
+    expect(
+      /minHeight:\s*'calc\(100dvh - \d+px\)'/.test(host),
+      'PageBlockHost.tsx has gone back to a hardcoded px value in the viewport-fit calc.'
+    ).toBe(false);
+    expect(
+      host.includes('`calc(100dvh - ${HEADER_HEIGHT_PX}px)`'),
+      'PageBlockHost.tsx no longer interpolates HEADER_HEIGHT_PX into the viewport-fit calc.'
+    ).toBe(true);
   });
 
   /**

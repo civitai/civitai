@@ -151,8 +151,13 @@ const baseProps = {
  * window the runner actually opened.
  */
 function layoutChainHeights() {
-  // What the OLD host claimed. 60 is `HEADER_HEIGHT`, restated by the old style
-  // exactly as the bug did.
+  // What the OLD host claimed, restated by the old style exactly as the bug did.
+  // 🔴 The 60 is a DELIBERATE historical literal, intentionally NOT
+  // `HEADER_HEIGHT_PX`: this arm reproduces the bug as it shipped, so it must not
+  // move when the live header is resized. Importing the constant here would make
+  // the reproduction track the header and quietly stop reproducing the original
+  // defect. (The red arm holds for any header height below ~180; the fixture
+  // subtracts a further 120 of chrome from a real viewport.)
   const oldClaimedMinHeight = window.innerHeight - 60;
   // What a real run page has left after the site chrome inside the scroll area.
   // 120px stands in for sub-nav + mb-3 + banner + footer; any positive value
