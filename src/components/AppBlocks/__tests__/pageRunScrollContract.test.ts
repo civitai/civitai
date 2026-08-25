@@ -34,7 +34,7 @@ import { describe, expect, it } from 'vitest';
  *     floor existed, false the moment `FILL_MIN_HEIGHT_PX` was added in the same
  *     PR). Re-derive from the `fill` branch before touching this line.
  *   - `scrollable: false` WITHOUT `fit="fill"` → the host claims
- *     `100dvh - 60px` again. The `overflow-hidden` chain sits ABOVE the run
+ *     `100dvh - HEADER_HEIGHT_PX` again. The `overflow-hidden` chain sits ABOVE the run
  *     page's own wrapper, and that wrapper is `overflowY: 'auto'`, so the excess
  *     is SCROLLED, not clipped: a page scrollbar beside the block's own — the
  *     exact bug this PR removes. Measured 708px of host in a 600px wrapper,
@@ -169,7 +169,7 @@ describe('the run page and its host agree on who owns the height', () => {
     const src = code(read(HOST));
     expect(region(src, /\.\.\.\(fit === 'fill'[\s\S]*?\}\),/, 'fit ternary'), PIN_HELP).toBe(
       "...(fit === 'fill' ? { flex: 1, minHeight: FILL_MIN_HEIGHT_PX, } " +
-        ": { height: '100%', minHeight: 'calc(100dvh - 60px)', }),"
+        ": { height: '100%', minHeight: `calc(100dvh - ${HEADER_HEIGHT_PX}px)`, }),"
     );
   });
 
@@ -277,20 +277,67 @@ describe('the run page and its host agree on who owns the height', () => {
     expect(mainClasses).toContainEqual(['flex', 'flex-1', 'flex-col', 'overflow-hidden'].sort());
   });
 
-  it('`HEADER_HEIGHT` is still 60, so the surviving `viewport` calc is not silently stale', () => {
-    // `PageBlockHost` hardcodes `60` as a SECOND COPY of a constant private to
-    // `AppHeader.tsx`. The run page no longer depends on it, but the dev tunnel
-    // and mod review still do — and a header resize would re-open this bug there
-    // with nothing to notice. One rule, two places: this is the tripwire until
-    // they are consolidated.
-    const header = read(path.join(REPO_ROOT, 'src/components/AppLayout/AppHeader/AppHeader.tsx'));
-    const declared = /const HEADER_HEIGHT = (\d+);/.exec(code(header))?.[1];
-    expect(declared, 'HEADER_HEIGHT declaration not found in AppHeader.tsx').toBeDefined();
+  /**
+   * 🔴 THE HEADER HEIGHT HAS ONE SOURCE — THIS PINS THE LEDGER, NOT A NUMBER.
+   *
+   * This replaces the old `HEADER_HEIGHT is still 60` tripwire, which asserted a
+   * VALUE and so had to be re-tuned by hand every time the header moved. The
+   * defect it guarded was duplication, so what is asserted now is the RELATIONSHIP:
+   * exactly one TS declaration, every consumer reading it, and the CSS custom
+   * property agreeing with it. It fails when the set of declarations GROWS (a
+   * second copy reappears) or when the two representations DIVERGE — and it does
+   * not care what the number is.
+   *
+   * The CSS var cannot import the constant, so it is the one unavoidable second
+   * representation; binding it here is what makes it safe.
+   */
+  it('the header height has ONE TS source, and `globals.css` agrees with it', () => {
+    const constants = code(
+      read(path.join(REPO_ROOT, 'src/shared/constants/app-layout.constants.ts'))
+    );
+    const declared = /export const HEADER_HEIGHT_PX = (\d+);/.exec(constants)?.[1];
+    expect(
+      declared,
+      'HEADER_HEIGHT_PX declaration not found in app-layout.constants.ts — if it was renamed ' +
+        'or derived, re-point this guard rather than deleting it: it is the only check binding ' +
+        'the TS constant to the `--header-height` custom property.'
+    ).toBeDefined();
 
-    const hostCalc = /minHeight:\s*'calc\(100dvh - (\d+)px\)'/.exec(code(read(HOST)))?.[1];
-    expect(hostCalc, 'the viewport-fit calc not found in PageBlockHost.tsx').toBeDefined();
+    // The CSS half of the pair — what most consumers across the repo actually read.
+    const globals = read(path.join(REPO_ROOT, 'src/styles/globals.css'));
+    const cssVar = /--header-height:\s*(\d+)px;/.exec(globals)?.[1];
+    expect(cssVar, '--header-height declaration not found in globals.css').toBeDefined();
+    expect(
+      cssVar,
+      'globals.css `--header-height` and `HEADER_HEIGHT_PX` have DIVERGED. CSS cannot import ' +
+        'the constant, so these two are kept in step by this assertion and nothing else.'
+    ).toBe(declared);
 
-    expect(hostCalc).toBe(declared);
+    // No consumer may re-declare it. These are the two that historically did.
+    const header = code(
+      read(path.join(REPO_ROOT, 'src/components/AppLayout/AppHeader/AppHeader.tsx'))
+    );
+    expect(
+      /const HEADER_HEIGHT\s*=/.test(header),
+      'AppHeader.tsx has re-declared a private HEADER_HEIGHT. That is the duplication this ' +
+        'guard exists to prevent — import HEADER_HEIGHT_PX instead.'
+    ).toBe(false);
+    expect(
+      header.includes('HEADER_HEIGHT_PX'),
+      'AppHeader.tsx no longer reads HEADER_HEIGHT_PX — it must set the header from the shared ' +
+        'constant, or the constant stops describing the real header.'
+    ).toBe(true);
+
+    // The surviving `viewport` surfaces (dev tunnel, mod review) subtract it.
+    const host = code(read(HOST));
+    expect(
+      /minHeight:\s*'calc\(100dvh - \d+px\)'/.test(host),
+      'PageBlockHost.tsx has gone back to a hardcoded px value in the viewport-fit calc.'
+    ).toBe(false);
+    expect(
+      host.includes('`calc(100dvh - ${HEADER_HEIGHT_PX}px)`'),
+      'PageBlockHost.tsx no longer interpolates HEADER_HEIGHT_PX into the viewport-fit calc.'
+    ).toBe(true);
   });
 
   /**

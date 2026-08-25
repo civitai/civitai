@@ -15,7 +15,7 @@ import type * as TrpcMod from '~/utils/trpc';
  * iframe had another. Only one of them scrolled anything the viewer wanted.
  *
  * THE MECHANISM, and why it was unconditional rather than a race. `PageBlockHost`
- * claimed `min-height: calc(100dvh - 60px)` — the viewport minus the site header
+ * claimed `min-height: calc(100dvh - HEADER_HEIGHT_PX)` — the viewport minus the site header
  * ONLY. But in the default (`scrollable: true`) layout the space actually
  * available to the page is
  *
@@ -144,7 +144,7 @@ const baseProps = {
  *     `viewport − header`, then further reduced by the sub-nav / banner / footer
  *     rendered inside it.
  *
- * `containerHeight` is deliberately SMALLER than `calc(100dvh - 60px)` would be
+ * `containerHeight` is deliberately SMALLER than `calc(100dvh - HEADER_HEIGHT_PX)` would be
  * in this browser, because that gap IS the bug: it is the space the site chrome
  * takes that the old calc never subtracted. Derived from the live viewport at
  * run time rather than hardcoded, so the fixture cannot drift away from the
