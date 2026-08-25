@@ -6,7 +6,11 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { SignalMessages } from '~/server/common/enums';
 import { ChatMessageType, ChatNotifyLevel } from '~/shared/utils/prisma/enums';
-import { reviveChatMessageDates, shouldNotifyForMessage } from '~/shared/utils/chat';
+import {
+  reviveChatMessageDates,
+  shouldNotifyForMessage,
+  upsertChatInList,
+} from '~/shared/utils/chat';
 import type { ChatAllMessages, ChatCreateChat } from '~/types/router';
 import { isApril1 } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
@@ -208,6 +212,25 @@ export const useChatRoomUpdatedSignal = () => {
   useSignalConnection(SignalMessages.ChatRoomUpdated, onUpdate);
 };
 
+/**
+ * Somebody joined, was invited, left, was removed, or handed the group over.
+ *
+ * The payload is the chat id alone, so this refetches rather than patching:
+ * member rows are scoped per-recipient on the way out of `getAllByUser`, and a
+ * signal broadcast to the whole conversation has no per-recipient shape to
+ * carry them in. Without it the member list, the admin crown and the "you were
+ * removed" state only moved on a full page load.
+ */
+export const useChatMembersUpdatedSignal = () => {
+  const queryUtils = trpc.useUtils();
+
+  const onUpdate = useCallback(() => {
+    queryUtils.chat.getAllByUser.invalidate();
+  }, [queryUtils]);
+
+  useSignalConnection(SignalMessages.ChatMembersUpdated, onUpdate);
+};
+
 export const useChatNewRoomSignal = () => {
   const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
@@ -227,15 +250,14 @@ export const useChatNewRoomSignal = () => {
         return;
       }
 
-      queryUtils.chat.getAllByUser.setData(undefined, (old) => {
-        if (!old) return [updated];
-        return [{ ...updated, createdAt: new Date(updated.createdAt) }, ...old];
-      });
+      const revived = { ...updated, createdAt: new Date(updated.createdAt) };
+      queryUtils.chat.getAllByUser.setData(undefined, (old) => upsertChatInList(old, revived));
 
       queryUtils.chat.getUnreadCount.setData(
         undefined,
         produce((old) => {
           if (!old) return old;
+          if (old.some((c) => c.chatId === updated.id)) return old;
           old.push({ chatId: updated.id, cnt: 1 });
         })
       );

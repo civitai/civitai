@@ -42,6 +42,7 @@ import {
   createMessage,
   maxUsersPerChat,
   resolveChatRecipients,
+  signalChatMembersUpdated,
   upsertChat,
 } from '~/server/services/chat.service';
 import {
@@ -500,6 +501,10 @@ export const addUsersHandler = async ({
       userId: -1,
     });
 
+    // Last, so the refetch it triggers already sees the note above. The invitees
+    // are named because they only join the `chat:<id>` signals group on accept.
+    await signalChatMembersUpdated({ chatId: existing.id, userIds: allowed });
+
     return insertedChat;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -624,6 +629,8 @@ export const modifyUserHandler = async ({
         userId: -1,
       });
 
+      await signalChatMembersUpdated({ chatId: existing.chat.id });
+
       return promoted;
     }
 
@@ -711,6 +718,14 @@ export const modifyUserHandler = async ({
         content: `${successor.username ?? `User ${successor.userId}`} is now the group admin`,
         userId: -1,
       });
+    }
+
+    // Emitted once, after every system note above, so a recipient's refetch sees
+    // the finished state. The member themselves is named because a leave or a
+    // kick already took them out of the `chat:<id>` signals group, and the
+    // broadcast alone would skip the one person who most needs to know.
+    if (statusChanged || successor) {
+      await signalChatMembersUpdated({ chatId: existing.chat.id, userIds: [existing.userId] });
     }
 
     return resp;

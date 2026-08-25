@@ -85,6 +85,53 @@ function mentionsUser(content: string, username: string): boolean {
 }
 
 /**
+ * Place a conversation into the cached conversation list.
+ *
+ * `chat:new-room` is replayed when somebody who had left is invited back, and
+ * that reader still holds the conversation — prepending it a second time gave
+ * them two entries for one thread, one of which never updated again.
+ */
+export function upsertChatInList<T extends { id: number }>(list: T[] | undefined, chat: T): T[] {
+  if (!list) return [chat];
+  return list.some((c) => c.id === chat.id)
+    ? list.map((c) => (c.id === chat.id ? chat : c))
+    : [chat, ...list];
+}
+
+const youVerb: Record<string, string> = { is: 'are', was: 'were', has: 'have' };
+
+/**
+ * Render a system message ("<name> joined", "<name> was kicked") for one reader,
+ * addressing them as "You".
+ *
+ * The naive `content.replace(username, 'You')` this replaces produced
+ * "You is now the group admin" and "You was kicked", and — because
+ * `String.replace('')` matches at position zero — prefixed a bare "You" onto
+ * every system message for a user with no username.
+ *
+ * Only the leading subject is rewritten: the templates put the actor first,
+ * either alone or in a comma list, so a name anywhere else (a group renamed
+ * after somebody) is not the reader being addressed.
+ */
+export function formatChatSystemMessage({
+  content,
+  username,
+}: {
+  content: string;
+  username?: string | null;
+}): string {
+  if (!username) return content;
+
+  const escaped = username.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const asSubject = new RegExp(`(^|, )${escaped}(?=$|[ ,])`, 'g');
+  const rewritten = content.replace(asSubject, '$1You');
+
+  // A plural subject already carries a plural verb, so a singular one here can
+  // only have belonged to the reader alone.
+  return rewritten.replace(/^You (is|was|has)\b/, (_, verb: string) => `You ${youVerb[verb]}`);
+}
+
+/**
  * What to write to the two mute columns for one membership change.
  *
  * They are written by different surfaces — the previous chat writes `isMuted`,

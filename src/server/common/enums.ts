@@ -144,6 +144,7 @@ export enum SignalMessages {
   ChatMessageDeleted = 'chat:message-deleted',
   ChatMessageUpdated = 'chat:message-updated',
   ChatRoomUpdated = 'chat:room-updated',
+  ChatMembersUpdated = 'chat:members-updated',
   OrchestratorUpdate = 'orchestrator-job:status-update',
   TextToImageUpdate = 'orchestrator:text-to-image-update',
   WorkflowUpdate = 'orchestrator:workflow-update',
