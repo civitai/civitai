@@ -22,8 +22,9 @@ type BrowsingLevelInput = Omit<InputWrapperProps, 'children' | 'onChange'> & {
    */
   allowEmpty?: boolean;
   /**
-   * Wrap and shrink the chips. The default row is `nowrap` at full size, which is
-   * right in a modal and overflows a 300px sidebar.
+   * Shrink the chips so all of them still fit one row. The default row is full-size
+   * and overflows a 300px sidebar; wrapping instead leaves XXX alone on a second
+   * line, reading as though it were singled out.
    */
   compact?: boolean;
 };
@@ -59,7 +60,7 @@ export function BrowsingLevelsInput({
 
   return (
     <Input.Wrapper {...props} error={props.error}>
-      <Group gap={compact ? 4 : 'xs'} mt={compact ? 4 : 'md'} wrap={compact ? 'wrap' : 'nowrap'}>
+      <Group gap={compact ? 2 : 'xs'} mt={compact ? 4 : 'md'} wrap="nowrap">
         {levels.map((level) => (
           <BrowsingLevelLabel
             key={level}
@@ -90,7 +91,7 @@ function BrowsingLevelLabel({
 
   return (
     <Chip
-      classNames={classes}
+      classNames={compact ? { ...classes, label: `${classes.label} ${classes.compact}` } : classes}
       checked={isSelected}
       size={compact ? 'xs' : undefined}
       onChange={() => onToggle(level)}

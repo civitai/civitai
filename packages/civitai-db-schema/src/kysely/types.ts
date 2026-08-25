@@ -4023,6 +4023,11 @@ export type UserHub = {
   availability: Generated<Availability>;
   forcedBrowsingLevel: Generated<number>;
 };
+export type UserHubFollow = {
+  userId: number;
+  hubId: number;
+  createdAt: Generated<Timestamp>;
+};
 export type UserHubSource = {
   id: Generated<number>;
   hubId: number;
@@ -4560,6 +4565,7 @@ export type DB = {
   UserCosmeticShopPurchases: UserCosmeticShopPurchases;
   UserEngagement: UserEngagement;
   UserHub: UserHub;
+  UserHubFollow: UserHubFollow;
   UserHubSource: UserHubSource;
   UserLink: UserLink;
   UserMembershipOverride: UserMembershipOverride;

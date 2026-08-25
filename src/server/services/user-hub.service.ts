@@ -90,6 +90,18 @@ export function hubViewerWhere({ userId, isModerator }: HubViewer) {
   };
 }
 
+/**
+ * Who may WRITE a hub. Deliberately not `hubViewerWhere`: Public grants reading to
+ * anyone with the link and must never grant writing. Moderators may manage any hub —
+ * Justin's call on 2026-08-25, which answers the question subtask 868kwp5kc had
+ * parked. It covers the deliberate acts (rename, description, visibility, delete),
+ * not the incidental ones: a moderator's source toggles stay session state, so
+ * looking at a hub cannot quietly rewrite it.
+ */
+export function hubWriterWhere({ userId, isModerator }: HubViewer) {
+  return isModerator ? {} : { userId };
+}
+
 function readMetadata(metadata: Prisma.JsonValue | undefined) {
   return metadata && typeof metadata === 'object' && !Array.isArray(metadata)
     ? (metadata as Record<string, unknown>)
@@ -159,7 +171,12 @@ export async function getUserHubForRoute({ id, userId, isModerator }: { id: numb
   });
 }
 
-export async function upsertUserHub({ userId, ...input }: UpsertUserHubInput & { userId: number }) {
+export async function upsertUserHub({
+  userId,
+  isModerator,
+  ...input
+}: UpsertUserHubInput & { userId: number; isModerator?: boolean }) {
+  const writable = hubWriterWhere({ userId, isModerator });
   const { id, sources, description, filters, ...data } = input;
 
   if (sources) {
@@ -209,7 +226,7 @@ export async function upsertUserHub({ userId, ...input }: UpsertUserHubInput & {
   // json column, and a replica lagging behind the previous save merges a stale
   // description back over a newer one.
   const existing = await dbWrite.userHub.findFirst({
-    where: { id, userId },
+    where: { id, ...writable },
     select: { id: true, metadata: true },
   });
   if (!existing) throw throwNotFoundError('Hub not found');
@@ -228,7 +245,7 @@ export async function upsertUserHub({ userId, ...input }: UpsertUserHubInput & {
 
   if (!sources) {
     const hub = await dbWrite.userHub.update({
-      where: { id, userId },
+      where: { id, ...writable },
       data: { ...data, ...(metadata ? { metadata } : {}) },
       select: hubListSelect,
     });
@@ -238,11 +255,9 @@ export async function upsertUserHub({ userId, ...input }: UpsertUserHubInput & {
   const updated = await dbWrite.$transaction(async (tx) => {
     await tx.userHubSource.deleteMany({ where: { hubId: id } });
     return tx.userHub.update({
-      // Scoped by userId as well as id, like every read here. Redundant while
-      // `UserHub.userId` never changes; the moment hub sharing lands — which the
-      // rail already anticipates — a check in a prior SELECT is a check that can
-      // disagree with the write.
-      where: { id, userId },
+      // Scoped on the write as well as in the SELECT above, not instead of it: a
+      // check in a prior SELECT is a check that can disagree with the write.
+      where: { id, ...writable },
       data: {
         ...data,
         ...(metadata ? { metadata } : {}),
@@ -346,9 +361,76 @@ export async function removeUserHubSource({
   return { hubId, removed: count > 0 };
 }
 
-export async function deleteUserHub({ id, userId }: { id: number; userId: number }) {
-  const { count } = await dbWrite.userHub.deleteMany({ where: { id, userId } });
+export async function deleteUserHub({
+  id,
+  userId,
+  isModerator,
+}: { id: number; userId: number } & HubViewer) {
+  const { count } = await dbWrite.userHub.deleteMany({
+    where: { id, ...hubWriterWhere({ userId, isModerator }) },
+  });
   if (!count) throw throwNotFoundError('Hub not found');
+}
+
+/**
+ * The hubs this viewer follows, in the same shape and the same order the owned list
+ * comes back in.
+ *
+ * Filtered through `hubViewerWhere` on the READ, not merely at follow time. An owner
+ * flipping a hub back to Private has to make it vanish from every follower's list
+ * immediately, and there is no revocation pass to delete follow rows — the same
+ * argument `getUserHubById` makes for links (subtask 868kwp5g8). The row stays, and
+ * starts counting again if the hub is made Public a second time.
+ *
+ * `isModerator` is deliberately NOT threaded through: a moderator's reach over any
+ * hub is a view privilege, and letting it decide this list would put private hubs in
+ * a personal sidebar that everyone else's revocation empties.
+ */
+export async function getFollowedHubs({ userId }: { userId: number }) {
+  const follows = await dbRead.userHubFollow.findMany({
+    where: { userId, hub: hubViewerWhere({ userId }) },
+    // `hubListSelect`, not `hubSelect`: the rail renders a name and a source count,
+    // and joining the owner costs two extra round trips per render for a field
+    // nothing reads.
+    select: { hub: { select: hubListSelect } },
+    orderBy: { hub: { name: 'asc' } },
+    take: hubLimits.followedHubs,
+  });
+  return follows.map((follow) => toHubDetail(follow.hub, userId));
+}
+
+export async function followUserHub({ hubId, userId }: { hubId: number; userId: number }) {
+  // Through the WRITER, and scoped by the same fragment every hub read uses: a hub
+  // this viewer cannot open must be a not-found here, never a follow row pointing at
+  // something they will never be shown.
+  const hub = await dbWrite.userHub.findFirst({
+    where: { id: hubId, ...hubViewerWhere({ userId }) },
+    select: { id: true, userId: true },
+  });
+  if (!hub) throw throwNotFoundError('Hub not found');
+
+  // Your own hubs are already the list above this one in the rail.
+  if (hub.userId === userId) throw throwBadRequestError('This is your own hub');
+
+  const count = await dbWrite.userHubFollow.count({ where: { userId } });
+  if (count >= hubLimits.followedHubs)
+    throw throwBadRequestError(`You can follow at most ${hubLimits.followedHubs} hubs`);
+
+  // Idempotent: the button is rendered from a cached list, so a second click inside
+  // the invalidate window must not be an error.
+  await dbWrite.userHubFollow.upsert({
+    where: { userId_hubId: { userId, hubId } },
+    create: { userId, hubId },
+    update: {},
+  });
+  return { hubId, following: true };
+}
+
+export async function unfollowUserHub({ hubId, userId }: { hubId: number; userId: number }) {
+  // Scoped to the caller's own row on the DELETE itself, like every other write in
+  // this file — `deleteMany`, not a lookup followed by a delete by id.
+  const { count } = await dbWrite.userHubFollow.deleteMany({ where: { userId, hubId } });
+  return { hubId, following: false, removed: count > 0 };
 }
 
 export async function setUserHubOrder({ ids, userId }: SetUserHubOrderInput & { userId: number }) {

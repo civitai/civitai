@@ -500,6 +500,7 @@ model User {
   engagedImages              ImageEngagement[]
   collections                Collection[]
   hubs                       UserHub[]
+  hubFollows                 UserHubFollow[]
   collectionItems            CollectionItem[]
   reviewedCollectionItems    CollectionItem[]               @relation("reviewedBy")
   contributingCollections    CollectionContributor[]
@@ -8164,8 +8165,20 @@ model UserHub {
   forcedBrowsingLevel Int   @default(0)
 
   sources   UserHubSource[]
+  followers UserHubFollow[]
 
   @@index([userId])
+}
+
+model UserHubFollow {
+  userId    Int
+  hubId     Int
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  hub       UserHub  @relation(fields: [hubId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, hubId])
+  @@index([hubId])
 }
 
 model UserHubSource {

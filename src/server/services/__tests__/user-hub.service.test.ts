@@ -19,8 +19,10 @@ import {
   getUserHubs,
   getUserHubForRoute,
   getHubSourceSuggestions,
+  deleteUserHub,
   hubBrowsingLevel,
   hubViewerWhere,
+  hubWriterWhere,
   removeUserHubSource,
   getUserHubById,
   resolveHubSourceFromUrl,
@@ -1070,6 +1072,43 @@ describe('getUserHubById', () => {
     const hub = await getUserHubById({ id: 1 });
 
     expect(hub.isOwner).toBe(false);
+  });
+});
+
+describe('hubWriterWhere', () => {
+  it('scopes an ordinary caller to their own hubs', () => {
+    expect(hubWriterWhere({ userId: 5 })).toStrictEqual({ userId: 5 });
+  });
+
+  it('does NOT let Public grant writing', () => {
+    // The whole reason this is a second fragment rather than `hubViewerWhere`:
+    // Public means anyone holding the link can READ. Reusing the read fragment here
+    // would let any viewer of a shared hub rename or delete it.
+    expect(JSON.stringify(hubWriterWhere({ userId: 5 }))).not.toContain('availability');
+  });
+
+  it('lets a moderator manage any hub', () => {
+    expect(hubWriterWhere({ userId: 5, isModerator: true })).toStrictEqual({});
+  });
+});
+
+describe('deleteUserHub', () => {
+  it('scopes the delete to the caller by default', async () => {
+    dbMock.dbWrite.userHub.deleteMany.mockResolvedValue({ count: 1 });
+
+    await deleteUserHub({ id: 9, userId: 5 });
+
+    expect(dbMock.dbWrite.userHub.deleteMany).toHaveBeenCalledWith({
+      where: { id: 9, userId: 5 },
+    });
+  });
+
+  it('lets a moderator delete a hub that is not theirs', async () => {
+    dbMock.dbWrite.userHub.deleteMany.mockResolvedValue({ count: 1 });
+
+    await deleteUserHub({ id: 9, userId: 5, isModerator: true });
+
+    expect(dbMock.dbWrite.userHub.deleteMany).toHaveBeenCalledWith({ where: { id: 9 } });
   });
 });
 

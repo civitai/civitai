@@ -1,9 +1,21 @@
-import { Badge, Button, Card, Center, Group, Loader, Menu, Text, Title } from '@mantine/core';
+import {
+  Badge,
+  Button,
+  Card,
+  Center,
+  Group,
+  Loader,
+  Menu,
+  Popover,
+  Text,
+  Title,
+  Tooltip,
+} from '@mantine/core';
+import { useClipboard } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
-import { IconCopy, IconDotsVertical, IconPencil, IconShare3, IconTrash } from '@tabler/icons-react';
+import { IconDotsVertical, IconPencil, IconShare3, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { NotFound } from '~/components/AppLayout/NotFound';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
 import {
   BrowsingLevelProviderOptional,
   useBrowsingLevelDebounced,
@@ -18,14 +30,18 @@ import {
   useHubSessionFeedFilters,
   useHubSessionIncludePG13,
 } from '~/components/Hubs/hub-session.store';
-import { buildDuplicateHubInput, hubLocksViewerOut, hubUrl } from '~/components/Hubs/hub.utils';
+import { FollowHubButton } from '~/components/Hubs/FollowHubButton';
+import { hubLocksViewerOut, hubUrl, useInvalidateHub } from '~/components/Hubs/hub.utils';
 import { useHubSort } from '~/components/Hubs/useHubSort';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
+import { BrowsingModeMenu } from '~/components/BrowsingMode/BrowsingMode';
 import { NoContent } from '~/components/NoContent/NoContent';
+import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -34,7 +50,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { Availability } from '~/shared/utils/prisma/enums';
 import { getCanonicalSlugDestination } from '~/utils/canonical-slug';
 import { buildPassthroughQuery } from '~/utils/query-string-helpers';
-import { showErrorNotification } from '~/utils/notifications';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 export const getServerSideProps = createServerSideProps({
@@ -74,15 +90,47 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-// Centred in the feed's own column, on a card, so an empty hub reads as a state
-// rather than as a page that failed to load.
+// Centred in the feed's own column and only as wide as it needs to be, so an empty
+// hub reads as a state rather than as a page that failed to load.
 function HubEmptyState({ message, children }: { message: string; children?: React.ReactNode }) {
   return (
-    <Card withBorder radius="md" py="xl" className="my-6">
-      <NoContent message={message} iconSize={72}>
-        {children}
-      </NoContent>
-    </Card>
+    <div className="my-6 flex justify-center">
+      <Card withBorder radius="md" p="xl" className="max-w-md">
+        <NoContent message={message} iconSize={72}>
+          {children}
+        </NoContent>
+      </Card>
+    </div>
+  );
+}
+
+/**
+ * The way out of a hub whose cap you cannot see past. It opens the browsing-level
+ * menu rather than linking to account settings — that page is enormous and the level
+ * picker is one control on it.
+ *
+ * Offered only when that menu would actually contain the picker: `BrowsingModeMenu`
+ * renders it under `showNsfw && canViewNsfw`, so on green, or with mature content
+ * switched off, the button would open a menu that cannot change the answer. Those
+ * viewers get the explanation and nothing to press.
+ */
+function AdjustBrowsingLevelButton() {
+  const features = useFeatureFlags();
+  const showNsfw = useBrowsingSettings((state) => state.showNsfw);
+  if (!features.canViewNsfw || !showNsfw) return null;
+
+  return (
+    // No `width`: the menu carries its own `sm:min-w-96`, so any fixed width below
+    // that overflows the dropdown. Same configuration the header's browsing-mode
+    // popover uses to render this menu.
+    <Popover withArrow withinPortal position="top">
+      <Popover.Target>
+        <Button variant="light">Adjust your browsing level</Button>
+      </Popover.Target>
+      <Popover.Dropdown p="md">
+        <BrowsingModeMenu />
+      </Popover.Dropdown>
+    </Popover>
   );
 }
 
@@ -102,6 +150,7 @@ export default Page(
     const sessionIncludePG13 = useHubSessionIncludePG13(hubId);
     const sessionFilters = useHubSessionFeedFilters(hubId);
     const currentUser = useCurrentUser();
+    const invalidateHub = useInvalidateHub();
 
     // A viewer's sort and filter choices are session state; the owner's are the row.
     const isOwner = !!hub?.isOwner;
@@ -116,6 +165,22 @@ export default Page(
     // domain cap. Compared against the hub's own cap below so a viewer who would see
     // an empty feed is told why rather than shown nothing.
     const viewerAllowedLevel = useBrowsingLevelDebounced();
+
+    const clipboard = useClipboard();
+    const shareMutation = trpc.userHub.upsert.useMutation({
+      onSuccess: async (saved) => {
+        await invalidateHub(saved.id);
+        // Copied on the spot: the reason to press this was to hand someone a link,
+        // and making them press Share again for it is a second step for nothing.
+        clipboard.copy(`${window.location.origin}${hubUrl(saved)}`);
+        showSuccessNotification({
+          title: 'Sharing is on',
+          message: 'The link is on your clipboard. Anyone you give it to can view this hub.',
+        });
+      },
+      onError: (error) =>
+        showErrorNotification({ title: 'Could not share hub', error: new Error(error.message) }),
+    });
 
     const deleteMutation = trpc.userHub.delete.useMutation({
       onSuccess: async () => {
@@ -136,6 +201,7 @@ export default Page(
 
     const hasSources = hub.sources.some((s) => s.enabled);
     const isPublic = hub.availability === Availability.Public;
+    const canManage = hub.isOwner || !!currentUser?.isModerator;
     // Only on a hub you do not own. The owner's own level is their account setting,
     // and the hub's stored cap is applied server-side for everyone regardless.
     const viewerBrowsingLevel = hub.isOwner ? undefined : sessionBrowsingLevel;
@@ -174,9 +240,6 @@ export default Page(
                 {!hub.isOwner && !!hub.user && (
                   <Group gap={8} wrap="nowrap" mt={4}>
                     <UserAvatar user={hub.user} withUsername linkToProfile size="sm" />
-                    <Badge size="xs" variant="light" color="orange">
-                      OWNER
-                    </Badge>
                   </Group>
                 )}
               </div>
@@ -184,42 +247,62 @@ export default Page(
               <Group gap={4} wrap="nowrap">
                 {/* ShareButton is given a PATH, not an absolute URL: it prefixes
                     `location.protocol//location.host` itself. */}
-                {isPublic && (
+                {isPublic ? (
                   <ShareButton url={hubUrl(hub)} title={hub.name}>
-                    <Button
-                      size="compact-sm"
-                      variant="default"
-                      leftSection={<IconShare3 size={16} />}
-                    >
-                      Share
-                    </Button>
+                    <Tooltip label="Share" withinPortal>
+                      <LegacyActionIcon variant="subtle" aria-label="Share hub">
+                        <IconShare3 size={18} />
+                      </LegacyActionIcon>
+                    </Tooltip>
                   </ShareButton>
+                ) : (
+                  // Sharing is the point of the button, so it is here rather than
+                  // behind Edit. On a private hub it asks first, because pressing it
+                  // is what makes the hub readable by anyone holding the link.
+                  hub.isOwner && (
+                    <Tooltip label="Share" withinPortal>
+                      <LegacyActionIcon
+                        variant="subtle"
+                        aria-label="Share hub"
+                        loading={shareMutation.isPending}
+                        onClick={() =>
+                          openConfirmModal({
+                            title: 'Share this hub?',
+                            children: (
+                              <Text size="sm">
+                                This hub is private. Sharing it makes it viewable by anyone you give
+                                the link to. You can turn sharing back off at any time, and every
+                                link you handed out stops working.
+                              </Text>
+                            ),
+                            labels: { cancel: 'Cancel', confirm: 'Turn on sharing' },
+                            onConfirm: () =>
+                              shareMutation.mutate({
+                                id: hub.id,
+                                availability: Availability.Public,
+                              }),
+                          })
+                        }
+                      >
+                        <IconShare3 size={18} />
+                      </LegacyActionIcon>
+                    </Tooltip>
+                  )
                 )}
 
                 {/* Not on a private hub a moderator opened to look at it: copying
                     someone's curation into your own account is a write, and 868kwp5kc
                     scopes moderator access to viewing. */}
-                {!hub.isOwner && isPublic && (
-                  <LoginRedirect reason="duplicate-hub">
-                    <Button
-                      size="compact-sm"
-                      variant="default"
-                      leftSection={<IconCopy size={16} />}
-                      onClick={() =>
-                        dialogStore.trigger({
-                          component: HubUpsertModal,
-                          props: {
-                            duplicateOf: buildDuplicateHubInput(hub),
-                          },
-                        })
-                      }
-                    >
-                      Duplicate
-                    </Button>
-                  </LoginRedirect>
-                )}
+                {/* Following is the alternative to keeping the link somewhere: it
+                    puts the hub in your own sidebar. Hidden for the owner, whose hubs
+                    are already listed above it. */}
+                <FollowHubButton hub={hub} iconOnly />
 
-                {hub.isOwner && (
+                {/* Moderators get the context menu on any hub — Justin's call, and it
+                    answers the question 868kwp5kc parked. Deliberate acts only: their
+                    source toggles and level picks stay session state, so opening a
+                    hub to look at it cannot quietly rewrite it. */}
+                {canManage && (
                   <Menu withinPortal position="bottom-end">
                     <Menu.Target>
                       <LegacyActionIcon variant="subtle" aria-label="Hub options">
@@ -264,9 +347,7 @@ export default Page(
             {levelLocksViewerOut ? (
               <HubEmptyState message="Its owner limited this hub to content ratings you have not enabled.">
                 {currentUser ? (
-                  <Button component={Link} href="/user/account#content-moderation" variant="light">
-                    Adjust your content settings
-                  </Button>
+                  <AdjustBrowsingLevelButton />
                 ) : (
                   <LoginRedirect reason="view-content">
                     <Button>Sign in to change your content settings</Button>
@@ -278,7 +359,7 @@ export default Page(
                 message={
                   hub.sources.length === 0
                     ? hub.isOwner
-                      ? 'This hub is empty. Add a creator or a model from the rail to start filling it.'
+                      ? 'This hub is empty. Add a creator or a model from the sidebar to start filling it.'
                       : 'This hub has no sources yet.'
                     : 'Every source in this hub is switched off.'
                 }

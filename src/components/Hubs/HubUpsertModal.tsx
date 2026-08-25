@@ -156,7 +156,7 @@ export default function HubUpsertModal({
               value={sources}
               onChange={setSources}
               disabled={upsert.isPending}
-              emptyMessage="Add a creator or a model now, or leave it empty and fill it from the rail."
+              emptyMessage="Add a creator or a model now, or leave it empty and fill it from the sidebar."
             />
           </>
         )}

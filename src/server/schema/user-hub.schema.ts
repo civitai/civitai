@@ -10,6 +10,9 @@ import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constant
 
 export const hubLimits = {
   hubsPerUser: 20,
+  // Bounds the followed-hubs read as well as the write: the sidebar renders the
+  // whole list, and the follow button decides its own state from it.
+  followedHubs: 50,
   sourcesPerHub: 50,
   nameLength: 60,
   aliasLength: 60,
@@ -152,6 +155,12 @@ export type HubSourceExclusionInput = z.infer<typeof hubSourceExclusionSchema>;
 // One spelling, in the module both sides already import from.
 export const hubSourceKey = (source: HubSourceExclusionInput) =>
   `${source.type}:${source.targetId}`;
+
+export const userHubFollowSchema = z.object({
+  hubId: z.number().int().positive(),
+});
+
+export type UserHubFollowInput = z.infer<typeof userHubFollowSchema>;
 
 export const setUserHubOrderSchema = z.object({
   ids: z.array(z.number()).max(hubLimits.hubsPerUser),

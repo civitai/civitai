@@ -4,18 +4,22 @@ import {
   getHubSourceSuggestionsSchema,
   resolveHubSourceSchema,
   setUserHubOrderSchema,
+  userHubFollowSchema,
   upsertUserHubSchema,
   userHubSourceRefSchema,
 } from '~/server/schema/user-hub.schema';
 import {
   addUserHubSource,
   deleteUserHub,
+  followUserHub,
+  getFollowedHubs,
   getUserHubById,
   getHubSourceSuggestions,
   getUserHubs,
   removeUserHubSource,
   resolveHubSourceFromUrl,
   setUserHubOrder,
+  unfollowUserHub,
   upsertUserHub,
 } from '~/server/services/user-hub.service';
 import { publicUserHubProcedure, router, userHubProcedure } from '~/server/trpc';
@@ -25,6 +29,17 @@ export const userHubRouter = router({
   getAll: userHubProcedure
     .meta({ requiredScope: TokenScope.UserRead })
     .query(({ ctx }) => getUserHubs({ userId: ctx.user.id })),
+  getFollowed: userHubProcedure
+    .meta({ requiredScope: TokenScope.UserRead })
+    .query(({ ctx }) => getFollowedHubs({ userId: ctx.user.id })),
+  follow: userHubProcedure
+    .meta({ requiredScope: TokenScope.UserWrite })
+    .input(userHubFollowSchema)
+    .mutation(({ input, ctx }) => followUserHub({ ...input, userId: ctx.user.id })),
+  unfollow: userHubProcedure
+    .meta({ requiredScope: TokenScope.UserWrite })
+    .input(userHubFollowSchema)
+    .mutation(({ input, ctx }) => unfollowUserHub({ ...input, userId: ctx.user.id })),
   getById: publicUserHubProcedure
     .meta({ requiredScope: TokenScope.UserRead })
     .input(getByIdSchema)
@@ -38,7 +53,9 @@ export const userHubRouter = router({
   upsert: userHubProcedure
     .meta({ requiredScope: TokenScope.UserWrite })
     .input(upsertUserHubSchema)
-    .mutation(({ input, ctx }) => upsertUserHub({ ...input, userId: ctx.user.id })),
+    .mutation(({ input, ctx }) =>
+      upsertUserHub({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+    ),
   addSource: userHubProcedure
     .meta({ requiredScope: TokenScope.UserWrite })
     .input(addUserHubSourceSchema)
@@ -50,7 +67,9 @@ export const userHubRouter = router({
   delete: userHubProcedure
     .meta({ requiredScope: TokenScope.UserWrite })
     .input(getByIdSchema)
-    .mutation(({ input, ctx }) => deleteUserHub({ id: input.id, userId: ctx.user.id })),
+    .mutation(({ input, ctx }) =>
+      deleteUserHub({ id: input.id, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+    ),
   sourceSuggestions: userHubProcedure
     .meta({ requiredScope: TokenScope.UserRead })
     .input(getHubSourceSuggestionsSchema)

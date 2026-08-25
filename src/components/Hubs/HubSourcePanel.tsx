@@ -1,4 +1,4 @@
-import { Button, ScrollArea, Stack } from '@mantine/core';
+import { Button, Divider, ScrollArea, Stack } from '@mantine/core';
 import { IconCopy } from '@tabler/icons-react';
 import { useState } from 'react';
 import { BrowsingLevelsInput } from '~/components/BrowsingLevel/BrowsingLevelInput';
@@ -37,6 +37,17 @@ export type HubPanelHub = {
   isOwner: boolean;
   sources: HubSourceValue[];
 };
+
+function MaybeScrollArea({
+  maxHeight,
+  children,
+}: {
+  maxHeight?: number;
+  children: React.ReactNode;
+}) {
+  if (!maxHeight) return <>{children}</>;
+  return <ScrollArea.Autosize mah={maxHeight}>{children}</ScrollArea.Autosize>;
+}
 
 const levelHint = (level: number) =>
   level ? 'Only these levels show in this hub.' : 'No limit — your own browsing settings decide.';
@@ -177,7 +188,11 @@ export function HubSourcePanel({
         </FilterChip>
       )}
 
-      <ScrollArea.Autosize mah={listMaxHeight}>
+      {/* Scrolled ONLY where a caller asked for it — the popover. The rail already
+          renders inside a `ScrollArea.Autosize`, and nesting a second one there gives
+          the rail a scroller measuring a width nothing shows, which drags the whole
+          sidebar out of the layout. */}
+      <MaybeScrollArea maxHeight={listMaxHeight}>
         <HubSourceEditor
           readOnly
           value={view}
@@ -189,7 +204,7 @@ export function HubSourcePanel({
             }
           }}
         />
-      </ScrollArea.Autosize>
+      </MaybeScrollArea>
 
       {
         // Duplicating copies the owner's whole source list into an account of your
@@ -199,21 +214,27 @@ export function HubSourcePanel({
         // Outside the scroller on purpose: it is the answer to "these are not mine to
         // change", and a long source list would bury it.
         hub.availability === Availability.Public && (
-          <LoginRedirect reason="duplicate-hub">
-            <Button
-              fullWidth
-              size="compact-sm"
-              leftSection={<IconCopy size={14} />}
-              onClick={() =>
-                dialogStore.trigger({
-                  component: HubUpsertModal,
-                  props: { duplicateOf: buildDuplicateHubInput(hub) },
-                })
-              }
-            >
-              Duplicate this hub
-            </Button>
-          </LoginRedirect>
+          <>
+            {/* Full-bleed, so the cut-off above it reads as the edge of a footer
+                rather than as a list that happens to stop there. `Popover.Dropdown`
+                pads by `sm`, which this cancels. */}
+            <Divider mx="-sm" />
+            <LoginRedirect reason="duplicate-hub">
+              <Button
+                fullWidth
+                size="compact-sm"
+                leftSection={<IconCopy size={14} />}
+                onClick={() =>
+                  dialogStore.trigger({
+                    component: HubUpsertModal,
+                    props: { duplicateOf: buildDuplicateHubInput(hub) },
+                  })
+                }
+              >
+                Duplicate this hub
+              </Button>
+            </LoginRedirect>
+          </>
         )
       }
     </Stack>

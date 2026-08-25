@@ -33,6 +33,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import HubUpsertModal from '~/components/Hubs/HubUpsertModal';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { hubLimits } from '~/server/schema/user-hub.schema';
+import { FollowedHubsSection } from '~/components/Hubs/FollowedHubsSection';
 import { hubUrl, toPanelHub } from '~/components/Hubs/hub.utils';
 const HubSourcePanel = dynamic(
   () => import('~/components/Hubs/HubSourcePanel').then((m) => m.HubSourcePanel),
@@ -132,7 +133,9 @@ function HubsSidebarContent({
       {activeHubId && activeHub && (
         <>
           <SectionHeader
-            label={`Sources for ${activeHub.name}`}
+            // Not the hub's name: it can run to 60 characters and this header is
+            // ~180px wide, so the label would be doing the truncating.
+            label="Sources for this hub"
             expanded={sourcesOpen}
             onClick={() => setSourcesOpenOverride(!sourcesOpen)}
             right={
@@ -227,6 +230,10 @@ function HubsSidebarContent({
               </Stack>
             )}
           </Stack>
+
+          {/* Renders nothing until you follow something, so it costs an empty list no
+              space and no heading. */}
+          <FollowedHubsSection activeHubId={activeHubId} />
         </>
       )}
     </Stack>
