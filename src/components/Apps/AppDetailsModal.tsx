@@ -20,6 +20,7 @@ import Link from 'next/link';
 import { useMemo } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { AppBlockReviews } from '~/components/Apps/AppBlockReviews';
+import { AppListingDescription } from '~/components/Apps/AppListingDescription';
 import { getAppDetailAuthor } from '~/components/Apps/appDetailAuthorView';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -200,11 +201,10 @@ export function AppDetailsModal({ opened, onClose, block }: AppDetailsModalProps
           )}
         </Stack>
 
-        {description && (
-          <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
-            {description}
-          </Text>
-        )}
+        {/* Markdown, via the shared renderer (`appListingDescription.ts` holds the
+            rule). Was `pre-wrap` plain text, which disagreed with the listing
+            detail body's markdown rendering of the same stored string. */}
+        {description && <AppListingDescription description={description} />}
 
         {/* Detail-load failure (audit M1): when the public-detail query errors
             we can't say anything definitive about screenshots OR scopes, so

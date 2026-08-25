@@ -716,3 +716,100 @@ describe('AppBlockCard — cover image (first screenshot) + placeholder fallback
     expect(placeholder!.querySelector('svg')).not.toBeNull();
   });
 });
+
+/**
+ * The CARD's description is the PLAIN-TEXT PROJECTION of the stored markdown.
+ *
+ * The stored `description` is markdown (see `appListingDescription.ts` for the one
+ * rule). The card is a 3-line clamp in a grid, where markdown BLOCK elements would be
+ * wrong — so it is the one surface that deliberately does NOT render markdown. That
+ * makes it the surface where showing raw SOURCE is tempting and wrong: several live
+ * first-party listings use backticks for literal syntax (`{style}`, `#tag`, `.txt`),
+ * which printed as literal backtick characters in the grid.
+ *
+ * 🔴 RED at `origin/main` on the backtick, emphasis and hard-wrap tests: main passes
+ * `manifest.description` straight into `<Text className="line-clamp-3">`, so the
+ * rendered text still carries the markdown punctuation.
+ */
+describe('AppBlockCard description — plain-text projection', () => {
+  /** The card's description node, read by its rendered text content. */
+  function descriptionText(): string {
+    const el = document.querySelector('.line-clamp-3');
+    if (!el) throw new Error('no .line-clamp-3 description node on the card');
+    return el.textContent ?? '';
+  }
+
+  test('🔴 a backticked token loses its backticks and keeps its content', async () => {
+    renderWithProviders(
+      <AppBlockCard
+        block={makeBlock({ description: 'Use `{style}` and `#tag` here.' })}
+        alreadySubscribed={false}
+        onOpen={onOpen}
+      />
+    );
+    await expect.element(page.getByRole('button', { name: /view details/i })).toBeInTheDocument();
+    expect(descriptionText()).toBe('Use {style} and #tag here.');
+  });
+
+  test('🔴 emphasis markers do not reach the grid', async () => {
+    renderWithProviders(
+      <AppBlockCard
+        block={makeBlock({ description: 'a **bold** and _italic_ word' })}
+        alreadySubscribed={false}
+        onOpen={onOpen}
+      />
+    );
+    await expect.element(page.getByRole('button', { name: /view details/i })).toBeInTheDocument();
+    expect(descriptionText()).toBe('a bold and italic word');
+  });
+
+  test('🔴 hard line wraps collapse into single spaces', async () => {
+    renderWithProviders(
+      <AppBlockCard
+        block={makeBlock({ description: 'wrapped at a fixed\ncolumn width by hand' })}
+        alreadySubscribed={false}
+        onOpen={onOpen}
+      />
+    );
+    await expect.element(page.getByRole('button', { name: /view details/i })).toBeInTheDocument();
+    expect(descriptionText()).toBe('wrapped at a fixed column width by hand');
+  });
+
+  // MEASURED GREEN AT BASE → INVARIANT GUARD, not regression coverage for this
+  // change. At base the card passed raw source into a `<Text>`, so it rendered no
+  // markdown elements either — the assertion cannot tell the two implementations
+  // apart. Kept because it pins the card as a NON-renderer against a future "just
+  // render markdown everywhere" change, which is a real and tempting mistake. NOT
+  // counted in the red/green matrix.
+  test('invariant: the card renders NO markdown elements — it is text, not a renderer', async () => {
+    renderWithProviders(
+      <AppBlockCard
+        block={makeBlock({
+          description: '# Heading\n\n- one\n- two\n\n[link](https://example.com)',
+        })}
+        alreadySubscribed={false}
+        onOpen={onOpen}
+      />
+    );
+    await expect.element(page.getByRole('button', { name: /view details/i })).toBeInTheDocument();
+    const el = document.querySelector('.line-clamp-3')!;
+    // Positive control first: the text DID render, so the zero counts below are facts
+    // about markdown elements rather than about an empty node.
+    expect(el.textContent).toContain('Heading');
+    expect(el.querySelectorAll('h1, ul, li, a, code, strong, em')).toHaveLength(0);
+  });
+
+  test('invariant: plain prose is unchanged', async () => {
+    // Green at base AND at HEAD. Pins that the projection does not mangle ordinary
+    // descriptions, which is the majority case.
+    renderWithProviders(
+      <AppBlockCard
+        block={makeBlock({ description: 'Does a thing.' })}
+        alreadySubscribed={false}
+        onOpen={onOpen}
+      />
+    );
+    await expect.element(page.getByRole('button', { name: /view details/i })).toBeInTheDocument();
+    expect(descriptionText()).toBe('Does a thing.');
+  });
+});

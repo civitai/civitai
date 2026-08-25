@@ -1610,3 +1610,136 @@ describe('AppListingDetailBody — store-scope review seam', () => {
     expect(dropdown.querySelector('[data-testid="apps-listing-review-action"]')).not.toBeNull();
   });
 });
+
+/**
+ * THE DESCRIPTION RENDERS ABOVE THE SCREENSHOTS.
+ *
+ * The reported defect, from the operator looking at the store preview page: "app
+ * listing description should be above screenshots". The description is what tells a
+ * reader what the app IS; the gallery is supporting evidence for that claim, so
+ * leading with pictures made the reader scroll past the answer to reach it.
+ *
+ * 🔴 WHAT IS ASSERTED IS DOCUMENT ORDER, NOT PRESENCE. `compareDocumentPosition` is
+ * the whole point of this block. A test asserting "the description exists and the
+ * gallery exists" passes in EITHER order — green on the broken code AND green on the
+ * fix — which is precisely the defect class here.
+ *
+ * 🔴 NOT A MERGE GATE: this file is in the browser-mode `component` project, which CI
+ * runs only as the preview pipeline's report-only `preview / component-tests` (the
+ * same caveat `.gallery.browser.test.tsx` carries). The blocking half of this change
+ * is `__tests__/appListingDescription.test.ts` in the node project — it gates the
+ * renderer rule but cannot see a node's position. Both are needed; neither substitutes.
+ *
+ * RED at `origin/main` on the `toBe(DOCUMENT_POSITION_FOLLOWING)` assertion: main
+ * renders the gallery first, so the comparison returns DOCUMENT_POSITION_PRECEDING (2)
+ * rather than FOLLOWING (4). Full matrix in the PR body.
+ */
+describe('AppListingDetailBody — description / screenshot order', () => {
+  /** A listing with BOTH — the only shape in which an ordering claim is meaningful. */
+  function withBoth(over: Partial<ListingDetail> = {}) {
+    return base({
+      description: 'The description body.',
+      // Distinct, non-round URLs so nothing below can match a hardcoded constant.
+      screenshots: [
+        { url: 'https://cdn.example/shot-7311.png', caption: 'first' },
+        { url: 'https://cdn.example/shot-9427.png', caption: 'second' },
+      ],
+      ...over,
+    });
+  }
+
+  /**
+   * `compareDocumentPosition(description, gallery)`.
+   *
+   * 🔴 Throws when either node is missing rather than returning a falsy value. A
+   * helper that returned 0 for an absent node would let every ordering assertion
+   * pass vacuously the moment a testid was renamed — the reassuring-zero failure
+   * mode. Failing loudly is what makes a green here mean both nodes were found.
+   */
+  function comparePositions(container: HTMLElement): number {
+    const description = container.querySelector('[data-testid="apps-listing-description"]');
+    const gallery = container.querySelector('[data-testid="apps-listing-screenshot-grid"]');
+    if (!description) throw new Error('no [data-testid="apps-listing-description"] in the tree');
+    if (!gallery) throw new Error('no [data-testid="apps-listing-screenshot-grid"] in the tree');
+    return description.compareDocumentPosition(gallery);
+  }
+
+  test('🔴 the description precedes the screenshot gallery in document order', async () => {
+    const { container } = await renderScoped(<AppListingDetailBody detail={withBoth()} />);
+    // DOCUMENT_POSITION_FOLLOWING (4) = "the gallery comes AFTER the description".
+    // An exact `toBe` against the named constant, not a bitmask test: the nodes are
+    // siblings in one subtree, so exactly one bit is set, and an exact comparison
+    // cannot be satisfied by an unrelated CONTAINS/CONTAINED_BY bit.
+    expect(comparePositions(container)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+
+  test('🔴 the gallery does NOT precede the description (the inverse, stated directly)', async () => {
+    const { container } = await renderScoped(<AppListingDetailBody detail={withBoth()} />);
+    expect(comparePositions(container) & Node.DOCUMENT_POSITION_PRECEDING).toBe(0);
+  });
+
+  test('🔴 both sit in the MAIN column, description first', async () => {
+    // Guards a "fix" that satisfied document order by moving the description into
+    // the right rail — a different, wrong change. Pins the RELATIONSHIP (same
+    // parent column + order), not just the order.
+    const { container } = await renderScoped(<AppListingDetailBody detail={withBoth()} />);
+    const mainCol = container.querySelector('[data-testid="apps-listing-main-col"]');
+    expect(mainCol).not.toBeNull();
+    const description = mainCol!.querySelector('[data-testid="apps-listing-description"]');
+    const gallery = mainCol!.querySelector('[data-testid="apps-listing-screenshot-grid"]');
+    expect(description).not.toBeNull();
+    expect(gallery).not.toBeNull();
+    expect(description!.compareDocumentPosition(gallery!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+
+  // MEASURED GREEN AT BASE → INVARIANT GUARD, not regression coverage. This surface
+  // already rendered markdown before this change; what changed is that the OTHER
+  // full surfaces now match it. Kept because the reorder and the new allowlist both
+  // touch this call site, and a regression to plain text here would be silent.
+  // NOT counted in the red/green matrix.
+  test('invariant: the description renders markdown — a backticked token becomes a code span', async () => {
+    // The renderer half of the rule, at the surface. A description using backticks
+    // for literal syntax must not show the backticks.
+    const { container } = await renderScoped(
+      <AppListingDetailBody detail={withBoth({ description: 'Use `{style}` here.' })} />
+    );
+    expect(container.querySelector('.markdown-content code')?.textContent).toBe('{style}');
+  });
+
+  test('🔴 the description renders NO <img>, even when the markdown asks for one', async () => {
+    // `img` is excluded from APP_LISTING_DESCRIPTION_ALLOWED_ELEMENTS. Asserted here
+    // through a real render because the array test in the node project proves the
+    // array's CONTENTS, not that this array is the one handed to react-markdown.
+    const { container } = await renderScoped(
+      <AppListingDetailBody
+        detail={withBoth({ description: 'before ![alt](https://cdn.example/x.png) after' })}
+      />
+    );
+    const markdown = container.querySelector('.markdown-content');
+    expect(markdown).not.toBeNull();
+    // Positive control for the negative assertion: the surrounding text DID render,
+    // so an img count of 0 is a fact about images — not about a markdown block that
+    // never mounted.
+    expect(markdown!.textContent).toContain('before');
+    expect(markdown!.textContent).toContain('after');
+    expect(markdown!.querySelectorAll('img')).toHaveLength(0);
+  });
+
+  // ── invariant guards: green at base, LABELLED as such, not counted as
+  //    regression coverage for the reorder ─────────────────────────────────────
+  test('invariant: no description → the gallery still renders', async () => {
+    const { container } = await renderScoped(
+      <AppListingDetailBody detail={withBoth({ description: null })} />
+    );
+    expect(container.querySelector('[data-testid="apps-listing-description"]')).toBeNull();
+    expect(container.querySelector('[data-testid="apps-listing-screenshot-grid"]')).not.toBeNull();
+  });
+
+  test('invariant: no screenshots → the description still renders', async () => {
+    const { container } = await renderScoped(
+      <AppListingDetailBody detail={withBoth({ screenshots: [] })} />
+    );
+    expect(container.querySelector('[data-testid="apps-listing-description"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="apps-listing-screenshot-grid"]')).toBeNull();
+  });
+});
