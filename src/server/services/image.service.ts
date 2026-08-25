@@ -1603,6 +1603,34 @@ const imageMetricsClickhouseTimeoutCounter = registerCounter({
 });
 
 /**
+ * Who may ask for unpublished content, and over whose work.
+ *
+ * A moderator may ask about anyone. Everyone else may ask only about themselves,
+ * and only when the request is ALREADY scoped to them — the scoping is the
+ * authorization, not a separate check that could drift from it. An unscoped
+ * `notPublished` from a non-moderator would otherwise return every draft on the
+ * site, so a missing `targetUserId` must refuse rather than default.
+ *
+ * `targetUserId` is the creator being browsed, NOT the viewer. Those are
+ * different fields on every path here (`getAllImages` calls the viewer `userId`
+ * and the creator `targetUserId`; the search builders call the creator `userId`
+ * and the viewer `currentUserId`), and passing the wrong one turns this into a
+ * check that always passes.
+ */
+function canRequestUnpublished({
+  isModerator,
+  currentUserId,
+  targetUserId,
+}: {
+  isModerator?: boolean;
+  currentUserId?: number | null;
+  targetUserId?: number | null;
+}) {
+  if (isModerator) return true;
+  return !!currentUserId && !!targetUserId && targetUserId === currentUserId;
+}
+
+/**
  * Resolve the `hideChallenges` flag into an `excludedTagIds` entry, in place.
  * Mirrors `enforceBlockedBrowsingTags`: the client sends intent, the server owns
  * the tag id, and every query path picks it up from `excludedTagIds` unchanged.
@@ -1675,6 +1703,7 @@ export const getAllImages = async (
     pending,
     publishedOnly,
     notPublished,
+    scheduled,
     tools,
     techniques,
     baseModels,
@@ -1832,13 +1861,26 @@ export const getAllImages = async (
     AND.push(Prisma.sql`(i.meta IS NOT NULL AND i.meta ? 'civitaiResources')`);
   }
   // [x]
-  if (notPublished && isModerator) {
+  if (notPublished && canRequestUnpublished({ isModerator, currentUserId: userId, targetUserId })) {
     AND.push(Prisma.sql`(p."publishedAt" IS NULL)`);
   } else if (!effectivePending) {
-    if (userId && !publishedOnly) {
-      // userId is bound into the SQL, so each user gets their own cache key —
-      // safe to cache, lower hit rate but no cross-user leakage.
-      AND.push(Prisma.sql`(p."publishedAt" < now() OR p."userId" = ${userId})`);
+    // Strict published-only, with the owner carve-out gated on the `scheduled`
+    // opt-in — the same rule the two Meili builders and the BitDex merge apply,
+    // so all three backends now answer this question identically.
+    //
+    // The carve-out used to be a bare `p."userId" = <viewer>` with no publish
+    // predicate and no opt-in, so every signed-in caller got their own drafts,
+    // bounty entry uploads and orphans mixed into EVERY feed whether or not they
+    // asked. `p."publishedAt" > now()` is what makes it mean scheduled rather
+    // than unpublished; drafts have a NULL publish time and are reached through
+    // the Draft toggle instead (`notPublished`, handled above).
+    //
+    // userId is bound into the SQL, so each user gets their own cache key —
+    // safe to cache, lower hit rate but no cross-user leakage.
+    if (userId && !publishedOnly && scheduled) {
+      AND.push(
+        Prisma.sql`(p."publishedAt" < now() OR (p."userId" = ${userId} AND p."publishedAt" > now()))`
+      );
     } else {
       AND.push(Prisma.sql`(p."publishedAt" < now())`);
     }
@@ -3322,6 +3364,26 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
     input = { ...input, userId: targetUser.id };
   }
 
+  // A creator asking for their OWN drafts declines for the same reason a
+  // moderator's request does: `wantsUnpublished` below reads `scheduled` alone
+  // for a non-moderator, so BitDex would answer a drafts request with the
+  // PUBLISHED feed — a non-empty result that suppresses the Meili fallback and
+  // shows the creator a population that is not the one they asked for.
+  //
+  // 🔴 Deliberately AFTER the username resolution above, not beside the
+  // moderator decline. The comparison needs the RESOLVED creator id: a request
+  // addressed by handle carries no `userId` at that point, so the same check
+  // placed earlier reads `undefined === <caller>` and never fires — the request
+  // would go on to be answered wrongly, silently, on exactly the profile page
+  // this feature is for.
+  //
+  // Scoped to the caller's own profile, matching `canRequestUnpublished`. An
+  // unscoped or someone-else's `notPublished` from a non-moderator is refused by
+  // the filter builders instead, because there is nothing to fall back TO —
+  // Meili will not answer that either.
+  if (input.notPublished && !!input.currentUserId && input.userId === input.currentUserId)
+    return null;
+
   // Which cohort this run belongs to. Read once so the three emit points below
   // cannot disagree, and computed here rather than at each call so a later
   // caller-mode cannot be added to one of them and missed by the others.
@@ -4714,10 +4776,15 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   if (fromPlatform) filters.push(makeMeiliImageSearchFilter('onSite', '= true'));
 
   const snappedNow = snapToInterval(Math.round(Date.now()));
-  if (isModerator) {
-    if (notPublished) filters.push(makeMeiliImageSearchFilter('publishedAtUnix', 'NOT EXISTS'));
-    else if (scheduled)
-      filters.push(makeMeiliImageSearchFilter('publishedAtUnix', `> ${snappedNow}`));
+  // Hoisted above the moderator branch so a creator browsing their OWN profile
+  // reaches it too. `canRequestUnpublished` is what keeps that safe: it refuses
+  // unless the request is already scoped to the caller, so a non-moderator
+  // cannot ask this question about the site at large. Moderator behaviour is
+  // unchanged — they still answer true for any creator.
+  if (notPublished && canRequestUnpublished({ isModerator, currentUserId, targetUserId: userId })) {
+    filters.push(makeMeiliImageSearchFilter('publishedAtUnix', 'NOT EXISTS'));
+  } else if (isModerator) {
+    if (scheduled) filters.push(makeMeiliImageSearchFilter('publishedAtUnix', `> ${snappedNow}`));
     else {
       const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snappedNow}`)];
       // `publishedOnly` is the caller saying it cannot use an unpublished row at
@@ -5647,10 +5714,12 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
 
   // Publish Date Filtering.
   const snappedNow = snapToInterval(Date.now());
-  if (isModerator) {
-    if (notPublished) filters.push(makeMeiliImageSearchFilter('publishedAtUnix', 'NOT EXISTS'));
-    else if (scheduled)
-      filters.push(makeMeiliImageSearchFilter('publishedAtUnix', `> ${snappedNow}`));
+  // Hoisted above the moderator branch so a creator browsing their OWN profile
+  // reaches it too — see the matching block in getImagesFromSearchPreFilter.
+  if (notPublished && canRequestUnpublished({ isModerator, currentUserId, targetUserId: userId })) {
+    filters.push(makeMeiliImageSearchFilter('publishedAtUnix', 'NOT EXISTS'));
+  } else if (isModerator) {
+    if (scheduled) filters.push(makeMeiliImageSearchFilter('publishedAtUnix', `> ${snappedNow}`));
     else {
       const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snappedNow}`)];
       // `publishedOnly` is the caller saying it cannot use an unpublished row at

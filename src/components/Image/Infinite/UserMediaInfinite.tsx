@@ -5,6 +5,7 @@ import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import React from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { SortFilter } from '~/components/Filters';
+import { FeedContentToggle } from '~/components/FeedContentToggle/FeedContentToggle';
 import { MediaFiltersDropdown } from '~/components/Image/Filters/MediaFiltersDropdown';
 import type { ImageSections } from '~/components/Image/image.utils';
 import { useImageQueryParams } from '~/components/Image/image.utils';
@@ -55,6 +56,7 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
 
   const isSameUser =
     !!currentUser && postgresSlugify(currentUser.username) === postgresSlugify(username);
+  const isModerator = currentUser?.isModerator ?? false;
   const section = isSameUser ? query.section ?? 'images' : 'images';
   const viewingReactions = section === 'reactions';
 
@@ -77,6 +79,21 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
                     value={section}
                     type={type}
                     onChange={(section) => replace({ section })}
+                  />
+                )}
+                {/* Drafts are the creator's own unpublished work, so the toggle
+                    belongs to whoever may see it: the creator on their own
+                    profile, and a moderator on anyone's. The server decides that
+                    independently in `canRequestUnpublished` — this only decides
+                    whether to offer the control. Hidden under Reactions, which is
+                    a view of other people's posts. */}
+                {(isSameUser || isModerator) && !viewingReactions && (
+                  <FeedContentToggle
+                    size="xs"
+                    value={notPublished ? 'draft' : 'published'}
+                    onChange={(value) =>
+                      replace({ notPublished: value === 'draft' ? true : undefined })
+                    }
                   />
                 )}
                 {viewingReactions && (
@@ -130,6 +147,12 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
                   size="compact-sm"
                   className="w-full justify-center"
                   hideMediaTypes
+                  // The Published/Draft toggle above owns this on these two tabs,
+                  // so the moderator chip would be a second control for the same
+                  // state. Dropped HERE only — the chip is the sole way to reach
+                  // unpublished content on /images, /videos, collections, tool
+                  // feeds and model galleries, none of which have a toggle.
+                  exclude={['notPublished']}
                   isSameUser={isSameUser}
                 />
               </Group>
