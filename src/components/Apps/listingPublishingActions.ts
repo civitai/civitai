@@ -41,6 +41,19 @@ import type { AppRole } from '~/shared/constants/app-capabilities.constants';
  * buttons. Deleting it here without that replacement guard would have been the #4154 shape
  * a third time.
  *
+ * 🔴 SCOPE, STATED EXACTLY, BECAUSE THE OVERCLAIM IS THE DANGEROUS PART. The ledger sees
+ * the controls inside the Publishing panel's ACTION CONTAINER and nothing else. It does not
+ * see the panel's own explanatory alerts, the confirmation modal's Cancel/Unpublish buttons,
+ * the History tab's Withdraw buttons, or any other tab. The modal half is MEASURED rather
+ * than assumed — `ListingPublishingPanel.browser.test.tsx`'s "the ledger does not see the
+ * confirmation modal's own buttons" opens it and re-reads the set — because "it is in a
+ * portal so it cannot be in the container" is a claim about Mantine's rendering, and this
+ * paragraph is the wrong place to be guessing about someone else's implementation.
+ * An earlier version of this paragraph — on the `/apps/mine` row it replaces
+ * — said "every author-facing control", which is false, and false in the worst direction:
+ * it is exactly the sentence a future consolidation would cite as proof of coverage it does
+ * not have. That is how the bug this ledger exists to catch happened in the first place.
+ *
  * 🔴 THE STATE MACHINE ITSELF IS NOT RE-DERIVED HERE. `ownerListingState` in
  * `offsiteOwnerControls.ts` is the single client mirror of the server guard in
  * `offsite-moderation.service.ts#republishOwnListing` (the last moderation event must be

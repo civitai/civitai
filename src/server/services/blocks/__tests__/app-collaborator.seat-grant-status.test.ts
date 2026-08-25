@@ -23,11 +23,22 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  *
  * ## Scope, stated exactly
  *
- * It guards the TWO GRANT PATHS ONLY — `invite`, and `respondToInvite` on an ACCEPT.
+ * It guards the TWO SEAT-GRANT PATHS ONLY — `invite`, and `respondToInvite` on an ACCEPT.
  * `remove`, `leave`, `setDisplayed`, a DECLINE and `list` are deliberately unguarded: each
  * either REDUCES access or is a read, and refusing them on a removed listing would strand an
  * owner who wants to revoke a seat on the app that was just taken down. Every one of those is
  * asserted below as a control, so "the guard is too wide" is a red rather than a review note.
+ *
+ * 🔴 "EVERY ONE OF THOSE" WAS FALSE WHEN IT WAS FIRST WRITTEN. `setDisplayed` was named in
+ * that sentence, in `assertSeatGrantable`'s docblock and in the PR body, and had no test
+ * anywhere in the tree. Behaviourally it was fine — the guard genuinely does not reach it —
+ * but a coverage claim that reads as protection and provides none is the exact class the
+ * ledger in this PR exists to prevent, arrived at from the other direction. The case is
+ * below; the sentence is now true.
+ *
+ * 🔴 REPO-GRANT SCOPE: this file is about the SEAT paths. `grantAppRepoWrite` has a third
+ * caller (ownership transfer) that is knowingly NOT status-guarded — see
+ * `app-repo-grant-callers.test.ts`, which pins the whole surface as a set.
  */
 
 const { mockRepo, mockNotify } = vi.hoisted(() => ({
@@ -52,8 +63,14 @@ vi.mock('~/server/services/blocks/app-collaborator-notify', () => mockNotify);
  */
 const { dbMock } = await import('~/__tests__/mocks/db.mock');
 
-const { inviteCollaborator, respondToInvite, removeCollaborator, leaveApp, listCollaborators } =
-  await import('~/server/services/blocks/app-collaborator.service');
+const {
+  inviteCollaborator,
+  respondToInvite,
+  removeCollaborator,
+  leaveApp,
+  listCollaborators,
+  setCollaboratorDisplayed,
+} = await import('~/server/services/blocks/app-collaborator.service');
 
 const OWNER = 41;
 const TARGET = 42;
@@ -107,6 +124,74 @@ beforeEach(() => {
   dbMock.dbWrite.appCollaborator.updateMany.mockClear();
   dbMock.dbWrite.appCollaborator.deleteMany.mockClear();
   dbMock.dbWrite.appOwnershipEvent.create.mockClear();
+});
+
+/**
+ * 🔴 THE FAIL-CLOSED DEFAULT, WHICH HAD NO KILLING TEST UNTIL AN AUDIT MUTATED IT.
+ *
+ * `toSeatListing` reads the column as `row.status ?? ''`. An audit flipped that to
+ * `?? 'approved'` — fail-OPEN — and the four collaborator suites reported **156/156
+ * passed**: SURVIVED. The instrument was fine (neutering `assertSeatGrantable` on the same
+ * command gives 6 failed / 150 passed), so the mutant genuinely was not covered.
+ *
+ * 🔴 AND THE CAUSE WAS THIS PR'S OWN FIXTURE FIX. Adding the seat-grant guard made the
+ * status column load-bearing, which reddened 33 existing tests whose fixtures never set it;
+ * the fix was to add `status: 'approved'` to all seven rows of the shared listing table.
+ * That is correct — production rows always have a status — but it removed the LAST fixture
+ * that could reach the defaulting branch, so the branch became unreachable and its mutant
+ * became unkillable. A blanket fixture fix silently deleting the only witness to a guard is
+ * the shape worth remembering: the tests went green and coverage went DOWN.
+ *
+ * So the branch gets an explicit fixture that OMITS the column, here rather than in the
+ * shared table — putting it there would re-break the 33.
+ */
+describe('🔴 a seat listing whose status column is ABSENT fails CLOSED', () => {
+  /** Distinct id and slug from every other fixture, and no `status` key at all. */
+  function withNoStatusColumn() {
+    dbMock.dbRead.appListing.findUnique.mockImplementation(
+      async (args: unknown): Promise<unknown> => {
+        const w = (args as { where: { id?: string } }).where;
+        if (w.id !== LISTING) return null;
+        const row = seatListing('approved') as Record<string, unknown>;
+        delete row.status;
+        return row;
+      }
+    );
+  }
+
+  it('refuses an INVITE, and writes nothing', () => {
+    withNoStatusColumn();
+    return expect(
+      inviteCollaborator({ appListingId: LISTING, targetUserId: TARGET, actorUserId: OWNER })
+    )
+      .rejects.toMatchObject({ code: 'INVALID_TARGET' })
+      .then(() => {
+        expect(dbMock.dbWrite.appCollaborator.upsert).not.toHaveBeenCalled();
+      });
+  });
+
+  it('refuses an ACCEPT, and grants no repo write', async () => {
+    withNoStatusColumn();
+    await expect(
+      respondToInvite({ appListingId: LISTING, userId: TARGET, accept: true })
+    ).rejects.toMatchObject({ code: 'INVALID_TARGET' });
+    expect(mockRepo.grantAppRepoWrite).not.toHaveBeenCalled();
+  });
+
+  it('🔴 the SAME fixture WITH the column admits both (the control arm)', async () => {
+    // 🔴 THE POSITIVE CONTROL THAT MAKES THE TWO REFUSALS ABOUT THE COLUMN. Without it,
+    // both cases above are satisfied by any fixture that breaks the read entirely — a
+    // `null` row, a thrown mock — and would still pass with the defaulting branch deleted.
+    // The only difference between this arm and those two is the presence of `status`.
+    withStatus('approved');
+    await expect(
+      inviteCollaborator({ appListingId: LISTING, targetUserId: TARGET, actorUserId: OWNER })
+    ).resolves.toMatchObject({ status: 'pending' });
+    await expect(
+      respondToInvite({ appListingId: LISTING, userId: TARGET, accept: true })
+    ).resolves.toMatchObject({ status: 'accepted' });
+    expect(mockRepo.grantAppRepoWrite).toHaveBeenCalledTimes(1);
+  });
 });
 
 /* ------------------------------------------------------------------ *
@@ -226,6 +311,21 @@ describe('🔴 the guard is on the GRANT paths only — access-REDUCING ones sta
     withStatus('removed');
     const result = await leaveApp({ appListingId: LISTING, userId: TARGET });
     expect(result).toMatchObject({ removed: true });
+  });
+
+  it('a collaborator can still change their own BYLINE flag on a removed listing', async () => {
+    // 🔴 THE CASE THE PROSE CLAIMED AND DID NOT HAVE. `setDisplayed` is a consent
+    // preference on the seat row — it grants nothing and revokes nothing — so the guard
+    // must not reach it. Without this, "each with its own test" was an overclaim.
+    withStatus('removed');
+    dbMock.dbRead.appCollaborator.findFirst.mockResolvedValue({ userId: TARGET });
+    dbMock.dbWrite.appCollaborator.updateMany.mockResolvedValue({ count: 1 });
+    const result = await setCollaboratorDisplayed({
+      appListingId: LISTING,
+      userId: TARGET,
+      displayed: false,
+    });
+    expect(result).toMatchObject({ appListingId: LISTING, userId: TARGET, displayed: false });
   });
 
   it('the roster is still READABLE on a removed listing — moderators review takedowns', async () => {

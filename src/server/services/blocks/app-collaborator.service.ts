@@ -333,11 +333,21 @@ async function loadSeatListing(appListingId: string): Promise<SeatListing> {
  * gate, and a tRPC procedure is callable without any page at all. So the refusal lives
  * here, where the grant does.
  *
- * 🔴 IT GUARDS THE TWO GRANT PATHS ONLY — `invite` and an ACCEPT. `remove`, `leave`,
- * `setDisplayed` and `list` are deliberately NOT guarded: each either REDUCES access or is
- * a read, and refusing them on a removed listing would strand an owner who wants to revoke
- * a seat on the app that was just taken down — the opposite of the property being
- * protected. `list` in particular must keep working for moderators reviewing a takedown.
+ * 🔴 IT GUARDS THE TWO **SEAT** GRANT PATHS — `invite` and an ACCEPT — AND NOTHING ELSE.
+ * The qualifier is a correction: this sentence used to read "the two grant paths only",
+ * which reads as an enumeration of the repo-grant SURFACE and is not one.
+ * `grantAppRepoWrite` has a THIRD caller — `app-ownership-transfer.service.ts` on transfer
+ * accept — which reads no status at all and is knowingly NOT guarded here (pre-existing,
+ * consented at both ends, cannot deploy while the block is suspended, and a guard would
+ * break an owner-unpublished handover). That is recorded, with the full reasoning and a
+ * set-equality ledger over every caller, in `app-repo-grant-callers.test.ts` — go there
+ * before assuming this guard closes the grant surface.
+ *
+ * Within the SEAT paths, `remove`, `leave`, `setDisplayed`, a DECLINE and `list` are
+ * deliberately NOT guarded: each either REDUCES access or is a read, and refusing them on a
+ * removed listing would strand an owner who wants to revoke a seat on the app that was just
+ * taken down — the opposite of the property being protected. `list` in particular must keep
+ * working for moderators reviewing a takedown.
  *
  * 🔴 IT USES THE AUTHORABLE SET, NOT THE ROUTE SET. `removed` and `rejected` are both
  * refused, and an unknown status is refused too (`isAuthorableListingStatus` fails closed).

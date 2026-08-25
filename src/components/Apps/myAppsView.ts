@@ -7,10 +7,6 @@ import type {
   ListingCapability,
   ListingKind,
 } from '~/shared/constants/app-capabilities.constants';
-import {
-  canOpenListingAuthoringPage,
-  isAuthorableListingStatus,
-} from '~/shared/constants/app-capabilities.constants';
 
 /**
  * `/apps/mine` — the pure view-model behind the ONE merged author table.
@@ -302,30 +298,6 @@ export function orphanGroupStartsOpen(
  * so the row's link is how the author reaches them, and it must land on the tab that
  * exists rather than on a `?tab=details` the destination will silently rewrite.
  */
-/**
- * May THIS caller open the authoring page for THIS row?
- *
- * 🔴 IT IS BOTH CLAUSES, AND EACH ONE IS THE SOLE CAUSE OF A `false` SOMEWHERE.
- *
- *   - STATUS. `canOpenListingAuthoringPage` fails closed on a status this code has never
- *     heard of. It admits `removed` and `rejected` — the narrowed publishing/history mode —
- *     which is the whole reason this predicate replaced the old `isAuthorableListingStatus`
- *     test at the row's link: those two statuses are exactly the ones whose History used to
- *     be reachable ONLY from the row, and the row is where it stopped being.
- *   - ROLE. On a non-authorable status the narrowed surface is OWNER-ONLY server-side
- *     (`getAppListingAuthoringContext` refuses a seated editor there), so an editor looking
- *     at a removed app gets no link rather than a link to a 403.
- *
- * The two disagree in opposite directions and neither is redundant: an editor on an
- * `approved` listing is `true` by the first clause alone, and an owner on a `removed` one
- * is `true` only because the first clause admits the status — so dropping either flips a
- * different case. `myAppsView.test.ts` pins one per direction.
- */
-export function myAppsRowLinkable(row: { status: string; role: AppRole }): boolean {
-  if (!canOpenListingAuthoringPage(row.status)) return false;
-  return isAuthorableListingStatus(row.status) || row.role === 'owner';
-}
-
 export function myAppListingHref(row: {
   appListingId: string;
   kind: ListingKind;

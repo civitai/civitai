@@ -279,6 +279,35 @@ describe('the ledger — the SET of publishing controls the panel offers, per st
   });
 });
 
+describe('🔴 what the ledger can and cannot see — measured, not assumed', () => {
+  test('the ledger does not see the confirmation modal’s own buttons', async () => {
+    // 🔴 THE SCOPE CLAIM IN `listingPublishingActions.ts`, TURNED INTO A CHECK. That
+    // docblock says the ledger sees the action container and nothing else, and names the
+    // modal's Cancel/Unpublish pair as outside it. That is a claim about where Mantine puts
+    // a `<Modal>` — not something to assert from memory in a comment whose entire subject is
+    // the danger of overclaiming coverage.
+    renderWithProviders(<ListingPublishingPanel {...LIVE_ONSITE} />);
+    // 🔴 AWAIT THE MOUNT BEFORE READING THE DOM. `renderWithProviders` commits
+    // asynchronously in browser mode, so a synchronous `renderedActions()` here races it and
+    // fails with "Cannot find element" against an empty <body> — which reads as the scope
+    // claim being false when it is only the harness being read too early. (It did, on the
+    // first run of this case.)
+    await expect.element(page.getByTestId('apps-publishing-panel')).toBeInTheDocument();
+    const before = renderedActions();
+    expect(before).toEqual(['unpublish']);
+
+    await userEvent.click(page.getByTestId('apps-publishing-unpublish'));
+    // Positive control: the modal really is open, so an unchanged set below is a fact about
+    // the container's contents rather than about a modal that never mounted.
+    await expect.element(page.getByTestId('apps-publishing-unpublish-confirm')).toBeInTheDocument();
+
+    // 🔴 UNCHANGED — and `renderedActions()` throws on any control lacking
+    // `data-author-action`, so if the modal's buttons HAD landed inside the container this
+    // would fail loudly rather than silently growing the set.
+    expect(renderedActions()).toEqual(before);
+  });
+});
+
 describe('the wiring — each control fires the right procedure with the right input', () => {
   test('Unpublish is CONFIRM-GATED, then calls unpublishOwnListing with the listing id', async () => {
     renderWithProviders(<ListingPublishingPanel {...LIVE_ONSITE} />);

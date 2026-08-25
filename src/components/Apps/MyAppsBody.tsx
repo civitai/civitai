@@ -36,7 +36,6 @@ import type { MyAppMediaKind, MyAppRow } from '~/components/Apps/myAppsView';
 import {
   historyStatusColor,
   listingMediaIndex,
-  myAppsRowLinkable,
   listingMediaShots,
   listingStatusColor,
   myAppListingHref,
@@ -48,6 +47,7 @@ import {
 } from '~/components/Apps/myAppsView';
 import { ownerListingState, ownerStateChip } from '~/components/Apps/offsiteOwnerControls';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { canOpenListingAuthoringPage } from '~/shared/constants/app-capabilities.constants';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -251,23 +251,39 @@ function ListingCover({
 /**
  * The app's NAME — a link to the authoring page.
  *
- * 🔴 IT IS NOW A LINK ON EVERY ROW THIS CALLER CAN OPEN, INCLUDING A REMOVED OR REJECTED
- * ONE, and that reversal is load-bearing rather than cosmetic. It used to be plain text on
- * any non-authorable status because `getAppListingAuthoringContext` refused those with
- * FORBIDDEN — linking there offered a guaranteed 403. That route now opens on them in a
- * NARROWED mode (at most Publishing + History; no Details, no Collaborators), and this PR
+ * 🔴 IT IS NOW A LINK ON EVERY ROW WHOSE STATUS THE ROUTE OPENS ON, INCLUDING A REMOVED OR
+ * REJECTED ONE, and that reversal is load-bearing rather than cosmetic. It used to be plain
+ * text on any non-authorable status because `getAppListingAuthoringContext` refused those
+ * with FORBIDDEN — linking there offered a guaranteed 403. That route now opens on them in
+ * a NARROWED mode (at most Publishing + History; no Details, no Collaborators), and this PR
  * moved BOTH the History disclosure and the Unpublish/Republish pair off this row and into
- * that page. So the link is the only way the author reaches either one, and leaving these
- * rows unlinked would strand exactly the population — a rejected or removed app — that
- * needs its history most.
+ * that page. So the link is the only way the author reaches either one, and leaving a
+ * REMOVED row unlinked would strand exactly the population that most needs its history.
  *
- * 🔴 THE PREDICATE READS ROLE AS WELL AS STATUS. The narrowed surface is owner-only
- * server-side, so a seated EDITOR on a removed listing still gets no link — the page would
- * refuse them. `myAppsRowLinkable` in `myAppsView.ts` is the single derivation and is
- * pinned in the blocking `unit` tier.
+ * 🔴 `rejected` RIDES ALONG AS A FAIL-SAFE, NOT AS A SERVED POPULATION. Nothing writes
+ * `AppListing.status = 'rejected'` (measured across all 33 `appListing` write sites: an
+ * on-site reject deletes the draft listing, an off-site reject writes `removed`). The value
+ * is in the DB CHECK and legacy rows may carry it, so linking it is correct — but the
+ * rescue argument above is about `removed` alone. Rejected FIRST VERSIONS are served by the
+ * orphan group further down this page, which is deliberately untouched by this PR.
+ *
+ * 🔴 IT DELIBERATELY DOES **NOT** READ `role`, AND AN EARLIER DRAFT OF THIS FILE DID — on a
+ * premise that was simply false. That draft withheld the link from a seated EDITOR on a
+ * removed listing, justified as "the page would refuse them". It does not:
+ * `resolveListingAccess` returns `role:'editor'` for any accepted seat REGARDLESS of the
+ * listing's status, and `getAppListingAuthoringContext` refuses only on a missing role or a
+ * status the route does not open on — neither of which fires there. The server serves that
+ * editor a History-only page, exactly as `editorTabsFor` says it does. So the role clause
+ * was not a mirror of a server gate; it was an unannounced REGRESSION, because
+ * pre-PR the row's History toggle rendered unconditionally and a seated editor could open a
+ * removed app's history from here. Withholding the link now would leave them no route at
+ * all short of typing the URL.
+ *
+ * The predicate is therefore `canOpenListingAuthoringPage` itself, called directly rather
+ * than wrapped: one rule, one place, and no second name to drift from it.
  */
 function ListingName({ row }: { row: MyAppRow }) {
-  if (myAppsRowLinkable(row)) {
+  if (canOpenListingAuthoringPage(row.status)) {
     return (
       <Link href={myAppListingHref(row)} data-testid={`apps-mine-link-${row.appListingId}`}>
         <Text fw={600}>{row.name}</Text>

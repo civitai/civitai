@@ -1,3 +1,8 @@
+import {
+  APP_LISTING_STATUSES,
+  type AppListingStatus,
+} from '~/server/services/blocks/app-listing-status.constants';
+
 /**
  * App Listing CAPABILITIES — what a listing of a given KIND can support at all.
  *
@@ -180,6 +185,19 @@ export function isPublishableListingStatus(status: string): boolean {
  * heard of — a new lifecycle value, a typo, a column read from somewhere unexpected —
  * refuses the page outright instead of falling into the narrowed branch by default.
  *
+ * 🔴 DERIVED FROM `APP_LISTING_STATUSES`, NOT HAND-COPIED, and that changed after review.
+ * It was five string literals restating the same value space, with nothing tying them to
+ * the one constant that HAS a migration-agreement test against the `app_listings_status_check`
+ * DB CHECK. The failure mode of a hand-copy here is quiet and total: add a sixth lifecycle
+ * status and this list would not know about it, so `canOpenListingAuthoringPage` would
+ * return `false` and the authoring page would FORBID that entire cohort — fail-closed, but a
+ * complete outage for them, with no test going red. Deriving makes that drift impossible
+ * rather than merely detectable.
+ *
+ * If a future status must be EXCLUDED from the route, replace the alias with an explicit
+ * filter over `APP_LISTING_STATUSES` — never with a fresh literal list. The equality case in
+ * `myAppsView.test.ts` is the tripwire for exactly that edit.
+ *
  * 🔴 WHY THE ROUTE OPENS ON `removed` AT ALL. Both an owner Unpublish and a moderator
  * takedown write `status='removed'`. While this route refused that status, an owner who
  * unpublished their own app could not reach Republish from the canonical editor — a
@@ -187,13 +205,7 @@ export function isPublishableListingStatus(status: string): boolean {
  * civitai/civitai#4218 exists to prevent, so the fix is to open the route and withhold the
  * tabs, never to widen {@link AUTHORABLE_LISTING_STATUSES}.
  */
-export const LISTING_AUTHORING_ROUTE_STATUSES = [
-  'draft',
-  'pending',
-  'approved',
-  'removed',
-  'rejected',
-] as const;
+export const LISTING_AUTHORING_ROUTE_STATUSES: readonly AppListingStatus[] = APP_LISTING_STATUSES;
 
 /**
  * May the authoring route open on this status at all (full OR narrowed)?

@@ -33,6 +33,8 @@ const mocks = vi.hoisted(() => ({
   queryCalls: [] as Array<{ appListingId: string }>,
   /** `[procedureName, input]` for every withdraw fired, in order. */
   calls: [] as Array<[string, unknown]>,
+  /** Every `utils.appListings.<proc>.invalidate()` the panel issues, by procedure name. */
+  invalidated: [] as string[],
   appBlocksFlag: true,
 }));
 
@@ -58,8 +60,15 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
   trpc: {
     useUtils: () => ({
       appListings: {
-        listingHistory: { invalidate: vi.fn() },
-        listMine: { invalidate: vi.fn() },
+        // 🔴 RECORDED BY NAME. "refetchHistory ran" says nothing about WHICH reads it
+        // refreshed, and a withdraw can delete the listing this page is rendering — see
+        // the invalidation case below.
+        listingHistory: { invalidate: () => mocks.invalidated.push('listingHistory') },
+        listMine: { invalidate: () => mocks.invalidated.push('listMine') },
+        getAuthoringContext: { invalidate: () => mocks.invalidated.push('getAuthoringContext') },
+        listMyOrphanedSubmissions: {
+          invalidate: () => mocks.invalidated.push('listMyOrphanedSubmissions'),
+        },
       },
     }),
     appListings: {
@@ -117,6 +126,7 @@ beforeEach(() => {
   mocks.error = null;
   mocks.queryCalls = [];
   mocks.calls = [];
+  mocks.invalidated = [];
   mocks.appBlocksFlag = true;
 });
 
@@ -314,6 +324,70 @@ describe('the container — one listing-keyed read, and the source-keyed withdra
     await expect.element(btn).toBeInTheDocument();
     await userEvent.click(btn.element());
     expect(mocks.calls).toEqual([['withdrawExternalRequest', { publishRequestId: 'lst_m8' }]]);
+  });
+
+  /**
+   * 🔴 A WITHDRAW CAN DELETE THE LISTING THIS PAGE IS RENDERING, so the reads it refreshes
+   * are not a hygiene detail — they are what stops the page describing a row that is gone.
+   *
+   * `withdrawRequest` calls `deleteOnsiteDraftListingForSlug`, which hard-deletes the
+   * pre-approval `draft` listing to release the slug. `draft` is authorable, so this panel
+   * is reachable on exactly that listing, and the withdrawn submission moves to
+   * `listMyOrphanedSubmissions` — the only surface it has left.
+   *
+   * 🔴 THE PATH IS NEW TO THIS PR. On `/apps/mine` the same panel was a row disclosure whose
+   * container invalidated THREE reads, orphans included. Moving it onto the authoring page
+   * and carrying over only two dropped both of the reads that notice.
+   */
+  test('🔴 a withdraw refreshes the tab set AND the orphan group, not just the stream', async () => {
+    mocks.entries = [
+      entry({ id: 'first_ver_p4', source: 'version', status: 'pending', canWithdraw: true }),
+    ];
+    renderWithProviders(<ListingHistoryPanel appListingId="apl_draft_first" />);
+    const btn = page.getByTestId('apps-history-withdraw-first_ver_p4');
+    await expect.element(btn).toBeInTheDocument();
+    await userEvent.click(btn.element());
+
+    // The mutation fired — the positive control for the four names below, so an empty
+    // `invalidated` list cannot pass as "nothing needed refreshing".
+    expect(mocks.calls).toEqual([['withdrawPublishRequest', { publishRequestId: 'first_ver_p4' }]]);
+
+    // 🔴 NAMED, AND ALL FOUR. `getAuthoringContext` is the read the whole tab set derives
+    // from, so without it the page keeps rendering Details/Collaborators for a listing that
+    // no longer exists. `listMyOrphanedSubmissions` is where the withdrawn submission now
+    // lives, so without it that group is stale until a full reload.
+    expect([...mocks.invalidated].sort()).toEqual([
+      'getAuthoringContext',
+      'listMine',
+      'listMyOrphanedSubmissions',
+      'listingHistory',
+    ]);
+  });
+
+  test('🔴 a LISTING-source withdraw refreshes the same four reads', async () => {
+    // The off-site sibling proc. It does not delete a draft listing, but it does change the
+    // request stream and `AppListing` state the tab set reads, and a caller should not have
+    // to know which of the two procs fired to know the page is consistent afterwards.
+    mocks.entries = [
+      entry({
+        id: 'lst_w2',
+        source: 'listing',
+        status: 'pending',
+        version: null,
+        canWithdraw: true,
+      }),
+    ];
+    renderWithProviders(<ListingHistoryPanel appListingId="apl_off_w2" />);
+    const btn = page.getByTestId('apps-history-withdraw-lst_w2');
+    await expect.element(btn).toBeInTheDocument();
+    await userEvent.click(btn.element());
+    expect(mocks.calls).toEqual([['withdrawExternalRequest', { publishRequestId: 'lst_w2' }]]);
+    expect([...mocks.invalidated].sort()).toEqual([
+      'getAuthoringContext',
+      'listMine',
+      'listMyOrphanedSubmissions',
+      'listingHistory',
+    ]);
   });
 
   test('🔴 the container passes the store flag through to the version-withdraw gate', async () => {

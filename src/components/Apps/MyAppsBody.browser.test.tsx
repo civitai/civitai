@@ -727,14 +727,21 @@ describe('🔴 per-row gating survives the merge, and now reads ROLE as well as 
    * The edit affordance is the NAME LINK, and it is withheld exactly when
    * `getAppListingAuthoringContext` would refuse the caller.
    *
-   * 🔴 THE RULE INVERTED FOR THE OWNER OF A REMOVED/REJECTED APP, and that inversion is
-   * this PR. Those rows used to be dimmed text because the authoring route refused any
-   * non-authorable status. The route now opens on them in a NARROWED mode — at most
-   * Publishing + History, never Collaborators — and this PR moved BOTH the History
-   * disclosure and the Unpublish/Republish pair off this row and onto that page. So an
-   * unlinked removed row would now strand its owner with no route to either. The gate did
-   * not disappear; it moved to `myAppsRowLinkable`, which still withholds the link from a
-   * seated EDITOR on those statuses (the narrowed surface is owner-only server-side).
+   * 🔴 THE RULE INVERTED FOR A REMOVED/REJECTED APP, and that inversion is this PR. Those
+   * rows used to be dimmed text because the authoring route refused any non-authorable
+   * status. The route now opens on them in a NARROWED mode — at most Publishing + History,
+   * never Collaborators — and this PR moved BOTH the History disclosure and the
+   * Unpublish/Republish pair off this row and onto that page. So an unlinked removed row
+   * would now strand whoever is looking at it with no route to either.
+   *
+   * 🔴 IT DOES NOT READ `role`, AND AN EARLIER DRAFT DID — on a false premise. That draft
+   * withheld the link from a seated EDITOR on a removed listing, and the test name said
+   * "the page would refuse them". It does not: `resolveListingAccess` returns `role:'editor'`
+   * for any accepted seat regardless of the listing's status, so the authoring context is
+   * served and `editorTabsFor` hands that editor `['history']`. The clause was therefore not
+   * a mirror of a server gate but an unannounced REGRESSION — the pre-PR row rendered its
+   * History toggle unconditionally, so an editor could already open a removed app's history
+   * here. The case below is that one, corrected and inverted.
    */
   test('🔴 a REMOVED row DOES link for its owner — and lands on Publishing, not Details', async () => {
     renderWithProviders(
@@ -755,7 +762,7 @@ describe('🔴 per-row gating survives the merge, and now reads ROLE as well as 
     expect(page.getByTestId('apps-mine-unlinked-apl_rm').elements()).toHaveLength(0);
   });
 
-  test('🔴 a REJECTED row links its owner to HISTORY — the reviewer reason has one home', async () => {
+  test('🔴 a REJECTED row links its owner to HISTORY — a FAIL-SAFE branch, not a live cohort', async () => {
     renderWithProviders(
       <MyAppsBodyView
         rows={[row({ appListingId: 'apl_rj', status: 'rejected', kind: 'offsite', role: 'owner' })]}
@@ -768,10 +775,16 @@ describe('🔴 per-row gating survives the merge, and now reads ROLE as well as 
     // 🔴 NOT `publishing`: a rejected listing never reached the store, so there is no
     // control to offer and `editorTabsFor` withholds that tab too. A different first tab
     // from the removed case above, so a mutant that hardcodes either literal fails once.
+    //
+    // 🔴 SCOPE OF THIS CASE, STATED SO IT IS NOT MIS-CITED: nothing writes
+    // `AppListing.status = 'rejected'` today — an on-site reject deletes the draft listing,
+    // an off-site reject writes `removed`. This pins a FAIL-SAFE for a value the DB CHECK
+    // permits and legacy rows may carry. It is not evidence that a live cohort was rescued;
+    // rejected first versions are served by the orphan group, which this PR left alone.
     expect(a.element().getAttribute('href')).toBe('/apps/listing/apl_rj/edit?tab=history');
   });
 
-  test('🔴 a seated EDITOR on a REMOVED row still gets NO link — the page would refuse them', async () => {
+  test('🔴 a seated EDITOR on a REMOVED row DOES link — to History, which the page serves them', async () => {
     renderWithProviders(
       <MyAppsBodyView
         rows={[row({ appListingId: 'apl_seat_rm', status: 'removed', role: 'editor' })]}
@@ -779,10 +792,27 @@ describe('🔴 per-row gating survives the merge, and now reads ROLE as well as 
     );
     await expect.element(page.getByTestId('apps-mine-inactive-toggle')).toBeInTheDocument();
     await userEvent.click(page.getByTestId('apps-mine-inactive-toggle').element());
-    // Same status as `apl_rm` above, different role — so this case isolates the ROLE clause
-    // of `myAppsRowLinkable`, and a mutant that drops it turns exactly this one red.
-    await expect.element(page.getByTestId('apps-mine-unlinked-apl_seat_rm')).toBeInTheDocument();
-    expect(page.getByTestId('apps-mine-link-apl_seat_rm').elements()).toHaveLength(0);
+    const a = page.getByTestId('apps-mine-link-apl_seat_rm');
+    await expect.element(a).toBeInTheDocument();
+    // 🔴 `?tab=history`, NOT `?tab=publishing`. Same status as `apl_rm` above, different
+    // role: the link exists for both, and what `role` narrows is the TAB, not the link. A
+    // regression that re-added a role clause to the link predicate turns this red; a
+    // regression that offered an editor Publishing turns it red on the tab instead.
+    expect(a.element().getAttribute('href')).toBe('/apps/listing/apl_seat_rm/edit?tab=history');
+    expect(page.getByTestId('apps-mine-unlinked-apl_seat_rm').elements()).toHaveLength(0);
+  });
+
+  test('🔴 an UNKNOWN status is the ONLY shape left unlinked — fail closed', async () => {
+    // The negative arm the role clause used to supply. Without a case here the link
+    // predicate would have no `false` at all, and "everything links" is satisfied by
+    // deleting the predicate entirely. `quarantined` is not a prefix or suffix of any real
+    // status, and it is NOT one of the two the Inactive collapse owns, so it renders in the
+    // main table — no disclosure click, which keeps this case free of that dependency.
+    renderWithProviders(
+      <MyAppsBodyView rows={[row({ appListingId: 'apl_unknown_v9', status: 'quarantined' })]} />
+    );
+    await expect.element(page.getByTestId('apps-mine-unlinked-apl_unknown_v9')).toBeInTheDocument();
+    expect(page.getByTestId('apps-mine-link-apl_unknown_v9').elements()).toHaveLength(0);
   });
 
   test('a seated EDITOR on an APPROVED row DOES link — the control arm for the role clause', async () => {

@@ -231,6 +231,57 @@ describe('🔴 a NON-AUTHORABLE listing gets the narrowed set — one case per w
   });
 });
 
+/**
+ * 🔴 THE DEEP-LINK ARM OF THE COLLABORATORS GUARD, NAMED.
+ *
+ * The tab-set cases above prove the tab is not OFFERED on a removed listing. They say
+ * nothing about a caller who types `?tab=collaborators` — which is the shape an old
+ * bookmark, a legacy `/apps/<block>/edit?tab=collaborators` redirect, or a curious user
+ * actually produces. `resolveEditorTab` is the second gate and it is what makes the answer
+ * safe; this is the case an auditor looks for and did not find.
+ */
+describe('🔴 a `?tab=collaborators` deep link on a REMOVED listing lands somewhere safe', () => {
+  const removedOwner = {
+    kind: 'onsite',
+    appBlockId: 'ab_deep',
+    role: 'owner',
+    status: 'removed',
+    capabilities: onsite,
+  } as const;
+
+  it('resolves to Publishing, never to Collaborators', () => {
+    const allowed = editorTabsFor(removedOwner);
+    // The parse-only allowlist still CONTAINS `collaborators` — that is deliberate, so a
+    // legacy deep link survives an SSR hop instead of being flattened. The narrowing is
+    // this call, against the tab set for THIS listing.
+    expect(ALL_EDITOR_TABS).toContain('collaborators');
+    expect(resolveEditorTab('collaborators', allowed)).toBe('publishing');
+    expect(resolveEditorTab('collaborators', allowed)).not.toBe('collaborators');
+  });
+
+  it('the same link for a seated EDITOR resolves to History', () => {
+    // A different answer from the owner case, so a mutant that hardcodes either literal
+    // fails in exactly one of the two.
+    const allowed = editorTabsFor({ ...removedOwner, role: 'editor' });
+    expect(resolveEditorTab('collaborators', allowed)).toBe('history');
+  });
+
+  it('🔴 resolveEditorTab can NEVER return a tab outside `allowed` — the structural half', () => {
+    // The two cases above are about one string. This is the property they are instances of,
+    // driven across every tab name for every status × role the route opens on: whatever is
+    // asked for, the answer is in the set the listing may open. Without it, the guard is
+    // pinned only at the values someone thought to name.
+    for (const status of ['draft', 'pending', 'approved', 'removed', 'rejected'] as const) {
+      for (const role of ['owner', 'editor'] as const) {
+        const allowed = editorTabsFor({ ...removedOwner, status, role });
+        for (const asked of [...ALL_EDITOR_TABS, 'nonsense', '', 'collaborators']) {
+          expect(allowed, `${status}/${role}/${asked}`).toContain(resolveEditorTab(asked, allowed));
+        }
+      }
+    }
+  });
+});
+
 describe('🔴 Publishing is offered only where a control exists, and only to the owner', () => {
   const base = {
     kind: 'offsite',

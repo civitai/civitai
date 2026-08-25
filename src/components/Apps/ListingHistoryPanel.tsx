@@ -20,12 +20,23 @@ import { trpc } from '~/utils/trpc';
  * 🔴 THE POPULATION THAT MOVING IT COULD HAVE STRANDED, AND WHY IT DOES NOT. An author
  * arriving from a rejection notification lands on `/apps/mine`. Two shapes reach it:
  *
- *   - a REJECTED or REMOVED listing — its history used to be reachable only from the row,
- *     and `/apps/mine` deliberately did NOT link those rows to the editor because the
- *     authoring page refused the status. Both halves changed together: the route now opens
- *     on those statuses in a narrowed mode whose tab set is at most Publishing + History,
- *     and the row links to it. Had only the panel moved, that population would have lost
- *     its history entirely — which is why the route change and this move are one PR.
+ *   - a REMOVED listing — its history used to be reachable only from the row, and
+ *     `/apps/mine` deliberately did NOT link those rows to the editor because the authoring
+ *     page refused the status. Both halves changed together: the route now opens on it in a
+ *     narrowed mode whose tab set is at most Publishing + History, and the row links to it.
+ *     Had only the panel moved, that population would have lost its history entirely —
+ *     which is why the route change and this move are one PR.
+ *
+ *     🔴 `rejected` IS **NOT** A SECOND SUCH POPULATION, and an earlier draft of this
+ *     comment said it was. Measured across all 33 `appListing` write sites: nothing writes
+ *     `AppListing.status = 'rejected'`. An on-site reject DELETES the pre-approval draft
+ *     listing (releasing the slug) and an off-site reject writes `removed` via
+ *     `closeTerminalListing`; the two `status:'rejected'` writes in the tree are both on the
+ *     publish-REQUEST tables, which are a different column entirely. So the `rejected`
+ *     branch is a FAIL-SAFE for a value the DB CHECK permits and legacy rows may carry — it
+ *     is right to keep and right to test, but it serves nobody today, and describing it as a
+ *     stranded population overstates what this move rescues. The authors of rejected first
+ *     versions are served by the orphan group, which stays on `/apps/mine` untouched.
  *   - a submission whose LISTING WAS DELETED (a first version rejected or withdrawn
  *     releases the slug). That population has no listing and therefore no authoring page at
  *     all; it is served by the "Submissions without a listing" group, which STAYS on
@@ -180,9 +191,37 @@ export function ListingHistoryPanel({ appListingId }: { appListingId: string }) 
   const query = trpc.appListings.listingHistory.useQuery({ appListingId }, { retry: false });
   const utils = trpc.useUtils();
 
+  /**
+   * 🔴 FOUR READS, AND THE TWO ADDED AFTER REVIEW ARE THE ONES A WITHDRAW ACTUALLY MOVES.
+   *
+   * A withdraw is not only a status flip on a request row. `withdrawRequest` calls
+   * `deleteOnsiteDraftListingForSlug`, which HARD-DELETES the pre-approval `draft` listing
+   * to release the slug — and `draft` is authorable, so this panel is reachable on exactly
+   * the listing that is about to stop existing. Withdrawing a first version therefore
+   * deletes the row out from under the page it was clicked on.
+   *
+   * 🔴 THIS PATH DID NOT EXIST BEFORE THIS PR. On `/apps/mine` the history panel was a row
+   * disclosure, and its container invalidated THREE reads including
+   * `listMyOrphanedSubmissions` — which is precisely where a withdrawn first version goes
+   * once its listing is gone. Moving the panel here created a surface where the same click
+   * can invalidate the page's own identity, and the first version of this callback dropped
+   * both of the reads that notice:
+   *
+   *   - `getAuthoringContext` — the read the WHOLE TAB SET derives from. Without it the
+   *     page keeps rendering Details/Collaborators/Publishing for a listing that no longer
+   *     exists, and every one of those tabs is a query that will now NOT_FOUND.
+   *   - `listMyOrphanedSubmissions` — the only surface the withdrawn submission still has.
+   *     Stale until a full reload, which is the same "it looks like it vanished" impression
+   *     the orphan group exists to stop giving.
+   *
+   * Invalidating a read that did not change is free; failing to invalidate one that did is
+   * a page rendering a listing that is gone.
+   */
   const refetchHistory = useCallback(() => {
     void utils.appListings.listingHistory.invalidate();
     void utils.appListings.listMine.invalidate();
+    void utils.appListings.getAuthoringContext.invalidate();
+    void utils.appListings.listMyOrphanedSubmissions.invalidate();
   }, [utils]);
 
   const onWithdrawError = useCallback((message: string) => {
