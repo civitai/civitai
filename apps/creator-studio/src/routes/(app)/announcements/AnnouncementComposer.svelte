@@ -9,13 +9,16 @@
   import { Switch } from '@civitai/ui/components/ui/switch/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import { ToggleGroup, ToggleGroupItem } from '@civitai/ui/components/ui/toggle-group/index.js';
+  import { IconCheck } from '@tabler/icons-svelte';
   import {
     CONTENT_MAX,
     DEFAULT_DOMAINS,
     DOMAIN_CHIPS,
     LINK_TEXT_MAX,
     TITLE_MAX,
+    MIN_ANNOUNCEMENT_DURATION_MS,
     allowanceState,
+    toDomainArray,
     type AnnouncementAllowance,
     type AnnouncementDomain,
   } from '$lib/announcements';
@@ -57,7 +60,9 @@
   let title = $state(seed?.title ?? '');
   let content = $state(seed?.content ?? '');
   let domains = $state<AnnouncementDomain[]>(
-    seed?.domain?.length ? [...new Set(seed.domain as AnnouncementDomain[])] : [...DEFAULT_DOMAINS]
+    seed?.domain?.length
+      ? (toDomainArray(seed.domain) as AnnouncementDomain[])
+      : [...DEFAULT_DOMAINS]
   );
   let profileOnly = $state(seed?.profileOnly ?? false);
   let startsLocal = $state(toLocalInput(seed?.startsAt));
@@ -101,6 +106,35 @@
 
   const startsAt = $derived(toInstant(startsLocal));
   const endsAt = $derived(toInstant(endsLocal));
+
+  // Re-read on every keystroke in the pickers so the floor tracks the clock across a long compose,
+  // rather than freezing at whatever `now` was when the form mounted.
+  let clock = $state(Date.now());
+
+  // An announcement that is already running legitimately started in the past, and a `min` above its
+  // own value makes the field invalid and blocks the form. Its existing start is the floor instead.
+  const startFloor = $derived(
+    seed?.startsAt && new Date(seed.startsAt).getTime() < clock
+      ? new Date(seed.startsAt)
+      : new Date(clock)
+  );
+  const startMin = $derived(toLocalInput(startFloor));
+  const endMin = $derived(
+    toLocalInput(
+      new Date(
+        (startsAt ? new Date(startsAt).getTime() : startFloor.getTime()) +
+          MIN_ANNOUNCEMENT_DURATION_MS
+      )
+    )
+  );
+
+  // Pull the end along rather than leaving an invalid value behind: moving the start past the end is
+  // the ordinary way to reach the state, and a picker that silently blocks submit reads as a bug.
+  function onStartChange() {
+    clock = Date.now();
+    if (!endsLocal) return;
+    if (endsLocal < endMin) endsLocal = endMin;
+  }
 
   const allowState = $derived(allowance ? allowanceState(allowance) : null);
   // A slot is spent on the profile-only → notifying transition, so editing an announcement that
@@ -197,27 +231,45 @@
         onValueChange={setDomains}
       >
         {#each DOMAIN_CHIPS as chip (chip.color)}
-          <ToggleGroupItem value={chip.color} aria-label={chip.label}>{chip.label}</ToggleGroupItem>
+          {@const selected = domains.includes(chip.color)}
+          <ToggleGroupItem
+            value={chip.color}
+            aria-label={`${chip.label} (${chip.host})`}
+            class="gap-1.5"
+          >
+            <!-- Reserved rather than conditionally rendered: the chip would otherwise resize as it is
+                 toggled, which moves its neighbour out from under the pointer. -->
+            <IconCheck size={14} class={selected ? '' : 'invisible'} aria-hidden="true" />
+            {chip.host}
+          </ToggleGroupItem>
         {/each}
       </ToggleGroup>
-      <span class="text-xs text-dark-2">
-        {DOMAIN_CHIPS.filter((c) => domains.includes(c.color))
-          .map((c) => c.host)
-          .join(' · ')}
-      </span>
     </fieldset>
 
     <div class="grid gap-4 sm:grid-cols-2">
       <div class="flex flex-col gap-1.5">
         <Label for="announcement-starts">Starts</Label>
-        <Input id="announcement-starts" type="datetime-local" bind:value={startsLocal} />
+        <Input
+          id="announcement-starts"
+          type="datetime-local"
+          min={startMin}
+          bind:value={startsLocal}
+          oninput={onStartChange}
+        />
       </div>
       <div class="flex flex-col gap-1.5">
         <Label for="announcement-ends">Ends</Label>
-        <Input id="announcement-ends" type="datetime-local" bind:value={endsLocal} />
+        <Input
+          id="announcement-ends"
+          type="datetime-local"
+          min={endMin}
+          bind:value={endsLocal}
+          oninput={() => (clock = Date.now())}
+        />
       </div>
       <span class="text-xs text-dark-2 sm:col-span-2">
         Your local time{timeZone ? ` (${timeZone})` : ''}. Leave both empty to show it from now on.
+        An announcement runs for at least an hour.
       </span>
     </div>
 

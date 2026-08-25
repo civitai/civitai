@@ -94,16 +94,19 @@ describe('announcementFormSchema', () => {
     expect(parse({ startsAt: 'sometime next week' }).success).toBe(false);
   });
 
-  it('rejects an end date at or before the start date', () => {
-    expect(
-      messages({
-        startsAt: '2026-09-01T10:00:00.000Z',
-        endsAt: '2026-08-01T10:00:00.000Z',
-      })
-    ).toContain('End date must be after the start date');
-    expect(
-      parse({ startsAt: '2026-08-01T10:00:00.000Z', endsAt: '2026-09-01T10:00:00.000Z' }).success
-    ).toBe(true);
+  // Ordering is the main app's to enforce, by sliding the end forward rather than refusing the save.
+  // Rejecting here would stop the value ever reaching that clamp.
+  it('passes an inverted window through for the server to clamp', () => {
+    const result = parse({
+      startsAt: '2026-09-01T10:00:00.000Z',
+      endsAt: '2026-08-01T10:00:00.000Z',
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.startsAt?.toISOString()).toBe('2026-09-01T10:00:00.000Z');
+      expect(result.data.endsAt?.toISOString()).toBe('2026-08-01T10:00:00.000Z');
+    }
   });
 
   it('rejects a cover key that is not the uploader UUID', () => {

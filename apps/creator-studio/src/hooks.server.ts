@@ -1,11 +1,30 @@
-import type { Handle, HandleServerError } from '@sveltejs/kit';
+import type { Handle, HandleServerError, ServerInit } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
+import { registerEnumArrayTypeParsers } from '@civitai/db/kysely';
 import { guard } from '$lib/server/auth';
+import { dbPool } from '$lib/server/db';
 import { getLogger } from '$lib/server/logger';
 
 const FALLBACK_REDIRECT = env.CIVITAI_APP_URL || 'https://civitai.com';
 
 console.info(`[creator-studio] version ${__APP_VERSION__}`);
+
+/**
+ * pg has no parser for arrays of a user-defined enum, so a `"SomeEnum"[]` column arrives as the raw
+ * Postgres literal `{a,b}` — a string where the Kysely type promises `string[]`. SvelteKit awaits
+ * `init` before it handles a request, which is the guarantee this needs: the parsers are in place
+ * before the first query rather than a few queries in.
+ *
+ * Fail-open, matching the main app's `instrumentation.node.ts`: a DB hiccup at boot must not stop the
+ * app serving. Read sites still have to tolerate the unparsed shape — see `getMyAnnouncements`.
+ */
+export const init: ServerInit = async () => {
+  try {
+    await registerEnumArrayTypeParsers(dbPool);
+  } catch (err) {
+    console.error('[creator-studio] enum-array type-parser registration failed (fail-open):', err);
+  }
+};
 
 // Prerendered at build (no cookie), so it must resolve before the gate.
 const PUBLIC_PATHS = new Set(['/favicon.svg']);

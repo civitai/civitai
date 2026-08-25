@@ -37,13 +37,45 @@ export const DEFAULT_DOMAINS: AnnouncementDomain[] = DOMAIN_CHIPS.map((c) => c.c
 
 // Labels for rendering an announcement's stored domains, including values the picker does not
 // offer — `all` is on every migrated profile banner, and `red` on anything written before this.
+//
+// The host IS the label: the colour names do not match the sites (see DOMAIN_CHIPS), so showing a
+// creator "green" or even "Civitai" leaves them guessing which of the two sites they picked.
 export const DOMAIN_LABELS: Record<AnnouncementDomain, { label: string; hint: string }> = {
-  green: { label: 'Civitai', hint: 'civitai.com' },
-  blue: { label: 'Civitai Red', hint: 'civitai.red' },
+  green: { label: 'civitai.com', hint: 'Civitai' },
+  blue: { label: 'civitai.red', hint: 'Civitai Red' },
   // Only reachable on rows written before the picker existed — no request resolves to this colour.
   red: { label: 'Unrouted', hint: 'no site resolves to this' },
   all: { label: 'Everywhere', hint: 'All domains' },
 };
+
+/**
+ * Normalises a `DomainColor[]` column into an array.
+ *
+ * pg has no parser for arrays of a user-defined enum, so unless `registerEnumArrayTypeParsers` has
+ * run this column arrives as the raw Postgres literal `{green,blue}` — a string that every array
+ * operation accepts and treats as its characters. `[...new Set(value)]` on it yielded one chip per
+ * distinct LETTER. `hooks.server.ts` registers the parser at boot, but does so fail-open, so this
+ * has to stand on its own.
+ */
+export function toDomainArray(value: unknown): string[] {
+  const list = Array.isArray(value)
+    ? value
+    : typeof value === 'string'
+    ? value.replace(/^\{|\}$/g, '').split(',')
+    : [];
+
+  return [...new Set(list.map((entry) => String(entry).trim()).filter(Boolean))];
+}
+
+/**
+ * Shortest announcement the server will store. The picker enforces it so the creator sees the
+ * constraint while choosing; `clampAnnouncementWindow` in the main app enforces it again on arrival,
+ * because a wall-clock picker cannot bind a value that is already minutes old when it is submitted.
+ *
+ * Must stay in step with MIN_ANNOUNCEMENT_DURATION_MS in
+ * src/server/services/creator-announcement.service.ts.
+ */
+export const MIN_ANNOUNCEMENT_DURATION_MS = 60 * 60 * 1000;
 
 export type AnnouncementAllowance = {
   eligible: boolean;

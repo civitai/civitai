@@ -204,7 +204,7 @@ export async function getFollowedAnnouncements({
 async function assertOwnedAnnouncement(id: number, userId: number, isModerator = false) {
   const existing = await dbRead.announcement.findFirst({
     where: isModerator ? { id, userId: { not: null } } : { id, userId },
-    select: { id: true, coverId: true, profileOnly: true },
+    select: { id: true, coverId: true, profileOnly: true, startsAt: true },
   });
   if (!existing) throw throwAuthorizationError('Announcement not found');
   return existing;
@@ -234,6 +234,49 @@ export function toDomainRelativeLink(link: string) {
   if (!ours) return link;
 
   return `${url.pathname}${url.search}${url.hash}` || '/';
+}
+
+/**
+ * Shortest announcement we will store. Mirrored in apps/creator-studio/src/lib/announcements.ts,
+ * where the picker enforces the same floor while the creator is choosing.
+ */
+export const MIN_ANNOUNCEMENT_DURATION_MS = 60 * 60 * 1000;
+
+/**
+ * Slides a submitted window into the range we accept instead of refusing it.
+ *
+ * The picker is wall-clock: a creator who selects "in two minutes" and then spends five minutes
+ * writing the message submits a start that is already past. Refusing that is a dead end the creator
+ * cannot distinguish from a bug, so the start moves up to now and the end moves out to clear it by
+ * an hour.
+ *
+ * 🔴 A start the creator did not touch is left alone, even when it is in the past. Re-stamping it
+ * would republish a running announcement to the top of every follower's feed on an edit that only
+ * fixed a typo — `getFollowedAnnouncements` orders by `startsAt` desc.
+ *
+ * A null start still means "from now on" and stays null; only the end is then floored against now.
+ */
+export function clampAnnouncementWindow({
+  startsAt,
+  endsAt,
+  previousStartsAt,
+  now,
+}: {
+  startsAt?: Date | null;
+  endsAt?: Date | null;
+  previousStartsAt?: Date | null;
+  now: Date;
+}): { startsAt: Date | null; endsAt: Date | null } {
+  const untouched =
+    !!startsAt && !!previousStartsAt && startsAt.getTime() === previousStartsAt.getTime();
+
+  const start =
+    startsAt && !untouched && startsAt.getTime() < now.getTime() ? now : startsAt ?? null;
+
+  const earliestEnd = (start ?? now).getTime() + MIN_ANNOUNCEMENT_DURATION_MS;
+  const end = endsAt && endsAt.getTime() < earliestEnd ? new Date(earliestEnd) : endsAt ?? null;
+
+  return { startsAt: start, endsAt: end };
 }
 
 export async function upsertCreatorAnnouncement({
@@ -279,14 +322,21 @@ export async function upsertCreatorAnnouncement({
       : {}),
   };
 
+  const window = clampAnnouncementWindow({
+    startsAt: input.startsAt,
+    endsAt: input.endsAt,
+    previousStartsAt: existing?.startsAt,
+    now: new Date(),
+  });
+
   const data = {
     title: input.title,
     content: input.content,
     emoji: input.emoji,
     color: input.color ?? 'blue',
     domain: input.domain,
-    startsAt: input.startsAt ?? null,
-    endsAt: input.endsAt ?? null,
+    startsAt: window.startsAt,
+    endsAt: window.endsAt,
     // Never written on an update. A creator cannot set `disabled` at all (the schema has
     // no such field), so a row a moderator took down stays down through any edit.
     ...(existing ? {} : { disabled: false }),
@@ -355,9 +405,9 @@ export async function upsertCreatorAnnouncement({
     const announcement = existing
       ? await tx.announcement.update({
           where: { id: existing.id },
-          // A row crossing into notifying starts its life now. The fan-out selects on
-          // COALESCE(startsAt, createdAt) inside a 30-minute floor, so a draft written
-          // an hour ago would be charged a slot and then picked up by nobody.
+          // A row crossing into notifying starts its life now. `getFollowedAnnouncements` orders
+          // by startsAt desc NULLS LAST, so a draft that keeps a null start is charged a slot and
+          // then lands at the bottom of every follower's feed.
           data: { ...data, startsAt: data.startsAt ?? new Date() },
           select: creatorAnnouncementSelect,
         })

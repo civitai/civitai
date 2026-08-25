@@ -2,7 +2,7 @@ import type { SessionUser } from '@civitai/auth';
 import { dbRead } from '$lib/server/db';
 import { callMainApp, type MainAppResult } from '$lib/server/main-app';
 import { getFlipt, fliptContext } from '$lib/server/flipt';
-import type { AnnouncementAllowance } from '$lib/announcements';
+import { toDomainArray, type AnnouncementAllowance } from '$lib/announcements';
 import { allowanceSchema, type AnnouncementForm } from './announcements-schema';
 
 // Announcement writes go through the MAIN APP, not kysely: the allowance check, the creator/sitewide
@@ -88,7 +88,7 @@ export async function getMyAnnouncements(userId: number): Promise<AnnouncementRo
       id: row.id,
       title: row.title,
       content: row.content,
-      domain: [...new Set(row.domain as string[])],
+      domain: toDomainArray(row.domain),
       startsAt: row.startsAt,
       endsAt: row.endsAt,
       disabled: row.disabled,

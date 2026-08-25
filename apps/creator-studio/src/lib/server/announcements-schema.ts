@@ -62,11 +62,11 @@ export const announcementFormSchema = z
   .refine((v) => !!v.linkUrl === !!v.linkText, {
     message: 'A button needs both a link and button text',
     path: ['linkText'],
-  })
-  .refine((v) => !v.startsAt || !v.endsAt || v.endsAt > v.startsAt, {
-    message: 'End date must be after the start date',
-    path: ['endsAt'],
   });
+// Deliberately NOT refined on start/end ordering. The picker constrains both with `min`, and the
+// main app clamps whatever arrives (clampAnnouncementWindow) — a wall-clock value can be minutes
+// stale by the time it is submitted, and sliding it forward is the intended handling. Rejecting here
+// would turn that into an error the creator has to fix by hand, and the clamp would never run.
 
 export type AnnouncementForm = z.infer<typeof announcementFormSchema>;
 

@@ -77,7 +77,13 @@ function forceSslNoVerify(connectionString?: string): string | undefined {
   return url.toString();
 }
 
-export type KyselyReadWrite<DB> = { dbRead: Kysely<DB>; dbWrite: Kysely<DB> };
+/**
+ * `pool` is the PRIMARY pg pool backing `dbWrite`, handed back so a caller can run the startup work
+ * that needs a pool rather than a Kysely instance — `registerEnumArrayTypeParsers` above being the
+ * one that exists. Kysely does not expose its dialect's pool, and an app that builds its own to get
+ * one has to re-derive the SSL and sizing config this factory owns.
+ */
+export type KyselyReadWrite<DB> = { dbRead: Kysely<DB>; dbWrite: Kysely<DB>; pool: Pool };
 
 export interface CreateKyselyClientsOptions extends PoolConfig {
   /** Pre-built write pool (primary). Overrides connectionString. */
@@ -100,11 +106,11 @@ export interface CreateKyselyClientsOptions extends PoolConfig {
 
 export function createKyselyClients<DB>(
   options: CreateKyselyClientsOptions & { singleClient: true }
-): { db: Kysely<DB> };
+): { db: Kysely<DB>; pool: Pool };
 export function createKyselyClients<DB>(options?: CreateKyselyClientsOptions): KyselyReadWrite<DB>;
 export function createKyselyClients<DB>(
   options: CreateKyselyClientsOptions = {}
-): { db: Kysely<DB> } | KyselyReadWrite<DB> {
+): { db: Kysely<DB>; pool: Pool } | KyselyReadWrite<DB> {
   registerNumericTypeParsers();
 
   const {
@@ -157,12 +163,13 @@ export function createKyselyClients<DB>(
     return p;
   };
 
-  const primary = make(pool ?? guard(new Pool(config)));
-  if (singleClient) return { db: primary };
+  const primaryPool = pool ?? guard(new Pool(config));
+  const primary = make(primaryPool);
+  if (singleClient) return { db: primary, pool: primaryPool };
 
   const dbRead =
     readPool || replicaString
       ? make(readPool ?? guard(new Pool({ ...config, connectionString: replicaString })))
       : primary;
-  return { dbRead, dbWrite: primary };
+  return { dbRead, dbWrite: primary, pool: primaryPool };
 }
