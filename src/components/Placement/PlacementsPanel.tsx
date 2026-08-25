@@ -1,4 +1,6 @@
-import { Container, SegmentedControl, Stack, Text, Title } from '@mantine/core';
+import { Anchor, Container, Group, SegmentedControl, Stack, Text, Title } from '@mantine/core';
+import { IconSticker } from '@tabler/icons-react';
+import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { Meta } from '~/components/Meta/Meta';
 import { useQueryNotificationsCount } from '~/components/Notifications/notifications.utils';
@@ -10,6 +12,8 @@ import {
   PLACEMENT_SURFACE_TABS,
   type PlacementSurfaceTab,
 } from '~/components/Placement/queue-routes';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 /**
  * Everything waiting on this creator, in one place.
@@ -31,6 +35,8 @@ import {
  */
 export function PlacementsPanel() {
   const router = useRouter();
+  const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const { pendingStickerPlacements, pendingRemixSubmissions } = useQueryNotificationsCount();
 
   const surface: PlacementSurfaceTab = isPlacementSurfaceTab(router.query.type)
@@ -49,6 +55,13 @@ export function PlacementsPanel() {
       { shallow: true }
     );
 
+  // No username, no link: the book is a profile route, and the page itself
+  // redirects a flag-less viewer away rather than rendering.
+  const stickerBookHref =
+    features.stickerBook && currentUser?.username
+      ? `/user/${currentUser.username}/sticker-book`
+      : undefined;
+
   const counts: Record<PlacementSurfaceTab, number> = {
     sticker: pendingStickerPlacements,
     remix: pendingRemixSubmissions,
@@ -65,6 +78,15 @@ export function PlacementsPanel() {
               <Text size="sm" c="dimmed">
                 What is waiting on your images, and what you have sent to other creators&apos;.
               </Text>
+              {/* Sticker surface only: the remix queue has no book behind it. */}
+              {surface === 'sticker' && stickerBookHref && (
+                <Anchor component={Link} href={stickerBookHref} size="sm" mt={4}>
+                  <Group gap={4} wrap="nowrap">
+                    <IconSticker size={14} />
+                    Your sticker book
+                  </Group>
+                </Anchor>
+              )}
             </div>
 
             <SegmentedControl
