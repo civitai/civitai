@@ -19,6 +19,7 @@ import { CustomYoutubeNode } from '~/shared/tiptap/custom-youtube-node';
 import { TimestampNode } from '~/shared/tiptap/timestamp.node';
 import { LocalTimestamp } from '~/components/LocalTimestamp/LocalTimestamp';
 import { MentionHoverCard } from '~/components/UserAvatar/MentionHoverCard';
+import { BlurbNode } from '~/shared/tiptap/blurb.node';
 
 const extensions = [
   StarterKit.configure({ heading: false }),
@@ -31,6 +32,7 @@ const extensions = [
   MentionNode,
   StrawPollNode,
   TimestampNode,
+  BlurbNode,
 ];
 
 export function RenderRichText({
