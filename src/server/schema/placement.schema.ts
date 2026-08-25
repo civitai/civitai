@@ -197,6 +197,17 @@ export const getRemixGalleryVisibilitySchema = z.object({
   browsingLevel: z.number().min(0).default(allBrowsingLevelsFlag),
 });
 
+/**
+ * Counts and preview thumbnails for the host images on one surface.
+ *
+ * Capped at 100 to match the sticker batch, which is what sets a feed's cost at
+ * one query per 100 cards rather than one per card.
+ */
+export const getRemixGalleryCardSummariesSchema = z.object({
+  imageIds: z.array(z.number().int().positive()).min(1).max(100),
+  browsingLevel: z.number().min(0).default(allBrowsingLevelsFlag),
+});
+
 export const submitToRemixGallerySchema = z
   .object({
     hostImageId: z.number().int().positive(),

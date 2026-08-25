@@ -27,7 +27,8 @@ import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { CollectionItemStatus, ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { RemixMenu, isRemixMenuVisible } from '~/components/Image/Remix/RemixMenu';
-import { remixFrame, useRemixDemoDensity } from '~/components/RemixGallery/remix-card-demo';
+import { REMIX_FRAME } from '~/components/RemixGallery/remix-card-demo';
+import { useRemixCardData } from '~/components/RemixGallery/use-remix-card-data';
 import { RemixedCardFlyout } from '~/components/RemixGallery/RemixedCardFlyout';
 import { tourOverlayZIndex } from '~/shared/constants/app-layout.constants';
 import { useImageStore } from '~/store/image.store';
@@ -88,8 +89,8 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
   // The owner's own cosmetic wins; the remix frame is only a fallback.
   // The hook is called first and unconditionally — inside the `??` it sits after
   // a short-circuit, which is a conditional hook call.
-  const remixDensity = useRemixDemoDensity();
-  const cosmetic = image.cosmetic?.data ?? remixFrame(image.id, remixDensity);
+  const remix = useRemixCardData(image.id);
+  const cosmetic = image.cosmetic?.data ?? (remix.count ? REMIX_FRAME : undefined);
 
   const twCardStyle = useMemo(() => {
     return !cosmetic ? { height } : undefined;

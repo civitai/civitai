@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { create } from 'zustand';
+import type { MediaType } from '~/shared/utils/prisma/enums';
 
 /**
  * Stand-in data for the remix-gallery card indicator while the treatment is
@@ -37,8 +38,13 @@ export const useRemixDemoDensity = () => {
   useEffect(() => {
     const raw = new URLSearchParams(window.location.search).get('remixdemo');
     const parsed = raw ? Number(raw) : NaN;
-    const next = Number.isInteger(parsed) && parsed > 0 ? parsed : DEFAULT_MODULUS;
+    const valid = Number.isInteger(parsed) && parsed > 0;
+    const next = valid ? parsed : DEFAULT_MODULUS;
     if (next !== modulus) setModulus(next);
+    // Whether the stand-in data is in play at all, which is now a different
+    // question from what density it uses: without `?remixdemo=` the cards read
+    // the real batched counts, and the demo has to be asked for.
+    useRemixPeelStore.setState({ demoActive: valid });
   }, [modulus, setModulus]);
 
   return modulus;
@@ -56,7 +62,14 @@ const DEMO_THUMBS = [
 ];
 
 export const demoRemixEntries = (imageId: number, count: number) =>
-  Array.from({ length: count }, (_, index) => DEMO_THUMBS[(imageId + index) % DEMO_THUMBS.length]);
+  Array.from({ length: count }, (_, index) => ({
+    ...DEMO_THUMBS[(imageId + index) % DEMO_THUMBS.length],
+    // Shaped like a real entry so one component renders both. Every stand-in is
+    // a still, but the real column is not — the first production row this was
+    // measured against was a video.
+    type: 'image' as MediaType,
+    nsfwLevel: 1,
+  }));
 
 /**
  * The frame an image wears because somebody remixed it.
@@ -108,12 +121,15 @@ export const useFinePointer = () => {
 export const useRemixPeelStore = create<{
   openId: number | null;
   modulus: number;
+  /** `?remixdemo=` is present, so cards show stand-in data instead of real counts. */
+  demoActive: boolean;
   toggle: (id: number) => void;
   close: () => void;
   setModulus: (modulus: number) => void;
 }>((set) => ({
   openId: null,
   modulus: DEFAULT_MODULUS,
+  demoActive: false,
   toggle: (id) => set((state) => ({ openId: state.openId === id ? null : id })),
   close: () => set({ openId: null }),
   setModulus: (modulus) => set({ modulus }),

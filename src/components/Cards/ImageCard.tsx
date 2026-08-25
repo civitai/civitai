@@ -7,7 +7,8 @@ import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 import { DurationBadge } from '~/components/DurationBadge/DurationBadge';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { CardRemixButton } from '~/components/Image/Remix/CardRemixButton';
-import { remixFrame, useRemixDemoDensity } from '~/components/RemixGallery/remix-card-demo';
+import { REMIX_FRAME } from '~/components/RemixGallery/remix-card-demo';
+import { useRemixCardData } from '~/components/RemixGallery/use-remix-card-data';
 import { RemixedCardFlyout } from '~/components/RemixGallery/RemixedCardFlyout';
 import { CardStickerOverlay } from '~/components/Sticker/CardStickerOverlay';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -21,13 +22,13 @@ export function ImageCard({ data }: Props) {
   const features = useFeatureFlags();
   // Called unconditionally: inside the `??` below it would sit after a
   // short-circuit, which is a conditional hook call.
-  const remixDensity = useRemixDemoDensity();
+  const remix = useRemixCardData(data.id);
 
   return (
     <AspectRatioImageCard
       image={data}
       // The owner's own cosmetic wins; the remix frame is only a fallback.
-      cosmetic={data.cosmetic?.data ?? remixFrame(data.id, remixDensity)}
+      cosmetic={data.cosmetic?.data ?? (remix.count ? REMIX_FRAME : undefined)}
       routedDialog={{
         name: 'imageDetail',
         state: { imageId: data.id, images: getImages(), ...context },

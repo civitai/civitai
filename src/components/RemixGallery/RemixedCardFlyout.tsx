@@ -5,13 +5,8 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { createPortal } from 'react-dom';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogLink';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import {
-  demoRemixCount,
-  demoRemixEntries,
-  useFinePointer,
-  useRemixDemoDensity,
-  useRemixPeelStore,
-} from '~/components/RemixGallery/remix-card-demo';
+import { useFinePointer, useRemixPeelStore } from '~/components/RemixGallery/remix-card-demo';
+import { useRemixCardData } from '~/components/RemixGallery/use-remix-card-data';
 import { useRemixFlyoutLayout } from '~/components/RemixGallery/remix-flyout-layout';
 import styles from './RemixedCardFlyout.module.scss';
 
@@ -136,7 +131,7 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
   const openId = useRemixPeelStore((state) => state.openId);
   const setOpen = useRemixPeelStore((state) => state.toggle);
   const close = useRemixPeelStore((state) => state.close);
-  const count = demoRemixCount(imageId, useRemixDemoDensity());
+  const { count, entries: available } = useRemixCardData(imageId);
   const open = openId === imageId;
 
   const anchorRef = useRef<HTMLSpanElement>(null);
@@ -410,7 +405,11 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
 
   // At most four thumbnails; `+N` carries the rest. More than that and the tiles
   // shrink to the point of being unreadable at feed card widths.
-  const entries = demoRemixEntries(imageId, shown);
+  //
+  // Sliced rather than trusted: the query already caps what it returns, and the
+  // `+N` is computed from `count`, so a shorter list than `shown` would silently
+  // overstate the remainder.
+  const entries = available.slice(0, shown);
   const side = layout === 'side';
   const label = count === 1 ? '1 remix' : `${count} remixes`;
   const body = (tile: number | undefined) => (
@@ -447,7 +446,7 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
             key={index}
             className={clsx('min-w-0', side ? 'mx-auto' : 'max-w-16 flex-1')}
             style={side ? { width: tile, height: tile } : undefined}
-            aria-label={`Open ${entry.username}'s remix`}
+            aria-label={entry.username ? `Open ${entry.username}'s remix` : 'Open remix'}
             onClick={(event) => {
               event.preventDefault();
               event.stopPropagation();
@@ -457,7 +456,7 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
           >
             <EdgeMedia
               src={entry.url}
-              type="image"
+              type={entry.type}
               width={128}
               className="aspect-square w-full rounded object-cover ring-1 ring-gray-3 transition hover:opacity-80 dark:ring-dark-4"
             />
