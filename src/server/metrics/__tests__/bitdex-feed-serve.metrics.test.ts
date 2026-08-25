@@ -15,7 +15,7 @@ import {
 /**
  * 🔴 THE RUNTIME LABEL-NARROWING GUARDS, WHICH NOTHING ELSE REACHES.
  *
- * The module's header claims a hard cardinality bound of 14 series and says the
+ * The module's header claims a hard cardinality bound of 20 series and says the
  * bound "rests on CODE, not on the erased types". That claim is only true if the
  * `is…` checks in the two `record…` functions actually run and actually drop an
  * unrecognised value. Nothing else in the suite can test them: every other caller

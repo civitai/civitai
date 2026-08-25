@@ -524,6 +524,113 @@ describe('bitdex_primary_result_total moves, and moves a DIFFERENT series per ou
     expect(seriesThatMoved(before, after)).toEqual([]);
   });
 
+  // 🔴 THE CURSORED SPLIT. Cursored requests stopped falling back on 2026-08-24,
+  // so counting them as `fallback_*` would leave those counters describing a
+  // fallback that no longer happens. These three assert the SPLIT, which the
+  // behaviour tests in bitdex-empty-fallback.test.ts cannot see (they never read
+  // metrics) and the metric tests cannot see either (they derive their expected
+  // series from the union and never run the service). Delete the ternary in
+  // `fetchBitdexPrimary` and, without these, everything stays green.
+  //
+  // The load-bearing half of each is the `toEqual([...])` exact match: it asserts
+  // the `fallback_*` twin did NOT also move.
+  it('🔴 PRIMARY, cursored + empty + nothing failed → cursored_end{primary} +1, NOT fallback_empty', async () => {
+    getFliptVariantMock.mockResolvedValue('primary');
+    // cursor undefined → the loop breaks on "no more pages", so the index really
+    // is exhausted and this is an END, not a skip.
+    queryBitdexMock.mockResolvedValue({ documents: [], cursor: undefined });
+    const before = await readOutcomes();
+
+    const result = await getImagesFromSearch({
+      ...baseInput,
+      currentUserId: CURRENT_USER_ID,
+      cursor: 'bdx:{"sortAt":1700000000,"id":101}',
+    });
+
+    const after = await readOutcomes();
+    expect(result.source).toBe('bitdex');
+    expect(seriesThatMoved(before, after)).toEqual([key('cursored_end', 'primary')]);
+  });
+
+  it('🔴 PRIMARY, cursored + empty but a LIVE cursor → cursored_skip{primary} +1, NOT cursored_end', async () => {
+    getFliptVariantMock.mockResolvedValue('primary');
+    // A full page whose documents the post-filter drops, with the cursor still
+    // live: the pass budget runs out, not the index. Recording this as
+    // `cursored_end` would label a feed that did NOT end as one that did — the
+    // truncation this outcome exists to keep visible.
+    // Terminal after 5 pages: the service stops at MAX_PASSES (3) so the cap is
+    // never reached, but a fake that paged forever would turn a regression into a
+    // hang rather than a failure.
+    let pagesServed = 0;
+    queryBitdexMock.mockImplementation(async () => {
+      pagesServed++;
+      return {
+        documents: [{ ...bitdexDoc, id: 900, userId: 7, availability: 'Private' }],
+        cursor: pagesServed >= 5 ? undefined : { sortAt: 1699999999, id: 99 },
+      };
+    });
+    const before = await readOutcomes();
+
+    const result = await getImagesFromSearch({
+      ...baseInput,
+      currentUserId: CURRENT_USER_ID,
+      cursor: 'bdx:{"sortAt":1700000000,"id":101}',
+    });
+
+    const after = await readOutcomes();
+    expect(result.source).toBe('bitdex');
+    expect(seriesThatMoved(before, after)).toEqual([key('cursored_skip', 'primary')]);
+    expect(pagesServed).toBeLessThan(5);
+  });
+
+  it('🔴 PRIMARY, cursored + a call FAILS → cursored_error{primary} +1, NOT fallback_error or fallback_exception', async () => {
+    getFliptVariantMock.mockResolvedValue('primary');
+    queryBitdexMock.mockImplementation(async (...args: unknown[]) => {
+      const onFailure = args.find((a) => typeof a === 'function') as
+        | ((reason: string) => void)
+        | undefined;
+      onFailure?.('http_5xx');
+      return null;
+    });
+    const before = await readOutcomes();
+
+    await expect(
+      getImagesFromSearch({
+        ...baseInput,
+        currentUserId: CURRENT_USER_ID,
+        cursor: 'bdx:{"sortAt":1700000000,"id":101}',
+      })
+    ).rejects.toMatchObject({ code: 'SERVICE_UNAVAILABLE' });
+
+    const after = await readOutcomes();
+    // `fallback_exception` must NOT appear: the sentinel is re-raised BEFORE the
+    // catch arm records it. Move that `instanceof` check below the recording and
+    // this is the assertion that goes red.
+    expect(seriesThatMoved(before, after)).toEqual([key('cursored_error', 'primary')]);
+  });
+
+  it('🔴 SHADOW, cursored + empty → fallback_empty{shadow}, NEVER a cursored_* outcome', async () => {
+    // The split is gated on `opts.serving`, which shadow does not pass. Drop that
+    // gate and an empty cursored shadow request throws into the detached catch,
+    // recording fallback_exception{shadow} — moving a documented tripwire off the
+    // flat zero that makes it useful. Nothing else in the suite sees that.
+    getFliptVariantMock.mockResolvedValue('shadow');
+    queryBitdexMock.mockResolvedValue({ documents: [], cursor: undefined });
+    const before = await readOutcomes();
+
+    const result = await getImagesFromSearch({
+      ...baseInput,
+      currentUserId: CURRENT_USER_ID,
+      cursor: 'bdx:{"sortAt":1700000000,"id":101}',
+    });
+    expect(result.source).toBe('meili');
+
+    await vi.waitFor(async () => {
+      const after = await readOutcomes();
+      expect(seriesThatMoved(before, after)).toEqual([key('fallback_empty', 'shadow')]);
+    });
+  });
+
   it('SHADOW, BitDex answers with documents → served{mode="shadow"} +1 (Meili still serves the user)', async () => {
     getFliptVariantMock.mockResolvedValue('shadow');
     const before = await readOutcomes();
