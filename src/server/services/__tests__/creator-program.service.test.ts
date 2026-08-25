@@ -212,8 +212,8 @@ describe('userCapCache peak-earning query', () => {
     const { sql } = await runLookup([userId]);
 
     const bankable = buzzBankTypes.map((type) => `'${type}'`).join(', ');
-    // String.raw, not a plain template: `\n` and `\s` in one are a newline and the letter s, so the
-    // pattern would match nothing and this assertion would never fire.
+    // String.raw, not a plain template: `\s` in one is the letter s, which cannot consume the
+    // query's indentation, so the pattern matches nothing and this test fails outright.
     expect(sql).toMatch(new RegExp(String.raw`\n\s*AND toAccountType IN \(${bankable}\)`));
   });
 
