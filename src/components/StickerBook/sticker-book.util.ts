@@ -6,10 +6,11 @@ export function isStickerBookSide(value: unknown): value is StickerBookSide {
 }
 
 /**
- * The book's route, written once.
+ * The absolute book URL, for the three places that build one.
  *
- * Beside the copy below for the same reason: a rename gets fixed in the spellings
- * someone greps and missed in the one they don't.
+ * Deliberately not the profile nav's `${baseUrl}/sticker-book` — that row is
+ * built like all ten tabs beside it, and pulling one out to call this would
+ * make that table worse, not better.
  */
 export function stickerBookUrl(username: string) {
   return `/user/${username}/sticker-book`;
