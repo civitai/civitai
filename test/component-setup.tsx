@@ -16,6 +16,61 @@ import { afterEach, vi } from 'vitest';
 import { render, cleanup } from 'vitest-browser-react';
 import { MantineProvider } from '@mantine/core';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+// Raw text, NOT a stylesheet import — see the block below for why that distinction
+// is the whole point.
+import globalsCss from '~/styles/globals.css?raw';
+
+/**
+ * 🔴 THE APP'S ROOT CUSTOM PROPERTIES, AND ONLY THOSE.
+ *
+ * This harness loads no app stylesheet, so every `var(--header-height)` in a
+ * component under test resolved to `""`. That is not "a missing nicety": an
+ * unresolvable `var()` makes the whole declaration **invalid at computed-value
+ * time**, so `min-height: calc(100dvh - var(--header-height))` silently becomes
+ * `auto`/`0px` and the component lays out differently here than in production —
+ * measured in real Chromium. **33 TS/TSX files and 7 stylesheets read
+ * `--header-height` today**, so that divergence was repo-wide and invisible: a
+ * layout assertion could be green against geometry no user ever sees.
+ *
+ * 🔴 Why the properties are EXTRACTED rather than the stylesheet IMPORTED.
+ * Importing `~/styles/globals.css` pulls the real cascade — Tailwind preflight,
+ * `@layer` ordering, element defaults — which changes the rendered geometry of
+ * every existing test (Mantine `Group` starts centring its items, so same-line
+ * assertions written against `top` begin failing against correct code). That is a
+ * much larger change than this fixes. Taking only the `:root` custom properties
+ * gives components the values they read while leaving the cascade exactly as the
+ * suite has always had it.
+ *
+ * 🔴 Why they are PARSED rather than restated. Hardcoding `--header-height: 60px`
+ * here would be a fourth copy of a constant that civitai#4379 existed to
+ * consolidate, and it would drift silently the first time the header is resized.
+ * The values come from `globals.css` itself, so there is nothing to keep in step.
+ */
+{
+  const rootBlock = /:root\s*\{([^}]*)\}/.exec(globalsCss)?.[1];
+  if (!rootBlock) {
+    // Loud, not silent: if this stops matching, every component test goes back to
+    // laying out against undefined custom properties, and nothing else would say so.
+    throw new Error(
+      'component-setup: no `:root { … }` block found in src/styles/globals.css — the ' +
+        'custom-property injection below is inert. Fix the extraction rather than deleting it.'
+    );
+  }
+  const customProps = rootBlock
+    .split(';')
+    .map((d) => d.trim())
+    .filter((d) => d.startsWith('--'));
+  if (customProps.length === 0) {
+    throw new Error(
+      'component-setup: the `:root` block in globals.css declares no custom properties. ' +
+        'Either it moved, or the extraction regex is matching the wrong block.'
+    );
+  }
+  const style = document.createElement('style');
+  style.setAttribute('data-source', 'component-setup:globals.css :root');
+  style.textContent = `:root { ${customProps.join('; ')}; }`;
+  document.head.appendChild(style);
+}
 
 // `vi.waitFor` defaults to a 1000ms timeout. That's fine for a DOM mount, but
 // the browser suite has ~80 waitFor sites and many await an async round-trip

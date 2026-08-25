@@ -10,27 +10,24 @@
  * walks `src/`, requires exactly ONE declaration of each, and fails if they
  * disagree. Change one and that test tells you about the other.
  *
- * 🔴 Do NOT rewrite `PageBlockHost`'s viewport-fit calc to
- * `calc(… - var(--header-height))`. Measured, in the component-test Chromium:
- * `globals.css` is NOT loaded there, so `--header-height` reads as `""`, the
- * declaration is invalid at computed-value time, and the host stops claiming a
- * viewport-derived height — as a column flex item its `min-height` computes to
- * `auto` and it clamps to its parent instead. The browser suite's RED ARM (which
- * asserts the legacy styling really does overflow) then FAILS:
- * `expected 716 to be greater than 716`.
+ * ⚠️ **RETIRED PROHIBITION — kept as history, not as a rule.** This comment used to
+ * forbid rewriting `PageBlockHost`'s viewport-fit calc to
+ * `calc(… - var(--header-height))`, because the component-test harness loaded no
+ * global stylesheet: the custom property read as `""`, the declaration was invalid
+ * at computed-value time, and the component laid out differently under test than
+ * in production. **That is fixed** — `test/component-setup.tsx` now injects the
+ * `:root` custom properties parsed out of `globals.css`, and
+ * `src/components/AppLayout/rootCustomProperties.browser.test.tsx` is the guard
+ * that proves they resolve. Measured there, with and without the injection:
+ * `--header-height` `""` → `60px`, and `calc(100dvh - var(--header-height))`
+ * `0px` → `viewport − 60`.
  *
- * So the failure is LOUD, not silent — an earlier version of this comment claimed
- * the opposite and was wrong. The reason to interpolate the constant is fidelity,
- * not rescue: it makes the component render identically under test and in
- * production, instead of behaving one way in a browser that has `globals.css` and
- * another in one that does not. Note the net is only as strong as its tier —
- * `preview / component-tests` is REPORT-ONLY and does not block a merge.
- *
- * This prohibition is about THIS calc, which a browser test measures without
- * `globals.css`. It is NOT a blanket rule: many components legitimately use
- * `var(--header-height)` in styles no test asserts on. Defining the custom
- * property in `test/component-setup.tsx` would remove the asymmetry for all of
- * them and make this note unnecessary.
+ * So `var(--header-height)` is now safe in a component that a browser test
+ * measures. The calc in `PageBlockHost` still interpolates this constant, and that
+ * is a deliberate non-change rather than a leftover: switching it would leave
+ * `AppHeader` as this constant's only consumer and would need the CSS/TS binding
+ * guard re-pointed, which is a refactor with its own risk and no user-visible
+ * benefit. Do it as its own change if you want it, not incidentally.
  */
 export const HEADER_HEIGHT_PX = 60;
 
