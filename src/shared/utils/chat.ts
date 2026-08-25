@@ -30,6 +30,19 @@ export function chatBucketFor(member: {
 }
 
 /**
+ * The statuses an unfiltered membership can hold and still be in the inbox.
+ * The header badge counts inbox conversations, so its query has to select on
+ * the same thing the rail buckets on — it selected `Joined` alone, and an
+ * unfiltered invitation then lit a badge no tab could account for.
+ *
+ * `chatBucketFor` stays the definition; a test pins this list to it.
+ */
+export const inboxStatuses: ChatMemberStatus[] = [
+  ChatMemberStatus.Joined,
+  ChatMemberStatus.Invited,
+];
+
+/**
  * Shared by the `createMessageInput` cap and the composer's counter. Lives here
  * rather than in `server/common/constants` because `chat.schema.ts` is a leaf the
  * client `_app` bundle imports — pulling the server constants module in from

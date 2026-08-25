@@ -101,8 +101,11 @@ Active / Pending / Archived:
 - **Requests** — `Invited` where `filteredAt IS NOT NULL`
 - **Archived** — `Ignored`, `Left`, `Kicked` (unchanged)
 
-`getUnreadMessagesForUserHandler` must exclude members with `filteredAt` set, or a filtered
-request still rings the header badge and the filtering achieves nothing.
+`getUnreadMessagesForUserHandler` counts the Inbox bucket, so it selects on the same two things:
+members with `filteredAt` set are excluded (or a filtered request still rings the header badge and
+the filtering achieves nothing), and both inbox statuses are included (or an unfiltered invitation
+rings a badge no tab accounts for). It selects that list from `inboxStatuses` in
+`src/shared/utils/chat.ts` for that reason.
 
 Accepting a request needs no extra handling: the existing invite accept/reject moves the member
 to `Joined`, and the bucket rule only consults `filteredAt` for `Invited` members, so the thread

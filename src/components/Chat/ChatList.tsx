@@ -314,10 +314,7 @@ export function ChatList() {
               {filteredData.map((d) => {
                 const myMember = d.chatMembers.find((cm) => cm.userId === currentUser?.id);
                 const otherMembers = d.chatMembers.filter((cm) => cm.userId !== currentUser?.id);
-                const unreadCount =
-                  myMember?.status === ChatMemberStatus.Invited
-                    ? 0
-                    : chatCounts?.find((cc) => cc.chatId === d.id)?.cnt;
+                const unreadCount = chatCounts?.find((cc) => cc.chatId === d.id)?.cnt;
                 const isModSender = !!otherMembers.find(
                   (om) => om.isOwner === true && om.user.isModerator === true
                 );
