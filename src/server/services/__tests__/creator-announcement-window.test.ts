@@ -1,3 +1,5 @@
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
 import { describe, it, expect } from 'vitest';
 import {
   MIN_ANNOUNCEMENT_DURATION_MS,
@@ -123,7 +125,29 @@ describe('clampAnnouncementWindow — the end', () => {
 });
 
 describe('the minimum duration', () => {
-  it('is one hour, and the creator-studio picker mirrors this number', () => {
+  it('is one hour', () => {
     expect(MIN_ANNOUNCEMENT_DURATION_MS).toBe(HOUR);
+  });
+
+  // The creator-studio picker cannot import this constant across the app boundary, so it keeps its
+  // own copy. Reading that file is the only thing that can catch the two drifting apart — a picker
+  // offering 30 minutes against a server that clamps to 60 silently slides every such save.
+  it('is the same number the creator-studio picker enforces', () => {
+    const source = readFileSync(
+      fileURLToPath(
+        new URL('../../../../apps/creator-studio/src/lib/announcements.ts', import.meta.url)
+      ),
+      'utf8'
+    );
+
+    const declaration = source.match(/export const MIN_ANNOUNCEMENT_DURATION_MS = ([^;]+);/)?.[1];
+
+    // Fail loudly if the constant was renamed or moved, rather than passing on a null match.
+    expect(
+      declaration,
+      'MIN_ANNOUNCEMENT_DURATION_MS not found in the creator-studio source'
+    ).toBeDefined();
+    // eslint-disable-next-line no-eval
+    expect(eval(declaration!)).toBe(MIN_ANNOUNCEMENT_DURATION_MS);
   });
 });

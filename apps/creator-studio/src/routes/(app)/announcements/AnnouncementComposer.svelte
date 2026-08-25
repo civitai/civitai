@@ -128,8 +128,8 @@
     )
   );
 
-  // Pull the end along rather than leaving an invalid value behind: moving the start past the end is
-  // the ordinary way to reach the state, and a picker that silently blocks submit reads as a bug.
+  // Pull the end along; otherwise moving the start past the end leaves the field invalid and blocks
+  // submit with nothing on screen saying why.
   function onStartChange() {
     clock = Date.now();
     if (!endsLocal) return;

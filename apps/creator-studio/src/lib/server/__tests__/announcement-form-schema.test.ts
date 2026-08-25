@@ -94,8 +94,6 @@ describe('announcementFormSchema', () => {
     expect(parse({ startsAt: 'sometime next week' }).success).toBe(false);
   });
 
-  // Ordering is the main app's to enforce, by sliding the end forward rather than refusing the save.
-  // Rejecting here would stop the value ever reaching that clamp.
   it('passes an inverted window through for the server to clamp', () => {
     const result = parse({
       startsAt: '2026-09-01T10:00:00.000Z',

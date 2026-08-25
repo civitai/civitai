@@ -78,10 +78,8 @@ function forceSslNoVerify(connectionString?: string): string | undefined {
 }
 
 /**
- * `pool` is the PRIMARY pg pool backing `dbWrite`, handed back so a caller can run the startup work
- * that needs a pool rather than a Kysely instance — `registerEnumArrayTypeParsers` above being the
- * one that exists. Kysely does not expose its dialect's pool, and an app that builds its own to get
- * one has to re-derive the SSL and sizing config this factory owns.
+ * `pool` is the PRIMARY pg pool backing `dbWrite`. Handed back because Kysely does not expose its
+ * dialect's pool, and an app that builds its own re-derives the SSL and sizing config this factory owns.
  */
 export type KyselyReadWrite<DB> = { dbRead: Kysely<DB>; dbWrite: Kysely<DB>; pool: Pool };
 

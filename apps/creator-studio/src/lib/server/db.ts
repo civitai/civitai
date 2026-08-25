@@ -9,8 +9,6 @@ function required(name: 'DATABASE_URL' | 'DATABASE_REPLICA_URL'): string {
   return value;
 }
 
-// `pool` is the primary pg pool: `hooks.server.ts`'s `init` needs it to register the enum-array type
-// parsers before the first query. See registerEnumArrayTypeParsers in @civitai/db/kysely.
 export const {
   dbRead,
   dbWrite,

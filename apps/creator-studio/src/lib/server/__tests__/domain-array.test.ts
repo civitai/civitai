@@ -1,7 +1,5 @@
 import { describe, it, expect } from 'vitest';
-// Relative, not `$lib`: this project's node vitest has no SvelteKit plugin, and an aliased import
-// fails COLLECTION — which reads as zero tests rather than as a failure.
-import { DOMAIN_LABELS, toDomainArray } from '../../announcements';
+import { DOMAIN_LABELS, toDomainArray } from '$lib/announcements';
 
 describe('toDomainArray', () => {
   it('parses the raw Postgres literal pg hands back for an unparsed enum array', () => {

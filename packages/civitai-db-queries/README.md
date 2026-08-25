@@ -134,8 +134,13 @@ inferred type says `Date`/`number`. Parse those fields where a real `Date`/`bigi
   INSERTs and `ON CONFLICT DO UPDATE` still set `updatedAt` explicitly.
 - **Postgres enum-ARRAY columns need a parser.** pg has no parser for an array of a user-defined enum (dynamic
   oid), so a `SomeEnum[]` column reads back as the raw `{a,b}` literal string. Consumers call
-  `registerEnumArrayTypeParsers(pool)` (from `@civitai/db/kysely`) once at startup (main app:
-  `src/instrumentation.node.ts`) so those columns parse to `string[]`. Scalar enums are fine without it.
+  `registerEnumArrayTypeParsers(pool)` (from `@civitai/db/kysely`) once at startup — main app:
+  `src/instrumentation.node.ts`; SvelteKit spokes: a `ServerInit` `init` export in `hooks.server.ts`
+  (SvelteKit awaits `init` before the first request), using the `pool` returned by
+  `createKyselyClients`. Both register **fail-open**, so a read site that can receive an enum-array
+  column must still tolerate the raw literal — `{green,blue}` is a string that every array operation
+  accepts and iterates by character (see `toDomainArray` in `apps/creator-studio/src/lib/announcements.ts`).
+  Scalar enums are fine without it.
 - **Nested writes** (Prisma `connect`/`connectOrCreate`/nested `create`): decompose into explicit statement
   functions, and have a compose function open `db.transaction().execute((trx) => …)` and pass `trx` as each
   statement's `db`. See **Tag links** below for the canonical example.

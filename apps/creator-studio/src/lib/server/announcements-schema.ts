@@ -63,10 +63,8 @@ export const announcementFormSchema = z
     message: 'A button needs both a link and button text',
     path: ['linkText'],
   });
-// Deliberately NOT refined on start/end ordering. The picker constrains both with `min`, and the
-// main app clamps whatever arrives (clampAnnouncementWindow) — a wall-clock value can be minutes
-// stale by the time it is submitted, and sliding it forward is the intended handling. Rejecting here
-// would turn that into an error the creator has to fix by hand, and the clamp would never run.
+// No start/end ordering refine: the main app slides the end forward (clampAnnouncementWindow);
+// rejecting here means the clamp never runs.
 
 export type AnnouncementForm = z.infer<typeof announcementFormSchema>;
 

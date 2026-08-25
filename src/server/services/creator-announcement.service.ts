@@ -128,9 +128,8 @@ export async function getCreatorAnnouncements({
 /**
  * The *Creators* chip: live announcements from authors the caller follows.
  *
- * Muted creators are absent entirely, not merely un-pinged. A mute that silenced the
- * notification but left the posts in the feed would not be the escape hatch the ticket
- * asked for — the follower would still be reading what they opted out of.
+ * Muted creators are absent entirely, not merely demoted — leaving their posts in the feed
+ * would not be the escape hatch the ticket asked for.
  *
  * Profile-only rows never appear here; that is what profile-only means.
  */
@@ -243,18 +242,13 @@ export function toDomainRelativeLink(link: string) {
 export const MIN_ANNOUNCEMENT_DURATION_MS = 60 * 60 * 1000;
 
 /**
- * Slides a submitted window into the range we accept instead of refusing it.
+ * The picker is wall-clock: a creator who selects "in two minutes" then spends five writing submits
+ * a start that is already past. Refusing that is a dead end, so the start moves up to now and the
+ * end out to clear it by an hour.
  *
- * The picker is wall-clock: a creator who selects "in two minutes" and then spends five minutes
- * writing the message submits a start that is already past. Refusing that is a dead end the creator
- * cannot distinguish from a bug, so the start moves up to now and the end moves out to clear it by
- * an hour.
- *
- * 🔴 A start the creator did not touch is left alone, even when it is in the past. Re-stamping it
- * would republish a running announcement to the top of every follower's feed on an edit that only
- * fixed a typo — `getFollowedAnnouncements` orders by `startsAt` desc.
- *
- * A null start still means "from now on" and stays null; only the end is then floored against now.
+ * 🔴 A start the creator did not touch is left alone even when past. Re-stamping it would
+ * republish a running announcement to the top of every follower's feed on a typo fix —
+ * `getFollowedAnnouncements` orders by `startsAt` desc.
  */
 export function clampAnnouncementWindow({
   startsAt,

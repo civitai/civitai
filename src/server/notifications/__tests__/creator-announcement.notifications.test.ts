@@ -5,8 +5,7 @@ import { notificationCategoryTypes } from '~/server/notifications/utils.notifica
 const processor = creatorAnnouncementNotifications['creator-announcement'];
 
 describe('creator announcements do not fan out as notifications', () => {
-  // The revert this is here to catch is re-adding prepareQuery: send-notifications guards on
-  // `if (query)`, so a restored fan-out produces notifications again and nothing else changes.
+  // send-notifications guards on `if (query)` — re-adding prepareQuery silently restores the fan-out.
   it('has no fan-out query', () => {
     expect(processor.prepareQuery).toBeUndefined();
   });
@@ -23,8 +22,6 @@ describe('creator announcements do not fan out as notifications', () => {
 });
 
 describe('already-delivered notifications still render', () => {
-  // prepareMessage resolves at render time, so removing it would blank out every row already in
-  // users' inboxes rather than merely stopping new ones.
   it('builds a message and a url from stored details', () => {
     const message = processor.prepareMessage({
       type: 'creator-announcement',

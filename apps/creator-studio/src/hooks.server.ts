@@ -10,13 +10,11 @@ const FALLBACK_REDIRECT = env.CIVITAI_APP_URL || 'https://civitai.com';
 console.info(`[creator-studio] version ${__APP_VERSION__}`);
 
 /**
- * pg has no parser for arrays of a user-defined enum, so a `"SomeEnum"[]` column arrives as the raw
- * Postgres literal `{a,b}` — a string where the Kysely type promises `string[]`. SvelteKit awaits
- * `init` before it handles a request, which is the guarantee this needs: the parsers are in place
- * before the first query rather than a few queries in.
+ * pg has no parser for arrays of a user-defined enum — see `toDomainArray`. `init` is awaited before
+ * the first request, which is why registration lives here and not at module scope.
  *
- * Fail-open, matching the main app's `instrumentation.node.ts`: a DB hiccup at boot must not stop the
- * app serving. Read sites still have to tolerate the unparsed shape — see `getMyAnnouncements`.
+ * Fail-open, matching `instrumentation.node.ts`: a DB hiccup at boot must not stop the app serving,
+ * so read sites still have to tolerate the unparsed shape.
  */
 export const init: ServerInit = async () => {
   try {
