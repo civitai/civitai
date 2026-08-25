@@ -619,7 +619,10 @@ describe('getFileForModelVersion — the direct flag reaches resolveDownloadUrl'
   it('passes direct:undefined when the caller omits it, never true', async () => {
     await getFileForModelVersion({ modelVersionId: 1, noAuth: true, user: A_USER });
 
-    expect(optionsArg()).toEqual({ direct: undefined });
+    // toStrictEqual, not toEqual: toEqual treats an undefined-valued key as equal
+    // to a MISSING one, so it cannot tell `{ direct: undefined }` from `{}` — which
+    // is exactly the distinction the comment above claims this assertion makes.
+    expect(optionsArg()).toStrictEqual({ direct: undefined });
     expect(optionsArg()?.direct).not.toBe(true);
   });
 });

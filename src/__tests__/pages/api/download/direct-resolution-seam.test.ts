@@ -25,13 +25,11 @@ const {
   mockGetFileForModelVersion,
   mockHasExceededLimit,
   mockIncrement,
-  mockEnv,
 } = vi.hoisted(() => ({
   mockGetServerAuthSession: vi.fn(),
   mockGetFileForModelVersion: vi.fn(),
   mockHasExceededLimit: vi.fn(),
   mockIncrement: vi.fn(),
-  mockEnv: { STORAGE_RESOLVER_DIRECT_USER_AGENTS: [] as string[] },
 }));
 
 vi.mock('~/server/auth/get-server-auth-session', () => ({
@@ -65,14 +63,17 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
   PublicEndpoint: (handler: (req: NextApiRequest, res: NextApiResponse) => unknown) => handler,
 }));
 
-// Mocked at the env boundary rather than stubbing `shouldResolveDirect` itself:
-// stubbing the helper would leave the route free to ignore it and still pass.
-vi.mock('~/env/server', () => ({ env: mockEnv }));
-
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 import handler from '~/pages/api/download/models/[modelVersionId]';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 const mockLogToAxiom = loggingMock.logToAxiom;
+
+// Driven through the canonical env mock rather than by stubbing
+// `shouldResolveDirect`: stubbing the helper would leave the route free to ignore
+// it and still pass. Overriding the env value keeps the real helper in the path.
+const setAllowlist = (entries: string[]) =>
+  setEnv({ STORAGE_RESOLVER_DIRECT_USER_AGENTS: entries });
 
 const mockFindUnique = dbMock.dbRead.keyValue.findUnique;
 const REDIRECT_URL = 'https://example.invalid/signed/model.safetensors';
@@ -104,7 +105,8 @@ const directArg = () => mockGetFileForModelVersion.mock.calls[0][0].direct;
 beforeEach(() => {
   vi.clearAllMocks();
   vi.restoreAllMocks();
-  mockEnv.STORAGE_RESOLVER_DIRECT_USER_AGENTS = [];
+  resetEnv();
+  setAllowlist([]);
   mockFindUnique.mockResolvedValue(null);
   mockGetServerAuthSession.mockResolvedValue({ user: { id: 5 } });
   mockHasExceededLimit.mockResolvedValue(false);
@@ -136,7 +138,7 @@ describe('the download route passes shouldResolveDirect through to the resolver'
 
   // Kills the hardcoded-false mutant and the deleted-argument mutant.
   it('asks for direct:true when the agent is allowlisted', async () => {
-    mockEnv.STORAGE_RESOLVER_DIRECT_USER_AGENTS = ['some-internal-client'];
+    setAllowlist(['some-internal-client']);
 
     const { promise } = run(ALLOWED_UA);
     await promise;
@@ -147,7 +149,7 @@ describe('the download route passes shouldResolveDirect through to the resolver'
   // Kills the inverted mutant: it is the pairing of these two under ONE
   // allowlist that no single-value assertion can express.
   it('asks for direct:false for a non-allowlisted agent under the same allowlist', async () => {
-    mockEnv.STORAGE_RESOLVER_DIRECT_USER_AGENTS = ['some-internal-client'];
+    setAllowlist(['some-internal-client']);
 
     const { promise } = run('Mozilla/5.0');
     await promise;

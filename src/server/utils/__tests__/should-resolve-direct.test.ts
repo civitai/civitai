@@ -1,21 +1,23 @@
 import type { NextApiRequest } from 'next';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-
-// The allowlist is read per-call (not captured at module load), so a single mock
-// object whose value we mutate between tests is enough to drive every case.
-// vi.hoisted is required: vi.mock's factory is hoisted above the file's own
-// top-level declarations, so a plain const would not exist yet when it runs.
-const mockEnv = vi.hoisted(() => ({ STORAGE_RESOLVER_DIRECT_USER_AGENTS: [] as string[] }));
-vi.mock('~/env/server', () => ({ env: mockEnv }));
-
+import { beforeEach, describe, expect, it } from 'vitest';
+import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 import { shouldResolveDirect } from '../request-helpers';
+
+// The canonical `~/env/server` mock, not a per-file `vi.mock` factory. A wholesale
+// one-key replacement blanks every OTHER env read in the module graph under test,
+// and `~/env/server` is on the repo's pending-migration list — a new file should
+// not add to it. Per-file overrides are the supported spelling for a value the
+// code reads at CALL time, which this one is.
+const setAllowlist = (entries: string[]) =>
+  setEnv({ STORAGE_RESOLVER_DIRECT_USER_AGENTS: entries });
 
 const reqWithUA = (userAgent?: string) =>
   ({ headers: userAgent === undefined ? {} : { 'user-agent': userAgent } } as NextApiRequest);
 
 describe('shouldResolveDirect', () => {
   beforeEach(() => {
-    mockEnv.STORAGE_RESOLVER_DIRECT_USER_AGENTS = [];
+    resetEnv();
+    setAllowlist([]);
   });
 
   // The default must be off. This is the test that makes the feature safe to
@@ -28,12 +30,12 @@ describe('shouldResolveDirect', () => {
   });
 
   it('matches an allowlisted agent as a substring', () => {
-    mockEnv.STORAGE_RESOLVER_DIRECT_USER_AGENTS = ['some-internal-client'];
+    setAllowlist(['some-internal-client']);
     expect(shouldResolveDirect(reqWithUA('some-internal-client/1.2.3'))).toBe(true);
   });
 
   it('does not match an agent that is absent from the allowlist', () => {
-    mockEnv.STORAGE_RESOLVER_DIRECT_USER_AGENTS = ['some-internal-client'];
+    setAllowlist(['some-internal-client']);
     // Every one of these would be served directly by a `true`-by-default bug, and
     // the middle two are the near-misses a sloppy substring test would let through.
     expect(shouldResolveDirect(reqWithUA('Mozilla/5.0'))).toBe(false);
@@ -42,12 +44,12 @@ describe('shouldResolveDirect', () => {
   });
 
   it('matches case-insensitively in both directions', () => {
-    mockEnv.STORAGE_RESOLVER_DIRECT_USER_AGENTS = ['Some-Internal-Client'];
+    setAllowlist(['Some-Internal-Client']);
     expect(shouldResolveDirect(reqWithUA('SOME-INTERNAL-CLIENT/1.0'))).toBe(true);
   });
 
   it('tolerates whitespace around a configured entry', () => {
-    mockEnv.STORAGE_RESOLVER_DIRECT_USER_AGENTS = [' some-internal-client '];
+    setAllowlist([' some-internal-client ']);
     expect(shouldResolveDirect(reqWithUA('some-internal-client/1.2.3'))).toBe(true);
   });
 
@@ -56,7 +58,7 @@ describe('shouldResolveDirect', () => {
   // into a fleet-wide direct rollout, silently and at real cost. This is the
   // reason the empty-needle check exists.
   it('never lets an empty allowlist entry match everything', () => {
-    mockEnv.STORAGE_RESOLVER_DIRECT_USER_AGENTS = ['some-internal-client', ''];
+    setAllowlist(['some-internal-client', '']);
     expect(shouldResolveDirect(reqWithUA('Mozilla/5.0'))).toBe(false);
     expect(shouldResolveDirect(reqWithUA('curl/8.0'))).toBe(false);
     // ...while the legitimate entry alongside it still works.
@@ -64,7 +66,7 @@ describe('shouldResolveDirect', () => {
   });
 
   it('returns false when the caller sends no user agent', () => {
-    mockEnv.STORAGE_RESOLVER_DIRECT_USER_AGENTS = ['some-internal-client'];
+    setAllowlist(['some-internal-client']);
     expect(shouldResolveDirect(reqWithUA(undefined))).toBe(false);
   });
 
@@ -75,7 +77,7 @@ describe('shouldResolveDirect', () => {
   it.each(['', 'c', 'in'])(
     'ignores an allowlist entry too short to be a real token: %o',
     (entry) => {
-      mockEnv.STORAGE_RESOLVER_DIRECT_USER_AGENTS = [entry];
+      setAllowlist([entry]);
       expect(shouldResolveDirect(reqWithUA('Mozilla/5.0 (Macintosh; Intel Mac OS X)'))).toBe(false);
       expect(shouldResolveDirect(reqWithUA('curl/8.0'))).toBe(false);
     }
@@ -84,13 +86,13 @@ describe('shouldResolveDirect', () => {
   it('still honours a short-but-plausible entry at the floor', () => {
     // Three characters is the floor, not a rejection: an entry this short is
     // admitted, so the guard cannot be read as "we quietly dropped your config".
-    mockEnv.STORAGE_RESOLVER_DIRECT_USER_AGENTS = ['abc'];
+    setAllowlist(['abc']);
     expect(shouldResolveDirect(reqWithUA('abc-client/1.0'))).toBe(true);
     expect(shouldResolveDirect(reqWithUA('Mozilla/5.0'))).toBe(false);
   });
 
   it('a too-short entry does not disable the valid entries beside it', () => {
-    mockEnv.STORAGE_RESOLVER_DIRECT_USER_AGENTS = ['c', 'some-internal-client'];
+    setAllowlist(['c', 'some-internal-client']);
     expect(shouldResolveDirect(reqWithUA('some-internal-client/1.2.3'))).toBe(true);
     expect(shouldResolveDirect(reqWithUA('Mozilla/5.0'))).toBe(false);
   });

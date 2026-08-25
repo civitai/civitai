@@ -41,9 +41,12 @@ export function isRequestFromBrowser(req: NextApiRequest): boolean {
  * Shortest allowlist entry that is meaningful. A one- or two-character entry
  * matches essentially every real user agent — `"c"` is inside
  * `Mozilla/5.0 (Macintosh…)` — so a truncated paste would silently roll direct
- * resolution out to everyone. Three is not a magic number; it is simply short
- * enough to admit any real product token and long enough that no plausible
- * fragment of one matches the whole population.
+ * resolution out to everyone.
+ *
+ * Three is not a magic number, and it is not a guarantee either: a 3-character
+ * fragment like `"moz"` or `"mac"` still matches essentially every browser. What
+ * this closes is the accident — a 1-2 character truncation — not a deliberately
+ * broad entry, which no length check can catch. Keep the entries specific.
  */
 const MIN_ALLOWLIST_ENTRY_LENGTH = 3;
 
