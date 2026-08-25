@@ -1,4 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+// The REAL key constants. `~/server/redis/client` is mocked below; the PACKAGE it
+// re-exports is not, so importing from it here gives the values production uses and the
+// assertions below cannot drift away from them again.
+import { REDIS_KEYS, REDIS_SYS_KEYS } from '@civitai/redis/client';
 
 /**
  * Tests for the fail-open wrapper added in PR #2332 round-3 audit on
@@ -45,20 +49,17 @@ vi.mock('~/server/redis/fail-open-log', () => ({
   logSysRedisFailOpen: mockLogSysRedisFailOpen,
 }));
 
-vi.mock('~/server/redis/client', () => ({
+// 🔴 Spread the REAL package for the key constants rather than re-typing them. The
+// hand-typed copies here were wrong in four places at once — USER_TOKENS
+// 'session:user-tokens' vs the real 'session:user-tokens2', USER.SESSION 'user:session' vs
+// 'session:data2', TOKEN_STATE and ALL both prefixed 'sys:' where production has no such
+// prefix — so this suite asserted against keys Redis never sees and could not have caught a
+// key-name regression. Client and control surface stay overridden.
+vi.mock('~/server/redis/client', async () => ({
+  ...(await import('@civitai/redis/client')),
   sysRedis: {
     hScanNoValues: mockHScanNoValues,
     set: vi.fn().mockResolvedValue('OK'),
-  },
-  REDIS_KEYS: {
-    SESSION: { USER_TOKENS: 'session:user-tokens' },
-    USER: { SESSION: 'user:session' },
-  },
-  REDIS_SYS_KEYS: {
-    SESSION: {
-      TOKEN_STATE: 'sys:session:token-state',
-      ALL: 'sys:session:all',
-    },
   },
   withSysReadDeadline: mockWithSysReadDeadline,
 }));
@@ -105,7 +106,7 @@ describe('updateSessionState fail-open wrapper (via refreshSession)', () => {
 
     expect(mockHSetMultiWithTTL).toHaveBeenCalledTimes(1);
     const [, key, fieldsObj, ttlMs] = mockHSetMultiWithTTL.mock.calls[0];
-    expect(key).toBe('sys:session:token-state');
+    expect(key).toBe(REDIS_SYS_KEYS.SESSION.TOKEN_STATE);
     expect(fieldsObj).toEqual({ 'token-a': 'refresh', 'token-b': 'refresh' });
     // 30 days in ms
     expect(ttlMs).toBe(60 * 60 * 24 * 30 * 1000);
@@ -250,7 +251,7 @@ describe('updateSessionState reads field names incrementally', () => {
     // The mocked client surface has no hGetAll at all, so a regression to it throws rather than silently
     // working — but assert the intent explicitly too.
     const [key, cursor, options] = mockHScanNoValues.mock.calls[0];
-    expect(key).toBe('session:user-tokens:42');
+    expect(key).toBe(`${REDIS_KEYS.SESSION.USER_TOKENS}:42`);
     expect(cursor).toBe('0');
     expect(options.COUNT).toBeGreaterThan(0);
   });
