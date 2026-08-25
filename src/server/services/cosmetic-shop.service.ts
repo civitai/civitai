@@ -2,6 +2,12 @@ import { Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { ImageSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import {
+  expandBlurbs,
+  getReferencedBlurbIds,
+  reconcileBlurbReferences,
+} from '~/server/services/blurb-materialize.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { refreshOwnedStickerCache } from '~/server/redis/caches';
 import { dbReadFallbackCounter } from '~/server/prom/client';
@@ -211,6 +217,7 @@ export const upsertCosmeticShopItem = async ({
         select: {
           id: true,
           cosmeticId: true,
+          addedById: true,
           _count: {
             select: {
               purchases: true,
@@ -241,8 +248,25 @@ export const upsertCosmeticShopItem = async ({
   if (id && existingItem?.cosmeticId == null)
     throw new Error('Packs are edited through the pack editor');
 
+  // Re-expanded from the owner's rows rather than trusted from the client, and before the write
+  // so what is stored is what the blurb actually says. `addedById` is nullable and only ever
+  // moderators, so it falls back to the actor rather than resolving nothing.
+  const ownerId = existingItem?.addedById ?? userId;
+  const restrictToBlurbIds =
+    existingItem && ownerId !== userId
+      ? await getReferencedBlurbIds({ entityType: 'CosmeticShopItem', entityId: existingItem.id })
+      : undefined;
+  const { html: description, uses: blurbUses } = await expandBlurbs({
+    userId: ownerId,
+    html: cosmeticShopItem.description ?? '',
+    restrictToBlurbIds,
+  });
+
   const data = {
     ...cosmeticShopItem,
+    // Spread conditionally: `undefined` means "leave the column alone" to Prisma, and `null`
+    // clears it — neither should be overwritten with the empty string expansion returns.
+    ...(cosmeticShopItem.description != null && { description }),
     availableQuantity,
     availableTo,
     availableFrom,
@@ -280,8 +304,44 @@ export const upsertCosmeticShopItem = async ({
     });
   }
 
+  await reconcileBlurbReferences({
+    entityType: 'CosmeticShopItem',
+    entityId: item.id,
+    uses: blurbUses,
+  });
+
   return item;
 };
+
+/**
+ * The one path for "a shop item's description changed", for a caller holding only new HTML —
+ * the blurb fan-out. `upsertCosmeticShopItem` takes a whole form payload, so a partial call to
+ * it would clear title, price, availability window and quantity rather than update a column.
+ *
+ * The write is the whole of it: shop items are not indexed, not text-moderated, and carry no
+ * per-row cache. So unlike the other surfaces there is no shared follow-up for the interactive
+ * path to route through.
+ *
+ * `CosmeticShopItem` has no `updatedAt` column, so this is a plain Prisma update rather than the
+ * `$executeRaw` the other adapters need to keep a background rewrite out of "recently updated".
+ */
+export async function applyCosmeticShopItemContentChange({
+  id,
+  description,
+}: {
+  id: number;
+  description: string;
+}) {
+  // The blocklist can move after a blurb was saved, and this path has no user in the loop to
+  // catch it — same reason `applyArticleContentChange` re-checks.
+  await throwOnBlockedLinkDomain(description);
+
+  const updated = await dbWrite.cosmeticShopItem.updateMany({
+    where: { id },
+    data: { description },
+  });
+  if (!updated.count) throw throwNotFoundError(`No cosmetic shop item with id ${id}`);
+}
 
 export const getShopSections = async (input: GetAllCosmeticShopSections) => {
   const where: Prisma.CosmeticShopSectionFindManyArgs['where'] = {};

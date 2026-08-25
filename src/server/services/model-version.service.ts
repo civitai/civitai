@@ -29,6 +29,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import {
   getDbWithoutLag,
   preventModelVersionLag,
+  preventModelVersionLagBatch,
   preventReplicationLag,
 } from '~/server/db/db-lag-helpers';
 import { dbReadFallbackCounter } from '~/server/prom/client';
@@ -104,6 +105,11 @@ import {
 import { applyModelMonetizationPolicy } from '~/server/services/model-monetization-policy';
 import { resolveRightsAffirmation } from '~/server/services/monetization-rights.service';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import {
+  expandBlurbs,
+  getReferencedBlurbIds,
+  reconcileBlurbReferences,
+} from '~/server/services/blurb-materialize.service';
 import { findOfficialFileByHash } from '~/server/services/model-file.service';
 import {
   createMultiAccountBuzzTransaction,
@@ -568,6 +574,30 @@ export const upsertModelVersion = async ({
     data.licensingFeeSettlementCurrency = null;
   }
 
+  // Re-expanded from the OWNER's rows rather than trusted from the client, and before the write
+  // so what is stored is what the blurb actually says. A moderator saving someone else's version
+  // resolves none of their blurbs, so they get the ids the version already references instead of
+  // stripping every span.
+  const actorId = actorUserId ?? model.userId;
+  // `id` alone is not "the row this lands on" — a templated write creates a NEW version even with
+  // an id present, and that new row references nothing yet.
+  const editsExistingVersion = !!id && !templateId;
+  const restrictToBlurbIds =
+    editsExistingVersion && model.userId !== actorId
+      ? await getReferencedBlurbIds({ entityType: 'ModelVersion', entityId: id as number })
+      : undefined;
+  const { html: expandedDescription, uses: blurbUses } = await expandBlurbs({
+    userId: model.userId,
+    html: data.description ?? '',
+    restrictToBlurbIds,
+  });
+  if (data.description != null) {
+    data.description = expandedDescription;
+    // The guard at the top of this function saw the CLIENT's html. Blurb bodies were spliced in
+    // since, so the string about to be written is one it never checked.
+    await throwOnBlockedLinkDomain(data.description);
+  }
+
   // Validate NSFW + restricted base model combination
   if (
     model.nsfw &&
@@ -715,6 +745,12 @@ export const upsertModelVersion = async ({
     // Native: derive the gate straight from the config input (endsAt materialized at publish for a
     // timed window), and create the EA donation goal here (option A) instead of at publish.
     await writeModelVersionGateAndGoal(version, model.userId, paidAccess, donationGoal);
+
+    await reconcileBlurbReferences({
+      entityType: 'ModelVersion',
+      entityId: version.id,
+      uses: blurbUses,
+    });
 
     return version;
   } else {
@@ -919,9 +955,82 @@ export const upsertModelVersion = async ({
     if (feeBefore !== feeAfter)
       await bustMvCache(version.id, version.modelId, actorUserId).catch(() => undefined);
 
+    if (version.description !== existingVersion.description)
+      await applyModelVersionContentChange({
+        id: version.id,
+        description: version.description ?? '',
+        context: { modelId: version.modelId },
+      });
+
+    await reconcileBlurbReferences({
+      entityType: 'ModelVersion',
+      entityId: version.id,
+      uses: blurbUses,
+    });
+
     return version;
   }
 };
+
+/**
+ * The one path for "a model version's description changed": the column write plus the follow-up
+ * that change implies. `upsertModelVersion` calls it, and so does the blurb fan-out — which is
+ * what stops the two drifting.
+ *
+ * Deliberately narrow. `upsertModelVersion` is form-shaped, so a caller holding only new HTML
+ * cannot use it without clearing the base model, files, monetization and recommended resources.
+ *
+ * Note what is NOT here: no text-moderation submit. Nothing scans a ModelVersion description
+ * today — the submits in this file belong to publish/unpublish, and cover the MODEL's text.
+ * That is pre-existing, and this function does not change it.
+ *
+ * The follow-up is the pair `upsertModelVersionHandler` runs after the save
+ * (`queueModelEarlyAccessReindex` + `dataForModelsCache.refresh`), inlined rather than imported:
+ * it lives in model.service.ts, which already imports this module.
+ */
+export async function applyModelVersionContentChange({
+  id,
+  description,
+  context,
+}: {
+  id: number;
+  description: string;
+  /**
+   * A caller that has ALREADY written this body passes its post-write snapshot here. Delete it
+   * from such a call site and the write below replays the body over a save that committed in
+   * between.
+   */
+  context?: { modelId: number };
+}) {
+  // The blocklist can move after a blurb was saved, and the fan-out has no user in the loop to
+  // catch it — same reason `applyArticleContentChange` re-checks.
+  await throwOnBlockedLinkDomain(description);
+
+  let modelId: number;
+  if (context) {
+    modelId = context.modelId;
+  } else {
+    const stored = await dbWrite.modelVersion.findUnique({
+      where: { id },
+      select: { modelId: true },
+    });
+    if (!stored) throw throwNotFoundError(`No model version with id ${id}`);
+    modelId = stored.modelId;
+
+    // Raw SQL because Prisma's @updatedAt fires on every client-side update(), and a blurb
+    // re-materialization is not a creator edit.
+    await dbWrite.$executeRaw`UPDATE "ModelVersion" SET description = ${description} WHERE id = ${id}`;
+    await preventModelVersionLagBatch(modelId, [id]);
+  }
+
+  // `dataForModelsCache` carries `mv."description"` and the public GET /api/v1/models/[id] body
+  // carries the version rows, so both serve the pre-rewrite text until they are dropped.
+  await dataForModelsCache.refresh(modelId);
+  await bustPublicModelResponseCache(modelId);
+  await modelsSearchIndex.queueUpdate([
+    { id: modelId, action: SearchIndexUpdateQueueAction.Update },
+  ]);
+}
 
 // Narrow write for just the paid-access config — the studio (and any caller that only wants to edit
 // monetization) doesn't have to round-trip the whole version payload through `upsertModelVersion`.

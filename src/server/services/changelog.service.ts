@@ -7,7 +7,12 @@ import type {
   GetChangelogsInput,
   UpdateChangelogInput,
 } from '~/server/schema/changelog.schema';
-import { throwDbError } from '~/server/utils/errorHandling';
+import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import {
+  expandBlurbs,
+  reconcileBlurbReferences,
+} from '~/server/services/blurb-materialize.service';
+import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { createKeyedTtlMemo } from '~/server/utils/ttl-memoize';
 import { DomainColor } from '~/shared/utils/prisma/enums';
 
@@ -124,26 +129,75 @@ export const getChangelogs = async (input: GetChangelogsInput & { hasFeature: bo
   }
 };
 
-export const createChangelog = async (data: CreateChangelogInput) => {
+// `Changelog` has no author column, so blurb spans resolve against the MODERATOR making the
+// edit. Consequence, and it is the reason there is no `restrictToBlurbIds` call here: another
+// moderator editing an entry unwraps a span they do not own to the text it already carries.
+// Nothing is lost, only the live reference; there is no owner to key on instead.
+export const createChangelog = async (data: CreateChangelogInput & { userId: number }) => {
+  const { userId, ...input } = data;
   try {
-    return dbWrite.changelog.create({ data: { ...data, updatedAt: data.effectiveAt } });
-  } catch (error) {
-    throw throwDbError(error);
-  }
-};
-
-export const updateChangelog = async (data: UpdateChangelogInput) => {
-  const { id, ...rest } = data;
-
-  try {
-    return dbWrite.changelog.update({
-      where: { id },
-      data: rest,
+    const { html: content, uses } = await expandBlurbs({ userId, html: input.content });
+    const created = await dbWrite.changelog.create({
+      data: { ...input, content, updatedAt: input.effectiveAt },
     });
+    await reconcileBlurbReferences({
+      entityType: 'Changelog',
+      entityId: created.id,
+      uses,
+    });
+    return created;
   } catch (error) {
     throw throwDbError(error);
   }
 };
+
+export const updateChangelog = async (data: UpdateChangelogInput & { userId: number }) => {
+  const { id, userId, ...rest } = data;
+
+  try {
+    if (rest.content === undefined) {
+      return await dbWrite.changelog.update({ where: { id }, data: rest });
+    }
+
+    const { html: content, uses } = await expandBlurbs({ userId, html: rest.content });
+    const updated = await dbWrite.changelog.update({
+      where: { id },
+      data: { ...rest, content },
+    });
+    await reconcileBlurbReferences({ entityType: 'Changelog', entityId: id, uses });
+    return updated;
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+/**
+ * The one path for "a changelog's body changed", for a caller holding only new HTML — the blurb
+ * fan-out. `updateChangelog` takes a whole form payload, so a partial call to it would clear
+ * title, tags, link and domain rather than update a column.
+ *
+ * The write is the whole of it: changelogs are not indexed, not text-moderated, and not cached
+ * per row (`getLatestChangelog`'s memo keys on `effectiveAt`, which this never moves). So unlike
+ * the other surfaces there is no shared follow-up for the interactive path to route through.
+ */
+export async function applyChangelogContentChange({
+  id,
+  content,
+}: {
+  id: number;
+  content: string;
+}) {
+  // The blocklist can move after a blurb was saved, and this path has no user in the loop to
+  // catch it — same reason `applyArticleContentChange` re-checks.
+  await throwOnBlockedLinkDomain(content);
+
+  // Raw SQL because Prisma's @updatedAt fires on every client-side update(), and a blurb
+  // re-materialization is not a moderator edit: the changelog list stamps "Updated" on any entry
+  // whose `updatedAt` runs more than an hour past `createdAt`.
+  const affected =
+    await dbWrite.$executeRaw`UPDATE "Changelog" SET content = ${content} WHERE id = ${id}`;
+  if (!affected) throw throwNotFoundError(`No changelog with id ${id}`);
+}
 
 export const deleteChangelog = async ({ id }: DeleteChangelogInput) => {
   try {

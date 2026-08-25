@@ -289,8 +289,27 @@ export const modelVersionUpsertSchema = z.object({
   baseModel: baseModelSchema,
   baseModelType: z.enum(constants.baseModelTypes).nullish(),
   description: getSanitizedStringSchema({
-    allowedTags: ['div', 'strong', 'p', 'em', 'u', 's', 'a', 'br', 'ul', 'ol', 'li', 'code', 'pre'],
+    // `span` is absent from the app-wide default list this narrows, so without it here a blurb
+    // span is stripped at save and `expandBlurbs` sees plain text — the control would render
+    // and silently do nothing on this surface alone.
+    allowedTags: [
+      'div',
+      'strong',
+      'p',
+      'em',
+      'u',
+      's',
+      'a',
+      'br',
+      'ul',
+      'ol',
+      'li',
+      'code',
+      'pre',
+      'span',
+    ],
     stripEmpty: true,
+    allowBlurbs: true,
   }).nullish(),
   steps: z.coerce.number().min(0).nullish(),
   epochs: z.coerce.number().min(0).max(100000).nullish(),
@@ -452,8 +471,27 @@ export const modelVersionUpsertSchema2 = z.object({
   baseModel: baseModelSchema,
   baseModelType: z.enum(constants.baseModelTypes).nullish(),
   description: getSanitizedStringSchema({
-    allowedTags: ['div', 'strong', 'p', 'em', 'u', 's', 'a', 'br', 'ul', 'ol', 'li', 'code', 'pre'],
+    // `span` is absent from the app-wide default list this narrows, so without it here a blurb
+    // span is stripped at save and `expandBlurbs` sees plain text — the control would render
+    // and silently do nothing on this surface alone.
+    allowedTags: [
+      'div',
+      'strong',
+      'p',
+      'em',
+      'u',
+      's',
+      'a',
+      'br',
+      'ul',
+      'ol',
+      'li',
+      'code',
+      'pre',
+      'span',
+    ],
     stripEmpty: true,
+    allowBlurbs: true,
   }).nullish(),
   steps: z.number().min(0).nullish(),
   epochs: z.number().min(0).max(100000).nullish(),

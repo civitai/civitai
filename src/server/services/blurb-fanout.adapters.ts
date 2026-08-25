@@ -1,5 +1,11 @@
+import { constants } from '~/server/common/constants';
 import { dbRead } from '~/server/db/client';
 import { applyArticleContentChange } from '~/server/services/article.service';
+import { applyBountyContentChange } from '~/server/services/bounty.service';
+import { applyChangelogContentChange } from '~/server/services/changelog.service';
+import { applyCosmeticShopItemContentChange } from '~/server/services/cosmetic-shop.service';
+import { applyModelContentChange } from '~/server/services/model.service';
+import { applyModelVersionContentChange } from '~/server/services/model-version.service';
 
 export type BlurbFanoutAdapter = {
   /** `null` means the entity no longer exists and the reference should be dropped. */
@@ -17,6 +23,10 @@ export type BlurbFanoutAdapter = {
 // (see blurb-materialize.service.ts). A mismatch is silent: references
 // accumulate, the fan-out reports them `unsupported` forever, and nothing
 // rewrites them.
+//
+// Every `save` here goes through an `apply<Entity>ContentChange`, never the entity's
+// form-shaped upsert: a partial payload to one of those does not update a column, it
+// clears every field it omits.
 const adapters: Record<string, BlurbFanoutAdapter> = {
   Article: {
     load: async (entityId) => {
@@ -31,6 +41,67 @@ const adapters: Record<string, BlurbFanoutAdapter> = {
     // update a column, it clears every field it omits.
     save: ({ entityId, userId, html }) =>
       applyArticleContentChange({ id: entityId, userId, content: html }),
+  },
+  Model: {
+    load: async (entityId) => {
+      const row = await dbRead.model.findUnique({
+        where: { id: entityId },
+        select: { userId: true, description: true },
+      });
+      return row ? { userId: row.userId, html: row.description ?? '' } : null;
+    },
+    // NOT `updateModelById`: that runs neither the text-moderation submit nor the
+    // response-cache bust, so a rewritten description would go unscanned and keep
+    // serving its old text from the public model API.
+    save: ({ entityId, html }) => applyModelContentChange({ id: entityId, description: html }),
+  },
+  ModelVersion: {
+    load: async (entityId) => {
+      const row = await dbRead.modelVersion.findUnique({
+        where: { id: entityId },
+        select: { description: true, model: { select: { userId: true } } },
+      });
+      return row ? { userId: row.model.userId, html: row.description ?? '' } : null;
+    },
+    save: ({ entityId, html }) =>
+      applyModelVersionContentChange({ id: entityId, description: html }),
+  },
+  Bounty: {
+    load: async (entityId) => {
+      const row = await dbRead.bounty.findUnique({
+        where: { id: entityId },
+        select: { userId: true, description: true },
+      });
+      // `Bounty.userId` is nullable (the owner's account can be deleted out from under it),
+      // and nothing downstream reads this one — the save writes a column and no more.
+      return row ? { userId: row.userId ?? constants.system.user.id, html: row.description } : null;
+    },
+    save: ({ entityId, html }) => applyBountyContentChange({ id: entityId, description: html }),
+  },
+  Changelog: {
+    load: async (entityId) => {
+      const row = await dbRead.changelog.findUnique({
+        where: { id: entityId },
+        select: { content: true },
+      });
+      // `Changelog` has no author column at all. Nothing downstream reads this, so the system
+      // actor stands in rather than inventing an owner the row does not have.
+      return row ? { userId: constants.system.user.id, html: row.content } : null;
+    },
+    save: ({ entityId, html }) => applyChangelogContentChange({ id: entityId, content: html }),
+  },
+  CosmeticShopItem: {
+    load: async (entityId) => {
+      const row = await dbRead.cosmeticShopItem.findUnique({
+        where: { id: entityId },
+        select: { addedById: true, description: true },
+      });
+      return row
+        ? { userId: row.addedById ?? constants.system.user.id, html: row.description ?? '' }
+        : null;
+    },
+    save: ({ entityId, html }) =>
+      applyCosmeticShopItemContentChange({ id: entityId, description: html }),
   },
 };
 

@@ -1,4 +1,5 @@
 import { dbRead, dbWrite } from '~/server/db/client';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { findBlurbSpans, replaceBlurbSpans, unwrapBlurbSpans } from '~/server/utils/blurb-html';
 
 export type BlurbUse = { blurbId: number; contentHash: string };
@@ -29,6 +30,14 @@ export async function expandBlurbs({
    */
   restrictToBlurbIds?: number[];
 }) {
+  // Keyed on the owner rather than the actor so a percentage rollout picks a sticky subset of
+  // creators. Off means the spans are left exactly as the client sent them and no reference row
+  // is claimed — deliberately NOT the same as unwrapping, which would strip a creator's blurbs
+  // the moment they fell out of the rollout. The fan-out job is not gated on this; see
+  // blurb-fanout.service.ts.
+  if (!(await isFlipt(FLIPT_FEATURE_FLAGS.TEXT_BLURBS, String(userId))))
+    return { html, uses: [] as BlurbUse[] };
+
   const spans = findBlurbSpans(html);
   if (!spans.length) return { html, uses: [] as BlurbUse[] };
 

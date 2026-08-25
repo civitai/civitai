@@ -152,7 +152,7 @@ export type ModelInput = z.infer<typeof modelSchema>;
 export const modelSchema = licensingSchema.extend({
   id: z.number().optional(),
   name: z.string().min(1, 'Name cannot be empty.'),
-  description: getSanitizedStringSchema().nullish(),
+  description: getSanitizedStringSchema({ allowBlurbs: true }).nullish(),
   type: z.enum(ModelType),
   uploadType: z.enum(ModelUploadType),
   status: z.enum(ModelStatus),
@@ -216,7 +216,7 @@ export const modelUpsertSchema = z.object({
   ...licensingSchema.shape,
   id: z.coerce.number().optional(),
   name: z.string().trim().min(1, 'Name cannot be empty.'),
-  description: getSanitizedStringSchema().nullish(),
+  description: getSanitizedStringSchema({ allowBlurbs: true }).nullish(),
   type: z.enum(ModelType),
   uploadType: z.enum(ModelUploadType),
   status: z.enum(ModelStatus),

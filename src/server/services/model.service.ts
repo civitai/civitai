@@ -105,6 +105,11 @@ import {
   queueImageSearchIndexUpdate,
 } from '~/server/services/image.service';
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
+import {
+  expandBlurbs,
+  getReferencedBlurbIds,
+  reconcileBlurbReferences,
+} from '~/server/services/blurb-materialize.service';
 import { submitModelTextModeration } from '~/server/services/model-moderation.adapter';
 import {
   bustMvCache,
@@ -2370,6 +2375,28 @@ export const upsertModel = async (
   const storedLockedProperties = beforeUpdate?.lockedProperties ?? [];
   enforceLockedProperties({ data, storedLockedProperties, isModerator });
 
+  // Re-expanded from the OWNER's rows rather than trusted from the client, and before the write
+  // so what is stored is what the blurb actually says — and before the profanity filter below,
+  // which must evaluate the text that will actually be published. A moderator saving someone
+  // else's model resolves none of their blurbs, so they get the ids the model already
+  // references instead of stripping every span.
+  const ownerId = beforeUpdate?.userId ?? userId;
+  const restrictToBlurbIds =
+    beforeUpdate && ownerId !== userId
+      ? await getReferencedBlurbIds({ entityType: 'Model', entityId: id as number })
+      : undefined;
+  const { html: expandedDescription, uses: blurbUses } = await expandBlurbs({
+    userId: ownerId,
+    html: data.description ?? '',
+    restrictToBlurbIds,
+  });
+  if (data.description != null) {
+    data.description = expandedDescription;
+    // The guard at the top of this function saw the CLIENT's html. Blurb bodies were spliced in
+    // since, so the string about to be written is one it never checked.
+    await throwOnBlockedLinkDomain(data.description);
+  }
+
   let profanityAutoNsfw = false;
   if (!isModerator) {
     // Check model name and description for profanity using threshold-based evaluation
@@ -2466,6 +2493,8 @@ export const upsertModel = async (
         })
       );
     }
+
+    await reconcileBlurbReferences({ entityType: 'Model', entityId: result.id, uses: blurbUses });
 
     await modelTagCache.refresh(result.id);
     // Model tag set changed → the votable-tags list (score>0 ModelTag rows) changed too.
@@ -2646,27 +2675,82 @@ export const upsertModel = async (
     // cached body) stops serving a stale 200 on an edge-miss for up to the cache
     // TTL. preventReplicationLag('model', id) above already guards the rebuild
     // read against the replication window. Fail-open (the helper swallows Redis
-    // errors); the only post-commit write left in this branch.
+    // errors). Unconditional, unlike the content-change call below: the fields it
+    // covers are wider than the two that one gates on.
     await bustPublicModelResponseCache(result.id);
 
-    // Fire-and-forget: the helper owns its own flag check and swallows its own errors, so a
-    // moderation outage can never fail a model save. `result` carries the post-update
-    // name/description, not the pre-update values in `beforeUpdate`.
-    //
-    // Skipped when neither field moved. contentHash dedup would drop it anyway, but only
-    // after a round trip and an EntityModeration upsert on every unrelated model edit.
+    // Skipped when neither field moved. contentHash dedup would drop the moderation submit
+    // anyway, but only after a round trip and an EntityModeration upsert on every unrelated
+    // model edit. `result` carries the post-update values, not `beforeUpdate`'s.
     if (result.name !== beforeUpdate.name || result.description !== beforeUpdate.description) {
-      submitModelTextModeration({
+      await applyModelContentChange({
         id: result.id,
-        name: result.name,
-        description: result.description,
-        isModerator,
-      }).catch(() => null);
+        description: result.description ?? '',
+        context: { name: result.name, isModerator },
+      });
     }
+
+    await reconcileBlurbReferences({ entityType: 'Model', entityId: result.id, uses: blurbUses });
 
     return withoutMinorHashMeta(result);
   }
 };
+
+/**
+ * The one path for "a model's description changed": the column write plus the follow-up that
+ * change implies. `upsertModel` calls it, and so does the blurb fan-out — which is what stops
+ * the two drifting.
+ *
+ * Deliberately narrow. `upsertModel` is form-shaped, so a caller holding only new HTML cannot
+ * use it without clearing tags, gallery settings and the whole licensing block. `updateModelById`
+ * is not the answer either: it takes an arbitrary Prisma update and runs neither the moderation
+ * submit nor the response-cache bust below.
+ */
+export async function applyModelContentChange({
+  id,
+  description,
+  context,
+}: {
+  id: number;
+  description: string;
+  /**
+   * A caller that has ALREADY written this body passes its post-write snapshot here. Delete it
+   * from such a call site and the write below replays the body over a save that committed in
+   * between.
+   */
+  context?: { name: string; isModerator?: boolean };
+}) {
+  // The blocklist can move after a blurb was saved, and the fan-out has no user in the loop to
+  // catch it — same reason `applyArticleContentChange` re-checks.
+  await throwOnBlockedLinkDomain(description);
+
+  let resolved = context;
+  if (!resolved) {
+    const stored = await dbWrite.model.findUnique({ where: { id }, select: { name: true } });
+    if (!stored) throw throwNotFoundError(`No model with id ${id}`);
+    resolved = { name: stored.name };
+
+    // Raw SQL because Prisma's @updatedAt fires on every client-side update(), and a blurb
+    // re-materialization is not a creator edit: `updatedAt` orders the "recently updated"
+    // model lists.
+    await dbWrite.$executeRaw`UPDATE "Model" SET description = ${description} WHERE id = ${id}`;
+    await preventReplicationLag('model', id);
+  }
+
+  // The description is carried in the cached public GET /api/v1/models/[id] body, so without
+  // this an edge-miss keeps serving the pre-rewrite text for up to the cache TTL. Fail-open
+  // (the helper swallows Redis errors).
+  await bustPublicModelResponseCache(id);
+
+  // Fire-and-forget: the helper owns its own flag check and swallows its own errors, so a
+  // moderation outage can never fail a model save.
+  submitModelTextModeration({
+    id,
+    name: resolved.name,
+    description,
+    isModerator: resolved.isModerator,
+  }).catch(() => null);
+}
 
 export const publishModelById = async ({
   id,

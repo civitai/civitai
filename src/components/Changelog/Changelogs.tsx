@@ -456,6 +456,7 @@ const CreateChangelog = ({
                   'media',
                   'colors',
                   'timestamp',
+                  'blurb',
                 ]} // mentions, polls
                 withAsterisk
                 stickyToolbar

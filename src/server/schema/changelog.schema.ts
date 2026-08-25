@@ -21,7 +21,10 @@ export type CreateChangelogInput = z.infer<typeof createChangelogInput>;
 export const createChangelogInput = z.object({
   title: z.string().min(1),
   titleColor: z.string().optional(),
-  content: getSanitizedStringSchema().refine((data) => data.length > 0, 'Cannot be empty'),
+  content: getSanitizedStringSchema({ allowBlurbs: true }).refine(
+    (data) => data.length > 0,
+    'Cannot be empty'
+  ),
   link: z.url().optional().or(z.literal('')),
   //   link: z.string().optional().refine(value => !value || /^(https?:\/\/)?([\da-z.-]+)\.([a-z.]{2,6})(\/[\w.-]*)*\/?$/.test(value), {
   //     message: "Please provide a valid URL",

@@ -51,6 +51,11 @@ import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema'
 import type { IngestImageInput } from '~/server/schema/image.schema';
 import { userBountyCountCache } from '~/server/redis/caches';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import {
+  expandBlurbs,
+  getReferencedBlurbIds,
+  reconcileBlurbReferences,
+} from '~/server/services/blurb-materialize.service';
 import { createProfanityFilter } from '~/libs/profanity-simple';
 import { logToAxiom } from '~/server/logging/client';
 
@@ -463,10 +468,34 @@ export const upsertBounty = async ({
   await throwOnBlockedLinkDomain(data.description);
 
   const stored = id
-    ? await dbRead.bounty.findUnique({ where: { id }, select: { lockedProperties: true } })
+    ? await dbRead.bounty.findUnique({
+        where: { id },
+        select: { lockedProperties: true, userId: true },
+      })
     : null;
   const storedLockedProperties = stored?.lockedProperties ?? [];
   enforceLockedProperties({ data, storedLockedProperties, isModerator });
+
+  // Re-expanded from the OWNER's rows rather than trusted from the client, and before the write
+  // so what is stored is what the blurb actually says — and before the profanity filter below,
+  // which must evaluate the text that will actually be published. A moderator saving someone
+  // else's bounty resolves none of their blurbs, so they get the ids the bounty already
+  // references instead of stripping every span.
+  const ownerId = stored?.userId ?? userId;
+  const restrictToBlurbIds =
+    id && ownerId !== userId
+      ? await getReferencedBlurbIds({ entityType: 'Bounty', entityId: id })
+      : undefined;
+  const { html: expandedDescription, uses: blurbUses } = await expandBlurbs({
+    userId: ownerId,
+    html: data.description,
+    restrictToBlurbIds,
+  });
+  data.description = expandedDescription;
+
+  // The guard above saw the CLIENT's html. Blurb bodies were spliced in since, so the string
+  // about to be written is one it never checked.
+  await throwOnBlockedLinkDomain(data.description);
 
   const addLockedProperties: string[] = [];
   if (!isModerator) {
@@ -496,12 +525,19 @@ export const upsertBounty = async ({
 
   if (id) {
     const updateInput = await updateBountyInputSchema.parseAsync({ id, ...data });
-    return updateBountyById({
+    const updated = await updateBountyById({
       ...updateInput,
       userId,
       isModerator,
       addLockedProperties,
     });
+    if (updated)
+      await reconcileBlurbReferences({
+        entityType: 'Bounty',
+        entityId: updated.id,
+        uses: blurbUses,
+      });
+    return updated;
   } else {
     if (data.poi) {
       throw throwBadRequestError(
@@ -510,9 +546,42 @@ export const upsertBounty = async ({
     }
 
     const createInput = await createBountyInputSchema.parseAsync({ ...data, buzzType });
-    return createBounty({ ...createInput, userId, addLockedProperties });
+    const created = await createBounty({ ...createInput, userId, addLockedProperties });
+    await reconcileBlurbReferences({
+      entityType: 'Bounty',
+      entityId: created.id,
+      uses: blurbUses,
+    });
+    return created;
   }
 };
+
+/**
+ * The one path for "a bounty's description changed", for a caller holding only new HTML — the
+ * blurb fan-out. `upsertBounty` is form-shaped, so a partial call to it would clear name, tags,
+ * files, images and the entry limit rather than update a column.
+ *
+ * The write is the whole of it, because that is all a description change does on the
+ * interactive path too: `updateBountyById`'s follow-up is the image ingest queue and the owner's
+ * bounty COUNT, neither of which a re-materialised body moves.
+ */
+export async function applyBountyContentChange({
+  id,
+  description,
+}: {
+  id: number;
+  description: string;
+}) {
+  // The blocklist can move after a blurb was saved, and this path has no user in the loop to
+  // catch it — same reason `applyArticleContentChange` re-checks.
+  await throwOnBlockedLinkDomain(description);
+
+  // Raw SQL because Prisma's @updatedAt fires on every client-side update(), and a blurb
+  // re-materialization is not a creator edit.
+  const affected =
+    await dbWrite.$executeRaw`UPDATE "Bounty" SET description = ${description} WHERE id = ${id}`;
+  if (!affected) throw throwNotFoundError(`No bounty with id ${id}`);
+}
 
 export const deleteBountyById = async ({
   id,
