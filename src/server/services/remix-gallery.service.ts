@@ -1959,7 +1959,7 @@ export async function getMyRemixGallerySubmissions({
           --   availability - a post inherits it from the model version, so it
           --   can be published AND private;
           --   needsReview / acceptableMinor - a moderator flag leaves ingestion
-          --   at 'Scanned', so neither is implied by the line above.
+          --   at 'Scanned', so neither is implied by the ingestion clause below.
           AND p."publishedAt" < now()
           AND p."availability" != ${Availability.Private}
           AND i.ingestion = 'Scanned'

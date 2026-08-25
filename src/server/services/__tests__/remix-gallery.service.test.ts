@@ -2155,12 +2155,55 @@ describe('the reads a Buzz figure is rendered from', () => {
     expect(hostReads).toHaveLength(1);
     const sql = flatten(hostReads[0]);
 
-    expect(sql).toContain('p."availability" !=');
+    // 🔴 The leading `AND` is part of every assertion, and that is the whole
+    // point of them. Matching the fragment alone pins the spelling of a clause
+    // without pinning how it JOINS the others — measured: flipping one `AND` to
+    // `OR` left all five green while making the entire WHERE permissive, which
+    // is worse than deleting any single clause.
+    expect(sql).toContain('AND p."availability" !=');
     expect(boundValues(hostReads[0])).toContain(Availability.Private);
     // `IS NOT NULL` alone served a scheduled post ahead of its own publish time.
-    expect(sql).toContain('p."publishedAt" < now()');
-    expect(sql).toContain('i."needsReview" IS NULL');
-    expect(sql).toContain('NOT i."acceptableMinor"');
+    expect(sql).toContain('AND p."publishedAt" < now()');
+    expect(sql).toContain('AND i."needsReview" IS NULL');
+    expect(sql).toContain('AND NOT i."acceptableMinor"');
+    expect(sql).not.toContain('OR ');
+  });
+
+  /**
+   * 🔴 The withholding above must never become a disappearance. This list is the
+   * submitter's own record of where their Buzz went, and the withdraw button
+   * beside each row is the only route back to an escrow that otherwise sits
+   * until expiry.
+   *
+   * So a host the nine clauses exclude has to come back as `targetImage: null`
+   * on a row that is still there — not as a filtered-out row. The owner's
+   * received queue deliberately does the opposite (`:1861` filters on
+   * `row.image && row.targetImage`), and copying that one line into this
+   * function is a plausible tidy-up that passes every other test in this file
+   * while vanishing a pending row and its withdraw.
+   */
+  it('keeps the row when the host is withheld, so the withdraw survives', async () => {
+    placementFindMany.mockResolvedValue([
+      {
+        id: 1,
+        targetId: HOST_IMAGE,
+        ownerId: OWNER,
+        status: 'pending',
+        data: { imageId: REMIX_IMAGE },
+      },
+    ]);
+    // What the filtered read returns once the host stops meeting the rules.
+    queryRaw.mockImplementation(async () => []);
+
+    const rows = await getMyRemixGallerySubmissions({
+      placerId: PLACER,
+      domainLevels: allBrowsingLevelsFlag,
+      viewerLevels: allBrowsingLevelsFlag,
+    });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].id).toBe(1);
+    expect(rows[0].targetImage).toBeNull();
   });
 
   it('the submitter’s pending rows on the image detail card', async () => {
