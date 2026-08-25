@@ -16,13 +16,15 @@ governing _how often_ they may put a new price on something.
 | | Today | After |
 | --- | --- | --- |
 | Who may monetize at all | Anyone | Creator score ≥ 10,000 |
-| Licensing fee ceiling | Per tier (free 1/0.1 → gold 100) | Flat 100/generation for everyone, ×5 video |
-| Paid access price ceiling | Per tier (free 500 → gold unlimited) | None — uncapped |
+| Licensing fee a creator may SET | Per tier (free 1/0.1 → gold 100) | Flat 100/generation for everyone, ×5 video |
+| Licensing fee a creator EARNS | Per tier | **Unchanged — still per tier** |
+| Paid access price a creator may SET | Per tier (free 500 → gold unlimited) | None — uncapped |
+| Paid access price a creator EARNS | Per tier | **Unchanged — still per tier** |
 | Permanent gate allowance | Concurrent count, free capped at 3 | — replaced by the monthly allowance |
 | New priced versions | Unlimited | Monthly allowance: free 3, bronze 10, silver 25, gold unlimited — a fee or a permanent gate both count |
 | Re-pricing an already-priced version | Cap-checked | Free — costs no allowance |
 | Early access | Uncapped price, score-gated length | Unchanged, and never counts against the allowance |
-| Membership lapse | Prices clamp to the lower tier's cap | Nothing changes; only the allowance shrinks |
+| Membership lapse | Payouts clamp to the lower tier's cap | **Unchanged** — payouts still clamp; the allowance shrinks too |
 
 ## What this replaces
 
@@ -105,8 +107,17 @@ video (500). Paid access is uncapped.**
       there is no ceiling to check, not a large one, so the paid-access price loses its raise check
       too, and `assertPaidAccessCaps` keeps only the eligibility and allowance work — it shipped as
       `assertMonetizationWrite`.
-- [x] `effectiveLicensingFee` loses its `recipientTier` argument and stops clamping. This takes a
-      tier lookup off the per-generation billing path.
+- [x] ~~`effectiveLicensingFee` loses its `recipientTier` argument and stops clamping.~~
+      **Reverted 2026-08-25.** The charge-time clamp is back, along with `maxLicensingFee`,
+      `maxPaidAccessPrice`, `cappedTerms` and the cap-tier cache. Removing it would have made every
+      stored over-cap price go live at deploy, and the only way to stop that without the clamp was to
+      rewrite creators' stored prices — which changes a number they set, with no explanation they would
+      see. The clamp instead leaves the stored value alone and shows both figures in the editor, which
+      is what it did before.
+
+      What did NOT come back: the **write-path** cap. A creator may still set anything up to the flat
+      ceiling at any tier; membership governs the payout, not the field. So this is not a straight
+      revert — set and earn are now separate axes.
 - [x] `maxFeeBuzzForRatio`, `feeImageOptionsForCap`, `monetizationLimits`, `resolveCapTier` — drop
       the tier axis where it no longer varies anything. `resolveCapTier` may survive only for the
       allowance.

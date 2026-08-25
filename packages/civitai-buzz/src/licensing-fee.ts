@@ -28,6 +28,54 @@ export function maxLicensingFeeCeiling(mediaType?: CapMediaType): number {
   return MAX_LICENSING_FEE * mediaMultiplier(mediaType);
 }
 
+// Shaped like SUGGESTED_FEE_PER_IMAGE: checkpoints carry more value, everything else takes `default`.
+const BRONZE_FEE_CAP = { checkpoint: 3, default: 1 };
+
+/**
+ * Highest per-generation fee a tier may EARN. Membership no longer limits what a creator may SET — the
+ * write path allows anything up to the flat ceiling — but it still limits what they are paid, which is
+ * what stops a lapse silently repricing a version for its buyers.
+ */
+export const LICENSING_FEE_CAP_BY_TIER: Record<string, { checkpoint: number; default: number }> = {
+  free: { checkpoint: 1, default: 0.1 },
+  // Legacy paid tier — earns as bronze.
+  founder: BRONZE_FEE_CAP,
+  bronze: BRONZE_FEE_CAP,
+  silver: { checkpoint: 10, default: 5 },
+  gold: { checkpoint: MAX_LICENSING_FEE, default: MAX_LICENSING_FEE },
+};
+
+/**
+ * Highest per-image fee `tier` may earn for `modelType`. An unknown or lapsed tier gets the FREE cap,
+ * so a lapse tightens what is earned without a migration and can never ungate anything.
+ */
+export function maxLicensingFee(
+  tier: string | null | undefined,
+  modelType?: string | null,
+  mediaType?: CapMediaType
+): number {
+  const caps =
+    (tier ? LICENSING_FEE_CAP_BY_TIER[tier] : undefined) ?? LICENSING_FEE_CAP_BY_TIER.free;
+  const base = modelType === 'Checkpoint' ? caps.checkpoint : caps.default;
+  return base * mediaMultiplier(mediaType);
+}
+
+/**
+ * What a generation is billed: the stored fee lowered to the RECIPIENT's current cap. The stored value
+ * is NEVER rewritten, so re-subscribing restores it and the owner's editor keeps showing what they set.
+ * A positive fee never clamps to 0 (the lowest cap of any tier is 0.1), so callers never need to drop a
+ * zeroed component.
+ */
+export function effectiveLicensingFee(
+  storedFee: number | null | undefined,
+  recipientTier: string | null | undefined,
+  modelType?: string | null,
+  mediaType?: CapMediaType
+): number {
+  if (storedFee == null || storedFee <= 0) return 0;
+  return Math.min(storedFee, maxLicensingFee(recipientTier, modelType, mediaType));
+}
+
 /** Infinity means 'no limit', which no JSON boundary survives — every cap crosses one as null. */
 export const finiteOrNull = (n: number): number | null => (Number.isFinite(n) ? n : null);
 

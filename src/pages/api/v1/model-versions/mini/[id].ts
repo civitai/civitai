@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
-import { DEFAULT_GENERATION_TRIAL_LIMIT } from '@civitai/buzz';
+import { DEFAULT_GENERATION_TRIAL_LIMIT, capMediaType, effectiveLicensingFee } from '@civitai/buzz';
+import { getCapTiers } from '~/server/services/paid-access.service';
 import { lowerFirst } from 'lodash-es';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Session } from '~/types/session';
@@ -413,10 +414,26 @@ export default MixedAuthEndpoint(async function handler(
     recipientModelVersionId: number;
     recipientUserId: number;
   }> = [];
+
+  // What a generation is BILLED: the stored fee lowered to the recipient's current tier cap. The stored
+  // value is never rewritten, so the owner's editor keeps showing what they set and re-subscribing
+  // restores it — which is why no backfill is needed to stop a lapse repricing a version for its buyers.
+  const capTiers = await getCapTiers([
+    isLicensingRoot || hasOwnFee ? modelVersion.modelUserId : null,
+    hasSourceRule ? modelVersion.sourceLicensingFeeRecipientUserId : null,
+  ]);
+  const ownFeeTier = capTiers.get(modelVersion.modelUserId) ?? null;
+  const sourceFeeTier = capTiers.get(modelVersion.sourceLicensingFeeRecipientUserId!) ?? null;
+
   if (isLicensingRoot) {
     fees.push({
       role: 'baseModel',
-      amount: modelVersion.licensingFee ?? 0,
+      amount: effectiveLicensingFee(
+        modelVersion.licensingFee,
+        ownFeeTier,
+        modelVersion.type,
+        capMediaType(modelVersion.baseModel)
+      ),
       type: lowerFirst(modelVersion.licensingFeeType ?? 'PerImageBuzz'),
       settlementCurrency: lowerFirst(modelVersion.licensingFeeSettlementCurrency ?? 'Buzz'),
       recipientModelVersionId: modelVersion.id,
@@ -425,7 +442,12 @@ export default MixedAuthEndpoint(async function handler(
   } else if (hasSourceRule) {
     fees.push({
       role: 'baseModel',
-      amount: modelVersion.sourceLicensingFee ?? 0,
+      amount: effectiveLicensingFee(
+        modelVersion.sourceLicensingFee,
+        sourceFeeTier,
+        modelVersion.sourceModelType,
+        capMediaType(modelVersion.sourceBaseModel)
+      ),
       type: lowerFirst(modelVersion.sourceLicensingFeeType ?? 'PerImageBuzz'),
       settlementCurrency: lowerFirst(modelVersion.sourceLicensingFeeSettlementCurrency ?? 'Buzz'),
       recipientModelVersionId: modelVersion.licensingSourceVersionId!,
@@ -435,7 +457,12 @@ export default MixedAuthEndpoint(async function handler(
   if (hasOwnFee) {
     fees.push({
       role: 'version',
-      amount: modelVersion.licensingFee ?? 0,
+      amount: effectiveLicensingFee(
+        modelVersion.licensingFee,
+        ownFeeTier,
+        modelVersion.type,
+        capMediaType(modelVersion.baseModel)
+      ),
       type: lowerFirst(modelVersion.licensingFeeType ?? 'PerImageBuzz'),
       settlementCurrency: lowerFirst(modelVersion.licensingFeeSettlementCurrency ?? 'Buzz'),
       recipientModelVersionId: modelVersion.id,

@@ -88,6 +88,8 @@ import {
   monetizationLimits,
   pricingAllowanceState,
   ratioToFee,
+  capMediaType,
+  maxLicensingFee,
   resolveCapTier,
   separateGenerationPriceMissing,
   seedFeeRatio,
@@ -446,6 +448,11 @@ export function ModelVersionUpsertForm({
   // ceiling instead of stranding it on whatever the form loaded with.
   const limits = monetizationLimits({ tier: feeCapTier, baseModel });
   const licensingFeeCap = limits.fee.maxPerGeneration;
+  // What this creator's tier actually EARNS, as opposed to what they may set. Membership no longer
+  // limits the number in the field — it limits the payout — so the editor has to show both or the
+  // creator has no way to know the two differ.
+  const feeEarnCap = maxLicensingFee(feeCapTier, model?.type, capMediaType(baseModel));
+  const feeIsClamped = currentLicensingFee > feeEarnCap;
   const feeImageOptions = limits.fee.denominators;
   // Paid access has no ceiling; the input still needs a sane bound, so it borrows the donation one.
   const paidAccessCap = MAX_DONATION_GOAL;
@@ -1857,6 +1864,14 @@ export function ModelVersionUpsertForm({
                                   capTier={feeCapTier}
                                 />
                               </Group>
+                            )}
+                            {feeIsClamped && (
+                              <Text size="xs" c="yellow.5">
+                                You&apos;ve set {currentLicensingFee} Buzz, but your membership
+                                earns up to {feeEarnCap} per generation for this model type — buyers
+                                are charged {feeEarnCap}. The full amount applies if you upgrade;
+                                nothing is rewritten either way.
+                              </Text>
                             )}
                             {showLicensingFeeSettlementCurrency && (
                               <InputSelect

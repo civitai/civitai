@@ -3,6 +3,8 @@
 // `terms` is bundle semantics (a `download` purchase grants generation too). No termsVersion —
 // the zod write boundary is the contract. See docs/creator-studio/paid-access-schema.md.
 
+import { VIDEO_CAP_MULTIPLIER, type CapMediaType } from './licensing-fee';
+
 export type PaidAccessEntityType = 'ModelVersion' | 'ComicChapter';
 
 export type Grant = { price: number };
@@ -293,6 +295,77 @@ export const SALE_DAYS_BY_TIER: Record<string, number> = {
  * deploy; the pricing gate has no override.
  */
 export const MONETIZATION_MIN_CREATOR_SCORE = 10_000;
+
+/**
+ * Highest permanent-gate price a tier may EARN. Like the fee cap, this limits what is paid out, not what
+ * the creator may set — the write path leaves the price uncapped.
+ */
+export const PAID_ACCESS_PRICE_CAP_BY_TIER: Record<string, number> = {
+  free: 500,
+  // Legacy paid tier — earns as bronze.
+  founder: 1000,
+  bronze: 1000,
+  silver: 5000,
+  gold: Infinity,
+};
+
+/** Highest price a tier may earn for paid access. Unknown/lapsed tiers get the FREE cap. */
+export function maxPaidAccessPrice(
+  tier: string | null | undefined,
+  mediaType?: CapMediaType
+): number {
+  const base =
+    (tier ? PAID_ACCESS_PRICE_CAP_BY_TIER[tier] : undefined) ?? PAID_ACCESS_PRICE_CAP_BY_TIER.free;
+  return mediaType === 'video' ? base * VIDEO_CAP_MULTIPLIER : base;
+}
+
+/**
+ * What a buyer is billed for a gate: the stored price lowered to the owner's current cap.
+ */
+export function effectivePaidAccessPrice(
+  storedPrice: number | null | undefined,
+  ownerTier: string | null | undefined,
+  gate: { permanent: boolean; mediaType?: CapMediaType }
+): number {
+  if (storedPrice == null || storedPrice <= 0) return 0;
+  // Required rather than optional so the compiler makes every call site decide. The cap shipping without
+  // this distinction is what charged 10k early-access windows at 500 (CU 868kk3avk).
+  if (!gate.permanent) return storedPrice;
+  return Math.min(storedPrice, maxPaidAccessPrice(ownerTier, gate.mediaType));
+}
+
+/**
+ * Terms priced at the owner's current cap — what a buyer is billed. Show these to buyers; show the
+ * STORED terms to the owner, whose editors write them back. A generation tier with no price of its own
+ * must keep falling back to the download price, which is already capped here.
+ */
+export function cappedTerms(
+  terms: ModelVersionTerms,
+  ownerTier: string | null,
+  gate: { permanent: boolean; mediaType?: CapMediaType }
+): ModelVersionTerms {
+  if (!gate.permanent) return terms;
+  const paidGen = paidGenerationGrant(terms);
+  return {
+    ...terms,
+    ...(terms.download
+      ? {
+          download: {
+            ...terms.download,
+            price: effectivePaidAccessPrice(terms.download.price, ownerTier, gate),
+          },
+        }
+      : {}),
+    ...(paidGen?.price != null
+      ? {
+          generation: {
+            ...paidGen,
+            price: effectivePaidAccessPrice(paidGen.price, ownerTier, gate),
+          },
+        }
+      : {}),
+  };
+}
 
 /** How far ahead a sale may be scheduled, so next month's promo can be prepared from the back half of this one. */
 export const MAX_SALE_LEAD_DAYS = 14;
