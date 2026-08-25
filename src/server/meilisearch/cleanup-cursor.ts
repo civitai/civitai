@@ -95,6 +95,19 @@ export async function readScanCursor(key: string, now = Date.now()): Promise<Rea
     return { cursor: null, reason: 'invalid' };
   if (typeof covered !== 'number' || !Number.isFinite(covered) || covered < 0)
     return { cursor: null, reason: 'invalid' };
+  // 🔴 `covered` is the sole input to both coverage judgements — whether an empty page
+  // is believed, and whether the pass is credited as finished — so an absurd value
+  // silently credits a pass that covered nothing. Ids are non-negative and strictly
+  // increasing, so a pass standing at `lastId` cannot have walked past more than
+  // `lastId + 1` of them. That is a structural invariant, not a heuristic.
+  //
+  // What this does NOT catch: an index rebuilt or bulk-deleted between runs, which
+  // shrinks `totalInIndex` while `covered` legitimately carries the old, larger figure.
+  // No validation here can see that. It self-heals in one night — the resumed page sits
+  // above every surviving id, so the scan gets an empty page at apparently-complete
+  // coverage, credits the pass, clears the cursor, and the next run walks the rebuilt
+  // index from the bottom.
+  if (covered > lastId + 1) return { cursor: null, reason: 'invalid' };
 
   const age = now - startedAt;
   // A future-dated `startedAt` (clock skew, or a hand-edited value) would make `age`

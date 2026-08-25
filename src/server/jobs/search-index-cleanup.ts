@@ -1,5 +1,6 @@
 import { createJob } from './job';
 import { CLEANUP_INDEXES, cleanupAllIndexes } from '~/server/meilisearch/cleanup';
+import { assessPassCoverage } from '~/server/meilisearch/cleanup-coverage';
 import { logToAxiom } from '~/server/logging/client';
 
 // Page size REQUESTED per keyset scan. `cleanupIndex` clamps this down to each
@@ -17,25 +18,13 @@ import { logToAxiom } from '~/server/logging/client';
 const SCAN_BATCH = 10000;
 
 /**
- * How far `idsScanned` may fall short of the pre-scan document count before the
- * run is called incomplete on the counts alone.
- *
- * A shortfall is NORMAL: `totalInIndex` is a snapshot taken before a scan that
- * then runs for a long time, and a separate cleanup job issues delete-by-filter
- * against most of these indexes every five minutes, so documents legitimately
- * disappear from under the cursor. The authoritative truncation signal is
- * `stoppedEarly` — a fact about how the loop exited, immune to that drift —
- * and this band is only the backstop for "the loop claimed to finish but
- * covered implausibly little".
- *
- * The band is a judgement, not a measurement, and it is deliberately loose:
- * the real incident it has to catch was a 63% shortfall. Every run logs
- * `scanned`, `total` and `coverage`, so it can be re-derived from data rather
- * than re-guessed.
+ * 🔴 The coverage band that decides "incomplete" USED TO LIVE HERE, open-coded, while
+ * `cleanupIndex` carried a second copy with a different number to decide whether to keep
+ * its resume cursor. They disagreed, and a pass landing between the two thresholds was
+ * reported truncated at error level while its resume point was discarded in the same run.
+ * Both now call `assessPassCoverage`, which owns the constants — do not reintroduce a
+ * local threshold here.
  */
-const COVERAGE_SHORTFALL_RATIO = 0.25;
-const COVERAGE_SHORTFALL_FLOOR = 1000;
-
 export const searchIndexCleanupJob = createJob(
   'search-index-cleanup',
   '0 2 * * *',
@@ -91,18 +80,12 @@ export const searchIndexCleanupJob = createJob(
       // exists to make trustworthy. `passCovered` carries the ids earlier runs of the
       // same pass already walked past.
       const covered = r.passCovered;
-      const coverage = r.totalInIndex && r.totalInIndex > 0 ? covered / r.totalInIndex : null;
-      const shortfall = r.totalInIndex === null ? null : r.totalInIndex - covered;
-      const lowCoverage =
-        !r.stoppedEarly &&
-        shortfall !== null &&
-        // A count taken while the engine was mid-ingest is a moving number, so
-        // a shortfall against it is not evidence of anything.
-        r.indexingAtStart !== true &&
-        shortfall > COVERAGE_SHORTFALL_FLOOR &&
-        shortfall > (r.totalInIndex as number) * COVERAGE_SHORTFALL_RATIO;
+      // 🔴 The SAME call `cleanupIndex` makes to decide whether to clear the cursor.
+      // `incomplete` and "the cursor was discarded" are now the one boolean, negated —
+      // that identity is the fix, and it is asserted directly in the tests.
+      const { reachedEnd, lowCoverage, coverage } = assessPassCoverage(r);
 
-      const incomplete = r.stoppedEarly || lowCoverage;
+      const incomplete = !reachedEnd;
       // `errors > 0` escalates on its own. The case that forces this: an index
       // the engine cannot serve at all fails BOTH `getStats` and `getSettings`,
       // so `totalInIndex` stays null and no coverage comparison is possible —
@@ -137,6 +120,9 @@ export const searchIndexCleanupJob = createJob(
       if (r.resumedFrom !== null) cursorNotes.push(`resumed from id ${r.resumedFrom}`);
       if (r.cursorPersisted !== null)
         cursorNotes.push(`cursor saved at id ${r.cursorPersisted} for the next run`);
+      // Stated, not inferred. A discarded cursor and a failed write both leave
+      // `cursorPersisted: null`, and they are opposite events.
+      if (r.cursorCleared) cursorNotes.push('cursor cleared — the next run starts over');
       // A discarded cursor means the run silently restarted from the bottom. `missing`
       // is the normal aftermath of a completed pass and is not worth a line.
       if (r.cursorDiscardReason !== null && r.cursorDiscardReason !== 'missing')
@@ -158,6 +144,7 @@ export const searchIndexCleanupJob = createJob(
         covered,
         resumedFrom: r.resumedFrom,
         cursorPersisted: r.cursorPersisted,
+        cursorCleared: r.cursorCleared,
         cursorDiscardReason: r.cursorDiscardReason,
         emptyPageRetries: r.emptyPageRetries,
         stale: r.staleFound,

@@ -16,6 +16,7 @@ import {
   writeScanCursor,
   type CursorDiscardReason,
 } from '~/server/meilisearch/cleanup-cursor';
+import { assessPassCoverage } from '~/server/meilisearch/cleanup-coverage';
 import { userSearchIndexEligibilitySql } from '~/server/search-index/user-index-eligibility';
 import type { JobContext } from '~/server/jobs/job';
 import {
@@ -25,6 +26,49 @@ import {
   CollectionReadConfiguration,
   ModelStatus,
 } from '~/shared/utils/prisma/enums';
+
+/**
+ * How long to wait before re-asking the same cursor after an empty page that COVERAGE
+ * ALREADY AGREES IS THE END. Also the delay used once the escalation budget below is
+ * exhausted, so an exhausted budget degrades to exactly the pre-existing single confirm
+ * rather than to a longer or an absent one.
+ */
+export const EMPTY_PAGE_CONFIRM_DELAY_MS = 500;
+
+/**
+ * Escalating re-asks for an empty page arriving while coverage says the scan is nowhere
+ * near the end. Measured: the engine's task queue was about an hour behind and applying
+ * writes in large batches when it answered empty at 15.5% coverage, and replaying the
+ * identical query off-peak walked 400 pages without ever hitting an end. One retry at
+ * 500 ms cannot clear a write batch that takes far longer.
+ *
+ * Five attempts, 30 s of waiting for one empty page.
+ */
+export const EMPTY_PAGE_BACKOFF_MS = [1000, 2000, 4000, 8000, 15000];
+
+/**
+ * Coverage at or above which an empty page is taken at close to face value and gets only
+ * the cheap single confirmation. Deliberately generous and NOT exact: `totalInIndex` is a
+ * pre-scan snapshot that drifts while the scan runs, and one index has legitimately
+ * reported coverage slightly ABOVE 1 because documents were added mid-scan.
+ */
+export const EMPTY_PAGE_TRUST_COVERAGE = 0.9;
+
+/**
+ * Ceiling on time spent ESCALATING, per index per run: 5 minutes.
+ *
+ * 🔴 State precisely what this does and does not bound, because an earlier version of
+ * this comment claimed a total it did not enforce. EVERY delay is charged against it,
+ * including the first — so escalation really is capped at 5 minutes per index, ~35
+ * minutes across the seven configured indexes, against the job's 2 h lock.
+ *
+ * What it does NOT bound: every empty page still gets ONE confirmation even after the
+ * budget is gone, because never confirming at all is the original defect. That residual
+ * is `EMPTY_PAGE_CONFIRM_DELAY_MS` per empty page, and empty pages are bounded by pages,
+ * since a transient empty that then yields documents advances the cursor. So the true
+ * worst case is 5 min of escalation plus 0.5 s per empty page.
+ */
+export const EMPTY_PAGE_BACKOFF_BUDGET_MS = 5 * 60 * 1000;
 
 export type CleanupIndexKey =
   | 'models'
@@ -191,6 +235,13 @@ export type CleanupOptions = {
    * suite that really slept through it could not run. Defaults to real time.
    */
   delay?: (ms: number) => Promise<void>;
+  /**
+   * Escalation budget for empty-page confirmation. Overridable for the same reason as
+   * `delay`: at the shipped 5 minutes no fixture of a runnable size ever reaches it, so
+   * the clamp would ship having never once executed. Defaults to
+   * `EMPTY_PAGE_BACKOFF_BUDGET_MS`.
+   */
+  emptyPageBackoffBudgetMs?: number;
   onBatch?: (info: { key: string; offset: number; scanned: number; stale: number }) => void;
   onError?: (info: { key: string; offset: number; error: Error }) => void;
   onDelete?: (info: { key: string; chunk: number; ids: number }) => void;
@@ -239,8 +290,14 @@ export type CleanupIndexStats = {
   passCovered: number;
   /** The stored cursor this run resumed from, or null if it started from the bottom. */
   resumedFrom: number | null;
-  /** The cursor left behind for the next run, or null if the pass completed. */
+  /** The cursor left behind for the next run, or null if none was. */
   cursorPersisted: number | null;
+  /**
+   * Whether the stored cursor was DISCARDED at the end of this run, so the next run
+   * starts from the bottom. Reported rather than inferred from `cursorPersisted: null`,
+   * which a healthy completed pass and a failed write emit identically.
+   */
+  cursorCleared: boolean;
   /**
    * Why a stored cursor was NOT used, or null if one was. `missing` after a completed
    * pass is normal; `unparseable`/`invalid`/`unreadable` mean the run silently restarted
@@ -303,6 +360,7 @@ export async function cleanupIndex(
     passCovered: 0,
     resumedFrom: null,
     cursorPersisted: null,
+    cursorCleared: false,
     cursorDiscardReason: null,
     emptyPageRetries: 0,
   };
@@ -443,6 +501,9 @@ export async function cleanupIndex(
   const MAX_CONSECUTIVE_PG_FAILURES = 10;
   let consecutivePgFailures = 0;
 
+  /** Set when the monotonicity guard fired; see the guard for why it forbids persisting. */
+  let cursorUnadvanceable = false;
+
   // One keyset page, already reduced to the numeric ids it carried.
   const fetchPage = async (cursor: number): Promise<number[]> => {
     const page = await withRetries(() =>
@@ -456,38 +517,7 @@ export async function cleanupIndex(
     return page.hits.map((r) => r.id).filter((n): n is number => Number.isFinite(n));
   };
 
-  // How long to wait before re-asking the same cursor after an empty page that
-  // COVERAGE ALREADY AGREES IS THE END. See `confirmEmptyPage` below.
-  const EMPTY_PAGE_CONFIRM_DELAY_MS = 500;
-
-  /**
-   * Escalating re-asks for an empty page arriving while coverage says the scan is
-   * nowhere near the end. Measured: the engine's task queue was about an hour behind
-   * and applying writes in large batches when it answered empty at 15.5% coverage,
-   * and replaying the identical query off-peak walked 400 pages without ever hitting
-   * an end. One retry at 500 ms cannot clear a write batch that takes far longer.
-   *
-   * Five attempts, 30 s of waiting for one empty page.
-   */
-  const EMPTY_PAGE_BACKOFF_MS = [1000, 2000, 4000, 8000, 15000];
-
-  /**
-   * Coverage at or above which an empty page is taken at close to face value and gets
-   * only the cheap single confirmation. Deliberately generous and NOT exact:
-   * `totalInIndex` is a pre-scan snapshot that drifts while the scan runs, and one
-   * index has legitimately reported coverage slightly ABOVE 1 because documents were
-   * added mid-scan.
-   */
-  const EMPTY_PAGE_TRUST_COVERAGE = 0.9;
-
-  /**
-   * Hard ceiling on time spent re-asking empty pages for THIS index in THIS run:
-   * 5 minutes, so all seven configured indexes together cannot spend more than ~35
-   * minutes of the job's 2 h lock on backoff. The first confirmation of any empty
-   * page is always taken — the budget only gates escalation past it — so an exhausted
-   * budget degrades to the previous behaviour rather than to no confirmation at all.
-   */
-  const EMPTY_PAGE_BACKOFF_BUDGET_MS = 5 * 60 * 1000;
+  const backoffBudgetMs = opts.emptyPageBackoffBudgetMs ?? EMPTY_PAGE_BACKOFF_BUDGET_MS;
   let emptyPageBackoffSpentMs = 0;
 
   /**
@@ -519,16 +549,29 @@ export async function cleanupIndex(
         : EMPTY_PAGE_BACKOFF_MS;
 
     let page: number[] = [];
-    for (let i = 0; i < schedule.length; i++) {
-      const ms = schedule[i];
-      // `i > 0`: the first confirmation is unconditional, so the budget can never
-      // reduce this below the single confirm the scan already did.
-      if (i > 0 && emptyPageBackoffSpentMs + ms > EMPTY_PAGE_BACKOFF_BUDGET_MS) break;
+    let asked = 0;
+    for (const ms of schedule) {
+      // EVERY delay is charged, the first included. An earlier version exempted it,
+      // which meant the budget bounded nothing about how many empty pages could be
+      // confirmed — the documented "~5 minutes per index" was not what ran.
+      if (emptyPageBackoffSpentMs + ms > backoffBudgetMs) break;
       emptyPageBackoffSpentMs += ms;
       stats.emptyPageRetries += 1;
+      asked += 1;
       await delay(ms);
       page = await fetchPage(cursor);
       if (page.length > 0) return page;
+    }
+
+    // Budget gone before a single re-ask. Confirm ONCE anyway, at the cheap delay:
+    // believing an empty page on sight is the original defect, and this must never
+    // degrade below the single confirmation the scan already did before this change.
+    // Charged too, so the spend figure stays truthful.
+    if (asked === 0) {
+      emptyPageBackoffSpentMs += EMPTY_PAGE_CONFIRM_DELAY_MS;
+      stats.emptyPageRetries += 1;
+      await delay(EMPTY_PAGE_CONFIRM_DELAY_MS);
+      page = await fetchPage(cursor);
     }
     return page;
   };
@@ -552,8 +595,15 @@ export async function cleanupIndex(
    * rather than costing a re-examination tomorrow.
    *
    * If the primary cannot be reached the chunk is NOT deleted. The safe
-   * failure direction here is to delete nothing: an undeleted stale document
-   * is picked up by the next nightly run, a wrongly deleted live one is not.
+   * failure direction here is to delete nothing: an undeleted stale document is
+   * picked up by a LATER pass, a wrongly deleted live one is not.
+   *
+   * ⚠️ "Later pass", not "tomorrow". Under `resumable` the next run continues ABOVE
+   * these ids, so they are re-examined when the cursor next laps the index — at most
+   * one pass away, bounded by the cursor staleness limit. That is a real change in
+   * cleanup LATENCY for a truncating index, and the trade the cursor buys: before it,
+   * these ids were re-examined the next night, but the ids above the truncation point
+   * were never examined at all.
    */
   const flushDeletions = async (final: boolean) => {
     if (!opts.apply) return;
@@ -656,6 +706,13 @@ export async function cleanupIndex(
     const nextId = docIds[docIds.length - 1];
     if (!(nextId > lastId)) {
       stats.errors += 1;
+      // 🔴 A cursor the scan could not advance past must NOT be handed to the next
+      // run. Persisting it makes every subsequent run trip this same guard on its
+      // first page and examine ZERO documents, for as long as the staleness bound
+      // allows — turning a bad page into a whole index going uncleaned. Before the
+      // cursor existed, everything below the bad page was still cleaned nightly;
+      // discarding the cursor restores exactly that.
+      cursorUnadvanceable = true;
       opts.onError?.({
         key: cfg.key,
         offset: lastId,
@@ -701,8 +758,10 @@ export async function cleanupIndex(
       // Postgres-side error survived retries. Don't abandon the whole
       // index for a single transient batch — advance the cursor and try
       // the next page. We'll miss cleanup for the ids in this batch this
-      // run; the next nightly run will catch them. But cap consecutive
-      // failures so a hard outage doesn't grind through millions of ids.
+      // run; a LATER PASS will catch them — under `resumable` the next RUN
+      // continues above them, so it is when the cursor next laps the index,
+      // not tomorrow. But cap consecutive failures so a hard outage doesn't
+      // grind through millions of ids.
       stats.errors += 1;
       consecutivePgFailures += 1;
       // These ids were fetched but never judged. The cursor advances past them
@@ -746,39 +805,45 @@ export async function cleanupIndex(
 
   if (resumable) {
     /**
-     * 🔴 "Genuinely reached the end" is NOT "we saw an empty page".
+     * 🔴 "Genuinely reached the end" is NOT "we saw an empty page", and it is NOT a
+     * judgement made here. It is `assessPassCoverage` — the SINGLE definition, shared
+     * with the job that logs the verdict.
      *
-     * The empty page is the very signal the engine produces transiently under write
-     * load, and trusting it here is what would carry the original defect into the
-     * cursor: a pass truncated at 15% would clear its cursor, restart at the bottom
-     * next run, and cumulative progress would stay at zero with a cursor bolted on.
-     *
-     * So completion needs BOTH: the loop exited through its terminator (rather than
-     * an error, a cancellation or the non-advancing-cursor guard), AND the pass
-     * covered a plausible share of the index the engine said was there.
-     *
-     * The share is deliberately loose. `totalInIndex` is a pre-scan snapshot against
-     * an index other jobs delete from every few minutes, so it drifts; the number
-     * that has to be separable from it is the 0.155 the real truncation produced,
-     * an order of magnitude below this. And when the count was taken mid-ingest, or
-     * could not be read at all, coverage refutes nothing — the pass is credited,
-     * because the alternative is holding a cursor on a judgement we cannot make.
+     * Both facts matter. The empty page is the very signal the engine produces
+     * transiently under write load, so trusting it alone would carry the original
+     * defect into the cursor. And computing a second, private threshold here is how
+     * this code shipped with the two disagreeing: the cursor cleared at 50% while the
+     * job alarmed below 75%, so a pass in between reported itself truncated and threw
+     * its resume point away in the same run.
      */
-    const COMPLETION_MIN_COVERAGE = 0.5;
-    const coverageRefutesCompletion =
-      stats.totalInIndex !== null &&
-      stats.totalInIndex > 0 &&
-      stats.indexingAtStart !== true &&
-      stats.passCovered < stats.totalInIndex * COMPLETION_MIN_COVERAGE;
+    const verdict = assessPassCoverage(stats);
 
-    const completed = !stats.stoppedEarly && !coverageRefutesCompletion;
-
-    if (completed) {
+    if (verdict.reachedEnd || cursorUnadvanceable) {
       // Start the next run from the bottom. Without this the cursor sits at the top
       // of the index forever and the low-id region — where a document that was
       // eligible when it was indexed and has since gone stale actually lives — is
-      // never re-examined.
-      await clearScanCursor(cfg.key);
+      // never re-examined. `cursorUnadvanceable` lands here too, deliberately: see
+      // the monotonicity guard for why a cursor the scan could not pass must be
+      // discarded rather than handed on.
+      const cleared = await clearScanCursor(cfg.key);
+      stats.cursorCleared = cleared;
+      if (!cleared) {
+        // 🔴 Loud, because the silent version is the worst failure this code has.
+        // A completed pass that cannot clear its cursor resumes at the TOP of the
+        // index next run, scans nothing, carries the old `covered` forward so the
+        // count still looks complete, and reports `info … scanned 0, stale 0,
+        // deleted 0` — an index getting zero cleanup while looking healthy, nightly,
+        // until the staleness bound expires it.
+        stats.errors += 1;
+        opts.onError?.({
+          key: cfg.key,
+          offset: -1,
+          error: new Error(
+            `could not CLEAR the scan cursor for ${cfg.indexName} after a completed pass; ` +
+              `the next run will resume at id ${lastId} and may scan nothing`
+          ),
+        });
+      }
     } else if (lastId >= 0) {
       const persisted = await writeScanCursor(cfg.key, {
         lastId,
@@ -786,6 +851,20 @@ export async function cleanupIndex(
         covered: stats.passCovered,
       });
       if (persisted) stats.cursorPersisted = lastId;
+      else {
+        // The pass was truncated and its position could not be saved, so the next run
+        // restarts at the bottom — defect B, for this index, this night. Silent, it is
+        // indistinguishable from a healthy rollover.
+        stats.errors += 1;
+        opts.onError?.({
+          key: cfg.key,
+          offset: -1,
+          error: new Error(
+            `could not PERSIST the scan cursor for ${cfg.indexName} at id ${lastId}; ` +
+              `the next run will restart from the beginning of the index`
+          ),
+        });
+      }
     }
   }
 
