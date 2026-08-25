@@ -48,9 +48,9 @@
     text = '';
   }
 
-  // Duplicates are reachable: `upsertBlocklist` dedupes only on its update branch, so the first save
-  // of a type persists whatever was submitted. They would collide as `{#each}` keys, and each chip
-  // now carries a remove control identified by that same string.
+  // Duplicates are reachable in rows written before `upsertBlocklist` deduped its insert branch as
+  // well as its update branch. They would collide as `{#each}` keys, and each chip carries a remove
+  // control identified by that same string.
   const sortedItems = $derived(
     [...new Set(data.blocklist.data)].sort((a, b) => a.localeCompare(b))
   );
@@ -135,6 +135,14 @@
 {:else if form?.success}
   <div class="mb-4 max-w-xl rounded-md border border-teal-500/30 bg-teal-500/10 p-2 text-sm text-teal-300">
     {form.action === 'add' ? 'Added' : 'Removed'} {form.count} item{form.count === 1 ? '' : 's'}.
+    {#if form.cacheStale}
+      <!-- The row is written; only the cache clear failed. Saying so beats both alternatives: a
+           bare success above a list that still shows the old entries reads as the write being lost,
+           and an error reads as a write that never happened and invites a retry. -->
+      <span class="text-amber-300">
+        The cached copy could not be refreshed, so this list may keep showing its previous contents.
+      </span>
+    {/if}
   </div>
 {/if}
 
@@ -198,6 +206,7 @@
               use:enhance={submitChip(item)}
               class="relative"
             >
+              <input type="hidden" name="type" value={data.type} />
               <input type="hidden" name="id" value={data.blocklist.id} />
               <input type="hidden" name="blocklist" value={item} />
               <!-- The badge styling stays on this span, NOT on the form. `badgeVariants` carries

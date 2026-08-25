@@ -213,70 +213,226 @@ describe('a type with more than one Blocklist row', () => {
   });
 });
 
-describe('what an edit writes into the cache', () => {
+describe('what an edit does to the shared cache key', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    redisGet.mockResolvedValue(null);
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([{ id: 8, data: ['c.example'] }]);
+    dbMock.dbWrite.blocklist.updateMany.mockResolvedValue({ count: 1 });
+  });
+
+  const edit = () =>
+    upsertBlocklist({ id: 8, type: BlocklistType.EmailDomain, blocklist: ['new.example'] });
+
+  /**
+   * This used to cache a re-read of the winning row, which fixed one bug and left another: the
+   * re-read and the `SET` are themselves an unserialised read-modify-write over the key, so two
+   * edits the row lock correctly serialised could still land their cache writes in the other
+   * order and leave the LOSER's list under a month TTL. Every enforcement path reads this key
+   * first, so that is the lost update the row lock exists to prevent, moved to the artifact that
+   * actually gates. A delete commutes; the next read repopulates from the table.
+   *
+   * It also makes the old duplicate-row-promotion incident unrepresentable rather than merely
+   * guarded: there is no snapshot to pick the wrong row for.
+   */
+  it('DELETES the key rather than writing a snapshot back', async () => {
+    await edit();
+
+    expect(redisMock.redis.del).toHaveBeenCalledWith('system:blocklist:EmailDomain');
+    expect(redisMock.redis.del).toHaveBeenCalledTimes(1);
+    expect(
+      redisMock.redis.set,
+      'an edit must not repopulate the key it just invalidated'
+    ).not.toHaveBeenCalled();
+  });
+
+  it('busts the key for the type it was given, not a hardcoded one', async () => {
+    // Every other assertion here uses EmailDomain, so a hardcoded key would pass all of them.
+    await upsertBlocklist({
+      id: 8,
+      type: BlocklistType.MessagePattern,
+      blocklist: ['unfreeze your funds'],
+    });
+
+    expect(redisMock.redis.del).toHaveBeenCalledWith('system:blocklist:MessagePattern');
+  });
+
+  it('does not report failure when the key could not be cleared', async () => {
+    // The row is already committed. Throwing here tells the caller a write failed that
+    // succeeded, and the weekly cron would then re-add domains it had already added. Same rule
+    // as `a04fa6a608` on the session cache: log it, do not surface it.
+    redisMock.redis.del.mockRejectedValueOnce(new Error('redis down'));
+
+    await expect(edit()).resolves.toBeUndefined();
+    expect(dbMock.dbWrite.blocklist.updateMany).toHaveBeenCalled();
+  });
+});
+
+describe('what an edit is allowed to touch', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     redisGet.mockResolvedValue(null);
   });
 
-  // The production incident was not the read: `upsertBlocklist` cached the row it had just
-  // written under a key scoped to the TYPE, so editing the duplicate row promoted it to the
-  // live answer for a month. Reverting to `data: result` leaves every read-side test green,
-  // so this is the only thing standing between that bug and a re-introduction.
-  const twoRows = () => {
-    // Deliberately the SAME order-and-where-honouring fake as the read tests: a fake that
-    // returns a fixed array would make `id: 1` below the fixture's answer rather than the
-    // code's.
-    dbMock.dbWrite.blocklist.findMany.mockImplementation(
-      async (args?: { where?: { type?: string }; orderBy?: { id?: 'asc' | 'desc' } }) => {
-        const rows = [
-          { id: 8, type: BlocklistType.EmailDomain, data: ['c.example'] },
-          { id: 1, type: BlocklistType.EmailDomain, data: ['a.example', 'b.example'] },
-        ];
-        const type = args?.where?.type;
-        const filtered = type ? rows.filter((row) => row.type === type) : [...rows];
-        const direction = args?.orderBy?.id;
-        if (!direction) return filtered;
-        return filtered.sort((a, b) => (direction === 'desc' ? b.id - a.id : a.id - b.id));
-      }
-    );
-    dbMock.dbWrite.blocklist.findUnique.mockResolvedValue({ data: ['c.example'] });
-    dbMock.dbWrite.blocklist.update.mockResolvedValue({
-      id: 8,
-      type: BlocklistType.EmailDomain,
-      data: ['c.example', 'new.example'],
-    });
-  };
+  // The id and the type reach `upsertBlocklist` as two independent values — in the moderator
+  // spoke they are two form fields on the same POST. Scoping the statements to the id alone
+  // let one type's entries be merged into another type's row, which on a deny list means
+  // arbitrary strings start blocking things.
+  it('refuses an id that belongs to no row of the submitted type, and writes nothing', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
 
-  const cachedPayload = () => {
-    const call = redisMock.redis.set.mock.calls.at(-1);
-    return call ? JSON.parse(call[1] as string) : undefined;
-  };
+    await expect(
+      upsertBlocklist({
+        id: 1,
+        type: BlocklistType.MessagePattern,
+        blocklist: ['unfreeze your funds'],
+      })
+    ).rejects.toThrow(/does not belong to this type/);
 
-  it('caches the row that WINS the read, not the row that was just edited', async () => {
-    twoRows();
-
-    await upsertBlocklist({
-      id: 8,
-      type: BlocklistType.EmailDomain,
-      blocklist: ['new.example'],
-    });
-
-    const cached = cachedPayload();
-    expect(cached?.id).toBe(1);
-    expect(cached?.data).toEqual(['a.example', 'b.example']);
+    expect(dbMock.dbWrite.blocklist.updateMany).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.blocklist.create).not.toHaveBeenCalled();
+    expect(redisMock.redis.del).not.toHaveBeenCalled();
   });
 
-  it('writes under a key scoped to the type', async () => {
-    twoRows();
+  it('carries the type into the UPDATE as well as the locking read', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([{ id: 1, data: ['a.example'] }]);
+    dbMock.dbWrite.blocklist.updateMany.mockResolvedValue({ count: 1 });
 
     await upsertBlocklist({
-      id: 8,
+      id: 1,
       type: BlocklistType.EmailDomain,
       blocklist: ['new.example'],
     });
 
-    expect(redisMock.redis.set.mock.calls.at(-1)?.[0]).toBe('system:blocklist:EmailDomain');
+    expect(dbMock.dbWrite.blocklist.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 1, type: BlocklistType.EmailDomain },
+      })
+    );
+
+    // The read is raw SQL, so the mock answers whatever it is asked and cannot tell a correctly
+    // scoped statement from one scoped to the id alone. Read the statement instead. The
+    // interpolated values are asserted separately because joining the template's static parts
+    // drops them.
+    const [fragments, ...values] = dbMock.dbWrite.$queryRaw.mock.calls[0] as [
+      readonly string[],
+      ...unknown[]
+    ];
+    const statement = fragments.join('?').replace(/\s+/g, ' ');
+    expect(statement).toMatch(/type = \?/);
+    expect(statement).toMatch(/FOR UPDATE/);
+    expect(values).toEqual([1, BlocklistType.EmailDomain]);
+  });
+
+  /**
+   * 🔴 The default `$transaction` mock hands the callback the SAME node the assertions read, so it
+   * cannot tell `tx.$queryRaw` from `dbWrite.$queryRaw`. Deleting the `$transaction` wrapper and
+   * running the body against the bare client left every other test here green — with `FOR UPDATE`
+   * still in the statement, and the lock held by a transaction that has already committed. An
+   * inert lock is the shape that reads as fixed and is not, so this overrides the mock with a
+   * DISTINCT tx object and asserts both statements were issued on it.
+   */
+  it('issues the locking read and the update on the TRANSACTION client', async () => {
+    const tx = {
+      $queryRaw: vi.fn().mockResolvedValue([{ id: 1, data: ['a.example'] }]),
+      blocklist: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+    };
+    // `Once`, not a standing implementation: `vi.clearAllMocks()` clears CALLS but not
+    // implementations, so a standing override here leaks into every later test in the file and
+    // sends their statements to this dead `tx` object.
+    dbMock.dbWrite.$transaction.mockImplementationOnce(async (cb: (client: unknown) => unknown) =>
+      cb(tx)
+    );
+
+    await upsertBlocklist({ id: 1, type: BlocklistType.EmailDomain, blocklist: ['new.example'] });
+
+    expect(tx.$queryRaw, 'the locked read must run inside the transaction').toHaveBeenCalledTimes(
+      1
+    );
+    expect(tx.blocklist.updateMany, 'the write must run inside the same one').toHaveBeenCalledTimes(
+      1
+    );
+    expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.blocklist.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('gives the transaction a budget larger than Prisma’s 5s default', async () => {
+    // The one caller is a weekly cron with no retry, and this path had no transaction before, so
+    // both of Prisma’s ceilings (maxWait 2s, timeout 5s) are new ways for it to fail — at a cost
+    // of a week’s disposable-domain additions.
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([{ id: 1, data: ['a.example'] }]);
+    dbMock.dbWrite.blocklist.updateMany.mockResolvedValue({ count: 1 });
+
+    await upsertBlocklist({ id: 1, type: BlocklistType.EmailDomain, blocklist: ['new.example'] });
+
+    expect(
+      dbMock.dbWrite.$transaction,
+      'the edit must open a transaction at all'
+    ).toHaveBeenCalled();
+    const options = dbMock.dbWrite.$transaction.mock.calls[0][1] as
+      | { maxWait?: number; timeout?: number }
+      | undefined;
+    // Named rather than destructured: without the guard, dropping the options argument fails as a
+    // TypeError on `undefined`, which reads as a broken test rather than a missing budget.
+    expect(options?.timeout ?? 5_000).toBeGreaterThan(5_000);
+    expect(options?.maxWait ?? 2_000).toBeGreaterThan(2_000);
+  });
+
+  it('locks the lowest row of the type when no id was submitted', async () => {
+    // 🔴 TWO rows, and that is the whole point of the fixture. With one, `locked[0]` and
+    // `locked.at(-1)` are the same object, so merging into the HIGHEST-id row passes every
+    // assertion while the `ORDER BY id ASC` stays in the statement to reassure the reader — the
+    // duplicate-row promotion this file exists to prevent, hidden behind a text match.
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([
+      { id: 3, data: ['lowest.example'] },
+      { id: 8, data: ['highest.example'] },
+    ]);
+    dbMock.dbWrite.blocklist.updateMany.mockResolvedValue({ count: 1 });
+
+    await upsertBlocklist({ type: BlocklistType.EmailDomain, blocklist: ['new.example'] });
+
+    // Not an insert: a type that already has a row must not gain a second, whose entries
+    // `readBlocklistRow` would then never enforce.
+    expect(dbMock.dbWrite.blocklist.create).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.blocklist.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        // The row id AND the data it merged from, so reading the wrong element of `locked`
+        // fails on a value rather than on a regex over SQL text.
+        where: { id: 3, type: BlocklistType.EmailDomain },
+        data: { data: ['lowest.example', 'new.example'] },
+      })
+    );
+
+    const [fragments] = dbMock.dbWrite.$queryRaw.mock.calls[0] as [readonly string[]];
+    const statement = fragments.join('?').replace(/\s+/g, ' ');
+    expect(statement).toMatch(/ORDER BY id ASC/);
+    expect(statement).toMatch(/FOR UPDATE/);
+  });
+
+  it('throws and busts nothing when the locked update matches no row', async () => {
+    // Unreachable while the lock holds, which is exactly why it needs a test: the guard exists so
+    // that moving either statement out of the transaction fails loudly instead of writing nothing,
+    // reporting success, and busting a key over a row that never changed.
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([{ id: 1, data: ['a.example'] }]);
+    dbMock.dbWrite.blocklist.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(
+      upsertBlocklist({ id: 1, type: BlocklistType.EmailDomain, blocklist: ['new.example'] })
+    ).rejects.toThrow(/matched 0 rows/);
+
+    expect(redisMock.redis.del).not.toHaveBeenCalled();
+  });
+
+  it('inserts only when the type has no row at all', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
+
+    await upsertBlocklist({ type: BlocklistType.UsernameExact, blocklist: ['Scammer'] });
+
+    expect(dbMock.dbWrite.blocklist.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: { data: ['scammer'], type: BlocklistType.UsernameExact },
+      })
+    );
   });
 });
 
