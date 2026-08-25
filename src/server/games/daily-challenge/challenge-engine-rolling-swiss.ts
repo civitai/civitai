@@ -17,6 +17,7 @@ import {
   PODIUM_SIZE,
   runPool,
 } from '~/server/games/daily-challenge/challenge-ladder';
+import { isContentRefusal } from '~/server/games/daily-challenge/challenge-judge-routes';
 import {
   buildGroupComparisonPrompt,
   compareGroup,
@@ -243,61 +244,114 @@ async function runGroups(
 
   let calls = 0;
   let malformed = 0;
+  let unloadable = 0;
+  let failed = 0;
+  let refused = 0;
+  const failedGroups: string[] = [];
+  let firstError: string | undefined;
   let buzz = 0;
 
-  await runPool(groups, LADDER_CONCURRENCY, async (group) => {
-    // Checked per group rather than once up front: the deadline is what holds when the provider is
-    // slower than we assumed, and a limit that is only tested before the work starts cannot do that.
-    // The SPEND ceiling is deliberately not here — it is applied when groups are planned, because a
-    // check inside concurrent lanes all read zero before any lane has paid for anything.
-    if (deadlineMs != null && Date.now() >= deadlineMs) return;
+  try {
+    await runPool(groups, LADDER_CONCURRENCY, async (group) => {
+      // Checked per group rather than once up front: the deadline is what holds when the provider is
+      // slower than we assumed, and a limit that is only tested before the work starts cannot do that.
+      // The SPEND ceiling is deliberately not here — it is applied when groups are planned, because a
+      // check inside concurrent lanes all read zero before any lane has paid for anything.
+      if (deadlineMs != null && Date.now() >= deadlineMs) return;
 
-    const groupImages = group
-      .map((entry) => images.get(entry.imageId))
-      .filter((image): image is ComparisonImage => !!image);
-    // A group we cannot fully load is not a group. Comparing the remainder would silently change
-    // the question from "rank four" to "rank three" and bill for it.
-    if (groupImages.length !== group.length) return;
+      const groupImages = group
+        .map((entry) => images.get(entry.imageId))
+        .filter((image): image is ComparisonImage => !!image);
+      // A group we cannot fully load is not a group. Comparing the remainder would silently change
+      // the question from "rank four" to "rank three" and bill for it.
+      if (groupImages.length !== group.length) {
+        unloadable++;
+        return;
+      }
 
-    const verdict = await compareGroup({ systemPrompt, group: groupImages });
-    calls++;
-    buzz += verdict.buzzCost;
+      // One group's failure must cost one group. `runPool` stops dispatching on the first rejection
+      // and rethrows it, so an error escaping here abandoned every group not yet started AND the
+      // whole review tick around it.
+      try {
+        const verdict = await compareGroup({ systemPrompt, group: groupImages });
+        calls++;
+        buzz += verdict.buzzCost;
 
-    if (!verdict.order) {
-      malformed++;
-      return;
-    }
+        if (!verdict.order) {
+          malformed++;
+          return;
+        }
 
-    // Written against the SNAPSHOT's played set, so a pair another lane recorded in the meantime is
-    // still attempted here and lands on the conflict clause rather than being skipped by a read
-    // that raced. Cheap either way: it is one row, not one call.
-    const relations = relationsFromRanking(verdict.order, state.played);
-    for (const [index, relation] of relations.entries()) {
-      await store.recordComparison({
-        challengeId: ctx.challengeId,
-        phase: 'swiss',
-        verdict: {
-          imageIdA: relation.winnerImageId,
-          imageIdB: relation.loserImageId,
-          firstSeatImageId: groupImages[0].imageId,
-          winnerImageId: relation.winnerImageId,
-          margin: null,
-          perCategory: {},
-          reason: null,
-          model: verdict.model,
-          rerouted: false,
-          usage: verdict.usage,
-          // One CALL produced all of these rows, so its cost belongs to the group once. Spreading
-          // it across six rows would make each look a sixth as expensive as it was; repeating it
-          // would sextuple the challenge's recorded spend. The first row carries it.
-          buzzCost: index === 0 ? verdict.buzzCost : 0,
-        },
-      });
-    }
-  });
+        // Written against the SNAPSHOT's played set, so a pair another lane recorded in the meantime
+        // is still attempted here and lands on the conflict clause rather than being skipped by a
+        // read that raced. Cheap either way: it is one row, not one call.
+        const relations = relationsFromRanking(verdict.order, state.played);
+        for (const [index, relation] of relations.entries()) {
+          await store.recordComparison({
+            challengeId: ctx.challengeId,
+            phase: 'swiss',
+            verdict: {
+              imageIdA: relation.winnerImageId,
+              imageIdB: relation.loserImageId,
+              firstSeatImageId: groupImages[0].imageId,
+              winnerImageId: relation.winnerImageId,
+              margin: null,
+              perCategory: {},
+              reason: null,
+              model: verdict.model,
+              rerouted: false,
+              usage: verdict.usage,
+              // One CALL produced all of these rows, so its cost belongs to the group once. Spreading
+              // it across six rows would make each look a sixth as expensive as it was; repeating it
+              // would sextuple the challenge's recorded spend. The first row carries it.
+              buzzCost: index === 0 ? verdict.buzzCost : 0,
+            },
+          });
+        }
+      } catch (error) {
+        failed++;
+        if (isContentRefusal(error)) refused++;
+        // A group of four fails as a UNIT, so no single failure attributes to an entry. The
+        // membership is logged so attribution can be done across ticks by intersection — an image in
+        // every failed group and no successful one is the suspect.
+        failedGroups.push(groupImages.map((image) => image.imageId).join(','));
+        firstError ??= error instanceof Error ? error.message : String(error);
+      }
+    });
+  } finally {
+    // Billed whatever happens to the pool: `buzz` grows the moment a call returns, so anything
+    // already paid for is in it even on a path that throws past this point.
+    const spend = Math.ceil(buzz);
+    if (spend > 0) await incrementOperationSpent(ctx.challengeId, spend);
+  }
 
-  const spend = Math.ceil(buzz);
-  if (spend > 0) await incrementOperationSpent(ctx.challengeId, spend);
+  if (failed) {
+    logToAxiom({
+      type: 'warning',
+      name: 'challenge-swiss-group-failed',
+      challengeId: ctx.challengeId,
+      planned: groups.length,
+      calls,
+      failed,
+      // `message` is the OpenRouter envelope and is generic for a refusal; `refused` is the
+      // classified answer, read out of the raw body by `isContentRefusal`.
+      refused,
+      failedGroups,
+      message: firstError,
+    }).catch(() => undefined);
+  }
+  if (unloadable) {
+    // A group whose images would not load is NOT a group that failed and not one that succeeded.
+    // Three names rather than one counter, so a provider outage and a deleted image do not read as
+    // the same event.
+    logToAxiom({
+      type: 'warning',
+      name: 'challenge-swiss-group-unloadable',
+      challengeId: ctx.challengeId,
+      planned: groups.length,
+      unloadable,
+    }).catch(() => undefined);
+  }
   if (malformed) {
     logToAxiom({
       type: 'warning',
