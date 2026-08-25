@@ -191,6 +191,7 @@ export function defaultStartRun({ worktree, args, onLog, onExit }) {
       // the order they were actually written. See createOutputCapture.
       stdio: ['ignore', capture.writeFd, capture.writeFd],
       shell: isWindows,
+      windowsHide: true,
       // Its own process group, so the kill below can take the whole vitest tree. Without this,
       // killing by negative pid names no group, fails with ESRCH, and leaves the run burning
       // cores while its slot is handed to the next caller.

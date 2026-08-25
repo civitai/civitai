@@ -61,14 +61,14 @@ async function startDaemon() {
     stdio: 'ignore',
     cwd: projectRoot,
     windowsHide: true,
-    shell: true,
   };
 
-  // Use quoted command string for shell: true on Windows. No --port: the daemon resolves
-  // DEV_DAEMON_PORT through the same function this file does, off the environment it inherits
-  // here, so the two cannot disagree about where it lives.
-  const command = `"${process.execPath}" "${serverScript}"`;
-  const child = spawn(command, [], spawnOptions);
+  // No shell. windowsHide reaches only the process node creates, so with `shell: true` it lands on
+  // cmd.exe and never on the daemon cmd.exe then starts: that node gets a fresh console, Windows 11
+  // hands it to the default terminal app, and a Windows Terminal window opens and takes focus off
+  // whatever the user was doing. No --port: the daemon resolves DEV_DAEMON_PORT through the same
+  // function this file does, off the environment it inherits here, so the two cannot disagree.
+  const child = spawn(process.execPath, [serverScript], spawnOptions);
   child.unref();
 
   writeFileSync(pidFile, String(child.pid));

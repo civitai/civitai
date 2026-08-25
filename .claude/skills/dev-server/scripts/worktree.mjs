@@ -20,6 +20,7 @@ function git(args, cwd) {
     cwd,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
   }).trim();
 }
 
@@ -123,6 +124,7 @@ function spawnGh(args, cwd) {
       cwd,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
     }).trim();
   } catch {
     return null;
