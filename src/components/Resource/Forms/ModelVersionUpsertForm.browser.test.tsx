@@ -614,6 +614,55 @@ describe('ModelVersionUpsertForm — monetization disclosure', () => {
     expect((rightsCheckbox().element() as HTMLInputElement).checked).toBe(true);
   });
 
+  // The price input's `max` was keyed to the stored price once a version was published, and Mantine
+  // clamps to `max` on blur — so raising the price on a released model reverted it with no error, no
+  // toast and no request (CU 868kwjc13). Whether a raise is allowed is the server's call.
+  test('raises the access price on a released version', async () => {
+    flags.current = { licensingFee: true, earlyAccessModel: true };
+    // Gold's cap is unlimited, so nothing but the stored price can bound this input.
+    currentUser.value = { id: 1, tier: 'gold', isModerator: false, meta: {} };
+    renderWithProviders(
+      <ModelVersionUpsertForm
+        model={model}
+        version={
+          {
+            ...(chargingVersion as object),
+            paidAccess: { endsAt: null, timeframeDays: null, terms: { download: { price: 1000 } } },
+          } as React.ComponentProps<typeof ModelVersionUpsertForm>['version']
+        }
+        onSubmit={vi.fn()}
+      >
+        {() => <button type="submit">Save</button>}
+      </ModelVersionUpsertForm>
+    );
+
+    await userEvent.fill(page.getByLabelText('Price for access'), '3000');
+    await userEvent.click(page.getByRole('button', { name: 'Save' }));
+    await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    const terms = (mutateAsync.mock.calls[0][0] as { paidAccess?: { terms?: ModelVersionTerms } })
+      .paidAccess?.terms;
+    // A revert reports `expected 1000 to be 3000` — the old price, which is the reported symptom itself.
+    expect(terms?.download?.price).toBe(3000);
+  });
+
+  // The other half of the same expression, and the reason it can't simply drop to the tier cap: a stored
+  // price above the cap stays chargeable (the server rejects raises only), so clamping the input down
+  // would cut a lapsed creator's price on the next unrelated save.
+  test('keeps a grandfathered over-cap price rather than clamping to the tier cap', async () => {
+    // Free caps paid access at 500; this version stores 5000.
+    renderChargingForm();
+
+    await userEvent.fill(page.getByLabelText('Price for access'), '6000');
+    // An edit the clamp can't undo, so the save isn't short-circuited as pristine once 6000 comes back
+    // down to the stored 5000.
+    await userEvent.fill(page.getByLabelText('Name'), 'v1.1');
+    await userEvent.click(page.getByRole('button', { name: 'Save' }));
+    await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    const terms = (mutateAsync.mock.calls[0][0] as { paidAccess?: { terms?: ModelVersionTerms } })
+      .paidAccess?.terms;
+    expect(terms?.download?.price).toBe(5000);
+  });
+
   // A pristine edit short-circuits the mutation, so the observable is the form's own onSubmit: it fires
   // only once validation passed, which is what the unasked-for fee used to block.
   test('saves without ever opening the section', async () => {
