@@ -3833,6 +3833,23 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
     if (!wantsUnpublished && (!input.isModerator || input.publishedOnly)) {
       const mergeNow = Date.now();
       ownDocs = ownDocs.filter((d) => isPublicallyPublished(d, mergeNow, stats));
+    } else if (wantsUnpublished && !input.isModerator) {
+      // `scheduled` is a non-moderator's ONLY opt-in here, and it means scheduled —
+      // not "everything unpublished". The BitDex query cannot draw that line
+      // (`isPublished = false` carries both, see the own-excluded scope above), so it
+      // is drawn on the way out, where `publishedAtUnix` still separates a
+      // never-published draft (null) from one whose time has not come (future).
+      //
+      // Equivalent to what the two Meili builders now emit: their arms are
+      // `publishedAtUnix <= snappedNow` and `(userId = me AND publishedAtUnix >
+      // snappedNow)`, whose union is exactly "the field exists". Both backends
+      // therefore answer `scheduled` the same way, which is the property the
+      // `wantsUnpublished` comment above exists to protect.
+      ownDocs = ownDocs.filter((d) => {
+        if (d.publishedAtUnix != null) return true;
+        stats.publicationHolds++;
+        return false;
+      });
     }
 
     if (ownDocs.length) {
