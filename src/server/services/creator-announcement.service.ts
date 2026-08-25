@@ -322,7 +322,7 @@ export async function upsertCreatorAnnouncement({
       : {}),
   };
 
-  const window = clampAnnouncementWindow({
+  const schedule = clampAnnouncementWindow({
     startsAt: input.startsAt,
     endsAt: input.endsAt,
     previousStartsAt: existing?.startsAt,
@@ -335,8 +335,8 @@ export async function upsertCreatorAnnouncement({
     emoji: input.emoji,
     color: input.color ?? 'blue',
     domain: input.domain,
-    startsAt: window.startsAt,
-    endsAt: window.endsAt,
+    startsAt: schedule.startsAt,
+    endsAt: schedule.endsAt,
     // Never written on an update. A creator cannot set `disabled` at all (the schema has
     // no such field), so a row a moderator took down stays down through any edit.
     ...(existing ? {} : { disabled: false }),
