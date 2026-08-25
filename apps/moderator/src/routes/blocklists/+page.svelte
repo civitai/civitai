@@ -79,15 +79,19 @@
     (item: string): SubmitFunction =>
     ({ formElement }) => {
       removing = item;
-      // Both captured BEFORE the submit, because the invalidation unmounts this chip: afterwards
-      // the item is gone from the list and `document.activeElement` is <body>, so neither question
-      // can still be answered.
+      // All three captured BEFORE the submit, because the invalidation unmounts this chip:
+      // afterwards `document.activeElement` is <body>, and the list being indexed may not even be
+      // this blocklist any more.
       const position = shown.visible.indexOf(item);
       // Focus is only moved if it was already inside THIS chip's form. That is true for keyboard
       // activation, and also for a pointer in browsers that focus a button on click — which is
       // fine, since those get no visible ring under `:focus-visible`. What it excludes is the
       // case that would be an unasked-for scroll: focus sitting somewhere else on the page.
       const restoreFocus = formElement.contains(document.activeElement);
+      // A removal can outlive the tab. Clicking another tab mid-flight swaps `data.blocklist` for
+      // a different type's entries, and focusing "the entry at that index" would then land on an
+      // unrelated blocklist — precisely the unpredictable movement this is supposed to avoid.
+      const submittedType = data.type;
 
       return async ({ update }) => {
         // `finally`, not a bare sequence. Every chip's control is disabled while `removing` is set,
@@ -104,34 +108,55 @@
           // the submit never fires and "Remove" behaves exactly like "Cancel", silently. Same trap
           // as `ConfirmSubmit.svelte`.
           confirming = null;
-        }
 
-        if (restoreFocus) {
-          // After `removing` is cleared, not before: every chip control is `disabled` while a
-          // removal is in flight, and a disabled button silently refuses focus. `tick` waits for
-          // both the re-rendered chips and that re-enable to reach the DOM.
-          await tick();
-          focusAfterRemoval(position);
+          // Inside the `finally`, so a rejected submit does not leave focus on <body> — the worst
+          // case to lose it in, since nothing changed and the chip is still there to return to.
+          // After `removing` is cleared, never before: every chip control is `disabled` while a
+          // removal is in flight, and a disabled button silently refuses focus. One `tick` covers
+          // both the re-rendered chips and that re-enable (it drains cascading batches), and would
+          // stop being enough only under `compilerOptions.experimental.async`, which this app does
+          // not set.
+          if (restoreFocus) {
+            await tick();
+            if (data.type === submittedType) focusAfterRemoval(position, item);
+          }
         }
       };
     };
 
+  /** The remove control of a chip, if it is on screen. */
+  const chipControl = (entry: string) =>
+    panel?.querySelector<HTMLElement>(`[data-chip-remove="${CSS.escape(entry)}"]`) ?? null;
+
   /**
-   * Where focus lands once the removed chip is gone. The chip that TOOK its place, so holding the
-   * key removes down the list; the previous one when the removal took the last chip; and the filter
-   * input when it emptied the list. Landing on the filter is why it is worth being deliberate: it
-   * is the one control that can bring chips back, and `{#each}` is keyed by the entry, so there is
-   * no stable node to return to.
+   * Returns focus to the chip a confirm was opened on. Cancel and Escape both unmount the popover
+   * that holds `document.activeElement`, and Svelte flushes that teardown synchronously — so
+   * without this the keyboard user who opens a confirm and changes their mind lands on <body>,
+   * which is the same failure this file exists to fix, one keystroke off the path that was fixed.
    */
-  function focusAfterRemoval(position: number) {
+  function dismissConfirm() {
+    const control = confirming ? chipControl(confirming) : null;
+    confirming = null;
+    control?.focus();
+  }
+
+  /**
+   * Where focus lands once the removed chip is gone. `chipFocusTarget` decides WHICH entry; this
+   * resolves it to a node and degrades when it cannot.
+   *
+   * The fallback chain runs whenever the chip node is missing, not only when there is no entry to
+   * look for — a resolved entry whose node is absent used to leave `target` null and focus on
+   * <body>, which is the outcome the whole function exists to prevent. The filter bar unmounts with
+   * the chips when the LIST is empty rather than merely filtered to nothing, so the textarea is the
+   * last resort.
+   */
+  function focusAfterRemoval(position: number, item: string) {
     if (!panel) return;
-    const next = chipFocusTarget(shown.visible, position);
-    const target = next
-      ? panel.querySelector<HTMLElement>(`[data-chip-remove="${CSS.escape(next)}"]`)
-      : // The filter bar unmounts with the chips when the LIST is empty rather than merely
-        // filtered to nothing, so the textarea is the last resort — never <body>.
-        (panel.querySelector<HTMLElement>('[data-blocklist-filter] input') ??
-        panel.querySelector<HTMLElement>('textarea'));
+    const next = chipFocusTarget(shown.visible, position, item);
+    const target =
+      (next.kind === 'chip' ? chipControl(next.entry) : null) ??
+      panel.querySelector<HTMLElement>('[data-blocklist-filter] input') ??
+      panel.querySelector<HTMLElement>('textarea');
     target?.focus();
   }
 </script>
@@ -139,7 +164,7 @@
 <!-- One window listener rather than one per chip: at CHIP_LIMIT that would be 200 of them. -->
 <svelte:window
   onkeydown={(e) => {
-    if (e.key === 'Escape') confirming = null;
+    if (e.key === 'Escape') dismissConfirm();
   }}
 />
 
@@ -287,7 +312,7 @@
                     size="sm"
                     variant="outline"
                     disabled={removing !== null}
-                    onclick={() => (confirming = null)}
+                    onclick={dismissConfirm}
                   >
                     Cancel
                   </Button>
