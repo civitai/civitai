@@ -40,14 +40,7 @@ vi.mock('~/server/logging/client', () => ({
 }));
 
 import { rollingSwissEngine } from '~/server/games/daily-challenge/challenge-engine-rolling-swiss';
-import {
-  DEFAULT_BOUT_BUDGET,
-  GROUP_SIZE,
-  RELATIONS_PER_CALL,
-} from '~/server/games/daily-challenge/challenge-swiss';
-
-/** Mirrors the engine's own private backstop, so the close tests can assert they did not hit it. */
-const MAX_SETTLE_PASSES = DEFAULT_BOUT_BUDGET + 2;
+import { GROUP_SIZE, RELATIONS_PER_CALL } from '~/server/games/daily-challenge/challenge-swiss';
 
 const ctx = {
   challengeId: 1,
@@ -99,7 +92,12 @@ function useAccumulatingState() {
     const wins = new Map<number, number>();
     const games = new Map<number, number>();
     const played = new Set<string>();
-    for (const [arg] of recordComparison.mock.calls) {
+    for (const [index, [arg]] of recordComparison.mock.calls.entries()) {
+      // 🔴 Committed rows ONLY. `mock.calls` includes writes that REJECTED, and a fixture built from
+      // those reports a field measured by rows that never landed — which is the exact property the
+      // close-time guard turns on, inverted. A write-failure test using this helper would then stop
+      // the guard firing and read as though the guard were wrong.
+      if (recordComparison.mock.settledResults[index]?.type !== 'fulfilled') continue;
       const { imageIdA, imageIdB, winnerImageId } = (
         arg as { verdict: { imageIdA: number; imageIdB: number; winnerImageId: number } }
       ).verdict;
@@ -337,6 +335,13 @@ describe('advance and rankField', () => {
         message: 'write conflict',
       })
     );
+    // The ids are the point of this event: they name the groups now holding some of their six rows,
+    // and finding those rows to clean them needs the membership.
+    const written = logToAxiom.mock.calls
+      .map(([arg]) => arg as { name: string; writeFailedGroups?: string[] })
+      .find((arg) => arg.name === 'challenge-swiss-write-failed');
+    expect(written?.writeFailedGroups).toHaveLength(1);
+    expect(written?.writeFailedGroups?.[0].split(',')).toHaveLength(GROUP_SIZE);
     // A database failure must not be filed as a provider failure. They point at different systems,
     // and `refused` — the count of provider content refusals — must never be fed a Postgres error.
     expect(logToAxiom).not.toHaveBeenCalledWith(
@@ -442,9 +447,6 @@ describe('advance and rankField', () => {
     expect(incrementOperationSpent).not.toHaveBeenCalled();
   });
 
-  // Passes against the UNFIXED engine too — it is not a revert control, it is the third arm of the
-  // three-way distinction: success emits neither warning. It fails if either log is ever moved out
-  // of its `if`, which is the edit it exists to stop.
   /**
    * The guards exist because `isContentRefusal` and the message read both touch properties of a
    * thrown value, INSIDE the catch that stops a failure escaping. A throwing accessor there escapes
@@ -473,6 +475,9 @@ describe('advance and rankField', () => {
     );
   });
 
+  // Passes against the UNFIXED engine too — it is not a revert control, it is the third arm of the
+  // three-way distinction: success emits neither warning. It fails if either log is ever moved out
+  // of its `if`, which is the edit it exists to stop.
   it('reports NEITHER warning on a clean tick', async () => {
     getStandings.mockResolvedValue(standings(GROUP_SIZE));
     stubQueries(GROUP_SIZE);
@@ -586,6 +591,10 @@ describe('advance and rankField', () => {
   it('REFUSES to finalize when every close-time relation WRITE failed', async () => {
     const field = GROUP_SIZE * 4;
     stubQueries(field);
+    // Deliberately the ACCUMULATING fake, not the frozen one: this is the fixture that would let a
+    // rejected write count as measurement, so it is the one that proves the helper counts committed
+    // rows only. With the filter removed, the guard stops firing and this test resolves.
+    useAccumulatingState();
     compareGroup.mockImplementation((input: unknown) => {
       const { group } = input as { group: { imageId: number }[] };
       return Promise.resolve({
@@ -713,7 +722,11 @@ describe('advance and rankField', () => {
     // The loop ended because the field ran out of work, NOT because it hit its backstop. Against a
     // frozen state fake this reads identically while actually reaching pass 11, and the one failed
     // group would be silently re-attempted ten more times.
-    expect(closeEvent()?.passes).toBeLessThan(MAX_SETTLE_PASSES);
+    // The exact count, not `< MAX_SETTLE_PASSES`. The bound is module-private in the engine, so a
+    // copy of it here would go vacuous and SILENTLY if the engine's ever dropped — and a run that
+    // doubled its passes would still satisfy the inequality. Against a frozen state fake this reads
+    // 11, the backstop, which is the artifact this fixture exists to rule out.
+    expect(closeEvent()?.passes).toBe(6);
   });
 
   it('applies the spend ceiling at close too, not only on ticks', async () => {
