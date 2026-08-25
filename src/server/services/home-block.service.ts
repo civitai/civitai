@@ -401,8 +401,11 @@ export const getHomeBlockData = async ({
   // `domain` isn't part of the public getHomeBlocks input — it's supplied by the
   // by-id cached path, which is the only caller whose blocks are domain-scoped.
   input: GetHomeBlocksInputSchema & { domain?: DomainColor };
-  // Optional, and on the hot path it is absent. When supplied it IS read — it is passed
-  // to `getCollectionItemsByCollectionId` below, which uses it for models/posts/etc.
+  // Optional, and on the hot path it is absent. When supplied it IS read, in TWO places
+  // below, both of which make the body caller-dependent: it is passed whole to
+  // `getCollectionItemsByCollectionId` (which uses it for models/posts/etc.), and read as
+  // `user?.isModerator` for `getLeaderboardsWithResults`. Either one is enough to poison
+  // the shared entry described below.
   //
   // But the by-id path never supplies it: `getHomeBlockCached`
   // (`~/server/services/home-block-cache.service.ts`) calls this function with

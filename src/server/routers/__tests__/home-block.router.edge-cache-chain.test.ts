@@ -104,8 +104,9 @@ type Ctx = {
   tokenScope: number;
   cache: CacheState;
   // Read by `applyDomainFeature` (src/server/trpc.ts) as `ctx.features.canViewNsfw`,
-  // ahead of the cache middleware. Omitting it is not "a permissive default" — it is a
-  // TypeError that ends the call before `edgeCacheIt` runs.
+  // ahead of the cache middleware — but ONLY on the authenticated arm. Measured: drop
+  // this key and 7 of the 9 tests here still pass; the two that fail are exactly the
+  // `user: { id: 1 }` cases.
   features: { canViewNsfw: boolean };
 };
 
@@ -134,15 +135,17 @@ function rootCtx(
     cache: { ...ttls, canCache: true, skip: false },
     // ⚠️ `canViewNsfw`, NOT `alternateHome`. An earlier revision of this file set
     // `features: { alternateHome: true }` and documented it as what satisfies
-    // `isFlagProtected('alternateHome')`. That was wrong in both directions, and only
-    // measuring it showed so: `isFlagProtected` resolves the flag through
-    // `getFeatureFlags(ctx)` (`~/server/services/feature-flags.service.ts`), which
-    // computes from the session/Flipt and never reads a `ctx.features` property — so the
-    // key was INERT, and setting it to `false` does NOT produce a FORBIDDEN. What
-    // `ctx.features` is actually needed for is `applyDomainFeature`, which dereferences
-    // `ctx.features.canViewNsfw` unguarded; drop the object and the call dies with a
-    // TypeError before `edgeCacheIt` is reached. `false` is the realistic value for the
-    // anonymous public caller these tests model.
+    // `isFlagProtected('alternateHome')`. That was wrong, and only measuring it showed
+    // so: `isFlagProtected` resolves the flag through `getFeatureFlags(ctx)`
+    // (`~/server/services/feature-flags.service.ts`), which computes from the
+    // session/Flipt and never reads a `ctx.features` property — so the key was INERT,
+    // and setting it to `false` does NOT produce a FORBIDDEN.
+    //
+    // `canViewNsfw` is the key `ctx.features` is genuinely needed for, via
+    // `applyDomainFeature` — but be exact about the scope, because the first attempt at
+    // THIS comment overreached too: it is reached only on the AUTHENTICATED arm (see the
+    // type above for the measurement). `false` is the realistic value for the anonymous
+    // public caller most of these tests model.
     features: { canViewNsfw: false },
   };
 }

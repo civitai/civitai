@@ -87,9 +87,17 @@ function rootCtx() {
     acceptableOrigin: true,
     tokenScope: TokenScope.Full,
     cache: { ...SENTINEL, canCache: true, skip: false },
-    // `applyDomainFeature` (src/server/trpc.ts) dereferences this unguarded, ahead of
-    // `edgeCacheIt`, on every `publicProcedure`. Without it the call dies with a
-    // TypeError before the middleware under test runs.
+    // Present for context realism only — MEASURED INERT for this file: delete this key
+    // and all 3 tests here still pass. `applyDomainFeature` (src/server/trpc.ts) does
+    // read `ctx.features.canViewNsfw`, but only on the authenticated arm: with `ctx.req`
+    // undefined, `parseVerifiedBotHeader(undefined)` returns null and the `&&`
+    // short-circuits before the property is reached, and the anonymous branch of
+    // `maxAllowed` never reads it either. Every case in this file is anonymous.
+    //
+    // Said plainly because the previous version of this comment claimed omitting the key
+    // "dies with a TypeError before the middleware under test runs" — that is false here,
+    // and it is the same defect (a test-context key documented as load-bearing that the
+    // code path never touches) that this PR exists to fix.
     features: { canViewNsfw: false },
   };
 }
