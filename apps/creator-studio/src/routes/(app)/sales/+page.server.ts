@@ -6,7 +6,6 @@ import { bustVersionCache } from '$lib/server/monetization/bust-cache';
 import { getSaleLimitOverrides } from '$lib/server/monetization/sale-limits';
 import {
   cancelSale,
-  cheapestCoveredPrice,
   deepenSale,
   getCreatorSales,
   getManageableSales,
@@ -17,6 +16,7 @@ import {
 } from '$lib/server/monetization/sales';
 import { resolveCreatorScore, TEST_CREATOR_SCORE_COOKIE } from '$lib/server/creator-score';
 import { minCreatorScoreForSale } from '@civitai/buzz';
+import { salePreviewPayload } from '$lib/monetization/sales';
 import type { SessionUser } from '@civitai/auth';
 import { getFlipt, fliptContext } from '$lib/server/flipt';
 
@@ -124,20 +124,14 @@ export const actions: Actions = {
     const form = await request.formData();
     const parsed = versionIdsSchema.safeParse(form.get('versionIds'));
     if (!parsed.success) return fail(400, { error: firstError(parsed.error) });
-    const [selection, minCoveredPrice] = await Promise.all([
-      summarizeSaleSelection(locals.user.id, parsed.data),
-      cheapestCoveredPrice(
-        locals.user.id,
-        parsed.data,
-        cappedTier(resolveMembership(locals.user, cookies.get(TEST_MEMBERSHIP_COOKIE)))
-      ),
-    ]);
-    return {
-      earlyAccess: selection.earlyAccess,
-      unpriced: selection.unpriced,
-      eligible: selection.eligible,
-      minCoveredPrice,
-    };
+    // cappedTier, not the display label: the floor is measured against what a buyer is charged, and a
+    // lapsed membership keeps its name but is capped at free.
+    const selection = await summarizeSaleSelection(
+      locals.user.id,
+      parsed.data,
+      cappedTier(resolveMembership(locals.user, cookies.get(TEST_MEMBERSHIP_COOKIE)))
+    );
+    return salePreviewPayload(selection);
   },
 
   scheduleSale: async ({ request, locals, cookies }) => {

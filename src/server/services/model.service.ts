@@ -4872,7 +4872,9 @@ export async function transferModelOwnership({
         modelIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
       )
     ),
-    // Not covered by bustMvCache: the gate row carries ownerId, the public donation goal carries userId.
+    // The gate row carries ownerId and the public donation goal carries userId, so both have to go.
+    // bustMvCache busts the gate row too as of 868kwp6ne — this stays as the deliberate duplicate that
+    // keeps the pair together, and a second bust of an already-busted key costs one SET.
     invalidation('bustPaidAccessCache', bustPaidAccessCache('ModelVersion', affectedVersionIds)),
     invalidation(
       'bustPublicDonationGoals',

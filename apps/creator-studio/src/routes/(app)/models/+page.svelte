@@ -74,7 +74,9 @@
   });
 
   // Arrived from Sales via "New sale": the page is here to collect a selection and hand it back.
-  const pickingForSale = $derived(page.url.searchParams.get('for') === 'sale' && data.salesEnabled);
+  // Read from the view rather than the URL so the banner cannot be absent while the list is narrowed —
+  // the server narrows on `for=sale` alone, and an unexplained short list is worse than an early prompt.
+  const pickingForSale = $derived(view.query.saleOnly);
 
   // The tier every cap on this page resolves against (a lapse falls back to free, never to "no access").
   const tier = $derived(data.caps.capTier);
@@ -422,10 +424,14 @@
     const qs = params.toString();
     return `/models/export${qs ? `?${qs}` : ''}`;
   });
+  // Every filter the empty state offers to clear. `mt` and `usage` were missing, so filtering to a type
+  // with no matches reported "you have no models" — and, under `for=sale`, "none of these can go on sale".
   const filterActive = $derived(
     !!view.query.q ||
       !!view.query.fee ||
       !!view.query.bm ||
+      !!view.query.mt ||
+      !!view.query.usage ||
       !!view.query.status ||
       view.query.access
   );
@@ -781,25 +787,25 @@
 <div aria-busy={searching} class={searching ? 'opacity-60 transition-opacity' : undefined}>
   {#if view.models.length === 0}
     <div class="placeholder">
-      {#if view.query.saleOnly}
-        Nothing here can go on sale. A sale discounts a permanent access price, so price a version
-        first — early access and licensing fees aren't what a sale takes Buzz off.
-        {#if filterActive}
-          <button
-            class="underline"
-            onclick={() =>
-              navigate({ q: null, fee: null, bm: null, status: null, access: null, page: null })}
-            >Clear filters</button
-          >
-        {/if}
-        <a href="/models">Set a price</a>
-      {:else if filterActive}
+      {#if filterActive}
         No models match your filters. <button
           class="underline"
           onclick={() =>
-            navigate({ q: null, fee: null, bm: null, status: null, access: null, page: null })}
-          >Clear</button
+            navigate({
+              q: null,
+              fee: null,
+              bm: null,
+              mt: null,
+              usage: null,
+              status: null,
+              access: null,
+              page: null,
+            })}>Clear</button
         >
+      {:else if view.query.saleOnly}
+        Nothing here can go on sale. A sale discounts a permanent access price, so price a version
+        first — early access and licensing fees aren't what a sale takes Buzz off.
+        <a href="/models">Set a price</a>
       {:else}
         You have no models yet. <a href="https://civitai.com/models/create"
           >Upload one on civitai.com</a

@@ -2573,8 +2573,14 @@ export const bustMvCache = async (
   }
   // Not covered by the badge bust above: the gate row caches the sale windows too, and it is what the
   // model page prices from. Busting one and not the other left the card and the page disagreeing about
-  // the same sale for the rest of the hour (868kwp6ne).
-  await bustPaidAccessCache('ModelVersion', versionIds);
+  // the same sale for the rest of the hour (868kwp6ne). Guarded like the badge for the same reason, and
+  // separately from it so one Redis fault cannot take both — this row self-heals on its TTL, while the
+  // search-index enqueue at the end of this function does not.
+  try {
+    await bustPaidAccessCache('ModelVersion', versionIds);
+  } catch {
+    // Best-effort: a stale price on the model page is not worth failing an unpublish over.
+  }
   await bustOrchestratorModelCache(versionIds, userId);
   await modelVersionAccessCache.refresh(versionIds);
   // Refresh imagesForModelVersionsCache too — TTL is up to 1 day on Datapacket,

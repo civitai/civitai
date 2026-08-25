@@ -61,6 +61,7 @@ vi.mock('~/server/services/paid-access.service', async (importOriginal) => ({
 
 import { bustMvCache } from '~/server/services/model-version.service';
 import { bustModelSaleCache, bustPaidAccessCache } from '~/server/services/paid-access.service';
+import { modelsSearchIndex } from '~/server/search-index';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -76,6 +77,9 @@ describe('bustMvCache', () => {
 
     expect(bustModelSaleCache).toHaveBeenCalledWith([11, 22]);
     expect(bustPaidAccessCache).toHaveBeenCalledWith('ModelVersion', [11, 22]);
+    // Once each. A consolidation that folds a second bust in at a caller is otherwise invisible here.
+    expect(bustModelSaleCache).toHaveBeenCalledTimes(1);
+    expect(bustPaidAccessCache).toHaveBeenCalledTimes(1);
   });
 
   it('busts them for a single id passed unwrapped', async () => {
@@ -91,5 +95,15 @@ describe('bustMvCache', () => {
 
     await expect(bustMvCache([11])).resolves.toBeUndefined();
     expect(bustPaidAccessCache).toHaveBeenCalledWith('ModelVersion', [11]);
+  });
+
+  // And the other direction. The search-index enqueue at the end of this function is the one leg that
+  // does NOT self-heal — every cache here expires on a TTL, the Meilisearch document does not — so a
+  // Redis fault on the cheapest bust must not be what stops it running.
+  it('still reaches the search-index enqueue when the gate-row bust throws', async () => {
+    vi.mocked(bustPaidAccessCache).mockRejectedValueOnce(new Error('redis down'));
+
+    await expect(bustMvCache([11], [7])).resolves.toBeUndefined();
+    expect(modelsSearchIndex.queueUpdate).toHaveBeenCalled();
   });
 });

@@ -281,7 +281,7 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
           .$if(!!usageValue, (b) => b.where('mv.usageControl', '=', usageValue!))
           .$if(fee === 'set', (b) => b.where(feeFilter('mv', 'set')))
           .$if(fee === 'off', (b) => b.where(feeFilter('mv', 'off')))
-          .$if(!!saleEligible, (b) => b.where(saleEligibleFilter('mv')))
+          .$if(!!saleEligible, (b) => b.where(saleEligibleFilter('mv', userId)))
       )
     );
 
@@ -375,7 +375,7 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
     .$if(!!usageValue, (b) => b.where('mv.usageControl', '=', usageValue!))
     .$if(fee === 'set', (b) => b.where(feeFilter('mv', 'set')))
     .$if(fee === 'off', (b) => b.where(feeFilter('mv', 'off')))
-    .$if(!!saleEligible, (b) => b.where(saleEligibleFilter('mv')))
+    .$if(!!saleEligible, (b) => b.where(saleEligibleFilter('mv', userId)))
     .orderBy('mv.index', 'asc')
     .execute();
 
@@ -399,7 +399,7 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
       .$if(!!usageValue, (b) => b.where('mv.usageControl', '=', usageValue!))
       .$if(fee === 'set', (b) => b.where(feeFilter('mv', 'set')))
       .$if(fee === 'off', (b) => b.where(feeFilter('mv', 'off')))
-      .$if(!!saleEligible, (b) => b.where(saleEligibleFilter('mv')))
+      .$if(!!saleEligible, (b) => b.where(saleEligibleFilter('mv', userId)))
       .select('mv.id')
       .execute();
     matchingVersionIds = idRows.map((r) => r.id);
