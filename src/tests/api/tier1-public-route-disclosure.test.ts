@@ -99,12 +99,6 @@ vi.mock('~/server/services/user.service', () => ({
 vi.mock('~/server/services/tensor-metadata.service', () => ({
   getFullTensorAnalysisCached: mockGetFullTensorAnalysisCached,
 }));
-// Stubbed for its import graph, not its behaviour: the real module reaches
-// `model-file.service`, which builds a `createCachedObject` at module scope and so
-// needs a wider cache-helpers mock than this file's. It never touches the response.
-vi.mock('~/server/services/model-file-header-correction.service', () => ({
-  correctModelFileFromTensorHeader: vi.fn().mockResolvedValue({ corrections: {}, applied: false }),
-}));
 vi.mock('~/server/utils/cache-helpers', () => ({
   fetchThroughCache: mockFetchThroughCache,
 }));
