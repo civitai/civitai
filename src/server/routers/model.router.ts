@@ -131,11 +131,62 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   });
 });
 
+/**
+ * Marks `getAll` un-edge-cacheable when its response would be caller-dependent.
+ *
+ * Runs UPSTREAM of `edgeCacheIt` deliberately, and that is the only position that
+ * works: `edgeCacheIt` reads `ctx.cache.skip` to compute the TTL *before* it calls
+ * the resolver, so a resolver (or controller) assigning `ctx.cache.skip` is inert.
+ * See the comment in `system.router.ts`.
+ *
+ * 🔴 `!!ctx.user` is DEFENCE IN DEPTH — today it changes no response header, and it
+ * is worth keeping anyway. Both halves of that matter, so do not "simplify" either.
+ *
+ * Why it is inert today: `responseMeta` (`src/pages/api/trpc/[trpc].ts`) is handed
+ * the ROOT context (`ctxManager.valueOrUndefined()`), while tRPC's `next({ ctx })`
+ * builds a NEW object for downstream (`{ ...opts.ctx, ...nextOpts.ctx }`). The
+ * `cache: { ...ctx.cache }` below is therefore a COPY, and `edgeCacheIt`'s
+ * `ctx.cache.edgeTTL = reqTTL` lands on that copy — never on the object the header
+ * is computed from. So the header already comes from `createContext`'s defaults,
+ * which are 0 for a session. `model.getAll` is the ONLY production router that
+ * replaces `ctx.cache`, i.e. the only one immune this way, and it is immune by
+ * accident rather than by design.
+ *
+ * Why it stays: that accident is one refactor deep. Anyone who drops the spread —
+ * an obvious tidy-up, since copying looks pointless — hands `edgeCacheIt` the root
+ * object and this procedure starts emitting `public, s-maxage=60` on responses
+ * computed for a specific caller. This flag makes the outcome correct either way.
+ * `model.router.edge-cache-chain.test.ts` pins both properties; removing the spread
+ * or reordering the two `.use()` calls fails it.
+ *
+ * The response really is caller-dependent:
+ * `getModelsWithImagesAndModelVersions` branches on `user.isModerator` when
+ * filtering by status and on `model.user.id === user?.id` for owner-only fields,
+ * and the controller reads the per-user feature flags `getAllModelImagesSlim` and
+ * `modelMetricPrivacyReadtime`. None of that is expressible in an edge cache key.
+ *
+ * Anonymous callers are unaffected — they have no `ctx.user`, their response is the
+ * same for all of them, and they are the bulk of this procedure's cache hits.
+ * `canCache = false` (set later, when a result `isPrivate`) is NOT a substitute:
+ * it makes the middleware skip the block that assigns the TTLs, which leaves the
+ * context defaults in place — and for an anonymous caller that default is 60.
+ *
+ * Sibling procedures do NOT have this procedure's accidental immunity: they never
+ * replace `ctx.cache`, so `edgeCacheIt` mutates the root and their TTLs really do
+ * reach the header for an authenticated caller. That is only safe because none of
+ * them returns a caller-dependent body — a property nothing currently enforces.
+ */
 const skipEdgeCache = middleware(async ({ input, ctx, next }) => {
   const _input = input as GetAllModelsOutput;
 
   return next({
-    ctx: { user: ctx.user, cache: { ...ctx.cache, skip: _input.favorites || _input.hidden } },
+    ctx: {
+      user: ctx.user,
+      cache: {
+        ...ctx.cache,
+        skip: !!ctx.user || !!_input.favorites || !!_input.hidden,
+      },
+    },
   });
 });
 

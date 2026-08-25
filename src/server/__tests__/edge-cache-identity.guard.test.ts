@@ -54,16 +54,20 @@ import { describe, expect, it } from 'vitest';
  * ── TODO: consolidate with `CACHEABLE_PROCEDURES` ─────────────────────────────
  * `src/utils/__tests__/trpc-batching.test.ts` derives a closely-related set (which
  * procedures are edge-cacheable for authed sessions) with its own copy of this
- * parsing. That derivation is currently being improved on PR #4347
- * (`zach/model-getall-edge-cache-auth-skip`), so this file deliberately keeps an
- * independent copy rather than importing from it — touching that file here would
- * make this a stacked change. ONE RULE, ONE PLACE: once #4347 lands, hoist the
- * shared primitives (`stripTsComments`, `procedureBlocks`, the router key map, the
- * `edgeCacheIt` derivation) into a single test helper module and have both
- * consumers read from it. Note while doing so that this file's derivation is the
- * WIDER of the two — see `edgeCacheAliases`; the batching one misses hoisted
- * `const x = edgeCacheIt(…)` aliases and therefore does not see either
- * `leaderboard` procedure.
+ * parsing. Both halves now sit in one change (#4347 carries the batching-side
+ * derivation and this commit), so the reason for keeping an independent copy — not
+ * wanting a stacked change — has expired. ONE RULE, ONE PLACE: hoist the shared
+ * primitives (`stripTsComments`, `procedureBlocks`, the router key map, the
+ * `edgeCacheIt` derivation) into a single test helper module and have both consumers
+ * read from it. Deliberately NOT done here: this commit's job is to stop the two
+ * derivations DISAGREEING, and folding a refactor of both into the same change would
+ * make it impossible to tell which half a later regression came from.
+ * Closing condition: a follow-up PR in which `trpc-batching.test.ts` and this file
+ * both import those primitives from one module and neither declares its own copy —
+ * checkable by grepping both files for `function stripTsComments`.
+ * Note while doing so that this file's derivation is the WIDER of the two — see
+ * `edgeCacheAliases`; the batching one misses hoisted `const x = edgeCacheIt(…)`
+ * aliases and therefore does not see either `leaderboard` procedure.
  */
 
 const SRC = resolve(__dirname, '../..');
@@ -712,23 +716,15 @@ const LEDGER: Record<string, LedgerEntry> = {
     forwards: ['getUserCreator|isModerator|ignores'],
     directUses: 1,
   },
-  'model.getAll': {
-    status: 'accepted-variance',
-    why:
-      'PRE-EXISTING, NOT SAFE, and known: the branch that adds an authed opt-out here is open ' +
-      'as PR #4347. getModelsInfiniteHandler reads two feature flags off ctx.features and ' +
-      'forwards `user: ctx.user` into getModelsWithImagesAndModelVersions, which uses it. The ' +
-      'local `skipEdgeCache` middleware is NOT a caller-aware opt-out — it derives `skip` from ' +
-      'the INPUT (favorites/hidden), leaving every other input shape caller-varying. ' +
-      '`ctx.cache.canCache = false` in the handler does take effect but is conditional on a ' +
-      'private model having appeared, so it covers one path, not the class.',
-    closes:
-      'Remove this entry when #4347 lands an authed opt-out on model.getAll. Checked by: ' +
-      'this test failing as a stale entry once the opt-out is derivable.',
-    identity: ['ctx.features', 'ctx.user'],
-    forwards: ['getModelsWithImagesAndModelVersions|user|uses'],
-    directUses: 2,
-  },
+  // `model.getAll` was here as `accepted-variance` ("PRE-EXISTING, NOT SAFE"):
+  // getModelsInfiniteHandler reads two feature flags off ctx.features and forwards
+  // `user: ctx.user` into getModelsWithImagesAndModelVersions, which uses it, while the
+  // local `skipEdgeCache` derived `skip` from the INPUT (favorites/hidden) only. This
+  // change makes that middleware caller-aware (`!!ctx.user`), which is the exact closing
+  // condition the entry named, so the entry is retired with the defect rather than
+  // restated. Removing it is NOT free-standing housekeeping: drop it without the
+  // `!!ctx.user` above and `model.getAll` is still risky, so the `unledgered` assertion
+  // fails. Measured both ways before this was written.
 };
 
 const fmtForwards = (d: Derived) =>
