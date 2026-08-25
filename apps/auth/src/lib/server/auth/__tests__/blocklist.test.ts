@@ -27,7 +27,9 @@ function makeRedis() {
   return {
     _store: store,
     get: vi.fn(async (k: string) => store.get(k) ?? null),
-    set: vi.fn(async (k: string, v: string) => {
+    // The options argument is modelled because the EXPIRY is now part of what this file asserts.
+    // A fake narrower than the real client is a ceiling on what any test here can see.
+    set: vi.fn(async (k: string, v: string, _options?: { EX: number }) => {
       store.set(k, v);
       return 'OK';
     }),
@@ -61,11 +63,34 @@ describe('getBlockedEmailDomains', () => {
 
     expect(await getBlockedEmailDomains()).toEqual(['db1.com', 'db2.com']);
     expect(h.executeTakeFirst).toHaveBeenCalledTimes(1);
-    // best-effort repopulate with a 30d TTL
     expect(redis.set).toHaveBeenCalledWith(
       BLOCKLIST_KEY,
       JSON.stringify({ type: 'EmailDomain', data: ['db1.com', 'db2.com'] }),
-      { EX: 60 * 60 * 24 * 30 }
+      { EX: expect.any(Number) }
+    );
+  });
+
+  /**
+   * This repopulate is what a moderator's edit has to outlive. The writers DELETE the key, so an
+   * edit normally lands on the next read; what the delete cannot reach is a read that started
+   * before the write and finishes after it, writing its pre-write copy back. The expiry is the
+   * only bound on that, and it used to be a month.
+   *
+   * A ceiling rather than the exact number, so tuning the value needs no test edit while restoring
+   * the month fails. The main app and the moderator spoke populate this same key and carry the
+   * same bound.
+   */
+  it('repopulates with a bound of minutes, not a month', async () => {
+    const redis = makeRedis();
+    h.getRedis.mockReturnValue(redis);
+    h.executeTakeFirst.mockResolvedValue({ data: ['db1.com'] });
+
+    await getBlockedEmailDomains();
+
+    const options = redis.set.mock.calls.at(-1)?.[2] as { EX?: number } | undefined;
+    expect(options?.EX, 'the repopulate must set an expiry').toBeGreaterThan(0);
+    expect(options?.EX, 'a stale copy must not be able to serve for hours').toBeLessThanOrEqual(
+      15 * 60
     );
   });
 
