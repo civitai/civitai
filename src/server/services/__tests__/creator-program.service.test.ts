@@ -183,7 +183,7 @@ describe('userCapCache peak-earning query', () => {
     const [parts, ...values] = call as [string[], ...any[]];
     const sql = parts.reduce((acc, part, i) => acc + part + (values[i] ?? ''), '');
 
-    return { sql, values, result };
+    return { sql, result };
   }
 
   beforeEach(() => {
@@ -203,15 +203,18 @@ describe('userCapCache peak-earning query', () => {
     expect(sql).toMatch(/type = 'purchase' AND fromAccountId != 0/);
   });
 
-  // This clause decides which Buzz counts toward Peak Earning Month, and so toward a creator's Cap;
-  // both halves of it return a plausible wrong number rather than an error. Asserted as column AND
-  // list together: on the list alone, narrowing `toAccountType` to `fromAccountType` sums Buzz
-  // leaving the account instead of arriving and every test in this block still passes.
+  // This clause decides which Buzz counts toward Peak Earning Month, and so toward a creator's Cap,
+  // and a wrong one returns a plausible number rather than an error. Column and list are asserted
+  // together, anchored to the line: asserting the list alone left `toAccountType` free, and
+  // narrowing it to `fromAccountType` passed every test in this block. The anchor is what makes
+  // commenting the clause out fail, since the text would otherwise still be present in the query.
   it('narrows the peak-earning sum to the bankable types arriving in the account', async () => {
     const { sql } = await runLookup([userId]);
 
     const bankable = buzzBankTypes.map((type) => `'${type}'`).join(', ');
-    expect(sql).toContain(`toAccountType IN (${bankable})`);
+    // String.raw, not a plain template: `\n` and `\s` in one are a newline and the letter s, so the
+    // pattern would match nothing and this assertion would never fire.
+    expect(sql).toMatch(new RegExp(String.raw`\n\s*AND toAccountType IN \(${bankable}\)`));
   });
 
   it('derives the cap from the peak month returned by ClickHouse', async () => {
