@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { NsfwLevel } from '~/server/common/enums';
+import { Availability } from '~/shared/utils/prisma/enums';
 import {
   allBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
@@ -2120,6 +2121,89 @@ describe('the reads a Buzz figure is rendered from', () => {
     // something to inspect — deleting it as pointless removes the guard's
     // anchor with nothing turning red.
     expect(placementFindMany).toHaveBeenCalled();
+  });
+
+  /**
+   * 🔴 Named for the decision, because the clauses look like padding next to the
+   * five that were already there and read like an obvious tidy-up to delete.
+   *
+   * The host on this list belongs to somebody else. Every clause below admitted
+   * a host the submitter could still see after its owner had stopped showing it
+   * to anyone else, and none is implied by the `ingestion = 'Scanned'` beside
+   * them — a moderator flag leaves `ingestion` untouched, and a scheduled post
+   * carries a non-null FUTURE `publishedAt`.
+   *
+   * Asserted on the ONE read that joins `Post`. The joined text of every
+   * `queryRaw` call would pass if a clause landed in the submitter's own-image
+   * read instead, which is a different question about a different person's
+   * picture.
+   */
+  it('fetches the host under the full public rules, not published-only', async () => {
+    placementFindMany.mockResolvedValue([
+      { id: 1, targetId: HOST_IMAGE, ownerId: OWNER, data: { imageId: REMIX_IMAGE } },
+    ]);
+
+    await getMyRemixGallerySubmissions({
+      placerId: PLACER,
+      domainLevels: allBrowsingLevelsFlag,
+      viewerLevels: allBrowsingLevelsFlag,
+    });
+
+    const hostReads = queryRaw.mock.calls.filter((call) => flatten(call).includes('JOIN "Post"'));
+    // Exactly one, so the assertions below cannot be satisfied by some other
+    // read that happens to carry the same words.
+    expect(hostReads).toHaveLength(1);
+    const sql = flatten(hostReads[0]);
+
+    // 🔴 The leading `AND` is part of every assertion, and that is the whole
+    // point of them. Matching the fragment alone pins the spelling of a clause
+    // without pinning how it JOINS the others — measured: flipping one `AND` to
+    // `OR` left all five green while making the entire WHERE permissive, which
+    // is worse than deleting any single clause.
+    expect(sql).toContain('AND p."availability" !=');
+    expect(boundValues(hostReads[0])).toContain(Availability.Private);
+    // `IS NOT NULL` alone served a scheduled post ahead of its own publish time.
+    expect(sql).toContain('AND p."publishedAt" < now()');
+    expect(sql).toContain('AND i."needsReview" IS NULL');
+    expect(sql).toContain('AND NOT i."acceptableMinor"');
+    expect(sql).not.toContain('OR ');
+  });
+
+  /**
+   * 🔴 The withholding above must never become a disappearance. This list is the
+   * submitter's own record of where their Buzz went, and the withdraw button
+   * beside each row is the only route back to an escrow that otherwise sits
+   * until expiry.
+   *
+   * So a host the nine clauses exclude has to come back as `targetImage: null`
+   * on a row that is still there — not as a filtered-out row. The owner's
+   * received queue deliberately does the opposite (`:1861` filters on
+   * `row.image && row.targetImage`), and copying that one line into this
+   * function is a plausible tidy-up that passes every other test in this file
+   * while vanishing a pending row and its withdraw.
+   */
+  it('keeps the row when the host is withheld, so the withdraw survives', async () => {
+    placementFindMany.mockResolvedValue([
+      {
+        id: 1,
+        targetId: HOST_IMAGE,
+        ownerId: OWNER,
+        status: 'pending',
+        data: { imageId: REMIX_IMAGE },
+      },
+    ]);
+    // What the filtered read returns once the host stops meeting the rules.
+    queryRaw.mockImplementation(async () => []);
+
+    const rows = await getMyRemixGallerySubmissions({
+      placerId: PLACER,
+      domainLevels: allBrowsingLevelsFlag,
+      viewerLevels: allBrowsingLevelsFlag,
+    });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].id).toBe(1);
+    expect(rows[0].targetImage).toBeNull();
   });
 
   it('the submitter’s pending rows on the image detail card', async () => {
