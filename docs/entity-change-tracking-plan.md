@@ -135,6 +135,7 @@ export const watchedEntityFields = {
   ModelVersion: [
     'description',
     'status',
+    'nsfw',
     'baseModel',
     'paidAccess',
     'monetization',
@@ -150,8 +151,9 @@ export const watchedEntityFields = {
 Notes:
 
 - `nsfwLevel` is intentionally **excluded**: it's recomputed by ingestion/jobs on
-  unrelated triggers and would flood the log with rows nobody asked for. `nsfw` (the
-  user/mod-set flag) is watched.
+  unrelated triggers and would flood the log with rows nobody asked for. `nsfw` is watched on
+  both — user/mod-set on `Model`, set only by name moderation on `ModelVersion`, which is why it
+  has to be logged: nothing else in a version's history would name what flipped it.
 - JSON-object fields (`paidAccess`, `monetization`) are diffed **per leaf**,
   emitting dotted-path rows (`paidAccess.timeframeDays`, `paidAccess.terms`,
   `monetization.unitAmount`). Nested diffing lives in the helper, so the registry stays

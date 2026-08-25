@@ -1,8 +1,8 @@
 # Model Text Moderation
 
-**Status**: Shipping dark — flags exist, ramp not started
+**Status**: Model text — shipping dark, flags exist, ramp not started · Version names — live path built, term list unseeded
 **Tracking**: CU 868ktb1wb
-**Last Updated**: 2026-08-20
+**Last Updated**: 2026-08-25
 
 How a model's name and description are checked for policy violations, and what happens when
 one is found.
@@ -34,6 +34,9 @@ Scanned on **every save** — creation and edit alike, published or draft.
 
 Not included:
 
+- **Version names.** Scanned by a separate pipeline of their own — see
+  [Version name moderation](#version-name-moderation). A version name never affects the
+  model's rating; it sets a flag on the version.
 - **Version descriptions and trigger words.** Those belong to a separate model-ingestion scan.
 - **Moderator-authored saves.** A moderator editing a model's text is making a decision, and an
   unattended scan must never re-flip it.
@@ -99,7 +102,7 @@ than to whoever last saved the model.
 
 ---
 
-## Rollout and reversibility
+## Rollout and reversibility — model text only
 
 Two feature flags control the feature independently, both **failing closed** — if the flag
 service is unreachable or the flag does not exist, no model is flagged.
@@ -112,7 +115,8 @@ failure.
 | apply  | whether a verdict is written to the model          | scans run and verdicts are recorded; the model is untouched |
 
 Flags are evaluated **per model**, so a percentage rollout selects a stable subset of content
-rather than following a particular author around.
+rather than following a particular author around. Neither flag gates version-name moderation,
+which has none.
 
 Splitting submit from apply gives a real **shadow phase**: verdicts accumulate against live
 traffic while the existing mechanisms stay solely in charge of the NSFW column. That is what
@@ -147,6 +151,152 @@ flag goes up, and re-running it after a rollback.
 
 A full sweep over every published model is deliberately not part of this. Size it once live
 per-label trigger rates exist to extrapolate from.
+
+---
+
+## The name harness
+
+A **name** is a different problem from a name plus a description, and the pipeline above cannot
+tell you how different. A description is where the context lives; a name is two to six words
+with none, which is why the profanity filter it replaces never fired on a short title — that
+detector needs density, and a title has none to measure.
+
+So there is a separate operator harness for names, run from a script rather than from the
+service. It scans a model's name **on its own**, and every published version name beneath it,
+and reports what each detector made of each one. Its verdicts are therefore **not comparable**
+to the pipeline's and must not be read as a preview of them.
+
+It is a **measurement tool, not the live path.** Version names are moderated automatically on
+save by the pipeline described below; the harness exists to tune the term list that pipeline
+selects with, and to answer questions about the corpus that only a whole-table sweep can.
+
+It carries two detectors so they can be compared on the same corpus:
+
+- a **term list** — one of the lists this repository already ships, or a curated subset
+  supplied at run time
+- the **XGuard scan**, the same fifteen labels the pipeline sends
+
+Running both reports how often they agree, which is the input to deciding whether names need a
+scan at all or whether a short list of unambiguous terms already settles the egregious cases.
+
+### What the lists already tell us
+
+Two existing lists are relevant, and neither needed to be written:
+
+- The **profanity filter's own list** already contains the words a bad title is made of. It
+  never fires on titles because its verdict is a density judgement over the whole text, and a
+  title gives it nothing to measure. **Its list was never the problem; its shape was.**
+- A second, smaller list is **already applied to model names** today, client-side, to hide
+  models from viewers who cannot see NSFW. So a name we already hide from those viewers is
+  currently not flagged in the database — the two mechanisms disagree, and the flag is the one
+  that loses.
+
+The harness reports **per-term hit counts**, because "the most egregious terms" is a judgement
+about which terms fire on real titles and on what. A flagged total does not show that.
+
+⚠️ **Matching the whole word is the load-bearing part.** Measured: the profanity matcher
+substring-matches, so on control names it fires on _Essex_, _Unisex_, _Sussex_, _Middlesex_ and
+_Scunthorpe_ — five false positives out of six flags. The same terms matched whole-word flag
+the real offenders and none of the five. Two soft lists are deliberately not offered at all:
+they carry words like _booty_ and _twerk_, which are a reasonable soft signal on a prompt and a
+false positive on a title, and flagging a model is not a soft outcome.
+
+**A curated subset must not be committed here.** The shipped lists are already public, so using
+them discloses nothing new — but "these are the terms we auto-flag on" is a decision rule, and
+this repository is public and permanent.
+
+### What it can change
+
+Two writes, both off unless asked for:
+
+- **Recording version-name findings** on the model, beside its own scan, for moderator review.
+- **Flagging a model** whose own name scores at or above an operator-supplied score on one of
+  the three level labels. That score has no default — "egregious" is the judgement the harness
+  exists to inform.
+
+A flip from the harness goes through the same function the moderation callback uses, so it is
+the same write: the NSFW flag, the lock, the browsing-level recompute that queues the model's
+search document, the origin-side response-cache bust, and the change-history entry. It is
+attributed to the harness rather than to the pipeline, so a moderator can tell an operator-run
+flip from an automatic one. Models already carrying a moderator lock on NSFW are skipped.
+
+Like the backfill, it is **not** gated on either feature flag, and for the same reason.
+
+---
+
+## Version name moderation
+
+A version's name renders on civitai.com in places the model's rating never reaches, and until
+this existed nothing scanned it. It is a **separate pipeline** from everything above: different
+text, different column, different verdict. Ramping one has no effect on the other.
+
+### When it runs
+
+On **create, and on rename** — not on every save. An unchanged name has already been ruled on.
+
+### The two stages
+
+**A curated term list selects; XGuard decides.** The list is a local regex pass cheap enough to
+run on every save, and it keeps the classifier off the overwhelming majority of names, which are
+`v1.0` and `epoch2` and carry nothing to read. Only a name that matches a term is sent onward.
+
+**The list is not in this repository.** It lives in system Redis, so a term that turns out to
+fire on something innocent can be pulled without a deploy — and because "these are the words we
+auto-flag on" is a decision rule, not configuration. An empty list is also the feature's off
+switch: nothing is selected, so nothing is scanned or flagged.
+
+### What a version scan reads
+
+**The version name, alone.** Not its description, deliberately:
+
+- The flag exists because the **name** is what displays. Including the description would make
+  the verdict "is this version adult", which answers the wrong question in both directions — an
+  adult description with a clean name would flag a version that shows nothing, and a clean
+  description could talk the classifier out of a name that is bad on screen.
+- The description is **already scanned one layer up**, where it sets the model's own flag — and
+  a flagged model already stamps every version beneath it. Scanning it here would double-count a
+  signal that is already acted on.
+- Only about a quarter of versions have one, so including it would make the flag mean different
+  things depending on whether a creator happened to write a description.
+
+### The score floor
+
+A verdict is applied only when the highest sexual-axis score clears a configured floor, stored
+beside the term list and tunable without a deploy.
+
+⚠️ **This is not belt-and-braces on top of the classifier's own thresholds — it is load-bearing.**
+A name that short gives the classifier almost nothing to read, so on contentless strings like
+`v1.0` it returns a mid-range _suggestive_ score that clears its own threshold; at the default it
+would flag four names in five. The measurements are in the version-NSFW plan §5.2. Do not lower
+the floor without re-measuring.
+
+### What happens when a version is flagged
+
+The version's **`nsfw` flag** is set — never its level directly. The flag is an *input* to the
+level derivation, so the recompute stamps the level and cannot later clobber the flag. That is
+also why the version needs no lock column of its own.
+
+The flip is recorded in the version's change history, attributed to the system.
+
+**A flagged version does not take its model down.** The model's rating is rolled up from its
+*unflagged* published versions, so a model with safe versions stays where it is. Only when every
+published version is flagged does the model itself become NSFW.
+
+**A version under the system account is never flagged.** The level derivation has no branch for
+an unflagged system-owned version, which makes setting the flag there a one-way door — so the
+database refuses the write outright.
+
+### The callback
+
+None was built. Every text scan already reports to one shared webhook that dispatches by entity
+type, so this pipeline is one registration in that registry — which also gives it the retry
+behaviour and the audit record that every other scanned entity gets.
+
+### Not yet enforced everywhere
+
+A flagged version is stamped, and the surfaces that filter a version by its level react
+immediately. Not every surface that renders a version name filters on it yet; the remaining work
+is tracked in the version-NSFW plan §4.
 
 ---
 

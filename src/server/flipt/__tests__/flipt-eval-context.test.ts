@@ -177,7 +177,7 @@ const ENTITY_WITHOUT_CONTEXT_LEDGER: Record<string, string> = {
   // rollout it will silently match nothing here. A percentage rollout is fine.
   'server/services/model-moderation.adapter.ts:123':
     'model-text-moderation-xguard has no segment rollouts; entityId is a MODEL id (no user segment can describe it) and the rollout is threshold-keyed; webhook path with no SessionUser',
-  'server/services/model-moderation.adapter.ts:228':
+  'server/services/model-moderation.adapter.ts:381':
     'model-text-moderation-xguard-apply has no segment rollouts; entityId is a MODEL id (no user segment can describe it) and the rollout is threshold-keyed; webhook path with no SessionUser',
 };
 

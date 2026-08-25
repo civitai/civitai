@@ -367,7 +367,11 @@ async function migrateModelVersions(req: NextApiRequest, res: NextApiResponse) {
           SELECT
             mv.id,
             CASE
-              WHEN m.nsfw = TRUE THEN ${nsfwBrowsingLevelsFlag}
+              -- Third copy of the version CASE. Without mv.nsfw here this endpoint recomputes a
+              -- name-flagged version's level from its images alone: the stamp is wiped while the
+              -- flag stays TRUE, and nothing re-stamps it — the trigger fires on a CHANGE to
+              -- nsfw, and there is no longer one to make.
+              WHEN m.nsfw = TRUE OR mv.nsfw = TRUE THEN ${nsfwBrowsingLevelsFlag}
               -- WHEN m."userId" = -1 THEN (
               --   SELECT COALESCE(bit_or(ranked."nsfwLevel"), 0) "nsfwLevel"
               --   FROM (
@@ -442,13 +446,31 @@ async function migrateModels(req: NextApiRequest, res: NextApiResponse) {
     },
     processor: async ({ start, end, cancelFns }) => {
       const { cancel, result } = await pgDbWrite.cancellableQuery(Prisma.sql`
-        WITH level AS (
+        WITH agg AS (
           SELECT
             mv."modelId" as "id",
-            bit_or(mv."nsfwLevel") "nsfwLevel"
+            -- Third copy of the model rollup, after nsfwLevels.service and
+            -- temp-set-missing-nsfw-level. Name-flagged versions are excluded here too, or
+            -- running this endpoint reverses the exclusion for its whole id range.
+            bit_or(mv."nsfwLevel") FILTER (WHERE NOT mv.nsfw) "safeLevel",
+            count(*) FILTER (WHERE NOT mv.nsfw) "safeCount"
           FROM "ModelVersion" mv
           WHERE mv."modelId" BETWEEN ${start} AND ${end}
+            -- The other two copies of this rollup have always filtered on Published; this one
+            -- did not, and it used to be harmless because a draft sits at 0 and contributes
+            -- nothing to a plain bit_or. With safeCount it stopped being harmless: one
+            -- unflagged draft makes safeCount non-zero, which suppresses the all-flagged
+            -- fallback and writes 0 where the service copies write the NSFW level.
+            AND mv.status = 'Published'
           GROUP BY mv."modelId"
+        ), level AS (
+          SELECT
+            agg.id,
+            CASE
+              WHEN agg."safeCount" = 0 THEN ${nsfwBrowsingLevelsFlag}
+              ELSE agg."safeLevel"
+            END "nsfwLevel"
+          FROM agg
         )
         UPDATE "Model" m
         SET "nsfwLevel" = (

@@ -42,6 +42,7 @@ import type { DonationGoalWithTotal } from '~/server/redis/caches';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { resourceDataCache } from '~/server/redis/resource-data.redis';
+import { submitModelVersionNameModeration } from '~/server/services/model-version-moderation.adapter';
 import {
   allBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
@@ -715,12 +716,18 @@ export const upsertModelVersion = async ({
     // timed window), and create the EA donation goal here (option A) instead of at publish.
     await writeModelVersionGateAndGoal(version, model.userId, paidAccess, donationGoal);
 
+    // Awaited so no rejection escapes; it swallows its own errors, so a scan cannot fail the save.
+    await submitModelVersionNameModeration({ id: version.id, name: version.name, isModerator });
+
     return version;
   } else {
     const existingVersion = await dbWrite.modelVersion.findUniqueOrThrow({
       where: { id },
       select: {
         id: true,
+        // Read so a rename is detectable — the name scan runs on create and on change, not on
+        // every save, which is what keeps it off the contentHash-dedup path entirely.
+        name: true,
         status: true,
         description: true,
         trainedWords: true,
@@ -917,6 +924,12 @@ export const upsertModelVersion = async ({
     const feeAfter = feeProvided ? data.licensingFee ?? null : feeBefore;
     if (feeBefore !== feeAfter)
       await bustMvCache(version.id, version.modelId, actorUserId).catch(() => undefined);
+
+    // On rename only. An unchanged name has already been ruled on, and re-submitting it every
+    // save would re-audit the same string forever — the same reasoning as the model path's
+    // "text that has not changed" carve-out.
+    if (data.name !== undefined && data.name !== existingVersion.name)
+      await submitModelVersionNameModeration({ id: version.id, name: version.name, isModerator });
 
     return version;
   }

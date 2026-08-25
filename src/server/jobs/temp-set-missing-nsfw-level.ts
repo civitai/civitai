@@ -13,7 +13,14 @@ export const tempSetMissingNsfwLevel = createJob(
         SELECT
           mv.id,
           CASE
-            WHEN m.nsfw = TRUE THEN 28
+            -- Same inputs as updateModelVersionNsfwLevels, kept in step so the two do not
+            -- diverge if this statement is ever revived.
+            --
+            -- ⚠️ This half of the job is DEAD: the WHERE below is pinned to a single hardcoded
+            -- id and never references missing_level, so that CTE is computed and discarded.
+            -- That predates this change. Do not read this branch as a backstop for a flagged
+            -- version sitting at 0 — nothing here runs.
+            WHEN m.nsfw = TRUE OR mv.nsfw = TRUE THEN 28
             -- WHEN m."userId" = -1 THEN (
             --   SELECT COALESCE(bit_or(ranked."nsfwLevel"), 0) "nsfwLevel"
             --   FROM (
@@ -61,14 +68,27 @@ export const tempSetMissingNsfwLevel = createJob(
       WITH missing_level AS (
         SELECT id FROM "Model"
         WHERE status = 'Published' AND "nsfwLevel" = 0
-      ), level AS (
+      ), agg AS (
         SELECT
           mv."modelId" as "id",
-          bit_or(mv."nsfwLevel") "nsfwLevel"
+          -- Second copy of the model rollup. Must exclude name-flagged versions for the same
+          -- reason updateModelNsfwLevels does — otherwise a model sitting at 0 with one
+          -- flagged version gets that version's level rolled up here every 10 minutes, and
+          -- the whole model leaves the SFW domain.
+          bit_or(mv."nsfwLevel") FILTER (WHERE NOT mv.nsfw) "safeLevel",
+          count(*) FILTER (WHERE NOT mv.nsfw) "safeCount"
         FROM "ModelVersion" mv
         WHERE mv."modelId" IN (SELECT id FROM missing_level)
         AND mv.status = 'Published'
         GROUP BY mv."modelId"
+      ), level AS (
+        SELECT
+          agg.id,
+          CASE
+            WHEN agg."safeCount" = 0 THEN 28
+            ELSE agg."safeLevel"
+          END "nsfwLevel"
+        FROM agg
       )
       UPDATE "Model" m
       SET "nsfwLevel" = (

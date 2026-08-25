@@ -49,17 +49,17 @@ export const MODEL_MODERATION_SCAN_LABELS = [
 ] as const;
 
 /** Triggering any of these sets `nsfw = true`. Lowercase — comparisons normalize both sides. */
-const MODEL_MODERATION_LEVEL_LABELS = ['nsfw', 'suggestive', 'explicit'] as const;
+export const MODEL_MODERATION_LEVEL_LABELS = ['nsfw', 'suggestive', 'explicit'] as const;
 
 const LEVEL_LABEL_SET: ReadonlySet<string> = new Set(MODEL_MODERATION_LEVEL_LABELS);
 
 /**
- * Cap on the matched terms persisted per model. XGuard sets the cardinality from a body
+ * Cap on how many items of any one kind land in `Model.meta`. XGuard sets the cardinality from a body
  * that can be 167 KB, and `Model.meta` is selected for every row of the model feed — a
  * column whose p99 is 310 bytes today. The terms are a moderator's starting point, not an
  * exhaustive record; the full set stays on the scan's own row.
  */
-const MAX_PERSISTED_MATCHED_TERMS = 50;
+const MAX_PERSISTED_META_ITEMS = 50;
 
 /**
  * The single definition of the scanned string.
@@ -161,6 +161,9 @@ async function recordForensics({
   // Bound as TEXT and cast in SQL rather than bound as jsonb — binding a jsonb
   // parameter breaks when two copies of @prisma/client are in the bundle.
   const labelsJson = JSON.stringify(labels);
+  // Bounded at the write, not at one call site. Both callers reach this function, and the cap
+  // enforced by only one of them is the cap that is not enforced.
+  const boundedTerms = matchedTerms.slice(0, MAX_PERSISTED_META_ITEMS);
 
   // Database-side jsonb merge, not a read-modify-write of the whole object. A
   // `minorFlagSnapshot` written between the read and the write would otherwise be
@@ -168,14 +171,164 @@ async function recordForensics({
   await dbWrite.$executeRaw`
     UPDATE "Model" m
     SET meta = COALESCE(m.meta, '{}'::jsonb) || jsonb_build_object(
-      'textModeration', jsonb_build_object(
+      'textModeration', COALESCE(m.meta -> 'textModeration', '{}'::jsonb) || jsonb_build_object(
         'labels', ${labelsJson}::jsonb,
-        'matchedTerms', to_jsonb(${matchedTerms}::text[]),
+        'matchedTerms', to_jsonb(${boundedTerms}::text[]),
         'scannedAt', now()
       )
     )
     WHERE m.id = ${entityId}
   `;
+}
+
+/**
+ * Version-name scan findings, recorded and not acted on.
+ *
+ * Recorded for review only: nothing sets `ModelVersion.nsfw` from THESE. The automatic
+ * version-name path writes that column itself — see `model-version-moderation.adapter.ts`.
+ * Lands under the model's `textModeration` key, which `stripMinorHashMeta` strips from every
+ * creator-facing response, the owner's included.
+ */
+export async function recordModelVersionNameForensics({
+  modelId,
+  versions,
+}: {
+  modelId: number;
+  versions: {
+    versionId: number;
+    name: string;
+    labels: { label: string; score: number; threshold: number }[];
+  }[];
+}) {
+  const versionsJson = JSON.stringify(versions.slice(0, MAX_PERSISTED_META_ITEMS));
+  await dbWrite.$executeRaw`
+    UPDATE "Model" m
+    SET meta = COALESCE(m.meta, '{}'::jsonb) || jsonb_build_object(
+      'textModeration', COALESCE(m.meta -> 'textModeration', '{}'::jsonb) || jsonb_build_object(
+        'versions', ${versionsJson}::jsonb,
+        'versionsScannedAt', now()
+      )
+    )
+    WHERE m.id = ${modelId}
+  `;
+}
+
+/**
+ * The NSFW flip, shared by the moderation callback and the operator harness.
+ *
+ * Both arrive with a verdict already rendered; what differs is how they got it, not what the
+ * write has to do. The parts that are easiest to leave out of a second copy — the level
+ * recompute that queues Meilisearch, the origin-side cache bust, the system attribution — are
+ * exactly the parts nothing would report missing.
+ *
+ * The caller owns flag gating; this function has none. The harness runs in the situations the
+ * flags are down for, which is the same exemption the backfill endpoint has.
+ */
+export async function applyModelTextNsfwFlag({
+  entityId,
+  triggeredLabels,
+  matchedTerms,
+  labels,
+  source = 'xguard-text-moderation',
+}: {
+  entityId: number;
+  triggeredLabels: string[];
+  matchedTerms: string[];
+  labels: { label: string; score: number; threshold: number }[];
+  source?: string;
+}): Promise<'applied' | 'repaired' | 'skipped_locked' | 'declined_race' | 'missing'> {
+  const db = await getDbWithoutLag('model', entityId);
+  const model = await db.model.findUnique({
+    where: { id: entityId },
+    select: { id: true, nsfw: true, nsfwLevel: true, lockedProperties: true, userId: true },
+  });
+  // Deleted between submit and callback — a bare update would throw P2025 and fail the
+  // moderation callback, which the orchestrator would then retry forever.
+  if (!model) return 'missing';
+
+  // Recorded whether or not the flip happens, matching the profanity branch: a moderator
+  // reviewing a model they already ruled on still needs to see that the scan disagreed.
+  await recordForensics({ entityId, matchedTerms, labels });
+
+  const stored = model.lockedProperties ?? [];
+  // A stored lock is a moderator's call: minor-flagging sets nsfw:false and locks it.
+  if (stored.includes('nsfw')) {
+    // A prior callback may have written nsfw:true and died before recomputing levels —
+    // EntityModeration is already Succeeded by then, so nothing else revisits the row.
+    // Gated on the level actually being wrong: `updateModelNsfwLevels` matches every
+    // `nsfw = true` row unconditionally, so calling it on a correct row still writes,
+    // fires the model row trigger, and queues a Meilisearch re-render.
+    if (model.nsfw && model.nsfwLevel !== nsfwBrowsingLevelsFlag) {
+      await updateModelNsfwLevels([entityId]);
+      recordModelTextModerationOutcome('repaired');
+      return 'repaired';
+    }
+    recordModelTextModerationOutcome('skipped_locked');
+    return 'skipped_locked';
+  }
+
+  // Guarded in the WHERE, not by the read above. The lock check and this write are two
+  // statements, and a moderator ruling that lands between them would otherwise be
+  // overwritten. `array_append` in the database for the same reason — writing back the
+  // array we read would drop a concurrent lock on some other property.
+  const flipped = await dbWrite.$executeRaw`
+    UPDATE "Model" m
+    SET nsfw = TRUE,
+        "lockedProperties" = array_append(COALESCE(m."lockedProperties", ARRAY[]::text[]), 'nsfw')
+    WHERE m.id = ${entityId}
+      AND NOT ('nsfw' = ANY(COALESCE(m."lockedProperties", ARRAY[]::text[])))
+  `;
+
+  if (!flipped) {
+    recordModelTextModerationOutcome('declined_race');
+    logToAxiom({
+      name: 'model-text-moderation',
+      type: 'warning',
+      message: 'nsfw lock appeared between read and write; flag not applied',
+      modelId: entityId,
+    }).catch(() => null);
+    return 'declined_race';
+  }
+
+  // Also queues the model's Meilisearch document — the search doc carries `nsfwLevel` and the
+  // version names, and is what the site filters on.
+  await updateModelNsfwLevels([entityId]);
+  // The origin-side public response cache keys off browsing level and is otherwise only
+  // busted by `upsertModel`. Without this the pre-flip payload keeps being served for the
+  // whole TTL, including on the SFW-only key used for region-restricted requests.
+  await bustPublicModelResponseCache(entityId);
+
+  // Attribute the flip to the system rather than leaving it absent from the change
+  // history — this write has no actor at all, so nothing else can.
+  await new Tracker()
+    .entityChanges(
+      diffEntityChanges({
+        entityType: 'Model',
+        entityId,
+        ownerId: model.userId,
+        before: { nsfw: model.nsfw, lockedProperties: stored },
+        after: { nsfw: true, lockedProperties: [...stored, 'nsfw'] },
+        actorRole: 'system',
+        systemFields: { nsfw: source, lockedProperties: source },
+      })
+    )
+    .catch(() => null);
+
+  recordModelTextModerationOutcome('applied');
+
+  logToAxiom({
+    name: 'model-text-moderation',
+    type: 'info',
+    message: 'nsfw flag applied',
+    modelId: entityId,
+    source,
+    triggeredLabels,
+    // Scores, not just names: during a ramp the question is whether flags are
+    // landing near their thresholds (policy needs tuning) or far above them.
+    labels,
+  }).catch(() => null);
+
+  return 'applied';
 }
 
 export const modelModerationAdapter: ModerationAdapter = {
@@ -228,102 +381,14 @@ export const modelModerationAdapter: ModerationAdapter = {
     if (!(await isFlipt(FLIPT_FEATURE_FLAGS.MODEL_TEXT_MODERATION_XGUARD_APPLY, String(entityId))))
       return;
 
-    const db = await getDbWithoutLag('model', entityId);
-    const model = await db.model.findUnique({
-      where: { id: entityId },
-      select: { id: true, nsfw: true, nsfwLevel: true, lockedProperties: true, userId: true },
-    });
-    // Deleted between submit and callback — a bare update would throw P2025 and fail the
-    // moderation callback, which the orchestrator would then retry forever.
-    if (!model) return;
+    const matchedTerms = collectMatchedTerms(output, triggered);
 
-    const matchedTerms = collectMatchedTerms(output, triggered).slice(
-      0,
-      MAX_PERSISTED_MATCHED_TERMS
-    );
-    const labels = triggeredLabelDetails(output, triggered);
-
-    // Recorded whether or not the flip happens, matching the profanity branch: a moderator
-    // reviewing a model they already ruled on still needs to see that the scan disagreed.
-    await recordForensics({ entityId, matchedTerms, labels });
-
-    const stored = model.lockedProperties ?? [];
-    // A stored lock is a moderator's call: minor-flagging sets nsfw:false and locks it.
-    if (stored.includes('nsfw')) {
-      // A prior callback may have written nsfw:true and died before recomputing levels —
-      // EntityModeration is already Succeeded by then, so nothing else revisits the row.
-      // Gated on the level actually being wrong: `updateModelNsfwLevels` matches every
-      // `nsfw = true` row unconditionally, so calling it on a correct row still writes,
-      // fires the model row trigger, and queues a Meilisearch re-render.
-      if (model.nsfw && model.nsfwLevel !== nsfwBrowsingLevelsFlag) {
-        await updateModelNsfwLevels([entityId]);
-        recordModelTextModerationOutcome('repaired');
-      } else {
-        recordModelTextModerationOutcome('skipped_locked');
-      }
-      return;
-    }
-
-    // Guarded in the WHERE, not by the read above. The lock check and this write are two
-    // statements, and a moderator ruling that lands between them would otherwise be
-    // overwritten. `array_append` in the database for the same reason — writing back the
-    // array we read would drop a concurrent lock on some other property.
-    const flipped = await dbWrite.$executeRaw`
-      UPDATE "Model" m
-      SET nsfw = TRUE,
-          "lockedProperties" = array_append(COALESCE(m."lockedProperties", ARRAY[]::text[]), 'nsfw')
-      WHERE m.id = ${entityId}
-        AND NOT ('nsfw' = ANY(COALESCE(m."lockedProperties", ARRAY[]::text[])))
-    `;
-
-    if (!flipped) {
-      recordModelTextModerationOutcome('declined_race');
-      logToAxiom({
-        name: 'model-text-moderation',
-        type: 'warning',
-        message: 'nsfw lock appeared between read and write; flag not applied',
-        modelId: entityId,
-      }).catch(() => null);
-      return;
-    }
-
-    await updateModelNsfwLevels([entityId]);
-    // The origin-side public response cache keys off browsing level and is otherwise only
-    // busted by `upsertModel`. Without this the pre-flip payload keeps being served for the
-    // whole TTL, including on the SFW-only key used for region-restricted requests.
-    await bustPublicModelResponseCache(entityId);
-
-    // Attribute the flip to the system rather than leaving it absent from the change
-    // history — this write has no actor at all, so nothing else can.
-    await new Tracker()
-      .entityChanges(
-        diffEntityChanges({
-          entityType: 'Model',
-          entityId,
-          ownerId: model.userId,
-          before: { nsfw: model.nsfw, lockedProperties: stored },
-          after: { nsfw: true, lockedProperties: [...stored, 'nsfw'] },
-          actorRole: 'system',
-          systemFields: {
-            nsfw: 'xguard-text-moderation',
-            lockedProperties: 'xguard-text-moderation',
-          },
-        })
-      )
-      .catch(() => null);
-
-    recordModelTextModerationOutcome('applied');
-
-    logToAxiom({
-      name: 'model-text-moderation',
-      type: 'info',
-      message: 'nsfw flag applied',
-      modelId: entityId,
+    await applyModelTextNsfwFlag({
+      entityId,
       triggeredLabels,
-      // Scores, not just names: during a ramp the question is whether flags are
-      // landing near their thresholds (policy needs tuning) or far above them.
-      labels,
-    }).catch(() => null);
+      matchedTerms,
+      labels: triggeredLabelDetails(output, triggered),
+    });
   },
 
   // No applyFailure. A model's visibility does not gate on its text scan, so a terminal

@@ -1113,6 +1113,7 @@ model ModelVersion {
   settings             Json?
   availability         Availability      @default(Public)
   nsfwLevel            Int               @default(0)
+  nsfw                 Boolean           @default(false)
   uploadType           ModelUploadType   @default(Created)
   usageControl         ModelUsageControl @default(Download)
   earlyAccessTimeFrame Int               @default(0)

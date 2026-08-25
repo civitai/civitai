@@ -196,7 +196,9 @@ export function ModelModerationCard({
                           these policies return no matched terms. */}
                       <Text size="xs" c="dimmed">
                         {data.textModeration.labels
-                          .map((l) => `${l.label} ${l.score.toFixed(2)} / ${l.threshold.toFixed(2)}`)
+                          .map(
+                            (l) => `${l.label} ${l.score.toFixed(2)} / ${l.threshold.toFixed(2)}`
+                          )
                           .join(' · ')}
                       </Text>
                       {data.textModeration.matchedTerms.length > 0 && (
@@ -209,6 +211,31 @@ export function ModelModerationCard({
                       <Text size="xs" c="dimmed">
                         Recorded even when a lock kept the flag from being applied.
                       </Text>
+                      {!!data.textModeration.versions?.length && (
+                        <Stack gap={2}>
+                          <Text size="xs" fw={600} c="orange">
+                            Version names{' '}
+                            {data.textModeration.versionsScannedAt
+                              ? formatDate(data.textModeration.versionsScannedAt)
+                              : ''}
+                          </Text>
+                          {data.textModeration.versions.map((v) => (
+                            <Text key={v.versionId} size="xs">
+                              {v.name} —{' '}
+                              {v.labels
+                                .map(
+                                  (l) =>
+                                    `${l.label} ${l.score.toFixed(2)}/${l.threshold.toFixed(2)}`
+                                )
+                                .join(' · ')}
+                            </Text>
+                          ))}
+                          <Text size="xs" c="dimmed">
+                            Harness findings, recorded for review — separate from the automatic
+                            version-name flag.
+                          </Text>
+                        </Stack>
+                      )}
                     </Stack>
                   )}
                   {data.unpublishedAt && (

@@ -852,6 +852,19 @@ export function matchLabels(labels: string[], text: string): LabelMatchResult[] 
 }
 
 /**
+ * Run a spec that is NOT in `SCANNER_LABEL_REGEX` — an operator-supplied term list loaded at
+ * runtime rather than committed here.
+ *
+ * The list stays out of the repo (this one is public, and a trigger list is an evasion guide),
+ * but it must not get its own matcher: whole-word boundaries and carve-out stripping are the
+ * difference between "sex" meaning sex and "sex" meaning Essex, and a second implementation is
+ * how that gets lost.
+ */
+export function matchSpec(label: string, spec: LabelRegexSpec, text: string): LabelMatchResult {
+  return matchSpecAgainstNormalized(label, spec, normalizePromptForRegex(text));
+}
+
+/**
  * Single-label convenience wrapper around `matchLabels`. Use `matchLabels`
  * directly when checking multiple labels on the same text to avoid
  * re-normalizing the prompt.

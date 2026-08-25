@@ -346,6 +346,16 @@ export type ModelMeta = Partial<{
     labels: { label: string; score: number; threshold: number }[];
     matchedTerms: string[];
     scannedAt: string;
+    /**
+     * Version-name scan findings, for moderator review. Distinct from `ModelVersion.nsfw`:
+     * nothing writes that column from these.
+     */
+    versions?: {
+      versionId: number;
+      name: string;
+      labels: { label: string; score: number; threshold: number }[];
+    }[];
+    versionsScannedAt?: string;
   };
   minorFlagSnapshot: MinorFlagSnapshot;
   minorHashDismissed: { at: string; by: number };

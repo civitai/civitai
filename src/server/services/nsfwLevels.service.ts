@@ -551,14 +551,30 @@ export async function updateCollectionsNsfwLevels(collectionIds: number[]) {
 export async function updateModelNsfwLevels(modelIds: number[]) {
   if (!modelIds.length) return;
   const models = await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
-    WITH level AS (
+    WITH agg AS (
       SELECT
         mv."modelId" as "id",
-        bit_or(mv."nsfwLevel") "nsfwLevel"
+        -- Versions flagged NSFW by name are excluded from the rollup: one of them must not
+        -- drag a model with safe versions off the SFW domain. They are still hidden on their
+        -- own, per the version-level filters.
+        bit_or(mv."nsfwLevel") FILTER (WHERE NOT mv.nsfw) "safeLevel",
+        count(*) FILTER (WHERE NOT mv.nsfw) "safeCount"
       FROM "ModelVersion" mv
       WHERE mv."modelId" IN (${Prisma.join(modelIds)})
       AND mv.status = 'Published'
       GROUP BY mv."modelId"
+    ), level AS (
+      SELECT
+        agg.id,
+        -- Published versions, all of them flagged: there is no safe version left to show, so
+        -- the model itself is NSFW. Without this branch the filtered bit_or is NULL and the
+        -- model keeps its old level forever — it is a live model, so the group still exists
+        -- and nothing else revisits it.
+        CASE
+          WHEN agg."safeCount" = 0 THEN ${nsfwBrowsingLevelsFlag}
+          ELSE agg."safeLevel"
+        END "nsfwLevel"
+      FROM agg
     )
     UPDATE "Model" m
     SET "nsfwLevel" = (
@@ -635,12 +651,15 @@ export async function updateModelVersionNsfwLevels(modelVersionIds: number[]) {
   const flag = Buffer.isBuffer(rawFlag) ? rawFlag.toString('utf8') : rawFlag;
   const updateSystemNsfwLevel = flag !== 'false';
 
-  await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
+  const versions = await dbWrite.$queryRaw<{ id: number; modelId: number }[]>(Prisma.sql`
     WITH level as (
       SELECT
         mv.id,
         CASE
-          WHEN m.nsfw = TRUE THEN ${nsfwBrowsingLevelsFlag}
+          -- mv.nsfw is an input to the derived level, the same way m.nsfw is. That is why
+          -- there is no lock column on ModelVersion: a recompute cannot clobber a flag it
+          -- reads as one of its own inputs.
+          WHEN m.nsfw = TRUE OR mv.nsfw = TRUE THEN ${nsfwBrowsingLevelsFlag}
           -- WHEN m."userId" = -1 THEN (
           --   SELECT COALESCE(bit_or(ranked."nsfwLevel"), 0) "nsfwLevel"
           --   FROM (
@@ -681,8 +700,18 @@ export async function updateModelVersionNsfwLevels(modelVersionIds: number[]) {
     SET "nsfwLevel" = level."nsfwLevel"
     FROM level
     WHERE level.id = mv.id AND level."nsfwLevel" != mv."nsfwLevel"
-    RETURNING mv.id;
+    RETURNING mv.id, mv."modelId";
   `);
+
+  // The model's indexed document embeds `versions[].nsfwLevel`. This used to ride along on the
+  // model rollup, which ran in the same tick and queued the index itself — but a version
+  // flagged by name no longer moves the model's own level, so there is nothing to ride on and
+  // the indexed copy would stay stale until a full rebuild.
+  const modelIds = uniq(versions.map((v) => v.modelId));
+  if (modelIds.length)
+    await modelsSearchIndex.queueUpdate(
+      modelIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+    );
 }
 
 export async function updateComicChapterNsfwLevels(projectIds: number[]) {

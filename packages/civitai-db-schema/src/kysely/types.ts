@@ -2894,6 +2894,7 @@ export type ModelVersion = {
   settings: unknown | null;
   availability: Generated<Availability>;
   nsfwLevel: Generated<number>;
+  nsfw: Generated<boolean>;
   uploadType: Generated<ModelUploadType>;
   usageControl: Generated<ModelUsageControl>;
   earlyAccessTimeFrame: Generated<number>;

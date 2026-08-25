@@ -329,6 +329,16 @@ describe('modelModerationAdapter.applyResult', () => {
       expect(dbMock.dbWrite.model.update).not.toHaveBeenCalled();
     });
 
+    // The INNER merge, a different erasure from the one above. Reverting this to a bare
+    // `jsonb_build_object` leaves `meta` intact but wipes `textModeration.versions` on every
+    // model scan — the version findings a moderator is meant to review, gone with nothing
+    // reading back to notice.
+    it('merges into the existing textModeration object rather than replacing it', async () => {
+      await modelModerationAdapter.applyResult?.(applyArgs(['Suggestive']));
+
+      expect(forensicsCall()?.sql).toContain("COALESCE(m.meta -> 'textModeration'");
+    });
+
     // XGuard sets the term cardinality from a body that can be 167 KB, and `Model.meta` is
     // selected for every row of the model feed — a column whose p99 is 310 bytes.
     it('caps how many matched terms are persisted', async () => {
@@ -837,5 +847,127 @@ describe('triggeredLabelDetails', () => {
   it('skips a label that has no score in results[]', async () => {
     const { triggeredLabelDetails } = await import('~/server/services/moderation-label-helpers');
     expect(triggeredLabelDetails({ results: [] }, new Set(['suggestive']))).toEqual([]);
+  });
+});
+
+describe('recordModelVersionNameForensics', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
+  });
+
+  it('writes version findings under textModeration', async () => {
+    const { recordModelVersionNameForensics } = await import(
+      '~/server/services/model-moderation.adapter'
+    );
+    await recordModelVersionNameForensics({
+      modelId: 7,
+      versions: [{ versionId: 71, name: 'bad name', labels: [] }],
+    });
+
+    const call = forensicsCall();
+    expect(call?.sql).toContain("'versions'");
+    expect(call?.values).toEqual([
+      JSON.stringify([{ versionId: 71, name: 'bad name', labels: [] }]),
+      7,
+    ]);
+  });
+
+  it('caps how many version findings are persisted', async () => {
+    const { recordModelVersionNameForensics } = await import(
+      '~/server/services/model-moderation.adapter'
+    );
+    await recordModelVersionNameForensics({
+      modelId: 7,
+      versions: Array.from({ length: 120 }, (_, i) => ({
+        versionId: i,
+        name: `v${i}`,
+        labels: [],
+      })),
+    });
+
+    // Same bound and same reason as the matched terms: `Model.meta` is read for every row of
+    // the model feed.
+    expect(JSON.parse(forensicsCall()?.values[0] as string)).toHaveLength(50);
+  });
+
+  // Both writers merge INTO the existing `textModeration` object. Reverting either to a bare
+  // jsonb_build_object erases the other's findings, and nothing reads back to notice.
+  it('merges into the existing textModeration object rather than replacing it', async () => {
+    const { recordModelVersionNameForensics } = await import(
+      '~/server/services/model-moderation.adapter'
+    );
+    await recordModelVersionNameForensics({ modelId: 7, versions: [] });
+    expect(forensicsCall()?.sql).toContain("COALESCE(m.meta -> 'textModeration'");
+  });
+});
+
+describe('applyModelTextNsfwFlag', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    entityChangesMock.mockResolvedValue(undefined);
+    outcomeMock.mockReturnValue(undefined);
+    dbMock.dbRead.model.findUnique.mockResolvedValue(modelRow());
+    dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
+  });
+
+  const args = (over: Record<string, unknown> = {}) => ({
+    entityId: 1,
+    triggeredLabels: ['suggestive'],
+    matchedTerms: [],
+    labels: [{ label: 'suggestive', score: 0.9, threshold: 0.5 }],
+    ...over,
+  });
+
+  // The harness runs while the flags are down by design. A revert that reads the apply flag
+  // here would make every operator-driven flip a silent no-op.
+  it('applies without consulting either feature flag', async () => {
+    const { applyModelTextNsfwFlag } = await import('~/server/services/model-moderation.adapter');
+    expect(await applyModelTextNsfwFlag(args())).toBe('applied');
+    expect(isFlipt).not.toHaveBeenCalled();
+    // Counts, not just args: a duplicate recompute folded into a caller would double the
+    // write and re-queue Meilisearch twice while toHaveBeenCalledWith stayed green.
+    expect(updateModelNsfwLevels).toHaveBeenCalledExactlyOnceWith([1]);
+    expect(bustPublicModelResponseCache).toHaveBeenCalledExactlyOnceWith(1);
+  });
+
+  it('attributes the change to the caller-supplied source', async () => {
+    const { applyModelTextNsfwFlag } = await import('~/server/services/model-moderation.adapter');
+    await applyModelTextNsfwFlag(args({ source: 'xguard-name-harness' }));
+
+    // Per row, not a stringify-and-search: `source` has to reach BOTH systemFields, and a
+    // half-plumbed attribution passes any assertion that only looks for the string somewhere.
+    const rows = entityChangesMock.mock.calls[0][0] as Array<Record<string, unknown>>;
+    expect(rows.find((r) => r.field === 'nsfw')).toMatchObject({
+      reason: 'xguard-name-harness',
+    });
+    expect(rows.find((r) => r.field === 'lockedProperties')).toMatchObject({
+      reason: 'xguard-name-harness',
+    });
+  });
+
+  it('leaves a moderator lock alone and reports why', async () => {
+    dbMock.dbRead.model.findUnique.mockResolvedValue(
+      modelRow({ lockedProperties: ['nsfw'], nsfw: false })
+    );
+    const { applyModelTextNsfwFlag } = await import('~/server/services/model-moderation.adapter');
+    expect(await applyModelTextNsfwFlag(args())).toBe('skipped_locked');
+    expect(flipCall()).toBeUndefined();
+  });
+
+  it('reports the race when a lock lands between the read and the write', async () => {
+    dbMock.dbWrite.$executeRaw.mockResolvedValue(0);
+    const { applyModelTextNsfwFlag } = await import('~/server/services/model-moderation.adapter');
+    expect(await applyModelTextNsfwFlag(args())).toBe('declined_race');
+    expect(updateModelNsfwLevels).not.toHaveBeenCalled();
+  });
+
+  it('reports a model deleted between scan and apply', async () => {
+    dbMock.dbRead.model.findUnique.mockResolvedValue(null);
+    const { applyModelTextNsfwFlag } = await import('~/server/services/model-moderation.adapter');
+    expect(await applyModelTextNsfwFlag(args())).toBe('missing');
+    // recordForensics only needs entityId, so hoisting it above the !model guard is a
+    // plausible tidy-up that would write forensics onto deleted models.
+    expect(forensicsCall()).toBeUndefined();
   });
 });

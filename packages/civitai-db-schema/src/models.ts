@@ -981,6 +981,7 @@ export interface ModelVersion {
   settings: JsonValue | null;
   availability: Availability;
   nsfwLevel: number;
+  nsfw: boolean;
   uploadType: ModelUploadType;
   usageControl: ModelUsageControl;
   earlyAccessTimeFrame: number;

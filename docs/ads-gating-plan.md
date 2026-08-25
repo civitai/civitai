@@ -223,9 +223,14 @@ a greenfield build — resist writing a parallel scanner.
 
 #### Close coverage gaps
 
-- [ ] `ModelVersion.name` is unscanned — there's a `// TODO possibly add modelVersion` at
-      [`entity-moderation.ts:180`](../src/server/jobs/entity-moderation.ts#L180). Version
-      names render on the page and reach the `<title>`
+- [x] `ModelVersion.name` is scanned as of the version-name moderation pipeline
+      (`model-version-moderation.adapter.ts`, registered under `ModelVersion`) — on create and
+      rename, a curated term list selects and XGuard decides. **Not closed for ad-safety**: it
+      gates on the sexual-content axis only, and it selects with a term list rather than scanning
+      every name, so an ad-unsafe name matching no term is never sent. The
+      `// TODO possibly add modelVersion` at
+      [`entity-moderation.ts:180`](../src/server/jobs/entity-moderation.ts#L180) is a separate,
+      still-open queue-config gap
 - [ ] Tags and trigger words — both render on the page, neither is in the queue config
 - [ ] Description behind "Show more" — confirm we scan the full field, not a truncated
       preview (the `krea2` example was specifically flagged on hidden text)

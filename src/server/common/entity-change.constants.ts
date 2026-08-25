@@ -25,6 +25,9 @@ export const watchedEntityFields = {
   ModelVersion: [
     'description',
     'status',
+    // Set only by name moderation, never by a creator — so without it a version silently
+    // becomes NSFW with nothing in its history naming what did it or why.
+    'nsfw',
     'baseModel',
     'paidAccess',
     'monetization',

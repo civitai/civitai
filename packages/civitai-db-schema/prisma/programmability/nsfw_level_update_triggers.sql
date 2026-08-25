@@ -78,18 +78,73 @@ BEGIN
   IF (TG_OP = 'DELETE') THEN
     -- When a model version is deleted, schedule nsfw level update for the model
     PERFORM create_job_queue_record(OLD."modelId", 'Model', 'UpdateNsfwLevel');
+    RETURN NULL;
+  END IF;
+
   -- On model version publish, create a job to update the nsfw level of the related entities (model)
-  ELSIF (NEW.status = 'Published' AND OLD.status != 'Published') THEN
+  IF (NEW.status = 'Published' AND OLD.status != 'Published') THEN
     PERFORM create_job_queue_record(NEW.id, 'ModelVersion', 'UpdateNsfwLevel');
   END IF;
+
+  -- ModelVersion.nsfw is an INPUT to the version's derived nsfwLevel, so a flip has to
+  -- enqueue a recompute or the level never moves: the cron drains "JobQueue" and does not
+  -- scan for stale rows, and update-model-version-nsfw-levels only revisits versions
+  -- sitting at 0. IS DISTINCT FROM in BOTH directions, not `!=` — the same shape on
+  -- "Model" left versions stamped NSFW after a true->false flip, which froze the model's
+  -- bit_or rollup (see 20260519120000_fix_model_nsfw_flip_version_cascade).
+  --
+  -- Version only: getModelVersionConnectedEntities derives the parent model from it, and
+  -- the cron rolls models up after versions in the same tick.
+  IF (NEW."nsfw" IS DISTINCT FROM OLD."nsfw") THEN
+    PERFORM create_job_queue_record(NEW.id, 'ModelVersion', 'UpdateNsfwLevel');
+  END IF;
+
   RETURN NULL;
 END;
 $model_version_nsfw_level$ LANGUAGE plpgsql;
 ---
 CREATE OR REPLACE TRIGGER model_version_nsfw_level_change
-AFTER UPDATE OF "status" OR DELETE ON "ModelVersion"
+AFTER UPDATE OF "status", "nsfw" OR DELETE ON "ModelVersion"
 FOR EACH ROW
 EXECUTE FUNCTION update_model_version_nsfw_level();
+---
+
+-- A version under a system-owned model must never carry the name flag.
+--
+-- The derivation has no branch for a system-owned model that is not flagged: the CASE falls
+-- through to NULL, the update's `!=` guard is never true, and the row keeps whatever level it
+-- had. So setting the flag there is a ONE-WAY door — clearing it leaves the version stamped at
+-- the NSFW level permanently, and that then rolls into its parent model. There is no agreed
+-- level to recompute such a version back to, so the trap is closed at the write instead.
+--
+-- INSERT as well as UPDATE: the whole reason this is in the database is the writers that are
+-- not the adapter — a hand-run backfill or a moderator tool can INSERT a version with the flag
+-- already set, and an UPDATE-only guard never sees it. Once the row exists in that state no
+-- later UPDATE OF "nsfw" is needed to keep it, so there is no second chance to catch it.
+--
+-- Enforced in the database, not in application code. The live writer (the version-name
+-- moderation adapter) excludes system-owned models in its own WHERE, but a guard that only
+-- lived there would not see a hand-run backfill or a moderator tool — and this is a trap with
+-- no way back out.
+CREATE OR REPLACE FUNCTION reject_system_model_version_nsfw()
+RETURNS TRIGGER AS $reject_system_mv_nsfw$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM "Model" m WHERE m.id = NEW."modelId" AND m."userId" = -1
+  ) THEN
+    RAISE EXCEPTION
+      'ModelVersion.nsfw cannot be set on a system-owned model (modelVersionId %, modelId %)',
+      NEW.id, NEW."modelId";
+  END IF;
+  RETURN NEW;
+END;
+$reject_system_mv_nsfw$ LANGUAGE plpgsql;
+---
+CREATE OR REPLACE TRIGGER model_version_nsfw_system_guard
+BEFORE INSERT OR UPDATE OF "nsfw" ON "ModelVersion"
+FOR EACH ROW
+WHEN (NEW."nsfw")
+EXECUTE FUNCTION reject_system_model_version_nsfw();
 
 
 -- MODEL TRIGGER
