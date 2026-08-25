@@ -81,87 +81,6 @@ function norm(src: string): string {
 }
 
 /**
- * The chain of `{`-blocks enclosing `index`, outermost first, each labelled by the
- * selector or at-rule that introduced it.
- *
- * Deliberately a brace walk, not a CSS parser — it only has to be right about the
- * stylesheets in this repo, and a parser would be a dependency to keep correct.
- * Two things it MUST get right, because both were measured producing a false PASS
- * (a conditional declaration reported as unconditional), which is the direction
- * that matters:
- *
- *   - 🔴 A label is the text since the last brace, which includes any STATEMENTS
- *     that preceded the introducer — `--footer-height: 45px; @media (max-width:
- *     768px)`, or `@tailwind components; @tailwind utilities; @media …`. An
- *     anchored `^@media` test then misses, and the guard reports no conditional
- *     at-rule. That is the house style here: 175 at-rules in this repo's own
- *     stylesheets sit in exactly that position. A selector or at-rule prelude
- *     cannot legally contain `;`, so keeping only the text after the last `;` is
- *     safe and is what makes the label the introducer alone.
- *   - 🔴 Braces inside STRINGS (`content: '}'`) pop the stack and hoist the
- *     declaration out of its enclosing at-rule. Quoted spans are skipped.
- *
- * It is still not a parser: it does not know about escapes beyond `\`, comments
- * (callers pass comment-stripped source), or SCSS interpolation. Report the chain
- * in any failure message rather than asserting a cause from it.
- */
-function enclosingBlocks(src: string, index: number): string[] {
-  const stack: string[] = [];
-  let last = 0;
-  let quote: string | null = null;
-  for (let i = 0; i < index; i++) {
-    const ch = src[i];
-    if (quote) {
-      if (ch === '\\') i++;
-      else if (ch === quote) quote = null;
-      continue;
-    }
-    if (ch === '"' || ch === "'" || ch === '`') {
-      quote = ch;
-    } else if (ch === '{') {
-      // Keep only the text after the last `;` — the introducer itself.
-      const label = norm(src.slice(last, i)).split(';').pop() ?? '';
-      stack.push(label.trim());
-      last = i + 1;
-    } else if (ch === '}') {
-      stack.pop();
-      last = i + 1;
-    }
-  }
-  return stack;
-}
-
-/**
- * The full text of an element's opening tag, from `<name` to the `>` that closes
- * it — brace/paren/bracket aware, so a `>` inside a prop expression (an arrow
- * function, a comparison, a generic) does not end the tag early.
- *
- * 🔴 A non-greedy `/<header[\s\S]*?>/` truncates at the first such `>`, and that
- * failure is SILENT: it still yields exactly one match, so a caller's
- * exactly-one-match guard cannot see it, and everything after the arrow becomes
- * invisible to whatever the caller asserts on the tag.
- */
-function openTag(src: string, name: string): string {
-  const start = src.indexOf(`<${name}`);
-  expect(start, `<${name}> open tag not found`).toBeGreaterThanOrEqual(0);
-  let depth = 0;
-  let quote: string | null = null;
-  for (let i = start; i < src.length; i++) {
-    const ch = src[i];
-    if (quote) {
-      if (ch === '\\') i++;
-      else if (ch === quote) quote = null;
-      continue;
-    }
-    if (ch === '"' || ch === "'" || ch === '`') quote = ch;
-    else if (ch === '{' || ch === '(' || ch === '[') depth++;
-    else if (ch === '}' || ch === ')' || ch === ']') depth--;
-    else if (ch === '>' && depth === 0) return norm(src.slice(start, i + 1));
-  }
-  expect.fail(`<${name}> open tag never closed — the scan ran to end of file`);
-}
-
-/**
  * Pull one balanced-looking source region out of a file by anchor regex, and
  * fail loudly if the anchor stops matching.
  *
@@ -364,41 +283,31 @@ describe('the run page and its host agree on who owns the height', () => {
    * What the previous guard (`HEADER_HEIGHT is still 60`) actually did: it
    * extracted the number from `AppHeader.tsx` and from the host's calc and
    * asserted they were equal. That was already a RELATIONSHIP, not a hardcoded
-   * value, and it needed no retuning when the header moved — only its TITLE named
-   * 60. An earlier draft of this comment claimed otherwise; that was wrong, and
-   * the honest justification for replacing it is narrower: it could only ever see
-   * TWO files, so it was blind to `globals.css` — the declaration that most of the
-   * repo actually reads — and to a copy reappearing in any third file.
+   * value. Its real weakness was narrower: it could only ever see TWO files, so it
+   * was blind to `globals.css` — the declaration most of the repo actually reads —
+   * and to a copy reappearing in any third file. So this walks the tree instead.
    *
-   * So this walks the tree instead of opening four files by name. It fails when
-   * the set of declarations GROWS (a second copy anywhere under `src/`), when it
-   * SHRINKS to zero, or when the CSS and TS representations DIVERGE. It does not
-   * care what the number is.
+   * 🔴 DELIBERATELY KEPT SIMPLE, and that is a decision with history. Earlier
+   * drafts grew a CSS at-rule/selector analyser and a JSX tag parser to close
+   * ever-narrower holes. Five audit rounds found a false PASS in every one of
+   * them — each parser added to fix a false pass shipped its own. A guard whose
+   * own complexity is a defect source is not protecting anything. What survives
+   * here is only what a reader can check by eye:
    *
-   * 🔴 An earlier draft ASSERTED this ledger in prose while implementing spot
-   * checks on four named files; an audit killed eight mutants against it —
-   * a second declaration without a trailing `;`, one in `rem`, one in another
-   * stylesheet, one in another `.ts`, the only one commented out, a consumer
-   * applying `HEADER_HEIGHT_PX - 4`, and a consumer that kept only the IMPORT.
-   * A description that reads as coverage while providing none is worse than no
-   * guard, because it stops the next person looking. Hence the walk below, and
-   * an application check that rejects arithmetic rather than a token-presence one.
+   *   1. exactly one `HEADER_HEIGHT_PX` declaration under `src/`
+   *   2. exactly one `--header-height` declaration under `src/`, in `globals.css`
+   *   3. the two values agree
+   *   4. `AppHeader` applies the constant to a height, unmodified
    *
-   * 🔴 WHAT IT STILL DOES NOT SEE, stated so this docstring is not the same lie in
-   * a smaller size — and stated as MISSES, because an earlier version of this
-   * paragraph closed with "everything here fails toward noise, never toward
-   * silence", which an audit refuted with seven surviving mutants. These are
-   * silence:
-   *   - `.js/.jsx/.mjs` are not scanned (the extension filter below).
-   *   - A TS copy declared as an object property, a class static or a destructured
-   *     re-export: the scan matches a `const|let|var` binding only.
-   *   - `setProperty(K, …)` where `K` is a variable rather than a literal.
-   *   - `@property --header-height { initial-value: … }`, which is a declaration
-   *     the CSS patterns do not model.
-   * And these are noise (a false FAILURE, the safe direction): a CSS snippet
-   * inside a TS string or a `type` key — `code()` strips comments, not strings —
-   * and a declaration disabled with a TRAILING line comment, which `code()`'s
-   * start-of-line-anchored rule does not strip.
+   * 🔴 WHAT IT DOES NOT SEE — stated so this docstring is not an overclaim.
+   * SILENCE: `.js/.jsx/.mjs` are unscanned; a TS copy declared as an object
+   * property, class static or destructured re-export; `setProperty(K, …)` with a
+   * variable key; `@property --header-height { … }`; a declaration scoped to a
+   * conditional at-rule or to a subtree rather than `:root` (that analysis was
+   * removed — see above); a height reaching the header through a utility class or
+   * a spread. NOISE (a false FAILURE, the safe direction): a CSS snippet inside a
+   * TS string or a `type` key, and a declaration disabled with a trailing line
+   * comment, which `code()`'s start-of-line-anchored rule does not strip.
    */
   it('the header height has ONE declaration under `src/`, and CSS and TS agree', () => {
     const constants = code(
@@ -412,9 +321,9 @@ describe('the run page and its host agree on who owns the height', () => {
         'the TS constant to the `--header-height` custom property.'
     ).toBeDefined();
 
-    // ---- Walk `src/` once. Spot-checking named files is what the audited draft
-    // did, and a copy reappearing in a file this test does not happen to open is
-    // exactly the defect the consolidation removed.
+    // Walk `src/` once. Spot-checking named files is what an audited draft did, and
+    // a copy reappearing in a file this test does not happen to open is exactly the
+    // defect the consolidation removed.
     const SRC = path.join(REPO_ROOT, 'src');
     const files = fs
       .readdirSync(SRC, { recursive: true, encoding: 'utf8' })
@@ -423,73 +332,39 @@ describe('the run page and its host agree on who owns the height', () => {
       // `readdirSync` yields directories too, and this repo has directories whose
       // names end in a matching extension — reading one throws EISDIR.
       .filter((f) => fs.statSync(f).isFile());
-    // Guard the walk itself: a glob that matches nothing makes every assertion
-    // below vacuously true, which is the reassuring-zero failure mode.
+    // Guard the walk itself: a glob matching nothing makes everything below
+    // vacuously true, which is the reassuring-zero failure mode.
     expect(files.length, 'the src/ walk matched no stylesheets or TS files').toBeGreaterThan(1000);
 
-    // ---- CSS side: exactly one `--header-height` declaration, anywhere.
-    // Deliberately NOT anchored to `px;` — a value in `rem`, or with no trailing
-    // semicolon, is still a declaration and still shadows. Capture the raw value
-    // and judge it explicitly rather than letting a non-matching spelling read as
-    // "no second declaration".
-    const cssDecls: { file: string; value: string; blocks: string[] }[] = [];
+    const cssDecls: { file: string; value: string }[] = [];
     const tsDecls: { file: string; text: string }[] = [];
     for (const file of files) {
-      // `code()` removes WHOLE-LINE (`^\s*//`) and BLOCK comments, so a declaration
-      // commented out either of those ways counts as ABSENT — which it must, since
-      // the audited draft read raw text and stayed green when the only declaration
-      // was commented out. 🔴 It does NOT strip a TRAILING `//` comment (the rule is
-      // anchored), so a declaration disabled that way is still counted. That
-      // direction is fail-safe — a spurious FAILURE, never a spurious pass — and
-      // stripping trailing `//` from CSS is not safe anyway (`url(https://…)`).
+      // `code()` removes whole-line and block comments, so a declaration commented
+      // out either way counts as ABSENT — which it must, since an audited draft read
+      // raw text and stayed green when the only declaration was commented out.
       const src = code(fs.readFileSync(file, 'utf8'));
+      // 🔴 Skip THIS file: it necessarily contains the patterns it searches for.
+      // By path, not by exempting tests generally, so a copy in any OTHER test file
+      // is still caught.
+      if (path.resolve(file) === path.resolve(__filename)) continue;
 
-      // Two spellings, because this repo uses both. Plain CSS (`--x: 60px`) and the
-      // CSS-in-JS object form (`'--x': '60px'`), which is how ~240 custom-property
-      // declarations under src/ are actually written — including a whole theme in
-      // `src/shared/constants/chat-theme.ts` — plus the imperative `setProperty`.
-      // Matching only the plain form made the test's title ("ONE declaration under
-      // src/") wider than what it enforced.
-      // 🔴 No `(?<!['"])` lookbehind on the plain form. An earlier draft had one to
-      // stop the object form double-counting — but the object form cannot match
-      // this pattern anyway (the quote sits between the name and the colon), so the
-      // lookbehind bought nothing and silently DROPPED two real shapes: a style
-      // attribute string (`style="--header-height: 80px"`) and a CSS snippet in a
-      // string constant. Both are genuine shadowing declarations.
+      // Three spellings, because this repo uses all three: plain CSS, the CSS-in-JS
+      // object form (including a computed key — `CSSProperties` rejects the plain
+      // one), and the imperative setter.
       const patterns = [
         /--header-height\s*:\s*([^;}\n]+)/g,
-        // `\]?` so a COMPUTED key matches too — `['--header-height']: v` is the
-        // standard TS idiom here, because `CSSProperties` rejects the plain key.
         /['"`]--header-height['"`]\s*\]?\s*:\s*([^,;}\n]+)/g,
         /setProperty\(\s*['"`]--header-height['"`]\s*,\s*([^)]+)\)/g,
       ];
-      // 🔴 Skip THIS file on the CSS side too, for the same reason as the TS side
-      // below: the patterns above are widened enough that a future failure message
-      // quoting `--header-height: 60px` would match one of them and mint a phantom
-      // second declaration inside the very file being edited. It self-matches zero
-      // times today; that is one message-edit away from being untrue.
-      const isSelf = path.resolve(file) === path.resolve(__filename);
-      for (const re of isSelf ? [] : patterns) {
+      for (const re of patterns) {
         for (const m of src.matchAll(re)) {
           cssDecls.push({
             file: path.relative(REPO_ROOT, file),
             value: m[1].trim().replace(/^['"`]|['"`]$/g, ''),
-            // The chain of blocks enclosing this declaration, outermost first.
-            // 🔴 NOT a brace-depth number: depth alone cannot tell `@layer theme`
-            // (unconditional, and already used in this repo's globals.css) apart
-            // from `@media` (conditional), and it calls a top-level `.some-scope`
-            // block correct when the property is undefined everywhere outside it.
-            // What matters is WHICH blocks enclose it, so record them and judge.
-            blocks: enclosingBlocks(src, m.index),
           });
         }
       }
-      // Any TS/TSX constant that looks like a private header-height copy.
-      // 🔴 Skip THIS file: it necessarily contains the pattern it searches for
-      // (the extraction regex above is a literal `const HEADER_HEIGHT_PX = …`),
-      // so it matches itself. Excluded by path rather than by exempting tests
-      // generally, so a copy in any OTHER test file is still caught.
-      if (/\.tsx?$/.test(file) && path.resolve(file) !== path.resolve(__filename)) {
+      if (/\.tsx?$/.test(file)) {
         for (const m of src.matchAll(/(?:const|let|var)\s+(HEADER_HEIGHT(?:_PX)?)\s*=/g)) {
           tsDecls.push({ file: path.relative(REPO_ROOT, file), text: m[1] });
         }
@@ -498,40 +373,14 @@ describe('the run page and its host agree on who owns the height', () => {
 
     expect(
       cssDecls.map((d) => `${d.file}: ${d.value}`),
-      'expected exactly ONE `--header-height` declaration under src/. Zero means it was renamed ' +
-        'or removed (or commented out) — re-point this guard rather than deleting it. More than ' +
-        'one means the header height is conditional or duplicated, and binding it to a single TS ' +
+      'expected exactly ONE `--header-height` declaration under src/. Zero means it was renamed, ' +
+        'removed or commented out — re-point this guard rather than deleting it. More than one ' +
+        'means the header height is duplicated or conditional, and binding it to a single TS ' +
         'constant is no longer a truthful claim.'
     ).toHaveLength(1);
     expect(cssDecls[0].file, 'the `--header-height` declaration moved out of globals.css').toBe(
       'src/styles/globals.css'
     );
-    const chain = cssDecls[0].blocks;
-    const chainText = chain.length ? chain.join(' > ') : '(no enclosing block)';
-    // Conditional at-rules only. `@layer` is NOT one — it orders the cascade, it
-    // does not gate it — and this repo already wraps rules in `@layer theme`.
-    expect(
-      chain.filter((b) => /^@(media|supports|container|scope)\b/.test(b)),
-      `the \`--header-height\` declaration is inside a CONDITIONAL at-rule. Enclosing chain: ` +
-        `${chainText}. Outside that condition the property is UNDEFINED, and every ` +
-        '`calc(… - var(--header-height))` call site collapses at computed-value time.'
-    ).toHaveLength(0);
-    // 🔴 The INNERMOST block, and every comma-separated selector in it, must be
-    // exactly `:root` or `html`. A substring test is not enough: `:root .app-shell`
-    // and `html.dark` both contain the token while scoping the property to a
-    // subtree or a theme, so it is undefined everywhere else — the same collapse.
-    // Checking the innermost block (rather than `some()` over the chain) also stops
-    // an outer `:root` vouching for a declaration nested deeper inside it.
-    const innermost = chain.length ? chain[chain.length - 1] : '';
-    const selectors = innermost.split(',').map((s) => s.trim());
-    expect(
-      selectors.every((s) => s === ':root' || s === 'html'),
-      `the \`--header-height\` declaration is not on a bare \`:root\`/\`html\`. Innermost block: ` +
-        `"${innermost}". Full chain: ${chainText}. A declaration scoped to a subtree or a theme ` +
-        'leaves the property undefined everywhere else, which is the same computed-value-time ' +
-        'collapse. NOTE: this chain comes from a brace walk — it skips quoted strings, but it is ' +
-        'still not a CSS parser, so check the file before concluding the declaration moved.'
-    ).toBe(true);
     expect(
       cssDecls[0].value,
       'globals.css `--header-height` and `HEADER_HEIGHT_PX` have DIVERGED (or the unit changed). ' +
@@ -539,7 +388,6 @@ describe('the run page and its host agree on who owns the height', () => {
         'nothing else.'
     ).toBe(`${declared}px`);
 
-    // ---- TS side: exactly one declaration, and it is the exported constant.
     expect(
       tsDecls.map((d) => `${d.file}: ${d.text}`),
       'expected exactly ONE header-height constant under src/ — the exported HEADER_HEIGHT_PX. ' +
@@ -547,65 +395,38 @@ describe('the run page and its host agree on who owns the height', () => {
     ).toHaveLength(1);
     expect(
       tsDecls[0].file,
-      'the header-height constant moved out of app-layout.constants.ts. That is fine as a ' +
-        'deliberate relocation — re-point this guard and the doc comment on the constant — but ' +
-        'it must stay a SINGLE exported declaration.'
+      'the header-height constant moved out of app-layout.constants.ts. Fine as a deliberate ' +
+        'relocation — re-point this guard and the constant’s doc comment — but it must stay a ' +
+        'SINGLE exported declaration.'
     ).toBe('src/shared/constants/app-layout.constants.ts');
 
-    // ---- Consumers must APPLY it, not merely import it. A token-presence check
-    // is satisfied by the import line alone, so renaming the constant or applying
-    // `HEADER_HEIGHT_PX - 4` both survived the audited draft.
+    // ---- Consumers must APPLY it, not merely import it. A token-presence check is
+    // satisfied by the import line alone, so a rename and `HEADER_HEIGHT_PX - 4`
+    // both survived an audited draft.
     //
-    // 🔴 SCOPED TO THE `<header>` OPEN TAG, and it must be. Two earlier drafts got
-    // this wrong in opposite directions. A `region()` pin anchored on
-    // `style={{ height: … }}` was too brittle: a property reorder, a nested `}`
-    // from a conditional spread, or ANY second inline height style anywhere in the
-    // file broke it, reported through `region()`'s anchor assertion without
-    // `PIN_HELP`. Relaxing it to an unanchored substring test over the whole file
-    // then went too far the other way — `maxHeight: 40` added beside the constant
-    // renders the header at 40px while every consumer still subtracts 60, and the
-    // check stayed GREEN. One innocent-looking edit, silently wrong.
-    //
-    // Anchoring on `<header …>` keeps what was load-bearing — the height styles
-    // that matter are the ones ON the header element, and there must be no other
-    // height property fighting the constant — while staying immune to reordering
-    // and to unrelated inline styles elsewhere in the component.
-    const header = code(
-      read(path.join(REPO_ROOT, 'src/components/AppLayout/AppHeader/AppHeader.tsx'))
+    // 🔴 A LEDGER OF EVERY INLINE HEIGHT IN THE FILE, not a pin on one attribute.
+    // A pin anchored on `style={{ height: … }}` broke on a property reorder; scoping
+    // it to the `<header>` tag needed a JSX parser that then truncated at a `>`
+    // inside an arrow function, silently. This is neither: collect every inline
+    // height property in the component and require the set to be exactly the
+    // constant. It catches a sibling `maxHeight` clamping the real header, a
+    // hardcoded number, and arithmetic — the cases that matter — with no parsing.
+    // The accepted cost: an unrelated inline height anywhere in this component
+    // fails it, and must be added here deliberately. That is noise, not silence.
+    const header = norm(
+      code(read(path.join(REPO_ROOT, 'src/components/AppLayout/AppHeader/AppHeader.tsx')))
     );
-    const headerTag = openTag(header, 'header');
-    // 🔴 A height can reach this element three ways, and the ledger below only sees
-    // one of them. `max-h-[40px]` in `className` sets a DIFFERENT property, so there
-    // is no specificity contest — it just clamps the header to 40px while every
-    // consumer keeps subtracting the constant. A spread of a variable hides the same
-    // thing behind a name this file cannot resolve. Both are refused outright, so
-    // the ledger's claim ("exactly one height property on the header") is true of the
-    // ELEMENT and not merely of one spelling.
-    expect(
-      /(?:^|[\s'"([{])(?:max-|min-)?h-[[\d]/.test(headerTag),
-      `the <header> sets a height through a utility CLASS (\`h-…\`/\`max-h-…\`/\`min-h-…\`). ` +
-        'That is invisible to the inline-style ledger below and does not contend with it — it ' +
-        'silently clamps the real header while every consumer still subtracts HEADER_HEIGHT_PX. ' +
-        `Tag: ${headerTag}`
-    ).toBe(false);
-    expect(
-      /style=\{\{[^}]*\.\.\./.test(headerTag),
-      'the <header> style object SPREADS something. This file cannot resolve what it contains, ' +
-        'so a `maxHeight` hidden in it would pass the ledger below. Inline the properties, or ' +
-        `re-point this guard deliberately. Tag: ${headerTag}`
-    ).toBe(false);
-    // Every height-family property on the tag, as a ledger. Exactly one, and it is
-    // the shared constant applied unmodified.
-    const heightProps = [...headerTag.matchAll(/([A-Za-z]*[Hh]eight)\s*:\s*([^,}]+)/g)].map(
+    const heightProps = [...header.matchAll(/([A-Za-z]*[Hh]eight)\s*:\s*([^,}]+)/g)].map(
       (m) => `${m[1]}: ${m[2].trim()}`
     );
     expect(
       heightProps,
-      `${PIN_HELP} The <header> element must carry exactly ONE height property, set from the ` +
-        'shared constant UNMODIFIED. Anything else — a hardcoded number, arithmetic ' +
-        '(`HEADER_HEIGHT_PX - 4`), or a sibling `maxHeight`/`minHeight` clamping it — ' +
-        'desynchronises the real header from every consumer that subtracts the constant, and ' +
-        'the page-level double scrollbar comes back on the `viewport` surfaces.'
+      'AppHeader must carry exactly ONE inline height property, set from the shared constant ' +
+        'UNMODIFIED. Anything else — a hardcoded number, arithmetic (`HEADER_HEIGHT_PX - 4`), a ' +
+        'sibling `maxHeight`/`minHeight` clamping it, or the import kept without applying it — ' +
+        'desynchronises the real header from every consumer that subtracts the constant, and the ' +
+        'page-level double scrollbar returns on the `viewport` surfaces. An unrelated inline ' +
+        'height here is not wrong, but it must be added to this expectation deliberately.'
     ).toEqual(['height: HEADER_HEIGHT_PX']);
 
     // The surviving `viewport` surfaces (dev tunnel, mod review) subtract it.
