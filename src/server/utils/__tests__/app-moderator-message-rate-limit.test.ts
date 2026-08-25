@@ -33,18 +33,35 @@ beforeEach(() => {
 });
 
 describe('the two windows are SEPARATE keys', () => {
-  it('🔴 a moderator and a listing never share a counter', async () => {
-    // If both helpers wrote one key, the per-listing ceiling would be silently
-    // consumed by the moderator's own sends and vice versa — and the pair would still
-    // "have a rate limit". The two keys must be distinct AND each must name its own
-    // subject, so a second moderator gets a second budget while the recipient does not.
+  /**
+   * ⚠️ WHAT THIS BLOCK CAN AND CANNOT PROVE, stated because the first version of it
+   * overclaimed.
+   *
+   * A genuine COLLISION between the two counters is **not producible by any small
+   * mutation**: the subjects live in disjoint id spaces — an integer `userId` and an
+   * `apl_*` string — so even identical namespaces (`…:mod-message:8` vs
+   * `…:mod-message:apl_live`) yield distinct keys. A mutant that "makes them collide"
+   * has to hardcode a literal, which produces a defect no realistic edit produces, and
+   * a verdict from a non-productive mutant is a false alarm.
+   *
+   * What IS producible, and what these assertions actually pin: each helper writing
+   * the WRONG NAMESPACE — the shape a copy-paste between the two functions gives you.
+   * That is a real bug (the listing window would then share the actor's bucket for the
+   * same subject id, or land in a namespace nothing reads) and it is asserted on the
+   * literal below rather than inferred from the keys merely differing.
+   */
+  it('each helper writes its OWN namespace and its own subject', async () => {
     await checkModMessageModeratorQuota(8);
     await checkModMessageListingQuota('apl_live');
     const keys = redisMock.redis.incrBy.mock.calls.map((c) => c[0] as string);
     expect(keys).toHaveLength(2);
-    expect(keys[0]).not.toBe(keys[1]);
+    expect(keys[0]).toContain(':mod-message-actor:');
     expect(keys[0]).toContain('8');
+    expect(keys[1]).toContain(':mod-message-listing:');
     expect(keys[1]).toContain('apl_live');
+    // …and neither borrows the other's namespace, which is the copy-paste failure.
+    expect(keys[0]).not.toContain(':mod-message-listing:');
+    expect(keys[1]).not.toContain(':mod-message-actor:');
   });
 
   it('different moderators, and different listings, get different keys', async () => {

@@ -93,12 +93,20 @@ describe('prepareMessage', () => {
     expect(m!.message).toContain(MODERATION_REPLY_URL);
   });
 
-  it('does NOT name the acting moderator — nothing in details can', () => {
-    // Attribution lives in `AppListingModerationEvent.actorUserId`. Naming the
-    // individual on the wire would make "who acted on my app" answerable by the
-    // developer, which is a retaliation vector the rest of the moderation surface
-    // declines to open. Asserted on the TYPE's own field set, so adding a
-    // `moderatorUsername` field later fails here rather than shipping quietly.
+  it('renders nothing beyond the four details fields', () => {
+    // ⚠️ SCOPE, corrected: this asserts the shape of the LOCAL fixture, not the
+    // exported TYPE. TypeScript types are erased at runtime, so adding a
+    // `moderatorUsername` field to `AppModeratorMessageNotificationDetails` would NOT
+    // fail this — an earlier version of this comment claimed it would, and that claim
+    // was the kind of "reads as coverage while providing none" that stops the next
+    // person looking.
+    //
+    // 🔴 THE REAL GUARD ON "the moderator is not named to the recipient" IS
+    // `app-moderator-message.service.test.ts` → "the moderator is recorded in the audit
+    // row and ABSENT from what the recipient gets", which inspects the details object
+    // the SERVICE actually builds and is confirmed by mutation. What this case is worth
+    // keeping for is narrower: the fixture that feeds the whole-string pin below has
+    // exactly these four fields, so the pinned copy cannot be silently fed a fifth.
     expect(Object.keys(DETAILS).sort()).toEqual(['body', 'listingId', 'slug', 'subject']);
   });
 

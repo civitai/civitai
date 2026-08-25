@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { TRPCError } from '@trpc/server';
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
@@ -253,6 +254,46 @@ describe('collaborators are opt-in, and the set is de-duplicated', () => {
     expect(where).not.toHaveProperty('displayed');
   });
 
+  it('🔴 the collaborator read is keyed on the PARENT listing, not the id that was passed', async () => {
+    // The quota key's parent-ness was pinned from the start and this was not, so a
+    // mutant swapping `seatListingId` for `appListingId` HERE survived. Under it, a
+    // moderator who pasted a shadow revision id delivers to the owner alone — a shadow
+    // holds no seats — while the audit row's `includeCollaborators: true` says the
+    // editors were looped in. Silent under-delivery with a record that disagrees.
+    dbMock.dbRead.appListing.findUnique.mockResolvedValue({
+      id: SHADOW,
+      userId: STALE_NAME,
+      slug: 'rev-01hx',
+      kind: 'onsite',
+      appBlockId: null,
+      revisionOfId: LIVE,
+      appBlock: null,
+      revisionOf: {
+        id: LIVE,
+        slug: 'prompt-vault',
+        userId: STALE_NAME,
+        kind: 'onsite',
+        appBlockId: 'ab_1',
+        appBlock: { app: { userId: REAL_OWNER } },
+      },
+    });
+    dbMock.dbRead.appCollaborator.findMany.mockResolvedValue([{ userId: EDITOR }]);
+
+    const result = await messageAppOwner({
+      input: input({ appListingId: SHADOW, includeCollaborators: true }),
+      moderatorUserId: MOD,
+    });
+
+    expect(dbMock.dbRead.appCollaborator.findMany.mock.calls[0][0]).toMatchObject({
+      where: { appListingId: LIVE },
+    });
+    expect((mockNotify.mock.calls[0][0] as { userIds: number[] }).userIds).toEqual([
+      REAL_OWNER,
+      EDITOR,
+    ]);
+    expect(result.recipientCount).toBe(2);
+  });
+
   it('an owner who also holds a seat is notified ONCE', async () => {
     dbMock.dbRead.appCollaborator.findMany.mockResolvedValue([
       { userId: REAL_OWNER },
@@ -306,6 +347,19 @@ describe('nothing is delivered that was not first recorded', () => {
     });
     // No state changed, so there is deliberately no `before`.
     expect((data as Record<string, unknown>).before).toBeUndefined();
+  });
+
+  it('🔴 `after.includeCollaborators` records FALSE on the default path', async () => {
+    // The true case alone left a hardcoded-`true` mutant alive, which is the one
+    // misreport that matters: `after` exists precisely so a later reviewer can tell
+    // whether a private accusation was broadcast to third parties, and a field that is
+    // always `true` answers that question wrongly on the DEFAULT path — the common one.
+    await messageAppOwner({ input: input(), moderatorUserId: MOD });
+    const data = dbMock.dbWrite.appListingModerationEvent.create.mock.calls[0][0].data as {
+      after: { includeCollaborators: boolean; recipientUserIds: number[] };
+    };
+    expect(data.after.includeCollaborators).toBe(false);
+    expect(data.after.recipientUserIds).toEqual([REAL_OWNER]);
   });
 
   it('the notification key is the audit event id, so a retry delivers once', async () => {
@@ -365,18 +419,44 @@ describe('rate limiting — BOTH windows, and a refusal writes and sends nothing
     expect(mockNotify).not.toHaveBeenCalled();
   });
 
-  it('when BOTH are exhausted the LONGER retry-after is reported', async () => {
+  it('🔴 an ALREADY-CAPPED moderator does NOT spend the LISTING budget', async () => {
+    // The harm this pins: the listing window is the harassment ceiling, 5/h across ALL
+    // moderators. If a refused send still INCR'd it, one already-capped moderator
+    // retrying five times would exhaust that app's ceiling and lock out every OTHER
+    // moderator for the rest of the hour, over messages that were never sent.
+    //
+    // Same ordering principle as the BLOCKED_LINK case below, applied to the other
+    // rejection path — that one was asserted from the start and this one was not, which
+    // is exactly how the two halves drifted apart.
+    mockActorQuota.mockResolvedValue({ allowed: false, retryAfterSeconds: 120 });
+    await expect(messageAppOwner({ input: input(), moderatorUserId: MOD })).rejects.toMatchObject({
+      code: 'RATE_LIMITED',
+    });
+    expect(mockActorQuota).toHaveBeenCalledTimes(1);
+    expect(mockListingQuota).not.toHaveBeenCalled();
+  });
+
+  it('an actor-capped refusal reports the ACTOR window retry-after', async () => {
     mockActorQuota.mockResolvedValue({ allowed: false, retryAfterSeconds: 120 });
     mockListingQuota.mockResolvedValue({ allowed: false, retryAfterSeconds: 3400 });
     await expect(messageAppOwner({ input: input(), moderatorUserId: MOD })).rejects.toMatchObject({
-      message: expect.stringContaining('3400'),
+      // 120, not 3400: the listing window is never consulted, so the number the mod is
+      // told is the one that actually governs their next attempt.
+      message: expect.stringContaining('120'),
     });
   });
 });
 
 describe('text validation runs BEFORE the quota is spent', () => {
   it('a blocked link domain refuses with BLOCKED_LINK; no write, no send', async () => {
-    mockBlockedLink.mockRejectedValue(new Error('invalid urls: evil.example'));
+    // 🔴 A REAL `TRPCError`/BAD_REQUEST, which is what `throwOnBlockedLinkDomain`
+    // actually throws (via `throwBadRequestError`) — not a bare `Error`. The bare-Error
+    // fixture this replaces was indistinguishable from an infra failure, so it was
+    // green against a catch that could not tell the two apart. See the ECONNREFUSED
+    // case above: the pair is what makes either one mean anything.
+    mockBlockedLink.mockRejectedValue(
+      new TRPCError({ code: 'BAD_REQUEST', message: 'invalid urls: evil.example' })
+    );
     const err = await messageAppOwner({ input: input(), moderatorUserId: MOD }).then(
       () => {
         throw new Error('expected a refusal');
@@ -391,6 +471,31 @@ describe('text validation runs BEFORE the quota is spent', () => {
     // silently spend the ceiling that protects the developer from being spammed.
     expect(mockListingQuota).not.toHaveBeenCalled();
     expect(mockActorQuota).not.toHaveBeenCalled();
+  });
+
+  it('🔴 an INFRA failure in the link scan is NOT relabelled as a blocked link', async () => {
+    // `throwOnBlockedLinkDomain` reaches `getBlocklistDTO`, whose first statement is an
+    // unguarded `await redis.get(...)`. A bare catch here would turn a Redis outage into
+    // "The message contains a blocked link domain." about a message with no link — and
+    // because BLOCKED_LINK maps to BAD_REQUEST it would never reach the INTERNAL branch
+    // that feeds the server-fault logger, so the outage would be invisible from here.
+    //
+    // 🔴 The fixture is a bare `Error`, which is what a Redis failure actually looks
+    // like at the catch site. The pre-fix test used `new Error('invalid urls: …')` for
+    // the BLOCKED case — indistinguishable from ECONNREFUSED to a bare catch, which is
+    // precisely why the suite could not see this defect.
+    mockBlockedLink.mockRejectedValue(new Error('connect ECONNREFUSED 10.0.0.5:6379'));
+    const err = await messageAppOwner({ input: input(), moderatorUserId: MOD }).then(
+      () => {
+        throw new Error('expected a rejection');
+      },
+      (e) => e as Error & { code?: string }
+    );
+    expect(err.code).not.toBe('BLOCKED_LINK');
+    expect(err).not.toBeInstanceOf(AppModeratorMessageError);
+    expect(err.message).toContain('ECONNREFUSED');
+    expect(dbMock.dbWrite.appListingModerationEvent.create).not.toHaveBeenCalled();
+    expect(mockNotify).not.toHaveBeenCalled();
   });
 
   it('the link scan covers the SUBJECT as well as the body', async () => {

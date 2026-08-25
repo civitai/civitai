@@ -13,14 +13,34 @@ import type { TRPCError } from '@trpc/server';
  * "It rejected" is satisfied by a proc that sends the message and then throws on the
  * way out; only the un-called mock says the refusal happened BEFORE any write or send.
  *
- * 🔴 WHICH CASES ACTUALLY TEST THE MOD GATE — stated rather than assumed, because
- * getting this wrong is how an authz matrix reads as coverage while providing none.
- * `moderatorProcedure` is `protectedProcedure.use(isMod)`, so an ANONYMOUS caller is
- * refused by `isAuthed` with UNAUTHORIZED before `isMod` is ever reached — and that is
- * equally true if the gate is downgraded to `protectedProcedure`. The anonymous case is
- * therefore STRUCTURALLY incapable of discriminating mod-gated from
- * merely-authenticated: it is an AUTH guard, labelled as one. The TESTER case is the
- * mod guard, and it is the one that dies to the downgrade mutant.
+ * 🔴 WHICH CASES ACTUALLY TEST WHICH GATE — stated rather than assumed, because getting
+ * this wrong is how an authz matrix reads as coverage while providing none. There are
+ * TWO gates on this proc and the difference between them is not cosmetic:
+ *
+ *   1. `moderatorProcedure` = `protectedProcedure.use(isMod)`. `isMod` throws
+ *      **FORBIDDEN** on `!user.isModerator`. This is the gate the TESTER and DEVELOPER
+ *      cases below pin.
+ *   2. the inner `if (!ctx.user?.isModerator) throw throwAuthorizationError(...)`, which
+ *      throws **UNAUTHORIZED**. Every sibling mod action in this router carries the same
+ *      belt.
+ *
+ * 🔴 GATE 2 IS UNREACHABLE TODAY, AND IS LABELLED RATHER THAN COUNTED. It tests the
+ * IDENTICAL predicate to `isMod` (`trpc.ts`: `if (!user.isModerator) throw FORBIDDEN`),
+ * so no context can reach the proc body with a non-moderator — deleting its throw leaves
+ * the whole suite green. It is defence-in-depth against a future downgrade of gate 1,
+ * which is worth keeping, but no BEHAVIOURAL test here proves it does anything. The
+ * "both gates are present" case at the end is a STRUCTURAL guard covering that, and is
+ * described as one.
+ *
+ * ⚠️ A consequence worth naming, because it was mis-stated in review: mutating
+ * `moderatorProcedure` → `protectedProcedure` does NOT grant a user access — gate 2 then
+ * refuses, with UNAUTHORIZED. That mutant dies on the CODE MISMATCH below, not on the
+ * service being reached, and `mockMessageAppOwner` is never called under it either.
+ * Pinning the exact code is what makes the mutant die at all.
+ *
+ * The ANONYMOUS case is a third thing again: `isAuthed` refuses it before `isMod` runs,
+ * and would do so under either gate, so it discriminates nothing about moderator-only.
+ * It is an AUTH guard, labelled as one.
  */
 
 const { mockMessageAppOwner, mockIsAppBlocksEnabled, mockIsAppBlocksAuthorEnabled } = vi.hoisted(
@@ -100,12 +120,16 @@ beforeEach(() => {
 });
 
 describe('authorization — one case per role, and the service never runs on a refusal', () => {
-  it('🔴 MOD GATE: a non-moderator is FORBIDDEN and the service is NOT called', async () => {
+  it('🔴 GATE 1 (moderatorProcedure): a non-moderator is FORBIDDEN, service NOT called', async () => {
     const caller = appListingsRouter.createCaller(fakeCtx(tester) as never);
-    // FORBIDDEN specifically, not `instanceof TRPCError` — a caller invoking a proc
-    // that does not exist ALSO rejects with a TRPCError (NOT_FOUND, "No procedure found
-    // on path"), so the loose assertion would be green on a branch where
-    // `messageAppOwner` was never added, i.e. it would prove the gate without the gate.
+    // 🔴 FORBIDDEN specifically, for TWO independent reasons:
+    //   (a) a caller invoking a proc that does not exist ALSO rejects with a TRPCError
+    //       (NOT_FOUND, "No procedure found on path"), so a loose `instanceof` would be
+    //       green on a branch where `messageAppOwner` was never added; and
+    //   (b) FORBIDDEN is `isMod`'s code, while the inner recheck's is UNAUTHORIZED — so
+    //       this assertion is what distinguishes gate 1 from gate 2, and the only reason
+    //       a `moderatorProcedure → protectedProcedure` mutant dies at all. A test that
+    //       accepted either code would pass with gate 1 removed.
     await expect(caller.messageAppOwner(INPUT)).rejects.toMatchObject({ code: 'FORBIDDEN' });
     expect(mockMessageAppOwner).not.toHaveBeenCalled();
   });
@@ -268,20 +292,70 @@ describe('schema bounds — rejected at the boundary, service NEVER called', () 
   });
 });
 
-describe('the mod-only limiter is not the inert middleware', () => {
-  it('🔴 the proc does NOT rely on the tRPC rateLimit middleware', () => {
-    // `rateLimit` short-circuits for moderators, so wiring it here would cap nothing
-    // while reading as a limit. This asserts the SOURCE, because the behaviour is
-    // unobservable: an inert middleware and no middleware are indistinguishable from
-    // outside, which is precisely what makes the mistake survivable in review.
+describe('source-level guards on the proc', () => {
+  /**
+   * 🔴 THE EXTRACTOR IS THE INSTRUMENT, SO IT IS CONTROLLED BEFORE IT IS READ.
+   *
+   * The first version of these guards sliced to `'\n  }),'` — TWO spaces. The real
+   * terminator is FOUR (`    }),`), so `indexOf` returned -1, `slice(0, -1)` kept
+   * nearly the whole 3k-line router, and every assertion below was answered by some
+   * OTHER procedure's source. Measured: deleting this proc's inner `isModerator`
+   * recheck left the "both gates are present" case GREEN, because a sibling's identical
+   * line was in scope. A guard reading as coverage while providing none.
+   *
+   * It fails loudly now, and `the extractor is BOUNDED` below is the positive control
+   * that keeps it honest — without it, a future terminator change silently restores the
+   * whole-file scan and every assertion here goes vacuous again in exactly the same way.
+   */
+  function procBody(): string {
     const src = readFileSync(
       path.join(process.cwd(), 'src/server/routers/app-listings.router.ts'),
       'utf8'
     );
-    const proc = src.slice(src.indexOf('messageAppOwner: moderatorProcedure'));
-    const body = proc.slice(0, proc.indexOf('\n  }),'));
-    expect(body).toContain('moderatorProcedure');
-    expect(body).not.toContain('.use(rateLimit(');
+    const start = src.indexOf('  messageAppOwner: moderatorProcedure');
+    if (start === -1) throw new Error('messageAppOwner proc not found in the router');
+    const rest = src.slice(start);
+    const end = rest.indexOf('\n    }),');
+    if (end === -1) throw new Error('messageAppOwner proc terminator not found');
+    return rest.slice(0, end);
+  }
+
+  it('🔴 POSITIVE CONTROL: the extractor is BOUNDED to this one procedure', () => {
+    const body = procBody();
+    // Small enough to be one proc, and — the load-bearing half — containing NO
+    // neighbouring procedure. Both siblings named here carry their own
+    // `if (!ctx.user?.isModerator)` recheck, which is precisely what the broken
+    // extractor was reading.
+    expect(body).toContain('messageAppOwner');
+    expect(body.length).toBeLessThan(1200);
+    for (const sibling of ['delistListing:', 'relistListing:', 'claimListing:', 'purgeListing:']) {
+      expect(body, `the slice must not reach ${sibling}`).not.toContain(sibling);
+    }
+  });
+
+  it('🔴 STRUCTURAL: both authorization gates are present on the proc', () => {
+    // Structural, and labelled as such: gate 2 (the inner recheck) is unreachable while
+    // gate 1 stands — see the file header — so no behavioural case can pin it. Deleting
+    // it leaves every behavioural test green, which is exactly why the ledger has to be
+    // written down somewhere. This is that somewhere: removing EITHER gate fails here,
+    // while the tester/developer cases above fail only if gate 1 goes.
+    const body = procBody();
+    expect(body).toContain('messageAppOwner: moderatorProcedure');
+    expect(body).toContain('if (!ctx.user?.isModerator)');
+    expect(body).toContain('throwAuthorizationError');
+  });
+
+  it('🔴 the proc does NOT rely on the tRPC rateLimit middleware', () => {
+    // `rateLimit` short-circuits for moderators, so wiring it here would cap nothing
+    // while reading as a limit. This asserts the SOURCE, because the behaviour is
+    // unobservable: an inert middleware and no middleware are indistinguishable from
+    // outside, which is what makes the mistake survivable in review.
+    //
+    // ⚠️ The pattern is `rateLimit(`, NOT `.use(rateLimit(`. This router never spells
+    // the latter — it writes `.use(\n      rateLimit({` across lines — so the original
+    // `not.toContain('.use(rateLimit(')` was VACUOUSLY TRUE and would have passed with
+    // a rate limit sitting on the proc. Matching the call itself is what can fail.
+    expect(procBody()).not.toContain('rateLimit(');
     // …and the real ceilings exist and are reached from the service.
     const svc = readFileSync(
       path.join(process.cwd(), 'src/server/services/blocks/app-moderator-message.service.ts'),

@@ -1,3 +1,5 @@
+import { TRPCError } from '@trpc/server';
+
 import { dbWrite } from '~/server/db/client';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import {
@@ -50,9 +52,20 @@ import { newAppListingModerationEventId } from '~/server/utils/app-block-ids';
  *
  * The write precedes the delivery so that a notifications outage costs the delivery
  * and never the record that a moderator sent a message — the inverse would let a mod
- * message a developer with nothing in the audit log. The text validation precedes the
- * rate-limit spend so a rejected draft does not consume the recipient's harassment
- * budget (a mod fixing a typo would otherwise burn the listing's hourly allowance).
+ * message a developer with nothing in the audit log.
+ *
+ * 🔴 ONE ORDERING PRINCIPLE, APPLIED IN THREE PLACES: a send that will not happen must
+ * never consume the RECIPIENT's budget. So the text validation precedes the quota spend
+ * (a mod fixing a typo would otherwise burn the listing's hourly allowance), and the
+ * ACTOR window is spent and checked before the LISTING window is touched at all. Step 3
+ * is therefore two steps, not one — see the note at the call site.
+ *
+ * ⚠️ SCOPE OF "nothing is delivered that is not first recorded": it is a property of
+ * THIS procedure, not of the `app-moderator-message` notification type. The
+ * webhook-token-gated `src/pages/api/mod/send-mod-notification.ts` can emit any type —
+ * this one included — with arbitrary `userIds` and text, no audit row and no rate limit.
+ * That is not moderator-reachable and is equally true of the eleven existing app types,
+ * but the claim above is about the proc.
  *
  * ## Authorization
  *
@@ -99,14 +112,24 @@ export type MessageAppOwnerResult = {
  * rendered in other users' browsers. Three of its five checks are actively wrong for
  * this surface:
  *
- *   - `includesMinor` / `includesPoi` HARD-FAIL the text. A moderator writing "your
- *     cover image appears to depict a minor — take it down" is exactly the message
- *     this channel exists to carry, and that belt refuses to send it. The control
- *     would block its own most important use.
- *   - `auditPromptServer(isGreen: true)` forces the SFW + profanity ceiling on
- *     correspondence between staff and a developer, and its abuse principal is the
- *     SENDER — so a moderator quoting an app's own offending content would accrue
- *     blocked-prompt strikes against their account for doing their job.
+ *   - `includesMinor` / `includesPoi` HARD-FAIL the text, with NO moderator bypass —
+ *     they run before the `isModerator` flag reaches anything. A moderator writing
+ *     "your cover image appears to depict a minor — take it down" is exactly the
+ *     message this channel exists to carry, and that belt refuses to send it. The
+ *     control would block its own most important use. This leg alone is sufficient.
+ *   - `auditPromptServer({ isGreen: true })` forces the SFW + profanity ceiling on
+ *     correspondence between staff and a developer, and on a hit appends
+ *     `GREEN_SFW_REDIRECT` — "please visit civitai.red where you have more freedom to
+ *     generate mature content" — which is nonsense copy to show a moderator writing to
+ *     a developer about their app.
+ *     ⚠️ CORRECTED: an earlier version of this comment claimed the audit accrues
+ *     blocked-prompt strikes against the SENDER. It does NOT. With `isGreen: true` the
+ *     handler takes the `else if (isGreen)` branch (`promptAuditing.ts`), which calls
+ *     neither `addBlockedPrompt` nor `reportProhibitedRequest` — no strike, no
+ *     ClickHouse row, no auto-mute; and `assertSharedTextSafe` threads `isModerator`
+ *     through anyway. The real cost is the hard-failed send and the wrong copy above,
+ *     which is narrower than what this comment used to assert. Left visible rather than
+ *     silently rewritten, because the overstated version was quoted in review.
  *
  * It would also be inconsistent rather than protective: EVERY existing moderator
  * free-text field that renders verbatim into a user-visible notification —
@@ -139,11 +162,38 @@ async function validateMessageText(subject: string, body: string): Promise<void>
   try {
     await throwOnBlockedLinkDomain(`${subject}\n${body}`);
   } catch (err) {
-    throw new AppModeratorMessageError(
-      'BLOCKED_LINK',
-      'The message contains a blocked link domain.',
-      { cause: err }
-    );
+    // 🔴 NARROW ON PURPOSE — a bare `catch` here is a live defect, not a style nit.
+    //
+    // `throwOnBlockedLinkDomain` reaches `getBlocklistDTO`, whose FIRST statement is an
+    // unguarded `await redis.get(...)`. So a Redis outage throws from inside this call,
+    // and a bare catch converts it into "The message contains a blocked link domain."
+    // about a message that contains no link — leaving the moderator to edit text that
+    // is fine, with no way to tell. Worse, `BLOCKED_LINK` maps to BAD_REQUEST, which
+    // never reaches the INTERNAL branch that feeds the server-fault logger, so the
+    // outage would be INVISIBLE from this path.
+    //
+    // 🔴 It would also invert this feature's own stated fail-direction: the rate limiter
+    // deliberately fails OPEN so a Redis incident cannot block moderation
+    // correspondence (see `app-moderator-message-rate-limit.ts`). A fail-CLOSED Redis
+    // dependency in front of the same send contradicts that.
+    //
+    // `throwOnBlockedLinkDomain` signals a REAL block with `throwBadRequestError`, i.e.
+    // a `TRPCError` with code BAD_REQUEST. Anything else — a Redis error, a JSON parse
+    // failure on a corrupt cache entry, a DB error in `readBlocklistRow` — is infra and
+    // is RETHROWN, so the router maps it to INTERNAL_SERVER_ERROR (no raw leak) and it
+    // is logged as the fault it is.
+    //
+    // ⚠️ `assertSharedTextSafe` has the byte-identical wart (its `catch {}` around the
+    // same call re-labels everything as `'link'`). This is a copied house pattern rather
+    // than a novel defect here; fixing it there is a separate change.
+    if (err instanceof TRPCError && err.code === 'BAD_REQUEST') {
+      throw new AppModeratorMessageError(
+        'BLOCKED_LINK',
+        'The message contains a blocked link domain.',
+        { cause: err }
+      );
+    }
+    throw err;
   }
 }
 
@@ -191,20 +241,34 @@ export async function messageAppOwner(opts: {
   // empty message. Runs BEFORE the quota spend — see the ordering note in the header.
   await validateMessageText(subject, body);
 
-  // 🔴 BOTH windows, and the ORDER between them does not matter for correctness but the
-  // fact that BOTH are spent does: a short-circuit that skipped the listing counter
-  // whenever the moderator counter allowed would leave the harassment ceiling
-  // unenforced for any mod under their own cap, which is the normal case.
+  // 🔴 THE ACTOR WINDOW IS SPENT AND CHECKED FIRST, AND THE LISTING WINDOW IS NOT
+  // TOUCHED WHEN THE ACTOR IS ALREADY CAPPED. Spending both unconditionally is a live
+  // defect, and it is the SAME ordering principle the text validation above obeys: a
+  // send that will not happen must not consume the RECIPIENT's budget.
+  //
+  // The concrete harm, because it is not obvious: the listing window is the harassment
+  // ceiling, 5/h across ALL moderators. A moderator who has exhausted their own 30/h
+  // window and keeps retrying would INCR the per-listing key on every attempt — five
+  // retries by one already-capped mod would exhaust that app's ceiling and LOCK OUT
+  // every other moderator for the rest of the hour, over messages that were never sent.
+  //
+  // 🔴 The short-circuit runs in ONE direction only. Skipping the listing spend when the
+  // actor is REFUSED is free (nothing is delivered, so nothing should count against the
+  // recipient). Skipping it when the actor is ALLOWED would be the opposite mistake and
+  // would leave the ceiling unenforced for every mod under their own cap — i.e. the
+  // normal case. `app-moderator-message.service.test.ts` pins both directions.
   const actorQuota = await checkModMessageModeratorQuota(moderatorUserId);
-  const listingQuota = await checkModMessageListingQuota(appListingId);
-  if (!actorQuota.allowed || !listingQuota.allowed) {
-    const retryAfterSeconds = Math.max(
-      actorQuota.allowed ? 0 : actorQuota.retryAfterSeconds,
-      listingQuota.allowed ? 0 : listingQuota.retryAfterSeconds
-    );
+  if (!actorQuota.allowed) {
     throw new AppModeratorMessageError(
       'RATE_LIMITED',
-      `Too many moderator messages — try again in ${retryAfterSeconds}s.`
+      `Too many moderator messages — try again in ${actorQuota.retryAfterSeconds}s.`
+    );
+  }
+  const listingQuota = await checkModMessageListingQuota(appListingId);
+  if (!listingQuota.allowed) {
+    throw new AppModeratorMessageError(
+      'RATE_LIMITED',
+      `Too many moderator messages — try again in ${listingQuota.retryAfterSeconds}s.`
     );
   }
 
