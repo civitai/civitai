@@ -6,6 +6,7 @@ import React, { useMemo } from 'react';
 
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { CreatorAnnouncementsCarousel } from '~/components/Announcements/CreatorAnnouncementsCarousel';
+import { CreatorAnnouncementsEntry } from '~/components/Announcements/CreatorAnnouncementsEntry';
 import { useQueryCreatorAnnouncements } from '~/components/Announcements/creator-announcements.utils';
 import { ProfileSidebar } from '~/components/Profile/ProfileSidebar';
 import { shouldShowProfileMessage } from '~/components/Profile/profile.utils';
@@ -27,7 +28,11 @@ export function ProfileHeader({ username }: { username: string }) {
     username,
   });
   const isMobile = useContainerSmallerThan('sm');
-  const { announcements } = useQueryCreatorAnnouncements(user?.id);
+  const {
+    announcements,
+    isLoading: announcementsLoading,
+    isError: announcementsErrored,
+  } = useQueryCreatorAnnouncements(user?.id);
 
   const cover = user?.profile?.coverImage;
   const images = useMemo(
@@ -136,6 +141,14 @@ export function ProfileHeader({ username }: { username: string }) {
     return (
       <div className="flex flex-col gap-3">
         {!user.muted && <CreatorAnnouncementsCarousel userId={user.id} className="container" />}
+        <CreatorAnnouncementsEntry
+          userId={user.id}
+          userMuted={user.muted}
+          announcementCount={announcements.length}
+          announcementsLoading={announcementsLoading}
+          announcementsErrored={announcementsErrored}
+          className="container"
+        />
         {renderMessage()}
         <div className="flex flex-col">
           {renderCoverImage()}
@@ -155,6 +168,14 @@ export function ProfileHeader({ username }: { username: string }) {
     <Stack>
       {renderCoverImage()}
       {!user.muted && <CreatorAnnouncementsCarousel userId={user.id} className="container" />}
+      <CreatorAnnouncementsEntry
+        userId={user.id}
+        userMuted={user.muted}
+        announcementCount={announcements.length}
+        announcementsLoading={announcementsLoading}
+        announcementsErrored={announcementsErrored}
+        className="container"
+      />
       {renderMessage()}
     </Stack>
   );
