@@ -411,18 +411,14 @@ describe('assertMonetizationWrite', () => {
 
   // The gate lookup feeds BOTH wasPriced and the willBePriced fallback.
   describe('the existing permanent gate makes a version already-priced', () => {
-    const gateRow = (timeframeDays: number | null) => ({
-      1: {
-        entityId: 1,
-        ownerId: 1,
-        endsAtMs: new Date('2099-01-01T00:00:00.000Z').getTime(),
-        timeframeDays,
-        terms: { download: { price: 500 } },
-      },
-    });
+    // The write gate reads PaidAccess fresh from the primary: an hour-old cache would disagree with
+    // the caller's live fee read about whether the version is already priced.
+    const gateRow = (timeframeDays: number | null) =>
+      mockDbWrite.paidAccess.findUnique.mockResolvedValue({ timeframeDays } as never);
+    const noGate = () => mockDbWrite.paidAccess.findUnique.mockResolvedValue(null as never);
 
     it('lets a below-floor owner add a fee to a version they already gate, at no cost', async () => {
-      mockCacheFetch.mockImplementation(async () => gateRow(null));
+      gateRow(null);
       mockSlotCount.mockResolvedValue(99);
 
       await expect(
@@ -441,7 +437,7 @@ describe('assertMonetizationWrite', () => {
     // Re-pricing the gate itself, which is what a creator does most often. The gate row is what makes
     // the version already-priced, so the new terms are irrelevant to both rules.
     it('lets a below-floor owner change the PRICE of a gate they already have, at no cost', async () => {
-      mockCacheFetch.mockImplementation(async () => gateRow(null));
+      gateRow(null);
       mockSlotCount.mockResolvedValue(99);
 
       await expect(
@@ -461,7 +457,7 @@ describe('assertMonetizationWrite', () => {
     // The negative control: without it the test above passes for the wrong reason, since a lookup that
     // returns nothing at all also produces spendsSlot on the same inputs.
     it('charges for the same write when no gate row exists', async () => {
-      mockCacheFetch.mockImplementation(async () => ({}));
+      noGate();
 
       await expect(
         assertMonetizationWrite({
@@ -478,7 +474,7 @@ describe('assertMonetizationWrite', () => {
 
     // A timed window is not a price, so it must not confer the exemption.
     it('does not treat a TIMED window as already-priced', async () => {
-      mockCacheFetch.mockImplementation(async () => gateRow(7));
+      gateRow(7);
 
       await expect(
         assertMonetizationWrite({
@@ -495,7 +491,7 @@ describe('assertMonetizationWrite', () => {
 
     // A fee-only edit on an already-gated version leaves it gated: willBePriced falls back to the row.
     it('keeps a gated version priced when the write clears its fee', async () => {
-      mockCacheFetch.mockImplementation(async () => gateRow(null));
+      gateRow(null);
 
       await expect(
         assertMonetizationWrite({
@@ -616,15 +612,7 @@ describe('assertMonetizationWrite', () => {
   // Clearing ONE of two prices is not clearing the price: the version still charges. `undefined`
   // leaves the gate alone — null would be asking to clear it as well, and does.
   it('offers nothing back while the other kind of price still stands', async () => {
-    mockCacheFetch.mockImplementation(async () => ({
-      1: {
-        entityId: 1,
-        ownerId: 1,
-        endsAtMs: new Date('2099-01-01T00:00:00.000Z').getTime(),
-        timeframeDays: null,
-        terms: { download: { price: 500 } },
-      },
-    }));
+    mockDbWrite.paidAccess.findUnique.mockResolvedValue({ timeframeDays: null } as never);
 
     await expect(
       assertMonetizationWrite({
@@ -642,15 +630,7 @@ describe('assertMonetizationWrite', () => {
   // null is the explicit clear, and it has to reach the ledger as one: removing the gate from a version
   // whose only price it was returns the slot.
   it('offers the slot back when a null gate clears the only price', async () => {
-    mockCacheFetch.mockImplementation(async () => ({
-      1: {
-        entityId: 1,
-        ownerId: 1,
-        endsAtMs: new Date('2099-01-01T00:00:00.000Z').getTime(),
-        timeframeDays: null,
-        terms: { download: { price: 500 } },
-      },
-    }));
+    mockDbWrite.paidAccess.findUnique.mockResolvedValue({ timeframeDays: null } as never);
 
     await expect(
       assertMonetizationWrite({

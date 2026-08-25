@@ -564,8 +564,15 @@ export async function assertMonetizationWrite({
   /** The base model the version is on NOW, when that differs. See the ceiling check below. */
   storedBaseModel?: string | null;
 }): Promise<PricingWriteOutcome> {
+  // Read fresh from the primary rather than through getPaidAccess, whose cache is an hour old. This
+  // decides whether the version counts as ALREADY priced, and the fee half of that same question comes
+  // from a caller's live read — a stale gate makes the two disagree and charges a slot for a version
+  // that is already priced.
   const existing = versionId
-    ? (await getPaidAccess('ModelVersion', [versionId]))[versionId]
+    ? await dbWrite.paidAccess.findUnique({
+        where: { entityType_entityId: { entityType: 'ModelVersion', entityId: versionId } },
+        select: { timeframeDays: true },
+      })
     : undefined;
   const hadPermanentGate = existing != null && existing.timeframeDays == null;
 

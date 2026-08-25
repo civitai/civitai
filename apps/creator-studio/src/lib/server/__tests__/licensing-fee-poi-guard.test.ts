@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { maxLicensingFeeCeiling } from '@civitai/buzz';
 import type { Membership } from '../membership';
 
 // Kysely fake, per table. `rows` is what the owned-versions read returns; `written` records every
@@ -119,6 +120,8 @@ const { setLicensingFee, bulkSetLicensingFee } = await import('../monetization/l
 
 const GOLD: Membership = { tier: 'gold', isMember: true, isCreatorProgramMember: true };
 
+const MAX_IMAGE_FEE = maxLicensingFeeCeiling('image');
+
 // `gated` stands in for a permanent PaidAccess row on the version (null = none).
 const version = (over: Partial<Record<string, unknown>> = {}) => ({
   id: 1,
@@ -146,6 +149,57 @@ beforeEach(() => {
 
 // Clearing a price hands the slot back, but only when nothing has transacted against the version — the
 // creator who priced a draft to see what it looked like should not pay a month's allowance for it.
+// The spoke writes licensingFee with its own SQL, so the ceiling has to be re-applied here or this is
+// a way around it — the same shape as the POI guard above, and it had no test at all until Justin's
+// review pointed that out.
+describe('licensing fee ceiling', () => {
+  it('refuses a fee over the ceiling for the version media type, and writes nothing', async () => {
+    state.rows = [version({ baseModel: 'SDXL 1.0' })];
+
+    const result = await setLicensingFee(7, GOLD, 1, MAX_IMAGE_FEE + 1, true);
+
+    expect(result.ok).toBe(false);
+    expect(state.written).toEqual([]);
+  });
+
+  it('allows exactly the ceiling', async () => {
+    state.rows = [version({ baseModel: 'SDXL 1.0' })];
+
+    const result = await setLicensingFee(7, GOLD, 1, MAX_IMAGE_FEE, true);
+
+    expect(result.ok).toBe(true);
+  });
+
+  // Video earns a higher ceiling, so the same number that is refused above is allowed here — without
+  // this the test above passes for a ceiling that ignores the media axis entirely.
+  it('applies the VIDEO ceiling to a video base model', async () => {
+    state.rows = [version({ baseModel: 'Hunyuan Video' })];
+
+    const result = await setLicensingFee(7, GOLD, 1, MAX_IMAGE_FEE + 1, true);
+
+    expect(result.ok).toBe(true);
+  });
+
+  // Raise-only: a fee already stored above the ceiling stays savable, or a creator whose stored fee
+  // predates the ceiling could never touch anything else on the version.
+  it('lets a stored over-ceiling fee be re-saved unchanged', async () => {
+    state.rows = [version({ baseModel: 'SDXL 1.0', currentFee: MAX_IMAGE_FEE + 50 })];
+
+    const result = await setLicensingFee(7, GOLD, 1, MAX_IMAGE_FEE + 50, true);
+
+    expect(result.ok).toBe(true);
+  });
+
+  it('still refuses raising an already over-ceiling fee', async () => {
+    state.rows = [version({ baseModel: 'SDXL 1.0', currentFee: MAX_IMAGE_FEE + 50 })];
+
+    const result = await setLicensingFee(7, GOLD, 1, MAX_IMAGE_FEE + 51, true);
+
+    expect(result.ok).toBe(false);
+    expect(state.written).toEqual([]);
+  });
+});
+
 describe('returning the slot when a fee is cleared', () => {
   it('releases a version nobody ever bought or generated with', async () => {
     state.rows = [version({ currentFee: 5 })];
@@ -205,6 +259,24 @@ describe('returning the slot when a fee is cleared', () => {
   // behind — this is the whole reason a same-day price-and-clear can be answered at all.
   it('keeps the slot when a fee was charged since it was spent', async () => {
     state.rows = [version({ currentFee: 5, publishedAt: new Date('2026-01-01') })];
+    state.charges = { 1: '2026-08-24' };
+
+    await setLicensingFee(7, GOLD, 1, null, true);
+
+    expect(state.released).toEqual([]);
+  });
+
+  // The regression Justin's review caught: max(date) is a DAY, so a charge made at any time on the
+  // 24th reads as the 24th at midnight — before a slot created that afternoon. Comparing raw dates
+  // refunded a version that had just been paid for, which is the exact case this lookup exists for.
+  it('keeps the slot when the charge lands the same DAY the slot was spent', async () => {
+    state.rows = [
+      version({
+        currentFee: 5,
+        publishedAt: new Date('2026-01-01'),
+        slotCreatedAt: new Date('2026-08-24T14:00:00.000Z'),
+      }),
+    ];
     state.charges = { 1: '2026-08-24' };
 
     await setLicensingFee(7, GOLD, 1, null, true);

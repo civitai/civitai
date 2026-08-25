@@ -182,7 +182,10 @@ export async function releasePricingSlot({
 
   // The slot's own createdAt bounds the charge lookup: only what was charged while THIS slot was live
   // holds it. A version that earned before its owner priced it keeps nothing hostage.
-  const slot = await dbRead.pricingSlot.findUnique({
+  // Primary, not the replica: this runs immediately after the write that cleared the price, and a
+  // replica still showing the old row makes the release refuse — silently costing the creator the
+  // slot it was called to give back. Same reason for the price re-read below.
+  const slot = await dbWrite.pricingSlot.findUnique({
     where: { entityType_entityId: { entityType, entityId } },
     select: { createdAt: true, ownerId: true },
   });
@@ -192,8 +195,8 @@ export async function releasePricingSlot({
   // version carries no price at all, and the write that prompted this removed one of the two kinds.
   // The creator-studio mirror answers the same question the same way, off its own post-write read.
   const [version, gate] = await Promise.all([
-    dbRead.modelVersion.findUnique({ where: { id: entityId }, select: { licensingFee: true } }),
-    dbRead.paidAccess.findUnique({
+    dbWrite.modelVersion.findUnique({ where: { id: entityId }, select: { licensingFee: true } }),
+    dbWrite.paidAccess.findUnique({
       where: { entityType_entityId: { entityType, entityId } },
       select: { timeframeDays: true },
     }),

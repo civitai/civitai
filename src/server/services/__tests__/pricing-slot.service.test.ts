@@ -21,11 +21,14 @@ const mockCount = dbMock.dbRead.pricingSlot.count;
 const mockCreateMany = dbMock.dbWrite.pricingSlot.createMany;
 const mockFindUnique = dbMock.dbRead.user.findUnique;
 const mockDeleteMany = dbMock.dbWrite.pricingSlot.deleteMany;
+// Publish state and access rows are not touched by the price write, so they stay on the replica.
 const mockVersion = dbMock.dbRead.modelVersion.findUnique;
-const mockGate = dbMock.dbRead.paidAccess.findUnique;
 const mockAccessCount = dbMock.dbRead.entityAccess.count;
 const mockMetric = dbMock.dbRead.modelVersionMetric.findUnique;
-const mockSlot = dbMock.dbRead.pricingSlot.findUnique;
+// The post-write re-reads: a lagging replica here refuses a release and silently eats the slot.
+const mockSlot = dbMock.dbWrite.pricingSlot.findUnique;
+const mockFee = dbMock.dbWrite.modelVersion.findUnique;
+const mockGate = dbMock.dbWrite.paidAccess.findUnique;
 
 const OWNER = 42;
 const VERSION = 9;
@@ -35,8 +38,8 @@ const SLOT_CREATED = new Date('2026-08-20T00:00:00.000Z');
 function seedReleasable() {
   mockSlot.mockResolvedValue({ createdAt: SLOT_CREATED, ownerId: OWNER } as never);
   mockChQuery.mockResolvedValue([] as never);
+  mockFee.mockResolvedValue({ licensingFee: null } as never);
   mockVersion.mockResolvedValue({
-    licensingFee: null,
     initialPublishedAt: null,
     publishedAt: null,
   } as never);
@@ -71,7 +74,6 @@ describe('releasePricingSlot', () => {
   it('asks only about charges made since the slot was spent', async () => {
     seedReleasable();
     mockVersion.mockResolvedValue({
-      licensingFee: null,
       initialPublishedAt: new Date('2026-01-01'),
       publishedAt: null,
     } as never);
@@ -85,7 +87,6 @@ describe('releasePricingSlot', () => {
   it('refuses when a fee was charged since the slot was spent', async () => {
     seedReleasable();
     mockVersion.mockResolvedValue({
-      licensingFee: null,
       initialPublishedAt: new Date('2026-01-01'),
       publishedAt: null,
     } as never);
@@ -100,7 +101,6 @@ describe('releasePricingSlot', () => {
   it('does not consult the daily mirror when ClickHouse answered', async () => {
     seedReleasable();
     mockVersion.mockResolvedValue({
-      licensingFee: null,
       initialPublishedAt: new Date('2026-01-01'),
       publishedAt: null,
     } as never);
@@ -137,7 +137,6 @@ describe('releasePricingSlot', () => {
   it('falls back to the earnings mirror when ClickHouse throws', async () => {
     seedReleasable();
     mockVersion.mockResolvedValue({
-      licensingFee: null,
       initialPublishedAt: new Date('2026-01-01'),
       publishedAt: null,
     } as never);
@@ -176,11 +175,7 @@ describe('releasePricingSlot', () => {
     // Re-read post-write rather than trusting the caller: the version may still carry the OTHER price.
     it('when a licensing fee is still set', async () => {
       seedReleasable();
-      mockVersion.mockResolvedValue({
-        licensingFee: 5,
-        initialPublishedAt: null,
-        publishedAt: null,
-      } as never);
+      mockFee.mockResolvedValue({ licensingFee: 5 } as never);
 
       await expect(release()).resolves.toBe(false);
       expect(mockDeleteMany).not.toHaveBeenCalled();
@@ -216,7 +211,6 @@ describe('releasePricingSlot', () => {
     it('but NOT on a lifetime total when nothing was charged since the slot', async () => {
       seedReleasable();
       mockVersion.mockResolvedValue({
-        licensingFee: null,
         initialPublishedAt: new Date('2026-01-01'),
         publishedAt: new Date('2026-01-01'),
       } as never);
@@ -228,7 +222,7 @@ describe('releasePricingSlot', () => {
     // Fails closed: a version that cannot be read cannot be shown to be untransacted.
     it('when the version cannot be read at all', async () => {
       seedReleasable();
-      mockVersion.mockResolvedValue(null as never);
+      mockFee.mockResolvedValue(null as never);
 
       await expect(release()).resolves.toBe(false);
       expect(mockDeleteMany).not.toHaveBeenCalled();

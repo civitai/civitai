@@ -83,14 +83,20 @@ const isOwnerOrModerator = middleware(async ({ ctx, input, next }) => {
   if (ctx.user.isModerator) return next({ ctx: { user: ctx.user } });
 
   const { id: userId } = ctx.user;
-  const { id } = input as { id: number };
+  const { id, modelId: inputModelId } = input as { id?: number; modelId?: number };
 
-  if (id) {
-    const modelId = (await getVersionById({ id, select: { modelId: true } }))?.modelId ?? 0;
-    const ownerId = (await getModel({ id: modelId, select: { userId: true } }))?.userId ?? -1;
+  // Both shapes name a model: an edit through its version id, a create through modelId directly.
+  // Ownership is proven against whichever the caller supplied, so every write reaching the handler
+  // has had its model checked.
+  const modelId = id
+    ? (await getVersionById({ id, select: { modelId: true } }))?.modelId ?? 0
+    : inputModelId ?? 0;
 
-    if (userId !== ownerId) throw throwAuthorizationError();
-  }
+  const ownerId = modelId
+    ? (await getModel({ id: modelId, select: { userId: true } }))?.userId ?? -1
+    : -1;
+
+  if (userId !== ownerId) throw throwAuthorizationError();
 
   return next({
     ctx: {

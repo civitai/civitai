@@ -147,11 +147,18 @@ export async function releasableVersionIds(
         // null = ClickHouse could not answer; fall back to the daily mirror rather than to "no".
         if (chargedAt === null) return Number(r.earned ?? 0) <= 0;
         const last = chargedAt.get(r.id);
-        return last === undefined || last < r.slotCreatedAt;
+        // Compared day-to-day, because `date` is a Date column: max(date) for a charge made at any
+        // time on the 24th is the 24th at midnight, which is BEFORE a slot created that afternoon.
+        // Truncating the slot side too makes a same-day charge count — the case this whole lookup
+        // exists for. The main app gets this for free by comparing in SQL against toDate(since).
+        return last === undefined || last < startOfUtcDay(r.slotCreatedAt);
       })
       .map((r) => r.id),
   ];
 }
+
+const startOfUtcDay = (date: Date): Date =>
+  new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
 
 /**
  * How long the charge lookup may take before the caller falls back to the daily mirror. A try/catch

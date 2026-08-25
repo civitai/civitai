@@ -218,7 +218,8 @@ that have to happen, or be decided, before it reaches creators.
 - [x] **Decided: no feature flag.** The migration is applied, which was the reason to want one — the
       `PricingSlot` reads had nothing to fall back on until the table existed. Every other change is a
       rule move over columns that already ship.
-- [ ] **Push, open the PR** (one PR for the whole revamp), and move the ClickUp task off "to do".
+- [x] **Push and open the PR** — [#4270](https://github.com/civitai/civitai/pull/4270), one PR for the
+      whole revamp, reviewed 2026-08-24.
 - [ ] **Update Justin's article** to the monthly allowance — tracked in
       [creator-studio/paid-access-followups](creator-studio/paid-access-followups.md), which warns that
       the old and new numbers look identical and mean different things.
@@ -232,9 +233,25 @@ that have to happen, or be decided, before it reaches creators.
 - [ ] **The upsell lands on the wrong tier.** Measured over 30 days: 11 of 26 bronze creators exceed the
       allowance against 5 of 789 free. The free allowance was set tight *because* it is the upsell, but
       the data says it delivers bronze→silver, not free→bronze.
-- [ ] **Existing over-tier fees start billing at full value on deploy.** The one user-visible price
-      *increase* in the revamp, and still unmeasured — neither blast-radius table counts how many live
-      versions get more expensive for buyers, or by how much.
+- [ ] **Existing over-ceiling prices start billing at full value on deploy — measured 2026-08-24, and
+      bigger than this item used to imply.** Counts and multiples are exact, against stored state and
+      today's tier; the money projection is soft, because tier-at-charge-time is not recoverable from
+      Postgres and some owners appear to have lapsed from a higher tier.
+
+      **Licensing fees**: 589 published versions across 60 creators, median jump 2.0x, max 1000x (a 0.1
+      cap holding a 100.00 stored fee). Nothing lands under 2x — the old caps were coarse and creators
+      set round numbers. Those versions served 100,058 generations to 1,283 distinct generators in 30
+      days, so this is live traffic. Two populations: 346 of the 589 belong to 4 bronze creators (a
+      doubling each), and the tail is 53 free-tier creators at a median 10x. No checkpoints, no silver
+      or gold owners.
+
+      **Paid access is the one people notice**: 11 permanent gates, 3 owners, every one exactly 5x —
+      1,000 to 5,000 Buzz. 31 purchases by 27 distinct buyers in 30 days, so those 27 each pay 4,000
+      Buzz more. The fee rise is spread thin over 1,283 people paying a couple more per generation;
+      this is 27 people paying 4,000 more each.
+
+      Nothing in the diff sweeps or notifies the affected versions. **That is a product call, not a
+      code change** — decide before ship whether these are grandfathered, clamped, or announced.
 - [x] **A slot now comes back when the last price comes off an untransacted version** (2026-08-24).
       This was the sharper half of "setting and then removing does not return the allowance": a creator
       pricing a draft to see what it looked like paid a month's allowance for nothing. Clearing the last
@@ -265,7 +282,9 @@ that have to happen, or be decided, before it reaches creators.
 
 ### Known and accepted, no action planned
 
-- The allowance is a count-then-insert with no advisory lock. A rate limit, not a balance;
+- The allowance is a count-then-insert with nothing serializing it — two concurrent first-time prices
+  can both pass a full month's check. Re-raised in review 2026-08-24 and still accepted: a rate limit,
+  not a balance;
   `free-placement.service.ts` documents the advisory-lock pattern if it ever needs to become one.
 - `creator-shop.service.ts:getEarlyAccessModelPrices` reports a closed early-access window as still
   priced — it skips `isPaidAccessActive`. Pre-existing, unrelated to this change.
@@ -277,6 +296,23 @@ that have to happen, or be decided, before it reaches creators.
   and `DonationGoal.userId` (#4309). Those two are denormalised copies of the current owner and decide
   who gets paid; a slot is a record of who spent an allowance and when. Moving it would refund the
   seller a slot they did spend and charge the recipient for a pricing they never made.
+
+### Closed in review, 2026-08-24
+
+- [x] **The spoke compared a day-granularity charge date against a full timestamp**, so a fee charged
+      the same day a slot was spent read as never charged and refunded a version somebody had paid for
+      — the exact case the lookup exists for. The main app never had it: it compares in SQL against
+      `toDate(since)`. Now truncated on both sides, with a test at the boundary.
+- [x] **The release path re-read post-write state from the replica.** A lagging replica still showing
+      the old price makes the release refuse, silently costing the creator the slot it was called to
+      return. Those three reads are on the primary now; the publish and access reads stay on the
+      replica, because the price write does not touch them.
+- [x] **`hadPermanentGate` came from an hour-old cache** while the fee half of the same question came
+      from a caller's live read. A stale gate makes them disagree and charges a slot for a version that
+      is already priced. Read fresh from the primary on the write path.
+- [x] **The spoke's fee ceiling had no test at all** — a re-implemented rule with no guard is how the
+      spoke becomes a way around it, which is the same shape as the POI guard. Five cases now, incl.
+      the media axis and the raise-only carve-out.
 
 ### Opened by the merge with scheduled sales
 
