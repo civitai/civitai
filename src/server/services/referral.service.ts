@@ -1174,7 +1174,18 @@ export async function advanceReferralSubscriptions(now: Date = new Date()) {
     // for up to 24h. That cost nothing while the referral products carried no multipliers; it
     // costs real Buzz now that they do (ClickUp 868kv5az9).
     if (result !== 'noop') {
-      await invalidateSubscriptionCaches(sub.userId).catch(() => undefined);
+      await invalidateSubscriptionCaches(sub.userId).catch((error) => {
+        // The helper allSettles its six steps and logs each rejection itself, so the only way it
+        // rejects is a SYNCHRONOUS throw from one of them — which aborts the map, leaves the
+        // remaining steps unrun, and logs nothing. Swallowing that silently would leave the user
+        // with a stale multiplier and no trace.
+        logToAxiom({
+          name: 'referral-advance-cache-invalidation-failed',
+          type: 'error',
+          userId: sub.userId,
+          error: (error as Error)?.message,
+        }).catch(() => undefined);
+      });
     }
   }
 

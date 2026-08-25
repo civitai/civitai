@@ -560,6 +560,13 @@ const INT32_MAX = 2147483647;
 // `buzzEvents` is narrower than `BuzzEventLog`: `forId` is Int32, `status` is
 // Enum8('pending','awarded','capped') and `multiplier` is Decimal(3, 2).
 const CLICKHOUSE_STATUSES = new Set(['pending', 'awarded', 'capped']);
+// 🔴 This must equal the ceiling of the DEPLOYED `buzzEvents.multiplier` column, which is
+// Decimal(3, 2). Raising it sends a value the column cannot hold, and an unparseable row is
+// dropped server-side while `sendAward` pays anyway — so this is the ONLY guard, not a backstop.
+// Widening the column was costed and declined (2026-08-24): the ceiling is not reachable today,
+// and it was not worth a mutation over 1.4 billion rows. If that changes, the column moves first
+// and this follows in the same window — never the other way round.
+// See src/server/clickhouse/migrations/2026-08-24-buzz-events-multiplier-width.sql.
 const CLICKHOUSE_MAX_MULTIPLIER = 9.99;
 
 /**
@@ -615,18 +622,9 @@ export function toClickhouseBuzzEvent(event: BuzzEventLog): BuzzEventLog {
     multiplier = CLICKHOUSE_MAX_MULTIPLIER;
     // On the batch path this value is not audit — `process-rewards` reads it back out and
     // `sendAward` pays `awardAmount * multiplier` from it, so a clamp UNDERPAYS rather than
-    // rounding a record. Gold's 4 x MAX_GLOBAL_BONUS 5 is 20, against a Decimal(3, 2) ceiling
-    // of 9.99.
-    //
-    // 🔴 Keep this even once the column is widened, and do not drop the log with it. The clamp is
-    // the backstop; 2026-08-24-buzz-events-multiplier-width.sql raises the ceiling to 99.99, and
-    // the two are not the same guarantee — that migration is applied by hand, so this code has to
-    // be correct on a database where it has not been applied yet.
-    log(event, {
-      message: 'Buzz event multiplier exceeded the ClickHouse column and was clamped',
-      multiplierRaw: coerced.multiplierRaw,
-      clampedTo: CLICKHOUSE_MAX_MULTIPLIER,
-    });
+    // rounding a record. Reported once per batch by the caller, not here: the condition becomes
+    // reachable when a site-wide bonus event switches on, which clamps every gold member's pending
+    // events at once, and this function runs per event per retry.
   }
 
   if (Object.keys(coerced).length === 0) return event;
@@ -647,6 +645,29 @@ export function toClickhouseBuzzEvent(event: BuzzEventLog): BuzzEventLog {
   };
 }
 
+/** Fits a batch to the column types and reports a clamped multiplier once, with a count. */
+function toClickhouseBuzzEvents(events: BuzzEventLog[]): BuzzEventLog[] {
+  let clamped = 0;
+  const rows = events.map((event) => {
+    const row = toClickhouseBuzzEvent(event);
+    if (row.multiplier !== event.multiplier) clamped++;
+    return row;
+  });
+
+  if (clamped > 0) {
+    logToAxiom({
+      name: 'buzz-rewards',
+      type: 'error',
+      message: 'Buzz event multiplier exceeded the ClickHouse column and was clamped',
+      clampedEvents: clamped,
+      batchSize: events.length,
+      clampedTo: CLICKHOUSE_MAX_MULTIPLIER,
+    }).catch(() => null);
+  }
+
+  return rows;
+}
+
 // TODO: sometimes this can cause duplicate entries.
 //  hypothesis is that this occurs due to a combination of
 //  async inserts + ch's merge strategy
@@ -659,7 +680,7 @@ async function addBuzzEvent(
     async () =>
       await clickhouse?.insert({
         table: 'buzzEvents',
-        values: [toClickhouseBuzzEvent(event)],
+        values: toClickhouseBuzzEvents([event]),
         format: 'JSONEachRow',
       }),
     retries,
@@ -673,7 +694,7 @@ async function updateBuzzEvents(events: BuzzEventLog[]) {
     async () =>
       await clickhouse?.insert({
         table: 'buzzEvents',
-        values: events.map(toClickhouseBuzzEvent),
+        values: toClickhouseBuzzEvents(events),
         format: 'JSONEachRow',
       }),
     5,

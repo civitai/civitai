@@ -1,3 +1,17 @@
+-- ⛔ NOT BEING APPLIED. Justin's call, 2026-08-24: the ceiling is not currently reachable, so this
+-- is not worth a production mutation on a 1.4-billion-row table. It is kept as the written record
+-- of the numbers, the hazards and the precedent, so that whoever needs it next does not re-derive
+-- any of it.
+--
+-- 🔴 WHAT THAT MEANS FOR THE CODE: the clamp in src/server/rewards/base.reward.ts is no longer a
+-- backstop, it is the ONLY guard. CLICKHOUSE_MAX_MULTIPLIER = 9.99 is correct and must stay
+-- correct — it has to equal the ceiling of the deployed column, which this file does not change.
+-- Do not raise it while this is unapplied: a value the column cannot hold is a row ClickHouse
+-- drops server-side while sendAward pays anyway.
+--
+-- Reopen this if a global bonus event above 2.5x is ever scheduled — see ClickUp 868kw9m36, which
+-- carries that trigger.
+
 -- buzzEvents.multiplier cannot hold the value the app computes.
 --
 -- The column is Decimal(3, 2) — 3 digits total, 2 after the point — so its ceiling is 9.99. The
@@ -74,6 +88,16 @@ ALTER TABLE buzzEvents UPDATE multiplier = CAST(multiplier_old, 'Decimal(4, 2)')
 
 -- ALTER TABLE buzzEvents DROP COLUMN multiplier_old;
 
--- AFTERWARDS: the clamp in src/server/rewards/base.reward.ts stays as a backstop under the new
--- ceiling, and keeps its log line. It is applied by hand, so the code has to remain correct on a
--- database where this has not been run.
+-- 🔴 AFTERWARDS — THIS MIGRATION BUYS NOTHING WITHOUT IT.
+--
+-- CLICKHOUSE_MAX_MULTIPLIER in src/server/rewards/base.reward.ts is 9.99 and clamps to it, and
+-- that clamp is what pays: process-rewards reads the multiplier back out and sendAward computes
+-- awardAmount * multiplier from it. Widening the column and leaving the constant alone means a
+-- 1.4-billion-row rewrite that changes nothing — gold members are still paid half during a 5x
+-- bonus event, just against a column with room to spare.
+--
+-- Raise it to 99.99 and deploy, IN THAT ORDER, after step 2 completes. Not before: the constant
+-- has to match the column that is actually deployed, and this file is applied by hand.
+--
+-- Keep the clamp itself. It is the backstop, and the code must stay correct on a database where
+-- this has not been run.
