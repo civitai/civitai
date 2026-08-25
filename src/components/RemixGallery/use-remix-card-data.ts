@@ -7,6 +7,7 @@ import {
   useRemixPeelStore,
 } from '~/components/RemixGallery/remix-card-demo';
 import { useRemixGalleryBatch } from '~/components/RemixGallery/RemixGalleryBatchProvider';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export type RemixCardData = { count: number; entries: RemixGalleryCardEntry[] };
 
@@ -23,9 +24,18 @@ export type RemixCardData = { count: number; entries: RemixGalleryCardEntry[] };
  * would scroll past nothing at all.
  */
 export function useRemixCardData(imageId: number): RemixCardData {
+  const features = useFeatureFlags();
   const batch = useRemixGalleryBatch(imageId);
   const modulus = useRemixDemoDensity();
-  const demo = useRemixPeelStore((state) => state.demoActive);
+  // 🔴 Behind the same flag as the feature, not just behind the query string.
+  // `demoActive` is set from `window.location.search` alone, and this hook is
+  // called unconditionally by every image card — so without this an anonymous
+  // visitor appending `?remixdemo=2` to any feed saw golden "this was remixed"
+  // frames on half the cards, with thumbnails attributed by username to real
+  // people who had nothing to do with those images. The demo branch also returns
+  // before the batch is consulted, so it needed no provider and no flag: it was
+  // the one path around the gate the rest of the feature sits behind.
+  const demo = useRemixPeelStore((state) => state.demoActive) && !!features.remixGallery;
 
   return useMemo(() => {
     if (!demo) return batch ?? { count: 0, entries: [] };

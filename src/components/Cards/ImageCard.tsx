@@ -50,12 +50,12 @@ export function ImageCard({ data }: Props) {
           </div>
         </div>
       }
-      footer={
+      footer={({ safe }) => (
         <div className="flex w-full flex-col gap-2">
           {/* In the footer, not over the media: this card's footer is painted on
               the image at the same bottom edge, so an anchored panel lands on the
               reaction counts. */}
-          <RemixedCardFlyout imageId={data.id} />
+          {safe && <RemixedCardFlyout imageId={data.id} />}
           <UserAvatarSimple {...data.user} />
           <div className="flex flex-wrap justify-between gap-1">
             <Reactions
@@ -84,7 +84,7 @@ export function ImageCard({ data }: Props) {
             )}
           </div>
         </div>
-      }
+      )}
     />
   );
 }

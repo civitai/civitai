@@ -1,11 +1,14 @@
 import { Text } from '@mantine/core';
-import { IconHierarchy, IconX } from '@tabler/icons-react';
+import { IconEyeOff, IconHierarchy, IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogLink';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { useFinePointer, useRemixPeelStore } from '~/components/RemixGallery/remix-card-demo';
+import { useBrowsingLevelContext } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { useRemixPeelStore } from '~/components/RemixGallery/remix-card-demo';
+import { Flags } from '~/shared/utils/flags';
+import { useHoverCapable } from '~/components/UserAvatar/UserHoverCard';
 import { useRemixCardData } from '~/components/RemixGallery/use-remix-card-data';
 import { useRemixFlyoutLayout } from '~/components/RemixGallery/remix-flyout-layout';
 import styles from './RemixedCardFlyout.module.scss';
@@ -145,7 +148,13 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
   /** The nearest ancestor that clips, whose edges bound where the panel may go. */
   const clipRef = useRef<HTMLElement | null>(null);
   const [place, setPlace] = useState<Placement | null>(null);
-  const fine = useFinePointer();
+  const fine = useHoverCapable();
+  // Blur is a SEPARATE control from the browsing level the query filters on.
+  // A viewer can admit R/X to their feed and still keep `blurNsfw` on, and every
+  // card honours that through ImageGuard — these tiles are outside it, so they
+  // have to read the same preference or the strip hands out unblurred what the
+  // card underneath is blurring.
+  const { blurLevels } = useBrowsingLevelContext();
   const layout = useRemixFlyoutLayout();
 
   // How many boxes the row will hold: the tiles, plus the `+N` box when the
@@ -292,7 +301,7 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
   useEffect(() => {
     const item = itemRef.current;
     const card = cardRef.current;
-    if (!open || !item || !card) return;
+    if (!open || !count || !item || !card) return;
     const item0 = {
       cv: item.style.contentVisibility,
       contain: item.style.contain,
@@ -314,7 +323,7 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
       item.style.position = item0.position;
       card.style.zIndex = card0;
     };
-  }, [open]);
+  }, [open, count]);
 
   const cancelOpen = () => {
     if (openTimer.current) clearTimeout(openTimer.current);
@@ -382,7 +391,7 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
   // rather than left behind when the feed scrolls under it. One open at a time,
   // so this is a single rAF loop for the whole page.
   useLayoutEffect(() => {
-    if (!open || !fine) return;
+    if (!open || !count || !fine) return;
     let frame = 0;
     const tick = () => {
       measure();
@@ -390,7 +399,7 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
     };
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
-  }, [open, fine, measure]);
+  }, [open, count, fine, measure]);
 
   useEffect(() => {
     if (!open) return;
@@ -454,12 +463,22 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
               triggerRoutedDialog({ name: 'imageDetail', state: { imageId: entry.imageId } });
             }}
           >
-            <EdgeMedia
-              src={entry.url}
-              type={entry.type}
-              width={128}
-              className="aspect-square w-full rounded object-cover ring-1 ring-gray-3 transition hover:opacity-80 dark:ring-dark-4"
-            />
+            {Flags.hasFlag(blurLevels ?? 0, entry.nsfwLevel) ? (
+              // A placeholder rather than a blurred image: the strip is a hover
+              // preview with no room for a reveal toggle, so there is no gesture
+              // that would un-blur it. The tile still opens the remix, and the
+              // detail view has its own guard.
+              <div className="flex aspect-square w-full items-center justify-center rounded bg-gray-3 ring-1 ring-gray-3 dark:bg-dark-5 dark:ring-dark-4">
+                <IconEyeOff size={16} className="text-gray-6 dark:text-dark-2" />
+              </div>
+            ) : (
+              <EdgeMedia
+                src={entry.url}
+                type={entry.type}
+                width={128}
+                className="aspect-square w-full rounded object-cover ring-1 ring-gray-3 transition hover:opacity-80 dark:ring-dark-4"
+              />
+            )}
           </button>
         ))}
         {count > entries.length && (

@@ -1,5 +1,6 @@
 import { createContext, useContext, useMemo } from 'react';
 import type { RemixGalleryCardSummary } from '~/server/services/remix-gallery.service';
+import { chunkStickerIds } from '~/components/Sticker/sticker.util';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '~/utils/trpc';
@@ -44,15 +45,15 @@ export function RemixGalleryBatchProvider({
   // turned off.
   const browsingLevel = useBrowsingLevelDebounced();
 
-  const chunks = useMemo(() => {
-    if (!enabled) return [] as number[][];
-    const unique = [...new Set(imageIds)];
-    const result: number[][] = [];
-    for (let i = 0; i < unique.length; i += SUMMARY_FETCH_CHUNK)
-      result.push(unique.slice(i, i + SUMMARY_FETCH_CHUNK));
-    return result;
+  // The sticker batch's chunker, not a third copy of it. Its own tests pin the
+  // property both providers depend on and neither spells out in code: chunking
+  // in ARRIVAL order keeps an earlier chunk's key stable as a feed appends lower
+  // ids, where sorting would reshuffle every boundary and refetch the surface.
+  const chunks = useMemo(
+    () => (enabled ? chunkStickerIds(imageIds, SUMMARY_FETCH_CHUNK) : []),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [imageIds.join(','), enabled]);
+    [imageIds.join(','), enabled]
+  );
 
   const queries = trpc.useQueries((t) =>
     chunks.map((chunk) =>

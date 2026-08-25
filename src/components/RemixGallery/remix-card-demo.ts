@@ -1,20 +1,24 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { create } from 'zustand';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 
 /**
- * Stand-in data for the remix-gallery card indicator while the treatment is
- * being chosen (ticket 868kumuhp).
+ * Stand-in card data for reviewing the remix indicator, behind `?remixdemo=`.
  *
- * 🔴 TEMPORARY. Nothing here survives the decision. The shipping version reads a
- * batched count for the ids on the surface — the shape `getStickerPlacementCounts`
- * already uses, one query per 100 cards — not a function of the id.
+ * 🔴 This module is NOT deletable, whatever an earlier version of this comment
+ * said. `REMIX_FRAME` and `useRemixPeelStore` below are imported by `ImageCard`,
+ * `ImagesCard` and `RemixedCardFlyout`. Only the `demoRemix*` helpers and the
+ * density hook are the stand-in half.
  *
- * Density is the one thing this cannot be honest about. Production has 237 host
- * images with any approved entry, out of every image on the site, so a faithful
- * demo would show a badge on no card you ever scrolled past. This shows one on
- * roughly a ninth of them so the indicator can be judged at all; read it for fit
- * and behaviour, never for how busy the feed would look.
+ * The stand-in half survives because the feature cannot be reviewed on real
+ * data: a few hundred images site-wide have any approved entry, so a faithful
+ * demo shows a frame on no card anyone scrolls past. This shows one on roughly a
+ * ninth of them so the treatment can be judged at all. Read it for fit and
+ * behaviour, never for how busy a real feed would look.
+ *
+ * It is gated on the remix-gallery feature flag in `useRemixCardData`, not on
+ * the query string alone — the thumbnails carry real usernames, so an ungated
+ * demo attributes remixes to people who never made them.
  */
 const DEFAULT_MODULUS = 9;
 
@@ -91,25 +95,6 @@ export const REMIX_FRAME = {
 /** The remix frame for an image, or nothing when it has no entries. */
 export const remixFrame = (imageId: number, modulus?: number) =>
   demoRemixCount(imageId, modulus) ? REMIX_FRAME : undefined;
-
-/**
- * Whether this viewer has a real pointer.
- *
- * Desktop-only for this pass, by decision — the flyout is a hover affordance and
- * the touch story is deliberately unbuilt. Gates the indicator as well as the
- * panel: a badge that opens nothing is worse on a phone than no badge at all.
- *
- * Starts false and settles in an effect, because the server cannot know and a
- * value read during render would differ between the two and desynchronise
- * hydration.
- */
-export const useFinePointer = () => {
-  const [fine, setFine] = useState(false);
-  useEffect(() => {
-    setFine(window.matchMedia('(hover: hover) and (pointer: fine)').matches);
-  }, []);
-  return fine;
-};
 
 /**
  * Which card has its preview open, site-wide.
