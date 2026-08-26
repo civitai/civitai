@@ -94,6 +94,14 @@ const wanVersionDefs = [
       i2v: 'WanVideo27',
     },
   },
+  {
+    version: 'v3.0',
+    label: '3.0',
+    ecosystems: {
+      t2v: 'WanVideo30',
+      i2v: 'WanVideo30',
+    },
+  },
 ] as const;
 
 /** Wan version type */
@@ -506,6 +514,67 @@ const wan27Graph = new DataGraph<WanVersionCtx, GenerationCtx>()
   );
 
 // =============================================================================
+// Wan 3.0 Video Subgraph
+// =============================================================================
+
+const wan30AspectRatioList: GenerationAspectRatio[] = ['16:9', '4:3', '1:1', '3:4', '9:16'];
+
+const wan30AspectRatiosByResolution: Record<string, typeof wanAspectRatios> = {
+  '480p': getAspectRatioOptions('480p', wan30AspectRatioList),
+  '720p': getAspectRatioOptions('720p', wan30AspectRatioList),
+  '1080p': getAspectRatioOptions('1080p', wan30AspectRatioList),
+};
+
+const wan30Resolutions = [
+  { label: '480p', value: '480p' },
+  { label: '720p', value: '720p' },
+  { label: '1080p', value: '1080p' },
+];
+
+/**
+ * Wan 3.0 video subgraph
+ *
+ * `usePrime` routes to wan3.0-video-prime — same output quality, lower latency,
+ * higher price — so it is a cost decision the user has to make explicitly.
+ */
+const wan30Graph = new DataGraph<WanVersionCtx, GenerationCtx>()
+  .merge(triggerWordsGraph)
+  .merge(snippetsGraph)
+  .merge(promptGraph)
+  .merge(negativePromptGraph)
+  .node('resolution', {
+    input: z.enum(['480p', '720p', '1080p']).optional(),
+    output: z.enum(['480p', '720p', '1080p']),
+    defaultValue: '720p' as const,
+    meta: { options: wan30Resolutions },
+  })
+  .node(
+    'aspectRatio',
+    (ctx) => {
+      const resolution = (ctx as { resolution?: string }).resolution ?? '720p';
+      const options =
+        wan30AspectRatiosByResolution[resolution] ?? wan30AspectRatiosByResolution['720p'];
+      return {
+        ...aspectRatioNode({ options, defaultValue: '16:9' }),
+        when: !(Array.isArray(ctx.images) && ctx.images.length > 0),
+      };
+    },
+    ['images', 'resolution']
+  )
+  // Alibaba documents 2-30s for wan3.0-video, default 5.
+  .node('duration', sliderNode({ min: 2, max: 30, step: 1, defaultValue: 5 }))
+  .node('enablePromptEnhancer', {
+    input: z.boolean().optional(),
+    output: z.boolean(),
+    defaultValue: false,
+  })
+  .node('usePrime', {
+    input: z.boolean().optional(),
+    output: z.boolean(),
+    defaultValue: false,
+  });
+
+// =============================================================================
 // Wan Graph
 // =============================================================================
 
@@ -534,12 +603,14 @@ export const wanGraph = new DataGraph<WanCtx, GenerationCtx>()
   .node(
     'images',
     (ctx) => {
-      const isV27 = ecosystemToVersionDef.get(ctx.ecosystem)?.version === 'v2.7';
+      const version = ecosystemToVersionDef.get(ctx.ecosystem)?.version;
+      const isV27 = version === 'v2.7';
       const isRef2vid = ctx.workflow === 'img2vid:ref2vid';
       const isImg2vid = ctx.workflow === 'img2vid' || ctx.workflow === 'img2vid:first-last';
       const isEditVideo = ctx.workflow.startsWith('vid2vid');
 
-      if (isV27 && isImg2vid) {
+      // v3.0 takes startImage + optional endImage, same slot shape as v2.7.
+      if ((isV27 || version === 'v3.0') && isImg2vid) {
         return {
           ...imagesNode({
             slots: [{ label: 'First Frame', required: true }, { label: 'Last Frame (optional)' }],
@@ -632,6 +703,7 @@ export const wanGraph = new DataGraph<WanCtx, GenerationCtx>()
     'v2.2-5b': wan225bGraph,
     'v2.5': wan25Graph,
     'v2.7': wan27Graph,
+    'v3.0': wan30Graph,
   });
 
 // Export constants for use in components

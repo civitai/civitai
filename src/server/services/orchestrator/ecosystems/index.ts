@@ -463,6 +463,7 @@ async function createEcosystemStep(
     case 'WanVideo-25-I2V':
     case 'WanImage27':
     case 'WanVideo27':
+    case 'WanVideo30':
       return createWanSteps(normalizedData, handlerCtx);
 
     // Vidu

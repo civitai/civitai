@@ -407,6 +407,7 @@ export const ecosystemGraph = new DataGraph<
         'WanVideo-25-T2V',
         'WanVideo-25-I2V',
         'WanVideo27',
+        'WanVideo30',
       ] as const,
       graph: wanGraph,
     },

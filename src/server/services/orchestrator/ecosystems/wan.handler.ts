@@ -21,6 +21,8 @@ import type {
   Wan27FalImageToVideoInput,
   Wan27FalReferenceToVideoInput,
   Wan27FalEditVideoInput,
+  Wan30TextToVideoInput,
+  Wan30ImageToVideoInput,
   VideoGenStepTemplate,
   VideoInterpolationStepTemplate,
   ImageGenStepTemplate,
@@ -52,7 +54,8 @@ type WanBaseModel =
   | 'WanVideo-25-T2V'
   | 'WanVideo-25-I2V'
   | 'WanImage27'
-  | 'WanVideo27';
+  | 'WanVideo27'
+  | 'WanVideo30';
 
 type WanCtx = EcosystemGraphOutput & { ecosystem: WanBaseModel };
 
@@ -62,7 +65,7 @@ type WanSteps =
   | [ImageGenStepTemplate];
 
 // Wan version type
-type WanVersion = 'v2.1' | 'v2.2' | 'v2.2-5b' | 'v2.5' | 'v2.7';
+type WanVersion = 'v2.1' | 'v2.2' | 'v2.2-5b' | 'v2.5' | 'v2.7' | 'v3.0';
 
 // Supported aspect ratios per version (from @civitai/client types)
 const v21AspectRatiosByResolution: Record<
@@ -434,6 +437,50 @@ export const createWanSteps = defineHandler<WanCtx, WanSteps>(async (data, ctx) 
               ? { operation: 'editImage', images: data.images!.map((x) => x.url) }
               : { operation: 'createImage' }),
           }) as Wan27FalTextToImageInput | Wan27FalImageEditInput,
+        },
+      ];
+    }
+
+    // Unlike every other Wan version, v3.0 takes no `provider`, and its image-to-video
+    // input carries startImage/endImage rather than an images array.
+    case 'v3.0': {
+      const v30Base = {
+        engine: 'wan' as const,
+        version: 'v3.0' as const,
+        prompt: data.prompt,
+        negativePrompt: 'negativePrompt' in data ? data.negativePrompt : undefined,
+        cfgScale: 'cfgScale' in data ? data.cfgScale : undefined,
+        duration: 'duration' in data ? data.duration : undefined,
+        resolution: 'resolution' in data ? data.resolution : undefined,
+        enablePromptExpansion:
+          'enablePromptEnhancer' in data ? data.enablePromptEnhancer : undefined,
+        usePrime: 'usePrime' in data ? data.usePrime : undefined,
+        seed: data.seed,
+      };
+
+      if (hasImages) {
+        const [startImage, endImage] = data.images!;
+        return [
+          {
+            $type: 'videoGen',
+            input: removeEmpty({
+              ...v30Base,
+              operation: 'image-to-video',
+              startImage: startImage?.url,
+              endImage: endImage?.url,
+            }) as Wan30ImageToVideoInput,
+          },
+        ];
+      }
+
+      return [
+        {
+          $type: 'videoGen',
+          input: removeEmpty({
+            ...v30Base,
+            operation: 'text-to-video',
+            aspectRatio: data.aspectRatio?.value as Wan30TextToVideoInput['aspectRatio'],
+          }) as Wan30TextToVideoInput,
         },
       ];
     }
