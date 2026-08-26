@@ -23,6 +23,47 @@ const TTL_SECONDS = 5 * 60;
 type StringGet = { get(k: string): Promise<string | null | undefined> };
 type StringSet = { set(k: string, v: string, o: { EX: number }): Promise<unknown> };
 
+/** Trailing dot is the FQDN root and resolves identically, so it must not read as a new domain. */
+function normalizeDomain(domain: string): string {
+  return domain.trim().toLowerCase().replace(/\.+$/, '');
+}
+
+/**
+ * The domain of an email address, normalized for comparison against the blocklist.
+ *
+ * `lastIndexOf`, not `split('@')[1]`: a quoted-local address ("a@b"@host) carries more than one
+ * `@`, and taking the first segment yields a domain that matches no list entry — i.e. it ADMITS a
+ * blocked address. Shared by both hub call sites so reverting one cannot silently diverge from the
+ * other; the main app carries its own copy of the same rule in `blocklist.service.ts`.
+ */
+export function emailDomain(email: string): string {
+  const at = email.lastIndexOf('@');
+  return at === -1 ? '' : normalizeDomain(email.slice(at + 1));
+}
+
+/**
+ * Both sides go through the SAME normalizer. Stripping the input but not the list entry would make
+ * a hand-typed `provider.com.` enforced by the main app and silently inert here — the exact
+ * divergence `emailDomain` was extracted to prevent. The row is hand-edited by moderators, which is
+ * the premise the case-normalization rule rests on too.
+ */
+export function isBlockedDomain(entries: string[], domain: string): boolean {
+  return !!domain && entries.some((entry) => normalizeDomain(entry) === domain);
+}
+
+/**
+ * The address as it should be STORED and LOOKED UP.
+ *
+ * `userExistsByEmail` is both the returning-user exemption for the blocklist and the gate on the
+ * `+`-alias block, and both key on the exact stored string. Without this a trailing dot is a free
+ * second identity against both: one real mailbox, two `User` rows past a citext-unique column.
+ */
+export function normalizeEmailAddress(email: string): string {
+  const at = email.lastIndexOf('@');
+  if (at === -1) return email.trim().toLowerCase();
+  return `${email.slice(0, at).trim()}@${normalizeDomain(email.slice(at + 1))}`;
+}
+
 export async function getBlockedEmailDomains(): Promise<string[]> {
   const redis = getRedis();
   if (redis) {

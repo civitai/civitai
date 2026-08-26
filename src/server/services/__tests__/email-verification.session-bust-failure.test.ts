@@ -22,6 +22,11 @@ vi.mock('~/server/utils/errorHandling', async (importOriginal) => ({
   handleLogError: mockHandleLogError,
 }));
 
+// `requestEmailChange` now runs the email-domain guard first, whose MX probe would otherwise do a
+// live DNS lookup for `ada@example.test` (a reserved TLD that never resolves) and reject before any
+// of the session-bust behaviour under test is reached.
+vi.mock('~/server/utils/email-domain', () => ({ domainAcceptsMail: async () => true }));
+
 const { mockSend } = vi.hoisted(() => ({ mockSend: vi.fn() }));
 vi.mock('~/server/email/templates/emailVerification.email', () => ({
   emailVerificationEmail: { send: mockSend },

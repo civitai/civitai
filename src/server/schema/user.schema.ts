@@ -404,7 +404,9 @@ export const userOnboardingSchema = z.discriminatedUnion('step', [
   z.object({
     step: z.literal(OnboardingSteps.Profile),
     username: usernameInputSchema,
-    email: z.string(),
+    // `.email()`, not a bare string: this is the only writer of `User.email` that was unvalidated,
+    // so a tRPC caller could post `x@!!!` and have it stored verbatim.
+    email: z.string().email(),
   }),
   z.object({ step: z.literal(OnboardingSteps.BrowsingLevels) }),
   z.object({

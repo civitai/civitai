@@ -8,11 +8,22 @@ import {
   fetchProfile,
   isStubProviderEnabled,
 } from '$lib/server/auth/providers';
-import { findOrCreateUser, linkAccountToUser } from '$lib/server/auth/users';
+import {
+  findOrCreateUser,
+  linkAccountToUser,
+  userExistsByEmail,
+  isLinkedAccount,
+} from '$lib/server/auth/users';
+import {
+  emailDomain,
+  getBlockedEmailDomains,
+  isBlockedDomain,
+  normalizeEmailAddress,
+} from '$lib/server/auth/blocklist';
 import { establishSession } from '$lib/server/auth/session';
 import { buildPostLoginRedirect } from '$lib/server/auth/redirect';
 import { buildPostLoginOriginCheck } from '$lib/server/oauth/first-party';
-import { loginsTotal } from '$lib/server/metrics';
+import { blockedEmailDomainSignupsTotal, loginsTotal } from '$lib/server/metrics';
 
 export const GET: RequestHandler = async ({ params, url, cookies, locals }) => {
   const provider = getProvider(params.provider);
@@ -51,6 +62,9 @@ export const GET: RequestHandler = async ({ params, url, cookies, locals }) => {
     codeVerifier: verifier,
   });
   const profile = await fetchProfile(provider, accessToken);
+  // Normalize BEFORE anything reads it: `findOrCreateUser` both looks up and STORES this string,
+  // and a trailing-dot variant would be a second row for one real mailbox.
+  if (profile.email) profile.email = normalizeEmailAddress(profile.email);
 
   // Account-LINKING: attach this provider to the CURRENT user (no new user, no new session, no cross-domain
   // sync). On conflict, bounce back with an error the account page surfaces. The session must STILL be present
@@ -65,6 +79,33 @@ export const GET: RequestHandler = async ({ params, url, cookies, locals }) => {
     const target =
       result === 'conflict' ? appendQuery(returnUrl, 'error', 'AccountNotLinked') : returnUrl;
     redirect(302, buildPostLoginRedirect(target, null, url.origin, dev, isAllowedOrigin));
+  }
+
+  // Blocked email domains, OAuth edge of the same gate the email action applies. A provider-VERIFIED
+  // address is deliverable by construction, so the blocklist is the whole check here — no MX probe.
+  // Ordered blocklist-first so the two lookups below only run for an address that is actually
+  // blocked; a returning user (linked account, or an existing row on that address) is exempt for the
+  // same reason as the email action — a domain appended upstream later must not lock anyone out.
+  if (profile.email && profile.emailVerified) {
+    const domain = emailDomain(profile.email);
+    if (
+      domain &&
+      isBlockedDomain(await getBlockedEmailDomains(), domain) &&
+      !(await isLinkedAccount(provider.id, profile.providerAccountId)) &&
+      !(await userExistsByEmail(profile.email))
+    ) {
+      blockedEmailDomainSignupsTotal.inc({ path: 'oauth' });
+      // NOT `error(400)`. This is a top-level browser navigation and apps/auth ships no
+      // +error.svelte, so a throw here renders SvelteKit's bare fallback page with no way back --
+      // and the flow cookies that would let them retry were already deleted above. Send them to the
+      // hub's own login page, which is what the email half of this same gate effectively does.
+      // `returnUrl` was read at the top, BEFORE the flow cookies were deleted, so a successful
+      // retry still lands where they started rather than at AUTH_DEFAULT_RETURN_URL.
+      const retry = new URL('/login', url.origin);
+      retry.searchParams.set('error', 'BlockedDomain');
+      if (returnUrl && returnUrl !== '/') retry.searchParams.set('returnUrl', returnUrl);
+      redirect(302, `${retry.pathname}${retry.search}`);
+    }
   }
 
   // Standard login / signup — the hub sets the session cookie here.

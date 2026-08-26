@@ -120,7 +120,7 @@ import {
   UserEngagementType,
 } from '~/shared/utils/prisma/enums';
 import blockedUsernames from '~/utils/blocklist-username.json';
-import { getBlocklistData } from '~/server/services/blocklist.service';
+import { assertEmailAllowed, getBlocklistData } from '~/server/services/blocklist.service';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { simpleCosmeticSelect } from '../selectors/cosmetic.selector';
@@ -628,7 +628,11 @@ export const updateUserById = async ({
 }) => {
   if (data.email) {
     const existingData = await dbWrite.user.findFirst({ where: { id }, select: { email: true } });
+    // Only a user with NO address on file can set one here, so the guard runs on exactly the writes
+    // that survive — an existing address was already vetted when it was set.
     if (existingData?.email) delete data.email;
+    else if (typeof data.email === 'string') await assertEmailAllowed(data.email);
+    else delete data.email;
   }
 
   if (
@@ -1247,6 +1251,9 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
 
   const { imageRemoval: _removalChoice, ...meta } = (user.meta ?? {}) as UserMeta;
 
+  // Deliberately NOT domain-guarded, same exempt class as `forceUpdateUserIdentity`: this is a
+  // moderator putting back the address a closed account already had, and re-judging it against a
+  // list that moved since would make some accounts unrestorable.
   await dbWrite.$transaction([
     dbWrite.user.update({
       where: { id },

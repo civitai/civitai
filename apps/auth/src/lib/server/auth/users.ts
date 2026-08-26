@@ -68,6 +68,17 @@ export async function userExistsByEmail(email: string): Promise<boolean> {
   return !!row;
 }
 
+/** True if this provider identity is already linked — i.e. a RETURNING user, not a signup. */
+export async function isLinkedAccount(provider: string, providerAccountId: string) {
+  const row = await db
+    .selectFrom('Account')
+    .select('userId')
+    .where('provider', '=', provider)
+    .where('providerAccountId', '=', providerAccountId)
+    .executeTakeFirst();
+  return !!row;
+}
+
 // Resolve (or provision) a Civitai user for an upstream OAuth profile, then link the Account.
 // Mirrors NextAuth's adapter behavior: match by linked account → verified email → create.
 export async function findOrCreateUser(
