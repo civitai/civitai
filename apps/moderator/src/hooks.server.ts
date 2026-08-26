@@ -3,8 +3,8 @@ import { civitaiAppUrl } from '$lib/server/civitai-url';
 import { guard } from '$lib/server/auth';
 import { applyGrants, canAccess, resolvePermissions } from '$lib/server/access';
 import { loadPageAccessGrants } from '$lib/server/page-access';
-import { authenticateWebhookToken } from '$lib/server/webhook-endpoint';
-import { logAxiomError } from '$lib/server/axiom';
+import { authenticateWebhookToken, type AcceptedCredential } from '$lib/server/webhook-endpoint';
+import { logAxiomError, logToAxiom } from '$lib/server/axiom';
 
 // Where authenticated-but-not-a-moderator users get sent. A 403 would be a dead end (re-login can't
 // grant the role); bounce them to the main site instead. Overridable via env for non-prod hosts.
@@ -21,6 +21,56 @@ const NON_MODERATOR_REDIRECT = civitaiAppUrl();
 // where there is no cookie). Everything else is gated.
 const PUBLIC_PATHS = new Set(['/favicon.svg']);
 
+/**
+ * The `event` string every credential-attribution line carries. One constant so a soak query and the
+ * emit below cannot drift, and so renaming it is a visible edit rather than a silently-unmatched
+ * filter.
+ */
+export const CREDENTIAL_ATTRIBUTION_EVENT = 'webhook credential presented';
+
+/**
+ * Records WHICH inbound service credential authenticated a request — the runtime signal that makes
+ * dropping WEBHOOK_TOKEN from `acceptedTokens` a checkable claim rather than an inferred one (see the
+ * header of $lib/server/webhook-endpoint).
+ *
+ * 🔴 EMITTED FOR EVERY CLASS, NOT JUST THE LEGACY ONE. Logging only WEBHOOK_TOKEN looks like the
+ * obvious saving — it is the thing we are waiting to stop seeing — and it destroys the evidence. A
+ * zero from a legacy-only emitter is indistinguishable from an emitter that was never deployed, never
+ * ingested, or quietly broken, so it can never license the removal. With both classes emitted, a
+ * non-zero MOD_INBOUND_TOKEN count is the IN-BAND POSITIVE CONTROL standing beside the WEBHOOK_TOKEN
+ * zero in the same window and proving the instrument was live when it read zero. The pair is the
+ * evidence. Do not narrow this to the legacy class.
+ *
+ * 🔴 NOTHING DERIVED FROM THE TOKEN'S BYTES GOES IN THE RECORD — no value, prefix, suffix, length or
+ * hash. Any of those is a credential oracle on a log stream that is far more widely readable than the
+ * secret store. The class NAME is the whole payload. `pathname` specifically, never `url.href` or
+ * `url.search`: callers may present the token as `?token=`, so the full URL carries the secret.
+ *
+ * `userAgent` and `method` are here because the migration's question is not only WHETHER the legacy
+ * credential is still presented but BY WHOM — a count with no way to reach the caller cannot be acted
+ * on.
+ *
+ * Fire-and-forget, and swallows its own failure both ways a promise-returning call can fail —
+ * attribution must never be the thing that breaks a request. Same contract as `logAxiomError`.
+ */
+function logCredentialAttribution(
+  event: Parameters<Handle>[0]['event'],
+  credential: AcceptedCredential
+): void {
+  try {
+    void logToAxiom({
+      type: 'info',
+      event: CREDENTIAL_ATTRIBUTION_EVENT,
+      credential,
+      path: event.url.pathname,
+      method: event.request.method,
+      userAgent: event.request.headers.get('user-agent'),
+    }).catch(() => {});
+  } catch {
+    /* see above: a logging fault must not surface as a failed moderation call */
+  }
+}
+
 export const handle: Handle = async ({ event, resolve }) => {
   if (PUBLIC_PATHS.has(event.url.pathname)) return resolve(event);
   // An /api/* request presenting a credential of its own is verified HERE and never redirected to the hub
@@ -30,9 +80,18 @@ export const handle: Handle = async ({ event, resolve }) => {
   // can attribute a write.
   if (event.url.pathname.startsWith('/api/')) {
     const token = authenticateWebhookToken(event);
-    if (token instanceof Response) return token;
-    if (token === 'webhook') {
-      event.locals.tokenClient = token;
+    // Branch on the tag and nothing else — `refused` carries a Response, and a Response is an object,
+    // so an `instanceof`/`typeof` discriminator would silently start mis-sorting the moment another
+    // object-shaped member is added.
+    if (token.kind === 'refused') return token.response;
+    if (token.kind === 'authenticated') {
+      logCredentialAttribution(event, token.credential);
+      // 🔴 Stays the bare string, for BOTH credential classes. Which credential authenticated is a
+      // migration question and belongs in the log line above; it is NOT a privilege distinction, and
+      // three call sites compare this field strictly (`!== 'webhook'` in the two endpoint wrappers,
+      // truthiness in defineEndpoint). Widening it to carry the class would refuse every
+      // token-authenticated request at those sites without a type error anywhere.
+      event.locals.tokenClient = 'webhook';
       event.locals.grants = {};
       return resolve(event);
     }
