@@ -136,13 +136,23 @@ export function listingKindSupports(kind: string, capability: ListingCapability)
  * The listing statuses the CANONICAL AUTHORING PAGE may be opened on.
  *
  * 🔴 MIRRORS `getMyListingForEdit`'s existing switch, deliberately, so the entry point and
- * the first thing it loads cannot disagree: that proc already refuses `removed` with
- * FORBIDDEN ('removed by a moderator and can no longer be edited') and `rejected` with
+ * the first thing it loads cannot disagree: that proc refuses `removed` with FORBIDDEN
+ * ('removed by a moderator and can no longer be edited') and `rejected` with
  * MUST_RESUBMIT. Before this gate the authoring page opened happily on a moderator-REMOVED
  * listing — every tab rendered, and the Collaborators tab was fully live, so an owner
  * could still invite someone onto a delisted app and the acceptance would mint Forgejo
  * `write` on its repo. The procs were always going to refuse the CONTENT edits; it is this
  * PR that made the page reachable, so the gate belongs here.
+ *
+ * 🔴 IT NO LONGER MIRRORS THAT SWITCH EXACTLY, AND THE DIVERGENCE IS DELIBERATE.
+ * `getMyListingForEdit`/`updateListing` now admit a `removed` listing whose LAST
+ * moderation event is the owner's own `owner-unpublish` — an owner who took
+ * their app down to repair it can now repair it. This set was NOT widened to match,
+ * because `removed` is one status string covering two states and this constant cannot see
+ * which: adding it would also open every CONTENT tab — above all Collaborators, where
+ * accepting an invite mints repo `write` — on a MODERATOR-delisted listing. The status
+ * column is the wrong instrument for that question; the procs branch on the last
+ * moderation action instead. Widen this set only if it too gains that bit.
  */
 export const AUTHORABLE_LISTING_STATUSES = ['draft', 'pending', 'approved'] as const;
 

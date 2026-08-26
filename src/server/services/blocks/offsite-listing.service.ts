@@ -41,6 +41,11 @@ import {
   assertListingMeetsFloor,
 } from '~/server/services/blocks/app-listing-assets.service';
 import { assertOffsiteListingActionable } from '~/server/services/blocks/app-listing-actionable.service';
+import {
+  isOwnerUnpublishedListing,
+  readLastModerationAction,
+  isOwnerUnpublishAction,
+} from '~/server/services/blocks/app-listing-owner-unpublish';
 // TYPE-ONLY (erased at compile time) — the runtime reach into `app-access.service` stays
 // a dynamic import, so this adds nothing to the module graph. See `resolveListingRole`.
 import type { AppRole } from '~/server/services/blocks/app-access.service';
@@ -1124,11 +1129,28 @@ export async function updateListing(opts: {
   };
 
   switch (listing.status) {
-    case 'removed':
-      throw new OffsiteRequestError(
-        'FORBIDDEN',
-        'this listing has been removed by a moderator and can no longer be edited'
-      );
+    case 'removed': {
+      // 🔴 `removed` IS TWO DIFFERENT STATES WEARING ONE STATUS STRING. An owner who
+      // unpublished their own app to fix it up lands here, and so does a listing a
+      // moderator took down; only the last moderation event separates them. Refusing both
+      // meant the owner's "take it down, repair it, put it back" loop had no repair step.
+      // See `app-listing-owner-unpublish` — PRIMARY read, `null` (no events) fails closed.
+      if (!(await isOwnerUnpublishedListing(dbWrite, listingId))) {
+        throw new OffsiteRequestError(
+          'FORBIDDEN',
+          'this listing has been removed by a moderator and can no longer be edited'
+        );
+      }
+      // Edit IN PLACE, exactly like draft/pending, and for the same reason: the listing is
+      // not being served, so there is nothing live to protect with a shadow revision and
+      // no re-review to stage. The go-live gates run on the way BACK UP —
+      // `republishOwnListing` re-asserts scan-clean assets + off-site actionability before
+      // it flips removed → approved — so an edit made while down still cannot reach the
+      // store unreviewed.
+      const data = buildListingPatchData(effectivePatch, patchOpts);
+      await dbWrite.appListing.update({ where: { id: listingId }, data });
+      return { listingId, status: listing.status, requiresReview: false, shadowId: null };
+    }
     case 'rejected':
       // reject() deletes the draft, so this row usually doesn't exist (→ NOT_FOUND
       // above). If a rejected row somehow persists, steer the caller to resubmit.
@@ -1672,8 +1694,9 @@ async function loadListingEditView(
 /**
  * AUTHOR: owner-gated prefill read for the dual-mode edit wizard. Loads the
  * caller's OWN listing (NOT_OWNED / NOT_FOUND), asserts it is EDITABLE
- * (draft/pending/approved; rejected → MUST_RESUBMIT, removed → FORBIDDEN,
- * an internal shadow → INVALID_REVISION), and returns the prefill scalars +
+ * (draft/pending/approved; rejected → MUST_RESUBMIT; removed → editable ONLY when the
+ * owner unpublished it themselves, else FORBIDDEN; an internal shadow →
+ * INVALID_REVISION), and returns the prefill scalars +
  * current assets from the EFFECTIVE source: an approved parent's in-progress
  * shadow when one exists (so a resumed revision prefills its edited state), else
  * the listing itself. `slug` + `status` + `parentId` always describe the live
@@ -1693,11 +1716,19 @@ export async function getMyListingForEdit(opts: {
     );
   }
   switch (listing.status) {
-    case 'removed':
-      throw new OffsiteRequestError(
-        'FORBIDDEN',
-        'this listing has been removed by a moderator and can no longer be edited'
-      );
+    case 'removed': {
+      // 🔴 Same two-states-one-string branch as `updateListing` — the prefill read has to
+      // agree with the write path it prefills, or the owner gets an editor they are then
+      // refused by. `app-listing-owner-unpublish` is the single spelling of the predicate.
+      const lastAction = await readLastModerationAction(dbWrite, listingId);
+      if (!isOwnerUnpublishAction(lastAction)) {
+        throw new OffsiteRequestError(
+          'FORBIDDEN',
+          'this listing has been removed by a moderator and can no longer be edited'
+        );
+      }
+      break;
+    }
     case 'rejected':
       throw new OffsiteRequestError(
         'MUST_RESUBMIT',
@@ -2004,6 +2035,15 @@ export async function getMyListingForApp(opts: {
     effectiveId !== listing.id ? dbWrite : dbRead
   );
 
+  // 🔴 Only a `removed` listing needs this — it is the ONE status whose editability is not
+  // decided by the status column alone (owner self-unpublish and moderator takedown both
+  // write it). Gated on the status so the common path keeps its existing round-trip count.
+  // PRIMARY, not the replica: see `readLastModerationAction` — a lagging replica can hide
+  // a moderator's just-written `delist` behind the owner's older `owner-unpublish`, and
+  // reading the primary can only err toward refusing.
+  const ownerUnpublished =
+    listing.status === 'removed' ? await isOwnerUnpublishedListing(dbWrite, listing.id) : false;
+
   return {
     appListingId: listing.id,
     status: listing.status,
@@ -2013,7 +2053,7 @@ export async function getMyListingForApp(opts: {
     hasPendingRevision: !!pendingRevisionReq,
     shadowId,
     editTargetId: effectiveId,
-    editBlockedReason: listingMediaEditBlockedReason(listing),
+    editBlockedReason: listingMediaEditBlockedReason(listing, ownerUnpublished),
     assets,
   };
 }
@@ -2026,15 +2066,37 @@ export async function getMyListingForApp(opts: {
  * media editor mounting against a `removed` / `rejected` listing. Lazy creation
  * removes that call, so the verdict is computed here (read-only) and surfaced on the
  * read. Mirrors `updateListing`'s state routing: draft/pending edit in place,
- * approved edits through a revision, rejected → resubmit, removed → terminal. An
- * internal shadow (`revisionOfId != null`) is not a page the owner addresses directly.
+ * approved edits through a revision, rejected → resubmit, removed → terminal UNLESS the
+ * owner removed it themselves. An internal shadow (`revisionOfId != null`) is not a page
+ * the owner addresses directly.
+ *
+ * 🔴 STILL PURE AND STILL SYNCHRONOUS — the one bit that `removed` cannot supply arrives
+ * as an ARGUMENT rather than as a DB read inside this function. `status='removed'` is
+ * written by both an owner self-unpublish and a moderator takedown, so answering
+ * "editable?" needs the listing's last moderation action; making this function fetch that
+ * itself would have made it `async` and DB-bound, and the reason it is exported at all is
+ * that its branch table is unit-testable WITHOUT a DB. Its only caller already has the
+ * listing loaded and is already `async`, so the read belongs there.
+ *
+ * 🔴 `ownerUnpublished` IS REQUIRED, NOT OPTIONAL-DEFAULTING-TO-FALSE. A default would be
+ * the safe VALUE (refuse) but the wrong ERGONOMICS: a future caller could omit it and
+ * silently reintroduce exactly the defect this parameter fixes, with nothing going red.
+ * Required means every call site has to decide, out loud.
  *
  * Pure + exported so the branch table is unit-testable without a DB.
  */
-export function listingMediaEditBlockedReason(listing: {
-  status: string;
-  revisionOfId: string | null;
-}): string | null {
+export function listingMediaEditBlockedReason(
+  listing: {
+    status: string;
+    revisionOfId: string | null;
+  },
+  /**
+   * Did the OWNER take this listing down themselves (last moderation action ===
+   * `owner-unpublish`)? Only consulted on `removed`. `false` on a moderator takedown AND
+   * on a listing with no recorded events — see `app-listing-owner-unpublish`.
+   */
+  ownerUnpublished: boolean
+): string | null {
   if (listing.revisionOfId != null) {
     return 'this listing is an internal revision draft and cannot be edited directly';
   }
@@ -2046,7 +2108,14 @@ export function listingMediaEditBlockedReason(listing: {
     case 'rejected':
       return 'this listing was rejected; submit a new listing instead of editing it';
     case 'removed':
-      return 'this listing has been removed by a moderator and can no longer be edited';
+      // 🔴 The owner's OWN unpublish is a repair state, not a terminal one: they took the
+      // app down to fix it and putting it back (`republishOwnListing`) re-runs the
+      // scan-clean + actionability go-live gates, so editing while it is down cannot
+      // sneak anything past review. A MODERATOR takedown stays terminal — and keeps
+      // saying so, which for this caller is now only ever the true attribution.
+      return ownerUnpublished
+        ? null
+        : 'this listing has been removed by a moderator and can no longer be edited';
     default:
       return `cannot edit a listing in status ${listing.status}`;
   }

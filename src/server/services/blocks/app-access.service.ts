@@ -6,6 +6,11 @@ import { dbRead } from '~/server/db/client';
 // on the hot path of every `/apps/mine` render, where a dynamic import would cost a
 // microtask hop per call for nothing.
 import { loadListingAssetScansBatch } from '~/server/services/blocks/app-listing-assets.service';
+import {
+  isOwnerUnpublishAction,
+  OWNER_UNPUBLISH_EVENT,
+  readLastModerationAction,
+} from '~/server/services/blocks/app-listing-owner-unpublish';
 import { listingCoverUrl, listingIconUrl } from '~/server/services/blocks/listing-media-url';
 import type { ListingProblem } from '~/server/services/blocks/listing-problems';
 import { computeListingProblems } from '~/server/services/blocks/listing-problems';
@@ -948,14 +953,19 @@ export type AppListingAuthoringContext = Omit<
  * on (it is what `republishOwnListing`'s last-event guard permits), so every other verb
  * collapses to `other` before it leaves the server. Widening this back to the raw string
  * re-opens the editor-disclosure hole described at the call site — do not "simplify" it away.
+ *
+ * 🔴 RE-EXPORTED FROM `app-listing-owner-unpublish`, NOT REDECLARED. That module owns the
+ * server-side predicate the SERVER branches on (`republishOwnListing`'s go-live guard and
+ * the author edit paths); this is the same fact reaching the CLIENT. Two literals spelling
+ * one action is how they drift apart.
  */
-export const OWNER_UNPUBLISH_EVENT = 'owner-unpublish';
+export { OWNER_UNPUBLISH_EVENT };
 export type NormalizedModerationAction = typeof OWNER_UNPUBLISH_EVENT | 'other';
 
 /** `null` in ⇒ `null` out (no event); the owner's own unpublish keeps its name; all else → `other`. */
 function normalizeLastModerationAction(action: string | null): NormalizedModerationAction | null {
   if (action == null) return null;
-  return action === OWNER_UNPUBLISH_EVENT ? OWNER_UNPUBLISH_EVENT : 'other';
+  return isOwnerUnpublishAction(action) ? OWNER_UNPUBLISH_EVENT : 'other';
 }
 
 /** Hydrate {@link resolveAccessibleListingIds} into rows, newest listing first. */
@@ -1345,21 +1355,21 @@ export async function getAppListingAuthoringContext(opts: {
    * anything on — every other status keeps this read at the two round trips it already
    * did. Same keyset (`orderBy desc` + `take 1`) the batched list read uses, and the same
    * NORMALISATION on the way out.
+   *
+   * 🔴 THE REPLICA IS CORRECT HERE and it is the opposite call from the one the SERVER
+   * gates make. This value only decides which BUTTON the Publishing tab renders; the
+   * mutation behind it re-checks on the primary inside its own transaction
+   * (`republishOwnListing`), so a stale read costs at worst one refused click. The gates
+   * in `offsite-listing.service` pass `dbWrite` because there a stale read would GRANT.
    */
-  const lastEvent =
-    row.status === 'removed'
-      ? await dbRead.appListingModerationEvent.findFirst({
-          where: { appListingId: access.seatListingId },
-          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-          select: { action: true },
-        })
-      : null;
+  const lastAction =
+    row.status === 'removed' ? await readLastModerationAction(dbRead, access.seatListingId) : null;
   return {
     appListingId: access.seatListingId,
     slug: row.slug,
     name: row.name,
     status: row.status,
-    lastModerationAction: normalizeLastModerationAction(lastEvent?.action ?? null),
+    lastModerationAction: normalizeLastModerationAction(lastAction),
     // 🔴 KIND AND BLOCK COME FROM `access` (the PARENT), never from the row asked for —
     // a shadow carries `appBlockId: null` by construction, so reading them off it would
     // make an in-flight revision look off-site and silently strip the block-only tabs.
