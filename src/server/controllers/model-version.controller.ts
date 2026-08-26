@@ -12,6 +12,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { getFeatureFlagsLazy, userTiers } from '~/server/services/feature-flags.service';
 import type { SessionUser } from '~/types/session';
 import type { BaseModelType } from '~/server/common/constants';
+import type { LicensingSourceRejection } from '~/server/schema/model-version.schema';
 import { type BaseModel, DEPRECATED_BASE_MODELS } from '~/shared/constants/basemodel.constants';
 import { baseModelLicenses, constants } from '~/server/common/constants';
 import type { Context, ProtectedContext } from '~/server/createContext';
@@ -542,18 +543,101 @@ export const upsertModelVersionHandler = async ({
         input.licensingFeeSettlementCurrency = LicensingFeeSettlementCurrency.Buzz;
     }
 
-    // Licensing lineage: the chosen source must be a registered LicensingRoot for
-    // the same base model. Guards against pointing at an arbitrary version to
-    // dodge the base-model rule.
+    // Set when the block below repairs the payload, so the audit can attribute the change to the rule
+    // rather than to the creator. Without it the first rows this new trail ever produces are automated
+    // repairs wearing an owner's name — which is the opposite of why the field was added to the audit.
+    let licensingSourceCoercedReason: LicensingSourceRejection | undefined;
+    // Licensing lineage: the chosen source must be a registered LicensingRoot for the same base model
+    // AND the same model type. The model-type half is the one that was missing (CU 868kwf2fd,
+    // Freshdesk #69622): every LicensingRoot row is a Checkpoint, so a LoRA that inherits one charges
+    // the checkpoint's per-image fee to everyone who generates with it, settled to the CHECKPOINT
+    // owner, on a line labelled with the LoRA's own name. The reporter paid 10 Buzz/image instead of 5
+    // for a month, and no surface on the site could clear it. `getLicensingRoots` already scopes the
+    // picker by model type "so a LoRA isn't offered a checkpoint's fee" — this is the same rule, on the
+    // side of the wire the client cannot race.
+    //
+    // 🔴 Coerced to null, NOT rejected, and that is deliberate — do not "tighten" it into a throw.
+    // The version editor re-submits the stored value out of `defaultValues`, so throwing would make
+    // every already-stamped version unsaveable by its owner. 159 versions were in that state when this
+    // landed, and six of them ALSO carry a base model that no longer matches their source (four
+    // Checkpoints on Wan Video / Flux / SDXL / Other, two LoRAs on Illustrious, all pointing at Anima's
+    // root) — those six already hit the older base-model throw below and cannot be saved at all today.
+    // A throw would strand real creators on an error they cannot act on, which is a worse bug than the
+    // one being fixed. Coercing blocks the bad write AND repairs the stored value on the owner's next
+    // save.
+    // Nothing legitimate is lost: the picker only ever offers roots that pass this same scope, so a
+    // deliberate selection cannot reach the coercion. It is also not a way to dodge a fee — sending
+    // `null` outright has always been allowed, and 99.77% of Anima and Krea 2 LoRAs do exactly that
+    // (107 of 46,994 and 45 of 19,999 carry a source at all).
     if (input.licensingSourceVersionId != null) {
-      const source = await dbRead.licensingRoot.findUnique({
-        where: { modelVersionId: input.licensingSourceVersionId },
-        select: { baseModel: true },
-      });
-      if (!source)
-        throw throwBadRequestError('Invalid licensing source: not a licensing lineage root.');
-      if (source.baseModel !== input.baseModel)
-        throw throwBadRequestError('Licensing source must share the same base model.');
+      const [source, destinationModel] = await Promise.all([
+        // `dbWrite`, matching the destination read below rather than sitting one line above it under the
+        // opposite rule. A root registered moments ago that misses on the replica reads as
+        // `'not-a-root'`, which silently clears a legitimate source with no error to the creator.
+        dbWrite.licensingRoot.findUnique({
+          where: { modelVersionId: input.licensingSourceVersionId },
+          select: { baseModel: true, modelType: true },
+        }),
+        // 🔴 The model this save LANDS the version on, which is `input.modelId` — always, on a create
+        // and on an update alike. `modelId` is not destructured in `upsertModelVersion`, so it rides
+        // `...data` into `dbWrite.modelVersion.update`: the payload's modelId is not a claim about
+        // where the version lives that we would have to verify, it is the instruction for where it
+        // will live. Whatever it names is where the fee will apply, so it is the only model whose type
+        // matters.
+        //
+        // Two earlier rounds of this fix got that backwards — one read the STORED model (so a version
+        // could be re-parented onto a LoRA model in the same request and keep a checkpoint's fee), the
+        // next required BOTH to match (which silently cleared a valid root when someone moved a
+        // version out of a mis-typed model into a correctly typed one). If `modelId` is ever stripped
+        // from the update payload, the destination becomes the stored model and this line has to move
+        // with it — the test named for the move is what will tell you.
+        //
+        // Not `getModel`: that resolves its client through `getDbWithoutLag`, so a model created
+        // seconds ago — the ModelWizard's step-1-then-step-2 shape exactly — can come back as a
+        // replica miss. The coercion below turns a miss into `null`, and because it coerces rather
+        // than throws the creator is never told. `storedUsageControl` above uses `dbWrite` for the
+        // same reason: "a replica miss must not read as already-generation-only".
+        input.modelId
+          ? dbWrite.model.findUnique({ where: { id: input.modelId }, select: { type: true } })
+          : null,
+      ]);
+      // A destination that cannot be read coerces rather than passing. Note what this branch is and is
+      // not: `upsertModelVersion` opens with `findUniqueOrThrow` on `data.modelId` against the same
+      // `dbWrite` client, so a miss here is a throw a few statements later and NO save lands either
+      // way. It is not load-bearing for any persisted outcome. It is kept because writing it the
+      // permissive way (`destinationModel && ...`) makes "we could not check" indistinguishable from
+      // "we checked and it was fine" in the source, and the next person to move this block should not
+      // have to rediscover which of those it meant.
+      const rejectedReason: LicensingSourceRejection | null = !source
+        ? 'not-a-root'
+        : source.baseModel !== input.baseModel
+        ? 'base-model-mismatch'
+        : !destinationModel
+        ? 'model-not-found'
+        : destinationModel.type !== source.modelType
+        ? 'model-type-mismatch'
+        : null;
+      if (rejectedReason) {
+        // A coercion leaves no trace in the row it corrected, so emit the deciding branch. This is
+        // also the only signal that the client is still sending bad values.
+        logToAxiom({
+          name: 'model-version-licensing-source-rejected',
+          type: 'info',
+          reason: rejectedReason,
+          userId,
+          // `modelId` is where this save puts the version, and `modelType` is that model's type — the
+          // two have to name the same row or the log stops being evidence.
+          modelId: input.modelId,
+          modelVersionId: input.id ?? null,
+          requestedSourceVersionId: input.licensingSourceVersionId,
+          modelType: destinationModel?.type ?? null,
+          sourceModelType: source?.modelType ?? null,
+          baseModel: input.baseModel ?? null,
+          sourceBaseModel: source?.baseModel ?? null,
+        }).catch(() => null);
+        input.licensingSourceVersionId = null;
+        licensingSourceCoercedReason = rejectedReason;
+      }
     }
 
     const version = await upsertModelVersion({
@@ -562,6 +646,7 @@ export const upsertModelVersionHandler = async ({
       tracker: ctx.track,
       actorUserId: userId,
       isModerator: ctx.user.isModerator,
+      licensingSourceCoercedReason,
     });
     if (!version) throw throwNotFoundError(`No model version with id ${input.id as number}`);
 

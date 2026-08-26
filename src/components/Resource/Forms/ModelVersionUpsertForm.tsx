@@ -552,9 +552,19 @@ export function ModelVersionUpsertForm({
   const removingStoredCharge = removingStoredFee || removingStoredGate;
 
   const licensingSourceVersionId = form.watch('licensingSourceVersionId') ?? null;
+  // 🔴 `enabled` waits on the model's TYPE, not just on `baseModel`. Do not relax it back.
+  // `baseModel` is seeded synchronously (version -> previousBaseModel -> lastUsedBaseModel -> default)
+  // while `model` arrives from a query, so gating on `baseModel` alone fires a first fetch with
+  // `modelType: undefined`. The type filter inside `getLicensingRoots` is conditional, so that
+  // unscoped fetch returns the ecosystem's CHECKPOINT roots — and the default-selection effect below
+  // stamps one onto a LoRA with `shouldDirty: false`, where nothing on screen marks it as changed. The
+  // scoped refetch then returns [], and the effect early-returns on a null default, so it can never
+  // clear what it already set. That is how 160 non-Checkpoint versions came to charge a checkpoint's
+  // per-image fee (CU 868kwf2fd). The server coerces the same case, but this is what stops the form
+  // showing a selection it is about to lose.
   const { data: licensingRootsData } = trpc.modelVersion.getLicensingRoots.useQuery(
     { baseModel, modelType: model?.type },
-    { enabled: !!baseModel }
+    { enabled: !!baseModel && !!model?.type }
   );
   const defaultLicensingSourceId = licensingRootsData?.defaultVersionId ?? null;
   // A version that is itself a licensing root is the source, so it doesn't pick a parent.
@@ -581,6 +591,14 @@ export function ModelVersionUpsertForm({
       form.setValue('licensingSourceVersionId', null, { shouldDirty: true });
   }, [baseModel]);
 
+  // No effect clears the source when the MODEL TYPE changes, and adding one is not the oversight it
+  // looks like — a round of this fix did add one, and it was dead code. Mantine's Stepper renders only
+  // the active step's children, so this form is UNMOUNTED for the whole of the step-1 edit where the
+  // type is chosen; coming back remounts it and any `useRef` seed already holds the new type. No other
+  // in-app surface has a type control. The effect could not fire, and the test that appeared to cover
+  // it only passed because the harness re-rendered a MOUNTED form with a swapped type — a transition
+  // the wizard never produces. The server coerces a mismatched source regardless, which is where that
+  // rule belongs.
   // A derivative must record an explicit parent — a null source means no fee, so
   // pre-select the ecosystem's default root when none is set. Skipped for roots
   // and exempt versions (which legitimately have no parent).

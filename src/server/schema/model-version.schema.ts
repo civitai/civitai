@@ -514,6 +514,17 @@ export const getModelVersionSchema = z.object({
   withFiles: z.boolean().optional(),
 });
 
+/**
+ * Why the upsert handler cleared a submitted `licensingSourceVersionId`. A union rather than a string
+ * because it is written straight into the audit's `reason` column: a typo in a free-form string reaches
+ * a moderator's change history with nothing on the way to catch it.
+ */
+export type LicensingSourceRejection =
+  | 'not-a-root'
+  | 'base-model-mismatch'
+  | 'model-not-found'
+  | 'model-type-mismatch';
+
 export type GetLicensingRootsSchema = z.infer<typeof getLicensingRootsSchema>;
 export const getLicensingRootsSchema = z.object({
   baseModel: z.string(),
