@@ -14,7 +14,9 @@ export const BountiesSearchIndexSortBy = [
   BOUNTIES_SEARCH_INDEX,
   `${BOUNTIES_SEARCH_INDEX}:stats.unitAmountCountAllTime:desc`,
   `${BOUNTIES_SEARCH_INDEX}:stats.entryCountAllTime:desc`,
-  `${BOUNTIES_SEARCH_INDEX}:favoriteCountAllTime:desc`,
+  // `stats.`-prefixed, like its siblings: that is where the bounty document carries the count, and
+  // what the index declares sortable. A bare `favoriteCountAllTime` names no field at all.
+  `${BOUNTIES_SEARCH_INDEX}:stats.favoriteCountAllTime:desc`,
   `${BOUNTIES_SEARCH_INDEX}:createdAt`,
 ] as const;
 

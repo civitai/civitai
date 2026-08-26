@@ -16,6 +16,7 @@ import type { RecommendedSettingsSchema } from '~/server/schema/model-version.sc
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import { modelsFilterableAttributes } from '~/server/search-index/filterable-attributes';
+import { modelsSortableAttributes } from '~/server/search-index/sortable-attributes';
 import { getValidCreatorMembershipMap } from '~/server/services/creator-program.service';
 import {
   anyMetricHidden,
@@ -65,18 +66,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     );
   }
 
-  const sortableAttributes = [
-    // sort
-    'createdAt',
-    'id',
-    'metrics.collectedCount',
-    'metrics.commentCount',
-    'metrics.thumbsUpCount',
-    // Creator Controls: downloads + tipped can be masked in the displayed `metrics`,
-    // so sort on the REAL sort-only mirrors (excluded from displayedAttributes).
-    'sortMetrics.downloadCount',
-    'sortMetrics.tippedAmountCount',
-  ];
+  const sortableAttributes = [...modelsSortableAttributes];
 
   // Meilisearch stores sorted.
   if (JSON.stringify(sortableAttributes.sort()) !== JSON.stringify(settings.sortableAttributes)) {
@@ -371,9 +361,13 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
           collectedCount: metrics.collectedCount ?? 0,
           tippedAmountCount: hidden.buzz ? null : realTippedAmountCount,
         },
-        // SORT-ONLY: REAL values, excluded from `displayedAttributes` (see
-        // onIndexSetup) so sort by most-downloaded / most-tipped keeps the true
-        // order even when the displayed number is masked. Never returned to clients.
+        // SORT-ONLY: REAL values, excluded from `displayedAttributes` (see onIndexSetup) so they
+        // are never returned to clients. NOT sortable yet: `sortableAttributes` only reach a live
+        // index through the manual index-reset job, so until a reset ships, the search sort options
+        // stay on `metrics.*` (see `modelsSortableAttributes` and
+        // src/components/Search/parsers/model.parser.ts). Once one has, add these two back to
+        // `modelsSortableAttributes` and repoint those options — then most-downloaded /
+        // most-tipped keeps the true order even when the displayed number is masked.
         sortMetrics: {
           downloadCount: realDownloadCount,
           tippedAmountCount: realTippedAmountCount,

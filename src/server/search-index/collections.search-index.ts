@@ -12,6 +12,7 @@ import type {
 import { CollectionReadConfiguration } from '~/shared/utils/prisma/enums';
 import { COLLECTIONS_SEARCH_INDEX } from '~/server/common/constants';
 import { collectionsFilterableAttributes } from '~/server/search-index/filterable-attributes';
+import { collectionsSortableAttributes } from '~/server/search-index/sortable-attributes';
 import { isDefined } from '~/utils/type-guards';
 import { uniqBy } from 'lodash-es';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
@@ -49,13 +50,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     );
   }
 
-  const sortableAttributes = [
-    'createdAt',
-    'id',
-    'metrics.itemCount',
-    'metrics.followerCount',
-    'metrics.contributorCount',
-  ];
+  const sortableAttributes = [...collectionsSortableAttributes];
 
   if (JSON.stringify(sortableAttributes.sort()) !== JSON.stringify(settings.sortableAttributes)) {
     const sortableFieldsAttributesTask = await index.updateSortableAttributes(sortableAttributes);
