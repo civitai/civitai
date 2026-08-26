@@ -119,12 +119,15 @@ export function deriveTrainingWorkflowState(
 
     // Map TrainingEpochResult to our internal format
     const trainingOutput = output as TrainingOutput | undefined;
-    epochs = (trainingOutput?.epochs ?? []).map((epoch) => ({
-      epochNumber: epoch.epochNumber ?? -1,
-      blobUrl: epoch.model?.url ?? '',
-      blobSize: 0, // Not provided in TrainingStep
-      sampleImages: (epoch.samples ?? []).map((s) => s.url ?? ''),
-    }));
+    // Pending epochs arrive with an unavailable model; only finished checkpoints belong in trainingResults.
+    epochs = (trainingOutput?.epochs ?? [])
+      .filter((epoch) => epoch.model?.available !== false)
+      .map((epoch) => ({
+        epochNumber: epoch.epochNumber ?? -1,
+        blobUrl: epoch.model?.url ?? '',
+        blobSize: 0, // Not provided in TrainingStep
+        sampleImages: (epoch.samples ?? []).map((s) => s.url ?? ''),
+      }));
   } else if (stepType === 'imageResourceTraining') {
     // ImageResourceTrainingStep: legacy format
     const imageOutput = output as ImageResourceTrainingOutput | undefined;
