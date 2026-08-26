@@ -72,12 +72,24 @@ describe('isOwnerUnpublishAction', () => {
 
 describe('LISTING_STATUS_CHANGING_MODERATION_ACTIONS', () => {
   /**
-   * 🔴 THE PARTITION IS PINNED AGAINST THE WHOLE TAXONOMY, NOT SAMPLED. The hazard this
-   * set exists to stop is a NEW action silently joining the log and changing who may
-   * edit — so the guard has to fail when the taxonomy GROWS, not merely when one known
-   * member is missing. `APP_LISTING_MODERATION_ACTIONS` is itself pinned against the
-   * migration's CHECK IN-list by `app-listing-mod-action.constants.test.ts`, so this
-   * chains all the way to the database.
+   * 🔴 BOTH HALVES ARE HARDCODED LITERALS, AND THAT IS WHAT MAKES THE ASSERTION BELOW
+   * MEAN ANYTHING. `STATE_NEUTRAL_MODERATION_ACTIONS` was briefly the DERIVED complement
+   * (`APP_LISTING_MODERATION_ACTIONS.filter(a => !CHANGING.includes(a))`). Under that
+   * construction union-equals-taxonomy, empty-intersection and size-sum are all
+   * TAUTOLOGIES: a new verb lands in the neutral half automatically and every assertion
+   * still holds. Measured — adding `'suspend'` to the taxonomy left 33 passing / 0
+   * failing. The guard read as coverage and provided none, which is worse than none.
+   *
+   * The hazard it was supposed to stop is real and FAIL-OPEN: a new status-CHANGING
+   * takedown verb omitted from `LISTING_STATUS_CHANGING_MODERATION_ACTIONS` is filtered
+   * OUT of `readLastModerationAction`'s WHERE clause, so an older `owner-unpublish`
+   * resurfaces beneath the moderator's takedown and the owner regains edit +
+   * `republishOwnListing` on content that was just removed.
+   *
+   * With both halves written out, a new verb is a member of NEITHER, so the union
+   * assertion goes RED and the classification has to be made out loud.
+   * `APP_LISTING_MODERATION_ACTIONS` is itself pinned against the migration's CHECK
+   * IN-list by `app-listing-mod-action.constants.test.ts`, so this chains to the DB.
    */
   it('🔴 partitions the FULL action taxonomy: status-changing ∪ state-neutral = all, ∩ = ∅', () => {
     const changing = new Set<string>(LISTING_STATUS_CHANGING_MODERATION_ACTIONS);
@@ -87,6 +99,31 @@ describe('LISTING_STATUS_CHANGING_MODERATION_ACTIONS', () => {
     expect(new Set([...changing, ...neutral])).toEqual(new Set(APP_LISTING_MODERATION_ACTIONS));
     // No duplicates hiding inside either half.
     expect(changing.size + neutral.size).toBe(APP_LISTING_MODERATION_ACTIONS.length);
+  });
+
+  /**
+   * INVARIANT GUARD (not regression coverage — it passed before this change too, because
+   * the derived complement produced exactly this list). It exists to pin the two halves
+   * as WHOLE ARRAYS so a member cannot be quietly dropped from one and appear in the
+   * other while the partition assertion above stays satisfied. Order is asserted too:
+   * these feed a SQL `IN` list, and a stable order keeps the pinned statement text in
+   * `offsite-listing.edit.service.test.ts` deterministic.
+   */
+  it('pins BOTH halves as whole literal arrays, so neither can be silently re-derived', () => {
+    expect([...LISTING_STATUS_CHANGING_MODERATION_ACTIONS]).toEqual([
+      'delist',
+      'relist',
+      'purge',
+      'reset-to-pending',
+      'owner-unpublish',
+      'owner-republish',
+    ]);
+    expect([...STATE_NEUTRAL_MODERATION_ACTIONS]).toEqual([
+      'claim',
+      'report-resolve',
+      'report-dismiss',
+      'message-owner',
+    ]);
   });
 
   it.each(['delist', 'relist', 'purge', 'reset-to-pending', 'owner-unpublish', 'owner-republish'])(

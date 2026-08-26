@@ -1,6 +1,5 @@
 import type { Prisma } from '@prisma/client';
 
-import { APP_LISTING_MODERATION_ACTIONS } from '~/server/schema/blocks/offsite-moderation.schema';
 import type { AppListingModerationAction } from '~/server/schema/blocks/offsite-moderation.schema';
 
 /**
@@ -59,13 +58,24 @@ export const OWNER_UNPUBLISH_EVENT = 'owner-unpublish';
  * self-restore mod-mandated content). Same mechanism, opposite blast direction — which is
  * why the set is filtered in the QUERY rather than by post-hoc inspection of one row.
  *
- * 🔴 ADDING A NEW STATE-NEUTRAL ACTION MUST NOT SILENTLY CHANGE AUTHORIZATION. That is the
- * whole point of enumerating this explicitly instead of writing `NOT IN (…neutral…)`: a new
- * verb added to {@link APP_LISTING_MODERATION_ACTIONS} is EXCLUDED here by default, so the
- * failure mode of forgetting this file is "the new action does not affect owner editing" —
- * inert — rather than "the new action revokes it". `app-listing-owner-unpublish.test.ts`
- * pins the partition against the full taxonomy, so a new verb makes that test fail and
- * forces the decision to be made out loud.
+ * 🔴 ADDING A NEW ACTION TO THE TAXONOMY MUST NOT SILENTLY CHANGE AUTHORIZATION — AND THE
+ * DEFAULT IS NOT SAFE IN EITHER DIRECTION, WHICH IS WHY IT IS GATED RATHER THAN CHOSEN.
+ * Omitting a new verb from this list makes it invisible to the WHERE clause below, so a
+ * newer event of that verb does NOT displace an older `owner-unpublish` underneath it. For
+ * a state-NEUTRAL verb (`message-owner`) that is exactly right. For a new status-CHANGING
+ * takedown verb it is FAIL-OPEN: a moderator takes the listing down, the owner's stale
+ * `owner-unpublish` resurfaces as "the most recent status-changing event", and the owner
+ * regains edit AND `republishOwnListing` on content a moderator just removed.
+ *
+ * So the decision is forced to be made OUT LOUD rather than defaulted: both halves of the
+ * partition are HARDCODED LITERALS (`STATE_NEUTRAL_MODERATION_ACTIONS` is NOT derived from
+ * this one), `UnclassifiedModerationAction` below fails `pnpm typecheck` on any unclassified
+ * verb, and `app-listing-owner-unpublish.test.ts` asserts the union equals
+ * `APP_LISTING_MODERATION_ACTIONS` exactly. 🔴 Do NOT "simplify" either literal into
+ * `APP_LISTING_MODERATION_ACTIONS.filter(…)` — a derived complement makes every partition
+ * assertion a tautology that a new verb satisfies automatically, which is the precise shape
+ * that restores the fail-open default above while leaving the suite green. (Measured: with
+ * the neutral half derived, adding `'suspend'` to the taxonomy left 33/33 passing.)
  *
  * `purge` is included even though it hard-DELETES the row (its event's `appListingId` is
  * SetNull'd, so it can never come back from this query): the set is defined by what an
@@ -81,18 +91,50 @@ export const LISTING_STATUS_CHANGING_MODERATION_ACTIONS = [
 ] as const satisfies readonly AppListingModerationAction[];
 
 /**
- * The complement of {@link LISTING_STATUS_CHANGING_MODERATION_ACTIONS} — actions recorded
- * against a listing that leave `app_listings.status` alone. Exported so the partition can
- * be asserted as EXHAUSTIVE against the taxonomy rather than merely sampled.
+ * The other half of the partition — actions recorded against a listing that leave
+ * `app_listings.status` alone, and so must never displace the event that explains a
+ * removal. Exported so the partition can be asserted as EXHAUSTIVE against the taxonomy.
+ *
+ * 🔴 THIS IS A HARDCODED LITERAL ON PURPOSE, NOT
+ * `APP_LISTING_MODERATION_ACTIONS.filter(a => !CHANGING.includes(a))`. It was that derived
+ * complement for one round, and the consequence was that EVERY partition assertion —
+ * union-equals-taxonomy, empty intersection, size-sum — became a TAUTOLOGY satisfied by
+ * construction: a new verb flowed into this set automatically and the whole suite stayed
+ * green (measured: adding `'suspend'` to the taxonomy → 33 passed, 0 failed). The guard read
+ * as coverage and provided none. Written out, a new verb is in NEITHER literal, the union
+ * assertion fails, and the fail-open hazard described on
+ * {@link LISTING_STATUS_CHANGING_MODERATION_ACTIONS} cannot be introduced by omission.
+ *
+ * The `satisfies` clause pins membership in the taxonomy; EXHAUSTIVENESS of the two halves
+ * together is what `UnclassifiedModerationAction` and the partition test exist for.
  */
-export const STATE_NEUTRAL_MODERATION_ACTIONS = APP_LISTING_MODERATION_ACTIONS.filter(
-  (
-    a
-  ): a is Exclude<
-    AppListingModerationAction,
-    (typeof LISTING_STATUS_CHANGING_MODERATION_ACTIONS)[number]
-  > => !(LISTING_STATUS_CHANGING_MODERATION_ACTIONS as readonly string[]).includes(a)
-);
+export const STATE_NEUTRAL_MODERATION_ACTIONS = [
+  'claim',
+  'report-resolve',
+  'report-dismiss',
+  'message-owner',
+] as const satisfies readonly AppListingModerationAction[];
+
+/**
+ * A moderation action that is in the taxonomy but in NEITHER half of the partition above.
+ * `never` while the classification is complete.
+ *
+ * 🔴 THE COMPILE-TIME HALF OF THE SAME GATE, and it is here because a test can be skipped,
+ * excluded by a `-t` selector, or simply not run in whichever tier happened to go green.
+ * `typecheck` cannot be. The assignment below is the gate: while this type is `never` it is
+ * legal; the moment a verb joins {@link AppListingModerationAction} without being
+ * classified, the type widens to that verb and `pnpm typecheck` fails ON THIS LINE, naming
+ * it. The runtime partition test says the same thing a second time — two independent
+ * readings of one invariant, on purpose.
+ */
+export type UnclassifiedModerationAction = Exclude<
+  AppListingModerationAction,
+  | (typeof LISTING_STATUS_CHANGING_MODERATION_ACTIONS)[number]
+  | (typeof STATE_NEUTRAL_MODERATION_ACTIONS)[number]
+>;
+const _everyModerationActionIsClassified: never =
+  undefined as unknown as UnclassifiedModerationAction;
+void _everyModerationActionIsClassified;
 
 /**
  * The narrowest client shape this module needs.
