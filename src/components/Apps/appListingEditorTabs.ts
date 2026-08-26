@@ -93,12 +93,30 @@ export type EditorTabContext = {
    * self-unpublish and a moderator takedown; only the last status-changing event
    * separates them. See {@link isOwnerUnpublishedTabContext}.
    *
-   * 🔴 OPTIONAL, AND ABSENT MEANS "NOT PROVEN TO BE THE OWNER'S OWN", i.e. today's
-   * narrowed behaviour. Same fail-closed direction as the server predicate
-   * (`app-listing-owner-unpublish`): a caller that has not wired the field through gets
-   * the narrow set, never the wide one.
+   * 🔴 REQUIRED, AND IT WAS OPTIONAL FOR EXACTLY ONE RELEASE — that is the whole reason
+   * this comment is long. `null` still means "not proven to be the owner's own", i.e. the
+   * narrowed behaviour, and the runtime direction is unchanged and still fail-closed
+   * (`undefined !== OWNER_UNPUBLISH_ACTION`, so a JS caller that omits it gets the narrow
+   * set). What changed is that OMITTING IT IS NOW A COMPILE ERROR.
+   *
+   * 🔴 WHY, CONCRETELY. While the field was optional there were two production callers of
+   * {@link editorTabsFor} — the authoring page and `myAppListingHref` (`myAppsView.ts`) —
+   * and only ONE of them passed it. The row `myAppListingHref` receives already CARRIES
+   * `lastModerationAction` (`MyAppsBody` reads it off the same object two lines away), so
+   * this was not a plumbing gap, it was a dropped field. The consequence was two different
+   * tab sets derived for ONE listing: the page offered the owner `details`/`media`, the
+   * `/apps/mine` row linked at `?tab=publishing`. Nothing went red, because optionality is
+   * precisely what makes a dropped field type-check.
+   *
+   * 🔴 SO THE ENFORCEMENT IS THE TYPE, NOT A TEST. A ledger test can assert that today's
+   * call sites pass the field (and `appListingEditorTabs.callers.test.ts` does, as
+   * defence-in-depth for a caller added in a way the compiler cannot see — a `.js` file, an
+   * `as any`, a spread of a wider object). But the compiler is what makes the NEXT caller
+   * impossible to get wrong, and it runs on every PR as `tekton / typecheck`, which the
+   * browser suite that covers this function does NOT. Pass `null` explicitly when the
+   * caller genuinely does not know — that is a decision, and it now reads as one.
    */
-  lastModerationAction?: string | null;
+  lastModerationAction: string | null;
 };
 
 /**

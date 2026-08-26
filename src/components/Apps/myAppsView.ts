@@ -74,11 +74,17 @@ export type MyAppRow = {
    *
    * 🔴 ONLY MEANINGFUL WHEN `status === 'removed'`, and it is the only thing that separates
    * "I unpublished this and may put it back" from "a moderator removed this and only a
-   * moderator can restore it". `status` alone reads `removed` for both. Optional on the type
-   * so a fixture need not spell it; absent is read as a moderator removal, which is the safe
-   * direction (it withholds a button the server would refuse rather than inventing one).
+   * moderator can restore it". `status` alone reads `removed` for both.
+   *
+   * 🔴 REQUIRED, AND IT USED TO BE OPTIONAL "so a fixture need not spell it". That
+   * convenience is what let `myAppListingHref` drop the field on its way into
+   * `editorTabsFor` for a release — a fixture-ergonomics decision that bought a silent
+   * production defect (two different tab sets derived for one listing). It is never absent
+   * from the real `listMine` payload, so the type now says so and a fixture spells `null`.
+   * `null` still reads as a moderator removal, which is the safe direction: it withholds a
+   * button the server would refuse rather than inventing one.
    */
-  lastModerationAction?: string | null;
+  lastModerationAction: string | null;
   /**
    * The listing-completeness advisory (missing icon / cover / screenshots / description /
    * tagline / category), computed server-side by `computeListingProblems`.
@@ -304,6 +310,22 @@ export function myAppListingHref(row: {
   appBlockId: string | null;
   role: AppRole;
   status: string;
+  /**
+   * 🔴 THE SECOND HALF OF THE STATUS INPUT, AND THIS CALLER DROPPED IT FOR A RELEASE.
+   *
+   * `status='removed'` is written by BOTH an owner self-unpublish and a moderator
+   * takedown, so `status` alone cannot decide the tab set — `editorTabsFor` needs the
+   * last status-changing action to tell them apart. The authoring page passed it; this
+   * function did not, while the field was optional on `EditorTabContext`. The row handed
+   * in HAS it (`MyAppsBody` renders `ownerStateChip` off `row.lastModerationAction` at the
+   * same call site), so the two surfaces derived DIFFERENT tab sets for one listing: the
+   * page offered `details` + `media`, this href pointed at `?tab=publishing`.
+   *
+   * The field is now REQUIRED on `EditorTabContext`, so this parameter is what the
+   * compiler forces the caller to supply. Keep it required HERE too — making it optional
+   * on this row type would re-open the identical hole one level out.
+   */
+  lastModerationAction: string | null;
   capabilities: Readonly<Record<ListingCapability, boolean>>;
 }): string {
   const tabs: EditorTab[] = editorTabsFor({
@@ -311,6 +333,7 @@ export function myAppListingHref(row: {
     appBlockId: row.appBlockId,
     role: row.role,
     status: row.status,
+    lastModerationAction: row.lastModerationAction,
     capabilities: row.capabilities,
   });
   return listingEditHref(row.appListingId, tabs[0]);

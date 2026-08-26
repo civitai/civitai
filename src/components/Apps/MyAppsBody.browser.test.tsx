@@ -127,6 +127,11 @@ function row(over: Partial<MyAppRow> & { appListingId: string }): MyAppRow {
     iconUrl: null,
     coverUrl: null,
     updatedAt: '2026-08-01T00:00:00Z',
+    // 🔴 SPELLED, not defaulted-by-omission. `null` is the fail-closed value ("not proven
+    // to be the owner's own"), and the field is REQUIRED on `MyAppRow` because its former
+    // optionality — justified in exactly these words, "so a fixture need not spell it" —
+    // is what let `myAppListingHref` silently drop it into `editorTabsFor`.
+    lastModerationAction: null,
     ...over,
     // `capabilities` must follow the FINAL kind, not the default one.
     ...(over.capabilities ? {} : { capabilities: capabilitiesForKind(over.kind ?? kind) }),
