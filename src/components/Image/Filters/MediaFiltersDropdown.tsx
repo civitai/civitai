@@ -111,7 +111,13 @@ export function MediaFiltersDropdown({
       requiringMeta: undefined,
       hidden: undefined,
       fromPlatform: undefined,
-      notPublished: undefined,
+      // Only cleared when this dropdown actually SHOWS the control. On the
+      // profile images/videos tabs the Published/Draft toggle owns
+      // `notPublished` and the chip is excluded, so clearing it here would flip
+      // a creator out of Drafts from a control that never displayed that state.
+      // Same reasoning as `filterLength` below, which is already gated: a
+      // dropdown should not own a filter it does not show.
+      ...(shows('notPublished') ? { notPublished: undefined } : {}),
       scheduled: undefined,
       hideManualResources: undefined,
       hideAutoResources: undefined,
@@ -143,7 +149,7 @@ export function MediaFiltersDropdown({
         types: getDefaultMediaTypes(filterType),
         period: MetricTimeframe.AllTime,
       });
-  }, [onChange, setFilters, filterType]);
+  }, [onChange, setFilters, filterType, shows]);
 
   const {
     opened,

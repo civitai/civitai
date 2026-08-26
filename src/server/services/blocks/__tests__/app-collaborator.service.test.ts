@@ -140,6 +140,14 @@ const NOW = new Date('2026-08-10T12:00:00Z');
  * 🔴 PAIRWISE-DISTINCT VALUES on purpose: the on-site and off-site rows differ in id,
  * slug, kind, appBlockId AND appBlock, so an assertion cannot be satisfied by the wrong
  * row happening to look like the right one.
+ *
+ * 🔴 EVERY ROW CARRIES `status: 'approved'`, and it is not decoration. The seat-GRANT paths
+ * (`inviteCollaborator`, and `respondToInvite` on an accept) now refuse a listing whose
+ * status is not authorable, and `toSeatListing` reads a missing column as `''` — i.e. FAILS
+ * CLOSED — so a fixture that omits it refuses every invite in this file. The refusal itself
+ * is exercised in `app-collaborator.seat-grant-status.test.ts`, deliberately not here: this
+ * file's subject is seat mechanics, and burying a status case in it would make every OTHER
+ * assertion depend on a value that has nothing to do with what it is testing.
  */
 function listingTable(): Record<string, Record<string, unknown>> {
   return {
@@ -147,6 +155,7 @@ function listingTable(): Record<string, Record<string, unknown>> {
       id: LISTING,
       slug: SLUG,
       kind: 'onsite',
+      status: 'approved',
       userId: OWNER,
       appBlockId: APP,
       revisionOfId: null,
@@ -157,6 +166,7 @@ function listingTable(): Record<string, Record<string, unknown>> {
       id: OFFSITE,
       slug: OFFSITE_SLUG,
       kind: 'offsite',
+      status: 'approved',
       userId: OWNER,
       appBlockId: null,
       revisionOfId: null,
@@ -167,6 +177,7 @@ function listingTable(): Record<string, Record<string, unknown>> {
       id: SHADOW,
       slug: SLUG,
       kind: 'onsite',
+      status: 'approved',
       userId: OWNER,
       // A shadow carries appBlockId: null by construction (@unique stays on the parent).
       appBlockId: null,
@@ -179,6 +190,7 @@ function listingTable(): Record<string, Record<string, unknown>> {
       id: OFFSITE_WITH_REPO,
       slug: 'offsite-store-slug',
       kind: 'offsite',
+      status: 'approved',
       userId: OWNER,
       appBlockId: 'ab_offsiteBlock',
       revisionOfId: null,
@@ -194,6 +206,7 @@ function listingTable(): Record<string, Record<string, unknown>> {
       id: ONSITE_NO_BLOCK,
       slug: 'onsite-no-block-slug',
       kind: 'onsite',
+      status: 'approved',
       userId: OWNER,
       appBlockId: null,
       revisionOfId: null,
@@ -207,6 +220,7 @@ function listingTable(): Record<string, Record<string, unknown>> {
       id: OFFSITE_BLOCK_DRIFTED,
       slug: 'offsite-block-drifted',
       kind: 'offsite',
+      status: 'approved',
       userId: OWNER,
       appBlockId: 'ab_offsiteDrifted',
       revisionOfId: null,
@@ -222,6 +236,7 @@ function listingTable(): Record<string, Record<string, unknown>> {
       id: DRIFTED,
       slug: 'drifted-slug',
       kind: 'onsite',
+      status: 'approved',
       userId: STALE_OWNER,
       appBlockId: 'ab_drifted',
       revisionOfId: null,

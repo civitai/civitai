@@ -9,6 +9,7 @@ import {
   BlockedUsers,
   HiddenUsers,
 } from '~/server/services/user-preferences.service';
+import { bulkSetCommentV2TosViolation } from '~/server/services/commentsv2.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import {
   handleLogError,
@@ -37,7 +38,7 @@ import {
 
 export const getCommentHandler = async ({ ctx, input }: { ctx: Context; input: GetByIdInput }) => {
   try {
-    const comment = await getComment({ ...input });
+    const comment = await getComment({ ...input, isModerator: ctx.user?.isModerator ?? false });
     if (!comment) throw throwNotFoundError(`No comment with id ${input.id}`);
 
     if (ctx.user && !ctx.user.isModerator) {
@@ -154,7 +155,7 @@ export const getCommentCountV2Handler = async ({
   input: CommentConnectorInput;
 }) => {
   try {
-    return await getCommentCount(input);
+    return await getCommentCount({ ...input, isModerator: ctx.user?.isModerator ?? false });
   } catch (error) {
     throw throwDbError(error);
   }
@@ -190,7 +191,11 @@ export const getCommentsThreadDetailsHandler = async ({
       isContentOwner,
     });
 
-    return await getCommentsThreadDetails2({ ...input, excludedUserIds });
+    return await getCommentsThreadDetails2({
+      ...input,
+      excludedUserIds,
+      isModerator: ctx.user?.isModerator ?? false,
+    });
   } catch (error) {
     throw throwDbError(error);
   }
@@ -317,8 +322,35 @@ export const getCommentsInfiniteHandler = async ({
       isContentOwner,
     });
 
-    return await getCommentsInfinite({ ...input, excludedUserIds });
+    return await getCommentsInfinite({
+      ...input,
+      excludedUserIds,
+      isModerator: ctx.user?.isModerator ?? false,
+    });
   } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const setTosViolationHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: ProtectedContext;
+}) => {
+  try {
+    // The service is the bulk one the moderator app already calls, so this path picks up the
+    // report actioning, reporter rewards and owner notification rather than re-deriving them.
+    const result = await bulkSetCommentV2TosViolation({
+      ids: [input.id],
+      actor: { id: ctx.user.id, ip: ctx.ip },
+    });
+    if (!result.count) throw throwNotFoundError(`No comment with id ${input.id}`);
+
+    return result;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
   }
 };

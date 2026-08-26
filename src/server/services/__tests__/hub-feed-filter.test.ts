@@ -17,12 +17,29 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as BitdexClient from '~/server/bitdex/client';
 import type * as MeiliClient from '~/server/meilisearch/client';
 import type * as FliptClient from '~/server/flipt/client';
+import type * as UserHubService from '~/server/services/user-hub.service';
+import type { ResolvedHubSources } from '~/server/services/user-hub.service';
 
 const { fetchDocumentsMock, resolveHubSourcesMock, queryBitdexMock } = vi.hoisted(() => ({
   fetchDocumentsMock: vi.fn(),
   resolveHubSourcesMock: vi.fn(),
   queryBitdexMock: vi.fn(),
 }));
+
+// Every stub goes through this, so a field added to `ResolvedHubSources` has one
+// place to land rather than eight. It is NOT a compile gate: `resolveHubSourcesMock`
+// is a bare `vi.fn()`, so `mockResolvedValue` takes `any`, and nothing in
+// package.json, CI or scripts/ ever runs `tsconfig.tests.json`. What it buys is that
+// a reader can see which fields a stub chose — an omitted `forcedBrowsingLevel`
+// reads as "no cap" and would leave the cap tests green over a hub serving uncapped.
+const hubSources = (over: Partial<ResolvedHubSources> = {}): ResolvedHubSources => ({
+  userIds: [],
+  modelVersionIds: [],
+  collectionIds: [],
+  truncated: false,
+  forcedBrowsingLevel: 0,
+  ...over,
+});
 
 vi.mock('../../../../event-engine-common/feeds', () => ({
   ImagesFeed: class {
@@ -71,7 +88,10 @@ vi.mock('~/server/bitdex/client', async (importOriginal) => ({
   queryBitdex: queryBitdexMock,
 }));
 
-vi.mock('~/server/services/user-hub.service', () => ({
+// `hubBrowsingLevel` is a pure function over the resolved sources and is spread
+// through unmocked: replacing it would be replacing the very cap these tests check.
+vi.mock('~/server/services/user-hub.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof UserHubService>()),
   resolveHubSources: resolveHubSourcesMock,
 }));
 
@@ -83,6 +103,7 @@ import {
   getImagesFromSearchPreFilter,
 } from '../image.service';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { UserHubSourceType } from '~/shared/utils/prisma/enums';
 
 redisMock.redis.get.mockResolvedValue('[]');
 redisMock.redis.set.mockResolvedValue(undefined);
@@ -119,12 +140,9 @@ const bitdexFilters = () => JSON.stringify(queryBitdexMock.mock.calls[0]?.[1] ??
 
 describe('hub filter reaches the search backend', () => {
   it('emits every source arm, ORed together', async () => {
-    resolveHubSourcesMock.mockResolvedValue({
-      userIds: [10, 11],
-      modelVersionIds: [20, 21],
-      collectionIds: [],
-      truncated: false,
-    });
+    resolveHubSourcesMock.mockResolvedValue(
+      hubSources({ userIds: [10, 11], modelVersionIds: [20, 21] })
+    );
 
     await getImagesFromSearchPreFilter(input(1));
 
@@ -138,12 +156,7 @@ describe('hub filter reaches the search backend', () => {
 
   it('honours hideAutoResources and hideManualResources', async () => {
     // Without these gates a hub silently ignores two filters the user set.
-    resolveHubSourcesMock.mockResolvedValue({
-      userIds: [],
-      modelVersionIds: [20],
-      collectionIds: [],
-      truncated: false,
-    });
+    resolveHubSourcesMock.mockResolvedValue(hubSources({ modelVersionIds: [20] }));
 
     await getImagesFromSearchPreFilter({ ...input(1), hideAutoResources: true });
 
@@ -166,12 +179,7 @@ describe('hub filter reaches the search backend', () => {
   });
 
   it('does not search when the hub has no enabled sources', async () => {
-    resolveHubSourcesMock.mockResolvedValue({
-      userIds: [],
-      modelVersionIds: [],
-      collectionIds: [],
-      truncated: false,
-    });
+    resolveHubSourcesMock.mockResolvedValue(hubSources());
 
     const result = await getImagesFromSearchPreFilter(input(1));
 
@@ -195,12 +203,7 @@ describe('the post-filter builder has the same guard', () => {
   // flag. Mutating one and watching the pre-filter tests go red proves nothing
   // about the other, and a per-user flag decides which one a given request gets.
   it('emits the hub arm', async () => {
-    resolveHubSourcesMock.mockResolvedValue({
-      userIds: [10],
-      modelVersionIds: [],
-      collectionIds: [],
-      truncated: false,
-    });
+    resolveHubSourcesMock.mockResolvedValue(hubSources({ userIds: [10] }));
 
     await getImagesFromSearchPostFilter(input(1));
 
@@ -250,12 +253,7 @@ describe('builders that cannot serve a hub refuse it', () => {
 
 describe('the BitDex builder carries the same hub arm', () => {
   it('ORs every source arm into the emitted clause set', async () => {
-    resolveHubSourcesMock.mockResolvedValue({
-      userIds: [10],
-      modelVersionIds: [20],
-      collectionIds: [],
-      truncated: false,
-    });
+    resolveHubSourcesMock.mockResolvedValue(hubSources({ userIds: [10], modelVersionIds: [20] }));
 
     await getImagesFromBitdexPreFilter(input(1));
 
@@ -267,12 +265,7 @@ describe('the BitDex builder carries the same hub arm', () => {
   });
 
   it('honours hideAutoResources and hideManualResources', async () => {
-    resolveHubSourcesMock.mockResolvedValue({
-      userIds: [],
-      modelVersionIds: [20],
-      collectionIds: [],
-      truncated: false,
-    });
+    resolveHubSourcesMock.mockResolvedValue(hubSources({ modelVersionIds: [20] }));
 
     await getImagesFromBitdexPreFilter({
       ...input(1),
@@ -298,12 +291,7 @@ describe('the BitDex builder carries the same hub arm', () => {
   });
 
   it('declines when the hub has no enabled sources', async () => {
-    resolveHubSourcesMock.mockResolvedValue({
-      userIds: [],
-      modelVersionIds: [],
-      collectionIds: [],
-      truncated: false,
-    });
+    resolveHubSourcesMock.mockResolvedValue(hubSources());
 
     const result = await getImagesFromBitdexPreFilter(input(1));
 
@@ -318,5 +306,180 @@ describe('the BitDex builder carries the same hub arm', () => {
 
     expect(queryBitdexMock).toHaveBeenCalled();
     expect(resolveHubSourcesMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The hub's own content cap (subtask 868kwp5f2). Three builders apply it and each
+ * emits its own clause syntax, so a cap missing from one is a hub serving past its
+ * own setting on whichever backend that request happened to take — with nothing
+ * red anywhere. Asserted on the EMITTED level list rather than on the call, because
+ * the call is identical with and without the cap.
+ *
+ * PG = 1, PG-13 = 2, R = 4. Viewer asks for PG|PG13|R, the hub allows PG|PG13.
+ */
+describe('a hub caps its own feed to the level the owner set', () => {
+  const cappedSources = hubSources({ userIds: [10], forcedBrowsingLevel: 1 | 2 });
+
+  const viewerWantsR = (hubId?: number) => ({ ...input(hubId), browsingLevel: 1 | 2 | 4 });
+
+  it('the pre-filter builder emits only the levels the hub allows', async () => {
+    resolveHubSourcesMock.mockResolvedValue(cappedSources);
+
+    await getImagesFromSearchPreFilter(viewerWantsR(1));
+
+    expect(emittedFilter()).toContain('nsfwLevel IN [1,2]');
+    expect(emittedFilter()).not.toContain('nsfwLevel IN [1,2,4]');
+  });
+
+  it('the post-filter builder emits only the levels the hub allows', async () => {
+    resolveHubSourcesMock.mockResolvedValue(cappedSources);
+
+    await getImagesFromSearchPostFilter(viewerWantsR(1));
+
+    expect(emittedFilter()).toContain('nsfwLevel IN [1,2]');
+    expect(emittedFilter()).not.toContain('nsfwLevel IN [1,2,4]');
+  });
+
+  it('the BitDex builder emits only the levels the hub allows', async () => {
+    resolveHubSourcesMock.mockResolvedValue(cappedSources);
+
+    await getImagesFromBitdexPreFilter(viewerWantsR(1));
+
+    const filters = bitdexFilters();
+    expect(filters).toContain('{"In":["nsfwLevel",[{"Integer":1},{"Integer":2}]]}');
+    expect(filters).not.toContain('{"Integer":4}');
+  });
+
+  it('leaves the viewer alone when the hub sets no cap', async () => {
+    // The negative control. Without it every assertion above passes for a builder
+    // that hard-codes PG|PG-13 and never reads the viewer's level at all.
+    resolveHubSourcesMock.mockResolvedValue({ ...cappedSources, forcedBrowsingLevel: 0 });
+
+    await getImagesFromSearchPreFilter(viewerWantsR(1));
+
+    expect(emittedFilter()).toContain('nsfwLevel IN [1,2,4]');
+  });
+
+  it('serves nothing rather than everything when the viewer and the hub do not overlap', async () => {
+    // The dangerous direction: an empty intersection reaching the level block's
+    // `if (!browsingLevel) browsingLevel = PG` fallback would show PG images from a
+    // hub whose owner allowed only R.
+    resolveHubSourcesMock.mockResolvedValue({ ...cappedSources, forcedBrowsingLevel: 4 });
+
+    const result = await getImagesFromSearchPreFilter({ ...input(1), browsingLevel: 1 });
+
+    expect(fetchDocumentsMock).not.toHaveBeenCalled();
+    expect(result.data).toEqual([]);
+  });
+
+  it('the post-filter builder serves nothing on an empty intersection too', async () => {
+    // Covered per builder, not once: the empty-intersection branch is three separate
+    // `if (!capped)` lines, and the one that gets deleted is the one nobody tested.
+    resolveHubSourcesMock.mockResolvedValue({ ...cappedSources, forcedBrowsingLevel: 4 });
+
+    const result = await getImagesFromSearchPostFilter({ ...input(1), browsingLevel: 1 });
+
+    expect(fetchDocumentsMock).not.toHaveBeenCalled();
+    expect(result.data).toEqual([]);
+  });
+
+  it('the BitDex builder declines on an empty intersection, so Meili answers instead', async () => {
+    // `null` means "cannot serve", which falls through to Meili — where the same
+    // clamp produces the empty page. Pushing no filter would serve the global feed.
+    resolveHubSourcesMock.mockResolvedValue({ ...cappedSources, forcedBrowsingLevel: 4 });
+
+    const result = await getImagesFromBitdexPreFilter({ ...input(1), browsingLevel: 1 });
+
+    expect(result).toBeNull();
+    expect(queryBitdexMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('what the builders hand resolveHubSources', () => {
+  // The mock swallows these silently: delete `excludedSources` and every per-session
+  // source toggle is inert; delete `isModerator` and a moderator gets an empty feed
+  // on every private hub. Both are one-line deletions in the layer where the
+  // behaviour lives, and no assertion about the emitted FILTER can see either.
+  it('passes the viewer identity and this session exclusions through', async () => {
+    resolveHubSourcesMock.mockResolvedValue(hubSources({ userIds: [10] }));
+
+    await getImagesFromSearchPreFilter({
+      ...input(1),
+      isModerator: true,
+      hubExcludedSources: [{ type: UserHubSourceType.User, targetId: 11 }],
+    } as Parameters<typeof getImagesFromSearchPreFilter>[0]);
+
+    expect(resolveHubSourcesMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hubId: 1,
+        userId: 5,
+        isModerator: true,
+        excludedSources: [{ type: UserHubSourceType.User, targetId: 11 }],
+      })
+    );
+  });
+
+  it('does not invent a viewer or an exclusion list when the request carries none', async () => {
+    // The negative control. Without it the assertion above passes for a builder that
+    // hard-codes both, which is the same as not reading the input at all.
+    resolveHubSourcesMock.mockResolvedValue(hubSources({ userIds: [10] }));
+
+    await getImagesFromSearchPreFilter(input(1));
+
+    expect(resolveHubSourcesMock).toHaveBeenCalledWith(
+      expect.objectContaining({ isModerator: undefined, excludedSources: undefined })
+    );
+  });
+});
+
+describe('the unscanned-image arm is not open to anonymous callers', () => {
+  // `nsfwLevel = 0` is never-scanned content. It is ORed past the browsing level so a
+  // caller can see their OWN unscanned uploads — which needs a caller. Unpaired, the
+  // arm is every unscanned image on the site, to everyone logged out.
+  const anonymous = () =>
+    ({
+      currentUserId: undefined,
+      browsingLevel: 1,
+      limit: 10,
+      include: [],
+      period: 'AllTime',
+      sort: 'Newest',
+    } as unknown as Parameters<typeof getImagesFromSearchPreFilter>[0]);
+
+  it('omits the arm entirely with no signed-in caller', async () => {
+    await getImagesFromSearchPreFilter(anonymous());
+
+    // The `not.toContain` is only worth anything if a filter was emitted at all:
+    // `emittedFilter()` returns '' when nothing was searched, and '' satisfies it.
+    expect(fetchDocumentsMock).toHaveBeenCalled();
+    expect(emittedFilter()).not.toContain('nsfwLevel = 0');
+  });
+
+  it('still gives a signed-in caller their own unscanned uploads', async () => {
+    // The control: without it the assertion above passes for a builder that dropped
+    // the arm for everybody, which is a different regression.
+    await getImagesFromSearchPreFilter({ ...anonymous(), currentUserId: 5 });
+
+    expect(emittedFilter()).toContain('(nsfwLevel = 0 AND userId = 5)');
+  });
+
+  // The post-filter builder carries the same arm under a TIGHTER condition — own
+  // content, on your own user page. Deleting `&& userId === currentUserId` there ORs
+  // every unscanned image on the site into every signed-in caller's feed: the bug
+  // just fixed in the pre-filter, in the builder a per-user flag routes some
+  // requests to.
+  it('the post-filter builder scopes its arm to the caller viewing their own page', async () => {
+    await getImagesFromSearchPostFilter({ ...anonymous(), currentUserId: 5, userId: 5 });
+
+    expect(fetchDocumentsMock).toHaveBeenCalled();
+    expect(emittedFilter()).toContain('nsfwLevel = 0');
+  });
+
+  it('the post-filter builder omits its arm when the caller is looking elsewhere', async () => {
+    await getImagesFromSearchPostFilter({ ...anonymous(), currentUserId: 5, userId: 99 });
+
+    expect(fetchDocumentsMock).toHaveBeenCalled();
+    expect(emittedFilter()).not.toContain('nsfwLevel = 0');
   });
 });

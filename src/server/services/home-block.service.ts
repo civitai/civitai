@@ -174,7 +174,20 @@ export const getHomeBlockById = async ({
   id,
   domain,
 }: GetHomeBlockByIdInputSchema & {
-  // SessionUser required because it's passed down to getHomeBlockData
+  // Accepted and deliberately NOT read. The body destructures `id` and `domain` only.
+  //
+  // Keep it that way, for two independent reasons — the first is the one that binds:
+  //
+  // 1. The result is stored in a SHARED Redis entry with no user segment. This path goes
+  //    through `getHomeBlockCached` (`~/server/services/home-block-cache.service.ts`),
+  //    whose key is built from the block's type, its identifier and the domain only.
+  //    Personalizing the result off `user` would therefore write one caller's body under
+  //    a key every other caller reads — a cross-user leak that exists even with
+  //    `edgeCacheIt` removed from the procedure entirely, because the leak is in the
+  //    server-side cache, not in the response headers.
+  //
+  // 2. `homeBlock.getHomeBlock` is additionally edge-cached, so a personalized body would
+  //    also be served from the edge to every other caller of the same URL.
   user?: SessionUser;
 }) => {
   const homeBlockFindArgs = {
@@ -388,8 +401,22 @@ export const getHomeBlockData = async ({
   // `domain` isn't part of the public getHomeBlocks input — it's supplied by the
   // by-id cached path, which is the only caller whose blocks are domain-scoped.
   input: GetHomeBlocksInputSchema & { domain?: DomainColor };
-  // Session user required because it's passed down to collection get items service
-  // which requires it for models/posts/etc
+  // Optional, and on the hot path it is absent. When supplied it IS read, in TWO places
+  // below, both of which make the body caller-dependent: it is passed whole to
+  // `getCollectionItemsByCollectionId` (which uses it for models/posts/etc.), and read as
+  // `user?.isModerator` for `getLeaderboardsWithResults`. Either one is enough to poison
+  // the shared entry described below.
+  //
+  // But the by-id path never supplies it: `getHomeBlockCached`
+  // (`~/server/services/home-block-cache.service.ts`) calls this function with
+  // `{ homeBlock, input }` and no `user`, so collection items already resolve as
+  // ANONYMOUS there. That is the correct state, not an oversight to be tidied up.
+  //
+  // 🔴 Do NOT start passing a user through that caller. `getHomeBlockCached` stores the
+  // result under a Redis key built from type/identifier/domain with no user segment, so
+  // a user-dependent body would be written into an entry every other caller reads —
+  // poisoning a shared cache entry and leaking one user's view to everyone else. If a
+  // personalized variant is ever genuinely needed, it needs its own key, not this one.
   user?: SessionUser;
 }): Promise<HomeBlockWithData | null> => {
   const metadata = await resolveHomeBlockMetadata(homeBlock);

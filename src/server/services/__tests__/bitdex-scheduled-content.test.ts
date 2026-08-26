@@ -363,6 +363,79 @@ describe('BitDex primary feed — content is not served before its publish time'
     expect(result.data.map((i: { id: number }) => i.id)).not.toContain(101);
   });
 
+  it('declines a CREATOR’s own-drafts request so Meili answers it', async () => {
+    // The Draft toggle on the profile images/videos tabs sends `notPublished`
+    // from a non-moderator. `wantsUnpublished` reads `scheduled` alone for a
+    // non-moderator, so without the decline BitDex answers a drafts request with
+    // the PUBLISHED feed — and a non-empty result suppresses the Meili fallback,
+    // so the creator is shown a population that is not the one they asked for,
+    // with nothing signalling it.
+    //
+    // Scoped: `userId === currentUserId`. The decline sits AFTER the
+    // username→userId resolution, so a request addressed by handle reaches it
+    // with a resolved id rather than `undefined`.
+    routeByShape();
+
+    const result = await getImagesFromSearch({
+      ...baseInput,
+      currentUserId: OWNER_ID,
+      userId: OWNER_ID,
+      isModerator: false,
+      notPublished: true,
+    });
+
+    expect(result.source).toBe('meili');
+    // Asserted on the MOCK, not on `data`. `data` is `[]` by construction whenever
+    // source is meili — this file stubs `metricsSearchClient: null` and the Meili
+    // builders early-return an empty page — so a `not.toContain(101)` here could
+    // never fail. It read as proof that BitDex had not answered with the published
+    // feed and proved nothing.
+    //
+    // The mock also separates the two ways source can be 'meili': the decline
+    // firing (no BitDex query at all) versus BitDex throwing and falling through.
+    expect(queryBitdexMock).not.toHaveBeenCalled();
+  });
+
+  it('declines when the creator is addressed by USERNAME rather than id', async () => {
+    // 🔴 The decline sits AFTER the username→userId resolution precisely so this
+    // works. Every other case here passes `userId` explicitly, so the check reads
+    // the same value at either position and none of them can tell whether the
+    // placement is right. Move the block above the resolution and only this case
+    // fails — which matters because the profile page addresses creators by handle.
+    routeByShape();
+
+    const result = await getImagesFromSearch({
+      ...baseInput,
+      currentUserId: OWNER_ID,
+      username: 'owner-handle',
+      isModerator: false,
+      notPublished: true,
+    });
+
+    expect(result.source).toBe('meili');
+    expect(queryBitdexMock).not.toHaveBeenCalled();
+  });
+
+  it('does NOT decline a non-moderator asking about SOMEONE ELSE', async () => {
+    // The control. Without it the test above passes against a build that declines
+    // every `notPublished` request from anyone, which would quietly route an
+    // unauthorized request to Meili instead of refusing it — and would make the
+    // decline look like authorization, which it is not. The filter builders are
+    // what refuse; this only chooses which backend answers.
+    routeByShape();
+
+    const result = await getImagesFromSearch({
+      ...baseInput,
+      currentUserId: OWNER_ID + 99,
+      userId: OWNER_ID,
+      isModerator: false,
+      notPublished: true,
+    });
+
+    expect(result.source).toBe('bitdex');
+    expect(queryBitdexMock).toHaveBeenCalled();
+  });
+
   it('declines a moderator’s `notPublished` request so Meili answers it', async () => {
     // Same class as `scheduled`. BitDex's query pushes `isPublished = false`,
     // which covers scheduled AND never-published with no separate signal, so it
@@ -519,6 +592,54 @@ describe('BitDex primary feed — content is not served before its publish time'
     const ids = result.data.map((i: { id: number }) => i.id);
 
     expect(ids).toContain(202);
+  });
+
+  it('opting in with `scheduled` surfaces scheduled work and STILL holds back drafts', async () => {
+    // ClickUp 868kt9y1w, BitDex half. `scheduled` sets `wantsUnpublished`, which
+    // skips the publication guard on this merge entirely — so a creator who asked
+    // for their scheduled posts also received every never-published draft they own.
+    // Same symptom the Meili builders had.
+    //
+    // Both docs arrive through the own-excluded pass together, which is the point:
+    // the opt-in has to separate them rather than admit or refuse the pair. 202 is
+    // scheduled (future `sortAt`), 404 is a draft (`publishedAt: null`).
+    queryBitdexMock.mockImplementation(async (_index: string, filters: unknown) =>
+      isOwnExcludedQuery(filters) ? page([rescheduledDoc, neverPublishedDoc]) : page([publishedDoc])
+    );
+
+    const result = await getImagesFromSearch({
+      ...baseInput,
+      currentUserId: OWNER_ID,
+      scheduled: true,
+    });
+    const ids = result.data.map((i: { id: number }) => i.id);
+
+    // Asserted on IDs rather than a count: `getInfinite({ids})` is known to drop
+    // its ids and return the global feed, so a count here could pass against a
+    // result that is not this query's at all.
+    expect(ids).toContain(101);
+    expect(ids).toContain(202);
+    expect(ids).not.toContain(404);
+  });
+
+  it('a moderator’s own-excluded merge is unchanged by that rule', async () => {
+    // The control. The fix is scoped to non-moderators — a moderator's `scheduled`
+    // request is declined outright so Meili answers it (see the tests above), and
+    // their own unpublished content still arrives through this pass. Without this,
+    // narrowing the moderator branch too would keep the test above green while
+    // silently changing what #4148 deliberately built.
+    queryBitdexMock.mockImplementation(async (_index: string, filters: unknown) =>
+      isOwnExcludedQuery(filters) ? page([neverPublishedDoc]) : page([publishedDoc])
+    );
+
+    const result = await getImagesFromSearch({
+      ...baseInput,
+      currentUserId: OWNER_ID,
+      isModerator: true,
+    });
+    const ids = result.data.map((i: { id: number }) => i.id);
+
+    expect(ids).toContain(404);
   });
 
   it('stops skipping emptied pages at the bound instead of walking forever', async () => {

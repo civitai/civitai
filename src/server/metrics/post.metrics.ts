@@ -164,7 +164,7 @@ async function getCommentTasks(ctx: MetricContext) {
         'AllTime'::"MetricTimeframe" AS timeframe,
         COUNT(c.id)::int AS "commentCount"
       FROM "Thread" t
-      JOIN "CommentV2" c ON c."threadId" = t.id
+      JOIN "CommentV2" c ON c."threadId" = t.id AND c."tosViolation" = false
       WHERE t."postId" IN (${ids})
         AND t."postId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
       GROUP BY t."postId"

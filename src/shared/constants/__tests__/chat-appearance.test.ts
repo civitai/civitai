@@ -32,6 +32,15 @@ describe('chat themes', () => {
     }
   });
 
+  it('gives every membership theme its own text colour', () => {
+    // The window paints `color: var(--chat-text)`, whose stock value is
+    // `inherit` — so a theme that skips it inherits the app's light/dark text
+    // onto a fixed palette, which is white-on-cream for the light themes.
+    for (const theme of chatThemes.filter((t) => t.slug !== CHAT_THEME_DEFAULT)) {
+      expect(theme.vars?.['--chat-text'], theme.slug).toMatch(/^#[0-9a-f]{3,8}$/i);
+    }
+  });
+
   it('leaves the default theme without vars so the app tokens show through', () => {
     expect(chatThemes.find((t) => t.slug === CHAT_THEME_DEFAULT)?.vars).toBeNull();
   });

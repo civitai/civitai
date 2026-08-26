@@ -93,7 +93,28 @@ module.exports = {
     // comment, a false negative costs a silently-empty test suite. The known
     // false-positive shapes are listed in eslint-local-rules.js so a blocked
     // author can recognise their own and reach for a disable comment.
-    'local-rules/no-wholesale-module-mock': ['error', { modules: ['~/utils/trpc'] }],
+    // `modules` is a CURATED registry, not the whole hazard: the rule only looks
+    // at modules named here, so a module absent from this list is not "safe", it
+    // is UNWATCHED. That is not hypothetical — `~/utils/trpc` was the only entry
+    // when the identical defect landed on `~/components/Dialog/RoutedDialogLink`
+    // (#4364 added a `triggerRoutedDialog` importer three files away from a
+    // factory that listed only `RoutedDialogLink`; the carousel suite died at
+    // import and collected 0 tests for ~17h, reported as `Tests 2062 passed`).
+    //
+    // Add a module here once its wholesale mocks are converted to the
+    // `importOriginal` spread — the entry is only free while the site count is
+    // low. Measured on this tree: 62 modules are wholesale-mocked somewhere in
+    // the browser suite with at least one REAL export omitted, over 329 call
+    // sites, and `eslint src/**/*.browser.test.tsx` already reports 52 files
+    // violating this rule for `~/utils/trpc` alone. Those persist because the
+    // ESLint gate in .github/workflows/lint.yml blocks only ADDED files; the
+    // modified-files pass is `continue-on-error: true`. So widening this list
+    // holds NEW browser tests to the pattern and annotates the rest — it does
+    // not retroactively fix them.
+    'local-rules/no-wholesale-module-mock': [
+      'error',
+      { modules: ['~/utils/trpc', '~/components/Dialog/RoutedDialogLink'] },
+    ],
 
     // aligns closing brackets for tags
     'react/jsx-closing-bracket-location': ['error', 'line-aligned'],

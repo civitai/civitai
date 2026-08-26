@@ -6,6 +6,15 @@ We use markdown documents to discuss plans. Documentation goes in the `docs/` fo
 ### Inline Comments
 Comments from us are marked with `@dev:` and you can leave comments as well with `@ai:`.
 
+### Filing follow-up work
+🔴 **Never open an issue or ticket you cannot state a CLOSING CONDITION for.** Name what ends it **and** who or what checks it — either a mechanical check (a merged PR, a passing command, a metric back under threshold) **or** a named human judgement over named evidence ("X reviews the diff" — never "someone will decide"). If you can name neither, it is **not a work item**: say so in your reply, with why, instead of opening something nobody can close.
+
+Why: a complete sweep of this org's open GitHub objects found that agent-filed **issues** survive dramatically longer than pull requests. The PRs close; the follow-up issues they spawn do not. Duplication turned out **not** to be the problem — closability was. The dominant pattern is *"merge a PR, then file follow-ups"*, and a follow-up filed at merge time is precisely the object born with no closing condition and no owner. Most such issues were also opened with no labels and no comments, so nothing downstream could triage them either.
+
+**If you are an automated producer** — a bot, a scheduled job, or an agent that opens issues — also label what you create `agent/<producer>` and put a machine-readable marker in the body naming the producer and the closing condition, so the object can be reconciled and closed later instead of accumulating. Apply the label on **create only**; never let an update overwrite labels a human has set.
+
+🔴 **Nothing enforces this.** There is no gate, no hook, and no CI check — it binds only the agents and people who read this file. If you are adding a new issue-creating producer, stamp it at the create site, because nothing will catch you if you don't.
+
 ## Tech Stack Overview
 
 ### Core Technologies
@@ -140,7 +149,7 @@ suite you did not run — the scripts above already use `'unit*'` for this reaso
 
 #### Run the suites that cover your change; run the WHOLE suite once, at the end
 
-The full unit suite is ~19,500 tests and ~75s, and `test:unit:run` is serialised through the dev-server
+The full unit suite is ~21,500 tests and ~75s, and `test:unit:run` is serialised through the dev-server
 queue — so running it between edits blocks everyone else's runs for minutes at a time. Name the covering
 suites before you start editing and run those on each iteration:
 
@@ -202,12 +211,35 @@ Use a top-level `import type * as PromClient` — an inline `typeof import('...'
 **Before widening a mock, check whether the import edge is needed at all.** A failing suite may be telling you the code pulled in a dependency it doesn't want, not that the mock is too narrow, and widening it would hide that. (Bit us twice in one day, Aug 2026, on two branches; one of those three suites was fixed by extracting the helpers into their own module instead.)
 
 #### Convention guards run as tests
-Several repo conventions are enforced by tests, not by eslint — `pnpm run test:lint-rules` runs all of them:
-`no-wholesale-module-mock` (the `importOriginal` rule above), `no-io-in-transaction`, `no-module-scope-cache`,
-`no-server-infra-in-app-graph`, `no-stale-moderator-route-probe`, `no-unbounded-paging-fake`,
-`no-unloadable-image-fixture`. They live in `src/server/services/__tests__/`. If one fails, fix the code — don't
-add an exemption without saying why. **Add a new guard to the `test:lint-rules` script when you write one**, or it
-is discoverable only by reading the directory.
+Several repo conventions are enforced by tests, not by eslint. 18 live in
+`src/server/services/__tests__/no-*.test.ts` — `no-agent-ground-truth-write`, `no-coerce-boolean-in-api`,
+`no-direct-shared-module-mock` (the shared-mock ratchet, see `docs/testing/shared-module-mocks.md`),
+`no-doubled-free-slot-noun`, `no-hand-typed-redis-key-constants` (the Redis key-constant
+ratchet — hand-typed `REDIS_KEYS` in an allowlisted mock had drifted 15 times), `no-io-in-transaction`,
+`no-lint-rules-script-drift`,
+`no-module-scope-cache`, `no-pk-addressed-engagement-write`, `no-server-infra-in-app-graph`,
+`no-sharp-outside-native-project`, `no-stale-moderator-route-probe`, `no-static-html2canvas-import`,
+`no-unbounded-paging-fake`, `no-unloadable-image-fixture`, `no-unverified-provenance-write`,
+`no-unwrapped-knob-rotation`, `no-wholesale-module-mock` (the `importOriginal` rule above) — plus
+`hub-filter-parity` beside them, `src/server/schema/__tests__/track.addView.schema.test.ts`,
+`src/server/notifications/__tests__/notification-settings-polarity.test.ts` and
+`src/server/services/__tests__/video-leaderboard-badge-staging.test.ts`. If one fails, fix the code —
+don't add an exemption without saying why.
+
+🔴 **`pnpm run test:lint-rules` is a hand-maintained file list, not a glob**, so a guard missing from it fails
+only in a full-suite run — hours later, in a file you weren't looking at. Five were missing at once when this
+was last audited, on 2026-08-24, and were wired in then. **Add a new guard to the script in the same commit
+you write it**, and don't read a green `test:lint-rules` as "all guards passed" without checking the directory
+against the script.
+
+`test:lint-rules` names 23 files today.
+
+The count above, the count in the list, and the list itself are what went stale three times, so
+`no-lint-rules-script-drift` fails when they disagree with the directory or the script. It reads two exact
+phrasings — `<n> live in \`src/server/services/__tests__/no-*.test.ts\`` and
+`` `test:lint-rules` names <n> files today `` — plus the backticked names in the list paragraph, so keep those
+shapes when you edit the numbers. The same paragraph pair in `.claude/agents/civitai-test-review.md` is
+covered too.
 
 `test:lint-rules` is a convenience selector, not the enforcement point: these files match the `unit` project's
 `include`, so they already run in `pnpm run test:unit:run` and in CI's `Unit tests` job. No workflow invokes

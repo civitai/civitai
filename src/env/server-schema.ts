@@ -409,6 +409,14 @@ export const serverSchema = z
     DELIVERY_WORKER_TOKEN: z.string().optional(),
     STORAGE_RESOLVER_ENDPOINT: z.string().optional(), // URL for storage-resolver microservice
     STORAGE_RESOLVER_AUTH: z.string().optional(), // Basic auth credentials (username:password)
+    // User-agent substrings whose model downloads resolve to an origin-direct URL
+    // instead of the CDN-fronted one. Empty (the default) disables the behaviour
+    // entirely, so this ships inert and is turned on by config.
+    //
+    // A direct URL is more expensive to serve than a CDN-fronted one, so this is
+    // an opt-in allowlist rather than a boolean: it names exactly which internal
+    // clients are worth it. See `shouldResolveDirect`.
+    STORAGE_RESOLVER_DIRECT_USER_AGENTS: commaDelimitedStringArray().default([]),
     TRPC_ORIGINS: commaDelimitedStringArray().default([]),
     // Server-side cap on how many procedure calls ONE batched tRPC request may carry
     // (`maxBatchSize` on the adapter). Defaults to the compiled-in constant that the browser

@@ -19,6 +19,13 @@ describe('unaccountedCharges', () => {
     expect(unaccountedCharges(charges, ['2026-05-26T01:06:29.761Z'])).toEqual([]);
   });
 
+  it('matches a charge that arrives ALREADY zone-marked', () => {
+    // `getTrainingCharges` zone-marks before calling this; appending a second `Z` gives NaN, which
+    // reads as every run deleted.
+    const charges = [{ id: 'z', date: '2026-05-26T01:06:29Z', buzz: 500, workflowId: null }];
+    expect(unaccountedCharges(charges, ['2026-05-26T01:06:29.761Z'])).toEqual([]);
+  });
+
   it('lists a charge no run submitted near', () => {
     const orphan = charge('2026-04-01 16:40:06');
     expect(unaccountedCharges([orphan], ['2026-05-26T01:06:29.761Z'])).toEqual([orphan]);

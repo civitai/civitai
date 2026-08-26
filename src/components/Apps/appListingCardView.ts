@@ -45,7 +45,7 @@ import type {
   ListingCard,
   ListingRecommendRollup,
 } from '~/server/schema/blocks/app-listing-read.schema';
-import { STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
+import { EMBEDDED_KIND_LABEL, STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
 import type { AppListingStatus } from '~/server/services/blocks/app-listing-status.constants';
 
 /** Kind badge shown on the card face. */
@@ -53,7 +53,13 @@ export type ListingBadgeKind = 'onsite' | 'offsite';
 export type ListingBadge = { label: string; kind: ListingBadgeKind };
 
 /**
- * The kind badge: on-site apps read "App"; every off-site app reads "Standalone".
+ * The kind badge: on-site apps read "Embedded"; every off-site app reads "Standalone".
+ *
+ * 🔴 BOTH BRANCHES NOW RESOLVE FROM `listingKindLabels`. The onsite branch used to
+ * return a hardcoded `'App'` — the CORRECT-looking word, which is why no copy sweep
+ * ever surfaced it and why the ledger's retired-wording rule could not see it either.
+ * A literal here is what let this surface and `appListingDetailRows` disagree about
+ * the same listing before, so neither side spells the word any more.
  *
  * 🔴 Off-site used to fork into two BADGES — "Connect app" (a linked OAuth
  * client) vs "Off-site" (no client) — derived from `connectClientId`. That fork
@@ -66,7 +72,7 @@ export type ListingBadge = { label: string; kind: ListingBadgeKind };
  * but the other one.
  */
 export function getListingBadge(card: Pick<ListingCard, 'kind' | 'kindData'>): ListingBadge {
-  if (card.kindData.kind === 'onsite') return { label: 'App', kind: 'onsite' };
+  if (card.kindData.kind === 'onsite') return { label: EMBEDDED_KIND_LABEL, kind: 'onsite' };
   return { label: STANDALONE_KIND_LABEL, kind: 'offsite' };
 }
 

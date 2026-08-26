@@ -1623,8 +1623,10 @@ export type Changelog = {
 export type Chat = {
   id: Generated<number>;
   createdAt: Generated<Timestamp>;
-  hash: string;
+  hash: string | null;
   ownerId: number;
+  isGroup: Generated<boolean>;
+  name: string | null;
 };
 export type ChatMember = {
   id: Generated<number>;
@@ -4024,6 +4026,13 @@ export type UserHub = {
   period: Generated<MetricTimeframe>;
   mediaTypes: MediaType[];
   metadata: Generated<unknown>;
+  availability: Generated<Availability>;
+  forcedBrowsingLevel: Generated<number>;
+};
+export type UserHubFollow = {
+  userId: number;
+  hubId: number;
+  createdAt: Generated<Timestamp>;
 };
 export type UserHubSource = {
   id: Generated<number>;
@@ -4563,6 +4572,7 @@ export type DB = {
   UserCosmeticShopPurchases: UserCosmeticShopPurchases;
   UserEngagement: UserEngagement;
   UserHub: UserHub;
+  UserHubFollow: UserHubFollow;
   UserHubSource: UserHubSource;
   UserLink: UserLink;
   UserMembershipOverride: UserMembershipOverride;

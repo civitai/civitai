@@ -174,6 +174,7 @@ export const ECO = {
   WanVideo25_I2V: 40,
   WanImage27: 64,
   WanVideo27: 65,
+  WanVideo30: 82,
   CogVideoX: 41,
   LTXV: 42,
   LTXV2: 58,
@@ -503,6 +504,13 @@ export const ecosystems: EcosystemRecord[] = [
     displayName: 'Wan Video 2.7',
     familyId: 5,
     sortOrder: 61,
+  },
+  {
+    id: ECO.WanVideo30,
+    key: 'WanVideo30',
+    displayName: 'Wan Video 3.0',
+    familyId: 5,
+    sortOrder: 62,
   },
 
   // PixArt Family (familyId: 6)
@@ -1038,6 +1046,7 @@ export const ecosystemSupport: EcosystemSupport[] = [
   { ecosystemId: ECO.WanVideo25_I2V, supportType: 'generation', modelTypes: checkpointOnly },
   { ecosystemId: ECO.WanImage27, supportType: 'generation', modelTypes: checkpointOnly },
   { ecosystemId: ECO.WanVideo27, supportType: 'generation', modelTypes: checkpointOnly },
+  { ecosystemId: ECO.WanVideo30, supportType: 'generation', modelTypes: checkpointOnly },
 
   // HiDream - checkpoint and LORA
   { ecosystemId: ECO.HiDream, supportType: 'generation', modelTypes: checkpointAndLora },
@@ -1433,6 +1442,14 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.WanVideo27,
     defaults: {
       model: { id: 2828005 },
+      modelLocked: true,
+      engine: 'wan',
+    },
+  },
+  {
+    ecosystemId: ECO.WanVideo30,
+    defaults: {
+      model: { id: 3267095 },
       modelLocked: true,
       engine: 'wan',
     },
@@ -2107,6 +2124,7 @@ export const BM = {
   Qwen3: 99,
   WanImage27: 86,
   WanVideo27: 81,
+  WanVideo30: 101,
   Upscaler: 82,
   Ernie: 83,
   AceAudio: 84,
@@ -3394,6 +3412,14 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: 'Video generation model from Alibaba',
     type: 'video',
     ecosystemId: ECO.WanVideo27,
+    licenseId: 31,
+  },
+  {
+    id: BM.WanVideo30,
+    name: 'Wan Video 3.0',
+    description: 'Video generation model from Alibaba',
+    type: 'video',
+    ecosystemId: ECO.WanVideo30,
     licenseId: 31,
   },
 

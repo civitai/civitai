@@ -4,6 +4,7 @@ import { MAX_LICENSING_FEE, maxLicensingFeeCeiling } from '@civitai/buzz';
 import * as z from 'zod';
 import { MAX_DONATION_GOAL, MIN_DONATION_GOAL } from '~/shared/constants/donation-goal.constants';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
+import { baseModels } from '~/shared/constants/basemodel.constants';
 import { constants } from '~/server/common/constants';
 import { imageSchema } from '~/server/schema/image.schema';
 import { modelFileSchema } from '~/server/schema/model-file.schema';
@@ -274,10 +275,18 @@ export const trainingDetailsObj = z.object({
     .optional(),
 });
 
+const canonicalBaseModels = new Set(baseModels);
+
+// Every name, not `activeBaseModels`: deprecated models must stay editable, and hidden ones are
+// moderator-only in the UI but legitimate on the wire.
+const baseModelSchema = z.string().refine((value) => canonicalBaseModels.has(value), {
+  error: (issue) => `Unknown base model: ${issue.input}`,
+});
+
 export const modelVersionUpsertSchema = z.object({
   id: z.coerce.number().optional(),
   name: z.string().min(1, 'Name cannot be empty.'),
-  baseModel: z.string(),
+  baseModel: baseModelSchema,
   baseModelType: z.enum(constants.baseModelTypes).nullish(),
   description: getSanitizedStringSchema({
     allowedTags: ['div', 'strong', 'p', 'em', 'u', 's', 'a', 'br', 'ul', 'ol', 'li', 'code', 'pre'],
@@ -440,7 +449,7 @@ export const modelVersionUpsertSchema2 = z.object({
   modelId: z.number(),
   id: z.number().optional(),
   name: z.string().trim().min(1, 'Name cannot be empty.'),
-  baseModel: z.string(),
+  baseModel: baseModelSchema,
   baseModelType: z.enum(constants.baseModelTypes).nullish(),
   description: getSanitizedStringSchema({
     allowedTags: ['div', 'strong', 'p', 'em', 'u', 's', 'a', 'br', 'ul', 'ol', 'li', 'code', 'pre'],
@@ -504,6 +513,17 @@ export const getModelVersionSchema = z.object({
   id: z.number(),
   withFiles: z.boolean().optional(),
 });
+
+/**
+ * Why the upsert handler cleared a submitted `licensingSourceVersionId`. A union rather than a string
+ * because it is written straight into the audit's `reason` column: a typo in a free-form string reaches
+ * a moderator's change history with nothing on the way to catch it.
+ */
+export type LicensingSourceRejection =
+  | 'not-a-root'
+  | 'base-model-mismatch'
+  | 'model-not-found'
+  | 'model-type-mismatch';
 
 export type GetLicensingRootsSchema = z.infer<typeof getLicensingRootsSchema>;
 export const getLicensingRootsSchema = z.object({

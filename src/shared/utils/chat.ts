@@ -2,6 +2,12 @@ import { ChatMemberStatus, ChatNotifyLevel } from '~/shared/utils/prisma/enums';
 
 export type ChatBucket = 'Inbox' | 'Requests' | 'Archived';
 
+/** A membership that still occupies a seat and can still read the conversation. */
+export const activeMemberStatuses: ChatMemberStatus[] = [
+  ChatMemberStatus.Invited,
+  ChatMemberStatus.Joined,
+];
+
 const archivedStatuses: ChatMemberStatus[] = [
   ChatMemberStatus.Ignored,
   ChatMemberStatus.Left,
@@ -24,6 +30,19 @@ export function chatBucketFor(member: {
 }
 
 /**
+ * The statuses an unfiltered membership can hold and still be in the inbox.
+ * The header badge counts inbox conversations, so its query has to select on
+ * the same thing the rail buckets on — it selected `Joined` alone, and an
+ * unfiltered invitation then lit a badge no tab could account for.
+ *
+ * `chatBucketFor` stays the definition; a test pins this list to it.
+ */
+export const inboxStatuses: ChatMemberStatus[] = [
+  ChatMemberStatus.Joined,
+  ChatMemberStatus.Invited,
+];
+
+/**
  * Shared by the `createMessageInput` cap and the composer's counter. Lives here
  * rather than in `server/common/constants` because `chat.schema.ts` is a leaf the
  * client `_app` bundle imports — pulling the server constants module in from
@@ -31,6 +50,13 @@ export function chatBucketFor(member: {
  * not see.
  */
 export const MAX_CHAT_MESSAGE_LENGTH = 2000;
+
+/**
+ * Seat cap for a conversation, shared by the server guard and the member
+ * pickers so the UI stops at the same number the API refuses at. Here rather
+ * than in `chat.service` because the pickers are client components.
+ */
+export const MAX_CHAT_MEMBERS = 10;
 
 /**
  * Whether an incoming message should ring for a member, given their
@@ -69,6 +95,53 @@ function mentionsUser(content: string, username: string): boolean {
     if (next === undefined || !/[a-z0-9_-]/.test(next)) return true;
     from = at + 1;
   }
+}
+
+/**
+ * Place a conversation into the cached conversation list.
+ *
+ * `chat:new-room` is replayed when somebody who had left is invited back, and
+ * that reader still holds the conversation — prepending it a second time gave
+ * them two entries for one thread, one of which never updated again.
+ */
+export function upsertChatInList<T extends { id: number }>(list: T[] | undefined, chat: T): T[] {
+  if (!list) return [chat];
+  return list.some((c) => c.id === chat.id)
+    ? list.map((c) => (c.id === chat.id ? chat : c))
+    : [chat, ...list];
+}
+
+const youVerb: Record<string, string> = { is: 'are', was: 'were', has: 'have' };
+
+/**
+ * Render a system message ("<name> joined", "<name> was kicked") for one reader,
+ * addressing them as "You".
+ *
+ * The naive `content.replace(username, 'You')` this replaces produced
+ * "You is now the group admin" and "You was kicked", and — because
+ * `String.replace('')` matches at position zero — prefixed a bare "You" onto
+ * every system message for a user with no username.
+ *
+ * Only the leading subject is rewritten: the templates put the actor first,
+ * either alone or in a comma list, so a name anywhere else (a group renamed
+ * after somebody) is not the reader being addressed.
+ */
+export function formatChatSystemMessage({
+  content,
+  username,
+}: {
+  content: string;
+  username?: string | null;
+}): string {
+  if (!username) return content;
+
+  const escaped = username.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const asSubject = new RegExp(`(^|, )${escaped}(?=$|[ ,])`, 'g');
+  const rewritten = content.replace(asSubject, '$1You');
+
+  // A plural subject already carries a plural verb, so a singular one here can
+  // only have belonged to the reader alone.
+  return rewritten.replace(/^You (is|was|has)\b/, (_, verb: string) => `You ${youVerb[verb]}`);
 }
 
 /**

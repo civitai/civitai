@@ -1499,7 +1499,7 @@ export const updateCollectionCoverImage = async ({
   });
 
   if (!permission.manage) {
-    return;
+    throw throwAuthorizationError('You do not have permission to manage this collection');
   }
 
   // TODO if necessary, check image ownership here

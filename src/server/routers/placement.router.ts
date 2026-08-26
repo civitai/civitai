@@ -14,6 +14,7 @@ import {
   getRemixGallerySchema,
   getRemixGalleryFreeEligibilitySchema,
   getRemixGalleryVisibilitySchema,
+  getRemixGalleryCardSummariesSchema,
   getStickerPlacementDetailSchema,
   getStickerPlacementsSchema,
   placementPriceRangeSchema,
@@ -66,6 +67,7 @@ import {
   getRemixGallery,
   getRemixGalleryFreeEligibility,
   getRemixGalleryVisibility,
+  getRemixGalleryCardSummaries,
   retractRemixGallerySubmission,
   setRemixGalleryPins,
 } from '~/server/services/remix-gallery.service';
@@ -381,6 +383,20 @@ export const placementRouter = router({
       user: ctx.user ?? undefined,
     })
   ),
+
+  // Counts and preview thumbnails for a whole surface, so a feed pays one query
+  // per 100 cards. Deliberately not merged with the sticker batch: the two
+  // filter completely differently — a gallery entry has to clear a visibility
+  // gate that a sticker has none of — and HTTP/3 makes a second request cheap
+  // enough that fusing two safety contracts to save one is a bad trade.
+  getRemixGalleryCardSummaries: publicProcedure
+    .input(getRemixGalleryCardSummariesSchema)
+    .query(({ input, ctx }) =>
+      getRemixGalleryCardSummaries({
+        imageIds: input.imageIds,
+        browsingLevel: viewerBrowsingLevel(ctx, input.browsingLevel),
+      })
+    ),
 
   // Whether to draw the card at all, and at what price. Its own query because
   // the answer is needed on every image detail view while the gallery contents

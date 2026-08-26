@@ -17,6 +17,7 @@ import type {
   GetRecentAppealsInput,
   ResolveAppealInput,
 } from '~/server/schema/report.schema';
+import { withAdditionalReport } from '~/server/services/report-details';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { imagesMetricsSearchIndex, imagesSearchIndex } from '~/server/search-index';
 import {
@@ -159,6 +160,8 @@ const validateReportCreation = async ({
   // if alsoReportedBy includes the userId, then do nothing
   if (alsoReportedBy.includes(userId)) return existingReport;
 
+  const mergedDetails = withAdditionalReport(existingReport.details, { userId, details });
+
   // if alsoReportedBy count is greater than previouslyReviewedCount * 2,
   // then set the status to pending and reset the previouslyReviewedCount
   if (previouslyReviewedCount > 0 && alsoReportedBy.length >= previouslyReviewedCount * 2) {
@@ -168,6 +171,7 @@ const validateReportCreation = async ({
         status: ReportStatus.Pending,
         previouslyReviewedCount: 0,
         alsoReportedBy: [...alsoReportedBy, userId],
+        ...(mergedDetails ? { details: mergedDetails } : {}),
       },
     });
 
@@ -178,6 +182,7 @@ const validateReportCreation = async ({
     where: { id },
     data: {
       alsoReportedBy: [...alsoReportedBy, userId],
+      ...(mergedDetails ? { details: mergedDetails } : {}),
     },
   });
 

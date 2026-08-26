@@ -180,9 +180,16 @@
         <IconAlertTriangle />
         <Alert.Title>Applies to {n.applies} of {selectedCount} selected</Alert.Title>
         <Alert.Description>
-          {n.skipped}
-          {n.skipped === 1 ? 'is' : 'are'} in early access, which already prices itself out when the window
-          closes — a sale can't run on top of one.
+          {#if n.earlyAccess > 0}
+            {n.earlyAccess}
+            {n.earlyAccess === 1 ? 'is' : 'are'} in early access, which already prices itself out when
+            the window closes — a sale can't run on top of one.
+          {/if}
+          {#if n.unpriced > 0}
+            {n.unpriced}
+            {n.unpriced === 1 ? 'has' : 'have'} no permanent access price, so there is nothing for a sale
+            to take Buzz off.
+          {/if}
         </Alert.Description>
       </Alert.Root>
     {/if}

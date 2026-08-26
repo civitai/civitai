@@ -541,6 +541,33 @@ async function getImageTagsForImages(
   );
 }
 
+/**
+ * Associates already-fetched tags to their images in O(N + M).
+ *
+ * `getImageTagsForImages` returns the tags for EVERY image in the batch, so a
+ * per-image `tags.filter(x => x.imageId === i.id)` rescans the whole array once
+ * per image — O(N x M), and M grows with N. CPU profiles of the production API
+ * showed that construct dominating multi-second event-loop stalls.
+ *
+ * 🔴 The empty case must stay `[]`, NOT `undefined`. `.filter()` returned `[]`
+ * for an image with no tags and `Map.get()` returns `undefined`; those are
+ * different values in the API response, and images with no tags are common.
+ * That is what the `?? []` is for — do not "simplify" it away.
+ */
+export function attachTagsToImages<TImage extends { id: number }, TTag extends { imageId: number }>(
+  images: TImage[],
+  tags: TTag[] | undefined
+): (TImage & { tags: TTag[] })[] {
+  const tagsByImageId = tags?.reduce((acc, tag) => {
+    const arr = acc.get(tag.imageId);
+    if (arr) arr.push(tag);
+    else acc.set(tag.imageId, [tag]);
+    return acc;
+  }, new Map<number, TTag[]>());
+
+  return images.map((i) => ({ ...i, tags: tagsByImageId?.get(i.id) ?? [] }));
+}
+
 export const deleteImageById = async ({
   id,
   updatePost,
@@ -1576,6 +1603,34 @@ const imageMetricsClickhouseTimeoutCounter = registerCounter({
 });
 
 /**
+ * Who may ask for unpublished content, and over whose work.
+ *
+ * A moderator may ask about anyone. Everyone else may ask only about themselves,
+ * and only when the request is ALREADY scoped to them — the scoping is the
+ * authorization, not a separate check that could drift from it. An unscoped
+ * `notPublished` from a non-moderator would otherwise return every draft on the
+ * site, so a missing `targetUserId` must refuse rather than default.
+ *
+ * `targetUserId` is the creator being browsed, NOT the viewer. Those are
+ * different fields on every path here (`getAllImages` calls the viewer `userId`
+ * and the creator `targetUserId`; the search builders call the creator `userId`
+ * and the viewer `currentUserId`), and passing the wrong one turns this into a
+ * check that always passes.
+ */
+function canRequestUnpublished({
+  isModerator,
+  currentUserId,
+  targetUserId,
+}: {
+  isModerator?: boolean;
+  currentUserId?: number | null;
+  targetUserId?: number | null;
+}) {
+  if (isModerator) return true;
+  return !!currentUserId && !!targetUserId && targetUserId === currentUserId;
+}
+
+/**
  * Resolve the `hideChallenges` flag into an `excludedTagIds` entry, in place.
  * Mirrors `enforceBlockedBrowsingTags`: the client sends intent, the server owns
  * the tag id, and every query path picks it up from `excludedTagIds` unchanged.
@@ -1648,6 +1703,7 @@ export const getAllImages = async (
     pending,
     publishedOnly,
     notPublished,
+    scheduled,
     tools,
     techniques,
     baseModels,
@@ -1805,13 +1861,44 @@ export const getAllImages = async (
     AND.push(Prisma.sql`(i.meta IS NOT NULL AND i.meta ? 'civitaiResources')`);
   }
   // [x]
-  if (notPublished && isModerator) {
+  if (notPublished && canRequestUnpublished({ isModerator, currentUserId: userId, targetUserId })) {
     AND.push(Prisma.sql`(p."publishedAt" IS NULL)`);
   } else if (!effectivePending) {
-    if (userId && !publishedOnly) {
-      // userId is bound into the SQL, so each user gets their own cache key —
-      // safe to cache, lower hit rate but no cross-user leakage.
-      AND.push(Prisma.sql`(p."publishedAt" < now() OR p."userId" = ${userId})`);
+    // Strict published-only, with the owner carve-out gated on the `scheduled`
+    // opt-in — the same rule the two Meili builders and the BitDex merge apply
+    // FOR A NON-MODERATOR.
+    //
+    // Deliberately not claiming full parity, because there isn't any. A
+    // moderator's `scheduled` request diverges: Meili emits `publishedAtUnix >
+    // now` (scheduled content from every creator), while this path emits the
+    // ordinary published feed plus that one moderator's own scheduled posts. So
+    // a moderator on a collection or any other DB-pinned view sees a different
+    // population than they would on the index. Pre-existing and out of scope
+    // here; recorded so the next person checking parity does not read a
+    // three-backend claim and stop looking.
+    //
+    // A fourth site is out of step too: `getImage` (~:6452) still carries the old
+    // permissive `OR p."userId" = <viewer>` with no publish predicate.
+    //
+    // The carve-out used to be a bare `p."userId" = <viewer>` with no publish
+    // predicate and no opt-in, so every signed-in caller got their own drafts,
+    // bounty entry uploads and orphans mixed into EVERY feed whether or not they
+    // asked. `p."publishedAt" > now()` is what makes it mean scheduled rather
+    // than unpublished; drafts have a NULL publish time and are reached through
+    // the Draft toggle instead (`notPublished`, handled above).
+    //
+    // Cache keying is NOT carried by this clause — measured, because the obvious
+    // reading is that removing the bare owner match widened the key. It does not:
+    // the availability carve-out a few lines below binds `userId` into the SQL
+    // for every non-moderator, and `queryCacheRaw` hashes the whole statement
+    // including its values. So the key stays per-user for the same viewers it
+    // always was. A moderator's key does widen — they skip the availability
+    // clause too — which shares one key across moderators rather than one each,
+    // and cannot collide with a non-moderator's differently-shaped SQL.
+    if (userId && !publishedOnly && scheduled) {
+      AND.push(
+        Prisma.sql`(p."publishedAt" < now() OR (p."userId" = ${userId} AND p."publishedAt" > now()))`
+      );
     } else {
       AND.push(Prisma.sql`(p."publishedAt" < now())`);
     }
@@ -2953,6 +3040,22 @@ export const makeMeiliImageSearchFilter = (
 ): MeiliImageFilter => {
   return `${field} ${criteria}`;
 };
+/**
+ * Owner carve-out for a `scheduled` request: own content whose publish date is
+ * still in the future.
+ *
+ * The publish predicate is the whole point. A bare `userId = me` admits every
+ * unpublished row the caller owns — drafts, bounty entry uploads, orphans — so
+ * turning Scheduled on filled a creator's own profile with work they never
+ * posted (ClickUp 868kt9y1w). Shared rather than inlined because all three
+ * call sites had their own copy and only one of them would have been fixed.
+ */
+const makeOwnScheduledMeiliFilter = (currentUserId: number, snappedNow: number) =>
+  `(${makeMeiliImageSearchFilter('userId', `= ${currentUserId}`)} AND ${makeMeiliImageSearchFilter(
+    'publishedAtUnix',
+    `> ${snappedNow}`
+  )})`;
+
 type MeiliImageSort = `${MetricsImageSortableAttribute}:${'asc' | 'desc'}`;
 export const makeMeiliImageSearchSort = (
   field: MetricsImageSortableAttribute,
@@ -3174,6 +3277,19 @@ function isScheduledForFuture(
  * The main query is fully cacheable (no per-user filter clauses).
  * Returns null if BitDex can't serve the request.
  */
+/**
+ * A cursored BitDex page came back empty because a query FAILED, so falling back to
+ * Meili would silently restart the user's scroll at page 1. Caught by the only
+ * caller that serves users and re-raised as a retryable 503.
+ *
+ * A dedicated class rather than a TRPCError: `fetchBitdexPrimary`'s call site
+ * swallows every throw and falls through to Meili, which is correct for the
+ * app-side map/merge/sort bugs that catch exists for. This one must survive it,
+ * and matching on TRPCError would also catch throws from deeper in the query path
+ * whose fallback behaviour is not ours to change.
+ */
+class BitdexCursoredPageUnavailable extends Error {}
+
 async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boolean } = {}) {
   // Two moderator queues BitDex cannot answer, declined so Meili does.
   //
@@ -3265,6 +3381,26 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
     // every username-addressed request. Pinned by a test.
     input = { ...input, userId: targetUser.id };
   }
+
+  // A creator asking for their OWN drafts declines for the same reason a
+  // moderator's request does: `wantsUnpublished` below reads `scheduled` alone
+  // for a non-moderator, so BitDex would answer a drafts request with the
+  // PUBLISHED feed — a non-empty result that suppresses the Meili fallback and
+  // shows the creator a population that is not the one they asked for.
+  //
+  // 🔴 Deliberately AFTER the username resolution above, not beside the
+  // moderator decline. The comparison needs the RESOLVED creator id: a request
+  // addressed by handle carries no `userId` at that point, so the same check
+  // placed earlier reads `undefined === <caller>` and never fires — the request
+  // would go on to be answered wrongly, silently, on exactly the profile page
+  // this feature is for.
+  //
+  // Scoped to the caller's own profile, matching `canRequestUnpublished`. An
+  // unscoped or someone-else's `notPublished` from a non-moderator is refused by
+  // the filter builders instead, because there is nothing to fall back TO —
+  // Meili will not answer that either.
+  if (input.notPublished && !!input.currentUserId && input.userId === input.currentUserId)
+    return null;
 
   // Which cohort this run belongs to. Read once so the three emit points below
   // cannot disagree, and computed here rather than at each call so a later
@@ -3402,11 +3538,17 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
 
   // Decode BitDex keyset cursor from "offset|bdx:JSON" format
   let bitdexCursor: any = undefined;
+  // Tracked separately from the parsed value because the fallback decision turns
+  // on "the caller sent a bdx: cursor", not on "we understood it". A cursor that
+  // fails to parse is still meaningless to Meili, so treating it as uncursored
+  // would send it down the very path that degrades offset to 0.
+  let hasBdxCursor = false;
   if (input.cursor) {
     const raw = input.cursor.toString();
     const pipeIdx = raw.indexOf('|');
     const entryPart = pipeIdx >= 0 ? raw.slice(pipeIdx + 1) : raw;
     if (entryPart.startsWith('bdx:')) {
+      hasBdxCursor = true;
       try {
         bitdexCursor = JSON.parse(entryPart.slice(4));
       } catch {}
@@ -3790,6 +3932,23 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
     if (!wantsUnpublished && (!input.isModerator || input.publishedOnly)) {
       const mergeNow = Date.now();
       ownDocs = ownDocs.filter((d) => isPublicallyPublished(d, mergeNow, stats));
+    } else if (wantsUnpublished && !input.isModerator) {
+      // `scheduled` is a non-moderator's ONLY opt-in here, and it means scheduled —
+      // not "everything unpublished". The BitDex query cannot draw that line
+      // (`isPublished = false` carries both, see the own-excluded scope above), so it
+      // is drawn on the way out, where `publishedAtUnix` still separates a
+      // never-published draft (null) from one whose time has not come (future).
+      //
+      // Equivalent to what the two Meili builders now emit: their arms are
+      // `publishedAtUnix <= snappedNow` and `(userId = me AND publishedAtUnix >
+      // snappedNow)`, whose union is exactly "the field exists". Both backends
+      // therefore answer `scheduled` the same way, which is the property the
+      // `wantsUnpublished` comment above exists to protect.
+      ownDocs = ownDocs.filter((d) => {
+        if (d.publishedAtUnix != null) return true;
+        stats.publicationHolds++;
+        return false;
+      });
     }
 
     if (ownDocs.length) {
@@ -3863,18 +4022,57 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
     // request that never contacted BitDex is neither of these things, and
     // recording it would make this counter's denominator disagree with its own
     // help string.
+    // A cursored request that is being SERVED does not fall back (see below), so
+    // it is recorded under its own outcomes rather than inflating `fallback_*`
+    // with requests that never fell back.
+    const cursoredServe = hasBdxCursor && !!opts.serving;
+    // A LIVE cursor with an empty page means the pass budget ran out, NOT the
+    // index. The loop above is bounded by MAX_PASSES as well as by `!result.cursor`,
+    // and an ordinary filter can empty every page it sees (a poi-heavy slice under
+    // `disablePoi`, a private-heavy one) while more content sits behind the cursor.
+    // Ending the feed there would truncate it permanently, which is worse than the
+    // page-1 restart this branch exists to fix.
+    const liveCursor = lastCursor ? `bdx:${JSON.stringify(lastCursor)}` : undefined;
     if (bitdexCallsObserved > 0)
-      recordBitdexPrimaryResult(anyQueryFailed ? 'fallback_error' : 'fallback_empty', serveMode);
+      recordBitdexPrimaryResult(
+        cursoredServe
+          ? anyQueryFailed
+            ? 'cursored_error'
+            : liveCursor
+            ? 'cursored_skip'
+            : 'cursored_end'
+          : anyQueryFailed
+          ? 'fallback_error'
+          : 'fallback_empty',
+        serveMode
+      );
 
-    // ⚠️ A cursored request does not fall back cleanly — the Meili path parses
-    // cursors as `offset|entryTimestamp` (:2594) and a `bdx:{…}` cursor fails
-    // both `isNumber` guards, so offset degrades to 0. An earlier revision of
-    // this PR ended the feed instead, and that was wrong: the paginated fallback
-    // is a DELIBERATE, pinned decision — see the invariant guard
-    // "authenticated + paginated (bdx cursor) + zero documents → falls back to
-    // Meili" in bitdex-empty-fallback.test.ts, whose comment says it is "pinned
-    // so the decision is explicit". Reversing it belongs in a change that owns
-    // that decision, not in this one. Raised separately.
+    // A cursored request must NOT fall back to Meili. `getAllImagesIndex` parses
+    // cursors as `offset|entryTimestamp` behind two `isNumber` guards (see its
+    // `cursorParsed`), and a `bdx:{…}` cursor fails both — so `offset` degrades
+    // to 0 AND the `entry` pin is lost, and the user's infinite scroll silently
+    // restarts at the top of a feed reshuffled by anything published since. No
+    // error, no empty page, just the wrong content.
+    //
+    // The two empties are answered differently because only one of them is worth
+    // retrying, which is the whole reason the split above exists:
+    //   • a call FAILED  → nobody knows what was in the index. Throw, so the
+    //     client retries the same cursor and can land on the real page.
+    //   • nothing failed → no error. `fallback_empty` is the bulk of normal
+    //     fallback volume, so erroring here would spin the client on the routine
+    //     case. Whether that means END or SKIP is decided by `liveCursor` below.
+    //
+    // Shadow mode is deliberately excluded: it serves nobody, and throwing there
+    // would move `fallback_exception{serve_mode="shadow"}` off the flat zero that
+    // makes it a usable tripwire for app-side throws.
+    if (cursoredServe) {
+      if (anyQueryFailed) throw new BitdexCursoredPageUnavailable();
+      // `liveCursor` undefined here means the loop broke on `!result.cursor` — the
+      // index really is exhausted, so the feed is over. Otherwise hand the cursor
+      // back and let the client skip forward over the emptied region.
+      return { data: [], nextCursor: liveCursor };
+    }
+
     return null;
   }
 
@@ -3958,6 +4156,17 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
       if (result) return { ...result, source: 'bitdex' as const };
       console.log('[BitDex] PRIMARY returned no results, falling through to Meili');
     } catch (err) {
+      // Re-raised, not swallowed: this is the one throw from `fetchBitdexPrimary`
+      // that means "do not fall through to Meili". Falling through would hand the
+      // Meili path a `bdx:` cursor it cannot parse and restart the user's scroll
+      // at page 1, which is the defect this branch exists to prevent.
+      if (err instanceof BitdexCursoredPageUnavailable) {
+        throw new TRPCError({
+          code: 'SERVICE_UNAVAILABLE',
+          message: 'Image feed is temporarily unavailable — please retry.',
+          cause: err,
+        });
+      }
       console.error('[BitDex] PRIMARY error, falling through to Meili:', err);
       recordBitdexError(err);
       // Distinct from `fallback_error`, and the distinction is the point: the
@@ -4252,7 +4461,7 @@ export async function getImagesFromFeedSearch(
 }
 
 import type { ResolvedHubSources } from '~/server/services/user-hub.service';
-import { resolveHubSources } from '~/server/services/user-hub.service';
+import { hubBrowsingLevel, resolveHubSources } from '~/server/services/user-hub.service';
 import { HUB_COLLECTION_SOURCES_ENABLED } from '~/server/schema/user-hub.schema';
 
 // The OR-group a hub's sources become. Mirrors the single-`modelVersionId`
@@ -4280,7 +4489,12 @@ function hubCreatorScope(sources: ResolvedHubSources | null) {
 async function resolvedHubSources(input: ImageSearchInput) {
   if (!input.hubId) return null;
   if (input.resolvedHub !== undefined) return input.resolvedHub;
-  const sources = await resolveHubSources({ hubId: input.hubId, userId: input.currentUserId });
+  const sources = await resolveHubSources({
+    hubId: input.hubId,
+    userId: input.currentUserId,
+    isModerator: input.isModerator,
+    excludedSources: input.hubExcludedSources,
+  });
   input.resolvedHub = sources;
   return sources;
 }
@@ -4477,6 +4691,15 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     const hubFilter = sources && buildHubFilter(sources, input);
     if (!hubFilter) return { data: [], nextCursor: undefined };
     filters.push(hubFilter);
+
+    // The hub's own content cap, applied before the browsing-level block below
+    // reads `browsingLevel`. An empty intersection is served as an empty page, not
+    // as the uncapped feed the block's `if (!browsingLevel)` fallback would give it.
+    const capped = hubBrowsingLevel(browsingLevel, sources);
+    if (capped !== undefined) {
+      if (!capped) return { data: [], nextCursor: undefined };
+      browsingLevel = capped;
+    }
   }
 
   // nb: commenting this out while we try checking existence in the db
@@ -4499,10 +4722,17 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   const nsfwFilters = [
     makeMeiliImageSearchFilter(nsfwLevelField, `IN [${browsingLevels.join(',')}]`) as string,
   ];
-  const nsfwUserFilters = [makeMeiliImageSearchFilter(nsfwLevelField, `= 0`)];
-  if (currentUserId)
-    nsfwUserFilters.push(makeMeiliImageSearchFilter('userId', `= ${currentUserId}`));
-  nsfwFilters.push(`(${nsfwUserFilters.join(' AND ')})`);
+  // The caller's own unscanned uploads. Added only when there IS a caller: with no
+  // `userId` clause to pair it with, this arm is every unscanned image on the site,
+  // ORed past the browsing level, for anyone logged out. Signed-in behaviour is
+  // unchanged.
+  if (currentUserId) {
+    const nsfwUserFilters = [
+      makeMeiliImageSearchFilter(nsfwLevelField, `= 0`),
+      makeMeiliImageSearchFilter('userId', `= ${currentUserId}`),
+    ];
+    nsfwFilters.push(`(${nsfwUserFilters.join(' AND ')})`);
+  }
   filters.push(`(${nsfwFilters.join(' OR ')})`);
 
   // NSFW License Restrictions Filter
@@ -4585,10 +4815,15 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   if (fromPlatform) filters.push(makeMeiliImageSearchFilter('onSite', '= true'));
 
   const snappedNow = snapToInterval(Math.round(Date.now()));
-  if (isModerator) {
-    if (notPublished) filters.push(makeMeiliImageSearchFilter('publishedAtUnix', 'NOT EXISTS'));
-    else if (scheduled)
-      filters.push(makeMeiliImageSearchFilter('publishedAtUnix', `> ${snappedNow}`));
+  // Hoisted above the moderator branch so a creator browsing their OWN profile
+  // reaches it too. `canRequestUnpublished` is what keeps that safe: it refuses
+  // unless the request is already scoped to the caller, so a non-moderator
+  // cannot ask this question about the site at large. Moderator behaviour is
+  // unchanged — they still answer true for any creator.
+  if (notPublished && canRequestUnpublished({ isModerator, currentUserId, targetUserId: userId })) {
+    filters.push(makeMeiliImageSearchFilter('publishedAtUnix', 'NOT EXISTS'));
+  } else if (isModerator) {
+    if (scheduled) filters.push(makeMeiliImageSearchFilter('publishedAtUnix', `> ${snappedNow}`));
     else {
       const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snappedNow}`)];
       // `publishedOnly` is the caller saying it cannot use an unpublished row at
@@ -4605,9 +4840,11 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     // their own scheduled/unpublished content pinned to feeds. The `scheduled`
     // flag is opt-in: when set, OR-in the owner carve-out so the user-own
     // second pass surfaces own scheduled hits.
-    const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snappedNow}`)];
+    const publishedFilters: string[] = [
+      makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snappedNow}`),
+    ];
     if (currentUserId && scheduled) {
-      publishedFilters.push(makeMeiliImageSearchFilter('userId', `= ${currentUserId}`));
+      publishedFilters.push(makeOwnScheduledMeiliFilter(currentUserId, snappedNow));
     }
     filters.push(`(${publishedFilters.join(' OR ')})`);
   }
@@ -5145,6 +5382,15 @@ export async function getImagesFromBitdexPreFilter(
     const arms = hubFilterArms(sources, { hideAutoResources, hideManualResources });
     if (!arms) return null;
     filters.push(_or(...arms.map((arm) => _in(arm.field, arm.ids.map(_int)))));
+
+    // Same cap as the Meili paths. `null` here means "BitDex cannot serve this",
+    // which falls through to Meili — where the identical clamp produces the empty
+    // page — rather than serving the hub past its own level.
+    const capped = hubBrowsingLevel(browsingLevel, sources);
+    if (capped !== undefined) {
+      if (!capped) return null;
+      browsingLevel = capped;
+    }
   }
 
   // --- NSFW Browsing Level ---
@@ -5408,6 +5654,15 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     const hubFilter = sources && buildHubFilter(sources, input);
     if (!hubFilter) return { data: [], nextCursor: undefined };
     filters.push(hubFilter);
+
+    // The hub's own content cap, applied before the browsing-level block below
+    // reads `browsingLevel`. An empty intersection is served as an empty page, not
+    // as the uncapped feed the block's `if (!browsingLevel)` fallback would give it.
+    const capped = hubBrowsingLevel(browsingLevel, sources);
+    if (capped !== undefined) {
+      if (!capped) return { data: [], nextCursor: undefined };
+      browsingLevel = capped;
+    }
   }
 
   // nb: commenting this out while we try checking existence in the db
@@ -5516,10 +5771,12 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
 
   // Publish Date Filtering.
   const snappedNow = snapToInterval(Date.now());
-  if (isModerator) {
-    if (notPublished) filters.push(makeMeiliImageSearchFilter('publishedAtUnix', 'NOT EXISTS'));
-    else if (scheduled)
-      filters.push(makeMeiliImageSearchFilter('publishedAtUnix', `> ${snappedNow}`));
+  // Hoisted above the moderator branch so a creator browsing their OWN profile
+  // reaches it too — see the matching block in getImagesFromSearchPreFilter.
+  if (notPublished && canRequestUnpublished({ isModerator, currentUserId, targetUserId: userId })) {
+    filters.push(makeMeiliImageSearchFilter('publishedAtUnix', 'NOT EXISTS'));
+  } else if (isModerator) {
+    if (scheduled) filters.push(makeMeiliImageSearchFilter('publishedAtUnix', `> ${snappedNow}`));
     else {
       const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snappedNow}`)];
       // `publishedOnly` is the caller saying it cannot use an unpublished row at
@@ -5532,21 +5789,25 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
       filters.push(`(${publishedFilters.join(' OR ')})`);
     }
   } else if (userId) {
-    const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snappedNow}`)];
+    const publishedFilters: string[] = [
+      makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snappedNow}`),
+    ];
     // For own user's profile view, only surface own scheduled content when the
     // caller explicitly opted in via the `scheduled` flag. Without opt-in, the
     // strict published filter applies even to own profile.
     if (currentUserId && userId === currentUserId && scheduled) {
-      publishedFilters.push(makeMeiliImageSearchFilter('userId', `= ${currentUserId}`));
+      publishedFilters.push(makeOwnScheduledMeiliFilter(currentUserId, snappedNow));
     }
     filters.push(`(${publishedFilters.join(' OR ')})`);
   } else {
     // General feed queries - strict published filter for caching by default.
     // When `scheduled` is opt-in, OR-in the owner carve-out so own scheduled
     // hits surface in the main feed.
-    const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snappedNow}`)];
+    const publishedFilters: string[] = [
+      makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snappedNow}`),
+    ];
     if (currentUserId && scheduled) {
-      publishedFilters.push(makeMeiliImageSearchFilter('userId', `= ${currentUserId}`));
+      publishedFilters.push(makeOwnScheduledMeiliFilter(currentUserId, snappedNow));
     }
     filters.push(`(${publishedFilters.join(' OR ')})`);
   }
@@ -7078,10 +7339,7 @@ export const getImagesByEntity = async ({
     tagsVar = await getImageTagsForImages(imageIds);
   }
 
-  return images.map((i) => ({
-    ...i,
-    tags: tagsVar?.filter((x) => x.imageId === i.id),
-  }));
+  return attachTagsToImages(images, tagsVar);
 };
 
 export async function createImage({
@@ -7406,28 +7664,63 @@ export const getEntityCoverImage = async ({
         UNION
         -- CONNECTIONS
         SELECT * FROM (
-          SELECT
+          -- There is one "ImageConnection" row per linked image, so this branch --
+          -- alone among the six -- can emit many rows per entity (fan-out p50 1,
+          -- p99 11, max 525). DISTINCT ON collapses it to the single row the JS
+          -- join below would have consumed anyway, which is what keeps the size of
+          -- this result set proportional to the number of entities requested.
+          --
+          -- The eligibility predicate belongs HERE rather than in the outer WHERE.
+          -- DISTINCT ON picks its row before any later filter runs, so collapsing
+          -- first and filtering afterwards could settle on an unscanned image and
+          -- leave the entity with no cover at all, even though a sibling connection
+          -- was eligible the whole time.
+          --
+          -- Both key columns are required. Every other branch pins a single
+          -- "entityType", so "entityId" alone identifies a row there; this branch
+          -- joins on the pair, so one id can legitimately recur across types.
+          --
+          -- "ImageConnection" carries no ordering column of its own -- no index, no
+          -- timestamp -- so nothing on the link records which image the author meant
+          -- to come first. The tiebreak is the image id, chosen for the properties
+          -- that can actually be guaranteed: it is a primary key, so the order is
+          -- total, never null, and leaves no residual tie for the planner to settle
+          -- arbitrarily. It is deliberately NOT claimed to be a first-attached rule.
+          -- "updateEntityImages" links already-existing images -- with arbitrary older
+          -- ids -- ahead of the ones it creates in the same call, so attaching an older
+          -- image on a later edit lowers the minimum and promotes that image to cover.
+          -- What the tiebreak buys is a stable, deterministic choice, not a
+          -- semantically-first one.
+          SELECT DISTINCT ON (e."entityId", e."entityType")
               e."entityId",
               e."entityType",
               i.id AS "imageId",
               0 "order1",
-	          0 "order2",
-	          0 "order3"
+              0 "order2",
+              0 "order3"
           FROM entities e
           JOIN "ImageConnection" ic ON ic."entityId" = e."entityId" AND ic."entityType" = e."entityType"
           JOIN "Image" i ON i.id = ic."imageId"
+          WHERE i."ingestion" = 'Scanned'
+            AND i."needsReview" IS NULL
+          ORDER BY e."entityId", e."entityType", i.id
         ) t
     ) t
     JOIN "Image" i ON i.id = t."imageId"
     WHERE i."ingestion" = 'Scanned' AND i."needsReview" IS NULL`;
 
+  // Index once instead of scanning `imagesRaw` per entity. `set` is guarded so the
+  // first row for a key wins, matching what `.find()` returned: an entity can still
+  // draw rows from two branches at once (an Article has both a cover image and
+  // content-image connections), and this must not silently switch which one is kept.
+  const imagesByEntity = new Map<string, GetEntityImageRaw>();
+  for (const image of imagesRaw) {
+    const key = `${image.entityId}:${image.entityType}`;
+    if (!imagesByEntity.has(key)) imagesByEntity.set(key, image);
+  }
+
   const images = entities
-    .map((e) => {
-      const image = imagesRaw.find(
-        (i) => i.entityId === e.entityId && i.entityType === e.entityType
-      );
-      return image ?? null;
-    })
+    .map((e) => imagesByEntity.get(`${e.entityId}:${e.entityType}`) ?? null)
     .filter(isDefined);
 
   let tagsVar: (VotableTagModel & { imageId: number })[] | undefined = [];
@@ -7438,9 +7731,8 @@ export const getEntityCoverImage = async ({
 
   const cosmetics = await getCosmeticsForEntity({ ids: images.map((i) => i.id), entity: 'Image' });
 
-  return images.map((i) => ({
+  return attachTagsToImages(images, tagsVar).map((i) => ({
     ...i,
-    tags: tagsVar?.filter((x) => x.imageId === i.id),
     cosmetic: cosmetics[i.id],
   }));
 };

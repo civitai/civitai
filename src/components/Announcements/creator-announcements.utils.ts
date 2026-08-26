@@ -9,12 +9,17 @@ export function useCreatorAnnouncementsFeature() {
 
 export function useQueryCreatorAnnouncements(userId?: number, limit = 10) {
   const enabled = useCreatorAnnouncementsFeature();
-  const { data, isLoading } = trpc.announcement.getCreatorAnnouncements.useQuery(
+  const { data, isLoading, isError } = trpc.announcement.getCreatorAnnouncements.useQuery(
     { userId: userId as number, limit },
     { enabled: enabled && !!userId }
   );
 
-  return { announcements: data ?? [], isLoading: enabled && !!userId ? isLoading : false };
+  const active = enabled && !!userId;
+  return {
+    announcements: data ?? [],
+    isLoading: active ? isLoading : false,
+    isError: active ? isError : false,
+  };
 }
 
 export function useQueryFollowedAnnouncements(enabled = true, limit = 20) {

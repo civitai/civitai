@@ -17,6 +17,7 @@ import {
   PODIUM_SIZE,
   runPool,
 } from '~/server/games/daily-challenge/challenge-ladder';
+import { isContentRefusal } from '~/server/games/daily-challenge/challenge-judge-routes';
 import {
   buildGroupComparisonPrompt,
   compareGroup,
@@ -120,13 +121,14 @@ export const rollingSwissEngine: ChallengeJudgingEngine = {
       return 0;
     }
 
-    return runGroups(
+    const pass = await runGroups(
       ctx,
       standings.map((row) => ({ imageId: row.imageId })),
       maxCalls,
       progress,
       deadlineMs
     );
+    return pass.calls;
   },
 
   /**
@@ -139,7 +141,14 @@ export const rollingSwissEngine: ChallengeJudgingEngine = {
     if (eligible.length < 2) return eligible;
 
     let calls = 0;
+    let passes = 0;
+    // The close stage has NO wall-clock bound, only `MAX_SETTLE_PASSES`, and it can outlast the
+    // 10-minute completion claim (see `pickWinnersForChallenge`). Leaving it unbounded is a
+    // deliberate call — a timeout trades a measured podium for a faster one — so the duration is
+    // measured instead of capped, and it is on the close event below.
+    const settleStartedAt = Date.now();
     for (let pass = 0; pass < MAX_SETTLE_PASSES; pass++) {
+      passes++;
       // The spend ceiling has to be re-read each pass and applied here too. Settling at close was
       // originally unbounded, which would have made the budget a limit on ticks only — the one
       // moment a runaway is most likely is the moment it was exempt.
@@ -162,9 +171,39 @@ export const rollingSwissEngine: ChallengeJudgingEngine = {
         break;
       }
 
-      const spentCalls = await runGroups(ctx, eligible, affordable, 1);
-      calls += spentCalls;
-      if (spentCalls === 0) break;
+      const pass = await runGroups(ctx, eligible, affordable, 1);
+      calls += pass.calls;
+      // Nothing left to compare — the field is settled.
+      if (pass.planned === 0) break;
+      // 🔴 Keyed on ROWS RECORDED, never on calls made. A call that resolved and then failed to
+      // write, and a call that came back unparseable, both leave the field exactly as unmeasured as
+      // a call that never happened — and neither increments `failed`. Keying on calls let those two
+      // run the loop to its bound, billing every pass, and then rank on nothing.
+      if (pass.recorded > 0) continue;
+
+      // A pass planned work and recorded none of it. Whether that is fatal depends on the FIELD,
+      // not on this pass: refusing whenever one last transient group fails would abort the close of
+      // a fully measured challenge, and 37% of ticks see a provider failure.
+      //
+      // The bar is not a threshold anyone picked. With no comparison rows at all, every entry
+      // scores the same 0.5 in `strength` and `swissStandings` falls through to its `imageId`
+      // tiebreak — so the podium is upload order, carrying no information, and the caller pays real
+      // prizes on it. Throwing leaves the challenge in 'Completing' for a later run to judge
+      // properly, which is what the whole tick did before groups were caught individually. With any
+      // rows, the ranking is evidence-based but short, which is what `shortOfBudget` below reports.
+      // `advance` keeps the tolerant behaviour throughout; only at close does giving up cost money.
+      // Strictly fresher than the snapshot the pass planned from, so it can only ever hold MORE
+      // rows — which makes the guard more permissive, the safe direction for one that refuses to
+      // finalize. Reached only when a pass recorded nothing, so at most once per close.
+      const measured = await store.getSwissState(ctx.challengeId);
+      if (measured.games.size === 0) {
+        throw new Error(
+          `swiss close: ${pass.planned} groups planned, no comparison recorded, field unmeasured ` +
+            `(failed ${pass.failed}, malformed ${pass.malformed}, writeFailed ${pass.writeFailed}, ` +
+            `unloadable ${pass.unloadable})`
+        );
+      }
+      break;
     }
 
     const state = await store.getSwissState(ctx.challengeId);
@@ -181,6 +220,8 @@ export const rollingSwissEngine: ChallengeJudgingEngine = {
       challengeId: ctx.challengeId,
       field: eligible.length,
       closeCalls: calls,
+      passes,
+      settleMs: Date.now() - settleStartedAt,
       shortOfBudget,
       minGames: Math.min(...eligible.map((e) => state.games.get(e.imageId) ?? 0)),
     }).catch(() => undefined);
@@ -213,13 +254,24 @@ export const rollingSwissEngine: ChallengeJudgingEngine = {
  * mid-flight would let two lanes pick the same pair before either had recorded it, which is the
  * third concurrency race this subsystem has had.
  */
+type GroupPass = {
+  /** Relation ROWS actually inserted. The only counter that says the field got measured. */
+  recorded: number;
+  calls: number;
+  planned: number;
+  failed: number;
+  malformed: number;
+  writeFailed: number;
+  unloadable: number;
+};
+
 async function runGroups(
   ctx: JudgingEngineContext,
   pool: { imageId: number }[],
   maxCalls: number,
   progress: number,
   deadlineMs?: number
-): Promise<number> {
+): Promise<GroupPass> {
   const state = await store.getSwissState(ctx.challengeId);
   const groups = planGroups({
     pool,
@@ -230,7 +282,16 @@ async function runGroups(
     budget: DEFAULT_BOUT_BUDGET,
     maxGroups: maxCalls,
   });
-  if (!groups.length) return 0;
+  if (!groups.length)
+    return {
+      recorded: 0,
+      calls: 0,
+      planned: 0,
+      failed: 0,
+      malformed: 0,
+      writeFailed: 0,
+      unloadable: 0,
+    };
 
   const images = await loadComparisonImages(groups.flat().map((entry) => entry.imageId));
   const systemPrompt = buildGroupComparisonPrompt({
@@ -242,62 +303,156 @@ async function runGroups(
   });
 
   let calls = 0;
+  let recorded = 0;
   let malformed = 0;
+  let unloadable = 0;
+  let failed = 0;
+  let refused = 0;
+  let writeFailed = 0;
+  const failedGroups: string[] = [];
+  const writeFailedGroups: string[] = [];
+  let firstError: string | undefined;
+  let firstWriteError: string | undefined;
   let buzz = 0;
 
-  await runPool(groups, LADDER_CONCURRENCY, async (group) => {
-    // Checked per group rather than once up front: the deadline is what holds when the provider is
-    // slower than we assumed, and a limit that is only tested before the work starts cannot do that.
-    // The SPEND ceiling is deliberately not here — it is applied when groups are planned, because a
-    // check inside concurrent lanes all read zero before any lane has paid for anything.
-    if (deadlineMs != null && Date.now() >= deadlineMs) return;
+  try {
+    await runPool(groups, LADDER_CONCURRENCY, async (group) => {
+      // Checked per group rather than once up front: the deadline is what holds when the provider is
+      // slower than we assumed, and a limit that is only tested before the work starts cannot do that.
+      // The SPEND ceiling is deliberately not here — it is applied when groups are planned, because a
+      // check inside concurrent lanes all read zero before any lane has paid for anything.
+      if (deadlineMs != null && Date.now() >= deadlineMs) return;
 
-    const groupImages = group
-      .map((entry) => images.get(entry.imageId))
-      .filter((image): image is ComparisonImage => !!image);
-    // A group we cannot fully load is not a group. Comparing the remainder would silently change
-    // the question from "rank four" to "rank three" and bill for it.
-    if (groupImages.length !== group.length) return;
+      const groupImages = group
+        .map((entry) => images.get(entry.imageId))
+        .filter((image): image is ComparisonImage => !!image);
+      // A group we cannot fully load is not a group. Comparing the remainder would silently change
+      // the question from "rank four" to "rank three" and bill for it.
+      if (groupImages.length !== group.length) {
+        unloadable++;
+        return;
+      }
 
-    const verdict = await compareGroup({ systemPrompt, group: groupImages });
-    calls++;
-    buzz += verdict.buzzCost;
+      // One group's failure must cost one group. `runPool` stops dispatching on the first rejection
+      // and rethrows it, so an error escaping here abandoned every group not yet started AND the
+      // whole review tick around it.
+      //
+      // The comparison and the writes are caught SEPARATELY. They are not one failure: a provider
+      // that never answered cost nothing and wrote nothing, while a failed write means the call was
+      // made, was billed, and left some of its six rows behind. They point at different systems and
+      // one counter cannot say which happened.
+      let verdict: Awaited<ReturnType<typeof compareGroup>>;
+      try {
+        verdict = await compareGroup({ systemPrompt, group: groupImages });
+      } catch (error) {
+        failed++;
+        if (isRefusal(error)) refused++;
+        // A group of four fails as a UNIT, so no single failure attributes to an entry. The
+        // membership is logged so attribution can be done across ticks by intersection — an image in
+        // every failed group and no successful one is the suspect.
+        if (failedGroups.length < MAX_LOGGED_FAILED_GROUPS)
+          failedGroups.push(groupImages.map((image) => image.imageId).join(','));
+        firstError ??= describeError(error);
+        return;
+      }
 
-    if (!verdict.order) {
-      malformed++;
-      return;
-    }
+      calls++;
+      buzz += verdict.buzzCost;
+      if (!verdict.order) {
+        malformed++;
+        return;
+      }
 
-    // Written against the SNAPSHOT's played set, so a pair another lane recorded in the meantime is
-    // still attempted here and lands on the conflict clause rather than being skipped by a read
-    // that raced. Cheap either way: it is one row, not one call.
-    const relations = relationsFromRanking(verdict.order, state.played);
-    for (const [index, relation] of relations.entries()) {
-      await store.recordComparison({
-        challengeId: ctx.challengeId,
-        phase: 'swiss',
-        verdict: {
-          imageIdA: relation.winnerImageId,
-          imageIdB: relation.loserImageId,
-          firstSeatImageId: groupImages[0].imageId,
-          winnerImageId: relation.winnerImageId,
-          margin: null,
-          perCategory: {},
-          reason: null,
-          model: verdict.model,
-          rerouted: false,
-          usage: verdict.usage,
-          // One CALL produced all of these rows, so its cost belongs to the group once. Spreading
-          // it across six rows would make each look a sixth as expensive as it was; repeating it
-          // would sextuple the challenge's recorded spend. The first row carries it.
-          buzzCost: index === 0 ? verdict.buzzCost : 0,
-        },
-      });
-    }
-  });
+      try {
+        // Written against the SNAPSHOT's played set, so a pair another lane recorded in the meantime
+        // is still attempted here and lands on the conflict clause rather than being skipped by a
+        // read that raced. Cheap either way: it is one row, not one call.
+        const relations = relationsFromRanking(verdict.order, state.played);
+        for (const [index, relation] of relations.entries()) {
+          await store.recordComparison({
+            challengeId: ctx.challengeId,
+            phase: 'swiss',
+            verdict: {
+              imageIdA: relation.winnerImageId,
+              imageIdB: relation.loserImageId,
+              firstSeatImageId: groupImages[0].imageId,
+              winnerImageId: relation.winnerImageId,
+              margin: null,
+              perCategory: {},
+              reason: null,
+              model: verdict.model,
+              rerouted: false,
+              usage: verdict.usage,
+              // One CALL produced all of these rows, so its cost belongs to the group once. Spreading
+              // it across six rows would make each look a sixth as expensive as it was; repeating it
+              // would sextuple the challenge's recorded spend. The first row carries it.
+              buzzCost: index === 0 ? verdict.buzzCost : 0,
+            },
+          });
+          recorded++;
+        }
+      } catch (error) {
+        writeFailed++;
+        // The ids go on THIS event, not only on the provider one: these are the groups left with
+        // some of their six rows committed, and finding those rows needs their membership.
+        if (writeFailedGroups.length < MAX_LOGGED_FAILED_GROUPS)
+          writeFailedGroups.push(groupImages.map((image) => image.imageId).join(','));
+        firstWriteError ??= describeError(error);
+      }
+    });
+  } finally {
+    // Billed whatever happens to the pool: `buzz` grows the moment a call returns, so anything
+    // already paid for is in it even on a path that throws past this point.
+    const spend = Math.ceil(buzz);
+    if (spend > 0) await incrementOperationSpent(ctx.challengeId, spend);
+  }
 
-  const spend = Math.ceil(buzz);
-  if (spend > 0) await incrementOperationSpent(ctx.challengeId, spend);
+  if (failed) {
+    logToAxiom({
+      type: 'warning',
+      name: 'challenge-swiss-group-failed',
+      challengeId: ctx.challengeId,
+      planned: groups.length,
+      calls,
+      failed,
+      // `message` is the OpenRouter envelope and is generic for a refusal; `refused` is the
+      // classified answer, read out of the raw body by `isContentRefusal`.
+      refused,
+      failedGroups,
+      // The list is capped, so it stops being the count as soon as a whole field fails.
+      failedGroupsTruncated: failed > failedGroups.length,
+      message: firstError,
+    }).catch(() => undefined);
+  }
+  if (writeFailed) {
+    // Points at the DATABASE, not the provider: the call was made and billed, and some of the
+    // group's six relation rows landed. `recordComparison` is one statement per row with no
+    // transaction around them, so a partial group is biased — `relationsFromRanking` emits pairs in
+    // ranking order, so the rows that land first are the ones the group's leader wins.
+    logToAxiom({
+      type: 'warning',
+      name: 'challenge-swiss-write-failed',
+      challengeId: ctx.challengeId,
+      planned: groups.length,
+      calls,
+      recorded,
+      writeFailed,
+      writeFailedGroups,
+      message: firstWriteError,
+    }).catch(() => undefined);
+  }
+  if (unloadable) {
+    // A group whose images would not load is NOT a group that failed and not one that succeeded.
+    // Three names rather than one counter, so a provider outage and a deleted image do not read as
+    // the same event.
+    logToAxiom({
+      type: 'warning',
+      name: 'challenge-swiss-group-unloadable',
+      challengeId: ctx.challengeId,
+      planned: groups.length,
+      unloadable,
+    }).catch(() => undefined);
+  }
   if (malformed) {
     logToAxiom({
       type: 'warning',
@@ -307,7 +462,35 @@ async function runGroups(
       malformed,
     }).catch(() => undefined);
   }
-  return calls;
+  return { recorded, calls, planned: groups.length, failed, malformed, writeFailed, unloadable };
+}
+
+/**
+ * A cap on the ids one tick reports. Attribution wants membership, not a transcript, and a field-
+ * wide outage at close can plan hundreds of groups against an unset `operationBudget`.
+ */
+const MAX_LOGGED_FAILED_GROUPS = 20;
+
+/**
+ * 🔴 Both of these run INSIDE the catch that exists to stop a failure escaping. `isContentRefusal`
+ * reads `.message`, `.body` and `.data$.body$` off the thrown value unguarded, and `String(error)`
+ * calls `toString` — a throwing accessor on either would escape `runPool` and abandon the tick,
+ * which is the exact bug this file was changed to remove.
+ */
+function isRefusal(error: unknown): boolean {
+  try {
+    return isContentRefusal(error);
+  } catch {
+    return false;
+  }
+}
+
+function describeError(error: unknown): string {
+  try {
+    return error instanceof Error ? error.message : String(error);
+  } catch {
+    return 'unserializable error';
+  }
 }
 
 /**

@@ -11,7 +11,8 @@ export function TrainingRunSummary({
   versionName: string;
   trainingDetails: TrainingDetailsObj | undefined | null;
 }) {
-  const { architecture, continuedFromEpoch, rows } = summarizeTrainingRun(trainingDetails);
+  const { architecture, continuedFromEpoch, continuedFromVersionName, rows } =
+    summarizeTrainingRun(trainingDetails);
 
   return (
     <Paper shadow="sm" radius="sm" p="md" withBorder>
@@ -30,6 +31,7 @@ export function TrainingRunSummary({
             {continuedFromEpoch !== null && continuedFromEpoch > 0 && (
               <Badge variant="light" color="violet">
                 Continued from epoch #{continuedFromEpoch}
+                {continuedFromVersionName ? ` of ${continuedFromVersionName}` : ''}
               </Badge>
             )}
           </Group>

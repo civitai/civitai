@@ -53,6 +53,14 @@ const { mockRead, mockWrite, seq } = vi.hoisted(() => {
     // denormalized AppListing.userId), the resolver is on EVERY path. Default: no seat,
     // i.e. exactly the owner-only behaviour these cases assert.
     appCollaborator: { findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
+    // The last-moderation-event lookup that separates an OWNER self-unpublish from a
+    // MODERATOR takedown on a `removed` listing (both write `status='removed'`). Default
+    // NO event ⇒ not owner-unpublish ⇒ still refused, which is what the `removed` cases
+    // below assert. Owner-unpublish is covered in
+    // `offsite-listing.owner-unpublish-editable.service.test.ts`.
+    appListingModerationEvent: {
+      findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
+    },
   });
   const mockRead = makeClient();
   const mockWrite = makeClient() as ReturnType<typeof makeClient> & {

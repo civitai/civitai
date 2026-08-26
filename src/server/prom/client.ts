@@ -377,3 +377,72 @@ export const placementUnfundedSettlementsGauge = registerInstrumentationMetric(
       registers: [instrumentationRegistry],
     })
 );
+
+/**
+ * Images that the restricted-base-model reconcile had to flag on its last run.
+ *
+ * A steady zero is the healthy state, so this gauge cannot be read on its own:
+ * a gauge that was never set scrapes as 0, and so does a job that has not run
+ * since October. Alert on it together with
+ * `restricted_image_reconcile_last_success_timestamp` below, which is the only
+ * thing that distinguishes "no drift" from "no job".
+ */
+export const restrictedImageDriftGauge = registerInstrumentationMetric(
+  PROM_PREFIX + 'restricted_image_drift',
+  () =>
+    new client.Gauge({
+      name: PROM_PREFIX + 'restricted_image_drift',
+      help: 'Images the restricted-base-model reconcile flagged on its last run',
+      registers: [instrumentationRegistry],
+    })
+);
+
+export const restrictedImageReconcileLastSuccessGauge = registerInstrumentationMetric(
+  PROM_PREFIX + 'restricted_image_reconcile_last_success_timestamp',
+  () =>
+    new client.Gauge({
+      name: PROM_PREFIX + 'restricted_image_reconcile_last_success_timestamp',
+      help: 'Unix seconds at which the restricted-base-model reconcile last completed',
+      registers: [instrumentationRegistry],
+    })
+);
+
+/**
+ * Base models the code licence data and the `RestrictedBaseModels` table disagree about.
+ *
+ * `missing_in_db` is the failure that produced the 2025-10 exposure: a licence
+ * restricting NSFW was added in code, nobody added the DB row, and every Postgres
+ * read path went on treating that base model as unrestricted while search hid it.
+ * Nothing reconciles the two by design — restricting a base model hides live
+ * creator content, so it stays a deliberate act rather than a deploy artifact.
+ */
+export const restrictedBaseModelDivergenceGauge = registerInstrumentationMetric(
+  PROM_PREFIX + 'restricted_base_model_divergence',
+  () =>
+    new client.Gauge({
+      name: PROM_PREFIX + 'restricted_base_model_divergence',
+      help: 'Base models present in one restricted list and not the other',
+      labelNames: ['direction'],
+      registers: [instrumentationRegistry],
+    })
+);
+
+/**
+ * Flagged images that no longer qualify — the recovery queue, reported and never acted on.
+ *
+ * Un-hiding restores content to public feeds, which is a moderation decision rather
+ * than a reconciliation, so the job never clears the flag. This is the number that
+ * says how much is sitting hidden without a current reason, and the query behind it
+ * is also the answer to "which images do we restore" if a model owner ever flips a
+ * base model to a restricted value and back. Read it with the heartbeat below: an
+ * unset gauge scrapes as 0, which here reads as the reassuring answer.
+ */
+export const restrictedImageOverhiddenGauge = registerInstrumentationMetric(
+  PROM_PREFIX + 'restricted_image_overhidden',
+  () =>
+    new client.Gauge({
+      name: PROM_PREFIX + 'restricted_image_overhidden',
+      help: 'Images flagged modelRestricted that no longer match any restricted base model',
+      registers: [instrumentationRegistry],
+    })
+);

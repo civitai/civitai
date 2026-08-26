@@ -571,6 +571,7 @@ export interface User {
   engagedImages?: ImageEngagement[];
   collections?: Collection[];
   hubs?: UserHub[];
+  hubFollows?: UserHubFollow[];
   collectionItems?: CollectionItem[];
   reviewedCollectionItems?: CollectionItem[];
   contributingCollections?: CollectionContributor[];
@@ -3488,8 +3489,10 @@ export interface ClubMetric {
 export interface Chat {
   id: number;
   createdAt: Date;
-  hash: string;
+  hash: string | null;
   ownerId: number;
+  isGroup: boolean;
+  name: string | null;
   owner?: User;
   chatMembers?: ChatMember[];
   messages?: ChatMessage[];
@@ -5407,7 +5410,18 @@ export interface UserHub {
   period: MetricTimeframe;
   mediaTypes: MediaType[];
   metadata: JsonValue;
+  availability: Availability;
+  forcedBrowsingLevel: number;
   sources?: UserHubSource[];
+  followers?: UserHubFollow[];
+}
+
+export interface UserHubFollow {
+  userId: number;
+  hubId: number;
+  createdAt: Date;
+  user?: User;
+  hub?: UserHub;
 }
 
 export interface UserHubSource {

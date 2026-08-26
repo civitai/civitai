@@ -21,6 +21,7 @@ import { RewardsBonusBanner } from '~/components/Buzz/RewardsBonusBanner';
 import { useRegionWarning } from '~/components/RegionBlock/useRegionWarning';
 import { useRegionRedirectDetection } from '~/components/RegionBlock/useRegionRedirectDetection';
 import { useToSUpdateModal } from '~/hooks/useToSUpdateModal';
+import { useTosReacceptancePrompt } from '~/hooks/useTosReacceptancePrompt';
 
 let shownReadonly = false;
 const readonlyAlertCutoff = Date.now() - 1000 * 60 * 30; // 30 minutes
@@ -54,6 +55,7 @@ export function AppLayout({
   useRegionWarning();
   useRegionRedirectDetection();
   useToSUpdateModal();
+  useTosReacceptancePrompt();
 
   useEffect(() => {
     if (isMounted() && !features.canWrite && !shownReadonly) {

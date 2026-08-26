@@ -42,6 +42,14 @@ const { mockRead, mockWrite, seq } = vi.hoisted(() => {
     oauthClient: {
       findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
     },
+    // The last-moderation-event lookup that separates an OWNER self-unpublish from a
+    // MODERATOR takedown on a `removed` listing (both write `status='removed'`). Default
+    // NO event ⇒ not owner-unpublish ⇒ still FORBIDDEN, which is what the `removed` case
+    // below asserts. Owner-unpublish is covered in
+    // `offsite-listing.owner-unpublish-editable.service.test.ts`.
+    appListingModerationEvent: {
+      findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
+    },
   });
   const mockRead = makeClient();
   const mockWrite = makeClient() as ReturnType<typeof makeClient> & {

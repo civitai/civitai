@@ -186,7 +186,11 @@ export function QueueItem({
   };
 
   const handleGenerate = () => {
-    const replayParams = sourceLineageStep?.params ?? request.params;
+    // Workflow-level replay: the enhancement's own form input, so remixing an
+    // upscale/interpolate card re-opens that enhancement. Remixing the source
+    // generation it ran on is the per-image action on GeneratedOutput, which
+    // reads step params.
+    const replayParams = request.params;
     const isTxt2Img = replayParams?.workflow === 'txt2img';
     // 3D Models: pin the ecosystem so the form's discriminator activates the
     // matching subgraph (auto-hiding the checkpoint picker via Controller's
@@ -226,9 +230,9 @@ export function QueueItem({
       },
       // PolyGen has no checkpoint/LoRA resources — drop any inherited ones so
       // the form provider doesn't push a `model` value onto the polyGen branch.
-      resources: isPolyGenReplay ? [] : sourceLineageStep?.resources ?? request.resources,
+      resources: isPolyGenReplay ? [] : request.resources,
       runType: 'replay',
-      remixOfId: sourceLineageStep?.remixOfId ?? request.remixOfId,
+      remixOfId: request.remixOfId,
     });
   };
 

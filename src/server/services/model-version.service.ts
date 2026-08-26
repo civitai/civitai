@@ -10,6 +10,7 @@ import {
 } from '~/server/utils/early-access-helpers';
 import { env } from '~/env/server';
 import type { Tracker } from '~/server/clickhouse/client';
+import type { LicensingSourceRejection } from '~/server/schema/model-version.schema';
 import { clickhouse } from '~/server/clickhouse/client';
 import { diffEntityChanges, resolveActorRole } from '~/server/utils/entity-change-helpers';
 import {
@@ -82,6 +83,7 @@ import {
   getPaidAccess,
   getFreshSalesForPermanentGate,
   bustModelSaleCache,
+  bustPaidAccessCache,
   materializePaidAccessEndsAt,
   writePaidAccessForModelVersion,
 } from '~/server/services/paid-access.service';
@@ -510,6 +512,7 @@ export const upsertModelVersion = async ({
   tracker,
   actorUserId,
   isModerator,
+  licensingSourceCoercedReason,
   ...data
 }: Omit<ModelVersionUpsertInput, 'trainingDetails'> & {
   meta?: Prisma.ModelVersionCreateInput['meta'];
@@ -517,6 +520,13 @@ export const upsertModelVersion = async ({
   tracker?: Tracker;
   actorUserId?: number;
   isModerator?: boolean;
+  /**
+   * Why the controller cleared `licensingSourceVersionId` — `model-type-mismatch`,
+   * `base-model-mismatch`, `not-a-root` or `model-not-found`. A rule acting, not the actor, and the
+   * audit says which rule: otherwise the repairs land in the change log as edits by creators who did
+   * nothing, and a moderator reading the history cannot tell a type mismatch from an unreadable model.
+   */
+  licensingSourceCoercedReason?: LicensingSourceRejection;
 }) => {
   if (data.description) await throwOnBlockedLinkDomain(data.description);
 
@@ -727,6 +737,10 @@ export const upsertModelVersion = async ({
         usageControl: true,
         flags: true,
         licensingFee: true,
+        // Read for the audit diff, not for the write. `watchedEntityFields` compares before/after by
+        // key, so a watched field missing from this select silently produces no row rather than an
+        // error — the audit would look wired up and record nothing.
+        licensingSourceVersionId: true,
         model: {
           select: {
             id: true,
@@ -902,6 +916,9 @@ export const upsertModelVersion = async ({
           ownerId: model.userId,
           isModerator,
         }),
+        systemFields: licensingSourceCoercedReason
+          ? { licensingSourceVersionId: `cleared: ${licensingSourceCoercedReason}` }
+          : undefined,
       });
       tracker.entityChanges(changeRows).catch(() => null);
     }
@@ -2554,8 +2571,22 @@ export const bustMvCache = async (
   // endpoint that calls this, so without it a cancelled sale stayed advertised for the whole TTL.
   try {
     await bustModelSaleCache(versionIds);
-  } catch {
+  } catch (error) {
     // Best-effort, like the busts around it: a stale badge is not worth failing an unpublish over.
+    // Logged rather than silent — a sustained Redis fault otherwise advertises stale sales for a full
+    // TTL with nothing recorded anywhere.
+    logToAxiom({ type: 'error', name: 'bust-model-sale-cache', message: 'sale badge', error });
+  }
+  // Not covered by the badge bust above: the gate row caches the sale windows too, and it is what the
+  // model page prices from. Busting one and not the other left the card and the page disagreeing about
+  // the same sale for the rest of the hour (868kwp6ne). Guarded like the badge for the same reason, and
+  // separately from it so one Redis fault cannot take both — this row self-heals on its TTL, while the
+  // search-index enqueue at the end of this function does not.
+  try {
+    await bustPaidAccessCache('ModelVersion', versionIds);
+  } catch (error) {
+    // Best-effort: a stale price on the model page is not worth failing an unpublish over.
+    logToAxiom({ type: 'error', name: 'bust-paid-access-cache', message: 'gate row', error });
   }
   await bustOrchestratorModelCache(versionIds, userId);
   await modelVersionAccessCache.refresh(versionIds);

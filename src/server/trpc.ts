@@ -1,4 +1,6 @@
 import { initTRPC, TRPCError } from '@trpc/server';
+import { couldAwaitTosReacceptance } from '~/server/common/tos-reacceptance';
+import { shouldOfferTosReacceptance } from '~/server/services/tos-reacceptance.service';
 import type { NextApiRequest } from 'next';
 import semver from 'semver';
 import { OnboardingSteps } from '~/server/common/enums';
@@ -109,9 +111,16 @@ const t = initTRPC
       // `cause.softBlock` is set only by the generation gate (auditPromptServer)
       // and read only by the generator form. Keep it off the message: consumers
       // match that with `startsWith`.
-      const cause = error.cause as { softBlock?: boolean } | undefined;
+      const cause = error.cause as
+        | { softBlock?: boolean; tosReacceptRequired?: boolean }
+        | undefined;
       if (cause?.softBlock === true) {
         return { ...shape, data: { ...shape.data, softBlock: true } };
+      }
+      // The client opens the ToS modal on this rather than showing the refusal — see
+      // `server/common/tos-reacceptance.ts`. Off the message, same reason as softBlock.
+      if (cause?.tosReacceptRequired === true) {
+        return { ...shape, data: { ...shape.data, tosReacceptRequired: true } };
       }
       return shape;
     },
@@ -396,11 +405,18 @@ const isAuthed = t.middleware(({ ctx: { user, acceptableOrigin, ...ctx }, next }
 const isMuted = middleware(async ({ ctx, next }) => {
   const { user } = ctx;
   if (!user) throw new TRPCError({ code: 'UNAUTHORIZED' });
-  if (user.muted)
+  if (user.muted) {
+    // `.catch`: this decides whether to OFFER a way out, never whether to refuse. A replica blip
+    // rejecting here would turn the refusal into a 500 carrying the driver's message.
+    const offer = couldAwaitTosReacceptance(user)
+      ? await shouldOfferTosReacceptance(user.id).catch(() => false)
+      : false;
     throw new TRPCError({
       code: 'FORBIDDEN',
       message: 'You cannot perform this action because your account has been restricted',
+      ...(offer ? { cause: { tosReacceptRequired: true } } : {}),
     });
+  }
 
   return next({
     ctx: { ...ctx, user },
@@ -477,6 +493,9 @@ export const appDeveloperProcedure = protectedProcedure.use(hasAppBlocksAuthor);
 // carries no static availability, so an absent flag / Flipt-down leaves every hub
 // procedure refusing, which is the pre-hubs behaviour.
 export const userHubProcedure = protectedProcedure.use(isFlagProtected('userHubs'));
+// Reading one hub, which a public hub allows to anyone holding the link — signed
+// out included. Every other hub verb stays on `userHubProcedure`.
+export const publicUserHubProcedure = publicProcedure.use(isFlagProtected('userHubs'));
 
 /**
  * Verified procedure to prevent users from making actions

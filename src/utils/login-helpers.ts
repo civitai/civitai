@@ -24,6 +24,7 @@ export const loginRedirectReasons = {
   'post-images': 'You need to be logged in to create a post',
   'add-to-collection': 'You must be logged in to add this resource to a collection',
   'add-to-hub': 'You must be logged in to add this to a hub',
+  'duplicate-hub': 'You need to be logged in to make your own copy of this hub',
   'create-bounty': 'You need to be logged in to create a new bounty',
   'perform-action': 'You need to be logged in to perform this action',
   'purchase-buzz': 'You need to be logged in to purchase Buzz',

@@ -12,7 +12,11 @@ import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { createLimiter } from '~/server/utils/rate-limiting';
 import { getTrustedClientIp, parseIpBlocklist, parseUserBlocklist } from '~/server/utils/client-ip';
 import { fetchDownloadCount } from '~/server/utils/download-count';
-import { isRequestFromBrowser, repairSplitQueryString } from '~/server/utils/request-helpers';
+import {
+  isRequestFromBrowser,
+  repairSplitQueryString,
+  shouldResolveDirect,
+} from '~/server/utils/request-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { GENERIC_SERVER_ERROR_MESSAGE } from '~/server/utils/rest-error-envelope';
 
@@ -171,9 +175,15 @@ export default PublicEndpoint(
       if (!modelVersionId) return errorResponse(400, 'Missing modelVersionId');
 
       // Get file
+      //
+      // `direct` is evaluated here, AFTER the blocklist, rate-limit and (inside
+      // getFileForModelVersion) auth/ownership/paid-access checks. It selects
+      // which host serves the bytes and nothing else — a caller that fails any
+      // gate above never reaches this line, so the allowlist cannot widen access.
       const fileResult = await getFileForModelVersion({
         ...input,
         user: session?.user,
+        direct: shouldResolveDirect(req),
       });
 
       if (fileResult.status === 'not-found') return errorResponse(404, 'File not found');

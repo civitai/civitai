@@ -40,6 +40,7 @@ import type {
 import { Meta } from '~/components/Meta/Meta';
 import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
 import { APPS_PAGE_WIDTHS } from '~/components/Apps/appsPageWidths';
+import { EMBEDDED_KIND_LABEL, STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isAppReviewer } from '~/shared/utils/app-blocks-access';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -195,7 +196,7 @@ export default function ReviewQueuePage() {
       <AppsPageLayout
         size={APPS_PAGE_WIDTHS['/apps/review']}
         title="App publish-request queue"
-        subtitle="Moderator review for Apps. On-site + external submissions share one queue per tab; Pending is oldest-first, history is newest-first."
+        subtitle={`Moderator review for Apps. ${EMBEDDED_KIND_LABEL} + ${STANDALONE_KIND_LABEL} submissions share one queue per tab; Pending is oldest-first, history is newest-first.`}
       >
         <ActivePreviewsPanel />
 

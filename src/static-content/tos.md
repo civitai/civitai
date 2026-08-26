@@ -1,7 +1,7 @@
 ---
 title: Terms of Service
 description: The Terms of Service for the model sharing platform Civitai
-lastmod: 2026-08-19
+lastmod: 2026-08-26
 ---
 
 Welcome, and thank you for your interest in Civit AI, Inc. (“Civitai,” “we,” or “us”) and our website at [civitai.red](https://civitai.red), along with our related websites, hosted applications, mobile or other downloadable applications, and other services provided by us (collectively, the “Service”). These Terms of Service are a legally binding contract between you and Civitai regarding your use of the Service.
@@ -97,7 +97,7 @@ ARBITRATION NOTICE. EXCEPT FOR CERTAIN KINDS OF DISPUTES DESCRIBED IN SECTION 18
 
   Moderators may flag content or Users at their reasonable discretion. If any User Content is flagged, our moderators will consider context and intent while enforcing these Terms and our policies. If notified by a User or content owner that User Content allegedly does not conform to these Terms, we may investigate the allegation and determine in our sole discretion whether to remove the User Content, which we reserve the right to do at any time and without notice. For clarity, Civitai does not permit infringing activities on the Service. Civitai may block, filter, mute, remove or disable access to any User Content uploaded to or transmitted through the Service without any liability to the User who Posted such User Content to the Service or to any other Users.
 
-  **The following User Content is expressly prohibited and may be flagged by or for our moderators:**
+  <a id="tos-prohibited-content"></a>**The following User Content is expressly prohibited and may be flagged by or for our moderators:**
 
   Prohibited Content Includes (but is not limited to):
 

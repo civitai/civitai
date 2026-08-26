@@ -15,7 +15,7 @@ import { TransactionType } from '~/shared/constants/buzz.constants';
 import { createBuzzTransactionMany, getMultipliersForUser } from '~/server/services/buzz.service';
 import type { ResolvedRewardConfig, RewardConfig } from '~/server/rewards/reward-config';
 import { resolveFromConfig, resolveRewardConfig } from '~/server/rewards/reward-config';
-import { hashifyObject } from '~/utils/string-helpers';
+import { hashify, hashifyObject } from '~/utils/string-helpers';
 import { isClickHouseConnectionError, withRetries } from '../utils/errorHandling';
 
 // Retry budget for the batch `process` (cron) path — can afford to block.
@@ -202,9 +202,7 @@ export function createBuzzEvent<T>({
     await withRetries(() =>
       createBuzzTransactionMany(
         events
-          .filter((x) => x.awardAmount > 0)
           .map((event) => {
-            if (event.multiplier === 0) event.multiplier = 1;
             return {
               type: TransactionType.Reward,
               toAccountId: event.toUserId,
@@ -224,6 +222,10 @@ export function createBuzzEvent<T>({
               toAccountType: buzzEvent.toAccountType ?? 'yellow',
             };
           })
+          // A zero multiplier is `getMultipliersForUser` reporting rewards-ineligibility, not a
+          // missing value, so the amount it produces is the intended one. Filtering on the amount
+          // rather than on `awardAmount` also keeps a 0-Buzz transaction off the ledger.
+          .filter((transaction) => transaction.amount > 0)
       )
     );
   };
@@ -453,6 +455,19 @@ export function createBuzzEvent<T>({
 
     // prepare awards for allocation
     for (const event of targeted) {
+      // `getMultipliersForUser` zeroes the multiplier for a rewards-ineligible user, and `apply`
+      // stored that decision on the pending row. Leaving it `awarded` would both claim a payout
+      // that did not happen and consume the user's cap, so a later eligible grant in the same
+      // interval would be short by the amount never paid.
+      //
+      // `Number()` because the value is read back out of a ClickHouse `Decimal(3, 2)`: it arrives
+      // unquoted today, but a client setting away from arriving as `'0.00'`, which `=== 0` misses.
+      if (Number(event.multiplier) === 0) {
+        event.status = 'unqualified';
+        event.awardAmount = 0;
+        continue;
+      }
+
       // check against caps
       const prevAwardKeys = new Set<string>();
       if (buzzEvent.caps) {
@@ -556,6 +571,118 @@ export function createBuzzEvent<T>({
   };
 }
 
+const INT32_MAX = 2147483647;
+// `buzzEvents` is narrower than `BuzzEventLog`: `forId` is Int32, `status` is
+// Enum8('pending','awarded','capped') and `multiplier` is Decimal(3, 2).
+const CLICKHOUSE_STATUSES = new Set(['pending', 'awarded', 'capped']);
+// 🔴 This must equal the ceiling of the DEPLOYED `buzzEvents.multiplier` column, which is
+// Decimal(3, 2). Raising it sends a value the column cannot hold, and an unparseable row is
+// dropped server-side while `sendAward` pays anyway — so this is the ONLY guard, not a backstop.
+// Widening the column was costed and declined (2026-08-24): the ceiling is not reachable today,
+// and it was not worth a mutation over 1.4 billion rows. If that changes, the column moves first
+// and this follows in the same window — never the other way round.
+// See src/server/clickhouse/migrations/2026-08-24-buzz-events-multiplier-width.sql.
+const CLICKHOUSE_MAX_MULTIPLIER = 9.99;
+
+/**
+ * Fit an event to the `buzzEvents` column types before it goes over the wire.
+ *
+ * Inserts run `async_insert=1, wait_for_async_insert=0`, so ClickHouse accepts the request, parses
+ * the batch server-side afterwards, and drops it — the app sees success and `sendAward` still pays.
+ * A value the column cannot hold therefore costs a row, or a whole 1000-row chunk, with no error
+ * anywhere. Three fields could do it, and all three were doing it (ClickUp 868ktbnjh):
+ *
+ *   forId       a reward keyed on a string (generation-feedback's jobId, ad-watched's token,
+ *               appBlockReview's appBlockId). 4M payouts, zero event rows.
+ *   status      `unqualified` is not in the enum, so a chunk carrying one loses the awarded and
+ *               capped updates riding with it and those rows stay `pending` forever.
+ *   multiplier  gold's 4 times MAX_GLOBAL_BONUS of 5 is 20, against a ceiling of 9.99.
+ *
+ * The original value is kept in `transactionDetails` so a coerced row is still traceable, and the
+ * event itself is left alone so `sendAward`'s `externalTransactionId` keeps the value it has
+ * always used.
+ */
+export function toClickhouseBuzzEvent(event: BuzzEventLog): BuzzEventLog {
+  const coerced: MixedObject = {};
+
+  let forId = event.forId;
+  if (typeof forId === 'number') {
+    // A number the column cannot hold is dropped exactly like a string would be, so the range
+    // check belongs on both branches, not only on the parsed one.
+    if (!Number.isInteger(forId) || Math.abs(forId) > INT32_MAX) {
+      coerced.forIdRaw = forId;
+      forId = hashify(String(forId));
+    }
+  } else {
+    coerced.forIdRaw = forId;
+    // Strict digits only: `Number('')` is 0 and `Number(' 42 ')` is 42, and buzzEvents is ordered
+    // by (type, toUserId, forId, byUserId), so two keys collapsing to one id replace each other.
+    forId =
+      /^-?\d+$/.test(forId) && Math.abs(Number(forId)) <= INT32_MAX
+        ? Number(forId)
+        : hashify(forId);
+  }
+
+  let status = event.status;
+  if (status && !CLICKHOUSE_STATUSES.has(status)) {
+    coerced.statusRaw = status;
+    // `unqualified` and `capped` both mean seen and paid nothing. Recording it as the nearest
+    // legal value keeps the row; widening the enum would let it keep its own name.
+    status = 'capped';
+  }
+
+  let multiplier = event.multiplier;
+  if (multiplier !== undefined && multiplier > CLICKHOUSE_MAX_MULTIPLIER) {
+    coerced.multiplierRaw = multiplier;
+    multiplier = CLICKHOUSE_MAX_MULTIPLIER;
+    // On the batch path this value is not audit — `process-rewards` reads it back out and
+    // `sendAward` pays `awardAmount * multiplier` from it, so a clamp UNDERPAYS rather than
+    // rounding a record. Reported once per batch by the caller, not here: the condition becomes
+    // reachable when a site-wide bonus event switches on, which clamps every gold member's pending
+    // events at once, and this function runs per event per retry.
+  }
+
+  if (Object.keys(coerced).length === 0) return event;
+
+  let details: MixedObject;
+  try {
+    details = JSON.parse(event.transactionDetails ?? '{}');
+  } catch {
+    details = {};
+  }
+
+  return {
+    ...event,
+    forId,
+    status,
+    multiplier,
+    transactionDetails: JSON.stringify({ ...details, ...coerced }),
+  };
+}
+
+/** Fits a batch to the column types and reports a clamped multiplier once, with a count. */
+function toClickhouseBuzzEvents(events: BuzzEventLog[]): BuzzEventLog[] {
+  let clamped = 0;
+  const rows = events.map((event) => {
+    const row = toClickhouseBuzzEvent(event);
+    if (row.multiplier !== event.multiplier) clamped++;
+    return row;
+  });
+
+  if (clamped > 0) {
+    logToAxiom({
+      name: 'buzz-rewards',
+      type: 'error',
+      message: 'Buzz event multiplier exceeded the ClickHouse column and was clamped',
+      clampedEvents: clamped,
+      batchSize: events.length,
+      clampedTo: CLICKHOUSE_MAX_MULTIPLIER,
+    }).catch(() => null);
+  }
+
+  return rows;
+}
+
 // TODO: sometimes this can cause duplicate entries.
 //  hypothesis is that this occurs due to a combination of
 //  async inserts + ch's merge strategy
@@ -568,7 +695,7 @@ async function addBuzzEvent(
     async () =>
       await clickhouse?.insert({
         table: 'buzzEvents',
-        values: [event],
+        values: toClickhouseBuzzEvents([event]),
         format: 'JSONEachRow',
       }),
     retries,
@@ -582,7 +709,7 @@ async function updateBuzzEvents(events: BuzzEventLog[]) {
     async () =>
       await clickhouse?.insert({
         table: 'buzzEvents',
-        values: events,
+        values: toClickhouseBuzzEvents(events),
         format: 'JSONEachRow',
       }),
     5,

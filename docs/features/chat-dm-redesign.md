@@ -101,8 +101,11 @@ Active / Pending / Archived:
 - **Requests** — `Invited` where `filteredAt IS NOT NULL`
 - **Archived** — `Ignored`, `Left`, `Kicked` (unchanged)
 
-`getUnreadMessagesForUserHandler` must exclude members with `filteredAt` set, or a filtered
-request still rings the header badge and the filtering achieves nothing.
+`getUnreadMessagesForUserHandler` counts the Inbox bucket, so it selects on the same two things:
+members with `filteredAt` set are excluded (or a filtered request still rings the header badge and
+the filtering achieves nothing), and both inbox statuses are included (or an unfiltered invitation
+rings a badge no tab accounts for). It selects that list from `inboxStatuses` in
+`src/shared/utils/chat.ts` for that reason.
 
 Accepting a request needs no extra handling: the existing invite accept/reject moves the member
 to `Joined`, and the bucket rule only consults `filteredAt` for `Invited` members, so the thread
@@ -256,8 +259,8 @@ side of the thread; without it, a report filed today can be rendered unreviewabl
 ## Themes
 
 A theme is a palette applied as CSS variables on the chat window and nothing else — the other
-side of a conversation sees their own. `default` is free; `citron`, `bubblegum` and `terminal`
-come with any active membership.
+side of a conversation sees their own. `default` is free and every other theme in
+`chatThemes` comes with any active membership.
 
 The palettes live in `src/shared/constants/chat-theme.ts`. The *choice* is a chat user setting;
 the *entitlement* is the membership, and the two are resolved against each other at render
@@ -267,6 +270,11 @@ to set it again.
 
 Themes reach the chrome, the message rows and the type, not just accent colours — but every token
 they move resolves to the stock value in the default palette, so the unthemed window is unchanged.
+`--chat-bg-image` takes any CSS background, so a theme's texture is gradients or an inline SVG
+filter rather than an asset.
+
+The app loads no webfonts, so a theme's display face is whatever of its stack is already installed.
+Naming the Google face first costs nothing and makes the stack correct if the app ever loads one.
 
 A named theme is a fixed palette in both colour schemes. Picking Terminal is picking the terminal
 look, not a preference the light/dark setting gets to reinterpret; only `default` follows the

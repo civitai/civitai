@@ -66,6 +66,7 @@ import {
 import { env } from '~/env/client';
 import { effectiveSandboxIsOpaque, intersectSandbox } from './sandbox';
 import { PAGE_SLOT_ID } from '~/shared/constants/slot-registry';
+import { HEADER_HEIGHT_PX } from '~/shared/constants/app-layout.constants';
 import { usePostMessage } from './usePostMessage';
 import type { BlockInitPayload, PageContext } from './types';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -204,6 +205,64 @@ type Status = 'loading' | 'ready' | 'timeout' | 'fatal' | 'no_token' | 'error';
 // (gotcha #73). Module-scope so referencing it in a handler adds no effect dep.
 const REVIEW_NACK_MESSAGE = 'not available in review preview';
 
+/**
+ * The floor a `fit="fill"` host will not shrink below, in px.
+ *
+ * 🔴 WHY A FLOOR EXISTS AT ALL. `fit="fill"` is only correct under a
+ * `Page(…, { scrollable: false })` layout, where EVERY ancestor is
+ * `overflow-hidden`. That is what removes the double scrollbar — and it also
+ * means the page is the only thing left that can offer a scrollbar. The site's
+ * fixed chrome cannot shrink, so with a bare `min-height: 0` the app absorbed
+ * the ENTIRE shortfall on a short viewport and the overflow was simply clipped
+ * away with nothing to scroll. Measured before this floor existed: 153px of host
+ * at a ~360px-tall SHORT DESKTOP window (the 90px ad; a phone in landscape gets
+ * the 50px one and lands at 193 — see the table below), and 0px at 250px, with
+ * `outerScrollbar = false` at every step. That is WCAG 1.4.4 / 1.4.10 — strictly worse than the cosmetic spare
+ * scrollbar `fill` mode was introduced to remove.
+ *
+ * 🔴 THE FLOOR IS A TRADE, NOT A FREE WIN, AND ITS VALUE IS THE WHOLE TRADE.
+ * When `available < FILL_MIN_HEIGHT_PX` the host overflows the page wrapper and
+ * that wrapper grows a scrollbar — beside the block's own, i.e. THIS PR'S BUG in
+ * a narrower window. Below the floor that is the right call (a scrollbar beats
+ * unreachable content), so the number's only job is to make the band as small as
+ * it can be while still catching the degenerate case. Raising it widens the
+ * population that sees two scrollbars, so the value is bounded on BOTH sides —
+ * in `__tests__/pageRunScrollContract.test.ts` (the GATING node suite; that is
+ * the copy that can block a merge) and again in
+ * `PageBlockHostScrollFit.browser.test.tsx` (report-only, which is why it is not
+ * the only one). The NUMBERS deliberately live in those tests, not here: a band
+ * declared beside the value it bounds can be moved in the same edit. What lives
+ * here is the ARITHMETIC that justifies them.
+ *
+ * THE ARITHMETIC, which decides who lands in the band:
+ *
+ *   available = innerHeight − 60 (header) − 57 (AppFooter 45 + its mt-3 12)
+ *                           − AdhesiveAd (90 desktop / 50 mobile / 0 for paid)
+ *                           − RewardsBonusBanner (~32 when active)
+ *
+ * 🔴 `innerHeight`, NOT the screen height — an earlier version of this comment
+ * justified 400 with "a 768px laptop has 561px after chrome, so the floor never
+ * fires there". That subtracted chrome from the PANEL height. A maximised
+ * browser on a 768px screen has `innerHeight ≈ 650` once the OS taskbar, tab
+ * strip, omnibox and bookmarks bar are gone, so the real margin was ~43px, not
+ * 161 — one bookmarks bar or 110% zoom would have eaten it.
+ *
+ * At 300, the floor fires below roughly `innerHeight < 467` (logged-out mobile)
+ * / `< 507` (logged-out desktop). That clears the mainstream portrait phones a
+ * 400 floor caught — 375×667-class Safari (`innerHeight ≈ 553`, available ≈ 386)
+ * and 360×640 Android (`≈ 560`, available ≈ 393) — while still protecting phone
+ * LANDSCAPE (~360 tall → available ≈ 193) and heavy desktop zoom, which is where
+ * the unreachable-content case actually lives.
+ *
+ * It is deliberately NOT derived from `100dvh` — that arithmetic is exactly what
+ * this PR removed. Note the block's own area is `floor − AppBlockChrome`, so the
+ * usable figure is meaningfully smaller than the constant.
+ *
+ * The floor only helps if something can scroll once it binds, so the run page's
+ * wrapper carries `overflowY: 'auto'` as the scroll container of last resort.
+ */
+export const FILL_MIN_HEIGHT_PX = 300;
+
 export interface PageBlockHostProps {
   /** AppBlock id (`apb_*`) — used to build the BLOCK_INIT ids + trust chrome. */
   appBlockId: string;
@@ -337,6 +396,59 @@ export interface PageBlockHostProps {
    * Default false → a mounter that hasn't wired it shows no dead links.
    */
   canOpenPage?: boolean;
+  /**
+   * How the host sizes itself VERTICALLY. This is the double-scrollbar axis, so
+   * it is spelled out rather than inferred from `surface`.
+   *
+   *   'viewport' (DEFAULT, the historical behaviour) — the host claims
+   *     `min-height: calc(100dvh - HEADER_HEIGHT_PX)` and lets whatever is above
+   *     it scroll.
+   *     Correct ONLY for a mounter sitting inside a SCROLLING ancestor that does
+   *     not otherwise bound its height: the dev tunnel (`/apps/dev/<blockId>`,
+   *     default `AppLayout` → `ScrollArea`) and the mod-review preview (inside a
+   *     modal). Without it those hosts would be sized only by
+   *     `FILL_MIN_HEIGHT_PX` — measured 300px of host, 31px of chrome, 269px of
+   *     iframe, regardless of how much room the page actually has. Usable, but
+   *     no longer FILLING anything.
+   *
+   *   'fill' — the host fills its parent (`flex: 1`, floored at
+   *     `FILL_MIN_HEIGHT_PX`) and
+   *     claims no viewport-derived height of its own. Requires the mounter's
+   *     ancestor chain to already bound the height — i.e. a page declared
+   *     `Page(…, { scrollable: false })`, whose `AppLayout` branch is
+   *     `flex-1 overflow-hidden` all the way down.
+   *
+   * 🔴 WHY THE DEFAULT IS WRONG FOR A FULL-PAGE APP, and why 'fill' exists.
+   * `calc(100dvh - HEADER_HEIGHT_PX)` subtracts ONLY the site header. Inside the default
+   * scrolling layout the actual space left to the page is
+   * `100dvh − header − subNav − its mb-3 − RewardsBonusBanner − AppFooter −
+   * AdhesiveAd`, every term of which is ≥ 0 and several of which are > 0 on a
+   * normal render. So the host is UNCONDITIONALLY taller than its scroll
+   * viewport: the layout's `ScrollArea` grows a vertical scrollbar it can only
+   * ever scroll by that residue, while the block's own document scrolls inside
+   * the iframe — two scrollbars, side by side, for one scrollable thing. It is
+   * arithmetic, not a race: there is no viewport size at which the two heights
+   * agree. `'fill'` removes the magic number instead of re-tuning it.
+   *
+   * The header term is `HEADER_HEIGHT_PX` from
+   * `~/shared/constants/app-layout.constants`, which `AppHeader` also sets itself
+   * from — it used to be a private `HEADER_HEIGHT = 60` there and a bare `60`
+   * here, so a header resize re-opened this bug on any surface still on
+   * `'viewport'`. One source now, and a guard in `pageRunScrollContract.test.ts`
+   * binds it to the `--header-height` custom property that CSS call sites use.
+   *
+   * ⚠️ This used to carry a prohibition on rewriting the calc to
+   * `calc(100dvh - var(--header-height))`, because the component-test harness
+   * loaded no global stylesheet and the custom property read as `""` there — an
+   * invalid declaration, so the host laid out differently under test than in
+   * production. **That is fixed**: `test/component-setup.tsx` now injects the
+   * `:root` custom properties from `globals.css`. Interpolating `HEADER_HEIGHT_PX`
+   * here is kept deliberately (see the constant's own comment), not because the
+   * var is unsafe.
+   *
+   * Still prefer moving a mounter to `'fill'` over re-tuning this calc.
+   */
+  fit?: 'viewport' | 'fill';
 }
 
 export function PageBlockHost({
@@ -366,6 +478,7 @@ export function PageBlockHost({
   reviewMode = false,
   reviewRunForReal = false,
   canOpenPage = false,
+  fit = 'viewport',
 }: PageBlockHostProps) {
   const router = useRouter();
   // MOD REVIEW SANDBOX (#2831): the side-effect NACK gate. Side-effecting handlers
@@ -3465,13 +3578,32 @@ export function PageBlockHost({
       style={{
         display: 'flex',
         flexDirection: 'column',
-        // Full viewport under the global header. The host chrome sits on top;
-        // the iframe fills the rest.
-        height: '100%',
-        minHeight: 'calc(100dvh - 60px)',
         width: '100%',
+        // See the `fit` prop for why these are the two modes and why the
+        // viewport arithmetic can never agree with its own scroll viewport.
+        ...(fit === 'fill'
+          ? {
+              // Fill the (already bounded) parent — but never below
+              // `FILL_MIN_HEIGHT_PX`. See that constant for why a bare
+              // `minHeight: 0` here was a WCAG regression rather than a tidier
+              // fix. Above the floor `flex: 1` still resolves to exactly the
+              // parent's height, so nothing overflows and no outer scrollbar
+              // appears; the floor is inert at every ordinary viewport.
+              flex: 1,
+              minHeight: FILL_MIN_HEIGHT_PX,
+            }
+          : {
+              // Full viewport under the global header. The host chrome sits on
+              // top; the iframe fills the rest.
+              height: '100%',
+              minHeight: `calc(100dvh - ${HEADER_HEIGHT_PX}px)`,
+            }),
       }}
       data-testid="app-page-frame"
+      // Observable sizing mode, so a regression test (and DevTools) can assert
+      // WHICH branch a surface took rather than re-deriving it from computed
+      // styles that jsdom does not resolve.
+      data-fit={fit}
       data-block-instance-id={blockInstanceId}
       // #3/#6: surface the consent signal as an observable attribute. The page
       // token still mints with the granted subset (so the block loads — consent
@@ -3515,7 +3647,26 @@ export function PageBlockHost({
         // terminal path (timeout / fatal / no_token / error, which also flip
         // `showIframe` to false and render the BlockFallback below) — so it can
         // never spin forever.
-        <Box style={{ position: 'relative', flex: 1, display: 'flex' }}>
+        <Box
+          style={{
+            position: 'relative',
+            flex: 1,
+            display: 'flex',
+            // 🔴 CONFINE THE LAUNCH-REVEAL TRANSFORM. While the block is still
+            // handshaking the iframe carries `translateY(8px)`, and a transform
+            // does not change layout but DOES extend the SCROLLABLE OVERFLOW
+            // region — so those 8px pushed past this wrapper and asked the
+            // nearest scrolling ancestor for a scrollbar. Measured, not
+            // inferred: wrapper `bottom=716`, iframe `bottom=724`, container
+            // `scrollHeight 724` vs `clientHeight 716`. Purely decorative
+            // motion should never be able to do that. Clipping here is also
+            // free — the iframe fills this box exactly, so nothing else can be
+            // cut off. Covered by the GREEN ARM in
+            // `PageBlockHostScrollFit.browser.test.tsx`, which asserts exact
+            // equality precisely so an 8px leak cannot hide in a tolerance.
+            overflow: 'hidden',
+          }}
+        >
           <iframe
             // #4 Retry: re-key on `reloadNonce` so a retry UNMOUNTS + REMOUNTS
             // the iframe (fresh contentWindow), not just reloads its src — the

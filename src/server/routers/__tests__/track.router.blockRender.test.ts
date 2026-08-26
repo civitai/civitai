@@ -22,7 +22,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('~/server/redis/client', () => ({
   sysRedis: { hGetAll: vi.fn(async () => ({})) },
   withSysReadDeadline: (p: Promise<unknown>) => p,
-  REDIS_SYS_KEYS: { CLIENT: 'system:client' },
+  REDIS_SYS_KEYS: { CLIENT: 'client' },
 }));
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
 

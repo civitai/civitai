@@ -29,6 +29,8 @@ import { useRouter } from 'next/router';
 import { useMemo } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { AppBlockReviews } from '~/components/Apps/AppBlockReviews';
+import { appListingDescriptionToPlainText } from '~/components/Apps/appListingDescriptionText';
+import { AppListingDescription } from '~/components/Apps/AppListingDescription';
 import { openAppSettingsModal } from '~/components/Apps/AppSettingsModal';
 import { STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
 import {
@@ -235,6 +237,12 @@ export default function AppDetailPage() {
   const detail = data as PublicAppDetail | undefined;
   const name = detail?.manifest.name ?? detail?.blockId ?? appBlockId;
   const description = detail?.manifest.description ?? '';
+  // 🔴 `<meta>` gets the PLAIN-TEXT PROJECTION, never the markdown source. The
+  // stored description is markdown (see `appListingDescriptionText.ts`), and a meta
+  // tag cannot render it — shipping the source put literal `**bold**` and
+  // backticks into og:description. The projection is built only from mdast text
+  // values, so it also cannot introduce markup into the tag.
+  const metaDescription = appListingDescriptionToPlainText(description);
   const slots = detail?.manifest.targets?.map((t) => t.slotId).filter(Boolean) ?? [];
   // Show Install ONLY for an app that installs into a model/in-context slot.
   // A page app (target slot `app.page`) is STATELESS (installModel `'none'`) — no
@@ -302,7 +310,7 @@ export default function AppDetailPage() {
       */}
       <Meta
         title={`${name} — Civitai Apps`}
-        description={description || `${name} on the Civitai Apps marketplace.`}
+        description={metaDescription || `${name} on the Civitai Apps marketplace.`}
         deIndex
       />
       <Container size="md" py="md">
@@ -431,11 +439,12 @@ export default function AppDetailPage() {
                 </Group>
               </Group>
 
-              {description && (
-                <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
-                  {description}
-                </Text>
-              )}
+              {/* Markdown, via the shared renderer — see `appListingDescriptionText.ts`
+                  for the one rule. This surface used to be `pre-wrap` plain text
+                  while the listing detail body rendered the SAME stored string as
+                  markdown, so a description written with backticks showed literal
+                  backtick characters here and a code span there. */}
+              {description && <AppListingDescription description={description} />}
 
               {/* F-E E5 — publisher screenshot gallery. Public display URLs
                   (the gated /api/blocks/screenshot/... route); the images were

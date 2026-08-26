@@ -160,6 +160,7 @@ export const getFileForModelVersion = async ({
   user,
   noAuth,
   fileId,
+  direct,
 }: {
   modelVersionId: number;
   type?: ModelFileType;
@@ -175,6 +176,12 @@ export const getFileForModelVersion = async ({
   };
   noAuth?: boolean;
   fileId?: number;
+  /**
+   * Resolve to an origin-direct URL rather than the CDN-fronted one. Affects only
+   * which host serves the bytes — every access decision above is unchanged, and
+   * this flag is read after all of them.
+   */
+  direct?: boolean;
 }): Promise<ModelVersionFileResult> => {
   const modelVersion = await dbRead.modelVersion.findFirst({
     // `model: { is: {} }` requires the (required) `model` relation to exist.
@@ -346,7 +353,7 @@ export const getFileForModelVersion = async ({
     file,
   });
   try {
-    const { url } = await resolveDownloadUrl(file.id, file.url, filename);
+    const { url } = await resolveDownloadUrl(file.id, file.url, filename, { direct });
     return {
       status: 'success',
       url,

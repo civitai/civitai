@@ -175,6 +175,7 @@ export function ChatList() {
       searchInput.length > 0
         ? tabData.filter((d) => {
             if (
+              d.name?.toLowerCase().includes(searchInput) ||
               d.chatMembers
                 .filter((cm) => cm.userId !== currentUser?.id)
                 .some((cm) => cm.user.username?.toLowerCase().includes(searchInput))
@@ -313,10 +314,7 @@ export function ChatList() {
               {filteredData.map((d) => {
                 const myMember = d.chatMembers.find((cm) => cm.userId === currentUser?.id);
                 const otherMembers = d.chatMembers.filter((cm) => cm.userId !== currentUser?.id);
-                const unreadCount =
-                  myMember?.status === ChatMemberStatus.Invited
-                    ? 0
-                    : chatCounts?.find((cc) => cc.chatId === d.id)?.cnt;
+                const unreadCount = chatCounts?.find((cc) => cc.chatId === d.id)?.cnt;
                 const isModSender = !!otherMembers.find(
                   (om) => om.isOwner === true && om.user.isModerator === true
                 );
@@ -369,7 +367,7 @@ export function ChatList() {
                           c={hasMod ? 'red' : undefined}
                           highlight={searchInput}
                         >
-                          {otherMembers.map((cm) => cm.user.username).join(', ')}
+                          {d.name ?? otherMembers.map((cm) => cm.user.username).join(', ')}
                         </Highlight>
                         {!!myMember?.pinnedAt && (
                           <IconPin size={12} style={{ flex: 'none', opacity: 0.6 }} />

@@ -22,6 +22,7 @@ import { UserMenu } from '~/components/AppLayout/AppHeader/UserMenu';
 import { CreateMenu } from '~/components/AppLayout/AppHeader/CreateMenu';
 import { YellowBuzzMigrationNotice } from '~/components/Alerts/YellowBuzzMigrationNotice';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { HEADER_HEIGHT_PX } from '~/shared/constants/app-layout.constants';
 import dynamic from 'next/dynamic';
 
 const AutocompleteSearch = dynamic(
@@ -29,8 +30,6 @@ const AutocompleteSearch = dynamic(
     import('~/components/AutocompleteSearch/AutocompleteSearch').then((x) => x.AutocompleteSearch),
   { ssr: false }
 );
-
-const HEADER_HEIGHT = 60;
 
 function defaultRenderSearchComponent({ onSearchDone, isMobile, ref }: RenderSearchComponentProps) {
   if (isMobile) {
@@ -65,7 +64,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
       className={clsx('z-[199] border-b border-b-gray-2 dark:border-b-dark-5', {
         ['border-red-8 border-b-[3px]']: features.isRed,
       })}
-      style={{ height: HEADER_HEIGHT, borderBottomStyle: 'solid' }}
+      style={{ height: HEADER_HEIGHT_PX, borderBottomStyle: 'solid' }}
     >
       <div className={clsx('h-full', { ['hidden']: !showSearch })}>
         {renderSearchComponent({ onSearchDone, isMobile: true, ref: searchRef })}

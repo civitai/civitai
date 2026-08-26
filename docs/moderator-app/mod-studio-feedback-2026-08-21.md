@@ -6,9 +6,11 @@ place to see what this round asked for and whether it is done.
 **Scope:** the "highest priority before the weekend" list raised on 2026-08-21, PLUS everything still
 open from earlier rounds, carried into the second half of this file.
 
-**This is the live list.** A round gets its own dated file so it is clear when something was first asked
-for, and unfinished items move to the newest file rather than being ticked across several — so the
-newest file is the only one with open boxes. Earlier rounds:
+**This is no longer the live list.** Everything still open when the 2026-08-24 round opened moved to
+[`mod-studio-feedback-2026-08-24.md`](mod-studio-feedback-2026-08-24.md), so there is one live list
+rather than boxes to tick in two files. They keep the date they were first raised. What stays here is
+the record of what this round reported and what shipped — moved items appear below as plain bullets
+with their reasoning intact, and no checkbox. Earlier rounds:
 [`mod-studio-feedback-2026-08-19.md`](mod-studio-feedback-2026-08-19.md),
 [`mod-studio-feedback-2026-08-17.md`](mod-studio-feedback-2026-08-17.md).
 
@@ -127,6 +129,11 @@ this repo is public (CLAUDE.md → Security). The private triage keeps attributi
       verification pass after `--apply` fails the run if any is countable. There is no ordering
       requirement against the deploy and no second deploy. Reasoning:
       [`legacy-strike-migration.md`](legacy-strike-migration.md#the-one-thing-that-matters).
+
+      **Corrected 2026-08-24.** Both notes above are superseded: the second reader was retired
+      `2b7639a3ab`, and an *earlier* import pass had already copied the same rows Active and
+      point-bearing — those duplicates were deleted 2026-08-24. See
+      [`legacy-strike-migration.md`](legacy-strike-migration.md).
 
 - [x] **Generator Restrictions can see previous successful generations again.** The main site's page had
       a "View Generations" drawer; the ported one had nothing, so the question that decides the ruling
@@ -274,7 +281,7 @@ Reported after the items above shipped.
 Nothing below is built yet; each box carries what the code actually does today, because three of the
 four have a root cause that is not what the symptom suggests.
 
-- [ ] **`/moderator/contests` is a bare list and should be part of the suite.** It renders every
+- **`/moderator/contests` is a bare list and should be part of the suite.** It renders every
       `CollectionMode.Contest` collection newest-first with name, created-at, type and the submission
       window — and nothing that says whether a row is an official contest, a daily challenge or a
       user-made one. It predates user challenges entirely.
@@ -289,7 +296,7 @@ four have a root cause that is not what the symptom suggests.
       `NAVIGATION` entry, a Kysely load, filters on kind / status / window, and links out to both the
       collection and the challenge. **Unreachable until granted on `/admin`**, like every new page here.
 
-- [ ] **Contest bans list caps at 20, and a new ban appears to do nothing.** Both symptoms are one bug.
+- **Contest bans list caps at 20, and a new ban appears to do nothing.** Both symptoms are one bug.
       `/moderator/contests/bans` calls `user.getAll({ contestBanned: true })`, whose input extends
       `getAllQuerySchema` → `paginationSchema`, where `limit` is `.default(20)`. The page never passes a
       limit, so the query lands `LIMIT 20` and there is no total in the response to say what was cut.
@@ -306,13 +313,13 @@ four have a root cause that is not what the symptom suggests.
       `WHERE` clause**, before the `contestBanned` predicate. It is unreachable only because the
       contest-banned path never passes `query`; passing both would emit invalid SQL.
 
-- [ ] **User Lookup shows no contest-ban flag.** `getUserLookup` already selects
+- **User Lookup shows no contest-ban flag.** `getUserLookup` already selects
       `u.meta #>> '{banDetails,reasonCode}'` and `{banDetails,detailsInternal}` off the same row, so
       adding `{contestBanDetails,bannedAt}` costs nothing extra. Render it as a badge in the pinned
       account-state column beside banned / muted — the column that exists precisely so a flag is not
       buried behind a long username.
 
-- [ ] **Split contest bans: daily challenges vs everything else.** Most contest-banned accounts were
+- **Split contest bans: daily challenges vs everything else.** Most contest-banned accounts were
       farming Buzz on the daily challenge and may still compete fairly elsewhere, and today the ban is
       one flag with one meaning.
 
@@ -341,23 +348,23 @@ it was first raised.
 
 ## P0 — operational, nothing to build
 
-- [ ] **Finish the environment and database steps** *(08-17)* — handover blockers
+- **Finish the environment and database steps** *(08-17)* — handover blockers
       [#1–#4](retool-migration-handover.md). `CIVITAI_MOD_API_KEY` is retired and must NOT be
       provisioned, and `RETOOL_DATABASE_URL` is retired too — the Retool and moderator databases were
       consolidated, so `MODERATOR_DATABASE_URL` is the only name. What remains is the `FRESHDESK_TOKEN`
       rename, and verifying two of the three SQL migrations.
-- [ ] **Tick the action grants on `/admin`, then check as a non-admin** *(08-19)*. There are no default
+- **Tick the action grants on `/admin`, then check as a non-admin** *(08-19)*. There are no default
       roles, so until this pass happens the actions are held by nobody. The pass itself is
       [`action-grants-review.md`](action-grants-review.md). **Add Post Reports to it** — the new page is
       admin-only until granted.
 
 ## P1 — reported defects
 
-- [ ] **Comment highlighting does not work on article comments** *(08-19)*. Read end to end and not
+- **Comment highlighting does not work on article comments** *(08-19)*. Read end to end and not
       reproduced from the code; needs a live repro with the URL in hand.
-- [ ] **User Lookup unavailable for the staff role** *(08-17)*. Not a defect — part of the `/admin` pass.
-- [ ] **`reportedUser` renders greyed out on reports** *(08-18)*. Suspected downstream of the above.
-- [ ] **Comment rows are "funky" to read** *(08-18)*. Needs the reporter to say what is wrong.
+- **User Lookup unavailable for the staff role** *(08-17)*. Not a defect — part of the `/admin` pass.
+- **`reportedUser` renders greyed out on reports** *(08-18)*. Suspected downstream of the above.
+- **Comment rows are "funky" to read** *(08-18)*. Needs the reporter to say what is wrong.
 - [x] **Why are banned users' comics queued for review at all?** *(08-18)*. **Measured 2026-08-21 —
       it is moot.** The queue is empty in production for everyone, not just banned authors:
 
@@ -375,11 +382,11 @@ it was first raised.
 
 ## P2 — decisions
 
-- [ ] **A paged list has no "load more"** *(08-19)*. Two panels have since been paged — the one fixed in
+- **A paged list has no "load more"** *(08-19)*. Two panels have since been paged — the one fixed in
       the 08-19 round, and the account image grid (numbered paging, 08-21) — so the reporter needs to
       confirm which they meant rather than anything needing building.
-- [ ] **`ReToolActions` vs `ModActivity`** *(08-17)* — two mod-action logs that nothing reconciles.
-- [ ] **`aiNsfwLevel` / `aiModel` exist in production but not in `schema.full.prisma`** *(08-17)*.
+- **`ReToolActions` vs `ModActivity`** *(08-17)* — two mod-action logs that nothing reconciles.
+- **`aiNsfwLevel` / `aiModel` exist in production but not in `schema.full.prisma`** *(08-17)*.
 - [x] **`RatingChanges`** *(08-17)* — **ported 2026-08-21, both writes.** Setting a rating and voting a
       moderation tag onto an image each record to `RatingChanges`, the before/after trail
       `recordModActivity` does not keep.
@@ -389,19 +396,19 @@ it was first raised.
       got wrong — `LogNsfwLevel` upserts by `imageId` rather than inserting, and `originalRating` is the
       sweep's selected rating rather than the image's own previous level. Both facts are now pinned by
       mutation-checked tests. **Unexercised against a database.**
-- [ ] **How queue sweeps get tracked** *(08-17)* — a new table, or an extension of `ModActivity`.
+- **How queue sweeps get tracked** *(08-17)* — a new table, or an extension of `ModActivity`.
 
 The "two strike systems" P2 from 08-19 is **closed by this round** — see the strike item above. What is
 left of it is applying the migration, which is an operational step, not a decision.
 
 ## P3 — improvements, after parity
 
-- [ ] **Show "recently worked" and "time sweeps" beside the queues they describe** *(08-17)*.
-- [ ] **Whether the `/images/*` triage queues join the sweep tracking** *(08-17)*.
-- [ ] **Link a report to the site it originated from** *(08-17)* — forward-only is possible via
+- **Show "recently worked" and "time sweeps" beside the queues they describe** *(08-17)*.
+- **Whether the `/images/*` triage queues join the sweep tracking** *(08-17)*.
+- **Link a report to the site it originated from** *(08-17)* — forward-only is possible via
       `Report.details`; the retroactive half is not.
-- [ ] **The "Admin Attention" report reason is too vague to action** *(08-17)*.
-- [ ] **The mod changelog modal disappears once a model is unpublished** *(08-17)*.
-- [ ] **Unpublished articles have no republish path** *(08-17)*.
-- [ ] **A model marked as depicting a minor can still receive a new version containing X-rated images**
+- **The "Admin Attention" report reason is too vague to action** *(08-17)*.
+- **The mod changelog modal disappears once a model is unpublished** *(08-17)*.
+- **Unpublished articles have no republish path** *(08-17)*.
+- **A model marked as depicting a minor can still receive a new version containing X-rated images**
       *(08-17)*.

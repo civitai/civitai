@@ -4,7 +4,7 @@ Infrastructure for developing XGuard labels: sample live prompts, have a model r
 
 The point is the loop, not any one label. Adding a label is adding an entry to `labels.ts` and running the rater again over samples you already have.
 
-Scoping doc: `_local/docs/plans/xguard-regex-retirement-scoping.md`. Tuning harness: `_local/docs/plans/xguard-age-labels/`.
+Scoping doc: `local/xguard-regex-retirement-scoping.md`. Tuning harness: `local/xguard-tuning-harness/`.
 
 ## Which database
 
@@ -36,9 +36,16 @@ only `moderator:admin` can open the lab.
 ## Driving it from an agent
 
 Everything above except reviewing is also an HTTP endpoint under `/api/xguard/*`, each wrapped in
-`WebhookEndpoint` (`$lib/server/webhook-endpoint`) and authenticated with the shared `WEBHOOK_TOKEN`,
-sent as `?token=` or `Authorization: Bearer`. There is no user behind it: calls are not attributed to
-anybody, and revoking access means rotating the token for everyone holding it.
+`WebhookEndpoint` (`$lib/server/webhook-endpoint`), sent as `?token=` or `Authorization: Bearer`.
+There is no user behind it: calls are not attributed to anybody, and revoking access means rotating
+the token for everyone holding it.
+
+🔴 **Hand out `MOD_INBOUND_TOKEN`, not `WEBHOOK_TOKEN`.** Both are accepted — `acceptedTokens()` in
+`$lib/server/webhook-endpoint` returns both — but only the first is inbound-only: nothing outside
+this app accepts it, and nothing in this app sends it anywhere. `WEBHOOK_TOKEN` is shared with the
+main app and is kept accepted for compatibility while callers migrate. Since revocation here means
+rotating for every holder, which token an agent operator holds decides how much a rotation costs and
+how far a leak reaches.
 
 `/xguard/docs` is the operator guide, and its endpoint list is generated from the routes rather than
 written down. Read it there; a copy here would be the version that goes stale.
@@ -71,13 +78,13 @@ A refusal is not a verdict. Recording it as `false` would quietly bias the train
 
 The unit of work is a **(sample, label) pair**, not a sample. A prompt sampled today for age can be judged for sexual content next month without being re-sampled.
 
-| table | holds |
-|---|---|
-| `sample` | prompt text, live XGuard scores at sample time, which batch |
-| `label_def` / `label_policy` | the label set, and every revision of its policy prose |
-| `machine_judgement` | what XGuard or the AI rater said, with reason and highlight spans |
-| `human_judgement` | agree/disagree, resulting verdict, reviewer, time on item |
-| `ground_truth` (view) | current verdict per pair, with reviewer count and whether contested |
+| table                        | holds                                                               |
+| ---------------------------- | ------------------------------------------------------------------- |
+| `sample`                     | prompt text, live XGuard scores at sample time, which batch         |
+| `label_def` / `label_policy` | the label set, and every revision of its policy prose               |
+| `machine_judgement`          | what XGuard or the AI rater said, with reason and highlight spans   |
+| `human_judgement`            | agree/disagree, resulting verdict, reviewer, time on item           |
+| `ground_truth` (view)        | current verdict per pair, with reviewer count and whether contested |
 
 Judgements reference an exact `label_policy` row, so editing a policy never silently rewrites past results. `duration_ms` is recorded because a reviewer averaging two seconds is rubber-stamping, and that only shows up if the number is honest.
 

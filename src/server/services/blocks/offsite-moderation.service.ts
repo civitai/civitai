@@ -22,8 +22,12 @@ import {
 import { safeCollaboratorQuery } from '~/server/services/blocks/app-access.service';
 import { recordOwnershipEvent } from '~/server/services/blocks/app-collaborator.service';
 import { notifyAppListingOwner } from '~/server/services/blocks/app-listing-notify';
-import { assertListingAssetsScanCleanInTx } from '~/server/services/blocks/app-listing-assets.service';
+import {
+  assertListingAssetsScanCleanInTx,
+  resolveListingRatingFloorInTx,
+} from '~/server/services/blocks/app-listing-assets.service';
 import { assertOffsiteListingActionableInTx } from '~/server/services/blocks/app-listing-actionable.service';
+import { isOwnerUnpublishedListing } from '~/server/services/blocks/app-listing-owner-unpublish';
 import {
   newAppListingModerationEventId,
   newAppListingPublishRequestId,
@@ -1368,10 +1372,21 @@ async function loadOwnedListingInTx(
   slug: string;
   name: string | null;
   appBlockId: string | null;
+  contentRating: string | null;
 }> {
   const listing = await tx.appListing.findUnique({
     where: { id: appListingId },
-    select: { userId: true, status: true, kind: true, slug: true, name: true, appBlockId: true },
+    select: {
+      userId: true,
+      status: true,
+      kind: true,
+      slug: true,
+      name: true,
+      appBlockId: true,
+      // The DECLARED rating, the input to `republishOwnListing`'s go-live rating floor.
+      // `unpublishOwnListing` ignores it — a self-hide never touches the rating.
+      contentRating: true,
+    },
   });
   if (!listing) {
     throw new OffsiteModerationError('NOT_FOUND', 'Listing not found.');
@@ -1386,6 +1401,7 @@ async function loadOwnedListingInTx(
     slug: listing.slug,
     name: listing.name,
     appBlockId: listing.appBlockId,
+    contentRating: listing.contentRating,
   };
 }
 
@@ -1470,8 +1486,18 @@ export type RepublishOwnListingResult = { appListingId: string; status: 'approve
  *
  * ON-SITE: the backing `AppBlock` is also restored suspended → approved in the SAME
  * tx (via {@link flipBackingBlockStatus}), so the app serves again. OFF-SITE: only the
- * listing flips. Pure visibility toggle — no re-derive, no publish request. `reason`
- * optional.
+ * listing flips. `reason` optional.
+ *
+ * 🔴 MATURITY IS RE-DERIVED AT GO-LIVE, UNIFORMLY FOR BOTH KINDS (this used to be a
+ * pure visibility toggle with NO re-derive, which was the hole). A `removed` listing is
+ * directly asset-editable and the attach path never rejects a `Scanned` MATURE image, so
+ * `unpublish → attach mature media → republish` re-published mature store art under an
+ * unchanged declared rating. The stored rating is therefore FLOORED at the media-derived
+ * one ({@link resolveListingRatingFloorInTx}, RAISE-ONLY — tame media never lowers a
+ * deliberately higher rating).
+ *
+ * Fail-closed: the derive runs INSIDE the tx and is not caught, so a throw leaves the
+ * listing `removed`.
  */
 export async function republishOwnListing(opts: {
   input: RepublishOwnListingInput;
@@ -1495,12 +1521,7 @@ export async function republishOwnListing(opts: {
     // the PRIMARY inside the tx (a concurrent mod delist/purge would otherwise race
     // between a replica read and the flip). A mod delist/purge (or NO event) → the
     // owner may not self-restore.
-    const lastEvent = await tx.appListingModerationEvent.findFirst({
-      where: { appListingId: input.appListingId },
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-      select: { action: true },
-    });
-    if (!lastEvent || lastEvent.action !== 'owner-unpublish') {
+    if (!(await isOwnerUnpublishedListing(tx, input.appListingId))) {
       throw new OffsiteModerationError(
         'FORBIDDEN',
         'This listing was removed by a moderator and cannot be restored by its owner.'
@@ -1520,9 +1541,59 @@ export async function republishOwnListing(opts: {
     // (`tx`), row-consistent with the flip. On-site republishes no-op.
     await assertOffsiteListingActionableInTx(tx, input.appListingId);
     const isOnsite = listing.kind === 'onsite';
+
+    // 🔴 GO-LIVE RATING FLOOR — UNIFORM, BOTH KINDS.
+    //
+    // Republish is an OWNER-DRIVEN go-live with NO human in the loop, and a `removed`
+    // listing is DIRECTLY asset-editable (`assertOwnerAssetEditable` refuses only an
+    // `approved` non-shadow row). The attach path rejects only `Blocked`/`NotFound`
+    // images — never a `Scanned` MATURE one — and neither gate above inspects maturity:
+    // `assertListingAssetsScanCleanInTx` reads scan STATUS, `assertOffsiteListingActionableInTx`
+    // reads the href. So `unpublish → attach mature media → republish` put mature store
+    // art back on a `g`-rated card, which passes `listingMatureFilter(redCapable=false)`
+    // (`content_rating NOT IN ('r','x')`) and shows it to SFW-ONLY users.
+    //
+    // 🔴 WHY ON-SITE IS FLOORED TOO (this is EXISTING precedent, not a new policy). The
+    // on-site DRAFT go-live already does exactly this: `approveRequest` reads the
+    // AppBlock's manifest-declared `contentRating`, passes it through THIS SAME helper
+    // and writes the floored result to the listing — for the same stated reason
+    // (`publish-request.service.ts`, "🔴 RATING FLOOR (go-live)"). Two properties make
+    // it safe on both kinds:
+    //   - it writes `AppListing.contentRating` (the STORE CARD). The runtime .red/.com
+    //     serving gate reads `AppBlock.contentRating` / `AppBlock.manifest.contentRating`
+    //     — SEPARATE columns — so a raise here cannot change what the block is allowed to
+    //     render. Enumerated over `src/`: no runtime gate reads the listing column, and
+    //     nothing ever copies listing → block (the mirror runs block → listing only).
+    //     The raise's real effect is STORE VISIBILITY, and only ever NARROWING it:
+    //     `listingMatureFilter` hides the card and `getListingDetail` 404s it for
+    //     SFW-only viewers. That is the point of the fix.
+    //   - the raise PERSISTS: `buildListingScalarSync` deliberately EXCLUDES
+    //     `contentRating` from the manifest re-sync ("mod override, floored at the
+    //     derived rating" — `app-listing-mapper.ts`, restated at the approve call site in
+    //     `publish-request.service.ts`), so a later version approve does not undo it.
+    // 🔴 Three comments elsewhere still assert an UNQUALIFIED "on-site listings MIRROR
+    // AppBlock.content_rating" (the `AppListing.contentRating` schema comment, the
+    // mapper's create path, the backfill service) and the on-site media-revision copy
+    // step declines to floor. Those describe the block → listing MIRROR and that one copy
+    // step; they are narrower than the code, which already floors on-site at draft
+    // go-live and on mod live-edit. Not rewritten here — see the PR body's open item.
+    //
+    // Derived BEFORE the flip and NOT wrapped in try/catch: a throw here aborts the tx,
+    // so a listing whose rating cannot be derived does NOT go live (fail-closed).
+    //
+    // RAISE-ONLY is the helper's contract — it returns `declaredRating` unchanged unless
+    // the derived ceiling is strictly higher — so writing the result UNCONDITIONALLY is
+    // safe: tame media can never lower a deliberately higher declaration, and an
+    // unchanged rating writes its own value back. Same shape as `approveRequest`'s.
+    const flooredRating = await resolveListingRatingFloorInTx(
+      tx,
+      input.appListingId,
+      listing.contentRating
+    );
+
     const flipped = await tx.appListing.updateMany({
       where: { id: input.appListingId, kind: listing.kind, status: 'removed' },
-      data: { status: 'approved' },
+      data: { status: 'approved', contentRating: flooredRating },
     });
     if (flipped.count === 0) {
       throw new OffsiteModerationError(
@@ -1546,6 +1617,7 @@ export async function republishOwnListing(opts: {
       });
       if (!flippedBlock) onsiteBlockRestoreDrift = true;
     }
+
     await tx.appListingModerationEvent.create({
       data: {
         id: newAppListingModerationEventId(),

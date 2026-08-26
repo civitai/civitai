@@ -2,6 +2,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { Prisma } from '@prisma/client';
 import type {
   AddUserHubSourceInput,
+  HubSourceExclusionInput,
   GetHubSourceSuggestionsInput,
   ResolveHubSourceInput,
   SetUserHubOrderInput,
@@ -13,8 +14,13 @@ import {
   HUB_COLLECTION_SOURCES_ENABLED,
   hubFeedFiltersSchema,
   hubLimits,
+  hubSourceKey,
 } from '~/server/schema/user-hub.schema';
-import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
+import {
+  throwAuthorizationError,
+  throwBadRequestError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import {
   Availability,
   CollectionContributorPermission,
@@ -27,27 +33,78 @@ import {
   UserEngagementType,
   UserHubSourceType,
 } from '~/shared/utils/prisma/enums';
-import { ImageSort } from '~/server/common/enums';
+import { ImageSort, NsfwLevel } from '~/server/common/enums';
 import { getUserCollectionPermissionsByIds } from '~/server/services/collection.service';
+import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import { getAllServerHosts } from '~/server/utils/server-domain';
 import { parseCivitaiUrlSafe } from '~/utils/civitai-url';
 
-const hubSelect = {
+// Everything a hub carries EXCEPT its owner. `getUserHubs` is `where: { userId }`,
+// so the joined owner would always be the caller — a row the client already holds —
+// and no consumer of the list reads it. Two round trips per rail render, for nothing.
+const hubListSelect = {
   id: true,
+  userId: true,
   name: true,
   index: true,
   sort: true,
   period: true,
   mediaTypes: true,
+  availability: true,
+  forcedBrowsingLevel: true,
   metadata: true,
+
   sources: {
     select: { id: true, type: true, targetId: true, alias: true, enabled: true, index: true },
     orderBy: { index: 'asc' },
   },
 } as const;
 
-type HubRow = { metadata: Prisma.JsonValue };
+// One hub, where the owner IS read: a hub arriving by a shared link says nothing
+// about whose curation it is unless they come with it. Cosmetics included, like
+// every other attribution surface — without them a creator's equipped badge is
+// missing on their own hub and nothing in the types says why.
+const hubSelect = {
+  ...hubListSelect,
+  user: { select: userWithCosmeticsSelect },
+} as const;
+
+type HubRow = {
+  metadata: Prisma.JsonValue;
+  userId: number;
+  sources: { enabled: boolean }[];
+};
+
+export type HubViewer = { userId?: number; isModerator?: boolean };
+
+/**
+ * The single answer to "may this viewer open this hub", expressed as a `where`
+ * fragment rather than a check after the fetch: an id the viewer cannot open is a
+ * not-found, never a row plus a refusal.
+ *
+ * A moderator may open any hub — subtask 868kwp5kc, view only. Everyone else gets
+ * their own hubs plus whatever is Public. There is no discovery surface, so Public
+ * means "anyone holding the link", not "listed".
+ */
+export function hubViewerWhere({ userId, isModerator }: HubViewer) {
+  if (isModerator) return {};
+  return {
+    OR: [...(userId ? [{ userId }] : []), { availability: Availability.Public }],
+  };
+}
+
+/**
+ * Who may WRITE a hub. Deliberately not `hubViewerWhere`: Public grants reading to
+ * anyone with the link and must never grant writing. Moderators may manage any hub —
+ * Justin's call on 2026-08-25, which answers the question subtask 868kwp5kc had
+ * parked. It covers the deliberate acts (rename, description, visibility, delete),
+ * not the incidental ones: a moderator's source toggles stay session state, so
+ * looking at a hub cannot quietly rewrite it.
+ */
+export function hubWriterWhere({ userId, isModerator }: HubViewer) {
+  return isModerator ? {} : { userId };
+}
 
 function readMetadata(metadata: Prisma.JsonValue | undefined) {
   return metadata && typeof metadata === 'object' && !Array.isArray(metadata)
@@ -57,11 +114,20 @@ function readMetadata(metadata: Prisma.JsonValue | undefined) {
 
 // `metadata` never leaves the service: callers get the fields it carries, so a key
 // added to it later is not published to every client by default.
-function toHubDetail<T extends HubRow>({ metadata, ...hub }: T) {
+function toHubDetail<T extends HubRow>({ metadata, ...hub }: T, viewerId?: number) {
   const stored = readMetadata(metadata);
   const description = stored.description;
+  const isOwner = !!viewerId && hub.userId === viewerId;
   return {
     ...hub,
+    // What the client branches its whole chrome on. Computed here rather than
+    // compared client-side, because the client's idea of who it is and the row the
+    // server just authorised are two different facts.
+    isOwner,
+    // A source the owner switched off contributes nothing to the feed and is not
+    // shown, so shipping it to a viewer publishes part of their curation for no
+    // reason. The owner still gets the whole list, which is the one they edit.
+    sources: isOwner ? hub.sources : hub.sources.filter((source) => source.enabled),
     description: typeof description === 'string' ? description : null,
     // Re-validated on the way out: what is on the row was written by an older
     // shape of this schema, and the feed refuses some combinations outright.
@@ -74,21 +140,47 @@ export type UserHubDetail = Awaited<ReturnType<typeof getUserHubs>>[number];
 export async function getUserHubs({ userId }: { userId: number }) {
   const hubs = await dbRead.userHub.findMany({
     where: { userId },
-    select: hubSelect,
-    orderBy: { index: 'asc' },
+    select: hubListSelect,
+    // Alphabetical, not by `index` — subtask 868kwp5m9. `index` is still written by
+    // `setUserHubOrder` and still what a hub is created with; nothing reads it for
+    // display any more.
+    orderBy: { name: 'asc' },
   });
-  return hubs.map(toHubDetail);
+  return hubs.map((hub) => toHubDetail(hub, userId));
 }
 
-// Every read is scoped by userId rather than checked after the fetch, so an id
-// belonging to someone else is a not-found rather than a leak.
-export async function getUserHubById({ id, userId }: { id: number; userId: number }) {
-  const hub = await dbRead.userHub.findFirst({ where: { id, userId }, select: hubSelect });
+// Scoped in the `where` rather than checked after the fetch, so a hub this viewer
+// may not open is a not-found rather than a leak. Revoking `Public` therefore makes
+// every link anyone was given 404 on the next read — subtask 868kwp5g8 — with no
+// separate revocation list to keep in step.
+export async function getUserHubById({ id, userId, isModerator }: { id: number } & HubViewer) {
+  const hub = await dbRead.userHub.findFirst({
+    where: { id, ...hubViewerWhere({ userId, isModerator }) },
+    select: hubSelect,
+  });
   if (!hub) throw throwNotFoundError('Hub not found');
-  return toHubDetail(hub);
+  return toHubDetail(hub, userId);
 }
 
-export async function upsertUserHub({ userId, ...input }: UpsertUserHubInput & { userId: number }) {
+/**
+ * What the route needs before it renders: null when this viewer may not open the
+ * hub, so a revoked link is a real HTTP 404 rather than a 200 carrying a not-found
+ * component (subtask 868kwp5g8). The name comes back with it because the canonical
+ * slug redirect needs it, and two facts off one primary-key read beats two reads.
+ */
+export async function getUserHubForRoute({ id, userId, isModerator }: { id: number } & HubViewer) {
+  return dbRead.userHub.findFirst({
+    where: { id, ...hubViewerWhere({ userId, isModerator }) },
+    select: { id: true, name: true },
+  });
+}
+
+export async function upsertUserHub({
+  userId,
+  isModerator,
+  ...input
+}: UpsertUserHubInput & { userId: number; isModerator?: boolean }) {
+  const writable = hubWriterWhere({ userId, isModerator });
   const { id, sources, description, filters, ...data } = input;
 
   if (sources) {
@@ -105,7 +197,10 @@ export async function upsertUserHub({ userId, ...input }: UpsertUserHubInput & {
   if (!id) {
     if (!data.name) throw throwBadRequestError('A new hub needs a name');
 
-    const count = await dbRead.userHub.count({ where: { userId } });
+    // Through the WRITER, like every other read-then-write in this file: replica lag
+    // lets a burst of creates overshoot the cap, and Duplicate makes creating a hub
+    // one click.
+    const count = await dbWrite.userHub.count({ where: { userId } });
     if (count >= hubLimits.hubsPerUser)
       throw throwBadRequestError(`You can have at most ${hubLimits.hubsPerUser} hubs`);
 
@@ -126,19 +221,29 @@ export async function upsertUserHub({ userId, ...input }: UpsertUserHubInput & {
         index: count,
         sources: { create: (sources ?? []).map(({ id: _, ...source }) => source) },
       },
-      select: hubSelect,
+      select: hubListSelect,
     });
-    return toHubDetail(hub);
+    return toHubDetail(hub, userId);
   }
 
   // Read through the WRITER, not the replica: this is a read-modify-write of one
   // json column, and a replica lagging behind the previous save merges a stale
   // description back over a newer one.
   const existing = await dbWrite.userHub.findFirst({
-    where: { id, userId },
-    select: { id: true, metadata: true },
+    where: { id, ...writable },
+    select: { id: true, userId: true, metadata: true },
   });
   if (!existing) throw throwNotFoundError('Hub not found');
+
+  // The moderator line, ENFORCED here rather than only described. `hubWriterWhere`
+  // opens the row to a moderator, and this mutation is how a source list and a
+  // content cap are written — so without this a moderator could replace another
+  // user's whole curation in one call, which is the incidental half the grant
+  // deliberately excludes. The client never offers it; that is not a control.
+  if (existing.userId !== userId && (sources || input.forcedBrowsingLevel !== undefined))
+    throw throwAuthorizationError(
+      'Only the owner can change the sources or the content level of a hub'
+    );
 
   // Merged rather than replaced, and only ever with the one key this schema names
   // — `metadata` holds more than the description, and an omitted `description`
@@ -154,30 +259,28 @@ export async function upsertUserHub({ userId, ...input }: UpsertUserHubInput & {
 
   if (!sources) {
     const hub = await dbWrite.userHub.update({
-      where: { id, userId },
+      where: { id, ...writable },
       data: { ...data, ...(metadata ? { metadata } : {}) },
-      select: hubSelect,
+      select: hubListSelect,
     });
-    return toHubDetail(hub);
+    return toHubDetail(hub, userId);
   }
 
   const updated = await dbWrite.$transaction(async (tx) => {
     await tx.userHubSource.deleteMany({ where: { hubId: id } });
     return tx.userHub.update({
-      // Scoped by userId as well as id, like every read here. Redundant while
-      // `UserHub.userId` never changes; the moment hub sharing lands — which the
-      // rail already anticipates — a check in a prior SELECT is a check that can
-      // disagree with the write.
-      where: { id, userId },
+      // Scoped on the write as well as in the SELECT above, not instead of it: a
+      // check in a prior SELECT is a check that can disagree with the write.
+      where: { id, ...writable },
       data: {
         ...data,
         ...(metadata ? { metadata } : {}),
         sources: { create: sources.map(({ id: _, ...source }) => source) },
       },
-      select: hubSelect,
+      select: hubListSelect,
     });
   });
-  return toHubDetail(updated);
+  return toHubDetail(updated, userId);
 }
 
 export async function addUserHubSource({
@@ -206,7 +309,13 @@ export async function addUserHubSource({
     // success message for nothing happening.
     if (existing.enabled) return { hubId, added: false };
 
-    await dbWrite.userHubSource.update({ where: { id: existing.id }, data: { enabled: true } });
+    // Owner-scoped on the write as well as in the read above, per the argument this
+    // file makes for `removeUserHubSource`: id-addressing is safe only while a source
+    // row cannot change hubs, and that is not a property anything enforces.
+    await dbWrite.userHubSource.updateMany({
+      where: { id: existing.id, hub: { userId } },
+      data: { enabled: true },
+    });
     return { hubId, added: true };
   }
 
@@ -266,9 +375,76 @@ export async function removeUserHubSource({
   return { hubId, removed: count > 0 };
 }
 
-export async function deleteUserHub({ id, userId }: { id: number; userId: number }) {
-  const { count } = await dbWrite.userHub.deleteMany({ where: { id, userId } });
+export async function deleteUserHub({
+  id,
+  userId,
+  isModerator,
+}: { id: number; userId: number } & HubViewer) {
+  const { count } = await dbWrite.userHub.deleteMany({
+    where: { id, ...hubWriterWhere({ userId, isModerator }) },
+  });
   if (!count) throw throwNotFoundError('Hub not found');
+}
+
+/**
+ * The hubs this viewer follows, in the same shape and the same order the owned list
+ * comes back in.
+ *
+ * Filtered through `hubViewerWhere` on the READ, not merely at follow time. An owner
+ * flipping a hub back to Private has to make it vanish from every follower's list
+ * immediately, and there is no revocation pass to delete follow rows — the same
+ * argument `getUserHubById` makes for links (subtask 868kwp5g8). The row stays, and
+ * starts counting again if the hub is made Public a second time.
+ *
+ * `isModerator` is deliberately NOT threaded through: a moderator's reach over any
+ * hub is a view privilege, and letting it decide this list would put private hubs in
+ * a personal sidebar that everyone else's revocation empties.
+ */
+export async function getFollowedHubs({ userId }: { userId: number }) {
+  const follows = await dbRead.userHubFollow.findMany({
+    where: { userId, hub: hubViewerWhere({ userId }) },
+    // `hubListSelect`, not `hubSelect`: the rail renders a name and a source count,
+    // and joining the owner costs two extra round trips per render for a field
+    // nothing reads.
+    select: { hub: { select: hubListSelect } },
+    orderBy: { hub: { name: 'asc' } },
+    take: hubLimits.followedHubs,
+  });
+  return follows.map((follow) => toHubDetail(follow.hub, userId));
+}
+
+export async function followUserHub({ hubId, userId }: { hubId: number; userId: number }) {
+  // Through the WRITER, and scoped by the same fragment every hub read uses: a hub
+  // this viewer cannot open must be a not-found here, never a follow row pointing at
+  // something they will never be shown.
+  const hub = await dbWrite.userHub.findFirst({
+    where: { id: hubId, ...hubViewerWhere({ userId }) },
+    select: { id: true, userId: true },
+  });
+  if (!hub) throw throwNotFoundError('Hub not found');
+
+  // Your own hubs are already the list above this one in the rail.
+  if (hub.userId === userId) throw throwBadRequestError('This is your own hub');
+
+  const count = await dbWrite.userHubFollow.count({ where: { userId } });
+  if (count >= hubLimits.followedHubs)
+    throw throwBadRequestError(`You can follow at most ${hubLimits.followedHubs} hubs`);
+
+  // Idempotent: the button is rendered from a cached list, so a second click inside
+  // the invalidate window must not be an error.
+  await dbWrite.userHubFollow.upsert({
+    where: { userId_hubId: { userId, hubId } },
+    create: { userId, hubId },
+    update: {},
+  });
+  return { hubId, following: true };
+}
+
+export async function unfollowUserHub({ hubId, userId }: { hubId: number; userId: number }) {
+  // Scoped to the caller's own row on the DELETE itself, like every other write in
+  // this file — `deleteMany`, not a lookup followed by a delete by id.
+  const { count } = await dbWrite.userHubFollow.deleteMany({ where: { userId, hubId } });
+  return { hubId, following: false, removed: count > 0 };
 }
 
 export async function setUserHubOrder({ ids, userId }: SetUserHubOrderInput & { userId: number }) {
@@ -289,28 +465,44 @@ export type ResolvedHubSources = {
   collectionIds: number[];
   /** True when a Model source expanded past the id cap and was trimmed. */
   truncated: boolean;
+  /** The hub's stored browsing-level cap. 0 means the hub imposes none. */
+  forcedBrowsingLevel: number;
 };
 
 // Resolves a hub to the id sets its feed filter is built from. Returns null when
-// the hub does not exist or is not the viewer's — callers must treat that as
-// "return nothing", never as "no filter", the same way `newCreators` does with an
-// unpopulated board.
+// the hub does not exist or this viewer may not open it — callers must treat that
+// as "return nothing", never as "no filter", the same way `newCreators` does with
+// an unpopulated board.
 export async function resolveHubSources({
   hubId,
   userId,
+  isModerator,
+  excludedSources,
 }: {
   hubId: number;
-  userId?: number;
-}): Promise<ResolvedHubSources | null> {
-  if (!userId) return null;
+  excludedSources?: HubSourceExclusionInput[];
+} & HubViewer): Promise<ResolvedHubSources | null> {
   const hub = await dbRead.userHub.findFirst({
-    where: { id: hubId, userId },
-    select: { sources: { where: { enabled: true }, select: { type: true, targetId: true } } },
+    where: { id: hubId, ...hubViewerWhere({ userId, isModerator }) },
+    select: {
+      forcedBrowsingLevel: true,
+      sources: { where: { enabled: true }, select: { type: true, targetId: true } },
+    },
   });
   if (!hub) return null;
 
+  // A viewer of someone else's hub toggles sources off for their own session, and
+  // that never reaches the owner's row — subtask 868kwp5gt. Applied here rather
+  // than in the filter builders because this is the one place the id sets exist,
+  // and because subtracting can only ever NARROW the feed: a forged exclusion
+  // removes content from the forger, and can add none.
+  const excluded = new Set((excludedSources ?? []).map(hubSourceKey));
+  const sources = excluded.size
+    ? hub.sources.filter((s) => !excluded.has(hubSourceKey(s)))
+    : hub.sources;
+
   const byType = (type: UserHubSourceType) =>
-    hub.sources.filter((s) => s.type === type).map((s) => s.targetId);
+    sources.filter((s) => s.type === type).map((s) => s.targetId);
 
   const modelIds = byType(UserHubSourceType.Model);
   const explicitVersionIds = byType(UserHubSourceType.ModelVersion);
@@ -358,7 +550,26 @@ export async function resolveHubSources({
     modelVersionIds,
     truncated,
     collectionIds: byType(UserHubSourceType.Collection),
+    forcedBrowsingLevel: hub.forcedBrowsingLevel,
   };
+}
+
+/**
+ * The hub's own content cap, intersected with whatever the viewer was already
+ * allowed. Returns 0 for "this viewer can see nothing in this hub", which callers
+ * must serve as an empty page rather than as an uncapped one.
+ *
+ * Extracted because three filter builders apply it — the two Meilisearch paths and
+ * BitDex — and a cap missing from one of them is a hub quietly serving past its
+ * own setting on whichever backend that request happened to take.
+ */
+export function hubBrowsingLevel(browsingLevel: number | undefined, sources: ResolvedHubSources) {
+  if (!sources.forcedBrowsingLevel) return browsingLevel;
+  // An absent level means PG here, exactly as it does in the level block each
+  // caller runs next. Defaulting to "every level" instead would let a hub's cap
+  // WIDEN a request that asked for no level at all, which is the opposite of what
+  // a cap is for.
+  return (browsingLevel || NsfwLevel.PG) & sources.forcedBrowsingLevel;
 }
 
 export function hubSourcesAreEmpty(sources: ResolvedHubSources) {

@@ -44,3 +44,44 @@ export const REMIX_QUEUE_RECEIVED_URL = '/user/placements?type=remix&tab=receive
 
 /** The viewer's own outgoing remix submissions. */
 export const REMIX_QUEUE_SENT_URL = '/user/placements?type=remix&tab=sent';
+
+/**
+ * Turns the reveal on for whoever follows the link.
+ *
+ * Placed stickers are hidden by default site-wide and the count chip is the only
+ * control that shows them — so every link that exists BECAUSE of a sticker lands
+ * on an image that looks untouched, and the person has no way to tell that from
+ * the sticker having been removed. That is the queue's "view image" link, and
+ * the placer's "your sticker was accepted" notification.
+ */
+export const STICKER_REVEAL_PARAM = 'stickers';
+
+/**
+ * The query string on its own, for a caller that already has a URL to append to
+ * — the withheld thumbnail's cross-domain link is built elsewhere and must not
+ * end up with a second spelling of this.
+ */
+export const STICKER_REVEAL_SEARCH = `?${STICKER_REVEAL_PARAM}=1`;
+
+/** An image, with its placed stickers shown on arrival. */
+export function imageWithStickersUrl(imageId: number) {
+  return `/images/${imageId}${STICKER_REVEAL_SEARCH}`;
+}
+
+/**
+ * Whether a router query value is asking for the reveal.
+ *
+ * Beside the writer above rather than at the reading end, so the two cannot
+ * drift into a link that carries a value nothing recognises — which fails as a
+ * page that simply does not reveal, indistinguishable from the bug this exists
+ * to fix.
+ *
+ * `true` as well as `1`, because `true` is what every other boolean query param
+ * in the app uses (`booleanString()` in `utils/zod-helpers`, and the feed
+ * filters) and this one is short enough to be typed by hand into a support link.
+ * The writer above emits `1`; both are accepted.
+ */
+export function stickerRevealRequested(value: string | string[] | undefined) {
+  const first = Array.isArray(value) ? value[0] : value;
+  return first === '1' || first === 'true';
+}

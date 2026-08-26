@@ -29,11 +29,11 @@ const { hGetAll, hSet, mockWithSysReadDeadline, mockLogSysRedisFailOpen, mockGet
 vi.mock('~/server/redis/client', () => ({
   redis: { hGet: vi.fn(), hSet: vi.fn(), del: vi.fn(), hDel: vi.fn() },
   sysRedis: { hGetAll, hSet },
-  REDIS_KEYS: { COSMETICS: { IDS: 'cosmetics:ids' }, EVENT: { CACHE: 'event:cache' } },
+  REDIS_KEYS: { COSMETICS: { IDS: 'cosmeticIds' }, EVENT: { CACHE: 'packed:event' } },
   REDIS_SUB_KEYS: {
     EVENT: { MANUAL_ASSIGNMENTS: 'manual-assignments', DISCORD_ROLES: 'discord-roles', COSMETICS: 'cosmetics' },
   },
-  REDIS_SYS_KEYS: { EVENT: 'sys:event' },
+  REDIS_SYS_KEYS: { EVENT: 'event' },
   withSysReadDeadline: mockWithSysReadDeadline,
 }));
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: mockLogSysRedisFailOpen }));

@@ -1,6 +1,7 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
 import { getClickhouse } from './clickhouse';
+import { COMMENT_SPAM } from '$lib/comment-spam';
 import { clickhouseDate } from './clickhouse-date';
 import { usersByIds } from './users.service';
 import { strikeCountsByUserIds } from './moderation-memory.service';
@@ -276,22 +277,55 @@ export async function getSharedSocialAccounts(
   };
 }
 
-// Retool's PotentialSpammer/V2 (Postgres, despite sitting beside the ClickHouse queries): a burst of
-// comments in a short window. V2 supersedes V1 by summing both comment tables instead of returning a row
-// per table, so only that behaviour is ported.
-export async function getCommentBurst(userId: number): Promise<number> {
-  const [v2, v1] = await Promise.all(
-    (['CommentV2', 'Comment'] as const).map(async (table) => {
-      const r = await dbRead
-        .selectFrom(table)
-        .select((eb) => eb.fn.countAll<string>().as('count'))
-        .where('userId', '=', userId)
-        .where('createdAt', '>', sql<Date>`now() - interval '2 days'`)
-        .executeTakeFirst();
-      return Number(r?.count ?? 0);
-    })
+export type CommentBurst = {
+  comments: number;
+  /** Normalised to ISO. ClickHouse hands back `YYYY-MM-DD HH:MM:SS` with no zone, which renders shifted
+   *  by the viewer's offset — putting the burst on a different clock from the IP events beside it. */
+  hour: string;
+  /** Hours between signup and the burst. This is the condition that does the discriminating. */
+  ageAtBurstHours: number;
+  matchesSignature: boolean;
+};
+
+/**
+ * Retool's PotentialSpammer/V2 measured "more than 2 comments in 48 hours" over Postgres. All of that
+ * is retired: the threshold detected nothing in particular, and Postgres cannot answer after a ban
+ * because moderators delete the comments — of the 1,002 accounts in the 2026-08-24 wave, TWO comments
+ * survived. ClickHouse keeps the events, which is also what lets one rule drive the list.
+ *
+ * The busiest hour, and how old the account was when it happened. Both halves of `COMMENT_SPAM` are
+ * applied HERE rather than by the caller, so this badge and `/users/newest?view=spam` cannot drift
+ * into two rules.
+ */
+export async function getCommentBurst(userId: number): Promise<CommentBurst | null> {
+  const [rows, account] = await Promise.all([
+    getClickhouse().$query<{ comments: string; hour: string }>(`
+      SELECT count() AS comments, toString(toStartOfHour(time)) AS hour
+      FROM comments
+      WHERE userId = ${Number(userId)} AND time >= now() - INTERVAL 30 DAY
+      GROUP BY toStartOfHour(time)
+      ORDER BY comments DESC
+      LIMIT 1
+    `),
+    dbRead.selectFrom('User').select('createdAt').where('id', '=', userId).executeTakeFirst(),
+  ]);
+  const row = rows[0];
+  if (!row || !account) return null;
+
+  const hour = clickhouseDate(row.hour);
+  const comments = Number(row.comments);
+  const ageAtBurstHours = Math.max(
+    0,
+    (new Date(hour).getTime() - new Date(account.createdAt).getTime()) / 3_600_000
   );
-  return v2 + v1;
+  return {
+    comments,
+    hour,
+    ageAtBurstHours,
+    matchesSignature:
+      comments >= COMMENT_SPAM.minComments &&
+      ageAtBurstHours <= COMMENT_SPAM.maxAccountAgeDays * 24,
+  };
 }
 
 // GENERATION ABUSE (Retool's GetBlockedPrompts, GenRateLimited).

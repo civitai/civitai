@@ -52,6 +52,10 @@ function resolvePrimaryCheckout() {
       cwd: projectRoot,
       encoding: 'utf-8',
       stdio: ['ignore', 'pipe', 'ignore'],
+      // The daemon has no console of its own, so every console child it starts without this
+      // allocates one — which Windows 11 hands to the default terminal app, popping a Windows
+      // Terminal window that takes focus. Piping stdio does not prevent the allocation.
+      windowsHide: true,
       // This runs at module load, before the listener exists, so a wedged git would hang the daemon
       // where `ensureDaemon` reports a bare "Failed to start daemon" with nothing naming git.
       timeout: 5000,
@@ -336,6 +340,7 @@ function getGitBranch(dir) {
       cwd: dir,
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
     });
     return result.trim();
   } catch (e) {
@@ -484,6 +489,7 @@ function runCommand(cmd, args, cwd, env, log) {
       env,
       stdio: ['ignore', 'pipe', 'pipe'],
       shell: process.platform === 'win32',
+      windowsHide: true,
     });
     const pipe = (stream, level) =>
       stream.on('data', (d) => {
@@ -769,6 +775,7 @@ class DevSession {
       env,
       stdio: ['ignore', 'pipe', 'pipe'],
       shell: isWindows,
+      windowsHide: true,
     };
 
     // Use process groups on Unix for proper cleanup
@@ -905,7 +912,7 @@ class DevSession {
   killProcessTree(proc) {
     try {
       if (process.platform === 'win32') {
-        spawn('taskkill', ['/pid', String(proc.pid), '/f', '/t'], { shell: true });
+        spawn('taskkill', ['/pid', String(proc.pid), '/f', '/t'], { shell: true, windowsHide: true });
       } else {
         process.kill(-proc.pid, 'SIGKILL');
       }
@@ -1375,6 +1382,7 @@ class RgbProxy {
       env: process.env,
       stdio: ['ignore', 'pipe', 'pipe'],
       shell: isWindows,
+      windowsHide: true,
     };
     if (!isWindows) spawnOptions.detached = true;
 
@@ -1443,7 +1451,7 @@ class RgbProxy {
       proc.once('exit', () => resolve(this.getStatus()));
       try {
         if (process.platform === 'win32') {
-          spawn('taskkill', ['/pid', String(proc.pid), '/f', '/t'], { shell: true });
+          spawn('taskkill', ['/pid', String(proc.pid), '/f', '/t'], { shell: true, windowsHide: true });
         } else {
           process.kill(-proc.pid, 'SIGKILL');
         }
@@ -1661,6 +1669,7 @@ class AuthHub {
       env: this.spawnEnv(),
       stdio: ['ignore', 'pipe', 'pipe'],
       shell: isWindows,
+      windowsHide: true,
     };
     if (!isWindows) spawnOptions.detached = true;
 
@@ -1778,7 +1787,7 @@ class AuthHub {
       proc.once('exit', resolve);
       try {
         if (process.platform === 'win32') {
-          spawn('taskkill', ['/pid', String(proc.pid), '/f', '/t'], { shell: true });
+          spawn('taskkill', ['/pid', String(proc.pid), '/f', '/t'], { shell: true, windowsHide: true });
         } else {
           process.kill(-proc.pid, 'SIGKILL');
         }

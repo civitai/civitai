@@ -194,6 +194,20 @@ const GATE_LEDGER: Record<string, string> = {
     'recipient and for a moderator-claimed owner, on an app they can plainly edit. ' +
     'Refuses FORBIDDEN rather than returning [], because an empty list reads to the UI ' +
     'as "this app has no history", which is a lie a stranger should not be told either.',
+  'src/server/services/blocks/app-moderator-message.service.ts':
+    'NOT a caller-identity gate — the caller is a MODERATOR and the mod boundary is the ' +
+    'router (`moderatorProcedure` + the inner isModerator recheck), exactly as on ' +
+    'delist/relist/claim/purge. It calls resolveListingAccess to answer a different ' +
+    'question: WHO IS THE RECIPIENT. That is why it passes `userId: null` — it wants ' +
+    '`ownerUserId`, not a role, and null takes the early return so no seat lookup is ' +
+    'paid. 🔴 It is in this ledger for the reason the mapper and the backfill are: the ' +
+    'ownership-READ sites must stay enumerated. Reading the denormalized ' +
+    'AppListing.userId here would be worse than a missed delivery — on a drifted onsite ' +
+    'row it would send a moderator’s private message ABOUT someone’s app TO a user who ' +
+    'no longer owns it, while the real owner is never told their listing has a problem. ' +
+    'Collaborators are NOT included by default (an editor consented to edit, not to ' +
+    'receive moderation correspondence); `includeCollaborators` opts in per message and ' +
+    'reads the ACCEPTED set via listAcceptedCollaboratorUserIds, ignoring `displayed`.',
   'src/pages/api/v1/blocks/dev-token.ts':
     'NOT widened, deliberately. This is a THIRD gate shape the ledger surfaced: a ' +
     'positive-match BRANCH CONDITION (`block.app.userId === user.id`) rather than a ' +

@@ -5,7 +5,7 @@ import { useStickerPlacements } from '~/components/Sticker/placement.util';
 import { useStickerTreatment } from '~/components/Sticker/treatments/useStickerTreatment';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.store';
-import { useStickerRevealStore } from '~/store/sticker-reveal.store';
+import { stickersRevealed, useStickerRevealStore } from '~/store/sticker-reveal.store';
 import { useStickerHistoryStep } from '~/store/sticker-history.store';
 
 /**
@@ -37,7 +37,7 @@ export function ImageStickerOverlay({
 }) {
   const currentUser = useCurrentUser();
   const treatment = useStickerTreatment();
-  const revealed = useStickerRevealStore((state) => state.revealed);
+  const revealed = useStickerRevealStore(stickersRevealed);
   const targetImageId = useStickerPlacementDraftStore((state) => state.targetImageId);
   const setSurface = useStickerPlacementDraftStore((state) => state.setSurface);
 
@@ -105,10 +105,10 @@ export function ImageStickerOverlay({
 
   const imageIds = useMemo(() => [imageId], [imageId]);
   // Signed-in viewers always fetch, because a pending placement is something
-  // they either paid for or have been asked to answer — and the notification
-  // sends the owner straight here. Gating this on `revealed` meant the owner
-  // followed the link to an image that looked untouched, with no control on the
-  // page that would have shown them the thing they came to decide on.
+  // they either paid for or have been asked to answer. Gating this on `revealed`
+  // meant arriving at an image that looked untouched, with no control on the
+  // page that would have shown them the thing they came for — the count chip
+  // needs the total before it can offer to reveal anything.
   const { byImage } = useStickerPlacements(imageIds, revealed || isPlacing || !!currentUser);
 
   const all = byImage.get(imageId) ?? [];

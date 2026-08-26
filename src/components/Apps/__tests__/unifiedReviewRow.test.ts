@@ -129,8 +129,9 @@ describe('offsiteRequestToUnifiedRow', () => {
     const req = offsite({ id: 'o1', slug: 'ext-app' });
     const row = offsiteRequestToUnifiedRow(req, vi.fn());
     expect(row.key).toBe('offsite:o1');
+    // 🔴 The ROUTING VALUE is untouched by the copy rename — only `badge` moved.
     expect(row.kind).toBe('offsite');
-    expect(row.badge).toBe('External');
+    expect(row.badge).toBe('Standalone');
     expect(row.badgeColor).toBe('grape');
     expect(row.title).toBe('External App');
     expect(row.slug).toBe('ext-app');
@@ -257,7 +258,7 @@ describe('offsiteRequestToUnifiedRow — on-site listing-media revision (kind: o
   it('an absent kind (older payload) still behaves as an external listing', () => {
     const row = offsiteRequestToUnifiedRow(offsite({ id: 'o9', slug: 's' }), vi.fn());
     expect(row.key).toBe('offsite:o9');
-    expect(row.badge).toBe('External');
+    expect(row.badge).toBe('Standalone');
   });
 });
 
@@ -294,7 +295,7 @@ function row(key: string, iso: string): UnifiedReviewRow {
     key,
     // `onsite:` = code review; everything else routes to the listing modal.
     kind: isOnsiteCode ? 'onsite' : 'offsite',
-    badge: isOnsiteCode ? 'App' : key.startsWith('onsite-listing:') ? 'Listing media' : 'External',
+    badge: isOnsiteCode ? 'App' : key.startsWith('onsite-listing:') ? 'Listing media' : 'Standalone',
     badgeColor: isOnsiteCode ? 'blue' : key.startsWith('onsite-listing:') ? 'teal' : 'grape',
     title: key,
     submitter: null,

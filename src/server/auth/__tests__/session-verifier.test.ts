@@ -15,9 +15,14 @@ const h = vi.hoisted(() => ({
 vi.mock('@civitai/auth', () => ({ createAuthVerifier: () => ({}) }));
 vi.mock('~/server/auth/session-metrics', () => ({ observeSessionLeg: h.observeSessionLeg }));
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: h.logSysRedisFailOpen }));
-vi.mock('~/server/redis/client', () => ({
+// 🔴 Spread the REAL package for the key constants rather than re-typing them. Hand-typed
+// copies drift silently: this factory used to declare TOKEN_STATE as 'sys:token-state' and
+// ALL as 'sys:all' while production uses 'session:token-state' and 'session:all', so the
+// suite exercised keys Redis never sees and could not have caught a key-name regression.
+// The client and the withSysReadDeadline control surface stay overridden.
+vi.mock('~/server/redis/client', async () => ({
+  ...(await import('@civitai/redis/client')),
   sysRedis: { hGet: h.hGet, get: h.get },
-  REDIS_SYS_KEYS: { SESSION: { TOKEN_STATE: 'sys:token-state', ALL: 'sys:all' } },
   withSysReadDeadline: h.withSysReadDeadline,
 }));
 

@@ -30,8 +30,12 @@ vi.mock('~/server/services/user-hub.service', () => ({
   resolveHubSourceFromUrl: vi.fn().mockResolvedValue(null),
   addUserHubSource: vi.fn().mockResolvedValue({ hubId: 1, added: true }),
   removeUserHubSource: vi.fn().mockResolvedValue({ hubId: 1, removed: true }),
+  getFollowedHubs: vi.fn().mockResolvedValue([]),
+  followUserHub: vi.fn().mockResolvedValue({ hubId: 1, followed: true }),
+  unfollowUserHub: vi.fn().mockResolvedValue({ hubId: 1, followed: false }),
 }));
 
+import { getUserHubById } from '~/server/services/user-hub.service';
 import { userHubRouter } from '~/server/routers/user-hub.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
@@ -48,11 +52,66 @@ const inputs: Record<string, unknown> = {
   resolveSource: { url: 'https://civitai.com/user/someone' },
   addSource: { hubId: 1, type: 'User', targetId: 2 },
   removeSource: { hubId: 1, type: 'User', targetId: 2 },
+  getFollowed: undefined,
+  follow: { hubId: 1 },
+  unfollow: { hubId: 1 },
 };
 
 const procedureNames = Object.keys(
   (userHubRouter as unknown as { _def: { procedures: Record<string, unknown> } })._def.procedures
 );
+
+// Signed out. The whole point of a shareable hub link is that someone who is not
+// logged in can open it, and `getById` is the only verb that may serve them.
+const anonymousCaller = () =>
+  userHubRouter.createCaller({
+    user: undefined,
+    ip: '1.2.3.4',
+    acceptableOrigin: true,
+    tokenScope: TokenScope.Full,
+    apiKeyId: null,
+    features: {},
+  } as never) as unknown as Record<string, (input?: unknown) => Promise<unknown>>;
+
+describe('a signed-out visitor can open a hub and do nothing else', () => {
+  beforeEach(() => {
+    getFeatureFlagsMock.mockReturnValue({ userHubs: true });
+  });
+
+  it('hands the service the viewer it was given, and nothing invented', async () => {
+    // The line this branch changed, and the one nothing else can see: the gate suite
+    // mocks the service wholesale, and the service suite never sees the router.
+    // `userId: ctx.user?.id` -> `undefined` 404s every private hub for its own owner;
+    // dropping `isModerator` silently removes moderator access. Both stay green
+    // everywhere else.
+    await anonymousCaller().getById({ id: 1 });
+    expect(getUserHubById).toHaveBeenLastCalledWith({
+      id: 1,
+      userId: undefined,
+      isModerator: undefined,
+    });
+
+    await caller().getById({ id: 1 });
+    expect(getUserHubById).toHaveBeenLastCalledWith({ id: 1, userId: 7, isModerator: false });
+  });
+
+  it('getById serves a signed-out caller', async () => {
+    // Reverting `getById` to `userHubProcedure` UNAUTHORIZEDs every shared link, and
+    // reading `ctx.user.id` instead of `ctx.user?.id` throws on the same request.
+    // Both are one-token edits and nothing else in the repo sees either.
+    await expect(anonymousCaller().getById({ id: 1 })).resolves.not.toThrow();
+  });
+
+  for (const name of procedureNames.filter((n) => n !== 'getById')) {
+    it(`${name} still refuses a signed-out caller`, async () => {
+      // The control on the line above: opening ONE read to the public must not have
+      // opened the rest of the router with it.
+      await expect(anonymousCaller()[name](inputs[name])).rejects.toMatchObject({
+        code: 'UNAUTHORIZED',
+      });
+    });
+  }
+});
 
 const caller = (tokenScope: number = TokenScope.Full, apiKeyId: number | null = null) =>
   userHubRouter.createCaller({
@@ -115,6 +174,9 @@ const requiredScopes: Record<string, number> = {
   removeSource: TokenScope.UserWrite,
   delete: TokenScope.UserWrite,
   setOrder: TokenScope.UserWrite,
+  getFollowed: TokenScope.UserRead,
+  follow: TokenScope.UserWrite,
+  unfollow: TokenScope.UserWrite,
 };
 
 // `UserRead` and `UserWrite` are independent bits, so each is the other's negative

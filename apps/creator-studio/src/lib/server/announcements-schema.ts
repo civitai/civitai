@@ -3,7 +3,7 @@ import { z } from 'zod';
 // SvelteKit plugin and cannot resolve the alias — an aliased import fails COLLECTION, which reads as
 // zero tests rather than as a failure.
 import { checkbox, numberish } from './form-fields';
-import { CONTENT_MAX, DOMAIN_COLORS, LINK_TEXT_MAX, TITLE_MAX } from '../announcements';
+import { CONTENT_CEILING, DOMAIN_COLORS, LINK_TEXT_MAX, TITLE_MAX } from '../announcements';
 
 const optionalText = (max: number) =>
   z.preprocess(
@@ -37,7 +37,9 @@ export const announcementFormSchema = z
   .object({
     id: z.preprocess(numberish, z.number().int().positive().optional()),
     title: z.string().trim().min(1, 'Add a subject').max(TITLE_MAX),
-    content: z.string().trim().min(1, 'Add a message').max(CONTENT_MAX),
+    // CONTENT_CEILING, not CONTENT_MAX: the main app enforces the real limit and grandfathers rows
+    // that were already over it. Capping at CONTENT_MAX here would refuse those before they got there.
+    content: z.string().trim().min(1, 'Add a message').max(CONTENT_CEILING),
     domain: domainList,
     profileOnly: checkbox,
     startsAt: optionalDate,
@@ -62,11 +64,9 @@ export const announcementFormSchema = z
   .refine((v) => !!v.linkUrl === !!v.linkText, {
     message: 'A button needs both a link and button text',
     path: ['linkText'],
-  })
-  .refine((v) => !v.startsAt || !v.endsAt || v.endsAt > v.startsAt, {
-    message: 'End date must be after the start date',
-    path: ['endsAt'],
   });
+// No start/end ordering refine: the main app slides the end forward (clampAnnouncementWindow);
+// rejecting here means the clamp never runs.
 
 export type AnnouncementForm = z.infer<typeof announcementFormSchema>;
 

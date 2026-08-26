@@ -7,6 +7,7 @@ export type ReplyThread = {
   locked: boolean;
   /** 1 = replies to a comment on the requested page, and the level of the comment that owns it. */
   depth: number;
+  /** What the viewer can actually be shown — excludes ToS-flagged replies for non-moderators. */
   commentCount: number;
   hiddenCount: number;
   comments: CommentV2Model[];
@@ -120,12 +121,14 @@ export function groupReplyThreads({
   threads,
   comments,
   hiddenCounts,
+  commentCounts,
   sort,
   limit,
 }: {
   threads: ReplyThreadRow[];
   comments: CommentV2Model[];
   hiddenCounts: Record<number, number>;
+  commentCounts: Record<number, number>;
   sort: ThreadSort;
   limit: number;
 }): ReplyThread[] {
@@ -151,7 +154,7 @@ export function groupReplyThreads({
       commentId: thread.commentId,
       locked: thread.locked,
       depth: thread.depth,
-      commentCount: thread.commentCount,
+      commentCount: commentCounts[thread.id] ?? 0,
       hiddenCount: hiddenCounts[thread.id] ?? 0,
       comments: [...pinned, ...page],
       nextCursor: page.length === limit ? page[page.length - 1].id : undefined,

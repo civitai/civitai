@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { requiresGrant } from '$lib/server/access';
 import { parseForm, parseQuery } from '$lib/server/query';
-import { banFieldsSchema, rejectUnexplainedOther } from '$lib/server/ban-input';
+import { banFieldsSchema, banRemovalArgs, rejectUnexplainedOther } from '$lib/server/ban-input';
 import { setBanned } from '$lib/server/user-actions.service';
 import {
   ANNOUNCEMENT_COLORS,
@@ -117,8 +117,7 @@ export const actions: Actions = {
       reasonCode: input.reasonCode,
       detailsInternal: input.detailsInternal || undefined,
       detailsExternal: input.detailsExternal || undefined,
-      removeMedia: input.removeMedia,
-      removeModels: input.removeModels,
+      ...banRemovalArgs(input, true),
       moderatorId: locals.user.id,
     });
     return result.ok ? { success: true } : fail(400, { error: result.error });

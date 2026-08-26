@@ -1,5 +1,5 @@
 import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
-import { trainingModelInfo } from '~/utils/training';
+import { prettyTrainingBaseModel, trainingModelInfo } from '~/utils/training';
 
 export type TrainingRunSummaryRow = { label: string; value: string };
 
@@ -8,6 +8,7 @@ export type TrainingRunSummary = {
   architecture: string | null;
   architectureKey: string | null;
   continuedFromEpoch: number | null;
+  continuedFromVersionName: string | null;
   rows: TrainingRunSummaryRow[];
 };
 
@@ -24,18 +25,16 @@ export function trainingArchitectureKey(
 /**
  * Kohya and AI Toolkit store the same knobs under different names (`unetLR`/`lr`,
  * `maxTrainEpochs`/`epochs`, `trainBatchSize`/`batchSize`), so a caller that reads one shape shows
- * blanks for the other.
+ * blanks for the other. Labels match `trainingSettings` on the submit screen — the same value must
+ * not be set under one name and read back under another. Copied rather than imported: this module
+ * is also pulled into the epoch-download API route, and `trainingSettings` is in a `.tsx`.
  */
 export function summarizeTrainingRun(
   trainingDetails: TrainingDetailsObj | undefined | null
 ): TrainingRunSummary {
   const params = trainingDetails?.params as Record<string, unknown> | undefined;
-  const baseModel = trainingDetails?.baseModel;
   const architectureKey = trainingArchitectureKey(trainingDetails);
-
-  const pretty = baseModel
-    ? (trainingModelInfo as Record<string, { pretty?: string } | undefined>)[baseModel]?.pretty
-    : undefined;
+  const pretty = prettyTrainingBaseModel(trainingDetails?.baseModel);
 
   const rows: TrainingRunSummaryRow[] = [];
   const add = (label: string, value: unknown) => {
@@ -53,27 +52,24 @@ export function summarizeTrainingRun(
 
   add('Engine', params?.engine);
   add('Steps', num('steps', 'targetSteps'));
-  add('Epochs', num('epochs', 'maxTrainEpochs'));
+  // AI Toolkit's `epochs` is its saved-checkpoint count, not an epoch count — the submit screen
+  // labels the same knob "Checkpoints".
+  if (params?.engine === 'ai-toolkit') add('Checkpoints', num('epochs', 'maxTrainEpochs'));
+  else add('Epochs', num('maxTrainEpochs', 'epochs'));
   add('Resolution', num('resolution'));
-  add('Batch size', num('batchSize', 'trainBatchSize'));
-  add('Learning rate', num('lr', 'unetLR'));
-  add('Text encoder LR', num('textEncoderLr', 'textEncoderLR'));
-  add(
-    'Network dim / alpha',
-    (() => {
-      const dim = num('networkDim');
-      const alpha = num('networkAlpha');
-      if (dim === undefined && alpha === undefined) return undefined;
-      return `${dim ?? '—'} / ${alpha ?? '—'}`;
-    })()
-  );
+  add('Train Batch Size', num('batchSize', 'trainBatchSize'));
+  add('Unet LR', num('lr', 'unetLR'));
+  add('Text Encoder LR', num('textEncoderLr', 'textEncoderLR'));
+  add('Network Dim', num('networkDim'));
+  add('Network Alpha', num('networkAlpha'));
   add('Optimizer', params?.optimizerType);
-  add('Scheduler', params?.lrScheduler);
+  add('LR Scheduler', params?.lrScheduler);
 
   return {
     architecture: pretty ?? architectureKey,
     architectureKey,
     continuedFromEpoch: trainingDetails?.continueFromEpoch?.epochNumber ?? null,
+    continuedFromVersionName: trainingDetails?.continueFromEpoch?.sourceVersionName ?? null,
     rows,
   };
 }

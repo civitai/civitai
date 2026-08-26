@@ -151,7 +151,7 @@ async function getCommentTasks(ctx: MetricContext) {
         t."model3dId",
         COUNT(c.id)::int AS "commentCount"
       FROM "Thread" t
-      JOIN "CommentV2" c ON c."threadId" = t.id
+      JOIN "CommentV2" c ON c."threadId" = t.id AND c."tosViolation" = false
       WHERE t."model3dId" IN (${ids})
         AND t."model3dId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
       GROUP BY t."model3dId"

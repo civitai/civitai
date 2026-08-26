@@ -23,7 +23,13 @@ export function PlacementFreeSlotSlider({
   value,
   onChange,
   onCommit,
-  /** Singular and plural of what is placed here: `['free sticker', 'free stickers']`. */
+  /**
+   * Singular and plural of what is placed here: `['sticker', 'stickers']`.
+   *
+   * The BARE noun. This control supplies "Free" itself, so a caller passing
+   * "free stickers" renders "Free free stickers you'll accept" — which is what
+   * both callers did until 2026-08-24.
+   */
   noun,
 }: {
   surface: PlacementSurface;

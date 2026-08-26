@@ -75,6 +75,8 @@ const userFindFirst = dbMock.dbWrite.user.findFirst;
 // default for a write verb, so an undeclared one returns `undefined` and the fan-out throws.
 const userLinkDeleteMany = dbMock.dbWrite.userLink.deleteMany;
 const imageUpdateMany = dbMock.dbWrite.image.updateMany;
+const commentUpdateMany = dbMock.dbWrite.comment.updateMany;
+const commentV2UpdateMany = dbMock.dbWrite.commentV2.updateMany;
 
 const call = () =>
   toggleBan({
@@ -90,6 +92,8 @@ beforeEach(() => {
   userFindFirst.mockResolvedValue(null);
   userLinkDeleteMany.mockResolvedValue({ count: 0 });
   imageUpdateMany.mockResolvedValue({ count: 0 });
+  commentUpdateMany.mockResolvedValue({ count: 0 });
+  commentV2UpdateMany.mockResolvedValue({ count: 0 });
 });
 
 describe('toggleBan -> user search index', () => {
@@ -153,5 +157,47 @@ describe('toggleBan -> user search index', () => {
     expect(mockRemoveContent).toHaveBeenCalledTimes(1);
     expect(mockRemoveContent).toHaveBeenCalledWith(expect.objectContaining({ userId: USER_ID }));
     expect(mockQueueUpdate).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A ban can flag the account's comments in both tables — the ToS flag, not `hidden`; see
+ * `commentsv2.service.ts` for why the flag is what removes a comment and `hidden` is not.
+ */
+describe('toggleBan -> removeComments', () => {
+  const ban = (removeComments?: boolean) =>
+    toggleBan({
+      id: USER_ID,
+      reasonCode: BanReasonCode.Other,
+      userId: ACTOR_ID,
+      isModerator: true,
+      removeComments,
+    } as Parameters<typeof toggleBan>[0]);
+
+  beforeEach(() => {
+    userFindUnique.mockResolvedValue({
+      bannedAt: null,
+      meta: {},
+      username: 'someone',
+      email: null,
+    });
+  });
+
+  it('flags both comment tables when asked, and does not touch the author-owned hide', async () => {
+    await ban(true);
+
+    for (const updateMany of [commentUpdateMany, commentV2UpdateMany]) {
+      expect(updateMany).toHaveBeenCalledWith({
+        where: { userId: USER_ID, tosViolation: false },
+        data: { tosViolation: true },
+      });
+    }
+  });
+
+  it('leaves comments alone otherwise — it is opt-in, like removeMedia', async () => {
+    await ban();
+
+    expect(commentUpdateMany).not.toHaveBeenCalled();
+    expect(commentV2UpdateMany).not.toHaveBeenCalled();
   });
 });

@@ -3,6 +3,10 @@ import type {
   ListingCapability,
   ListingKind,
 } from '~/server/services/blocks/app-access.service';
+import {
+  isAuthorableListingStatus,
+  isPublishableListingStatus,
+} from '~/shared/constants/app-capabilities.constants';
 
 /**
  * App Store Listings — the CANONICAL owner/editor authoring page's tab set.
@@ -20,7 +24,14 @@ import type {
  * to `AppListing`: an OFF-SITE listing has no AppBlock at all, so a block-keyed route is
  * structurally unable to address one of the store's two kinds.
  */
-export type EditorTab = 'details' | 'media' | 'manifest' | 'earnings' | 'collaborators';
+export type EditorTab =
+  | 'details'
+  | 'media'
+  | 'manifest'
+  | 'earnings'
+  | 'collaborators'
+  | 'publishing'
+  | 'history';
 
 /** The tab a bare `/edit` (no `?tab=`) lands on. Always in the allowed set. */
 export const DEFAULT_EDITOR_TAB: EditorTab = 'details';
@@ -40,6 +51,8 @@ export const ALL_EDITOR_TABS: EditorTab[] = [
   'manifest',
   'earnings',
   'collaborators',
+  'publishing',
+  'history',
 ];
 
 /** What the caller sees on each tab. Rendered in this order. */
@@ -49,6 +62,8 @@ export const EDITOR_TAB_LABELS: Readonly<Record<EditorTab, string>> = Object.fre
   manifest: 'Manifest',
   earnings: 'Earnings',
   collaborators: 'Collaborators',
+  publishing: 'Publishing',
+  history: 'History',
 });
 
 /** The inputs the tab set is derived from. Nothing else may influence it. */
@@ -59,6 +74,14 @@ export type EditorTabContext = {
   role: AppRole;
   /** The listing's kind-derived capability row (`capabilitiesForKind`). */
   capabilities: Readonly<Record<ListingCapability, boolean>>;
+  /**
+   * The LISTING's own status — `draft|pending|approved|rejected|removed`.
+   *
+   * 🔴 LOAD-BEARING, AND THE REASON THIS FUNCTION IS NOW A SECURITY SURFACE. A
+   * non-authorable status (`removed`/`rejected`) collapses the set to the narrowed
+   * publishing/history pair; see {@link editorTabsFor}.
+   */
+  status: string;
 };
 
 /**
@@ -67,7 +90,32 @@ export type EditorTabContext = {
  * 🔴 EVERY CLAUSE BELOW IS THE *REASON* A PROC WOULD REFUSE, not a style preference.
  * A tab rendered outside these rules is a guaranteed 403/404 one click later.
  *
- *   - `details`       — ALWAYS. `appListings.getMyListingForEdit` / `updateListing` are
+ * 🔴 FIRST, THE STATUS BRANCH — AND IT IS THE ONE SECURITY-CRITICAL CLAUSE IN THIS FILE.
+ * On a NON-AUTHORABLE status (`removed`, `rejected`) the set collapses to at most
+ * `publishing` + `history`, and EVERY content tab is withheld — `details`, `media`,
+ * `manifest`, `earnings` and, above all, `collaborators`. `details` and `collaborators`
+ * used to be pushed UNCONDITIONALLY, which is precisely why the route was previously
+ * forbidden outright on those statuses: leaving the page open on a delisted app left a
+ * LIVE Collaborators tab, where accepting an invite still mints Forgejo `write` on the
+ * app's repo. Opening the route so an owner can Republish (rather than being stuck behind
+ * a one-way door only a moderator can reopen — civitai/civitai#4218) is only safe because
+ * this branch exists, so:
+ *
+ *   🔴 DO NOT MAKE `details` OR `collaborators` UNCONDITIONAL AGAIN, and do not "simplify"
+ *   this branch into a filter over the full set. Each withheld tab has its OWN negative
+ *   test in `appListingEditorTabs.test.ts`; the `collaborators` one names the Forgejo
+ *   consequence.
+ *
+ * 🔴 AND THE TAB SET IS A UI NARROWING, NEVER A GATE. Measured on this tree:
+ * `appCollaborators.list`, `inviteCollaborator` and `respondToInvite` did NOT check
+ * listing status at all — only `getAppListingAuthoringContext`'s refusal stood between a
+ * removed listing and a fresh repo grant. `inviteCollaborator`/`respondToInvite` now
+ * refuse a non-authorable listing server-side (see `app-collaborator.service.ts`), and
+ * THAT is the enforcement point. This function only stops the caller being offered a
+ * surface the server is going to refuse.
+ *
+ *   - `details`       — every AUTHORABLE status. `appListings.getMyListingForEdit` /
+ *                       `updateListing` are
  *                       LISTING-keyed and seat-aware (both route through
  *                       `resolveListingAccess` via `loadOwnedEditableListing`), and
  *                       `capabilitiesForKind(...).listingContent` is `true` for BOTH
@@ -118,17 +166,40 @@ export type EditorTabContext = {
  * `appListingEditorTabs.test.ts` pins one case per direction, so dropping either clause
  * reddens exactly one of them.
  *
- *   - `collaborators` — ALWAYS. Seats are listing-keyed, so both kinds have a roster, and
+ *   - `collaborators` — every AUTHORABLE status, and NEVER on a non-authorable one. Seats
+ *                       are listing-keyed, so both kinds have a roster, and
  *                       `appCollaborators.list` admits the OWNER **and** an ACCEPTED
  *                       editor. (Which CONTROLS render inside the panel is a separate,
- *                       narrower question — owner-only for invite/remove.)
+ *                       narrower question — owner-only for invite/remove.) The status
+ *                       clause is the Forgejo-write guard described at the top.
+ *
+ *   - `publishing`    — OWNER only, and only where a publishing control actually exists
+ *                       (`isPublishableListingStatus`: `approved` ⇒ Unpublish, `removed` ⇒
+ *                       Republish). This is the first clause for which `role` has ever been
+ *                       load-bearing here: both `unpublishOwnListing` and
+ *                       `republishOwnListing` are owner-scoped server-side and throw for a
+ *                       seated editor, so offering an editor the tab would be offering a
+ *                       guaranteed red toast.
+ *
+ *   - `history`       — ALWAYS, for BOTH roles and EVERY status the route opens on.
+ *                       `listingHistory` authorizes through `resolveListingAccess` (owner
+ *                       OR accepted seat) and reads no status, so it refuses nothing this
+ *                       page can reach. It is also what keeps the set non-empty: an editor
+ *                       on a `removed` listing gets `['history']`, never `[]`, so
+ *                       `resolveEditorTab`'s `allowed[0]` fallback always has an answer.
  */
 export function editorTabsFor(ctx: EditorTabContext): EditorTab[] {
-  const tabs: EditorTab[] = ['details'];
-  if (ctx.capabilities.listingMedia === true && ctx.appBlockId != null) tabs.push('media');
-  if (ctx.capabilities.submitVersion === true && ctx.appBlockId != null) tabs.push('manifest');
-  if (ctx.capabilities.earnings === true && ctx.appBlockId != null) tabs.push('earnings');
-  tabs.push('collaborators');
+  const tabs: EditorTab[] = [];
+  // 🔴 THE SECURITY BRANCH. See the block above before touching it.
+  if (isAuthorableListingStatus(ctx.status)) {
+    tabs.push('details');
+    if (ctx.capabilities.listingMedia === true && ctx.appBlockId != null) tabs.push('media');
+    if (ctx.capabilities.submitVersion === true && ctx.appBlockId != null) tabs.push('manifest');
+    if (ctx.capabilities.earnings === true && ctx.appBlockId != null) tabs.push('earnings');
+    tabs.push('collaborators');
+  }
+  if (ctx.role === 'owner' && isPublishableListingStatus(ctx.status)) tabs.push('publishing');
+  tabs.push('history');
   return tabs;
 }
 

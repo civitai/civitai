@@ -96,11 +96,14 @@ describe('shouldBatch', () => {
   it('does NOT batch a procedure that is edge-cacheable for authed sessions', () => {
     setTrpcBatchingEnabled(true);
     setWindowAuthed(true);
-    // `model.getAll` applies `edgeCacheIt` and does NOT opt out for authed, so it emits a
+    // `bug.getLatest` applies `edgeCacheIt` and does NOT opt out for authed, so it emits a
     // cacheable response for logged-in users — batching would append `?batch=1` and lose
     // the CF edge-hit. Must stay unbatched.
-    expect(CACHEABLE_PROCEDURES.has('model.getAll')).toBe(true);
-    expect(shouldBatch(op({ path: 'model.getAll' }))).toBe(false);
+    //
+    // This used to name `model.getAll`, which is no longer a member: its `skipEdgeCache`
+    // middleware now skips on `!!ctx.user`, so it is deliberately not cacheable-for-authed.
+    expect(CACHEABLE_PROCEDURES.has('bug.getLatest')).toBe(true);
+    expect(shouldBatch(op({ path: 'bug.getLatest' }))).toBe(false);
   });
 
   it('DOES batch a non-cacheable authed query on the same router', () => {
@@ -431,6 +434,75 @@ describe('CACHEABLE_PROCEDURES stays in sync with the routers (batch-skip guard)
     });
   };
 
+  /**
+   * Middlewares defined as top-level consts in the same router file, so a bare
+   * `.use(someMiddleware)` can be resolved to its body.
+   *
+   * A router may express the authed opt-out in a bespoke middleware rather than via
+   * `noEdgeCache` — `model.router.ts`'s `skipEdgeCache` sets `ctx.cache.skip` from
+   * `ctx.user`, which `edgeCacheIt` reads to compute the TTL. A block-scoped regex
+   * cannot see that, so without this resolution the derivation reports such a
+   * procedure as cacheable-for-authed, which is the opposite of the truth.
+   */
+  const localMiddlewares = (content: string): Record<string, string> => {
+    const lines = content.split('\n');
+    const out: Record<string, string> = {};
+    lines.forEach((line, i) => {
+      const m = /^const (\w+) = middleware\(/.exec(line);
+      if (!m) return;
+      let end = i;
+      while (end < lines.length && !/^\}\);/.test(lines[end])) end++;
+      out[m[1]] = lines.slice(i, Math.min(end + 1, lines.length)).join('\n');
+    });
+    return out;
+  };
+
+  /** Append the bodies of any locally-defined middlewares the block applies. */
+  const withResolvedUses = (block: string, locals: Record<string, string>) =>
+    [block, ...[...block.matchAll(/\.use\((\w+)\)/g)].map((m) => locals[m[1]] ?? '')].join('\n');
+
+  /**
+   * Does this (use-resolved) block opt out of edge caching for authenticated callers?
+   * Three spellings, all of which mean "not cacheable-for-authed":
+   *   - `noEdgeCache({ authedOnly: true })`
+   *   - a blanket `noEdgeCache()`
+   *   - a `skip` assignment that consults `ctx.user`
+   */
+  const optsOutForAuthed = (text: string) =>
+    /noEdgeCache\(\s*\{\s*authedOnly/.test(text) ||
+    /noEdgeCache\(\s*\)/.test(text) ||
+    /skip:[^,\n]*ctx\.user/.test(text);
+
+  it('resolves a bespoke authed opt-out expressed in a local middleware', () => {
+    const content = [
+      "const skipIt = middleware(async ({ ctx, next }) => {",
+      "  return next({ ctx: { cache: { ...ctx.cache, skip: !!ctx.user } } });",
+      "});",
+      "",
+      "  getAll: publicProcedure",
+      "    .use(skipIt)",
+      "    .use(edgeCacheIt({ ttl: 60 }))",
+    ].join('\n');
+    const block = procedureBlocks(content).find((b) => b.name === 'getAll')!.block;
+    // The bare block cannot see it; resolving `.use()` is what makes it visible.
+    expect(optsOutForAuthed(block)).toBe(false);
+    expect(optsOutForAuthed(withResolvedUses(block, localMiddlewares(content)))).toBe(true);
+  });
+
+  it('does not invent an opt-out for a local middleware that ignores the caller', () => {
+    const content = [
+      "const skipIt = middleware(async ({ input, ctx, next }) => {",
+      "  return next({ ctx: { cache: { ...ctx.cache, skip: !!(input as any).favorites } } });",
+      "});",
+      "",
+      "  getAll: publicProcedure",
+      "    .use(skipIt)",
+      "    .use(edgeCacheIt({ ttl: 60 }))",
+    ].join('\n');
+    const block = procedureBlocks(content).find((b) => b.name === 'getAll')!.block;
+    expect(optsOutForAuthed(withResolvedUses(block, localMiddlewares(content)))).toBe(false);
+  });
+
   it('matches the statically-derived cacheable-for-authed set exactly', () => {
     const fileToKey = buildFileToKey();
     const derived = new Set<string>();
@@ -447,12 +519,12 @@ describe('CACHEABLE_PROCEDURES stays in sync with the routers (batch-skip guard)
         missingKey.push(file);
         continue;
       }
+      const locals = localMiddlewares(content);
       for (const { name, block } of procedureBlocks(content)) {
         if (!block.includes('edgeCacheIt(')) continue;
-        // opts out of edge cache for authed (or everyone) => not cacheable-for-authed
-        if (/noEdgeCache\(\s*\{\s*authedOnly/.test(block) || /noEdgeCache\(\s*\)/.test(block)) {
-          continue;
-        }
+        // opts out of edge cache for authed (or everyone) => not cacheable-for-authed.
+        // Resolve `.use(localMiddleware)` first, or a bespoke opt-out is invisible here.
+        if (optsOutForAuthed(withResolvedUses(block, locals))) continue;
         derived.add(`${key}.${name}`);
       }
     }

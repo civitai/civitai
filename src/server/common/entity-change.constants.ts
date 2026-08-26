@@ -32,6 +32,11 @@ export const watchedEntityFields = {
     'flags',
     'trainedWords',
     'licensingFee',
+    // Decides who is paid per image and by whom: a derivative inherits its root's fee, charged to the
+    // derivative's users and settled to the ROOT's owner. It was writable with no trail at all until
+    // CU 868kwf2fd — 160 versions carried a value nobody could account for, and the one that reached
+    // support had been charging the reporter twice per image for a month.
+    'licensingSourceVersionId',
   ],
   ModelFile: ['hash.SHA256'],
 } as const;

@@ -10,6 +10,7 @@ import {
   DEFAULT_GENERATION_TRIAL_LIMIT,
   type PaidAccessConfig,
 } from '$lib/monetization/paid-access';
+import { saleEligibleFilter } from '$lib/server/monetization/sale-eligibility';
 
 // "Sold in any form": an active PaidAccess row — a timed window still open OR a permanent (no end date) gate.
 function paidAccessFilter(alias: string) {
@@ -94,6 +95,8 @@ export type ModelsQuery = {
   access?: boolean; // has early / paid access on a version
   /** Usage-control filter (bulk paid-access scoping): 'download' or 'generation'. */
   usage?: 'download' | 'generation';
+  /** Only versions a sale could actually discount — the sale picker's list (868kwp6mp). */
+  saleEligible?: boolean;
   sort?: ModelsSort;
   page?: number;
   /** Rows per page (defaults to MODELS_PER_PAGE); the page's cookie-backed size selector sets it. */
@@ -238,7 +241,18 @@ export const PAGE_SIZE_COOKIE = 'cs-page-size';
 // sort + pagination. Version-level filters (fee/baseModel/access) both narrow the model list (models with ≥1
 // matching version) AND restrict the versions shown, so "select all" selects exactly what's on screen.
 export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModelsResult> {
-  const { userId, q, fee, baseModel, type, status, access, usage, sort = 'recent' } = query;
+  const {
+    userId,
+    q,
+    fee,
+    baseModel,
+    type,
+    status,
+    access,
+    usage,
+    saleEligible,
+    sort = 'recent',
+  } = query;
   const page = Math.max(1, query.page ?? 1);
   const perPage = query.perPage ?? MODELS_PER_PAGE;
   const usageValue =
@@ -254,7 +268,7 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
   if (status === 'published') filtered = filtered.where('status', '=', 'Published');
   else if (status === 'draft') filtered = filtered.where('status', '=', 'Draft');
   else if (status !== 'all') filtered = filtered.where('status', '!=', 'Draft'); // default: hide drafts
-  const hasVersionFilter = !!baseModel || !!access || !!fee || !!usageValue;
+  const hasVersionFilter = !!baseModel || !!access || !!fee || !!usageValue || !!saleEligible;
   if (hasVersionFilter)
     filtered = filtered.where((eb) =>
       eb.exists(
@@ -267,6 +281,7 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
           .$if(!!usageValue, (b) => b.where('mv.usageControl', '=', usageValue!))
           .$if(fee === 'set', (b) => b.where(feeFilter('mv', 'set')))
           .$if(fee === 'off', (b) => b.where(feeFilter('mv', 'off')))
+          .$if(!!saleEligible, (b) => b.where(saleEligibleFilter('mv', userId)))
       )
     );
 
@@ -360,6 +375,7 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
     .$if(!!usageValue, (b) => b.where('mv.usageControl', '=', usageValue!))
     .$if(fee === 'set', (b) => b.where(feeFilter('mv', 'set')))
     .$if(fee === 'off', (b) => b.where(feeFilter('mv', 'off')))
+    .$if(!!saleEligible, (b) => b.where(saleEligibleFilter('mv', userId)))
     .orderBy('mv.index', 'asc')
     .execute();
 
@@ -383,6 +399,7 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
       .$if(!!usageValue, (b) => b.where('mv.usageControl', '=', usageValue!))
       .$if(fee === 'set', (b) => b.where(feeFilter('mv', 'set')))
       .$if(fee === 'off', (b) => b.where(feeFilter('mv', 'off')))
+      .$if(!!saleEligible, (b) => b.where(saleEligibleFilter('mv', userId)))
       .select('mv.id')
       .execute();
     matchingVersionIds = idRows.map((r) => r.id);

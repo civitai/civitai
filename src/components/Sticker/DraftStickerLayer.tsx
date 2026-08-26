@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import type { Gesture } from '~/components/Sticker/draft-gesture';
-import { rotate } from '~/components/Sticker/draft-gesture';
+import { knobRotation, rotate } from '~/components/Sticker/draft-gesture';
 import { DraftSticker } from '~/components/Sticker/DraftSticker';
 import { freeOfferFor } from '~/components/Sticker/free-offer';
 import {
@@ -161,9 +161,7 @@ export function DraftStickerLayer() {
       if (active.mode === 'rotate') {
         const dx = pointerX - current.x * bounds.width;
         const dy = pointerY - current.y * bounds.height;
-        // The knob sits above the sticker, so straight up is zero rather than
-        // atan2's zero, which points right.
-        move(active.draftId, { rotation: (Math.atan2(dy, dx) * 180) / Math.PI + 90 });
+        move(active.draftId, { rotation: knobRotation(dx, dy) });
         return;
       }
 

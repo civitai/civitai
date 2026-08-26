@@ -2,6 +2,7 @@ import { Button, Card, Stack, Text, ThemeIcon, Title } from '@mantine/core';
 import { IconLayoutGrid, IconPlus, IconUsers } from '@tabler/icons-react';
 import { Page } from '~/components/AppLayout/Page';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { hubUrl } from '~/components/Hubs/hub.utils';
 import { HubsLayout } from '~/components/Hubs/HubsLayout';
 import HubUpsertModal from '~/components/Hubs/HubUpsertModal';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
@@ -18,7 +19,7 @@ export const getServerSideProps = createServerSideProps({
     // An entry point, not a page: it lands on a hub. Only someone with no hubs
     // sees this.
     const hubs = await getUserHubs({ userId: session.user.id });
-    if (hubs.length) return { redirect: { destination: `/hubs/${hubs[0].id}`, permanent: false } };
+    if (hubs.length) return { redirect: { destination: hubUrl(hubs[0]), permanent: false } };
   },
 });
 

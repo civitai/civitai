@@ -58,6 +58,7 @@ import {
   resolveReportSchema,
   unpublishOwnListingSchema,
 } from '~/server/schema/blocks/offsite-moderation.schema';
+import { messageAppOwnerSchema } from '~/server/schema/blocks/app-moderator-message.schema';
 import { rateLimit } from '~/server/middleware.trpc';
 import {
   recordStoreScopeApplied,
@@ -123,9 +124,18 @@ const enforceAppBlocksAuthorFlag = middleware(async ({ ctx, next }) => {
 });
 
 /**
- * Token-scope gate for the listing-media authoring procs the civitai CLI drives
+ * Token-scope gate for the OWNER-SCOPED listing procs the civitai CLI drives
  * (`civitai app listing set-icon/set-cover/add-screenshot/rm-screenshot/reorder/status`,
- * civitai/cli#186).
+ * civitai/cli#186; and `civitai app doctor` — the listing-problems read + its fixes).
+ *
+ * 🔴 THE SET IS NO LONGER "MEDIA" — the name is kept because it is referenced from the
+ * CLI-side docs, but the membership rule is broader and is stated here so a future
+ * annotation is a decision rather than a copy: a proc may carry this meta iff it is
+ * OWNER-OR-SEAT bound independently of token scope, writes only author-owned state, and
+ * (for an approved listing) routes material change through the shadow-revision model.
+ * `listMine` + `getAssets` (the doctor READS) and `updateListing` +
+ * `updateRevisionDraft` (its FIXES) joined on exactly that test; each states its own
+ * verdict at its own site.
  *
  * The CLI acts as the caller over the SCOPED OAuth access token `civitai login` mints
  * (`UserRead | AppBlocksSubmit | AppBlocksDevTunnel`) — NOT a Full personal API key.
@@ -145,9 +155,42 @@ const enforceAppBlocksAuthorFlag = middleware(async ({ ctx, next }) => {
  * ADDITIVE, never loosening: each proc keeps its `appDeveloperProcedure` /
  * `protectedProcedure + enforceAppBlocksAuthorFlag` author-cohort gate and the
  * service-layer owner checks (`assertOwnerAssetEditable`, owner-bound `userId`). This is
- * one more gate the token must clear, applied only to the owner-scoped listing-media
- * authoring procs — no mod-only or cross-user proc is annotated. Mirrors
- * `blocks.router` `startDevTunnel`/`stopDevTunnel` (`AppBlocksDevTunnel`).
+ * one more gate the token must clear, applied only to owner-scoped procs — no MOD-ONLY
+ * proc is annotated. Mirrors `blocks.router` `startDevTunnel`/`stopDevTunnel`
+ * (`AppBlocksDevTunnel`).
+ *
+ * 🔴 THAT CLAIM NEEDS A QUALIFIER AND THE EARLIER WORDING ("no mod-only or CROSS-USER
+ * proc is annotated") DID NOT CARRY IT: **the gate behind this set is NOT UNIFORM**, so
+ * do not reason about one member from another. Derived by tracing every member (not by
+ * pattern), the three shapes are:
+ *
+ *   1. MOD-BYPASSING, via `app-listing-assets::loadOwnedListing`, which short-circuits
+ *      the ownership check for `user.isModerator` — disagreement D1 in
+ *      `app-access.call-site-ledger.test.ts`, where sibling gates deliberately disagree
+ *      about the bypass. Reached by `setIcon`, `setCover`, `addScreenshot`,
+ *      `reorderScreenshots` (directly / via `resolveOwnerAssetEditTarget`) and by
+ *      `updateScreenshotCaption`, `removeScreenshot` (via `resolveOwnerScreenshotTarget`).
+ *      `getAssetScanStatuses` carries its OWN equivalent (`user.isModerator ? {} :
+ *      { userId: user.id }`). Seven members.
+ *   2. NO LISTING GATE AT ALL, caller-bound: `persistAssetImage`,
+ *      `ingestAssetFromDataUri` create an `Image` owned by the caller and take no
+ *      listing id. No bypass to have.
+ *   3. NO MOD OVERRIDE, via `offsite-listing::loadOwnedEditableListing`:
+ *      `getMyListingForEdit`, `getMyListingForApp`, `beginListingRevision`,
+ *      `submitListingRevision`, `updateListing`, `updateRevisionDraft`.
+ *
+ * For a caller who IS a moderator, the shape-1 members are cross-listing, so this meta
+ * lets a THIRD-PARTY APP the moderator authorised with `AppBlocksSubmit` inherit that
+ * reach — where an un-annotated proc would have 403'd it. That is delegated moderator
+ * authority rather than widened authority, and it is the accepted cost of admitting the
+ * CLI on the media procs; it is written down rather than left to be discovered.
+ *
+ * 🔴 IT IS ALSO WHY `getAssets` IS **NOT** IN THIS SET. It was annotated during the
+ * `civitai app doctor` work and the annotation was withdrawn as a product decision: it is
+ * shape 1, and it is a pure READ whose whole payload was already reachable from procs
+ * already in this set, so it carried the bypass and bought nothing. New annotations are
+ * decided on that basis — what the proc ADDS, weighed against which gate it sits behind —
+ * never by copying a sibling's `.meta(...)`.
  */
 const listingMediaCliScope = { requiredScope: TokenScope.AppBlocksSubmit } as const;
 
@@ -298,7 +341,15 @@ function mapOffsiteError(err: unknown): TRPCError {
   if (err instanceof TRPCError) return err;
   if (
     err instanceof Error &&
-    (err.name === 'OffsiteRequestError' || err.name === 'OffsiteModerationError') &&
+    (err.name === 'OffsiteRequestError' ||
+      err.name === 'OffsiteModerationError' ||
+      // Moderator → developer messaging. Duck-typed like its two siblings so the
+      // service stays out of this router's STATIC import graph, and mapped HERE
+      // rather than in a second mapper — a private `mapModMessageError` would be a
+      // fourth spelling of the same code→TRPCError table, and the shapes that drift
+      // between such copies are exactly the ones nobody re-reads (an unmapped code
+      // silently becomes BAD_REQUEST).
+      err.name === 'AppModeratorMessageError') &&
     typeof (err as { code?: unknown }).code === 'string'
   ) {
     const code = (err as { code?: unknown }).code as string;
@@ -309,6 +360,24 @@ function mapOffsiteError(err: unknown): TRPCError {
         ? 'FORBIDDEN'
         : code === 'ALREADY_REPORTED'
         ? 'CONFLICT'
+        : // 🔴 An exhausted quota must NOT fall through to the BAD_REQUEST default.
+        // BAD_REQUEST reads to a caller as "your input was wrong" and carries no
+        // retry semantics, so a mod who hit the hourly ceiling would be told to fix
+        // a message that is fine. TOO_MANY_REQUESTS is the honest code and is what
+        // the sibling mod-only limiter (`blocks.retriggerBuild`) already returns.
+        code === 'RATE_LIMITED'
+        ? 'TOO_MANY_REQUESTS'
+        : // 🔴 MAPPED EXPLICITLY even though it lands on the same TRPC code as the
+        // default. The default is a FALLTHROUGH, and this table's own note above warns
+        // that an unmapped code silently becomes BAD_REQUEST — so an entry here is the
+        // difference between "we decided" and "nobody looked". BAD_REQUEST is the honest
+        // code: the caller's AUTHORITY is fine (they own the listing and may edit it),
+        // it is the specific field in this specific state that is refused, and the
+        // message names the field and the way forward. FORBIDDEN would read as "you may
+        // not edit this listing", which is exactly the false attribution this arc exists
+        // to remove.
+        code === 'MATERIAL_CHANGE_BLOCKED'
+        ? 'BAD_REQUEST'
         : 'BAD_REQUEST';
     return new TRPCError({ code: trpcCode, message: err.message, cause: err });
   }
@@ -320,7 +389,24 @@ function mapOffsiteError(err: unknown): TRPCError {
 }
 
 export const appListingsRouter = router({
-  /** Owner/mod read of a listing's current assets (creator dashboard). */
+  /**
+   * Owner/mod read of a listing's current assets (creator dashboard).
+   *
+   * 🔴 DELIBERATELY **NOT** `listingMediaCliScope`, and this is the note that keeps it
+   * that way. It was annotated during the `civitai app doctor` work and the annotation
+   * was then withdrawn as a product decision: its service gate
+   * ({@link loadOwnedListing}) SHORT-CIRCUITS for moderators, so admitting a scoped OAuth
+   * token here would let a third-party app a moderator authorised inherit that
+   * cross-listing reach. `app doctor` does not need it — every datum it wanted is already
+   * on annotated procs (`listMine.problems[]` for the advisory + `hasBlockedAsset` /
+   * `hasPendingScan` / completeness equivalents; `getMyListingForEdit` /
+   * `getMyListingForApp` for per-screenshot `{id, imageId, order, caption}`;
+   * `getAssetScanStatuses` for per-image scan state). Re-annotating this proc needs the
+   * mod-bypass question answered first, not a copy of a sibling's `.meta(...)`.
+   *
+   * `app-listings.router.cli-scope.test.ts` asserts a scoped OAuth token is REFUSED here,
+   * so the exclusion is behaviourally pinned rather than left to this comment.
+   */
   getAssets: protectedProcedure
     .use(enforceAppBlocksAuthorFlag)
     .input(listingAssetsQuerySchema)
@@ -585,9 +671,56 @@ export const appListingsRouter = router({
    * contentRating) → in place; approved-material (externalUrl/name) → staged on a
    * shadow-draft revision (`requiresReview:true` + the `shadowId` to edit assets
    * against, then `submitListingRevision`). Owner-bound in the service. Rejected →
-   * MUST_RESUBMIT; removed → FORBIDDEN. Typed failures map via `mapOffsiteError`.
+   * MUST_RESUBMIT. `removed` is SPLIT: a moderator takedown → FORBIDDEN, an OWNER
+   * self-unpublish → trivial fields edit in place and a MATERIAL field →
+   * MATERIAL_CHANGE_BLOCKED. Typed failures map via `mapOffsiteError`.
+   *
+   * ## CLI-reachable (`listingMediaCliScope`) — a WRITE, so the three checks stated
+   *
+   * `civitai app doctor` reports `empty-description` / `empty-tagline` / `empty-category`;
+   * this is the only proc that can FIX them, so leaving it un-annotated would ship a
+   * read-only diagnosis of problems the CLI cannot act on.
+   *
+   *   (a) AUTHORITY IS INDEPENDENT OF TOKEN SCOPE. `loadOwnedEditableListing` →
+   *       `resolveListingRole` → `resolveListingAccess` admits the listing's OWNER or an
+   *       ACCEPTED collaborator, and NOTHING else — there is not even a moderator
+   *       override on this path. The meta changes which CREDENTIAL may speak for that
+   *       caller, never who the caller may act for.
+   *   (b) IT CANNOT MUTATE ANYTHING A MODERATOR OWNS. Every write funnels through
+   *       `buildListingPatchData`, whose entire output surface is author-owned scalars
+   *       (externalUrl / sourceRepoUrl / name / tagline / description / category /
+   *       contentRating / the derived connect-scope snapshot). No `status`, no
+   *       moderation event, no publish-request row. A `rejected` listing is steered to
+   *       resubmit; a `removed` one is refused (FORBIDDEN) when a MODERATOR took it down.
+   *   (c) IT CANNOT PUT AN UNREVIEWED MATERIAL VALUE ON THE STORE, IN EITHER OF THE TWO
+   *       STATES THAT LOOK EDITABLE. This is the claim that actually carries the scope
+   *       annotation, so it is stated by mechanism rather than by status:
+   *         - `approved` + MATERIAL → staged onto a shadow via `beginListingRevision`;
+   *           the live parent is untouched until a moderator approves the revision. Only
+   *           trivial edits touch an approved row in place.
+   *         - `removed` + last status-changing event `owner-unpublish` (the owner's own
+   *           repair state, which this proc now admits) + MATERIAL →
+   *           MATERIAL_CHANGE_BLOCKED, refused. It is NOT applied and NOT staged. This
+   *           refusal is what stops the owner-driven loop `approved` →
+   *           `unpublishOwnListing` → patch `externalUrl`/`contentRating` in place →
+   *           `republishOwnListing` → `approved`, which would otherwise swap the store's
+   *           destination or lower its content rating after approval. Neither republish
+   *           gate is a content review (one checks image scans, the other that an https
+   *           href exists), so the refusal — not the republish path — is the guarantee.
+   *         - A shadow passed here is REFUSED (`revisionOfId != null` →
+   *           INVALID_REVISION) — shadows are `updateRevisionDraft`'s job.
+   *       Net: the ONLY route from a token to a changed material value on a live store
+   *       page still runs through moderator re-approval.
+   *
+   * 🔴 The scope-disclosure keys (`requestedScopes`/`scopeJustifications`) are reachable
+   * through this patch, but they are SERVER-DERIVED: `deriveScopePatch` re-resolves the
+   * linked OAuth client's `allowedScopes` ceiling and `assertConnectScopesValid` re-checks
+   * the subset + justifications, so a token cannot request a scope its client does not
+   * already allow. A scope change is MATERIAL, so it follows (c): on `approved` it routes
+   * to a shadow, on an owner-unpublished `removed` it is refused.
    */
   updateListing: appDeveloperProcedure
+    .meta(listingMediaCliScope)
     .use(
       rateLimit({
         limit: 30,
@@ -619,7 +752,15 @@ export const appListingsRouter = router({
    * assets (edge-resolved) + status + hasPendingRevision, resolving an approved
    * parent's in-progress shadow so a resumed revision prefills its edited state.
    * Owner-bound in the service (NOT_OWNED→FORBIDDEN, NOT_FOUND, rejected→
-   * MUST_RESUBMIT/BAD_REQUEST, removed→FORBIDDEN). Typed failures via `mapOffsiteError`.
+   * MUST_RESUBMIT/BAD_REQUEST). `removed` is SPLIT on the last status-changing moderation
+   * event: a moderator takedown → FORBIDDEN, the owner's own `owner-unpublish` → the
+   * prefill resolves (the listing is in the owner's repair state). It agrees with
+   * `updateListing`'s gate by construction — both read the same predicate — so this read
+   * never hands back an editor the write path then refuses. Note the prefill is still
+   * WIDER than what the write accepts: a material field prefills but cannot be SAVED while
+   * unpublished (MATERIAL_CHANGE_BLOCKED), which is deliberate — the author has to be able
+   * to SEE the current value of a field they may not change. Typed failures via
+   * `mapOffsiteError`.
    */
   getMyListingForEdit: appDeveloperProcedure
     .meta(listingMediaCliScope)
@@ -642,8 +783,23 @@ export const appListingsRouter = router({
    * procs that already mutate an owned shadow). Owner-bound in the service; asserts
    * the target is a draft shadow so it can never edit a live top-level listing.
    * Typed failures map via `mapOffsiteError`.
+   *
+   * ## CLI-reachable (`listingMediaCliScope`) — same three checks as `updateListing`
+   *
+   * The CLI's asset procs (`setIcon`/`setCover`/`addScreenshot`) already take a shadow id
+   * and are already annotated; without this one the SCALAR half of a shadow edit stays
+   * 403 for the same token, so `civitai app doctor --fix` could repair an approved app's
+   * media but not its tagline.
+   *
+   *   (a) Same `loadOwnedEditableListing` owner/seat gate, no moderator override.
+   *   (b) Same `buildListingPatchData` write surface — author-owned scalars only.
+   *   (c) Strictly TIGHTER on the revision model than `updateListing`: it REFUSES a
+   *       top-level listing (`revisionOfId == null` → INVALID_REVISION) and refuses a
+   *       shadow that is not still `draft`, so it can only ever write a not-yet-submitted
+   *       revision draft the caller owns. It cannot touch a live parent at all.
    */
   updateRevisionDraft: appDeveloperProcedure
+    .meta(listingMediaCliScope)
     .use(
       rateLimit({
         limit: 30,
@@ -910,8 +1066,15 @@ export const appListingsRouter = router({
    * `appDeveloperProcedure` = the App Blocks author FLAG (`protectedProcedure.use(
    * hasAppBlocksAuthor)`), NOT an ownership check — which is what makes it correct for a
    * seat-only caller who owns nothing. Same gate the collaborator router composes.
+   *
+   * CLI-reachable (`listingMediaCliScope`): THE read behind `civitai app doctor`. It is
+   * the only surface carrying `problems[]` (the 8-code completeness advisory) plus
+   * `lastModerationAction`, so without the meta the CLI's OAuth token 403s on the one
+   * proc that can tell an author what is wrong with their listing. The set it returns is
+   * resolved from ownership ∪ accepted seats in the service; the meta admits a credential,
+   * it does not widen that set.
    */
-  listMine: appDeveloperProcedure.query(async ({ ctx }) => {
+  listMine: appDeveloperProcedure.meta(listingMediaCliScope).query(async ({ ctx }) => {
     if (!ctx.user) return [];
     const { listMyAppListings } = await import('~/server/services/blocks/app-access.service');
     return listMyAppListings({ userId: ctx.user.id });
@@ -1173,6 +1336,45 @@ export const appListingsRouter = router({
       throw mapOffsiteError(err);
     }
   }),
+
+  /**
+   * MOD send the app's OWNER a free-text message, delivered as a notification.
+   *
+   * The only mod action here that changes no listing state — it exists because the
+   * eleven app notification types are all event-triggered with fixed copy, so a
+   * moderator who needed to tell a developer something the platform has no event for
+   * had no in-product route at all (see `app-moderator-message.service.ts`).
+   *
+   * Same boundary as its neighbours: `moderatorProcedure` + the inner `isModerator`
+   * recheck, `moderatorUserId` bound to `ctx.user.id` (never client-supplied), one
+   * `AppListingModerationEvent` per send, and `mapOffsiteError` for typed failures
+   * (NOT_FOUND→NOT_FOUND, RATE_LIMITED→TOO_MANY_REQUESTS, BLOCKED_LINK/INVALID_TEXT→
+   * BAD_REQUEST, infra→INTERNAL with no leak).
+   *
+   * 🔴 NO `rateLimit()` MIDDLEWARE HERE ON PURPOSE — it short-circuits for moderators
+   * and would cap nothing while looking like a limit. The real ceilings are the two
+   * Redis windows spent inside the service
+   * (`~/server/utils/app-moderator-message-rate-limit`).
+   *
+   * DUAL-KIND: works for an on-site or an off-site listing, and accepts a shadow
+   * revision id (resolved to its parent), because the owner resolver handles all three
+   * and a moderator should not have to know which they pasted.
+   */
+  messageAppOwner: moderatorProcedure
+    .input(messageAppOwnerSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Messaging app owners is restricted to civitai team');
+      }
+      const { messageAppOwner } = await import(
+        '~/server/services/blocks/app-moderator-message.service'
+      );
+      try {
+        return await messageAppOwner({ input, moderatorUserId: ctx.user.id });
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
+    }),
 
   /** MOD relist a removed off-site listing (removed → approved). Reversibility. */
   relistListing: moderatorProcedure.input(relistListingSchema).mutation(async ({ ctx, input }) => {

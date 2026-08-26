@@ -86,9 +86,11 @@ name: Lint
 # than as one bad commit.
 #
 # The push path deliberately does NOT run every job here. `eslint` is diff-vs-
-# base by construction and is skipped; so are the three sibling workflows
-# (schema-drift, submodule-pin-guard, windows-dev-env), which are all
-# base-relative gates with nothing to compare against on a push. The consequence
+# base by construction and is skipped; so are the sibling workflows schema-drift
+# and submodule-pin-guard, which are base-relative gates with nothing to compare
+# against on a push. (`windows-dev-env` was in that list and did not belong in
+# it — it is not base-relative, it just never had a push trigger. It gained one
+# on 2026-08-25 to fix an Actions-cache leak; see its header.) The consequence
 # is worth stating rather than leaving implied: the added-file ESLint/Prettier
 # gate and the stray-migrations guard remain reachable only through a PR, so a
 # direct push to `main` still bypasses them. Closing that is a separate change,
@@ -401,7 +403,59 @@ jobs:
     # If the suite proves too noisy there, the fix is to de-flake the tests or to
     # narrow what runs on push — NOT to hide the result behind continue-on-error.
     continue-on-error: ${{ github.event_name == 'pull_request' }}
-    timeout-minutes: 30
+    # ── SHARDED ACROSS 4 RUNNERS ────────────────────────────────────────────
+    #
+    # Measured before the change, n=12 runs of this job, from the Actions API:
+    #
+    #   Unit tests step   555.5s   <- variable, scales with 1/shards
+    #   Install            30.0s   |
+    #   checkout           21.0s   |  fixed overhead, paid by EVERY shard
+    #   setup-node         13.0s   |
+    #   set up job + pnpm   2.5s   |  = 66.5s
+    #   -------------------------
+    #   total             622.0s   = the 10.4m job median
+    #
+    # So T(N) = 66.5 + 555.5/N:  1 -> 10.4m, 2 -> 5.7m, 3 -> 4.2m, 4 -> 3.4m,
+    # 6 -> 2.7m, 8 -> 2.3m. Runner-minutes go 10.4 -> 13.7 at N=4 (+32%).
+    #
+    # 🔴 WHY 4 AND NOT MORE. `App unit tests + typecheck` is 2.9m. At N=4 this
+    # job lands at ~3.4m and at N=5 it reaches parity, so past N=5 sharding
+    # optimises something that is NO LONGER THE BOTTLENECK — the PR's critical
+    # path floors at ~2.9m however far you go. Raising this number without
+    # first making the other jobs faster buys wall-clock nothing and costs
+    # runner-minutes linearly.
+    #
+    # BALANCE: ASSUMED BEFOREHAND, NOW MEASURED. `--shard` is not cost-aware and
+    # this suite's cost is bimodal (p50 66 modules per file, p75 1088 — see
+    # claudedocs/test-perf-measurement-envelope-2026-08-15.md and
+    # scripts/test-perf/README.md), so uneven shards were the live risk. Measured
+    # on the first green sharded run, 2026-08-25:
+    #
+    #   shard   1        2        3        4
+    #   files   355      354      354      354     <- vitest splits by FILE COUNT
+    #   tests   5794     5142     5774     5447
+    #   wall    3.3m     3.6m     3.8m     3.4m    <- 1.14x spread
+    #
+    # The file split is near-exact; the 14% spread is the cost distribution
+    # showing through it. Adequate at N=4 — but the margin narrows as N rises and
+    # per-shard file counts fall, so READ THE FOUR DURATIONS after any change to
+    # this matrix. If one dominates, assign files by measured per-file cost
+    # (scripts/test-perf/reporter.mjs emits it) rather than raising N.
+    #
+    # ⚠️ Suite size moves fast: 1,065 files / 16,784 tests on 2026-08-15 became
+    # 1,417 files / 22,157 executed ten days later, +33%. Any figure here is a
+    # snapshot — re-derive before quoting one.
+    #
+    # `fail-fast: false` is load-bearing: the default cancels the sibling shards
+    # the moment one goes red, which throws away three quarters of the signal
+    # from a job whose entire purpose is to report.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    # Per-shard, not the whole suite: 555.5/4 + overhead is ~3.4m, so 15m is
+    # ~4x headroom. It is NOT 30/4 — the fixed 66.5s does not shard.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -417,8 +471,120 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      # ── VITE PRE-BUNDLE CACHE ───────────────────────────────────────────
+      #
+      # A DIFFERENT cache from the one `setup-node` keeps. `cache: pnpm` above
+      # caches the pnpm STORE — the downloaded packages. This caches what Vite's
+      # dependency optimizer BUILDS out of them.
+      #
+      # What is in there, measured 2026-08-25 on a warm local checkout rather
+      # than assumed: `node_modules/.vite` is 302 MB, all of it under
+      # `.vite/vitest/<project-config-hash>/{deps,deps_ssr}` — esbuild pre-bundles
+      # — plus a few hundred KB of `results.json`. It is NOT per-test-file output,
+      # which is why the key below does not mention the shard's file list: the
+      # content is a function of the dependency set and the Vitest config, so
+      # `pnpm-lock.yaml` is the right thing to key on.
+      #
+      # Every one of the 4 shards rebuilds this from cold on every PR today, and
+      # nothing in the repo caches it. (Do not reach for the `optimizeDeps`
+      # pre-bundle list in vitest.config.mts as prior art here: that block belongs
+      # to the `component` project, which this job does not run. It moves WHEN the
+      # optimize pass happens within a run; it does not carry anything between
+      # runs.)
+      #
+      # 🔴 RESTORE ALWAYS, SAVE ONLY ON `main`, and that asymmetry is the whole
+      # design rather than a tuning choice. An Actions cache saved by a PR run is
+      # scoped to `refs/pull/N/merge`, readable by NOTHING else, and counts
+      # against the same 10 GB repo budget as everything useful. Saving from PRs
+      # would mint 4 dead entries per open PR — the exact leak this PR's sibling
+      # change exists to clean up (20 orphans, 9.65 GB, 95.3% of the budget).
+      # Saving only on `main` keeps this at FOUR entries total, restorable by
+      # every PR because a PR can read its base branch's scope.
+      #
+      # Budget: 4 x 302 MB = 1.21 GB worst case, and that is an over-estimate
+      # twice over — the 302 MB is the full local project set (this job runs
+      # `--project unit*`, a subset) and Actions compresses on upload.
+      #
+      # A PR that changes `pnpm-lock.yaml` misses the exact key and falls back to
+      # the prefix, restoring the previous lockfile's bundles; Vite validates its
+      # own optimizer metadata and re-optimizes what actually moved. It then
+      # saves nothing, so that PR pays cold-ish cost until it merges. That is the
+      # correct trade: lockfile changes are rare and per-PR entries are the bug.
+      - name: Restore Vite pre-bundle cache
+        id: vite-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: node_modules/.vite
+          key: vite-unit-${{ runner.os }}-${{ runner.arch }}-${{ matrix.shard }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            vite-unit-${{ runner.os }}-${{ runner.arch }}-${{ matrix.shard }}-
+
+      # `scripts/test-unit-run.mjs` forwards process.argv.slice(2) straight into
+      # `vitest run --project unit* ...args`, and its queueDecision() returns
+      # early on CI, so the dev-server queue never sees this.
+      #
+      # 🔴 NO `--` SEPARATOR, and that is not a style choice. pnpm forwards `--`
+      # through LITERALLY rather than consuming it (measured on pnpm 10.28.1,
+      # the version `packageManager` pins and `pnpm/action-setup` installs; also
+      # reproduced on 9.0.0):
+      #
+      #   pnpm run x -- --shard=1/4   ->  ["--", "--shard=1/4"]
+      #   pnpm run x    --shard=1/4   ->  ["--shard=1/4"]
+      #
+      # vitest then DISCARDS every argument after the bare `--` — it does not
+      # treat them as filename filters, which an earlier revision of this comment
+      # claimed. Measured both ways:
+      #
+      #   vitest list --filesOnly --project 'unit*' -- assert-shard-ran  -> 1416 files
+      #   vitest list --filesOnly --project 'unit*'    assert-shard-ran  ->    1 file
+      #
+      # The distinction matters when you are debugging: as FILTERS the shard
+      # would run almost nothing, but what actually happens is the INVERSE — no
+      # `--shard`, no `--outputFile`, so every runner executes the WHOLE suite and
+      # writes no report, while the step still exits 0. On the run that shipped
+      # this bug the four `Unit tests` steps took 7m30s-9m54s each, which is the
+      # tell. The assert step below is what caught it, on its first live run.
+      #
+      # The sibling `packages` / `apps` jobs have always used this separator-less
+      # form; copy them, not the shell habit.
       - name: Unit tests
-        run: pnpm run test:unit:run
+        run: pnpm run test:unit:run --shard=${{ matrix.shard }}/4 --reporter=default --reporter=json --outputFile=unit-report.json
+
+      # 🔴 POSITIVE CONTROL. A `--shard` expression that matches no files exits 0
+      # and reports a green check — the same silent-zero class this repo has been
+      # bitten by before (a suite that fails to IMPORT reports "no tests", not a
+      # failure). A per-shard test count is the cheapest thing that can tell
+      # "this shard passed" apart from "this shard ran nothing", and it must run
+      # even when the suite above went red, or a red shard hides a zero shard.
+      - name: Assert this shard actually ran tests
+        # `!cancelled()` rather than `always()`: the guard must still run after a RED
+        # suite (that is the case it exists for — a red shard must not hide a zero
+        # shard), but a CANCELLED run has no report to read and would render a
+        # confusing red assert step on top of the cancellation. Observed on shard 3
+        # of the run that shipped the `--` bug.
+        if: ${{ !cancelled() }}
+        run: node scripts/ci/assert-shard-ran.mjs unit-report.json ${{ matrix.shard }} 4
+
+      # See the restore step for why this is `main`-only. Three further details:
+      #
+      #   `!cancelled()` rather than the default — a RED suite still produced a
+      #     valid set of pre-bundles, and refusing to save them would mean a
+      #     single red commit on `main` leaves every subsequent PR cold.
+      #   `cache-hit != 'true'` — an exact-key hit means this content is already
+      #     stored under this key, so re-uploading ~300 MB would buy nothing. A
+      #     PREFIX hit leaves this false, which is right: that content belongs to
+      #     a different lockfile and does want re-saving under the new key.
+      #   `continue-on-error` — a cache save is best-effort infrastructure. Two
+      #     shards can race the same key, and the loser reports "another job may
+      #     be creating this cache". That must not red a commit on `main`, where
+      #     this job is no longer report-only.
+      - name: Save Vite pre-bundle cache
+        if: ${{ !cancelled() && github.event_name == 'push' && steps.vite-cache.outputs.cache-hit != 'true' }}
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: node_modules/.vite
+          key: vite-unit-${{ runner.os }}-${{ runner.arch }}-${{ matrix.shard }}-${{ hashFiles('pnpm-lock.yaml') }}
 
   packages:
     name: Package unit tests

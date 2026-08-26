@@ -1,6 +1,8 @@
+import { readFileSync } from 'fs';
+import path from 'path';
 import { describe, expect, it } from 'vitest';
 import { ChatMemberStatus } from '~/shared/utils/prisma/enums';
-import { chatBucketFor } from '~/shared/utils/chat';
+import { chatBucketFor, inboxStatuses } from '~/shared/utils/chat';
 
 /**
  * Which rail bucket a membership lands in.
@@ -70,5 +72,59 @@ describe('a filtered membership is always actionable', () => {
     // membership must bucket back to the inbox.
     expect(chatBucketFor(member(ChatMemberStatus.Joined, null))).toBe('Inbox');
     expect(chatBucketFor(member(ChatMemberStatus.Invited, null))).toBe('Inbox');
+  });
+});
+
+/**
+ * The header badge cannot be exercised here — it is raw SQL — so what is pinned
+ * is the list the query interpolates. It selected `Joined` alone while the rail
+ * bucketed on `filteredAt`, so an unfiltered invitation lit the badge and then
+ * appeared under no tab's count: not Requests (unfiltered), not Inbox
+ * (`status <> 'Joined'`), and the row's own indicator was zeroed for `Invited`.
+ */
+describe('inboxStatuses', () => {
+  it('names exactly the statuses an unfiltered membership can hold in the inbox', () => {
+    const derived = Object.values(ChatMemberStatus).filter(
+      (status) => chatBucketFor({ status, filteredAt: null }) === 'Inbox'
+    );
+
+    expect([...inboxStatuses].sort()).toEqual([...derived].sort());
+  });
+
+  it('includes an unfiltered invitation — the badge counts it, so a tab has to', () => {
+    expect(inboxStatuses).toContain(ChatMemberStatus.Invited);
+    expect(inboxStatuses).toContain(ChatMemberStatus.Joined);
+  });
+
+  it('excludes every archived status', () => {
+    for (const status of [
+      ChatMemberStatus.Ignored,
+      ChatMemberStatus.Left,
+      ChatMemberStatus.Kicked,
+    ]) {
+      expect(inboxStatuses).not.toContain(status);
+    }
+  });
+});
+
+describe('🔴 the unread-badge query selects on the shared inbox statuses', () => {
+  const source = readFileSync(
+    path.resolve(__dirname, '../../controllers/chat.controller.ts'),
+    'utf8'
+  );
+
+  const handler = source.slice(source.indexOf('export const getUnreadMessagesForUserHandler'));
+  const body = handler.slice(0, handler.indexOf('\nexport const '));
+
+  it('positive control — the handler body was actually located', () => {
+    // Without this, a slice that came back empty would make the assertions below
+    // vacuously green.
+    expect(body).toContain('$queryRaw');
+    expect(body.length).toBeGreaterThan(200);
+  });
+
+  it('interpolates the shared list rather than naming a status inline', () => {
+    expect(body).toContain('memb.status in (${Prisma.raw(inboxStatusLiterals)})');
+    expect(body).not.toMatch(/memb\.status\s*=\s*'/);
   });
 });

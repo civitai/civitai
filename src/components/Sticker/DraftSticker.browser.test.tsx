@@ -8,6 +8,7 @@ import type * as Trpc from '~/utils/trpc';
 import { renderWithProviders } from '../../../test/component-setup';
 import { resolveTreatment } from '~/components/Sticker/treatments/sticker-treatments';
 import { stickerArtworkStyle } from '~/components/Sticker/placement-appearance';
+import { PANEL_LEFT_CONTROLS } from '~/components/Sticker/place-button-position';
 import type { StickerDraft } from '~/store/sticker-placement-draft.store';
 import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.store';
 
@@ -343,6 +344,128 @@ describe('the free option is a price, not a process', () => {
     await renderDraft(null, { ownerShare: 1 });
 
     await expect.element(page.getByText(/proceeds go to/)).toBeInTheDocument();
+  });
+});
+
+/**
+ * The note and the payout line are the two pieces of PROSE in the draft's chrome,
+ * and every one of its children is inside the element carrying `rotate(...)` —
+ * so without a counter-rotation a sticker turned any distance leaves both of them
+ * sideways, and at a half turn upside down. Placed stickers already counter-rotate
+ * their marks; this is the draft's half.
+ *
+ * The fixture sits at 15 degrees, so the assertion is a specific angle rather
+ * than "some transform": a counter-rotation by the wrong sign is the failure that
+ * looks most like a fix.
+ */
+describe('the note and the payout caption stay upright', () => {
+  test('counter-rotates by exactly the sticker angle', async () => {
+    await renderDraft(null, { ownerShare: 1 });
+
+    const note = (await page.getByRole('button', { name: /Add a note/ }).element()) as HTMLElement;
+    const caption = (await page.getByText(/proceeds go to/).element()) as HTMLElement;
+    // Anchored on the CAPTION, so both containment checks below are real. Taking
+    // the cluster from `note.closest(...)` made the note's own check true by
+    // construction — the anchor moves with the element, so a note relocated out
+    // of the cluster still "contains" itself in whatever its new home is.
+    const cluster = caption.closest<HTMLElement>('.w-max');
+
+    expect(cluster?.style.transform).toBe('translateX(-50%) rotate(-15deg)');
+    expect(cluster?.contains(note)).toBe(true);
+    expect(cluster?.contains(caption)).toBe(true);
+  });
+
+  /**
+   * 🔴 BOTH HALVES OF THE MECHANISM, because either one alone is a real bug.
+   *
+   * The first version of this counter-rotation wrote the individual `rotate`
+   * property and left the Tailwind `-translate-x-1/2` class in place, on the
+   * reasoning that the two compose. They do — as `translate · rotate · scale ·
+   * transform` — so the class's `transform` applies first and the element then
+   * orbits its already-shifted box. Measured in Chromium on a 200px cluster:
+   * 29px right and 71px down at 45 degrees, and a full cluster width to the side
+   * at 180. The other way to get it wrong is to write the combined transform and
+   * FORGET to drop the class, which doubles the centring.
+   *
+   * So: one `transform` carrying both, and no translate class beside it.
+   *
+   * ⚠️ A STRUCTURAL PIN, NOT A MEASUREMENT, and deliberately. The honest check is
+   * where the cluster's box actually lands, and this harness cannot give it: a
+   * rotated draft renders at negative coordinates outside the iframe (the note
+   * on `renderDraft` above records the same problem for clicks), so the rects
+   * come back describing a layout nobody would see. A geometric assertion here
+   * would be measuring the harness. The displacement was confirmed in a real
+   * browser instead; this holds the shape that fix depends on.
+   */
+  test('carries the centring and the counter-rotation in one transform', async () => {
+    await renderDraft(null, { ownerShare: 1 });
+
+    const caption = (await page.getByText(/proceeds go to/).element()) as HTMLElement;
+    const cluster = caption.closest<HTMLElement>('.w-max') as HTMLElement;
+
+    expect(cluster.style.transform).toBe('translateX(-50%) rotate(-15deg)');
+    // The class would compose with the inline transform and centre it twice.
+    expect(cluster.className).not.toContain('-translate-x-1/2');
+  });
+
+  // The negative control for the pair above: they would both pass against a
+  // component that counter-rotated nothing if the sticker itself were never
+  // rotated, and `draft.rotation` is a fixture anyone may edit.
+  test('the sticker it sits in really is rotated', async () => {
+    await renderDraft(null);
+
+    const note = (await page.getByRole('button', { name: /Add a note/ }).element()) as HTMLElement;
+    const root = note.closest<HTMLElement>('.cursor-move');
+
+    expect(root?.style.transform).toContain('rotate(15deg)');
+  });
+});
+
+/**
+ * The left panel's width is what `STICKER_PANEL_MIN_WIDTH_PX` is derived from,
+ * and the bug this PR fixed was that derivation going stale: Copy joined the
+ * panel as a third icon and the constant stayed at the width computed for two,
+ * so the panel painted over the rotate knob on a whole band of sticker widths.
+ *
+ * The constant now moves with `PANEL_LEFT_CONTROLS`, but nothing tied that to
+ * the JSX — a fourth control could be added and every test stay green while the
+ * panel ate the knob again. This is that tie. It COUNTS rather than measures,
+ * deliberately: component tests load no stylesheet, so every Tailwind width in
+ * this environment is a lie and a measured assertion here would be worse than
+ * none.
+ */
+describe('the left control panel', () => {
+  test('holds exactly the number of controls the width constant assumes', async () => {
+    renderWithProviders(
+      // Wide enough that the panels are drawn against the sticker's own edges at
+      // all: below STICKER_PANEL_MIN_WIDTH_PX the controls move into the buy
+      // cluster and there is no panel to count. 0.6 of 400 is 240.
+      <div style={{ position: 'relative', width: 400, height: 600 }}>
+        <DraftSticker
+          draft={{ ...draft, scale: 0.6 }}
+          art={art}
+          selected
+          dressed={resolveTreatment({ treatment: 'none', surface: 'detail', isPending: false })}
+          price={PRICE}
+          freeOffer={null}
+          ownerShare={undefined}
+          ownerUsername="creator"
+          onGesture={() => true}
+          onDuplicate={() => null}
+        />
+      </div>
+    );
+
+    await expect
+      .element(page.getByRole('button', { name: 'Duplicate this sticker' }))
+      .toBeInTheDocument();
+
+    const left = document.querySelector('[data-left-panel]');
+
+    // Present at all, so a panel that stopped being drawn reads as a failure
+    // here rather than as a count of zero matching a constant somebody zeroed.
+    expect(left).not.toBeNull();
+    expect(left?.querySelectorAll('button').length).toBe(PANEL_LEFT_CONTROLS);
   });
 });
 

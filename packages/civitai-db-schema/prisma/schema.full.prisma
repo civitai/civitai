@@ -500,6 +500,7 @@ model User {
   engagedImages              ImageEngagement[]
   collections                Collection[]
   hubs                       UserHub[]
+  hubFollows                 UserHubFollow[]
   collectionItems            CollectionItem[]
   reviewedCollectionItems    CollectionItem[]               @relation("reviewedBy")
   contributingCollections    CollectionContributor[]
@@ -3811,6 +3812,7 @@ model Comment {
 
   @@index([modelId], type: Hash)
   @@index([parentId], type: Hash)
+  @@index([userId])
 }
 
 model CommentReaction {
@@ -3942,6 +3944,7 @@ model CommentV2 {
 
   @@index([threadId], type: Hash)
   @@index([reactionCount(sort: Desc), id(sort: Desc)])
+  @@index([userId])
 }
 
 model Thread {
@@ -5343,8 +5346,14 @@ model ClubMetric {
 model Chat {
   id        Int      @id @default(autoincrement())
   createdAt DateTime @default(now())
-  hash      String   @unique // hash of asc-sorted userIds
+  // Hash of asc-sorted userIds, and the dedupe key for 1:1 conversations. Null
+  // for groups: a group is identified by its row id, so two groups may hold the
+  // same people. Postgres treats nulls as distinct, so the unique index still
+  // holds for the 1:1 rows it applies to.
+  hash      String?  @unique
   ownerId   Int
+  isGroup   Boolean  @default(false)
+  name      String?
 
   owner User @relation(fields: [ownerId], references: [id])
 
@@ -8167,10 +8176,30 @@ model UserHub {
   period    MetricTimeframe @default(AllTime)
   mediaTypes MediaType[]
   metadata  Json            @default("{}")
+  availability Availability @default(Private)
+  // A browsing-level bitmask the hub's own feed is capped to. 0 means uncapped —
+  // the viewer's own level decides, as it did before hubs could be shared.
+  //
+  // Named like Collection's and Challenge's, NOT `nsfwLevel`: every `nsfwLevel`
+  // column in this schema is a DERIVED content level that nsfwLevels.service.ts
+  // owns and overwrites. This one is a setting its owner chose.
+  forcedBrowsingLevel Int   @default(0)
 
   sources   UserHubSource[]
+  followers UserHubFollow[]
 
   @@index([userId])
+}
+
+model UserHubFollow {
+  userId    Int
+  hubId     Int
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  hub       UserHub  @relation(fields: [hubId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, hubId])
+  @@index([hubId])
 }
 
 model UserHubSource {

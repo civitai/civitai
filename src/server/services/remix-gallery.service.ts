@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import type { MediaType } from '~/shared/utils/prisma/enums';
-import { MetricTimeframe } from '~/shared/utils/prisma/enums';
+import { Availability, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { ImageSort, NsfwLevel } from '~/server/common/enums';
 import type { SessionUser } from '~/types/session';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -21,7 +21,10 @@ import type { QueueImage as SharedQueueImage } from '~/server/utils/queue-image'
 import { toQueueImage } from '~/server/utils/queue-image';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
-import { onlySelectableLevels } from '~/shared/constants/browsingLevel.constants';
+import {
+  nsfwBrowsingLevelsFlag,
+  onlySelectableLevels,
+} from '~/shared/constants/browsingLevel.constants';
 import {
   declineFeeAmount,
   encodePlacementQueueCursor,
@@ -1021,17 +1024,7 @@ export async function getRemixGallery({
       LEFT JOIN "Post" p ON p.id = i."postId"
       WHERE pl.surface = ${SURFACE}
         AND pl."targetType" = ${TARGET_TYPE}
-        AND pl."targetId" = ${hostImageId}
-        AND pl.status = 'approved'
-        AND p."publishedAt" IS NOT NULL
-        AND p."publishedAt" < now()
-        AND i.ingestion = 'Scanned'
-        AND i."needsReview" IS NULL
-        AND NOT i."tosViolation"
-        AND NOT i.minor
-        AND NOT i.poi
-        AND (i."nsfwLevel" & ${levels}) != 0
-        AND i."nsfwLevel" != 0${minorHostCeiling(hostImageId)}
+        AND pl."targetId" = ${hostImageId}${entryIsVisible(levels, Prisma.sql`${hostImageId}`)}
     )
     SELECT * FROM e
     WHERE TRUE ${keyset}
@@ -1159,13 +1152,67 @@ async function readHostImage(hostImageId: number) {
  * for a week. So the ceiling is applied on read too — an entry that becomes
  * inadmissible stops rendering rather than waiting on a takedown.
  */
-const minorHostCeiling = (hostImageId: number) => Prisma.sql`
+const minorHostCeiling = (host: Prisma.Sql) => Prisma.sql`
         AND (
           i."nsfwLevel" <= ${REMIX_GALLERY_MINOR_HOST_MAX_LEVEL}
           OR NOT EXISTS (
-            SELECT 1 FROM "Image" h WHERE h.id = ${hostImageId} AND ${hostIsMinor('h')}
+            SELECT 1 FROM "Image" h WHERE h.id = ${host} AND ${hostIsMinor('h')}
           )
         )`;
+
+/**
+ * Which approved entries a viewer may see, as one fragment.
+ *
+ * 🔴 There is no second copy of this. It was written out by hand in the ordering
+ * read and again in the existence check, with a comment on the second saying the
+ * two had to stay identical — which is a rule enforced by nobody. A batched
+ * count would have been the third, and a count that filters differently from the
+ * gallery it opens says four and shows two, or puts a thumbnail on a feed card
+ * past the viewer's browsing level.
+ *
+ * `host` is a SQL reference rather than an id so the minor-host ceiling can be
+ * correlated per row: `${hostImageId}` for one gallery, `pl."targetId"` when the
+ * query spans a surface's worth of them.
+ *
+ * Assumes the aliases the callers use: `pl` the placement, `i` the entry image,
+ * `p` the entry's post.
+ */
+const entryIsVisible = (levels: number, host: Prisma.Sql) => Prisma.sql`
+        AND pl.status = 'approved'
+        AND p."publishedAt" IS NOT NULL
+        AND p."publishedAt" < now()
+        -- 🔴 Published is not the same as public. A post inherits its
+        -- availability from the model version, so it can be published AND
+        -- private, and nothing on the submission path reads the column — such an
+        -- image submits and approves normally. The ordering read never needed
+        -- this because hydration went through getAllImages, which carries its
+        -- own private guard and quietly dropped the row; the batched read does
+        -- not hydrate, so without this it hands back the URL of an image its
+        -- owner marked not-public.
+        --
+        -- No owner arm, deliberately: getAllImages re-admits a private image
+        -- to its own author, which is right for their own feed and wrong on
+        -- somebody else's public gallery.
+        AND p."availability" != ${Availability.Private}
+        AND i.ingestion = 'Scanned'
+        AND i."needsReview" IS NULL
+        AND NOT i."tosViolation"
+        AND NOT i.minor
+        AND NOT i."acceptableMinor"
+        AND NOT i.poi
+        AND (i."nsfwLevel" & ${levels}) != 0
+        AND i."nsfwLevel" != 0
+        -- Licensing, not moderation: an image built on a restricted base model
+        -- may not be shown at R or above. Copied from getAllImages verbatim
+        -- rather than simplified to NOT i."modelRestricted" - the column is not
+        -- in the Prisma schema and the backfill that writes it uses
+        -- IS DISTINCT FROM true, so a bare NOT would drop every SFW row the
+        -- moment a NULL appears, emptying galleries rather than over-showing.
+        -- The first arm settles SFW rows before nullability can matter.
+        AND (
+          (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
+          OR NOT i."modelRestricted"
+        )${minorHostCeiling(host)}`;
 
 export function parseGalleryCursor(cursor?: string | null) {
   if (!cursor) return null;
@@ -1217,21 +1264,116 @@ async function galleryHasEntries({
       LEFT JOIN "Post" p ON p.id = i."postId"
       WHERE pl.surface = ${SURFACE}
         AND pl."targetType" = ${TARGET_TYPE}
-        AND pl."targetId" = ${hostImageId}
-        AND pl.status = 'approved'
-        AND p."publishedAt" IS NOT NULL
-        AND p."publishedAt" < now()
-        AND i.ingestion = 'Scanned'
-        AND i."needsReview" IS NULL
-        AND NOT i."tosViolation"
-        AND NOT i.minor
-        AND NOT i.poi
-        AND (i."nsfwLevel" & ${levels}) != 0
-        AND i."nsfwLevel" != 0${minorHostCeiling(hostImageId)}
+        AND pl."targetId" = ${hostImageId}${entryIsVisible(levels, Prisma.sql`${hostImageId}`)}
     ) AS "exists"
   `;
 
   return row?.exists ?? false;
+}
+
+/** Thumbnails a card shows before the `+N` tile takes over. */
+export const REMIX_GALLERY_CARD_THUMBS = 4;
+
+export type RemixGalleryCardEntry = {
+  imageId: number;
+  url: string;
+  type: MediaType;
+  username: string | null;
+  nsfwLevel: number;
+};
+
+export type RemixGalleryCardSummary = { count: number; entries: RemixGalleryCardEntry[] };
+
+/**
+ * Counts and preview thumbnails for a surface's worth of host images.
+ *
+ * Batched rather than carried in the feed payload. Joining this into
+ * `getInfiniteImages` would put it on the hottest path in the product — one that
+ * is edge-cached for anonymous viewers, and implemented twice over Meili and the
+ * database, so the join would be too. It also cannot be stored: the count is
+ * scoped to the viewer's browsing level, so a number computed once is wrong for
+ * somebody.
+ *
+ * The thumbnails ride along in the same statement rather than waiting for the
+ * hover. Cheap because so few hosts have entries at all, and it means opening the
+ * strip fires no request and needs no skeleton.
+ *
+ * One statement, not two: `count(*) OVER` gives the true total from the same scan
+ * that `row_number()` takes the top few from, so the `+N` is the real remainder
+ * rather than the number of rows that happened to come back.
+ *
+ * 🔴 Per-viewer blocks are NOT applied here, and the gallery itself does apply
+ * them when it hydrates. So a blocked creator's remix is counted, and can appear
+ * as a thumbnail, on a card belonging to someone who blocked them.
+ */
+export async function getRemixGalleryCardSummaries({
+  imageIds,
+  browsingLevel,
+}: {
+  imageIds: number[];
+  browsingLevel: number;
+}): Promise<Record<number, RemixGalleryCardSummary>> {
+  if (!imageIds.length) return {};
+  const levels = onlySelectableLevels(browsingLevel);
+  const ids = [...new Set(imageIds)];
+
+  const rows = await dbRead.$queryRaw<
+    {
+      hostId: number;
+      imageId: number;
+      url: string;
+      type: MediaType;
+      nsfwLevel: number;
+      username: string | null;
+      total: bigint;
+    }[]
+  >`
+    WITH visible AS (
+      SELECT
+        pl."targetId" AS "hostId",
+        i.id AS "imageId",
+        i.url,
+        i.type,
+        i."nsfwLevel",
+        u.username,
+        row_number() OVER (
+          PARTITION BY pl."targetId"
+          ORDER BY
+            (pl.data ->> 'pinnedAt' IS NOT NULL) DESC,
+            COALESCE((pl.data ->> 'position')::int, 2147483647) ASC,
+            pl.id DESC
+        ) AS rn,
+        count(*) OVER (PARTITION BY pl."targetId") AS total
+      FROM "Placement" pl
+      JOIN "Image" i ON i.id = (pl.data ->> 'imageId')::int
+      LEFT JOIN "Post" p ON p.id = i."postId"
+      LEFT JOIN "User" u ON u.id = i."userId"
+      WHERE pl.surface = ${SURFACE}
+        AND pl."targetType" = ${TARGET_TYPE}
+        AND pl."targetId" IN (${Prisma.join(ids)})${entryIsVisible(
+    levels,
+    Prisma.raw('pl."targetId"')
+  )}
+    )
+    SELECT "hostId", "imageId", url, type, "nsfwLevel", username, total
+    FROM visible
+    WHERE rn <= ${REMIX_GALLERY_CARD_THUMBS}
+    ORDER BY "hostId", rn
+  `;
+
+  const summaries: Record<number, RemixGalleryCardSummary> = {};
+  for (const row of rows) {
+    // `count(*) OVER` comes back as bigint, which does not survive JSON.
+    const summary = (summaries[row.hostId] ??= { count: Number(row.total), entries: [] });
+    summary.entries.push({
+      imageId: row.imageId,
+      url: row.url,
+      type: row.type,
+      username: row.username,
+      nsfwLevel: row.nsfwLevel,
+    });
+  }
+  return summaries;
 }
 
 /**
@@ -1808,7 +1950,21 @@ export async function getMyRemixGallerySubmissions({
         JOIN "Post" p ON p.id = i."postId"
         WHERE i.id IN (${Prisma.join(targetIds)})
           AND p."publishedAt" IS NOT NULL
+          -- Four clauses the public rules carry and this copy did not. Each
+          -- admitted a host the submitter could still see after its owner had
+          -- stopped showing it to anybody else. (No backticks below: a template
+          -- literal ends at the first one.)
+          --   now() - a scheduled post carries a non-null FUTURE publishedAt,
+          --   so IS NOT NULL served it ahead of its own publish time;
+          --   availability - a post inherits it from the model version, so it
+          --   can be published AND private;
+          --   needsReview / acceptableMinor - a moderator flag leaves ingestion
+          --   at 'Scanned', so neither is implied by the ingestion clause below.
+          AND p."publishedAt" < now()
+          AND p."availability" != ${Availability.Private}
           AND i.ingestion = 'Scanned'
+          AND i."needsReview" IS NULL
+          AND NOT i."acceptableMinor"
           AND NOT i."tosViolation"
           AND NOT i.minor
           AND NOT i.poi

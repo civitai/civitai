@@ -68,6 +68,7 @@ import {
   useReportListingAffordance,
 } from '~/components/Apps/ReportListingModal';
 import { ReviewListingModal, useCanReviewListing } from '~/components/Apps/ReviewListingButton';
+import { AppListingDescription } from '~/components/Apps/AppListingDescription';
 import { AppListingReviews } from '~/components/Apps/AppListingReviews';
 import { CATEGORY_ICONS, FALLBACK_CATEGORY_ICON } from '~/components/Apps/marketplaceCategoryIcons';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
@@ -76,7 +77,6 @@ import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { StatHoverCard } from '~/components/Stats/StatHoverCard';
-import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import {
   isMarketplaceCategory,
   marketplaceCategoryLabel,
@@ -96,7 +96,7 @@ import type {
  * PAGE's layout, deliberately: a full-bleed hero, then a header block (icon + name +
  * tagline + collaborator byline + interactive stat chips + a `⋮` overflow menu + an
  * `Updated: <date> │ <category>` meta line), then a two-column `ContainerGrid2` — main
- * content left (screenshots, `About` under a `ContentClamp`), a stack of `Card
+ * content left (`About` under a `ContentClamp`, THEN screenshots), a stack of `Card
  * withBorder` rails right (the primary action, the `SmartCreatorCard`, a "Details"
  * accordion) — then the full-width discovery rail, reviews and discussion.
  *
@@ -156,8 +156,11 @@ import type {
  *
  * XSS / encoding discipline (mirrors P2b): external hrefs are https-guarded in the
  * pure view-model (`safeExternalHref`) + rendered with rel="noopener noreferrer"
- * target="_blank"; the markdown description goes through the shared `CustomMarkdown`
- * (react-markdown, no `dangerouslySetInnerHTML`). 🔴 `ContentClamp` wraps that markdown
+ * target="_blank"; the markdown description goes through the shared
+ * `AppListingDescription` → `CustomMarkdown` (react-markdown, no
+ * `dangerouslySetInnerHTML`), which also states the element allowlist — `img` is
+ * NOT in it, so a description cannot embed a remote image. 🔴 `ContentClamp` wraps
+ * that markdown
  * — it does NOT replace it. Do not swap in `RenderHtml` to get a nicer clamp: the
  * markdown path is the XSS posture, not a formatting preference.
  *
@@ -1118,20 +1121,29 @@ export function AppListingDetailBody({
           data-testid="apps-listing-main-col"
         >
           <Stack gap="lg">
-            <ScreenshotGallery screenshots={detail.screenshots} name={detail.name} />
+            {/* Description — ABOVE the screenshots. The description is what tells a
+                reader what the app IS; the gallery is supporting evidence for that
+                claim, so leading with pictures made the reader scroll past the
+                answer to reach it. 🔴 The DOM order here is the presentation
+                decision and is pinned by a test that asserts the two nodes'
+                relative document position — a test that merely asserts both are
+                present passes in either order, which is exactly the defect.
 
-            {/* Description — shared CustomMarkdown (no dangerouslySetInnerHTML), under
-                the model page's `ContentClamp maxHeight={460}`. */}
+                Rendering goes through the shared `AppListingDescription` (still
+                `CustomMarkdown` underneath — no `dangerouslySetInnerHTML`), which
+                is the single place the markdown element allowlist is stated. Under
+                the model page's `ContentClamp maxHeight={460}`; the clamp is this
+                surface's layout choice, not part of the shared rule. */}
             {detail.description && (
-              <Stack gap="xs">
+              <Stack gap="xs" data-testid="apps-listing-description">
                 <Title order={4}>About</Title>
                 <ContentClamp maxHeight={460}>
-                  <div className="markdown-content">
-                    <CustomMarkdown>{detail.description}</CustomMarkdown>
-                  </div>
+                  <AppListingDescription description={detail.description} />
                 </ContentClamp>
               </Stack>
             )}
+
+            <ScreenshotGallery screenshots={detail.screenshots} name={detail.name} />
 
             {/* Off-site external destination disclosure (mirrors the live detail).
                 🔴 The condition lives in `shouldShowOffsiteDisclosure`, NOT here —

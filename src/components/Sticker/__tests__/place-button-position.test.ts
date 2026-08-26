@@ -8,6 +8,7 @@ import {
   placeButtonBoxes,
   shouldFlipPlaceButton,
   STICKER_PANEL_BAND_PX,
+  STICKER_PANEL_LEFT_WIDTH_PX,
   STICKER_PANEL_MIN_WIDTH_PX,
 } from '~/components/Sticker/place-button-position';
 
@@ -116,19 +117,35 @@ describe('panelsFitInsideEdges', () => {
     expect(panelsFitInsideEdges(65)).toBe(false);
   });
 
-  // The rotate knob is centred and 16px wide, and the left panel reaches 54px
-  // in: below 124 the knob ends up under it, and the panel swallows the press.
+  // The rotate knob is centred and 16px wide, and the left panel reaches 78px
+  // in: below 172 the knob ends up under it, and the panel swallows the press.
   it('is bounded by the knob, not merely by the two panels touching', () => {
     expect(panelsFitInsideEdges(STICKER_PANEL_MIN_WIDTH_PX - 1)).toBe(false);
     expect(panelsFitInsideEdges(STICKER_PANEL_MIN_WIDTH_PX)).toBe(true);
-    // 92 is where the panels alone stop overlapping (54 + 26 + a gap). Wide
-    // enough for them, still too narrow for the knob — the case a fix aimed at
-    // the panels alone would get wrong.
-    expect(panelsFitInsideEdges(92)).toBe(false);
+    // 104 is where the panels alone stop overlapping (78 + 26). Wide enough for
+    // them, still too narrow for the knob — the case a fix aimed at the panels
+    // alone would get wrong.
+    expect(panelsFitInsideEdges(104)).toBe(false);
   });
 
+  // 144 fit while the left panel held two icons. Adding Copy widened it to 78px
+  // and left this constant at 124, so a 144px sticker drew a panel over its own
+  // rotate knob — the reported bug, and a size the default scale reaches on a
+  // desktop media box.
+  it('refuses the widths that fit before Copy joined the left panel', () => {
+    expect(panelsFitInsideEdges(144)).toBe(false);
+    // The numbers, so a wrong control count reads as `expected 54 to be 78`
+    // rather than as `expected true to be false` on one width. Three icons:
+    // `4 + 22 + 2 + 22 + 2 + 22 + 4`, and the knob needs 8px of the half-width.
+    expect(STICKER_PANEL_LEFT_WIDTH_PX).toBe(78);
+    expect(STICKER_PANEL_MIN_WIDTH_PX).toBe(172);
+  });
+
+  // Literal widths, deliberately. `panelsFitInsideEdges` IS
+  // `w >= STICKER_PANEL_MIN_WIDTH_PX`, so a case written in terms of that
+  // constant holds for every value the constant could take and pins nothing.
   it('allows it at the sizes the flush layout was designed for', () => {
-    expect(panelsFitInsideEdges(144)).toBe(true);
+    expect(panelsFitInsideEdges(172)).toBe(true);
     expect(panelsFitInsideEdges(400)).toBe(true);
   });
 
@@ -137,7 +154,8 @@ describe('panelsFitInsideEdges', () => {
   // the button decline a flip it could have taken.
   it('reports no band to clear where no panels are drawn', () => {
     expect(panelBandFor(51)).toBe(0);
-    expect(panelBandFor(144)).toBe(STICKER_PANEL_BAND_PX);
+    // Literal, for the reason above.
+    expect(panelBandFor(172)).toBe(STICKER_PANEL_BAND_PX);
   });
 });
 

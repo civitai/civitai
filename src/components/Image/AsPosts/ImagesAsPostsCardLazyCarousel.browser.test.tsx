@@ -4,6 +4,7 @@ import { page, userEvent } from 'vitest/browser';
 // does not participate in mock hoisting. `@typescript-eslint/consistent-type-imports` rejects
 // the `typeof import('...')` form, which is why this is a named namespace.
 import type * as TrpcUtils from '~/utils/trpc';
+import type * as RoutedDialogLinkModule from '~/components/Dialog/RoutedDialogLink';
 
 // =============================================================================
 // Gallery lazy per-post carousel (`galleryLazyPostImages`).
@@ -172,7 +173,15 @@ vi.mock('~/components/Image/ContextMenu/ImagesAsPostsContextMenu', () => ({
 }));
 vi.mock('~/components/Image/Meta/ImageMetaPopover', () => ({ ImageMetaPopover2: () => null }));
 vi.mock('~/components/Cards/components/HoverActionButton', () => ({ default: () => null }));
-vi.mock('~/components/Dialog/RoutedDialogLink', () => ({
+// Spread the real module and override only what this test renders. A WHOLESALE
+// factory would replace the module, pinning its export surface to whatever was
+// needed the day it was written: #4364 pulled RemixedCardFlyout into
+// ImagesAsPostsCard, that component imports `triggerRoutedDialog` from here, and
+// the then-current factory listed only RoutedDialogLink — so the whole FILE died
+// at import with a SyntaxError and collected 0 tests for ~17h without going red
+// in any pass/fail count. Spreading is immune to the next export added upstream.
+vi.mock('~/components/Dialog/RoutedDialogLink', async (importOriginal) => ({
+  ...(await importOriginal<typeof RoutedDialogLinkModule>()),
   RoutedDialogLink: ({ children }: any) => <a>{children}</a>,
 }));
 vi.mock('~/providers/FeatureFlagsProvider', () => ({

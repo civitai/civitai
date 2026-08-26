@@ -1,6 +1,6 @@
 // The standalone scripts under `moderator-db/` and `xguard-lab/`. They are outside `src/`, so
 // SvelteKit's generated tsconfig does not include them and `pnpm run typecheck` cannot see them —
-// which is how a one-off script that talks to two production databases ends up being the only
+// which is how one-off scripts that talk to two production databases ends up being the only
 // unchecked code in the app. Run with `pnpm run typecheck:scripts`.
 {
   "extends": "./tsconfig.json",

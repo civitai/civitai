@@ -7,6 +7,9 @@ import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 import { DurationBadge } from '~/components/DurationBadge/DurationBadge';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { CardRemixButton } from '~/components/Image/Remix/CardRemixButton';
+import { REMIX_FRAME } from '~/components/RemixGallery/remix-card-demo';
+import { useRemixCardData } from '~/components/RemixGallery/use-remix-card-data';
+import { RemixedCardFlyout } from '~/components/RemixGallery/RemixedCardFlyout';
 import { CardStickerOverlay } from '~/components/Sticker/CardStickerOverlay';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { StickerPlacementCardBadge } from '~/components/Sticker/StickerPlacementCardBadge';
@@ -17,11 +20,15 @@ import { ThemeIcon } from '@mantine/core';
 export function ImageCard({ data }: Props) {
   const { getImages, ...context } = useImagesContext();
   const features = useFeatureFlags();
+  // Called unconditionally: inside the `??` below it would sit after a
+  // short-circuit, which is a conditional hook call.
+  const remix = useRemixCardData(data.id);
 
   return (
     <AspectRatioImageCard
       image={data}
-      cosmetic={data.cosmetic?.data}
+      // The owner's own cosmetic wins; the remix frame is only a fallback.
+      cosmetic={data.cosmetic?.data ?? (remix.count ? REMIX_FRAME : undefined)}
       routedDialog={{
         name: 'imageDetail',
         state: { imageId: data.id, images: getImages(), ...context },
@@ -43,8 +50,12 @@ export function ImageCard({ data }: Props) {
           </div>
         </div>
       }
-      footer={
+      footer={({ safe }) => (
         <div className="flex w-full flex-col gap-2">
+          {/* In the footer, not over the media: this card's footer is painted on
+              the image at the same bottom edge, so an anchored panel lands on the
+              reaction counts. */}
+          {safe && <RemixedCardFlyout imageId={data.id} />}
           <UserAvatarSimple {...data.user} />
           <div className="flex flex-wrap justify-between gap-1">
             <Reactions
@@ -73,7 +84,7 @@ export function ImageCard({ data }: Props) {
             )}
           </div>
         </div>
-      }
+      )}
     />
   );
 }

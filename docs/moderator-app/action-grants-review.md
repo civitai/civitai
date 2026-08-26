@@ -74,6 +74,10 @@ Two shapes on the `/admin` page tree, and they behave differently:
       ticked. It is NOT covered by the `/reports` `sharedAccess` grant: that one covers the generic
       `/reports/*` queues, and this is a separate page under the `Retool` group. Whoever holds
       `/retool/user-reports` is the group to match.
+- [ ] **`/users/newest`** — new 2026-08-24, admin-only until ticked. Grant it on its own merits: it
+      reads emails and profile text. 🔴 Do **not** reach for `/users` instead — that grant is also what
+      User Lookup's ban, purge and bulk-comment actions check, so granting it hands over enforcement.
+      `/users` itself is still the "Not built yet" placeholder it has always been.
 - [ ] Walk the rest of `NAVIGATION` and confirm every page a role is expected to open has a row. Newer
       pages are the likely gaps, since a new page ships ungranted by design.
 

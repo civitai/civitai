@@ -330,6 +330,28 @@ export async function getPerceptualHash(
   }
 }
 
+export type XGuardLabelOverride = {
+  label: string;
+  action: string;
+  threshold: number;
+  policy: string;
+};
+
+/**
+ * Overrides are part of what was scanned, so they belong in the dedup key: the check below
+ * answers a request from an earlier workflow scored under whatever policy was in force
+ * then, and leaving them out answers the first request under a new policy with the old
+ * one's verdict. Empty when absent, so hashes already written stay valid.
+ */
+function labelOverrideHashSuffix(overrides: XGuardLabelOverride[] | undefined) {
+  if (!overrides?.length) return '';
+  const canonical = overrides
+    .map((o) => [o.label, o.action, o.threshold, o.policy].join('\u0001'))
+    .sort()
+    .join('\u0002');
+  return `\u0000${canonical}`;
+}
+
 type XGuardModerationArgs = {
   /**
    * Optional entity reference. When present, the webhook updates
@@ -345,15 +367,10 @@ type XGuardModerationArgs = {
   userId?: number;
   labels?: string[];
   /** Per-label policy/threshold/action overrides for this single request.
-   * Merges with the orchestrator's default registry. Useful for debug /
-   * policy-tuning paths (e.g. `/api/testing/xguard-test`) where we want to
-   * evaluate a candidate policy without modifying the live registry. */
-  labelOverrides?: Array<{
-    label: string;
-    action: string;
-    threshold: number;
-    policy: string;
-  }>;
+   * Merges with the orchestrator's default registry. Lets a debug path
+   * (`/api/testing/xguard-test`) or a single surface run a candidate policy
+   * without editing the registry every text consumer shares. */
+  labelOverrides?: XGuardLabelOverride[];
   /** Override the default audit-result callback URL. Omit to use the standard
    * `/api/webhooks/text-moderation-result` endpoint (which is what makes audit
    * rows land in `scanner_label_results`). Pass `null` to suppress the
@@ -432,7 +449,10 @@ export async function createXGuardModerationRequest(args: XGuardModerationArgs) 
   //     can't return a meaningful id from those; treat as cache miss.
   //   - `!forceRescan`: caller-side escape hatch for moderator-initiated
   //     rechecks (`rescanArticle`, policy-version-bump rescans, etc.).
-  const contentHash = args.mode === 'text' ? hashContent(args.content) : undefined;
+  const contentHash =
+    args.mode === 'text'
+      ? hashContent(args.content + labelOverrideHashSuffix(labelOverrides))
+      : undefined;
   if (!args.forceRescan && entityType && entityId !== undefined && contentHash) {
     const existing = await dbRead.entityModeration.findUnique({
       where: { entityType_entityId: { entityType, entityId } },

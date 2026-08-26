@@ -275,15 +275,23 @@ export async function getAbuseFindings(
  * Ordered newest-first and NOT filtered on `actioned`: "we looked at this account twice and did
  * nothing" is a real answer to "why is this creator complaining", and the most common one.
  */
-export async function getAbuseFindingsForUser(userId: number, limit = 50): Promise<AbuseFinding[]> {
+export async function getAbuseFindingsForUser(
+  userId: number,
+  limit = 50
+): Promise<{ findings: AbuseFinding[]; truncated: boolean }> {
+  // 🔴 `truncated` is the whole reason this returns an object. It used to return a bare array, and
+  // its caller rendered `rows.length` as the TOTAL — so an account with 300 findings read as
+  // "Abuse detections (50)" and a moderator concluded they had seen the entire record. On a surface
+  // whose whole claim is honest reporting, a cap presented as a total is the one number that lies.
+  // Same `limit + 1` probe as `getAbuseFindings` above; the extra row is dropped.
   const rows = await abuseDb()
     .selectFrom('abuse_detection_finding')
     .selectAll()
     .where('user_id', '=', userId)
     .orderBy('created_at', 'desc')
-    .limit(limit)
+    .limit(limit + 1)
     .execute();
-  return rows.map(toFinding);
+  return { findings: rows.slice(0, limit).map(toFinding), truncated: rows.length > limit };
 }
 
 /** The distinct detectors that have ever reported, for the board's filter. */

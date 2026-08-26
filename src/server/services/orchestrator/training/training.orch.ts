@@ -13,7 +13,12 @@ import type {
 import { env } from '~/env/server';
 import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
-import { classifyErrorFault, logToAxiom } from '~/server/logging/client';
+import {
+  buildCentralErrorLog,
+  classifyErrorFault,
+  logToAxiom,
+  markServerFaultLogged,
+} from '~/server/logging/client';
 import type { TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import { resolveEpochOffset } from '~/shared/utils/training-epochs';
 import type {
@@ -22,6 +27,7 @@ import type {
   ImageTrainingWorkflowSchema,
   ImageTraininWhatIfWorkflowSchema,
 } from '~/server/schema/orchestrator/training.schema';
+import { TRAINING_WORKFLOW_TAG } from '~/server/services/orchestrator/training/workflow-state';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import type { TrainingRequest } from '~/server/services/training.service';
 import { getTrainingServiceStatus } from '~/server/services/training.service';
@@ -393,10 +399,20 @@ export const createTrainingWorkflow = async ({
 
   const stepRun = createTrainingStep(runArgs);
 
+  // `type` and `baseModel` are fixed at submit, so tagging them here is what makes those two
+  // filters answerable orchestrator-side later — tags are the only server-side filter
+  // `queryWorkflows` offers. Nothing reads them yet.
+  const trainingType = modelVersion.trainingDetails.type;
+
   const workflow = await submitWorkflow({
     token,
     body: {
-      tags: ['training', `modelVersion:${modelVersionId}`],
+      tags: [
+        TRAINING_WORKFLOW_TAG,
+        `modelVersion:${modelVersionId}`,
+        `baseModel:${baseModel}`,
+        ...(trainingType ? [`trainingType:${trainingType}`] : []),
+      ],
       steps: [stepRun],
       callbacks: [
         {
@@ -520,12 +536,12 @@ export const createTrainingWhatIfWorkflow = async ({
     logToAxiom(
       {
         name: 'training-whatif',
-        type: classifyErrorFault(e) === 'client' ? 'info' : 'error',
-        message: e instanceof Error ? e.message : String(e),
+        ...buildCentralErrorLog(e),
         data: whatIfLogData,
       },
       'webhooks'
     ).catch();
+    if (classifyErrorFault(e) === 'server') markServerFaultLogged(e);
     throw e;
   }
 
@@ -534,13 +550,14 @@ export const createTrainingWhatIfWorkflow = async ({
   // `cost.total`; surface their sum so the UI can break out the license fee.
   const licenseFee = Object.values(workflow.cost?.fees ?? {}).reduce((sum, fee) => sum + fee, 0);
 
-  // No exception to catch here: the orchestrator accepted the workflow and priced it at nothing.
+  // `0` stays out of this guard: a zero estimate is spendable, and TrainingSubmit gates on the same
+  // `!isDefined(cost) || cost < 0`. Widening one side alone logs a cost the UI is charging.
   if (cost == null || cost < 0) {
     logToAxiom(
       {
         name: 'training-whatif',
         type: 'error',
-        message: 'Orchestrator returned no cost',
+        message: 'Orchestrator returned an unusable cost',
         data: { ...whatIfLogData, cost },
       },
       'webhooks'

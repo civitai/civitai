@@ -1,5 +1,5 @@
 import type { GroupProps } from '@mantine/core';
-import { Center, Group, Loader, Popover, ScrollArea } from '@mantine/core';
+import { Center, Group, Loader, Popover } from '@mantine/core';
 import { IconWorld } from '@tabler/icons-react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
@@ -8,12 +8,18 @@ import { FilterButton } from '~/components/Buttons/FilterButton';
 import classes from '~/components/Filters/FeedFilters/FeedFilters.module.scss';
 import { SortFilter } from '~/components/Filters/SortFilter';
 import { buildHubFilterSave } from '~/components/Hubs/hub-filter-save';
-import { useInvalidateHub } from '~/components/Hubs/hub.utils';
+import { toPanelHub, useInvalidateHub } from '~/components/Hubs/hub.utils';
 import { useHubSort } from '~/components/Hubs/useHubSort';
+import {
+  useHubSessionFeedFilters,
+  useSetHubSessionFeedFilters,
+} from '~/components/Hubs/hub-session.store';
 import { hubExcludedFilterKeys } from '~/components/Image/Filters/media-filter-keys';
 import { MediaFiltersDropdown } from '~/components/Image/Filters/MediaFiltersDropdown';
 import type { HubSort } from '~/server/schema/user-hub.schema';
-import { hubLimits, hubSortSchema } from '~/server/schema/user-hub.schema';
+import { hubFeedFiltersSchema, hubSortSchema } from '~/server/schema/user-hub.schema';
+import type { MediaType } from '~/shared/utils/prisma/enums';
+import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -48,7 +54,20 @@ export function HubFeedFilters({ ...groupProps }: GroupProps) {
     { id: hubId },
     { enabled: Number.isInteger(hubId) }
   );
-  const sort = useHubSort(hub?.sort);
+  const sessionFilters = useHubSessionFeedFilters(hubId);
+  const setSessionFilters = useSetHubSessionFeedFilters();
+
+  // The owner's stored values are the starting point for everyone; a viewer's own
+  // choices sit on top for this session only.
+  const effective = {
+    sort: (hub?.isOwner ? hub.sort : sessionFilters.sort ?? hub?.sort) as string | undefined,
+    period: (hub?.isOwner ? hub.period : sessionFilters.period ?? hub?.period) as
+      | MetricTimeframe
+      | undefined,
+    types: hub?.isOwner ? hub.mediaTypes : sessionFilters.types ?? hub?.mediaTypes,
+    filters: hub?.isOwner ? hub.filters : sessionFilters.filters ?? hub?.filters,
+  };
+  const sort = useHubSort(effective.sort);
 
   const upsert = trpc.userHub.upsert.useMutation({
     onSuccess: () => invalidateHub(hubId),
@@ -58,7 +77,11 @@ export function HubFeedFilters({ ...groupProps }: GroupProps) {
 
   if (!hub) return null;
 
-  const sourceCount = hub.sources.length;
+  // On a hub you do not own, the only source count that means anything is the one
+  // contributing to the feed: the owner's switched-off rows are not shown.
+  const sourceCount = hub.isOwner
+    ? hub.sources.length
+    : hub.sources.filter((source) => source.enabled).length;
 
   return (
     <Group className={classes.filtersWrapper} gap={8} wrap="nowrap" {...groupProps}>
@@ -83,25 +106,31 @@ export function HubFeedFilters({ ...groupProps }: GroupProps) {
           </FilterButton>
         </Popover.Target>
         <Popover.Dropdown p="sm">
-          <ScrollArea.Autosize mah={400}>
-            <HubSourcePanel
-              hubId={hub.id}
-              // Opening the picker in here pushes the popover past its own height
-              // and it starts scrolling inside a scroll. Adding lives in the rail.
-              hideAdd
-              maxSources={hubLimits.sourcesPerHub}
-              sources={hub.sources.map(({ id: _id, ...source }) => source)}
-            />
-          </ScrollArea.Autosize>
+          {/* The panel scrolls its own source list and pins what follows, so the
+              duplicate button reads as a footer instead of sitting at the bottom of a
+              list that can be fifty rows long. */}
+          <HubSourcePanel
+            hub={toPanelHub(hub)}
+            // Opening the picker in here pushes the popover past its own height and
+            // it starts scrolling inside a scroll. Adding lives in the rail.
+            hideAdd
+            listMaxHeight={340}
+          />
         </Popover.Dropdown>
       </Popover>
 
+      {/* Shown on a hub you do not own as well: these narrow the feed in front of
+          you, they are not source controls and not the owner's curation. The owner's
+          choices persist; a viewer's are session state, because `upsert` is
+          owner-scoped and would refuse them. */}
       <SortFilter
         type="images"
         value={sort}
         options={hubSortSchema.options.map((value) => ({ label: value, value }))}
         onChange={(value) =>
-          upsert.mutate({ id: hub.id, sort: value as HubSort, period: hub.period })
+          hub.isOwner
+            ? upsert.mutate({ id: hub.id, sort: value as HubSort, period: hub.period })
+            : setSessionFilters(hub.id, { sort: value })
         }
       />
       <MediaFiltersDropdown
@@ -111,11 +140,19 @@ export function HubFeedFilters({ ...groupProps }: GroupProps) {
         size="compact-sm"
         exclude={hubExcludedFilterKeys}
         query={{
-          ...hub.filters,
-          period: hub.period,
-          types: hub.mediaTypes,
+          ...effective.filters,
+          period: effective.period,
+          types: effective.types,
         }}
-        onChange={(next) => upsert.mutate(buildHubFilterSave(hub.id, next))}
+        onChange={(next) =>
+          hub.isOwner
+            ? upsert.mutate(buildHubFilterSave(hub.id, next))
+            : setSessionFilters(hub.id, {
+                period: (next.period ?? MetricTimeframe.AllTime) as MetricTimeframe,
+                types: (next.types ?? []) as MediaType[],
+                filters: hubFeedFiltersSchema.parse(next),
+              })
+        }
       />
     </Group>
   );

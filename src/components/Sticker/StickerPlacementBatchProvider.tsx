@@ -6,7 +6,7 @@ import type { ResolvedSticker } from '~/components/Sticker/sticker.util';
 import { useStickerCosmetics } from '~/components/Sticker/sticker.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { useStickerRevealStore } from '~/store/sticker-reveal.store';
+import { stickersRevealed, useStickerRevealStore } from '~/store/sticker-reveal.store';
 import { trpc } from '~/utils/trpc';
 
 /** Matches the `imageIds` cap on `getStickerPlacementsSchema`. */
@@ -56,7 +56,7 @@ export function StickerPlacementBatchProvider({
 }) {
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
-  const revealed = useStickerRevealStore((state) => state.revealed);
+  const revealed = useStickerRevealStore(stickersRevealed);
 
   const enabled = !!features.stickers && !!features.stickerPlacement;
 

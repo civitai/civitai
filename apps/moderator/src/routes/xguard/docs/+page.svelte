@@ -55,8 +55,11 @@
     <h2 class="mb-1 text-base font-semibold text-white">Getting access</h2>
     <ol class="ml-4 list-decimal text-sm text-dark-2">
       <li class="mb-1">
-        Ask a moderator admin for <code class="font-mono text-dark-1">WEBHOOK_TOKEN</code>. It is the
-        shared service secret the moderator app already uses, not a per-person credential.
+        Ask a moderator admin for <code class="font-mono text-dark-1">MOD_INBOUND_TOKEN</code>. It
+        is a service secret, not a per-person credential — but it is <strong>inbound-only</strong>:
+        this app accepts it and nothing else does, so it cannot be used anywhere but here. Ask for
+        this one. <code class="font-mono text-dark-1">WEBHOOK_TOKEN</code> is also accepted for
+        compatibility and reaches further than this app, so it is the wrong thing to hand out.
       </li>
       <li class="mb-1">
         Send it as <code class="font-mono text-dark-1">?token=</code> or
@@ -68,7 +71,7 @@
         only way to revoke access is to rotate the token for everyone.
       </li>
     </ol>
-    <pre class="mt-3 overflow-x-auto rounded-lg bg-dark-8 p-3 font-mono text-xs text-dark-1">curl -H "Authorization: Bearer $WEBHOOK_TOKEN" \
+    <pre class="mt-3 overflow-x-auto rounded-lg bg-dark-8 p-3 font-mono text-xs text-dark-1">curl -H "Authorization: Bearer $MOD_INBOUND_TOKEN" \
   https://moderator.civitai.com/api/xguard/me</pre>
   </section>
 

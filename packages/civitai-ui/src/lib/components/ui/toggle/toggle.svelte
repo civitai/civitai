@@ -7,7 +7,7 @@
 			variant: {
 				default: "bg-transparent",
 				outline:
-					"border-input hover:bg-accent hover:text-accent-foreground border bg-transparent shadow-xs",
+					"border-input hover:bg-accent/40 hover:text-accent-foreground data-[state=on]:hover:bg-accent/80 border bg-transparent shadow-xs",
 			},
 			size: {
 				default: "h-9 min-w-9 px-2",

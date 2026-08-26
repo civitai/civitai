@@ -10,7 +10,7 @@ export const GET: RequestHandler = async ({ params, locals }) => {
   const userId = requireIdParam(
     locals,
     params.userId,
-    ['/audit/generator-restrictions', '/audit/training-models', '/users'],
+    ['/audit/generator-restrictions', '/audit/training-models', '/retool/user-lookup', '/users'],
     'userId'
   );
 

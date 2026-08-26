@@ -1,4 +1,4 @@
-import { ActionIcon, Group, Menu, Text, Tooltip } from '@mantine/core';
+import { Group, Menu, Text, Tooltip } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { ChatMemberStatus } from '~/shared/utils/prisma/enums';
 import {
@@ -8,10 +8,15 @@ import {
   IconDoorExit,
   IconFlag,
   IconSettings,
+  IconPencil,
+  IconUserPlus,
   IconX,
 } from '@tabler/icons-react';
 import produce from 'immer';
-import React from 'react';
+import React, { useState } from 'react';
+import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
+import { ChatAddMembersModal } from '~/components/Chat/ChatAddMembersModal';
+import { ChatRenameModal } from '~/components/Chat/ChatRenameModal';
 import { useChatStore } from '~/components/Chat/ChatProvider';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -25,13 +30,23 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 export const ChatActionsV1 = ({ chatObj }: { chatObj?: ChatListMessage }) => {
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useUtils();
+  const [addingMembers, setAddingMembers] = useState(false);
+  const [renaming, setRenaming] = useState(false);
 
-  // const isOwner = myMember?.isOwner === true;
   const myMember = chatObj?.chatMembers.find((cm) => cm.userId === currentUser?.id);
   const modSender = chatObj?.chatMembers.find(
     (cm) => cm.userId !== currentUser?.id && cm.isOwner === true && cm.user.isModerator === true
   );
   const cantLeave = modSender?.status === ChatMemberStatus.Joined && !myMember?.user.isModerator;
+  // `chatMembers.length` is the fallback for threads that predate `Chat.isGroup`
+  // and have not been backfilled.
+  const isGroup = !!chatObj?.isGroup || (chatObj?.chatMembers.length ?? 0) > 2;
+  const isAdmin = isGroup && !!currentUser && chatObj?.ownerId === currentUser.id;
+  // Moderators are left out: blocking one severs the conversation the
+  // `cantLeave` guard exists to hold open.
+  const blockable =
+    chatObj?.chatMembers.filter((cm) => cm.userId !== currentUser?.id && !cm.user.isModerator) ??
+    [];
 
   const { mutate: modifyMembership } = trpc.chat.modifyUser.useMutation({
     onSuccess(data, req) {
@@ -123,11 +138,24 @@ export const ChatActionsV1 = ({ chatObj }: { chatObj?: ChatListMessage }) => {
           </Menu.Target>
           <Menu.Dropdown>
             <>
-              {/*<Menu.Label>Owner Actions</Menu.Label>*/}
-              {/*TODO enable these*/}
-              {/*{isOwner && <Menu.Item leftSection={<IconUserPlus size={18} />}>Add users</Menu.Item>}*/}
-              {/*{isOwner && <Menu.Item leftSection={<IconUserX size={18} />}>Ban users</Menu.Item>}*/}
-              {/*<Menu.Label>Chat Actions</Menu.Label>*/}
+              {isAdmin && myMember?.status === ChatMemberStatus.Joined && (
+                <>
+                  <Menu.Label>Admin Actions</Menu.Label>
+                  <Menu.Item
+                    leftSection={<IconUserPlus size={18} />}
+                    onClick={() => setAddingMembers(true)}
+                  >
+                    Add users
+                  </Menu.Item>
+                  <Menu.Item
+                    leftSection={<IconPencil size={18} />}
+                    onClick={() => setRenaming(true)}
+                  >
+                    Rename group
+                  </Menu.Item>
+                  <Menu.Label>Chat Actions</Menu.Label>
+                </>
+              )}
               {myMember?.status === ChatMemberStatus.Joined && (
                 <Menu.Item
                   leftSection={
@@ -139,6 +167,22 @@ export const ChatActionsV1 = ({ chatObj }: { chatObj?: ChatListMessage }) => {
               <Menu.Item leftSection={<IconFlag size={18} />} color="orange" onClick={reportModal}>
                 Report
               </Menu.Item>
+              {blockable.length === 1 ? (
+                <BlockUserButton as="menu-item" userId={blockable[0].userId} />
+              ) : blockable.length > 1 ? (
+                <>
+                  <Menu.Label>Block a member</Menu.Label>
+                  {blockable.map((cm) => (
+                    <BlockUserButton
+                      key={cm.userId}
+                      as="menu-item"
+                      userId={cm.userId}
+                      label={`Block ${cm.user.username ?? `user ${cm.userId}`}`}
+                      unblockLabel={`Unblock ${cm.user.username ?? `user ${cm.userId}`}`}
+                    />
+                  ))}
+                </>
+              ) : null}
               {myMember?.status === ChatMemberStatus.Joined ? (
                 <Tooltip
                   label={
@@ -168,15 +212,22 @@ export const ChatActionsV1 = ({ chatObj }: { chatObj?: ChatListMessage }) => {
                 </Menu.Item>
               ) : undefined}
             </>
-
-            {/* TODO blocklist here? */}
-            {/*<Menu.Item>Manage blocklist</Menu.Item>*/}
           </Menu.Dropdown>
         </Menu>
       )}
       <LegacyActionIcon onClick={() => useChatStore.setState({ open: false })}>
         <IconX />
       </LegacyActionIcon>
+      {!!chatObj && (
+        <>
+          <ChatAddMembersModal
+            chatObj={chatObj}
+            opened={addingMembers}
+            onClose={() => setAddingMembers(false)}
+          />
+          <ChatRenameModal chatObj={chatObj} opened={renaming} onClose={() => setRenaming(false)} />
+        </>
+      )}
     </Group>
   );
 };

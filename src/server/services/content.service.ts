@@ -138,10 +138,20 @@ export const tosBaselineHashMap = {
 // resolves to a hash nobody has stored and everyone is re-prompted.
 const tosHashOverrideMap: Record<string, string> = {
   // 2026-07-20 §9.2 "unless a another license" -> "unless another license"
-  '9fd2f1de839bd54420c16ee18bd3a6be64e8de6e80b8ba98c1c6b034d2684996': // tos.md (blue/red)
+  // tos.md (blue/red)
+  '9fd2f1de839bd54420c16ee18bd3a6be64e8de6e80b8ba98c1c6b034d2684996':
     'f25e3738258c4bc10f41131b9f695430e387cb17b6a081d16b6235a5bcd33ae4',
-  'fd2d6aab421c43e48513d67e233f17c7faa5216b50470324d31c2f5955f53ecc': // tos.green.md
+  // tos.green.md
+  fd2d6aab421c43e48513d67e233f17c7faa5216b50470324d31c2f5955f53ecc:
     '7777d54b7357eb7b1aea4f05c96f2c664d24d5311cb5db8b75ed92e172398d87',
+  // 2026-08-24 an empty `<a id="tos-prohibited-content">` before §9.6's prohibited list, so the ToS
+  // modal can scroll a struck user to the terms they broke. Renders as nothing and says nothing.
+  // tos.md (blue/red)
+  d0c31a6918f20667ccc502c55e556223468ded91189c7318006e1c934e1711fd:
+    '31f28b3e38065449f2ea1e9a342e64e79f3c1bcbe10d6185cad484f4ceebce6f',
+  // tos.green.md
+  '906c25c702d4b89244b444fd2a050e9585ba0a92bf84c3918fd0ba09d4b3ae86':
+    '978c839dea33653f13bce7440d91f4024e886e93557d4deb5718086c904ce0b5',
 };
 
 /**

@@ -4,10 +4,12 @@ import { useBuzzSignalUpdate } from '~/components/Buzz/useBuzz';
 import { useCryptoDepositSignal } from '~/components/Signals/CryptoDepositSignal';
 import { useReferralSignals } from '~/components/Referrals/ReferralSignals';
 import {
+  useChatMembersUpdatedSignal,
   useChatMessageDeletedSignal,
   useChatMessageUpdatedSignal,
   useChatNewMessageSignal,
   useChatNewRoomSignal,
+  useChatRoomUpdatedSignal,
 } from '~/components/Chat/ChatSignals';
 import { useNotificationSignal } from '~/components/Notifications/notifications.utils';
 import { useSessionRefreshSignal } from '~/components/Signals/SessionRefreshSignal';
@@ -41,6 +43,8 @@ export function SignalsRegistrar() {
 
   useChatNewMessageSignal();
   useChatNewRoomSignal();
+  useChatRoomUpdatedSignal();
+  useChatMembersUpdatedSignal();
   useChatMessageDeletedSignal();
   useChatMessageUpdatedSignal();
 

@@ -229,7 +229,7 @@ export async function bulkCommentAction(input: {
   commentV2Ids: number[];
   userId: number;
   moderatorId: number;
-}): Promise<ActionResult> {
+}): Promise<ActionResult & { affected?: number }> {
   if (!input.commentIds.length && !input.commentV2Ids.length)
     return { ok: false, error: 'Select at least one comment.' };
 
@@ -257,7 +257,8 @@ export async function bulkCommentAction(input: {
     return { ok: false, error: 'Nothing changed — those comments may already be gone. Reload.' };
 
   await logAction(`comments:${input.action}:${affected}`, input.userId, input.moderatorId);
-  return { ok: true };
+  // Both endpoints count rows they actually wrote, so a short count is real.
+  return { ok: true, affected };
 }
 
 // BULK REVIEW ACTIONS (Retool's DeleteReview / ExcludeOrIncludeReview).
@@ -427,6 +428,31 @@ export async function getBanContentPreview(
   return { imageCount: Number(images?.count ?? 0), modelCount: Number(models?.count ?? 0) };
 }
 
+/** Returned when the account's state already matches the request. Exported because Bulk Ban has to
+ *  tell it apart from a real failure on a retry. */
+export const alreadyBannedError = (ban: boolean) =>
+  `User is already ${ban ? 'banned' : 'not banned'}. Reload.`;
+
+/**
+ * Has the ban actually landed? `/api/mod/ban-user` answers 200 as soon as it has parsed the request and
+ * logs its failures rather than returning them, so a 200 means "accepted", never "banned".
+ *
+ * Polls rather than reading once, and reads the PRIMARY: the write is in flight, so a replica can
+ * answer from before it. A false negative withholds a caller's follow-up action; it never bans twice.
+ */
+export async function banConfirmed(userId: number, attempts = 6): Promise<boolean> {
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const row = await dbWrite
+      .selectFrom('User')
+      .select('bannedAt')
+      .where('id', '=', userId)
+      .executeTakeFirst();
+    if (row?.bannedAt) return true;
+  }
+  return false;
+}
+
 export async function setBanned(input: {
   userId: number;
   ban: boolean;
@@ -440,6 +466,8 @@ export async function setBanned(input: {
   /** Unpublishes their models. The endpoint DEFAULTS THIS ON when the param is absent, so a caller that
    *  never sends it cannot offer the operator a choice. Send it explicitly either way. */
   removeModels?: boolean;
+  /** Flags every comment on the account as a ToS violation. Nothing is deleted. */
+  removeComments?: boolean;
   moderatorId: number;
 }): Promise<ActionResult> {
   const current = await dbWrite
@@ -450,8 +478,7 @@ export async function setBanned(input: {
   if (!current) return { ok: false, error: 'User not found.' };
 
   const isBanned = current.bannedAt !== null;
-  if (isBanned === input.ban)
-    return { ok: false, error: `User is already ${input.ban ? 'banned' : 'not banned'}. Reload.` };
+  if (isBanned === input.ban) return { ok: false, error: alreadyBannedError(input.ban) };
 
   const params: Record<string, string> = { userId: String(input.userId) };
   if (input.ban && input.reasonCode) params.reasonCode = input.reasonCode;
@@ -460,6 +487,7 @@ export async function setBanned(input: {
   if (input.ban && input.removeMedia) params.removeMedia = 'true';
   if (input.ban && input.removeModels !== undefined)
     params.removeModels = String(input.removeModels);
+  if (input.ban && input.removeComments) params.removeComments = 'true';
 
   const result = await callMainApp('/api/mod/ban-user', params, 'Ban endpoint');
   if (!result.ok) return result;

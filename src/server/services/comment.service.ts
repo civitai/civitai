@@ -359,10 +359,14 @@ export async function bulkSetCommentTosViolation({
 
   let rewardedReports = 0;
   let notified = 0;
+  // Rows actually flagged, NOT ids submitted: the loop skips a row whose update threw, and the caller
+  // writes an audit row from this number.
+  let count = 0;
 
   for (const id of ids) {
     const comment = await updateCommentById({ id, data: { tosViolation: true } }).catch(() => null);
     if (!comment) continue;
+    count += 1;
 
     const reports = await updateCommentReportStatusByReason({
       id,
@@ -390,7 +394,7 @@ export async function bulkSetCommentTosViolation({
       .catch(() => {});
   }
 
-  return { count: ids.length, notified, rewardedReports };
+  return { count, notified, rewardedReports };
 }
 
 export async function bulkDeleteComments({ ids }: { ids: number[] }) {

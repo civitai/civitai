@@ -1,11 +1,28 @@
-import type { Handle, HandleServerError } from '@sveltejs/kit';
+import type { Handle, HandleServerError, ServerInit } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
+import { registerEnumArrayTypeParsers } from '@civitai/db/kysely';
 import { guard } from '$lib/server/auth';
+import { dbPool } from '$lib/server/db';
 import { getLogger } from '$lib/server/logger';
 
 const FALLBACK_REDIRECT = env.CIVITAI_APP_URL || 'https://civitai.com';
 
 console.info(`[creator-studio] version ${__APP_VERSION__}`);
+
+/**
+ * pg has no parser for arrays of a user-defined enum — see `toDomainArray`. `init` is awaited before
+ * the first request, which is why registration lives here and not at module scope.
+ *
+ * Fail-open, matching `instrumentation.node.ts`: a DB hiccup at boot must not stop the app serving,
+ * so read sites still have to tolerate the unparsed shape.
+ */
+export const init: ServerInit = async () => {
+  try {
+    await registerEnumArrayTypeParsers(dbPool);
+  } catch (err) {
+    console.error('[creator-studio] enum-array type-parser registration failed (fail-open):', err);
+  }
+};
 
 // Prerendered at build (no cookie), so it must resolve before the gate.
 const PUBLIC_PATHS = new Set(['/favicon.svg']);

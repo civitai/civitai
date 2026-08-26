@@ -25,7 +25,14 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcModule>()),
   trpc: {
     modelVersion: {
-      getLicensingRoots: { useQuery: () => ({ data: undefined }) },
+      getLicensingRoots: {
+        // Modelled on react-query's own contract, because that contract is what the fix turns on: a
+        // query with `enabled: false` never runs and therefore has no data. A fixed `{ data: undefined }`
+        // mock cannot tell a gated query from an ungated one, so it would pass either way.
+        useQuery: (input: { modelType?: string }, opts?: { enabled?: boolean }) => ({
+          data: opts?.enabled === false ? undefined : licensingRoots.respond(input),
+        }),
+      },
       getUserEarlyAccessVersions: { useQuery: () => ({ data: [] }) },
       // Hand-listed, so every router entry the component reads has to appear here or it throws on
       // render — the whole suite went red on this one when the allowance counter was added.
@@ -41,6 +48,23 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
     }),
   },
 }));
+/** Anima's default licensing root: a Checkpoint charging 5 Buzz per image, settled to its own owner. */
+const ANIMA_CHECKPOINT_ROOT = {
+  id: 2945208,
+  modelId: 2458426,
+  versionName: 'base-v1.0',
+  isDefault: true,
+};
+const NO_ROOTS = { roots: [], defaultVersionId: null };
+
+const licensingRoots = vi.hoisted(() => ({
+  // Default: no roots for anyone, which is what every test in this file that predates the licensing
+  // lineage expects. The lineage tests below set their own, and those read the input.
+  respond: (() => ({ roots: [], defaultVersionId: null })) as (input: {
+    modelType?: string;
+  }) => unknown,
+}));
+
 const flags = vi.hoisted(() => ({
   // earlyAccessModel off keeps the Paid Access sub-section out of the way for the disclosure tests; the
   // removal test turns it on, because that section is what holds the irreversible warning.
@@ -166,6 +190,7 @@ beforeEach(() => {
   flags.current = { licensingFee: true, earlyAccessModel: false };
   currentUser.value = { id: 1, tier: 'free', isModerator: false, meta: {} };
   allowance.data = { used: 0, limit: 3 };
+  licensingRoots.respond = () => NO_ROOTS;
 });
 
 describe('ModelVersionUpsertForm — the monetization eligibility floor', () => {
@@ -662,6 +687,55 @@ describe('ModelVersionUpsertForm — monetization disclosure', () => {
     expect((rightsCheckbox().element() as HTMLInputElement).checked).toBe(true);
   });
 
+  // The price input's `max` was keyed to the stored price once a version was published, and Mantine
+  // clamps to `max` on blur — so raising the price on a released model reverted it with no error, no
+  // toast and no request (CU 868kwjc13). Whether a raise is allowed is the server's call.
+  test('raises the access price on a released version', async () => {
+    flags.current = { licensingFee: true, earlyAccessModel: true };
+    // Gold's cap is unlimited, so nothing but the stored price can bound this input.
+    currentUser.value = { id: 1, tier: 'gold', isModerator: false, meta: {} };
+    renderWithProviders(
+      <ModelVersionUpsertForm
+        model={model}
+        version={
+          {
+            ...(chargingVersion as object),
+            paidAccess: { endsAt: null, timeframeDays: null, terms: { download: { price: 1000 } } },
+          } as React.ComponentProps<typeof ModelVersionUpsertForm>['version']
+        }
+        onSubmit={vi.fn()}
+      >
+        {() => <button type="submit">Save</button>}
+      </ModelVersionUpsertForm>
+    );
+
+    await userEvent.fill(page.getByLabelText('Price for access'), '3000');
+    await userEvent.click(page.getByRole('button', { name: 'Save' }));
+    await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    const terms = (mutateAsync.mock.calls[0][0] as { paidAccess?: { terms?: ModelVersionTerms } })
+      .paidAccess?.terms;
+    // A revert reports `expected 1000 to be 3000` — the old price, which is the reported symptom itself.
+    expect(terms?.download?.price).toBe(3000);
+  });
+
+  // The other half of the same expression, and the reason it can't simply drop to the tier cap: a stored
+  // price above the cap stays chargeable (the server rejects raises only), so clamping the input down
+  // would cut a lapsed creator's price on the next unrelated save.
+  test('keeps a grandfathered over-cap price rather than clamping to the tier cap', async () => {
+    // Free caps paid access at 500; this version stores 5000.
+    renderChargingForm();
+
+    await userEvent.fill(page.getByLabelText('Price for access'), '6000');
+    // An edit the clamp can't undo, so the save isn't short-circuited as pristine once 6000 comes back
+    // down to the stored 5000.
+    await userEvent.fill(page.getByLabelText('Name'), 'v1.1');
+    await userEvent.click(page.getByRole('button', { name: 'Save' }));
+    await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    const terms = (mutateAsync.mock.calls[0][0] as { paidAccess?: { terms?: ModelVersionTerms } })
+      .paidAccess?.terms;
+    expect(terms?.download?.price).toBe(5000);
+  });
+
   // A pristine edit short-circuits the mutation, so the observable is the form's own onSubmit: it fires
   // only once validation passed, which is what the unasked-for fee used to block.
   test('saves without ever opening the section', async () => {
@@ -671,5 +745,70 @@ describe('ModelVersionUpsertForm — monetization disclosure', () => {
     await userEvent.click(page.getByRole('button', { name: 'Save' }));
     await vi.waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     expect(mutateAsync).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * `licensingSourceVersionId` makes a version inherit a root's per-image licence fee — charged to
+ * everyone who generates with it, settled to the ROOT's owner, on a line carrying THIS model's name.
+ * The form pre-selects the ecosystem default with `shouldDirty: false`, so a wrong pre-selection leaves
+ * no mark on screen, and no surface on the site can clear it afterwards (CU 868kwf2fd).
+ *
+ * Both tests render a BRAND-NEW version, which is the shape the leak actually takes: no `version` means
+ * no stored value to echo, and `!version?.id` sends the save straight to the mutation, so whatever the
+ * effect pre-selected is what gets written.
+ */
+describe('ModelVersionUpsertForm — licensing lineage pre-selection', () => {
+  const renderNew = () =>
+    renderWithProviders(
+      <ModelVersionUpsertForm model={model} onSubmit={vi.fn()}>
+        {() => <button type="submit">Save</button>}
+      </ModelVersionUpsertForm>
+    );
+
+  const save = async () => {
+    await userEvent.click(page.getByRole('button', { name: 'Save' }));
+    await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    return mutateAsync.mock.calls[0][0] as { licensingSourceVersionId?: number | null };
+  };
+
+  // The control for the test below, and the reason it is worth anything: same fixtures, same save, a
+  // root the query DOES offer. If the pre-selection effect or this harness ever stops reaching the
+  // payload, this goes red — so a null in the test below cannot be an artifact of the form never
+  // stamping anything at all.
+  test('stamps a root the query offers', async () => {
+    licensingRoots.respond = () => ({
+      roots: [ANIMA_CHECKPOINT_ROOT],
+      defaultVersionId: ANIMA_CHECKPOINT_ROOT.id,
+    });
+    renderNew();
+
+    expect((await save()).licensingSourceVersionId).toBe(ANIMA_CHECKPOINT_ROOT.id);
+  });
+
+  // 🔴 The gate this pins is `enabled: !!baseModel && !!model?.type`. Relaxing it back to
+  // `!!baseModel` fires one unscoped fetch whose CHECKPOINT roots get stamped onto a LoRA before the
+  // scoped refetch — which returns nothing, so the effect early-returns on a null default and can never
+  // clear it.
+  //
+  // The model is present here and only its TYPE is missing, which is what makes this test worth
+  // anything: with `model` undefined entirely, relaxing the gate to `!!model` also passes, so the test
+  // would pin the wrong half of the condition. (It is also the truer fixture — the wizard's step 2
+  // renders with a model object whose query has resolved and a type the user has not chosen yet.)
+  test('stamps nothing while the model type is still unknown', async () => {
+    licensingRoots.respond = (input) =>
+      input.modelType === undefined
+        ? { roots: [ANIMA_CHECKPOINT_ROOT], defaultVersionId: ANIMA_CHECKPOINT_ROOT.id }
+        : NO_ROOTS;
+    renderWithProviders(
+      <ModelVersionUpsertForm
+        model={{ ...model, type: undefined } as typeof model}
+        onSubmit={vi.fn()}
+      >
+        {() => <button type="submit">Save</button>}
+      </ModelVersionUpsertForm>
+    );
+
+    expect((await save()).licensingSourceVersionId ?? null).toBeNull();
   });
 });

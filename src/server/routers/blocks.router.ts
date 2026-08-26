@@ -114,7 +114,13 @@ import {
   validateBlockCheckpoint,
 } from '~/server/services/blocks/checkpoint.service';
 import { getModelShowcaseImages } from '~/server/services/blocks/showcase.service';
-import { computeListingProblems } from '~/server/services/blocks/listing-problems';
+import {
+  computeListingProblems,
+  type ListingProblemKind,
+} from '~/server/services/blocks/listing-problems';
+// The ONE spelling of "which moderation actions can explain a removal". Value import:
+// it is spread into a Prisma `where` below. See `app-listing-owner-unpublish`.
+import { LISTING_STATUS_CHANGING_MODERATION_ACTIONS } from '~/server/services/blocks/app-listing-owner-unpublish';
 import { getRequestDomainColor, isHostForColor } from '~/server/utils/server-domain';
 // Type-only: the runtime `resolveCanGenerateForVersions` is loaded via a
 // dynamic import() inside assertViewerCanGeneratePageResources so the heavy
@@ -2259,6 +2265,17 @@ export const blocksRouter = router({
         tagline: string | null;
         category: string | null;
         screenshotCount: number;
+        /**
+         * The listing's kind, threaded into `computeListingProblems` so the three
+         * empty-text problems name the right remedy.
+         *
+         * 🔴 PROJECTED, NOT ASSUMED, even though the `where` below filters
+         * `kind: 'onsite'`. A literal `'onsite'` at the call site would be a SECOND
+         * place that has to stay in step with that filter, and it would go wrong
+         * SILENTLY (wrong advice, no error) if the filter is ever widened. Reading
+         * the column costs nothing and cannot drift.
+         */
+        kind: string;
       }
     >();
     if (appBlockIds.length) {
@@ -2268,6 +2285,7 @@ export const blocksRouter = router({
           id: true,
           appBlockId: true,
           status: true,
+          kind: true,
           iconId: true,
           coverId: true,
           description: true,
@@ -2287,6 +2305,9 @@ export const blocksRouter = router({
           listingByBlockId.set(l.appBlockId, {
             id: l.id,
             status: l.status,
+            // A narrow test fake that ignores `select` yields `undefined`; the `where`
+            // clause above admits only on-site rows, so that is the honest fallback.
+            kind: l.kind ?? 'onsite',
             iconId: l.iconId,
             coverId: l.coverId,
             description: l.description,
@@ -2297,18 +2318,30 @@ export const blocksRouter = router({
       }
     }
 
-    // For every REMOVED backing listing, its MOST-RECENT moderation-event action —
-    // so the UI distinguishes an owner-hidden listing (last event `owner-unpublish`
-    // → Republish-eligible) from a moderator takedown (last event `delist`/`purge` →
-    // Republish FORBIDDEN, shown as "removed by a moderator"). Batched `distinct` +
-    // `orderBy desc` (ONE query, latest per listing), only over removed listings —
-    // mirrors the off-site `listMySubmissions` approach.
+    // For every REMOVED backing listing, its MOST-RECENT STATUS-CHANGING moderation-event
+    // action — so the UI distinguishes an owner-hidden listing (last event
+    // `owner-unpublish` → Republish-eligible) from a moderator takedown (last event
+    // `delist`/`purge` → Republish FORBIDDEN, shown as "removed by a moderator"). Batched
+    // `distinct` + `orderBy desc` (ONE query, latest per listing), only over removed
+    // listings — mirrors the off-site `listMySubmissions` approach.
+    //
+    // 🔴 FILTERED TO THE STATUS-CHANGING SET, FROM THE SHARED CONSTANT. An unfiltered read
+    // here answers a DIFFERENT question from the server gate (`republishOwnListing` and the
+    // author edit paths, which all route through `readLastModerationAction`), and the two
+    // disagree the moment a state-neutral event lands on top: a moderator's `message-owner`
+    // ("fix X and republish") is newest, the client maps "not owner-unpublish" to
+    // `mod-removed`, and /apps/mine tells the owner a moderator removed a listing the server
+    // would happily republish — killing the repair loop this feature exists for. `claim`,
+    // `report-resolve` and `report-dismiss` do the same. One spelling of the set.
     const removedListingIds = [...listingByBlockId.values()]
       .filter((l) => l.status === 'removed')
       .map((l) => l.id);
     const lastEvents = removedListingIds.length
       ? await dbRead.appListingModerationEvent.findMany({
-          where: { appListingId: { in: removedListingIds } },
+          where: {
+            appListingId: { in: removedListingIds },
+            action: { in: [...LISTING_STATUS_CHANGING_MODERATION_ACTIONS] },
+          },
           orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
           distinct: ['appListingId'],
           select: { appListingId: true, action: true },
@@ -2349,6 +2382,7 @@ export const blocksRouter = router({
         // version) — nothing to flag until a listing row exists.
         problems: listing
           ? computeListingProblems({
+              kind: listing.kind as ListingProblemKind,
               iconId: listing.iconId,
               coverId: listing.coverId,
               screenshotCount: listing.screenshotCount,

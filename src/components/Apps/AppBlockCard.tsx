@@ -11,6 +11,7 @@ import Link from 'next/link';
 import { useState } from 'react';
 import { STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
 import { AppDetailsModal } from '~/components/Apps/AppDetailsModal';
+import { appListingDescriptionToPlainText } from '~/components/Apps/appListingDescriptionText';
 import { CATEGORY_ICONS, FALLBACK_CATEGORY_ICON } from '~/components/Apps/marketplaceCategoryIcons';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import {
@@ -249,8 +250,14 @@ export function AppBlockCard({
             // M1: the description link is a detail-page open too — record it.
             onClick={() => onRecentOpen?.(block)}
           >
+            {/* 🔴 The card shows the PLAIN-TEXT PROJECTION, not the markdown source.
+                This is the second half of the one rule (`appListingDescriptionText.ts`):
+                a 3-line clamp in a grid cannot render markdown block elements, so
+                it renders markdown's text instead. Passing the raw source here
+                would print literal backticks and `**` in the grid — the same
+                unpredictability the rule exists to remove, just relocated. */}
             <Text size="sm" c="dimmed" className="line-clamp-3">
-              {manifest.description}
+              {appListingDescriptionToPlainText(manifest.description)}
             </Text>
           </Anchor>
         )}

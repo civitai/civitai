@@ -2,7 +2,7 @@
  * Import a policy-set JSON into `label_policy` as the next version of each label it defines.
  *
  *   pnpm exec tsx --env-file=.env apps/moderator/xguard-lab/import-policy.ts \
- *     --file _local/docs/plans/xguard-age-labels/policies/age-split-v6-block.json
+ *     --file local/xguard-tuning-harness/policies/age-split-v6-block.json
  *
  * Same shape the tuning harness uses:
  *   { name, note?, combine?, labels: [{ label, policy, threshold, action? }] }

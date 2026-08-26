@@ -1,12 +1,8 @@
 import { z } from 'zod';
 import { fail } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
-import {
-  getCreatorModels,
-  MODELS_PER_PAGE,
-  PAGE_SIZE_OPTIONS,
-  PAGE_SIZE_COOKIE,
-} from '$lib/server/models';
+import { PAGE_SIZE_OPTIONS } from '$lib/server/models';
+import { getModelsView } from '$lib/server/models-view';
 import {
   resolveMembership,
   cappedTier,
@@ -68,107 +64,39 @@ const versionIdsSchema = z
       .filter((n) => Number.isInteger(n) && n > 0)
   )
   .refine((ids) => ids.length > 0, 'Select at least one version.');
-const modelsQuerySchema = z.object({
-  q: z.string().optional(),
-  fee: z.enum(['set', 'off']).optional().catch(undefined),
-  bm: z.string().optional(),
-  mt: z.string().optional(),
-  status: z.enum(['all', 'published', 'draft']).optional().catch(undefined),
-  access: z.enum(['1']).optional().catch(undefined),
-  usage: z.enum(['download', 'generation']).optional().catch(undefined),
-  sort: z.enum(['recent', 'name']).catch('recent'),
-  page: z.coerce.number().int().min(1).catch(1),
-  // Page-size selector value (868ke493p); persisted to a cookie so it applies on later loads.
-  ps: z.coerce.number().int().optional().catch(undefined),
-});
-
-// A year — the page-size preference should stick.
-const PAGE_SIZE_MAX_AGE = 60 * 60 * 24 * 365;
-function resolvePageSize(psParam: number | undefined, cookieVal: string | undefined): number {
-  const opts = PAGE_SIZE_OPTIONS as readonly number[];
-  if (psParam && opts.includes(psParam)) return psParam;
-  const c = Number(cookieVal);
-  return opts.includes(c) ? c : MODELS_PER_PAGE;
-}
 
 const firstError = (e: z.ZodError) => e.issues[0]?.message ?? 'Invalid input.';
-
 export const load: PageServerLoad = async ({ locals, parent, url, cookies }) => {
   const { membership } = await parent();
-  const parsed = modelsQuerySchema.parse(Object.fromEntries(url.searchParams));
-  const q = parsed.q?.trim() || undefined;
-  const baseModel = parsed.bm?.trim() || undefined;
-  const type = parsed.mt?.trim() || undefined;
-  const access = parsed.access === '1';
 
-  // Page size: an explicit ?ps= updates the shared cookie; otherwise fall back to the cookie, then the default.
-  const perPage = resolvePageSize(parsed.ps, cookies.get(PAGE_SIZE_COOKIE));
-  if (parsed.ps && (PAGE_SIZE_OPTIONS as readonly number[]).includes(parsed.ps)) {
-    cookies.set(PAGE_SIZE_COOKIE, String(perPage), { path: '/', maxAge: PAGE_SIZE_MAX_AGE });
-  }
+  const [view, modelsScore, pricingUsed, earlyAccessUsed, creatorScore] = await Promise.all([
+    getModelsView(locals.user, url, cookies),
+    resolveModelsScore(
+      locals.user.id,
+      !!locals.user.isModerator,
+      cookies.get(TEST_MODELS_SCORE_COOKIE)
+    ),
+    countPricingSlotsThisMonth(locals.user.id),
+    countActiveEarlyAccessVersions(locals.user.id),
+    resolveCreatorScore(
+      locals.user.id,
+      !!locals.user.isModerator,
+      cookies.get(TEST_CREATOR_SCORE_COOKIE)
+    ),
+  ]);
 
-  const [result, modelsScore, pricingUsed, earlyAccessUsed, creatorScore, salesEnabled] =
-    await Promise.all([
-      getCreatorModels({
-        userId: locals.user.id,
-        q,
-        fee: parsed.fee,
-        baseModel,
-        type,
-        status: parsed.status,
-        access,
-        usage: parsed.usage,
-        sort: parsed.sort,
-        page: parsed.page,
-        perPage,
-        // Selection is always available, so "select all matching filters" always needs the full id set.
-        withMatchingVersionIds: true,
-      }),
-      resolveModelsScore(
-        locals.user.id,
-        !!locals.user.isModerator,
-        cookies.get(TEST_MODELS_SCORE_COOKIE)
-      ),
-      countPricingSlotsThisMonth(locals.user.id),
-      countActiveEarlyAccessVersions(locals.user.id),
-      resolveCreatorScore(
-        locals.user.id,
-        !!locals.user.isModerator,
-        cookies.get(TEST_CREATOR_SCORE_COOKIE)
-      ),
-      // Per-user entityId so the feature can open to a few creators before everyone. `isEnabled` rather
-      // than `getBoolean`: only the former honours FLIPT_LOCAL_OVERRIDES, so this is togglable locally.
-      getFlipt().isEnabled(
-        'scheduled-model-sales',
-        String(locals.user.id),
-        fliptContext(locals.user)
-      ),
-    ]);
-
-  // Sales are read ONLY when the feature is on. Migrations here are applied by hand, so on any
-  // environment where the sale tables have not been created yet an unconditional read makes /models
-  // throw for every creator — flag on or off. The flag has to gate the reads, not just the UI.
+  // Query-independent, so they stay out of getModelsView: the creator's own sale windows and the
+  // limit overrides are the same whatever is being searched for.
+  const [sales, saleLimits] = view.salesEnabled
+    ? await Promise.all([getCreatorSales(locals.user.id), getSaleLimitOverrides()])
+    : [[], {}];
   const pricingLimit = monthlyPricingAllowance(cappedTier(membership));
-
-  const [sales, salesByVersion, saleLimits] = salesEnabled
-    ? await Promise.all([
-        getCreatorSales(locals.user.id),
-        getSalesByVersion(
-          locals.user.id,
-          result.models.flatMap((m) => m.versions.map((v) => v.id))
-        ),
-        getSaleLimitOverrides(),
-      ])
-    : [[], {}, {}];
   return {
-    ...result,
-    perPage,
-    salesEnabled,
+    ...view,
     creatorScore,
     // The creator's own recent sale windows. The form computes the budget from these with the same
     // @civitai/buzz helper the write refuses on, so the number shown and the number enforced are one.
     sales,
-    salesByVersion,
     saleLimits,
     pageSizeOptions: PAGE_SIZE_OPTIONS,
     // `tier` is the display label; `capTier` is what the allowance must use — a lapsed membership keeps
@@ -186,16 +114,6 @@ export const load: PageServerLoad = async ({ locals, parent, url, cookies }) => 
       earlyAccessUsed,
       earlyAccessCap: earlyAccessQuantityForScore(modelsScore),
       canSetGenerationOnly: await canSetGenerationOnlyFresh(locals.user),
-    },
-    query: {
-      q: q ?? '',
-      fee: parsed.fee ?? '',
-      bm: baseModel ?? '',
-      mt: type ?? '',
-      status: parsed.status ?? '',
-      access,
-      usage: parsed.usage ?? '',
-      sort: parsed.sort,
     },
   };
 };

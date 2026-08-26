@@ -1,4 +1,5 @@
 import dayjs from '~/shared/utils/dayjs';
+import { uniq } from 'lodash-es';
 import { find as findLinks } from 'linkifyjs';
 import { unfurl } from 'unfurl.js';
 import { linkifyOptions } from '~/components/Chat/util';
@@ -17,7 +18,8 @@ import {
 import { BlockedByUsers, BlockedUsers } from '~/server/services/user-preferences.service';
 import { getUserSettings } from '~/server/services/user.service';
 import { withSignals } from '~/server/signals/wrapper';
-import { decideDmRouting, getChatHash } from '~/server/utils/chat';
+import { decideDmRouting } from '~/server/utils/chat';
+import { normalizeChatName, resolveChatIdentity } from '~/server/utils/chat-group';
 import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import {
@@ -27,12 +29,13 @@ import {
 import { getOwnedStickerCosmetics } from '~/server/services/cosmetic.service';
 import { createLimiter } from '~/server/utils/rate-limiting';
 import { resolveStickerTokens, stripStickerTokens } from '~/shared/utils/sticker-token';
+import { MAX_CHAT_MEMBERS } from '~/shared/utils/chat';
 import { ChatMemberStatus, ChatMessageType, UserEngagementType } from '~/shared/utils/prisma/enums';
 import type { ChatAllMessages, ChatCreateChat } from '~/types/router';
 
 export const maxChats = 1000;
 export const maxChatsPerDay = 10;
-export const maxUsersPerChat = 10;
+export const maxUsersPerChat = MAX_CHAT_MEMBERS;
 
 // Message rate limiting — stricter for new accounts (< 7 days old)
 const newAccountAgeDays = 7;
@@ -102,51 +105,126 @@ const evaluateDmPolicies = async ({
   return { refused, filtered };
 };
 
-export const upsertChat = async ({
-  userIds,
-  isModerator,
-  isSupporter,
+/**
+ * Who out of `recipientIds` may actually be pulled into a conversation with
+ * `userId`, and which of them land in Requests rather than an inbox. Shared by
+ * chat creation and by adding members to an existing group, so a group invite
+ * cannot be used to route around a block or a DM policy that a new chat would
+ * have honoured.
+ */
+export const resolveChatRecipients = async ({
   userId,
-}: CreateChatInput & { userId: number; isModerator?: boolean; isSupporter?: boolean }) => {
-  const hash = getChatHash(userIds);
-  // filter out blocked users from userIds
+  recipientIds,
+  isModerator,
+}: {
+  userId: number;
+  recipientIds: number[];
+  isModerator?: boolean;
+}) => {
   const blockedUsers = await Promise.all([
     BlockedUsers.getCached({ userId }),
     BlockedByUsers.getCached({ userId }),
   ]);
-  const blockedUserIds = [...new Set(blockedUsers.flat().map((u) => u.id))];
-  userIds = userIds.filter((u) => !blockedUserIds.includes(u));
+  const blockedUserIds = new Set(blockedUsers.flat().map((u) => u.id));
+  let allowed = recipientIds.filter((u) => u !== userId && !blockedUserIds.has(u));
 
   // Apply each recipient's DM policy (mods bypass). Only `nobody` refuses; a
   // sender who fails a `following`/`mutuals` policy still gets a chat, it just
   // lands in the recipient's Requests instead of their inbox.
   let filteredIds = new Set<number>();
-  if (!isModerator) {
-    const { refused, filtered } = await evaluateDmPolicies({
-      userId,
-      recipientIds: userIds.filter((u) => u !== userId),
-    });
-    if (refused.size) userIds = userIds.filter((u) => !refused.has(u));
+  if (!isModerator && allowed.length) {
+    const { refused, filtered } = await evaluateDmPolicies({ userId, recipientIds: allowed });
+    if (refused.size) allowed = allowed.filter((u) => !refused.has(u));
     filteredIds = filtered;
   }
 
-  // `userIds` includes the creator; everyone else is a recipient. If every
-  // requested recipient was dropped (blocked, or not accepting chat), there is
-  // no one to talk to — surface a friendly error instead of silently creating
-  // a chat that only contains the creator.
-  const remainingRecipients = userIds.filter((u) => u !== userId);
-  if (remainingRecipients.length === 0) {
+  return { allowed, filteredIds };
+};
+
+/**
+ * A group name is user-authored text shown to every member, so it goes through
+ * the same blocklists as a message rather than being trusted because it is short.
+ */
+export const assertChatNameAllowed = async (name: string | null) => {
+  if (!name) return;
+  await throwOnBlockedLinkDomain(name);
+  await throwOnBlockedMessagePattern(name);
+};
+
+/**
+ * Tell every side of a conversation that its membership moved.
+ *
+ * The payload is the chat id and nothing else. Member rows are per-recipient —
+ * `scopeMemberPrivacy` scrubs another member's `filteredAt`, `pinnedAt` and
+ * read receipt out of a query result — and a group broadcast has one body for
+ * everyone, so shipping the rows here would hand each member the fields the
+ * query deliberately withholds. Recipients refetch instead.
+ *
+ * `userIds` names people the group broadcast cannot reach: someone just removed
+ * (their signals group membership is already gone) or just invited (they only
+ * join the group on accept).
+ */
+export const signalChatMembersUpdated = async ({
+  chatId,
+  userIds = [],
+}: {
+  chatId: number;
+  userIds?: number[];
+}) => {
+  const body = JSON.stringify({ chatId });
+  const urls = [
+    `${env.SIGNALS_ENDPOINT}/groups/chat:${chatId}/signals/${SignalMessages.ChatMembersUpdated}`,
+    ...uniq(userIds).map(
+      (uid) => `${env.SIGNALS_ENDPOINT}/users/${uid}/signals/${SignalMessages.ChatMembersUpdated}`
+    ),
+  ];
+
+  await Promise.all(
+    urls.map((url) =>
+      withSignals(() =>
+        fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body })
+      ).catch(() => undefined)
+    )
+  );
+};
+
+export const upsertChat = async ({
+  userIds,
+  isGroup,
+  name,
+  isModerator,
+  isSupporter,
+  userId,
+}: CreateChatInput & { userId: number; isModerator?: boolean; isSupporter?: boolean }) => {
+  const { allowed, filteredIds } = await resolveChatRecipients({
+    userId,
+    recipientIds: uniq(userIds),
+    isModerator,
+  });
+
+  // If every requested recipient was dropped (blocked, or not accepting chat),
+  // there is no one to talk to — surface a friendly error instead of silently
+  // creating a chat that only contains the creator.
+  if (allowed.length === 0) {
     throw throwBadRequestError('This user is not accepting chat requests');
   }
 
-  const existing = await dbWrite.chat.findFirst({
-    where: { hash },
-    select: {
-      ...singleChatSelect,
-      ...latestChat,
-    },
-    // select: { id: true },
-  });
+  userIds = [userId, ...allowed];
+  const identity = resolveChatIdentity({ userIds, isGroup });
+  const chatName = identity.isGroup ? normalizeChatName(name) : null;
+  await assertChatNameAllowed(chatName);
+
+  // A group's identity is its row id, so it never dedupes: asking for a group
+  // with people you already have a group with is a request for a second group.
+  const existing = identity.hash
+    ? await dbWrite.chat.findFirst({
+        where: { hash: identity.hash },
+        select: {
+          ...singleChatSelect,
+          ...latestChat,
+        },
+      })
+    : null;
 
   if (!!existing) {
     // Re-opening a chat still has to respect the recipient's policy. Returning
@@ -215,7 +293,12 @@ export const upsertChat = async ({
 
   const createdChat = await dbWrite.$transaction(async (tx) => {
     const newChat = await tx.chat.create({
-      data: { hash, ownerId: userId },
+      data: {
+        hash: identity.hash,
+        ownerId: userId,
+        isGroup: identity.isGroup,
+        name: chatName,
+      },
       select: { id: true, createdAt: true },
     });
 

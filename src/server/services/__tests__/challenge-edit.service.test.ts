@@ -309,6 +309,25 @@ describe('getUserChallengeForEdit — ownership/moderator gate', () => {
       getUserChallengeForEdit({ id: 1, userId: 222, isModerator: true })
     ).rejects.toThrow('This challenge cannot be edited here.');
   });
+
+  // The read stays status-unfiltered on purpose — the form goes read-only past Scheduled instead.
+  // Gating it here 404s the edit page for the owner and the moderators who need to inspect it.
+  it.each(['Active', 'Completing', 'Completed', 'Cancelled'] as const)(
+    'returns a %s challenge instead of throwing',
+    async (status) => {
+      mockDbRead.challenge.findUnique.mockResolvedValue({ ...guardRow, status });
+      mockGetChallengeById.mockResolvedValue(
+        makeMockChallenge({ source: 'User', createdById: 111, status })
+      );
+
+      await expect(getUserChallengeForEdit({ id: 1, userId: 111 })).resolves.toMatchObject({
+        id: 1,
+      });
+      await expect(
+        getUserChallengeForEdit({ id: 1, userId: 222, isModerator: true })
+      ).resolves.toMatchObject({ id: 1 });
+    }
+  );
 });
 
 describe('upsertUserChallenge — schedule limits', () => {

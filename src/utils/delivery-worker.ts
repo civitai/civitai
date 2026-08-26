@@ -4,6 +4,10 @@ import { parseKey } from './s3-utils';
 const deliveryWorkerEndpoint = `${env.DELIVERY_WORKER_ENDPOINT}?token=${env.DELIVERY_WORKER_TOKEN}`;
 const storageResolverEndpoint = env.STORAGE_RESOLVER_ENDPOINT;
 const storageResolverAuth = env.STORAGE_RESOLVER_AUTH; // format: username:password
+// The resolver's INTERNAL_API_TOKEN. Required to ask for an origin-direct URL —
+// see `getDownloadUrlByFileId`. Same credential the register/deregister calls in
+// `~/server/services/storage-resolver` already use.
+const storageResolverInternalToken = env.STORAGE_RESOLVER_INTERNAL_TOKEN;
 
 export type DownloadInfo = {
   url: string;
@@ -103,21 +107,56 @@ export type DeliveryWorkerStatus = {
  * Get download URL via the storage-resolver microservice.
  * The resolver handles multi-backend storage (Cloudflare, Backblaze, MinIO).
  */
+/**
+ * Options that only the storage resolver understands. The delivery-worker
+ * fallback silently ignores them, which is correct: it is the legacy path keyed
+ * off `ModelFile.url` and has no notion of which host serves the bytes.
+ */
+export type ResolveOptions = {
+  /**
+   * Ask for a URL addressing the storage origin rather than the CDN in front of
+   * it. Only honoured for backends that have a second address; ignored otherwise.
+   *
+   * Serving a file directly costs more than serving it through the CDN, so this
+   * should be set only for callers that measurably benefit. See
+   * `shouldResolveDirect`.
+   */
+  direct?: boolean;
+};
+
 export async function getDownloadUrlByFileId(
   fileId: number,
-  fileName?: string
+  fileName?: string,
+  options?: ResolveOptions
 ): Promise<DownloadInfo> {
   if (!storageResolverEndpoint) {
     throw new Error('STORAGE_RESOLVER_ENDPOINT is not configured');
   }
 
+  // 🔴 The resolver only honours `direct` for a caller presenting the internal
+  // bearer token, because /resolve is publicly reachable and `direct` moves bytes
+  // onto our billed egress allowance. Without the token we do not ask at all,
+  // rather than asking and being refused: the resolver's granted="unauthorized"
+  // counter is the signal that someone found the cost lever, and our own
+  // misconfiguration must not be what fills it.
+  const canRequestDirect = Boolean(options?.direct && storageResolverInternalToken);
+
   const body = JSON.stringify({
     fileId,
     fileName: fileName ? safeDecodeURIComponent(fileName) : undefined,
+    // Omitted rather than sent as `false` so an older resolver, which does not
+    // know the field, receives a byte-identical request to the one it does today.
+    ...(canRequestDirect ? { direct: true } : {}),
   });
 
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (storageResolverAuth) {
+  if (canRequestDirect) {
+    // Bearer replaces, not supplements, the Basic header — there is one
+    // Authorization header. The Basic credential is not validated on /resolve
+    // anyway (the ingress routes this path around the basic-auth middleware), so
+    // nothing that works today stops working.
+    headers['Authorization'] = `Bearer ${storageResolverInternalToken}`;
+  } else if (storageResolverAuth) {
     headers['Authorization'] = `Basic ${Buffer.from(storageResolverAuth).toString('base64')}`;
   }
 
@@ -216,12 +255,13 @@ export function isStorageResolverEnabled(): boolean {
 export async function resolveDownloadUrl(
   fileId: number,
   fileUrl: string,
-  fileName?: string
+  fileName?: string,
+  options?: ResolveOptions
 ): Promise<DownloadInfo> {
   if (isStorageResolverEnabled()) {
     let resolverError: unknown;
     try {
-      return await getDownloadUrlByFileId(fileId, fileName);
+      return await getDownloadUrlByFileId(fileId, fileName, options);
     } catch (err) {
       // Fall back to delivery worker when the storage resolver doesn't have
       // this file (e.g. File table records like BountyEntry attachments that
