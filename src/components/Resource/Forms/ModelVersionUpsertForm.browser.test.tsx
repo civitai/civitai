@@ -711,12 +711,9 @@ describe('ModelVersionUpsertForm — monetization disclosure', () => {
  * effect pre-selected is what gets written.
  */
 describe('ModelVersionUpsertForm — licensing lineage pre-selection', () => {
-  const renderNew = (withModel: boolean) =>
+  const renderNew = () =>
     renderWithProviders(
-      // `model` undefined is not a contrived fixture: it is one render of the real wizard. `model`
-      // arrives from a query while `baseModel` is seeded synchronously from the last-used store, so
-      // there is a window where the form knows the ecosystem and not the model type.
-      <ModelVersionUpsertForm model={withModel ? model : undefined} onSubmit={vi.fn()}>
+      <ModelVersionUpsertForm model={model} onSubmit={vi.fn()}>
         {() => <button type="submit">Save</button>}
       </ModelVersionUpsertForm>
     );
@@ -736,7 +733,7 @@ describe('ModelVersionUpsertForm — licensing lineage pre-selection', () => {
       roots: [ANIMA_CHECKPOINT_ROOT],
       defaultVersionId: ANIMA_CHECKPOINT_ROOT.id,
     });
-    renderNew(true);
+    renderNew();
 
     expect((await save()).licensingSourceVersionId).toBe(ANIMA_CHECKPOINT_ROOT.id);
   });

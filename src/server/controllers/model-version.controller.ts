@@ -12,6 +12,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { getFeatureFlagsLazy, userTiers } from '~/server/services/feature-flags.service';
 import type { SessionUser } from '~/types/session';
 import type { BaseModelType } from '~/server/common/constants';
+import type { LicensingSourceRejection } from '~/server/schema/model-version.schema';
 import { type BaseModel, DEPRECATED_BASE_MODELS } from '~/shared/constants/basemodel.constants';
 import { baseModelLicenses, constants } from '~/server/common/constants';
 import type { Context, ProtectedContext } from '~/server/createContext';
@@ -545,7 +546,7 @@ export const upsertModelVersionHandler = async ({
     // Set when the block below repairs the payload, so the audit can attribute the change to the rule
     // rather than to the creator. Without it the first rows this new trail ever produces are automated
     // repairs wearing an owner's name — which is the opposite of why the field was added to the audit.
-    let licensingSourceCoercedReason: string | undefined;
+    let licensingSourceCoercedReason: LicensingSourceRejection | undefined;
     // Licensing lineage: the chosen source must be a registered LicensingRoot for the same base model
     // AND the same model type. The model-type half is the one that was missing (CU 868kwf2fd,
     // Freshdesk #69622): every LicensingRoot row is a Checkpoint, so a LoRA that inherits one charges
@@ -570,7 +571,10 @@ export const upsertModelVersionHandler = async ({
     // (107 of 46,994 and 45 of 19,999 carry a source at all).
     if (input.licensingSourceVersionId != null) {
       const [source, destinationModel] = await Promise.all([
-        dbRead.licensingRoot.findUnique({
+        // `dbWrite`, matching the destination read below rather than sitting one line above it under the
+        // opposite rule. A root registered moments ago that misses on the replica reads as
+        // `'not-a-root'`, which silently clears a legitimate source with no error to the creator.
+        dbWrite.licensingRoot.findUnique({
           where: { modelVersionId: input.licensingSourceVersionId },
           select: { baseModel: true, modelType: true },
         }),
@@ -597,10 +601,14 @@ export const upsertModelVersionHandler = async ({
           ? dbWrite.model.findUnique({ where: { id: input.modelId }, select: { type: true } })
           : null,
       ]);
-      // A destination that cannot be read coerces rather than passing. Written the permissive way
-      // (`destinationModel && ...`) it would make "we could not check" indistinguishable from "we
-      // checked and it was fine", which is the shape of every guard that turns out inert.
-      const rejectedReason = !source
+      // A destination that cannot be read coerces rather than passing. Note what this branch is and is
+      // not: `upsertModelVersion` opens with `findUniqueOrThrow` on `data.modelId` against the same
+      // `dbWrite` client, so a miss here is a throw a few statements later and NO save lands either
+      // way. It is not load-bearing for any persisted outcome. It is kept because writing it the
+      // permissive way (`destinationModel && ...`) makes "we could not check" indistinguishable from
+      // "we checked and it was fine" in the source, and the next person to move this block should not
+      // have to rediscover which of those it meant.
+      const rejectedReason: LicensingSourceRejection | null = !source
         ? 'not-a-root'
         : source.baseModel !== input.baseModel
         ? 'base-model-mismatch'

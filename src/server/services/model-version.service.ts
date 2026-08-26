@@ -10,6 +10,7 @@ import {
 } from '~/server/utils/early-access-helpers';
 import { env } from '~/env/server';
 import type { Tracker } from '~/server/clickhouse/client';
+import type { LicensingSourceRejection } from '~/server/schema/model-version.schema';
 import { clickhouse } from '~/server/clickhouse/client';
 import { diffEntityChanges, resolveActorRole } from '~/server/utils/entity-change-helpers';
 import {
@@ -528,7 +529,7 @@ export const upsertModelVersion = async ({
    * audit says which rule: otherwise the repairs land in the change log as edits by creators who did
    * nothing, and a moderator reading the history cannot tell a type mismatch from an unreadable model.
    */
-  licensingSourceCoercedReason?: string;
+  licensingSourceCoercedReason?: LicensingSourceRejection;
 }) => {
   if (data.description) await throwOnBlockedLinkDomain(data.description);
 

@@ -65,7 +65,7 @@ const call = async ({
   root?: Root;
   licensingSourceVersionId?: number | null;
 }) => {
-  dbMock.dbRead.licensingRoot.findUnique.mockResolvedValue(root);
+  dbMock.dbWrite.licensingRoot.findUnique.mockResolvedValue(root);
   // Keyed on the argument, NOT a flat `mockResolvedValue`. A mock that ignores its `where` hands
   // STORED_MODEL_ID back whatever row the guard asked for, which leaves the one test in this file about
   // *which row was looked up* unable to detect the wrong row being looked up. Measured: with a flat
@@ -142,6 +142,24 @@ describe('upsertModelVersionHandler — licensing lineage scope', () => {
     expect(written.licensingSourceVersionId).toBeNull();
   });
 
+  // 🔴 The rule is "the destination's type equals the ROOT's type", not "the destination is a
+  // Checkpoint". Every LicensingRoot row is a Checkpoint today, so with only Checkpoint fixtures a
+  // guard hardcoded to `!== 'Checkpoint'` passes every other test in this file — measured. The day a
+  // LoRA or Video root is registered, that guard would drop every legitimate same-type lineage while
+  // the suite still reported the rule as enforced.
+  const loraRoot = { baseModel: 'Anima', modelType: 'LORA' };
+
+  it('keeps a LORA root on a LORA, though no such root exists yet', async () => {
+    const written = await call({ ...creating('LORA'), root: loraRoot });
+    expect(written.licensingSourceVersionId).toBe(ANIMA_ROOT_VERSION_ID);
+  });
+
+  it('drops a LORA root from a CHECKPOINT', async () => {
+    const written = await call({ ...creating('Checkpoint'), root: loraRoot });
+    expect(written.licensingSourceVersionId).toBeNull();
+    expect(written.licensingSourceCoercedReason).toBe('model-type-mismatch');
+  });
+
   // 🔴 The type is checked against `input.modelId` — the model this save LANDS the version on —
   // and NOT against the model it currently belongs to. `modelId` rides `...data` into
   // `dbWrite.modelVersion.update`, so the payload's modelId is not a claim to be verified, it is the
@@ -207,9 +225,11 @@ describe('upsertModelVersionHandler — licensing lineage scope', () => {
     expect((await call(creating('Checkpoint'))).licensingSourceCoercedReason).toBeUndefined();
   });
 
+  // Only the call-count assertion is worth anything here: with the input already null, nothing in any
+  // implementation of the guard assigns to it, so asserting it came back null passes even with the
+  // whole block deleted. Dropped rather than left in as apparent coverage.
   it('leaves an unset source alone without reading the root table', async () => {
-    const written = await call({ ...creating('LORA'), licensingSourceVersionId: null });
-    expect(written.licensingSourceVersionId).toBeNull();
-    expect(dbMock.dbRead.licensingRoot.findUnique).not.toHaveBeenCalled();
+    await call({ ...creating('LORA'), licensingSourceVersionId: null });
+    expect(dbMock.dbWrite.licensingRoot.findUnique).not.toHaveBeenCalled();
   });
 });
