@@ -9,44 +9,66 @@ import { replaceBlurbSpans, unwrapBlurbSpans } from '~/server/utils/blurb-html';
 
 type Ref = { blurbId: number; entityType: string; entityId: number; materializedHash: string };
 type Blurb = { id: number; content: string; contentHash: string; deletedAt: Date | null };
+type StaleRow = Ref & Blurb;
 
 export type FanoutOutcome = 'rewritten' | 'skipped' | 'gone' | 'unsupported';
 
-export async function processBlurbReference(ref: Ref, blurb: Blurb): Promise<FanoutOutcome> {
-  const adapter = getBlurbFanoutAdapter(ref.entityType);
+/**
+ * One entity, every stale reference it has, one load and one save.
+ *
+ * 🔴 Per reference instead and the entity loses an edit. Two stale rows for one article share a
+ * `materializedAt` — `reconcileBlurbReferences` stamps them from a single `now` — so they sort
+ * adjacently under `ORDER BY materializedAt ASC` and land in the same batch. Each would load the
+ * same html, splice in only its OWN blurb, and save the whole body: last write wins, the other
+ * edit is discarded, and both rows are stamped current so it is never retried.
+ */
+export async function processBlurbEntity(rows: StaleRow[]): Promise<FanoutOutcome> {
+  const [first] = rows;
+  const adapter = getBlurbFanoutAdapter(first.entityType);
   if (!adapter) return 'unsupported';
 
-  const loaded = await adapter.load(ref.entityId);
+  const loaded = await adapter.load(first.entityId);
   if (!loaded) {
     // A reference can outlive its entity — entityType/entityId is a loose pair, not a
     // foreign key. Dropping it stops one deleted article being re-selected on every pass
     // forever.
-    await dropReference(ref);
+    await dropReferences(rows);
     return 'gone';
   }
 
-  const deleting = !!blurb.deletedAt;
-  const next = deleting
-    ? unwrapBlurbSpans(loaded.html, new Set([blurb.id]))
-    : replaceBlurbSpans(loaded.html, new Map([[blurb.id, blurb.content]]));
-
-  if (next === loaded.html) {
-    if (deleting) await dropReference(ref);
-    else await recordReference(ref, blurb.contentHash);
-    return 'skipped';
+  const replacements = new Map<number, string>();
+  const removals = new Set<number>();
+  for (const row of rows) {
+    if (row.deletedAt) removals.add(row.blurbId);
+    else replacements.set(row.blurbId, row.content);
   }
 
-  await adapter.save({ entityId: ref.entityId, userId: loaded.userId, html: next });
+  // Replace before unwrap: both rescan the html they are handed, and a deleted blurb's span has
+  // to still be there for the unwrap to find it.
+  let next = replaceBlurbSpans(loaded.html, replacements);
+  if (removals.size) next = unwrapBlurbSpans(next, removals);
 
-  if (deleting) await dropReference(ref);
-  else await recordReference(ref, blurb.contentHash);
+  const rewritten = next !== loaded.html;
+  if (rewritten)
+    await adapter.save({ entityId: first.entityId, userId: loaded.userId, html: next });
 
-  return 'rewritten';
+  const deleted = rows.filter((row) => row.deletedAt);
+  if (deleted.length) await dropReferences(deleted);
+  for (const row of rows) {
+    if (!row.deletedAt) await recordReference(row, row.contentHash);
+  }
+
+  return rewritten ? 'rewritten' : 'skipped';
 }
 
-function dropReference(ref: Ref) {
+function dropReferences(rows: Ref[]) {
+  const [first] = rows;
   return dbWrite.blurbReference.deleteMany({
-    where: { blurbId: ref.blurbId, entityType: ref.entityType, entityId: ref.entityId },
+    where: {
+      entityType: first.entityType,
+      entityId: first.entityId,
+      blurbId: { in: rows.map((r) => r.blurbId) },
+    },
   });
 }
 
@@ -81,6 +103,11 @@ function recordFailure(ref: Ref) {
 }
 
 export type BlurbFanoutCounts = {
+  /**
+   * Counted in REFERENCE ROWS, not entities, so `rewritten + skipped + gone + failed` is the size
+   * of what the selector returned and the job can still compare it against its LIMIT. The work is
+   * per entity, so every row of one entity carries that entity's outcome.
+   */
   rewritten: number;
   skipped: number;
   gone: number;
@@ -100,10 +127,10 @@ export async function runBlurbFanout({
 
   // Excluding unsupported entityTypes from the selector itself (rather than letting them
   // into the batch and discarding them per-row) is what stops them starving the queue: a
-  // row processBlurbReference can't rewrite never gets its materializedAt touched, so an
+  // row processBlurbEntity can't rewrite never gets its materializedAt touched, so an
   // in-batch reject would permanently occupy the head of the `ORDER BY materializedAt`
   // window once there were `limit` of them.
-  const stale = await dbRead.$queryRaw<Array<Ref & Blurb>>`
+  const stale = await dbRead.$queryRaw<StaleRow[]>`
     SELECT r."blurbId", r."entityType", r."entityId", r."materializedHash",
            b.id, b.content, b."contentHash", b."deletedAt"
     FROM "BlurbReference" r
@@ -114,6 +141,14 @@ export async function runBlurbFanout({
     LIMIT ${limit}
   `;
 
+  const byEntity = new Map<string, StaleRow[]>();
+  for (const row of stale) {
+    const key = `${row.entityType} ${row.entityId}`;
+    const group = byEntity.get(key);
+    if (group) group.push(row);
+    else byEntity.set(key, [row]);
+  }
+
   const counts: BlurbFanoutCounts = {
     rewritten: 0,
     skipped: 0,
@@ -123,21 +158,21 @@ export async function runBlurbFanout({
   };
 
   await limitConcurrency(
-    stale.map((row) => async () => {
-      // A single row's adapter `save` can throw for reasons that have nothing to do with
+    [...byEntity.values()].map((rows) => async () => {
+      // A single entity's adapter `save` can throw for reasons that have nothing to do with
       // fan-out logic — e.g. Task 6's blocked-link-domain guard now runs against the
       // whole article body on every save, and an article can gain a newly-blocklisted
       // domain long after it was written. `limitConcurrency` rejects its WHOLE batch on
       // the first thrown error (see concurrency-helpers.ts), so without this catch one
-      // such row would abort every other row in the same pass, forever, on every run.
+      // such entity would abort every other one in the same pass, forever, on every run.
       try {
-        const outcome = await processBlurbReference(row, row);
-        if (outcome === 'unsupported') counts.failed++;
-        else counts[outcome]++;
+        const outcome = await processBlurbEntity(rows);
+        if (outcome === 'unsupported') counts.failed += rows.length;
+        else counts[outcome] += rows.length;
       } catch (error) {
-        counts.failed++;
+        counts.failed += rows.length;
         const err = error as Error;
-        // `warn`, not `error`: a permanently-failing row logs this on every run, and the job's
+        // `warn`, not `error`: a permanently-failing entity logs this on every run, and the job's
         // aggregate log already warns on a nonzero `failed`.
         await logToAxiom({
           type: 'error',
@@ -145,14 +180,16 @@ export async function runBlurbFanout({
           name: 'blurb-fanout-row',
           message: err.message,
           stack: err.stack,
-          blurbId: row.blurbId,
-          entityType: row.entityType,
-          entityId: row.entityId,
+          blurbIds: rows.map((r) => r.blurbId),
+          entityType: rows[0].entityType,
+          entityId: rows[0].entityId,
         }).catch(() => undefined);
-        try {
-          await recordFailure(row);
-        } catch {
-          // best effort: a row that keeps its old materializedAt is simply retried next pass
+        for (const row of rows) {
+          try {
+            await recordFailure(row);
+          } catch {
+            // best effort: a row that keeps its old materializedAt is simply retried next pass
+          }
         }
       }
     }),

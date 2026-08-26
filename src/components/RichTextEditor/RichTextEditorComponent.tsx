@@ -132,6 +132,7 @@ export function RichTextEditor({
   innerRef,
   onSuperEnter,
   withLinkValidation,
+  inlineFormattingOnly = false,
   stickyToolbar,
   toolbarOffset = 0,
   inputClasses,
@@ -172,12 +173,11 @@ export function RichTextEditor({
 
   const currentUser = useCurrentUser();
   const blurbsEnabled = useFeatureFlags().textBlurbs && addBlurbs;
-  const [docHasBlurb, setDocHasBlurb] = useState(false);
   const [hasOrphanedBlurb, setHasOrphanedBlurb] = useState(false);
-  // Off the flag the list is still needed to tell a live chip from a deleted one — but only for a
-  // document that actually holds one, or every logged-in editor mount pays for a cohort of mods.
+  // Not also "the document holds a chip": `blurb.getMine` is behind the same flag, so a fetch
+  // without it is a guaranteed 403 rather than the orphan detection it used to buy.
   const blurbsQuery = trpc.blurb.getMine.useQuery(undefined, {
-    enabled: !!currentUser && (blurbsEnabled || (addBlurbs && docHasBlurb)),
+    enabled: !!currentUser && blurbsEnabled,
   });
   const blurbs = useMemo(() => blurbsQuery.data ?? [], [blurbsQuery.data]);
   const blurbEditorState = useMemo(
@@ -204,8 +204,8 @@ export function RichTextEditor({
         italic: !addFormatting ? false : undefined,
         strike: !addFormatting ? false : undefined,
         code: !addFormatting ? false : undefined,
-        blockquote: !addFormatting ? false : undefined,
-        codeBlock: !addFormatting ? false : undefined,
+        blockquote: !addFormatting || inlineFormattingOnly ? false : undefined,
+        codeBlock: !addFormatting || inlineFormattingOnly ? false : undefined,
         dropcursor: !addMedia ? false : undefined,
         underline: !addFormatting ? false : undefined,
         link: false,
@@ -275,6 +275,7 @@ export function RichTextEditor({
     addBlurbs,
     addList,
     addFormatting,
+    inlineFormattingOnly,
     addColors,
     addLink,
     withLinkValidation,
@@ -364,15 +365,12 @@ export function RichTextEditor({
     if (!editor || !addBlurbs) return;
     const known = blurbsQuery.isSuccess ? new Set(blurbs.map((blurb) => blurb.id)) : null;
     const scan = () => {
-      let present = false;
       let orphaned = false;
       editor.state.doc.descendants((node) => {
         if (node.type.name !== 'blurb') return true;
-        present = true;
         if (known && !known.has(node.attrs.id)) orphaned = true;
         return false;
       });
-      setDocHasBlurb(present);
       setHasOrphanedBlurb(orphaned);
     };
     scan();
@@ -462,7 +460,7 @@ export function RichTextEditor({
                   <RTE.Underline />
                   <RTE.Strikethrough />
                   <RTE.ClearFormatting />
-                  <RTE.CodeBlock />
+                  {!inlineFormattingOnly && <RTE.CodeBlock />}
                   {addColors && (
                     <RTE.ColorPicker colors={[...constants.richTextEditor.presetColors]} />
                   )}
@@ -598,6 +596,12 @@ export type Props = Omit<RichTextEditorProps, 'editor' | 'children' | 'onChange'
     innerRef?: React.ForwardedRef<EditorCommandsRef>;
     onSuperEnter?: () => void;
     withLinkValidation?: boolean;
+    /**
+     * Drops the block-level half of the `formatting` group — blockquote and code block. For a
+     * surface whose STORED schema is inline-only: a block element there cannot round-trip, so
+     * offering the control promises something the save is going to flatten.
+     */
+    inlineFormattingOnly?: boolean;
     stickyToolbar?: boolean;
     toolbarOffset?: number;
     inputClasses?: string;

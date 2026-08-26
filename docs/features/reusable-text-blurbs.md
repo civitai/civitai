@@ -174,9 +174,12 @@ Two layers do the work, the second protecting the first:
 
 **The `updatedAt > lastRun` watermark this design started with was dropped.** It was Justin's
 suggestion — find blurbs touched since the last run via `getJobDate`, then look at their references
-— and once staleness became hash-derived it bought nothing: the hash join is exact and indexed, and
-a watermark can only lose work when a run is missed. Nothing reads `getJobDate` for this job, and
-`Blurb.@@index([updatedAt])` is consequently read by nothing today.
+— and once staleness became hash-derived it bought nothing: the hash join is exact, and a watermark
+can only lose work when a run is missed. Exact but NOT indexed —
+`r."materializedHash" <> b."contentHash"` compares two tables and is not sargable, so the selector
+pays a join over `BlurbReference`; `ORDER BY r."materializedAt" ASC` is what the index serves.
+Nothing reads `getJobDate` for this job, and `Blurb.@@index([updatedAt])` is consequently read by
+nothing today.
 
 It is self-healing with no queue state to reconcile. A reference whose hash does not match
 is stale, whatever went wrong before, so a crashed or half-finished run needs no recovery logic.
@@ -264,17 +267,25 @@ blurb-fanout job   (*/5 * * * *, lockExpiration 15m)
   +-- stale references: JOIN Blurb ON materializedHash <> contentHash OR deletedAt IS NOT NULL
   |     AND entityType = ANY(<registered adapter keys>)  ORDER BY materializedAt ASC  LIMIT 500
   |
-  +-- for each, through limitConcurrency(5):
-        entity no longer exists -> drop the reference row
-        span already holds this text -> record and skip
+  +-- GROUP the batch by (entityType, entityId)
+  |
+  +-- for each ENTITY, through limitConcurrency(5):
+        entity no longer exists -> drop its reference rows
+        body already holds every one of these texts -> record and skip
         otherwise:
-          rewrite the blurb span (or, for a soft-deleted blurb, unwrap it)
-          save via that entity's apply<Entity>ContentChange
+          rewrite EVERY stale blurb span in one pass (unwrapping the soft-deleted ones)
+          save via that entity's apply<Entity>ContentChange, ONCE
             -> whatever follow-up that surface has: see the tracking task
-        set materializedHash, materializedAt
+        set materializedHash, materializedAt on each of the entity's rows
   |
   +-- hard-delete soft-deleted blurbs that now have no references
 ```
+
+**The grouping is a correctness requirement, not a batching nicety.** `reconcileBlurbReferences`
+stamps all of an entity's rows from one `now`, so two blurbs edited in one manager session sort
+adjacently and land in the same window. Processed per reference, each task loads the same body,
+splices in only its own blurb and saves the whole thing — one update wins, the other is silently
+discarded, and both rows are stamped current so nothing ever retries it.
 
 The skip is not an optimisation for the expected path — the hash comparison already handles
 that. It is there so that a bug anywhere upstream costs a read rather than a fan-out of no-op
@@ -353,8 +364,10 @@ people who want this. The cost is accepted instead: a blurb edit may be a lot of
 
 Be clear-eyed about what that means. There is no cross-entity shortcut — scan deduplication is
 per entity and temporal (`orchestrator.service.ts:456`), and two models sharing a footer still
-have different surrounding text — so N references is genuinely N writes, N scans, N index syncs.
-A creator with two thousand models editing one blurb is two thousand of each.
+have different surrounding text — so N referencing ENTITIES is genuinely N writes, N scans, N
+index syncs. A creator with two thousand models editing one blurb is two thousand of each. What
+the per-entity grouping above does collapse is the other axis: an entity using k blurbs that all
+went stale costs one write, not k.
 
 **So the fan-out needs monitoring before the flag ramps**, not after: entities rewritten per
 run, per blurb and per creator, and how far the backlog is behind. The expectation is that most
@@ -518,12 +531,22 @@ it, which is why it went unnoticed.
 `sanitizeBlurbInterior` is the single definition of that allowlist and three places enforce it:
 `blurbContentSchema` at save, `replaceBlurbSpans` at every splice (both the interactive path and the
 fan-out), and `RenderRichText`'s blurb mapping at render. The blurb editor is a full RichTextEditor,
-so paragraph boundaries are converted to `<br />` before the strip runs — without that,
-`<p>a</p><p>b</p>` sanitizes to `ab` and silently runs the author's words together.
+so BLOCK boundaries are converted to `<br />` before the strip runs — without that,
+`<p>a</p><p>b</p>` sanitizes to `ab` and silently runs the author's words together. Every block tag,
+not just `p`: the toolbar drops blockquote and code block (`inlineFormattingOnly`), but
+`blurb.create` is reachable with no toolbar in the way.
+
+**Names are unique per creator among LIVE blurbs only** — `Blurb_userId_name_key` carries
+`WHERE "deletedAt" IS NULL`. Names are immutable by design, so delete-and-recreate is the way to fix
+a typo; unfiltered, the deleted row would squat the name and `createBlurb` would report a conflict
+for a name absent from the creator's list. Prisma cannot express a partial unique index, so
+`schema.full.prisma` documents it rather than declaring it, and `createBlurb` accepts both the field
+list and the raw index name in the P2002 it maps to that conflict.
 
 Two gates, covering different things. `featureFlags.textBlurbs` (`availability: ['mod']`,
 `fliptKey: 'text-blurbs'`) gates the two INSERTION paths — the toolbar control and the `//` picker —
-and never the node, so a blurb span already in a draft keeps parsing. `FLIPT_FEATURE_FLAGS.TEXT_BLURBS`
+plus the whole `blurb.*` tRPC router (`isFlagProtected('textBlurbs')`), and never the node, so a
+blurb span already in a draft keeps parsing. `FLIPT_FEATURE_FLAGS.TEXT_BLURBS`
 gates the server-side expansion in `expandBlurbs`, evaluated against the content OWNER so a rollout
 picks a sticky subset of creators. Both default off; `isFlipt` returns false for an unknown flag,
 and not expanding is the safe failure for a feature that rewrites published content.

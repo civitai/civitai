@@ -583,9 +583,14 @@ export const upsertModelVersion = async ({
   // an id present, and that new row references nothing yet.
   const editsExistingVersion = !!id && !templateId;
   const restrictToBlurbIds =
-    editsExistingVersion && model.userId !== actorId
+    model.userId === actorId
+      ? undefined
+      : editsExistingVersion
       ? await getReferencedBlurbIds({ entityType: 'ModelVersion', entityId: id as number })
-      : undefined;
+      : // A new row references nothing yet, so there is no set to keep — and `undefined` here
+        // would leave a moderator adding a version to someone else's model free to guess
+        // `data-id`s and read the creator's private blurb text out of the response.
+        [];
   const expansion = await expandBlurbs({
     userId: model.userId,
     html: data.description ?? '',

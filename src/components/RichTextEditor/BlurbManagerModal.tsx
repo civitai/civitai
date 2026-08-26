@@ -431,6 +431,9 @@ function BlurbForm({
             value={content}
             onChange={setContent}
             includeControls={['formatting', 'link']}
+            // A blurb is stored as inline html (see BLURB_INTERIOR_ALLOWED_TAGS), so a
+            // blockquote or code block cannot survive the save.
+            inlineFormattingOnly
             withLinkValidation
             editorSize="md"
           />

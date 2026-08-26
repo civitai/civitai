@@ -7,10 +7,18 @@ vi.mock('~/server/services/blurb-fanout.adapters', () => ({
   getBlurbFanoutAdapter: () => adapter,
 }));
 
-const { processBlurbReference } = await import('~/server/services/blurb-fanout.service');
+const { processBlurbEntity } = await import('~/server/services/blurb-fanout.service');
 
-const ref = { blurbId: 7, entityType: 'Article', entityId: 1, materializedHash: 'old' };
-const blurb = { id: 7, content: 'NEW', contentHash: 'new', deletedAt: null as Date | null };
+const row = {
+  blurbId: 7,
+  entityType: 'Article',
+  entityId: 1,
+  materializedHash: 'old',
+  id: 7,
+  content: 'NEW',
+  contentHash: 'new',
+  deletedAt: null as Date | null,
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -20,9 +28,9 @@ beforeEach(() => {
   });
 });
 
-describe('processBlurbReference', () => {
+describe('processBlurbEntity', () => {
   it('rewrites the span through the adapter save', async () => {
-    const result = await processBlurbReference(ref, blurb);
+    const result = await processBlurbEntity([row]);
     expect(result).toBe('rewritten');
     expect(adapter.save).toHaveBeenCalledWith({
       entityId: 1,
@@ -36,7 +44,7 @@ describe('processBlurbReference', () => {
       userId: 10,
       html: '<span data-type="blurb" data-id="7">NEW</span>',
     });
-    const result = await processBlurbReference(ref, blurb);
+    const result = await processBlurbEntity([row]);
     expect(result).toBe('skipped');
     expect(adapter.save).not.toHaveBeenCalled();
     // Still records, so the reference stops being selected.
@@ -45,14 +53,14 @@ describe('processBlurbReference', () => {
 
   it('drops the reference when the entity no longer exists', async () => {
     adapter.load.mockResolvedValue(null);
-    const result = await processBlurbReference(ref, blurb);
+    const result = await processBlurbEntity([row]);
     expect(result).toBe('gone');
     expect(dbMock.dbWrite.blurbReference.deleteMany).toHaveBeenCalled();
     expect(adapter.save).not.toHaveBeenCalled();
   });
 
   it('unwraps the span when the blurb is soft-deleted', async () => {
-    const result = await processBlurbReference(ref, { ...blurb, deletedAt: new Date() });
+    const result = await processBlurbEntity([{ ...row, deletedAt: new Date() }]);
     expect(result).toBe('rewritten');
     expect(adapter.save).toHaveBeenCalledWith({
       entityId: 1,
@@ -63,16 +71,75 @@ describe('processBlurbReference', () => {
   });
 
   it('records the new hash after a rewrite', async () => {
-    await processBlurbReference(ref, blurb);
+    await processBlurbEntity([row]);
     const call = dbMock.dbWrite.blurbReference.update.mock.calls[0][0];
     expect(call.data.materializedHash).toBe('new');
   });
 
   it('drops the reference when a soft-deleted blurb is already unwrapped', async () => {
     adapter.load.mockResolvedValue({ userId: 10, html: 'OLD' });
-    const result = await processBlurbReference(ref, { ...blurb, deletedAt: new Date() });
+    const result = await processBlurbEntity([{ ...row, deletedAt: new Date() }]);
     expect(result).toBe('skipped');
     expect(adapter.save).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.blurbReference.deleteMany).toHaveBeenCalled();
+  });
+});
+
+describe('processBlurbEntity — two stale blurbs in one entity', () => {
+  const rowA = { ...row, blurbId: 7, id: 7, content: 'A-NEW', contentHash: 'ha' };
+  const rowB = { ...row, blurbId: 8, id: 8, content: 'B-NEW', contentHash: 'hb' };
+
+  beforeEach(() => {
+    adapter.load.mockResolvedValue({
+      userId: 10,
+      html:
+        '<span data-type="blurb" data-id="7">A-OLD</span>' +
+        '<span data-type="blurb" data-id="8">B-OLD</span>',
+    });
+  });
+
+  it('🔴 applies both in a single save, so neither edit is discarded', async () => {
+    // Per-reference processing loaded the same html twice and replaced only its own blurb, so
+    // one save overwrote the other's and BOTH rows were still stamped current — a permanent,
+    // silent loss on published content.
+    const result = await processBlurbEntity([rowA, rowB]);
+
+    expect(result).toBe('rewritten');
+    expect(adapter.save).toHaveBeenCalledTimes(1);
+    expect(adapter.save.mock.calls[0][0].html).toBe(
+      '<span data-type="blurb" data-id="7">A-NEW</span>' +
+        '<span data-type="blurb" data-id="8">B-NEW</span>'
+    );
+  });
+
+  it('loads the entity once for the whole group', async () => {
+    await processBlurbEntity([rowA, rowB]);
+    expect(adapter.load).toHaveBeenCalledTimes(1);
+  });
+
+  it('records both rows so neither is re-selected', async () => {
+    await processBlurbEntity([rowA, rowB]);
+
+    const recorded = dbMock.dbWrite.blurbReference.update.mock.calls.map(([arg]) => ({
+      blurbId: arg.where.blurbId_entityType_entityId.blurbId,
+      hash: arg.data.materializedHash,
+    }));
+    expect(recorded).toEqual([
+      { blurbId: 7, hash: 'ha' },
+      { blurbId: 8, hash: 'hb' },
+    ]);
+  });
+
+  it('replaces a live blurb and unwraps a deleted one in the same pass', async () => {
+    await processBlurbEntity([rowA, { ...rowB, deletedAt: new Date() }]);
+
+    expect(adapter.save.mock.calls[0][0].html).toBe(
+      '<span data-type="blurb" data-id="7">A-NEW</span>B-OLD'
+    );
+    // The deleted one's row goes; the live one's is recorded.
+    expect(dbMock.dbWrite.blurbReference.deleteMany).toHaveBeenCalledWith({
+      where: { entityType: 'Article', entityId: 1, blurbId: { in: [8] } },
+    });
+    expect(dbMock.dbWrite.blurbReference.update).toHaveBeenCalledTimes(1);
   });
 });

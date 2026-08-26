@@ -10,13 +10,18 @@ import {
 
 export const MAX_BLURBS_PER_USER = 20;
 
+// The index is PARTIAL (`WHERE "deletedAt" IS NULL`, so a deleted blurb stops squatting its name),
+// which Prisma cannot express and therefore does not know about — it reports the raw index name
+// rather than mapping it back to `['userId', 'name']`. Both shapes are accepted so this keeps
+// working either way.
+const BLURB_NAME_INDEX = 'Blurb_userId_name_key';
+
 function isUniqueNameViolation(error: unknown) {
-  return (
-    error instanceof Prisma.PrismaClientKnownRequestError &&
-    error.code === 'P2002' &&
-    Array.isArray(error.meta?.target) &&
-    (error.meta.target as string[]).includes('name')
-  );
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002')
+    return false;
+  const target = error.meta?.target;
+  if (typeof target === 'string') return target === BLURB_NAME_INDEX;
+  return Array.isArray(target) && (target as string[]).includes('name');
 }
 
 // Names are immutable by design: a blurb's name is how a creator refers to it,

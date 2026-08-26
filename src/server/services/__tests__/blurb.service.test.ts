@@ -9,7 +9,7 @@ import {
   updateBlurbContent,
 } from '~/server/services/blurb.service';
 
-const p2002 = (target: string[]) =>
+const p2002 = (target: string[] | string) =>
   new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
     code: 'P2002',
     clientVersion: '1',
@@ -41,7 +41,10 @@ describe('createBlurb', () => {
   it('refuses past the per-creator cap', async () => {
     mockDbWrite.blurb.count.mockResolvedValue(MAX_BLURBS_PER_USER);
     const promise = createBlurb({ userId: 10, name: 'x', content: 'y' });
-    await expect(promise).rejects.toThrow(/limit of 20/i);
+    // The value, not just the shape — `/limit of 20/` also matches "limit of 200".
+    await expect(promise).rejects.toThrow(
+      new RegExp(`limit of ${MAX_BLURBS_PER_USER} blurbs`, 'i')
+    );
     await expect(promise).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     expect(mockDbWrite.blurb.create).not.toHaveBeenCalled();
   });
@@ -55,6 +58,16 @@ describe('createBlurb', () => {
 
   it('turns a duplicate name into a friendly conflict, not the raw Prisma text', async () => {
     mockDbWrite.blurb.create.mockRejectedValue(p2002(['userId', 'name']));
+    const promise = createBlurb({ userId: 10, name: 'footer', content: 'y' });
+    await expect(promise).rejects.toMatchObject({ code: 'CONFLICT' });
+    await expect(promise).rejects.toThrow(/already have a blurb named "footer"/i);
+  });
+
+  it('turns the raw partial-index name into the same conflict', async () => {
+    // The index carries a WHERE clause, so it is not declared in schema.prisma and Prisma reports
+    // the index NAME rather than the field list. Match only the array shape and every duplicate
+    // name surfaces as a raw Prisma error instead.
+    mockDbWrite.blurb.create.mockRejectedValue(p2002('Blurb_userId_name_key'));
     const promise = createBlurb({ userId: 10, name: 'footer', content: 'y' });
     await expect(promise).rejects.toMatchObject({ code: 'CONFLICT' });
     await expect(promise).rejects.toThrow(/already have a blurb named "footer"/i);

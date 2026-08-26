@@ -48,8 +48,10 @@ describe('expandBlurbs', () => {
     expect(html).toBe('<span data-type="blurb" data-id="7">REAL</span>');
   });
 
-  it('unwraps a span whose blurb belongs to another user', async () => {
-    // The ownership filter is in the query, so a foreign blurb simply does not come back.
+  it('unwraps a span the query returned nothing for', async () => {
+    // Says nothing about WHY the row is missing — the mock returns [] whatever the `where` is.
+    // The ownership filter itself is pinned by 'scopes the lookup to the saving user', and the
+    // restrict predicate by the `restrictToBlurbIds` block below, both of which read the `where`.
     dbRead.blurb.findMany.mockResolvedValue([]);
     const { html, uses } = await expandEvaluated({
       userId: 10,
@@ -109,6 +111,82 @@ describe('expandBlurbs', () => {
 
     isFlipt.mockResolvedValue(false);
     expect(await expandBlurbs({ userId: 10, html })).toEqual({ evaluated: false, html });
+  });
+
+  describe('restrictToBlurbIds', () => {
+    // The one predicate that stops a non-owner splicing a stranger's private blurb text into a
+    // response they read back. Run against the REAL expandBlurbs, with a findMany that HONOURS
+    // the id filter — a mock returning a fixed list would pass whether the filter exists or not.
+    const OWNER_BLURBS = [
+      { id: 7, contentHash: 'h7', content: 'REFERENCED' },
+      { id: 8, contentHash: 'h8', content: 'PRIVATE' },
+    ];
+
+    beforeEach(() => {
+      dbRead.blurb.findMany.mockImplementation(async ({ where }: any) =>
+        OWNER_BLURBS.filter((b) => where.id.in.includes(b.id))
+      );
+    });
+
+    it('resolves an id the entity already references', async () => {
+      const { html, uses } = await expandEvaluated({
+        userId: 10,
+        html: '<span data-type="blurb" data-id="7">stale</span>',
+        restrictToBlurbIds: [7],
+      });
+
+      expect(html).toBe('<span data-type="blurb" data-id="7">REFERENCED</span>');
+      expect(uses).toEqual([{ blurbId: 7, contentHash: 'h7' }]);
+    });
+
+    it('🔴 resolves nothing for a guessed id, and unwraps that span to plain text', async () => {
+      // Blurb 8 is the owner's and would resolve on an unrestricted call — the negative control
+      // for the test above, and the whole reason the parameter exists.
+      const { html, uses } = await expandEvaluated({
+        userId: 10,
+        html: '<span data-type="blurb" data-id="8">guessed</span>',
+        restrictToBlurbIds: [7],
+      });
+
+      expect(html).toBe('guessed');
+      expect(html).not.toContain('PRIVATE');
+      expect(uses).toEqual([]);
+    });
+
+    it('🔴 never asks the database for an id outside the list', async () => {
+      await expandBlurbs({
+        userId: 10,
+        html:
+          '<span data-type="blurb" data-id="7">a</span>' +
+          '<span data-type="blurb" data-id="8">b</span>',
+        restrictToBlurbIds: [7],
+      });
+
+      expect(dbRead.blurb.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ id: { in: [7] } }) })
+      );
+    });
+
+    it('skips the query entirely when no span survives the restriction', async () => {
+      const { html, uses } = await expandEvaluated({
+        userId: 10,
+        html: '<span data-type="blurb" data-id="8">guessed</span>',
+        restrictToBlurbIds: [],
+      });
+
+      expect(html).toBe('guessed');
+      expect(uses).toEqual([]);
+      expect(dbRead.blurb.findMany).not.toHaveBeenCalled();
+    });
+
+    it('leaves an owner passing no list unrestricted', async () => {
+      const { html } = await expandEvaluated({
+        userId: 10,
+        html: '<span data-type="blurb" data-id="8">stale</span>',
+      });
+
+      expect(html).toBe('<span data-type="blurb" data-id="8">PRIVATE</span>');
+    });
   });
 
   it('resolves one span and unwraps another in the same document, on both sides of it', async () => {

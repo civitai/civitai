@@ -19,7 +19,12 @@ CREATE TABLE "BlurbReference" (
     CONSTRAINT "BlurbReference_pkey" PRIMARY KEY ("blurbId", "entityType", "entityId")
 );
 
-CREATE UNIQUE INDEX "Blurb_userId_name_key" ON "Blurb"("userId", "name");
+-- Partial: names are immutable by design, so delete-and-recreate is the only way to fix a
+-- typo. Unfiltered, a soft-deleted blurb squats its name and createBlurb reports a conflict
+-- for a name absent from the user's list. Matches the cap check, which already filters on
+-- deletedAt. NOT expressible as a Prisma @@unique (it carries a WHERE), so schema.full.prisma
+-- documents it instead of declaring it.
+CREATE UNIQUE INDEX "Blurb_userId_name_key" ON "Blurb"("userId", "name") WHERE "deletedAt" IS NULL;
 CREATE INDEX "Blurb_updatedAt_idx" ON "Blurb"("updatedAt");
 CREATE INDEX "BlurbReference_entityType_entityId_idx" ON "BlurbReference"("entityType", "entityId");
 CREATE INDEX "BlurbReference_materializedAt_idx" ON "BlurbReference"("materializedAt");

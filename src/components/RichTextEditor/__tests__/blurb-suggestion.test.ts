@@ -129,3 +129,29 @@ describe('createBlurbSuggestion', () => {
     expect(onManage).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('mounting alongside mentions', () => {
+  it('🔴 constructs an editor carrying both the mention and blurb suggestions', async () => {
+    const { Editor } = await import('@tiptap/react');
+    const { default: StarterKit } = await import('@tiptap/starter-kit');
+    const { MentionNode } = await import('~/components/TipTap/MentionNode');
+    const { BlurbEditNode } = await import('~/components/TipTap/BlurbNode');
+    const { getSuggestions } = await import('~/components/RichTextEditor/suggestion');
+
+    // `ModelUpsertForm` passes both `'mentions'` and `'blurb'`, and `RichTextEditorComponent`
+    // registers each off `includeControls` alone — not off the feature flag — so a shared
+    // ProseMirror plugin key throws `Adding different instances of a keyed plugin (suggestion$)`
+    // out of `EditorState.create` for every user on the model description step. `new Editor()`
+    // is uncaught in @tiptap/react and there is no ErrorBoundary in src/.
+    const editor = new Editor({
+      extensions: [
+        StarterKit,
+        MentionNode.configure({ suggestion: getSuggestions({ defaultSuggestions: [] }) }),
+        BlurbEditNode,
+      ],
+    });
+
+    expect(editor.state.plugins.length).toBeGreaterThan(0);
+    editor.destroy();
+  });
+});

@@ -27,8 +27,8 @@ const {
   getReferencedBlurbIds: vi.fn(),
   reconcileBlurbReferences: vi.fn(),
   submitTextModeration: vi.fn(),
-  preventReplicationLag: vi.fn(async () => {}),
-  refreshUserArticleCount: vi.fn(async () => {}),
+  preventReplicationLag: vi.fn(async () => undefined),
+  refreshUserArticleCount: vi.fn(async () => undefined),
   throwOnBlockedLinkDomain: vi.fn(),
 }));
 

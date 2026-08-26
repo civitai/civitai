@@ -28,32 +28,48 @@ type FakeRow = {
   materializedAt: number; // fake-table ordering only, not part of the real SELECT list
 };
 
-function makeRow(id: number, entityType: string, materializedAt: number): FakeRow {
+// `entityId` is deliberately NOT `blurbId`: they were the same value here, which made every
+// fake row its own entity and hid the lost-update the per-entity batching exists to stop.
+function makeRow(
+  id: number,
+  entityType: string,
+  materializedAt: number,
+  entityId = id * 100
+): FakeRow {
   return {
     blurbId: id,
     entityType,
-    entityId: id,
+    entityId,
     materializedHash: 'old',
     id,
-    content: 'NEW',
-    contentHash: 'new',
+    content: `NEW-${id}`,
+    contentHash: `new-${id}`,
     deletedAt: null,
     materializedAt,
   };
 }
 
 let table: FakeRow[] = [];
+/** Per-entity html, for a test that needs a body the default builder can't express. */
+let entityBodies = new Map<number, string>();
 
 beforeEach(() => {
   vi.clearAllMocks();
   table = [];
-  // `entityId` and `blurbId` are the same value in the fake table (see `makeRow`), so a
-  // span tagged with the loaded entityId always matches the blurb being processed and a
-  // supported row always has something real to rewrite.
-  adapter.load.mockImplementation(async (entityId: number) => ({
-    userId: 10,
-    html: `<span data-type="blurb" data-id="${entityId}">OLD</span>`,
-  }));
+  entityBodies = new Map();
+  // Serves a body carrying a span for every blurb that references this entity, so a supported
+  // row always has something real to rewrite and a two-blurb entity can be observed losing one.
+  adapter.load.mockImplementation(async (entityId: number) =>
+    entityBodies.has(entityId)
+      ? { userId: 10, html: entityBodies.get(entityId) as string }
+      : {
+          userId: 10,
+          html: table
+            .filter((r) => r.entityId === entityId)
+            .map((r) => `<span data-type="blurb" data-id="${r.blurbId}">OLD-${r.blurbId}</span>`)
+            .join(''),
+        }
+  );
   adapter.save.mockResolvedValue(undefined);
 
   // Stands in for Postgres: filters by the same `entityType = ANY(...)` argument the real
@@ -80,8 +96,10 @@ beforeEach(() => {
         r.blurbId === key.blurbId && r.entityType === key.entityType && r.entityId === key.entityId
     );
     if (!row) return undefined;
-    if (args.data.materializedAt instanceof Date) row.materializedAt = args.data.materializedAt.getTime();
-    if (typeof args.data.materializedHash === 'string') row.materializedHash = args.data.materializedHash;
+    if (args.data.materializedAt instanceof Date)
+      row.materializedAt = args.data.materializedAt.getTime();
+    if (typeof args.data.materializedHash === 'string')
+      row.materializedHash = args.data.materializedHash;
     return undefined;
   });
 });
@@ -95,7 +113,7 @@ describe('runBlurbFanout — selector', () => {
     // Only the supported row ever reaches the adapter — proves the unsupported one
     // never entered the processing loop at all.
     expect(adapter.load).toHaveBeenCalledTimes(1);
-    expect(adapter.load).toHaveBeenCalledWith(2);
+    expect(adapter.load).toHaveBeenCalledWith(200);
   });
 });
 
@@ -123,11 +141,7 @@ describe('runBlurbFanout — starvation regression', () => {
 
 describe('runBlurbFanout — unsupported count', () => {
   it('still reports how many references are stuck on an unsupported entity type', async () => {
-    table = [
-      makeRow(1, 'Unsupported', 1),
-      makeRow(2, 'Unsupported', 2),
-      makeRow(3, 'Article', 3),
-    ];
+    table = [makeRow(1, 'Unsupported', 1), makeRow(2, 'Unsupported', 2), makeRow(3, 'Article', 3)];
 
     const result = await runBlurbFanout({ limit: 5 });
 
@@ -158,7 +172,7 @@ describe('runBlurbFanout — a failing row cannot wedge the batch', () => {
     // Simulates Task 6's blocked-link-domain guard (or any other adapter.save failure)
     // tripping on one specific row, mid-batch.
     adapter.save.mockImplementation(async (args: { entityId: number }) => {
-      if (args.entityId === 1) throw new Error('blocked domain');
+      if (args.entityId === 100) throw new Error('blocked domain');
     });
 
     table = [makeRow(1, 'Article', 1), makeRow(2, 'Article', 2)];
@@ -168,8 +182,8 @@ describe('runBlurbFanout — a failing row cannot wedge the batch', () => {
     expect(result.failed).toBe(1);
     expect(result.rewritten).toBe(1);
     // Both rows were attempted — row 2 was never skipped because row 1 threw.
-    expect(adapter.load).toHaveBeenCalledWith(1);
-    expect(adapter.load).toHaveBeenCalledWith(2);
+    expect(adapter.load).toHaveBeenCalledWith(100);
+    expect(adapter.load).toHaveBeenCalledWith(200);
   });
 
   it("advances the failing row's materializedAt, so it doesn't head the next window", async () => {
@@ -183,7 +197,7 @@ describe('runBlurbFanout — a failing row cannot wedge the batch', () => {
 
     const call = dbMock.dbWrite.blurbReference.update.mock.calls[0][0];
     expect(call.where).toEqual({
-      blurbId_entityType_entityId: { blurbId: 1, entityType: 'Article', entityId: 1 },
+      blurbId_entityType_entityId: { blurbId: 1, entityType: 'Article', entityId: 100 },
     });
     expect(call.data.materializedAt).toBeInstanceOf(Date);
     // Never the hash — the row's content was never actually applied.
@@ -197,7 +211,7 @@ describe('runBlurbFanout — a failing row cannot wedge the batch', () => {
     // recordFailure's materializedAt bump exists for, asserted end-to-end via a second pass
     // rather than just the shape of the write.
     adapter.save.mockImplementation(async (args: { entityId: number }) => {
-      if (args.entityId === 1) throw new Error('blocked domain');
+      if (args.entityId === 100) throw new Error('blocked domain');
     });
     table = [makeRow(1, 'Article', 1), makeRow(2, 'Article', 2)];
 
@@ -213,8 +227,40 @@ describe('runBlurbFanout — a failing row cannot wedge the batch', () => {
     // recordFailure's write (via the update mock's fake-table mutation set up in
     // beforeEach) pushed row 1's materializedAt past row 2's, so row 2 — not row 1 again —
     // is what this pass reaches.
-    expect(adapter.load).toHaveBeenCalledWith(2);
-    expect(adapter.load).not.toHaveBeenCalledWith(1);
+    expect(adapter.load).toHaveBeenCalledWith(200);
+    expect(adapter.load).not.toHaveBeenCalledWith(100);
     expect(second.rewritten).toBe(1);
+  });
+});
+
+describe('runBlurbFanout — two stale blurbs on one entity', () => {
+  it('🔴 applies both after a single pass', async () => {
+    // Both were edited in one manager session, so reconcileBlurbReferences stamped them from one
+    // `now` and they sort adjacently into the same window. Processed per reference, each task
+    // loaded the same body, spliced in only its own blurb and saved the whole thing — one update
+    // won, the other was discarded, and both rows were stamped current so nothing retried it.
+    const ENTITY = 500;
+    table = [makeRow(1, 'Article', 1, ENTITY), makeRow(2, 'Article', 1, ENTITY)];
+
+    const result = await runBlurbFanout({ limit: 5 });
+
+    expect(adapter.save).toHaveBeenCalledTimes(1);
+    expect(adapter.save.mock.calls[0][0].html).toBe(
+      '<span data-type="blurb" data-id="1">NEW-1</span>' +
+        '<span data-type="blurb" data-id="2">NEW-2</span>'
+    );
+    expect(result.rewritten).toBe(2);
+
+    // And both rows are stamped current. That half was already true of the broken version — it is
+    // what made the lost edit permanent — so it only means anything next to the html above.
+    expect(
+      dbMock.dbWrite.blurbReference.update.mock.calls.map(([arg]) => [
+        arg.where.blurbId_entityType_entityId.blurbId,
+        arg.data.materializedHash,
+      ])
+    ).toEqual([
+      [1, 'new-1'],
+      [2, 'new-2'],
+    ]);
   });
 });

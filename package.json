@@ -384,6 +384,7 @@
     "eslint-plugin-local-rules": "^3.0.2",
     "eslint-plugin-tailwindcss": "^3.15.1",
     "husky": "^9.1.1",
+    "jsdom": "^27.4.0",
     "pg-format": "^1.0.4",
     "playwright": "^1.57.0",
     "postcss": "^8.5.3",

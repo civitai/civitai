@@ -8191,7 +8191,10 @@ model Blurb {
 
   references BlurbReference[]
 
-  @@unique([userId, name])
+  // RAW partial unique index (NOT expressible in Prisma @@unique — it carries a WHERE):
+  // "Blurb_userId_name_key" UNIQUE (userId, name) WHERE "deletedAt" IS NULL. Created in
+  // 20260825000000_add_blurbs (manual-apply). createBlurb relies on its P2002 to report a
+  // duplicate name.
   @@index([updatedAt])
 }
 

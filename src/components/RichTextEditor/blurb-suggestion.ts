@@ -1,10 +1,20 @@
 import { computePosition, flip, shift } from '@floating-ui/dom';
+import { PluginKey } from '@tiptap/pm/state';
 import type { Editor } from '@tiptap/react';
 import { posToDOMRect, ReactRenderer } from '@tiptap/react';
 import type { SuggestionOptions, SuggestionProps } from '@tiptap/suggestion';
 import { BlurbList, type BlurbListRef } from '~/components/RichTextEditor/BlurbList';
 import type { BlurbItem } from '~/components/RichTextEditor/blurb.util';
 import { insertBlurb } from '~/components/RichTextEditor/blurb.util';
+
+/**
+ * Its own key, and it has to be. `@tiptap/suggestion` defaults `pluginKey` to the shared
+ * `SuggestionPluginKey`, which mentions (`suggestion.ts`) deliberately pins so `exitSuggestion()`
+ * reaches its reducer — only one plugin can hold that. Sharing it is "Adding different instances
+ * of a keyed plugin" at `EditorState.create`, i.e. every editor carrying both extensions throws on
+ * mount rather than misbehaving subtly.
+ */
+export const BlurbSuggestionPluginKey = new PluginKey('blurbSuggestion');
 
 /**
  * `getItems` is a function rather than a static array so the editor wrapper can reach a live query
@@ -46,6 +56,7 @@ export function createBlurbSuggestion({
   };
 
   const suggestion: Omit<SuggestionOptions<BlurbItem>, 'editor'> = {
+    pluginKey: BlurbSuggestionPluginKey,
     // `//`, not `/` — a lone slash is common in prose. `allowSpaces` is false and `allowedPrefixes`
     // is left at the plugin's default, so the character before the match must be whitespace or the
     // start of the current text node. That is what keeps `https://` from opening the popover: its

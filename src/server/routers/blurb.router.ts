@@ -9,11 +9,13 @@ import {
   deleteBlurbInputSchema,
   updateBlurbInputSchema,
 } from '~/server/schema/blurb.schema';
-import { protectedProcedure, router } from '~/server/trpc';
+import { isFlagProtected, protectedProcedure, router } from '~/server/trpc';
+
+const blurbProcedure = protectedProcedure.use(isFlagProtected('textBlurbs'));
 
 export const blurbRouter = router({
-  getMine: protectedProcedure.query(getMyBlurbsHandler),
-  create: protectedProcedure.input(createBlurbInputSchema).mutation(createBlurbHandler),
-  update: protectedProcedure.input(updateBlurbInputSchema).mutation(updateBlurbHandler),
-  delete: protectedProcedure.input(deleteBlurbInputSchema).mutation(deleteBlurbHandler),
+  getMine: blurbProcedure.query(getMyBlurbsHandler),
+  create: blurbProcedure.input(createBlurbInputSchema).mutation(createBlurbHandler),
+  update: blurbProcedure.input(updateBlurbInputSchema).mutation(updateBlurbHandler),
+  delete: blurbProcedure.input(deleteBlurbInputSchema).mutation(deleteBlurbHandler),
 });

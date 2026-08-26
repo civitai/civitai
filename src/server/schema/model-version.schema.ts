@@ -290,34 +290,8 @@ export const modelVersionUpsertSchema = z.object({
   baseModel: baseModelSchema,
   baseModelType: z.enum(constants.baseModelTypes).nullish(),
   description: getSanitizedStringSchema({
-    // `span` is absent from the app-wide default list this narrows, so without it here a blurb
-    // span is stripped at save and `expandBlurbs` sees plain text — the control would render
-    // and silently do nothing on this surface alone. `allowBlurbs` is an attribute STRIP
-    // toggle, not a tag admission, so it cannot admit the tag on its own.
-    allowedTags: [
-      'div',
-      'strong',
-      'p',
-      'em',
-      'u',
-      's',
-      'a',
-      'br',
-      'ul',
-      'ol',
-      'li',
-      'code',
-      'pre',
-      'span',
-    ],
-    // Admitting `span` re-opens what this surface used to strip outright, so its attributes are
-    // narrowed to the two a blurb needs. That closes `style`/`class` (CSS injection) and
-    // `data-label`.
-    // `data-type` + `data-id` are exactly what a mention carries, so a mention span survives here
-    // and gets a real hover card. Parity with every other rich-text surface, not a new exposure.
-    allowedAttributes: { ...DEFAULT_ALLOWED_ATTRIBUTES, span: ['data-type', 'data-id'] },
+    allowedTags: ['div', 'strong', 'p', 'em', 'u', 's', 'a', 'br', 'ul', 'ol', 'li', 'code', 'pre'],
     stripEmpty: true,
-    allowBlurbs: true,
   }).nullish(),
   steps: z.coerce.number().min(0).nullish(),
   epochs: z.coerce.number().min(0).max(100000).nullish(),

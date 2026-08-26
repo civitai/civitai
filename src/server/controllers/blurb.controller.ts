@@ -1,8 +1,5 @@
 import type { ProtectedContext } from '~/server/createContext';
-import type {
-  CreateBlurbInput,
-  UpdateBlurbInput,
-} from '~/server/schema/blurb.schema';
+import type { CreateBlurbInput, UpdateBlurbInput } from '~/server/schema/blurb.schema';
 import {
   createBlurb,
   getBlurbsForUser,
@@ -27,7 +24,8 @@ export async function createBlurbHandler({
   ctx: ProtectedContext;
 }) {
   try {
-    return await createBlurb({ userId: ctx.user.id, ...input });
+    // `userId` last: spread first and a `userId` in the input would override the session's.
+    return await createBlurb({ ...input, userId: ctx.user.id });
   } catch (error) {
     throw throwDbError(error);
   }
@@ -41,7 +39,7 @@ export async function updateBlurbHandler({
   ctx: ProtectedContext;
 }) {
   try {
-    return await updateBlurbContent({ userId: ctx.user.id, ...input });
+    return await updateBlurbContent({ ...input, userId: ctx.user.id });
   } catch (error) {
     throw throwDbError(error);
   }
