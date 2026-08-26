@@ -45,6 +45,7 @@ import {
   isOwnerUnpublishedListing,
   readLastModerationAction,
   isOwnerUnpublishAction,
+  LISTING_STATUS_CHANGING_MODERATION_ACTIONS,
 } from '~/server/services/blocks/app-listing-owner-unpublish';
 // TYPE-ONLY (erased at compile time) — the runtime reach into `app-access.service` stays
 // a dynamic import, so this adds nothing to the module graph. See `resolveListingRole`.
@@ -3448,10 +3449,21 @@ export async function listMySubmissions(opts: { userId: number } & ListOffsiteRe
   );
 
   // W13 post-approval mgmt (owner controls): for every REMOVED listing on the page,
-  // fetch its MOST-RECENT moderation-event action so the my-submissions UI can tell
-  // an owner-hidden listing (last event `owner-unpublish` → republish-eligible) from
-  // a moderator takedown (last event `delist` → republish FORBIDDEN, shown as
-  // "removed by a moderator") WITHOUT a per-row history fetch.
+  // fetch its MOST-RECENT STATUS-CHANGING moderation-event action so the my-submissions
+  // UI can tell an owner-hidden listing (last event `owner-unpublish` →
+  // republish-eligible) from a moderator takedown (last event `delist` → republish
+  // FORBIDDEN, shown as "removed by a moderator") WITHOUT a per-row history fetch.
+  //
+  // 🔴 THE `action IN (…)` PREDICATE IS LOAD-BEARING, AND ITS VALUES COME FROM
+  // `LISTING_STATUS_CHANGING_MODERATION_ACTIONS` — the same constant the Prisma reads use.
+  // This is the PRIMARY surface for the feature, and an unfiltered `DISTINCT ON` answers a
+  // different question from the server gate (`republishOwnListing`, the author edit paths):
+  // a `message-owner` / `claim` / `report-resolve` row newer than the owner's own
+  // `owner-unpublish` would badge the listing "removed by a moderator" and hide Republish on
+  // a listing the server would happily republish. Raw SQL is exactly where a second
+  // hand-maintained spelling of the set would go unnoticed, so the list is interpolated as
+  // BOUND PARAMETERS from the constant rather than typed out. The whole normalised statement
+  // is pinned in `offsite-listing.edit.service.test.ts`.
   //
   // Fix B4 (scaling): a Prisma `findMany({ distinct, orderBy: createdAt })` CANNOT
   // emit Postgres `DISTINCT ON` here — the `distinct` column (`appListingId`) is not
@@ -3472,6 +3484,7 @@ export async function listMySubmissions(opts: { userId: number } & ListOffsiteRe
             action
           FROM app_listing_moderation_events
           WHERE app_listing_id IN (${Prisma.join(removedParentIds)})
+            AND action IN (${Prisma.join([...LISTING_STATUS_CHANGING_MODERATION_ACTIONS])})
           ORDER BY app_listing_id, created_at DESC, id DESC
         `)
       : [];

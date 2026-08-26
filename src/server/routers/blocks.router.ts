@@ -118,6 +118,9 @@ import {
   computeListingProblems,
   type ListingProblemKind,
 } from '~/server/services/blocks/listing-problems';
+// The ONE spelling of "which moderation actions can explain a removal". Value import:
+// it is spread into a Prisma `where` below. See `app-listing-owner-unpublish`.
+import { LISTING_STATUS_CHANGING_MODERATION_ACTIONS } from '~/server/services/blocks/app-listing-owner-unpublish';
 import { getRequestDomainColor, isHostForColor } from '~/server/utils/server-domain';
 // Type-only: the runtime `resolveCanGenerateForVersions` is loaded via a
 // dynamic import() inside assertViewerCanGeneratePageResources so the heavy
@@ -2315,18 +2318,30 @@ export const blocksRouter = router({
       }
     }
 
-    // For every REMOVED backing listing, its MOST-RECENT moderation-event action —
-    // so the UI distinguishes an owner-hidden listing (last event `owner-unpublish`
-    // → Republish-eligible) from a moderator takedown (last event `delist`/`purge` →
-    // Republish FORBIDDEN, shown as "removed by a moderator"). Batched `distinct` +
-    // `orderBy desc` (ONE query, latest per listing), only over removed listings —
-    // mirrors the off-site `listMySubmissions` approach.
+    // For every REMOVED backing listing, its MOST-RECENT STATUS-CHANGING moderation-event
+    // action — so the UI distinguishes an owner-hidden listing (last event
+    // `owner-unpublish` → Republish-eligible) from a moderator takedown (last event
+    // `delist`/`purge` → Republish FORBIDDEN, shown as "removed by a moderator"). Batched
+    // `distinct` + `orderBy desc` (ONE query, latest per listing), only over removed
+    // listings — mirrors the off-site `listMySubmissions` approach.
+    //
+    // 🔴 FILTERED TO THE STATUS-CHANGING SET, FROM THE SHARED CONSTANT. An unfiltered read
+    // here answers a DIFFERENT question from the server gate (`republishOwnListing` and the
+    // author edit paths, which all route through `readLastModerationAction`), and the two
+    // disagree the moment a state-neutral event lands on top: a moderator's `message-owner`
+    // ("fix X and republish") is newest, the client maps "not owner-unpublish" to
+    // `mod-removed`, and /apps/mine tells the owner a moderator removed a listing the server
+    // would happily republish — killing the repair loop this feature exists for. `claim`,
+    // `report-resolve` and `report-dismiss` do the same. One spelling of the set.
     const removedListingIds = [...listingByBlockId.values()]
       .filter((l) => l.status === 'removed')
       .map((l) => l.id);
     const lastEvents = removedListingIds.length
       ? await dbRead.appListingModerationEvent.findMany({
-          where: { appListingId: { in: removedListingIds } },
+          where: {
+            appListingId: { in: removedListingIds },
+            action: { in: [...LISTING_STATUS_CHANGING_MODERATION_ACTIONS] },
+          },
           orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
           distinct: ['appListingId'],
           select: { appListingId: true, action: true },
