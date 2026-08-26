@@ -16,26 +16,111 @@ import { afterEach, vi } from 'vitest';
 import { render, cleanup } from 'vitest-browser-react';
 import { MantineProvider } from '@mantine/core';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+// Raw text, NOT a stylesheet import — see the block below for why that distinction
+// is the whole point.
+import globalsCss from '~/styles/globals.css?raw';
 
-// `vi.waitFor` defaults to a 1000ms timeout. That's fine for a DOM mount, but
-// the browser suite has ~80 waitFor sites and many await an async round-trip
-// (postMessage → consent dialog, a tRPC query settling, a zustand store update).
-// On the saturated preview CI box (browser tests share the host with the image
-// build) a genuinely-correct round-trip can exceed 1000ms, so the waitFor times
-// out and the test PASS→FAILs on load, not on code. Raise the DEFAULT timeout
-// globally (calls that pass their own timeout are untouched) — one root-cause fix
-// for the whole 1000ms-vs-contention class instead of editing every call site.
-{
-  const DEFAULT_WAITFOR_TIMEOUT_MS = 10000;
-  const original = vi.waitFor.bind(vi);
-  vi.waitFor = ((callback: Parameters<typeof original>[0], options?: number | object) => {
-    const opts = typeof options === 'number' ? { timeout: options } : { ...(options ?? {}) };
-    if ((opts as { timeout?: number }).timeout == null) {
-      (opts as { timeout?: number }).timeout = DEFAULT_WAITFOR_TIMEOUT_MS;
+/**
+ * 🔴 THE APP'S ROOT CUSTOM PROPERTIES, AND ONLY THOSE.
+ *
+ * This harness loads no app stylesheet, so every `var(--header-height)` in a
+ * component under test resolved to `""`. That is not "a missing nicety": an
+ * unresolvable `var()` makes the whole declaration **invalid at computed-value
+ * time**, so `min-height: calc(100dvh - var(--header-height))` silently becomes
+ * `auto`/`0px` and the component lays out differently here than in production —
+ * measured in real Chromium. **33 TS/TSX files and 7 stylesheets read
+ * `--header-height` today**, so that divergence was repo-wide and invisible: a
+ * layout assertion could be green against geometry no user ever sees.
+ *
+ * 🔴 Why the properties are EXTRACTED rather than the stylesheet IMPORTED.
+ * Importing `~/styles/globals.css` pulls the real cascade — Tailwind preflight,
+ * `@layer` ordering, element defaults — which changes the rendered geometry of
+ * every existing test (Mantine `Group` starts centring its items, so same-line
+ * assertions written against `top` begin failing against correct code). That is a
+ * much larger change than this fixes. Taking only the `:root` custom properties
+ * gives components the values they read while leaving the cascade exactly as the
+ * suite has always had it.
+ *
+ * 🔴 Why they are PARSED rather than restated. Hardcoding `--header-height: 60px`
+ * here would be a fourth copy of a constant that civitai#4379 existed to
+ * consolidate, and it would drift silently the first time the header is resized.
+ * The values come from `globals.css` itself, so there is nothing to keep in step.
+ *
+ * 🔴 WHY THE BROWSER PARSES IT AND NOT A REGEX — THE EXPENSIVE LESSON HERE.
+ * Three successive attempts to extract the block with regexes each shipped a
+ * defect, and each fix introduced the next one: a comment glued to the following
+ * property dropped it; a `}` inside a comment or a string truncated the capture
+ * and silently dropped everything after it; a "refuse more than one `:root`" rule
+ * blacked out all 2079 component tests on an ordinary dark-mode override; and a
+ * name sweep with `[^{]*` attributed an unrelated rule's properties to `:root`
+ * because the string `":root"` appeared in a `content:` value. The common cause
+ * was asking several regexes to agree about where a CSS block ends. They cannot.
+ *
+ * `CSSStyleSheet.replaceSync` hands the whole problem to the engine that will
+ * actually evaluate these properties, so comments, strings, nesting and at-rules
+ * are simply not our problem — and the CONDITIONAL/UNCONDITIONAL distinction that
+ * mattered most falls out of the rule types for free: a `:root` inside `@media` /
+ * `@supports` / `@container` is a `CSSMediaRule` &c and is deliberately skipped
+ * (its properties are undefined outside that condition, so injecting them
+ * unconditionally would be a lie), while `@layer` merely orders the cascade and is
+ * descended into.
+ */
+const injectedRootProperties: string[] = (() => {
+  const sheet = new CSSStyleSheet();
+  sheet.replaceSync(globalsCss);
+
+  const rootRules: CSSStyleRule[] = [];
+  const walk = (rules: CSSRuleList) => {
+    for (const rule of Array.from(rules)) {
+      if (rule instanceof CSSStyleRule) {
+        // A grouped selector (`:root, html`) still applies unconditionally to the
+        // root, so match on the parts rather than the whole string.
+        if (rule.selectorText.split(',').some((s) => s.trim() === ':root')) rootRules.push(rule);
+      } else if (typeof CSSLayerBlockRule !== 'undefined' && rule instanceof CSSLayerBlockRule) {
+        walk(rule.cssRules);
+      }
+      // @media / @supports / @container are CONDITIONAL — skipped on purpose.
     }
-    return original(callback, opts);
-  }) as typeof vi.waitFor;
-}
+  };
+  walk(sheet.cssRules);
+
+  // Later declarations win, as they would in the real cascade.
+  const values = new Map<string, string>();
+  for (const rule of rootRules) {
+    for (const name of Array.from(rule.style)) {
+      if (name.startsWith('--')) values.set(name, rule.style.getPropertyValue(name).trim());
+    }
+  }
+
+  if (values.size === 0) {
+    // Loud, not silent: with no properties injected, every component test goes
+    // back to laying out against undefined custom properties and nothing else
+    // would report it. If `globals.css` legitimately stopped declaring any, delete
+    // this block deliberately rather than letting it sit here doing nothing.
+    throw new Error(
+      'component-setup: found no custom properties on an unconditional `:root` rule in ' +
+        'src/styles/globals.css. Either they moved, or they are now declared only inside a ' +
+        'conditional at-rule (@media/@supports/@container), which this deliberately does not ' +
+        'inject because such a property is undefined outside its condition.'
+    );
+  }
+
+  const style = document.createElement('style');
+  style.setAttribute('data-source', 'component-setup:globals.css :root');
+  style.textContent = `:root { ${[...values].map(([n, v]) => `${n}: ${v}`).join('; ')}; }`;
+  document.head.appendChild(style);
+  return [...values.keys()];
+})();
+
+/**
+ * The custom-property names this setup injected. Exported so the guard in
+ * `src/components/AppLayout/rootCustomProperties.browser.test.tsx` can assert that
+ * EVERY one of them actually resolves in the document — not just the one property
+ * a hand-written test happened to name. An earlier guard checked only
+ * `--header-height`, and two other properties were silently undefined across all
+ * 190 component files while it stayed green.
+ */
+export const INJECTED_ROOT_PROPERTIES = injectedRootProperties;
 
 // Stub the Next pages-router. Returns vi.fn()s so tests can assert navigation
 // without a real router; extend per-test via `vi.mocked(useRouter)` if needed.
