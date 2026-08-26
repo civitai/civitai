@@ -216,6 +216,16 @@ export const MATERIAL_LISTING_PATCH_FIELDS = [
   'sourceRepoUrl',
 ] as const;
 
+/**
+ * One member of {@link MATERIAL_LISTING_PATCH_FIELDS}.
+ *
+ * 🔴 ITS JOB IS TO MAKE A NARROWED SWEEP FAIL WHEN THE SET GROWS. The ledger tests walk the
+ * constant, but an arm that legitimately covers only SOME members (the on-site case, which
+ * has no `externalUrl` input because it has no URL step) has to express that as
+ * `Exclude<MaterialListingPatchField, 'externalUrl'>` rather than as a hand-written literal
+ * list. A literal is a ledger that cannot grow: add a fifth material field and the sweep
+ * still passes, having never mentioned it.
+ */
 export type MaterialListingPatchField = (typeof MATERIAL_LISTING_PATCH_FIELDS)[number];
 
 /**

@@ -2,7 +2,10 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
-import { MATERIAL_LISTING_PATCH_FIELDS } from '~/shared/constants/app-capabilities.constants';
+import {
+  MATERIAL_LISTING_PATCH_FIELDS,
+  type MaterialListingPatchField,
+} from '~/shared/constants/app-capabilities.constants';
 import type * as TrpcModule from '~/utils/trpc';
 import type { ListingEditContext } from './offsiteEditConfig';
 
@@ -257,9 +260,28 @@ describe('🔴 an OWNER-UNPUBLISHED listing: material fields are shown, and lock
     await expect.element(notice).toBeInTheDocument();
     await expect.element(notice).not.toHaveTextContent(/App URL/);
     await expect.element(notice).toHaveTextContent(/source repository/i);
-    // On-site opens straight on Details (no URL step), and the three fields are locked.
+    // On-site opens straight on Details (no URL step), and every field it HAS is locked.
     await expect.element(page.getByTestId('apps-offsite-edit-name')).toBeInTheDocument();
-    for (const field of ['name', 'contentRating', 'sourceRepoUrl'] as const) {
+
+    // 🔴 DERIVED FROM THE SERVER'S CONSTANT, NOT HAND-LISTED. This used to spell
+    // `['name', 'contentRating', 'sourceRepoUrl']` — three of the four members of
+    // `MATERIAL_LISTING_PATCH_FIELDS` — which is a LEDGER THAT CANNOT GROW: a fifth
+    // material field added server-side would be refused by `updateListing` and would render
+    // an ENABLED input here, and this test would stay green because the literal never
+    // mentioned it. The off-site arm above already walks the constant; this arm is now the
+    // same sweep minus the ONE field on-site genuinely does not have.
+    //
+    // `externalUrl` is excluded by NAME rather than by "whatever is missing", so the
+    // exclusion is a claim that can itself be wrong and be caught — the assertion below
+    // pins that it really is absent.
+    const onsiteMaterialFields = MATERIAL_LISTING_PATCH_FIELDS.filter(
+      (f): f is Exclude<MaterialListingPatchField, 'externalUrl'> => f !== 'externalUrl'
+    );
+    // Positive control: the filter must leave a NON-EMPTY set. A rename of the excluded
+    // member (or of any other) that emptied this list would otherwise make the loop below
+    // vacuous and green.
+    expect(onsiteMaterialFields.length).toBeGreaterThan(0);
+    for (const field of onsiteMaterialFields) {
       expect(materialControl(field)?.disabled, field).toBe(true);
     }
     expect(materialControl('externalUrl'), 'no URL step for an on-site listing').toBeNull();
