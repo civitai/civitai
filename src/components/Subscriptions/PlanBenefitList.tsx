@@ -45,12 +45,14 @@ const defaultBenefits = [
       return (
         <Text>
           {limit === undefined ? (
-            <>Price more models each month</>
+            <>Price more model versions each month</>
           ) : (
             <>
               Put a price on{' '}
               <Text component="span" fw={600}>
-                {limit === null ? 'unlimited models' : `${limit.toLocaleString()} models`}
+                {limit === null
+                  ? 'unlimited model versions'
+                  : `${limit.toLocaleString()} model versions`}
               </Text>{' '}
               a month — a licensing fee or paid access. Changing a price you have already set is
               always free.

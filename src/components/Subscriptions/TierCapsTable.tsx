@@ -12,9 +12,9 @@ export const TierCapsTable = () => {
     <Stack gap="lg">
       <Stack gap={4}>
         <Text size="sm" fw={600}>
-          New prices per month{' '}
+          Model versions you can price each month{' '}
           <Text component="span" size="sm" c="dimmed" fw={400}>
-            — models you can start charging for
+            — a licensing fee or paid access
           </Text>
         </Text>
         <Table.ScrollContainer minWidth={320}>
@@ -22,7 +22,7 @@ export const TierCapsTable = () => {
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>Tier</Table.Th>
-                <Table.Th ta="right">New prices / month</Table.Th>
+                <Table.Th ta="right">Priced / month</Table.Th>
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>

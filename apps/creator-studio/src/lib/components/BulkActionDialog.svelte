@@ -459,7 +459,9 @@
           {:else}
             <Alert.Title>Over this month's pricing allowance</Alert.Title>
             <Alert.Description>
-              You can price {pricingSlotsRemaining} more model{pricingSlotsRemaining === 1 ? '' : 's'} this
+              You can price {pricingSlotsRemaining} more model version{pricingSlotsRemaining === 1
+                ? ''
+                : 's'} this
               month, but this selection would price {unpricedCount}. Deselect some, or the save will
               be rejected. Versions you already charge for don't count.
             </Alert.Description>

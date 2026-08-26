@@ -128,13 +128,13 @@ describe('pricingAllowanceState', () => {
 describe('formatPricingAllowance', () => {
   it('says the same thing everywhere it is rendered', () => {
     expect(formatPricingAllowance(pricingAllowanceState({ used: 1, limit: 3 }))).toBe(
-      '1 of 3 priced this month'
+      '1 of 3 versions priced this month'
     );
     expect(formatPricingAllowance(pricingAllowanceState({ used: 3, limit: 3 }))).toBe(
-      '3 of 3 priced this month · allowance used up'
+      '3 of 3 versions priced this month · allowance used up'
     );
     expect(formatPricingAllowance(pricingAllowanceState({ used: 7, limit: null }))).toBe(
-      '7 priced this month · unlimited'
+      '7 versions priced this month · unlimited'
     );
   });
 });
@@ -157,6 +157,16 @@ describe('refusal messages', () => {
   it('names the creator their own score when it is known', () => {
     expect(pricingFloorMessage(2431)).toContain('2,431');
     expect(pricingFloorMessage()).not.toMatch(/Yours is/);
+  });
+
+  // The ledger is keyed on ModelVersion, so two versions of one model spend two. Saying "models"
+  // reads as one per model and understates the cost of pricing a multi-version model.
+  it('count model VERSIONS, not models', () => {
+    expect(pricingAllowanceMessage(3, 3)).toContain('model versions');
+    expect(formatPricingAllowance(pricingAllowanceState({ used: 1, limit: 3 }))).toContain(
+      'versions'
+    );
+    expect(pricingAllowanceMessage(3, 3)).not.toMatch(/d models/);
   });
 
   it('both say an existing price is unaffected', () => {

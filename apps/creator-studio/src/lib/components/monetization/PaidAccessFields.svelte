@@ -92,7 +92,7 @@
         {ctx.permBlockedReason}
       {:else}
         You've used this month's pricing allowance ({formatPricingAllowance(allowanceState)}) —
-        upgrade your membership to price more models.
+        upgrade your membership to price more model versions.
       {/if}
     </span>
   {/if}
