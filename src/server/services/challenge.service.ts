@@ -2265,6 +2265,10 @@ export async function deleteUserChallenge({ id, userId }: { id: number; userId: 
 // first, then returns the same shape. User challenges have judgingPrompt = null, so nothing
 // moderator-sensitive is exposed. Moderators bypass ownership (they manage user challenges through
 // this same form); non-User challenges stay on the moderator edit page regardless.
+//
+// Unfiltered by status on purpose: the form goes read-only past Scheduled and upsertUserChallenge
+// re-checks status on write, so gating the read here just 404s a live or finished challenge for the
+// people who need to inspect it.
 export async function getUserChallengeForEdit({
   id,
   userId,
@@ -2276,18 +2280,13 @@ export async function getUserChallengeForEdit({
 }) {
   const existing = await dbRead.challenge.findUnique({
     where: { id },
-    select: { source: true, createdById: true, status: true },
+    select: { source: true, createdById: true },
   });
   if (!existing) throw throwNotFoundError('Challenge not found');
   if (existing.source !== ChallengeSource.User)
     throw new TRPCError({ code: 'FORBIDDEN', message: 'This challenge cannot be edited here.' });
   if (existing.createdById !== userId && !isModerator)
     throw new TRPCError({ code: 'FORBIDDEN', message: 'You can only edit your own challenges.' });
-  if (existing.status !== ChallengeStatus.Scheduled)
-    throw new TRPCError({
-      code: 'PRECONDITION_FAILED',
-      message: 'A published challenge can no longer be edited.',
-    });
   return getChallengeForEdit(id);
 }
 
