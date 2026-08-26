@@ -1,4 +1,5 @@
 import { Parser } from 'htmlparser2';
+import { isBlurbId } from '~/shared/constants/blurb.constants';
 import { sanitizeBlurbInterior } from '~/utils/html-sanitize-helpers';
 
 /** `innerEnd`/`outerEnd` are exclusive — one past the last character. */
@@ -9,9 +10,6 @@ export type BlurbSpan = {
   outerStart: number;
   outerEnd: number;
 };
-
-// `Blurb.id` is SERIAL (int4), so a larger `data-id` can never name a real row.
-const MAX_BLURB_ID = 2_147_483_647;
 
 // Positions rather than a parsed tree, because the caller splices the ORIGINAL
 // string. Re-serialising a parsed document would normalise markup we never
@@ -37,9 +35,8 @@ export function findBlurbSpans(html: string): BlurbSpan[] {
         if (name !== 'div' && name !== 'span') return;
         if (attribs['data-type'] !== 'blurb') return;
         const raw = attribs['data-id'];
-        if (!raw || !/^\d+$/.test(raw)) return;
+        if (!isBlurbId(raw)) return;
         const blurbId = Number(raw);
-        if (blurbId > MAX_BLURB_ID) return;
         open.push({
           blurbId,
           outerStart: parser.startIndex,

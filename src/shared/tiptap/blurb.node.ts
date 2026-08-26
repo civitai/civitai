@@ -1,6 +1,7 @@
 import { Node, mergeAttributes } from '@tiptap/core';
 import type { DOMOutputSpec } from '@tiptap/pm/model';
 import { Parser } from 'htmlparser2';
+import { isBlurbId } from '~/shared/constants/blurb.constants';
 
 export type BlurbAttrs = { id: number | null; text: string };
 
@@ -62,7 +63,7 @@ export const BlurbNode = Node.create({
         default: null,
         parseHTML: (el) => {
           const raw = (el as HTMLElement).getAttribute('data-id');
-          return raw && /^\d{1,9}$/.test(raw) ? Number(raw) : null;
+          return isBlurbId(raw) ? Number(raw) : null;
         },
         renderHTML: (attrs) => (attrs.id ? { 'data-id': String(attrs.id) } : {}),
       },

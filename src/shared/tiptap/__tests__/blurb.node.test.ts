@@ -1,5 +1,7 @@
 import { generateHTML, generateJSON } from '@tiptap/html';
 import { describe, expect, it } from 'vitest';
+import { MAX_BLURB_ID } from '~/shared/constants/blurb.constants';
+import { findBlurbSpans } from '~/server/utils/blurb-html';
 import { BlurbNode } from '~/shared/tiptap/blurb.node';
 import StarterKit from '@tiptap/starter-kit';
 
@@ -82,5 +84,40 @@ describe('BlurbNode markup round trip', () => {
     for (let i = 0; i < 3; i++) current = render(current);
     expect(current).toContain('<strong>b</strong>');
     expect(current).not.toContain('&lt;');
+  });
+});
+
+// 🔴 Two parsers read the same `data-id` — this node's `parseHTML` and the server's
+// `findBlurbSpans` — and they used to carry the bound by hand, at 9 digits and int4 max
+// respectively. An id between them parsed to `id: null` here while the server still resolved it,
+// and since `renderHTML` emits `data-id` only for a truthy id, the next save DROPPED the
+// reference and the blurb quietly became plain text.
+describe('BlurbNode — the id bound agrees with the server parser', () => {
+  const parsedId = (id: string) => {
+    const json = generateJSON(`<div data-type="blurb" data-id="${id}">x</div>`, extensions);
+    const node = (json as any).content[0];
+    return node.type === 'blurb' ? node.attrs.id : undefined;
+  };
+  const serverId = (id: string) =>
+    findBlurbSpans(`<div data-type="blurb" data-id="${id}">x</div>`)[0]?.blurbId;
+
+  it.each([
+    ['1', 1],
+    ['999999999', 999_999_999],
+    // The 10-digit range that only one of the two used to accept.
+    ['1000000000', 1_000_000_000],
+    [String(MAX_BLURB_ID), MAX_BLURB_ID],
+  ])('both accept %s', (raw, expected) => {
+    expect(parsedId(raw)).toBe(expected);
+    expect(serverId(raw)).toBe(expected);
+  });
+
+  it.each([
+    ['past int4', String(MAX_BLURB_ID + 1)],
+    ['not a number', 'abc'],
+    ['negative', '-1'],
+  ])('both reject %s', (_label, raw) => {
+    expect(parsedId(raw)).toBeNull();
+    expect(serverId(raw)).toBeUndefined();
   });
 });
