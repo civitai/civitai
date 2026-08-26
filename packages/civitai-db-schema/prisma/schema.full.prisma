@@ -8205,4 +8205,5 @@ model BlurbReference {
 
   @@id([blurbId, entityType, entityId])
   @@index([entityType, entityId])
+  @@index([materializedAt])
 }

@@ -69,6 +69,21 @@ beforeEach(() => {
     }
     return [...filtered].sort((a, b) => a.materializedAt - b.materializedAt).slice(0, limit);
   });
+
+  // Makes the fake table honour recordReference/recordFailure's writes, so a test can
+  // re-run the selector afterwards and observe the reordering those writes are FOR — not
+  // just assert the write's shape.
+  dbMock.dbWrite.blurbReference.update.mockImplementation(async (args: any) => {
+    const key = args.where.blurbId_entityType_entityId;
+    const row = table.find(
+      (r) =>
+        r.blurbId === key.blurbId && r.entityType === key.entityType && r.entityId === key.entityId
+    );
+    if (!row) return undefined;
+    if (args.data.materializedAt instanceof Date) row.materializedAt = args.data.materializedAt.getTime();
+    if (typeof args.data.materializedHash === 'string') row.materializedHash = args.data.materializedHash;
+    return undefined;
+  });
 });
 
 describe('runBlurbFanout — selector', () => {
@@ -173,5 +188,33 @@ describe('runBlurbFanout — a failing row cannot wedge the batch', () => {
     expect(call.data.materializedAt).toBeInstanceOf(Date);
     // Never the hash — the row's content was never actually applied.
     expect(call.data.materializedHash).toBeUndefined();
+  });
+
+  it('moves a failing row behind others, so a later pass reaches what it was blocking', async () => {
+    // Row 1 fails every time and starts at the FRONT of the queue (oldest materializedAt).
+    // Row 2 is genuinely stale and starts right behind it. With `limit: 1`, a selector that
+    // never re-sorted the failing row would starve row 2 forever — this is the property
+    // recordFailure's materializedAt bump exists for, asserted end-to-end via a second pass
+    // rather than just the shape of the write.
+    adapter.save.mockImplementation(async (args: { entityId: number }) => {
+      if (args.entityId === 1) throw new Error('blocked domain');
+    });
+    table = [makeRow(1, 'Article', 1), makeRow(2, 'Article', 2)];
+
+    const first = await runBlurbFanout({ limit: 1 });
+    expect(first.failed).toBe(1);
+    expect(adapter.save).toHaveBeenCalledTimes(1);
+
+    adapter.save.mockClear();
+    adapter.load.mockClear();
+
+    const second = await runBlurbFanout({ limit: 1 });
+
+    // recordFailure's write (via the update mock's fake-table mutation set up in
+    // beforeEach) pushed row 1's materializedAt past row 2's, so row 2 — not row 1 again —
+    // is what this pass reaches.
+    expect(adapter.load).toHaveBeenCalledWith(2);
+    expect(adapter.load).not.toHaveBeenCalledWith(1);
+    expect(second.rewritten).toBe(1);
   });
 });

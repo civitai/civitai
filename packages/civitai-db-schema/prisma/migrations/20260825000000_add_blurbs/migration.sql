@@ -22,6 +22,7 @@ CREATE TABLE "BlurbReference" (
 CREATE UNIQUE INDEX "Blurb_userId_name_key" ON "Blurb"("userId", "name");
 CREATE INDEX "Blurb_updatedAt_idx" ON "Blurb"("updatedAt");
 CREATE INDEX "BlurbReference_entityType_entityId_idx" ON "BlurbReference"("entityType", "entityId");
+CREATE INDEX "BlurbReference_materializedAt_idx" ON "BlurbReference"("materializedAt");
 
 ALTER TABLE "Blurb" ADD CONSTRAINT "Blurb_userId_fkey"
   FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;

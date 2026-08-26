@@ -64,12 +64,15 @@ function recordReference(ref: Ref, contentHash: string) {
 }
 
 // Deliberately leaves `materializedHash` untouched — the row is still stale and stays
-// eligible — but bumps `materializedAt` so it moves to the BACK of the next pass's
-// `ORDER BY materializedAt ASC` window instead of heading it again. A row that fails every
-// time (e.g. an article whose body trips the blocked-link-domain guard) is retried once per
-// full sweep of the backlog rather than every run, and never on its own; there's no
-// separate cap, because the `failed` counter and the row-level log below are what make it
-// visible to a person, and a permanent count-then-stop would hide the same row instead.
+// eligible — but bumps `materializedAt` so it moves to the BACK of the `ORDER BY
+// materializedAt ASC` window instead of heading it again next pass. That bounds a
+// permanently-failing row to one selected slot per pass and stops it crowding out other
+// rows once the backlog exceeds `limit` — it does NOT reduce how often the row itself is
+// retried: whenever the whole backlog fits in one batch (the common case), every stale row
+// is selected on every run regardless of position, so a row that fails every time is still
+// retried every run. There's no separate cap on that; the `failed` counter and the row-level
+// log are what surface it to a person, and a permanent count-then-stop would just hide the
+// same row more quietly.
 function recordFailure(ref: Ref) {
   return dbWrite.blurbReference.update({
     where: {
@@ -144,8 +147,15 @@ export async function runBlurbFanout({
       } catch (error) {
         counts.failed++;
         const err = error as Error;
+        // `warn`, not `error`: with the backlog under `limit` this fires every run for as
+        // long as the row keeps failing (see the comment on recordFailure), and the job's
+        // own aggregate log already carries `warn` for a nonzero `failed`. There's no
+        // persisted per-row attempt count to downgrade this further after N repeats —
+        // `materializedAt` can't stand in for one, since this same handler resets it on
+        // every failure, so a row failing every run always reads as "just touched."
         await logToAxiom({
           type: 'error',
+          level: 'warn',
           name: 'blurb-fanout-row',
           message: err.message,
           stack: err.stack,
