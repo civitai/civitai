@@ -2428,13 +2428,24 @@ describe('the removal cooldown on a free entry', () => {
  * instead, so it is as wide as the class.
  */
 describe('Availability parameters are cast to the enum, not bound as text', () => {
+  // Identified BY VALUE, because a Prisma tagged template hands the test bare
+  // scalars with no type information attached. Deliberately over-inclusive: a
+  // future unrelated parameter whose value happens to be the string 'Public' or
+  // 'Private' would be required to carry the cast too. That direction is the
+  // safe one — it can demand a cast that is not needed, never miss one that is —
+  // and the failure message names the route and the placeholder, so a false
+  // positive is a minute's work rather than a mystery.
   const AVAILABILITY_VALUES = new Set<unknown>(Object.values(Availability));
 
   type SqlLike = { strings: readonly string[]; values: readonly unknown[] };
 
   /**
-   * Duck-typed rather than `instanceof Prisma.Sql`: `@prisma/client` may resolve
-   * to a stub here, where `Prisma.Sql` is `undefined` and `instanceof` throws.
+   * Duck-typed rather than `instanceof Prisma.Sql`. Not because the class is
+   * unavailable — this suite mocks neither `@prisma/client` nor the Prisma
+   * namespace, and takes `Availability` from `~/shared/utils/prisma/enums` — but
+   * because the recursion below only ever reads `.strings` and `.values`, so the
+   * shape is the whole contract and `instanceof` would narrow on more than is
+   * used. It also keeps the guard working on a plain object fixture.
    */
   const isSql = (value: unknown): value is SqlLike =>
     !!value &&
@@ -2449,10 +2460,26 @@ describe('Availability parameters are cast to the enum, not bound as text', () =
    * here: it drops the values entirely, so the text it returns has nothing
    * where the parameter goes and cannot say what follows one.
    *
-   * 🔴 `--` line comments are stripped BEFORE any assertion reads this. The
-   * service explains this very cast in a comment beside the clause, so a naive
-   * substring check would be satisfied by the prose whether or not the cast is
-   * in the SQL.
+   * 🔴 Comments are stripped BEFORE any assertion reads this — BOTH `--` to
+   * end-of-line AND slash-star … star-slash blocks. (Spelled out: the closing
+   * delimiter would end this very comment.) The service explains this cast in a
+   * comment beside the clause, so a naive substring check would be satisfied by
+   * the prose whether or not the cast is in the SQL.
+   *
+   * 🔴 The block-comment half is not symmetry for its own sake: a clause wrapped
+   * in a block comment is DEAD SQL whose text and bound parameter both survive
+   * untouched, so every per-parameter assertion below still sees a correctly
+   * cast `Availability` while Postgres is handed a WHERE with the private-post
+   * guard missing. Measured: commenting out the `getMyRemixGallerySubmissions`
+   * clause that way passed this entire file before this strip existed.
+   *
+   * One `replace` with an alternation, not two passes: a single left-to-right
+   * scan lets whichever opener appears FIRST win, which is what a SQL lexer
+   * does. Stripping one kind and then the other lets a `--` inside a block
+   * comment (or a block opener inside a line comment) eat the other's
+   * delimiter. Postgres block comments nest and this does not — a nested one
+   * leaves a stray closing delimiter behind, which the whole-clause pins below
+   * fail on, so it is caught rather than waved through.
    */
   function render(call: unknown[]) {
     const [strings, ...values] = call as [readonly string[], ...unknown[]];
@@ -2466,7 +2493,7 @@ describe('Availability parameters are cast to the enum, not bound as text', () =
         return `${out}${part}$${params.length}`;
       }, '');
     const sql = expand(strings, values)
-      .replace(/--[^\n]*/g, ' ')
+      .replace(/--[^\n]*|\/\*[\s\S]*?\*\//g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
     return { sql, params };
@@ -2501,12 +2528,26 @@ describe('Availability parameters are cast to the enum, not bound as text', () =
       bindings.length,
       `${route} bound no Availability parameter at all — the guard has nothing to check`
     ).toBeGreaterThan(0);
-    for (const binding of bindings)
+    for (const binding of bindings) {
+      // 🔴 Its own assertion, ahead of the cast check. A parameter that is bound
+      // but whose placeholder appears NOWHERE in the rendered statement means the
+      // clause using it was commented out — the binding survives, the SQL does
+      // not, and the comparison is not made at all. Without this case
+      // `toMatch(null)` throws `expects to receive a string, but got object`,
+      // which fails (so nothing passes vacuously) but reads as a broken harness
+      // instead of naming the defect, and the message below never renders.
+      expect(
+        binding.follows,
+        `${route}: ${binding.placeholder} (${String(binding.param)}) is bound, but its ` +
+          'placeholder appears nowhere in the statement — the clause using it is ' +
+          'commented out, so availability is not being compared at all'
+      ).not.toBeNull();
       expect(
         binding.follows,
         `${route}: ${binding.placeholder} (${String(binding.param)}) is bound as text; ` +
           'append ::"Availability" or Postgres rejects the statement with 42883'
       ).toMatch(/^::"Availability"/);
+    }
   };
 
   beforeEach(() => {
@@ -2572,6 +2613,45 @@ describe('Availability parameters are cast to the enum, not bound as text', () =
     const { sql, params } = render(queryRaw.mock.calls[0] as unknown[]);
     const n = params.indexOf(Availability.Private) + 1;
     expect(n, 'Availability.Private is not bound by this read').toBeGreaterThan(0);
+    expect(sql).toContain(
+      `AND p."publishedAt" < now() AND p."availability" != $${n}::"Availability" ` +
+        `AND i.ingestion = 'Scanned'`
+    );
+  });
+
+  /**
+   * The same whole-clause pin for the second copy of the predicate.
+   *
+   * 🔴 This is the guard that gives the block-comment strip in `render` teeth.
+   * `getMyRemixGallerySubmissions` writes the clause out inline instead of
+   * composing `entryIsVisible`, so the pin above cannot reach it — and a
+   * per-parameter assertion cannot tell a live clause from a commented-out one,
+   * because commenting it out changes neither the text nor the binding. With
+   * only the per-parameter checks, that mutant passed all 141 tests here.
+   */
+  it("pins the submitter's own-submissions host clause as a whole, cast included", async () => {
+    placementFindMany.mockResolvedValue([
+      { id: 1, targetId: HOST_IMAGE, ownerId: OWNER, data: { imageId: REMIX_IMAGE } },
+    ]);
+    await getMyRemixGallerySubmissions({
+      placerId: PLACER,
+      domainLevels: allBrowsingLevelsFlag,
+      viewerLevels: allBrowsingLevelsFlag,
+    });
+    // Two raw reads run here — the submitter's own images by id, then the host
+    // read under the visibility filter. Only the host read binds Availability,
+    // so selecting by that is what identifies it, and asserting exactly one
+    // match is the positive control: a read that stopped comparing availability
+    // lands here as 0, not as a vacuous pass.
+    const bound = queryRaw.mock.calls
+      .map((call) => render(call as unknown[]))
+      .filter(({ params }) => params.includes(Availability.Private));
+    expect(
+      bound,
+      'exactly one read in getMyRemixGallerySubmissions should bind Availability.Private'
+    ).toHaveLength(1);
+    const { sql, params } = bound[0];
+    const n = params.indexOf(Availability.Private) + 1;
     expect(sql).toContain(
       `AND p."publishedAt" < now() AND p."availability" != $${n}::"Availability" ` +
         `AND i.ingestion = 'Scanned'`
