@@ -1,23 +1,10 @@
 /**
  * Wan Graph
  *
- * Controls for Wan video generation ecosystem.
- * Supports txt2vid and img2vid workflows across multiple versions (v2.1, v2.2, v2.2-5b, v2.5).
- *
- * Version-specific behavior:
- * - v2.1: Basic controls, supports LoRAs on Civitai provider
- * - v2.2: Advanced controls with negative prompt, shift, interpolation
- * - v2.2-5b: Smaller model with draft mode option
- * - v2.5: Latest version with extended duration options
- *
- * Nodes:
- * - model: Wan version selector (image-aware: shows txt2vid or img2vid versions)
- * - seed: Optional seed for reproducibility
- * - prompt: Text prompt
- * - aspectRatio: Output aspect ratio (hidden when images present)
- * - cfgScale: CFG scale for generation control
- * - resolution: Output resolution
- * - resources: Additional LoRAs (version-dependent)
+ * One graph for every Wan version, branched on `wanVersion` via the discriminator
+ * at the bottom. `wanVersionDefs` is the source of truth for which ecosystem keys
+ * map to which version — add a version there and to the discriminator, not by
+ * forking this file.
  */
 
 import z from 'zod';
@@ -680,20 +667,25 @@ export const wanGraph = new DataGraph<WanCtx, GenerationCtx>()
   // Seed node (common to all versions)
   .node('seed', seedNode())
 
-  // CFG scale (common to all versions)
+  // Alibaba's wan3.0-video API reference documents no cfgScale, so the slider is
+  // hidden there rather than offered as a control that does nothing.
   .node(
     'cfgScale',
-    sliderNode({
-      min: 1,
-      max: 10,
-      step: 0.5,
-      defaultValue: 3.5,
-      presets: [
-        { label: 'Low', value: 2 },
-        { label: 'Balanced', value: 3.5 },
-        { label: 'High', value: 6 },
-      ],
-    })
+    (ctx) => ({
+      ...sliderNode({
+        min: 1,
+        max: 10,
+        step: 0.5,
+        defaultValue: 3.5,
+        presets: [
+          { label: 'Low', value: 2 },
+          { label: 'Balanced', value: 3.5 },
+          { label: 'High', value: 6 },
+        ],
+      }),
+      when: ctx.wanVersion !== 'v3.0',
+    }),
+    ['wanVersion']
   )
 
   // Version-specific controls via discriminator

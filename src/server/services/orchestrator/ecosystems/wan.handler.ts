@@ -449,7 +449,6 @@ export const createWanSteps = defineHandler<WanCtx, WanSteps>(async (data, ctx) 
         version: 'v3.0' as const,
         prompt: data.prompt,
         negativePrompt: 'negativePrompt' in data ? data.negativePrompt : undefined,
-        cfgScale: 'cfgScale' in data ? data.cfgScale : undefined,
         duration: 'duration' in data ? data.duration : undefined,
         resolution: 'resolution' in data ? data.resolution : undefined,
         enablePromptExpansion:

@@ -8,14 +8,10 @@ const ext: GenerationCtx = {
   gateRules: [],
 };
 
-function init(workflow: string) {
+function init(workflow: string, ecosystem = 'WanVideo30', baseModel = 'Wan Video 3.0') {
   const graph = generationGraph as any;
   graph.init(
-    {
-      workflow,
-      ecosystem: 'WanVideo30',
-      model: { id: 3267095, baseModel: 'Wan Video 3.0', model: { type: 'Checkpoint' } },
-    },
+    { workflow, ecosystem, model: { id: 3267095, baseModel, model: { type: 'Checkpoint' } } },
     ext
   );
   return graph;
@@ -54,5 +50,15 @@ describe('wan 3.0 aspect ratio', () => {
     const g = init('img2vid');
     g.set({ images: [{ url: 'https://example.test/a.png', width: 1024, height: 576 }] });
     expect(g.hasNode('aspectRatio')).toBe(false);
+  });
+});
+
+describe('wan 3.0 cfgScale', () => {
+  // Alibaba's wan3.0-video reference documents no cfgScale. The slider is shared
+  // by every Wan version, so the negative control below is what proves it was
+  // hidden for 3.0 specifically rather than removed outright.
+  it('is hidden for 3.0 but still offered on 2.5', () => {
+    expect(init('txt2vid').hasNode('cfgScale')).toBe(false);
+    expect(init('txt2vid', 'WanVideo-25-T2V', 'Wan Video 2.5 T2V').hasNode('cfgScale')).toBe(true);
   });
 });
