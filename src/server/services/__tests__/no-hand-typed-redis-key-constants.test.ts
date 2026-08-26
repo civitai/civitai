@@ -24,7 +24,7 @@ import { mockPattern } from '~/__tests__/mocks/guarded-specifiers';
  * spread `@civitai/redis/client` into the factory for the real constants, and keep only your
  * own client stub and control-surface overrides as explicit properties.
  *
- * 🔴 A RATCHET, NOT A RULE, and deliberately so. 53 files hand-type these blocks today; a
+ * 🔴 A RATCHET, NOT A RULE, and deliberately so. 52 files hand-type these blocks today; a
  * hard rule would be red on all of them from day one, and a permanently-red gate is worse
  * than no gate — it trains everyone to click through. Some are also LEGITIMATE:
  * `BLOCKS.TOKEN_RATE_LIMIT: 'rl'` is a deliberate short stub, not drift. So this does not
@@ -48,6 +48,8 @@ import { mockPattern } from '~/__tests__/mocks/guarded-specifiers';
  * live drifts, `'session:usertokens'` among them. That is not an exotic evasion: 57 of the 66
  * files mocking this specifier already use `vi.hoisted()`, so it was one ordinary refactor
  * away for most of the population — and it made the guard go green rather than red.
+ * (That file is now converted and off the baseline; its three drifts were USER_TOKENS,
+ * USER.SESSION and TOKEN_STATE — its fourth constant, SESSION.ALL, was already correct.)
  *
  * The fix was to stop parsing. This now scans the WHOLE FILE for the property literal rather
  * than the factory body, which catches the hoisted shape and deletes an entire class of
@@ -120,7 +122,6 @@ const HAND_TYPED_BASELINE: string[] = [
   'src/__tests__/pages/api/download/download-quota-seam.test.ts',
   'src/__tests__/pages/api/download/model-version-blocklist.test.ts',
   'src/__tests__/pages/api/download/split-query-repair.test.ts',
-  'src/server/auth/__tests__/ban-session-revocation.test.ts',
   'src/server/auth/__tests__/session-client.test.ts',
   'src/server/events/__tests__/base-event.sysredis-soft.test.ts',
   'src/server/games/daily-challenge/__tests__/challenge-helpers.test.ts',
@@ -238,6 +239,6 @@ describe('no hand-typed Redis key constants in a guarded mock', () => {
   // load-bearing, add the entry AND raise this number in the same commit, with a note saying
   // which it is. A raise is then a visible, reviewable claim rather than a silent one.
   it('the baseline is exactly the recorded size', () => {
-    expect(HAND_TYPED_BASELINE.length).toBe(53);
+    expect(HAND_TYPED_BASELINE.length).toBe(52);
   });
 });
