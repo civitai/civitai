@@ -77,9 +77,9 @@ vi.mock('~/server/redis/client', () => ({
   sysRedis: mocks.sysRedis,
   REDIS_SYS_KEYS: {
     SYSTEM: {
-      DISABLED_HEALTHCHECKS: 'sys:disabled-healthchecks',
-      NON_CRITICAL_HEALTHCHECKS: 'sys:non-critical-healthchecks',
-      FEATURES: 'sys:features',
+      DISABLED_HEALTHCHECKS: 'disabled-healthchecks',
+      NON_CRITICAL_HEALTHCHECKS: 'non-critical-healthchecks',
+      FEATURES: 'system:features',
     },
   },
 }));

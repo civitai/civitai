@@ -64,6 +64,41 @@ import { mockPattern } from '~/__tests__/mocks/guarded-specifiers';
  * built from a variable or template literal; a computed (`[K]:`) or shorthand (`REDIS_KEYS,`)
  * property; a factory delegating to a helper that lives in another file. Widen it when one of
  * those appears rather than assuming the set below is the population.
+ *
+ * 🔴 THE BASELINE HOLDS TWO DIFFERENT SHAPES, AND ONLY ONE OF THEM IS DRIFT. Surveyed
+ * 2026-08-26, all 50 entries:
+ *
+ *   32 hand-type a literal key object — the drift class this guard was built for.
+ *   18 substitute a CATCH-ALL PROXY and type no constant at all:
+ *        const make = (): any => new Proxy(() => 'k', { get: () => make() });
+ *      Every property access returns another callable proxy, so the ENTIRE namespace —
+ *      264 key literals across 63 top-level groups — stringifies to the single string
+ *      'k', and every key collides with every other (verified by running it).
+ *
+ * 🔴 DO NOT "CONVERT" THE 18. They cannot drift, because they name no value; and the fix
+ * this guard prescribes would import the real `@civitai/redis/client` — pulling `redis`,
+ * `msgpackr`, `lodash-es` and `slugify` — into files whose Proxy exists precisely to avoid
+ * that graph. `model-version-blocklist.test.ts` says so in its own comment: "so module-eval-
+ * time dereferences like REDIS_SYS_KEYS.DOWNLOAD.COUNT resolve WITHOUT a real redis client".
+ * Import is 81–84% of unit-test worker time and cost is linear in module COUNT, so that
+ * conversion is a net loss. They are on the baseline because the detector is deliberately
+ * loose (it matches the property, not the value) — that is correct and should stay.
+ *
+ * 🔴 REMAINING DRIFT, ENUMERATED EXACTLY rather than estimated. Of the 32 literal-shape
+ * files: 8 genuinely drifted constants across 4 files (base-event.sysredis-soft ×3,
+ * health.runHealthChecks ×3, restore-user-images ×1, track.router.blockRender ×1) — all
+ * corrected 2026-08-26 in place, WITHOUT converting the mocks. The other flagged values are
+ * legitimate: 5 deliberate `BLOCKS.TOKEN_RATE_LIMIT: 'rl'` stubs, and 3 files whose key
+ * object is empty (`REDIS_KEYS: {}`) so they carry no constant to drift.
+ *
+ * Detectability is the thing to check before spending effort here: 15 of the 32 reference a
+ * key value somewhere outside its own definition, but only `restore-user-images` had an
+ * assertion pinned to a DRIFTED one — correcting the constant turned that suite red (2
+ * failures, 'pending-restores' vs the real 'system:pending-image-restores') before its
+ * assertions were updated. In every other file both the writer and the reader resolve the
+ * same fake, so a wrong value is invisible to the suite and correcting it changes nothing
+ * observable. Fixing the VALUE is cheap and removes false documentation; restructuring the
+ * MOCK buys no assertion. Prefer the former.
  */
 
 const REPO_ROOT = path.resolve(__dirname, '../../../..');
