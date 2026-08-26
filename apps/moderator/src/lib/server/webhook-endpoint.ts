@@ -34,10 +34,19 @@ import { env } from '$env/dynamic/private';
 //   1. "None present it inbound" is a claim about THE MAIN APP, not about this repo. The main app
 //      presents WEBHOOK_TOKEN on every call into this app, from its own codebase — so grepping HERE,
 //      finding no inbound presenter and concluding the migration is done 401s every delegated
-//      moderation action. Nothing in this app records WHICH credential authenticated, so there is
-//      also no runtime signal to check it against; add one before you rely on the answer.
+//      moderation action. The RUNTIME SIGNAL that settles it now exists: every token-authenticated
+//      request logs which credential class matched (`webhook credential presented`, emitted from
+//      hooks.server.ts), so the claim is checkable instead of inferred.
 //   2. Dropping it from `acceptedTokens` is NOT the same as unsetting the variable. Four services in
 //      this app present it OUTBOUND, and two of them degrade by WARNING rather than failing.
+//
+// 🔴 HOW TO READ THAT SIGNAL — the ZERO ALONE IS NOT THE EVIDENCE. Count the attribution lines grouped
+// by `credential` over a window long enough to cover every inbound caller's slowest schedule. The
+// verdict needs BOTH numbers: `WEBHOOK_TOKEN` at zero is only meaningful next to a NON-ZERO
+// `MOD_INBOUND_TOKEN` in the same window, which is the in-band positive control proving the emit path
+// was live and ingesting at the moment the legacy count read zero. Without the pair, "nobody presents
+// it any more" and "the log line never shipped, or stopped being ingested" produce the identical
+// observation. That is why the emit covers BOTH classes and not just the legacy one.
 //
 // Scoping a token to particular endpoints is a separate, later change: `EndpointAuth` is already
 // `{kind:'webhook'} | {kind:'session'; page}` (api-endpoint.ts), so `{kind:'webhook'; scope}` has
@@ -64,7 +73,24 @@ function presentedToken(event: { url: URL; request: Request }): Buffer {
 }
 
 /**
- * The credentials this deployment accepts inbound, as comparable buffers.
+ * The credential VARIABLE NAMES this app can accept inbound, in PREFERENCE-DESCENDING order — most
+ * preferred first, most legacy last. The order is load-bearing twice over: it decides which name the
+ * attribution record carries when a deployment sets both variables to the same value (see the match
+ * loop below), and it is the order the 503 body lists them in.
+ *
+ * A credential class is a variable NAME, never a value. Nothing derived from a token's bytes — not a
+ * prefix, a length, or a hash — may leave this module.
+ */
+export const ACCEPTED_CREDENTIALS = ['MOD_INBOUND_TOKEN', 'WEBHOOK_TOKEN'] as const;
+
+export type AcceptedCredential = (typeof ACCEPTED_CREDENTIALS)[number];
+
+/** One accepted credential: the class that identifies it, and the bytes to compare against. */
+type AcceptedToken = { credential: AcceptedCredential; secret: Buffer };
+
+/**
+ * The credentials this deployment accepts inbound, as comparable buffers LABELLED with the class they
+ * came from. The label is what makes the migration checkable at runtime — see the header.
  *
  * Trimmed to match what a caller sends: a secret injected with a trailing newline would otherwise
  * differ in length from the byte-identical token a caller presents, and every request would 401
@@ -75,51 +101,86 @@ function presentedToken(event: { url: URL; request: Request }): Buffer {
  * secret would turn every wrapped endpoint into an open one, which is the opposite of the
  * fail-closed behaviour the 503 below exists to provide.
  */
-function acceptedTokens(): Buffer[] {
-  return [env.MOD_INBOUND_TOKEN, env.WEBHOOK_TOKEN]
-    .map((value) => (value ?? '').trim())
-    .filter((value) => value.length > 0)
-    .map((value) => Buffer.from(value));
+function acceptedTokens(): AcceptedToken[] {
+  // Read by literal property rather than `env[credential]`: `$env/dynamic/private` is the deployment
+  // surface, and a literal keeps each variable greppable from the manifests that inject it. The
+  // Record type is what forces this map to grow when ACCEPTED_CREDENTIALS does — adding a name there
+  // and forgetting to read it here is a type error, not a credential that silently never matches.
+  const values: Record<AcceptedCredential, string | undefined> = {
+    MOD_INBOUND_TOKEN: env.MOD_INBOUND_TOKEN,
+    WEBHOOK_TOKEN: env.WEBHOOK_TOKEN,
+  };
+  return ACCEPTED_CREDENTIALS.map((credential) => ({
+    credential,
+    value: (values[credential] ?? '').trim(),
+  }))
+    .filter(({ value }) => value.length > 0)
+    .map(({ credential, value }) => ({ credential, secret: Buffer.from(value) }));
 }
 
 /**
- * Called from hooks.server.ts for every `/api/*` request.
+ * The verdict `authenticateWebhookToken` produces, tagged with an explicit `kind`.
  *
- * `'none'` — no credential presented; fall through to the session guard.
- * `Response` — a credential was presented and refused; answer with it. Returned rather than thrown so a
- *   script gets JSON: an `error()` from the hook renders the HTML error page.
- * `'webhook'` — verified.
+ * 🔴 The tag is the point. A `Response` is an object, so discriminating a union that carries one by
+ * `instanceof` or `typeof x === 'object'` is a foot-gun the moment another object-shaped member is
+ * added; every caller must branch on `kind` and nothing else.
+ *
+ * `none`          — no credential presented; fall through to the session guard.
+ * `refused`       — a credential was presented and refused; answer with `response`. Returned rather than
+ *                   thrown so a script gets JSON: an `error()` from the hook renders the HTML error page.
+ * `authenticated` — verified, and `credential` names WHICH class matched.
  */
-export function authenticateWebhookToken(event: {
-  url: URL;
-  request: Request;
-}): 'none' | Response | 'webhook' {
+export type WebhookAuthResult =
+  | { kind: 'none' }
+  | { kind: 'refused'; response: Response }
+  | { kind: 'authenticated'; credential: AcceptedCredential };
+
+/** Called from hooks.server.ts for every `/api/*` request. */
+export function authenticateWebhookToken(event: { url: URL; request: Request }): WebhookAuthResult {
   if (!event.url.searchParams.has('token') && !event.request.headers.has('authorization'))
-    return 'none';
+    return { kind: 'none' };
 
   const accepted = acceptedTokens();
   // Fails CLOSED — with NO secret configured every wrapped endpoint is unreachable rather than
   // unguarded. 503 rather than 401 so an operator reading logs sees a deployment problem, not a caller
   // with a bad token. Either variable alone is a complete configuration: WEBHOOK_TOKEN alone is the
-  // state before migration, MOD_INBOUND_TOKEN alone the state after.
-  if (accepted.length === 0)
-    return Response.json(
-      { message: 'Neither MOD_INBOUND_TOKEN nor WEBHOOK_TOKEN is configured on this deployment.' },
-      { status: 503 }
-    );
+  // state before migration, MOD_INBOUND_TOKEN alone the state after. The body names every accepted
+  // class, derived from the list itself so the two cannot drift.
+  if (accepted.length === 0) {
+    const names = ACCEPTED_CREDENTIALS.join(' nor ');
+    return {
+      kind: 'refused',
+      response: Response.json(
+        { message: `Neither ${names} is configured on this deployment.` },
+        { status: 503 }
+      ),
+    };
+  }
 
   const provided = presentedToken(event);
   // Every candidate is compared with no early exit on a match, so WHICH credential matched is not
   // revealed by how long the comparison takes. (It does not hide how many candidates share the
   // presented token's LENGTH — that is not a property being claimed here.) Length is checked first
   // because timingSafeEqual THROWS on a length mismatch; that leaks only the length, not the secret.
-  let matched = false;
-  for (const secret of accepted)
-    if (provided.length === secret.length && timingSafeEqual(provided, secret)) matched = true;
+  //
+  // 🔴 Recording WHICH candidate matched must not reintroduce that signal: this is the same single
+  // assignment the boolean flag used to be, in the same branch, with no `break` and no `else`. Do not
+  // add either.
+  //
+  // No `else` also means LAST MATCH WINS, and ACCEPTED_CREDENTIALS is preference-DESCENDING — so a
+  // deployment holding the same value in both variables attributes to the LAST, i.e. the most legacy,
+  // class. Deliberate: one shared value is indistinguishable on the wire, and attributing it to the
+  // legacy credential can only OVERSTATE legacy use. A migration proof that errs toward "still in
+  // use" is safe; one that errs toward zero is the failure this signal exists to prevent.
+  let matched: AcceptedCredential | null = null;
+  for (const candidate of accepted)
+    if (provided.length === candidate.secret.length && timingSafeEqual(provided, candidate.secret))
+      matched = candidate.credential;
 
-  if (!matched) return Response.json({ message: SEND_A_TOKEN }, { status: 401 });
+  if (matched === null)
+    return { kind: 'refused', response: Response.json({ message: SEND_A_TOKEN }, { status: 401 }) };
 
-  return 'webhook';
+  return { kind: 'authenticated', credential: matched };
 }
 
 // Generic over the event so a route's own `RequestHandler` type survives the wrap — otherwise `params`
