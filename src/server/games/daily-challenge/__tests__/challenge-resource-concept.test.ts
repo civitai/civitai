@@ -146,6 +146,29 @@ describe('generateArticle prompt framing', () => {
     expect(text).toContain(`What this resource depicts: ${CONCEPT}`);
   });
 
+  // Observed live on Mince SDXL: valid JSON, no `theme` key. It parses, so getJsonCompletion's
+  // retries never fire, and undefined would land in Challenge.theme as the scoring anchor.
+  it('refuses to return a challenge whose theme the model omitted', async () => {
+    getJsonCompletion.mockResolvedValue({
+      title: 't',
+      invitation: 'i',
+      body: 'b',
+      themeElements: ['coal texture'],
+    });
+    await expect(
+      generateArticle({
+        resource,
+        image,
+        challengeDate: new Date(0),
+        prizes: [],
+        entryPrizeRequirement: 10,
+        entryPrize: { buzz: 0 },
+        allowedNsfwLevel: 1,
+        config,
+      } as never)
+    ).rejects.toThrow(/no theme/i);
+  });
+
   it('omits the concept line entirely when no concept was derived', async () => {
     const text = await run(undefined);
     expect(text).not.toContain('What this resource depicts');

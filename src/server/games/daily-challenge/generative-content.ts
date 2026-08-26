@@ -213,12 +213,13 @@ export async function generateArticle({
           "invitation": "a single sentence invitation to participate in the challenge displayed in the on-site generator",
           "body": "the content of the article in markdown",
           "theme": "a 1-2 word theme for the challenge",
-          "themeElements": ["5-8 short phrases describing visual elements, colors, moods, objects, or textures expected in images matching this theme — used to anchor judging"]
+          "themeElements": ["5-8 SHORT keywords, 1-3 words each, one visible thing apiece — e.g. 'coal texture', 'amber drips', 'matte black' — used to anchor judging"]
         }
 
         THEME RULES — these decide whether entries are judged fairly, so they override tone:
         - The theme and themeElements are the ONLY thing entries are scored against, and entries must use the featured resource. An entrant who uses the resource faithfully has to be able to score well.
-        - Every themeElements array MUST name the featured resource's own subject matter — its objects, characters, setting, or art style — in concrete terms a judge can look for in an image.
+        - Each themeElements entry is ONE keyword of 1-3 words naming a single visible thing — "coal texture", "amber drips", "matte black". Never a sentence, a clause, or a description: the judge scores by counting how many are visibly present, and anything longer cannot be checked.
+        - The list as a whole must describe what the featured resource CONTRIBUTES — its material, style, technique, or subject class — not the subject of the one example image you were shown. If the resource turns things into a material, the elements are that material's look, and they must hold for whatever subject an entrant picks.
         - Do NOT swap the subject for an adjacent category. A Moroccan tagine resource is not a desserts theme; a scrimshaw resource is not a musical-instruments theme. If you cannot connect an idea to what the resource depicts, drop the idea, not the resource.
         - Generic mood words ("whimsical", "playful", "vibrant", "magical") are not subject matter. At most one element may be a mood; the rest must be things visible in an image.
         - Add your creative angle ON TOP of the resource's subject, never in place of it.`
@@ -246,11 +247,21 @@ export async function generateArticle({
   `);
   const content = await markdownToHtml(markdownContent);
 
+  // The model can return valid JSON that simply omits `theme` — observed on a live resource. It
+  // parses, so the retries above never fire, and `undefined` would be persisted as the challenge's
+  // scoring anchor: every entry then gets judged against an empty theme. Failing the generation is
+  // recoverable (the job logs and skips the date); a themeless challenge is not.
+  const theme = result.theme?.trim();
+  if (!theme)
+    throw new Error(
+      'generateArticle returned no theme; refusing to build a challenge without a scoring anchor'
+    );
+
   return {
     title: result.title,
     content,
     invitation: result.invitation,
-    theme: result.theme,
+    theme,
     themeElements: result.themeElements ?? [],
   };
 }
@@ -279,9 +290,9 @@ export async function generateThemeElements(input: GenerateThemeElementsInput): 
               type: 'text',
               text: `${
                 input.config.prompts.systemMessage
-              }\n\nGenerate 5-8 keywords (single words or short 2-3 word combinations) describing the concrete visual elements, colors, moods, objects, or textures expected in images matching a given theme. These will be used to anchor consistent judging of challenge entries. Keep them broad enough to allow creative interpretation.${
+              }\n\nGenerate 5-8 keywords of 1-3 words each, naming one visible thing apiece, expected in images matching a given theme. A judge scores by counting how many are visibly present, so never return a sentence or a clause. Keep them broad enough to allow creative interpretation.${
                 input.resourceConcept?.trim()
-                  ? "\n\nEntries must use the featured resource, and these keywords are the only thing they are scored against. So the keywords MUST name the featured resource's own subject matter in concrete terms, not an adjacent category, and generic mood words are not subject matter."
+                  ? '\n\nEntries must use the featured resource, and these keywords are the only thing they are scored against. So they MUST name what the featured resource contributes - its material, style, technique or subject class - never an adjacent category and never the subject of one example image. Generic mood words are not subject matter.'
                   : ''
               }\n\nReply with json\n\n{"themeElements": ["keyword1", "keyword2", ...]}`,
             },
@@ -701,19 +712,20 @@ export async function generateResourceConcept(input: {
           content: [
             {
               type: 'text',
-              text: `You identify what an image-generation resource actually depicts, so a challenge built on it can be judged fairly.
+              text: `You identify what an image-generation resource CONTRIBUTES to an image, so a challenge built on it can be judged fairly.
 
-Given a resource's title, its creator's description, its trained words, and example images it produced, reply with ONE sentence (at most 20 words) naming the concrete subject matter: the objects, characters, setting, or art style the resource renders.
+Given a resource's title, its creator's description, its trained words, and several example images it produced, reply with ONE sentence (at most 20 words) naming what the resource itself applies: its material, style, technique, setting, or class of subject.
 
 RULES:
-- Name concrete nouns a judge could look for in an image. "Moroccan clay tagine cookware and North African dining scenes", not "food".
-- The example images are the strongest evidence. Where the description and the images disagree, follow the images.
+- The example images all use this resource and differ in everything else. Describe ONLY what they have in COMMON. Whatever changes between them - the particular animal, person, object, or scene - is the entrant's choice, not the resource, and must NOT appear in your answer.
+- Name the transferable thing, the one that could apply to any subject: "everything rendered in matte black coal and glossy amber oil", NOT "a bumblebee made of coal".
+- Where the resource IS a specific subject rather than a style or material, name the subject class: "Moroccan clay tagine cookware and North African dining scenes", not "food".
 - Do not invent an adjacent category. A tagine is not a dessert; scrimshaw is not a musical instrument.
-- Describe the subject only. No praise, no challenge framing, no instructions.
+- Describe the resource only. No praise, no challenge framing, no instructions.
 
 Reply with json
 
-{"concept": "one sentence naming the concrete subject matter"}`,
+{"concept": "one sentence naming what the resource contributes"}`,
             },
           ],
         },
