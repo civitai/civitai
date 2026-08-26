@@ -18,6 +18,7 @@ export const BAN_REASONS = [
   'Nudify',
   'Harassment',
   'SpamBot',
+  'BotAccount',
   'LeaderboardCheating',
   'BuzzCheating',
   'RRDViolation',

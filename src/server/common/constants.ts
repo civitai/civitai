@@ -1755,6 +1755,11 @@ export const banReasonDetails: Record<
     publicBanReasonLabel: 'Community Abuse',
     privateBanReasonLabel: 'Spambot or automated account',
   },
+  [BanReasonCode.BotAccount]: {
+    code: BanReasonCode.BotAccount,
+    publicBanReasonLabel: 'Community Abuse',
+    privateBanReasonLabel: 'Automated / bot account',
+  },
   [BanReasonCode.LeaderboardCheating]: {
     code: BanReasonCode.LeaderboardCheating,
     publicBanReasonLabel: 'Leaderboard manipulation',
