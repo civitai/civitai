@@ -270,6 +270,64 @@ describe('getMyListingForApp', () => {
     expect(mockRead.appListingPublishRequest.findFirst).not.toHaveBeenCalled();
   });
 
+  /**
+   * 🔴 THE SEAM: the proc RESOLVES a role, and `ListingMediaEditor` BRANCHES on it.
+   *
+   * Nothing bound those two together, which is exactly the shape that stays broken while
+   * both sides look tested. `listing-media-page.browser.test.tsx` STUBS this query, so it
+   * asserts what the component does with a `role` it was handed — it cannot notice the
+   * server no longer sending one. And the cases above assert this proc's other fields
+   * without ever mentioning `role`. Drop `role` from the return and every one of those
+   * tests still passes, while `listing?.role === 'owner'` silently becomes `false` for
+   * OWNERS and every owner reads the collaborator copy.
+   *
+   * So this asserts the PRODUCED value, per role, on the same fixture — the half the
+   * component tests structurally cannot cover.
+   */
+  it('🔴 returns the OWNER role — the media editor branches its copy on this', async () => {
+    wireFindUnique({
+      entry: { id: 'apl_onsite', userId: OWNER, status: 'approved', contentRating: 'pg13' },
+      owned: ownedRow(),
+      viewByListingId: { apl_shadow: editViewRow('apls_shadow') },
+    });
+    withShadow('apl_shadow');
+
+    const res = await getMyListingForApp({ appBlockId: 'my-block', userId: OWNER });
+    expect(res.role).toBe('owner');
+  });
+
+  it('🔴 returns the EDITOR role for an ACCEPTED SEAT — this proc is not owner-only', async () => {
+    // 🔴 The listing is owned by someone ELSE and the call still succeeds, which is the
+    // whole point: the gate is `resolveListingRole(...) === null`, not an ownership
+    // comparison. Reading it as owner-only is what produced copy telling a seated editor
+    // "you unpublished it" and pointing them at an owner-only Publishing tab.
+    wireFindUnique({
+      entry: { id: 'apl_onsite', userId: OTHER, status: 'approved', contentRating: 'pg13' },
+      // 🔴 `userId: OTHER` on the OWNED row too, not just the entry — `resolveListingAccess`
+      // reads THIS row to decide ownership. Leaving it as the default OWNER makes the caller
+      // the owner and the seat is never consulted, so the case would assert 'editor' against
+      // a fixture that can only ever produce 'owner'.
+      owned: ownedRow({ userId: OTHER, appBlock: { app: { userId: OTHER } } }),
+      viewByListingId: { apl_shadow: editViewRow('apls_shadow') },
+    });
+    withShadow('apl_shadow');
+    // An ACCEPTED seat on the LISTING for the caller.
+    mockRead.appCollaborator.findFirst.mockResolvedValue({
+      id: 'acol_1',
+      appListingId: 'apl_onsite',
+      userId: OWNER,
+      status: 'accepted',
+      role: 'editor',
+    });
+
+    const res = await getMyListingForApp({ appBlockId: 'my-block', userId: OWNER });
+    expect(res.role).toBe('editor');
+    // The discriminating control: the two roles must actually DIFFER on this proc, or a
+    // mutant that hardcodes `'owner'` passes the case above and this one is the only thing
+    // that can see it.
+    expect(res.role).not.toBe('owner');
+  });
+
   it('no listing row for the app → NOT_FOUND', async () => {
     mockRead.appListing.findUnique.mockResolvedValue(null);
 
