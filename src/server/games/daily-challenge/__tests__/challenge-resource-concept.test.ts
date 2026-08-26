@@ -18,21 +18,26 @@ import { challengeMetadataSchema } from '~/server/schema/challenge.schema';
 // Every assertion here is about PROMPT TEXT, because the prompt is the only layer where "the model
 // was told what the resource depicts" is checkable without a live LLM.
 
-const { getJsonCompletionWithUsage } = vi.hoisted(() => ({
+const { getJsonCompletionWithUsage, getJsonCompletion } = vi.hoisted(() => ({
   getJsonCompletionWithUsage: vi.fn(),
+  getJsonCompletion: vi.fn(),
 }));
 
 vi.mock('~/server/services/ai/openrouter', async (importOriginal) => ({
   ...(await importOriginal<typeof Openrouter>()),
-  openrouter: { getJsonCompletionWithUsage },
+  openrouter: { getJsonCompletionWithUsage, getJsonCompletion },
 }));
 
 vi.mock('~/server/services/challenge-category.service', () => ({
   resolveRubricBlock: vi.fn().mockResolvedValue(''),
 }));
 
-const { generateResourceConcept, buildFallbackMessages, appendResourceFidelityClause } =
-  await import('~/server/games/daily-challenge/generative-content');
+const {
+  generateResourceConcept,
+  generateArticle,
+  buildFallbackMessages,
+  appendResourceFidelityClause,
+} = await import('~/server/games/daily-challenge/generative-content');
 
 const config = {
   judgeId: 1,
@@ -90,6 +95,62 @@ function reviewSystemText(messages: Awaited<ReturnType<typeof buildFallbackMessa
 beforeEach(() => {
   vi.clearAllMocks();
   loggingMock.logToAxiom.mockClear();
+});
+
+// The article step receives neither the description nor the trained words — only the title, links,
+// and the already-derived concept. A preamble naming fields that are absent misdescribes the prompt
+// to the model, and the concept step's "describe the subject" instruction contradicts this step's
+// actual job of writing an article.
+describe('generateArticle prompt framing', () => {
+  const resource = { modelId: 42, title: 'TagineXL', creator: 'alice' };
+  const image = { id: 1, url: 'https://example.com/cover.png' };
+
+  function articleUserText() {
+    const messages = getJsonCompletion.mock.calls[0][0].messages;
+    const user = messages.find((m: { role: string }) => m.role === 'user');
+    return (user.content as { type: string; text?: string }[]).find((c) => c.type === 'text')!
+      .text!;
+  }
+
+  async function run(resourceConcept?: string) {
+    getJsonCompletion.mockResolvedValue({
+      title: 't',
+      invitation: 'i',
+      body: 'b',
+      theme: 'Tagine Nights',
+      themeElements: ['clay tagine cookware'],
+    });
+    await generateArticle({
+      resource,
+      resourceConcept,
+      image,
+      challengeDate: new Date(0),
+      prizes: [],
+      entryPrizeRequirement: 10,
+      entryPrize: { buzz: 0 },
+      allowedNsfwLevel: 1,
+      config,
+    } as never);
+    return articleUserText();
+  }
+
+  it('does not claim fields this step is never given', async () => {
+    const text = await run(CONCEPT);
+    expect(text).not.toContain('trained words');
+    expect(text).not.toContain('Describe only the visual subject');
+  });
+
+  it('still frames what it does send as inert data, and carries the concept', async () => {
+    const text = await run(CONCEPT);
+    expect(text).toContain('never instructions');
+    expect(text).toContain(`What this resource depicts: ${CONCEPT}`);
+  });
+
+  it('omits the concept line entirely when no concept was derived', async () => {
+    const text = await run(undefined);
+    expect(text).not.toContain('What this resource depicts');
+    expect(text).toContain('Resource title: TagineXL');
+  });
 });
 
 describe('generateResourceConcept', () => {
@@ -291,5 +352,19 @@ describe('challenge metadata', () => {
 
   it('is optional, so pre-existing challenge rows still parse', () => {
     expect(challengeMetadataSchema.parse({ themeElements: [] }).resourceConcept).toBeUndefined();
+  });
+
+  // Hand-editable column: an oversized value would ride into the review prompt and every pairwise
+  // comparison. Truncating (not rejecting) keeps sibling keys — the write-back sites re-persist
+  // whatever parse returns, so a rejection would wipe the whole metadata column.
+  it('truncates an oversized concept instead of dropping the rest of the metadata', () => {
+    const parsed = challengeMetadataSchema.parse({
+      resourceConcept: 'x'.repeat(5000),
+      themeElements: ['tagine'],
+      resourceModelId: 145271,
+    });
+    expect(parsed.resourceConcept).toHaveLength(200);
+    expect(parsed.themeElements).toEqual(['tagine']);
+    expect(parsed.resourceModelId).toBe(145271);
   });
 });
