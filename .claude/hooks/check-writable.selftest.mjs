@@ -6,7 +6,7 @@
  * only mentions a port must all run untouched.
  */
 
-import { unboundedDevRequest } from './check-writable.mjs';
+import { fullUnitSuiteRun, unboundedDevRequest } from './check-writable.mjs';
 
 let failures = 0;
 const check = (name, cmd, expectBlocked) => {
@@ -49,6 +49,35 @@ check('curl to other local port', 'curl http://localhost:8080/thing', false);
 check('no curl at all', 'node .claude/skills/dev-server/cli.mjs probe /home', false);
 check('mentions the port only', 'echo "the dev server is on localhost:3000"', false);
 check('probe command itself', 'node cli.mjs probe /home --port 3000', false);
+
+const checkSuite = (name, cmd, expectBlocked) => {
+  const blocked = fullUnitSuiteRun(cmd);
+  const pass = blocked === expectBlocked;
+  if (!pass) failures++;
+  console.log(`${pass ? 'PASS' : 'FAIL'}  ${name}  blocked=${blocked} want=${expectBlocked}`);
+};
+
+checkSuite('bare full unit run', 'pnpm run test:unit:run', true);
+checkSuite('full run with worker cap', 'pnpm run test:unit:run --max-workers=8', true);
+checkSuite('direct vitest, unit project, no files', "pnpm exec vitest run --project 'unit*'", true);
+checkSuite('bare vitest run (all projects)', 'pnpm exec vitest run', true);
+checkSuite('env prefix does not hide it', "VITEST_MAX_WORKERS=8 pnpm exec vitest run --project 'unit*'", true);
+checkSuite('chained after typecheck', 'pnpm run typecheck && pnpm run test:unit:run', true);
+checkSuite('vitest related (never narrows here)', 'npx vitest related src/server/services/user.service.ts', true);
+checkSuite('workspace flag between pnpm and script', 'pnpm -w run test:unit:run', true);
+checkSuite('reporter flag before script', 'pnpm run --reporter=silent test:unit:run', true);
+checkSuite('windows .bin path', '.\\node_modules\\.bin\\vitest run', true);
+checkSuite('bare node_modules/.bin path', 'node_modules/.bin/vitest run', true);
+
+checkSuite('opt-in marker', 'FULL_SUITE=1 pnpm run test:unit:run', false);
+checkSuite('opt-in marker, powershell', '$env:FULL_SUITE=1; pnpm run test:unit:run', false);
+checkSuite('scoped to a test file', "pnpm exec vitest run --project 'unit*' src/server/services/__tests__/strike.service.test.ts", false);
+checkSuite('scoped to a __tests__ dir', "pnpm exec vitest run --project 'unit*' src/server/services/__tests__/", false);
+checkSuite('scoped queued run', 'pnpm run test:unit:run src/server/services/__tests__/strike.service.test.ts', false);
+checkSuite('non-unit project', 'pnpm exec vitest run --project lint-rules', false);
+checkSuite('lint-rules script', 'pnpm run test:lint-rules', false);
+checkSuite('packages suite', 'pnpm run test:packages:run', false);
+checkSuite('prose mentioning it', 'echo "do not run pnpm run test:unit:run between edits"', false);
 
 console.log(failures ? `\n${failures} FAILURES` : '\nall green');
 process.exit(failures ? 1 : 0);

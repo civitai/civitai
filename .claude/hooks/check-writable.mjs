@@ -162,6 +162,35 @@ export function unboundedDevRequest(command) {
     .filter((seg) => !isBounded(seg));
 }
 
+// The full unit suite (~21,500 tests / ~75s, serialised through the dev-server queue) belongs at
+// the END of a task, once — not between edits. Denied rather than asked, so the redirect reaches
+// the agent at the moment of the mistake instead of interrupting the user. FULL_SUITE=1 is the
+// deliberate opt-in for the single pre-commit run or an explicit user request.
+const VITEST_INVOCATION =
+  /^\s*(?:\w+=\S*\s+)*(?:(?:pnpm|yarn|bun)\s+(?:exec|run|dlx)\s+|npx\s+|\.?[\\/]?node_modules[\\/]\.bin[\\/])?vitest\b/;
+const UNIT_RUN_SCRIPT =
+  /^\s*(?:\w+=\S*\s+)*(?:pnpm|yarn|bun|npm)(?:\s+(?:run|-{1,2}[\w-]+(?:[= ]\S+)?))*\s+test:unit:run\b/;
+const SCOPED_TARGET = /\.(?:test|spec)\.[cm]?[jt]sx?\b|__tests__/;
+
+export function fullUnitSuiteRun(command) {
+  if (/FULL_SUITE\s*=\s*1|\$env:FULL_SUITE/.test(command)) return false;
+  return command.split(/[;&|\n]+/).some((seg) => {
+    if (SCOPED_TARGET.test(seg)) return false;
+    if (UNIT_RUN_SCRIPT.test(seg)) return true;
+    if (!VITEST_INVOCATION.test(seg)) return false;
+    const projects = [...seg.matchAll(/--project[=\s]+['"]?([^'"\s]+)/g)].map((m) => m[1]);
+    return projects.length === 0 || projects.some((p) => p.includes('unit'));
+  });
+}
+
+const FULL_SUITE_REASON =
+  'Full unit suite blocked mid-iteration: it is ~21,500 tests / ~75s and serialised through the ' +
+  "dev-server queue, blocking everyone else's runs. Run only the test files covering your change: " +
+  "`pnpm exec vitest run --project 'unit*' <files>` — find them with " +
+  '`grep -rln \'<symbol>\' src --include=*.test.ts`. The full suite runs ONCE, right before ' +
+  'committing; for that single run (or when the user explicitly asked for a full run), prefix the ' +
+  'command with FULL_SUITE=1.';
+
 // Patterns that would kill Claude Code or critical processes - BLOCK OUTRIGHT
 const DANGEROUS_PATTERNS = [
   { pattern: /taskkill\s+\/\/F\s+\/\/IM\s+node\.exe/i, reason: 'This would kill all Node.js processes including Claude Code itself' },
@@ -245,6 +274,17 @@ stdin.on('end', () => {
         console.error(`BLOCKED: ${reason}\nCommand: ${rawCommand}`);
         process.exit(2); // Exit code 2 blocks the command immediately
       }
+    }
+
+    if (fullUnitSuiteRun(command)) {
+      console.log(JSON.stringify({
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          permissionDecision: 'deny',
+          permissionDecisionReason: FULL_SUITE_REASON,
+        }
+      }));
+      process.exit(0);
     }
 
     for (const { pattern, check, reason } of GUARDED_PATTERNS) {
