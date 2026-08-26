@@ -1,9 +1,9 @@
-import { computePosition, flip, shift } from '@floating-ui/dom';
 import { PluginKey } from '@tiptap/pm/state';
-import type { Editor } from '@tiptap/react';
-import { posToDOMRect, ReactRenderer } from '@tiptap/react';
+import { ReactRenderer } from '@tiptap/react';
 import type { SuggestionOptions, SuggestionProps } from '@tiptap/suggestion';
+import { exitSuggestion } from '@tiptap/suggestion';
 import { BlurbList, type BlurbListRef } from '~/components/RichTextEditor/BlurbList';
+import { updateSuggestionPosition } from '~/components/RichTextEditor/suggestion';
 import type { BlurbItem } from '~/components/RichTextEditor/blurb.util';
 import { insertBlurb } from '~/components/RichTextEditor/blurb.util';
 
@@ -43,6 +43,7 @@ export function createBlurbSuggestion({
 } {
   let component: ReactRenderer<BlurbListRef> | null = null;
   let latestProps: SuggestionProps<BlurbItem> | null = null;
+  let outsideClickHandler: ((event: MouseEvent) => void) | null = null;
 
   /**
    * Opening the manager consumes nothing, so the `//sup` stays matched, the popover keeps drawing
@@ -83,7 +84,19 @@ export function createBlurbSuggestion({
           el.style.position = 'absolute';
           el.style.zIndex = '300';
           document.body.appendChild(el);
-          updatePosition(props.editor, el);
+          updateSuggestionPosition(props.editor, el);
+
+          // `@tiptap/suggestion` 3.4.0 removed the built-in document mousedown handler that closed
+          // the popover on an outside click. Restored here, as in `suggestion.ts` and
+          // `sticker-suggestion.ts` — without it the `//` popover stays open over the page.
+          outsideClickHandler = (event: MouseEvent) => {
+            const target = event.target as Node | null;
+            if (!target) return;
+            if (component?.element.contains(target)) return;
+            if (props.editor.view.dom.contains(target)) return;
+            exitSuggestion(props.editor.view, BlurbSuggestionPluginKey);
+          };
+          document.addEventListener('mousedown', outsideClickHandler);
         },
 
         onUpdate: (props) => {
@@ -91,12 +104,15 @@ export function createBlurbSuggestion({
           if (!component) return;
           component.updateProps({ ...props, loading: getLoading(), onManage: manage });
           if (!props.clientRect) return;
-          updatePosition(props.editor, component.element as HTMLElement);
+          updateSuggestionPosition(props.editor, component.element as HTMLElement);
         },
 
         onKeyDown: (props) => {
           if (props.event.key === 'Escape') {
-            cleanup();
+            // `exitSuggestion`, not a bare `cleanup()`: removing the DOM leaves the plugin's own
+            // state active, so the next keystroke reopens a popover the user just dismissed. The
+            // key argument is required — the bare call defaults to the mention plugin's key.
+            exitSuggestion(props.view, BlurbSuggestionPluginKey);
             return true;
           }
           return component?.ref?.onKeyDown(props) ?? false;
@@ -110,6 +126,10 @@ export function createBlurbSuggestion({
   };
 
   function cleanup() {
+    if (outsideClickHandler) {
+      document.removeEventListener('mousedown', outsideClickHandler);
+      outsideClickHandler = null;
+    }
     if (!component) return;
     component.element.remove();
     component.destroy();
@@ -124,20 +144,4 @@ export function createBlurbSuggestion({
   };
 
   return { suggestion, refresh, manage };
-}
-
-function updatePosition(editor: Editor, element: HTMLElement) {
-  const virtualElement = {
-    getBoundingClientRect: () =>
-      posToDOMRect(editor.view, editor.state.selection.from, editor.state.selection.to),
-  };
-  computePosition(virtualElement, element, {
-    placement: 'bottom-start',
-    strategy: 'absolute',
-    middleware: [shift({ padding: 8 }), flip()],
-  }).then(({ x, y, strategy }) => {
-    element.style.position = strategy;
-    element.style.left = `${x}px`;
-    element.style.top = `${y}px`;
-  });
 }

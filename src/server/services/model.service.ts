@@ -88,6 +88,7 @@ import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors
 import { associatedResourceSelect } from '~/server/selectors/model.selector';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { evaluateAutoNsfw } from '~/server/services/auto-nsfw';
 import { deleteBidsForModel, getLastAuctionReset } from '~/server/services/auction.service';
 import { enforceBlockedBrowsingTagsForModels } from '~/server/services/blocked-browsing-tags.service';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
@@ -2385,12 +2386,17 @@ export const upsertModel = async (
     beforeUpdate && ownerId !== userId
       ? await getReferencedBlurbIds({ entityType: 'Model', entityId: id as number })
       : undefined;
+  // Whether the CALLER supplied the column, captured before the expansion overwrites it below.
+  // A write that omits `description` — the review handlers select without it — must not
+  // reconcile: Prisma leaves the column alone, so an empty expansion would delete every
+  // reference row while the blurb markup stays in the body, stranding it permanently.
+  const descriptionSupplied = data.description != null;
   const expansion = await expandBlurbs({
     userId: ownerId,
     html: data.description ?? '',
     restrictToBlurbIds,
   });
-  if (data.description != null) {
+  if (descriptionSupplied) {
     data.description = expansion.html;
     // The guard at the top of this function saw the CLIENT's html. Blurb bodies were spliced in
     // since, so the string about to be written is one it never checked.
@@ -2494,7 +2500,7 @@ export const upsertModel = async (
       );
     }
 
-    if (expansion.evaluated)
+    if (descriptionSupplied && expansion.evaluated)
       await reconcileBlurbReferences({
         entityType: 'Model',
         entityId: result.id,
@@ -2694,7 +2700,7 @@ export const upsertModel = async (
       });
     }
 
-    if (expansion.evaluated)
+    if (descriptionSupplied && expansion.evaluated)
       await reconcileBlurbReferences({
         entityType: 'Model',
         entityId: result.id,
@@ -2735,7 +2741,10 @@ export async function applyModelContentChange({
 
   let resolved = context;
   if (!resolved) {
-    const stored = await dbWrite.model.findUnique({ where: { id }, select: { name: true } });
+    const stored = await dbWrite.model.findUnique({
+      where: { id },
+      select: { name: true, nsfw: true, lockedProperties: true, meta: true },
+    });
     if (!stored) throw throwNotFoundError(`No model with id ${id}`);
     resolved = { name: stored.name };
 
@@ -2744,12 +2753,42 @@ export async function applyModelContentChange({
     // model lists.
     await dbWrite.$executeRaw`UPDATE "Model" SET description = ${description} WHERE id = ${id}`;
     await preventReplicationLag('model', id);
+
+    // A caller passing `context` has already written the body AND already run this gate on it.
+    // This branch is the fan-out, which has neither — and the text it just wrote is text the
+    // upsert's gate never saw. Without this, editing a blurb is a way to put profanity into a
+    // published description while it keeps the SFW classification it earned with the old text.
+    const flagged = evaluateAutoNsfw({
+      name: stored.name,
+      description,
+      alreadyNsfw: stored.nsfw,
+      lockedProperties: stored.lockedProperties,
+    });
+    if (flagged) {
+      const meta = {
+        ...((stored.meta as MixedObject | null) ?? {}),
+        ...flagged.metaPatch,
+      } as Prisma.InputJsonObject;
+      // Prisma rather than raw SQL, unlike the body write above: this fires rarely, and hand-
+      // rolling the jsonb + text[] binds is where that trade stops being worth it. The
+      // `updatedAt` bump it carries is honest — the model's rating actually changed.
+      await dbWrite.model.update({
+        where: { id },
+        data: flagged.lock
+          ? { nsfw: true, lockedProperties: uniq([...stored.lockedProperties, 'nsfw']), meta }
+          : { meta },
+      });
+    }
   }
 
   // The description is carried in the cached public GET /api/v1/models/[id] body, so without
   // this an edge-miss keeps serving the pre-rewrite text for up to the cache TTL. Fail-open
   // (the helper swallows Redis errors).
-  await bustPublicModelResponseCache(id);
+  //
+  // Only when nobody handed us a `context`: a caller that passes one has already written the
+  // body, and `upsertModel` busts unconditionally a few lines before it calls this — so doing it
+  // here too was a second identical bust on every content-changing model save.
+  if (!context) await bustPublicModelResponseCache(id);
 
   // Fire-and-forget: the helper owns its own flag check and swallows its own errors, so a
   // moderation outage can never fail a model save.

@@ -54,9 +54,8 @@ export async function processBlurbEntity(rows: StaleRow[]): Promise<FanoutOutcom
 
   const deleted = rows.filter((row) => row.deletedAt);
   if (deleted.length) await dropReferences(deleted);
-  for (const row of rows) {
-    if (!row.deletedAt) await recordReference(row, row.contentHash);
-  }
+  const live = rows.filter((row) => !row.deletedAt);
+  if (live.length) await recordReferences(live);
 
   return rewritten ? 'rewritten' : 'skipped';
 }
@@ -72,17 +71,32 @@ function dropReferences(rows: Ref[]) {
   });
 }
 
-function recordReference(ref: Ref, contentHash: string) {
-  return dbWrite.blurbReference.update({
-    where: {
-      blurbId_entityType_entityId: {
-        blurbId: ref.blurbId,
-        entityType: ref.entityType,
-        entityId: ref.entityId,
-      },
-    },
-    data: { materializedHash: contentHash, materializedAt: new Date() },
-  });
+// Grouped by hash rather than one update per row: rows in a batch share an entity, so this is
+// `updateMany` per DISTINCT contentHash — normally one statement, where the loop it replaced was
+// up to `BATCH_LIMIT` sequential round trips to the primary on every pass. `dropReferences`
+// beside it already batched; this did not.
+function recordReferences(rows: StaleRow[]) {
+  const [first] = rows;
+  const now = new Date();
+  const byHash = new Map<string, number[]>();
+  for (const row of rows) {
+    const ids = byHash.get(row.contentHash);
+    if (ids) ids.push(row.blurbId);
+    else byHash.set(row.contentHash, [row.blurbId]);
+  }
+
+  return Promise.all(
+    [...byHash].map(([contentHash, blurbIds]) =>
+      dbWrite.blurbReference.updateMany({
+        where: {
+          entityType: first.entityType,
+          entityId: first.entityId,
+          blurbId: { in: blurbIds },
+        },
+        data: { materializedHash: contentHash, materializedAt: now },
+      })
+    )
+  );
 }
 
 // Leaves `materializedHash` stale so the row stays eligible, but bumps `materializedAt` so it

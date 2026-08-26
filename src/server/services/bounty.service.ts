@@ -50,6 +50,7 @@ import { updateEntityFiles } from './file.service';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import type { IngestImageInput } from '~/server/schema/image.schema';
 import { userBountyCountCache } from '~/server/redis/caches';
+import { evaluateAutoNsfw } from '~/server/services/auto-nsfw';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import {
   expandBlurbs,
@@ -581,11 +582,43 @@ export async function applyBountyContentChange({
   // catch it — same reason `applyArticleContentChange` re-checks.
   await throwOnBlockedLinkDomain(description);
 
+  const stored = await dbWrite.bounty.findUnique({
+    where: { id },
+    select: { name: true, nsfw: true, lockedProperties: true, details: true },
+  });
+  if (!stored) throw throwNotFoundError(`No bounty with id ${id}`);
+
   // Raw SQL because Prisma's @updatedAt fires on every client-side update(), and a blurb
   // re-materialization is not a creator edit.
   const affected =
     await dbWrite.$executeRaw`UPDATE "Bounty" SET description = ${description} WHERE id = ${id}`;
   if (!affected) throw throwNotFoundError(`No bounty with id ${id}`);
+
+  // `upsertBounty` runs this gate on the text a creator types. This path is the fan-out, which
+  // has just written text that gate never saw — without it, editing a blurb puts profanity into a
+  // published bounty while it keeps the SFW rating it earned with the old text. Evaluated
+  // unconditionally: there is no acting moderator here to exempt, only the owner whose blurb
+  // changed.
+  const flagged = evaluateAutoNsfw({
+    name: stored.name,
+    description,
+    alreadyNsfw: stored.nsfw,
+    lockedProperties: stored.lockedProperties,
+  });
+  if (flagged) {
+    const details = {
+      ...((stored.details as MixedObject | null) ?? {}),
+      ...flagged.metaPatch,
+    } as Prisma.InputJsonObject;
+    // Prisma rather than raw SQL, unlike the body write above: this fires rarely, and hand-rolling
+    // the jsonb + text[] binds is where that trade stops being worth it.
+    await dbWrite.bounty.update({
+      where: { id },
+      data: flagged.lock
+        ? { nsfw: true, lockedProperties: uniq([...stored.lockedProperties, 'nsfw']), details }
+        : { details },
+    });
+  }
 
   await queueBountySearchIndexUpdate(id);
 }

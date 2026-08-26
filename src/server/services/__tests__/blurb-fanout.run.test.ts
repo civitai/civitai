@@ -254,13 +254,13 @@ describe('runBlurbFanout — two stale blurbs on one entity', () => {
     // And both rows are stamped current. That half was already true of the broken version — it is
     // what made the lost edit permanent — so it only means anything next to the html above.
     expect(
-      dbMock.dbWrite.blurbReference.update.mock.calls.map(([arg]) => [
-        arg.where.blurbId_entityType_entityId.blurbId,
+      dbMock.dbWrite.blurbReference.updateMany.mock.calls.map(([arg]) => [
+        arg.where.blurbId.in,
         arg.data.materializedHash,
       ])
     ).toEqual([
-      [1, 'new-1'],
-      [2, 'new-2'],
+      [[1], 'new-1'],
+      [[2], 'new-2'],
     ]);
   });
 });

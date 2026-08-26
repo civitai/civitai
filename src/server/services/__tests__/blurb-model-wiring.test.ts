@@ -6,6 +6,7 @@ import type * as DbLagHelpers from '~/server/db/db-lag-helpers';
 import type * as RedisCaches from '~/server/redis/caches';
 import type * as ModelModerationAdapter from '~/server/services/model-moderation.adapter';
 import type * as ModelVersionService from '~/server/services/model-version.service';
+import type * as AutoNsfw from '~/server/services/auto-nsfw';
 
 // The Model half of the blurb save path, run against the REAL `upsertModel` /
 // `applyModelContentChange`. Only the blurb modules, the blocklist guard and the Redis-backed
@@ -21,6 +22,7 @@ const {
   throwOnBlockedLinkDomain,
   submitModelTextModeration,
   preventReplicationLag,
+  evaluateAutoNsfw,
 } = vi.hoisted(() => ({
   expandBlurbs: vi.fn(),
   getReferencedBlurbIds: vi.fn(),
@@ -28,6 +30,7 @@ const {
   throwOnBlockedLinkDomain: vi.fn(),
   submitModelTextModeration: vi.fn(),
   preventReplicationLag: vi.fn(async () => undefined),
+  evaluateAutoNsfw: vi.fn(),
 }));
 
 vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
@@ -43,6 +46,10 @@ vi.mock('~/server/services/blurb-materialize.service', async (importOriginal) =>
 vi.mock('~/server/services/model-moderation.adapter', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelModerationAdapter>()),
   submitModelTextModeration,
+}));
+vi.mock('~/server/services/auto-nsfw', async (importOriginal) => ({
+  ...(await importOriginal<typeof AutoNsfw>()),
+  evaluateAutoNsfw,
 }));
 vi.mock('~/server/db/db-lag-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof DbLagHelpers>()),
@@ -121,7 +128,13 @@ beforeEach(() => {
   throwOnBlockedLinkDomain.mockResolvedValue(undefined);
   submitModelTextModeration.mockResolvedValue(undefined);
   dbMock.dbRead.model.findUnique.mockResolvedValue(storedModel);
-  dbMock.dbWrite.model.findUnique.mockResolvedValue({ name: storedModel.name });
+  dbMock.dbWrite.model.findUnique.mockResolvedValue({
+    name: storedModel.name,
+    nsfw: false,
+    lockedProperties: [],
+    meta: null,
+  });
+  evaluateAutoNsfw.mockReturnValue(null);
   dbMock.dbWrite.model.update.mockResolvedValue({
     id: MODEL_ID,
     name: 'A model',
@@ -281,5 +294,66 @@ describe('applyModelContentChange', () => {
     expect(submitModelTextModeration).toHaveBeenCalledWith(
       expect.objectContaining({ id: MODEL_ID, description: EXPANDED_HTML })
     );
+  });
+});
+
+// The bypass this closes: `upsertModel` evaluates the text a creator types, but the fan-out
+// rewrites an already-published description with text that gate never saw. Publish clean, then
+// edit the blurb, and the model keeps the rating it earned with the old words.
+describe('applyModelContentChange — the auto-NSFW gate', () => {
+  const FLAGGED = {
+    metaPatch: { profanityMatches: ['x'], profanityEvaluation: { reason: 'r', metrics: {} } },
+    lock: true,
+  };
+
+  it('🔴 evaluates the text it just wrote', async () => {
+    await applyModelContentChange({ id: MODEL_ID, description: EXPANDED_HTML });
+
+    expect(evaluateAutoNsfw).toHaveBeenCalledWith({
+      name: storedModel.name,
+      description: EXPANDED_HTML,
+      alreadyNsfw: false,
+      lockedProperties: [],
+    });
+  });
+
+  it('🔴 marks the model nsfw and locks it when the gate fires', async () => {
+    evaluateAutoNsfw.mockReturnValue(FLAGGED);
+
+    await applyModelContentChange({ id: MODEL_ID, description: EXPANDED_HTML });
+
+    const [{ data }] = dbMock.dbWrite.model.update.mock.calls[0];
+    expect(data.nsfw).toBe(true);
+    expect(data.lockedProperties).toEqual(['nsfw']);
+    expect(data.meta).toMatchObject({ profanityMatches: ['x'] });
+  });
+
+  it('records the detection but never overturns a moderator lock', async () => {
+    evaluateAutoNsfw.mockReturnValue({ ...FLAGGED, lock: false });
+
+    await applyModelContentChange({ id: MODEL_ID, description: EXPANDED_HTML });
+
+    const [{ data }] = dbMock.dbWrite.model.update.mock.calls[0];
+    expect(data.nsfw).toBeUndefined();
+    expect(data.lockedProperties).toBeUndefined();
+    expect(data.meta).toMatchObject({ profanityMatches: ['x'] });
+  });
+
+  it('writes nothing when the gate does not fire', async () => {
+    await applyModelContentChange({ id: MODEL_ID, description: EXPANDED_HTML });
+    expect(dbMock.dbWrite.model.update).not.toHaveBeenCalled();
+  });
+
+  it('does not re-run on the caller-committed path, which already gated', async () => {
+    evaluateAutoNsfw.mockReturnValue(FLAGGED);
+
+    await applyModelContentChange({
+      id: MODEL_ID,
+      description: EXPANDED_HTML,
+      context: { name: storedModel.name },
+    });
+
+    expect(evaluateAutoNsfw).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.model.update).not.toHaveBeenCalled();
   });
 });

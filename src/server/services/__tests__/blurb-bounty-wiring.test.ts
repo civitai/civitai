@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as BlocklistService from '~/server/services/blocklist.service';
+import type * as AutoNsfw from '~/server/services/auto-nsfw';
 import type * as BlurbMaterializeService from '~/server/services/blurb-materialize.service';
 import type * as RedisCaches from '~/server/redis/caches';
 import type * as ImageIngestion from '~/server/services/image.service';
@@ -19,7 +20,9 @@ const {
   throwOnBlockedLinkDomain,
   enqueueImageIngestion,
   refreshUserBountyCount,
+  evaluateAutoNsfw,
 } = vi.hoisted(() => ({
+  evaluateAutoNsfw: vi.fn(),
   expandBlurbs: vi.fn(),
   getReferencedBlurbIds: vi.fn(),
   reconcileBlurbReferences: vi.fn(),
@@ -28,6 +31,10 @@ const {
   refreshUserBountyCount: vi.fn(async () => undefined),
 }));
 
+vi.mock('~/server/services/auto-nsfw', async (importOriginal) => ({
+  ...(await importOriginal<typeof AutoNsfw>()),
+  evaluateAutoNsfw,
+}));
 vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BlocklistService>()),
   throwOnBlockedLinkDomain,
@@ -119,6 +126,15 @@ beforeEach(() => {
     userId: OWNER_ID,
     details: null,
   });
+  // `applyBountyContentChange` reads the row back so it can re-run the auto-NSFW gate on the text
+  // it just wrote — see the fan-out branch in bounty.service.
+  dbMock.dbWrite.bounty.findUnique.mockResolvedValue({
+    name: 'a clean bounty',
+    nsfw: false,
+    lockedProperties: [],
+    details: null,
+  });
+  evaluateAutoNsfw.mockReturnValue(null);
   dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
 });
 
@@ -236,5 +252,51 @@ describe('applyBountyContentChange', () => {
     await expect(
       applyBountyContentChange({ id: BOUNTY_ID, description: EXPANDED_HTML })
     ).rejects.toThrow(/No bounty with id/);
+  });
+});
+
+// The bypass this closes: `upsertBounty` evaluates the text a creator types, but this path
+// rewrites an already-published description with text that gate never saw.
+describe('applyBountyContentChange — the auto-NSFW gate', () => {
+  const FLAGGED = {
+    metaPatch: { profanityMatches: ['x'], profanityEvaluation: { reason: 'r', metrics: {} } },
+    lock: true,
+  };
+
+  it('🔴 evaluates the text it just wrote', async () => {
+    await applyBountyContentChange({ id: BOUNTY_ID, description: EXPANDED_HTML });
+
+    expect(evaluateAutoNsfw).toHaveBeenCalledWith({
+      name: 'a clean bounty',
+      description: EXPANDED_HTML,
+      alreadyNsfw: false,
+      lockedProperties: [],
+    });
+  });
+
+  it('🔴 marks the bounty nsfw and locks it when the gate fires', async () => {
+    evaluateAutoNsfw.mockReturnValue(FLAGGED);
+
+    await applyBountyContentChange({ id: BOUNTY_ID, description: EXPANDED_HTML });
+
+    const [{ data }] = dbMock.dbWrite.bounty.update.mock.calls[0];
+    expect(data.nsfw).toBe(true);
+    expect(data.lockedProperties).toEqual(['nsfw']);
+    expect(data.details).toMatchObject({ profanityMatches: ['x'] });
+  });
+
+  it('records the detection but never overturns a moderator lock', async () => {
+    evaluateAutoNsfw.mockReturnValue({ ...FLAGGED, lock: false });
+
+    await applyBountyContentChange({ id: BOUNTY_ID, description: EXPANDED_HTML });
+
+    const [{ data }] = dbMock.dbWrite.bounty.update.mock.calls[0];
+    expect(data.nsfw).toBeUndefined();
+    expect(data.details).toMatchObject({ profanityMatches: ['x'] });
+  });
+
+  it('writes nothing extra when the gate does not fire', async () => {
+    await applyBountyContentChange({ id: BOUNTY_ID, description: EXPANDED_HTML });
+    expect(dbMock.dbWrite.bounty.update).not.toHaveBeenCalled();
   });
 });

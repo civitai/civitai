@@ -48,7 +48,7 @@ describe('processBlurbEntity', () => {
     expect(result).toBe('skipped');
     expect(adapter.save).not.toHaveBeenCalled();
     // Still records, so the reference stops being selected.
-    expect(dbMock.dbWrite.blurbReference.update).toHaveBeenCalled();
+    expect(dbMock.dbWrite.blurbReference.updateMany).toHaveBeenCalled();
   });
 
   it('drops the reference when the entity no longer exists', async () => {
@@ -72,7 +72,7 @@ describe('processBlurbEntity', () => {
 
   it('records the new hash after a rewrite', async () => {
     await processBlurbEntity([row]);
-    const call = dbMock.dbWrite.blurbReference.update.mock.calls[0][0];
+    const call = dbMock.dbWrite.blurbReference.updateMany.mock.calls[0][0];
     expect(call.data.materializedHash).toBe('new');
   });
 
@@ -120,14 +120,25 @@ describe('processBlurbEntity — two stale blurbs in one entity', () => {
   it('records both rows so neither is re-selected', async () => {
     await processBlurbEntity([rowA, rowB]);
 
-    const recorded = dbMock.dbWrite.blurbReference.update.mock.calls.map(([arg]) => ({
-      blurbId: arg.where.blurbId_entityType_entityId.blurbId,
+    const recorded = dbMock.dbWrite.blurbReference.updateMany.mock.calls.map(([arg]) => ({
+      blurbIds: arg.where.blurbId.in,
       hash: arg.data.materializedHash,
     }));
     expect(recorded).toEqual([
-      { blurbId: 7, hash: 'ha' },
-      { blurbId: 8, hash: 'hb' },
+      { blurbIds: [7], hash: 'ha' },
+      { blurbIds: [8], hash: 'hb' },
     ]);
+  });
+
+  it('🔴 collapses rows sharing a hash into ONE statement', async () => {
+    // The loop this replaced issued one primary UPDATE per reference row, so a saturated pass
+    // was up to BATCH_LIMIT sequential round trips. Revert it and this reports 2, not 1.
+    await processBlurbEntity([rowA, { ...rowB, contentHash: 'ha' }]);
+
+    expect(dbMock.dbWrite.blurbReference.updateMany).toHaveBeenCalledTimes(1);
+    const [arg] = dbMock.dbWrite.blurbReference.updateMany.mock.calls[0];
+    expect(arg.where).toMatchObject({ entityType: 'Article', entityId: 1 });
+    expect(arg.where.blurbId.in).toEqual([7, 8]);
   });
 
   it('replaces a live blurb and unwraps a deleted one in the same pass', async () => {
@@ -140,6 +151,6 @@ describe('processBlurbEntity — two stale blurbs in one entity', () => {
     expect(dbMock.dbWrite.blurbReference.deleteMany).toHaveBeenCalledWith({
       where: { entityType: 'Article', entityId: 1, blurbId: { in: [8] } },
     });
-    expect(dbMock.dbWrite.blurbReference.update).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbWrite.blurbReference.updateMany).toHaveBeenCalledTimes(1);
   });
 });

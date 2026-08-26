@@ -591,12 +591,17 @@ export const upsertModelVersion = async ({
         // would leave a moderator adding a version to someone else's model free to guess
         // `data-id`s and read the creator's private blurb text out of the response.
         [];
+  // Whether the CALLER supplied the column, captured before the expansion overwrites it below.
+  // A write that omits `description` — the review handlers select without it — must not
+  // reconcile: Prisma leaves the column alone, so an empty expansion would delete every
+  // reference row while the blurb markup stays in the body, stranding it permanently.
+  const descriptionSupplied = data.description != null;
   const expansion = await expandBlurbs({
     userId: model.userId,
     html: data.description ?? '',
     restrictToBlurbIds,
   });
-  if (data.description != null) {
+  if (descriptionSupplied) {
     data.description = expansion.html;
     // The guard at the top of this function saw the CLIENT's html. Blurb bodies were spliced in
     // since, so the string about to be written is one it never checked.
@@ -751,7 +756,7 @@ export const upsertModelVersion = async ({
     // timed window), and create the EA donation goal here (option A) instead of at publish.
     await writeModelVersionGateAndGoal(version, model.userId, paidAccess, donationGoal);
 
-    if (expansion.evaluated)
+    if (descriptionSupplied && expansion.evaluated)
       await reconcileBlurbReferences({
         entityType: 'ModelVersion',
         entityId: version.id,
@@ -968,7 +973,7 @@ export const upsertModelVersion = async ({
         context: { modelId: version.modelId },
       });
 
-    if (expansion.evaluated)
+    if (descriptionSupplied && expansion.evaluated)
       await reconcileBlurbReferences({
         entityType: 'ModelVersion',
         entityId: version.id,
