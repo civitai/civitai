@@ -29,7 +29,7 @@ import { useRouter } from 'next/router';
 import { useMemo } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { AppBlockReviews } from '~/components/Apps/AppBlockReviews';
-import { appListingDescriptionToPlainText } from '~/components/Apps/appListingDescription';
+import { appListingDescriptionToPlainText } from '~/components/Apps/appListingDescriptionText';
 import { AppListingDescription } from '~/components/Apps/AppListingDescription';
 import { openAppSettingsModal } from '~/components/Apps/AppSettingsModal';
 import { STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
@@ -238,7 +238,7 @@ export default function AppDetailPage() {
   const name = detail?.manifest.name ?? detail?.blockId ?? appBlockId;
   const description = detail?.manifest.description ?? '';
   // 🔴 `<meta>` gets the PLAIN-TEXT PROJECTION, never the markdown source. The
-  // stored description is markdown (see `appListingDescription.ts`), and a meta
+  // stored description is markdown (see `appListingDescriptionText.ts`), and a meta
   // tag cannot render it — shipping the source put literal `**bold**` and
   // backticks into og:description. The projection is built only from mdast text
   // values, so it also cannot introduce markup into the tag.
@@ -439,7 +439,7 @@ export default function AppDetailPage() {
                 </Group>
               </Group>
 
-              {/* Markdown, via the shared renderer — see `appListingDescription.ts`
+              {/* Markdown, via the shared renderer — see `appListingDescriptionText.ts`
                   for the one rule. This surface used to be `pre-wrap` plain text
                   while the listing detail body rendered the SAME stored string as
                   markdown, so a description written with backticks showed literal

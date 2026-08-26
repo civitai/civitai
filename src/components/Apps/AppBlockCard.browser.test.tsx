@@ -126,7 +126,12 @@ function expectAtLeastOneAffordance() {
 describe('AppBlockCard action CTA gate', () => {
   test('page app + canOpenPage=false (pages flag off) → "View details" present, NOT actionless [HIGH regression, #2747 retargeted]', async () => {
     renderWithProviders(
-      <AppBlockCard block={pageBlock()} alreadySubscribed={false} onOpen={onOpen} canOpenPage={false} />
+      <AppBlockCard
+        block={pageBlock()}
+        alreadySubscribed={false}
+        onOpen={onOpen}
+        canOpenPage={false}
+      />
     );
 
     // The live "Open app" run is unavailable (flag off); the never-empty-card
@@ -372,7 +377,12 @@ describe('AppBlockCard — View details modal opens', () => {
 
   test('"View details" button is present on a PAGE app and opens the modal', async () => {
     renderWithProviders(
-      <AppBlockCard block={pageBlock()} alreadySubscribed={false} onOpen={onOpen} canOpenPage={false} />
+      <AppBlockCard
+        block={pageBlock()}
+        alreadySubscribed={false}
+        onOpen={onOpen}
+        canOpenPage={false}
+      />
     );
 
     const viewDetails = page.getByRole('button', { name: /view details/i });
@@ -497,10 +507,7 @@ describe('AppBlockCard — 2026-06 card cleanup', () => {
   test('scopes are NOT rendered on the card face (moved into the modal)', async () => {
     renderWithProviders(
       <AppBlockCard
-        block={makeBlock(
-          {},
-          { scopesSummary: ['user:read:self', 'ai:write:budgeted'] }
-        )}
+        block={makeBlock({}, { scopesSummary: ['user:read:self', 'ai:write:budgeted'] })}
         alreadySubscribed={false}
         onOpen={onOpen}
       />
@@ -547,7 +554,12 @@ describe('AppBlockCard — round-2 card cleanup (slot badge + author dropped, Vi
 
   test('slot badge is NOT rendered on a PAGE app (no slot label leaks)', async () => {
     renderWithProviders(
-      <AppBlockCard block={pageBlock()} alreadySubscribed={false} onOpen={onOpen} canOpenPage={false} />
+      <AppBlockCard
+        block={pageBlock()}
+        alreadySubscribed={false}
+        onOpen={onOpen}
+        canOpenPage={false}
+      />
     );
 
     await expect.element(page.getByRole('button', { name: /view details/i })).toBeInTheDocument();
@@ -564,10 +576,7 @@ describe('AppBlockCard — round-2 card cleanup (slot badge + author dropped, Vi
   test('"by {author}" attribution line is NOT rendered', async () => {
     renderWithProviders(
       <AppBlockCard
-        block={makeBlock(
-          { name: 'Cool Block' },
-          { appName: 'Acme Publisher Co' }
-        )}
+        block={makeBlock({ name: 'Cool Block' }, { appName: 'Acme Publisher Co' })}
         alreadySubscribed={false}
         onOpen={onOpen}
       />
@@ -642,7 +651,12 @@ describe('AppBlockCard — round-2 card cleanup (slot badge + author dropped, Vi
 
   test('"View details" is rendered on a PAGE app too (invariant preserved) and is link-styled', async () => {
     renderWithProviders(
-      <AppBlockCard block={pageBlock()} alreadySubscribed={false} onOpen={onOpen} canOpenPage={false} />
+      <AppBlockCard
+        block={pageBlock()}
+        alreadySubscribed={false}
+        onOpen={onOpen}
+        canOpenPage={false}
+      />
     );
 
     const viewDetails = page.getByRole('button', { name: /view details/i });
@@ -689,7 +703,10 @@ describe('AppBlockCard — cover image (first screenshot) + placeholder fallback
     // …and the placeholder box (aria-hidden, carries an svg glyph) is present, so
     // the cover area is never empty. The card body still renders.
     await expect.element(page.getByRole('button', { name: /view details/i })).toBeInTheDocument();
-    const card = page.getByRole('button', { name: /view details/i }).element().closest('.mantine-Card-root');
+    const card = page
+      .getByRole('button', { name: /view details/i })
+      .element()
+      .closest('.mantine-Card-root');
     expect(card).not.toBeNull();
     const placeholder = card!.querySelector('[aria-hidden]');
     expect(placeholder).not.toBeNull();
@@ -710,7 +727,10 @@ describe('AppBlockCard — cover image (first screenshot) + placeholder fallback
     await expect.element(page.getByRole('button', { name: /view details/i })).toBeInTheDocument();
     // Still no real cover img (no screenshot) — placeholder path.
     expect(page.getByRole('img', { name: /Util App listing image/i }).query()).toBeNull();
-    const card = page.getByRole('button', { name: /view details/i }).element().closest('.mantine-Card-root');
+    const card = page
+      .getByRole('button', { name: /view details/i })
+      .element()
+      .closest('.mantine-Card-root');
     const placeholder = card!.querySelector('[aria-hidden]');
     expect(placeholder).not.toBeNull();
     expect(placeholder!.querySelector('svg')).not.toBeNull();
@@ -720,7 +740,7 @@ describe('AppBlockCard — cover image (first screenshot) + placeholder fallback
 /**
  * The CARD's description is the PLAIN-TEXT PROJECTION of the stored markdown.
  *
- * The stored `description` is markdown (see `appListingDescription.ts` for the one
+ * The stored `description` is markdown (see `appListingDescriptionText.ts` for the one
  * rule). The card is a 3-line clamp in a grid, where markdown BLOCK elements would be
  * wrong — so it is the one surface that deliberately does NOT render markdown. That
  * makes it the surface where showing raw SOURCE is tempting and wrong: several live

@@ -66,7 +66,7 @@ export const APP_LISTING_DESCRIPTION_ALLOWED_ELEMENTS = [
  * Use this on every surface whose job is to SHOW the description: the listing
  * detail body, `/apps/[appBlockId]`, and the details modal. Surfaces that cannot
  * render markdown (the card's 3-line clamp, `<meta>`) use
- * `appListingDescriptionToPlainText` instead — see `appListingDescription.ts`
+ * `appListingDescriptionToPlainText` instead — see `appListingDescriptionText.ts`
  * for the full rule and why it is split this way.
  *
  * Layout is the caller's business: the detail body wraps this in a

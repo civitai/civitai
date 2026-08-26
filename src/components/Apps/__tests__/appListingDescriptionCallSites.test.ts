@@ -32,7 +32,7 @@ import { describe, expect, test } from 'vitest';
 const SRC = path.resolve(__dirname, '../../..');
 
 const MARKDOWN_MODULE = '~/components/Apps/AppListingDescription';
-const PLAINTEXT_MODULE = '~/components/Apps/appListingDescription';
+const PLAINTEXT_MODULE = '~/components/Apps/appListingDescriptionText';
 
 /**
  * Every surface that presents a listing description, and which of the TWO
@@ -72,13 +72,10 @@ function findImporters(): Map<string, Set<'markdown' | 'plaintext'>> {
   for (const root of roots) {
     for (const file of walk(root)) {
       const text = fs.readFileSync(file, 'utf8');
-      // The two module specifiers differ only in the leading capital, so match the
-      // full quoted specifier — a `includes(PLAINTEXT_MODULE)` would also match the
-      // markdown one on a case-insensitive read and silently merge the two sets.
       const usesMarkdown = text.includes(`'${MARKDOWN_MODULE}'`);
       const usesPlaintext = text.includes(`'${PLAINTEXT_MODULE}'`);
       if (!usesMarkdown && !usesPlaintext) continue;
-      const rel = path.relative(SRC, file);
+      const rel = path.relative(SRC, file).split(path.sep).join('/');
       const kinds = found.get(rel) ?? new Set();
       if (usesMarkdown) kinds.add('markdown');
       if (usesPlaintext) kinds.add('plaintext');

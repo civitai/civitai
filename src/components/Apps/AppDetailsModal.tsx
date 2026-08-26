@@ -186,12 +186,7 @@ export function AppDetailsModal({ opened, onClose, block }: AppDetailsModalProps
             </Anchor>
           ) : (
             detail?.liveUrl && (
-              <Anchor
-                href={detail.liveUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                size="xs"
-              >
+              <Anchor href={detail.liveUrl} target="_blank" rel="noopener noreferrer" size="xs">
                 <Group gap={4}>
                   <IconExternalLink size={12} />
                   Open live
@@ -201,7 +196,7 @@ export function AppDetailsModal({ opened, onClose, block }: AppDetailsModalProps
           )}
         </Stack>
 
-        {/* Markdown, via the shared renderer (`appListingDescription.ts` holds the
+        {/* Markdown, via the shared renderer (`appListingDescriptionText.ts` holds the
             rule). Was `pre-wrap` plain text, which disagreed with the listing
             detail body's markdown rendering of the same stored string. */}
         {description && <AppListingDescription description={description} />}
@@ -275,50 +270,50 @@ export function AppDetailsModal({ opened, onClose, block }: AppDetailsModalProps
             security-relevant claim about an app whose scopes we never actually
             read. */}
         {!isExternal && (
-        <Stack gap="xs">
-          <Group gap="xs">
-            <ThemeIcon variant="light" color="blue" size="sm" radius="xl">
-              <IconShieldCheck size={14} />
-            </ThemeIcon>
-            <Title order={5}>This app can…</Title>
-          </Group>
-          {isError ? (
-            <Text size="sm" c="red">
-              Couldn&apos;t load full details — try again.
-            </Text>
-          ) : !detailLoaded ? (
-            <Center py="xs">
-              <Loader size="xs" />
-            </Center>
-          ) : scopes.length === 0 ? (
-            <Text size="sm" c="dimmed">
-              This app does not request any permissions.
-            </Text>
-          ) : (
-            <List
-              spacing="xs"
-              size="sm"
-              icon={
-                <ThemeIcon variant="light" color="gray" size="sm" radius="xl">
-                  <IconLock size={12} />
-                </ThemeIcon>
-              }
-            >
-              {scopes.map((scope) => (
-                <List.Item key={scope}>
-                  <Group gap="xs" wrap="nowrap" align="center">
-                    <Badge variant="outline" color="gray" size="xs">
-                      {scope}
-                    </Badge>
-                    <Text component="span" size="sm">
-                      {scopeLabel(scope)}
-                    </Text>
-                  </Group>
-                </List.Item>
-              ))}
-            </List>
-          )}
-        </Stack>
+          <Stack gap="xs">
+            <Group gap="xs">
+              <ThemeIcon variant="light" color="blue" size="sm" radius="xl">
+                <IconShieldCheck size={14} />
+              </ThemeIcon>
+              <Title order={5}>This app can…</Title>
+            </Group>
+            {isError ? (
+              <Text size="sm" c="red">
+                Couldn&apos;t load full details — try again.
+              </Text>
+            ) : !detailLoaded ? (
+              <Center py="xs">
+                <Loader size="xs" />
+              </Center>
+            ) : scopes.length === 0 ? (
+              <Text size="sm" c="dimmed">
+                This app does not request any permissions.
+              </Text>
+            ) : (
+              <List
+                spacing="xs"
+                size="sm"
+                icon={
+                  <ThemeIcon variant="light" color="gray" size="sm" radius="xl">
+                    <IconLock size={12} />
+                  </ThemeIcon>
+                }
+              >
+                {scopes.map((scope) => (
+                  <List.Item key={scope}>
+                    <Group gap="xs" wrap="nowrap" align="center">
+                      <Badge variant="outline" color="gray" size="xs">
+                        {scope}
+                      </Badge>
+                      <Text component="span" size="sm">
+                        {scopeLabel(scope)}
+                      </Text>
+                    </Group>
+                  </List.Item>
+                ))}
+              </List>
+            )}
+          </Stack>
         )}
 
         <Divider />

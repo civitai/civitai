@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { appListingDescriptionToPlainText } from '~/components/Apps/appListingDescription';
+import { appListingDescriptionToPlainText } from '~/components/Apps/appListingDescriptionText';
 import { APP_LISTING_DESCRIPTION_ALLOWED_ELEMENTS } from '~/components/Apps/AppListingDescription';
 
 /**
