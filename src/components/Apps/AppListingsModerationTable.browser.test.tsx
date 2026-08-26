@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import type * as TrpcModule from '~/utils/trpc';
 
 /**
  * W13 post-approval mgmt (P2) — the unified moderator listings management table.
@@ -152,7 +153,14 @@ vi.mock('~/utils/notifications', () => ({
   showErrorNotification: (...a: unknown[]) => showError(...a),
 }));
 
-vi.mock('~/utils/trpc', () => {
+// 🔴 `importOriginal` SPREAD, not a wholesale replacement (local-rules/
+// no-wholesale-module-mock, which this file was violating). A hand-written factory
+// breaks this whole FILE's ESM link the day `~/utils/trpc` gains an export something in
+// the module graph imports — and that failure reports as "0 tests collected", i.e. a
+// silent green, not a failure. Converted while adding the owner-message proc below,
+// because that addition is exactly the kind of edit that would have tripped it.
+vi.mock('~/utils/trpc', async (importOriginal) => {
+  const actual = await importOriginal<typeof TrpcModule>();
   // A mutation mock: records (name, vars), then drives onSuccess/onError so the
   // component's success + error paths both run.
   const mutation =
@@ -175,6 +183,7 @@ vi.mock('~/utils/trpc', () => {
     },
   };
   return {
+    ...actual,
     trpc: {
       useUtils: () => utils,
       appListings: {
@@ -263,6 +272,25 @@ vi.mock('~/utils/trpc', () => {
         purgeListing: { useMutation: mutation('purge') },
         approveExternalRequest: { useMutation: mutation('approve') },
         rejectExternalRequest: { useMutation: mutation('reject') },
+        // The owner-message proc RESOLVES WITH A VALUE (`{ recipientCount }`) that the
+        // composer's success handler reads, so it cannot use the shared `mutation`
+        // factory above — that one calls `onSuccess()` with no argument, which would
+        // throw inside the component and report as a render failure rather than as the
+        // mock gap it is.
+        messageAppOwner: {
+          useMutation: (opts?: {
+            onSuccess?: (r: { recipientCount: number }) => void | Promise<void>;
+            onError?: (e: { message: string }) => void;
+          }) => ({
+            mutate: (vars: unknown) => {
+              mocks.mutate('messageAppOwner', vars);
+              if (mocks.errorMode) opts?.onError?.({ message: 'boom' });
+              else void opts?.onSuccess?.({ recipientCount: 1 });
+            },
+            mutateAsync: vi.fn(),
+            isPending: false,
+          }),
+        },
       },
     },
   };
@@ -583,6 +611,61 @@ describe('AppListingsModerationTable — inline actions fire the right mutation'
     await page.getByTestId('apps-mod-action-reason').fill('spammy content');
     await page.getByTestId('apps-mod-action-confirm').click();
     expect(showError).toHaveBeenCalledWith(expect.objectContaining({ title: 'Hide failed' }));
+  });
+});
+
+/**
+ * The owner-message action. `appListings.messageAppOwner` shipped with no UI caller at
+ * all; this table is the surface that gives it one, and the properties worth pinning
+ * are that the button is on EVERY row (the proc has no status branch), that it opens
+ * the message composer rather than the reason-gated lifecycle modal, and that it fires
+ * with the row's LISTING ID.
+ */
+describe('AppListingsModerationTable — Message owner', () => {
+  test('every row offers the action, including a rejected/draft row that has no lifecycle action', async () => {
+    mocks.draftPending = true;
+    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    // A draft-with-a-pending-request (bucketed Pending) offers it…
+    await expect
+      .element(page.getByTestId('apps-mod-message-owner-draft-pending-ext'))
+      .toBeInTheDocument();
+    // …and so does the true ORPHAN draft, whose action cell was previously a dead `—`.
+    await page.getByTestId('apps-mod-listings-section-draft-toggle').click();
+    await expect
+      .element(page.getByTestId('apps-mod-message-owner-draft-orphan-ext'))
+      .toBeInTheDocument();
+  });
+
+  test('it is offered on an ON-SITE row too (the proc is dual-kind)', async () => {
+    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    await expect
+      .element(page.getByTestId('apps-mod-message-owner-onsite-live'))
+      .toBeInTheDocument();
+  });
+
+  test('it opens the MESSAGE composer, not the reason-gated lifecycle modal', async () => {
+    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    await page.getByTestId('apps-mod-message-owner-alpha-live').click();
+    await expect.element(page.getByTestId('apps-mod-message-subject')).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-mod-message-body')).toBeInTheDocument();
+    // 🔴 The negative half: the shared reason field must NOT be on screen. Without it
+    // this test passes even if BOTH modals opened.
+    expect(page.getByTestId('apps-mod-action-reason').elements()).toHaveLength(0);
+  });
+
+  test('sending forwards the row LISTING ID (never the slug) with the composed text', async () => {
+    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    await page.getByTestId('apps-mod-message-owner-alpha-live').click();
+    await page.getByTestId('apps-mod-message-subject').fill('Your listing overstates a feature');
+    await page
+      .getByTestId('apps-mod-message-body')
+      .fill('The listing says it asks before spending; it never has. Please correct it.');
+    await page.getByTestId('apps-mod-message-send').click();
+    expect(mocks.mutate).toHaveBeenCalledWith('messageAppOwner', {
+      appListingId: 'apl_a',
+      subject: 'Your listing overstates a feature',
+      body: 'The listing says it asks before spending; it never has. Please correct it.',
+    });
   });
 });
 

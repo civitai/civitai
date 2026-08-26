@@ -16,11 +16,13 @@ import { IconAlertTriangle, IconBox, IconThumbUp } from '@tabler/icons-react';
 import { keepPreviousData } from '@tanstack/react-query';
 import { Fragment, useMemo, useState } from 'react';
 import type { OffsitePendingRow } from '~/components/Apps/OffsiteReviewQueue';
+import { MessageAppOwnerModal } from '~/components/Apps/MessageAppOwnerModal';
 import { ModQueryError, isModAuthzError } from '~/components/Apps/ModQuerySurface';
 import { ReasonGatedActionModal } from '~/components/Apps/ReasonGatedActionModal';
 import { listingStatusChip } from '~/components/Apps/appListingModerationView';
 import { LISTING_KIND_LABELS } from '~/components/Apps/listingKindLabels';
 import {
+  actionOpensOwnerMessage,
   effectiveModerationStatus,
   isDestructiveListingModAction,
   listingKindChip,
@@ -58,7 +60,13 @@ import { trpc } from '~/utils/trpc';
  *   - pending  → Review (opens the existing off-site review modal to approve/reject),
  *   - approved → Reset to pending (off-site) + Hide (delist, dual-kind),
  *   - removed  → Relist (dual-kind) + Claim + Purge (off-site; Purge is destructive),
- *   - draft/rejected → read-only (unless a pending request offers Review).
+ *   - draft/rejected → no LIFECYCLE action (unless a pending request offers Review).
+ *
+ * Plus one action on EVERY row, of every status and both kinds: Message owner, which
+ * opens `MessageAppOwnerModal` and calls `appListings.messageAppOwner`. It is the only
+ * action here that changes no listing state, and it is unconditional because the proc
+ * has no status branch — see `listingModActions`. It is also why a draft/rejected row
+ * no longer renders a dead `—`.
  *
  * Dark + mod-only: the whole /apps/review page requires `isAppReviewer`, the query
  * is `moderatorProcedure`, and a query error (non-mod / flag off) renders nothing.
@@ -151,6 +159,11 @@ export function AppListingsModerationTable({
     action: ListingModAction;
     row: ModerationListingRow;
   } | null>(null);
+  // The owner-message composer is a SEPARATE piece of state from `pendingAction`: it
+  // opens its own modal (different fields, different floors — see
+  // `MessageAppOwnerModal`), and keeping the two apart means a lifecycle action can
+  // never render the message form's gate, or vice versa.
+  const [messageRow, setMessageRow] = useState<ModerationListingRow | null>(null);
 
   // A filter/search change = a NEW result set → reset pagination SYNCHRONOUSLY in the
   // onChange handler (batched with the filter state change in the same React event) so
@@ -263,6 +276,10 @@ export function AppListingsModerationTable({
       if (reviewable) openOffsiteReview(reviewable, invalidate);
       return;
     }
+    if (actionOpensOwnerMessage(action)) {
+      setMessageRow(row);
+      return;
+    }
     setPendingAction({ action, row });
   };
 
@@ -351,6 +368,10 @@ export function AppListingsModerationTable({
                     </Group>
                   </Table.Td>
                   <Table.Td>
+                    {/* The `—` branch is now UNREACHABLE from live data — `Message
+                        owner` is offered on every row — and is kept only as the total
+                        fallback for an empty action set. Do not read it as evidence
+                        that a dead-end row still exists. */}
                     {actions.length === 0 ? (
                       <Text size="xs" c="dimmed">
                         —
@@ -487,6 +508,30 @@ export function AppListingsModerationTable({
         pending={pendingAction}
         onClose={() => setPendingAction(null)}
         onDone={invalidate}
+      />
+
+      {/* 🔴 NO `onSent={invalidate}`, and that is measured rather than assumed:
+          `messageAppOwner` writes an `AppListingModerationEvent` and changes NO listing
+          state, and `ModerationListingRow` carries no moderation-event field for the
+          new row to differ in. `invalidate` also RESETS PAGING, so refetching here
+          would throw away every page the moderator had loaded in exchange for a
+          byte-identical result. If this row ever gains a "last moderator action"
+          column, wire the callback then. */}
+      <MessageAppOwnerModal
+        listing={
+          messageRow
+            ? {
+                appListingId: messageRow.id,
+                slug: messageRow.slug,
+                ownerLabel: messageRow.owner?.username
+                  ? `@${messageRow.owner.username}`
+                  : messageRow.owner?.id != null
+                  ? `#${messageRow.owner.id}`
+                  : null,
+              }
+            : null
+        }
+        onClose={() => setMessageRow(null)}
       />
     </Stack>
   );
