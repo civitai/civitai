@@ -205,9 +205,15 @@ pays a join over `BlurbReference`; `ORDER BY r."materializedAt" ASC` is what the
 Nothing reads `getJobDate` for this job, and `Blurb.@@index([updatedAt])` is consequently read by
 nothing today.
 
-It is self-healing with no queue state to reconcile. A reference whose hash does not match
-is stale, whatever went wrong before, so a crashed or half-finished run needs no recovery logic.
-It is simply picked up next pass.
+A crashed or half-finished run needs no recovery logic: `pendingSince` is cleared only on success,
+so anything the job did not finish is still marked and is simply picked up next pass.
+
+⚠️ It is NOT self-healing in the way an earlier version of this design was. Staleness used to be
+derived — `materializedHash <> contentHash`, true whatever went wrong before — and is now a stored
+marker, because the derived form is a cross-table inequality that no index can evaluate (see the
+selector). The trade: a writer that changes `Blurb.content` without stamping `pendingSince` is
+invisible to the job, where the hash comparison would have caught it on the next pass. Every write
+path goes through `markReferencesPending`; a raw backfill must too.
 
 `materializedAt` orders the fan-out's selection window, and a failing row is bumped to the back of
 it rather than heading the queue again next pass — that bounds a permanently-failing row to one

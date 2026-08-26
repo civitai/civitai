@@ -3,7 +3,16 @@ import type { ReactRendererOptions } from '@tiptap/react';
 import type { SuggestionProps } from '@tiptap/suggestion';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import clsx from 'clsx';
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import { useSuggestionListKeyboard } from '~/components/RichTextEditor/useSuggestionListKeyboard';
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
 /**
  * One flat row in the props the suggestion plugin hands us — one per
@@ -126,33 +135,20 @@ export const SnippetCategoryList = forwardRef<SnippetCategoryListRef, Props>(
       command({ id: group.id, label: group.label });
     };
 
-    useImperativeHandle(ref, () => ({
-      onKeyDown: ({ event }) => {
-        if (event.key === 'ArrowUp') {
-          setSelectedIndex((prev) => {
-            const next = (prev + groups.length - 1) % Math.max(groups.length, 1);
-            virtualizer.scrollToIndex(next, { align: 'auto' });
-            return next;
-          });
-          return true;
-        }
-        if (event.key === 'ArrowDown') {
-          setSelectedIndex((prev) => {
-            const next = (prev + 1) % Math.max(groups.length, 1);
-            virtualizer.scrollToIndex(next, { align: 'auto' });
-            return next;
-          });
-          return true;
-        }
-        if (event.key === 'Enter' || event.key === 'Tab') {
-          if (groups.length > 0) {
-            selectItem(selectedIndex);
-            return true;
-          }
-        }
-        return false;
-      },
-    }));
+    const scrollToIndex = useCallback(
+      (index: number) => virtualizer.scrollToIndex(index, { align: 'auto' }),
+      [virtualizer]
+    );
+
+    const onKeyDown = useSuggestionListKeyboard({
+      length: groups.length,
+      selectedIndex,
+      setSelectedIndex,
+      onSelect: selectItem,
+      onMove: scrollToIndex,
+    });
+
+    useImperativeHandle(ref, () => ({ onKeyDown }), [onKeyDown]);
 
     const virtualItems = virtualizer.getVirtualItems();
     const totalSize = virtualizer.getTotalSize();

@@ -1045,13 +1045,9 @@ export async function applyModelVersionContentChange({
     await preventModelVersionLagBatch(modelId, [id]);
   }
 
-  // `dataForModelsCache` carries `mv."description"` and the public GET /api/v1/models/[id] body
-  // carries the version rows, so both serve the pre-rewrite text until they are dropped.
-  await dataForModelsCache.refresh(modelId);
-  await bustPublicModelResponseCache(modelId);
-  await modelsSearchIndex.queueUpdate([
-    { id: modelId, action: SearchIndexUpdateQueueAction.Update },
-  ]);
+  // The public GET /api/v1/models/[id] body carries the version rows, so all of these serve the
+  // pre-rewrite text until they are dropped.
+  await bustModelLevelVersionCaches(modelId);
 
   return true;
 }
@@ -2690,6 +2686,27 @@ export async function bustPublicModelResponseCache(modelId: number | number[]) {
   await redis.del(keys).catch(() => undefined);
 }
 
+/**
+ * The model-level caches that carry a version's data. Both callers below reach it: `bustMvCache`
+ * after a status/takedown change, and `applyModelVersionContentChange` after a fan-out rewrite.
+ *
+ * One function because cache invalidation is the worst place for a second copy — the next cache
+ * added here would otherwise reach one path and not the other, and the symptom ("the fan-out ran
+ * but the model page still shows the old text") points nowhere near the omission.
+ */
+export async function bustModelLevelVersionCaches(modelIds: number | number[]) {
+  const mIds = Array.isArray(modelIds) ? modelIds : [modelIds];
+  // Stale entries here filter the model out of feeds (versions with status='Draft' get dropped by
+  // the post-fetch transform), and `dataForModelsCache` carries `mv."description"`.
+  await dataForModelsCache.refresh(mIds);
+  // Drop the origin-side public GET /api/v1/models/[id] response cache for these models so a
+  // takedown / unpublish / update stops serving a stale 200.
+  await bustPublicModelResponseCache(mIds);
+  await modelsSearchIndex.queueUpdate(
+    mIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+  );
+}
+
 export const bustMvCache = async (
   ids: number | number[],
   modelIds?: number | number[],
@@ -2725,19 +2742,7 @@ export const bustMvCache = async (
   // from feeds (the feed render drops items with no images for non-self
   // viewers) until the next image upload or natural expiry.
   await imagesForModelVersionsCache.refresh(versionIds);
-  if (modelIds) {
-    const mIds = Array.isArray(modelIds) ? modelIds : [modelIds];
-    // Refresh dataForModelsCache so callers don't have to remember to do it
-    // separately. Stale entries here filter the model out of feeds (versions
-    // with status='Draft' get dropped by the post-fetch transform).
-    await dataForModelsCache.refresh(mIds);
-    // Drop the origin-side public GET /api/v1/models/[id] response cache for these
-    // models so a takedown / unpublish / update stops serving a stale 200.
-    await bustPublicModelResponseCache(mIds);
-    await modelsSearchIndex.queueUpdate(
-      mIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
-    );
-  }
+  if (modelIds) await bustModelLevelVersionCaches(modelIds);
 };
 
 export const getWorkflowIdFromModelVersion = async ({ id }: GetByIdInput) => {

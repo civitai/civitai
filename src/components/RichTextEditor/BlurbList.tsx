@@ -3,9 +3,11 @@ import { IconRepeat } from '@tabler/icons-react';
 import type { ReactRendererOptions } from '@tiptap/react';
 import type { SuggestionProps } from '@tiptap/suggestion';
 import clsx from 'clsx';
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import type { BlurbItem } from '~/components/RichTextEditor/blurb.util';
 import { blurbPreview } from '~/components/RichTextEditor/blurb.util';
+import type { SuggestionListRef } from '~/components/RichTextEditor/useSuggestionListKeyboard';
+import { useSuggestionListKeyboard } from '~/components/RichTextEditor/useSuggestionListKeyboard';
 
 type Props = SuggestionProps<BlurbItem> & {
   editor: ReactRendererOptions['editor'];
@@ -13,9 +15,7 @@ type Props = SuggestionProps<BlurbItem> & {
   onManage?: () => void;
 };
 
-export type BlurbListRef = {
-  onKeyDown: (props: { event: KeyboardEvent }) => boolean;
-};
+export type BlurbListRef = SuggestionListRef;
 
 export const BlurbList = forwardRef<BlurbListRef, Props>(
   ({ items, command, query, loading, onManage }, ref) => {
@@ -30,30 +30,22 @@ export const BlurbList = forwardRef<BlurbListRef, Props>(
       rowRefs.current[selectedIndex]?.scrollIntoView({ block: 'nearest' });
     }, [selectedIndex]);
 
-    const selectItem = (index: number) => {
-      const item = items[index];
-      if (item) command(item);
-    };
-
-    useImperativeHandle(ref, () => ({
-      onKeyDown: ({ event }) => {
-        if (event.key === 'ArrowUp') {
-          setSelectedIndex((prev) => (prev + items.length - 1) % Math.max(items.length, 1));
-          return true;
-        }
-        if (event.key === 'ArrowDown') {
-          setSelectedIndex((prev) => (prev + 1) % Math.max(items.length, 1));
-          return true;
-        }
-        if (event.key === 'Enter' || event.key === 'Tab') {
-          if (items.length > 0) {
-            selectItem(selectedIndex);
-            return true;
-          }
-        }
-        return false;
+    const selectItem = useCallback(
+      (index: number) => {
+        const item = items[index];
+        if (item) command(item);
       },
-    }));
+      [items, command]
+    );
+
+    const onKeyDown = useSuggestionListKeyboard({
+      length: items.length,
+      selectedIndex,
+      setSelectedIndex,
+      onSelect: selectItem,
+    });
+
+    useImperativeHandle(ref, () => ({ onKeyDown }), [onKeyDown]);
 
     return (
       <Paper className="z-50 w-[380px] max-w-full" radius="md" withBorder shadow="md">

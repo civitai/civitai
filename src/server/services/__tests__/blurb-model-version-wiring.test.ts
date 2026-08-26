@@ -3,6 +3,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as BlocklistService from '~/server/services/blocklist.service';
 import type * as BlurbMaterializeService from '~/server/services/blurb-materialize.service';
 import type * as DbLagHelpers from '~/server/db/db-lag-helpers';
+import type * as RedisCaches from '~/server/redis/caches';
 
 // The ModelVersion half of the blurb save path, run against the REAL `upsertModelVersion` /
 // `applyModelVersionContentChange`. Only the blurb modules, the blocklist guard and the
@@ -16,12 +17,14 @@ const {
   reconcileBlurbReferences,
   throwOnBlockedLinkDomain,
   preventModelVersionLagBatch,
+  refreshDataForModelsCache,
 } = vi.hoisted(() => ({
   expandBlurbs: vi.fn(),
   getReferencedBlurbIds: vi.fn(),
   reconcileBlurbReferences: vi.fn(),
   throwOnBlockedLinkDomain: vi.fn(),
   preventModelVersionLagBatch: vi.fn(async () => undefined),
+  refreshDataForModelsCache: vi.fn(async () => undefined),
 }));
 
 vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
@@ -34,6 +37,13 @@ vi.mock('~/server/services/blurb-materialize.service', async (importOriginal) =>
   getReferencedBlurbIds,
   reconcileBlurbReferences,
 }));
+vi.mock('~/server/redis/caches', async (importOriginal) => {
+  const actual = await importOriginal<typeof RedisCaches>();
+  return {
+    ...actual,
+    dataForModelsCache: { ...actual.dataForModelsCache, refresh: refreshDataForModelsCache },
+  };
+});
 vi.mock('~/server/db/db-lag-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof DbLagHelpers>()),
   preventModelVersionLagBatch,
@@ -297,5 +307,19 @@ describe('applyModelVersionContentChange', () => {
     await expect(
       applyModelVersionContentChange({ id: VERSION_ID, description: EXPANDED_HTML })
     ).rejects.toThrow(/No model version with id/);
+  });
+});
+
+// `bustModelLevelVersionCaches` — the three model-level caches that carry a version's data. All
+// three were unasserted: delete the call and a fan-out rewrite leaves the model page and the
+// public GET /api/v1/models/[id] body serving the pre-rewrite version description until TTL,
+// with the search index never learning at all.
+describe('applyModelVersionContentChange — the caches it must drop', () => {
+  it('🔴 busts the MODEL-level caches, not the version id', async () => {
+    await applyModelVersionContentChange({ id: VERSION_ID, description: EXPANDED_HTML });
+
+    // Keyed on the model: `dataForModelsCache` and the public response cache are both per-model,
+    // so passing the version id here drops nothing and reads as working.
+    expect(refreshDataForModelsCache).toHaveBeenCalledWith([MODEL_ID]);
   });
 });
