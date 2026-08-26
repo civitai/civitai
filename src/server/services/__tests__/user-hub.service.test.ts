@@ -17,6 +17,8 @@ vi.mock('~/server/services/collection.service', () => ({
 import {
   addUserHubSource,
   getUserHubs,
+  getHubCardData,
+  hubRouteIsDark,
   getUserHubForRoute,
   getHubSourceSuggestions,
   deleteUserHub,
@@ -1192,6 +1194,32 @@ describe('getUserHubForRoute', () => {
     expect(await getUserHubForRoute({ id: 1, userId: 5 })).toMatchObject({ name: 'Cute Models' });
   });
 
+  it('returns the description, which the page renders as og:description', async () => {
+    // Server-side, because the hub the page body uses arrives through a client query
+    // — a description read off that never reaches the HTML an unfurler fetches.
+    findFirstHub.mockResolvedValue({
+      id: 1,
+      name: 'Cute Models',
+      availability: Availability.Public,
+      metadata: { description: 'Models I think are neat' },
+    });
+
+    expect(await getUserHubForRoute({ id: 1, userId: 5 })).toMatchObject({
+      description: 'Models I think are neat',
+    });
+  });
+
+  it('returns a null description rather than whatever metadata happens to hold', async () => {
+    findFirstHub.mockResolvedValue({
+      id: 1,
+      name: 'Cute Models',
+      availability: Availability.Public,
+      metadata: { description: { nope: true } },
+    });
+
+    expect(await getUserHubForRoute({ id: 1, userId: 5 })).toMatchObject({ description: null });
+  });
+
   it('returns null for a hub this viewer may not open', async () => {
     // Null is what the route turns into a real 404 rather than a 200 carrying a
     // not-found component. Returning a truthy value here restores exactly the
@@ -1199,6 +1227,65 @@ describe('getUserHubForRoute', () => {
     findFirstHub.mockResolvedValue(null);
 
     expect(await getUserHubForRoute({ id: 1, userId: 999 })).toBeNull();
+  });
+});
+
+describe('hubRouteIsDark', () => {
+  // The gate the /hubs/[id] route runs. A public hub is deliberately exempt from the
+  // `user-hubs` flag so a link unfurler — which fetches signed out — gets a 200 with
+  // meta instead of a 404. Restoring a flat `!hubsEnabled` here is what puts hub link
+  // previews back to producing nothing, and no other test would notice.
+  it.each([
+    { hubsEnabled: false, availability: Availability.Public, dark: false },
+    { hubsEnabled: false, availability: Availability.Private, dark: true },
+    { hubsEnabled: false, availability: Availability.Unsearchable, dark: true },
+    { hubsEnabled: true, availability: Availability.Public, dark: false },
+    { hubsEnabled: true, availability: Availability.Private, dark: false },
+  ])('flag $hubsEnabled + $availability -> dark $dark', ({ hubsEnabled, availability, dark }) => {
+    expect(hubRouteIsDark({ hubsEnabled, availability })).toBe(dark);
+  });
+});
+
+describe('getHubCardData', () => {
+  it('resolves a PUBLIC hub only, whoever is asking', async () => {
+    // The card is served unauthenticated, so this `where` is the only thing between a
+    // private hub's NAME and anyone who guesses its id. There is no viewer to scope
+    // to — an ownership arm here would be a hole, not a courtesy.
+    findFirstHub.mockResolvedValue({
+      name: 'Cute Models',
+      metadata: {},
+      user: { username: 'ellie' },
+      _count: { sources: 3, followers: 0 },
+    });
+
+    await getHubCardData(1);
+
+    expect(findFirstHub).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 1, availability: Availability.Public } })
+    );
+  });
+
+  it('returns null when the hub is not public, so the card 404s', async () => {
+    findFirstHub.mockResolvedValue(null);
+
+    expect(await getHubCardData(1)).toBeNull();
+  });
+
+  it('carries the counts the card puts in its stats bar', async () => {
+    findFirstHub.mockResolvedValue({
+      name: 'Cute Models',
+      metadata: { description: 'neat' },
+      user: { username: 'ellie' },
+      _count: { sources: 3, followers: 12 },
+    });
+
+    expect(await getHubCardData(1)).toEqual({
+      name: 'Cute Models',
+      description: 'neat',
+      username: 'ellie',
+      sourceCount: 3,
+      followerCount: 12,
+    });
   });
 });
 

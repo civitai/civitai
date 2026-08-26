@@ -95,6 +95,23 @@ export function hubViewerWhere({ userId, isModerator }: HubViewer) {
 }
 
 /**
+ * Whether the hub ROUTE stays dark for this viewer. Public hubs are spared the
+ * `user-hubs` flag because a link unfurler fetches the page signed out: a 404 gives
+ * it nothing to preview, where a 200 carries the meta tags. It buys the meta only —
+ * the body still needs the flag, since the hub and its feed both arrive through
+ * flag-gated tRPC reads.
+ */
+export function hubRouteIsDark({
+  hubsEnabled,
+  availability,
+}: {
+  hubsEnabled: boolean;
+  availability: Availability;
+}) {
+  return !hubsEnabled && availability !== Availability.Public;
+}
+
+/**
  * Who may WRITE a hub. Deliberately not `hubViewerWhere`: Public grants reading to
  * anyone with the link and must never grant writing. Moderators may manage any hub —
  * Justin's call on 2026-08-25, which answers the question subtask 868kwp5kc had
@@ -169,10 +186,46 @@ export async function getUserHubById({ id, userId, isModerator }: { id: number }
  * slug redirect needs it, and two facts off one primary-key read beats two reads.
  */
 export async function getUserHubForRoute({ id, userId, isModerator }: { id: number } & HubViewer) {
-  return dbRead.userHub.findFirst({
+  const hub = await dbRead.userHub.findFirst({
     where: { id, ...hubViewerWhere({ userId, isModerator }) },
-    select: { id: true, name: true },
+    select: { id: true, name: true, availability: true, metadata: true },
   });
+  if (!hub) return null;
+
+  // The description rides along because the page's <Meta> has to render on the
+  // SERVER: the hub itself arrives through a client query, so anything read off that
+  // is absent from the HTML a link unfurler fetches.
+  const { metadata, ...rest } = hub;
+  const description = readMetadata(metadata).description;
+  return { ...rest, description: typeof description === 'string' ? description : null };
+}
+
+/**
+ * What the link-preview card renders. Public only, and scoped in the `where` like
+ * every other hub read, so a private hub and an id that never existed are the same
+ * answer — a card that resolved a private hub would publish its name to anyone who
+ * guessed the id.
+ */
+export async function getHubCardData(id: number) {
+  const hub = await dbRead.userHub.findFirst({
+    where: { id, availability: Availability.Public },
+    select: {
+      name: true,
+      metadata: true,
+      user: { select: { username: true } },
+      _count: { select: { sources: true, followers: true } },
+    },
+  });
+  if (!hub) return null;
+
+  const description = readMetadata(hub.metadata).description;
+  return {
+    name: hub.name,
+    description: typeof description === 'string' ? description : null,
+    username: hub.user.username,
+    sourceCount: hub._count.sources,
+    followerCount: hub._count.followers,
+  };
 }
 
 export async function upsertUserHub({

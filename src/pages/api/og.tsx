@@ -19,11 +19,12 @@ import {
   resolveModelHiddenMetrics,
 } from '~/server/utils/model-metric-privacy';
 import { isDefined } from '~/utils/type-guards';
+import { getHubCardData } from '~/server/services/user-hub.service';
 
 // --- Schema & Types ---
 
 const querySchema = z.object({
-  type: z.enum(['model', 'post', 'image', 'article', 'bounty', 'challenge']),
+  type: z.enum(['model', 'post', 'image', 'article', 'bounty', 'challenge', 'hub']),
   id: z.coerce.number().int().positive(),
 });
 
@@ -486,6 +487,29 @@ async function fetchChallengeData(id: number): Promise<EntityData | null> {
   };
 }
 
+async function fetchHubData(id: number): Promise<EntityData | null> {
+  const hub = await getHubCardData(id);
+  if (!hub) return null;
+
+  // No cover: a hub has no image of its own, and the first image of its FEED is not
+  // a safe substitute — this card is served unauthenticated, so it would show that
+  // image to everyone the link reaches whatever their own browsing level is. The
+  // shared card already falls back to the Civitai mark. Justin's call, 2026-08-26.
+  return {
+    title: hub.name,
+    description: cleanDescription(hub.description ?? ''),
+    creator: hub.username ?? '',
+    imageUrl: null,
+    imageAspectRatio: 1,
+    stats: [
+      { value: formatStat(hub.sourceCount), label: 'Sources' },
+      ...(hub.followerCount > 0
+        ? [{ value: formatStat(hub.followerCount), label: 'Followers' }]
+        : []),
+    ],
+  };
+}
+
 const dataFetchers: Record<string, (id: number) => Promise<EntityData | null>> = {
   model: fetchModelData,
   post: fetchPostData,
@@ -493,6 +517,7 @@ const dataFetchers: Record<string, (id: number) => Promise<EntityData | null>> =
   article: fetchArticleData,
   bounty: fetchBountyData,
   challenge: fetchChallengeData,
+  hub: fetchHubData,
 };
 
 // --- Layout components ---

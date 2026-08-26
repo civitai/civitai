@@ -50,7 +50,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { getUserHubForRoute } from '~/server/services/user-hub.service';
+import { getUserHubForRoute, hubRouteIsDark } from '~/server/services/user-hub.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { Availability } from '~/shared/utils/prisma/enums';
 import { getCanonicalSlugDestination } from '~/utils/canonical-slug';
@@ -61,8 +61,6 @@ import { trpc } from '~/utils/trpc';
 export const getServerSideProps = createServerSideProps({
   useSession: true,
   resolver: async ({ ctx, session, features }) => {
-    if (!features?.userHubs) return { notFound: true };
-
     // No session check: a public hub opens for anyone holding the link, signed out
     // included. The visibility check is the same one the tRPC read uses, done here
     // so that a link whose hub went back to private is a real 404 rather than a 200
@@ -78,6 +76,13 @@ export const getServerSideProps = createServerSideProps({
     });
     if (!hub) return { notFound: true };
 
+    // The flag gate runs AFTER the lookup and spares a public hub, because a link
+    // unfurler fetches this URL signed out and a 404 gives it nothing to preview.
+    // It gets a 200 carrying the meta tags below; the body still needs the flag,
+    // since the hub and its feed both arrive through flag-gated tRPC reads.
+    if (hubRouteIsDark({ hubsEnabled: !!features?.userHubs, availability: hub.availability }))
+      return { notFound: true };
+
     // Same canonicalisation both other `[[...slug]]` routes use, including its
     // empty-slug redirect-loop guard. Without it a hub renders at any slug and the
     // links people share never converge on one URL.
@@ -92,6 +97,8 @@ export const getServerSideProps = createServerSideProps({
       queryString: buildPassthroughQuery(ctx.query),
     });
     if (destination) return { redirect: { destination, permanent: false } };
+
+    return { props: { hubMeta: { name: hub.name, description: hub.description } } };
   },
 });
 
@@ -139,8 +146,27 @@ function AdjustBrowsingLevelButton() {
   );
 }
 
+type HubMeta = { name: string; description: string | null };
+
+/**
+ * Rendered from the SERVER's copy of the hub, above every early return, because the
+ * hub the rest of the page uses arrives through a client query — nothing read off
+ * that appears in the HTML a link unfurler fetches.
+ */
+function HubMetaTags({ meta, id }: { meta?: HubMeta; id: number }) {
+  if (!meta) return null;
+  return (
+    <Meta
+      title={`${meta.name} | Civitai`}
+      description={meta.description ?? undefined}
+      ogEndpoint={`/api/og?type=hub&id=${id}`}
+      deIndex
+    />
+  );
+}
+
 export default Page(
-  function HubFeedPage() {
+  function HubFeedPage({ hubMeta }: { hubMeta?: HubMeta }) {
     const router = useRouter();
     const hubId = Number(router.query.id);
     const utils = trpc.useUtils();
@@ -197,11 +223,20 @@ export default Page(
 
     if (isLoading)
       return (
-        <Center py="xl">
-          <Loader />
-        </Center>
+        <>
+          <HubMetaTags meta={hubMeta} id={hubId} />
+          <Center py="xl">
+            <Loader />
+          </Center>
+        </>
       );
-    if (!hub) return <NotFound />;
+    if (!hub)
+      return (
+        <>
+          <HubMetaTags meta={hubMeta} id={hubId} />
+          <NotFound />
+        </>
+      );
 
     const hasSources = hub.sources.some((s) => s.enabled);
     const isPublic = hub.availability === Availability.Public;
@@ -219,7 +254,10 @@ export default Page(
 
     return (
       <>
-        <Meta title={`${hub.name} | Civitai`} deIndex />
+        <HubMetaTags
+          meta={hubMeta ?? { name: hub.name, description: hub.description }}
+          id={hubId}
+        />
         {/* Same container the feed itself renders in, so the title lines up with
             the first card instead of hugging the rail. */}
         <MasonryContainer className="min-h-full">
