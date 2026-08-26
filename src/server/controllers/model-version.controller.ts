@@ -542,18 +542,56 @@ export const upsertModelVersionHandler = async ({
         input.licensingFeeSettlementCurrency = LicensingFeeSettlementCurrency.Buzz;
     }
 
-    // Licensing lineage: the chosen source must be a registered LicensingRoot for
-    // the same base model. Guards against pointing at an arbitrary version to
-    // dodge the base-model rule.
+    // Licensing lineage: the chosen source must be a registered LicensingRoot for the same base model
+    // AND the same model type. The model-type half is the one that was missing (CU 868kwf2fd,
+    // Freshdesk #69622): every LicensingRoot row is a Checkpoint, so a LoRA that inherits one charges
+    // the checkpoint's per-image fee to everyone who generates with it, settled to the CHECKPOINT
+    // owner, on a line labelled with the LoRA's own name. The reporter paid 10 Buzz/image instead of 5
+    // for a month, and no surface on the site could clear it. `getLicensingRoots` already scopes the
+    // picker by model type "so a LoRA isn't offered a checkpoint's fee" — this is the same rule, on the
+    // side of the wire the client cannot race.
+    //
+    // 🔴 Coerced to null, NOT rejected, and that is deliberate — do not "tighten" it into a throw.
+    // The version editor re-submits the stored value out of `defaultValues`, so throwing would make
+    // every already-stamped version unsaveable by its owner. 160 versions were in that state when this
+    // landed, including two whose base model no longer matches their source, so a throw would strand
+    // real creators on an error they cannot act on — a worse bug than the one being fixed. Coercing
+    // blocks the bad write AND repairs the stored value on the owner's next save.
+    // Nothing legitimate is lost: the picker only ever offers roots that pass this same scope, so a
+    // deliberate selection cannot reach the coercion.
     if (input.licensingSourceVersionId != null) {
-      const source = await dbRead.licensingRoot.findUnique({
-        where: { modelVersionId: input.licensingSourceVersionId },
-        select: { baseModel: true },
-      });
-      if (!source)
-        throw throwBadRequestError('Invalid licensing source: not a licensing lineage root.');
-      if (source.baseModel !== input.baseModel)
-        throw throwBadRequestError('Licensing source must share the same base model.');
+      const [source, sourceModel] = await Promise.all([
+        dbRead.licensingRoot.findUnique({
+          where: { modelVersionId: input.licensingSourceVersionId },
+          select: { baseModel: true, modelType: true },
+        }),
+        getModel({ id: input.modelId, select: { type: true } }),
+      ]);
+      const rejectedReason = !source
+        ? 'not-a-root'
+        : source.baseModel !== input.baseModel
+        ? 'base-model-mismatch'
+        : sourceModel && source.modelType !== sourceModel.type
+        ? 'model-type-mismatch'
+        : null;
+      if (rejectedReason) {
+        // A coercion leaves no trace in the row it corrected, so emit the deciding branch. This is
+        // also the only signal that the client is still sending bad values.
+        logToAxiom({
+          name: 'model-version-licensing-source-rejected',
+          type: 'info',
+          reason: rejectedReason,
+          userId,
+          modelId: input.modelId,
+          modelVersionId: input.id ?? null,
+          requestedSourceVersionId: input.licensingSourceVersionId,
+          modelType: sourceModel?.type ?? null,
+          sourceModelType: source?.modelType ?? null,
+          baseModel: input.baseModel ?? null,
+          sourceBaseModel: source?.baseModel ?? null,
+        }).catch(() => null);
+        input.licensingSourceVersionId = null;
+      }
     }
 
     const version = await upsertModelVersion({

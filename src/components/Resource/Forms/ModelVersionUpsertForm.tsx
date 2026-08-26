@@ -552,9 +552,19 @@ export function ModelVersionUpsertForm({
   const removingStoredCharge = removingStoredFee || removingStoredGate;
 
   const licensingSourceVersionId = form.watch('licensingSourceVersionId') ?? null;
+  // 🔴 `enabled` waits on the model's TYPE, not just on `baseModel`. Do not relax it back.
+  // `baseModel` is seeded synchronously (version -> previousBaseModel -> lastUsedBaseModel -> default)
+  // while `model` arrives from a query, so gating on `baseModel` alone fires a first fetch with
+  // `modelType: undefined`. The type filter inside `getLicensingRoots` is conditional, so that
+  // unscoped fetch returns the ecosystem's CHECKPOINT roots — and the default-selection effect below
+  // stamps one onto a LoRA with `shouldDirty: false`, where nothing on screen marks it as changed. The
+  // scoped refetch then returns [], and the effect early-returns on a null default, so it can never
+  // clear what it already set. That is how 160 non-Checkpoint versions came to charge a checkpoint's
+  // per-image fee (CU 868kwf2fd). The server coerces the same case, but this is what stops the form
+  // showing a selection it is about to lose.
   const { data: licensingRootsData } = trpc.modelVersion.getLicensingRoots.useQuery(
     { baseModel, modelType: model?.type },
-    { enabled: !!baseModel }
+    { enabled: !!baseModel && !!model?.type }
   );
   const defaultLicensingSourceId = licensingRootsData?.defaultVersionId ?? null;
   // A version that is itself a licensing root is the source, so it doesn't pick a parent.

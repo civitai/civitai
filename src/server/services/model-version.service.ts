@@ -731,6 +731,10 @@ export const upsertModelVersion = async ({
         usageControl: true,
         flags: true,
         licensingFee: true,
+        // Read for the audit diff, not for the write. `watchedEntityFields` compares before/after by
+        // key, so a watched field missing from this select silently produces no row rather than an
+        // error — the audit would look wired up and record nothing.
+        licensingSourceVersionId: true,
         model: {
           select: {
             id: true,

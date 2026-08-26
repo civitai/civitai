@@ -21,7 +21,14 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcModule>()),
   trpc: {
     modelVersion: {
-      getLicensingRoots: { useQuery: () => ({ data: undefined }) },
+      getLicensingRoots: {
+        // Modelled on react-query's own contract, because that contract is what the fix turns on: a
+        // query with `enabled: false` never runs and therefore has no data. A fixed `{ data: undefined }`
+        // mock cannot tell a gated query from an ungated one, so it would pass either way.
+        useQuery: (input: { modelType?: string }, opts?: { enabled?: boolean }) => ({
+          data: opts?.enabled === false ? undefined : licensingRoots.respond(input),
+        }),
+      },
       getUserEarlyAccessVersions: { useQuery: () => ({ data: [] }) },
       upsert: { useMutation: () => ({ mutateAsync, isPending: false }) },
     },
@@ -34,6 +41,23 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
     }),
   },
 }));
+/** Anima's default licensing root: a Checkpoint charging 5 Buzz per image, settled to its own owner. */
+const ANIMA_CHECKPOINT_ROOT = {
+  id: 2945208,
+  modelId: 2458426,
+  versionName: 'base-v1.0',
+  isDefault: true,
+};
+const NO_ROOTS = { roots: [], defaultVersionId: null };
+
+const licensingRoots = vi.hoisted(() => ({
+  // Default: no roots for anyone, which is what every test in this file that predates the licensing
+  // lineage expects. The lineage tests below set their own, and those read the input.
+  respond: (() => ({ roots: [], defaultVersionId: null })) as (input: {
+    modelType?: string;
+  }) => unknown,
+}));
+
 const flags = vi.hoisted(() => ({
   // earlyAccessModel off keeps the Paid Access sub-section out of the way for the disclosure tests; the
   // removal test turns it on, because that section is what holds the irreversible warning.
@@ -156,6 +180,7 @@ beforeEach(() => {
   mutateAsync.mockClear();
   flags.current = { licensingFee: true, earlyAccessModel: false };
   currentUser.value = { id: 1, tier: 'free', isModerator: false, meta: {} };
+  licensingRoots.respond = () => NO_ROOTS;
 });
 
 describe('ModelVersionUpsertForm — monetization disclosure', () => {
@@ -672,5 +697,60 @@ describe('ModelVersionUpsertForm — monetization disclosure', () => {
     await userEvent.click(page.getByRole('button', { name: 'Save' }));
     await vi.waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     expect(mutateAsync).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * `licensingSourceVersionId` makes a version inherit a root's per-image licence fee — charged to
+ * everyone who generates with it, settled to the ROOT's owner, on a line carrying THIS model's name.
+ * The form pre-selects the ecosystem default with `shouldDirty: false`, so a wrong pre-selection leaves
+ * no mark on screen, and no surface on the site can clear it afterwards (CU 868kwf2fd).
+ *
+ * Both tests render a BRAND-NEW version, which is the shape the leak actually takes: no `version` means
+ * no stored value to echo, and `!version?.id` sends the save straight to the mutation, so whatever the
+ * effect pre-selected is what gets written.
+ */
+describe('ModelVersionUpsertForm — licensing lineage pre-selection', () => {
+  const renderNew = (withModel: boolean) =>
+    renderWithProviders(
+      // `model` undefined is not a contrived fixture: it is one render of the real wizard. `model`
+      // arrives from a query while `baseModel` is seeded synchronously from the last-used store, so
+      // there is a window where the form knows the ecosystem and not the model type.
+      <ModelVersionUpsertForm model={withModel ? model : undefined} onSubmit={vi.fn()}>
+        {() => <button type="submit">Save</button>}
+      </ModelVersionUpsertForm>
+    );
+
+  const save = async () => {
+    await userEvent.click(page.getByRole('button', { name: 'Save' }));
+    await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    return mutateAsync.mock.calls[0][0] as { licensingSourceVersionId?: number | null };
+  };
+
+  // The control for the test below, and the reason it is worth anything: same fixtures, same save, a
+  // root the query DOES offer. If the pre-selection effect or this harness ever stops reaching the
+  // payload, this goes red — so a null in the test below cannot be an artifact of the form never
+  // stamping anything at all.
+  test('stamps a root the query offers', async () => {
+    licensingRoots.respond = () => ({
+      roots: [ANIMA_CHECKPOINT_ROOT],
+      defaultVersionId: ANIMA_CHECKPOINT_ROOT.id,
+    });
+    renderNew(true);
+
+    expect((await save()).licensingSourceVersionId).toBe(ANIMA_CHECKPOINT_ROOT.id);
+  });
+
+  // 🔴 The gate this pins is `enabled: !!baseModel && !!model?.type`. Relaxing it back to `!!baseModel`
+  // fires one unscoped fetch whose CHECKPOINT roots get stamped onto a LoRA before the scoped refetch —
+  // which returns nothing, so the effect early-returns on a null default and can never clear it.
+  test('stamps nothing while the model type is still unknown', async () => {
+    licensingRoots.respond = (input) =>
+      input.modelType === undefined
+        ? { roots: [ANIMA_CHECKPOINT_ROOT], defaultVersionId: ANIMA_CHECKPOINT_ROOT.id }
+        : NO_ROOTS;
+    renderNew(false);
+
+    expect((await save()).licensingSourceVersionId ?? null).toBeNull();
   });
 });
