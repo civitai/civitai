@@ -5,6 +5,20 @@ import { findBlurbSpans, replaceBlurbSpans, unwrapBlurbSpans } from '~/server/ut
 export type BlurbUse = { blurbId: number; contentHash: string };
 
 /**
+ * Two facts a caller must never conflate: "the flag is off, so nothing was evaluated" and
+ * "evaluated, and this content uses no blurbs". Both leave the html alone, but only the second
+ * means the entity's reference rows should be reconciled to empty.
+ *
+ * Reconciling the first DELETES every reference row the moment a creator falls out of the
+ * rollout, and the fan-out then has nothing left to maintain — the same stranding the job is
+ * deliberately left ungated to avoid. Discriminated rather than a nullable `uses` so `uses` is
+ * unreachable at a call site that has not checked.
+ */
+export type BlurbExpansion =
+  | { evaluated: true; html: string; uses: BlurbUse[] }
+  | { evaluated: false; html: string };
+
+/**
  * Re-expands every blurb span from its row before the entity is stored.
  *
  * The inner text arrives from the client and is never trusted: a hand-crafted
@@ -29,17 +43,26 @@ export async function expandBlurbs({
    * private blurb text into a response the editor reads back.
    */
   restrictToBlurbIds?: number[];
-}) {
-  // Keyed on the owner rather than the actor so a percentage rollout picks a sticky subset of
-  // creators. Off means the spans are left exactly as the client sent them and no reference row
-  // is claimed — deliberately NOT the same as unwrapping, which would strip a creator's blurbs
-  // the moment they fell out of the rollout. The fan-out job is not gated on this; see
-  // blurb-fanout.service.ts.
+}): Promise<BlurbExpansion> {
+  // Keyed on the owner rather than the actor so a rollout picks a sticky subset of creators.
+  //
+  // 🔴 ROLL THIS FLAG OUT BY PERCENTAGE OR BOOLEAN ONLY — NEVER BY SEGMENT. The evaluation
+  // passes an entityId and no evaluation context, and every identity/tier/cohort segment in
+  // flipt-state is a STRING_COMPARISON constraint that reads the CONTEXT. A segment rollout
+  // therefore matches nothing here and looks exactly like "blurbs are off". A context is not
+  // available to fix that: `buildFliptContext` needs a full SessionUser for the OWNER, which a
+  // moderator editing someone else's page does not have, and the fan-out job has no session at all.
+  // The same note is recorded against this site in flipt-eval-context.test.ts's ledger.
+  //
+  // Off returns `evaluated: false`, not an empty result: the spans are left exactly as the
+  // client sent them and — critically — the caller must NOT reconcile, or a creator who falls
+  // out of the rollout loses every reference row on their next save. The fan-out job is not
+  // gated on this; see blurb-fanout.service.ts.
   if (!(await isFlipt(FLIPT_FEATURE_FLAGS.TEXT_BLURBS, String(userId))))
-    return { html, uses: [] as BlurbUse[] };
+    return { evaluated: false, html };
 
   const spans = findBlurbSpans(html);
-  if (!spans.length) return { html, uses: [] as BlurbUse[] };
+  if (!spans.length) return { evaluated: true, html, uses: [] };
 
   const spanIds = [...new Set(spans.map((s) => s.blurbId))];
   const allowed = restrictToBlurbIds && new Set(restrictToBlurbIds);
@@ -61,6 +84,7 @@ export async function expandBlurbs({
   if (orphaned.size) next = unwrapBlurbSpans(next, orphaned);
 
   return {
+    evaluated: true,
     html: next,
     uses: blurbs.map((b) => ({ blurbId: b.id, contentHash: b.contentHash })),
   };

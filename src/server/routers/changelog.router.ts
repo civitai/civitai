@@ -31,11 +31,11 @@ export const changelogRouter = router({
   create: moderatorProcedure
     .input(createChangelogInput)
     .use(isFlagProtected('changelogEdit'))
-    .mutation(({ input, ctx }) => createChangelog({ ...input, userId: ctx.user.id })),
+    .mutation(({ input }) => createChangelog(input)),
   update: moderatorProcedure
     .input(updateChangelogInput)
     .use(isFlagProtected('changelogEdit'))
-    .mutation(({ input, ctx }) => updateChangelog({ ...input, userId: ctx.user.id })),
+    .mutation(({ input }) => updateChangelog(input)),
   delete: moderatorProcedure
     .input(deleteChangelogInput)
     .use(isFlagProtected('changelogEdit'))

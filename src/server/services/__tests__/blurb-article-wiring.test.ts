@@ -67,7 +67,8 @@ const MODERATOR_ID = 9;
 
 const CLIENT_HTML = '<span data-type="blurb" data-id="7">ATTACKER SUPPLIED</span>';
 const EXPANDED_HTML = '<span data-type="blurb" data-id="7">REAL</span>';
-const BLOCKED_HTML = '<span data-type="blurb" data-id="7"><a href="https://blocked.example">x</a></span>';
+const BLOCKED_HTML =
+  '<span data-type="blurb" data-id="7"><a href="https://blocked.example">x</a></span>';
 const USES = [{ blurbId: 7, contentHash: 'h7' }];
 
 const storedArticle = {
@@ -116,7 +117,7 @@ function contentSql() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  expandBlurbs.mockResolvedValue({ html: EXPANDED_HTML, uses: USES });
+  expandBlurbs.mockResolvedValue({ evaluated: true, html: EXPANDED_HTML, uses: USES });
   getReferencedBlurbIds.mockResolvedValue([7]);
   throwOnBlockedLinkDomain.mockResolvedValue(undefined);
   reconcileBlurbReferences.mockResolvedValue(undefined);
@@ -164,7 +165,7 @@ describe('upsertArticle — blurb expansion', () => {
     // The client html is clean; the blurb the server splices in is not. The guard at the
     // top of `upsertArticle` ran before the splice, so only a re-check of the EXPANDED
     // html can see this.
-    expandBlurbs.mockResolvedValue({ html: BLOCKED_HTML, uses: USES });
+    expandBlurbs.mockResolvedValue({ evaluated: true, html: BLOCKED_HTML, uses: USES });
     throwOnBlockedLinkDomain.mockImplementation(async (html: string) => {
       if (html.includes('blocked.example')) throw new Error('invalid urls: blocked.example');
     });
@@ -186,9 +187,7 @@ describe('upsertArticle — blurb expansion', () => {
       entityType: 'Article',
       entityId: ARTICLE_ID,
     });
-    expect(expandBlurbs).toHaveBeenCalledWith(
-      expect.objectContaining({ restrictToBlurbIds: [7] })
-    );
+    expect(expandBlurbs).toHaveBeenCalledWith(expect.objectContaining({ restrictToBlurbIds: [7] }));
   });
 
   it('leaves the owner unrestricted', async () => {
@@ -249,6 +248,21 @@ describe('upsertArticle — blurb reconciliation', () => {
     // And does not replay the column write the transaction already committed — a second
     // save landing in between would be silently reinstated as the older body.
     expect(contentSql()).toEqual([]);
+  });
+
+  it('leaves an existing reference row alone when the flag is off for the owner', async () => {
+    // The regression this exists for: `expandBlurbs` used to report `uses: []` with the flag
+    // off, the call site handed that straight to reconcile, and reconcile deleted EVERY
+    // reference row for the article. A creator who fell out of the rollout lost their blurbs
+    // on their next save, and the fan-out — deliberately ungated so it can still maintain
+    // them — then had nothing left to maintain.
+    expandBlurbs.mockResolvedValue({ evaluated: false, html: CLIENT_HTML });
+
+    await upsert();
+
+    expect(reconcileBlurbReferences).not.toHaveBeenCalled();
+    // And the save still happens — the gate skips reconciliation, not the article.
+    expect(dbMock.dbWrite.article.update).toHaveBeenCalled();
   });
 
   it('reconciles a new article against the id it was created with', async () => {

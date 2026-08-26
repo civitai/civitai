@@ -2385,13 +2385,13 @@ export const upsertModel = async (
     beforeUpdate && ownerId !== userId
       ? await getReferencedBlurbIds({ entityType: 'Model', entityId: id as number })
       : undefined;
-  const { html: expandedDescription, uses: blurbUses } = await expandBlurbs({
+  const expansion = await expandBlurbs({
     userId: ownerId,
     html: data.description ?? '',
     restrictToBlurbIds,
   });
   if (data.description != null) {
-    data.description = expandedDescription;
+    data.description = expansion.html;
     // The guard at the top of this function saw the CLIENT's html. Blurb bodies were spliced in
     // since, so the string about to be written is one it never checked.
     await throwOnBlockedLinkDomain(data.description);
@@ -2494,7 +2494,14 @@ export const upsertModel = async (
       );
     }
 
-    await reconcileBlurbReferences({ entityType: 'Model', entityId: result.id, uses: blurbUses });
+    // Skipped when the flag was off for this owner: `expandBlurbs` did not evaluate anything, so
+    // reconciling would delete reference rows the fan-out is still meant to maintain.
+    if (expansion.evaluated)
+      await reconcileBlurbReferences({
+        entityType: 'Model',
+        entityId: result.id,
+        uses: expansion.uses,
+      });
 
     await modelTagCache.refresh(result.id);
     // Model tag set changed → the votable-tags list (score>0 ModelTag rows) changed too.
@@ -2690,7 +2697,12 @@ export const upsertModel = async (
       });
     }
 
-    await reconcileBlurbReferences({ entityType: 'Model', entityId: result.id, uses: blurbUses });
+    if (expansion.evaluated)
+      await reconcileBlurbReferences({
+        entityType: 'Model',
+        entityId: result.id,
+        uses: expansion.uses,
+      });
 
     return withoutMinorHashMeta(result);
   }

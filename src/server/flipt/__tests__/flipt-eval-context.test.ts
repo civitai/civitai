@@ -181,18 +181,18 @@ const ENTITY_WITHOUT_CONTEXT_LEDGER: Record<string, string> = {
     'model-text-moderation-xguard-apply has no segment rollouts; entityId is a MODEL id (no user segment can describe it) and the rollout is threshold-keyed; webhook path with no SessionUser',
   // flag `text-blurbs`: default-off, no rules and no rollouts.
   //
-  // Entity-keyed on purpose. The entityId is the CONTENT OWNER's user id, not the actor's, so
-  // that a percentage rollout buckets a sticky subset of creators and a moderator editing
-  // someone else's page resolves the same blurbs the owner would. A threshold rollout buckets on
-  // the entityId itself, which is exactly what is wanted here. The call also runs from the
-  // fan-out job, which has no SessionUser to build a truthful context from — and reading one for
-  // the owner would cost a user fetch on every save.
+  // Entity-keyed on purpose. The entityId is the CONTENT OWNER's user id, not the actor's, so a
+  // threshold rollout buckets a sticky subset of creators and a moderator editing someone else's
+  // page resolves the same blurbs the owner would. A context cannot be supplied here even in
+  // principle: `buildFliptContext` takes a full SessionUser, and the OWNER's session is not what
+  // a moderator's request carries — the fan-out job carries none at all.
   //
-  // The caveat applies with force: give this flag a SEGMENT rollout and it silently matches
-  // nothing here, which reads as "blurbs are off" rather than as a misconfiguration. A
-  // percentage rollout is fine.
-  'server/services/blurb-materialize.service.ts:38':
-    'text-blurbs has no segment rollouts; entityId is the CONTENT OWNER (not the actor) so the intended threshold rollout is sticky per creator; also called from the fan-out job with no SessionUser',
+  // 🔴 So this flag can only be ramped by PERCENTAGE or BOOLEAN. A SEGMENT rollout silently
+  // matches nothing here and looks exactly like "blurbs are off". The same warning is written at
+  // the gate itself (blurb-materialize.service.ts), because that is where someone running the
+  // ramp will look.
+  'server/services/blurb-materialize.service.ts:61':
+    'text-blurbs has no segment rollouts; entityId is the CONTENT OWNER (not the actor) so the intended threshold rollout is sticky per creator; no SessionUser for the owner exists on either the moderator-edit path or the fan-out job',
 };
 
 describe('flipt evaluation context — source gate', () => {

@@ -256,7 +256,7 @@ export const upsertCosmeticShopItem = async ({
     existingItem && ownerId !== userId
       ? await getReferencedBlurbIds({ entityType: 'CosmeticShopItem', entityId: existingItem.id })
       : undefined;
-  const { html: description, uses: blurbUses } = await expandBlurbs({
+  const expansion = await expandBlurbs({
     userId: ownerId,
     html: cosmeticShopItem.description ?? '',
     restrictToBlurbIds,
@@ -266,7 +266,7 @@ export const upsertCosmeticShopItem = async ({
     ...cosmeticShopItem,
     // Spread conditionally: `undefined` means "leave the column alone" to Prisma, and `null`
     // clears it — neither should be overwritten with the empty string expansion returns.
-    ...(cosmeticShopItem.description != null && { description }),
+    ...(cosmeticShopItem.description != null && { description: expansion.html }),
     availableQuantity,
     availableTo,
     availableFrom,
@@ -304,11 +304,14 @@ export const upsertCosmeticShopItem = async ({
     });
   }
 
-  await reconcileBlurbReferences({
-    entityType: 'CosmeticShopItem',
-    entityId: item.id,
-    uses: blurbUses,
-  });
+  // Skipped when the flag was off for this owner: `expandBlurbs` did not evaluate anything, so
+  // reconciling would delete reference rows the fan-out is still meant to maintain.
+  if (expansion.evaluated)
+    await reconcileBlurbReferences({
+      entityType: 'CosmeticShopItem',
+      entityId: item.id,
+      uses: expansion.uses,
+    });
 
   return item;
 };

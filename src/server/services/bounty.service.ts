@@ -56,6 +56,13 @@ import {
   getReferencedBlurbIds,
   reconcileBlurbReferences,
 } from '~/server/services/blurb-materialize.service';
+// The queue writer itself, NOT `bountiesSearchIndex` — that would pull `~/server/search-index`
+// (or `bounties.search-index`) and with it `meilisearch/client`, whose module-scope pLimit and
+// prom collectors this service's suites do not load today. `bountiesSearchIndex.queueUpdate` is
+// exactly this call with `indexName` bound (base.search-index.ts:465).
+import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
+import { BOUNTIES_SEARCH_INDEX } from '~/server/common/constants';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { createProfanityFilter } from '~/libs/profanity-simple';
 import { logToAxiom } from '~/server/logging/client';
 
@@ -486,12 +493,12 @@ export const upsertBounty = async ({
     id && ownerId !== userId
       ? await getReferencedBlurbIds({ entityType: 'Bounty', entityId: id })
       : undefined;
-  const { html: expandedDescription, uses: blurbUses } = await expandBlurbs({
+  const expansion = await expandBlurbs({
     userId: ownerId,
     html: data.description,
     restrictToBlurbIds,
   });
-  data.description = expandedDescription;
+  data.description = expansion.html;
 
   // The guard above saw the CLIENT's html. Blurb bodies were spliced in since, so the string
   // about to be written is one it never checked.
@@ -531,11 +538,13 @@ export const upsertBounty = async ({
       isModerator,
       addLockedProperties,
     });
-    if (updated)
+    // Skipped when the flag was off for this owner: `expandBlurbs` did not evaluate anything, so
+    // reconciling would delete reference rows the fan-out is still meant to maintain.
+    if (updated && expansion.evaluated)
       await reconcileBlurbReferences({
         entityType: 'Bounty',
         entityId: updated.id,
-        uses: blurbUses,
+        uses: expansion.uses,
       });
     return updated;
   } else {
@@ -547,11 +556,12 @@ export const upsertBounty = async ({
 
     const createInput = await createBountyInputSchema.parseAsync({ ...data, buzzType });
     const created = await createBounty({ ...createInput, userId, addLockedProperties });
-    await reconcileBlurbReferences({
-      entityType: 'Bounty',
-      entityId: created.id,
-      uses: blurbUses,
-    });
+    if (expansion.evaluated)
+      await reconcileBlurbReferences({
+        entityType: 'Bounty',
+        entityId: created.id,
+        uses: expansion.uses,
+      });
     return created;
   }
 };
@@ -561,9 +571,8 @@ export const upsertBounty = async ({
  * blurb fan-out. `upsertBounty` is form-shaped, so a partial call to it would clear name, tags,
  * files, images and the entry limit rather than update a column.
  *
- * The write is the whole of it, because that is all a description change does on the
- * interactive path too: `updateBountyById`'s follow-up is the image ingest queue and the owner's
- * bounty COUNT, neither of which a re-materialised body moves.
+ * `updateBountyById`'s own follow-up — the image ingest queue and the owner's bounty COUNT —
+ * is not repeated here: a re-materialised body moves neither.
  */
 export async function applyBountyContentChange({
   id,
@@ -581,6 +590,14 @@ export async function applyBountyContentChange({
   const affected =
     await dbWrite.$executeRaw`UPDATE "Bounty" SET description = ${description} WHERE id = ${id}`;
   if (!affected) throw throwNotFoundError(`No bounty with id ${id}`);
+
+  // `description` is an indexed field (bounties.search-index.ts:257) and nothing else on the
+  // bounty save path enqueues this, so without it a rewritten body stays searchable under its
+  // old text until a metric or entry event happens to re-enqueue the bounty.
+  await SearchIndexUpdate.queueUpdate({
+    indexName: BOUNTIES_SEARCH_INDEX,
+    items: [{ id, action: SearchIndexUpdateQueueAction.Update }],
+  });
 }
 
 export const deleteBountyById = async ({

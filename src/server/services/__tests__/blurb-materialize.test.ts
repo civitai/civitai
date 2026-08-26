@@ -74,16 +74,31 @@ describe('expandBlurbs', () => {
     expect(dbRead.blurb.findMany).not.toHaveBeenCalled();
   });
 
-  it('leaves the html untouched and claims nothing when the flag is off for the owner', async () => {
+  it('reports NOT EVALUATED, with the html untouched, when the flag is off for the owner', async () => {
     isFlipt.mockResolvedValue(false);
     const html = '<span data-type="blurb" data-id="7">CLIENT TEXT</span>';
 
     const result = await expandBlurbs({ userId: 10, html });
 
-    expect(result).toEqual({ html, uses: [] });
+    // `evaluated: false` and NO `uses` key. Returning `uses: []` here is the bug this shape
+    // exists to make unrepresentable: a caller would hand it to reconcileBlurbReferences and
+    // delete every reference row the owner has.
+    expect(result).toEqual({ evaluated: false, html });
+    expect('uses' in result).toBe(false);
     expect(dbRead.blurb.findMany).not.toHaveBeenCalled();
-    // Keyed on the OWNER, so a percentage rollout is sticky per creator rather than per save.
+    // Keyed on the OWNER, so a rollout is sticky per creator rather than per save.
     expect(isFlipt).toHaveBeenCalledWith('text-blurbs', '10');
+  });
+
+  it('distinguishes "no blurbs in this content" from "flag off" — the first IS evaluated', async () => {
+    // The pair is the point. Both leave the html alone; only this one may reconcile.
+    const html = '<p>plain</p>';
+
+    isFlipt.mockResolvedValue(true);
+    expect(await expandBlurbs({ userId: 10, html })).toEqual({ evaluated: true, html, uses: [] });
+
+    isFlipt.mockResolvedValue(false);
+    expect(await expandBlurbs({ userId: 10, html })).toEqual({ evaluated: false, html });
   });
 
   it('resolves one span and unwraps another in the same document, on both sides of it', async () => {
@@ -128,6 +143,20 @@ describe('reconcileBlurbReferences', () => {
     });
     expect(call.create.materializedHash).toBe('h7');
     expect(call.update.materializedHash).toBe('h7');
+  });
+
+  it('still deletes when uses is empty — the last blurb was removed from the content', async () => {
+    // The tempting shortcut for the flag-off case is to make this function a no-op on an empty
+    // `uses`. It would break exactly this: removing an entity's last blurb legitimately produces
+    // an empty `uses` and MUST drop the rows. The flag-off case is handled at the call site,
+    // which does not call this function at all.
+    dbRead.blurbReference.findMany.mockResolvedValue([{ blurbId: 5 }, { blurbId: 7 }]);
+    await reconcileBlurbReferences({ entityType: 'Article', entityId: 1, uses: [] });
+
+    expect(dbWrite.blurbReference.deleteMany).toHaveBeenCalledWith({
+      where: { entityType: 'Article', entityId: 1, blurbId: { in: [5, 7] } },
+    });
+    expect(dbWrite.blurbReference.upsert).not.toHaveBeenCalled();
   });
 
   it('skips the delete entirely when nothing needs removing', async () => {

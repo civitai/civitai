@@ -2,7 +2,6 @@ import { constants } from '~/server/common/constants';
 import { dbRead } from '~/server/db/client';
 import { applyArticleContentChange } from '~/server/services/article.service';
 import { applyBountyContentChange } from '~/server/services/bounty.service';
-import { applyChangelogContentChange } from '~/server/services/changelog.service';
 import { applyCosmeticShopItemContentChange } from '~/server/services/cosmetic-shop.service';
 import { applyModelContentChange } from '~/server/services/model.service';
 import { applyModelVersionContentChange } from '~/server/services/model-version.service';
@@ -77,18 +76,6 @@ const adapters: Record<string, BlurbFanoutAdapter> = {
       return row ? { userId: row.userId ?? constants.system.user.id, html: row.description } : null;
     },
     save: ({ entityId, html }) => applyBountyContentChange({ id: entityId, description: html }),
-  },
-  Changelog: {
-    load: async (entityId) => {
-      const row = await dbRead.changelog.findUnique({
-        where: { id: entityId },
-        select: { content: true },
-      });
-      // `Changelog` has no author column at all. Nothing downstream reads this, so the system
-      // actor stands in rather than inventing an owner the row does not have.
-      return row ? { userId: constants.system.user.id, html: row.content } : null;
-    },
-    save: ({ entityId, html }) => applyChangelogContentChange({ id: entityId, content: html }),
   },
   CosmeticShopItem: {
     load: async (entityId) => {

@@ -854,12 +854,12 @@ export const upsertArticle = async ({
       article && article.userId !== userId
         ? await getReferencedBlurbIds({ entityType: 'Article', entityId: article.id })
         : undefined;
-    const { html: expandedContent, uses: blurbUses } = await expandBlurbs({
+    const expansion = await expandBlurbs({
       userId: article?.userId ?? userId,
       html: data.content,
       restrictToBlurbIds,
     });
-    data.content = expandedContent;
+    data.content = expansion.html;
 
     // The guard at the top of this function saw the CLIENT's html. Blurb bodies were
     // spliced in above, so the string about to be written is one it never checked.
@@ -998,11 +998,14 @@ export const upsertArticle = async ({
         });
       }
 
-      await reconcileBlurbReferences({
-        entityType: 'Article',
-        entityId: result.id,
-        uses: blurbUses,
-      });
+      // Skipped when the flag was off for this owner: `expandBlurbs` did not evaluate anything,
+      // so reconciling would delete reference rows the fan-out is still meant to maintain.
+      if (expansion.evaluated)
+        await reconcileBlurbReferences({
+          entityType: 'Article',
+          entityId: result.id,
+          uses: expansion.uses,
+        });
 
       return result;
     }
@@ -1220,7 +1223,8 @@ export const upsertArticle = async ({
     // Deliberately unguarded: a failure here 500s a save that already committed, but
     // swallowing it leaves the reference rows stale, and the fan-out then skips this
     // article forever — a silently unmaintained body is the worse of the two.
-    await reconcileBlurbReferences({ entityType: 'Article', entityId: id, uses: blurbUses });
+    if (expansion.evaluated)
+      await reconcileBlurbReferences({ entityType: 'Article', entityId: id, uses: expansion.uses });
 
     // If it was published, process it.
     if (result.publishedAt && result.publishedAt <= new Date()) {

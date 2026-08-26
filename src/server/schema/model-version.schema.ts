@@ -10,6 +10,7 @@ import { imageSchema } from '~/server/schema/image.schema';
 import { modelFileSchema } from '~/server/schema/model-file.schema';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
+import { DEFAULT_ALLOWED_ATTRIBUTES } from '~/utils/html-sanitize-helpers';
 import {
   LicensingFeeSettlementCurrency,
   LicensingFeeType,
@@ -291,7 +292,8 @@ export const modelVersionUpsertSchema = z.object({
   description: getSanitizedStringSchema({
     // `span` is absent from the app-wide default list this narrows, so without it here a blurb
     // span is stripped at save and `expandBlurbs` sees plain text — the control would render
-    // and silently do nothing on this surface alone.
+    // and silently do nothing on this surface alone. `allowBlurbs` is an attribute STRIP
+    // toggle, not a tag admission, so it cannot admit the tag on its own.
     allowedTags: [
       'div',
       'strong',
@@ -308,6 +310,12 @@ export const modelVersionUpsertSchema = z.object({
       'pre',
       'span',
     ],
+    // Admitting `span` re-opens two vectors this surface did not have. Narrowing its attributes
+    // to the two a blurb needs closes both: no `style`/`class` (CSS injection) and no
+    // `data-label`, which is the username a mention span renders from (RenderHtml.tsx:109).
+    // What survives is an attribute-stripped `<span>` around its own text, which renders as
+    // that text — a deliberate residual, not an oversight.
+    allowedAttributes: { ...DEFAULT_ALLOWED_ATTRIBUTES, span: ['data-type', 'data-id'] },
     stripEmpty: true,
     allowBlurbs: true,
   }).nullish(),
@@ -473,7 +481,8 @@ export const modelVersionUpsertSchema2 = z.object({
   description: getSanitizedStringSchema({
     // `span` is absent from the app-wide default list this narrows, so without it here a blurb
     // span is stripped at save and `expandBlurbs` sees plain text — the control would render
-    // and silently do nothing on this surface alone.
+    // and silently do nothing on this surface alone. `allowBlurbs` is an attribute STRIP
+    // toggle, not a tag admission, so it cannot admit the tag on its own.
     allowedTags: [
       'div',
       'strong',
@@ -490,6 +499,12 @@ export const modelVersionUpsertSchema2 = z.object({
       'pre',
       'span',
     ],
+    // Admitting `span` re-opens two vectors this surface did not have. Narrowing its attributes
+    // to the two a blurb needs closes both: no `style`/`class` (CSS injection) and no
+    // `data-label`, which is the username a mention span renders from (RenderHtml.tsx:109).
+    // What survives is an attribute-stripped `<span>` around its own text, which renders as
+    // that text — a deliberate residual, not an oversight.
+    allowedAttributes: { ...DEFAULT_ALLOWED_ATTRIBUTES, span: ['data-type', 'data-id'] },
     stripEmpty: true,
     allowBlurbs: true,
   }).nullish(),

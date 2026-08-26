@@ -586,13 +586,13 @@ export const upsertModelVersion = async ({
     editsExistingVersion && model.userId !== actorId
       ? await getReferencedBlurbIds({ entityType: 'ModelVersion', entityId: id as number })
       : undefined;
-  const { html: expandedDescription, uses: blurbUses } = await expandBlurbs({
+  const expansion = await expandBlurbs({
     userId: model.userId,
     html: data.description ?? '',
     restrictToBlurbIds,
   });
   if (data.description != null) {
-    data.description = expandedDescription;
+    data.description = expansion.html;
     // The guard at the top of this function saw the CLIENT's html. Blurb bodies were spliced in
     // since, so the string about to be written is one it never checked.
     await throwOnBlockedLinkDomain(data.description);
@@ -746,11 +746,14 @@ export const upsertModelVersion = async ({
     // timed window), and create the EA donation goal here (option A) instead of at publish.
     await writeModelVersionGateAndGoal(version, model.userId, paidAccess, donationGoal);
 
-    await reconcileBlurbReferences({
-      entityType: 'ModelVersion',
-      entityId: version.id,
-      uses: blurbUses,
-    });
+    // Skipped when the flag was off for this owner: `expandBlurbs` did not evaluate anything, so
+    // reconciling would delete reference rows the fan-out is still meant to maintain.
+    if (expansion.evaluated)
+      await reconcileBlurbReferences({
+        entityType: 'ModelVersion',
+        entityId: version.id,
+        uses: expansion.uses,
+      });
 
     return version;
   } else {
@@ -962,11 +965,12 @@ export const upsertModelVersion = async ({
         context: { modelId: version.modelId },
       });
 
-    await reconcileBlurbReferences({
-      entityType: 'ModelVersion',
-      entityId: version.id,
-      uses: blurbUses,
-    });
+    if (expansion.evaluated)
+      await reconcileBlurbReferences({
+        entityType: 'ModelVersion',
+        entityId: version.id,
+        uses: expansion.uses,
+      });
 
     return version;
   }

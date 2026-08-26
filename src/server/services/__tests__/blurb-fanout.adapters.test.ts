@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as ArticleService from '~/server/services/article.service';
 import type * as BountyService from '~/server/services/bounty.service';
-import type * as ChangelogService from '~/server/services/changelog.service';
 import type * as CosmeticShopService from '~/server/services/cosmetic-shop.service';
 import type * as ModelService from '~/server/services/model.service';
 import type * as ModelVersionService from '~/server/services/model-version.service';
@@ -16,7 +15,6 @@ import type * as ModelVersionService from '~/server/services/model-version.servi
 const applies = vi.hoisted(() => ({
   applyArticleContentChange: vi.fn(),
   applyBountyContentChange: vi.fn(),
-  applyChangelogContentChange: vi.fn(),
   applyCosmeticShopItemContentChange: vi.fn(),
   applyModelContentChange: vi.fn(),
   applyModelVersionContentChange: vi.fn(),
@@ -27,7 +25,6 @@ const applies = vi.hoisted(() => ({
 const upserts = vi.hoisted(() => ({
   upsertArticle: vi.fn(),
   upsertBounty: vi.fn(),
-  updateChangelog: vi.fn(),
   upsertCosmeticShopItem: vi.fn(),
   upsertModel: vi.fn(),
   updateModelById: vi.fn(),
@@ -43,11 +40,6 @@ vi.mock('~/server/services/bounty.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BountyService>()),
   applyBountyContentChange: applies.applyBountyContentChange,
   upsertBounty: upserts.upsertBounty,
-}));
-vi.mock('~/server/services/changelog.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof ChangelogService>()),
-  applyChangelogContentChange: applies.applyChangelogContentChange,
-  updateChangelog: upserts.updateChangelog,
 }));
 vi.mock('~/server/services/cosmetic-shop.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CosmeticShopService>()),
@@ -73,14 +65,7 @@ const { getBlurbFanoutAdapter, getSupportedBlurbEntityTypes } = await import(
 // The v1 surfaces, spelled the way `reconcileBlurbReferences` is called with them. A key that
 // drifts from its call site is silent: references accumulate and the job reports them
 // `unsupported` forever.
-const V1_ENTITY_TYPES = [
-  'Article',
-  'Model',
-  'ModelVersion',
-  'Bounty',
-  'Changelog',
-  'CosmeticShopItem',
-];
+const V1_ENTITY_TYPES = ['Article', 'Model', 'ModelVersion', 'Bounty', 'CosmeticShopItem'];
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -95,10 +80,16 @@ describe('getBlurbFanoutAdapter', () => {
     expect(getSupportedBlurbEntityTypes().sort()).toEqual([...V1_ENTITY_TYPES].sort());
   });
 
-  it('resolves undefined for an unregistered entity type', () => {
-    // Comments and reviews are out of v1 deliberately.
-    expect(getBlurbFanoutAdapter('Comment')).toBeUndefined();
-  });
+  it.each(['Comment', 'Changelog', 'Challenge'])(
+    'resolves undefined for %s, which is out of v1 deliberately',
+    (entityType) => {
+      // Changelog and Challenge were dropped from v1 (no defensible owner to resolve spans
+      // against; a background rewrite would hide a live challenge). Nothing passes either
+      // string to reconcileBlurbReferences, so no reference row can name them — but if one
+      // ever did, the fan-out must report it `unsupported` rather than rewrite it.
+      expect(getBlurbFanoutAdapter(entityType)).toBeUndefined();
+    }
+  );
 });
 
 describe('adapter save', () => {
@@ -107,7 +98,6 @@ describe('adapter save', () => {
     ['Model', 'applyModelContentChange', { id: 5, description: '<p>hi</p>' }],
     ['ModelVersion', 'applyModelVersionContentChange', { id: 5, description: '<p>hi</p>' }],
     ['Bounty', 'applyBountyContentChange', { id: 5, description: '<p>hi</p>' }],
-    ['Changelog', 'applyChangelogContentChange', { id: 5, content: '<p>hi</p>' }],
     ['CosmeticShopItem', 'applyCosmeticShopItemContentChange', { id: 5, description: '<p>hi</p>' }],
   ];
 
@@ -161,14 +151,6 @@ describe('adapter load', () => {
     });
   });
 
-  it('reports the system actor for a changelog, which has no author column', async () => {
-    dbMock.dbRead.changelog.findUnique.mockResolvedValue({ content: '<p>hi</p>' });
-    await expect(getBlurbFanoutAdapter('Changelog')!.load(5)).resolves.toEqual({
-      userId: -1,
-      html: '<p>hi</p>',
-    });
-  });
-
   it('reads addedById for a cosmetic shop item', async () => {
     dbMock.dbRead.cosmeticShopItem.findUnique.mockResolvedValue({
       addedById: 9,
@@ -189,14 +171,7 @@ describe('adapter load', () => {
   });
 
   it.each(V1_ENTITY_TYPES)('returns null when the %s no longer exists', async (entityType) => {
-    for (const model of [
-      'article',
-      'model',
-      'modelVersion',
-      'bounty',
-      'changelog',
-      'cosmeticShopItem',
-    ] as const)
+    for (const model of ['article', 'model', 'modelVersion', 'bounty', 'cosmeticShopItem'] as const)
       dbMock.dbRead[model].findUnique.mockResolvedValue(null);
 
     await expect(getBlurbFanoutAdapter(entityType)!.load(5)).resolves.toBeNull();
