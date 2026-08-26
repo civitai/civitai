@@ -378,9 +378,17 @@ describe('🔴 the OAuth scope disclosure follows the DRIFT, not the status', ()
     // /scopes have also changed/i — a sentence appended after "Tagline, description and
     // category can be edited now", i.e. the test pinned HALF of a self-contradicting
     // message and was satisfied. The notice now states the actual consequence.
-    await expect
-      .element(page.getByTestId('apps-offsite-edit-material-locked-notice'))
-      .toHaveTextContent(/nothing on this screen can be saved/i);
+    const notice = page.getByTestId('apps-offsite-edit-material-locked-notice');
+    await expect.element(notice).toHaveTextContent(/nothing on this screen can be saved/i);
+    // 🔴 AND THE FALSE SENTENCE IS ABSENT FROM THE RENDER, not merely from the function's
+    // return value. This second assertion is not redundant with the unit test that pins
+    // `materialEditBlockedReason`'s output: the contradiction originally lived in the JSX,
+    // as a `{scopeLocked ? '…' : ''}` APPENDED after the reason. A mutant that re-adds any
+    // such append is invisible to a unit test of the copy function — the function's return
+    // is still correct — and invisible to a presence-only assertion here, because appending
+    // does not disturb the text already matched. Found exactly that way: this mutation
+    // SURVIVED the whole battery until this line existed.
+    await expect.element(notice).not.toHaveTextContent(/can be edited now/i);
     await page.getByRole('button', { name: 'Next' }).click();
     await expect.element(page.getByTestId('apps-offsite-justification-8')).toBeDisabled();
   });
