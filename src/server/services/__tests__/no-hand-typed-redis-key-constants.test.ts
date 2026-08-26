@@ -24,7 +24,7 @@ import { mockPattern } from '~/__tests__/mocks/guarded-specifiers';
  * spread `@civitai/redis/client` into the factory for the real constants, and keep only your
  * own client stub and control-surface overrides as explicit properties.
  *
- * 🔴 A RATCHET, NOT A RULE, and deliberately so. 52 files hand-type these blocks today; a
+ * 🔴 A RATCHET, NOT A RULE, and deliberately so. 50 files hand-type these blocks today; a
  * hard rule would be red on all of them from day one, and a permanently-red gate is worse
  * than no gate — it trains everyone to click through. Some are also LEGITIMATE:
  * `BLOCKS.TOKEN_RATE_LIMIT: 'rl'` is a deliberate short stub, not drift. So this does not
@@ -132,7 +132,6 @@ const HAND_TYPED_BASELINE: string[] = [
   'src/server/jobs/__tests__/rewards-abuse-prevention.test.ts',
   'src/server/metrics/__tests__/base.metrics.test.ts',
   'src/server/orchestrator/__tests__/get-orchestrator-token.sysredis-soft.test.ts',
-  'src/server/redis/__tests__/model-version-public-donation-goals-cache.test.ts',
   'src/server/redis/__tests__/queues.test.ts',
   'src/server/routers/__tests__/track.router.blockRender.test.ts',
   'src/server/services/blocks/__tests__/app-bounty-cap.service.test.ts',
@@ -144,7 +143,6 @@ const HAND_TYPED_BASELINE: string[] = [
   'src/server/services/generation/__tests__/generation.service.client-rejections.test.ts',
   'src/server/services/generation/__tests__/generation.service.generation-disabled-flag.test.ts',
   'src/server/services/generation/__tests__/generation.service.hidden-prompt.test.ts',
-  'src/server/services/generation/__tests__/generation.service.resource-data-aliasing.test.ts',
   'src/server/services/generation/__tests__/generation.service.scheduled-status.test.ts',
   'src/server/services/generation/__tests__/generation.service.sysredis-soft.test.ts',
   'src/server/services/orchestrator/__tests__/orchestration-new.air-map.test.ts',
@@ -239,6 +237,6 @@ describe('no hand-typed Redis key constants in a guarded mock', () => {
   // load-bearing, add the entry AND raise this number in the same commit, with a note saying
   // which it is. A raise is then a visible, reviewable claim rather than a silent one.
   it('the baseline is exactly the recorded size', () => {
-    expect(HAND_TYPED_BASELINE.length).toBe(52);
+    expect(HAND_TYPED_BASELINE.length).toBe(50);
   });
 });

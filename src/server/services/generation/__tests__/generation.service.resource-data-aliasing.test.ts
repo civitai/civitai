@@ -23,9 +23,18 @@ const setMock = vi.fn().mockResolvedValue(undefined);
 const setNxMock = vi.fn().mockResolvedValue(true);
 const delMock = vi.fn().mockResolvedValue(undefined);
 
-vi.mock('~/server/redis/client', () => {
-  const sysKeyProxy: any = new Proxy(() => 'sys', { get: () => sysKeyProxy });
+// 🔴 Spreads the real package for the key CONSTANTS; only the client stubs and the transparent
+// read-deadline are overridden. This block used to hand-type them: `CACHE_LOCKS: 'caches:lock'`
+// against the real 'cache-lock', and a catch-all Proxy standing in for the whole REDIS_SYS_KEYS /
+// REDIS_SUB_KEYS tables (every sys key stringified to 'sys'). Both sides of every lock read the
+// same fake, so the suite passed while exercising keys Redis never sees. `withSysReadDeadline`
+// stays overridden because it is a control surface, not a constant, and the package does not
+// export it — the app shim re-exports it from '~/server/redis/sys-read-deadline'.
+// See no-hand-typed-redis-key-constants.test.ts.
+vi.mock('~/server/redis/client', async () => {
+  const real = await import('@civitai/redis/client');
   return {
+    ...real,
     redis: {
       packed: {
         mGet: (...args: unknown[]) => mGetMock(...args),
@@ -39,12 +48,6 @@ vi.mock('~/server/redis/client', () => {
     },
     // getGateRules reads this; null => no gate rules configured.
     sysRedis: { hGet: vi.fn().mockResolvedValue(null), hSet: vi.fn() },
-    REDIS_KEYS: {
-      CACHE_LOCKS: 'caches:lock',
-      GENERATION: { RESOURCE_DATA: 'packed:generation:resource-data-3' },
-    },
-    REDIS_SYS_KEYS: sysKeyProxy,
-    REDIS_SUB_KEYS: sysKeyProxy,
     withSysReadDeadline: vi.fn((p: Promise<unknown>) => p),
   };
 });
