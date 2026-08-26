@@ -42,7 +42,7 @@ import type { DonationGoalWithTotal } from '~/server/redis/caches';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { resourceDataCache } from '~/server/redis/resource-data.redis';
-import { submitModelVersionNameModeration } from '~/server/services/model-version-moderation.adapter';
+import { moderateModelVersionName } from '~/server/services/model-version-moderation.adapter';
 import {
   allBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
@@ -716,8 +716,7 @@ export const upsertModelVersion = async ({
     // timed window), and create the EA donation goal here (option A) instead of at publish.
     await writeModelVersionGateAndGoal(version, model.userId, paidAccess, donationGoal);
 
-    // Awaited so no rejection escapes; it swallows its own errors, so a scan cannot fail the save.
-    await submitModelVersionNameModeration({ id: version.id, name: version.name, isModerator });
+    await moderateModelVersionName({ id: version.id, name: version.name, isModerator });
 
     return version;
   } else {
@@ -925,11 +924,11 @@ export const upsertModelVersion = async ({
     if (feeBefore !== feeAfter)
       await bustMvCache(version.id, version.modelId, actorUserId).catch(() => undefined);
 
-    // On rename only. An unchanged name has already been ruled on, and re-submitting it every
+    // On rename only. An unchanged name has already been ruled on, and re-evaluating it every
     // save would re-audit the same string forever — the same reasoning as the model path's
     // "text that has not changed" carve-out.
     if (data.name !== undefined && data.name !== existingVersion.name)
-      await submitModelVersionNameModeration({ id: version.id, name: version.name, isModerator });
+      await moderateModelVersionName({ id: version.id, name: version.name, isModerator });
 
     return version;
   }

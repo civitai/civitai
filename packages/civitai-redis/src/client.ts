@@ -1936,23 +1936,17 @@ export const REDIS_SYS_KEYS = {
   },
   MODEL_VERSION_NAME_MODERATION: {
     /*
-      Use: The curated term list that gates whether a model version's NAME is sent to
-      XGuard at all. Structure: single packed `LabelRegexSpec`
+      Use: The curated term list that decides whether a model version's NAME is NSFW.
+      Structure: single packed `LabelRegexSpec`
       ({ triggers, phrasePatterns, carveOutPatterns }).
+
+      Seeding this key is what turns the feature on; an empty or absent list selects nothing.
 
       In Redis rather than in the repo for two reasons: it has to be editable without a
       deploy when a term turns out to fire on something innocent, and this repository is
       public — a trigger list is a decision rule, not configuration (CLAUDE.md → Security).
      */
     TERMS: 'packed:system:model-version-name-moderation:terms',
-    /*
-      Use: Tuning that must move without a deploy alongside the terms.
-      Structure: packed { minScore: number }.
-
-      `minScore` is a floor on the top LEVEL-label score, not a replacement for XGuard's own
-      thresholds — see model-version-name-terms.service.ts.
-     */
-    CONFIG: 'packed:system:model-version-name-moderation:config',
   },
   SCANNER_POLICY: {
     /*

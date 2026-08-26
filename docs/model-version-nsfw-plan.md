@@ -1,6 +1,6 @@
 # Marking model versions NSFW — plan
 
-**Status**: §1–§3 and §5 built and tested · §4 (read-side filtering) not started · migration unapplied
+**Status**: §1–§3 and §5 built and tested · §4 (read-side filtering) not started · migration unapplied · **term list seeded in production** (see §6)
 **Related**: [Model Text Moderation](features/model-text-moderation.md)
 
 A model's own name and description already have a path to an NSFW flag. A **version** name does
@@ -17,6 +17,8 @@ not, and a version name renders on civitai.com in places the model's rating neve
   civitai.red redirect an NSFW model already gets.
 - **No Meilisearch rebuild** — a queued document update, nothing more.
 - **A version under a system-owned model is never flagged.** See §3.5.
+- **The term list decides and XGuard reviews.** A match flags the version at save time; the scan
+  that follows can overturn it and can do nothing else. See §5.
 
 ---
 
@@ -177,17 +179,30 @@ through a filename as well as a page.
 the existing text-moderation webhook dispatches by entity type, and the retry cron reads the
 same map. No new endpoint was needed.
 
-The path is: curated term list (local regex, every save) → XGuard on a match only → score floor
-→ `ModelVersion.nsfw`. The name is scanned **alone**; §5.1 explains why the description is not.
+The path is: curated term list (local regex, every save) → `ModelVersion.nsfw` set on the spot →
+XGuard on the same name → the verdict can overturn it. The name is scanned **alone**; §5.1
+explains why the description is not.
 
-**Term list and score floor live in system Redis**, not in this repository — editable without a
-deploy, and a decision rule rather than configuration. An empty list is the off switch: nothing
-is selected, so nothing is scanned or flagged, and the retry cron reports the adapter disabled
-rather than burning retry budget against it.
+**The list DECIDES and the scan REVIEWS**, in that order. XGuard reads a two-word title poorly —
+§5.2 has the measurements — so it is not usable as the thing that decides. It is good at the
+narrower question asked here: given a name the list already matched, is the list wrong? So
+`applyResult` only ever CLEARS. Nothing downstream of the term list can raise the flag, which is
+also why a moderator's decision cannot be undone by a callback arriving late.
 
-There are **no feature flags.** The term list is the switch; a second layer in front of it would
-be ceremony. The cost of that choice is that there is no shadow phase — seeding the list makes
-the first scan and the first flag happen in the same moment, on live content.
+**Failure leaves the flag on.** A submit that fails, or a callback that never arrives, means the
+review never happened and the list's verdict stands. That is the safe direction here, and it is
+why the moderator clear path is required rather than optional.
+
+**The term list lives in system Redis**, not in this repository — editable without a deploy, and
+a decision rule rather than configuration. An empty list is the off switch: nothing is flagged,
+scanned or cleared, and the retry cron reports the adapter disabled rather than burning retry
+budget against it. The off switch is checked *before* the term match, not after — a match and an
+unconfigured list both produce no terms, and reading the second as "this name is clean" would
+strip every standing flag on the next save.
+
+There are **no feature flags**, and no separate arming switch: seeding the list turns the feature
+on. The cost is that there is no shadow phase — the first flag lands on live content the moment
+the list is seeded.
 
 ### 5.1 Why the description is not scanned
 
@@ -198,12 +213,21 @@ the first scan and the first flag happen in the same moment, on live content.
 - Only 23.1% of versions have one (155,560 of 674,186 actionable), so including it would make
   the flag mean different things for different creators.
 
-### 5.2 The score floor is load-bearing
+### 5.2 Why XGuard reviews rather than decides
 
 Measured over 2,000 random version names: XGuard returns `suggestive` **0.55–0.69** for
 contentless strings like `v1.0`, clearing its own 0.50 threshold. **98.3% of its triggers sat in
-that band**; only 2 of 2,000 reached 0.85. At the default trigger this feature would flag four
-names in five on the classifier's noise floor. Do not lower the floor without re-measuring.
+that band**; only 2 of 2,000 reached 0.85. Asked to decide, it would flag four names in five on
+its own noise floor. That is what the term list is for.
+
+Asked instead whether a name the list already matched is a false positive, it is reliable: over
+the first full sweep it overturned 24 of 2,620 matches and a human ruled *do not flag* on all 24.
+
+**There is no score floor, and re-adding one would be a regression.** A floor belongs on a path
+where the classifier decides. Here the comparison is XGuard's own per-label thresholds — exactly
+the one the 24-for-24 record was measured on — and a floor stacked on top of it would clear every
+verdict below the floor. With 98.3% of triggers in the 0.50–0.70 band, an 0.85 floor would
+quietly overturn nearly everything the list flagged.
 
 ### 5.3 The sweep tooling
 
@@ -232,19 +256,26 @@ searchable, and model cards do not render them.
 
 ## 6. Rollout
 
+🔴 **The term list is already seeded in production** — 89 triggers, 10 phrase patterns, 5
+carve-outs, written 2026-08-26 with `scripts/oneoffs/seed-model-version-name-terms.ts`. Arming
+was step 4 precisely so it would come last; it is now first. Nothing reads the key while the
+column does not exist and this branch is undeployed, so it is inert today — but **the deploy is
+the moment flagging begins**, with no further action and no opportunity to stage it.
+
 1. **Apply the migration.** Not optional and not reorderable — see §3.1. Raw SQL and the
    generated client both reference the column; deploying the code first takes the level cron
    down.
-2. Ship the code. Still inert: the term list is unseeded, so nothing is selected or scanned.
-3. Read-side filtering (§4). Still inert.
-4. **Seed the term list.** This is the switch, and it turns on scanning and flagging together.
+2. **Ship the code — this is the live step**, not an inert one, because of the seeding above.
+   Every save of a version whose name matches a term flags it on the spot from here on.
+3. Read-side filtering (§4).
 
-Steps 2–3 are no-ops **subject to the §2 caveat** — the surfaces that already filter a version
-by its level react the moment a flag is written, ahead of §4.
+Step 3 is a no-op **subject to the §2 caveat** — the surfaces that already filter a version by
+its level react the moment a flag is written, ahead of §4.
 
-⚠️ **Seed narrow.** With no shadow phase, the first seeded list is the first live decision. Start
-with the terms whose verdicts are least arguable and widen from what they produce. Two entries in
-the current sweep file are known-bad (§5.3).
+⚠️ **The seeded list carries its two known-bad terms** (§5.3): `ass`, which matched the acronym
+of *Anime Screencap Style*, and `r34`, which matched a Nissan Skyline LoRA. Both were deliberately
+kept — XGuard overturned both in the sweep, so they exercise the clear path rather than producing
+standing false positives. Each still flags at save time and spends a scan before being cleared.
 
 ---
 
@@ -253,7 +284,8 @@ the current sweep file are known-bad (§5.3).
 - **Does a flagged version block generation?** Its files remain downloadable and it is still
   usable by id. A name is not a reason to break generation — but whether the picker offers it
   (§4.4) is a different question from whether the API accepts it.
-- **Is the creator told?** Neither path tells them anything today.
+- **Is the creator told?** Neither path tells them anything today. A creator who renames to a
+  name the list does not match clears the flag themselves without ever learning it existed.
 - **The term list has no measured miss rate.** See §5.3 — the blind spot is real and unquantified.
 - **The two rollups disagree on the value they stamp.** The service uses the NSFW composite; the
   ten-minute job uses a literal that omits one bit. The divergence predates this work and is
