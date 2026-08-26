@@ -2,7 +2,7 @@
 
 **Status**: Built, behind `FLIPT_FEATURE_FLAGS.TEXT_BLURBS` (default off) and `featureFlags.textBlurbs` (`availability: ['mod']`)
 **Tracking**: CU 868kv243c
-**Last Updated**: 2026-08-25
+**Last Updated**: 2026-08-26
 
 ⚠️ **As of 2026-08-25 the migration is committed and has not been applied in any
 environment.** `packages/civitai-db-schema/prisma/migrations/20260825000000_add_blurbs/migration.sql`
@@ -21,7 +21,23 @@ A creator-triggered variant was also considered, where a blurb edit marked its u
 and the creator pressed an action to apply them. Rejected in review: the update should just
 happen.
 
+**Usage counts are deliberately not shown.** An earlier build put a "41 uses" badge on every row
+and a per-surface breakdown in the editor, costing a `BlurbReference` groupBy on every open of the
+manager. Dropped 2026-08-26: nothing was decided on the number, and it was also actively
+misleading — reference rows are written by `reconcileBlurbReferences` on save, which does not run
+while the flag is off for the owner, so a snippet genuinely in use read "Not used yet". The
+propagation warning it accompanied is kept, phrased without a count. The rows themselves are
+untouched; the fan-out still needs them.
+
 This records the decisions, not the code.
+
+### Vocabulary: "snippet" to creators, "blurb" in the code
+
+Everything a creator reads says **Snippet** — the toolbar control, the manager, the picker, every
+error message. Every identifier says `blurb`: the table, the tRPC router, `data-type="blurb"`, the
+file names. The rename was UI-only and deliberately stopped there, because renaming the stored
+`data-type` would strand every body already carrying one, for a word nobody outside the codebase
+sees. Read a `blurb` symbol as the implementation of the thing called a snippet on screen.
 
 ---
 
@@ -37,12 +53,20 @@ The feature only earns its place if a later edit reaches content that is already
 
 ## How a blurb is stored
 
-**A blurb reference and its expanded text are stored together, in the same span.**
+**A blurb reference and its expanded text are stored together, in the same element.**
 
 ```html
 <p>Trained on Flux.</p>
-<span data-type="blurb" data-id="7">Tip me: ko-fi.com/example</span>
+<div data-type="blurb" data-id="7">
+  <h3>Support</h3>
+  <p>Tip me: ko-fi.com/example</p>
+</div>
 ```
+
+A `div`, and therefore a BLOCK element, is what lets a blurb hold headings and lists — see the
+inline-only note below for what it replaced. `span[data-type="blurb"]` is still parsed everywhere
+it could have been stored, so an old body opened and saved comes back out as a `div` and nothing
+has to rewrite the rows.
 
 The reference is what a later edit finds. The text is what everything else reads. Both live in
 the entity's own content column — `Article.content`, `Model.description`, and so on. No column
@@ -53,7 +77,7 @@ Two consequences follow, and they are the reason for the design:
 **Every consumer keeps working with no changes.** The stored column is the public artifact: the
 REST API returns `description` verbatim, the Meilisearch document indexes it, RSS and SSR read
 it, and `<RenderHtml html={...} />` renders it. A reference that carried no text would render as
-an empty span in all of them, because none of those consumers can call a resolver. Storing the
+an empty element in all of them, because none of those consumers can call a resolver. Storing the
 text means the API and the search index need no knowledge of blurbs at all.
 
 The render path has one exception, found in the build: `RenderRichText` (the article detail page)
@@ -63,7 +87,7 @@ blurb's bold/italic/link markup would render as literal tags. That mapping re-ap
 `sanitizeBlurbInterior` before injecting it, because the fan-out writes bodies via raw SQL rather
 than through zod, so this is the pass that makes it safe rather than an assumed upstream one.
 `RenderHtml` surfaces (model, version, bounty, shop) need nothing: they strip `data-type`/`data-id`
-off the span at render — they do not pass `allowBlurbs` — and the words render as ordinary inline
+off the element at render — they do not pass `allowBlurbs` — and the words render as ordinary
 markup.
 
 **A blurb edit becomes an ordinary entity edit.** Because the text lives in the column, changing
@@ -73,8 +97,8 @@ search-index sync, its cache invalidation. None of that has to be rebuilt for bl
 what keeps the feature small.
 
 It also degrades well. Delete every blurb, revert the feature, drop the table — the text is still
-sitting in the content. The span's `data-*` attributes are stripped at the next save and at render,
-leaving the words as plain inline markup.
+sitting in the content. The element's `data-*` attributes are stripped at the next save and at
+render, leaving the words as plain markup.
 
 ### Why not resolve at render time
 
@@ -205,20 +229,28 @@ one zod preprocessor used by every rich-text schema, article and model and versi
 rest. Blurb handling attaches in two layers, because that preprocessor has neither database
 access nor the acting user.
 
-**At the schema layer**, a blurb span's `data-type`/`data-id` are stripped unless the surface passed
+**At the schema layer**, a blurb's `data-type`/`data-id` are stripped unless the surface passed
 `allowBlurbs`. It exists for the same reason as the sticker strip in `html-sanitize-helpers.ts` —
-`span` and its `data-*` attributes are already in `DEFAULT_ALLOWED_ATTRIBUTES`, so blurb markup
-would otherwise survive on *every* rich-text surface, and the fan-out would then rewrite content on
-a surface nobody registered. The mechanism differs from the sticker strip, though: that one drops
-the whole element via `exclusiveFilter`, while this removes only the two attributes via a
-`transformTags.span` composed **after** the caller's spread, so a caller-supplied span transform
-cannot reinstate them. The span and its words survive; only the reference does not. Default-deny
-means a surface added later fails closed.
+`div`/`span` and their `data-*` attributes are already in `DEFAULT_ALLOWED_ATTRIBUTES`, so blurb
+markup would otherwise survive on *every* rich-text surface, and the fan-out would then rewrite
+content on a surface nobody registered. The mechanism differs from the sticker strip, though: that
+one drops the whole element via `exclusiveFilter`, while this removes only the two attributes via a
+`transformTags` entry composed **after** the caller's spread, so a caller-supplied transform cannot
+reinstate them. The element and its words survive; only the reference does not. Default-deny means
+a surface added later fails closed. Both tags get the strip, from one builder — `div` is the
+storage shape, `span` the one that predates it.
 
 ⚠️ `allowBlurbs` is an attribute **strip** toggle, not a tag admission. A schema that narrows
-`allowedTags` below the app default has to admit `span` itself — `modelVersionUpsertSchema` did not,
-and without that the span is stripped at save, `expandBlurbs` sees plain text, and the control
-renders and silently does nothing on that surface alone.
+`allowedTags` below the app default has to admit `div` itself, and keep `data-id` on it —
+`modelVersionUpsertSchema` is the one surface that narrows, and without both the element is stripped
+at save, `expandBlurbs` sees plain text, and the control renders and silently does nothing on that
+surface alone.
+
+⚠️ The same surface is also the one that narrows `span`'s attributes. It has to admit `style` there
+or a blurb's TEXT COLOUR is stripped on model versions and nowhere else; it is bounded by
+`allowedStyles: { span: { color: CSS_COLOR } }`, which makes it stricter than the surfaces taking
+the app-wide default. A per-surface divergence in what a blurb may contain is invisible until a
+creator reports that one page lost their formatting.
 
 **At the service layer**, each opted-in upsert calls two functions in
 `blurb-materialize.service.ts`. This design called them one function, `materializeBlurbs`; they were
@@ -470,10 +502,20 @@ the generator's prompt editor and solves most of the same problems.
 
 - The node is atomic and not editable in place, so the expanded text cannot drift from the
   blurb by hand-editing one copy.
-- `renderHTML` emits the span with the text as children, which is what puts the materialized
+- `renderHTML` emits the `div` with the text as children, which is what puts the materialized
   form in `editor.getHTML()`.
 - A node view renders it as a distinguishable chip so a creator can see which parts of a
-  document are shared.
+  document are shared. The chip shows the snippet's NAME, not its words — the words are not
+  editable there, and showing them invites the edit the atom exists to prevent. The name is
+  looked up from the picker's resolved list rather than stored as an attribute, for the same
+  reason orphan state is: an attribute in the body would go stale the moment anything changed and
+  nothing would ever correct it. It falls back to the words while the list is loading, and for an
+  orphan, which has no name left to show.
+- Selection is drawn explicitly (a ring, from the node view's `selected` prop). An atom has no
+  caret of its own, so without it a selected chip and an unselected one look alike.
+- The bubble menu is suppressed over a selected blurb (`shouldShow` in
+  `RichTextEditorComponent`). Its controls would all be offering formatting that belongs to the
+  blurb's own row and that the next save discards.
 - Orphan handling — a chip whose blurb no longer resolves — is derived at render from the picker's
   resolved list (`BlurbNode.tsx`), **not** carried as a `data-orphan` attribute the way
   `SnippetCategory` does it: an attribute would be written into the stored body, where nothing would
@@ -518,23 +560,38 @@ is tighter than it would otherwise be, and monitoring covers what neither number
 `src/shared/constants/blurb.constants.ts` is the copy the picker reads, because the service module
 reaches Prisma and cannot be imported client-side. Change both.
 
-🔴 **Blurb content is INLINE-ONLY and is NOT sanitized like the surface it lands on.** It passes
-`BLURB_INTERIOR_SANITIZE_OPTIONS` — `strong`, `em`, `u`, `s`, `a`, `br`, `code`, and no `span` at
-all. A block element (`p`, `div`, `ul`, `ol`, `li`, `pre`, `blockquote`, `h1`-`h3`) stored in a blurb
-is spliced inside an inline `<span data-type="blurb">` sitting inside the host document's `<p>`; the
-HTML parsing algorithm closes that `<p>` on the block start tag, and `span` is not a formatting
-element so it is popped rather than reconstructed. The chip is left EMPTY and the text lands as a
-detached sibling — then the next save re-splices the body into the empty span and the text appears
-twice. Pinned against parse5/jsdom in `blurb-inline-content.test.ts`; happy-dom does not reproduce
-it, which is why it went unnoticed.
+🔴 **Blurb content is BLOCK-CAPABLE but is NOT sanitized like the surface it lands on.** It passes
+`BLURB_INTERIOR_SANITIZE_OPTIONS` — `p`, `strong`, `em`, `u`, `s`, `a`, `br`, `code`, `span`,
+`h1`-`h3`, `ul`, `ol`, `li` — which is deliberately narrower than the app default. Two entries in
+that list carry the whole safety argument:
+
+- **No `div`.** That is the blurb's own wrapper, so one nested inside is found by `findBlurbSpans`
+  as a blurb in its own right — a hand-crafted `blurb.update` could carry a `data-id` naming
+  someone else's row and have the fan-out keep it fresh inside this body.
+- **`span` carries `style` and nothing else.** It is allowed only for text colour, and
+  `allowedStyles` names `color` as the only property. Grant it `data-*` and mention, sticker and
+  nested-blurb spoofing all reopen through the one tag — the ATTRIBUTE allowlist is the control
+  here, not the tag list.
+
+`DEFAULT_ALLOWED_ATTRIBUTES.div` must keep `data-id`. Every host body passes through `sanitizeHtml`
+on save, and `data-id` is the only thing tying a stored blurb back to its row: drop it and the words
+stay while the fan-out silently stops finding them.
+
+**Why a `div` rather than the `<span>` this started as.** Spliced inside an inline
+`<span data-type="blurb">` sitting in the host's `<p>`, a block element (`h1`-`h3`, `ul`, `ol`,
+`li`, `p`) made the HTML parsing algorithm close that `<p>` on the block start tag; `span` is not a
+formatting element, so it was popped rather than reconstructed. The chip rendered EMPTY, the text
+landed as a detached sibling, and the next save re-spliced the body into the empty span so the text
+appeared twice. Pinned against parse5/jsdom in `blurb-block-content.test.ts`, which keeps the old
+inline failure as the witness for why the wrapper is a block; happy-dom does not reproduce it, which
+is why it went unnoticed.
 
 `sanitizeBlurbInterior` is the single definition of that allowlist and three places enforce it:
 `blurbContentSchema` at save, `replaceBlurbSpans` at every splice (both the interactive path and the
-fan-out), and `RenderRichText`'s blurb mapping at render. The blurb editor is a full RichTextEditor,
-so BLOCK boundaries are converted to `<br />` before the strip runs — without that,
-`<p>a</p><p>b</p>` sanitizes to `ab` and silently runs the author's words together. Every block tag,
-not just `p`: the toolbar drops blockquote and code block (`inlineFormattingOnly`), but
-`blurb.create` is reachable with no toolbar in the way.
+fan-out), and `RenderRichText`'s blurb mapping at render. The blurb editor offers heading,
+formatting, colour, list and link; it passes `withoutBlockContainers` to drop blockquote and code
+block, which are the two block controls the stored allowlist omits. That is presentation only —
+`blurb.create` is reachable with no toolbar in the way, so the allowlist is the enforcement point.
 
 **Names are unique per creator among LIVE blurbs only** — `Blurb_userId_name_key` carries
 `WHERE "deletedAt" IS NULL`. Names are immutable by design, so delete-and-recreate is the way to fix

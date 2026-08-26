@@ -70,28 +70,38 @@ export const BlurbEditNode = BlurbNode.extend<unknown, BlurbNodeStorage>({
   },
 });
 
-function BlurbChip({ node }: ReactNodeViewProps<HTMLSpanElement>) {
+function BlurbChip({ node, selected }: ReactNodeViewProps<HTMLDivElement>) {
   const { id, text } = node.attrs as BlurbAttrs;
   const state = useContext(BlurbEditorContext);
-  const orphan = !!state?.resolved && !state.blurbs.some((blurb) => blurb.id === id);
+  const blurb = state?.blurbs.find((x) => x.id === id);
+  const orphan = !!state?.resolved && !blurb;
+
+  // The name, so the editor reads as a reference rather than as the words themselves — the point
+  // being that this text is not editable here. It falls back to the words while the list is still
+  // loading, and for an orphan, which by definition has no name left to show.
+  const label = blurb?.name ?? blurbPreview(text);
 
   return (
     <NodeViewWrapper
-      as="span"
+      as="div"
       data-drag-handle
       className={clsx(
-        'mx-px inline-flex min-h-6 items-center gap-1.5 rounded-sm border border-solid px-2 py-0.5 align-middle text-sm',
+        'my-1 flex min-h-8 cursor-pointer items-center gap-1.5 rounded-sm border border-solid px-2.5 py-1 text-sm',
         orphan
           ? 'border-red-8 bg-red-1 text-red-8 dark:bg-red-8/20 dark:text-red-2'
-          : 'border-blue-8 bg-blue-1 text-blue-8 dark:bg-blue-8/20 dark:text-blue-4'
+          : 'border-blue-8 bg-blue-1 text-blue-8 dark:bg-blue-8/20 dark:text-blue-4',
+        // An atom node has no caret of its own, so a plain border leaves selected and unselected
+        // looking alike. The ring is offset so it reads outside the chip's own border.
+        selected && 'ring-2 ring-offset-1 ring-offset-white dark:ring-offset-dark-7',
+        selected && (orphan ? 'ring-red-6' : 'ring-blue-5')
       )}
     >
       {orphan ? (
-        <IconUnlink size={13} stroke={1.5} className="shrink-0" />
+        <IconUnlink size={14} stroke={1.5} className="shrink-0" />
       ) : (
-        <IconRepeat size={13} stroke={1.5} className="shrink-0" />
+        <IconRepeat size={14} stroke={1.5} className="shrink-0" />
       )}
-      {blurbPreview(text)}
+      <span className="truncate font-semibold">{label}</span>
     </NodeViewWrapper>
   );
 }

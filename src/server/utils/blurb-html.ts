@@ -18,15 +18,23 @@ const MAX_BLURB_ID = 2_147_483_647;
 // touched, across every entity the fan-out rewrites.
 export function findBlurbSpans(html: string): BlurbSpan[] {
   const found: BlurbSpan[] = [];
-  const open: Array<{ blurbId: number; outerStart: number; innerStart: number; depth: number }> =
-    [];
+  const open: Array<{
+    blurbId: number;
+    outerStart: number;
+    innerStart: number;
+    depth: number;
+    tag: string;
+  }> = [];
   let depth = 0;
 
   const parser = new Parser(
     {
       onopentag(name, attribs) {
         depth++;
-        if (name !== 'span') return;
+        // `span` is the pre-block storage shape. Both are matched because the fan-out rewrites
+        // bodies that were stored either way, and an old one it skipped would stop updating with
+        // nothing to show for it.
+        if (name !== 'div' && name !== 'span') return;
         if (attribs['data-type'] !== 'blurb') return;
         const raw = attribs['data-id'];
         if (!raw || !/^\d+$/.test(raw)) return;
@@ -37,11 +45,14 @@ export function findBlurbSpans(html: string): BlurbSpan[] {
           outerStart: parser.startIndex,
           innerStart: parser.endIndex + 1,
           depth,
+          tag: name,
         });
       },
       onclosetag(name) {
         const top = open[open.length - 1];
-        if (name === 'span' && top && top.depth === depth) {
+        // Matched on the tag that OPENED it, not on either tag: a `div` blurb holding a `span`
+        // for colour would otherwise be closed by that span and report a truncated interior.
+        if (top && top.tag === name && top.depth === depth) {
           open.pop();
           found.push({
             blurbId: top.blurbId,
@@ -71,7 +82,7 @@ function spliceAll(html: string, edits: Array<{ start: number; end: number; text
   for (const edit of ordered) {
     // Both clauses drop an edit rather than corrupt the output. Positions all come from one scan
     // of the original string, so an edit nested inside one already applied has a stale range
-    // (`start < cursor`); and a self-closing `<span data-type="blurb"/>` reports its inner end
+    // (`start < cursor`); and a self-closing `<div data-type="blurb"/>` reports its inner end
     // before its inner start (`end < start`).
     if (edit.end < edit.start || edit.start < cursor) continue;
     out += html.slice(cursor, edit.start) + edit.text;
@@ -84,9 +95,9 @@ function spliceAll(html: string, edits: Array<{ start: number; end: number; text
  * The interior sanitize lives at this splice, not at either caller, because both materialisation
  * paths — `expandBlurbs` on save and the fan-out's rewrite — land here. `blurbContentSchema`
  * already sanitizes anything written through the API; this covers a row that was not (a backfill,
- * an admin script), where a block element inside the inline span leaves the chip empty — see the
- * note on BLURB_INTERIOR_ALLOWED_TAGS. Only the inserted text is sanitized; the host document is
- * still spliced by position and never re-serialised.
+ * an admin script), which is the only path by which a nested blurb or a `data-type` on an interior
+ * span could reach a host body — see the note on BLURB_INTERIOR_ALLOWED_TAGS. Only the inserted
+ * text is sanitized; the host document is still spliced by position and never re-serialised.
  */
 export function replaceBlurbSpans(html: string, contentByBlurbId: Map<number, string>): string {
   const edits = findBlurbSpans(html)
@@ -111,5 +122,5 @@ export function unwrapBlurbSpans(html: string, blurbIds: Set<number>): string {
 }
 
 export function renderBlurbSpan(blurbId: number, content: string): string {
-  return `<span data-type="blurb" data-id="${blurbId}">${content}</span>`;
+  return `<div data-type="blurb" data-id="${blurbId}">${content}</div>`;
 }

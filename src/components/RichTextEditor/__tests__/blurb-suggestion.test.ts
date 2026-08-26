@@ -9,8 +9,6 @@ const blurb: BlurbItem = {
   id: 7,
   name: 'support-footer',
   content: 'Tip me: ko-fi.com/example',
-  referenceCount: 41,
-  referencesByEntityType: { Model: 41 },
 };
 
 function makeChain() {

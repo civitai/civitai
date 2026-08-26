@@ -5,7 +5,7 @@ import type { SuggestionProps } from '@tiptap/suggestion';
 import clsx from 'clsx';
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import type { BlurbItem } from '~/components/RichTextEditor/blurb.util';
-import { blurbPreview, usesLabel } from '~/components/RichTextEditor/blurb.util';
+import { blurbPreview } from '~/components/RichTextEditor/blurb.util';
 
 type Props = SuggestionProps<BlurbItem> & {
   editor: ReactRendererOptions['editor'];
@@ -64,7 +64,7 @@ export const BlurbList = forwardRef<BlurbListRef, Props>(
         >
           <IconRepeat size={13} stroke={1.5} className="text-gray-6 dark:text-dark-2" />
           <Text size="xs" fw={600} c="dimmed">
-            {query ? `Blurbs matching “${query}”` : 'Blurbs'}
+            {query ? `Snippets matching “${query}”` : 'Snippets'}
           </Text>
         </Group>
 
@@ -74,12 +74,12 @@ export const BlurbList = forwardRef<BlurbListRef, Props>(
               <Group gap={6} wrap="nowrap">
                 <Loader size="xs" />
                 <Text size="xs" c="dimmed">
-                  Loading blurbs…
+                  Loading snippets…
                 </Text>
               </Group>
             ) : (
               <Text size="xs" c="dimmed">
-                {query ? `No blurbs match “${query}”` : 'Nothing reusable yet'}
+                {query ? `No snippets match “${query}”` : 'Nothing reusable yet'}
               </Text>
             )}
           </Center>
@@ -100,14 +100,9 @@ export const BlurbList = forwardRef<BlurbListRef, Props>(
                   onMouseEnter={() => setSelectedIndex(index)}
                   onClick={() => selectItem(index)}
                 >
-                  <span className="flex items-center justify-between gap-2">
-                    <Text size="sm" fw={600} c={isActive ? 'bright' : undefined} lineClamp={1}>
-                      {item.name}
-                    </Text>
-                    <Text size="xs" c="dimmed" className="shrink-0">
-                      {usesLabel(item.referenceCount)}
-                    </Text>
-                  </span>
+                  <Text size="sm" fw={600} c={isActive ? 'bright' : undefined} lineClamp={1}>
+                    {item.name}
+                  </Text>
                   <Text size="xs" c="dimmed" lineClamp={1}>
                     {blurbPreview(item.content)}
                   </Text>

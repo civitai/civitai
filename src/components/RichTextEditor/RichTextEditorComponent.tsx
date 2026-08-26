@@ -132,7 +132,7 @@ export function RichTextEditor({
   innerRef,
   onSuperEnter,
   withLinkValidation,
-  inlineFormattingOnly = false,
+  withoutBlockContainers = false,
   stickyToolbar,
   toolbarOffset = 0,
   inputClasses,
@@ -204,8 +204,8 @@ export function RichTextEditor({
         italic: !addFormatting ? false : undefined,
         strike: !addFormatting ? false : undefined,
         code: !addFormatting ? false : undefined,
-        blockquote: !addFormatting || inlineFormattingOnly ? false : undefined,
-        codeBlock: !addFormatting || inlineFormattingOnly ? false : undefined,
+        blockquote: !addFormatting || withoutBlockContainers ? false : undefined,
+        codeBlock: !addFormatting || withoutBlockContainers ? false : undefined,
         dropcursor: !addMedia ? false : undefined,
         underline: !addFormatting ? false : undefined,
         link: false,
@@ -275,7 +275,7 @@ export function RichTextEditor({
     addBlurbs,
     addList,
     addFormatting,
-    inlineFormattingOnly,
+    withoutBlockContainers,
     addColors,
     addLink,
     withLinkValidation,
@@ -460,7 +460,7 @@ export function RichTextEditor({
                   <RTE.Underline />
                   <RTE.Strikethrough />
                   <RTE.ClearFormatting />
-                  {!inlineFormattingOnly && <RTE.CodeBlock />}
+                  {!withoutBlockContainers && <RTE.CodeBlock />}
                   {addColors && (
                     <RTE.ColorPicker colors={[...constants.richTextEditor.presetColors]} />
                   )}
@@ -519,11 +519,15 @@ export function RichTextEditor({
           )}
 
           {editor && (
-            // Don't show the bubble menu for images, to prevent setting images as headings, etc.
+            // Not for images, to prevent setting them as headings, etc. Not for a blurb either:
+            // its words live on the blurb's own row, so every control here would be offering
+            // formatting that the next save discards.
             <BubbleMenu
               editor={editor}
               shouldShow={({ editor }) =>
-                !editor.state.selection.empty && !editor.isActive('image')
+                !editor.state.selection.empty &&
+                !editor.isActive('image') &&
+                !editor.isActive('blurb')
               }
               className={classes.bubbleTooltip}
             >
@@ -553,7 +557,7 @@ export function RichTextEditor({
             <Group gap={8} wrap="nowrap" className="m-3 rounded-sm bg-red-1 p-2.5 dark:bg-red-8/20">
               <IconUnlink size={14} stroke={1.5} className="shrink-0 text-red-6" />
               <Text size="xs">
-                This blurb was deleted. The words stay — save and they become ordinary text.
+                This snippet was deleted. The words stay — save and they become ordinary text.
               </Text>
             </Group>
           )}
@@ -597,11 +601,11 @@ export type Props = Omit<RichTextEditorProps, 'editor' | 'children' | 'onChange'
     onSuperEnter?: () => void;
     withLinkValidation?: boolean;
     /**
-     * Drops the block-level half of the `formatting` group — blockquote and code block. For a
-     * surface whose STORED schema is inline-only: a block element there cannot round-trip, so
-     * offering the control promises something the save is going to flatten.
+     * Drops blockquote and code block from the `formatting` group. For a surface whose stored
+     * allowlist omits them: a control offering markup the save discards promises something it
+     * cannot keep.
      */
-    inlineFormattingOnly?: boolean;
+    withoutBlockContainers?: boolean;
     stickyToolbar?: boolean;
     toolbarOffset?: number;
     inputClasses?: string;

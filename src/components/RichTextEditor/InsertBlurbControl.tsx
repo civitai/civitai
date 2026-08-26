@@ -4,7 +4,7 @@ import { IconRepeat } from '@tabler/icons-react';
 import { openBlurbManager } from '~/components/Dialog/triggers/blurb-manager';
 import { insertBlurb } from '~/components/RichTextEditor/blurb.util';
 
-const controlTitle = 'Insert blurb';
+const controlTitle = 'Insert snippet';
 
 export function InsertBlurbControl(props: RichTextEditorControlProps) {
   const { editor } = useRichTextEditorContext();
@@ -24,7 +24,7 @@ export function InsertBlurbControl(props: RichTextEditorControlProps) {
       }
     >
       <IconRepeat size={16} stroke={1.5} />
-      <span className="text-xs font-semibold">Blurbs</span>
+      <span className="text-xs font-semibold">Snippets</span>
     </RichTextEditor.Control>
   );
 }

@@ -27,20 +27,15 @@ import {
   IconRepeat,
   IconTrash,
 } from '@tabler/icons-react';
+import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { showNotification } from '@mantine/notifications';
 import clsx from 'clsx';
 import type { MouseEvent } from 'react';
 import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
-import { dialogStore } from '~/components/Dialog/dialogStore';
 import { RichTextEditor } from '~/components/RichTextEditor/RichTextEditorComponent';
 import type { BlurbItem } from '~/components/RichTextEditor/blurb.util';
-import {
-  blurbPreview,
-  placesLabel,
-  usageBreakdown,
-  usesLabel,
-} from '~/components/RichTextEditor/blurb.util';
+import { blurbPreview } from '~/components/RichTextEditor/blurb.util';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { MAX_BLURB_LENGTH } from '~/server/schema/blurb.schema';
 import { MAX_BLURBS_PER_USER } from '~/shared/constants/blurb.constants';
@@ -147,7 +142,7 @@ function BlurbListView({
         <Group gap={10} wrap="nowrap">
           <IconRepeat size={20} stroke={1.5} className="text-blue-6" />
           <Text fz={24} fw={700} c="bright">
-            Blurbs
+            Snippets
           </Text>
           <Badge variant="light" color={atLimit ? 'yellow' : 'gray'} radius="xl" size="sm">
             {blurbs.length} of {MAX_BLURBS_PER_USER}
@@ -156,7 +151,7 @@ function BlurbListView({
           {!mobile && <CloseButton onClick={onClose} />}
         </Group>
         <Text size="xs" c="dimmed" mt={4}>
-          Reusable text you write once. Editing a blurb updates every model, article and post it
+          Reusable text you write once. Editing a snippet updates every model, article and post it
           appears in.
         </Text>
       </div>
@@ -164,7 +159,7 @@ function BlurbListView({
       {atLimit && (
         <Alert color="yellow" radius={0} icon={<IconAlertTriangle size={15} stroke={1.5} />}>
           <Text size="xs">
-            You are at the limit of {MAX_BLURBS_PER_USER} blurbs. Delete one to make room for
+            You are at the limit of {MAX_BLURBS_PER_USER} snippets. Delete one to make room for
             another.
           </Text>
         </Alert>
@@ -186,7 +181,7 @@ function BlurbListView({
             Save the text you keep retyping — a support link, your licence terms, recommended
             settings. Change it here later and every model, article and post using it follows.
           </Text>
-          <Button onClick={onCreate}>Create your first blurb</Button>
+          <Button onClick={onCreate}>Create your first snippet</Button>
         </Stack>
       ) : (
         <div className="max-h-[50vh] overflow-y-auto">
@@ -221,7 +216,7 @@ function BlurbListView({
           <Group gap={6} wrap="nowrap" className="flex-1">
             <IconBulb size={14} stroke={1.5} className="text-gray-6 dark:text-dark-2" />
             <Text size="xs" c="dimmed">
-              Type // in any editor to insert a blurb
+              Type // in any editor to insert a snippet
             </Text>
           </Group>
         )}
@@ -232,7 +227,7 @@ function BlurbListView({
           disabled={atLimit}
           onClick={onCreate}
         >
-          New blurb
+          New snippet
         </Button>
       </Group>
     </>
@@ -250,7 +245,7 @@ function BlurbRow({
   onEdit: () => void;
   onInsert?: () => void;
 }) {
-  const onDelete = () => openBlurbDeleteConfirm(blurb);
+  const onDelete = useDeleteBlurb(blurb);
 
   return (
     <Group
@@ -264,19 +259,9 @@ function BlurbRow({
       onClick={mobile ? onInsert : undefined}
     >
       <Stack gap={3} className="min-w-0 flex-1">
-        <Group gap={8} wrap="nowrap">
-          <Text size="sm" fw={600} c="bright" lineClamp={1}>
-            {blurb.name}
-          </Text>
-          <Badge
-            size="sm"
-            radius="xl"
-            variant={blurb.referenceCount === 0 ? 'outline' : 'light'}
-            color="gray"
-          >
-            {usesLabel(blurb.referenceCount)}
-          </Badge>
-        </Group>
+        <Text size="sm" fw={600} c="bright" lineClamp={1}>
+          {blurb.name}
+        </Text>
         <Text size="xs" c="dimmed" lineClamp={1}>
           {blurbPreview(blurb.content)}
         </Text>
@@ -334,9 +319,7 @@ function BlurbForm({
   const utils = trpc.useUtils();
   const [name, setName] = useState(blurb?.name ?? '');
   const [content, setContent] = useState(blurb?.content ?? '');
-  const references = blurb?.referenceCount ?? 0;
-  const breakdown = usageBreakdown(blurb?.referencesByEntityType ?? {});
-
+  const onDelete = useDeleteBlurb(blurb, onCancel);
   // The counter promises characters of TEXT, which is what a creator is writing; the cap the
   // server enforces is on the sanitized HTML, which is never shorter. Blocking on both keeps the
   // counter honest without letting markup smuggle a body past the cap.
@@ -349,26 +332,24 @@ function BlurbForm({
       onCancel();
     },
     onError: (error) =>
-      showErrorNotification({ title: 'Could not create blurb', error: new Error(error.message) }),
+      showErrorNotification({ title: 'Could not create snippet', error: new Error(error.message) }),
   });
 
   const updateMutation = trpc.blurb.update.useMutation({
     onSuccess: async () => {
       await utils.blurb.getMine.invalidate();
-      if (references > 0)
-        showNotification({
-          icon: <IconRefresh size={18} />,
-          color: 'blue',
-          title: 'Blurb saved',
-          message: `${placesLabel(references)} ${
-            references === 1 ? 'is' : 'are'
-          } being updated. They will catch up within a few minutes — you do not need to stay on this page.`,
-          autoClose: 6000,
-        });
+      showNotification({
+        icon: <IconRefresh size={18} />,
+        color: 'blue',
+        title: 'Snippet saved',
+        message:
+          'Everywhere it is used is being updated. They catch up within a few minutes — you do not need to stay on this page.',
+        autoClose: 6000,
+      });
       onCancel();
     },
     onError: (error) =>
-      showErrorNotification({ title: 'Could not save blurb', error: new Error(error.message) }),
+      showErrorNotification({ title: 'Could not save snippet', error: new Error(error.message) }),
   });
 
   const pending = createMutation.isPending || updateMutation.isPending;
@@ -387,11 +368,11 @@ function BlurbForm({
         wrap="nowrap"
         className="border-0 border-b border-solid border-gray-3 px-5 py-[18px] dark:border-dark-4"
       >
-        <ActionIcon aria-label="Back to blurbs" onClick={onCancel}>
+        <ActionIcon aria-label="Back to snippets" onClick={onCancel}>
           <IconArrowLeft size={18} stroke={1.5} />
         </ActionIcon>
         <Text fz={20} fw={700} c="bright">
-          {blurb ? 'Edit blurb' : 'New blurb'}
+          {blurb ? 'Edit snippet' : 'New snippet'}
         </Text>
         <div className="flex-1" />
         <CloseButton onClick={onClose} />
@@ -418,7 +399,7 @@ function BlurbForm({
           />
           {blurb && (
             <Text size="xs" c="dimmed">
-              A blurb&apos;s name is fixed once it is created.
+              A snippet&apos;s name is fixed once it is created.
             </Text>
           )}
         </Stack>
@@ -430,10 +411,10 @@ function BlurbForm({
           <RichTextEditor
             value={content}
             onChange={setContent}
-            includeControls={['formatting', 'link']}
-            // A blurb is stored as inline html (see BLURB_INTERIOR_ALLOWED_TAGS), so a
-            // blockquote or code block cannot survive the save.
-            inlineFormattingOnly
+            includeControls={['heading', 'formatting', 'colors', 'list', 'link']}
+            // Blockquote and code block are the two the stored allowlist omits — see
+            // BLURB_INTERIOR_ALLOWED_TAGS.
+            withoutBlockContainers
             withLinkValidation
             editorSize="md"
           />
@@ -443,18 +424,17 @@ function BlurbForm({
           </Text>
         </Stack>
 
-        {blurb && references > 0 && (
+        {blurb && (
           <div className="rounded-sm border-0 border-l-[3px] border-solid border-blue-6 bg-blue-1 p-3.5 dark:bg-blue-8/20">
             <Group gap={8} wrap="nowrap">
               <IconRefresh size={15} stroke={1.5} className="text-blue-4" />
               <Text size="sm" fw={600} c="bright">
-                Used in {placesLabel(references)}
+                This edit is not local
               </Text>
             </Group>
             <Text size="xs" c="dimmed" mt={8}>
-              Saving rewrites all {references}
-              {breakdown ? ` — ${breakdown}` : ''}. They update on their own within a few minutes;
-              each one is re-scanned like any edit you make by hand.
+              Saving rewrites every model, article and post using this snippet. They update on their
+              own within a few minutes; each one is re-scanned like any edit you make by hand.
             </Text>
           </div>
         )}
@@ -470,7 +450,7 @@ function BlurbForm({
             variant="subtle"
             color="red"
             leftSection={<IconTrash size={15} stroke={1.5} />}
-            onClick={() => openBlurbDeleteConfirm(blurb, onCancel)}
+            onClick={onDelete}
           >
             Delete
           </Button>
@@ -480,88 +460,36 @@ function BlurbForm({
           Cancel
         </Button>
         <Button disabled={!canSubmit} loading={pending} onClick={submit}>
-          {!blurb
-            ? 'Create blurb'
-            : references > 0
-            ? `Save & update ${references}`
-            : 'Save changes'}
+          {blurb ? 'Save changes' : 'Create snippet'}
         </Button>
       </Group>
     </>
   );
 }
 
-function openBlurbDeleteConfirm(blurb: BlurbItem, onDeleted?: () => void) {
-  dialogStore.trigger({
-    component: BlurbDeleteConfirmModal,
-    props: { blurb, onDeleted },
-  });
-}
-
-function BlurbDeleteConfirmModal({
-  blurb,
-  onDeleted,
-}: {
-  blurb: BlurbItem;
-  onDeleted?: () => void;
-}) {
-  const dialog = useDialogContext();
+// The same confirm the other entities use (see the model page) rather than a bespoke modal, so
+// a destructive action reads the same way wherever a creator meets one.
+function useDeleteBlurb(blurb: BlurbItem | undefined, onDeleted?: () => void) {
   const utils = trpc.useUtils();
-  const references = blurb.referenceCount;
-
   const deleteMutation = trpc.blurb.delete.useMutation({
     onSuccess: async () => {
       await utils.blurb.getMine.invalidate();
-      dialog.onClose();
+      closeAllModals();
       onDeleted?.();
     },
     onError: (error) =>
-      showErrorNotification({ title: 'Could not delete blurb', error: new Error(error.message) }),
+      showErrorNotification({ title: 'Could not delete snippet', error: new Error(error.message) }),
   });
 
-  return (
-    <Modal {...dialog} size={500} withCloseButton={false} padding={24}>
-      <Stack gap={16}>
-        <Group gap={10} wrap="nowrap">
-          <ThemeIcon size={32} radius="xl" variant="light" color="red">
-            <IconTrash size={16} stroke={1.5} />
-          </ThemeIcon>
-          <Text fz={18} fw={700} c="bright">
-            Delete {blurb.name}?
-          </Text>
-        </Group>
-
-        <Text size="sm">
-          {references > 0
-            ? `Nothing you have published changes. The ${placesLabel(
-                references
-              )} using this blurb keep the words exactly as they are — they just become ordinary text and stop updating.`
-            : 'Nothing you have published changes. This blurb is not used anywhere yet.'}
-        </Text>
-
-        <Alert color="yellow" icon={<IconAlertTriangle size={15} stroke={1.5} />}>
-          <Text size="xs">
-            {references > 0
-              ? `This cannot be undone. Re-creating the blurb will not re-link the ${placesLabel(
-                  references
-                )}.`
-              : 'This cannot be undone.'}
-          </Text>
-        </Alert>
-
-        <Group gap={10} justify="end">
-          <Button variant="default" onClick={dialog.onClose}>
-            Keep it
-          </Button>
-          <Button
-            color="red"
-            loading={deleteMutation.isPending}
-            onClick={() => deleteMutation.mutate({ id: blurb.id })}
-          >
-            Delete blurb
-          </Button>
-        </Group>
-      </Stack>
-    </Modal>
-  );
+  return () =>
+    blurb &&
+    openConfirmModal({
+      title: 'Delete Snippet',
+      children: `Are you sure you want to delete "${blurb.name}"? Anywhere it is used keeps the words exactly as they are — they just become ordinary text and stop updating. This cannot be reverted.`,
+      centered: true,
+      labels: { confirm: 'Delete Snippet', cancel: "No, don't delete it" },
+      confirmProps: { color: 'red', disabled: deleteMutation.isPending },
+      closeOnConfirm: false,
+      onConfirm: () => deleteMutation.mutate({ id: blurb.id }),
+    });
 }

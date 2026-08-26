@@ -10,7 +10,7 @@ import {
 
 export const MAX_BLURBS_PER_USER = 20;
 
-// The index is PARTIAL (`WHERE "deletedAt" IS NULL`, so a deleted blurb stops squatting its name),
+// The index is PARTIAL (`WHERE "deletedAt" IS NULL`, so a deleted snippet stops squatting its name),
 // which Prisma cannot express and therefore does not know about — it reports the raw index name
 // rather than mapping it back to `['userId', 'name']`. Both shapes are accepted so this keeps
 // working either way.
@@ -24,7 +24,7 @@ function isUniqueNameViolation(error: unknown) {
   return Array.isArray(target) && (target as string[]).includes('name');
 }
 
-// Names are immutable by design: a blurb's name is how a creator refers to it,
+// Names are immutable by design: a snippet's name is how a creator refers to it,
 // and there is no update path that writes it. See "Names cannot be changed" in
 // docs/features/reusable-text-blurbs.md.
 export async function createBlurb({
@@ -36,13 +36,13 @@ export async function createBlurb({
   name: string;
   content: string;
 }) {
-  // A blurb body is spliced into entities whose own domain check already ran, so it has to be
+  // A snippet body is spliced into entities whose own domain check already ran, so it has to be
   // caught on this write too.
   await throwOnBlockedLinkDomain(content);
 
   const existing = await dbWrite.blurb.count({ where: { userId, deletedAt: null } });
   if (existing >= MAX_BLURBS_PER_USER)
-    throw throwBadRequestError(`You have reached the limit of ${MAX_BLURBS_PER_USER} blurbs.`);
+    throw throwBadRequestError(`You have reached the limit of ${MAX_BLURBS_PER_USER} snippets.`);
 
   try {
     return await dbWrite.blurb.create({
@@ -50,7 +50,7 @@ export async function createBlurb({
     });
   } catch (error) {
     if (isUniqueNameViolation(error))
-      throw throwConflictError(`You already have a blurb named "${name}".`);
+      throw throwConflictError(`You already have a snippet named "${name}".`);
     throw error;
   }
 }
@@ -67,7 +67,7 @@ export async function updateBlurbContent({
   await throwOnBlockedLinkDomain(content);
 
   const blurb = await dbWrite.blurb.findFirst({ where: { id, userId, deletedAt: null } });
-  if (!blurb) throw throwNotFoundError('Blurb not found.');
+  if (!blurb) throw throwNotFoundError('Snippet not found.');
 
   return dbWrite.blurb.update({
     where: { id },
@@ -77,35 +77,20 @@ export async function updateBlurbContent({
 
 export async function softDeleteBlurb({ userId, id }: { userId: number; id: number }) {
   const blurb = await dbWrite.blurb.findFirst({ where: { id, userId, deletedAt: null } });
-  if (!blurb) throw throwNotFoundError('Blurb not found.');
+  if (!blurb) throw throwNotFoundError('Snippet not found.');
 
   // Soft, because BlurbReference cascades: a hard delete destroys the rows naming
-  // the entities whose spans still need unwrapping. The fan-out job does that work
-  // and hard-deletes the blurb once no references remain.
+  // the entities whose markup still needs unwrapping. The fan-out job does that work
+  // and hard-deletes the row once no references remain.
   await dbWrite.blurb.update({ where: { id }, data: { deletedAt: new Date() } });
 }
 
+// No reference counts. BlurbReference rows still exist and the fan-out still needs them — what
+// went is only the aggregate over them, which cost a groupBy on every open of the manager to
+// print a number nothing was decided on.
 export async function getBlurbsForUser(userId: number) {
-  const blurbs = await dbRead.blurb.findMany({
+  return dbRead.blurb.findMany({
     where: { userId, deletedAt: null },
     orderBy: { name: 'asc' },
-  });
-  const counts = await dbRead.blurbReference.groupBy({
-    by: ['blurbId', 'entityType'],
-    where: { blurbId: { in: blurbs.map((b) => b.id) } },
-    _count: { _all: true },
-  });
-
-  const referencesByBlurbId = new Map<number, Record<string, number>>();
-  for (const { blurbId, entityType, _count } of counts) {
-    const byEntityType = referencesByBlurbId.get(blurbId) ?? {};
-    byEntityType[entityType] = _count._all;
-    referencesByBlurbId.set(blurbId, byEntityType);
-  }
-
-  return blurbs.map((b) => {
-    const referencesByEntityType = referencesByBlurbId.get(b.id) ?? {};
-    const referenceCount = Object.values(referencesByEntityType).reduce((sum, n) => sum + n, 0);
-    return { ...b, referenceCount, referencesByEntityType };
   });
 }

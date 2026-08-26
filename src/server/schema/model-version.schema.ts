@@ -10,7 +10,7 @@ import { imageSchema } from '~/server/schema/image.schema';
 import { modelFileSchema } from '~/server/schema/model-file.schema';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
-import { DEFAULT_ALLOWED_ATTRIBUTES } from '~/utils/html-sanitize-helpers';
+import { CSS_COLOR, DEFAULT_ALLOWED_ATTRIBUTES } from '~/utils/html-sanitize-helpers';
 import {
   LicensingFeeSettlementCurrency,
   LicensingFeeType,
@@ -474,11 +474,19 @@ export const modelVersionUpsertSchema2 = z.object({
       'span',
     ],
     // Admitting `span` re-opens what this surface used to strip outright, so its attributes are
-    // narrowed to the two a blurb needs. That closes `style`/`class` (CSS injection) and
-    // `data-label`.
+    // narrowed to the three a blurb needs. That closes `class` and `data-label`.
     // `data-type` + `data-id` are exactly what a mention carries, so a mention span survives here
     // and gets a real hover card. Parity with every other rich-text surface, not a new exposure.
-    allowedAttributes: { ...DEFAULT_ALLOWED_ATTRIBUTES, span: ['data-type', 'data-id'] },
+    // `style` is admitted for a blurb's text colour and bounded by `allowedStyles` below to the
+    // `color` property alone — STRICTER than the other blurb surfaces, which take the app-wide
+    // `span: [... 'style']` with no property allowlist at all. Without it a blurb's colour is
+    // stripped here and nowhere else, which is the silent per-surface divergence this whole
+    // paragraph exists to prevent.
+    allowedAttributes: {
+      ...DEFAULT_ALLOWED_ATTRIBUTES,
+      span: ['data-type', 'data-id', 'style'],
+    },
+    allowedStyles: { span: { color: CSS_COLOR } },
     stripEmpty: true,
     allowBlurbs: true,
   }).nullish(),

@@ -52,7 +52,7 @@ describe('RenderRichText', () => {
 
   test('renders a blurb containing formatting as real markup, not escaped text', async () => {
     const doc = generateJSON(
-      '<p><span data-type="blurb" data-id="7"><strong>bold</strong> text</span></p>',
+      '<div data-type="blurb" data-id="7"><strong>bold</strong> text</div>',
       tiptapExtensions
     );
 
@@ -72,7 +72,7 @@ describe('RenderRichText', () => {
   });
 
   test('a second parse/render cycle does not escalate the escaping', async () => {
-    const html = '<p><span data-type="blurb" data-id="7"><strong>bold</strong> text</span></p>';
+    const html = '<div data-type="blurb" data-id="7"><strong>bold</strong> text</div>';
     const firstDoc = generateJSON(html, tiptapExtensions);
 
     renderWithProviders(
@@ -81,17 +81,15 @@ describe('RenderRichText', () => {
       </div>
     );
     await vi.waitFor(() =>
-      expect(
-        document.querySelector('[data-testid="first"] span[data-type="blurb"]')
-      ).not.toBeNull()
+      expect(document.querySelector('[data-testid="first"] div[data-type="blurb"]')).not.toBeNull()
     );
 
     // Re-parse exactly what the first (fixed) render produced — simulating a later
     // request re-generating the doc from the same stored HTML — and render again.
-    const rerenderedSpan = document.querySelector(
-      '[data-testid="first"] span[data-type="blurb"]'
+    const rerendered = document.querySelector(
+      '[data-testid="first"] div[data-type="blurb"]'
     )!.outerHTML;
-    const secondDoc = generateJSON(`<p>${rerenderedSpan}</p>`, tiptapExtensions);
+    const secondDoc = generateJSON(rerendered, tiptapExtensions);
 
     renderWithProviders(
       <div data-testid="second">
@@ -138,21 +136,16 @@ describe('RenderRichText', () => {
     expect(document.querySelector('[data-testid="host"] iframe')).toBeNull();
   });
 
-  test('a blurb containing a styled span renders without the style attribute reaching the DOM', async () => {
+  test('a blurb containing a styled span renders without the dangerous style reaching the DOM', async () => {
     const doc = {
       type: 'doc',
       content: [
         {
-          type: 'paragraph',
-          content: [
-            {
-              type: 'blurb',
-              attrs: {
-                id: 7,
-                text: '<span style="background:url(javascript:alert(1))">styled</span> text',
-              },
-            },
-          ],
+          type: 'blurb',
+          attrs: {
+            id: 7,
+            text: '<span style="background:url(javascript:alert(1))">styled</span> text',
+          },
         },
       ],
     };
@@ -166,9 +159,35 @@ describe('RenderRichText', () => {
     await vi.waitFor(() =>
       expect(document.querySelector('[data-testid="host"]')?.textContent).toContain('styled')
     );
-    const blurbSpan = document.querySelector('[data-testid="host"] span[data-type="blurb"]');
-    expect(blurbSpan?.querySelector('span')).toBeNull();
-    expect(blurbSpan?.innerHTML).not.toContain('style=');
+    // `span` is allowed inside a blurb now, for text colour. `color` is the only property the
+    // allowlist names, so everything else in `style` goes — the tag surviving is not the risk.
+    const blurb = document.querySelector('[data-testid="host"] div[data-type="blurb"]');
+    expect(blurb?.innerHTML).not.toContain('background');
+    expect(blurb?.innerHTML).not.toContain('javascript:');
+  });
+
+  test('a blurb keeps a text colour, which is the one style it may carry', async () => {
+    const doc = {
+      type: 'doc',
+      content: [
+        {
+          type: 'blurb',
+          attrs: { id: 7, text: '<span style="color: #fa5252">red</span>' },
+        },
+      ],
+    };
+
+    renderWithProviders(
+      <div data-testid="host">
+        <RenderRichText content={doc} />
+      </div>
+    );
+
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-testid="host"]')?.textContent).toContain('red')
+    );
+    const colored = document.querySelector('[data-testid="host"] div[data-type="blurb"] span');
+    expect(colored?.getAttribute('style')).toContain('color');
   });
 
   test("a blurb's emphasis and link formatting survive the render-time sanitize", async () => {
@@ -176,16 +195,11 @@ describe('RenderRichText', () => {
       type: 'doc',
       content: [
         {
-          type: 'paragraph',
-          content: [
-            {
-              type: 'blurb',
-              attrs: {
-                id: 7,
-                text: '<em>emphasis</em> and <a href="https://example.com">a link</a>',
-              },
-            },
-          ],
+          type: 'blurb',
+          attrs: {
+            id: 7,
+            text: '<em>emphasis</em> and <a href="https://example.com">a link</a>',
+          },
         },
       ],
     };

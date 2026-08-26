@@ -12,12 +12,12 @@ describe('blurbContentSchema — the length cap', () => {
     const result = parse('a'.repeat(MAX_BLURB_LENGTH + 1));
     expect(result.success).toBe(false);
     expect(result.error?.issues[0].message).toBe(
-      `Blurbs are limited to ${MAX_BLURB_LENGTH} characters.`
+      `Snippets are limited to ${MAX_BLURB_LENGTH} characters.`
     );
   });
 
   it('🔴 measures the SANITIZED length, not what the client sent', () => {
-    // The cap is what stops one blurb becoming a large multiple of itself across every entity
+    // The cap is what stops one snippet becoming a large multiple of itself across every entity
     // using it, so it has to measure what gets STORED. Checked before the sanitize instead and
     // markup the sanitize was going to strip counts against the author's budget.
     const stripped = `<div>${'a'.repeat(MAX_BLURB_LENGTH - 1)}</div>`;
@@ -29,26 +29,30 @@ describe('blurbContentSchema — the length cap', () => {
   });
 });
 
-describe('blurbContentSchema — block boundaries', () => {
-  // The strip below keeps a block element's TEXT and drops the tag, so a boundary the
-  // preprocessor misses runs two lines together with nothing to point at afterwards.
-  const cases: Array<[string, string, string]> = [
-    ['paragraphs', '<p>a</p><p>b</p>', 'a<br />b'],
-    ['a code block', '<pre><code>a</code></pre><p>b</p>', '<code>a</code><br />b'],
-    ['a blockquote', '<blockquote><p>a</p></blockquote><p>b</p>', 'a<br />b'],
-    ['list items', '<ul><li><p>a</p></li><li><p>b</p></li></ul>', 'a<br />b'],
-    ['a heading', '<h2>a</h2><p>b</p>', 'a<br />b'],
-    ['a paragraph and a pre', '<p>a</p><pre>b</pre>', 'a<br />b'],
-    ['blocks separated by whitespace', '<p>a</p>\n  <p>b</p>', 'a<br />b'],
+describe('blurbContentSchema — block structure', () => {
+  // A blurb is spliced into a `<div>` of its own, so blocks round-trip rather than being flattened
+  // to `<br>`. The preprocess that did the flattening is gone; these pin that it stays gone.
+  const kept: Array<[string, string]> = [
+    ['paragraphs', '<p>a</p><p>b</p>'],
+    ['a heading and a paragraph', '<h2>a</h2><p>b</p>'],
+    ['a bullet list', '<ul><li>a</li><li>b</li></ul>'],
+    ['a numbered list', '<ol><li>a</li></ol>'],
   ];
 
-  it.each(cases)('🔴 keeps the break between %s', (_label, input, expected) => {
+  it.each(kept)('🔴 keeps %s intact', (_label, input) => {
     const result = parse(input);
     expect(result.success).toBe(true);
-    expect(result.data?.content).toBe(expected);
+    expect(result.data?.content).toBe(input);
+  });
+
+  it('still flattens the blocks the toolbar does not offer, keeping their text', () => {
+    expect(parse('<blockquote><p>a</p></blockquote><p>b</p>').data?.content).toBe(
+      '<p>a</p><p>b</p>'
+    );
+    expect(parse('<pre><code>a</code></pre><p>b</p>').data?.content).toBe('<code>a</code><p>b</p>');
   });
 
   it('leaves a single block alone', () => {
-    expect(parse('<p>just one line</p>').data?.content).toBe('just one line');
+    expect(parse('<p>just one line</p>').data?.content).toBe('<p>just one line</p>');
   });
 });

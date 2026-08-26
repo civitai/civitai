@@ -63,7 +63,7 @@ export function RenderRichText({
             // markup safe. The save gate and the splice apply the same allowlist; this is the
             // third and last place it has to hold.
             blurb: ({ node }) => (
-              <span
+              <div
                 data-type="blurb"
                 data-id={node.attrs.id}
                 dangerouslySetInnerHTML={{

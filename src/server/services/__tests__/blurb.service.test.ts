@@ -43,7 +43,7 @@ describe('createBlurb', () => {
     const promise = createBlurb({ userId: 10, name: 'x', content: 'y' });
     // The value, not just the shape — `/limit of 20/` also matches "limit of 200".
     await expect(promise).rejects.toThrow(
-      new RegExp(`limit of ${MAX_BLURBS_PER_USER} blurbs`, 'i')
+      new RegExp(`limit of ${MAX_BLURBS_PER_USER} snippets`, 'i')
     );
     await expect(promise).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     expect(mockDbWrite.blurb.create).not.toHaveBeenCalled();
@@ -60,7 +60,7 @@ describe('createBlurb', () => {
     mockDbWrite.blurb.create.mockRejectedValue(p2002(['userId', 'name']));
     const promise = createBlurb({ userId: 10, name: 'footer', content: 'y' });
     await expect(promise).rejects.toMatchObject({ code: 'CONFLICT' });
-    await expect(promise).rejects.toThrow(/already have a blurb named "footer"/i);
+    await expect(promise).rejects.toThrow(/already have a snippet named "footer"/i);
   });
 
   it('turns the raw partial-index name into the same conflict', async () => {
@@ -70,7 +70,7 @@ describe('createBlurb', () => {
     mockDbWrite.blurb.create.mockRejectedValue(p2002('Blurb_userId_name_key'));
     const promise = createBlurb({ userId: 10, name: 'footer', content: 'y' });
     await expect(promise).rejects.toMatchObject({ code: 'CONFLICT' });
-    await expect(promise).rejects.toThrow(/already have a blurb named "footer"/i);
+    await expect(promise).rejects.toThrow(/already have a snippet named "footer"/i);
   });
 
   it('leaves an unrelated unique violation to surface as-is', async () => {
@@ -141,24 +141,17 @@ describe('getBlurbsForUser', () => {
     });
   });
 
-  it('groups references by blurb and entity type in one query, folded into a per-entityType breakdown and a summed referenceCount', async () => {
+  // The manager shows no usage counts, so nothing aggregates BlurbReference on this path. The
+  // rows still exist and the fan-out still reads them — this pins only that opening the manager
+  // does not pay for a groupBy nobody looks at.
+  it('🔴 does not query references at all', async () => {
     mockDbRead.blurb.findMany.mockResolvedValue([{ id: 1, userId: 10, name: 'footer' }]);
-    mockDbRead.blurbReference.groupBy.mockResolvedValue([
-      { blurbId: 1, entityType: 'model', _count: { _all: 38 } },
-      { blurbId: 1, entityType: 'article', _count: { _all: 2 } },
-      { blurbId: 1, entityType: 'bounty', _count: { _all: 1 } },
-    ]);
 
     const [blurb] = await getBlurbsForUser(10);
 
-    expect(blurb.referenceCount).toBe(41);
-    expect(blurb.referencesByEntityType).toEqual({ model: 38, article: 2, bounty: 1 });
-    expect(mockDbRead.blurbReference.groupBy).toHaveBeenCalledTimes(1);
-    expect(mockDbRead.blurbReference.groupBy).toHaveBeenCalledWith({
-      by: ['blurbId', 'entityType'],
-      where: { blurbId: { in: [1] } },
-      _count: { _all: true },
-    });
+    expect(blurb.name).toBe('footer');
+    expect(mockDbRead.blurbReference.groupBy).not.toHaveBeenCalled();
+    expect(mockDbRead.blurbReference.findMany).not.toHaveBeenCalled();
   });
 });
 

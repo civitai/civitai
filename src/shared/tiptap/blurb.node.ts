@@ -42,13 +42,17 @@ function blurbInteriorSpec(html: string): DOMOutputSpec[] {
   return root as DOMOutputSpec[];
 }
 
-// Atomic and not editable in place: the text inside a blurb span is owned by the
-// blurb, and hand-editing one copy would drift from the row until the next fan-out
-// silently reverted it.
+// Atomic and not editable in place: the text inside a blurb is owned by the blurb, and
+// hand-editing one copy would drift from the row until the next fan-out silently reverted it.
+//
+// Block rather than inline, which is what lets a blurb hold headings and lists. As an inline
+// `<span>` it could not: the span sits inside the host's `<p>`, and in the HTML parsing algorithm
+// a block start tag closes that paragraph and pops the span rather than reconstructing it, so the
+// blurb rendered EMPTY and its words landed as a detached sibling — which the next save then
+// re-spliced, printing them twice.
 export const BlurbNode = Node.create({
   name: 'blurb',
-  group: 'inline',
-  inline: true,
+  group: 'block',
   atom: true,
   selectable: true,
 
@@ -71,11 +75,13 @@ export const BlurbNode = Node.create({
   },
 
   parseHTML() {
-    return [{ tag: 'span[data-type="blurb"]' }];
+    // `span` is the shape blurbs were stored in before they could hold blocks. Parsing it here is
+    // the whole migration: an old body opened in an editor comes back out as a `div` on save.
+    return [{ tag: 'div[data-type="blurb"]' }, { tag: 'span[data-type="blurb"]' }];
   },
 
   renderHTML({ node, HTMLAttributes }) {
-    // The text is emitted as the span's markup, which is what puts the materialised form in
+    // The text is emitted as the wrapper's markup, which is what puts the materialised form in
     // editor.getHTML() and therefore in the stored column.
     //
     // 🔴 Element children, not `['span', attrs, text]`. ProseMirror turns a string child into a
@@ -87,7 +93,7 @@ export const BlurbNode = Node.create({
     // shape blurb.node.test.ts round-trips. It does not protect the VALUE — a later argument wins
     // a key collision.
     const spec: [string, SpecAttrs, ...DOMOutputSpec[]] = [
-      'span',
+      'div',
       mergeAttributes({ 'data-type': 'blurb' }, HTMLAttributes),
       ...blurbInteriorSpec(node.attrs.text ?? ''),
     ];
