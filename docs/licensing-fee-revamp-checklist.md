@@ -296,6 +296,13 @@ that have to happen, or be decided, before it reaches creators.
 
 ### Known and accepted, no action planned
 
+- **The allowance check does not touch `PricingSlot` for gold, or for any release.** `assertPricingAllowed`
+  counts only when the limit is finite, and returns early when the write clears a price — so a gold
+  creator pricing for the first time, and anyone clearing their last price, reach the table for the
+  first time AFTER the version write. Everyone else fails cleanly before it. `releasePricingSlot`
+  therefore swallows its own errors: throwing there cannot preserve the slot (the retry sees an unpriced
+  version and never releases again), so it would report a failed save for a write that landed and lose
+  the slot anyway. `recordPricingSlot` still throws — failing soft there is a permanent free price.
 - The allowance is a count-then-insert with nothing serializing it — two concurrent first-time prices
   can both pass a full month's check. Re-raised in review 2026-08-24 and still accepted: a rate limit,
   not a balance;

@@ -186,6 +186,24 @@ describe('releasePricingSlot', () => {
     expect(mockDeleteMany.mock.calls[0][0].where.ownerId).toBe(OWNER);
   });
 
+  // Throwing would not preserve the slot: this runs after the write that cleared the price, so the
+  // retry sees an unpriced version, computes releasesSlot false, and never calls this again. A throw
+  // costs the creator the slot AND reports a failed save for a write that landed.
+  it('swallows a database failure rather than failing the save it runs after', async () => {
+    seedReleasable();
+    mockSlot.mockRejectedValue(new Error('relation "PricingSlot" does not exist'));
+
+    await expect(release()).resolves.toBe(false);
+    expect(mockDeleteMany).not.toHaveBeenCalled();
+  });
+
+  it('swallows a failure from the delete itself', async () => {
+    seedReleasable();
+    mockDeleteMany.mockRejectedValue(new Error('connection terminated'));
+
+    await expect(release()).resolves.toBe(false);
+  });
+
   describe('refuses, leaving the slot spent', () => {
     // Re-read post-write rather than trusting the caller: the version may still carry the OTHER price.
     it('when a licensing fee is still set', async () => {

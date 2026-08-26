@@ -169,15 +169,35 @@ export async function versionHasTransacted(
  * slot spent and returned in the same month becomes spendable again, and one returned in a later month
  * changes nothing — which is what "recovered" has to mean for a monthly allowance.
  */
-export async function releasePricingSlot({
-  entityType,
-  entityId,
-  ownerId,
-}: {
+type ReleaseArgs = {
   entityType: PricingSlotEntityType;
   entityId: number;
   ownerId: number;
-}): Promise<boolean> {
+};
+
+/**
+ * Never throws. This runs AFTER the write that cleared the price, and throwing does not preserve the
+ * slot: the retry finds the version already unpriced, so `releasesSlot` is false and the release never
+ * runs again. The creator would get a failed save for a write that landed AND still lose the slot.
+ * Swallowing leaves the row in place, which makes re-applying the price free — so price-on/price-off
+ * recovers it.
+ */
+export async function releasePricingSlot(args: ReleaseArgs): Promise<boolean> {
+  try {
+    return await attemptRelease(args);
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'pricing-slot-release',
+      error,
+      entityId: args.entityId,
+      ownerId: args.ownerId,
+    }).catch(() => undefined);
+    return false;
+  }
+}
+
+async function attemptRelease({ entityType, entityId, ownerId }: ReleaseArgs): Promise<boolean> {
   if (entityType !== 'ModelVersion') return false;
 
   // The slot's own createdAt bounds the charge lookup: only what was charged while THIS slot was live
