@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TRPCError } from '@trpc/server';
 
+import { NsfwLevel } from '~/server/common/enums';
+
 import {
   OffsiteModerationError,
   claimListing,
@@ -40,7 +42,12 @@ type WriteMock = {
     // republish reads the LATEST event on the primary inside the tx.
     findFirst: ReturnType<typeof vi.fn>;
   };
-  appListingReport: { updateMany: ReturnType<typeof vi.fn> };
+  appListingReport: {
+    updateMany: ReturnType<typeof vi.fn>;
+    // Spied ONLY so the removal guard can assert republish files no advisory report —
+    // an earlier revision of the rating change queued one for over-rated on-site media.
+    create: ReturnType<typeof vi.fn>;
+  };
   // claim validates the target owner on the primary inside the tx.
   user: { findUnique: ReturnType<typeof vi.fn> };
   // claim NEVER writes this (submitter preserved); reset CREATES a fresh pending request.
@@ -81,7 +88,10 @@ const { mockRead, mockWrite, mockNotify, mockLogToAxiom, ids } = vi.hoisted(() =
       create: vi.fn(async (a: { data: unknown }) => a.data),
       findFirst: vi.fn(async () => null),
     },
-    appListingReport: { updateMany: vi.fn(async () => ({ count: 1 })) },
+    appListingReport: {
+      updateMany: vi.fn(async () => ({ count: 1 })),
+      create: vi.fn(async (a: { data: unknown }) => a.data),
+    },
     user: { findUnique: vi.fn(async () => ({ id: 1 })) },
     appListingPublishRequest: {
       updateMany: vi.fn(async () => ({ count: 1 })),
@@ -1770,5 +1780,389 @@ describe('OffsiteModerationError (PR3/PR4 + W13 codes)', () => {
     expect(new OffsiteModerationError('INVALID_TARGET_USER', 'x').code).toBe('INVALID_TARGET_USER');
     expect(new OffsiteModerationError('NOT_OWNED', 'x').code).toBe('NOT_OWNED');
     expect(new OffsiteModerationError('FORBIDDEN', 'x').code).toBe('FORBIDDEN');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 🔴 republishOwnListing — GO-LIVE RATING FLOOR (UNIFORM, both kinds).
+//
+// The hole this closes: republish is an OWNER-driven go-live with NO human in the
+// loop, and a `removed` listing is directly asset-editable. The attach path rejects
+// only `Blocked`/`NotFound` images, never a `Scanned` MATURE one, and neither
+// pre-existing gate inspects maturity — so `unpublish → attach mature media →
+// republish` put mature store art back under an unchanged declared rating, which
+// passes `listingMatureFilter(redCapable=false)` (`content_rating NOT IN ('r','x')`).
+//
+// UNIFORM BY DESIGN — the floor is applied identically to BOTH kinds, matching the
+// on-site draft go-live (`publish-request.service.ts`, "🔴 RATING FLOOR (go-live)")
+// which already runs the manifest-declared rating through THIS SAME helper. The raise
+// targets `AppListing.contentRating` (the store card); the runtime serving gate reads
+// `AppBlock.contentRating`, a separate column.
+//
+// 🔴 COVERAGE HONESTY. Cases labelled `[INVARIANT GUARD]` are green at `origin/main`
+// too — they pin behaviour this change must NOT alter and are deliberately NOT counted
+// as regression coverage. Everything else is RED at `origin/main`.
+//
+// Levels are the REAL enum (`src/server/common/enums.ts`): PG=1, PG13=2, R=4, X=8.
+// The ladder is `['g','pg','pg13','r','x']`; `deriveContentRatingFromAssets` picks the
+// minimal rating covering the MAX asset level, so R(4)→'r' and X(8)→'x' — those are
+// exactly the two values `listingMatureFilter` hides, which is why the fixtures use
+// them rather than the level-2 art that happens to be live today.
+// ---------------------------------------------------------------------------
+describe('republishOwnListing — go-live RATING FLOOR (uniform, both kinds)', () => {
+  /** Pairwise-distinct asset ids, so a wrong-bind mutant cannot alias two of them. */
+  const ICON_ID = 101;
+  const COVER_ID = 202;
+  const SHOT_ID = 303;
+  /**
+   * DERIVED from the enum, not hand-typed. A local `const LVL_R = 4` is a guard spelled
+   * rather than structural: it keeps passing after the enum's bits move, and the test
+   * would then be asserting a ladder position that no longer exists.
+   * `~/server/common/enums` has ZERO imports of its own, so this pulls no module graph.
+   */
+  const LVL_NONE = 0;
+  const LVL_PG = NsfwLevel.PG;
+  const LVL_PG13 = NsfwLevel.PG13;
+  const LVL_R = NsfwLevel.R;
+  const LVL_X = NsfwLevel.X;
+
+  function ownerPrimary(opts: { kind: string; contentRating: string | null }) {
+    return {
+      userId: OWNER,
+      status: 'removed',
+      kind: opts.kind,
+      slug: SLUG,
+      name: 'Cool App',
+      appBlockId: opts.kind === 'onsite' ? BLOCK_ID : null,
+      contentRating: opts.contentRating,
+      externalUrl: opts.kind === 'offsite' ? EXTERNAL_URL : null,
+      connectClientId: null,
+    };
+  }
+
+  /**
+   * Wire the FOUR `appListing.findUnique` reads republish performs, in order:
+   *   1. `loadOwnedListingInTx`             → the owned-listing snapshot (+ contentRating)
+   *   2. `assertListingAssetsScanCleanInTx` → the asset ids for the scan gate
+   *   3. `assertOffsiteListingActionableInTx` → kind/slug/externalUrl/connectClientId
+   *   4. `resolveListingRatingFloorInTx`    → the asset ids for the maturity derive
+   * plus the screenshot + image reads (2) and (4) share.
+   *
+   * 🔴 The blanket shape carries `kind`/`slug`/`externalUrl`/`connectClientId` as well
+   * as the asset ids. Without them read (3) sees `kind: undefined`, and
+   * `checkOffsiteListingActionable` returns `skipped` on `kind !== 'offsite'` — i.e. a
+   * thinner fixture SILENTLY DISARMS the actionability gate and the floor would only
+   * ever be reached past a gate that never ran. Carrying them makes the floor reachable
+   * on an input no earlier check rejects, which is the point.
+   *
+   * `levels` maps image id → nsfwLevel; every image also carries `ingestion` so the
+   * pre-existing scan gate is satisfied.
+   */
+  function wire(opts: {
+    kind: string;
+    contentRating: string | null;
+    icon?: number | null;
+    cover?: number | null;
+    shots?: number[];
+    levels?: Record<number, number>;
+    ingestion?: string;
+  }) {
+    const icon = opts.icon === undefined ? ICON_ID : opts.icon;
+    const cover = opts.cover === undefined ? COVER_ID : opts.cover;
+    const shots = opts.shots ?? [SHOT_ID];
+    const levels = opts.levels ?? {};
+    const ingestion = opts.ingestion ?? 'Scanned';
+
+    // 🔴 Re-established on EVERY wire(), not left to `beforeEach`: `vi.clearAllMocks()`
+    // clears call history but NOT implementations, so a `mockResolvedValue` /
+    // `mockImplementation` set by an earlier test leaks forward and can silently disarm
+    // a later one (green for the wrong reason).
+    mockWrite.appListingReport.create.mockImplementation(async (a: { data: unknown }) => a.data);
+    mockWrite.appListing.findUnique.mockResolvedValue({
+      iconId: icon,
+      coverId: cover,
+      kind: opts.kind,
+      slug: SLUG,
+      externalUrl: opts.kind === 'offsite' ? EXTERNAL_URL : null,
+      connectClientId: null,
+    });
+    mockWrite.appListing.findUnique.mockResolvedValueOnce(
+      ownerPrimary({ kind: opts.kind, contentRating: opts.contentRating })
+    );
+    mockWrite.appListingScreenshot.findMany.mockResolvedValue(shots.map((imageId) => ({ imageId })));
+    mockWrite.image.findMany.mockImplementation(
+      async (args: { where?: { id?: { in?: number[] } } }) =>
+        (args?.where?.id?.in ?? []).map((id) => ({ id, ingestion, nsfwLevel: levels[id] ?? 0 }))
+    );
+    mockWrite.appListingModerationEvent.findFirst.mockResolvedValueOnce({
+      action: 'owner-unpublish',
+    });
+  }
+
+  /** The `data` payload of the listing status flip. */
+  function flipData() {
+    const call = mockWrite.appListing.updateMany.mock.calls.find(
+      (c: [{ where?: { status?: string } }]) => c[0]?.where?.status === 'removed'
+    );
+    return call?.[0]?.data;
+  }
+
+  const KINDS = ['offsite', 'onsite'] as const;
+
+  // ---- The floor, applied IDENTICALLY to both kinds ---------------------------------
+
+  it.each(KINDS)(
+    '%s: media BELOW declared → floored value is the DECLARED rating (raise-only never lowers)',
+    async (kind) => {
+      // Max asset level R(4) → derived 'r'; declared 'x' (level 8) is HIGHER, so the
+      // raise-only floor must return 'x'. A lower-vs-raise inversion would write 'r'
+      // here and silently drop a deliberately mature rating; a wrong-bind that passed
+      // anything other than the declared rating as the floor's third argument would
+      // also land on 'r'.
+      wire({
+        kind,
+        contentRating: 'x',
+        levels: { [ICON_ID]: LVL_PG13, [COVER_ID]: LVL_R, [SHOT_ID]: LVL_PG },
+      });
+      const res = await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
+      expect(res).toEqual({ appListingId: APP_ID, status: 'approved' });
+      expect(flipData()).toEqual({ status: 'approved', contentRating: 'x' });
+    }
+  );
+
+  it.each(KINDS)('%s: media EQUAL to declared → floored value is unchanged', async (kind) => {
+    // Max R(4) → derived 'r' === declared 'r'. Pins the strict-inequality boundary from
+    // the equal side: the value written is still 'r', never a neighbour.
+    wire({
+      kind,
+      contentRating: 'r',
+      levels: { [ICON_ID]: LVL_PG, [COVER_ID]: LVL_R, [SHOT_ID]: LVL_PG13 },
+    });
+    await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
+    expect(flipData()).toEqual({ status: 'approved', contentRating: 'r' });
+  });
+
+  it.each(KINDS)('%s: media ABOVE declared → rating RAISED to the derived value', async (kind) => {
+    // THE DEFECT. Declared 'g' with X(8) cover art: pre-fix this went live as 'g' and
+    // `content_rating NOT IN ('r','x')` showed it to SFW-only users.
+    wire({
+      kind,
+      contentRating: 'g',
+      levels: { [ICON_ID]: LVL_PG13, [COVER_ID]: LVL_X, [SHOT_ID]: LVL_R },
+    });
+    await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
+    expect(flipData()).toEqual({ status: 'approved', contentRating: 'x' });
+    // 🔴 The derive is scoped to THIS listing. Asserted over EVERY screenshot read, not
+    // via `toHaveBeenCalledWith` — the scan gate makes the same call with the same id
+    // one step earlier, so a "was it ever called with APP_ID" matcher is satisfied by
+    // the NEIGHBOURING call and an id wrong-bind in the floor survives it. (Measured: it
+    // did survive, as a mutant passing `listing.slug`.)
+    const shotCalls = mockWrite.appListingScreenshot.findMany.mock.calls;
+    expect(shotCalls.length).toBeGreaterThan(1);
+    for (const [args] of shotCalls) expect(args?.where?.appListingId).toBe(APP_ID);
+  });
+
+  it('🔴 PARITY: the two kinds produce a BYTE-IDENTICAL flip payload for the same media', async () => {
+    // The kind axis is GONE. This is the case a re-introduced `kind`/`isOnsite` branch
+    // in the rating path dies on — the per-kind cases above would each still pass if
+    // one kind silently stopped being floored only when read in isolation, so compare
+    // the two payloads directly.
+    const payloads: Record<string, unknown> = {};
+    for (const kind of KINDS) {
+      vi.clearAllMocks();
+      mockWrite.appListing.updateMany.mockResolvedValue({ count: 1 });
+      mockWrite.appBlock.updateMany.mockResolvedValue({ count: 1 });
+      mockWrite.appListingModerationEvent.create.mockImplementation(
+        async (a: { data: unknown }) => a.data
+      );
+      wire({
+        kind,
+        contentRating: 'g',
+        levels: { [ICON_ID]: LVL_PG13, [COVER_ID]: LVL_X, [SHOT_ID]: LVL_R },
+      });
+      await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
+      payloads[kind] = flipData();
+    }
+    expect(payloads.onsite).toEqual(payloads.offsite);
+    expect(payloads.onsite).toEqual({ status: 'approved', contentRating: 'x' });
+  });
+
+  it.each(KINDS)(
+    '%s: a deliberately HIGHER declared rating is never lowered by TAME media',
+    async (kind) => {
+      // Every asset is SFW (max PG13(2) → derived 'pg13'); the declaration is 'x'. This
+      // is the strongest form of the raise-only contract — the gap is three ladder rungs,
+      // so a comparison-direction flip cannot land back on 'x' by coincidence.
+      wire({
+        kind,
+        contentRating: 'x',
+        levels: { [ICON_ID]: LVL_PG, [COVER_ID]: LVL_PG13, [SHOT_ID]: LVL_NONE },
+      });
+      await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
+      expect(flipData()).toEqual({ status: 'approved', contentRating: 'x' });
+    }
+  );
+
+  it.each(KINDS)(
+    '%s: a NULL declared rating with tame media stays NULL (never stamped `g`)',
+    async (kind) => {
+      // 🔴 The strict-inequality boundary, from the only side that can observe it.
+      // `nsfwLevelFromContentRating` maps BOTH `null` and `'g'` to the SFW floor PG(1),
+      // so with tame media `derived === 'g'` ties the declared `null` on level. A
+      // `>` → `>=` mutant then returns `'g'` and silently stamps a rating onto a listing
+      // that had none. Every OTHER case in this block ties nowhere and cannot see it —
+      // measured: without this case that mutant was killed only by a PRE-EXISTING test
+      // elsewhere in the file, i.e. it survived this PR's own coverage.
+      wire({
+        kind,
+        contentRating: null,
+        levels: { [ICON_ID]: LVL_PG, [COVER_ID]: LVL_NONE, [SHOT_ID]: LVL_PG },
+      });
+      await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
+      expect(flipData()).toEqual({ status: 'approved', contentRating: null });
+    }
+  );
+
+  // ---- Edge cases -------------------------------------------------------------------
+
+  it('listing with NO attached assets → declared rating preserved, no crash', async () => {
+    wire({ kind: 'offsite', contentRating: 'g', icon: null, cover: null, shots: [] });
+    const res = await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
+    expect(res).toEqual({ appListingId: APP_ID, status: 'approved' });
+    expect(flipData()).toEqual({ status: 'approved', contentRating: 'g' });
+    // The helper short-circuits before the image read — a mutant that dropped that
+    // guard would derive 'g' from an empty set and coincidentally agree, so pin the
+    // read count too.
+    expect(mockWrite.image.findMany).not.toHaveBeenCalled();
+  });
+
+  it('absent listing row on the FLOOR read → declared rating preserved, republish still succeeds', async () => {
+    // The floor helper returns `declaredRating` when its own findUnique misses (a race
+    // with a concurrent purge). Pre-existing helper behaviour must survive the new call.
+    mockWrite.appListing.findUnique.mockResolvedValue(null);
+    mockWrite.appListing.findUnique.mockResolvedValueOnce(
+      ownerPrimary({ kind: 'offsite', contentRating: 'pg13' })
+    );
+    mockWrite.appListingModerationEvent.findFirst.mockResolvedValueOnce({
+      action: 'owner-unpublish',
+    });
+    const res = await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
+    expect(res).toEqual({ appListingId: APP_ID, status: 'approved' });
+    expect(flipData()).toEqual({ status: 'approved', contentRating: 'pg13' });
+  });
+
+  it('🔴 SCREENSHOTS contribute to the derived max, not just icon/cover', async () => {
+    // Icon and cover are both tame; the ONLY mature asset is a screenshot. A mutant
+    // that derives from `[iconId, coverId]` and drops the screenshot spread survives
+    // every icon/cover-driven case above and dies here ('pg13' instead of 'x').
+    wire({
+      kind: 'offsite',
+      contentRating: 'g',
+      levels: { [ICON_ID]: LVL_PG, [COVER_ID]: LVL_PG13, [SHOT_ID]: LVL_X },
+    });
+    await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
+    expect(flipData()).toEqual({ status: 'approved', contentRating: 'x' });
+  });
+
+  it('[INVARIANT GUARD — green at origin/main] 🔴 a BLOCKED asset still refuses via the PRE-EXISTING scan gate (the floor did not displace it)', async () => {
+    // Reachability/attribution: the media is ALSO over-rated (X), so both the scan gate
+    // and the floor would have something to say. The scan gate runs FIRST, so the
+    // listing must not flip — and the assertion names the SCAN gate's own error, not
+    // merely "something threw", which is the exact displacement it rules out.
+    wire({
+      kind: 'onsite',
+      contentRating: 'g',
+      levels: { [ICON_ID]: LVL_PG13, [COVER_ID]: LVL_X, [SHOT_ID]: LVL_R },
+      ingestion: 'Blocked',
+    });
+    await expect(
+      republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('blocked'),
+    });
+    expect(flipData()).toBeUndefined();
+    expect(mockWrite.appListingModerationEvent.create).not.toHaveBeenCalled();
+  });
+
+  it('🔴 FAIL-CLOSED: a throwing rating derivation leaves the listing NOT live', async () => {
+    wire({
+      kind: 'offsite',
+      contentRating: 'g',
+      levels: { [ICON_ID]: LVL_PG13, [COVER_ID]: LVL_X, [SHOT_ID]: LVL_R },
+    });
+    // The FIRST image.findMany (the scan gate) succeeds; the SECOND (the floor's own
+    // read) throws — so the failure is attributable to the derive, not the scan gate.
+    let call = 0;
+    mockWrite.image.findMany.mockImplementation(
+      async (args: { where?: { id?: { in?: number[] } } }) => {
+        if (++call >= 2) throw new Error('nsfwLevel read failed');
+        return (args?.where?.id?.in ?? []).map((id) => ({ id, ingestion: 'Scanned', nsfwLevel: 0 }));
+      }
+    );
+    await expect(
+      republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER })
+    ).rejects.toThrow('nsfwLevel read failed');
+    // NOT live, and no audit event claiming it was.
+    expect(flipData()).toBeUndefined();
+    expect(mockWrite.appListingModerationEvent.create).not.toHaveBeenCalled();
+  });
+
+  // ---- REMOVAL COVERAGE: the on-site moderator queue is GONE -------------------------
+
+  it.each(KINDS)(
+    '%s: republish files NO AppListingReport, even when the media is over-rated',
+    async (kind) => {
+      // 🔴 REMOVAL GUARD, not decoration. An earlier revision of this change queued an
+      // advisory `AppListingReport` for over-rated ON-SITE media instead of raising the
+      // rating. The uniform floor makes that queue entry meaningless — the card is no
+      // longer under-rated — so it was removed, and without this assertion its return
+      // would be untested. `create` is still a spy for exactly this reason.
+      wire({
+        kind,
+        contentRating: 'g',
+        levels: { [ICON_ID]: LVL_PG13, [COVER_ID]: LVL_X, [SHOT_ID]: LVL_R },
+      });
+      await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
+      // 🔴 ASSERTED FIRST, deliberately. Behind the payload assertion this test would go
+      // red at the pre-change tip for the WRONG reason (the missing raise), and the
+      // removal itself would still be unmeasured. First position makes the red
+      // attributable to the queue write and nothing else.
+      expect(mockWrite.appListingReport.create).not.toHaveBeenCalled();
+      expect(flipData()).toEqual({ status: 'approved', contentRating: 'x' });
+    }
+  );
+
+  // ---- Regression: the sibling flips are untouched -----------------------------------
+
+  it('[INVARIANT GUARD — green at origin/main] relistListing (mod, human in the loop) applies NO floor', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('removed'));
+    mockWrite.appListing.findUnique.mockResolvedValue({
+      iconId: ICON_ID,
+      coverId: COVER_ID,
+      kind: 'offsite',
+      slug: SLUG,
+      externalUrl: EXTERNAL_URL,
+      connectClientId: null,
+    });
+    mockWrite.appListingScreenshot.findMany.mockResolvedValue([{ imageId: SHOT_ID }]);
+    // Deliberately over-rated media — the mod path must still not auto-raise.
+    mockWrite.image.findMany.mockImplementation(
+      async (args: { where?: { id?: { in?: number[] } } }) =>
+        (args?.where?.id?.in ?? []).map((id) => ({
+          id,
+          ingestion: 'Scanned',
+          nsfwLevel: id === COVER_ID ? LVL_X : LVL_PG,
+        }))
+    );
+    await relistListing({
+      input: { appListingId: APP_ID, reason: GOOD_REASON },
+      userId: REVIEWER,
+    });
+    const relistCall = mockWrite.appListing.updateMany.mock.calls.find(
+      (c: [{ data?: Record<string, unknown> }]) => c[0]?.data?.status === 'approved'
+    );
+    expect(relistCall?.[0]?.data).not.toHaveProperty('contentRating');
+    expect(mockWrite.appListingReport.create).not.toHaveBeenCalled();
   });
 });
