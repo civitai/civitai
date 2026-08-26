@@ -249,9 +249,23 @@ const unitTestConfig = {
           '@axiomhq/axiom-node',
           '@aws-sdk/s3-request-presigner',
           // Added below: each verified to have ZERO `vi.mock` callers anywhere in the workspace,
-          // and the whole suite re-run to confirm the collected test count is unchanged.
+          // and the whole suite re-run to confirm the PASSED count is unchanged. Not the total —
+          // see the PGlite note above, where the total stayed put while 87 tests stopped running.
+          //
+          // 🔴 A THIRD HAZARD CLASS, beyond mock-callers and non-JS sidecars: SUBPATH DUAL-INSTANCE.
+          // `noDiscovery: true` + `entries: []` means only the BARE specifier is pre-bundled, so a
+          // subpath import still resolves through the module runner to the original files and the
+          // two forms become distinct copies. Live here today: `zod/v4` (4 files), `zustand/*`
+          // (50), `react-dom/*` (26). No failure observed — but `instanceof` across the two copies
+          // is the shape that breaks, e.g. `error instanceof z.ZodError` in
+          // src/pages/api/admin/manage-sanity-checks.ts. Check subpath usage before adding a
+          // package whose identity is compared with `instanceof`.
           'zod',
-          'react',
+          // 'react' is NOT here on purpose. Vitest hardcodes
+          // `exclude = ['vitest', 'react', 'vue']` in resolveOptimizerConfig and filters `include`
+          // against it, so an entry for it is silently dropped — measured: `deps_ssr/` contains
+          // react-dom.js but no react.js. Listing it would read as a delivered win that never
+          // happened.
           'react-dom',
           'zustand',
           'immer',
