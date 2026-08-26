@@ -30,7 +30,12 @@ const setMock = vi.fn(async (key: string, value: unknown) => {
 const delMock = vi.fn(async () => undefined);
 const setNxMock = vi.fn().mockResolvedValue(true);
 
-vi.mock('~/server/redis/client', () => ({
+// 🔴 Spreads the real package for the key CONSTANTS; only the client stubs are overridden.
+// `REDIS_KEYS.CACHE_LOCKS` used to be hand-typed here as 'caches:lock' — the real value is
+// 'cache-lock'. Both the lock writer and the lock reader read that one fake, so the suite
+// passed while exercising a key Redis never sees. See no-hand-typed-redis-key-constants.test.ts.
+vi.mock('~/server/redis/client', async () => ({
+  ...(await import('@civitai/redis/client')),
   redis: {
     packed: {
       mGet: (...args: unknown[]) => mGetMock(...(args as [string[]])),
@@ -40,7 +45,6 @@ vi.mock('~/server/redis/client', () => ({
     del: (...args: unknown[]) => delMock(...args),
   },
   sysRedis: {},
-  REDIS_KEYS: { CACHE_LOCKS: 'caches:lock' },
 }));
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
 vi.mock('~/server/prom/client', () => ({
