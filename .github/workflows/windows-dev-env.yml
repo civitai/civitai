@@ -24,10 +24,11 @@ name: Windows dev-env smoke
 # the TODO above was Git-Bash-specific. A pwsh-only job would not reproduce it, and
 # would report green over the one case we have written evidence about.
 #
-# DELIBERATELY NON-BLOCKING (`continue-on-error: true`) to start. A gate that lands
-# red on day one and stops unrelated PRs trains everyone to click through, which is
-# strictly worse than no gate. Turn it off once this has been green long enough to
-# mean something.
+# DELIBERATELY NON-BLOCKING ON PULL REQUESTS to start. A gate that lands red on day
+# one and stops unrelated PRs trains everyone to click through, which is strictly
+# worse than no gate. Turn it off once this has been green long enough to mean
+# something. It is NOT non-blocking on a push to `main` — see the job's
+# `continue-on-error` comment for why the two cases differ.
 #
 # DELIBERATELY NOT starting the compose stack: those are Linux containers, and
 # Docker on Windows runners is slow and flaky — it would buy noise, not signal.
@@ -36,23 +37,70 @@ name: Windows dev-env smoke
 #
 # COST: `windows-latest` is a standard GitHub-hosted runner, which is free for
 # public repositories. This adds no Actions minutes.
+#
+# ── ALSO RUNS ON PUSH TO `main`, AND THAT IS A CACHE FIX ─────────────────────
+#
+# `setup-node` with `cache: pnpm` writes an Actions cache entry keyed
+# `node-cache-Windows-x64-pnpm-<lockfile-hash>`. Actions caches are SCOPED TO A
+# REF: a PR run can READ an entry saved on its base branch, but it cannot read
+# one saved on another PR, and it saves into its own `refs/pull/N/merge` scope.
+#
+# With this workflow `pull_request`-only there was no entry on `refs/heads/main`
+# for a PR to restore from, so EVERY PR missed, re-resolved the whole store and
+# then saved its own ~518 MB copy under the same key in its own scope. Measured
+# 2026-08-25: 20 such copies, one per open PR, 9.65 GB — 95.3% of the repo's
+# 10 GB cache budget, against ONE 511 MB Linux entry on `main` from `lint.yml`.
+# The repo was over the limit, so LRU eviction was live and was evicting the
+# useful entries to keep 20 identical useless ones.
+#
+# `lint.yml` never had this problem, and the reason is exactly the leg added
+# below: it has a `push: [main]` trigger, so one base-branch entry serves every
+# PR and no PR ever saves its own. This makes that true here too. One entry,
+# reused by every PR, refreshed whenever `main` moves.
+#
+# The two matrix shells share one cache key (same OS, arch and lockfile), so on
+# `main` they race to save it and one logs "another job may be creating this
+# cache". That is the intended outcome — one entry is the point — not a defect.
+#
+# Nothing in this workflow reads `github.base_ref` or `github.event.pull_request`
+# (both are empty/null on a push), so no step needs gating. That is not luck:
+# `scripts/__tests__/main-branch-ci-coverage.test.ts` asserts it as a repo-wide
+# relationship over every push-reachable job.
 
 on:
   pull_request:
     branches: [main, release]
+  push:
+    branches: [main]
 
 permissions:
   contents: read
 
+# On a PR, unchanged: `github.ref` is `refs/pull/N/merge`, so a new push to the
+# branch cancels the in-flight run.
+#
+# On a push to `main` it MUST NOT be `github.ref` — that is one group for the
+# whole branch, so a busy `main` would cancel its own runs and only the last
+# commit would ever be checked (and the losers would render as `cancelled`,
+# which is indistinguishable from a real failure). Same expression as `lint.yml`,
+# for the same reason, and pinned by the same test.
 concurrency:
-  group: windows-dev-env-${{ github.ref }}
+  group: windows-dev-env-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: true
 
 jobs:
   smoke:
     name: Windows dev-env (${{ matrix.shell }})
     runs-on: windows-latest
-    continue-on-error: true
+    # REPORT-ONLY ON PULL REQUESTS, REAL VERDICT ON `main` — the same split
+    # `lint.yml`'s `unit` job makes, for the same reason. The header's
+    # non-blocking rationale is explicitly about not stopping UNRELATED PRs over
+    # a canary that might be red on day one. On a push the merge has already
+    # happened, so there is no unrelated work to stop and nothing to block; what
+    # `continue-on-error: true` would buy there is a run reporting `success`
+    # while the step underneath failed, which is a green that has to be
+    # disbelieved. `main` carries no required_status_checks either way.
+    continue-on-error: ${{ github.event_name == 'pull_request' }}
     timeout-minutes: 25
     strategy:
       fail-fast: false
