@@ -155,7 +155,7 @@ export const getCommentCountV2Handler = async ({
   input: CommentConnectorInput;
 }) => {
   try {
-    return await getCommentCount(input);
+    return await getCommentCount({ ...input, isModerator: ctx.user?.isModerator ?? false });
   } catch (error) {
     throw throwDbError(error);
   }

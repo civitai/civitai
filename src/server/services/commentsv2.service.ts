@@ -95,7 +95,7 @@ async function getReplyThreads({
   if (!selected.length) return empty;
 
   const threadIds = selected.map((x) => x.id);
-  const [comments, hiddenGroups] = await Promise.all([
+  const [comments, hiddenGroups, countGroups] = await Promise.all([
     dbRead.commentV2.findMany({
       where: {
         threadId: { in: threadIds },
@@ -115,16 +115,31 @@ async function getReplyThreads({
       },
       _count: { _all: true },
     }),
+    // The CTE carries `Thread.commentCount`, which a ToS flag never decrements. This seeds the
+    // client's reply count, so it must agree with `getCommentCount`: same predicate, and no
+    // viewer-preference exclusion either.
+    dbRead.commentV2.groupBy({
+      by: ['threadId'],
+      where: {
+        threadId: { in: threadIds },
+        tosViolation: isModerator ? undefined : false,
+      },
+      _count: { _all: true },
+    }),
   ]);
 
   const hiddenCounts = Object.fromEntries(
     hiddenGroups.map((group) => [group.threadId, group._count._all])
+  );
+  const commentCounts = Object.fromEntries(
+    countGroups.map((group) => [group.threadId, group._count._all])
   );
 
   const threads = groupReplyThreads({
     threads: selected,
     comments: comments as CommentV2Model[],
     hiddenCounts,
+    commentCounts,
     sort,
     limit,
   });
@@ -554,14 +569,24 @@ export async function bulkSetCommentV2TosViolation({
   return { count, notified, rewardedReports };
 }
 
-export const getCommentCount = async ({ entityId, entityType, hidden }: CommentConnectorInput) => {
-  const thread = await dbRead.thread.findUnique({
-    where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
-    select: { commentCount: true },
+// Counts rows rather than reading `Thread.commentCount`: an INSERT/DELETE trigger maintains that
+// counter, so a ToS flag never decrements it and the count keeps advertising a removed comment.
+//
+// Reached through the thread relation rather than resolving the thread first, so this stays ONE
+// round trip. Do not reach for a filtered Prisma `_count` on `Thread` instead: that compiles to an
+// uncorrelated aggregate subquery, which seq-scans all of CommentV2 (measured 1.7s on production
+// against 0.08ms for this).
+export const getCommentCount = async ({
+  entityId,
+  entityType,
+  isModerator = false,
+}: CommentConnectorInput & { isModerator?: boolean }) =>
+  dbRead.commentV2.count({
+    where: {
+      thread: { [`${entityType}Id`]: entityId } as Prisma.ThreadWhereInput,
+      tosViolation: isModerator ? undefined : false,
+    },
   });
-
-  return thread?.commentCount ?? 0;
-};
 
 // Get thread metadata including hidden comment count - optimized for separate thread meta queries
 export async function getCommentsThreadDetails2({

@@ -22,9 +22,8 @@ vi.mock('~/server/utils/otel-helpers', () => ({
   withSpan: (_name: string, fn: () => unknown) => fn(),
 }));
 
-const { getComment, getCommentsInfinite, getCommentsThreadDetails2 } = await import(
-  '../commentsv2.service'
-);
+const { getComment, getCommentCount, getCommentsInfinite, getCommentsThreadDetails2 } =
+  await import('../commentsv2.service');
 
 const threadFindUnique = dbMock.dbRead.thread.findUnique;
 const pinnedFindMany = dbMock.dbRead.commentV2.findMany;
@@ -146,5 +145,54 @@ describe('CommentV2 reads and the ToS flag', () => {
     expect(dbMock.dbRead.commentV2.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: 5, tosViolation: false } })
     );
+  });
+});
+
+/**
+ * Filtering the comment out of the page is only half of removing it. `Thread.commentCount` is
+ * maintained by an INSERT/DELETE trigger, so the flag never decrements it — and that number is
+ * what renders "show N replies". Reading it leaves an affordance pointing at a comment the viewer
+ * will never be shown.
+ */
+describe('CommentV2 counts and the ToS flag', () => {
+  it('counts what the viewer can be shown, not the thread counter', async () => {
+    commentCount.mockResolvedValue(3);
+
+    await expect(getCommentCount({ entityId: 1, entityType: 'image' })).resolves.toBe(3);
+    expect(commentCount).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ tosViolation: false }) })
+    );
+  });
+
+  it('counts everything for a moderator', async () => {
+    await getCommentCount({ entityId: 1, entityType: 'image', isModerator: true });
+
+    expect(commentCount).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ tosViolation: undefined }) })
+    );
+  });
+
+  // The thread is reached through the relation on purpose. Resolving it first is the obvious
+  // refactor and costs a second round trip on a query the comment list fires per comment.
+  it('reaches the thread through the relation, in a single query', async () => {
+    await getCommentCount({ entityId: 1, entityType: 'image' });
+
+    expect(threadFindUnique).not.toHaveBeenCalled();
+    expect(commentCount).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ thread: { imageId: 1 } }) })
+    );
+  });
+
+  it('seeds each reply thread from a filtered count rather than the thread counter', async () => {
+    // The CTE row carries `commentCount: 9`; a reply count the client can trust cannot come from it.
+    dbMock.dbRead.$queryRaw
+      .mockResolvedValueOnce([{ id: 1, threadId: 10, reactionCount: 0 }])
+      .mockResolvedValueOnce([{ id: 11, commentId: 1, locked: false, commentCount: 9, depth: 1 }]);
+    dbMock.dbRead.commentV2.groupBy.mockResolvedValue([]);
+
+    const result = await list(false, { repliesDepth: 1 });
+
+    expect(result?.replyThreads).toHaveLength(1);
+    expect(result?.replyThreads[0].commentCount).toBe(0);
   });
 });
