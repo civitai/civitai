@@ -764,6 +764,16 @@ describe('source suggestions stay inside the viewer', () => {
     expect(searching).toBeGreaterThan(2738);
   });
 
+  // A tripwire, not a behaviour test. The collections arm returns early while
+  // HUB_COLLECTION_SOURCES_ENABLED is false, so its `take` is unreachable and a test
+  // asserting on it would pass with the widened window reverted — measured: reverting
+  // that one call alone leaves this whole file green at 79 passed. Whoever flips the
+  // constant lands here: cover the collections window the way the two tests above
+  // cover creators and models, then delete this.
+  it('collection sources are still dark, so their search window has no test yet', () => {
+    expect(HUB_COLLECTION_SOURCES_ENABLED).toBe(false);
+  });
+
   it('widens every models relationship query for a search, not just the creators one', async () => {
     dbMock.dbRead.collection.findFirst.mockResolvedValue({ id: 77 });
     dbMock.dbRead.model.findMany.mockResolvedValue([{ id: 1 }]);

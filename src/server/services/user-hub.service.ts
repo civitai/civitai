@@ -731,26 +731,31 @@ export async function resolveHubSourceFromUrl({
 
 const SUGGESTIONS_LIMIT = 25;
 
-// How much of the viewer's relationship list the type-ahead searches. A name filter
-// expressed as a relation filter does NOT bound the work: Prisma emits it as a
-// subquery, the planner walks every one of the viewer's rows probing the target
-// table, and `take` only stops it early when matches are dense. Measured on the
-// prod replica: a viewer following 130,006 people paid 4.8s and ~4.85GB of buffers
-// for a term matching none of them — worst exactly for the rare term that makes a
-// type-ahead worth having.
+// How much of the viewer's relationship list a bare suggestion LIST reads. The name
+// filter is not expressed as a relation filter because that does NOT bound the work:
+// Prisma emits it as a subquery, the planner walks every one of the viewer's rows
+// probing the target table, and `take` only stops it early when matches are dense.
+// Measured on the prod replica: a viewer following 130,006 people paid 4.8s and
+// ~4.85GB of buffers for a term matching none of them — worst exactly for the rare
+// term that makes a type-ahead worth having.
 //
-// So the relationship list drives, bounded, and the name filter runs over the ids
-// it returns — a search of your most recent relationships, not all of them.
+// So the relationship list drives, bounded, and the name filter runs over the ids it
+// returns. Which makes the window the searchable SET, not a page size — see
+// SUGGESTIONS_SEARCH_WINDOW.
 const SUGGESTIONS_WINDOW = 500;
 
-// A search has to reach the whole relationship list, not the recent end of it: a
-// viewer following 2,738 creators had the one they were looking for at position
-// 1,905, so the 500-row window meant the type-ahead could never return them.
+// What a SEARCH reads instead, because it has to reach the whole relationship list
+// rather than the recent end of it: a viewer following 2,738 creators had the one
+// they were looking for at position 1,905, so the 500-row window meant the type-ahead
+// could never return them.
+//
 // Measured on the prod replica against the largest accounts on the site, for a term
 // matching nothing (the worst case, since `take` cannot stop early): 118,609 follows
-// 402 ms, 250,491 bell-subscribed models 392 ms. Only 57 accounts follow more than
-// this and 1,066 watch more models than this, so above the window a search is still
-// partial.
+// 402 ms, 250,491 bell-subscribed models 392 ms, and the models arm's 15,000-id union
+// 392 ms — flat against 5,000, since the planner stops probing by id and hashes.
+// Only 57 accounts follow more than this and 1,066 watch more models than this, so
+// above the window a search is still partial; closing that needs a trigram index so
+// the term can drive instead of the relationship list.
 const SUGGESTIONS_SEARCH_WINDOW = 5000;
 
 // A margin over the page size, because the name queries filter deleted rows AFTER the
@@ -758,15 +763,16 @@ const SUGGESTIONS_SEARCH_WINDOW = 5000;
 // one of the ids has since been deleted (measured on prod: 2 of 500 on one account).
 const SUGGESTIONS_SLICE = SUGGESTIONS_LIMIT * 2;
 
-// The relationship queries above return their ids most-recent-first. With no search
-// term that IS the answer, so the window is cut before the names query rather than
-// ordered after it — ordering above a `take` decides WHICH rows come back.
-// How far back the relationship queries read. Bigger for a search, because the name
-// filter runs over what they return, so anything outside the window is unreachable.
+// How far back the relationship queries read. Every one of them orders most-recent
+// first, so this is a recency cut — keep it that way when adding an arm, or the
+// widened window becomes an arbitrary slice that moves between keystrokes.
 function suggestionWindow(term: string | undefined) {
   return term ? SUGGESTIONS_SEARCH_WINDOW : SUGGESTIONS_WINDOW;
 }
 
+// The relationship queries above return their ids most-recent-first. With no search
+// term that IS the answer, so the window is cut before the names query rather than
+// ordered after it — ordering above a `take` decides WHICH rows come back.
 function scopeSuggestionIds(ids: number[], term: string | undefined) {
   return term ? ids : ids.slice(0, SUGGESTIONS_SLICE);
 }
@@ -852,6 +858,7 @@ export async function getHubSourceSuggestions({
     const followed = await dbRead.collectionContributor.findMany({
       where: { userId, permissions: { has: CollectionContributorPermission.VIEW } },
       select: { collectionId: true },
+      orderBy: { createdAt: 'desc' },
       take: suggestionWindow(term),
     });
     if (!followed.length) return [];
