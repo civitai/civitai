@@ -116,7 +116,7 @@ describe('runBlurbFanout — unsupported count', () => {
 
     const result = await runBlurbFanout({ limit: 5 });
 
-    expect(result.unsupported).toBe(2);
+    expect(result.unsupportedBacklog).toBe(2);
   });
 
   it('reports zero when every reference has a registered adapter', async () => {
@@ -124,6 +124,54 @@ describe('runBlurbFanout — unsupported count', () => {
 
     const result = await runBlurbFanout({ limit: 5 });
 
-    expect(result.unsupported).toBe(0);
+    expect(result.unsupportedBacklog).toBe(0);
+  });
+
+  it('reports null and skips the query when the caller opts out', async () => {
+    table = [makeRow(1, 'Unsupported', 1)];
+
+    const result = await runBlurbFanout({ limit: 5, includeUnsupportedBacklog: false });
+
+    expect(result.unsupportedBacklog).toBeNull();
+    // Only the selector call — the count query never ran.
+    expect(dbMock.dbRead.$queryRaw).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('runBlurbFanout — a failing row cannot wedge the batch', () => {
+  it('keeps processing the rest of the batch after one row throws, and counts the failure', async () => {
+    // Simulates Task 6's blocked-link-domain guard (or any other adapter.save failure)
+    // tripping on one specific row, mid-batch.
+    adapter.save.mockImplementation(async (args: { entityId: number }) => {
+      if (args.entityId === 1) throw new Error('blocked domain');
+    });
+
+    table = [makeRow(1, 'Article', 1), makeRow(2, 'Article', 2)];
+
+    const result = await runBlurbFanout({ limit: 5 });
+
+    expect(result.failed).toBe(1);
+    expect(result.rewritten).toBe(1);
+    // Both rows were attempted — row 2 was never skipped because row 1 threw.
+    expect(adapter.load).toHaveBeenCalledWith(1);
+    expect(adapter.load).toHaveBeenCalledWith(2);
+  });
+
+  it("advances the failing row's materializedAt, so it doesn't head the next window", async () => {
+    adapter.save.mockImplementation(async () => {
+      throw new Error('blocked domain');
+    });
+
+    table = [makeRow(1, 'Article', 1)];
+
+    await runBlurbFanout({ limit: 5 });
+
+    const call = dbMock.dbWrite.blurbReference.update.mock.calls[0][0];
+    expect(call.where).toEqual({
+      blurbId_entityType_entityId: { blurbId: 1, entityType: 'Article', entityId: 1 },
+    });
+    expect(call.data.materializedAt).toBeInstanceOf(Date);
+    // Never the hash — the row's content was never actually applied.
+    expect(call.data.materializedHash).toBeUndefined();
   });
 });

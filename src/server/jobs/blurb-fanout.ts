@@ -14,21 +14,33 @@ export const blurbFanoutJob = createJob(
   'blurb-fanout',
   '*/5 * * * *',
   async () => {
-    const counts = await runBlurbFanout({ limit: BATCH_LIMIT });
+    const counts = await runBlurbFanout({
+      limit: BATCH_LIMIT,
+      // unsupportedBacklog is a full table scan (see the service) and changes slowly — a
+      // misconfigured entityType is a one-time wiring gap, not per-run churn — so twice an
+      // hour is enough to catch it without paying the scan every 5 minutes.
+      includeUnsupportedBacklog: new Date().getMinutes() % 30 === 0,
+    });
 
-    // Emitted on every non-empty run, not only on error. There is no cap on how many
-    // entities one blurb reaches, so the scale of these runs is the number we do not
-    // yet know — and the point of measuring is to find out before it surprises us.
-    if (counts.rewritten || counts.skipped || counts.gone || counts.unsupported) {
+    const batchTotal = counts.rewritten + counts.skipped + counts.gone + counts.failed;
+    // Batch-capacity signal only: whether this run filled its LIMIT. unsupportedBacklog is
+    // a table-wide count with no relation to BATCH_LIMIT, so it must never be summed in here
+    // — a batch of 0 real rows behind a 600-row unsupported backlog is not a full batch.
+    const saturated = batchTotal >= BATCH_LIMIT;
+
+    // Emitted whenever the batch did something, or the (occasional) backlog check found a
+    // number worth reporting. `failed` alone earns `warn` — it's the actionable, per-row
+    // signal; unsupportedBacklog does not, since there's nothing to do about it on any
+    // single tick and it would otherwise warn every run forever in steady state.
+    if (batchTotal > 0 || counts.unsupportedBacklog) {
       await logToAxiom({
         type: 'blurb-fanout',
         name: 'blurb-fanout',
-        level: counts.unsupported ? 'warn' : 'info',
+        level: counts.failed > 0 ? 'warn' : 'info',
         message: 'fan-out pass complete',
         ...counts,
         batchLimit: BATCH_LIMIT,
-        saturated:
-          counts.rewritten + counts.skipped + counts.gone + counts.unsupported >= BATCH_LIMIT,
+        saturated,
       }).catch(() => undefined);
     }
 
