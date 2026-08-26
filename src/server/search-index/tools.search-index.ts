@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import type { ToolType } from '~/shared/utils/prisma/enums';
 import { TOOLS_SEARCH_INDEX } from '~/server/common/constants';
 import { toolsFilterableAttributes } from '~/server/search-index/filterable-attributes';
+import { toolsSortableAttributes } from '~/server/search-index/sortable-attributes';
 import { updateDocs } from '~/server/meilisearch/client';
 
 import { getOrCreateIndex } from '~/server/meilisearch/util';
@@ -14,7 +15,7 @@ const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;
 const INDEX_ID = TOOLS_SEARCH_INDEX;
 
 const searchableAttributes = ['name', 'domain', 'company', 'description'];
-const sortableAttributes = ['createdAt', 'id', 'name'];
+const sortableAttributes = [...toolsSortableAttributes];
 const rankingRules = [
   'supported:desc',
   'sort',

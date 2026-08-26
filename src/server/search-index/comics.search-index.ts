@@ -4,6 +4,7 @@ import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import { COMICS_SEARCH_INDEX } from '~/server/common/constants';
 import { comicsFilterableAttributes } from '~/server/search-index/filterable-attributes';
+import { comicsSortableAttributes } from '~/server/search-index/sortable-attributes';
 import { isDefined } from '~/utils/type-guards';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { profileImageSelect } from '../selectors/image.selector';
@@ -15,13 +16,7 @@ const INDEX_ID = COMICS_SEARCH_INDEX;
 const searchableAttributes = ['name', 'description', 'user.username'];
 // `id` is here and in the filterable list for the keyset cleanup scan
 // (src/server/meilisearch/cleanup.ts).
-const sortableAttributes = [
-  'createdAt',
-  'id',
-  'updatedAt',
-  'stats.chapterCount',
-  'stats.followerCount',
-];
+const sortableAttributes = [...comicsSortableAttributes];
 const rankingRules = ['sort', 'words', 'typo', 'proximity', 'attribute', 'exactness'];
 
 const onIndexSetup = async ({ indexName }: { indexName: string }) => {

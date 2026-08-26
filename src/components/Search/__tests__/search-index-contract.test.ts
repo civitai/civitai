@@ -1,11 +1,23 @@
 import { describe, expect, it } from 'vitest';
 import { queryFilters } from '~/components/AutocompleteSearch/autocomplete-query';
+import { ArticlesSearchIndexSortBy } from '~/components/Search/parsers/article.parser';
+import { BountiesSearchIndexSortBy } from '~/components/Search/parsers/bounties.parser';
+import { CollectionsSearchIndexSortBy } from '~/components/Search/parsers/collection.parser';
+import { ComicsSearchIndexSortBy } from '~/components/Search/parsers/comic.parser';
+import { ImagesSearchIndexSortBy } from '~/components/Search/parsers/image.parser';
+import { ModelSearchIndexSortBy } from '~/components/Search/parsers/model.parser';
+import { ToolsSearchIndexSortBy } from '~/components/Search/parsers/tool.parser';
+import { UsersSearchIndexSortBy } from '~/components/Search/parsers/user.parser';
 import { BROWSING_LEVEL_ATTRIBUTE } from '~/components/Search/search-index-filters';
 import { buildBrowsingLevelClause } from '~/components/Search/search-filters';
 import type { SearchIndexKey } from '~/components/Search/search.types';
 import { searchIndexMap } from '~/components/Search/search.types';
 import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { filterableAttributesByIndex } from '~/server/search-index/filterable-attributes';
+import {
+  modelsSortableAttributes,
+  sortableAttributesByIndex,
+} from '~/server/search-index/sortable-attributes';
 
 const searchIndexKeys = Object.keys(searchIndexMap) as SearchIndexKey[];
 
@@ -70,6 +82,83 @@ describe('filterableAttributesByIndex', () => {
       expect(duplicates, `${indexName} repeats ${duplicates.join(', ')}`).toEqual([]);
     }
   );
+});
+
+describe('search sort options', () => {
+  // Every `sortBy` an InstantSearch results page can put on the URL, keyed by the index it is
+  // sent to. A value is either the bare index name (relevancy, no sort) or
+  // `<index>:<attribute>[:<direction>]`.
+  const sortOptionsByIndex: Record<string, readonly string[]> = {
+    [searchIndexMap.articles]: ArticlesSearchIndexSortBy,
+    [searchIndexMap.bounties]: BountiesSearchIndexSortBy,
+    [searchIndexMap.collections]: CollectionsSearchIndexSortBy,
+    [searchIndexMap.comics]: ComicsSearchIndexSortBy,
+    [searchIndexMap.images]: ImagesSearchIndexSortBy,
+    [searchIndexMap.models]: ModelSearchIndexSortBy,
+    [searchIndexMap.tools]: ToolsSearchIndexSortBy,
+    [searchIndexMap.users]: UsersSearchIndexSortBy,
+  };
+
+  const sortedAttributes = Object.entries(sortOptionsByIndex).flatMap(([indexName, options]) =>
+    options
+      // An attribute never contains `:`, so index 1 is the whole attribute path.
+      .map((option) => option.split(':')[1])
+      .filter((attribute): attribute is string => Boolean(attribute))
+      .map((attribute) => [indexName, attribute] as [string, string])
+  );
+
+  it('covers a sort option from every index', () => {
+    expect(Object.keys(sortOptionsByIndex).sort()).toEqual(
+      Object.values(searchIndexMap).slice().sort()
+    );
+    expect(sortedAttributes.length).toBeGreaterThan(0);
+  });
+
+  it.each(sortedAttributes)(
+    '%s sorts on %s, which that index declares sortable',
+    (indexName, attribute) => {
+      expect(
+        sortableAttributesByIndex[indexName as keyof typeof sortableAttributesByIndex],
+        `a sort option sends \`${indexName}:${attribute}\`, but ${indexName} does not declare ${attribute} sortable — Meilisearch answers \`Attribute \`${attribute}\` is not sortable\` and the whole results page fails`
+      ).toContain(attribute);
+    }
+  );
+});
+
+describe('the models index sort contract', () => {
+  // Literal, not derived: these are the attributes the live models index is provisioned with.
+  // `sortableAttributes` only ever reach a live index through `onIndexSetup`, which runs solely
+  // inside the manual (`UNRUNNABLE_JOB_CRON`) index-reset job — so renaming an attribute here and
+  // pointing the client at the new name in the same release leaves the client asking for something
+  // the live index has never heard of, and every sorted model search 400s until someone runs a
+  // reset. Update these two lists only together with a reset that has actually shipped.
+  it('declares exactly the sortable attributes the live models index is provisioned with', () => {
+    expect(modelsSortableAttributes.slice().sort()).toEqual([
+      'createdAt',
+      'id',
+      'metrics.collectedCount',
+      'metrics.commentCount',
+      'metrics.downloadCount',
+      'metrics.favoriteCount',
+      'metrics.thumbsUpCount',
+      'metrics.tippedAmountCount',
+    ]);
+  });
+
+  it('offers exactly the sort options those attributes support, in label order', () => {
+    // Order is load-bearing: src/pages/search/models.tsx maps its dropdown labels
+    // ("Relevancy", "Highest Rated", "Most Downloaded", …) onto these by position.
+    expect(ModelSearchIndexSortBy.slice()).toEqual([
+      'models_v9',
+      'models_v9:metrics.thumbsUpCount:desc',
+      'models_v9:metrics.downloadCount:desc',
+      'models_v9:metrics.favoriteCount:desc',
+      'models_v9:metrics.commentCount:desc',
+      'models_v9:metrics.collectedCount:desc',
+      'models_v9:metrics.tippedAmountCount:desc',
+      'models_v9:createdAt:desc',
+    ]);
+  });
 });
 
 describe('an index with no browsing-level attribute', () => {

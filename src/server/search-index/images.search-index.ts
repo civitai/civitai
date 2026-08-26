@@ -18,6 +18,7 @@ import {
 } from '~/server/redis/caches';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import { imagesFilterableAttributes } from '~/server/search-index/filterable-attributes';
+import { imagesSortableAttributes } from '~/server/search-index/sortable-attributes';
 import { modelsSearchIndex } from '~/server/search-index/models.search-index';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
@@ -46,14 +47,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 
   const searchableAttributes: SearchableAttributes = ['prompt', 'tagNames', 'user.username'];
 
-  const sortableAttributes: SortableAttributes = [
-    'id',
-    'sortAt',
-    'stats.commentCountAllTime',
-    'stats.reactionCountAllTime',
-    'stats.collectedCountAllTime',
-    'stats.tippedAmountCountAllTime',
-  ];
+  const sortableAttributes: SortableAttributes = [...imagesSortableAttributes];
 
   if (JSON.stringify(searchableAttributes) !== JSON.stringify(settings.searchableAttributes)) {
     const updateSearchableAttributesTask = await index.updateSearchableAttributes(
