@@ -553,12 +553,17 @@ export const upsertModelVersionHandler = async ({
     //
     // 🔴 Coerced to null, NOT rejected, and that is deliberate — do not "tighten" it into a throw.
     // The version editor re-submits the stored value out of `defaultValues`, so throwing would make
-    // every already-stamped version unsaveable by its owner. 160 versions were in that state when this
-    // landed, including two whose base model no longer matches their source, so a throw would strand
-    // real creators on an error they cannot act on — a worse bug than the one being fixed. Coercing
-    // blocks the bad write AND repairs the stored value on the owner's next save.
+    // every already-stamped version unsaveable by its owner. 159 versions were in that state when this
+    // landed, and six of them ALSO carry a base model that no longer matches their source (four
+    // Checkpoints on Wan Video / Flux / SDXL / Other, two LoRAs on Illustrious, all pointing at Anima's
+    // root) — those six already hit the older base-model throw below and cannot be saved at all today.
+    // A throw would strand real creators on an error they cannot act on, which is a worse bug than the
+    // one being fixed. Coercing blocks the bad write AND repairs the stored value on the owner's next
+    // save.
     // Nothing legitimate is lost: the picker only ever offers roots that pass this same scope, so a
-    // deliberate selection cannot reach the coercion.
+    // deliberate selection cannot reach the coercion. It is also not a way to dodge a fee — sending
+    // `null` outright has always been allowed, and 99.77% of Anima and Krea 2 LoRAs do exactly that
+    // (107 of 46,994 and 45 of 19,999 carry a source at all).
     if (input.licensingSourceVersionId != null) {
       const [source, sourceModel] = await Promise.all([
         dbRead.licensingRoot.findUnique({
@@ -567,11 +572,17 @@ export const upsertModelVersionHandler = async ({
         }),
         getModel({ id: input.modelId, select: { type: true } }),
       ]);
+      // A missing model coerces rather than passing. `getModel` filters on nothing but the id, so this
+      // only happens for a modelId that does not exist — the upsert below throws on it anyway. Writing
+      // it as `sourceModel && ...` instead would make "we could not check" indistinguishable from
+      // "we checked and it was fine", which is the shape of every guard that turns out to be inert.
       const rejectedReason = !source
         ? 'not-a-root'
         : source.baseModel !== input.baseModel
         ? 'base-model-mismatch'
-        : sourceModel && source.modelType !== sourceModel.type
+        : !sourceModel
+        ? 'model-not-found'
+        : source.modelType !== sourceModel.type
         ? 'model-type-mismatch'
         : null;
       if (rejectedReason) {

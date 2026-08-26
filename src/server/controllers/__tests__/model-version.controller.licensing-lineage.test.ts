@@ -45,12 +45,13 @@ const call = async ({
   root = animaRoot as { baseModel: string; modelType: string } | null,
   licensingSourceVersionId = ANIMA_ROOT_VERSION_ID as number | null,
 }: {
-  modelType: string;
+  /** `null` stands for a modelId that resolves to no model — the handler cannot check the type then. */
+  modelType: string | null;
   baseModel?: string;
   root?: { baseModel: string; modelType: string } | null;
   licensingSourceVersionId?: number | null;
 }) => {
-  mockGetModel.mockResolvedValue({ type: modelType, nsfw: false });
+  mockGetModel.mockResolvedValue(modelType === null ? null : { type: modelType, nsfw: false });
   dbMock.dbRead.licensingRoot.findUnique.mockResolvedValue(root);
 
   await upsertModelVersionHandler({
@@ -98,6 +99,10 @@ describe('upsertModelVersionHandler — licensing lineage scope', () => {
   it.each([
     ['the base model does not match', { baseModel: 'Illustrious' }],
     ['the source is not a registered root', { root: null }],
+    // "Could not check" must land on the same side as "checked and wrong". Written as a permissive
+    // `sourceModel && …` this case passes the source straight through, and the guard reads as enforced
+    // while being inert for it.
+    ['the model itself cannot be read', { modelType: null }],
   ])('drops a source when %s', async (_label, overrides) => {
     const written = await call({ modelType: 'Checkpoint', ...overrides });
     expect(written.licensingSourceVersionId).toBeNull();
