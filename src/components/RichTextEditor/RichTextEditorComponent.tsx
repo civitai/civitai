@@ -39,7 +39,8 @@ import { useOwnedSticker } from '~/components/Sticker/sticker.util';
 import { InsertStickerControl } from '~/components/RichTextEditor/InsertStickerControl';
 import { InsertTimestampControl } from '~/components/RichTextEditor/InsertTimestampControl';
 import { InsertBlurbControl } from '~/components/RichTextEditor/InsertBlurbControl';
-import { openBlurbManager } from '~/components/RichTextEditor/blurb-manager';
+import { openBlurbManager } from '~/components/Dialog/triggers/blurb-manager';
+import { insertBlurb } from '~/components/RichTextEditor/blurb.util';
 import { BlurbEditNode, BlurbEditorProvider } from '~/components/TipTap/BlurbNode';
 
 // const mapEditorSizeHeight: Omit<Record<MantineSize, string>, 'xs'> = {
@@ -173,15 +174,18 @@ export function RichTextEditor({
   // surface opted in, so a span already in a draft keeps its reference either way.
   const currentUser = useCurrentUser();
   const blurbsEnabled = useFeatureFlags().textBlurbs && addBlurbs;
+  const [docHasBlurb, setDocHasBlurb] = useState(false);
+  const [hasOrphanedBlurb, setHasOrphanedBlurb] = useState(false);
+  // Off the flag the list is still needed to tell a live chip from a deleted one — but only for a
+  // document that actually holds one, or every logged-in editor mount pays for a cohort of mods.
   const blurbsQuery = trpc.blurb.getMine.useQuery(undefined, {
-    enabled: addBlurbs && !!currentUser,
+    enabled: !!currentUser && (blurbsEnabled || (addBlurbs && docHasBlurb)),
   });
   const blurbs = useMemo(() => blurbsQuery.data ?? [], [blurbsQuery.data]);
   const blurbEditorState = useMemo(
     () => ({ blurbs, resolved: blurbsQuery.isSuccess }),
     [blurbs, blurbsQuery.isSuccess]
   );
-  const [orphanedBlurbs, setOrphanedBlurbs] = useState(0);
 
   const accepts = useMemo(() => {
     const accepts: MediaType[] = [];
@@ -351,33 +355,36 @@ export function RichTextEditor({
     storage.enabled = blurbsEnabled;
     storage.onManage = () =>
       openBlurbManager({
-        onInsert: (blurb) =>
-          editor
-            ?.chain()
-            .focus()
-            .insertContent({ type: 'blurb', attrs: { id: blurb.id, text: blurb.content } })
-            .run(),
+        onInsert: (blurb) => {
+          if (editor) insertBlurb(editor, blurb);
+        },
       });
     storage.refresh?.();
   }, [editor, blurbs, blurbsQuery.isLoading, blurbsEnabled]);
 
-  // Only meaningful once the list has resolved — before that every chip would read as deleted.
+  // One walk feeds both: whether to fetch the list at all, and — once it has resolved, since
+  // before that every chip would read as deleted — whether anything in the document is orphaned.
   useEffect(() => {
-    if (!editor || !blurbsQuery.isSuccess) return;
-    const known = new Set(blurbs.map((blurb) => blurb.id));
-    const count = () => {
-      let orphans = 0;
+    if (!editor || !addBlurbs) return;
+    const known = blurbsQuery.isSuccess ? new Set(blurbs.map((blurb) => blurb.id)) : null;
+    const scan = () => {
+      let present = false;
+      let orphaned = false;
       editor.state.doc.descendants((node) => {
-        if (node.type.name === 'blurb' && !known.has(node.attrs.id)) orphans++;
+        if (node.type.name !== 'blurb') return true;
+        present = true;
+        if (known && !known.has(node.attrs.id)) orphaned = true;
+        return false;
       });
-      setOrphanedBlurbs(orphans);
+      setDocHasBlurb(present);
+      setHasOrphanedBlurb(orphaned);
     };
-    count();
-    editor.on('update', count);
+    scan();
+    editor.on('update', scan);
     return () => {
-      editor.off('update', count);
+      editor.off('update', scan);
     };
-  }, [editor, blurbs, blurbsQuery.isSuccess]);
+  }, [editor, addBlurbs, blurbs, blurbsQuery.isSuccess]);
 
   // Used to call editor commands outside the component via a ref
   useImperativeHandle(innerRef, () => ({
@@ -548,7 +555,7 @@ export function RichTextEditor({
 
           <RTE.Content />
 
-          {orphanedBlurbs > 0 && (
+          {hasOrphanedBlurb && (
             <Group gap={8} wrap="nowrap" className="m-3 rounded-sm bg-red-1 p-2.5 dark:bg-red-8/20">
               <IconUnlink size={14} stroke={1.5} className="shrink-0 text-red-6" />
               <Text size="xs">

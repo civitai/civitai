@@ -104,7 +104,7 @@ export function BlurbManagerModal({ onInsert }: { onInsert?: (blurb: BlurbItem) 
         }}
       >
         <div className="flex justify-center py-2.5">
-          <div className="rounded-xs h-1 w-9 bg-gray-4 dark:bg-dark-3"></div>
+          <div className="h-1 w-9 rounded-sm bg-gray-4 dark:bg-dark-3"></div>
         </div>
         {body}
       </Drawer>
@@ -153,7 +153,7 @@ function BlurbListView({
             {blurbs.length} of {MAX_BLURBS_PER_USER}
           </Badge>
           <div className="flex-1" />
-          <CloseButton onClick={onClose} />
+          {!mobile && <CloseButton onClick={onClose} />}
         </Group>
         <Text size="xs" c="dimmed" mt={4}>
           Reusable text you write once. Editing a blurb updates every model, article and post it
@@ -212,16 +212,22 @@ function BlurbListView({
       <Group
         gap={12}
         wrap="nowrap"
-        className="border-0 border-t border-solid border-gray-3 px-5 py-3.5 dark:border-dark-4"
+        className={clsx(
+          'border-0 border-t border-solid border-gray-3 dark:border-dark-4',
+          mobile ? 'p-4' : 'px-5 py-3.5'
+        )}
       >
-        <Group gap={6} wrap="nowrap" className="flex-1">
-          <IconBulb size={14} stroke={1.5} className="text-gray-6 dark:text-dark-2" />
-          <Text size="xs" c="dimmed">
-            Type // in any editor to insert a blurb
-          </Text>
-        </Group>
+        {!mobile && (
+          <Group gap={6} wrap="nowrap" className="flex-1">
+            <IconBulb size={14} stroke={1.5} className="text-gray-6 dark:text-dark-2" />
+            <Text size="xs" c="dimmed">
+              Type // in any editor to insert a blurb
+            </Text>
+          </Group>
+        )}
         <Button
           variant={mobile ? 'filled' : 'subtle'}
+          fullWidth={mobile}
           leftSection={mobile ? undefined : <IconPlus size={16} stroke={1.5} />}
           disabled={atLimit}
           onClick={onCreate}
@@ -429,7 +435,8 @@ function BlurbForm({
             editorSize="md"
           />
           <Text size="xs" c={overLimit ? 'red' : 'dimmed'}>
-            {textLength.toLocaleString()} / {MAX_BLURB_LENGTH.toLocaleString()} characters
+            {textLength.toLocaleString('en-US')} / {MAX_BLURB_LENGTH.toLocaleString('en-US')}{' '}
+            characters
           </Text>
         </Stack>
 

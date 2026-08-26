@@ -1,14 +1,11 @@
 import type { RichTextEditorControlProps } from '@mantine/tiptap';
 import { RichTextEditor, useRichTextEditorContext } from '@mantine/tiptap';
 import { IconRepeat } from '@tabler/icons-react';
-import { openBlurbManager } from '~/components/RichTextEditor/blurb-manager';
+import { openBlurbManager } from '~/components/Dialog/triggers/blurb-manager';
+import { insertBlurb } from '~/components/RichTextEditor/blurb.util';
 
 const controlTitle = 'Insert blurb';
 
-/**
- * The only labelled control in the toolbar. Blurbs are a feature a creator has to learn exists,
- * and a bare glyph does not teach it.
- */
 export function InsertBlurbControl(props: RichTextEditorControlProps) {
   const { editor } = useRichTextEditorContext();
 
@@ -20,12 +17,9 @@ export function InsertBlurbControl(props: RichTextEditorControlProps) {
       className="w-auto gap-1.5 bg-blue-1 px-2 text-blue-8 dark:bg-blue-8/20 dark:text-blue-4"
       onClick={() =>
         openBlurbManager({
-          onInsert: (blurb) =>
-            editor
-              ?.chain()
-              .focus()
-              .insertContent({ type: 'blurb', attrs: { id: blurb.id, text: blurb.content } })
-              .run(),
+          onInsert: (blurb) => {
+            if (editor) insertBlurb(editor, blurb);
+          },
         })
       }
     >

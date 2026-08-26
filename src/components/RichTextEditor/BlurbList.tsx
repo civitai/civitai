@@ -79,7 +79,7 @@ export const BlurbList = forwardRef<BlurbListRef, Props>(
               </Group>
             ) : (
               <Text size="xs" c="dimmed">
-                {query ? `No blurbs match "${query}"` : 'Nothing reusable yet'}
+                {query ? `No blurbs match “${query}”` : 'Nothing reusable yet'}
               </Text>
             )}
           </Center>
@@ -126,7 +126,7 @@ export const BlurbList = forwardRef<BlurbListRef, Props>(
             ↑↓ navigate · ↵ insert · esc dismiss
           </Text>
           {onManage && (
-            <Anchor size="xs" fw={600} onClick={onManage}>
+            <Anchor component="button" type="button" size="xs" fw={600} onClick={onManage}>
               Manage
             </Anchor>
           )}
