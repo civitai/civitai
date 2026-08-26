@@ -27,7 +27,7 @@ vi.mock('~/server/logging/client', () => ({
 }));
 vi.mock('~/server/redis/client', () => ({
   sysRedis: mockSysRedis,
-  REDIS_SYS_KEYS: { SYSTEM: { PENDING_IMAGE_RESTORES: 'pending-restores' } },
+  REDIS_SYS_KEYS: { SYSTEM: { PENDING_IMAGE_RESTORES: 'system:pending-image-restores' } },
 }));
 vi.mock('~/server/services/image.service', () => ({
   resetBlockedNsfwLevel: mockResetNsfwLevel,
@@ -144,7 +144,7 @@ describe('restoreUserImages', () => {
     expect(mockUnblock).not.toHaveBeenCalled();
     // Kept, the id costs a `User` round-trip every other minute forever, and nothing ever
     // reclaims it; `restoreUser` re-adds it if the account genuinely comes back.
-    expect(mockSysRedis.sRem).toHaveBeenCalledWith('pending-restores', '7');
+    expect(mockSysRedis.sRem).toHaveBeenCalledWith('system:pending-image-restores', '7');
     expect(pendingSet).toEqual([]);
     expect(result).toMatchObject({ reDeleted: 1, finished: 0 });
   });
@@ -178,7 +178,7 @@ describe('restoreUserImages', () => {
 
     await run();
 
-    expect(mockSysRedis.sRem).toHaveBeenCalledWith('pending-restores', '7');
+    expect(mockSysRedis.sRem).toHaveBeenCalledWith('system:pending-image-restores', '7');
     expect(pendingSet).toEqual([]);
   });
 
