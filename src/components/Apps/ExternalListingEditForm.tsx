@@ -44,6 +44,7 @@ import {
   isOnsiteEdit,
   hasScalarChanges,
   isApprovedEdit,
+  isOwnerEdit,
   listingEditHeaderCopy,
   materialEditBlockedReason,
   scopeDisclosureLockedForEdit,
@@ -323,8 +324,16 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
       {/* 🔴 THE REPAIR-STATE NOTICE. Rendered ABOVE the stepper so the reason is on screen
           before the author reaches a locked field — a disabled input with its explanation
           somewhere else reads as a bug. The copy is the server's refusal, restated ahead of
-          time instead of after a failed Save, and it names the way out (republish, then
-          edit). `scopeLocked` appends the one extra sentence its own case needs. */}
+          time instead of after a failed Save, and it names the way out.
+          🔴 THE `scopeLocked` APPEND IS GONE, and its removal is the point rather than a
+          tidy-up. It read "…so the scope justifications are locked until you republish",
+          which understated the state by a long way: in the drifted state NOTHING on this
+          screen can be saved, because the drifted mask rides along on every patch and
+          `handleSave` aborts client-side before any of it. Worse, it sat directly after a
+          sentence that said "Tagline, description and category can be edited now" — two
+          claims that cannot both be true. `materialEditBlockedReason` now owns the whole
+          drifted-state message, so there is ONE sentence to keep honest instead of two
+          that disagreed. */}
       {materialBlockedReason && (
         <Alert
           color="yellow"
@@ -333,13 +342,7 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
           title="This app is unpublished"
           data-testid="apps-offsite-edit-material-locked-notice"
         >
-          <Text size="sm">
-            {materialBlockedReason}
-            {scopeLocked
-              ? ' Your app’s OAuth scopes have also changed since it was last reviewed, so' +
-                ' the scope justifications are locked until you republish.'
-              : ''}
-          </Text>
+          <Text size="sm">{materialBlockedReason}</Text>
         </Alert>
       )}
 
@@ -610,6 +613,45 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
           data-testid="apps-offsite-wizard-step-assets"
         >
           <div data-testid="apps-offsite-wizard-assets-panel">
+            {/* 🔴 THE ASSETS STEP NEEDS THE REPAIR FRAME TOO, AND IT IS THE ONLY IMAGE
+                SURFACE AN OFF-SITE LISTING HAS. `capabilitiesForKind('offsite').listingMedia`
+                is `false`, so `editorTabsFor` withholds the Media tab entirely and
+                `ListingMediaEditor` — which DID get an unpublished frame — never mounts for
+                these listings. This step is where their icon, cover and screenshots are
+                edited, it became newly reachable in the repair state, and it shipped with no
+                framing at all.
+                🔴 AND THE WRITE SEMANTICS ARE THE SURPRISING PART, which is exactly why the
+                frame has to say them. `ListingAssetStep` writes EAGERLY, one mutation per
+                change, against `edit.parentId` — there is no shadow for a non-approved
+                listing, so nothing here is staged and nothing is undone by leaving without
+                pressing Save. That differs from the approved case the author has seen
+                before AND from the scalar fields on the previous step, which do wait for
+                Save. An author who assumes either would be wrong in a way that costs them
+                their live imagery.
+                🔴 Deliberately NOT gated on `scopeLocked`: the scope-drift dead end blocks
+                the SAVE path (scalars), and these writes do not go through it. Media stays
+                editable in that state, which is worth saying plainly rather than leaving
+                the author to infer it from a notice that talks about saving. */}
+            {materialBlockedReason && (
+              <Alert
+                color="yellow"
+                variant="light"
+                icon={<IconAlertTriangle size={16} />}
+                title="This app is unpublished"
+                mb="md"
+                data-testid="apps-offsite-edit-assets-unpublished-notice"
+              >
+                <Text size="sm">
+                  This app is <b>not visible in the store</b>
+                  {isOwnerEdit(edit) ? <> — you unpublished it</> : <> — its owner unpublished it</>}.
+                  Image changes here save <b>immediately</b> and are <b>not</b> staged for
+                  review — they are not held until you press Save, and leaving this page does
+                  not undo them. They appear in the store when the app is republished. Media
+                  can be added while it is still scanning; it only appears once its scan
+                  finishes cleanly.
+                </Text>
+              </Alert>
+            )}
             {effectiveId ? (
               <ListingAssetStep
                 listingId={effectiveId}

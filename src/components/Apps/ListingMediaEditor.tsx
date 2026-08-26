@@ -15,11 +15,19 @@ import { trpc } from '~/utils/trpc';
  * `/apps/[appBlockId]/listing` page so it can be embedded as the "Listing media" tab
  * of the unified `/apps/[appBlockId]/edit` page (and reused anywhere else).
  *
- * Owner gating is single-sourced at the tRPC layer: `getMyListingForApp` throws
- * NOT_OWNED→FORBIDDEN (non-owner) / NOT_FOUND (no listing) → this renders NotFound.
- * 🔴 That owner check has NO moderator branch, so this editor is only ever reachable
- * for the caller's OWN listing — including for a moderator (the production incident
+ * Access gating is single-sourced at the tRPC layer: `getMyListingForApp` throws
+ * NOT_OWNED→FORBIDDEN / NOT_FOUND (no listing) → this renders NotFound.
+ * 🔴 That check has NO moderator branch, so this editor is only ever reachable for a
+ * listing the caller holds a ROLE on — including for a moderator (the production incident
  * behind the notice below was an owner-AND-moderator editing their own live apps).
+ *
+ * 🔴 "ROLE", NOT "OWNERSHIP", AND THIS SENTENCE USED TO SAY OWNER. The gate is
+ * `resolveListingRole(listing.id, userId) === null`, which is non-null for the owner **or**
+ * an ACCEPTED COLLABORATOR seat — so a seated editor reaches this component. Reading the
+ * old wording as an ownership guarantee is what produced copy telling an editor "you
+ * unpublished it" and pointing them at a Publishing tab `editorTabsFor` withholds from
+ * them. The proc now returns the resolved `role`; branch on it (see `isOwner`) rather than
+ * assuming.
  *
  * 🔴 THREE WRITE SEMANTICS on an APPROVED listing, and the copy MUST match. The
  * discriminator is `isModerator && !shadowId` — NOT `isModerator` alone:
@@ -109,6 +117,27 @@ export function ListingMediaEditor({ appBlockId }: { appBlockId: string }) {
    * all — never both.
    */
   const isOwnerUnpublished = listing?.status === 'removed' && !editBlockedReason;
+  /**
+   * 🔴 IS THE CALLER THE OWNER? FROM THE SERVER, NOT FROM THE SESSION.
+   *
+   * The header above says owner gating is single-sourced at the tRPC layer, and that is
+   * still true of the GATE — but it is a ROLE gate, not an ownership one:
+   * `getMyListingForApp` refuses on `resolveListingRole(...) === null`, which admits an
+   * ACCEPTED COLLABORATOR. So this component is reachable by a seated editor, and the
+   * unpublished frame below used to address all of them as the person who unpublished the
+   * app and point them at an owner-only Publishing tab.
+   *
+   * 🔴 DELIBERATELY NOT `currentUser` — there is no session field that answers "are you the
+   * owner OF THIS LISTING", and `isModerator` is a different question entirely (see
+   * `modDirectLiveEdit`). The role is resolved by the proc's own access check and returned
+   * on the read, so every host of this editor is correct by default — the same reason
+   * `isModerator` is read from the hook rather than threaded as a prop.
+   *
+   * Absent (an older cached payload) reads as NOT-owner, which is the safe direction for
+   * COPY: the non-owner wording is true for an owner too, while the owner wording asserts
+   * things an editor would find false.
+   */
+  const isOwner = listing?.role === 'owner';
 
   // 🔴 THE ONE DISCRIMINATOR for "this edit goes live immediately" — see the header.
   // `!shadowId` is what makes it correct: it is exactly `editTargetId === appListingId`
@@ -260,11 +289,33 @@ export function ListingMediaEditor({ appBlockId }: { appBlockId: string }) {
           title="This app is unpublished"
           data-testid="apps-listing-media-unpublished-notice"
         >
+          {/* 🔴 ROLE-AWARE, AND BOTH HALVES OF THE OWNER SENTENCE WERE FALSE FOR AN EDITOR.
+              This editor is NOT owner-only — `getMyListingForApp` gates on
+              `resolveListingRole(...) === null`, which admits an accepted collaborator, and
+              `editorTabsFor` hands an editor `['details','media','history']` in exactly this
+              repair state. So a seated editor read "you unpublished it" (they did not) and
+              "republish it from the Publishing tab" (`publishing` is owner-only in
+              `editorTabsFor` — a tab they cannot see). The write semantics below are the
+              same for both roles; only the attribution and the way out differ. */}
           <Text size="sm">
-            This app is <b>not visible in the store</b> — you unpublished it. Image changes
-            here are <b>not</b> staged as a revision and need no re-approval: they save to the
-            listing straight away and appear when you <b>republish</b> it from the Publishing
-            tab. Media can be added while it is still scanning; it only appears once its scan
+            This app is <b>not visible in the store</b> —{' '}
+            {isOwner ? (
+              <>you unpublished it</>
+            ) : (
+              <>its owner unpublished it</>
+            )}
+            . Image changes here are <b>not</b> staged as a revision and need no
+            re-approval: they save to the listing straight away and appear when{' '}
+            {isOwner ? (
+              <>
+                you <b>republish</b> it from the Publishing tab
+              </>
+            ) : (
+              <>
+                the owner <b>republishes</b> it
+              </>
+            )}
+            . Media can be added while it is still scanning; it only appears once its scan
             finishes cleanly.
           </Text>
         </Alert>
