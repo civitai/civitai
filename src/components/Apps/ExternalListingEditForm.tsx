@@ -45,6 +45,8 @@ import {
   hasScalarChanges,
   isApprovedEdit,
   listingEditHeaderCopy,
+  materialEditBlockedReason,
+  scopeDisclosureLockedForEdit,
   type ListingEditContext,
 } from '~/components/Apps/offsiteEditConfig';
 import type { MarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
@@ -95,6 +97,23 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
   const showUrlStep = !isOnsiteEdit(edit);
   // 🔴 The HEADER reads the SAME flag the wizard shape does — see `listingEditHeaderCopy`.
   const headerCopy = listingEditHeaderCopy(showUrlStep);
+
+  /**
+   * 🔴 THE REPAIR-STATE LOCK. Non-null while this listing is UNPUBLISHED, in which case the
+   * server refuses any MATERIAL change with `MATERIAL_CHANGE_BLOCKED` — see
+   * `materialEditBlockedReason` and `updateListing`'s `removed` branch. Every input this
+   * gates is one the author could otherwise fill and never save.
+   *
+   * 🔴 THE VALUE IS THE GUARD *AND* THE COPY, deliberately one expression rather than a
+   * boolean beside a string. A separate `materialBlocked` flag is how the inputs get
+   * disabled with no explanation on screen, or explained while still enabled.
+   */
+  const materialBlockedReason = materialEditBlockedReason(edit);
+  const materialBlocked = materialBlockedReason != null;
+  // See `scopeDisclosureLockedForEdit`: a DRIFTED scope mask makes every save material, so
+  // the justification boxes are unsaveable too and must not stay live. Not implied by
+  // `materialBlocked` — while the masks agree, a justification edit is trivial and saves.
+  const scopeLocked = scopeDisclosureLockedForEdit(edit);
   const STEP_DETAILS = showUrlStep ? 1 : 0;
   const STEP_ASSETS = showUrlStep ? 2 : 1;
 
@@ -301,6 +320,29 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
         </Alert>
       )}
 
+      {/* 🔴 THE REPAIR-STATE NOTICE. Rendered ABOVE the stepper so the reason is on screen
+          before the author reaches a locked field — a disabled input with its explanation
+          somewhere else reads as a bug. The copy is the server's refusal, restated ahead of
+          time instead of after a failed Save, and it names the way out (republish, then
+          edit). `scopeLocked` appends the one extra sentence its own case needs. */}
+      {materialBlockedReason && (
+        <Alert
+          color="yellow"
+          variant="light"
+          icon={<IconLock size={16} />}
+          title="This app is unpublished"
+          data-testid="apps-offsite-edit-material-locked-notice"
+        >
+          <Text size="sm">
+            {materialBlockedReason}
+            {scopeLocked
+              ? ' Your app’s OAuth scopes have also changed since it was last reviewed, so' +
+                ' the scope justifications are locked until you republish.'
+              : ''}
+          </Text>
+        </Alert>
+      )}
+
       {edit.hasPendingRevision && (
         <Alert
           color="orange"
@@ -352,6 +394,12 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
                 maxLength={OFFSITE_SUBMIT_LIMITS.urlMax}
                 data-autofocus
                 data-testid="apps-offsite-edit-url"
+                // 🔴 MATERIAL. See `materialBlockedReason`. The `data-material-field` tag is
+                // what lets the ledger test walk `MATERIAL_LISTING_PATCH_FIELDS` and assert
+                // an input exists AND is disabled for every member — so a field added to
+                // that set with no input here turns the ledger red.
+                data-material-field="externalUrl"
+                disabled={materialBlocked}
               />
               {values.externalUrl.trim().length === 0 && (
                 <Alert
@@ -437,6 +485,9 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
               maxLength={OFFSITE_SUBMIT_LIMITS.nameMax}
               required
               data-testid="apps-offsite-edit-name"
+              // 🔴 MATERIAL — the listing's identity. See `materialBlockedReason`.
+              data-material-field="name"
+              disabled={materialBlocked}
             />
 
             <TextInput
@@ -484,6 +535,10 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
               error={errors.sourceRepoUrl}
               maxLength={OFFSITE_SUBMIT_LIMITS.sourceRepoUrlMax}
               data-testid="apps-offsite-edit-source-repo"
+              // 🔴 MATERIAL — a public outbound link a moderator approved. See
+              // `materialBlockedReason`.
+              data-material-field="sourceRepoUrl"
+              disabled={materialBlocked}
             />
 
             <Group grow align="flex-start">
@@ -509,6 +564,11 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
                 error={errors.contentRating}
                 allowDeselect={false}
                 data-testid="apps-offsite-edit-rating"
+                // 🔴 MATERIAL, and the sharpest of the four: `contentRating` drives the
+                // public SFW filter (`content_rating NOT IN ('r','x')`), so an in-place
+                // change with no re-review would surface a mature listing to SFW users.
+                data-material-field="contentRating"
+                disabled={materialBlocked}
               />
             </Group>
 
@@ -520,7 +580,12 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
                 requestedScopes={values.requestedScopes}
                 justifications={values.scopeJustifications}
                 onJustificationChange={handleJustificationChange}
-                disabled={saving}
+                // 🔴 `scopeLocked`, NOT `materialBlocked` — see `scopeDisclosureLockedForEdit`.
+                // A justification edit is trivial and saves fine on an unpublished listing
+                // while the scope masks agree; it is only unsaveable once they have DRIFTED,
+                // because the drifted mask then rides along on every patch and the server
+                // counts it as material.
+                disabled={saving || scopeLocked}
                 forceShowErrors={showScopeErrors}
                 intro="These are your OAuth app's allowed scopes — they're derived from the app and can't be changed here. Editing a justification (or a change to your app's scopes) is sent for review on a live listing."
               />

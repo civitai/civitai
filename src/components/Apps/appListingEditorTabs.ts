@@ -1,3 +1,4 @@
+import { OWNER_UNPUBLISH_ACTION } from '~/components/Apps/offsiteOwnerControls';
 import type {
   AppRole,
   ListingCapability,
@@ -82,7 +83,57 @@ export type EditorTabContext = {
    * publishing/history pair; see {@link editorTabsFor}.
    */
   status: string;
+  /**
+   * The listing's most-recent STATUS-CHANGING moderation action, NORMALISED
+   * (`'owner-unpublish' | 'other' | null`) — straight off
+   * `AppListingAuthoringContext.lastModerationAction`.
+   *
+   * 🔴 `status` ALONE CANNOT ANSWER "MAY THIS BE EDITED?" ON `removed`, and this is the
+   * bit that can. `app_listings.status = 'removed'` is written by BOTH an owner
+   * self-unpublish and a moderator takedown; only the last status-changing event
+   * separates them. See {@link isOwnerUnpublishedTabContext}.
+   *
+   * 🔴 OPTIONAL, AND ABSENT MEANS "NOT PROVEN TO BE THE OWNER'S OWN", i.e. today's
+   * narrowed behaviour. Same fail-closed direction as the server predicate
+   * (`app-listing-owner-unpublish`): a caller that has not wired the field through gets
+   * the narrow set, never the wide one.
+   */
+  lastModerationAction?: string | null;
 };
+
+/**
+ * Is this listing in the OWNER-REPAIR state — `removed`, because the owner unpublished it
+ * themselves?
+ *
+ * 🔴 THIS IS THE CLIENT MIRROR OF THE SERVER PREDICATE, NOT A SECOND OPINION.
+ * `isOwnerUnpublishedListing` in `app-listing-owner-unpublish` is authoritative and is what
+ * `getMyListingForEdit` / `updateListing` / `getMyListingForApp` actually branch on; this
+ * decides only whether the caller is OFFERED the surface those procs will accept. The two
+ * read the same normalised fact, and the action name comes from
+ * {@link OWNER_UNPUBLISH_ACTION} — the client literal `app-listing-owner-unpublish.test.ts`
+ * pins against the server's `OWNER_UNPUBLISH_EVENT` — so they cannot drift into different
+ * spellings.
+ *
+ * 🔴 BOTH CLAUSES ARE LOAD-BEARING AND NEITHER IS REDUNDANT.
+ *   - Without the STATUS clause a stale `owner-unpublish` on a listing that has since been
+ *     relisted (`approved`) or reset to `pending` would report `true`. That is harmless for
+ *     the tab set (those statuses are authorable anyway) but this predicate is exported, and
+ *     the next caller's default must not be "an old event still speaks for the row".
+ *     `getAppListingAuthoringContext` additionally refuses to even READ the event on a
+ *     non-`removed` listing, so the two agree.
+ *   - Without the ACTION clause every moderator takedown re-opens the content tabs — the
+ *     exact hazard the narrowing exists to prevent.
+ *
+ * 🔴 FAIL-CLOSED ON ABSENCE. `null` (no recorded event) and `'other'` (a moderator verb,
+ * collapsed by `normalizeLastModerationAction` before it leaves the server) are both
+ * `false`. A listing whose events were pruned, or that predates the taxonomy, is treated as
+ * a moderator removal — the safe direction, and a REAL branch rather than a degenerate one.
+ */
+export function isOwnerUnpublishedTabContext(
+  ctx: Pick<EditorTabContext, 'status' | 'lastModerationAction'>
+): boolean {
+  return ctx.status === 'removed' && ctx.lastModerationAction === OWNER_UNPUBLISH_ACTION;
+}
 
 /**
  * The tabs this caller may actually open, in display order.
@@ -106,6 +157,30 @@ export type EditorTabContext = {
  *   test in `appListingEditorTabs.test.ts`; the `collaborators` one names the Forgejo
  *   consequence.
  *
+ * 🔴 SECOND, THE OWNER-REPAIR BRANCH, AND IT IS NARROWER THAN THE FIRST ON PURPOSE.
+ * `status='removed'` is written by BOTH an owner self-unpublish and a moderator takedown,
+ * and civitai/civitai#4413 made the SERVER tell them apart: `getMyListingForEdit`,
+ * `updateListing` and `getMyListingForApp` now ACCEPT an owner-unpublished listing (trivial
+ * scalars in place, media edited directly) and still refuse a moderator takedown. Until this
+ * change nothing in the UI could reach that: `editorTabsFor` gated `details` and `media` on
+ * `isAuthorableListingStatus`, which excludes `removed`, so the owner had a repair loop with
+ * no repair step — a server capability with zero callers, which is how #4401's
+ * `messageAppOwner` shipped dark.
+ *
+ *   🔴 SO THE FIX BRANCHES ON THE LAST ACTION, IT DOES NOT WIDEN
+ *   `AUTHORABLE_LISTING_STATUSES`. That set has THREE consumers, and the other one is
+ *   `assertSeatGrantable` in `app-collaborator.service` — the server gate on
+ *   `inviteCollaborator` / `respondToInvite`. Adding `removed` to it would unlock
+ *   collaborator invites on MODERATOR-DELISTED listings, where accepting still mints
+ *   Forgejo `write` on the app's repo: exactly the hazard the first branch exists to
+ *   close, re-opened from the other end and server-side rather than merely in the UI.
+ *
+ *   🔴 AND THE REPAIR BRANCH GRANTS `details` + `media` ONLY. `collaborators` stays
+ *   withheld (its server gate refuses this status, so the tab would 403 — and it is the
+ *   Forgejo surface). `manifest` and `earnings` stay withheld too: nothing in this change
+ *   opens a version-submit or an earnings read on an unpublished app, and withholding a
+ *   tab is always safe — a tab set is a UI narrowing, never a gate.
+ *
  * 🔴 AND THE TAB SET IS A UI NARROWING, NEVER A GATE. Measured on this tree:
  * `appCollaborators.list`, `inviteCollaborator` and `respondToInvite` did NOT check
  * listing status at all — only `getAppListingAuthoringContext`'s refusal stood between a
@@ -114,14 +189,24 @@ export type EditorTabContext = {
  * THAT is the enforcement point. This function only stops the caller being offered a
  * surface the server is going to refuse.
  *
- *   - `details`       — every AUTHORABLE status. `appListings.getMyListingForEdit` /
+ *   - `details`       — every AUTHORABLE status, PLUS the owner-repair state. `getMyListingForEdit` /
  *                       `updateListing` are
  *                       LISTING-keyed and seat-aware (both route through
  *                       `resolveListingAccess` via `loadOwnedEditableListing`), and
  *                       `capabilitiesForKind(...).listingContent` is `true` for BOTH
  *                       kinds. There is no shape in which this tab is unreachable.
+ *                       🔴 On the repair state the panel is NOT fully editable: the server
+ *                       refuses a MATERIAL scalar change with `MATERIAL_CHANGE_BLOCKED`, so
+ *                       `ExternalListingEditForm` renders those four inputs disabled with
+ *                       the refusal's reason. Offering the tab and NOT doing that is an
+ *                       input the author can fill and can never save.
  *
- *   - `media`         — BOTH `capabilities.listingMedia` AND a backing block.
+ *   - `media`         — BOTH `capabilities.listingMedia` AND a backing block; on the
+ *                       AUTHORABLE statuses and on the repair state.
+ *                       🔴 The repair arm MIRRORS `listingMediaEditBlockedReason`, which
+ *                       returns `null` (editable) for an owner-unpublished listing and the
+ *                       moderator-takedown message otherwise. Offering this tab where that
+ *                       verdict is non-null would mount an editor over its own red alert.
  *                       🔴 The capability is the AUTHORITY here; the block check is the
  *                       renderability floor. That ordering used to be reversed — this arm
  *                       gated on block-presence ALONE, because `listingContent` was `true`
@@ -166,7 +251,9 @@ export type EditorTabContext = {
  * `appListingEditorTabs.test.ts` pins one case per direction, so dropping either clause
  * reddens exactly one of them.
  *
- *   - `collaborators` — every AUTHORABLE status, and NEVER on a non-authorable one. Seats
+ *   - `collaborators` — every AUTHORABLE status, and NEVER on a non-authorable one — the
+ *                       owner-repair state INCLUDED, which is why the repair branch is
+ *                       separate from `authorable` rather than folded into it. Seats
  *                       are listing-keyed, so both kinds have a roster, and
  *                       `appCollaborators.list` admits the OWNER **and** an ACCEPTED
  *                       editor. (Which CONTROLS render inside the panel is a separate,
@@ -191,9 +278,15 @@ export type EditorTabContext = {
 export function editorTabsFor(ctx: EditorTabContext): EditorTab[] {
   const tabs: EditorTab[] = [];
   // 🔴 THE SECURITY BRANCH. See the block above before touching it.
-  if (isAuthorableListingStatus(ctx.status)) {
+  const authorable = isAuthorableListingStatus(ctx.status);
+  // 🔴 THE REPAIR BRANCH — strictly narrower than `authorable`, and deliberately NOT a
+  // widening of `AUTHORABLE_LISTING_STATUSES`. See the block above.
+  const ownerRepair = isOwnerUnpublishedTabContext(ctx);
+  if (authorable || ownerRepair) {
     tabs.push('details');
     if (ctx.capabilities.listingMedia === true && ctx.appBlockId != null) tabs.push('media');
+  }
+  if (authorable) {
     if (ctx.capabilities.submitVersion === true && ctx.appBlockId != null) tabs.push('manifest');
     if (ctx.capabilities.earnings === true && ctx.appBlockId != null) tabs.push('earnings');
     tabs.push('collaborators');

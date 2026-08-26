@@ -7,8 +7,12 @@ import {
   editContextToForm,
   hasScalarChanges,
   isApprovedEdit,
+  isUnpublishedEdit,
+  materialEditBlockedReason,
+  scopeDisclosureLockedForEdit,
   type ListingEditContext,
 } from '~/components/Apps/offsiteEditConfig';
+import { MATERIAL_LISTING_PATCH_FIELDS } from '~/shared/constants/app-capabilities.constants';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 /**
@@ -366,5 +370,162 @@ describe('sourceRepoUrl — prefill and the minimal patch', () => {
     const ctx = makeCtx({ scalars: { ...makeCtx().scalars, sourceRepoUrl: REPO } });
     const patch = buildScalarPatch(ctx, { ...editContextToForm(ctx), sourceRepoUrl: `${REPO}.git` });
     expect(patch.sourceRepoUrl).toBe(`${REPO}.git`);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * THE REPAIR STATE — an OWNER-UNPUBLISHED listing's locked material fields
+ * ------------------------------------------------------------------ */
+
+/**
+ * 🔴 THE CLIENT HALF OF `MATERIAL_CHANGE_BLOCKED`.
+ *
+ * `updateListing`'s `removed` branch refuses any change to a field in
+ * `MATERIAL_LISTING_PATCH_FIELDS` — the value a moderator approved cannot change while the
+ * listing is down, because an unpublished listing has no route back into review. Until the
+ * editor tabs opened on this state that refusal was unreachable; with the tabs open and
+ * nothing else done, it is four inputs the author can fill and can never save.
+ *
+ * These pin the PURE verdict. The rendered consequence (which inputs are actually disabled,
+ * over the whole material set) is `ExternalSubmitForm.ownerUnpublished.browser.test.tsx`.
+ */
+describe('materialEditBlockedReason', () => {
+  it('🔴 is non-null ONLY on an unpublished listing', () => {
+    expect(materialEditBlockedReason(makeCtx({ status: 'removed' }))).not.toBeNull();
+    // Every status the edit form can otherwise be reached on. `rejected` is included even
+    // though `getMyListingForEdit` refuses it: this predicate must not invent a lock for a
+    // state whose message would be wrong ("republish it" is nonsense for a rejected app).
+    for (const status of ['draft', 'pending', 'approved', 'rejected'] as const) {
+      expect(materialEditBlockedReason(makeCtx({ status })), status).toBeNull();
+    }
+  });
+
+  it('🔴 names the way OUT, not just the refusal', () => {
+    // An author told only "no" has nowhere to go. The server's own message names republish →
+    // edit → staged for review, and this is that message stated BEFORE the failed save
+    // rather than after it.
+    const reason = materialEditBlockedReason(makeCtx({ status: 'removed' }))!;
+    expect(reason).toMatch(/republish/i);
+    expect(reason).toMatch(/moderator review/i);
+    // And what IS still editable, so the tab is not read as entirely dead.
+    expect(reason).toMatch(/tagline, description and category/i);
+  });
+
+  it('🔴 is KIND-AWARE — an on-site listing is not told its "App URL" is locked', () => {
+    // An on-site listing has no external URL and is rendered no step that could change one
+    // (`isOnsiteEdit` / `showUrlStep`), so naming it would describe a field that is not on
+    // screen — the exact defect `listingEditHeaderCopy` exists to fix, one alert further on.
+    const offsite = materialEditBlockedReason(makeCtx({ status: 'removed' }))!;
+    const onsite = materialEditBlockedReason(makeCtx({ status: 'removed', kind: 'onsite' }))!;
+    expect(offsite).toMatch(/App URL/);
+    expect(onsite).not.toMatch(/App URL/);
+    // Both still name the three fields that exist for either kind, so the on-site branch is
+    // a narrowing rather than a different (or empty) sentence.
+    for (const copy of [offsite, onsite]) {
+      expect(copy).toMatch(/name/i);
+      expect(copy).toMatch(/source repository/i);
+      expect(copy).toMatch(/content rating/i);
+    }
+  });
+
+  it('🔴 the locked set is exactly the SERVER’s material set — one list, not two', () => {
+    // The ledger. `MATERIAL_LISTING_PATCH_FIELDS` is what `offsite-listing.service` refuses
+    // on, and this asserts the value space the copy above is written against. A field added
+    // to that constant with no counterpart here (or in the form) is what this catches.
+    expect([...MATERIAL_LISTING_PATCH_FIELDS]).toEqual([
+      'externalUrl',
+      'name',
+      'contentRating',
+      'sourceRepoUrl',
+    ]);
+  });
+});
+
+describe('isUnpublishedEdit', () => {
+  it('is true for `removed` and false for every other status', () => {
+    expect(isUnpublishedEdit({ status: 'removed' })).toBe(true);
+    for (const status of ['draft', 'pending', 'approved', 'rejected', 'quarantined']) {
+      expect(isUnpublishedEdit({ status }), status).toBe(false);
+    }
+  });
+});
+
+/**
+ * 🔴 THE SCOPE-DRIFT ARM, which is NOT implied by the material lock.
+ *
+ * `buildScalarPatch` sends `requestedScopes` when the justifications changed OR when the
+ * connect client's CURRENT `allowedScopes` has drifted from the stored snapshot, and
+ * `materialPatchChanges` counts that key as material only when the two masks DIFFER. So
+ * while they agree a justification edit is trivial and saves fine on an unpublished
+ * listing; once they have drifted, the drifted mask rides along on EVERY patch and even a
+ * tagline-only save is refused. Disabling the boxes in the first case would remove a
+ * legitimate edit; leaving them live in the second is the fillable-but-unsaveable defect
+ * one field further out.
+ */
+describe('scopeDisclosureLockedForEdit', () => {
+  const connect = {
+    connectClientId: 'oauth-1',
+    connectAllowedScopes: 12,
+    connectRequestedScopes: 12,
+  };
+
+  it('🔴 is FALSE while the masks agree — a justification edit is trivial and saves', () => {
+    expect(scopeDisclosureLockedForEdit(makeCtx({ status: 'removed', ...connect }))).toBe(false);
+  });
+
+  it('🔴 is TRUE once the mask has DRIFTED on an unpublished listing', () => {
+    expect(
+      scopeDisclosureLockedForEdit(
+        makeCtx({ status: 'removed', ...connect, connectAllowedScopes: 28 })
+      )
+    ).toBe(true);
+  });
+
+  it('🔴 drift alone is NOT enough — a live listing stages the change instead of refusing it', () => {
+    // On `approved` a material change routes to a SHADOW revision and goes to review; it is
+    // only the `removed` branch that has nowhere to route it. Same drift, opposite answer,
+    // so the status clause is individually killable.
+    for (const status of ['draft', 'pending', 'approved'] as const) {
+      expect(
+        scopeDisclosureLockedForEdit(
+          makeCtx({ status, ...connect, connectAllowedScopes: 28 })
+        ),
+        status
+      ).toBe(false);
+    }
+  });
+
+  it('🔴 no connect client ⇒ no scope section ⇒ never locked, even with the masks apart', () => {
+    // A non-connect listing renders no disclosure at all, so a `true` here would be a lock
+    // on nothing — and `buildScalarPatch` emits no scope keys for it either.
+    expect(
+      scopeDisclosureLockedForEdit(
+        makeCtx({
+          status: 'removed',
+          connectClientId: null,
+          connectAllowedScopes: 28,
+          connectRequestedScopes: 12,
+        })
+      )
+    ).toBe(false);
+  });
+
+  it('🔴 absent masks read as 0 on BOTH sides, exactly as the server’s `?? 0` does', () => {
+    // A legacy context with neither field is NOT drifted (0 vs 0). One side present and
+    // non-zero IS. Asserting both directions is what stops an `undefined !== undefined`
+    // style mutant reading every legacy row as drifted and locking a box that saves fine.
+    expect(
+      scopeDisclosureLockedForEdit(makeCtx({ status: 'removed', connectClientId: 'oauth-1' }))
+    ).toBe(false);
+    expect(
+      scopeDisclosureLockedForEdit(
+        makeCtx({ status: 'removed', connectClientId: 'oauth-1', connectAllowedScopes: 4 })
+      )
+    ).toBe(true);
+    expect(
+      scopeDisclosureLockedForEdit(
+        makeCtx({ status: 'removed', connectClientId: 'oauth-1', connectRequestedScopes: 4 })
+      )
+    ).toBe(true);
   });
 });

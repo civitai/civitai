@@ -29,6 +29,7 @@ import {
   type PersistListingAssetImageInput,
   type SubmitExternalListingInput,
 } from '~/server/schema/blocks/offsite-listing.schema';
+import { MATERIAL_LISTING_PATCH_FIELDS } from '~/shared/constants/app-capabilities.constants';
 import { isAppBlockOauthClientId } from '~/shared/constants/block-scope.constants';
 import {
   connectScopesSubsetOfCeiling,
@@ -747,8 +748,16 @@ async function closeTerminalListing(
  * rather than going live silently. Like `externalUrl` it compares against the
  * validator's CANONICAL form, so re-saving `…/a/b` as `…/a/b.git` is correctly seen
  * as no change and does not cost a pointless mod re-review.
+ *
+ * 🔴 THE LIST ITSELF NOW LIVES IN `shared/`, and this is an ALIAS of it — not a copy. The
+ * EDIT FORM has to disable exactly these inputs while a listing is unpublished (the
+ * `removed` branch below refuses them with `MATERIAL_CHANGE_BLOCKED`), and it cannot import
+ * this module: `offsite-listing.service` top-level-imports `~/server/db/client`, so reading
+ * the list from here would drag Prisma into the browser bundle. A second literal in the
+ * component is how the form starts offering a field the server refuses. See
+ * {@link MATERIAL_LISTING_PATCH_FIELDS}.
  */
-const MATERIAL_PATCH_FIELDS = ['externalUrl', 'name', 'contentRating', 'sourceRepoUrl'] as const;
+const MATERIAL_PATCH_FIELDS = MATERIAL_LISTING_PATCH_FIELDS;
 
 /**
  * Validate + normalize an update patch (shared by the in-place + shadow paths).

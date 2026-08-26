@@ -185,6 +185,40 @@ export function isPublishableListingStatus(status: string): boolean {
 }
 
 /**
+ * The MATERIAL scalar fields of a listing patch — the ones whose value a MODERATOR
+ * approved, so a change to any of them cannot go live without re-review.
+ *
+ * 🔴 IT LIVES HERE, IN `shared/`, FOR THE SAME STRUCTURAL REASON THE CAPABILITY TABLE
+ * ABOVE DOES. The definition was a module-private literal in `offsite-listing.service.ts`,
+ * which top-level-imports `~/server/db/client` — so the EDIT FORM could not read it without
+ * dragging Prisma into the browser bundle, and therefore could not know which of its inputs
+ * the server is going to refuse. It re-typed nothing and simply rendered every field as
+ * editable; on an owner-unpublished listing that is four inputs an author can fill and can
+ * never save (`MATERIAL_CHANGE_BLOCKED`). `offsite-listing.service.ts` now imports this,
+ * so there is still exactly ONE definition and the form's disabled set cannot drift from
+ * the server's refusal set.
+ *
+ * 🔴 ADDING A FIELD HERE IS A UI CHANGE AS WELL AS A SERVER ONE. `ExternalListingEditForm`
+ * tags each material input with `data-material-field="<name>"` and
+ * `ExternalSubmitForm.ownerUnpublished.browser.test.tsx` iterates THIS list asserting every
+ * member has such an input and that it is disabled in the repair state — so a new material
+ * field with no disabled input turns that ledger red rather than shipping an unsaveable box.
+ *
+ * NOT the whole material surface: a change to the DISCLOSED OAuth scope mask
+ * (`requestedScopes`) is material too, but it is not an author-typed field — it is derived
+ * from the connect client's current `allowedScopes` — so it has no input to disable and is
+ * handled separately at both ends. See `materialPatchChanges`.
+ */
+export const MATERIAL_LISTING_PATCH_FIELDS = [
+  'externalUrl',
+  'name',
+  'contentRating',
+  'sourceRepoUrl',
+] as const;
+
+export type MaterialListingPatchField = (typeof MATERIAL_LISTING_PATCH_FIELDS)[number];
+
+/**
  * Every listing status the canonical authoring ROUTE may open on — in FULL authoring mode
  * or in the narrowed publishing/history mode.
  *

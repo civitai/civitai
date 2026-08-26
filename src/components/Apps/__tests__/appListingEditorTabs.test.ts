@@ -5,10 +5,16 @@ import {
   DEFAULT_EDITOR_TAB,
   EDITOR_TAB_LABELS,
   editorTabsFor,
+  isOwnerUnpublishedTabContext,
   listingEditHref,
   resolveEditorTab,
 } from '~/components/Apps/appListingEditorTabs';
-import { capabilitiesForKind } from '~/shared/constants/app-capabilities.constants';
+import { OWNER_UNPUBLISH_ACTION } from '~/components/Apps/offsiteOwnerControls';
+import {
+  AUTHORABLE_LISTING_STATUSES,
+  capabilitiesForKind,
+  isAuthorableListingStatus,
+} from '~/shared/constants/app-capabilities.constants';
 
 /**
  * The canonical authoring page's TAB SET, pinned in BOTH directions.
@@ -391,5 +397,257 @@ describe('the tab vocabulary is complete', () => {
       expect(EDITOR_TAB_LABELS[tab]).toBeTruthy();
     }
     expect(ALL_EDITOR_TABS).toContain(DEFAULT_EDITOR_TAB);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * THE OWNER-REPAIR BRANCH — `removed`, but the OWNER took it down
+ * ------------------------------------------------------------------ */
+
+/**
+ * 🔴 `removed` IS TWO STATES WEARING ONE STATUS STRING, AND THIS IS THE HALF THE SERVER
+ * ALREADY ACCEPTS.
+ *
+ * civitai/civitai#4413 taught `getMyListingForEdit`, `updateListing` and
+ * `getMyListingForApp` to distinguish an owner self-unpublish from a moderator takedown via
+ * the listing's most-recent STATUS-CHANGING moderation event, and to permit repair edits on
+ * the former. Nothing in the UI could reach that: this function gated `details` and `media`
+ * on `isAuthorableListingStatus`, which excludes `removed`. So the cases below are the
+ * REACHABILITY half of that change.
+ *
+ * 🔴 EVERY CASE IS PINNED IN BOTH DIRECTIONS, and the pairs are chosen so each clause of
+ * `isOwnerUnpublishedTabContext` is the SOLE cause of an answer somewhere:
+ *   - owner-unpublish vs `other`  kills the ACTION clause;
+ *   - `removed` vs `rejected`/`approved` carrying the SAME action kills the STATUS clause;
+ *   - `null` (no events) is the fail-closed arm, and it is a real branch, not a degenerate
+ *     one — a listing whose events were pruned must read as a moderator removal.
+ */
+describe('🔴 an OWNER-UNPUBLISHED listing regains Details + Media — and nothing else', () => {
+  const ownerUnpublished = {
+    kind: 'onsite',
+    appBlockId: 'ab_ou',
+    role: 'owner',
+    status: 'removed',
+    lastModerationAction: 'owner-unpublish',
+    capabilities: onsite,
+  } as const;
+
+  it('🔴 DETAILS is offered — `getMyListingForEdit` accepts this listing', () => {
+    // The proc's `removed` branch reads the last status-changing action on the PRIMARY and
+    // returns the prefill when it is `owner-unpublish`. Withholding the tab left that
+    // capability with no caller at all.
+    expect(editorTabsFor(ownerUnpublished)).toContain('details');
+  });
+
+  it('🔴 MEDIA is offered — `listingMediaEditBlockedReason` returns null for this listing', () => {
+    // Both other clauses of the media rule are satisfied in this fixture (`listingMedia` is
+    // true for on-site, `appBlockId` is non-null), so the repair branch is the sole cause of
+    // this presence and a mutant that drops it reddens exactly here.
+    expect(editorTabsFor(ownerUnpublished)).toContain('media');
+  });
+
+  it('🔴 NEVER Collaborators — the seat gate still refuses this status server-side', () => {
+    // `assertSeatGrantable` uses `isAuthorableListingStatus`, which does NOT include
+    // `removed`, so `inviteCollaborator` / `respondToInvite` refuse here. Offering the tab
+    // would offer a guaranteed refusal on the surface that mints Forgejo `write`. THIS is
+    // the case that fails if someone "simplifies" the fix by widening
+    // `AUTHORABLE_LISTING_STATUSES` instead of branching on the last action.
+    expect(editorTabsFor(ownerUnpublished)).not.toContain('collaborators');
+  });
+
+  it('🔴 NEVER Manifest or Earnings — nothing in this change opens either', () => {
+    // Same construction as the media case: `submitVersion` and `earnings` are both true for
+    // on-site and the block id is present, so their absence is the branch split alone.
+    expect(editorTabsFor(ownerUnpublished)).not.toContain('manifest');
+    expect(editorTabsFor(ownerUnpublished)).not.toContain('earnings');
+  });
+
+  it('🔴 the OWNER set is EXACTLY Details, Media, Publishing, History — in that order', () => {
+    // The aggregate AFTER the named cases, so a tab that creeps in later is caught even if
+    // no case above happens to name it. Order matters: the panel renders in this sequence.
+    expect(editorTabsFor(ownerUnpublished)).toEqual(['details', 'media', 'publishing', 'history']);
+  });
+
+  it('🔴 a MODERATOR takedown gets NONE of it — the ACTION clause, isolated', () => {
+    // Identical fixture, one field different. `other` is what
+    // `normalizeLastModerationAction` sends for every moderator verb, so this is the shape
+    // a real `delist` / `purge` produces on the wire.
+    expect(editorTabsFor({ ...ownerUnpublished, lastModerationAction: 'other' })).toEqual([
+      'publishing',
+      'history',
+    ]);
+  });
+
+  it('🔴 a RAW moderator verb is not the owner action either — `delist` / `purge` by name', () => {
+    // The wire value is normalised, but this function takes a plain string and is exported.
+    // A caller that has not normalised must not accidentally satisfy an `!= null` style
+    // check. Two pairwise-distinct real verbs, neither of which is a prefix or suffix of
+    // `owner-unpublish`.
+    for (const verb of ['delist', 'purge'] as const) {
+      expect(editorTabsFor({ ...ownerUnpublished, lastModerationAction: verb }), verb).toEqual([
+        'publishing',
+        'history',
+      ]);
+    }
+  });
+
+  it('🔴 NO moderation events at all fails CLOSED — `null` is a real branch', () => {
+    // A listing removed before the taxonomy carried these actions, or one whose events were
+    // pruned. Nothing proves the owner did it, so it is treated as a moderator removal.
+    // Asserted for BOTH absent spellings: the field omitted entirely (the shape a caller
+    // that has not been updated produces) and an explicit null (the shape the server sends).
+    expect(editorTabsFor({ ...ownerUnpublished, lastModerationAction: null })).toEqual([
+      'publishing',
+      'history',
+    ]);
+    const { lastModerationAction: _omitted, ...withoutTheField } = ownerUnpublished;
+    expect(editorTabsFor(withoutTheField)).toEqual(['publishing', 'history']);
+  });
+
+  it('🔴 the ACTION alone is not enough — a REJECTED listing carrying it stays narrowed', () => {
+    // The STATUS clause, isolated. `rejected` is non-authorable and is not the repair state,
+    // and `isPublishableListingStatus` withholds Publishing too, so the answer is History
+    // alone — a DIFFERENT answer from the removed cases above, which is what stops a mutant
+    // treating every non-authorable status alike.
+    expect(editorTabsFor({ ...ownerUnpublished, status: 'rejected' })).toEqual(['history']);
+  });
+
+  it('🔴 a STALE owner-unpublish on a RELISTED listing changes nothing — still the full set', () => {
+    // 🔴 INVARIANT GUARD, NOT REGRESSION COVERAGE: `approved` is authorable, so it took the
+    // wide branch before this change and takes it now. It is here because the repair branch
+    // is an OR — an implementation that reached the wide branch through the repair clause on
+    // an approved listing would also be wrong, just invisibly. (`getAppListingAuthoringContext`
+    // additionally refuses to READ the event on a non-`removed` listing, so this shape does
+    // not occur on the wire; the predicate must be right anyway.)
+    expect(editorTabsFor({ ...ownerUnpublished, status: 'approved' })).toEqual([
+      'details',
+      'media',
+      'manifest',
+      'earnings',
+      'collaborators',
+      'publishing',
+      'history',
+    ]);
+  });
+
+  it('🔴 an OFF-SITE owner-unpublished listing gets Details but NOT Media', () => {
+    // The media rule's other two clauses still apply in the repair branch — they were not
+    // bypassed. An off-site listing has no block to hand `<ListingMediaEditor>`, and
+    // `listingMedia` is false for the kind.
+    const tabs = editorTabsFor({
+      ...ownerUnpublished,
+      kind: 'offsite',
+      appBlockId: null,
+      capabilities: offsite,
+    });
+    expect(tabs).toEqual(['details', 'publishing', 'history']);
+    expect(tabs).not.toContain('media');
+  });
+
+  it('🔴 a seated EDITOR on an owner-unpublished listing repairs the copy but cannot republish', () => {
+    // `loadOwnedEditableListing` admits the owner OR an accepted collaborator, so the repair
+    // EDIT paths are seat-aware; `unpublishOwnListing` / `republishOwnListing` are
+    // owner-only. So the content tabs appear and Publishing does not — a third distinct
+    // answer, isolating the ROLE clause inside the repair branch.
+    expect(editorTabsFor({ ...ownerUnpublished, role: 'editor' })).toEqual([
+      'details',
+      'media',
+      'history',
+    ]);
+  });
+
+  it('🔴 `?tab=collaborators` on an owner-unpublished listing lands on Details, never Collaborators', () => {
+    // The deep-link arm. A DIFFERENT answer from the moderator-takedown case (which resolves
+    // to `publishing`, pinned above), so a mutant that hardcodes either literal fails in
+    // exactly one of the two.
+    const allowed = editorTabsFor(ownerUnpublished);
+    expect(resolveEditorTab('collaborators', allowed)).toBe('details');
+    expect(resolveEditorTab('collaborators', allowed)).not.toBe('collaborators');
+    expect(resolveEditorTab('manifest', allowed)).toBe('details');
+  });
+});
+
+describe('isOwnerUnpublishedTabContext — the predicate, both clauses', () => {
+  it('is true ONLY for `removed` + the owner action', () => {
+    expect(
+      isOwnerUnpublishedTabContext({ status: 'removed', lastModerationAction: 'owner-unpublish' })
+    ).toBe(true);
+  });
+
+  it('🔴 names the action with the shared client constant, so it cannot be re-spelled', () => {
+    // `OWNER_UNPUBLISH_ACTION` is the literal `app-listing-owner-unpublish.test.ts` pins
+    // against the SERVER's `OWNER_UNPUBLISH_EVENT`. Reading it here is what keeps the tab
+    // gate and the server predicate on one spelling.
+    expect(
+      isOwnerUnpublishedTabContext({
+        status: 'removed',
+        lastModerationAction: OWNER_UNPUBLISH_ACTION,
+      })
+    ).toBe(true);
+    expect(OWNER_UNPUBLISH_ACTION).toBe('owner-unpublish');
+  });
+
+  it('🔴 is false for every other (status, action) combination that matters', () => {
+    // Pairwise-distinct statuses and actions, so no case can pass by accident of two
+    // fixture values colliding.
+    const cases: Array<[string, string | null | undefined]> = [
+      ['removed', 'other'],
+      ['removed', 'delist'],
+      ['removed', 'relist'],
+      ['removed', null],
+      ['removed', undefined],
+      ['removed', ''],
+      ['rejected', 'owner-unpublish'],
+      ['draft', 'owner-unpublish'],
+      ['pending', 'owner-unpublish'],
+      ['approved', 'owner-unpublish'],
+      ['quarantined', 'owner-unpublish'],
+    ];
+    for (const [status, lastModerationAction] of cases) {
+      expect(
+        isOwnerUnpublishedTabContext({ status, lastModerationAction }),
+        `${status}/${String(lastModerationAction)}`
+      ).toBe(false);
+    }
+  });
+});
+
+/**
+ * 🔴 THE ROAD NOT TAKEN, PINNED: `AUTHORABLE_LISTING_STATUSES` MUST NOT GROW.
+ *
+ * The one-line "fix" for the repair state is to add `removed` to that set — and it works,
+ * for the tabs. It also silently changes a SERVER gate: `assertSeatGrantable` in
+ * `app-collaborator.service` is its other consumer, so `inviteCollaborator` and
+ * `respondToInvite` would start ADMITTING moderator-delisted listings, where accepting a
+ * seat still mints Forgejo `write` on the app's repo. That is the exact hazard the narrowed
+ * tab set was introduced to close, re-opened from the other end and server-side, where a
+ * UI narrowing cannot help.
+ *
+ * 🔴 THIS IS AN INVARIANT GUARD, NOT REGRESSION COVERAGE. It pins a set the change
+ * deliberately did NOT touch, so it was green before this PR and is green after. It is here
+ * because the wrong fix is cheaper to type than the right one, and because the damage lands
+ * two modules away from anyone editing the tab set. The BEHAVIOURAL half of the same
+ * property — that the collaborator procs still refuse `removed` — is
+ * `app-collaborator.seat-grant-status.test.ts`; a set assertion alone would type-check past
+ * a consumer that stopped reading the set.
+ */
+describe('🔴 the shared AUTHORABLE set was not widened to make the repair state work', () => {
+  it('is exactly draft, pending, approved — `removed` is NOT in it', () => {
+    expect([...AUTHORABLE_LISTING_STATUSES]).toEqual(['draft', 'pending', 'approved']);
+    expect(isAuthorableListingStatus('removed')).toBe(false);
+    expect(isAuthorableListingStatus('rejected')).toBe(false);
+  });
+
+  it('and the repair branch is therefore STRICTLY narrower than the authorable one', () => {
+    // Stated as a property rather than as a fixture: no status can be both, so the two arms
+    // of the `authorable || ownerRepair` disjunction can never disagree about which tabs a
+    // single listing gets. A mutant that widens either one collapses this.
+    for (const status of ['draft', 'pending', 'approved', 'removed', 'rejected'] as const) {
+      const repair = isOwnerUnpublishedTabContext({
+        status,
+        lastModerationAction: OWNER_UNPUBLISH_ACTION,
+      });
+      expect(isAuthorableListingStatus(status) && repair, status).toBe(false);
+    }
   });
 });

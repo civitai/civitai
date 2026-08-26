@@ -91,6 +91,90 @@ export function isApprovedEdit(ctx: ListingEditContext): boolean {
 }
 
 /**
+ * True for an edit context whose live parent is UNPUBLISHED — the owner-repair state.
+ * PURE.
+ *
+ * 🔴 `status === 'removed'` IS SUFFICIENT *HERE*, AND ONLY BECAUSE OF WHERE THIS CONTEXT
+ * COMES FROM. `ListingEditContext` is `getMyListingForEdit`'s result, and that proc's
+ * `removed` branch reads the last STATUS-CHANGING moderation action on the PRIMARY and
+ * throws `FORBIDDEN` unless it is the owner's own `owner-unpublish`
+ * (`app-listing-owner-unpublish`). So a moderator takedown never produces a context at all
+ * — the form is not reached, `AppsListingDetailsEditor` renders its error alert instead.
+ * A `removed` context that EXISTS is therefore owner-unpublished by construction.
+ *
+ * 🔴 AND THE FAILURE DIRECTION IS SAFE IF THAT EVER STOPS BEING TRUE. Should a mod-removed
+ * listing somehow reach this form, this predicate still returns `true`, the material inputs
+ * are still disabled, and the author is still told the truth — the server would refuse
+ * every one of those edits anyway. The mistake this CANNOT make is enabling an input the
+ * server refuses, which is the whole point.
+ */
+export function isUnpublishedEdit(ctx: Pick<ListingEditContext, 'status'>): boolean {
+  return ctx.status === 'removed';
+}
+
+/**
+ * Why this listing's MATERIAL scalar fields cannot be edited right now, or `null` when they
+ * can. PURE.
+ *
+ * 🔴 THIS MIRRORS A REFUSAL THAT ALREADY EXISTS SERVER-SIDE; it does not invent a rule.
+ * `updateListing`'s `removed` branch throws `MATERIAL_CHANGE_BLOCKED` (→ `BAD_REQUEST`) for
+ * any change to a field in `MATERIAL_LISTING_PATCH_FIELDS`, and it does so AFTER the author
+ * has typed the change and pressed Save. Until the editor tabs opened on this state that
+ * was unreachable; opening them without this makes it four inputs an author can fill and
+ * can never save, which is strictly worse than not offering the field at all. The PREFILL
+ * being wider than the write is deliberate — an author must be able to READ their current
+ * name and URL — and that is a different thing from offering an EDIT.
+ *
+ * 🔴 THE COPY NAMES THE WAY OUT, because the server's message does and an author who is
+ * only told "no" has nowhere to go: republish, then edit, and the edit is staged for
+ * review.
+ *
+ * Kind-aware for the same reason the header is (`listingEditHeaderCopy`): an on-site
+ * listing has no App URL and is rendered no step that could change one, so naming it here
+ * would describe a field that is not on screen.
+ */
+export function materialEditBlockedReason(
+  ctx: Pick<ListingEditContext, 'status' | 'kind'>
+): string | null {
+  if (!isUnpublishedEdit(ctx)) return null;
+  const fields = isOnsiteEdit(ctx)
+    ? 'name, source repository and content rating'
+    : 'name, App URL, source repository and content rating';
+  return (
+    `This app is unpublished, so its ${fields} are locked. Changing any of them needs ` +
+    `moderator review, and an unpublished listing has no way to reach it. Republish the ` +
+    `app from the Publishing tab first, then edit those fields — the edit is staged for ` +
+    `review. Tagline, description and category can be edited now.`
+  );
+}
+
+/**
+ * Does the OAuth scope disclosure ALSO have to be locked in the repair state? PURE.
+ *
+ * 🔴 A JUSTIFICATION EDIT IS NORMALLY TRIVIAL, SO THIS IS NOT "LOCK IT WHEN UNPUBLISHED".
+ * `buildScalarPatch` emits `requestedScopes` when the justifications changed OR when the
+ * connect client's CURRENT `allowedScopes` has DRIFTED from the stored snapshot, and
+ * `materialPatchChanges` counts that key as material only when the two masks actually
+ * differ. So while they agree, a justification edit is trivial and saves fine here.
+ *
+ * 🔴 WHEN THEY HAVE DRIFTED, EVERY SAVE IS REFUSED — including a tagline-only one, because
+ * the drifted mask rides along on the patch. Leaving the justification boxes live in that
+ * state is the same defect as the material inputs, one field further out, so they are
+ * disabled and the reason says so. Detectable client-side because both masks are on the
+ * edit context; absent values read as `0` exactly as the server's `?? 0` does.
+ */
+export function scopeDisclosureLockedForEdit(
+  ctx: Pick<
+    ListingEditContext,
+    'status' | 'kind' | 'connectClientId' | 'connectAllowedScopes' | 'connectRequestedScopes'
+  >
+): boolean {
+  if (materialEditBlockedReason(ctx) == null) return false;
+  if (ctx.connectClientId == null) return false;
+  return (ctx.connectAllowedScopes ?? 0) !== (ctx.connectRequestedScopes ?? 0);
+}
+
+/**
  * Map the edit prefill payload → the wizard form values. `slug` is filled from the
  * parent (shown read-only in edit mode); `changelog` starts blank (an edit note is
  * optional). A null tagline/description becomes '' (the form's blank), and a

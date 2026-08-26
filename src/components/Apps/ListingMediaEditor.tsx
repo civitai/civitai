@@ -50,6 +50,14 @@ import { trpc } from '~/utils/trpc';
  *     measurement taken under different preconditions is the exact error that produced
  *     the first, wrong version of this gate. If you need the number, go count it.
  *
+ * 🔴 AND A THIRD FRAMING STATE, added when the editor tabs opened on an OWNER-UNPUBLISHED
+ * listing (civitai/civitai#4413 made the server accept it; nothing in the UI could reach
+ * it). Every notice above is gated on `isApproved`, so this editor mounted with NO frame at
+ * all for a listing that is currently DOWN — and whose write semantics are a third case
+ * again: no shadow, no re-approval, the write lands on the listing and becomes visible on
+ * republish. See `isOwnerUnpublished`, which reads the SERVER's `editBlockedReason` rather
+ * than taking a second view of `status === 'removed'`.
+ *
  * NOTE: the "Back to app" affordance lives on the OWNING page (so the tabbed /edit
  * page has a single back control), not here.
  */
@@ -89,6 +97,18 @@ export function ListingMediaEditor({ appBlockId }: { appBlockId: string }) {
   const shadowId = listing?.shadowId ?? null;
   const editBlockedReason = listing?.editBlockedReason ?? null;
   const isApproved = listing?.status === 'approved';
+  /**
+   * 🔴 THE OWNER-REPAIR STATE — `removed` AND the server said it is editable.
+   *
+   * `status === 'removed'` alone is ambiguous (an owner self-unpublish and a moderator
+   * takedown both write it), which is exactly why the second conjunct is the SERVER's own
+   * verdict rather than a second client opinion: `listingMediaEditBlockedReason` returns
+   * `null` for an owner-unpublished listing and the "removed by a moderator" message
+   * otherwise. So this frame appears on precisely the rows the server will accept an asset
+   * write for, and a mod takedown falls through to the red alert below with no framing at
+   * all — never both.
+   */
+  const isOwnerUnpublished = listing?.status === 'removed' && !editBlockedReason;
 
   // 🔴 THE ONE DISCRIMINATOR for "this edit goes live immediately" — see the header.
   // `!shadowId` is what makes it correct: it is exactly `editTargetId === appListingId`
@@ -221,6 +241,34 @@ export function ListingMediaEditor({ appBlockId }: { appBlockId: string }) {
             </Text>
           </Alert>
         ))}
+
+      {/* 🔴 THE REPAIR-STATE FRAME. Without it this editor mounted for an owner-unpublished
+          listing with NO notice at all: the notice above is gated on `isApproved`, which is
+          false here, so the author saw a plain image editor for an app that is currently
+          DOWN — and, worse, one whose writes behave differently from the live case they
+          have seen before. Both facts are stated: the app is not visible, and (unlike an
+          approved listing) these edits are NOT staged — they apply to the listing directly
+          and become visible on republish. That is accurate: `getMyListingForApp` resolves
+          no shadow for a non-approved listing, so `editTargetId` is the listing itself, and
+          `assertOwnerAssetEditable` refuses only an APPROVED top-level listing. It is also
+          why no "Submit for review" control renders below — there is no revision to submit. */}
+      {isOwnerUnpublished && !listingError && (
+        <Alert
+          icon={<IconAlertTriangle size={16} />}
+          color="yellow"
+          variant="light"
+          title="This app is unpublished"
+          data-testid="apps-listing-media-unpublished-notice"
+        >
+          <Text size="sm">
+            This app is <b>not visible in the store</b> — you unpublished it. Image changes
+            here are <b>not</b> staged as a revision and need no re-approval: they save to the
+            listing straight away and appear when you <b>republish</b> it from the Publishing
+            tab. Media can be added while it is still scanning; it only appears once its scan
+            finishes cleanly.
+          </Text>
+        </Alert>
+      )}
 
       {listing?.hasPendingRevision && (
         <Alert
