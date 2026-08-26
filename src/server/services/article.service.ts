@@ -1268,11 +1268,20 @@ export async function applyArticleContentChange({
   content,
   scanContent = true,
   context,
+  expectedContent,
 }: {
   id: number;
   userId: number;
   content: string;
   scanContent?: boolean;
+  /**
+   * Compare-and-set: the body this caller READ before splicing. The fan-out does load → splice →
+   * save with nothing held across it, so a creator saving in that window had their edit silently
+   * reverted by the replay — no error, and the save it clobbered had already returned success.
+   * Supplied, a mismatch writes nothing and returns false; the reference stays pending and the
+   * next pass re-reads. Omitted, the write is unconditional as before.
+   */
+  expectedContent?: string;
   /**
    * A caller that has ALREADY written this body passes its pre-write snapshot here. Delete
    * it from such a call site and the re-read below runs after that caller's own commit, so
@@ -1305,7 +1314,11 @@ export async function applyArticleContentChange({
     // Raw SQL because Prisma's @updatedAt fires on every client-side update(), and a blurb
     // re-materialization is not a user edit: it must not reorder the "Recently Updated"
     // feed or reopen the rating-dispute re-edit window keyed on `updatedAt > resolvedAt`.
-    await dbWrite.$executeRaw`UPDATE "Article" SET content = ${content} WHERE id = ${id}`;
+    const affected =
+      await dbWrite.$executeRaw`UPDATE "Article" SET content = ${content} WHERE id = ${id}${
+        expectedContent === undefined ? Prisma.empty : Prisma.sql` AND content = ${expectedContent}`
+      }`;
+    if (expectedContent !== undefined && !affected) return false;
   }
 
   await preventReplicationLag('article', id);
@@ -1406,6 +1419,8 @@ export async function applyArticleContentChange({
   await updateArticleImageScanStatus([id]).catch((e) =>
     handleLogError(e, 'article-update-recompute', { articleId: id })
   );
+
+  return true;
 }
 
 export const deleteArticleById = async ({

@@ -1144,6 +1144,12 @@ export type BlurbReference = {
   entityId: number;
   materializedHash: string;
   materializedAt: Timestamp;
+  /**
+   * Set when the blurb is edited or soft-deleted, cleared once the entity is rewritten. The
+   * fan-out selector filters on it because the cross-table hash inequality it replaced cannot be
+   * indexed — see the note in 20260825000000_add_blurbs.
+   */
+  pendingSince: Timestamp | null;
 };
 export type Bounty = {
   id: Generated<number>;

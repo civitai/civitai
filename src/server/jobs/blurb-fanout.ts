@@ -22,7 +22,8 @@ export const blurbFanoutJob = createJob(
       includeUnsupportedBacklog: new Date().getMinutes() % 30 === 0,
     });
 
-    const batchTotal = counts.rewritten + counts.skipped + counts.gone + counts.failed;
+    const batchTotal =
+      counts.rewritten + counts.skipped + counts.gone + counts.failed + counts.conflict;
     // Batch-capacity signal only: whether this run filled its LIMIT. unsupportedBacklog is
     // a table-wide count with no relation to BATCH_LIMIT, so it must never be summed in here
     // — a batch of 0 real rows behind a 600-row unsupported backlog is not a full batch.

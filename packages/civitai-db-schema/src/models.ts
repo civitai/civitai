@@ -5435,6 +5435,7 @@ export interface BlurbReference {
   entityId: number;
   materializedHash: string;
   materializedAt: Date;
+  pendingSince: Date | null;
 }
 
 type JsonValue = string | number | boolean | { [key in string]?: JsonValue } | Array<JsonValue> | null;

@@ -574,9 +574,18 @@ export const upsertBounty = async ({
 export async function applyBountyContentChange({
   id,
   description,
+  expectedDescription,
 }: {
   id: number;
   description: string;
+  /**
+   * Compare-and-set: the body this caller READ before splicing. The fan-out does load → splice →
+   * save with nothing held across it, so a creator saving in that window had their edit silently
+   * reverted by the replay — no error, and the save it clobbered had already returned success.
+   * Supplied, a mismatch writes nothing and returns false; the reference stays pending and the
+   * next pass re-reads. Omitted, the write is unconditional as before.
+   */
+  expectedDescription?: string;
 }) {
   // The blocklist can move after a blurb was saved, and this path has no user in the loop to
   // catch it — same reason `applyArticleContentChange` re-checks.
@@ -591,8 +600,16 @@ export async function applyBountyContentChange({
   // Raw SQL because Prisma's @updatedAt fires on every client-side update(), and a blurb
   // re-materialization is not a creator edit.
   const affected =
-    await dbWrite.$executeRaw`UPDATE "Bounty" SET description = ${description} WHERE id = ${id}`;
-  if (!affected) throw throwNotFoundError(`No bounty with id ${id}`);
+    await dbWrite.$executeRaw`UPDATE "Bounty" SET description = ${description} WHERE id = ${id}${
+      expectedDescription === undefined
+        ? Prisma.empty
+        : Prisma.sql` AND description = ${expectedDescription}`
+    }`;
+  // `stored` above already proved the row exists, so a zero here is the compare-and-set losing.
+  if (!affected) {
+    if (expectedDescription !== undefined) return false;
+    throw throwNotFoundError(`No bounty with id ${id}`);
+  }
 
   // `upsertBounty` runs this gate on the text a creator types. This path is the fan-out, which
   // has just written text that gate never saw — without it, editing a blurb puts profanity into a
@@ -621,6 +638,8 @@ export async function applyBountyContentChange({
   }
 
   await queueBountySearchIndexUpdate(id);
+
+  return true;
 }
 
 /**

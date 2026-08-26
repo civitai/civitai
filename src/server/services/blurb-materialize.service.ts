@@ -138,7 +138,9 @@ export async function reconcileBlurbReferences({
         materializedHash: use.contentHash,
         materializedAt: now,
       },
-      update: { materializedHash: use.contentHash, materializedAt: now },
+      // `pendingSince: null` because this row was just materialized BY this save. Leave it set and
+      // the fan-out re-does work the save already did.
+      update: { materializedHash: use.contentHash, materializedAt: now, pendingSince: null },
     });
   }
 }

@@ -25,12 +25,14 @@ const row = {
   deletedAt: null as Date | null,
 };
 
+const BODY = '<span data-type="blurb" data-id="7">OLD</span>';
+
 beforeEach(() => {
   vi.clearAllMocks();
-  adapter.load.mockResolvedValue({
-    userId: 10,
-    html: '<span data-type="blurb" data-id="7">OLD</span>',
-  });
+  adapter.load.mockResolvedValue({ userId: 10, html: BODY });
+  // `save` reports whether it actually wrote. A bare vi.fn() resolves undefined, which the
+  // compare-and-set path reads as "someone else got there first".
+  adapter.save.mockResolvedValue(true);
 });
 
 describe('processBlurbEntity', () => {
@@ -41,6 +43,7 @@ describe('processBlurbEntity', () => {
       entityId: 1,
       userId: 10,
       html: '<span data-type="blurb" data-id="7">NEW</span>',
+      expectedHtml: BODY,
     });
   });
 
@@ -71,6 +74,7 @@ describe('processBlurbEntity', () => {
       entityId: 1,
       userId: 10,
       html: 'OLD',
+      expectedHtml: BODY,
     });
     expect(dbMock.dbWrite.blurbReference.deleteMany).toHaveBeenCalled();
   });
@@ -157,5 +161,30 @@ describe('processBlurbEntity — two stale blurbs in one entity', () => {
       where: { entityType: 'Article', entityId: 1, blurbId: { in: [8] } },
     });
     expect(dbMock.dbWrite.blurbReference.updateMany).toHaveBeenCalledTimes(1);
+  });
+});
+
+// The lost update. `processBlurbEntity` reads the body, splices, and writes it back with nothing
+// held across the two — so a creator saving in that window had their edit replaced by a replay of
+// the body as it was BEFORE they saved. Silent in both directions: their save had already returned
+// success, and the fan-out recorded the references as current so nothing ever revisited the entity.
+describe('processBlurbEntity — a concurrent save', () => {
+  it('🔴 writes nothing and records nothing when the body moved under it', async () => {
+    adapter.save.mockResolvedValue(false);
+
+    const outcome = await processBlurbEntity([row]);
+
+    expect(outcome).toBe('conflict');
+    // Not recorded: the row must stay pending so the next pass re-reads the body the creator
+    // actually saved and splices into THAT. Recording here is what made the loss permanent.
+    expect(dbMock.dbWrite.blurbReference.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('hands the adapter the body it read, so the write can compare against it', async () => {
+    await processBlurbEntity([row]);
+
+    const [args] = adapter.save.mock.calls[0];
+    expect(args.expectedHtml).toBe(BODY);
+    expect(args.html).not.toBe(BODY);
   });
 });

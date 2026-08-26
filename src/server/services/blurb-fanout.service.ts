@@ -11,7 +11,7 @@ type Ref = { blurbId: number; entityType: string; entityId: number; materialized
 type Blurb = { id: number; content: string; contentHash: string; deletedAt: Date | null };
 type StaleRow = Ref & Blurb;
 
-export type FanoutOutcome = 'rewritten' | 'skipped' | 'gone' | 'unsupported';
+export type FanoutOutcome = 'rewritten' | 'skipped' | 'gone' | 'unsupported' | 'conflict';
 
 /**
  * One entity, every stale reference it has, one load and one save.
@@ -49,8 +49,19 @@ export async function processBlurbEntity(rows: StaleRow[]): Promise<FanoutOutcom
   if (removals.size) next = unwrapBlurbSpans(next, removals);
 
   const rewritten = next !== loaded.html;
-  if (rewritten)
-    await adapter.save({ entityId: first.entityId, userId: loaded.userId, html: next });
+  if (rewritten) {
+    const applied = await adapter.save({
+      entityId: first.entityId,
+      userId: loaded.userId,
+      html: next,
+      expectedHtml: loaded.html,
+    });
+    // Someone saved the entity between our load and our save. Record nothing: the references stay
+    // pending, and the next pass re-reads the body they actually wrote and splices into that.
+    // Recording here is what made the clobbered edit permanent — the rows were stamped current, so
+    // nothing ever looked at that entity again.
+    if (!applied) return 'conflict';
+  }
 
   const deleted = rows.filter((row) => row.deletedAt);
   if (deleted.length) await dropReferences(deleted);
@@ -93,7 +104,9 @@ function recordReferences(rows: StaleRow[]) {
           entityId: first.entityId,
           blurbId: { in: blurbIds },
         },
-        data: { materializedHash: contentHash, materializedAt: now },
+        // `pendingSince: null` is what takes the row OUT of the selector. Drop it and the job
+        // re-selects the same rows on every pass forever.
+        data: { materializedHash: contentHash, materializedAt: now, pendingSince: null },
       })
     )
   );
@@ -118,14 +131,20 @@ function recordFailure(ref: Ref) {
 
 export type BlurbFanoutCounts = {
   /**
-   * Counted in REFERENCE ROWS, not entities, so `rewritten + skipped + gone + failed` is the size
-   * of what the selector returned and the job can still compare it against its LIMIT. The work is
-   * per entity, so every row of one entity carries that entity's outcome.
+   * Counted in REFERENCE ROWS, not entities, so `rewritten + skipped + gone + conflict + failed`
+   * is the size of what the selector returned and the job can still compare it against its LIMIT.
+   * The work is per entity, so every row of one entity carries that entity's outcome.
    */
   rewritten: number;
   skipped: number;
   gone: number;
   failed: number;
+  /**
+   * The entity was saved by someone else between our load and our save, so nothing was written and
+   * the rows stay pending for the next pass. A steady trickle is healthy — it is the guard doing
+   * its job. A rising one means the job is contending with interactive saves.
+   */
+  conflict: number;
   /**
    * Table-wide, not batch-scoped — how many BlurbReference rows currently have no
    * registered adapter. `null` when this pass didn't check (see `includeUnsupportedBacklog`).
@@ -144,12 +163,21 @@ export async function runBlurbFanout({
   // row processBlurbEntity can't rewrite never gets its materializedAt touched, so an
   // in-batch reject would permanently occupy the head of the `ORDER BY materializedAt`
   // window once there were `limit` of them.
+  //
+  // 🔴 Staleness is `pendingSince IS NOT NULL`, NOT a hash comparison. The obvious predicate —
+  // `r."materializedHash" <> b."contentHash"` — is a cross-table inequality that no index on
+  // BlurbReference can evaluate, so the planner estimates it at selectivity 1.0 and every plan
+  // shape is linear in the whole table, on a job that runs every 5 minutes whether or not there
+  // is work. `BlurbReference_pending_idx` is partial on exactly this predicate, so a quiet tick
+  // is one empty index probe. The consequence: anything that changes `Blurb.content` MUST stamp
+  // `pendingSince` (`markReferencesPending` in blurb.service) — a raw backfill that skips it is
+  // invisible to this job, where the hash comparison would have self-healed.
   const stale = await dbRead.$queryRaw<StaleRow[]>`
     SELECT r."blurbId", r."entityType", r."entityId", r."materializedHash",
            b.id, b.content, b."contentHash", b."deletedAt"
     FROM "BlurbReference" r
     JOIN "Blurb" b ON b.id = r."blurbId"
-    WHERE (r."materializedHash" <> b."contentHash" OR b."deletedAt" IS NOT NULL)
+    WHERE r."pendingSince" IS NOT NULL
       AND r."entityType" = ANY(${supportedTypes}::text[])
     ORDER BY r."materializedAt" ASC
     LIMIT ${limit}
@@ -168,6 +196,7 @@ export async function runBlurbFanout({
     skipped: 0,
     gone: 0,
     failed: 0,
+    conflict: 0,
     unsupportedBacklog: null,
   };
 
@@ -210,14 +239,15 @@ export async function runBlurbFanout({
     5
   );
 
-  // `NOT (… = ANY(…))` can't range-scan, so this is linear in table size — the caller
-  // decides how often it's worth paying for that (see the job's cadence comment). `null`
-  // here means this pass didn't look, not that the backlog is empty.
+  // `NOT (… = ANY(…))` can't range-scan, but `pendingSince IS NOT NULL` puts this on the same
+  // partial index as the selector, so it now costs a scan of the BACKLOG rather than of the
+  // table. `null` here means this pass didn't look, not that the backlog is empty.
   if (includeUnsupportedBacklog) {
     const [{ count }] = await dbRead.$queryRaw<{ count: number }[]>`
       SELECT count(*)::int AS count
       FROM "BlurbReference" r
-      WHERE NOT (r."entityType" = ANY(${supportedTypes}::text[]))
+      WHERE r."pendingSince" IS NOT NULL
+        AND NOT (r."entityType" = ANY(${supportedTypes}::text[]))
     `;
     counts.unsupportedBacklog = count;
   }

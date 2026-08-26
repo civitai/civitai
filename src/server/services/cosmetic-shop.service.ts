@@ -328,19 +328,33 @@ export const upsertCosmeticShopItem = async ({
 export async function applyCosmeticShopItemContentChange({
   id,
   description,
+  expectedDescription,
 }: {
   id: number;
   description: string;
+  /**
+   * Compare-and-set: the body this caller READ before splicing. The fan-out does load → splice →
+   * save with nothing held across it, so a creator saving in that window had their edit silently
+   * reverted by the replay — no error, and the save it clobbered had already returned success.
+   * Supplied, a mismatch writes nothing and returns false; the reference stays pending and the
+   * next pass re-reads. Omitted, the write is unconditional as before.
+   */
+  expectedDescription?: string;
 }) {
   // The blocklist can move after a blurb was saved, and this path has no user in the loop to
   // catch it — same reason `applyArticleContentChange` re-checks.
   await throwOnBlockedLinkDomain(description);
 
   const updated = await dbWrite.cosmeticShopItem.updateMany({
-    where: { id },
+    where: expectedDescription === undefined ? { id } : { id, description: expectedDescription },
     data: { description },
   });
-  if (!updated.count) throw throwNotFoundError(`No cosmetic shop item with id ${id}`);
+  if (!updated.count) {
+    if (expectedDescription !== undefined) return false;
+    throw throwNotFoundError(`No cosmetic shop item with id ${id}`);
+  }
+
+  return true;
 }
 
 export const getShopSections = async (input: GetAllCosmeticShopSections) => {

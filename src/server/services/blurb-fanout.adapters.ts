@@ -9,8 +9,17 @@ import { applyModelVersionContentChange } from '~/server/services/model-version.
 export type BlurbFanoutAdapter = {
   /** `null` means the entity no longer exists and the reference should be dropped. */
   load: (entityId: number) => Promise<{ userId: number; html: string } | null>;
-  /** Persist through the entity's `apply<Entity>ContentChange`, never a direct column write. */
-  save: (args: { entityId: number; userId: number; html: string }) => Promise<void>;
+  /**
+   * Persist through the entity's `apply<Entity>ContentChange`, never a direct column write.
+   * `expectedHtml` is the body `load` returned; `false` means someone else wrote in between and
+   * nothing was written here.
+   */
+  save: (args: {
+    entityId: number;
+    userId: number;
+    html: string;
+    expectedHtml: string;
+  }) => Promise<boolean>;
 };
 
 // Keys MUST match the `entityType` strings passed to `reconcileBlurbReferences`
@@ -30,8 +39,13 @@ const adapters: Record<string, BlurbFanoutAdapter> = {
       });
       return row ? { userId: row.userId, html: row.content } : null;
     },
-    save: ({ entityId, userId, html }) =>
-      applyArticleContentChange({ id: entityId, userId, content: html }),
+    save: ({ entityId, userId, html, expectedHtml }) =>
+      applyArticleContentChange({
+        id: entityId,
+        userId,
+        content: html,
+        expectedContent: expectedHtml,
+      }),
   },
   Model: {
     load: async (entityId) => {
@@ -41,7 +55,12 @@ const adapters: Record<string, BlurbFanoutAdapter> = {
       });
       return row ? { userId: row.userId, html: row.description ?? '' } : null;
     },
-    save: ({ entityId, html }) => applyModelContentChange({ id: entityId, description: html }),
+    save: ({ entityId, html, expectedHtml }) =>
+      applyModelContentChange({
+        id: entityId,
+        description: html,
+        expectedDescription: expectedHtml,
+      }),
   },
   ModelVersion: {
     load: async (entityId) => {
@@ -51,8 +70,12 @@ const adapters: Record<string, BlurbFanoutAdapter> = {
       });
       return row ? { userId: row.model.userId, html: row.description ?? '' } : null;
     },
-    save: ({ entityId, html }) =>
-      applyModelVersionContentChange({ id: entityId, description: html }),
+    save: ({ entityId, html, expectedHtml }) =>
+      applyModelVersionContentChange({
+        id: entityId,
+        description: html,
+        expectedDescription: expectedHtml,
+      }),
   },
   Bounty: {
     load: async (entityId) => {
@@ -64,7 +87,12 @@ const adapters: Record<string, BlurbFanoutAdapter> = {
       // and nothing downstream reads this one — the save writes a column and no more.
       return row ? { userId: row.userId ?? constants.system.user.id, html: row.description } : null;
     },
-    save: ({ entityId, html }) => applyBountyContentChange({ id: entityId, description: html }),
+    save: ({ entityId, html, expectedHtml }) =>
+      applyBountyContentChange({
+        id: entityId,
+        description: html,
+        expectedDescription: expectedHtml,
+      }),
   },
   CosmeticShopItem: {
     load: async (entityId) => {
@@ -76,8 +104,12 @@ const adapters: Record<string, BlurbFanoutAdapter> = {
         ? { userId: row.addedById ?? constants.system.user.id, html: row.description ?? '' }
         : null;
     },
-    save: ({ entityId, html }) =>
-      applyCosmeticShopItemContentChange({ id: entityId, description: html }),
+    save: ({ entityId, html, expectedHtml }) =>
+      applyCosmeticShopItemContentChange({
+        id: entityId,
+        description: html,
+        expectedDescription: expectedHtml,
+      }),
   },
 };
 

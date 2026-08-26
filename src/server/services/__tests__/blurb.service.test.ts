@@ -182,3 +182,37 @@ describe('blocked link domains', () => {
     expect(dbMock.dbWrite.blurb.update).not.toHaveBeenCalled();
   });
 });
+
+// The invariant the fan-out selector now rests on. It filters on `pendingSince IS NOT NULL`
+// because the cross-table hash comparison it replaced could not be indexed — the trade is that
+// this predicate does NOT self-heal. A writer that changes content without stamping the marker
+// is invisible to the job: the words change in the blurb and nowhere else, silently, forever.
+describe('marking references pending', () => {
+  beforeEach(() => {
+    mockDbWrite.blurb.findFirst.mockResolvedValue({ id: 1, userId: 10 });
+    mockDbWrite.blurb.update.mockResolvedValue({ id: 1 });
+  });
+
+  it('🔴 stamps the blurb references on a content edit', async () => {
+    await updateBlurbContent({ userId: 10, id: 1, content: 'new words' });
+
+    const [arg] = mockDbWrite.blurbReference.updateMany.mock.calls[0];
+    expect(arg.where.blurbId).toBe(1);
+    expect(arg.data.pendingSince).toBeInstanceOf(Date);
+  });
+
+  it('🔴 stamps them on a soft delete too, since the unwrap is work as well', async () => {
+    await softDeleteBlurb({ userId: 10, id: 1 });
+
+    const [arg] = mockDbWrite.blurbReference.updateMany.mock.calls[0];
+    expect(arg.where.blurbId).toBe(1);
+    expect(arg.data.pendingSince).toBeInstanceOf(Date);
+  });
+
+  it('does not re-stamp a row already waiting, so backlog age stays honest', async () => {
+    await updateBlurbContent({ userId: 10, id: 1, content: 'new words' });
+
+    const [arg] = mockDbWrite.blurbReference.updateMany.mock.calls[0];
+    expect(arg.where.pendingSince).toBeNull();
+  });
+});

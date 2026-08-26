@@ -26,6 +26,7 @@ type FakeRow = {
   contentHash: string;
   deletedAt: Date | null;
   materializedAt: number; // fake-table ordering only, not part of the real SELECT list
+  pendingSince: number | null; // fake-table filtering only, likewise
 };
 
 // `entityId` is deliberately NOT `blurbId`: they were the same value here, which made every
@@ -46,6 +47,8 @@ function makeRow(
     contentHash: `new-${id}`,
     deletedAt: null,
     materializedAt,
+    // Every fixture row starts stale, which is what the selector filters on now.
+    pendingSince: materializedAt,
   };
 }
 
@@ -70,7 +73,9 @@ beforeEach(() => {
             .join(''),
         }
   );
-  adapter.save.mockResolvedValue(undefined);
+  // `save` reports whether it actually wrote — a bare undefined reads as "someone else got there
+  // first" to the compare-and-set path.
+  adapter.save.mockResolvedValue(true);
 
   // Stands in for Postgres: filters by the same `entityType = ANY(...)` argument the real
   // query interpolates, so a fake-table scenario exercises the real filtering CONTRACT
@@ -79,9 +84,14 @@ beforeEach(() => {
   // — never a source of a hanging loop.
   dbMock.dbRead.$queryRaw.mockImplementation(async (..._args: unknown[]) => {
     const [, supported, limit] = _args as [unknown, string[], number | undefined];
-    const filtered = table.filter((r) => supported.includes(r.entityType));
+    // Honours `pendingSince` as well as the entityType argument, so a row the job has finished
+    // with actually LEAVES the fake selector — without that, `recordReferences` clearing the
+    // marker is unobservable and the job could re-select the same rows forever with every test
+    // still green.
+    const pending = table.filter((r) => r.pendingSince !== null);
+    const filtered = pending.filter((r) => supported.includes(r.entityType));
     if (limit === undefined) {
-      return [{ count: table.length - filtered.length }];
+      return [{ count: pending.length - filtered.length }];
     }
     return [...filtered].sort((a, b) => a.materializedAt - b.materializedAt).slice(0, limit);
   });
@@ -93,6 +103,7 @@ beforeEach(() => {
     if (!row) return;
     if (data.materializedAt instanceof Date) row.materializedAt = data.materializedAt.getTime();
     if (typeof data.materializedHash === 'string') row.materializedHash = data.materializedHash;
+    if (data.pendingSince === null) row.pendingSince = null;
   };
 
   // `recordFailure` still writes one row at a time.
@@ -141,12 +152,14 @@ describe('runBlurbFanout — the selector statement itself', () => {
     table = [makeRow(1, 'Article', 1)];
   });
 
-  it('🔴 selects only rows whose materialised hash has fallen behind, or whose blurb is deleted', async () => {
+  it('🔴 selects on the indexable pending marker, never a cross-table hash comparison', async () => {
     await runBlurbFanout({ limit: 5 });
 
     const sql = selectorSql().replace(/\s+/g, ' ');
-    expect(sql).toMatch(/"materializedHash"\s*<>\s*b?\.?"?contentHash"?/);
-    expect(sql).toMatch(/OR\s+b\."deletedAt" IS NOT NULL/);
+    expect(sql).toMatch(/r\."pendingSince" IS NOT NULL/);
+    // The predicate this replaced. It cannot be index-backed, so reinstating it puts the job
+    // back to a full scan of BlurbReference every 5 minutes whether or not there is work.
+    expect(sql).not.toMatch(/"materializedHash"\s*<>/);
   });
 
   it('🔴 takes the OLDEST first, which is what stops a failing row crowding the window', async () => {
@@ -242,6 +255,7 @@ describe('runBlurbFanout — a failing row cannot wedge the batch', () => {
     // tripping on one specific row, mid-batch.
     adapter.save.mockImplementation(async (args: { entityId: number }) => {
       if (args.entityId === 100) throw new Error('blocked domain');
+      return true;
     });
 
     table = [makeRow(1, 'Article', 1), makeRow(2, 'Article', 2)];
@@ -281,6 +295,7 @@ describe('runBlurbFanout — a failing row cannot wedge the batch', () => {
     // rather than just the shape of the write.
     adapter.save.mockImplementation(async (args: { entityId: number }) => {
       if (args.entityId === 100) throw new Error('blocked domain');
+      return true;
     });
     table = [makeRow(1, 'Article', 1), makeRow(2, 'Article', 2)];
 
@@ -355,5 +370,34 @@ describe('runBlurbFanout — reaping soft-deleted blurbs', () => {
     expect(sql).toMatch(
       /NOT EXISTS \( ?SELECT 1 FROM "BlurbReference" r WHERE r\."blurbId" = b\.id ?\)/
     );
+  });
+});
+
+// `pendingSince` is now the only thing keeping a row in the selector, which makes clearing it
+// load-bearing in a way the hash comparison never was: the old predicate self-healed, this one
+// does not.
+describe('runBlurbFanout — the pending marker', () => {
+  it('🔴 a rewritten row leaves the selector, so a second pass finds nothing', async () => {
+    table = [makeRow(1, 'Article', 1)];
+
+    const first = await runBlurbFanout({ limit: 5 });
+    expect(first.rewritten).toBe(1);
+
+    adapter.load.mockClear();
+    const second = await runBlurbFanout({ limit: 5 });
+
+    expect(second.rewritten).toBe(0);
+    expect(adapter.load).not.toHaveBeenCalled();
+  });
+
+  it('a row the job could not finish stays pending and is retried', async () => {
+    table = [makeRow(1, 'Article', 1)];
+    adapter.save.mockRejectedValueOnce(new Error('blocked domain'));
+
+    const first = await runBlurbFanout({ limit: 5 });
+    expect(first.failed).toBe(1);
+
+    const second = await runBlurbFanout({ limit: 5 });
+    expect(second.rewritten).toBe(1);
   });
 });

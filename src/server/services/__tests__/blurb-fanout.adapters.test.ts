@@ -93,17 +93,40 @@ describe('getBlurbFanoutAdapter', () => {
 });
 
 describe('adapter save', () => {
+  // Every adapter must forward `expectedHtml` as its entity's expected-column argument. Drop it
+  // from one and that surface silently loses the compare-and-set: the fan-out goes back to
+  // replaying a stale body over a save that committed between its load and its write.
   const cases: Array<[string, keyof typeof applies, Record<string, unknown>]> = [
-    ['Article', 'applyArticleContentChange', { id: 5, userId: 9, content: '<p>hi</p>' }],
-    ['Model', 'applyModelContentChange', { id: 5, description: '<p>hi</p>' }],
-    ['ModelVersion', 'applyModelVersionContentChange', { id: 5, description: '<p>hi</p>' }],
-    ['Bounty', 'applyBountyContentChange', { id: 5, description: '<p>hi</p>' }],
-    ['CosmeticShopItem', 'applyCosmeticShopItemContentChange', { id: 5, description: '<p>hi</p>' }],
+    [
+      'Article',
+      'applyArticleContentChange',
+      { id: 5, userId: 9, content: '<p>hi</p>', expectedContent: 'OLD' },
+    ],
+    [
+      'Model',
+      'applyModelContentChange',
+      { id: 5, description: '<p>hi</p>', expectedDescription: 'OLD' },
+    ],
+    [
+      'ModelVersion',
+      'applyModelVersionContentChange',
+      { id: 5, description: '<p>hi</p>', expectedDescription: 'OLD' },
+    ],
+    [
+      'Bounty',
+      'applyBountyContentChange',
+      { id: 5, description: '<p>hi</p>', expectedDescription: 'OLD' },
+    ],
+    [
+      'CosmeticShopItem',
+      'applyCosmeticShopItemContentChange',
+      { id: 5, description: '<p>hi</p>', expectedDescription: 'OLD' },
+    ],
   ];
 
   it.each(cases)('%s routes through %s', async (entityType, applyName, expected) => {
     const adapter = getBlurbFanoutAdapter(entityType)!;
-    await adapter.save({ entityId: 5, userId: 9, html: '<p>hi</p>' });
+    await adapter.save({ entityId: 5, userId: 9, html: '<p>hi</p>', expectedHtml: 'OLD' });
 
     expect(applies[applyName]).toHaveBeenCalledWith(expected);
   });
@@ -114,6 +137,7 @@ describe('adapter save', () => {
         entityId: 5,
         userId: 9,
         html: '<p>hi</p>',
+        expectedHtml: 'OLD',
       });
     }
 

@@ -999,7 +999,16 @@ export async function applyModelVersionContentChange({
   id,
   description,
   context,
+  expectedDescription,
 }: {
+  /**
+   * Compare-and-set: the body this caller READ before splicing. The fan-out does load → splice →
+   * save with nothing held across it, so a creator saving in that window had their edit silently
+   * reverted by the replay — no error, and the save it clobbered had already returned success.
+   * Supplied, a mismatch writes nothing and returns false; the reference stays pending and the
+   * next pass re-reads. Omitted, the write is unconditional as before.
+   */
+  expectedDescription?: string;
   id: number;
   description: string;
   /**
@@ -1026,7 +1035,13 @@ export async function applyModelVersionContentChange({
 
     // Raw SQL because Prisma's @updatedAt fires on every client-side update(), and a blurb
     // re-materialization is not a creator edit.
-    await dbWrite.$executeRaw`UPDATE "ModelVersion" SET description = ${description} WHERE id = ${id}`;
+    const affected =
+      await dbWrite.$executeRaw`UPDATE "ModelVersion" SET description = ${description} WHERE id = ${id}${
+        expectedDescription === undefined
+          ? Prisma.empty
+          : Prisma.sql` AND description = ${expectedDescription}`
+      }`;
+    if (expectedDescription !== undefined && !affected) return false;
     await preventModelVersionLagBatch(modelId, [id]);
   }
 
@@ -1037,6 +1052,8 @@ export async function applyModelVersionContentChange({
   await modelsSearchIndex.queueUpdate([
     { id: modelId, action: SearchIndexUpdateQueueAction.Update },
   ]);
+
+  return true;
 }
 
 // Narrow write for just the paid-access config — the studio (and any caller that only wants to edit

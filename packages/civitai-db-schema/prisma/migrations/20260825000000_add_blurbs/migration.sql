@@ -16,6 +16,16 @@ CREATE TABLE "BlurbReference" (
     "entityId" INTEGER NOT NULL,
     "materializedHash" TEXT NOT NULL,
     "materializedAt" TIMESTAMP(3) NOT NULL,
+    -- Set when the referenced blurb is edited or soft-deleted, cleared once the entity has been
+    -- rewritten. This is what the fan-out selector filters on.
+    --
+    -- It exists because the obvious predicate cannot be indexed: staleness is
+    -- r."materializedHash" <> b."contentHash", a CROSS-TABLE inequality, so no index on
+    -- BlurbReference can evaluate it and the planner estimates it at selectivity 1.0. Every plan
+    -- shape is then linear in the whole table, on a job that runs every 5 minutes whether or not
+    -- there is work — measured at 3.7s and 3.5M buffers to return ZERO rows on a 1.2M-row table of
+    -- the same shape.
+    "pendingSince" TIMESTAMP(3),
     CONSTRAINT "BlurbReference_pkey" PRIMARY KEY ("blurbId", "entityType", "entityId")
 );
 
@@ -27,7 +37,12 @@ CREATE TABLE "BlurbReference" (
 CREATE UNIQUE INDEX "Blurb_userId_name_key" ON "Blurb"("userId", "name") WHERE "deletedAt" IS NULL;
 CREATE INDEX "Blurb_updatedAt_idx" ON "Blurb"("updatedAt");
 CREATE INDEX "BlurbReference_entityType_entityId_idx" ON "BlurbReference"("entityType", "entityId");
-CREATE INDEX "BlurbReference_materializedAt_idx" ON "BlurbReference"("materializedAt");
+-- PARTIAL, and ordered by materializedAt rather than pendingSince. The predicate sizes the index
+-- to the actual backlog, so a quiet tick is one empty index probe; the ordering column keeps
+-- `recordFailure`'s move-to-the-back working, which sorting by pendingSince would have broken.
+-- `pendingSince` stays the moment the row went stale, so backlog AGE is still measurable from it.
+CREATE INDEX "BlurbReference_pending_idx"
+  ON "BlurbReference"("materializedAt") WHERE "pendingSince" IS NOT NULL;
 
 ALTER TABLE "Blurb" ADD CONSTRAINT "Blurb_userId_fkey"
   FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;

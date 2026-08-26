@@ -2725,9 +2725,18 @@ export async function applyModelContentChange({
   id,
   description,
   context,
+  expectedDescription,
 }: {
   id: number;
   description: string;
+  /**
+   * Compare-and-set: the body this caller READ before splicing. The fan-out does load → splice →
+   * save with nothing held across it, so a creator saving in that window had their edit silently
+   * reverted by the replay — no error, and the save it clobbered had already returned success.
+   * Supplied, a mismatch writes nothing and returns false; the reference stays pending and the
+   * next pass re-reads. Omitted, the write is unconditional as before.
+   */
+  expectedDescription?: string;
   /**
    * A caller that has ALREADY written this body passes its post-write snapshot here. Delete it
    * from such a call site and the write below replays the body over a save that committed in
@@ -2751,7 +2760,13 @@ export async function applyModelContentChange({
     // Raw SQL because Prisma's @updatedAt fires on every client-side update(), and a blurb
     // re-materialization is not a creator edit: `updatedAt` orders the "recently updated"
     // model lists.
-    await dbWrite.$executeRaw`UPDATE "Model" SET description = ${description} WHERE id = ${id}`;
+    const affected =
+      await dbWrite.$executeRaw`UPDATE "Model" SET description = ${description} WHERE id = ${id}${
+        expectedDescription === undefined
+          ? Prisma.empty
+          : Prisma.sql` AND description = ${expectedDescription}`
+      }`;
+    if (expectedDescription !== undefined && !affected) return false;
     await preventReplicationLag('model', id);
 
     // A caller passing `context` has already written the body AND already run this gate on it.
@@ -2798,6 +2813,8 @@ export async function applyModelContentChange({
     description,
     isModerator: resolved.isModerator,
   }).catch(() => null);
+
+  return true;
 }
 
 export const publishModelById = async ({

@@ -69,9 +69,23 @@ export async function updateBlurbContent({
   const blurb = await dbWrite.blurb.findFirst({ where: { id, userId, deletedAt: null } });
   if (!blurb) throw throwNotFoundError('Snippet not found.');
 
-  return dbWrite.blurb.update({
+  const updated = await dbWrite.blurb.update({
     where: { id },
     data: { content, contentHash: hashContent(content) },
+  });
+  await markReferencesPending(id);
+  return updated;
+}
+
+/**
+ * What makes the fan-out's work findable. Only rows that are not ALREADY pending are stamped, so
+ * a blurb edited twice before the job catches up keeps the timestamp of the first edit and the
+ * backlog age stays honest.
+ */
+function markReferencesPending(blurbId: number) {
+  return dbWrite.blurbReference.updateMany({
+    where: { blurbId, pendingSince: null },
+    data: { pendingSince: new Date() },
   });
 }
 
@@ -83,6 +97,8 @@ export async function softDeleteBlurb({ userId, id }: { userId: number; id: numb
   // the entities whose markup still needs unwrapping. The fan-out job does that work
   // and hard-deletes the row once no references remain.
   await dbWrite.blurb.update({ where: { id }, data: { deletedAt: new Date() } });
+  // The unwrap is work too, and the selector only sees pending rows.
+  await markReferencesPending(id);
 }
 
 // No reference counts. BlurbReference rows still exist and the fan-out still needs them — what
