@@ -10,6 +10,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { buildBenignPhraseRegex, stripBenignPhrasesWith } from '~/shared/utils/benign-phrases';
 import { removeTags, removeTagsCompact } from '~/utils/string-helpers';
 import { foldConfusables } from '~/server/utils/confusable-fold';
+import { domainAcceptsMail } from '~/server/utils/email-domain';
 
 export type BlocklistDTO = {
   id?: number;
@@ -497,5 +498,32 @@ export async function throwOnBlockedCommentContent(
 // #region [blocked emails]
 export async function getBlockedEmailDomains() {
   return await getBlocklistData(BlocklistType.EmailDomain);
+}
+
+/**
+ * Reject an email address whose domain is blocklisted or publishes no MX record.
+ *
+ * The two halves catch different things and neither subsumes the other: the blocklist covers the
+ * ~8,500 KNOWN disposable providers, which are real domains that accept mail; the MX check covers
+ * INVENTED domains, which no list can ever enumerate. The auth hub's magic-link action has had the
+ * blocklist half since the login cutover and its email path is the one at zero — every remaining
+ * writer of `User.email` (onboarding, profile update, email change) is free text that is never
+ * verified, so those need both.
+ *
+ * Callers must exempt users who ALREADY have this address. A domain appended to the upstream list
+ * later must not lock out an account that predates it — same rule as the hub's login action.
+ */
+export async function assertEmailAllowed(email: string) {
+  const domain = email.split('@')[1]?.trim().toLowerCase();
+  if (!domain) throw throwBadRequestError('Please provide a valid email address');
+
+  const blocked = await getBlockedEmailDomains();
+  // Normalize BOTH sides: the upstream sync writes lowercase today, but the same row is hand-edited
+  // by moderators, and a single capital letter would silently make an entry match nothing.
+  if (blocked.some((entry) => entry.trim().toLowerCase() === domain))
+    throw throwBadRequestError('Please use a different email address');
+
+  if (!(await domainAcceptsMail(domain)))
+    throw throwBadRequestError('Please use a different email address');
 }
 // #endregion

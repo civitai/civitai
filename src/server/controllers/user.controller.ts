@@ -114,6 +114,7 @@ import {
   updateUserById,
   userByReferralCode,
 } from '~/server/services/user.service';
+import { assertEmailAllowed } from '~/server/services/blocklist.service';
 import {
   handleLogError,
   throwAuthorizationError,
@@ -400,6 +401,9 @@ export const completeOnboardingHandler = async ({
       case OnboardingSteps.Profile: {
         if (input.username && !(await isUsernamePermitted(input.username)))
           throw throwBadRequestError('Invalid username');
+        // OAuth providers that hand us no email (Reddit) land here with `email: null`, and this step
+        // then REQUIRES one — free text that is never verified, which is the burner ring's door in.
+        if (input.email && input.email !== ctx.user.email) await assertEmailAllowed(input.email);
         await dbWrite.user.update({
           where: { id },
           data: { onboarding, username: input.username, email: input.email },

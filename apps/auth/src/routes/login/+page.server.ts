@@ -110,7 +110,11 @@ export const actions: Actions = {
     //    lock out EXISTING accounts when a domain is later appended to the upstream list (mirrors the
     //    existing-user exemption in step 4).
     const domain = email.split('@')[1];
-    if (domain && (await getBlockedEmailDomains()).includes(domain) && !(await userExistsByEmail(email))) {
+    if (
+      domain &&
+      (await getBlockedEmailDomains()).some((entry) => entry.trim().toLowerCase() === domain) &&
+      !(await userExistsByEmail(email))
+    ) {
       return fail(400, { email, blockedDomain: true });
     }
 

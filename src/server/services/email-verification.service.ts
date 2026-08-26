@@ -10,6 +10,7 @@ import {
 import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { refreshSession } from '~/server/auth/session-invalidation';
 import { userUpdateCounter } from '~/server/prom/client';
+import { assertEmailAllowed } from '~/server/services/blocklist.service';
 
 const EMAIL_VERIFICATION_EXPIRY = 15 * 60; // 15 minutes in seconds
 
@@ -82,6 +83,8 @@ export async function verifyEmailChangeToken(token: string) {
 }
 
 export async function requestEmailChange(userId: number, newEmail: string) {
+  await assertEmailAllowed(newEmail);
+
   // Check if the new email is already in use
   const existingUser = await dbRead.user.findFirst({
     where: { email: newEmail },

@@ -8,7 +8,13 @@ import {
   fetchProfile,
   isStubProviderEnabled,
 } from '$lib/server/auth/providers';
-import { findOrCreateUser, linkAccountToUser } from '$lib/server/auth/users';
+import {
+  findOrCreateUser,
+  linkAccountToUser,
+  userExistsByEmail,
+  isLinkedAccount,
+} from '$lib/server/auth/users';
+import { getBlockedEmailDomains } from '$lib/server/auth/blocklist';
 import { establishSession } from '$lib/server/auth/session';
 import { buildPostLoginRedirect } from '$lib/server/auth/redirect';
 import { buildPostLoginOriginCheck } from '$lib/server/oauth/first-party';
@@ -65,6 +71,22 @@ export const GET: RequestHandler = async ({ params, url, cookies, locals }) => {
     const target =
       result === 'conflict' ? appendQuery(returnUrl, 'error', 'AccountNotLinked') : returnUrl;
     redirect(302, buildPostLoginRedirect(target, null, url.origin, dev, isAllowedOrigin));
+  }
+
+  // Blocked email domains, OAuth edge of the same gate the email action applies. A provider-VERIFIED
+  // address is deliverable by construction, so the blocklist is the whole check here — no MX probe.
+  // Ordered blocklist-first so the two lookups below only run for an address that is actually
+  // blocked; a returning user (linked account, or an existing row on that address) is exempt for the
+  // same reason as the email action — a domain appended upstream later must not lock anyone out.
+  if (profile.email && profile.emailVerified) {
+    const domain = profile.email.split('@')[1]?.trim().toLowerCase();
+    if (
+      domain &&
+      (await getBlockedEmailDomains()).some((entry) => entry.trim().toLowerCase() === domain) &&
+      !(await isLinkedAccount(provider.id, profile.providerAccountId)) &&
+      !(await userExistsByEmail(profile.email))
+    )
+      error(400, 'Sign-up from this email domain is not allowed');
   }
 
   // Standard login / signup — the hub sets the session cookie here.
