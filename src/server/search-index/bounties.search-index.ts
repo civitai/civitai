@@ -11,6 +11,7 @@ import type {
 } from '~/shared/utils/prisma/enums';
 import { BOUNTIES_SEARCH_INDEX } from '~/server/common/constants';
 import { bountiesFilterableAttributes } from '~/server/search-index/filterable-attributes';
+import { bountiesSortableAttributes } from '~/server/search-index/sortable-attributes';
 import { isDefined } from '~/utils/type-guards';
 import { dbRead } from '~/server/db/client';
 import type { ImageMetadata } from '~/server/schema/media.schema';
@@ -44,14 +45,8 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     );
   }
 
-  const sortableAttributes = [
-    'createdAt',
-    // `id` required by the keyset cleanup scan (src/server/meilisearch/cleanup.ts).
-    'id',
-    'stats.unitAmountCountAllTime',
-    'stats.entryCountAllTime',
-    'stats.favoriteCountAllTime',
-  ];
+  // `id` required by the keyset cleanup scan (src/server/meilisearch/cleanup.ts).
+  const sortableAttributes = [...bountiesSortableAttributes];
 
   if (JSON.stringify(sortableAttributes.sort()) !== JSON.stringify(settings.sortableAttributes)) {
     const sortableFieldsAttributesTask = await index.updateSortableAttributes(sortableAttributes);

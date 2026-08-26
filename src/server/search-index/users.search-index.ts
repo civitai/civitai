@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { USERS_SEARCH_INDEX } from '~/server/common/constants';
 import { usersFilterableAttributes } from '~/server/search-index/filterable-attributes';
+import { usersSortableAttributes } from '~/server/search-index/sortable-attributes';
 import { updateDocs } from '~/server/meilisearch/client';
 
 import { getOrCreateIndex } from '~/server/meilisearch/util';
@@ -40,13 +41,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     );
   }
 
-  const sortableAttributes = [
-    'createdAt',
-    'id',
-    'metrics.thumbsUpCount',
-    'metrics.followerCount',
-    'metrics.uploadCount',
-  ];
+  const sortableAttributes = [...usersSortableAttributes];
 
   if (JSON.stringify(sortableAttributes.sort()) !== JSON.stringify(settings.sortableAttributes)) {
     const sortableFieldsAttributesTask = await index.updateSortableAttributes(sortableAttributes);

@@ -1193,7 +1193,16 @@ const entryIsVisible = (levels: number, host: Prisma.Sql) => Prisma.sql`
         -- No owner arm, deliberately: getAllImages re-admits a private image
         -- to its own author, which is right for their own feed and wrong on
         -- somebody else's public gallery.
-        AND p."availability" != ${Availability.Private}
+        --
+        -- 🔴 The ::"Availability" cast is load-bearing, not decoration. (No
+        -- backticks in this comment: a template literal ends at the first one.)
+        -- Prisma binds an interpolated string as text, and Postgres has no
+        -- "Availability" <> text operator, so without the cast the WHOLE query
+        -- dies at parse time with SQLSTATE 42883 — every caller of this
+        -- fragment 500s deterministically, not just the rows a private post
+        -- would have filtered. Same shape as meilisearch/cleanup.ts and
+        -- models.search-index.ts.
+        AND p."availability" != ${Availability.Private}::"Availability"
         AND i.ingestion = 'Scanned'
         AND i."needsReview" IS NULL
         AND NOT i."tosViolation"
@@ -1961,7 +1970,10 @@ export async function getMyRemixGallerySubmissions({
           --   needsReview / acceptableMinor - a moderator flag leaves ingestion
           --   at 'Scanned', so neither is implied by the ingestion clause below.
           AND p."publishedAt" < now()
-          AND p."availability" != ${Availability.Private}
+          -- ::"Availability" for the same reason as in entryIsVisible: an
+          -- uncast bound parameter is text, and "Availability" <> text is not
+          -- an operator Postgres has (SQLSTATE 42883).
+          AND p."availability" != ${Availability.Private}::"Availability"
           AND i.ingestion = 'Scanned'
           AND i."needsReview" IS NULL
           AND NOT i."acceptableMinor"

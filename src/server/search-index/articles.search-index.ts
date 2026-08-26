@@ -6,6 +6,7 @@ import { ArticleIngestionStatus, ArticleStatus, Availability } from '~/shared/ut
 import { articleDetailSelect } from '~/server/selectors/article.selector';
 import { ARTICLES_SEARCH_INDEX } from '~/server/common/constants';
 import { articlesFilterableAttributes } from '~/server/search-index/filterable-attributes';
+import { articlesSortableAttributes } from '~/server/search-index/sortable-attributes';
 import { removeTags } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
@@ -43,13 +44,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   );
 
   const sortableFieldsAttributesTask = await index.updateSortableAttributes([
-    'createdAt',
-    'stats.commentCount',
-    'stats.favoriteCount',
-    'stats.collectedCount',
-    'stats.viewCount',
-    'stats.tippedAmountCount',
-    'id',
+    ...articlesSortableAttributes,
   ]);
 
   console.log('onIndexSetup :: sortableFieldsAttributesTask created', sortableFieldsAttributesTask);
