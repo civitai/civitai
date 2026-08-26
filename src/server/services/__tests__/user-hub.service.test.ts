@@ -745,6 +745,53 @@ describe('source suggestions stay inside the viewer', () => {
     expect(names.orderBy).toEqual({ username: 'asc' });
   });
 
+  // Reported 2026-08-26: a viewer following 2,738 creators could not find one of them
+  // in the picker. The name filter runs over what the relationship query returns, so
+  // the window is not a page size — it is the whole searchable set, and the creator
+  // sat at position 1,905 of the follow list. Do not lower these back to one window
+  // without re-measuring the search: they are what makes a rare name reachable.
+  it('reaches past the recent-relationships window when there is a term to search', async () => {
+    dbMock.dbRead.userEngagement.findMany.mockResolvedValue([{ targetUserId: 11 }]);
+    dbMock.dbRead.user.findMany.mockResolvedValue([{ id: 11, username: 'someone' }]);
+
+    await getHubSourceSuggestions({ userId: 5, type: UserHubSourceType.User });
+    const listing = dbMock.dbRead.userEngagement.findMany.mock.calls[0][0].take;
+
+    await getHubSourceSuggestions({ userId: 5, type: UserHubSourceType.User, query: 'some' });
+    const searching = dbMock.dbRead.userEngagement.findMany.mock.calls[1][0].take;
+
+    expect(searching).toBeGreaterThan(listing);
+    expect(searching).toBeGreaterThan(2738);
+  });
+
+  it('widens every models relationship query for a search, not just the creators one', async () => {
+    dbMock.dbRead.collection.findFirst.mockResolvedValue({ id: 77 });
+    dbMock.dbRead.model.findMany.mockResolvedValue([{ id: 1 }]);
+    dbMock.dbRead.modelEngagement.findMany.mockResolvedValue([{ modelId: 2 }]);
+    dbMock.dbRead.collectionItem.findMany.mockResolvedValue([{ modelId: 3 }]);
+
+    await getHubSourceSuggestions({ userId: 5, type: UserHubSourceType.Model });
+    const listing = [
+      dbMock.dbRead.model.findMany.mock.calls[0][0].take,
+      dbMock.dbRead.modelEngagement.findMany.mock.calls[0][0].take,
+      dbMock.dbRead.collectionItem.findMany.mock.calls[0][0].take,
+    ];
+
+    await getHubSourceSuggestions({ userId: 5, type: UserHubSourceType.Model, query: 'nova' });
+    // The names query is call 1 on `model.findMany` with no term and call 3 with one,
+    // so the id queries are 0 and 2 — reading the wrong one is how a widened window
+    // gets asserted against a page size.
+    const searching = [
+      dbMock.dbRead.model.findMany.mock.calls[2][0].take,
+      dbMock.dbRead.modelEngagement.findMany.mock.calls[1][0].take,
+      dbMock.dbRead.collectionItem.findMany.mock.calls[1][0].take,
+    ];
+
+    expect(listing).toEqual([listing[0], listing[0], listing[0]]);
+    expect(searching).toEqual([searching[0], searching[0], searching[0]]);
+    expect(searching[0]).toBeGreaterThan(listing[0]);
+  });
+
   it('keeps the most recent relationships when there is nothing to search', async () => {
     // Ordering by name sits above `take`, so with no term it would decide WHICH
     // suggestions survive: a viewer following more than a page of creators would

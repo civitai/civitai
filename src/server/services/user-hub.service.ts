@@ -743,6 +743,16 @@ const SUGGESTIONS_LIMIT = 25;
 // it returns — a search of your most recent relationships, not all of them.
 const SUGGESTIONS_WINDOW = 500;
 
+// A search has to reach the whole relationship list, not the recent end of it: a
+// viewer following 2,738 creators had the one they were looking for at position
+// 1,905, so the 500-row window meant the type-ahead could never return them.
+// Measured on the prod replica against the largest accounts on the site, for a term
+// matching nothing (the worst case, since `take` cannot stop early): 118,609 follows
+// 402 ms, 250,491 bell-subscribed models 392 ms. Only 57 accounts follow more than
+// this and 1,066 watch more models than this, so above the window a search is still
+// partial.
+const SUGGESTIONS_SEARCH_WINDOW = 5000;
+
 // A margin over the page size, because the name queries filter deleted rows AFTER the
 // id restriction: slicing to exactly `SUGGESTIONS_LIMIT` returns a short page whenever
 // one of the ids has since been deleted (measured on prod: 2 of 500 on one account).
@@ -751,6 +761,12 @@ const SUGGESTIONS_SLICE = SUGGESTIONS_LIMIT * 2;
 // The relationship queries above return their ids most-recent-first. With no search
 // term that IS the answer, so the window is cut before the names query rather than
 // ordered after it — ordering above a `take` decides WHICH rows come back.
+// How far back the relationship queries read. Bigger for a search, because the name
+// filter runs over what they return, so anything outside the window is unreachable.
+function suggestionWindow(term: string | undefined) {
+  return term ? SUGGESTIONS_SEARCH_WINDOW : SUGGESTIONS_WINDOW;
+}
+
 function scopeSuggestionIds(ids: number[], term: string | undefined) {
   return term ? ids : ids.slice(0, SUGGESTIONS_SLICE);
 }
@@ -792,7 +808,7 @@ export async function getHubSourceSuggestions({
       where: { userId, type: UserEngagementType.Follow },
       select: { targetUserId: true },
       orderBy: { createdAt: 'desc' },
-      take: SUGGESTIONS_WINDOW,
+      take: suggestionWindow(term),
     });
     if (!follows.length) return [];
 
@@ -836,7 +852,7 @@ export async function getHubSourceSuggestions({
     const followed = await dbRead.collectionContributor.findMany({
       where: { userId, permissions: { has: CollectionContributorPermission.VIEW } },
       select: { collectionId: true },
-      take: SUGGESTIONS_WINDOW,
+      take: suggestionWindow(term),
     });
     if (!followed.length) return [];
 
@@ -879,20 +895,20 @@ export async function getHubSourceSuggestions({
       where: { userId, deletedAt: null },
       select: { id: true },
       orderBy: { id: 'desc' },
-      take: SUGGESTIONS_WINDOW,
+      take: suggestionWindow(term),
     }),
     dbRead.modelEngagement.findMany({
       where: { userId, type: ModelEngagementType.Notify },
       select: { modelId: true },
       orderBy: { createdAt: 'desc' },
-      take: SUGGESTIONS_WINDOW,
+      take: suggestionWindow(term),
     }),
     bookmarkCollection
       ? dbRead.collectionItem.findMany({
           where: { collectionId: bookmarkCollection.id, modelId: { not: null } },
           select: { modelId: true },
           orderBy: { id: 'desc' },
-          take: SUGGESTIONS_WINDOW,
+          take: suggestionWindow(term),
         })
       : Promise.resolve([]),
   ]);
