@@ -299,13 +299,9 @@ export function ListingMediaEditor({ appBlockId }: { appBlockId: string }) {
               same for both roles; only the attribution and the way out differ. */}
           <Text size="sm">
             This app is <b>not visible in the store</b> —{' '}
-            {isOwner ? (
-              <>you unpublished it</>
-            ) : (
-              <>its owner unpublished it</>
-            )}
-            . Image changes here are <b>not</b> staged as a revision and need no
-            re-approval: they save to the listing straight away and appear when{' '}
+            {isOwner ? <>you unpublished it</> : <>its owner unpublished it</>}. Image changes here
+            are <b>not</b> staged as a revision and need no re-approval: they save to the listing
+            straight away and appear when{' '}
             {isOwner ? (
               <>
                 you <b>republish</b> it from the Publishing tab
@@ -315,8 +311,8 @@ export function ListingMediaEditor({ appBlockId }: { appBlockId: string }) {
                 the owner <b>republishes</b> it
               </>
             )}
-            . Media can be added while it is still scanning; it only appears once its scan
-            finishes cleanly.
+            . Media can be added while it is still scanning; it only appears once its scan finishes
+            cleanly.
           </Text>
         </Alert>
       )}

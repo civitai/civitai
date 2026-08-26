@@ -266,6 +266,65 @@ describe('🔴 an OWNER-UNPUBLISHED listing: material fields are shown, and lock
   });
 });
 
+/**
+ * 🔴 THE ASSETS STEP — NEWLY REACHABLE, EAGERLY WRITING, AND IT SHIPPED WITH NO FRAME.
+ *
+ * `ListingMediaEditor` got a careful repair-state frame. This step got none, and for an
+ * OFF-SITE listing it is the ONLY image surface there is:
+ * `capabilitiesForKind('offsite').listingMedia` is `false`, so `editorTabsFor` withholds
+ * the Media tab entirely and `ListingMediaEditor` never mounts for these listings. The
+ * frame that was added therefore covered the case that did NOT need it most.
+ *
+ * The write semantics are the part that must be stated. `ListingAssetStep` writes EAGERLY,
+ * one mutation per change, against `edit.parentId` — a non-approved listing has no shadow,
+ * so nothing is staged, nothing waits for Save, and leaving the page does not undo it. That
+ * differs BOTH from the approved case (which stages a revision) and from the scalar fields
+ * on the previous step of this very wizard (which do wait for Save). An author who assumes
+ * either is wrong in a way that costs them their live imagery.
+ */
+describe('🔴 the ASSETS step carries the repair frame too', () => {
+  async function openAssets() {
+    // URL step -> Details -> Assets. Two `Next` clicks for an off-site listing.
+    await page.getByRole('button', { name: 'Next' }).click();
+    await page.getByRole('button', { name: 'Next' }).click();
+  }
+
+  test('🔴 an unpublished listing is told these image writes are IMMEDIATE, not staged', async () => {
+    renderWithProviders(<ExternalSubmitForm edit={makeCtx()} />);
+    await openAssets();
+
+    const notice = page.getByTestId('apps-offsite-edit-assets-unpublished-notice');
+    await expect.element(notice).toBeInTheDocument();
+    // The app is DOWN…
+    await expect.element(notice).toHaveTextContent(/not visible in the store/i);
+    // …and the surprising half: these writes do NOT wait for Save and are NOT staged.
+    await expect.element(notice).toHaveTextContent(/immediately/i);
+    await expect.element(notice).toHaveTextContent(/not.*staged/i);
+  });
+
+  test('🔴 CONTROL — a PUBLISHED listing gets NO such frame', async () => {
+    // Without this the notice could be unconditional, and every assertion above would pass
+    // while every approved author was told their staged edits apply immediately — the exact
+    // inversion of the truth, and a worse defect than the one being fixed.
+    renderWithProviders(<ExternalSubmitForm edit={makeCtx({ status: 'approved' })} />);
+    await openAssets();
+
+    await expect.element(page.getByTestId('apps-offsite-wizard-assets-panel')).toBeInTheDocument();
+    expect(page.getByTestId('apps-offsite-edit-assets-unpublished-notice').elements()).toHaveLength(
+      0
+    );
+  });
+
+  test('🔴 it is ROLE-AWARE, like every other repair-state sentence', async () => {
+    renderWithProviders(<ExternalSubmitForm edit={makeCtx({ role: 'editor' })} />);
+    await openAssets();
+
+    const notice = page.getByTestId('apps-offsite-edit-assets-unpublished-notice');
+    await expect.element(notice).toHaveTextContent(/its owner unpublished it/i);
+    await expect.element(notice).not.toHaveTextContent(/you unpublished it/i);
+  });
+});
+
 describe('🔴 the OAuth scope disclosure follows the DRIFT, not the status', () => {
   const connect = {
     connectClientId: 'oauth-1',
@@ -293,10 +352,80 @@ describe('🔴 the OAuth scope disclosure follows the DRIFT, not the status', ()
     renderWithProviders(
       <ExternalSubmitForm edit={makeCtx({ ...connect, connectAllowedScopes: 28 })} />
     );
+    // 🔴 THE ASSERTION CHANGED WITH THE COPY, AND THE OLD ONE WAS THE BUG. It matched
+    // /scopes have also changed/i — a sentence appended after "Tagline, description and
+    // category can be edited now", i.e. the test pinned HALF of a self-contradicting
+    // message and was satisfied. The notice now states the actual consequence.
     await expect
       .element(page.getByTestId('apps-offsite-edit-material-locked-notice'))
-      .toHaveTextContent(/scopes have also changed/i);
+      .toHaveTextContent(/nothing on this screen can be saved/i);
     await page.getByRole('button', { name: 'Next' }).click();
     await expect.element(page.getByTestId('apps-offsite-justification-8')).toBeDisabled();
+  });
+
+  /**
+   * 🔴 THE MISSING HALF: ATTEMPT THE SAVE.
+   *
+   * The test above asserts the box is DISABLED and stops there — which is precisely why the
+   * dead end was invisible. A disabled input is only half the story; the question an author
+   * has is "can I save anything from this screen", and nothing ever asked it.
+   *
+   * The answer is no, and by a route that is easy to miss: `handleSave` runs
+   * `scopeJustificationError(values)` for ANY connect listing (gated on
+   * `edit.connectClientId != null`, NOT on `scopeLocked`). The drifted mask adds a sensitive
+   * scope with no prefilled justification, so the save aborts CLIENT-side, sets the scope
+   * error and jumps the author to Details — where the box that would clear it is disabled.
+   *
+   * So this drives the real click path: edit a NON-material field the copy used to promise
+   * was saveable (tagline), press Save, and assert it did not go through.
+   *
+   * 🟡 LABEL: THIS IS A CHARACTERISATION GUARD, NOT REGRESSION COVERAGE, and it is measured
+   * rather than assumed — restoring `offsiteEditConfig.ts` + `ExternalListingEditForm.tsx`
+   * to b16cc80c2c and re-running leaves this test GREEN (11 executed, only the copy test
+   * red). That is the correct result and the reason the finding was worded as "the copy
+   * claims the opposite": the dead end is PRE-EXISTING and this PR does not remove it. The
+   * fix is that the copy stops denying it.
+   *
+   * What this test is FOR, then, is the next change rather than this one. The dead end has
+   * two independent halves — the unconditional scope check in `handleSave` and the disabled
+   * boxes — and a plausible future "fix" addresses one and leaves the other, which would
+   * still be a dead end while looking repaired. Both halves are asserted here, so a half-fix
+   * reddens exactly one line.
+   */
+  test('🟡 in the DRIFTED state a tagline-only Save is REFUSED — the screen is a dead end', async () => {
+    const onDrift = makeCtx({
+      ...connect,
+      // Stored mask is 12 (= ModelsRead 4 | ModelsWrite 8), with ModelsWrite justified.
+      // The client now allows 24 (= ModelsWrite 8 | ModelsDelete 16). ModelsDelete is
+      // SENSITIVE and has NO stored rationale — the client did not have it when the listing
+      // was last reviewed — and `editContextToForm` cannot invent one. That is what makes
+      // the save unclearable rather than merely inconvenient.
+      connectAllowedScopes: 24,
+    });
+    renderWithProviders(<ExternalSubmitForm edit={onDrift} />);
+
+    await page.getByRole('button', { name: 'Next' }).click();
+
+    // Edit the tagline — the field the old copy explicitly said "can be edited now".
+    const tagline = page.getByRole('textbox', { name: 'Tagline' });
+    await expect.element(tagline).toBeInTheDocument();
+    // 🔴 NOT disabled. The tagline is genuinely editable, which is exactly what made the old
+    // copy plausible — the defect is that editing it achieves nothing.
+    await expect.element(tagline).not.toBeDisabled();
+    await tagline.fill('A brand new tagline');
+
+    await page.getByTestId('apps-offsite-edit-save').click();
+
+    // 🔴 THE SAVE DID NOT LAND, asserted on the MUTATION SPY rather than on the absence of a
+    // success toast: a missing toast is indistinguishable from one that has not rendered
+    // yet, whereas "the mutation was never called" is a positive statement about the path.
+    expect(mocks.updateListing).not.toHaveBeenCalled();
+
+    // 🔴 AND THE DEAD END IS NOW ON SCREEN IN ONE FRAME: the unjustified sensitive scope
+    // (ModelsDelete, bit 16) carries a REQUIRED error, and the same input is DISABLED. An
+    // error on a box the author cannot type in is the whole defect, stated as an assertion.
+    const blocked = page.getByTestId('apps-offsite-justification-16');
+    await expect.element(blocked).toBeDisabled();
+    await expect.element(blocked).toHaveAccessibleDescription(/justification is required/i);
   });
 });

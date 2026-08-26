@@ -372,10 +372,7 @@ export function listingEditHeaderCopy(showUrlStep: boolean): ListingEditHeaderCo
 }
 
 /** True iff two string→string maps have identical keys + values. PURE. */
-function shallowEqualStringMap(
-  a: Record<string, string>,
-  b: Record<string, string>
-): boolean {
+function shallowEqualStringMap(a: Record<string, string>, b: Record<string, string>): boolean {
   const ak = Object.keys(a);
   if (ak.length !== Object.keys(b).length) return false;
   return ak.every((k) => a[k] === b[k]);

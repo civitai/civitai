@@ -50,7 +50,16 @@ function makeCtx(overrides: Partial<ListingEditContext> = {}): ListingEditContex
 describe('editContextToForm', () => {
   it('maps scalars to form values, filling slug and blanking null fields', () => {
     const form = editContextToForm(
-      makeCtx({ scalars: { name: 'X', tagline: null, description: null, category: null, contentRating: null, externalUrl: null } })
+      makeCtx({
+        scalars: {
+          name: 'X',
+          tagline: null,
+          description: null,
+          category: null,
+          contentRating: null,
+          externalUrl: null,
+        },
+      })
     );
     expect(form.slug).toBe('vitrine');
     expect(form.name).toBe('X');
@@ -162,8 +171,12 @@ describe('buildScalarPatch', () => {
 
   it('captures a category change and a category clear', () => {
     const ctx = makeCtx();
-    expect(buildScalarPatch(ctx, { ...editContextToForm(ctx), category: 'games' }).category).toBe('games');
-    expect(buildScalarPatch(ctx, { ...editContextToForm(ctx), category: null }).category).toBeNull();
+    expect(buildScalarPatch(ctx, { ...editContextToForm(ctx), category: 'games' }).category).toBe(
+      'games'
+    );
+    expect(
+      buildScalarPatch(ctx, { ...editContextToForm(ctx), category: null }).category
+    ).toBeNull();
   });
 });
 
@@ -369,7 +382,10 @@ describe('sourceRepoUrl — prefill and the minimal patch', () => {
     // compares CANONICAL forms — so this patch is classified as no material change and
     // applied in place, rather than queuing a moderator re-review.
     const ctx = makeCtx({ scalars: { ...makeCtx().scalars, sourceRepoUrl: REPO } });
-    const patch = buildScalarPatch(ctx, { ...editContextToForm(ctx), sourceRepoUrl: `${REPO}.git` });
+    const patch = buildScalarPatch(ctx, {
+      ...editContextToForm(ctx),
+      sourceRepoUrl: `${REPO}.git`,
+    });
     expect(patch.sourceRepoUrl).toBe(`${REPO}.git`);
   });
 });
@@ -488,9 +504,7 @@ describe('scopeDisclosureLockedForEdit', () => {
     // so the status clause is individually killable.
     for (const status of ['draft', 'pending', 'approved'] as const) {
       expect(
-        scopeDisclosureLockedForEdit(
-          makeCtx({ status, ...connect, connectAllowedScopes: 28 })
-        ),
+        scopeDisclosureLockedForEdit(makeCtx({ status, ...connect, connectAllowedScopes: 28 })),
         status
       ).toBe(false);
     }
