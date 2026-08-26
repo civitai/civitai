@@ -14,12 +14,14 @@ import type * as UserPreferences from '~/server/services/user-preferences.servic
 const getCommentsInfinite = vi.fn(async () => null);
 const getCommentsThreadDetails2 = vi.fn(async () => null);
 const getComment = vi.fn(async () => ({ id: 5, user: { id: 9 } }));
+const getCommentCount = vi.fn(async () => 0);
 
 vi.mock('~/server/services/commentsv2.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CommentsV2Service>()),
   getCommentsInfinite: (...args: unknown[]) => getCommentsInfinite(...(args as [])),
   getCommentsThreadDetails2: (...args: unknown[]) => getCommentsThreadDetails2(...(args as [])),
   getComment: (...args: unknown[]) => getComment(...(args as [])),
+  getCommentCount: (...args: unknown[]) => getCommentCount(...(args as [])),
   isViewerContentOwner: vi.fn(async () => false),
 }));
 
@@ -31,8 +33,12 @@ vi.mock('~/server/services/user-preferences.service', async (importOriginal) => 
   BlockedByUsers: emptyPreference,
 }));
 
-const { getCommentHandler, getCommentsInfiniteHandler, getCommentsThreadDetailsHandler } =
-  await import('../commentv2.controller');
+const {
+  getCommentHandler,
+  getCommentCountV2Handler,
+  getCommentsInfiniteHandler,
+  getCommentsThreadDetailsHandler,
+} = await import('../commentv2.controller');
 
 const input = { entityType: 'image', entityId: 1 } as never;
 const ctxFor = (user: { id: number; isModerator?: boolean } | undefined) => ({ user } as never);
@@ -73,5 +79,19 @@ describe('CommentV2 handlers forward who is asking', () => {
     await getCommentHandler({ ctx: ctxFor(user), input: { id: 5 } as never });
 
     expect(getComment).toHaveBeenCalledWith(expect.objectContaining({ isModerator: expected }));
+  });
+
+  // The count is what renders "show N replies". Forwarding the wrong answer here doesn't serve a
+  // removed comment, it advertises one — an affordance that opens onto nothing.
+  it.each([
+    ['a moderator', { id: 1, isModerator: true }, true],
+    ['an ordinary signed-in user', { id: 2, isModerator: false }, false],
+    ['a signed-out viewer', undefined, false],
+  ])('getCount: %s', async (_label, user, expected) => {
+    await getCommentCountV2Handler({ ctx: ctxFor(user), input });
+
+    expect(getCommentCount).toHaveBeenCalledWith(
+      expect.objectContaining({ isModerator: expected })
+    );
   });
 });

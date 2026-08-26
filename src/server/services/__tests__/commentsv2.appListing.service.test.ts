@@ -80,7 +80,8 @@ beforeEach(() => {
 
 describe('CommentsV2 appListing thread resolution', () => {
   it('getCommentCount resolves the thread by appListingId', async () => {
-    read.thread.findUnique.mockResolvedValueOnce({ commentCount: 7 });
+    read.thread.findUnique.mockResolvedValueOnce({ id: 100 });
+    read.commentV2.count.mockResolvedValueOnce(7);
     const count = await getCommentCount({ entityType: 'appListing', entityId: 42 });
     expect(count).toBe(7);
     // The crux: entityType 'appListing' → column `appListingId`.
