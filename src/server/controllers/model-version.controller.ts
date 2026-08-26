@@ -422,14 +422,15 @@ export const upsertModelVersionHandler = async ({
     const updatesExistingVersion = !!input.id && !input.templateId;
     // dbWrite, and a miss counts as a grant: this decides an entitlement, and the edit wizard saves again
     // fast enough to beat replication — a replica miss must not read as "already generation-only".
-    const storedUsageControl = updatesExistingVersion
-      ? (
-          await dbWrite.modelVersion.findUnique({
-            where: { id: input.id },
-            select: { usageControl: true },
-          })
-        )?.usageControl
+    // `modelId` comes along for the licensing-lineage guard further down, which needs the model this
+    // version currently belongs to. One read rather than two of the same row.
+    const storedVersion = updatesExistingVersion
+      ? await dbWrite.modelVersion.findUnique({
+          where: { id: input.id },
+          select: { usageControl: true, modelId: true },
+        })
       : undefined;
+    const storedUsageControl = storedVersion?.usageControl;
     const grantsGenerationOnly =
       input.usageControl !== ModelUsageControl.Download &&
       (!updatesExistingVersion || storedUsageControl !== ModelUsageControl.Generation);
@@ -545,7 +546,7 @@ export const upsertModelVersionHandler = async ({
     // Set when the block below repairs the payload, so the audit can attribute the change to the rule
     // rather than to the creator. Without it the first rows this new trail ever produces are automated
     // repairs wearing an owner's name — which is the opposite of why the field was added to the audit.
-    let licensingSourceCoerced = false;
+    let licensingSourceCoercedReason: string | undefined;
     // Licensing lineage: the chosen source must be a registered LicensingRoot for the same base model
     // AND the same model type. The model-type half is the one that was missing (CU 868kwf2fd,
     // Freshdesk #69622): every LicensingRoot row is a Checkpoint, so a LoRA that inherits one charges
@@ -569,55 +570,57 @@ export const upsertModelVersionHandler = async ({
     // `null` outright has always been allowed, and 99.77% of Anima and Krea 2 LoRAs do exactly that
     // (107 of 46,994 and 45 of 19,999 carry a source at all).
     if (input.licensingSourceVersionId != null) {
-      const [source, owningModel] = await Promise.all([
+      const [source, owningModels] = await Promise.all([
         dbRead.licensingRoot.findUnique({
           where: { modelVersionId: input.licensingSourceVersionId },
           select: { baseModel: true, modelType: true },
         }),
-        // 🔴 Two things this read must NOT do, both of which it did in an earlier round of this fix.
+        // 🔴 This resolves EVERY model the version touches on this save, and each one has to pass.
         //
-        // It must not read the model through `getModel`. That resolves its client through
-        // `getDbWithoutLag`, so a model created seconds ago — which is precisely the ModelWizard's
-        // step-1-then-step-2 shape — can come back as a replica miss. The coercion below turns a miss
-        // into `null`, and because it coerces rather than throws the creator is never told. The service
-        // reads the same row with `dbWrite.model.findUniqueOrThrow`, so the save still succeeds and the
-        // field is silently gone. `storedUsageControl` above uses `dbWrite` for the identical reason:
-        // "a replica miss must not read as already-generation-only".
+        // Not `getModel`: that goes through `getDbWithoutLag`, so a model created seconds ago — the
+        // ModelWizard's step-1-then-step-2 shape exactly — can come back as a replica miss. The
+        // coercion below turns a miss into `null`, and because it coerces rather than throws the
+        // creator is never told. `storedUsageControl` above uses `dbWrite` for the same reason: "a
+        // replica miss must not read as already-generation-only".
         //
-        // And on an update it must not trust `input.modelId`. `isOwnerOrModerator` authorises against
-        // the modelId of the version being EDITED, never against the one in the payload, so a caller
-        // who owns both a LoRA and a Checkpoint could send the LoRA's version id with the Checkpoint's
-        // modelId and have the type compared against the wrong model. `updatesExistingVersion` is the
-        // right predicate rather than `!!input.id`: a templated write carries an id and still creates a
-        // NEW version under `input.modelId`.
+        // And not one model but two, because `modelId` is not destructured in `upsertModelVersion` —
+        // it rides `...data` straight into `dbWrite.modelVersion.update`, so **a save can move the
+        // version to another model**. `isOwnerOrModerator` authorises only against the modelId of the
+        // version being EDITED and never compares it to the payload's. Check only the stored model and
+        // a Checkpoint version carrying a legitimate root can be re-parented onto a LoRA model in the
+        // same request: the guard sees Checkpoint, passes, and the write lands a checkpoint's per-image
+        // fee on a LoRA — this exact bug, through the guard that exists to stop it. Check only the
+        // payload's and the auth mismatch above reopens. So: both, deduped.
+        //
+        // `storedVersion` is already read only when `updatesExistingVersion` — a templated write
+        // carries an id and still creates a NEW version under `input.modelId`, where there is no
+        // stored model to consult, so it is `undefined` here and the set is just the payload's. Do NOT
+        // re-test that condition on this line: a mutation run proved the extra ternary can never
+        // change the result, and a conditional that cannot go the other way reads as a guard while
+        // guarding nothing.
         (async () => {
-          const owningModelId = updatesExistingVersion
-            ? (
-                await dbWrite.modelVersion.findUnique({
-                  where: { id: input.id },
-                  select: { modelId: true },
-                })
-              )?.modelId
-            : input.modelId;
-          if (owningModelId == null) return null;
-          return dbWrite.model.findUnique({
-            where: { id: owningModelId },
-            select: { type: true },
-          });
+          const ids = [...new Set([input.modelId, storedVersion?.modelId].filter(isDefined))];
+          // An update whose stored row could not be read leaves nothing to check it against; that is a
+          // "could not check", which lands with "checked and wrong" rather than passing.
+          if (updatesExistingVersion && storedVersion?.modelId == null) return null;
+          const models = await Promise.all(
+            ids.map((id) => dbWrite.model.findUnique({ where: { id }, select: { type: true } }))
+          );
+          return models.some((m) => !m) ? null : models.filter(isDefined);
         })(),
       ]);
-      // A model that cannot be read coerces rather than passing. Read from `dbWrite` above, `null` here
-      // means the row genuinely does not exist — and the service's own `findUniqueOrThrow` on the same
-      // client will reject the save moments later, so this branch costs a real creator nothing. Written
-      // the permissive way (`owningModel && ...`) it would make "we could not check" indistinguishable
-      // from "we checked and it was fine", which is the shape of every guard that turns out inert.
+      // A model that cannot be read coerces rather than passing. Written the permissive way
+      // (`owningModels && ...`) it would make "we could not check" indistinguishable from "we checked
+      // and it was fine", which is the shape of every guard that turns out inert. Do not soften this on
+      // the argument that the service throws on a missing model anyway: it throws on `data.modelId`,
+      // which on an update is not necessarily the row that failed to read here.
       const rejectedReason = !source
         ? 'not-a-root'
         : source.baseModel !== input.baseModel
         ? 'base-model-mismatch'
-        : !owningModel
+        : !owningModels
         ? 'model-not-found'
-        : source.modelType !== owningModel.type
+        : owningModels.some((m) => m.type !== source.modelType)
         ? 'model-type-mismatch'
         : null;
       if (rejectedReason) {
@@ -628,16 +631,20 @@ export const upsertModelVersionHandler = async ({
           type: 'info',
           reason: rejectedReason,
           userId,
+          // Both ids, because on an update they can differ and reporting one next to the other's type
+          // is how a log stops being evidence. `storedModelId` is where the version is now,
+          // `modelId` is where this save puts it.
           modelId: input.modelId,
+          storedModelId: storedVersion?.modelId ?? null,
           modelVersionId: input.id ?? null,
           requestedSourceVersionId: input.licensingSourceVersionId,
-          modelType: owningModel?.type ?? null,
+          modelTypes: owningModels?.map((m) => m.type) ?? null,
           sourceModelType: source?.modelType ?? null,
           baseModel: input.baseModel ?? null,
           sourceBaseModel: source?.baseModel ?? null,
         }).catch(() => null);
         input.licensingSourceVersionId = null;
-        licensingSourceCoerced = true;
+        licensingSourceCoercedReason = rejectedReason;
       }
     }
 
@@ -647,7 +654,7 @@ export const upsertModelVersionHandler = async ({
       tracker: ctx.track,
       actorUserId: userId,
       isModerator: ctx.user.isModerator,
-      licensingSourceCoerced,
+      licensingSourceCoercedReason,
     });
     if (!version) throw throwNotFoundError(`No model version with id ${input.id as number}`);
 

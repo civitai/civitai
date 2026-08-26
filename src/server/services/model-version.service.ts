@@ -514,7 +514,7 @@ export const upsertModelVersion = async ({
   tracker,
   actorUserId,
   isModerator,
-  licensingSourceCoerced,
+  licensingSourceCoercedReason,
   ...data
 }: Omit<ModelVersionUpsertInput, 'trainingDetails'> & {
   meta?: Prisma.ModelVersionCreateInput['meta'];
@@ -523,11 +523,12 @@ export const upsertModelVersion = async ({
   actorUserId?: number;
   isModerator?: boolean;
   /**
-   * The controller cleared `licensingSourceVersionId` because it pointed at a root of the wrong model
-   * type or base model. It is a rule acting, not the actor, and the audit says so — otherwise the
-   * repairs land in the change log as edits by creators who did nothing.
+   * Why the controller cleared `licensingSourceVersionId` — `model-type-mismatch`,
+   * `base-model-mismatch`, `not-a-root` or `model-not-found`. A rule acting, not the actor, and the
+   * audit says which rule: otherwise the repairs land in the change log as edits by creators who did
+   * nothing, and a moderator reading the history cannot tell a type mismatch from an unreadable model.
    */
-  licensingSourceCoerced?: boolean;
+  licensingSourceCoercedReason?: string;
 }) => {
   if (data.description) await throwOnBlockedLinkDomain(data.description);
 
@@ -917,11 +918,8 @@ export const upsertModelVersion = async ({
           ownerId: model.userId,
           isModerator,
         }),
-        systemFields: licensingSourceCoerced
-          ? {
-              licensingSourceVersionId:
-                'cleared: licensing source was not a root for this model type / base model',
-            }
+        systemFields: licensingSourceCoercedReason
+          ? { licensingSourceVersionId: `cleared: ${licensingSourceCoercedReason}` }
           : undefined,
       });
       tracker.entityChanges(changeRows).catch(() => null);

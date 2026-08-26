@@ -53,22 +53,27 @@ type Root = { baseModel: string; modelType: string } | null;
 const call = async ({
   modelTypes,
   id,
+  templateId,
   baseModel = 'Anima',
   root = animaRoot as Root,
   licensingSourceVersionId = ANIMA_ROOT_VERSION_ID as number | null,
 }: {
   modelTypes: Record<number, string | null>;
   id?: number;
+  templateId?: number;
   baseModel?: string;
   root?: Root;
   licensingSourceVersionId?: number | null;
 }) => {
   dbMock.dbRead.licensingRoot.findUnique.mockResolvedValue(root);
-  // Serves both reads the handler makes off this table: `storedUsageControl` and the owning modelId.
-  dbMock.dbWrite.modelVersion.findUnique.mockResolvedValue({
-    usageControl: 'Download',
-    modelId: STORED_MODEL_ID,
-  });
+  // Keyed on the argument, NOT a flat `mockResolvedValue`. A mock that ignores its `where` hands
+  // STORED_MODEL_ID back whatever row the guard asked for, which leaves the one test in this file about
+  // *which row was looked up* unable to detect the wrong row being looked up. Measured: with a flat
+  // mock, changing the guard to read `input.modelId` left all nine tests green.
+  dbMock.dbWrite.modelVersion.findUnique.mockImplementation(
+    async (args: { where: { id: number } }) =>
+      args.where.id === VERSION_ID ? { usageControl: 'Download', modelId: STORED_MODEL_ID } : null
+  );
   dbMock.dbWrite.model.findUnique.mockImplementation(async (args: { where: { id: number } }) => {
     const type = modelTypes[args.where.id];
     return type == null ? null : { type };
@@ -79,6 +84,7 @@ const call = async ({
   await upsertModelVersionHandler({
     input: {
       id,
+      templateId,
       modelId: PAYLOAD_MODEL_ID,
       name: 'v1.0',
       baseModel,
@@ -97,7 +103,7 @@ const call = async ({
 
   return mockUpsertModelVersion.mock.calls[0][0] as {
     licensingSourceVersionId: number | null;
-    licensingSourceCoerced?: boolean;
+    licensingSourceCoercedReason?: string;
   };
 };
 
@@ -136,18 +142,49 @@ describe('upsertModelVersionHandler — licensing lineage scope', () => {
     expect(written.licensingSourceVersionId).toBeNull();
   });
 
-  // 🔴 The type comes from the model the EDITED VERSION belongs to, never from the payload.
-  // `isOwnerOrModerator` authorises against the version's stored modelId and never compares it to
-  // `input.modelId`, so a caller who owns both a LoRA and a Checkpoint can name the Checkpoint in the
-  // payload while editing the LoRA's version. Read the payload's model here and the type check is
-  // satisfied by a model the row has nothing to do with.
-  it('reads the type from the edited version, not from the payload', async () => {
+  // 🔴 An update touches TWO models and both have to pass. Checking only one leaves a hole either
+  // way, and the two holes are opposite, so neither test below is redundant.
+  //
+  // Only the payload's: `isOwnerOrModerator` authorises against the stored version's modelId and never
+  // compares it to `input.modelId`, so a caller who owns both models can name the Checkpoint in the
+  // payload while editing the LoRA's version.
+  it('rejects when the model the version currently belongs to is the wrong type', async () => {
     const written = await call({
       id: VERSION_ID,
       modelTypes: { [PAYLOAD_MODEL_ID]: 'Checkpoint', [STORED_MODEL_ID]: 'LORA' },
     });
     expect(written.licensingSourceVersionId).toBeNull();
     expect(dbMock.dbWrite.model.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: STORED_MODEL_ID } })
+    );
+  });
+
+  // Only the stored one: `modelId` is not destructured in `upsertModelVersion`, so it rides `...data`
+  // into `dbWrite.modelVersion.update` and the save MOVES the version. A Checkpoint version holding a
+  // legitimate root, re-parented onto a LoRA model in the same request, would pass a stored-model-only
+  // check and land a checkpoint's per-image fee on a LoRA — this bug, through the guard for it.
+  it('rejects when the model the save MOVES the version to is the wrong type', async () => {
+    const written = await call({
+      id: VERSION_ID,
+      modelTypes: { [PAYLOAD_MODEL_ID]: 'LORA', [STORED_MODEL_ID]: 'Checkpoint' },
+    });
+    expect(written.licensingSourceVersionId).toBeNull();
+    expect(dbMock.dbWrite.model.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: PAYLOAD_MODEL_ID } })
+    );
+  });
+
+  // A templated write carries an `id` and still creates a NEW version under `input.modelId`, so there
+  // is no stored model to consult and `!!input.id` is the wrong predicate. Without this case,
+  // substituting `!!input.id` for `updatesExistingVersion` leaves every other test green.
+  it('uses the payload model for a templated write, id or not', async () => {
+    const written = await call({
+      id: VERSION_ID,
+      templateId: 77,
+      modelTypes: { [PAYLOAD_MODEL_ID]: 'Checkpoint', [STORED_MODEL_ID]: 'LORA' },
+    });
+    expect(written.licensingSourceVersionId).toBe(ANIMA_ROOT_VERSION_ID);
+    expect(dbMock.dbWrite.model.findUnique).not.toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: STORED_MODEL_ID } })
     );
   });
@@ -161,13 +198,21 @@ describe('upsertModelVersionHandler — licensing lineage scope', () => {
     expect(mockUpsertModelVersion).toHaveBeenCalledTimes(1);
   });
 
-  // A coercion is a rule acting, not the creator. Without this flag the audit rows this fix exists to
-  // produce would name owners who did nothing — worse than the missing trail it replaces.
-  it('tells the service the clear was automated, and only when it was', async () => {
-    expect((await call(creating('LORA'))).licensingSourceCoerced).toBe(true);
-    vi.clearAllMocks();
-    mockUpsertModelVersion.mockResolvedValue({ id: VERSION_ID, modelId: PAYLOAD_MODEL_ID });
-    expect((await call(creating('Checkpoint'))).licensingSourceCoerced).toBe(false);
+  // A coercion is a rule acting, not the creator, and the audit has to say WHICH rule. A bare boolean
+  // collapses four distinct branches into one sentence, so a moderator reading the change history
+  // cannot tell a type mismatch from a model that could not be read. With no flag at all, the rows this
+  // fix exists to produce name owners who did nothing — worse than the missing trail it replaces.
+  it.each([
+    ['a type mismatch', {}, 'model-type-mismatch'],
+    ['an unregistered source', { root: null }, 'not-a-root'],
+    ['a base-model mismatch', { baseModel: 'Illustrious' }, 'base-model-mismatch'],
+  ])('tells the service the clear was automated, and why: %s', async (_l, overrides, expected) => {
+    const written = await call({ ...creating('LORA'), ...overrides });
+    expect(written.licensingSourceCoercedReason).toBe(expected);
+  });
+
+  it('says nothing about coercion when it kept the source', async () => {
+    expect((await call(creating('Checkpoint'))).licensingSourceCoercedReason).toBeUndefined();
   });
 
   it('leaves an unset source alone without reading the root table', async () => {

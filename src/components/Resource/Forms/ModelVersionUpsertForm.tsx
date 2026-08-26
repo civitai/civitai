@@ -591,6 +591,21 @@ export function ModelVersionUpsertForm({
       form.setValue('licensingSourceVersionId', null, { shouldDirty: true });
   }, [baseModel]);
 
+  // The same argument for the MODEL TYPE, which roots are scoped by just as much and which is editable
+  // at wizard step 1 until the model is trained. Without this, moving a model Checkpoint -> LoRA after
+  // step 2 has already pre-selected a checkpoint root leaves the stale id in the form: the query
+  // re-keys, the scoped result is empty, the default effect early-returns on a null default, and the
+  // picker hides itself (`licensingRoots.length > 0`) — so the value is invisible AND submitted. The
+  // server coerces it, so nothing bad is written; this is about the form not carrying a selection it
+  // can neither show nor keep.
+  const prevModelTypeRef = useRef(model?.type);
+  useEffect(() => {
+    if (prevModelTypeRef.current === model?.type) return;
+    prevModelTypeRef.current = model?.type;
+    if (form.getValues('licensingSourceVersionId') != null)
+      form.setValue('licensingSourceVersionId', null, { shouldDirty: true });
+  }, [model?.type]);
+
   // A derivative must record an explicit parent — a null source means no fee, so
   // pre-select the ecosystem's default root when none is set. Skipped for roots
   // and exempt versions (which legitimately have no parent).

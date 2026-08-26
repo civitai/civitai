@@ -1,3 +1,4 @@
+import React from 'react';
 import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
@@ -741,16 +742,60 @@ describe('ModelVersionUpsertForm — licensing lineage pre-selection', () => {
     expect((await save()).licensingSourceVersionId).toBe(ANIMA_CHECKPOINT_ROOT.id);
   });
 
-  // 🔴 The gate this pins is `enabled: !!baseModel && !!model?.type`. Relaxing it back to `!!baseModel`
-  // fires one unscoped fetch whose CHECKPOINT roots get stamped onto a LoRA before the scoped refetch —
-  // which returns nothing, so the effect early-returns on a null default and can never clear it.
+  // 🔴 The gate this pins is `enabled: !!baseModel && !!model?.type`. Relaxing it back to
+  // `!!baseModel` fires one unscoped fetch whose CHECKPOINT roots get stamped onto a LoRA before the
+  // scoped refetch — which returns nothing, so the effect early-returns on a null default and can never
+  // clear it.
+  //
+  // The model is present here and only its TYPE is missing, which is what makes this test worth
+  // anything: with `model` undefined entirely, relaxing the gate to `!!model` also passes, so the test
+  // would pin the wrong half of the condition. (It is also the truer fixture — the wizard's step 2
+  // renders with a model object whose query has resolved and a type the user has not chosen yet.)
   test('stamps nothing while the model type is still unknown', async () => {
     licensingRoots.respond = (input) =>
       input.modelType === undefined
         ? { roots: [ANIMA_CHECKPOINT_ROOT], defaultVersionId: ANIMA_CHECKPOINT_ROOT.id }
         : NO_ROOTS;
-    renderNew(false);
+    renderWithProviders(
+      <ModelVersionUpsertForm
+        model={{ ...model, type: undefined } as typeof model}
+        onSubmit={vi.fn()}
+      >
+        {() => <button type="submit">Save</button>}
+      </ModelVersionUpsertForm>
+    );
 
+    expect((await save()).licensingSourceVersionId ?? null).toBeNull();
+  });
+
+  // 🔴 The type is editable at wizard step 1 until the model is trained, so it can change AFTER a
+  // root has been pre-selected. The pre-selection effect cannot undo that on its own: the query
+  // re-keys, the scoped result is empty, and the effect early-returns on a null default. The picker
+  // hides itself too (`licensingRoots.length > 0`), so without the clearing effect the stale id is
+  // invisible on screen and submitted anyway. The server coerces it, so this is about the form not
+  // carrying a selection it can neither show nor keep.
+  test('clears a stamped root when the model type changes under it', async () => {
+    licensingRoots.respond = (input) =>
+      input.modelType === 'Checkpoint'
+        ? { roots: [ANIMA_CHECKPOINT_ROOT], defaultVersionId: ANIMA_CHECKPOINT_ROOT.id }
+        : NO_ROOTS;
+
+    function Harness() {
+      const [type, setType] = React.useState('Checkpoint');
+      return (
+        <>
+          <button type="button" onClick={() => setType('LORA')}>
+            Make it a LoRA
+          </button>
+          <ModelVersionUpsertForm model={{ ...model, type } as typeof model} onSubmit={vi.fn()}>
+            {() => <button type="submit">Save</button>}
+          </ModelVersionUpsertForm>
+        </>
+      );
+    }
+    renderWithProviders(<Harness />);
+
+    await userEvent.click(page.getByRole('button', { name: 'Make it a LoRA' }));
     expect((await save()).licensingSourceVersionId ?? null).toBeNull();
   });
 });
