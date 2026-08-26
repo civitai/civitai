@@ -20,8 +20,13 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   isFlipt,
 }));
+// Both exports, not just the one these tests reach. `blurb-fanout.service` imports
+// `getSupportedBlurbEntityTypes` too, and a hand-listed factory that omits it works only while
+// nothing evaluates it — move that call to module scope and this file collects ZERO tests while
+// still reporting green.
 vi.mock('~/server/services/blurb-fanout.adapters', () => ({
   getBlurbFanoutAdapter: () => adapter,
+  getSupportedBlurbEntityTypes: () => ['Article'],
 }));
 
 const { expandBlurbs } = await import('~/server/services/blurb-materialize.service');

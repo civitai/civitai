@@ -223,6 +223,20 @@ describe('upsertModelVersion — blurb reconciliation', () => {
     );
   });
 
+  it('🔴 leaves them alone when the caller supplied no description at all', async () => {
+    // `requestReviewHandler` / `declineReviewHandler` re-save a version from a select that has no
+    // `description`. Prisma leaves the column alone for an `undefined`, so the blurb markup stays
+    // in the body — but `expandBlurbs('')` returns `{evaluated:true, uses:[]}`, and reconciling on
+    // that deletes every reference row for the version. The markup then has nothing maintaining
+    // it: the fan-out selects through BlurbReference, so it never touches that version again.
+    // A moderator's decline is one of the two callers, so this strands a creator's content.
+    expandBlurbs.mockResolvedValue({ evaluated: true, html: '', uses: [] });
+
+    await upsert({ description: undefined });
+
+    expect(reconcileBlurbReferences).not.toHaveBeenCalled();
+  });
+
   it('leaves an existing reference row alone when the flag is off for the owner', async () => {
     // Reconciling on an unevaluated expansion deletes EVERY reference row for the version, and the
     // fan-out — deliberately ungated so it can still maintain them — then has nothing left.

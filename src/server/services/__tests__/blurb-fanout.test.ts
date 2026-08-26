@@ -3,8 +3,13 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const adapter = { load: vi.fn(), save: vi.fn() };
 
+// Both exports, not just the one these tests reach. `blurb-fanout.service` imports
+// `getSupportedBlurbEntityTypes` too, and a hand-listed factory that omits it works only while
+// nothing evaluates it — move that call to module scope and this file collects ZERO tests while
+// still reporting green.
 vi.mock('~/server/services/blurb-fanout.adapters', () => ({
   getBlurbFanoutAdapter: () => adapter,
+  getSupportedBlurbEntityTypes: () => ['Article'],
 }));
 
 const { processBlurbEntity } = await import('~/server/services/blurb-fanout.service');

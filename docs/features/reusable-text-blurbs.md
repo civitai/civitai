@@ -533,9 +533,10 @@ Management lives in the modal the toolbar opens: list, insert, create, edit, del
 route and no separate page in v1. A blurb's name is set once at creation and cannot be changed
 afterwards, so the field is read-only on edit.
 
-The modal shows usage — *"used in 14 places"* — straight from `BlurbReference`, with no separate
-bookkeeping. It is not a control, since the update is automatic; it is there so a creator
-editing a blurb can see that the edit has reach before they make it.
+The modal shows NO usage count. An earlier build put one on every row and a per-surface breakdown
+in the editor; both are gone, along with the `BlurbReference` groupBy behind them — see "Usage
+counts are deliberately not shown" at the top. The editor still tells a creator the edit is not
+local, phrased without a number.
 
 A dedicated management page — in the main app or in Creator Studio — is worth building once
 there is evidence creators keep enough blurbs to need one. Usage counts and update history are
@@ -605,8 +606,21 @@ Two gates, covering different things. `featureFlags.textBlurbs` (`availability: 
 plus the whole `blurb.*` tRPC router (`isFlagProtected('textBlurbs')`), and never the node, so a
 blurb span already in a draft keeps parsing. `FLIPT_FEATURE_FLAGS.TEXT_BLURBS`
 gates the server-side expansion in `expandBlurbs`, evaluated against the content OWNER so a rollout
-picks a sticky subset of creators. Both default off; `isFlipt` returns false for an unknown flag,
-and not expanding is the safe failure for a feature that rewrites published content.
+picks a sticky subset of creators.
+
+🔴 **The two gates fail in OPPOSITE directions while `text-blurbs` does not exist in Flipt.** The
+server's `isFlipt` catches the flag-not-found eval error and returns **false**, so `expandBlurbs`
+never evaluates — that half is the safe failure. The client's `isFliptSync` catches the same error
+and returns **`null`**, which `hasFeature` reads as "Flipt unavailable, fall through to static
+evaluation" — and static is `availability: ['mod']`, i.e. **on for every moderator**. So the
+insertion UI is live while the server writes no reference rows: a moderator inserts a blurb, the
+body stores the client's text with a `data-id` behind it and nothing maintains it. Turning the flag
+on later does NOT repair those rows, because reconciliation only runs on each host entity's next
+save. **Create the flag before the deploy that ships the UI**, not after.
+
+A Flipt result also OVERRIDES the `['mod']` role gate rather than intersecting with it, so a
+percentage ramp does not stay inside the moderator population — pick the percentage on that
+basis.
 
 🔴 **Ramp `text-blurbs` by percentage or boolean ONLY — a segment rollout matches nothing.**
 `expandBlurbs` evaluates it with an entityId and no evaluation context, and every identity/tier/cohort
@@ -652,9 +666,12 @@ Keep the check there rather than letting call sites decide, or sharing becomes a
 edit.
 
 **A new surface** — four registrations, not the two this section used to claim: `'blurb'` in that
-editor's `includeControls`; `allowBlurbs: true` on its zod schema (plus `span` in `allowedTags` if
-that schema narrows below the app default — `allowBlurbs` is an attribute strip, not a tag
-admission); `expandBlurbs` + a gated `reconcileBlurbReferences` in its service, keyed on the owner;
+editor's `includeControls`; `allowBlurbs: true` on its zod schema (plus **`div`** in `allowedTags`,
+and `data-id` kept on it, if that schema narrows below the app default — `allowBlurbs` is an
+attribute strip, not a tag admission. `div` is the wrapper since the block move; a surface
+admitting only `span` loses every blurb at save. If it also narrows `span`'s attributes it needs
+`style` there too, or blurb text colour is stripped on that surface alone —
+`modelVersionUpsertSchema` is the one that does); `expandBlurbs` + a gated `reconcileBlurbReferences` in its service, keyed on the owner;
 and an entry in the fan-out adapter registry pointing at its `apply<Entity>ContentChange`. The
 sanitizer strip is default-deny, so a surface that registers none of them stays closed. A surface
 that registers the first three and not the fourth is the half-enabled state: references accumulate

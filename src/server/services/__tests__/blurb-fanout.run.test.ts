@@ -89,18 +89,87 @@ beforeEach(() => {
   // Makes the fake table honour recordReference/recordFailure's writes, so a test can
   // re-run the selector afterwards and observe the reordering those writes are FOR — not
   // just assert the write's shape.
+  const applyWrite = (row: (typeof table)[number] | undefined, data: any) => {
+    if (!row) return;
+    if (data.materializedAt instanceof Date) row.materializedAt = data.materializedAt.getTime();
+    if (typeof data.materializedHash === 'string') row.materializedHash = data.materializedHash;
+  };
+
+  // `recordFailure` still writes one row at a time.
   dbMock.dbWrite.blurbReference.update.mockImplementation(async (args: any) => {
     const key = args.where.blurbId_entityType_entityId;
-    const row = table.find(
-      (r) =>
-        r.blurbId === key.blurbId && r.entityType === key.entityType && r.entityId === key.entityId
+    applyWrite(
+      table.find(
+        (r) =>
+          r.blurbId === key.blurbId &&
+          r.entityType === key.entityType &&
+          r.entityId === key.entityId
+      ),
+      args.data
     );
-    if (!row) return undefined;
-    if (args.data.materializedAt instanceof Date)
-      row.materializedAt = args.data.materializedAt.getTime();
-    if (typeof args.data.materializedHash === 'string')
-      row.materializedHash = args.data.materializedHash;
     return undefined;
+  });
+
+  // `recordReferences` batches by contentHash. Without this arm the fake table silently stops
+  // honouring the success path, and every test that re-runs the selector to prove a row was
+  // marked current would pass whether or not it was.
+  dbMock.dbWrite.blurbReference.updateMany.mockImplementation(async (args: any) => {
+    for (const blurbId of args.where.blurbId.in as number[])
+      applyWrite(
+        table.find(
+          (r) =>
+            r.blurbId === blurbId &&
+            r.entityType === args.where.entityType &&
+            r.entityId === args.where.entityId
+        ),
+        args.data
+      );
+    return { count: 0 };
+  });
+});
+
+/** The selector's own SQL, joined back into readable text. */
+const selectorSql = () =>
+  (dbMock.dbRead.$queryRaw.mock.calls[0]?.[0] as unknown as string[]).join(' ? ');
+
+// The fake above stands in for Postgres, so it exercises the filtering CONTRACT but never the
+// SQL text — and the text is where the decisions live. Five separate mutations to this query
+// (dropping the staleness predicate, inverting it, flipping or dropping the ORDER BY, and
+// turning `= ANY` into `<> ANY`) left every other test in this file green.
+describe('runBlurbFanout — the selector statement itself', () => {
+  beforeEach(() => {
+    table = [makeRow(1, 'Article', 1)];
+  });
+
+  it('🔴 selects only rows whose materialised hash has fallen behind, or whose blurb is deleted', async () => {
+    await runBlurbFanout({ limit: 5 });
+
+    const sql = selectorSql().replace(/\s+/g, ' ');
+    expect(sql).toMatch(/"materializedHash"\s*<>\s*b?\.?"?contentHash"?/);
+    expect(sql).toMatch(/OR\s+b\."deletedAt" IS NOT NULL/);
+  });
+
+  it('🔴 takes the OLDEST first, which is what stops a failing row crowding the window', async () => {
+    await runBlurbFanout({ limit: 5 });
+
+    expect(selectorSql().replace(/\s+/g, ' ')).toMatch(/ORDER BY r\."materializedAt" ASC/);
+  });
+
+  it('🔴 keeps unsupported types OUT of the work query, not out of the backlog count', async () => {
+    await runBlurbFanout({ limit: 5 });
+
+    const work = selectorSql().replace(/\s+/g, ' ');
+    expect(work).toMatch(/r\."entityType" = ANY/);
+    expect(work).not.toMatch(/NOT \(r\."entityType" = ANY/);
+  });
+
+  it('🔴 counts the backlog as the COMPLEMENT of what it works on', async () => {
+    await runBlurbFanout({ limit: 5, includeUnsupportedBacklog: true });
+
+    const count = (dbMock.dbRead.$queryRaw.mock.calls.at(-1)?.[0] as unknown as string[]).join(
+      ' ? '
+    );
+    expect(count.replace(/\s+/g, ' ')).toMatch(/NOT \(r\."entityType" = ANY/);
   });
 });
 
@@ -262,5 +331,29 @@ describe('runBlurbFanout — two stale blurbs on one entity', () => {
       [[1], 'new-1'],
       [[2], 'new-2'],
     ]);
+  });
+});
+
+// The only hard delete in the feature. Both halves of its predicate are load-bearing in opposite
+// directions: without `deletedAt IS NOT NULL` it removes live blurbs, and inverting the
+// `NOT EXISTS` removes exactly the ones that still have references — whose bodies then carry
+// markup pointing at nothing, since BlurbReference cascades away with the row.
+describe('runBlurbFanout — reaping soft-deleted blurbs', () => {
+  const reapSql = () =>
+    dbMock.dbWrite.$executeRaw.mock.calls
+      .map(([strings]) => (strings as unknown as string[]).join(' ? ').replace(/\s+/g, ' '))
+      .filter((sql) => /DELETE FROM "Blurb"/.test(sql));
+
+  it('🔴 deletes only soft-deleted blurbs that nothing references any more', async () => {
+    table = [makeRow(1, 'Article', 1)];
+
+    await runBlurbFanout({ limit: 5 });
+
+    const [sql, ...extra] = reapSql();
+    expect(extra).toEqual([]);
+    expect(sql).toMatch(/b\."deletedAt" IS NOT NULL/);
+    expect(sql).toMatch(
+      /NOT EXISTS \( ?SELECT 1 FROM "BlurbReference" r WHERE r\."blurbId" = b\.id ?\)/
+    );
   });
 });

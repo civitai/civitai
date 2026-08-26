@@ -453,10 +453,12 @@ export const modelVersionUpsertSchema2 = z.object({
   baseModel: baseModelSchema,
   baseModelType: z.enum(constants.baseModelTypes).nullish(),
   description: getSanitizedStringSchema({
-    // `span` is absent from the app-wide default list this narrows, so without it here a blurb
-    // span is stripped at save and `expandBlurbs` sees plain text — the control would render
-    // and silently do nothing on this surface alone. `allowBlurbs` is an attribute STRIP
-    // toggle, not a tag admission, so it cannot admit the tag on its own.
+    // `div` is the blurb wrapper and is already in this narrowed list; `data-id` on it comes from
+    // the app-wide attribute defaults. `span` is here for what goes INSIDE a blurb — the colour
+    // span, and mentions. `allowBlurbs` is an attribute STRIP toggle, not a tag admission, so it
+    // cannot admit either tag on its own: drop one and the markup is stripped at save,
+    // `expandBlurbs` sees plain text, and the control renders and silently does nothing on this
+    // surface alone.
     allowedTags: [
       'div',
       'strong',

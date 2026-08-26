@@ -242,6 +242,19 @@ describe('upsertModel — blurb reconciliation', () => {
     expect(reconcileBlurbReferences).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.model.update).toHaveBeenCalled();
   });
+
+  it('🔴 reconciles on the CREATE path too, against the id it was created with', async () => {
+    // The create branch has its own reconcile call, and only the update branch was covered. A
+    // blurb inserted while creating a model would get no reference row at all, so the fan-out
+    // would never maintain it — frozen at its creation-time text, silently, forever.
+    await upsert({ id: undefined });
+
+    expect(reconcileBlurbReferences).toHaveBeenCalledWith({
+      entityType: 'Model',
+      entityId: MODEL_ID,
+      uses: USES,
+    });
+  });
 });
 
 describe('applyModelContentChange', () => {
