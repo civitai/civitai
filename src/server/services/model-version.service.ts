@@ -514,6 +514,7 @@ export const upsertModelVersion = async ({
   tracker,
   actorUserId,
   isModerator,
+  licensingSourceCoerced,
   ...data
 }: Omit<ModelVersionUpsertInput, 'trainingDetails'> & {
   meta?: Prisma.ModelVersionCreateInput['meta'];
@@ -521,6 +522,12 @@ export const upsertModelVersion = async ({
   tracker?: Tracker;
   actorUserId?: number;
   isModerator?: boolean;
+  /**
+   * The controller cleared `licensingSourceVersionId` because it pointed at a root of the wrong model
+   * type or base model. It is a rule acting, not the actor, and the audit says so — otherwise the
+   * repairs land in the change log as edits by creators who did nothing.
+   */
+  licensingSourceCoerced?: boolean;
 }) => {
   if (data.description) await throwOnBlockedLinkDomain(data.description);
 
@@ -910,6 +917,12 @@ export const upsertModelVersion = async ({
           ownerId: model.userId,
           isModerator,
         }),
+        systemFields: licensingSourceCoerced
+          ? {
+              licensingSourceVersionId:
+                'cleared: licensing source was not a root for this model type / base model',
+            }
+          : undefined,
       });
       tracker.entityChanges(changeRows).catch(() => null);
     }

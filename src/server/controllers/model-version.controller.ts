@@ -542,6 +542,10 @@ export const upsertModelVersionHandler = async ({
         input.licensingFeeSettlementCurrency = LicensingFeeSettlementCurrency.Buzz;
     }
 
+    // Set when the block below repairs the payload, so the audit can attribute the change to the rule
+    // rather than to the creator. Without it the first rows this new trail ever produces are automated
+    // repairs wearing an owner's name — which is the opposite of why the field was added to the audit.
+    let licensingSourceCoerced = false;
     // Licensing lineage: the chosen source must be a registered LicensingRoot for the same base model
     // AND the same model type. The model-type half is the one that was missing (CU 868kwf2fd,
     // Freshdesk #69622): every LicensingRoot row is a Checkpoint, so a LoRA that inherits one charges
@@ -565,24 +569,55 @@ export const upsertModelVersionHandler = async ({
     // `null` outright has always been allowed, and 99.77% of Anima and Krea 2 LoRAs do exactly that
     // (107 of 46,994 and 45 of 19,999 carry a source at all).
     if (input.licensingSourceVersionId != null) {
-      const [source, sourceModel] = await Promise.all([
+      const [source, owningModel] = await Promise.all([
         dbRead.licensingRoot.findUnique({
           where: { modelVersionId: input.licensingSourceVersionId },
           select: { baseModel: true, modelType: true },
         }),
-        getModel({ id: input.modelId, select: { type: true } }),
+        // 🔴 Two things this read must NOT do, both of which it did in an earlier round of this fix.
+        //
+        // It must not read the model through `getModel`. That resolves its client through
+        // `getDbWithoutLag`, so a model created seconds ago — which is precisely the ModelWizard's
+        // step-1-then-step-2 shape — can come back as a replica miss. The coercion below turns a miss
+        // into `null`, and because it coerces rather than throws the creator is never told. The service
+        // reads the same row with `dbWrite.model.findUniqueOrThrow`, so the save still succeeds and the
+        // field is silently gone. `storedUsageControl` above uses `dbWrite` for the identical reason:
+        // "a replica miss must not read as already-generation-only".
+        //
+        // And on an update it must not trust `input.modelId`. `isOwnerOrModerator` authorises against
+        // the modelId of the version being EDITED, never against the one in the payload, so a caller
+        // who owns both a LoRA and a Checkpoint could send the LoRA's version id with the Checkpoint's
+        // modelId and have the type compared against the wrong model. `updatesExistingVersion` is the
+        // right predicate rather than `!!input.id`: a templated write carries an id and still creates a
+        // NEW version under `input.modelId`.
+        (async () => {
+          const owningModelId = updatesExistingVersion
+            ? (
+                await dbWrite.modelVersion.findUnique({
+                  where: { id: input.id },
+                  select: { modelId: true },
+                })
+              )?.modelId
+            : input.modelId;
+          if (owningModelId == null) return null;
+          return dbWrite.model.findUnique({
+            where: { id: owningModelId },
+            select: { type: true },
+          });
+        })(),
       ]);
-      // A missing model coerces rather than passing. `getModel` filters on nothing but the id, so this
-      // only happens for a modelId that does not exist — the upsert below throws on it anyway. Writing
-      // it as `sourceModel && ...` instead would make "we could not check" indistinguishable from
-      // "we checked and it was fine", which is the shape of every guard that turns out to be inert.
+      // A model that cannot be read coerces rather than passing. Read from `dbWrite` above, `null` here
+      // means the row genuinely does not exist — and the service's own `findUniqueOrThrow` on the same
+      // client will reject the save moments later, so this branch costs a real creator nothing. Written
+      // the permissive way (`owningModel && ...`) it would make "we could not check" indistinguishable
+      // from "we checked and it was fine", which is the shape of every guard that turns out inert.
       const rejectedReason = !source
         ? 'not-a-root'
         : source.baseModel !== input.baseModel
         ? 'base-model-mismatch'
-        : !sourceModel
+        : !owningModel
         ? 'model-not-found'
-        : source.modelType !== sourceModel.type
+        : source.modelType !== owningModel.type
         ? 'model-type-mismatch'
         : null;
       if (rejectedReason) {
@@ -596,12 +631,13 @@ export const upsertModelVersionHandler = async ({
           modelId: input.modelId,
           modelVersionId: input.id ?? null,
           requestedSourceVersionId: input.licensingSourceVersionId,
-          modelType: sourceModel?.type ?? null,
+          modelType: owningModel?.type ?? null,
           sourceModelType: source?.modelType ?? null,
           baseModel: input.baseModel ?? null,
           sourceBaseModel: source?.baseModel ?? null,
         }).catch(() => null);
         input.licensingSourceVersionId = null;
+        licensingSourceCoerced = true;
       }
     }
 
@@ -611,6 +647,7 @@ export const upsertModelVersionHandler = async ({
       tracker: ctx.track,
       actorUserId: userId,
       isModerator: ctx.user.isModerator,
+      licensingSourceCoerced,
     });
     if (!version) throw throwNotFoundError(`No model version with id ${input.id as number}`);
 
