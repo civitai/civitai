@@ -8,6 +8,7 @@ import { dbRead } from '~/server/db/client';
 import { loadListingAssetScansBatch } from '~/server/services/blocks/app-listing-assets.service';
 import {
   isOwnerUnpublishAction,
+  LISTING_STATUS_CHANGING_MODERATION_ACTIONS,
   OWNER_UNPUBLISH_EVENT,
   readLastModerationAction,
 } from '~/server/services/blocks/app-listing-owner-unpublish';
@@ -954,12 +955,17 @@ export type AppListingAuthoringContext = Omit<
  * collapses to `other` before it leaves the server. Widening this back to the raw string
  * re-opens the editor-disclosure hole described at the call site — do not "simplify" it away.
  *
- * 🔴 RE-EXPORTED FROM `app-listing-owner-unpublish`, NOT REDECLARED. That module owns the
- * server-side predicate the SERVER branches on (`republishOwnListing`'s go-live guard and
- * the author edit paths); this is the same fact reaching the CLIENT. Two literals spelling
- * one action is how they drift apart.
+ * 🔴 THE VALUE IS IMPORTED FROM `app-listing-owner-unpublish`, NOT REDECLARED. That module
+ * owns the server-side predicate the SERVER branches on (`republishOwnListing`'s go-live
+ * guard and the author edit paths); this is the same fact reaching the CLIENT. Two literals
+ * spelling one action is how they drift apart.
+ *
+ * It is deliberately NOT re-exported from here. A re-export with no consumer reads as a
+ * second public home for the constant and invites the next caller to import the action name
+ * from a service that does not own it; `app-listing-owner-unpublish` is the one place to
+ * import it from. (`app-listing-owner-unpublish.test.ts` pins the client's own copy,
+ * `OWNER_UNPUBLISH_ACTION` in `~/components/Apps/offsiteOwnerControls`, against it.)
  */
-export { OWNER_UNPUBLISH_EVENT };
 export type NormalizedModerationAction = typeof OWNER_UNPUBLISH_EVENT | 'other';
 
 /** `null` in ⇒ `null` out (no event); the owner's own unpublish keeps its name; all else → `other`. */
@@ -1058,7 +1064,18 @@ async function hydrateMyAppListings(
   const [lastEvents, scansByListingId] = await Promise.all([
     removedListingIds.length
       ? dbRead.appListingModerationEvent.findMany({
-          where: { appListingId: { in: removedListingIds } },
+          // 🔴 FILTERED TO STATUS-CHANGING ACTIONS, exactly like
+          // `readLastModerationAction`, and from the SAME constant. This read decides
+          // whether `/apps/mine` offers **Republish**; the server-side gate
+          // (`republishOwnListing`, and now the three author edit paths) decides whether
+          // it works. An UNFILTERED read here and a filtered one there disagree the
+          // moment a moderator sends the owner a `message-owner` — the button vanishes
+          // from a listing the server would happily republish. Same query shape, one
+          // spelling of the set.
+          where: {
+            appListingId: { in: removedListingIds },
+            action: { in: [...LISTING_STATUS_CHANGING_MODERATION_ACTIONS] },
+          },
           orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
           distinct: ['appListingId'],
           select: { appListingId: true, action: true },

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { LISTING_STATUS_CHANGING_MODERATION_ACTIONS } from '~/server/services/blocks/app-listing-owner-unpublish';
 import {
   getMyListingForApp,
   getMyListingForEdit,
@@ -30,6 +31,21 @@ import {
  * INVARIANT GUARDS (green on both sides) and are labelled as such below rather than
  * counted as regression coverage.
  *
+ * 🔴 SECOND ROUND (the audit fixes). Measured against the pre-fix tip of this branch,
+ * `255218262f`, by reverting the four SOURCE files to it and re-running this file:
+ *   - REGRESSION coverage (red at `255218262f`, green now): every MATERIAL-field refusal,
+ *     the state-neutral-event cases, the collaborator MATERIAL refusal, and the two
+ *     query-shape cases.
+ *   - MUTATION GUARDS (green on both sides, and NOT regression coverage): the two
+ *     "reads the PRIMARY (site 2/3 of 3)" cases. `getMyListingForEdit` and
+ *     `getMyListingForApp` already read `dbWrite`; the defect they close is that a
+ *     `dbWrite → dbRead` mutation at either site SURVIVED the whole blocks suite, because
+ *     only `updateListing` carried a pool assertion. They are labelled as guards here so
+ *     nobody counts them as proof of a fixed bug.
+ *   - POSITIVE CONTROLS / INVARIANT GUARDS (green on both sides): the trivial-edit cases,
+ *     the unchanged-material-key case, the approved-still-stages case, and the
+ *     mod-takedown-wins-first case.
+ *
  * DB fully mocked — no real Prisma.
  */
 
@@ -54,7 +70,18 @@ const LISTING_ID = 'apl_parent';
 const MOD_TAKEDOWN_MESSAGE =
   'this listing has been removed by a moderator and can no longer be edited';
 
-/** An owner-owned OFF-SITE listing row, as `editableListingSelect` returns it. */
+/**
+ * An owner-owned OFF-SITE listing row, as `editableListingSelect` returns it (plus
+ * `sourceRepoUrl`, which the service reads through its own guarded second query on the
+ * same `findUnique` fake).
+ *
+ * 🔴 EVERY MATERIAL FIELD CARRIES A DISTINCT, NON-DEFAULT VALUE, and none of them equals
+ * a value any assertion below names as the "changed" one. An all-defaults fixture (empty
+ * strings, `null` externalUrl, `contentRating: 'g'`) collapses "the patch changed X" and
+ * "the patch left X alone" into the same observable, so a mutant that compares the wrong
+ * field — or that hardcodes a constant — survives. `contentRating` is `'r'` specifically
+ * so the LOWERING case (`r → g`) can be exercised in the direction that matters.
+ */
 function listingRow(overrides: Partial<Row> = {}): Row {
   return {
     id: LISTING_ID,
@@ -67,8 +94,9 @@ function listingRow(overrides: Partial<Row> = {}): Row {
     tagline: 'the tagline',
     description: 'the description',
     category: 'utility',
-    contentRating: 'g',
+    contentRating: 'r',
     externalUrl: 'https://cool.example.com/app',
+    sourceRepoUrl: 'https://github.com/cool/app',
     connectClientId: null,
     connectRequestedScopes: null,
     connectScopeJustifications: null,
@@ -226,7 +254,10 @@ describe('updateListing on a `removed` listing', () => {
     await updateListing({ listingId: LISTING_ID, patch: { tagline: 'y' }, userId: OWNER });
 
     expect(mockWrite.appListingModerationEvent.findFirst).toHaveBeenCalledWith({
-      where: { appListingId: LISTING_ID },
+      where: {
+        appListingId: LISTING_ID,
+        action: { in: [...LISTING_STATUS_CHANGING_MODERATION_ACTIONS] },
+      },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       select: { action: true },
     });
@@ -240,6 +271,381 @@ describe('updateListing on a `removed` listing', () => {
 
     expect(mockWrite.appListingModerationEvent.findFirst).not.toHaveBeenCalled();
     expect(mockRead.appListingModerationEvent.findFirst).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// updateListing — MATERIAL fields on the newly-opened `removed` path
+// ---------------------------------------------------------------------------
+
+/**
+ * 🔴 THE EXPLOIT THIS BLOCK PINS SHUT, spelled out so nobody re-opens it by "simplifying"
+ * the branch. `removed` + `owner-unpublish` is the state an owner can put their OWN listing
+ * into and take it back out of, with NO moderator in the loop:
+ *
+ *     approved → unpublishOwnListing → updateListing(<material>) → republishOwnListing → approved
+ *
+ * `republishOwnListing` gates on `assertListingAssetsScanCleanInTx` (did the images finish
+ * scanning?) and `assertOffsiteListingActionableInTx` (is there an https href at all?).
+ * NEITHER is a content review, so without a material-field refusal the store's destination
+ * URL, its displayed name, its public repo link, its disclosed OAuth scopes and its content
+ * rating could all be swapped AFTER approval. The refusal below is the whole guarantee; the
+ * republish path contributes nothing to it.
+ *
+ * Reachable today via the `appListings.updateListing` tRPC mutation and by CLI token under
+ * `TokenScope.AppBlocksSubmit` — "there is no UI button" is not a mitigation.
+ *
+ * 🔴 RED AT BASE: every case here fails on the pre-fix tip of this branch
+ * (`255218262f`), where the arm wrote the FULL patch in place and returned
+ * `requiresReview:false`. They are regression coverage, not invariant guards.
+ */
+describe('updateListing on an OWNER-UNPUBLISHED listing — MATERIAL fields are REFUSED', () => {
+  /** The typed code the refusal must carry (the router maps it to BAD_REQUEST). */
+  const BLOCKED = 'MATERIAL_CHANGE_BLOCKED';
+
+  async function expectRefused(patch: Record<string, unknown>, field: string) {
+    wireLastModerationEvent('owner-unpublish');
+    const err = await updateListing({
+      listingId: LISTING_ID,
+      patch: patch as never,
+      userId: OWNER,
+    }).then(
+      () => null,
+      (e: unknown) => e as { code?: string; message?: string }
+    );
+
+    // Not merely "it threw" — the RIGHT refusal, naming the RIGHT field.
+    expect(err?.code).toBe(BLOCKED);
+    expect(err?.message).toContain(field);
+    // 🔴 AND NOTHING WAS WRITTEN, on either the parent or a shadow. A refusal that still
+    // persisted the row would be the same defect with an error message stapled on.
+    expect(mockWrite.appListing.update).not.toHaveBeenCalled();
+    expect(mockWrite.appListing.create).not.toHaveBeenCalled();
+    return err;
+  }
+
+  it('🔴 externalUrl — the STORE DESTINATION cannot be swapped after approval', async () => {
+    wireListing(listingRow());
+    await expectRefused({ externalUrl: 'https://evil.example.com/app' }, 'externalUrl');
+  });
+
+  it('🔴 name — the listing IDENTITY cannot be swapped after approval', async () => {
+    wireListing(listingRow());
+    await expectRefused({ name: 'Totally Different App' }, 'name');
+  });
+
+  it('🔴 contentRating LOWERED r → g — Finding 1 subsumes the SFW-filter half', async () => {
+    // `contentRating` drives the public SFW filter (`content_rating NOT IN ('r','x')`) and
+    // `republishOwnListing` runs NO rating floor (`resolveListingRatingFloorInTx` is wired
+    // into the approve paths only), so lowering it in place would surface a still-mature
+    // listing to SFW users with nothing else in the chain to catch it. It is refused here
+    // because it is MATERIAL — the same one rule, not a second special case.
+    wireListing(listingRow({ contentRating: 'r' }));
+    await expectRefused({ contentRating: 'g' }, 'contentRating');
+  });
+
+  it('contentRating RAISED g → r is refused too — the rule is "material", not "lowered"', async () => {
+    // Direction-independent on purpose: a rating change is a moderator-visible fact either
+    // way, and a rule that only caught the "dangerous" direction would be a rule about the
+    // exploit rather than about review.
+    wireListing(listingRow({ contentRating: 'g' }));
+    await expectRefused({ contentRating: 'r' }, 'contentRating');
+  });
+
+  it('🔴 sourceRepoUrl — the public OUTBOUND repo link is material for the same reason', async () => {
+    wireListing(listingRow());
+    await expectRefused(
+      { sourceRepoUrl: 'https://github.com/someone-else/other' },
+      'sourceRepoUrl'
+    );
+  });
+
+  it('🔴 requestedScopes — a DISCLOSED OAuth scope drift cannot go live unreviewed', async () => {
+    // The mask is SERVER-DERIVED from the client's current `allowedScopes`, so the drift
+    // that matters is client-ceiling vs stored snapshot, not what the form sent.
+    wireListing(listingRow({ connectClientId: 'oc_1', connectRequestedScopes: 1 }));
+    mockRead.oauthClient.findUnique.mockResolvedValue({ userId: OWNER, allowedScopes: 7 });
+
+    await expectRefused({ requestedScopes: 1, scopeJustifications: {} }, 'requestedScopes');
+  });
+
+  it('names EVERY offending field, not just the first', async () => {
+    wireListing(listingRow());
+    const err = await expectRefused(
+      { name: 'Other', externalUrl: 'https://evil.example.com/app', tagline: 'ok' },
+      'name'
+    );
+    expect(err?.message).toContain('externalUrl');
+    // The trivial key travelling alongside is not accused.
+    expect(err?.message).not.toContain('tagline: ');
+  });
+
+  it('🔴 POSITIVE CONTROL — the FEATURE still works: tagline/description/category edit in place', async () => {
+    // This is the user need the whole PR exists for ("unpublish → fix your copy →
+    // republish"). If the refusal above were over-broad it would land here, and this case
+    // is what would say so.
+    wireListing(listingRow());
+    wireLastModerationEvent('owner-unpublish');
+
+    const res = await updateListing({
+      listingId: LISTING_ID,
+      patch: { tagline: 'clearer tagline', description: 'clearer copy', category: 'discovery' },
+      userId: OWNER,
+    });
+
+    expect(res).toEqual({
+      listingId: LISTING_ID,
+      status: 'removed',
+      requiresReview: false,
+      shadowId: null,
+    });
+    expect(mockWrite.appListing.update).toHaveBeenCalledWith({
+      where: { id: LISTING_ID },
+      data: { tagline: 'clearer tagline', description: 'clearer copy', category: 'discovery' },
+    });
+  });
+
+  /**
+   * 🔴 THIS IS ALSO THE ONLY CASE THAT CAN SEE A WRONG `live` BIND, and it took a surviving
+   * mutant to notice. Every "changed ⇒ refused" case above compares a patched value against
+   * a DIFFERENT live value, so replacing a `live.<field>` with a constant (`null`) leaves
+   * the inequality true and the refusal identical — the mutant `contentRating:
+   * listing.contentRating → contentRating: null` SURVIVED the whole battery on those cases
+   * alone. Only an UNCHANGED value distinguishes them: correct code sees equality and
+   * saves, a wrong bind sees `'r' !== null` and refuses. So every material field is
+   * re-sent VERBATIM here, not just one.
+   */
+  it('a material key present but UNCHANGED is not a change — every material field, verbatim', async () => {
+    // The editor round-trips every field, so a re-save of an untouched form carries them
+    // all. Refusing on PRESENCE rather than on CHANGE would make the repair loop unusable
+    // from the actual UI while looking correct in a unit test that only ever sends deltas.
+    wireListing(listingRow());
+    wireLastModerationEvent('owner-unpublish');
+
+    const res = await updateListing({
+      listingId: LISTING_ID,
+      patch: {
+        name: 'Cool App',
+        contentRating: 'r',
+        externalUrl: 'https://cool.example.com/app',
+        sourceRepoUrl: 'https://github.com/cool/app',
+        tagline: 'still fixing',
+      },
+      userId: OWNER,
+    });
+
+    expect(res.requiresReview).toBe(false);
+    expect(mockWrite.appListing.update).toHaveBeenCalledWith({
+      where: { id: LISTING_ID },
+      data: {
+        name: 'Cool App',
+        contentRating: 'r',
+        externalUrl: 'https://cool.example.com/app',
+        sourceRepoUrl: 'https://github.com/cool/app',
+        tagline: 'still fixing',
+      },
+    });
+  });
+
+  it('🔴 the refusal is scoped to `removed` — an APPROVED listing still STAGES a material change', async () => {
+    // Negative control on the branch itself: if the refusal leaked into the approved arm
+    // it would break the shadow-revision flow, and every case above would still pass.
+    wireListing(listingRow({ status: 'approved' }));
+    mockRead.appListing.findFirst.mockResolvedValue({ id: 'apl_shadow' });
+
+    const res = await updateListing({
+      listingId: LISTING_ID,
+      patch: { name: 'Renamed' },
+      userId: OWNER,
+    });
+
+    expect(res).toMatchObject({ requiresReview: true, shadowId: 'apl_shadow' });
+    expect(mockWrite.appListing.update).toHaveBeenCalledWith({
+      where: { id: 'apl_shadow' },
+      data: { name: 'Renamed' },
+    });
+  });
+
+  it('a MODERATOR takedown is refused BEFORE the material check — attribution wins', async () => {
+    // Ordering matters for the message the caller sees: on a mod takedown they must be
+    // told the listing is moderator-removed, not that `externalUrl` needs a republish
+    // they are not allowed to perform.
+    wireListing(listingRow());
+    wireLastModerationEvent('delist');
+
+    await expect(
+      updateListing({
+        listingId: LISTING_ID,
+        patch: { externalUrl: 'https://evil.example.com/app' },
+        userId: OWNER,
+      })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', message: MOD_TAKEDOWN_MESSAGE });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The repair loop survives a moderator MESSAGE (state-neutral events)
+// ---------------------------------------------------------------------------
+
+/**
+ * 🔴 A moderator messaging the owner *"fix X and republish"* is the most natural workflow
+ * this feature has, and it writes an `AppListingModerationEvent` — `action:'message-owner'`
+ * — that changes no listing status. An unfiltered "last event of any kind" read therefore
+ * REVOKED the repair loop and re-showed the owner the false "removed by a moderator"
+ * attribution the PR exists to delete. Same class as `report-resolve`/`report-dismiss`
+ * (`closeReport` writes those ungated) and `claim`.
+ *
+ * These cases are behavioural: they wire the DB fake to answer the FILTERED query the way
+ * the database would, so a code path that dropped the filter reads the neutral row instead.
+ */
+describe('a STATE-NEUTRAL moderation event does not revoke the repair loop', () => {
+  /**
+   * Answer like the real table: the newest row overall is state-neutral, but the newest
+   * STATUS-CHANGING row is the owner's own unpublish. Which one comes back depends
+   * entirely on whether the caller filtered.
+   */
+  function wireNeutralOnTopOfOwnerUnpublish(neutral: string) {
+    const impl = async (args: unknown) => {
+      const a = args as { where?: { action?: { in?: string[] } } };
+      const allowed = a.where?.action?.in;
+      if (!allowed) return { action: neutral }; // unfiltered ⇒ the neutral row wins
+      return allowed.includes('owner-unpublish') ? { action: 'owner-unpublish' } : null;
+    };
+    mockRead.appListingModerationEvent.findFirst.mockImplementation(impl);
+    mockWrite.appListingModerationEvent.findFirst.mockImplementation(impl);
+  }
+
+  it.each(['message-owner', 'report-resolve', 'report-dismiss', 'claim'])(
+    '🔴 %s on top of an owner-unpublish ⇒ updateListing still edits in place',
+    async (neutral) => {
+      wireListing(listingRow());
+      wireNeutralOnTopOfOwnerUnpublish(neutral);
+
+      const res = await updateListing({
+        listingId: LISTING_ID,
+        patch: { tagline: 'as the mod asked' },
+        userId: OWNER,
+      });
+
+      expect(res.status).toBe('removed');
+      expect(mockWrite.appListing.update).toHaveBeenCalledWith({
+        where: { id: LISTING_ID },
+        data: { tagline: 'as the mod asked' },
+      });
+    }
+  );
+
+  it('🔴 message-owner on top of an owner-unpublish ⇒ the media editor is not blocked', async () => {
+    wireListing(listingRow());
+    wireNeutralOnTopOfOwnerUnpublish('message-owner');
+
+    const res = await getMyListingForApp({ slug: 'cool-app', userId: OWNER });
+
+    expect(res.editBlockedReason).toBeNull();
+  });
+
+  it('🔴 message-owner on top of an owner-unpublish ⇒ the prefill read resolves', async () => {
+    wireListing(listingRow());
+    wireNeutralOnTopOfOwnerUnpublish('message-owner');
+
+    await expect(
+      getMyListingForEdit({ listingId: LISTING_ID, userId: OWNER })
+    ).resolves.toMatchObject({ status: 'removed' });
+  });
+
+  it('INVARIANT GUARD: a state-neutral event on top of a DELIST is still a delist', async () => {
+    // The filter must not become a way to walk past a moderator takedown by getting a
+    // report closed afterwards — the direction `closeTerminalListing` was already bitten in.
+    const impl = async (args: unknown) => {
+      const a = args as { where?: { action?: { in?: string[] } } };
+      const allowed = a.where?.action?.in;
+      if (!allowed) return { action: 'report-resolve' };
+      return allowed.includes('delist') ? { action: 'delist' } : null;
+    };
+    mockRead.appListingModerationEvent.findFirst.mockImplementation(impl);
+    mockWrite.appListingModerationEvent.findFirst.mockImplementation(impl);
+    wireListing(listingRow());
+
+    await expect(
+      updateListing({ listingId: LISTING_ID, patch: { tagline: 'x' }, userId: OWNER })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', message: MOD_TAKEDOWN_MESSAGE });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Finding 7 — the grant reaches an accepted COLLABORATOR, deliberately
+// ---------------------------------------------------------------------------
+
+/**
+ * 🔴 STATED AND PINNED RATHER THAN LEFT IMPLICIT. `updateListing` gates through
+ * `resolveListingRole`, which admits the OWNER **or an accepted seat**, while
+ * `readLastModerationAction` selects only `action` — never `actorUserId`. So the predicate
+ * asks "is this listing in owner-repair state?" and the gate asks "may THIS caller edit
+ * it?", and they are different questions on purpose.
+ *
+ * The decision: KEEP the seat's reach. A collaborator already has exactly this power on
+ * draft/pending/approved, so refusing only in the repair state would make the one flow most
+ * likely to need help the one flow a team cannot share; the seat is an authorization the
+ * owner granted and can revoke; and with material fields refused, everything reachable is
+ * copy. The asymmetry that stays: `unpublishOwnListing`/`republishOwnListing` are
+ * OWNER-ONLY (`loadOwnedListingInTx` compares `listing.userId`), so a collaborator can
+ * repair the copy but can neither take the app down nor put it back.
+ */
+describe('an accepted COLLABORATOR on an owner-unpublished listing', () => {
+  const EDITOR = 99;
+
+  /** `resolveListingAccess` reads an accepted seat off `appCollaborator`. */
+  function wireAcceptedSeat() {
+    mockRead.appCollaborator.findFirst.mockResolvedValue({
+      id: 'ac_1',
+      userId: EDITOR,
+      appListingId: LISTING_ID,
+      status: 'accepted',
+      role: 'editor',
+    });
+  }
+
+  it('MAY make a TRIVIAL edit — the repair loop is shareable with the team', async () => {
+    wireListing(listingRow());
+    wireLastModerationEvent('owner-unpublish');
+    wireAcceptedSeat();
+
+    const res = await updateListing({
+      listingId: LISTING_ID,
+      patch: { tagline: 'seat-holder copy fix' },
+      userId: EDITOR,
+    });
+
+    expect(res.status).toBe('removed');
+    expect(mockWrite.appListing.update).toHaveBeenCalledWith({
+      where: { id: LISTING_ID },
+      data: { tagline: 'seat-holder copy fix' },
+    });
+  });
+
+  it('🔴 MAY NOT change a MATERIAL field — the refusal is not owner-specific', async () => {
+    wireListing(listingRow());
+    wireLastModerationEvent('owner-unpublish');
+    wireAcceptedSeat();
+
+    await expect(
+      updateListing({
+        listingId: LISTING_ID,
+        patch: { externalUrl: 'https://evil.example.com/app' },
+        userId: EDITOR,
+      })
+    ).rejects.toMatchObject({ code: 'MATERIAL_CHANGE_BLOCKED' });
+    expect(mockWrite.appListing.update).not.toHaveBeenCalled();
+  });
+
+  it('INVARIANT GUARD: a stranger with no seat is still NOT_OWNED', async () => {
+    wireListing(listingRow());
+    wireLastModerationEvent('owner-unpublish');
+    mockRead.appCollaborator.findFirst.mockResolvedValue(null);
+
+    await expect(
+      updateListing({ listingId: LISTING_ID, patch: { tagline: 'x' }, userId: 1234 })
+    ).rejects.toMatchObject({ code: 'NOT_OWNED' });
   });
 });
 
@@ -276,6 +682,21 @@ describe('getMyListingForEdit on a `removed` listing', () => {
       getMyListingForEdit({ listingId: LISTING_ID, userId: OWNER })
     ).rejects.toMatchObject({ code: 'FORBIDDEN', message: MOD_TAKEDOWN_MESSAGE });
   });
+
+  it('🔴 reads the last event from the PRIMARY (site 2 of 3)', async () => {
+    // Same safety argument as `updateListing`, pinned SEPARATELY because it is a
+    // separate call: a `dbWrite → dbRead` mutation at this site SURVIVED the whole blocks
+    // suite while only `updateListing` carried a pool assertion. A stale replica can hide
+    // a moderator's just-written `delist` behind the owner's older `owner-unpublish`, and
+    // the direction that costs is the GRANT — this read is what mounts the editor.
+    wireListing(listingRow());
+    wireLastModerationEvent('owner-unpublish');
+
+    await getMyListingForEdit({ listingId: LISTING_ID, userId: OWNER });
+
+    expect(mockWrite.appListingModerationEvent.findFirst).toHaveBeenCalled();
+    expect(mockRead.appListingModerationEvent.findFirst).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -283,24 +704,24 @@ describe('getMyListingForEdit on a `removed` listing', () => {
 // ---------------------------------------------------------------------------
 
 describe('getMyListingForApp editBlockedReason on a `removed` listing', () => {
-  it('🔴 OWNER-UNPUBLISH ⇒ the media editor is NOT blocked (verdict is null)', async () => {
+  /**
+   * 🔴 ONE CASE, NOT TWO. This used to be split into "the verdict is null" and "the verdict
+   * never says 'by a moderator'", and the second could not fail unless the first did:
+   * identical fixture, identical call, and `null` satisfies both a `not.toContain` and a
+   * `not.toBe(MOD_TAKEDOWN_MESSAGE)` trivially. Two tests that die together are one test
+   * that reads as two — they inflate the count without adding a way for the code to be
+   * wrong. `toBeNull()` is the strictly stronger assertion, so it is the one kept.
+   */
+  it('🔴 OWNER-UNPUBLISH ⇒ the media editor is NOT blocked, so nothing blames a moderator', async () => {
     wireListing(listingRow());
     wireLastModerationEvent('owner-unpublish');
 
     const res = await getMyListingForApp({ slug: 'cool-app', userId: OWNER });
 
     expect(res.status).toBe('removed');
+    // Null is the whole claim: no verdict at all ⇒ no attribution, correct or otherwise.
+    // The mod-takedown case below is the arm that pins the message text.
     expect(res.editBlockedReason).toBeNull();
-  });
-
-  it('🔴 MESSAGE: an owner-unpublished listing never attributes the takedown to a moderator', async () => {
-    wireListing(listingRow());
-    wireLastModerationEvent('owner-unpublish');
-
-    const res = await getMyListingForApp({ slug: 'cool-app', userId: OWNER });
-
-    expect(res.editBlockedReason ?? '').not.toContain('by a moderator');
-    expect(res.editBlockedReason).not.toBe(MOD_TAKEDOWN_MESSAGE);
   });
 
   it('INVARIANT GUARD (green at base too): a MODERATOR delist still returns the moderator verdict', async () => {
@@ -319,6 +740,20 @@ describe('getMyListingForApp editBlockedReason on a `removed` listing', () => {
     const res = await getMyListingForApp({ slug: 'cool-app', userId: OWNER });
 
     expect(res.editBlockedReason).toBe(MOD_TAKEDOWN_MESSAGE);
+  });
+
+  it('🔴 reads the last event from the PRIMARY (site 3 of 3)', async () => {
+    // The third of the three sites, pinned for the same reason as the other two — a
+    // `dbWrite → dbRead` mutation here also SURVIVED the full blocks suite. This verdict
+    // is what unblocks the MEDIA editor, so a stale-read GRANT hands asset writes to
+    // someone a moderator has just cut off.
+    wireListing(listingRow());
+    wireLastModerationEvent('owner-unpublish');
+
+    await getMyListingForApp({ slug: 'cool-app', userId: OWNER });
+
+    expect(mockWrite.appListingModerationEvent.findFirst).toHaveBeenCalled();
+    expect(mockRead.appListingModerationEvent.findFirst).not.toHaveBeenCalled();
   });
 });
 

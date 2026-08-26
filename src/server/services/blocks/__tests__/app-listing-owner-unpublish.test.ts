@@ -1,10 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { OWNER_UNPUBLISH_ACTION } from '~/components/Apps/offsiteOwnerControls';
+import { APP_LISTING_MODERATION_ACTIONS } from '~/server/schema/blocks/offsite-moderation.schema';
 import {
   isOwnerUnpublishAction,
   isOwnerUnpublishedListing,
+  LISTING_STATUS_CHANGING_MODERATION_ACTIONS,
   OWNER_UNPUBLISH_EVENT,
   readLastModerationAction,
+  STATE_NEUTRAL_MODERATION_ACTIONS,
 } from '~/server/services/blocks/app-listing-owner-unpublish';
 
 /**
@@ -51,6 +55,63 @@ describe('isOwnerUnpublishAction', () => {
   it('names the action with the exported constant, so callers cannot re-spell it', () => {
     expect(OWNER_UNPUBLISH_EVENT).toBe('owner-unpublish');
   });
+
+  /**
+   * The CLIENT keeps its own literal (`OWNER_UNPUBLISH_ACTION` in
+   * `~/components/Apps/offsiteOwnerControls`) rather than importing this module, which is
+   * server-side and pulls the moderation schema with it. That is a deliberate bundle
+   * decision, not an accident — but it leaves two spellings of one action, and two
+   * literals are how the Republish button and the server gate drift apart. This is the
+   * seam that keeps them equal.
+   */
+  it('🔴 the CLIENT literal is the same string as the SERVER constant', () => {
+    expect(OWNER_UNPUBLISH_ACTION).toBe(OWNER_UNPUBLISH_EVENT);
+    expect(isOwnerUnpublishAction(OWNER_UNPUBLISH_ACTION)).toBe(true);
+  });
+});
+
+describe('LISTING_STATUS_CHANGING_MODERATION_ACTIONS', () => {
+  /**
+   * 🔴 THE PARTITION IS PINNED AGAINST THE WHOLE TAXONOMY, NOT SAMPLED. The hazard this
+   * set exists to stop is a NEW action silently joining the log and changing who may
+   * edit — so the guard has to fail when the taxonomy GROWS, not merely when one known
+   * member is missing. `APP_LISTING_MODERATION_ACTIONS` is itself pinned against the
+   * migration's CHECK IN-list by `app-listing-mod-action.constants.test.ts`, so this
+   * chains all the way to the database.
+   */
+  it('🔴 partitions the FULL action taxonomy: status-changing ∪ state-neutral = all, ∩ = ∅', () => {
+    const changing = new Set<string>(LISTING_STATUS_CHANGING_MODERATION_ACTIONS);
+    const neutral = new Set<string>(STATE_NEUTRAL_MODERATION_ACTIONS);
+
+    expect([...changing].filter((a) => neutral.has(a))).toEqual([]);
+    expect(new Set([...changing, ...neutral])).toEqual(new Set(APP_LISTING_MODERATION_ACTIONS));
+    // No duplicates hiding inside either half.
+    expect(changing.size + neutral.size).toBe(APP_LISTING_MODERATION_ACTIONS.length);
+  });
+
+  it.each(['delist', 'relist', 'purge', 'reset-to-pending', 'owner-unpublish', 'owner-republish'])(
+    '%s WRITES app_listings.status ⇒ status-changing',
+    (action) => {
+      expect(LISTING_STATUS_CHANGING_MODERATION_ACTIONS as readonly string[]).toContain(action);
+    }
+  );
+
+  it.each([
+    // A moderator writing to the owner ("fix X and republish") — the workflow that made
+    // an unfiltered last-event read revoke the very repair loop this arc adds.
+    'message-owner',
+    // A REPORT's status flips; the listing's does not.
+    'report-resolve',
+    'report-dismiss',
+    // The listing's `userId` moves; its `status` does not.
+    'claim',
+  ])(
+    '%s leaves app_listings.status alone ⇒ state-neutral, and must NOT displace a removal',
+    (action) => {
+      expect(LISTING_STATUS_CHANGING_MODERATION_ACTIONS as readonly string[]).not.toContain(action);
+      expect(STATE_NEUTRAL_MODERATION_ACTIONS as readonly string[]).toContain(action);
+    }
+  );
 });
 
 describe('readLastModerationAction', () => {
@@ -63,10 +124,31 @@ describe('readLastModerationAction', () => {
     await readLastModerationAction(client, 'apl_x');
 
     expect(findFirst).toHaveBeenCalledWith({
-      where: { appListingId: 'apl_x' },
+      where: {
+        appListingId: 'apl_x',
+        action: { in: [...LISTING_STATUS_CHANGING_MODERATION_ACTIONS] },
+      },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       select: { action: true },
     });
+  });
+
+  it('🔴 FILTERS IN THE QUERY: every state-neutral action is excluded by the WHERE clause', async () => {
+    // The filter must be a `where`, not a post-hoc test on one fetched row: "the newest
+    // STATUS-CHANGING event" is not derivable from "the newest event of any kind" — if
+    // the newest row is a `message-owner`, a post-filter yields null (fail-closed, but
+    // WRONG: it hides the owner's real `owner-unpublish` underneath).
+    const { client, findFirst } = fakeClient({ action: 'owner-unpublish' });
+
+    await readLastModerationAction(client, 'apl_x');
+
+    const where = (findFirst.mock.calls[0]?.[0] as { where: { action: { in: string[] } } }).where;
+    for (const neutral of STATE_NEUTRAL_MODERATION_ACTIONS) {
+      expect(where.action.in).not.toContain(neutral);
+    }
+    // Positive control on the same read: the query is not simply empty.
+    expect(where.action.in).toContain('owner-unpublish');
+    expect(where.action.in).toContain('delist');
   });
 
   it('returns the action, and null when the listing has no events', async () => {
