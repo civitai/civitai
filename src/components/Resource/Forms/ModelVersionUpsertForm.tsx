@@ -591,21 +591,14 @@ export function ModelVersionUpsertForm({
       form.setValue('licensingSourceVersionId', null, { shouldDirty: true });
   }, [baseModel]);
 
-  // The same argument for the MODEL TYPE, which roots are scoped by just as much and which is editable
-  // at wizard step 1 until the model is trained. Without this, moving a model Checkpoint -> LoRA after
-  // step 2 has already pre-selected a checkpoint root leaves the stale id in the form: the query
-  // re-keys, the scoped result is empty, the default effect early-returns on a null default, and the
-  // picker hides itself (`licensingRoots.length > 0`) — so the value is invisible AND submitted. The
-  // server coerces it, so nothing bad is written; this is about the form not carrying a selection it
-  // can neither show nor keep.
-  const prevModelTypeRef = useRef(model?.type);
-  useEffect(() => {
-    if (prevModelTypeRef.current === model?.type) return;
-    prevModelTypeRef.current = model?.type;
-    if (form.getValues('licensingSourceVersionId') != null)
-      form.setValue('licensingSourceVersionId', null, { shouldDirty: true });
-  }, [model?.type]);
-
+  // No effect clears the source when the MODEL TYPE changes, and adding one is not the oversight it
+  // looks like — a round of this fix did add one, and it was dead code. Mantine's Stepper renders only
+  // the active step's children, so this form is UNMOUNTED for the whole of the step-1 edit where the
+  // type is chosen; coming back remounts it and any `useRef` seed already holds the new type. No other
+  // in-app surface has a type control. The effect could not fire, and the test that appeared to cover
+  // it only passed because the harness re-rendered a MOUNTED form with a swapped type — a transition
+  // the wizard never produces. The server coerces a mismatched source regardless, which is where that
+  // rule belongs.
   // A derivative must record an explicit parent — a null source means no fee, so
   // pre-select the ecosystem's default root when none is set. Skipped for roots
   // and exempt versions (which legitimately have no parent).

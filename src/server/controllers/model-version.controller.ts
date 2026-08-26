@@ -422,15 +422,14 @@ export const upsertModelVersionHandler = async ({
     const updatesExistingVersion = !!input.id && !input.templateId;
     // dbWrite, and a miss counts as a grant: this decides an entitlement, and the edit wizard saves again
     // fast enough to beat replication — a replica miss must not read as "already generation-only".
-    // `modelId` comes along for the licensing-lineage guard further down, which needs the model this
-    // version currently belongs to. One read rather than two of the same row.
-    const storedVersion = updatesExistingVersion
-      ? await dbWrite.modelVersion.findUnique({
-          where: { id: input.id },
-          select: { usageControl: true, modelId: true },
-        })
+    const storedUsageControl = updatesExistingVersion
+      ? (
+          await dbWrite.modelVersion.findUnique({
+            where: { id: input.id },
+            select: { usageControl: true },
+          })
+        )?.usageControl
       : undefined;
-    const storedUsageControl = storedVersion?.usageControl;
     const grantsGenerationOnly =
       input.usageControl !== ModelUsageControl.Download &&
       (!updatesExistingVersion || storedUsageControl !== ModelUsageControl.Generation);
@@ -570,57 +569,44 @@ export const upsertModelVersionHandler = async ({
     // `null` outright has always been allowed, and 99.77% of Anima and Krea 2 LoRAs do exactly that
     // (107 of 46,994 and 45 of 19,999 carry a source at all).
     if (input.licensingSourceVersionId != null) {
-      const [source, owningModels] = await Promise.all([
+      const [source, destinationModel] = await Promise.all([
         dbRead.licensingRoot.findUnique({
           where: { modelVersionId: input.licensingSourceVersionId },
           select: { baseModel: true, modelType: true },
         }),
-        // 🔴 This resolves EVERY model the version touches on this save, and each one has to pass.
+        // 🔴 The model this save LANDS the version on, which is `input.modelId` — always, on a create
+        // and on an update alike. `modelId` is not destructured in `upsertModelVersion`, so it rides
+        // `...data` into `dbWrite.modelVersion.update`: the payload's modelId is not a claim about
+        // where the version lives that we would have to verify, it is the instruction for where it
+        // will live. Whatever it names is where the fee will apply, so it is the only model whose type
+        // matters.
         //
-        // Not `getModel`: that goes through `getDbWithoutLag`, so a model created seconds ago — the
-        // ModelWizard's step-1-then-step-2 shape exactly — can come back as a replica miss. The
-        // coercion below turns a miss into `null`, and because it coerces rather than throws the
-        // creator is never told. `storedUsageControl` above uses `dbWrite` for the same reason: "a
-        // replica miss must not read as already-generation-only".
+        // Two earlier rounds of this fix got that backwards — one read the STORED model (so a version
+        // could be re-parented onto a LoRA model in the same request and keep a checkpoint's fee), the
+        // next required BOTH to match (which silently cleared a valid root when someone moved a
+        // version out of a mis-typed model into a correctly typed one). If `modelId` is ever stripped
+        // from the update payload, the destination becomes the stored model and this line has to move
+        // with it — the test named for the move is what will tell you.
         //
-        // And not one model but two, because `modelId` is not destructured in `upsertModelVersion` —
-        // it rides `...data` straight into `dbWrite.modelVersion.update`, so **a save can move the
-        // version to another model**. `isOwnerOrModerator` authorises only against the modelId of the
-        // version being EDITED and never compares it to the payload's. Check only the stored model and
-        // a Checkpoint version carrying a legitimate root can be re-parented onto a LoRA model in the
-        // same request: the guard sees Checkpoint, passes, and the write lands a checkpoint's per-image
-        // fee on a LoRA — this exact bug, through the guard that exists to stop it. Check only the
-        // payload's and the auth mismatch above reopens. So: both, deduped.
-        //
-        // `storedVersion` is already read only when `updatesExistingVersion` — a templated write
-        // carries an id and still creates a NEW version under `input.modelId`, where there is no
-        // stored model to consult, so it is `undefined` here and the set is just the payload's. Do NOT
-        // re-test that condition on this line: a mutation run proved the extra ternary can never
-        // change the result, and a conditional that cannot go the other way reads as a guard while
-        // guarding nothing.
-        (async () => {
-          const ids = [...new Set([input.modelId, storedVersion?.modelId].filter(isDefined))];
-          // An update whose stored row could not be read leaves nothing to check it against; that is a
-          // "could not check", which lands with "checked and wrong" rather than passing.
-          if (updatesExistingVersion && storedVersion?.modelId == null) return null;
-          const models = await Promise.all(
-            ids.map((id) => dbWrite.model.findUnique({ where: { id }, select: { type: true } }))
-          );
-          return models.some((m) => !m) ? null : models.filter(isDefined);
-        })(),
+        // Not `getModel`: that resolves its client through `getDbWithoutLag`, so a model created
+        // seconds ago — the ModelWizard's step-1-then-step-2 shape exactly — can come back as a
+        // replica miss. The coercion below turns a miss into `null`, and because it coerces rather
+        // than throws the creator is never told. `storedUsageControl` above uses `dbWrite` for the
+        // same reason: "a replica miss must not read as already-generation-only".
+        input.modelId
+          ? dbWrite.model.findUnique({ where: { id: input.modelId }, select: { type: true } })
+          : null,
       ]);
-      // A model that cannot be read coerces rather than passing. Written the permissive way
-      // (`owningModels && ...`) it would make "we could not check" indistinguishable from "we checked
-      // and it was fine", which is the shape of every guard that turns out inert. Do not soften this on
-      // the argument that the service throws on a missing model anyway: it throws on `data.modelId`,
-      // which on an update is not necessarily the row that failed to read here.
+      // A destination that cannot be read coerces rather than passing. Written the permissive way
+      // (`destinationModel && ...`) it would make "we could not check" indistinguishable from "we
+      // checked and it was fine", which is the shape of every guard that turns out inert.
       const rejectedReason = !source
         ? 'not-a-root'
         : source.baseModel !== input.baseModel
         ? 'base-model-mismatch'
-        : !owningModels
+        : !destinationModel
         ? 'model-not-found'
-        : owningModels.some((m) => m.type !== source.modelType)
+        : destinationModel.type !== source.modelType
         ? 'model-type-mismatch'
         : null;
       if (rejectedReason) {
@@ -631,14 +617,12 @@ export const upsertModelVersionHandler = async ({
           type: 'info',
           reason: rejectedReason,
           userId,
-          // Both ids, because on an update they can differ and reporting one next to the other's type
-          // is how a log stops being evidence. `storedModelId` is where the version is now,
-          // `modelId` is where this save puts it.
+          // `modelId` is where this save puts the version, and `modelType` is that model's type — the
+          // two have to name the same row or the log stops being evidence.
           modelId: input.modelId,
-          storedModelId: storedVersion?.modelId ?? null,
           modelVersionId: input.id ?? null,
           requestedSourceVersionId: input.licensingSourceVersionId,
-          modelTypes: owningModels?.map((m) => m.type) ?? null,
+          modelType: destinationModel?.type ?? null,
           sourceModelType: source?.modelType ?? null,
           baseModel: input.baseModel ?? null,
           sourceBaseModel: source?.baseModel ?? null,

@@ -1,4 +1,3 @@
-import React from 'react';
 import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
@@ -765,37 +764,6 @@ describe('ModelVersionUpsertForm — licensing lineage pre-selection', () => {
       </ModelVersionUpsertForm>
     );
 
-    expect((await save()).licensingSourceVersionId ?? null).toBeNull();
-  });
-
-  // 🔴 The type is editable at wizard step 1 until the model is trained, so it can change AFTER a
-  // root has been pre-selected. The pre-selection effect cannot undo that on its own: the query
-  // re-keys, the scoped result is empty, and the effect early-returns on a null default. The picker
-  // hides itself too (`licensingRoots.length > 0`), so without the clearing effect the stale id is
-  // invisible on screen and submitted anyway. The server coerces it, so this is about the form not
-  // carrying a selection it can neither show nor keep.
-  test('clears a stamped root when the model type changes under it', async () => {
-    licensingRoots.respond = (input) =>
-      input.modelType === 'Checkpoint'
-        ? { roots: [ANIMA_CHECKPOINT_ROOT], defaultVersionId: ANIMA_CHECKPOINT_ROOT.id }
-        : NO_ROOTS;
-
-    function Harness() {
-      const [type, setType] = React.useState('Checkpoint');
-      return (
-        <>
-          <button type="button" onClick={() => setType('LORA')}>
-            Make it a LoRA
-          </button>
-          <ModelVersionUpsertForm model={{ ...model, type } as typeof model} onSubmit={vi.fn()}>
-            {() => <button type="submit">Save</button>}
-          </ModelVersionUpsertForm>
-        </>
-      );
-    }
-    renderWithProviders(<Harness />);
-
-    await userEvent.click(page.getByRole('button', { name: 'Make it a LoRA' }));
     expect((await save()).licensingSourceVersionId ?? null).toBeNull();
   });
 });

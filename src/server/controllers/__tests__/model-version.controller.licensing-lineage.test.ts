@@ -142,28 +142,15 @@ describe('upsertModelVersionHandler — licensing lineage scope', () => {
     expect(written.licensingSourceVersionId).toBeNull();
   });
 
-  // 🔴 An update touches TWO models and both have to pass. Checking only one leaves a hole either
-  // way, and the two holes are opposite, so neither test below is redundant.
+  // 🔴 The type is checked against `input.modelId` — the model this save LANDS the version on —
+  // and NOT against the model it currently belongs to. `modelId` rides `...data` into
+  // `dbWrite.modelVersion.update`, so the payload's modelId is not a claim to be verified, it is the
+  // instruction for where the version will live, and that is where the fee will apply.
   //
-  // Only the payload's: `isOwnerOrModerator` authorises against the stored version's modelId and never
-  // compares it to `input.modelId`, so a caller who owns both models can name the Checkpoint in the
-  // payload while editing the LoRA's version.
-  it('rejects when the model the version currently belongs to is the wrong type', async () => {
-    const written = await call({
-      id: VERSION_ID,
-      modelTypes: { [PAYLOAD_MODEL_ID]: 'Checkpoint', [STORED_MODEL_ID]: 'LORA' },
-    });
-    expect(written.licensingSourceVersionId).toBeNull();
-    expect(dbMock.dbWrite.model.findUnique).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: STORED_MODEL_ID } })
-    );
-  });
-
-  // Only the stored one: `modelId` is not destructured in `upsertModelVersion`, so it rides `...data`
-  // into `dbWrite.modelVersion.update` and the save MOVES the version. A Checkpoint version holding a
-  // legitimate root, re-parented onto a LoRA model in the same request, would pass a stored-model-only
-  // check and land a checkpoint's per-image fee on a LoRA — this bug, through the guard for it.
-  it('rejects when the model the save MOVES the version to is the wrong type', async () => {
+  // Both tests below describe a MOVE, and they pull in opposite directions on purpose. Check the
+  // stored model instead and the first passes wrongly; require both to match and the second fails
+  // wrongly. Two earlier rounds of this fix shipped one mistake each.
+  it('rejects a root the DESTINATION model cannot hold, whatever the version came from', async () => {
     const written = await call({
       id: VERSION_ID,
       modelTypes: { [PAYLOAD_MODEL_ID]: 'LORA', [STORED_MODEL_ID]: 'Checkpoint' },
@@ -174,19 +161,24 @@ describe('upsertModelVersionHandler — licensing lineage scope', () => {
     );
   });
 
-  // A templated write carries an `id` and still creates a NEW version under `input.modelId`, so there
-  // is no stored model to consult and `!!input.id` is the wrong predicate. Without this case,
-  // substituting `!!input.id` for `updatesExistingVersion` leaves every other test green.
-  it('uses the payload model for a templated write, id or not', async () => {
+  // The legitimate move: a checkpoint filed under a model someone mis-typed as LORA, moved to a
+  // properly typed Checkpoint model with its root intact. The fee is valid at the destination, so it
+  // must survive. Nothing tells the creator when it does not — `mini/[id]` reads a null source as NO
+  // lineage fee, not as a fallback — so an over-strict guard here quietly stops a payment.
+  it('keeps the root when a move lands the version somewhere it fits', async () => {
     const written = await call({
       id: VERSION_ID,
-      templateId: 77,
       modelTypes: { [PAYLOAD_MODEL_ID]: 'Checkpoint', [STORED_MODEL_ID]: 'LORA' },
     });
     expect(written.licensingSourceVersionId).toBe(ANIMA_ROOT_VERSION_ID);
-    expect(dbMock.dbWrite.model.findUnique).not.toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: STORED_MODEL_ID } })
-    );
+  });
+
+  // "Could not check the destination" has to land with "checked and wrong". Written permissively this
+  // case passes the source straight through on the exact path the guard exists for.
+  it('drops the source when the destination model cannot be read', async () => {
+    const written = await call({ id: VERSION_ID, modelTypes: { [STORED_MODEL_ID]: 'Checkpoint' } });
+    expect(written.licensingSourceVersionId).toBeNull();
+    expect(written.licensingSourceCoercedReason).toBe('model-not-found');
   });
 
   // 🔴 Coercion, not rejection, is the deliberate half of this fix — see the comment on the guard.
