@@ -71,7 +71,13 @@ import { InputCollectionSelect } from '~/libs/form/components/CollectionSelectIn
 const schema = modelUpsertSchema
   .extend({
     category: z.coerce.number().gt(0, 'Required'),
-    description: getSanitizedStringSchema().refine((data) => {
+    // `allowBlurbs` must mirror `modelUpsertSchema`'s own description field. This override exists
+    // only to add the empty check, but re-declaring the field also re-declares the sanitize — and
+    // without the flag this strips `data-type`/`data-id` off a blurb CLIENT-SIDE, before the
+    // request is sent. The server schema never sees the reference, no BlurbReference row is
+    // written, and the words are left frozen as ordinary text: the control renders, the chip
+    // inserts, and the feature silently does nothing on this surface alone.
+    description: getSanitizedStringSchema({ allowBlurbs: true }).refine((data) => {
       return data && data.length > 0 && data !== '<p></p>';
     }, 'Cannot be empty'),
     poi: z.string().refine((data) => !!data.length, 'Required'),

@@ -89,12 +89,17 @@ export function createBlurbSuggestion({
           // `@tiptap/suggestion` 3.4.0 removed the built-in document mousedown handler that closed
           // the popover on an outside click. Restored here, as in `suggestion.ts` and
           // `sticker-suggestion.ts` — without it the `//` popover stays open over the page.
+          //
+          // Both calls are needed. `exitSuggestion` only flips the plugin's `active` flag; the
+          // popover element is torn down by `cleanup`, which the plugin reaches through `onExit`.
+          // Verified in a browser: `exitSuggestion` alone leaves the popover on screen.
           outsideClickHandler = (event: MouseEvent) => {
             const target = event.target as Node | null;
             if (!target) return;
             if (component?.element.contains(target)) return;
             if (props.editor.view.dom.contains(target)) return;
             exitSuggestion(props.editor.view, BlurbSuggestionPluginKey);
+            cleanup();
           };
           document.addEventListener('mousedown', outsideClickHandler);
         },
@@ -108,13 +113,12 @@ export function createBlurbSuggestion({
         },
 
         onKeyDown: (props) => {
-          if (props.event.key === 'Escape') {
-            // `exitSuggestion`, not a bare `cleanup()`: removing the DOM leaves the plugin's own
-            // state active, so the next keystroke reopens a popover the user just dismissed. The
-            // key argument is required — the bare call defaults to the mention plugin's key.
-            exitSuggestion(props.view, BlurbSuggestionPluginKey);
-            return true;
-          }
+          // 🔴 Escape is NOT handled here, deliberately. The plugin's own `handleKeyDown` treats a
+          // truthy return as "the renderer dealt with it" and returns early — skipping the
+          // `onExit` call that tears the popover down. Handling Escape here left it on screen no
+          // matter what this returned. Falling through lets the plugin run its own path, which
+          // calls `onExit` (-> cleanup) AND resets its state.
+          if (props.event.key === 'Escape') return false;
           return component?.ref?.onKeyDown(props) ?? false;
         },
 

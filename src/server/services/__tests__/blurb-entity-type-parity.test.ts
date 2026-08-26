@@ -63,3 +63,46 @@ describe('blurb entityType parity', () => {
     expect(unwritten).toEqual([]);
   });
 });
+
+/**
+ * A form that offers the blurb control must not re-declare its body field's sanitize without
+ * `allowBlurbs`. `ModelUpsertForm` did: it extends `modelUpsertSchema` to add an empty check, and
+ * re-declaring the field re-declared the SANITIZE — stripping `data-type`/`data-id` CLIENT-SIDE,
+ * before the request was sent. The server schema was correct and never saw a reference, so no
+ * BlurbReference row was written and the words were frozen as ordinary text. Everything looked
+ * right: the control rendered, the chip inserted, the save succeeded.
+ *
+ * Found by driving the feature in a browser, not by any of the suites — which is why this exists.
+ * A source scan, so it covers the surface added next year.
+ */
+describe('a blurb-enabled form does not re-sanitize its body without allowBlurbs', () => {
+  const componentsDir = path.join(repoRoot, 'src/components');
+
+  const walk = (dir: string): string[] =>
+    readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) return e.name === '__tests__' ? [] : walk(full);
+      return e.isFile() && e.name.endsWith('.tsx') ? [full] : [];
+    });
+
+  it('🔴 every form passing the blurb control keeps allowBlurbs on its own schema', () => {
+    const offenders: string[] = [];
+
+    for (const file of walk(componentsDir)) {
+      const source = readFileSync(file, 'utf8');
+      // Only forms that actually offer the control can strand a reference.
+      if (!/includeControls=\{\[[^\]]*'blurb'/s.test(source)) continue;
+      if (!source.includes('getSanitizedStringSchema')) continue;
+
+      // Every local re-declaration must carry the flag. The import line has no call parens.
+      const calls = source.match(/getSanitizedStringSchema\(([^)]*)\)/g) ?? [];
+      for (const call of calls) {
+        if (!call.includes('allowBlurbs')) {
+          offenders.push(`${path.relative(repoRoot, file)} -> ${call}`);
+        }
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+});
