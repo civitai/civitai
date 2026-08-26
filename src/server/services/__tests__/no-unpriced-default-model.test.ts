@@ -11,7 +11,7 @@ import { AI_MODELS } from '~/server/services/ai/openrouter';
 // only reason anyone noticed was the vendor bill. A default model with no rate is unmeasurable
 // spend, not a rounding error.
 describe('every default challenge model is priced', () => {
-  // The three defaults generative-content.ts routes to when a call site passes no model override.
+  // Every model generative-content.ts routes to when a call site passes no override.
   const DEFAULTS = [AI_MODELS.MIMO] as const;
 
   it.each(DEFAULTS)('%s has a MODEL_BUZZ_RATES entry', (model) => {

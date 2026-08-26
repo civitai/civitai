@@ -297,7 +297,6 @@ async function selectResourceForDate(
   }
   if (!randomUser || !resource) throw new Error('Failed to pick resource');
 
-  // Get model versions and showcase images in parallel
   const [modelVersionRows, showcaseImages] = await Promise.all([
     dbRead.$queryRaw<{ id: number; trainedWords: string[] }[]>`
       SELECT mv.id, mv."trainedWords"

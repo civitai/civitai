@@ -5,9 +5,8 @@ import { usePlaygroundStore } from './playground.store';
 // Vision-capable models work for all flows; text-only models will fail on
 // generateArticle / generateReview (they send image_url).
 const MODEL_OPTIONS = [
-  { value: 'xiaomi/mimo-v2.5', label: 'MiMo v2.5 — review default (xiaomi/mimo-v2.5)' },
+  { value: 'xiaomi/mimo-v2.5', label: 'MiMo v2.5 — pipeline default (xiaomi/mimo-v2.5)' },
   { value: 'openai/gpt-4o-mini', label: 'GPT-4o Mini (openai/gpt-4o-mini)' },
-  { value: 'google/gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash Lite (google/gemini-2.5-flash-lite)' },
   { value: 'x-ai/grok-4.3', label: 'Grok 4.3 (x-ai/grok-4.3)' },
   { value: 'openai/gpt-5-nano', label: 'GPT-5 Nano (openai/gpt-5-nano)' },
   { value: 'openai/gpt-4o', label: 'GPT-4o (openai/gpt-4o)' },

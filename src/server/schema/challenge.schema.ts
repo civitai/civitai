@@ -138,9 +138,8 @@ export const challengeMetadataSchema = z.object({
   resourceModelId: z.number().optional(),
   articleId: z.number().optional(),
   themeElements: z.array(z.string()).optional(),
-  // The featured resource's concrete subject, derived at creation. Truncated rather than rejected:
-  // a `.max()` here would fail the whole safeParse and wipe the metadata column (see the note
-  // above), while an unbounded value rides into the review prompt and every pairwise comparison.
+  // Truncated rather than rejected: a `.max()` here would fail the whole safeParse and wipe the
+  // metadata column (see the note above). Cap rationale lives with RESOURCE_CONCEPT_MAX_LENGTH.
   resourceConcept: z
     .string()
     .transform((s) => s.slice(0, RESOURCE_CONCEPT_MAX_LENGTH))
