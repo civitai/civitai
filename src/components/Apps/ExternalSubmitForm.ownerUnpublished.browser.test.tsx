@@ -54,14 +54,16 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
     mutateAsync: vi.fn().mockResolvedValue({}),
     isPending: false,
   });
-  const recording = (fn: (v: unknown) => void, result: unknown = {}) => () => ({
-    mutate: vi.fn(),
-    mutateAsync: (vars: unknown) => {
-      fn(vars);
-      return Promise.resolve(result);
-    },
-    isPending: false,
-  });
+  const recording =
+    (fn: (v: unknown) => void, result: unknown = {}) =>
+    () => ({
+      mutate: vi.fn(),
+      mutateAsync: (vars: unknown) => {
+        fn(vars);
+        return Promise.resolve(result);
+      },
+      isPending: false,
+    });
   return {
     ...actual,
     trpc: {
