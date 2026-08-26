@@ -25,6 +25,11 @@
 
 .content {
   flex: 1;
+  // The NSFW/login gate renders as `absolute inset-0`. With no positioning context here it
+  // resolves against `.scroll-area` and covers the sidebar, leaving the rest of /collections
+  // unreachable; the height gives it the sidebar's column to centre in.
+  position: relative;
+  min-height: calc(100dvh - var(--header-height, 0px) - var(--footer-height, 0px) - 68px);
 }
 
 .drawerButton {
