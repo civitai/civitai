@@ -172,10 +172,9 @@ describe('getActiveSalesForModels — the card badge', () => {
     expect(out[7]).toBeUndefined();
   });
 
-  it('anchors on the price a BUYER pays, not the price the creator stored', async () => {
-    // A lapsed creator's permanent gate is clamped to the free ceiling for buyers. Anchored on the
-    // stored 5000 the percent looks deeper (1000 vs 300); at the 500 a buyer actually pays it is 100,
-    // and the page charges the fixed sale. The card must name the same one.
+  // The card and the page must resolve "deepest" against the same anchor — the STORED price.
+  // 20% of 5000 beats the fixed 300.
+  it('anchors on the stored price, and picks the sale the page will charge', async () => {
     capTier.mockResolvedValue(null);
     queryRaw.mockResolvedValue([
       row({ discountType: 'Percent', discountAmount: 20, terms: { download: { price: 5000 } } }),
@@ -189,11 +188,23 @@ describe('getActiveSalesForModels — the card badge', () => {
 
     const out = await getActiveSalesForModels([7], now);
 
-    expect(out[7]).toEqual({
-      endsAt: new Date('2026-03-09T00:00:00.000Z'),
-      discountType: 'Fixed',
-      discountAmount: 300,
-    });
+    expect(out[7]).toMatchObject({ discountType: 'Percent', discountAmount: 20 });
+  });
+
+  // The owner's tier is not consulted at all any more; the same rows must badge the same way.
+  it('badges identically whatever the owner tier', async () => {
+    const rows = [
+      row({ discountType: 'Percent', discountAmount: 20, terms: { download: { price: 5000 } } }),
+    ];
+    queryRaw.mockResolvedValue(rows);
+    capTier.mockResolvedValue(null);
+    const lapsed = await getActiveSalesForModels([7], now);
+
+    queryRaw.mockResolvedValue(rows);
+    capTier.mockResolvedValue('gold');
+    const gold = await getActiveSalesForModels([7], now);
+
+    expect(lapsed[7]).toEqual(gold[7]);
   });
 
   it('takes a sale at its dearest covered version, across the rows it spans', async () => {

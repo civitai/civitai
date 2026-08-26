@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import { fail } from '@sveltejs/kit';
-import { raisesOverCap } from '@civitai/buzz';
 import type { PageServerLoad, Actions } from './$types';
 import { PAGE_SIZE_OPTIONS } from '$lib/server/models';
 import { getModelsView } from '$lib/server/models-view';
@@ -20,12 +19,7 @@ import { bulkPaidAccessSchema } from '$lib/server/monetization/paid-access-schem
 import {
   setPaidAccessConfig,
   paidAccessFormSchema,
-  countPermanentAccessVersions,
-  countPermanentAccessVersionsExcluding,
   countActiveEarlyAccessVersions,
-  isVersionPermanent,
-  currentAccessPrices,
-  strictestCapMediaType,
   isCreatorUsageControl,
   setUsageControl,
   bulkSetPaidAccess,
@@ -46,10 +40,16 @@ import { getFlipt, fliptContext } from '$lib/server/flipt';
 import { getSaleLimitOverrides } from '$lib/server/monetization/sale-limits';
 import { canSetGenerationOnlyFresh } from '$lib/server/generation-only';
 import {
+  assertPricingAllowed,
+  countPricingSlotsThisMonth,
+  recordPricingSlots,
+  unpricedVersionIds,
+} from '$lib/server/monetization/pricing-slot';
+import {
   earlyAccessDaysForScore,
   earlyAccessQuantityForScore,
-  maxPermanentAccessModels,
-  maxPaidAccessPrice,
+  monthlyPricingAllowance,
+  pricingEligibility,
 } from '$lib/monetization/paid-access';
 
 // --- input schemas: every load/action input is zod-validated ---
@@ -69,14 +69,14 @@ const firstError = (e: z.ZodError) => e.issues[0]?.message ?? 'Invalid input.';
 export const load: PageServerLoad = async ({ locals, parent, url, cookies }) => {
   const { membership } = await parent();
 
-  const [view, modelsScore, permanentUsed, earlyAccessUsed, creatorScore] = await Promise.all([
+  const [view, modelsScore, pricingUsed, earlyAccessUsed, creatorScore] = await Promise.all([
     getModelsView(locals.user, url, cookies),
     resolveModelsScore(
       locals.user.id,
       !!locals.user.isModerator,
       cookies.get(TEST_MODELS_SCORE_COOKIE)
     ),
-    countPermanentAccessVersions(locals.user.id),
+    countPricingSlotsThisMonth(locals.user.id),
     countActiveEarlyAccessVersions(locals.user.id),
     resolveCreatorScore(
       locals.user.id,
@@ -90,7 +90,7 @@ export const load: PageServerLoad = async ({ locals, parent, url, cookies }) => 
   const [sales, saleLimits] = view.salesEnabled
     ? await Promise.all([getCreatorSales(locals.user.id), getSaleLimitOverrides()])
     : [[], {}];
-  const permanentCap = maxPermanentAccessModels(cappedTier(membership));
+  const pricingLimit = monthlyPricingAllowance(cappedTier(membership));
   return {
     ...view,
     creatorScore,
@@ -99,13 +99,16 @@ export const load: PageServerLoad = async ({ locals, parent, url, cookies }) => 
     sales,
     saleLimits,
     pageSizeOptions: PAGE_SIZE_OPTIONS,
-    // `tier` is the display label; `capTier` is what cap math must use — a lapsed membership keeps its
-    // tier string but is capped at free. null cap = unlimited (Infinity would not survive serialization).
+    // `tier` is the display label; `capTier` is what the allowance must use — a lapsed membership keeps
+    // its tier string but allows what free allows. null = unlimited (Infinity would not serialize).
     caps: {
       tier: displayTier(membership),
       capTier: cappedTier(membership),
-      permanentUsed,
-      permanentCap: Number.isFinite(permanentCap) ? permanentCap : null,
+      pricingUsed,
+      pricingLimit: Number.isFinite(pricingLimit) ? pricingLimit : null,
+      // The SIMULATED score, deliberately: the moderator score simulator exists to preview what a
+      // creator at a given score sees. What it never moves is the write, which re-reads the real one.
+      pricingFloor: pricingEligibility(modelsScore),
       // Score gates early access two ways: how long a window can run, and how many can run at once.
       maxEarlyAccessDays: earlyAccessDaysForScore(modelsScore),
       earlyAccessUsed,
@@ -244,33 +247,16 @@ export const actions: Actions = {
       }
     }
 
-    if (!locals.user.isModerator && permanent) {
-      // Price cap first — it applies to every tier; the count cap only bites on free (CU 868kj4q4j).
-      const priceCap = maxPaidAccessPrice(
-        cappedTier(membership),
-        await strictestCapMediaType(versionIds.data)
-      );
-      const highest = Math.max(pricing.data.accessPrice, pricing.data.generationPrice ?? 0);
-      if (highest > priceCap)
-        return fail(403, {
-          paidAccess: true,
-          error: `Your membership allows a paid-access price of up to ${priceCap} buzz.`,
-        });
-
-      const cap = maxPermanentAccessModels(cappedTier(membership));
-      if (Number.isFinite(cap)) {
-        const baseline = await countPermanentAccessVersionsExcluding(
-          locals.user.id,
-          versionIds.data
-        );
-        if (baseline + versionIds.data.length > cap)
-          return fail(400, {
-            paidAccess: true,
-            error: `Your membership allows up to ${cap} permanent paid-access model${
-              cap === 1 ? '' : 's'
-            }. Deselect some and try again.`,
-          });
-      }
+    // Paid-access prices are uncapped. What is limited is how many versions gain a price this month —
+    // and only versions that are not already priced count, so re-pricing a selection is always free.
+    // Moderators are NOT exempt — see assertPricingAllowed. The fee paths in this app do not exempt
+    // them either, and one write path answering this differently is how a spoke becomes a way around it.
+    const newlyPricedIds = permanent
+      ? await unpricedVersionIds(locals.user.id, versionIds.data)
+      : [];
+    {
+      const gate = await assertPricingAllowed(locals.user.id, membership, newlyPricedIds.length);
+      if (!gate.ok) return fail(gate.status, { paidAccess: true, error: gate.error });
     }
 
     const cookie = request.headers.get('cookie') ?? '';
@@ -294,6 +280,15 @@ export const actions: Actions = {
       checkbox.parse(form.get('rightsAffirmed'))
     );
     if (!result.ok) return fail(result.status, { paidAccess: true, error: result.error });
+
+    // Intersected with what was actually written: a bulk is reported `ok` even when some versions
+    // failed, and nothing ever clears a price that was not written, so that slot never comes back, so recording the whole intent would burn the creator's
+    // month for prices they do not have.
+    const written = new Set(result.updatedIds);
+    await recordPricingSlots(
+      locals.user.id,
+      newlyPricedIds.filter((id: number) => written.has(id))
+    );
 
     return {
       paidAccess: true,
@@ -347,8 +342,17 @@ export const actions: Actions = {
     };
   },
 
-  // How many of the selection a timed early-access window would skip. Same reason as the preview above:
-  // "select all matching" reaches versions the page never loaded, so the count can't come from the client.
+  unpricedPreview: async ({ request, locals }) => {
+    const form = await request.formData();
+    const versionIds = versionIdsSchema.safeParse(String(form.get('versionIds') ?? ''));
+    if (!versionIds.success)
+      return fail(400, { preview: true, error: firstError(versionIds.error) });
+    return {
+      preview: true,
+      unpriced: (await unpricedVersionIds(locals.user.id, versionIds.data)).length,
+    };
+  },
+
   publishedPreview: async ({ request, locals }) => {
     const form = await request.formData();
     const versionIds = versionIdsSchema.safeParse(String(form.get('versionIds') ?? ''));
@@ -456,21 +460,15 @@ export const actions: Actions = {
 
     const membership = resolveMembership(locals.user, cookies.get(TEST_MEMBERSHIP_COOKIE));
 
-    // Paid access is open to every tier; only free carries a COUNT limit (CU 868kj4q4j). Still only NEW
-    // permanent grants are counted — re-saving an already-permanent version stays allowed even at capacity,
-    // so an edit can't strand a creator whose membership lapsed.
-    if (permanent && !locals.user.isModerator && !(await isVersionPermanent(versionId.data))) {
-      const cap = maxPermanentAccessModels(cappedTier(membership));
-      if (Number.isFinite(cap)) {
-        const current = await countPermanentAccessVersions(locals.user.id, versionId.data);
-        if (current >= cap)
-          return fail(400, {
-            versionId: versionId.data,
-            error: `Your membership allows up to ${cap} permanent paid-access model${
-              cap === 1 ? '' : 's'
-            }. Upgrade for more.`,
-          });
-      }
+    // Only a version with no price yet spends allowance — re-saving one that already has a price stays
+    // allowed even at the limit, so an edit can never strand a creator.
+    // Moderators are NOT exempt — see assertPricingAllowed.
+    const newlyPricedIds = permanent
+      ? await unpricedVersionIds(locals.user.id, [versionId.data])
+      : [];
+    {
+      const gate = await assertPricingAllowed(locals.user.id, membership, newlyPricedIds.length);
+      if (!gate.ok) return fail(gate.status, { versionId: versionId.data, error: gate.error });
     }
 
     const config = paidAccessFormSchema.safeParse(Object.fromEntries(form));
@@ -498,35 +496,6 @@ export const actions: Actions = {
         return fail(usageResult.status, { versionId: versionId.data, error: usageResult.error });
     }
 
-    // Only an INCREASE is rejected: the editor resubmits the stored price on every save, so capping the
-    // submitted value outright would make an over-cap version uneditable after a lapse (the same class of
-    // bug that 82f64846ba had to hot-fix in the main app). Lowering or leaving it alone always passes.
-    // Permanent gates only: a timed early-access window has no price ceiling, because the version becomes
-    // free when the window closes. Mirrors assertPaidAccessCaps in the main app.
-    if (!locals.user.isModerator && permanent) {
-      const priceCap = maxPaidAccessPrice(
-        cappedTier(membership),
-        await strictestCapMediaType([versionId.data])
-      );
-      const prev = await currentAccessPrices(versionId.data);
-      // Compared per-component so a cheap generation tier can't be raised under an over-cap access price.
-      // For a gen-only version the access price IS the generation price, so it's checked against that side.
-      const next = genOnly
-        ? { download: 0, generation: config.data.accessPrice ?? 0 }
-        : {
-            download: config.data.accessPrice ?? 0,
-            generation: config.data.generationPrice ?? 0,
-          };
-      if (
-        raisesOverCap(next.download, prev.download, priceCap) ||
-        raisesOverCap(next.generation, prev.generation, priceCap)
-      )
-        return fail(403, {
-          versionId: versionId.data,
-          error: `Your membership allows a permanent paid-access price of up to ${priceCap} buzz. Lower the price, use a timed window, or upgrade your membership.`,
-        });
-    }
-
     const result = await setPaidAccessConfig(
       cookie,
       versionId.data,
@@ -535,6 +504,9 @@ export const actions: Actions = {
       checkbox.parse(form.get('rightsAffirmed'))
     );
     if (!result.ok) return fail(result.status, { versionId: versionId.data, error: result.error });
+
+    // After the write, so a failed one never costs the creator a slot.
+    await recordPricingSlots(locals.user.id, newlyPricedIds);
 
     return { versionId: versionId.data, paidAccessSaved: true };
   },

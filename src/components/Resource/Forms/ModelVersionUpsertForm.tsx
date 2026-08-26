@@ -84,7 +84,9 @@ import {
   hasCurrentRightsAffirmation,
   paidAccessCharges,
   feeToRatio,
+  formatPricingAllowance,
   monetizationLimits,
+  pricingAllowanceState,
   ratioToFee,
   resolveCapTier,
   separateGenerationPriceMissing,
@@ -434,40 +436,19 @@ export function ModelVersionUpsertForm({
       shouldValidate: true,
     });
   };
-  // Anyone may set a licensing fee, free tier included (CU 868kj4q49) — the tier caps only how much, and
-  // checkpoints carry a higher ceiling than everything else. Moderators are uncapped. Mirrored server-side
-  // in upsertModelVersionHandler, which is the enforcement point.
-  //
   // `memberInBadState` mirrors the server's getCapTier, which excludes bad-state subs — so the UI never
-  // advertises a ceiling the server will reject.
+  // advertises an allowance the server will reject.
   const feeCapTier = resolveCapTier({
     tier: currentUser?.tier ?? null,
     isMember: !!currentUser?.tier && currentUser.tier !== 'free' && !currentUser.memberInBadState,
   });
-  // Keyed to the WATCHED base model, not the seeded one, so switching ecosystem mid-form moves the caps
-  // instead of stranding them on whatever the form loaded with.
-  const limits = monetizationLimits({
-    tier: feeCapTier,
-    modelType: model?.type,
-    baseModel,
-    isModerator: currentUser?.isModerator,
-    // Only a permanent gate has a price ceiling; a timed early-access window becomes free when it closes.
-    permanent: !!paidAccessConfig?.permanent,
-  });
+  // Keyed to the WATCHED base model, not the seeded one, so switching ecosystem mid-form moves the fee
+  // ceiling instead of stranding it on whatever the form loaded with.
+  const limits = monetizationLimits({ tier: feeCapTier, baseModel });
   const licensingFeeCap = limits.fee.maxPerGeneration;
-  // The input bound is the ABSOLUTE ceiling, not the creator's tier cap. Clamping to the tier cap
-  // rewrites a grandfathered fee as soon as the form loads or the denominator changes — the server only
-  // blocks raises and never rewrites the stored value, so the client must not undo that. The over-cap
-  // notice below is what tells the creator they're earning less.
-  const licensingFeeCeilingLimits = monetizationLimits({
-    tier: 'gold',
-    modelType: model?.type,
-    baseModel,
-    isModerator: currentUser?.isModerator,
-  });
   const feeImageOptions = limits.fee.denominators;
-  // An unlimited price renders as no cap at all, so the input falls back to the donation ceiling.
-  const paidAccessCap = limits.access.maxPrice ?? MAX_DONATION_GOAL;
+  // Paid access has no ceiling; the input still needs a sane bound, so it borrows the donation one.
+  const paidAccessCap = MAX_DONATION_GOAL;
   const storedTerms = version?.paidAccess?.terms as ModelVersionTerms | undefined;
   const storedPaidGen =
     storedTerms?.generation && !('free' in storedTerms.generation)
@@ -928,6 +909,26 @@ export function ModelVersionUpsertForm({
     ? MAX_EARLY_ACCCESS
     : version?.paidAccess?.timeframeDays ?? 0;
 
+  // Fetched for moderators too — they are not exempt from the allowance, so hiding the counter from
+  // them makes the server's refusal their first warning. Gated on the monetization sections being
+  // visible: getCapTier behind it is three uncached queries against the primary.
+  const { data: pricingAllowance } = trpc.modelVersion.getPricingAllowance.useQuery(undefined, {
+    enabled: showPaidAccessInput || showLicensingFeeBlock,
+  });
+  // A version that already carries a price is exempt, so the counter must not read "used up" while the
+  // edit in front of the creator is free.
+  const allowanceState = pricingAllowance
+    ? pricingAllowanceState({
+        used: pricingAllowance.used,
+        limit: pricingAllowance.limit,
+        exempt: hasExistingCharge,
+      })
+    : null;
+  // Not waived for moderators, and not applied to a version that already charges. Absent while the
+  // query is in flight, so the control stays enabled rather than flickering shut; the server refuses anyway.
+  const eligibility = pricingAllowance?.eligibility;
+  const belowPricingFloor = !!eligibility && !eligibility.eligible && !hasExistingCharge;
+
   // Editing a version that already holds an EA slot doesn't count against the cap — mirrors the
   // server carve-out in assertUserEarlyAccessLimits.
   const { data: userEarlyAccessVersions } = trpc.modelVersion.getUserEarlyAccessVersions.useQuery(
@@ -1314,9 +1315,25 @@ export function ModelVersionUpsertForm({
                     )}
                   </Alert>
                 )}
+                {!monetizationBlocked && belowPricingFloor && eligibility && (
+                  <Alert
+                    color="yellow"
+                    icon={<IconAlertTriangle size={18} />}
+                    title="You can't monetize this version yet"
+                    mb="sm"
+                  >
+                    <Text size="sm">
+                      Monetizing a model version needs a creator score of{' '}
+                      {eligibility.required.toLocaleString()}. Yours is{' '}
+                      {eligibility.score.toLocaleString()} —{' '}
+                      {eligibility.shortfall.toLocaleString()} to go. Prices you have already set
+                      are unaffected.
+                    </Text>
+                  </Alert>
+                )}
                 {!monetizationBlocked && (showPaidAccessInput || showLicensingFeeBlock) && (
                   <Switch
-                    label="I want to charge for this version"
+                    label="I want to monetize this version"
                     description="Sell access to the version, charge a fee per generation, or both."
                     checked={chargeEnabled}
                     onChange={(e) => {
@@ -1324,9 +1341,26 @@ export function ModelVersionUpsertForm({
                       setChargeEnabled(checked);
                       if (!checked) clearCharges();
                     }}
-                    disabled={isEarlyAccessOver && !!version?.paidAccess}
+                    disabled={belowPricingFloor || (isEarlyAccessOver && !!version?.paidAccess)}
                   />
                 )}
+                {!monetizationBlocked &&
+                  (showPaidAccessInput || showLicensingFeeBlock) &&
+                  allowanceState && (
+                    <Group gap={6}>
+                      <Text size="xs" c={allowanceState.atLimit ? 'yellow.5' : 'dimmed'}>
+                        {formatPricingAllowance(allowanceState)}
+                        {hasExistingCharge ? ' · editing this one is free' : ''}
+                      </Text>
+                      {!allowanceState.unlimited && (
+                        <CapUpsell
+                          used={allowanceState.used}
+                          limit={pricingAllowance?.limit ?? Infinity}
+                          capTier={feeCapTier}
+                        />
+                      )}
+                    </Group>
+                  )}
                 {removingStoredCharge && !monetizationBlocked && (
                   <Stack gap={4} mt="sm" align="flex-start">
                     {/* Red only when the control the sentence is about is off screen — that's the case
@@ -1587,25 +1621,6 @@ export function ModelVersionUpsertForm({
                                 withAsterisk
                                 disabled={isEarlyAccessOver}
                               />
-                              {(paidAccessConfig?.accessPrice ?? 0) > paidAccessCap && (
-                                <Text size="xs" c="yellow.5">
-                                  This price is above your membership&apos;s{' '}
-                                  {paidAccessCap.toLocaleString()} Buzz cap. You can keep or lower
-                                  it, but not raise it.
-                                </Text>
-                              )}
-                              {!currentUser?.isModerator && (
-                                <CapUpsell
-                                  value={paidAccessConfig?.accessPrice}
-                                  cap={limits.access.maxPrice ?? Infinity}
-                                  capTier={feeCapTier}
-                                  capFor={(t) =>
-                                    monetizationLimits({ tier: t, baseModel, permanent: true })
-                                      .access.maxPrice ?? Infinity
-                                  }
-                                  title="Price for access"
-                                />
-                              )}
                               {!isGenOnly && (
                                 <>
                                   <Radio.Group
@@ -1808,8 +1823,8 @@ export function ModelVersionUpsertForm({
                                           charges a licensing fee, yours is added on top of it.
                                         </Text>
                                         <Text size="sm">
-                                          Your membership allows up to {licensingFeeCap} Buzz per
-                                          generation for this model type.
+                                          A licensing fee can be at most {licensingFeeCap} Buzz per
+                                          generation.
                                         </Text>
                                       </Stack>
                                     </Popover.Dropdown>
@@ -1828,7 +1843,7 @@ export function ModelVersionUpsertForm({
                                     })
                                   }
                                   min={0}
-                                  max={feeMaxFor(licensingFeeCeilingLimits, feeRatio.images)}
+                                  max={feeMaxFor(limits, feeRatio.images)}
                                   step={1}
                                   allowDecimal={false}
                                   leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
@@ -1846,10 +1861,7 @@ export function ModelVersionUpsertForm({
                                     // per-image and can be fractional, so `cap * images` would put a decimal
                                     // into a whole-number field the schema rejects. floor() keeps it valid.
                                     applyFeeRatio({
-                                      buzz: Math.min(
-                                        feeRatio.buzz,
-                                        feeMaxFor(licensingFeeCeilingLimits, images)
-                                      ),
+                                      buzz: Math.min(feeRatio.buzz, feeMaxFor(limits, images)),
                                       images,
                                     });
                                   }}
@@ -1865,34 +1877,6 @@ export function ModelVersionUpsertForm({
                                 </Text>
                               </Group>
                             </Input.Wrapper>
-                            {!currentUser?.isModerator && (
-                              <CapUpsell
-                                value={feeRatio.buzz}
-                                cap={feeMaxFor(limits, feeRatio.images)}
-                                capTier={feeCapTier}
-                                capFor={(t) =>
-                                  feeMaxFor(
-                                    monetizationLimits({
-                                      tier: t,
-                                      modelType: model?.type,
-                                      baseModel,
-                                    }),
-                                    feeRatio.images
-                                  )
-                                }
-                                title="Licensing fee"
-                                expanded={currentLicensingFee > licensingFeeCap}
-                                perLabel={`${feeRatio.images} generation${
-                                  feeRatio.images === 1 ? '' : 's'
-                                }`}
-                              />
-                            )}
-                            {currentLicensingFee > licensingFeeCap && (
-                              <Text size="xs" c="yellow.5">
-                                This fee is above your membership&apos;s {licensingFeeCap} Buzz cap
-                                for this model type. You can keep or lower it, but not raise it.
-                              </Text>
-                            )}
                             {showLicensingFeeSettlementCurrency && (
                               <InputSelect
                                 name="licensingFeeSettlementCurrency"

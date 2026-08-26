@@ -179,9 +179,8 @@ describe('ModelCard review indicator (batched membership)', () => {
     // types (it is `getEngagedModelsByIds` now). The value import is typed against the REAL
     // module while the runtime value is the mock, so the property is absent at type level and
     // present at run time. Casting here is narrower than widening the mock's shape.
-    const spiedUseQuery = (
-      trpc.user as unknown as { getEngagedModels: { useQuery: unknown } }
-    ).getEngagedModels.useQuery;
+    const spiedUseQuery = (trpc.user as unknown as { getEngagedModels: { useQuery: unknown } })
+      .getEngagedModels.useQuery;
     expect(spiedUseQuery).toBe(mocks.getEngagedModelsUseQuery);
   });
 

@@ -41,16 +41,19 @@ describe('addViewSchema matches the ClickHouse views columns', () => {
   it.each([
     ['type', VIEWS_TYPE_COLUMN, VIEW_TYPES],
     ['entityType', VIEWS_ENTITY_TYPE_COLUMN, VIEW_ENTITY_TYPES],
-  ] as const)('accepts exactly what %s stores, in ordinal order', (column, columnType, accepted) => {
-    const members = columnMembers(columnType);
+  ] as const)(
+    'accepts exactly what %s stores, in ordinal order',
+    (column, columnType, accepted) => {
+      const members = columnMembers(columnType);
 
-    // A snapshot that parsed to nothing would satisfy the comparison below by emptying both sides of it.
-    expect(members.length, `no members parsed out of the ${column} snapshot`).toBe(12);
+      // A snapshot that parsed to nothing would satisfy the comparison below by emptying both sides of it.
+      expect(members.length, `no members parsed out of the ${column} snapshot`).toBe(12);
 
-    // Equality, not containment: the direction a containment check misses is the schema accepting a value
-    // the column would reject. Order carries the ordinals, which is what makes index + 1 usable.
-    expect([...accepted]).toEqual(members);
-  });
+      // Equality, not containment: the direction a containment check misses is the schema accepting a value
+      // the column would reject. Order carries the ordinals, which is what makes index + 1 usable.
+      expect([...accepted]).toEqual(members);
+    }
+  );
 
   it('accepts a collection view', () => {
     expect(

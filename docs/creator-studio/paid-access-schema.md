@@ -6,7 +6,8 @@ as diffs. **The migration is applied** (see the record in `prisma/migrations/`);
 kept as the design record. For where the code lives now + open items, see
 [paid-access-current-state.md](paid-access-current-state.md).
 
-Schema file: `packages/civitai-db-schema/prisma/schema.prisma`.
+Schema file: `packages/civitai-db-schema/prisma/schema.full.prisma` (the only tracked schema; the slim
+`schema.prisma` beside it is generated — see the Database section of the root `CLAUDE.md`).
 
 > **Scope (post-review, 2026-07-24).** This PR is a **behavior-preserving structural migration** — move
 > paid-access config off the entity into a `PaidAccess` table, nothing more. Three things were cut to keep it
@@ -60,7 +61,7 @@ Schema file: `packages/civitai-db-schema/prisma/schema.prisma`.
 +   updatedAt  DateTime     @updatedAt
 +
 +   @@id([entityType, entityId])                 // one gate per entity
-+   @@index([ownerId, entityType, endsAt])       // owner-scoped range/active queries; the permanent cap count uses a partial index (see below)
++   @@index([ownerId, entityType, endsAt])       // denormalized at write — owner-scoped queries without a polymorphic join
 + }
 ```
 
@@ -70,15 +71,21 @@ Schema file: `packages/civitai-db-schema/prisma/schema.prisma`.
   window early. There is no separate discriminator — a second one could disagree with `endsAt`, which is the
   precise failure mode this refactor exists to remove.
 - **`ownerId`** is stamped at write (same pattern as licensing-fee owner-stamping / `reactions.ownerId`) so the
-  per-`ownerId`, per-`entityType` cap counts need no join to the entity.
+  owner-scoped queries need no join to the entity.
 - No `donationGoalId`, no `anchorAt` — see §3 and §4.
 - **Read through the accessor, not ad-hoc joins.** `getPaidAccess(entityType, entityIds)` (cached, batch) to
-  *decorate* known ids on hot paths; `paidAccessSql()` *only* to filter/sort/count in-query. See
+  *decorate* known ids on hot paths; go to SQL *only* to filter/sort/count in-query. See
   [caching `getPaidAccess`](onsite-monetization-parity.md#caching-getpaidaccess).
-- **Cap-count index is partial.** The tier cap counts an owner's *permanent* rows, so the tightest index is
-  `(ownerId, entityType) WHERE "endsAt" IS NULL` — created via **raw SQL** (Prisma can't express a partial index
-  in-schema). The general `@@index([ownerId, entityType, endsAt])` above stays for owner-scoped *range* queries
-  (active / ending-soon), which `IS NULL` alone can't serve.
+
+  ⚠️ **`paidAccessSql()` no longer exists** — it shipped in `ba2b7fb1d4` and was removed since. The handful
+  of sites that need the predicate hand-write it to the shape below, so the rest of this doc naming
+  `paidAccessSql` describes the plan, not the tree. Anything centralising it again has to cover every one.
+- **`PaidAccess_permanent_cap_idx` no longer has a consumer.** The partial index
+  `(ownerId, entityType) WHERE "endsAt" IS NULL` was built for a per-owner cap on permanent rows; that cap was
+  replaced by the monthly allowance, which counts `PricingSlot` instead, and `countUserPermanentAccessVersions`
+  is gone. Nothing queries `PaidAccess` by `ownerId` today. Left in place — an unused index costs writes, not
+  correctness — but drop it if you are already writing a migration here. The general
+  `@@index([ownerId, entityType, endsAt])` stays for owner-scoped *range* queries (active / ending-soon).
 
 ## 2. `ModelVersion` — add the anchor, retire the tangle
 

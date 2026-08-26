@@ -243,6 +243,33 @@ describe('transferModelOwnership moves the PaidAccess owner', () => {
     expect(statement.sql).toMatch(/"updatedAt"\s*=\s*NOW\(\)/);
   });
 
+  it('DELETES the PricingSlot rows rather than moving them', async () => {
+    await transferModelOwnership({
+      modelIds: MODEL_IDS,
+      targetUserId: TARGET_USER_ID,
+      modUserId: MOD_USER_ID,
+    });
+
+    const [statement, ...extra] = statementsFor('PricingSlot');
+    expect(
+      statement,
+      'no "PricingSlot" statement in the transfer transaction — the slot strands on the previous owner, where it can never be released and blocks every future insert for that version'
+    ).toBeDefined();
+    expect(extra).toHaveLength(0);
+    // DELETE, never UPDATE: moving ownerId charges the recipient a slot for a price they inherited.
+    expect(statement.sql).toMatch(/DELETE\s+FROM\s+"PricingSlot"/);
+    expect(statement.sql).not.toMatch(/SET\s+"ownerId"/);
+    // Without the join predicate this drops EVERY slot on the site, and `USING "ModelVersion"` alone
+    // still matches — same reason as the gate statement above.
+    expect(statement.sql).toMatch(/USING\s+"ModelVersion"/);
+    expect(statement.sql).toMatch(/ps\."entityId"\s*=\s*mv\.id/);
+    expect(statement.sql).toMatch(/ps\."entityType"\s*=\s*'ModelVersion'::"PaidAccessEntityType"/);
+    expect(valueAfter(statement, /"modelId"\s*=\s*ANY\($/)).toEqual(MODEL_IDS);
+    // No `ownerId <> target` guard, unlike the UPDATEs above: the row goes regardless of who holds it,
+    // because the harm is the primary key blocking a re-insert, not whose name is on it.
+    expect(statement.sql).not.toMatch(/"ownerId"/);
+  });
+
   it('busts every owner-derived cache for the transferred versions', async () => {
     await transferModelOwnership({
       modelIds: MODEL_IDS,

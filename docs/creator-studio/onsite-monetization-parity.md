@@ -33,16 +33,16 @@ No schema change, no migration, no backfill.
 - **Permanent toggle onsite**, settable after publish (permanent has no publish-anchored window), with the tier
   allowance shown. Timeframe control hides when permanent; donation goals correctly key on `isPublished`.
 - **Canonical read helper** — `@civitai/buzz/paid-access.ts` (`paidAccessMode`, `isPaidAccessActive`,
-  `isTimedWindowOver`, `paidAccessSql`), with tests whose permanent cases encode what every ad-hoc check got
-  wrong.
+  `isTimedWindowOver`), with tests whose permanent cases encode what every ad-hoc check got wrong.
+  `paidAccessSql` was part of this and **no longer exists** — see the rule below.
 - **Five review bugs fixed**, including one data-loss bug (the form nulled any config whose `timeframe` was
   falsy — i.e. every permanent config — so re-saving destroyed the paid gate).
 
 ### Blocking — do before shipping
 
 - [ ] **Exercise in a browser.** Nothing here has been clicked through; typecheck + unit tests only. Cover:
-      set a fee ratio, set permanent on an unpublished version, set permanent on a *published* version, hit the
-      tier cap, and round-trip a fee between Studio and onsite.
+      set a fee ratio, set permanent on an unpublished version, set permanent on a *published* version, exhaust
+      the monthly pricing allowance, and round-trip a fee between Studio and onsite.
 - [x] **Feature flag — decided (2026-07-24): no flag.** Permanent access releases with Creator Studio.
 - [ ] **Targeted mini-sweep of user-visible "is this paid" surfaces.** Not the full sweep (see Track 2) — just
       the badges/filters/labels a creator or buyer will see for a *permanent* version. Use
@@ -57,11 +57,12 @@ No schema change, no migration, no backfill.
       `requirements.validMembership` (`status IN ('incomplete','active')`, `LIMIT 1`, no tier ordering); the
       server enforces with `getHighestTierSubscription` (excludes canceled/past_due/unpaid, picks the highest
       tier). **The server is authoritative; the UI should display the server-computed cap, not recompute tier
-      client-side.** Have the form loader return `{ permanentCap, permanentUsed }` computed with the same helper
-      enforcement uses — then displayed == enforced by construction, and it also delivers the live "X of Y"
+      client-side.** Have the form loader return the allowance state computed with the same helper
+      enforcement uses (`pricingAllowanceState`, exposed onsite via `modelVersion.getPricingAllowance`) — then displayed == enforced by construction, and it also delivers the live "X of Y"
       count below. (Same pattern as creator-studio's loader.)
-- [ ] **Live "X of Y set" count onsite.** Only the tier *allowance* is shown today; the usage count needs a
-      small tRPC query. Hitting the cap currently surfaces as a server error with a specific message.
+- [x] **Live "X of Y set" count onsite.** Done in the monetization revamp: `modelVersion.getPricingAllowance`
+      feeds the count into the upsert form, so displayed == enforced. Note the meaning changed — it counts new
+      prices this calendar month against the membership allowance, not concurrent permanent gates.
 - [ ] **Naming divergence.** UI says "Paid Access"; every field is `earlyAccess*`. Rename deliberately or
       accept the split.
 
@@ -159,7 +160,7 @@ they differ by mode *and* entity type:
 | | Gated by | Limits |
 | --- | --- | --- |
 | Early access (timed) | creator **score** | concurrent count (`scoreQuantityUnlock`) **and** max days (`scoreTimeFrameUnlock`) |
-| Permanent | CP **tier** | concurrent count (`bronze 3 / silver 10 / gold ∞`) |
+| Permanent | Membership **tier** | monthly pricing allowance (`free 3 / bronze 10 / silver 25 / gold ∞` new prices per calendar month) |
 | Comics | **unknown** | **unknown** — different axis, or none |
 
 So the split is:
@@ -530,20 +531,22 @@ The accessor answers *"for these ids I already have, what is the access state?"*
 set**. That is the hot path (feed, generation, cards): fetch the entity (its own cache) + `getPaidAccess`
 (this cache) + zip. No join, and the two caches invalidate independently.
 
-A **DB-side predicate** (`paidAccessSql()` → `JOIN` / `EXISTS` / `IN`) is required *only* when access state
+A **DB-side predicate** (a hand-written `JOIN` / `EXISTS` / `IN` — the `paidAccessSql()` helper no longer
+exists) is required *only* when access state
 participates in **selecting, ordering, or counting** rows — those must run in the DB to be correct:
 
 - **Filtered pagination** — `WHERE (gated|not) … LIMIT/OFFSET`. You cannot page in the DB then drop gated rows
   in app code: the page shrinks and the counts lie.
 - **Sort by access state** — order by `endsAt` ("ending soon") *before* `LIMIT`.
-- **Aggregation / counts** — the owner cap count (a standalone `PaidAccess` query on the `ownerId` index — no
-  join), paid-vs-free analytics.
+- **Aggregation / counts** — paid-vs-free analytics. The owner cap count that used to sit here is gone:
+  the per-owner permanent cap was replaced by the monthly `PricingSlot` allowance, and nothing queries
+  `PaidAccess` by `ownerId` any more.
 - **PaidAccess-as-driver** — the expiry cron scans `endsAt <= now` to *find* entities; there are no ids to hand
   the accessor yet.
 - **`EXISTS` in a larger entity query** — "does this model have *any* gated version", pushed down instead of
   loading every version to check in app.
 
-**Rule: decorate known ids → `getPaidAccess`; select / sort / count by access state → `paidAccessSql`.** The
+**Rule: decorate known ids → `getPaidAccess`; select / sort / count by access state → SQL.** The
 two do not compete — the predicate cases are exactly the dynamic, query-specific result sets a per-entity cache
 cannot serve anyway, so joining there does not defeat the cache.
 

@@ -1,21 +1,16 @@
 import {
   DEFAULT_FEE_IMAGES,
-  feeImageOptionsForCap,
+  FEE_IMAGE_OPTIONS,
   feeToRatio,
   finiteOrNull,
-  maxLicensingFee,
   maxLicensingFeeCeiling,
   suggestedFeePerImage,
   type CapMediaType,
   type FeeRatio,
 } from './licensing-fee';
 import { capMediaType } from './media-type';
-import {
-  CAP_TIERS,
-  maxPaidAccessPrice,
-  maxPermanentAccessModels,
-  type CapTier,
-} from './paid-access';
+import { CAP_TIERS, type CapTier } from './paid-access';
+import { monthlyPricingAllowance } from './pricing-allowance';
 
 /**
  * What each app knows about a creator's membership. Produced app-side — the main app from the session
@@ -25,9 +20,9 @@ import {
 export type Membership = { tier: string | null; isMember: boolean };
 
 /**
- * The tier every cap resolves against. A lapsed or absent membership falls back to free rather than to
- * "no access", founder charges as bronze, and it returns a real tier — never null — so callers stop
- * carrying a `?? 'free'` fallback that had to be repeated at every site.
+ * The tier the monthly allowance resolves against. A lapsed or absent membership falls back to free
+ * rather than to "no access", founder counts as bronze, and it returns a real tier — never null — so
+ * callers stop carrying a `?? 'free'` fallback that had to be repeated at every site.
  *
  * This is the ONLY tier-normalising rule; everything else that needs a canonical tier goes through it.
  */
@@ -54,9 +49,8 @@ export function suggestedFee({
 
 /**
  * The suggestion a fee editor may open on, as a ratio. `denominators` is the list that editor actually
- * offers: a suggestion outside it (a checkpoint's 1-generation denominator against a selection capped at
- * 0.1/gen) would seed an option the select has no item for and a ceiling of 0, so it falls back to the
- * flat denominator with no amount.
+ * offers; a suggestion outside it would seed an option the select has no item for, so it falls back to
+ * the flat denominator with no amount.
  */
 export function suggestedFeeRatio(
   suggested: number | undefined | null,
@@ -73,9 +67,8 @@ export function suggestedFeeRatio(
 /**
  * What a fee editor opens on: an existing fee wins, otherwise the per-type suggestion.
  *
- * Only the suggestion is clamped to `denominators`. An existing fee never is — a creator whose tier
- * lapsed keeps the denominator they were grandfathered on, and seeing it against a real ceiling of 0 is
- * the point (see `maxFeeBuzzForRatio`), not a bug to seed away.
+ * Only the suggestion is clamped to `denominators`; an existing fee never is, so a creator always opens
+ * on the denominator they actually stored.
  */
 export function seedFeeRatio({
   licensingFee,
@@ -95,74 +88,48 @@ export function seedFeeRatio({
 /** Every ceiling an editor needs for ONE version. Plain data — no methods, nothing derived twice. */
 export type MonetizationLimits = {
   fee: {
-    /** Per-generation ceiling. May be fractional (0.1 at free/other), which is why editors use ratios. */
+    /** Per-generation ceiling. The same for every creator; only the media axis moves it. */
     maxPerGeneration: number;
-    /** Denominators the editor may offer: those that can express at least 1 buzz under this cap. */
+    /** Denominators the editor may offer. */
     denominators: number[];
   };
   /**
-   * `null` = unlimited (Infinity would not survive a JSON boundary). A TIMED early-access window is
-   * always unlimited: that price is temporary and the version becomes free when the window closes, so
-   * the tier ceiling only governs gates that never expire.
+   * New prices this tier may apply per calendar month, or `null` for unlimited (Infinity would not
+   * survive a JSON boundary). A count, so the video multiplier doesn't apply.
    */
-  access: { maxPrice: number | null };
-  /** `null` = unlimited. A count, so the video multiplier doesn't apply. */
-  permanent: { limit: number | null };
+  allowance: { monthlyPrices: number | null };
 };
 
 /**
- * Resolve every tier-dependent cap for a version from the three things that vary them: the creator's tier,
- * the model type, and the base model (which decides image vs video).
+ * Every limit for a version, from the two things that vary them: the creator's tier (the allowance) and
+ * the base model, which decides image vs video (the fee ceiling).
  *
  * Takes an already-resolved `tier` rather than a Membership so the same function answers "what would
  * another tier allow?" — that's what the upgrade nudge renders, and it's why the nudge can't quote a
- * number the input beside it contradicts.
+ * number the counter beside it contradicts.
  *
- * Moderators aren't tier-capped: they get the absolute ceiling and every denominator.
+ * Moderators are NOT special here. They are exempt from the fee CEILING (applied on the write path),
+ * but not from the eligibility floor or the allowance — so reporting them an unlimited allowance would
+ * promise something the server then refuses.
  */
 export function monetizationLimits({
   tier,
-  modelType,
   baseModel,
-  isModerator = false,
-  permanent = true,
 }: {
   tier: CapTier;
-  modelType?: string | null;
   baseModel?: string | null;
-  isModerator?: boolean;
-  /**
-   * Whether the gate being priced never expires. Defaults to true — the capped case — so a caller that
-   * forgets it gets the ceiling rather than accidentally uncapping a permanent gate.
-   */
-  permanent?: boolean;
 }): MonetizationLimits {
   const mediaType: CapMediaType = capMediaType(baseModel);
   return {
     fee: {
-      maxPerGeneration: isModerator
-        ? maxLicensingFeeCeiling(mediaType)
-        : maxLicensingFee(tier, modelType, mediaType),
-      // Gold's ceiling admits every denominator, which is what an uncapped moderator should see.
-      denominators: feeImageOptionsForCap(isModerator ? 'gold' : tier, modelType, mediaType),
+      maxPerGeneration: maxLicensingFeeCeiling(mediaType),
+      denominators: [...FEE_IMAGE_OPTIONS],
     },
-    access: {
-      maxPrice:
-        isModerator || !permanent ? null : finiteOrNull(maxPaidAccessPrice(tier, mediaType)),
-    },
-    permanent: {
-      limit: isModerator ? null : finiteOrNull(maxPermanentAccessModels(tier)),
-    },
+    allowance: { monthlyPrices: finiteOrNull(monthlyPricingAllowance(tier)) },
   };
 }
 
-/**
- * The fee ceiling in the editor's whole-number domain: "N buzz per `images` generations".
- *
- * Derived rather than looked up, so it stays exact for a denominator the tier can't express — a creator
- * who set 5 ⚡/generation and then lapsed opens the editor at `images = 1`, which free tier has no valid
- * entry for, and must see the real ceiling (0) rather than a fallback borrowed from another denominator.
- */
+/** The fee ceiling in the editor's whole-number domain: "N buzz per `images` generations". */
 export function feeMaxFor(limits: MonetizationLimits, images: number): number {
   return Math.floor(limits.fee.maxPerGeneration * images);
 }

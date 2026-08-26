@@ -3375,6 +3375,12 @@ export type Price = {
   metadata: unknown;
   provider: Generated<PaymentProvider>;
 };
+export type PricingSlot = {
+  entityType: PaidAccessEntityType;
+  entityId: number;
+  ownerId: number;
+  createdAt: Generated<Timestamp>;
+};
 export type Product = {
   id: string;
   active: boolean;
@@ -4501,6 +4507,7 @@ export type DB = {
   PostTag: PostTag;
   PressMention: PressMention;
   Price: Price;
+  PricingSlot: PricingSlot;
   Product: Product;
   PurchasableReward: PurchasableReward;
   Purchase: Purchase;

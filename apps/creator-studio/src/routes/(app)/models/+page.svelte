@@ -28,26 +28,29 @@
   import { Label } from '@civitai/ui/components/ui/label/index.js';
   import {
     feeToRatio,
-    feeMaxFor,
     monetizationLimits,
     suggestedFee,
     seedFeeRatio,
     DEFAULT_FEE_IMAGES,
     type MonetizationLimits,
   } from '$lib/monetization/fee';
-  import { capMediaType, type CapTier } from '@civitai/buzz';
+  import {
+    capMediaType,
+    formatPricingAllowance,
+    pricingAllowanceState,
+    pricingFloorMessage,
+    type CapTier,
+  } from '@civitai/buzz';
   import JoinUpsell from '$lib/components/JoinUpsell.svelte';
   import TierCapsTable from '$lib/components/TierCapsTable.svelte';
+  import CapUpsell from '$lib/components/CapUpsell.svelte';
   import LicensingFeeFields from '$lib/components/monetization/LicensingFeeFields.svelte';
   import RightsAffirmation from '$lib/components/monetization/RightsAffirmation.svelte';
   import PaidAccessEditor from '$lib/components/PaidAccessEditor.svelte';
   import BulkBar from '$lib/components/BulkBar.svelte';
   import BulkActionDialog from '$lib/components/BulkActionDialog.svelte';
   import type { BulkAction } from '$lib/monetization/bulk-actions';
-  import { maxPaidAccessPrice } from '$lib/monetization/paid-access';
 
-  // Gold's cap is Infinity; the context contract says uncapped is null.
-  const finiteOrNull = (n: number) => (Number.isFinite(n) ? n : null);
   import {
     IconSearch,
     IconFilter,
@@ -78,50 +81,21 @@
   // the server narrows on `for=sale` alone, and an unexplained short list is worse than an early prompt.
   const pickingForSale = $derived(view.query.saleOnly);
 
-  // The tier every cap on this page resolves against (a lapse falls back to free, never to "no access").
+  // The tier the monthly allowance resolves against (a lapse falls back to free, never to "no access").
   const tier = $derived(data.caps.capTier);
 
-  // Off / Active / Over cap — anyone may set a fee now, so the amber state means "above your tier's ceiling
-  // for this model type": still charged in full, but it can't be raised until the membership is upgraded.
-  function feeStatus(
-    fee: number | null,
-    modelType: string,
-    baseModel: string
-  ): { label: string; cls: string } {
-    if (fee == null || fee <= 0) return { label: 'Off', cls: 'text-dark-2' };
-    return fee > monetizationLimits({ tier, modelType, baseModel }).fee.maxPerGeneration
-      ? { label: 'Over cap', cls: 'text-yellow-5' }
+  function feeStatus(fee: number | null): { label: string; cls: string } {
+    return fee == null || fee <= 0
+      ? { label: 'Off', cls: 'text-dark-2' }
       : { label: 'Active', cls: 'text-green-5' };
   }
 
-  // Versions storing a fee above the creator's cap. They earn the capped amount, not the stored one, and
-  // the per-row "Over cap" chip only reaches someone already scanning the table — the creator in
-  // CU 868kn7zu4 set a fee before caps existed and had no reason to look again.
-  const overCapVersions = $derived.by(() => {
-    const out: { name: string; stored: number; effective: number }[] = [];
-    for (const m of view.models)
-      for (const v of m.versions) {
-        const fee = v.licensingFee ?? 0;
-        if (fee <= 0) continue;
-        const cap = monetizationLimits({ tier, modelType: m.type, baseModel: v.baseModel }).fee
-          .maxPerGeneration;
-        if (fee > cap) out.push({ name: `${m.name} · ${v.name}`, stored: fee, effective: cap });
-      }
-    return out;
-  });
-
-  // Compact fee chip for a scan row: colour mirrors feeStatus (green Active / amber Capped / dim Off).
-  function feeChip(
-    fee: number | null,
-    modelType: string,
-    baseModel: string
-  ): { label: string; cls: string } {
+  // Compact fee chip for a scan row: colour mirrors feeStatus.
+  function feeChip(fee: number | null): { label: string; cls: string } {
     if (fee == null || fee <= 0) return { label: 'Fee off', cls: 'border-dark-4 text-dark-2' };
     const { buzz, images } = feeToRatio(fee);
     const label = images === 1 ? `${buzz} ⚡ / gen` : `${buzz} ⚡ / ${images}`;
-    return fee > monetizationLimits({ tier, modelType, baseModel }).fee.maxPerGeneration
-      ? { label, cls: 'border-yellow-5/30 bg-yellow-5/10 text-yellow-5' }
-      : { label, cls: 'border-green-5/30 bg-green-5/10 text-green-5' };
+    return { label, cls: 'border-green-5/30 bg-green-5/10 text-green-5' };
   }
 
   // Early-access chip: shown (green) only while a window is actually active, so it clearly means
@@ -151,12 +125,11 @@
           title: 'Timed early access — becomes free when the window ends',
         };
   }
-  // Permanent access is capped by CP tier (null cap = unlimited); concurrent early access by models score.
-  const permAtCap = $derived(
-    data.caps.permanentCap !== null &&
-      data.caps.permanentCap > 0 &&
-      data.caps.permanentUsed >= data.caps.permanentCap
+  // New prices are limited by membership tier; concurrent early access by models score.
+  const allowance = $derived(
+    pricingAllowanceState({ used: data.caps.pricingUsed, limit: data.caps.pricingLimit })
   );
+  const permAtCap = $derived(allowance.atLimit);
   const eaAtCap = $derived(
     data.caps.earlyAccessCap > 0 && data.caps.earlyAccessUsed >= data.caps.earlyAccessCap
   );
@@ -283,26 +256,26 @@
   // never think to look for them. A reactive Set — in-place add/delete/clear stay fine-grained.
   const selected = new SvelteSet<number>();
   let bulkAction = $state<BulkAction | null>(null);
-  // Permanent slots the creator can still fill (null cap = unlimited).
-  const remainingPermanentSlots = $derived(
-    data.caps.permanentCap === null
+  // Prices the creator can still apply this month (null limit = unlimited).
+  const remainingPricingSlots = $derived(
+    data.caps.pricingLimit === null
       ? Infinity
-      : Math.max(0, data.caps.permanentCap - data.caps.permanentUsed)
+      : Math.max(0, data.caps.pricingLimit - data.caps.pricingUsed)
   );
-  // Versions already sold permanently don't consume a NEW slot when re-priced — mirrors the server's
-  // countPermanentAccessVersionsExcluding baseline, so re-pricing stays possible even at the cap.
-  const alreadyPermanentIds = $derived(
+  // A version that already carries a price spends nothing when re-priced — mirrors the server's
+  // unpricedVersionIds, so editing stays possible even with the month's allowance used up.
+  const alreadyPricedIds = $derived(
     new Set(
       view.models
         .flatMap((m) => m.versions)
-        .filter((v) => v.paidAccessConfig?.permanent)
+        .filter((v) => v.paidAccessConfig?.permanent || (v.licensingFee ?? 0) > 0)
         .map((v) => v.id)
     )
   );
-  // Slots the current selection would consume, for the paid-access form's over-cap warning.
+  // Slots the current selection would consume, for the paid-access form's warning.
   const newSlotsUsed = $derived.by(() => {
     let n = 0;
-    for (const id of selected) if (!alreadyPermanentIds.has(id)) n++;
+    for (const id of selected) if (!alreadyPricedIds.has(id)) n++;
     return n;
   });
   const affirmedIds = $derived(
@@ -338,29 +311,21 @@
     view.query.mt ? suggestedFee({ modelType: view.query.mt, baseModel: view.query.bm }) : undefined
   );
 
-  // One fee is applied to every picked version, so the input is capped by the STRICTEST cap in the
-  // selection — matching bulkSetLicensingFee on the server. "Select all" can pick versions beyond this
-  // page, whose model types aren't loaded, so anything unresolved falls back to the non-checkpoint cap
-  // (the strictest there is).
-  // Parameterised by tier so the cap upsell can ask "what would Gold allow for this same selection?"
-  function strictestLimits(t: CapTier): MonetizationLimits {
-    const loaded = new Map<number, { modelType: string; baseModel: string }>();
-    for (const m of view.models)
-      for (const v of m.versions) loaded.set(v.id, { modelType: m.type, baseModel: v.baseModel });
+  // One fee is applied to every picked version, so the input is bounded by the STRICTEST ceiling in the
+  // selection — matching bulkSetLicensingFee on the server. Only the media axis moves it now, so a mixed
+  // image/video selection is bounded at the image ceiling. "Select all" can pick versions beyond this
+  // page, whose base models aren't loaded; anything unresolved prices as image, the stricter of the two.
+  const bulkLimits = $derived.by(() => {
+    const loaded = new Map<number, string>();
+    for (const m of data.models) for (const v of m.versions) loaded.set(v.id, v.baseModel);
     let strictest: MonetizationLimits | null = null;
     for (const id of selected) {
-      const v = loaded.get(id);
-      const limits = monetizationLimits({
-        tier: t,
-        modelType: v?.modelType,
-        baseModel: v?.baseModel,
-      });
+      const limits = monetizationLimits({ tier, baseModel: loaded.get(id) });
       if (!strictest || limits.fee.maxPerGeneration < strictest.fee.maxPerGeneration)
         strictest = limits;
     }
-    return strictest ?? monetizationLimits({ tier: t });
-  }
-  const bulkLimits = $derived(strictestLimits(tier));
+    return strictest ?? monetizationLimits({ tier });
+  });
 
   // One fee is applied across the whole selection, and the server rejects the batch if it would raise ANY
   // version past that version's own cap — so a single "your cap is N" hides which member is binding.
@@ -370,12 +335,12 @@
     for (const m of view.models)
       for (const v of m.versions) {
         if (!selected.has(v.id)) continue;
-        const cap = monetizationLimits({ tier, modelType: m.type, baseModel: v.baseModel }).fee
-          .maxPerGeneration;
+        const cap = monetizationLimits({ tier, baseModel: v.baseModel }).fee.maxPerGeneration;
         const media = capMediaType(v.baseModel);
-        const key = `${m.type}|${media}`;
-        if (!byKey.has(key))
-          byKey.set(key, { label: media === 'video' ? `${m.type} (video)` : m.type, cap });
+        // Keyed on media alone: the ceiling no longer varies by model type, so keying on both emitted
+        // one row per type all showing the same number.
+        if (!byKey.has(media))
+          byKey.set(media, { label: media === 'video' ? 'Video models' : 'Image models', cap });
       }
     return [...byKey.values()].sort((a, b) => a.cap - b.cap);
   });
@@ -443,9 +408,7 @@
   // The edited version's base model decides the media axis of every cap in the drawer.
   // One object per edited version — max, offered denominators and the suggestion all come from it, so
   // they cannot disagree with each other or with what the server enforces.
-  const editingLimits = $derived(
-    monetizationLimits({ tier, modelType: editingType, baseModel: editing?.baseModel })
-  );
+  const editingLimits = $derived(monetizationLimits({ tier, baseModel: editing?.baseModel }));
   // Per-model-type suggested fee behind the drawer's "Use this" shortcut.
   const suggested = $derived(
     feeToRatio(suggestedFee({ modelType: editingType, baseModel: editing?.baseModel }))
@@ -456,6 +419,10 @@
   let feeAffirmed = $state(false);
   // Clearing a fee earns nothing, so only a non-zero fee needs the affirmation.
   const feeNeedsAffirmation = $derived(!!editing && !editing.rightsAffirmed && (feeBuzz ?? 0) > 0);
+  // Only a NEW price is floored: editing one the version already carries is exempt.
+  const feeBlockedByFloor = $derived(
+    !data.caps.pricingFloor.eligible && !!editing && !alreadyPricedIds.has(editing.id)
+  );
 
   // Opens the licensing drawer for a version. Seeds only the fee inputs here; the early/paid-access
   // editor (PaidAccessEditor) owns its own state, seeded from the version on mount.
@@ -525,17 +492,22 @@
   >
     <span class="flex items-center gap-1.5">
       <span class="inline-block h-2 w-2 rounded-full bg-blue-4"></span>
-      <span class="text-dark-2">Permanent access</span>
-      {#if data.caps.permanentCap === 0}
-        <span class="font-medium text-dark-2">Not available on your tier</span>
-      {:else if data.caps.permanentCap === null}
-        <span class="font-medium text-white">{data.caps.permanentUsed} set · unlimited</span>
+      {#if !data.caps.pricingFloor.eligible}
+        <span class="font-medium text-yellow-5">
+          Creator score {data.caps.pricingFloor.score.toLocaleString()} of {data.caps.pricingFloor.required.toLocaleString()}
+          to monetize
+        </span>
       {:else}
         <span class="font-medium {permAtCap ? 'text-yellow-5' : 'text-white'}">
-          {data.caps.permanentUsed} of {data.caps.permanentCap} set{permAtCap
-            ? ' · limit reached'
-            : ''}
+          {formatPricingAllowance(allowance)}
         </span>
+        {#if !allowance.unlimited}
+          <CapUpsell
+            used={allowance.used}
+            limit={data.caps.pricingLimit ?? Infinity}
+            capTier={data.caps.capTier}
+          />
+        {/if}
       {/if}
     </span>
     <span class="flex items-center gap-1.5">
@@ -558,7 +530,7 @@
         class="cursor-pointer select-none text-dark-2 marker:text-dark-2 hover:text-white"
         data-testid="tier-caps-toggle"
       >
-        Pricing limits · {data.caps.tier}
+        Monetization limits · {data.caps.tier}
       </summary>
       <TierCapsTable capTier={data.caps.capTier} class="mt-3" />
     </details>
@@ -728,30 +700,7 @@
   </label>
 </div>
 
-{#if overCapVersions.length > 0}
-  <div class="mb-3 rounded-lg border border-yellow-5/30 bg-yellow-5/10 px-3 py-2 text-sm">
-    <p class="font-medium text-yellow-4">
-      {overCapVersions.length} version{overCapVersions.length === 1 ? '' : 's'} earn less than the fee
-      you set
-    </p>
-    <p class="mt-0.5 text-xs text-dark-2">
-      Your membership tier caps what a generation can charge, so these are billed at the capped rate
-      — the stored fee applies again if you upgrade.
-    </p>
-    <ul class="mt-1.5 max-h-24 overflow-y-auto text-xs text-dark-1">
-      {#each overCapVersions.slice(0, 10) as v (v.name)}
-        <li class="truncate">
-          {v.name} — set {v.stored} ⚡, earning {v.effective} ⚡ / generation
-        </li>
-      {/each}
-    </ul>
-    {#if overCapVersions.length > 10}
-      <p class="mt-1 text-xs text-dark-2">…and {overCapVersions.length - 10} more.</p>
-    {/if}
-  </div>
-{/if}
-
-{#if view.total > 0 || selected.size > 0}
+{#if data.total > 0 || selected.size > 0}
   <BulkBar
     count={selected.size}
     matchingCount={view.matchingVersionIds.length}
@@ -774,12 +723,11 @@
   limits={bulkLimits}
   feeCapsByType={selectionFeeCaps}
   capTier={tier}
-  capFor={(t, imgs) => feeMaxFor(strictestLimits(t), imgs)}
-  accessCapFor={(t) => finiteOrNull(maxPaidAccessPrice(t))}
   caps={data.caps}
   suggestedFee={bulkSuggested}
   needsAffirmation={selectionNeedsAffirmation}
-  permanentSlotsLeft={remainingPermanentSlots - newSlotsUsed + selected.size}
+  pricingSlotsLeft={remainingPricingSlots - newSlotsUsed + selected.size}
+  pricingSlotsRemaining={remainingPricingSlots}
 />
 
 <!-- Dimmed rather than emptied while a search settles: replacing results with a spinner makes every
@@ -858,7 +806,7 @@
             {:else}
               <ul class="divide-y divide-dark-4 border-t border-dark-4">
                 {#each model.versions as version (version.id)}
-                  {@const chip = feeChip(version.licensingFee, model.type, version.baseModel)}
+                  {@const chip = feeChip(version.licensingFee)}
                   {@const cbId = `v-${version.id}`}
                   <li>
                     <div
@@ -964,7 +912,7 @@
 >
   <SheetContent side="right" class="w-full gap-0 overflow-y-auto p-0 sm:max-w-md">
     {#if editing}
-      {@const st = feeStatus(editing.licensingFee, editingType, editing.baseModel)}
+      {@const st = feeStatus(editing.licensingFee)}
       <SheetHeader class="border-b border-dark-4 p-5">
         <SheetTitle class="text-white">{editing.name}</SheetTitle>
         <SheetDescription>{editing.baseModel} · {editing.status}</SheetDescription>
@@ -988,19 +936,14 @@
               bind:buzz={feeBuzz}
               bind:images={feeImages}
               limits={editingLimits}
-              capTier={data.caps.capTier}
-              capFor={(t, imgs) =>
-                feeMaxFor(
-                  monetizationLimits({
-                    tier: t,
-                    modelType: editingType,
-                    baseModel: editing?.baseModel,
-                  }),
-                  imgs
-                )}
               {suggested}
               ariaLabelSuffix=" for {editing.name}"
             />
+            {#if feeBlockedByFloor}
+              <p class="w-full text-xs text-yellow-5">
+                {pricingFloorMessage(data.caps.pricingFloor.score)}
+              </p>
+            {/if}
             {#if feeNeedsAffirmation}
               <RightsAffirmation bind:checked={feeAffirmed} />
             {/if}
@@ -1008,7 +951,7 @@
               type="submit"
               size="sm"
               class="w-full"
-              disabled={feeNeedsAffirmation && !feeAffirmed}
+              disabled={feeBlockedByFloor || (feeNeedsAffirmation && !feeAffirmed)}
             >
               Save fee
             </Button>

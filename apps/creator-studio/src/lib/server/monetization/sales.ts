@@ -1,7 +1,5 @@
 import { sql } from '@civitai/db/kysely';
 import {
-  capMediaType,
-  effectivePaidAccessPrice,
   gatePrices,
   maxSaleDays,
   maxSaleLeadDays,
@@ -50,8 +48,7 @@ const SALE_BUDGET_LOCK_CLASS = 4109;
  */
 export async function summarizeSaleSelection(
   userId: number,
-  versionIds: number[],
-  tier: string | null
+  versionIds: number[]
 ): Promise<{
   eligible: number;
   earlyAccess: number;
@@ -69,19 +66,13 @@ export async function summarizeSaleSelection(
     eligible: eligible.length,
     earlyAccess: skippedEarlyAccess,
     unpriced: skippedUnpriced,
-    minCoveredPrice: lowestBuyerPrice(eligible, tier),
+    minCoveredPrice: lowestBuyerPrice(eligible),
   };
 }
 
 /**
  * The floor a Fixed discount must stay under: the cheapest price a BUYER would actually be charged
  * across the versions a sale WOULD cover.
- *
- * 🔴 Capped, not stored. A sale composes over `cappedTerms`, so the price it discounts is the stored
- * price lowered to the owner's current tier ceiling. Measuring the stored price instead lets a fixed
- * discount reach zero: a lapsed gold creator storing 5000 is billed 500, so "1000 off" looks safe
- * against 5000 and takes the buyer to nothing. An over-cap stored price is a normal supported state
- * (the cap guards RAISES, not existing values — CU 868kj4q4j), not an edge case.
  *
  * Both chargeable prices count, since a sale discounts the download price and any separate generation
  * price alike.
@@ -90,17 +81,13 @@ export async function summarizeSaleSelection(
  * with its own idea of "covered" is how the floor comes to be priced against a version the sale does
  * not cover — it already had no `endsAt` test while eligibility did.
  */
-function lowestBuyerPrice(rows: EligibleVersion[], tier: string | null): number | null {
+function lowestBuyerPrice(rows: EligibleVersion[]): number | null {
   let lowest: number | null = null;
   for (const row of rows) {
     const { download, generation } = gatePrices(row.terms as ModelVersionTerms | null);
-    // Permanent by construction: `isSaleEligibleGate` kept only permanent rows, and the ceiling governs
-    // permanent gates only.
-    const gate = { permanent: true, mediaType: capMediaType(row.baseModel ?? undefined) };
     for (const stored of [download, generation]) {
-      if (stored <= 0) continue;
-      const price = effectivePaidAccessPrice(stored, tier, gate);
-      if (price > 0 && (lowest === null || price < lowest)) lowest = price;
+      // The stored price IS the buyer-facing one.
+      if (stored > 0 && (lowest === null || stored < lowest)) lowest = stored;
     }
   }
   return lowest;
@@ -201,16 +188,10 @@ export async function scheduleSale(
               : "None of the selected versions can go on sale — a sale can't run on early access.",
       };
 
-    const refusal = await zeroFloorRefusal(
-      trx,
-      userId,
-      eligible.map((v) => v.id),
-      tier,
-      {
-        discountType: input.discountType,
-        discountAmount: input.discountAmount,
-      }
-    );
+    const refusal = await zeroFloorRefusal(trx, userId, eligible.map((v) => v.id), {
+      discountType: input.discountType,
+      discountAmount: input.discountAmount,
+    });
     if (refusal) return { ok: false as const, error: refusal };
 
     const month = new Date(
@@ -272,7 +253,6 @@ async function zeroFloorRefusal(
   trx: typeof dbWrite,
   userId: number,
   versionIds: number[],
-  tier: string | null,
   discount: { discountType: 'Fixed' | 'Percent'; discountAmount: number }
 ): Promise<string | null> {
   if (discount.discountType === 'Percent')
@@ -282,7 +262,7 @@ async function zeroFloorRefusal(
   if (!versionIds.length) return 'Could not check the prices on this sale. Try again.';
 
   const { eligible } = await classifySelection(trx, userId, versionIds);
-  const floor = lowestBuyerPrice(eligible, tier);
+  const floor = lowestBuyerPrice(eligible);
   if (floor === null || discount.discountAmount < floor) return null;
   return `That discount would take the cheapest covered version (${floor} Buzz) to zero. Lower it, or clear the gate to give the model away.`;
 }
@@ -363,8 +343,7 @@ export async function shortenSale(
 export async function deepenSale(
   userId: number,
   saleId: number,
-  discountAmount: number,
-  tier: string | null
+  discountAmount: number
 ): Promise<SaleEditResult> {
   return await dbWrite.transaction().execute(async (trx) => {
     // Inside the transaction and on the primary: the zero-floor is measured over these ids, and a
@@ -380,7 +359,7 @@ export async function deepenSale(
       .executeTakeFirst();
     if (!sale) return { ok: false as const, error: 'That sale is no longer editable.' };
 
-    const refusal = await zeroFloorRefusal(trx, userId, versionIds, tier, {
+    const refusal = await zeroFloorRefusal(trx, userId, versionIds, {
       discountType: sale.discountType,
       discountAmount,
     });

@@ -4828,6 +4828,18 @@ export async function transferModelOwnership({
       SET "userId" = ${targetUserId}
       WHERE id = ANY(${affectedImageIds}::int[])
     `,
+    // DELETED, not moved: ownerId records who spent an allowance, so moving it charges the recipient
+    // for a pricing they never made. Leaving it is worse — the key is the entity alone, so the row is
+    // both unreleasable (owner mismatch) and un-insertable, letting the recipient re-price that version
+    // forever off the books. Every other stranded slot goes inert at the month turn; a transferred
+    // entity outlives it.
+    dbWrite.$executeRaw`
+      DELETE FROM "PricingSlot" ps
+      USING "ModelVersion" mv
+      WHERE ps."entityType" = 'ModelVersion'::"PaidAccessEntityType"
+        AND ps."entityId" = mv.id
+        AND mv."modelId" = ANY(${modelIds}::int[])
+    `,
   ]);
 
   const tracker = new Tracker();

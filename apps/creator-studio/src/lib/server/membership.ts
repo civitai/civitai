@@ -1,5 +1,5 @@
 import type { SessionUser } from '@civitai/auth';
-import { resolveCapTier, type CapTier } from '@civitai/buzz';
+import { resolveCapTier, type CapTier, type PricingEligibility } from '@civitai/buzz';
 
 // Read membership off SessionUser (resolved by the shared session cache / hub) rather than re-querying.
 
@@ -36,8 +36,8 @@ export function resolveMembership(user: SessionUser | undefined, testCookie?: st
   return real;
 }
 
-// Monetization is open to every creator, free tier included (CU 868kj4q49 / 868kj4q4j) — membership decides
-// only HOW MUCH, via maxLicensingFee / maxPaidAccessPrice.
+// Monetization is open to every creator who meets the eligibility floor; membership decides only HOW MANY
+// new prices they may set in a month, via monthlyPricingAllowance.
 
 // Usage control is NOT open like monetization is: a non-Download control needs the main app's
 // `generationOnlyModels` feature, whose availability is ['mod', 'granted', 'gold']. Restated here rather
@@ -62,18 +62,21 @@ export function tierGrantsGenerationOnly(tier: string | null | undefined): boole
 export const displayTier = (m: Membership): string => m.tier ?? 'free';
 
 /**
- * The tier the caps resolve against. Delegates to the shared rule so the spoke and the main app can't
- * disagree about what a lapse, an unknown tier, or founder resolves to.
+ * The tier the monthly pricing allowance resolves against. Delegates to the shared rule so the spoke and
+ * the main app can't disagree about what a lapse, an unknown tier, or founder resolves to.
  */
 export const cappedTier: (m: Membership) => CapTier = resolveCapTier;
 
-/** Every capacity fact the models page ships to its editors. `null` cap = unlimited. */
+/** Every capacity fact the models page ships to its editors. `null` limit = unlimited. */
 export type CreatorCaps = {
-  /** Display label only — cap math uses `capTier`, which drops to free on a lapse. */
+  /** Display label only — the allowance uses `capTier`, which drops to free on a lapse. */
   tier: string;
   capTier: CapTier;
-  permanentUsed: number;
-  permanentCap: number | null;
+  /** Prices applied this calendar month, and how many the tier allows. */
+  pricingUsed: number;
+  pricingLimit: number | null;
+  /** Where the creator's score stands against the monetization floor, for the editors to render. */
+  pricingFloor: PricingEligibility;
   maxEarlyAccessDays: number;
   earlyAccessUsed: number;
   earlyAccessCap: number;

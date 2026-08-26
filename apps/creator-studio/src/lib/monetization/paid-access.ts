@@ -50,19 +50,18 @@ export function earlyAccessQuantityForScore(modelsScore: number): number {
   return quantity;
 }
 
-// Per-tier paid-access caps. In @civitai/buzz because the onsite model-version form sets access too, and the
-// main app enforces the caps server-side.
+// The monthly pricing allowance. In @civitai/buzz because the onsite model-version form applies prices too,
+// and the main app enforces the allowance server-side.
 export {
-  maxPermanentAccessModels,
-  maxPaidAccessPrice,
-  tierCapRows,
-  shouldUpsellCap,
+  monthlyPricingAllowance,
+  pricingEligibility,
+  tierAllowanceRows,
+  shouldUpsellAllowance,
   nextCapTier,
-  capUpsellRows,
   monetizationLimits,
   resolveCapTier,
 } from '@civitai/buzz';
-export type { TierCapAmounts, TierCapRow, CapTier } from '@civitai/buzz';
+export type { TierAllowanceRow, CapTier, PricingEligibility } from '@civitai/buzz';
 
 export type PaidAccessConfig = {
   timeframe: number;

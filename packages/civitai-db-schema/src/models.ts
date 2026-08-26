@@ -688,6 +688,7 @@ export interface User {
   placementsReceived?: Placement[];
   placementsMade?: Placement[];
   placementsSold?: Placement[];
+  pricingSlots?: PricingSlot[];
 }
 
 export interface CustomerSubscription {
@@ -1025,6 +1026,14 @@ export interface LicensingRoot {
   isDefault: boolean;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface PricingSlot {
+  entityType: PaidAccessEntityType;
+  entityId: number;
+  ownerId: number;
+  owner?: User;
+  createdAt: Date;
 }
 
 export interface ModelVersionEngagement {

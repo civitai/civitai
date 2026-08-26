@@ -51,8 +51,10 @@ post-V1 · **[justin]** Justin-owned (not us). Owner is Briant unless noted.
   trigger (permanent = `availability EarlyAccess` + NULL end date, gated forever); all paywall sites made
   permanent-aware; endpoint locked to the Creator Studio via `WEBHOOK_TOKEN`. Spoke: "Make permanent" checkbox
   (member-gated), tier cap **Bronze 3 / Silver 10 / Gold ∞** + active-membership gate enforced in the spoke action,
-  token forwarded on write. **Known gap (deferred):** the tRPC `modelVersion.upsert` path can still set `permanent`
-  without the token/cap. (`T:424`)
+  token forwarded on write. **Known gap (deferred) — closed by the monetization revamp (2026-08):** the concurrent
+  permanent-gate cap named above no longer exists, and the monthly pricing allowance that replaced it is
+  enforced on the tRPC `modelVersion.upsert` path by `assertMonetizationWrite`. See R3 in
+  [../features/monetization-rules.md](../features/monetization-rules.md). (`T:424`)
 
 **Naming:** keep the page **"Licensing"** even though it now also covers early/paid access. (Decided.) (`T:576`)
 

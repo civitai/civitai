@@ -84,11 +84,16 @@ describe('comics analytics excludes soft-deleted chapter reads', () => {
     // `search` returns -1 on a miss and `slice(-1)` is the last CHARACTER, which no assertion can fail
     // against. A refactor scoping the creator through a CTE would land there and stop this guarding.
     const fromIndex = sql.search(/FROM "ComicProject"/i);
-    expect(fromIndex, 'the comics query no longer selects FROM ComicProject').toBeGreaterThanOrEqual(0);
+    expect(
+      fromIndex,
+      'the comics query no longer selects FROM ComicProject'
+    ).toBeGreaterThanOrEqual(0);
 
     const fromOnwards = sql.slice(fromIndex);
     const whereIndex = fromOnwards.search(/\bWHERE\b/i);
-    expect(whereIndex, 'the comics query no longer has a statement WHERE').toBeGreaterThanOrEqual(0);
+    expect(whereIndex, 'the comics query no longer has a statement WHERE').toBeGreaterThanOrEqual(
+      0
+    );
 
     expect(fromOnwards.slice(whereIndex)).not.toMatch(/unread/i);
   });

@@ -1368,14 +1368,10 @@ export const getEarlyAccessModelPrices = async ({ modelVersionIds }: GetEarlyAcc
   const gatedIds = modelVersionIds.filter((id) => paidAccess[id]?.terms);
   if (!gatedIds.length) return prices;
 
-  // Owner comes from the model, not PaidAccess.ownerId, so a transferred model prices off whoever owns
-  // it now. The shop is a public listing — no viewer, so nobody gets the owner's stored prices.
-  const owners = await dbRead.modelVersion.findMany({
-    where: { id: { in: gatedIds } },
-    select: { id: true, baseModel: true, model: { select: { userId: true } } },
-  });
+  // A public listing: no viewer, so everyone is quoted the buyer price — which means a live sale
+  // discounts it. Reading the gate rows directly would advertise the pre-sale number.
   const monetization = await getViewerMonetization({
-    versions: owners.map((v) => ({ id: v.id, ownerId: v.model.userId, baseModel: v.baseModel })),
+    versions: gatedIds.map((id) => ({ id })),
     viewer: {},
   });
 

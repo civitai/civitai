@@ -46,7 +46,14 @@ const ROWS = [
   // A→Z sort is observable as a flip.
   offsite({ id: 'apl_b', slug: 'bravo-live', name: 'Bravo', status: 'approved' }),
   offsite({ id: 'apl_a', slug: 'alpha-live', name: 'Alpha', status: 'approved' }),
-  offsite({ id: 'apl_o', slug: 'onsite-live', name: 'Onsite', kind: 'onsite', appBlockId: 'ab_1', status: 'approved' }),
+  offsite({
+    id: 'apl_o',
+    slug: 'onsite-live',
+    name: 'Onsite',
+    kind: 'onsite',
+    appBlockId: 'ab_1',
+    status: 'approved',
+  }),
   offsite({ id: 'apl_r', slug: 'gone-ext', name: 'Gone', status: 'removed' }),
   // D: an on-site + pending listing — it belongs to the on-site review FIFO queue, so
   // the mgmt table must HIDE it (it would otherwise be a dead-end `—`-action row).
@@ -177,7 +184,9 @@ vi.mock('~/utils/trpc', () => {
             if (mocks.queryError) {
               const error = mocks.queryErrorCode
                 ? Object.assign(new Error('forbidden'), { data: { code: mocks.queryErrorCode } })
-                : Object.assign(new Error('transient boom'), { data: { code: 'INTERNAL_SERVER_ERROR' } });
+                : Object.assign(new Error('transient boom'), {
+                    data: { code: 'INTERNAL_SERVER_ERROR' },
+                  });
               return {
                 data: undefined,
                 isLoading: false,
@@ -201,13 +210,25 @@ vi.mock('~/utils/trpc', () => {
               const data = input?.cursor
                 ? { items: STRANDED_PAGE2, nextCursor: null }
                 : { items: STRANDED_PAGE1, nextCursor: 'cur-2' };
-              return { data, isLoading: false, isFetching: false, error: null, refetch: mocks.refetch };
+              return {
+                data,
+                isLoading: false,
+                isFetching: false,
+                error: null,
+                refetch: mocks.refetch,
+              };
             }
             if (mocks.paged) {
               const data = input?.cursor
                 ? { items: PAGE2, nextCursor: null }
                 : { items: PAGE1, nextCursor: 'cur-2' };
-              return { data, isLoading: false, isFetching: false, error: null, refetch: mocks.refetch };
+              return {
+                data,
+                isLoading: false,
+                isFetching: false,
+                error: null,
+                refetch: mocks.refetch,
+              };
             }
             return {
               data: { items: ROWS, nextCursor: null },
@@ -308,7 +329,9 @@ describe('AppListingsModerationTable — sections + kind-aware visibility', () =
   test('off-site-only actions are hidden on an on-site row (kind-aware)', async () => {
     renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
     // Off-site approved → BOTH reset-to-pending + hide.
-    await expect.element(page.getByTestId('apps-mod-reset-to-pending-alpha-live')).toBeInTheDocument();
+    await expect
+      .element(page.getByTestId('apps-mod-reset-to-pending-alpha-live'))
+      .toBeInTheDocument();
     await expect.element(page.getByTestId('apps-mod-hide-alpha-live')).toBeInTheDocument();
     // On-site approved → reset-to-pending (now dual-kind, #3165) + hide, but NEVER the
     // off-site-only claim/purge (those don't apply to an on-site row).
@@ -373,15 +396,17 @@ describe('AppListingsModerationTable — sort + server-side filter', () => {
     renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
     await expect.element(page.getByTestId('apps-mod-listing-row-alpha-live')).toBeInTheDocument();
     // Default = the server keyset order (Bravo precedes Alpha) — NOT a client A→Z.
-    const before =
-      page.getByTestId('apps-mod-listing-row-alpha-live').element()
-        .compareDocumentPosition(page.getByTestId('apps-mod-listing-row-bravo-live').element());
+    const before = page
+      .getByTestId('apps-mod-listing-row-alpha-live')
+      .element()
+      .compareDocumentPosition(page.getByTestId('apps-mod-listing-row-bravo-live').element());
     expect(before & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy(); // bravo precedes alpha
 
     await page.getByRole('button', { name: 'Sort by App' }).first().click();
-    const after =
-      page.getByTestId('apps-mod-listing-row-alpha-live').element()
-        .compareDocumentPosition(page.getByTestId('apps-mod-listing-row-bravo-live').element());
+    const after = page
+      .getByTestId('apps-mod-listing-row-alpha-live')
+      .element()
+      .compareDocumentPosition(page.getByTestId('apps-mod-listing-row-bravo-live').element());
     // A→Z: Alpha now precedes Bravo.
     expect(after & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
@@ -509,7 +534,10 @@ describe('AppListingsModerationTable — inline actions fire the right mutation'
     await page.getByTestId('apps-mod-purge-confirm').fill('gone-ext');
     await expect.element(page.getByTestId('apps-mod-action-confirm')).toBeEnabled();
     await page.getByTestId('apps-mod-action-confirm').click();
-    expect(mocks.mutate).toHaveBeenCalledWith('purge', { appListingId: 'apl_r', reason: 'malware' });
+    expect(mocks.mutate).toHaveBeenCalledWith('purge', {
+      appListingId: 'apl_r',
+      reason: 'malware',
+    });
   });
 
   test('a reason under the 3-char floor keeps the confirm disabled + shows the live counter', async () => {
@@ -533,15 +561,20 @@ describe('AppListingsModerationTable — inline actions fire the right mutation'
     ['relist', 'gone-ext'],
     ['claim', 'gone-ext'],
     ['purge', 'gone-ext'],
-  ])('the %s action shows the counter and disables the confirm under the floor', async (action, slug) => {
-    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
-    await page.getByTestId(`apps-mod-${action}-${slug}`).click();
-    await expect.element(page.getByText('0/3 characters minimum')).toBeInTheDocument();
-    await expect.element(page.getByTestId('apps-mod-action-confirm')).toBeDisabled();
-    await page.getByTestId('apps-mod-action-reason').fill('xy');
-    await expect.element(page.getByTestId('apps-mod-action-confirm')).toBeDisabled();
-    expect(mocks.mutate).not.toHaveBeenCalled();
-  });
+  ])(
+    'the %s action shows the counter and disables the confirm under the floor',
+    async (action, slug) => {
+      renderWithProviders(
+        <AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />
+      );
+      await page.getByTestId(`apps-mod-${action}-${slug}`).click();
+      await expect.element(page.getByText('0/3 characters minimum')).toBeInTheDocument();
+      await expect.element(page.getByTestId('apps-mod-action-confirm')).toBeDisabled();
+      await page.getByTestId('apps-mod-action-reason').fill('xy');
+      await expect.element(page.getByTestId('apps-mod-action-confirm')).toBeDisabled();
+      expect(mocks.mutate).not.toHaveBeenCalled();
+    }
+  );
 
   test('a mutation error surfaces via showErrorNotification', async () => {
     mocks.errorMode = true;
@@ -549,9 +582,7 @@ describe('AppListingsModerationTable — inline actions fire the right mutation'
     await page.getByTestId('apps-mod-hide-alpha-live').click();
     await page.getByTestId('apps-mod-action-reason').fill('spammy content');
     await page.getByTestId('apps-mod-action-confirm').click();
-    expect(showError).toHaveBeenCalledWith(
-      expect.objectContaining({ title: 'Hide failed' })
-    );
+    expect(showError).toHaveBeenCalledWith(expect.objectContaining({ title: 'Hide failed' }));
   });
 });
 
@@ -602,7 +633,9 @@ describe('AppListingsModerationTable — pagination, status filter + honest trun
 
     // Clicking it fetches page 2 → the previously-unreachable off-site row appears.
     await page.getByTestId('apps-mod-load-more').click();
-    await expect.element(page.getByTestId('apps-mod-listing-row-reachable-ext')).toBeInTheDocument();
+    await expect
+      .element(page.getByTestId('apps-mod-listing-row-reachable-ext'))
+      .toBeInTheDocument();
     expect(page.getByTestId('apps-mod-load-more').elements()).toHaveLength(0);
   });
 

@@ -1,20 +1,17 @@
 import { Prisma } from '@prisma/client';
 import type { PrismaClient } from '@prisma/client';
 import {
-  cappedTerms,
-  capMediaType,
-  effectiveLicensingFee,
-  gatePrices,
   bestSaleFor,
+  capMediaType,
   saleDiscountFor,
   discountedTerms,
+  gatePrices,
+  isAlreadyPriced,
+  isPaidAccessActive,
+  maxLicensingFeeCeiling,
+  raisesOverCap,
   type ModelVersionSaleWindow,
   type SaleDiscountKind,
-  isPaidAccessActive,
-  isPermanentGate,
-  maxPaidAccessPrice,
-  maxPermanentAccessModels,
-  raisesOverCap,
   type ModelVersionTerms,
   type PaidAccessEntityType,
   type PaidAccessRow,
@@ -26,10 +23,14 @@ import type {
   ModelVersionPaidAccessInputSchema,
 } from '~/server/schema/model-version.schema';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { getCapTier } from '~/server/services/subscriptions.service';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { createCachedObject } from '~/server/utils/cache-helpers';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
+import {
+  assertPricingAllowed,
+  type PricingWriteOutcome,
+  type TierInput,
+} from '~/server/services/pricing-slot.service';
 import { increaseDate } from '~/utils/date-helpers';
 
 // A gated version must actually charge for something: `download` always carries a price, and a
@@ -280,7 +281,6 @@ async function querySalesForModels(modelIds: number[]): Promise<CachedModelSale[
       modelId: number;
       saleId: number;
       ownerId: number;
-      baseModel: string | null;
       terms: unknown;
       startsAt: Date;
       endsAt: Date;
@@ -290,7 +290,7 @@ async function querySalesForModels(modelIds: number[]): Promise<CachedModelSale[
   >`
     SELECT
       mv."modelId" AS "modelId", s.id AS "saleId", m."userId" AS "ownerId",
-      mv."baseModel" AS "baseModel", pa.terms AS "terms",
+      pa.terms AS "terms",
       s."startsAt" AS "startsAt", s."endsAt" AS "endsAt",
       s."discountType" AS "discountType", s."discountAmount" AS "discountAmount"
     FROM "ModelVersionSaleItem" si
@@ -306,23 +306,12 @@ async function querySalesForModels(modelIds: number[]): Promise<CachedModelSale[
       AND (s."canceledAt" IS NULL OR s."canceledAt" > ${now})
     ORDER BY mv."modelId", s."endsAt"
   `;
-  // The CAPPED price, not the stored one — the same anchor getViewerMonetization resolves against. A
-  // lapsed creator's stored price can be many times what a buyer is charged, and anchoring on it lets the
-  // card name one sale while the page charges another.
-  const capTiers = await getCapTiers(rows.map((r) => Number(r.ownerId)));
   const byModel = new Map<number, CachedModelSale>();
   for (const r of rows) {
     const modelId = Number(r.modelId);
     const saleId = Number(r.saleId);
     const terms = (r.terms ?? undefined) as ModelVersionTerms | undefined;
-    const anchorPrice = terms
-      ? saleAnchorPrice(
-          cappedTerms(terms, capTiers.get(Number(r.ownerId)) ?? null, {
-            permanent: true,
-            mediaType: capMediaType(r.baseModel),
-          })
-        )
-      : 0;
+    const anchorPrice = terms ? saleAnchorPrice(terms) : 0;
     const entry = byModel.get(modelId) ?? { modelId, sales: [] };
     const existing = entry.sales.find((sale) => sale.saleId === saleId);
     if (existing) {
@@ -441,90 +430,10 @@ export async function getPaidAccess(
   return out;
 }
 
-// Permanent = timeframeDays IS NULL (a timed gate on an unpublished version also has endsAt NULL until
-// publish, so endsAt can't distinguish the two). Excludes soft-deleted models and the version being
-// edited. Enforces the per-tier permanent cap on the write path — see maxPermanentAccessModels.
-export async function countUserPermanentAccessVersions(
-  userId: number,
-  excludeVersionId?: number
-): Promise<number> {
-  const rows = await dbRead.$queryRaw<{ count: bigint }[]>`
-    SELECT COUNT(*)::bigint AS count
-    FROM "ModelVersion" mv
-    JOIN "Model" m ON m.id = mv."modelId"
-    JOIN "PaidAccess" pa ON pa."entityType" = 'ModelVersion' AND pa."entityId" = mv.id
-    WHERE m."userId" = ${userId}
-      AND m."deletedAt" IS NULL
-      AND pa."timeframeDays" IS NULL
-      ${excludeVersionId != null ? Prisma.sql`AND mv.id <> ${excludeVersionId}` : Prisma.empty}
-  `;
-  return Number(rows[0]?.count ?? 0);
-}
-
-// The tier the monetization caps resolve against, per user. Read on every paid-access purchase to clamp
-// what a buyer is charged, and getCapTier is an uncached join against the PRIMARY. A null tier (no
-// good-standing subscription) is cached like any other value — it's the common case.
-//
-// Busted from clearSessionCache, which Stripe's webhook reaches via refreshSession on every subscription
-// change, so an upgrade/downgrade/lapse applies on the next read; the TTL is only a missed-webhook backstop.
-type CachedCapTier = { userId: number; tier: string | null };
-// Lazily created (on first use) rather than at module load, for exactly the reason the
-// paidAccessCaches comment above gives: a top-level createCachedObject() runs during module
-// evaluation, so ANY test that wholesale-mocks `~/server/utils/cache-helpers` or
-// `~/server/redis/client` and merely imports this service transitively fails at COLLECTION —
-// before a single test runs — with "No createCachedObject export is defined on the mock" or
-// "Cannot read properties of undefined (reading 'PAID_ACCESS_CAP_TIER')". ~130 suites mock
-// those modules wholesale, so this is a broad tripwire, not a hypothetical.
-function createCapTierCache() {
-  return createCachedObject<CachedCapTier>({
-    key: REDIS_KEYS.CACHES.PAID_ACCESS_CAP_TIER,
-    idKey: 'userId',
-    ttl: CacheTTL.hour,
-    // Money gate: SWR off so a bust truly clears rather than serving one more stale price.
-    staleWhileRevalidate: false,
-    lookupFn: async (ids) => {
-      const userIds = (Array.isArray(ids) ? ids : [ids]).filter((id) => id != null);
-      if (!userIds.length) return {};
-      const rows = await Promise.all(
-        userIds.map(async (userId) => ({ userId, tier: await getCapTier(userId) }))
-      );
-      return Object.fromEntries(rows.map((r) => [String(r.userId), r]));
-    },
-  });
-}
-
-let capTierCacheInstance: ReturnType<typeof createCapTierCache> | undefined;
-function capTierCache() {
-  return (capTierCacheInstance ??= createCapTierCache());
-}
-
-/**
- * Cap tiers for a set of users in ONE cache read. Prefer this over awaiting getCachedCapTier per user:
- * capTierCache.fetch batches, a loop of single fetches is N sequential round-trips.
- */
-export async function getCapTiers(
-  userIds: (number | null | undefined)[]
-): Promise<Map<number, string | null>> {
-  const unique = [...new Set(userIds.filter((id): id is number => id != null))];
-  if (!unique.length) return new Map();
-  const cached = await capTierCache().fetch(unique);
-  return new Map(unique.map((id) => [id, cached[id]?.tier ?? null]));
-}
-
-/** The owner tier a buyer's price is clamped against. Cached — see capTierCache. */
-export async function getCachedCapTier(userId: number): Promise<string | null> {
-  return (await getCapTiers([userId])).get(userId) ?? null;
-}
-
 export type PaidAccessViewer = { id?: number | null; isModerator?: boolean | null };
 
 const isOwnerOrModView = (viewer: PaidAccessViewer, ownerId: number) =>
   (!!viewer.id && viewer.id === ownerId) || !!viewer.isModerator;
-
-const hasChargeablePrice = (terms: PaidAccessTerms | undefined) => {
-  const { download, generation } = gatePrices(terms as ModelVersionTerms | undefined);
-  return download > 0 || generation > 0;
-};
 
 export type ViewerMonetization = {
   paidAccess: PaidAccessRow | undefined;
@@ -536,46 +445,30 @@ export type ViewerMonetization = {
   sale: {
     listTerms: ModelVersionTerms;
     /**
-     * What a BUYER is quoted — capped then discounted. Sent even to an owner, who is otherwise shown a
-     * page full of their stored price while a banner claims a discount, with the actual number nowhere.
+     * What a BUYER is quoted. Sent even to an owner, who is otherwise shown a page full of their stored
+     * price while a banner claims a discount, with the actual number nowhere.
      */
     buyerTerms: ModelVersionTerms;
     endsAt: Date;
     discountType: SaleDiscountKind;
     discountAmount: number;
   } | null;
-  /** What THIS viewer is quoted. The owner and moderators see the stored value, not the capped one. */
+  /** The stored per-generation fee. */
   licensingFee: number | null;
-  /**
-   * What a generation actually bills, always capped. The owner sees their stored fee above, so without
-   * this an over-cap creator is shown a number they will never earn — the case in CU 868kn7zu4, where a
-   * free-tier fee of 1 was displayed to its owner while every consumer surface charged 0.1.
-   */
-  effectiveLicensingFee: number | null;
 };
 
 /**
- * Every amount a viewer would be charged for a set of versions — the paid-access gate and the licensing
- * fee — capped against the owner's current tier in one batched lookup. They're capped together because
- * capping them apart, against separately-fetched tiers, is how the two drift.
+ * The gate, the live sale and the licensing fee for a set of versions, in one batched lookup.
  *
- * An owner/mod gets the STORED values instead: their edit forms initialize from these and would save a
- * capped value back over the original. Pass `ownerId` (the Model's owner, not PaidAccess.ownerId, so a
- * transferred model reprices off whoever holds it now); it's required for `licensingFee` to be capped,
- * and falls back to the gate's owner when omitted.
+ * The viewer matters only for the sale: an OWNER is shown their stored terms, because
+ * their editors write those back, and is told about the sale separately through `sale`. A buyer is
+ * quoted the discounted terms directly.
  */
 export async function getViewerMonetization({
   versions,
   viewer,
 }: {
-  versions: {
-    id: number;
-    ownerId?: number;
-    licensingFee?: number | null;
-    modelType?: string | null;
-    /** Decides the media axis of the caps — video ceilings are higher. Absent prices as image. */
-    baseModel?: string | null;
-  }[];
+  versions: { id: number; ownerId?: number; licensingFee?: number | null }[];
   viewer: PaidAccessViewer;
 }): Promise<Record<number, ViewerMonetization>> {
   const rows = await getPaidAccess(
@@ -583,164 +476,142 @@ export async function getViewerMonetization({
     versions.map((v) => v.id)
   );
   const ownerOf = (v: { id: number; ownerId?: number }) => v.ownerId ?? rows[v.id]?.ownerId;
-  const cappable = versions.filter((v) => {
-    const ownerId = ownerOf(v);
-    return (
-      ownerId != null &&
-      !isOwnerOrModView(viewer, ownerId) &&
-      (hasChargeablePrice(rows[v.id]?.terms) || (v.licensingFee ?? 0) > 0)
-    );
-  });
-  const feeBearing = versions.filter((v) => (v.licensingFee ?? 0) > 0 && ownerOf(v) != null);
-  // Owners of sale-covered versions join the batch too: they are not "cappable" (they see stored terms)
-  // but the buyer price we show them has to be capped against their own tier, like a buyer's would be.
-  const saleBearing = versions.filter((v) => rows[v.id]?.sales?.length && ownerOf(v) != null);
-  const capTiers = await getCapTiers([...cappable, ...feeBearing, ...saleBearing].map(ownerOf));
-  const cappableIds = new Set(cappable.map((v) => v.id));
 
   const out: Record<number, ViewerMonetization> = {};
   for (const v of versions) {
     const row = rows[v.id];
-    const storedFee = v.licensingFee ?? null;
-    const effectiveFee =
-      storedFee != null
-        ? effectiveLicensingFee(
-            storedFee,
-            capTiers.get(ownerOf(v) as number) ?? null,
-            v.modelType,
-            capMediaType(v.baseModel)
-          )
-        : null;
-    if (!cappableIds.has(v.id)) {
-      // An owner or moderator is shown the STORED price — their editors write it back — but they are still
-      // told a sale is running. Suppressing it here made a creator's own model page the one place their
-      // own live sale was invisible.
-      const ownerTier = row?.sales?.length ? capTiers.get(ownerOf(v) as number) ?? null : null;
-      const ownerCapped = row?.sales?.length
-        ? cappedTerms(row.terms as ModelVersionTerms, ownerTier, {
-            permanent: isPermanentGate(row),
-            mediaType: capMediaType(v.baseModel),
-          })
-        : undefined;
-      // Resolved against the CAPPED price, the same one discountedTerms will re-pick at. Anchoring on
-      // the stored price let the banner name one sale ("50% off") beside a price produced by another.
-      const ownerSale = ownerCapped
-        ? bestSaleFor(saleAnchorPrice(ownerCapped), row?.sales)
-        : undefined;
-      const ownerBuyerTerms =
-        ownerSale && ownerCapped ? discountedTerms(ownerCapped, row?.sales) : undefined;
-      out[v.id] = {
-        paidAccess: row,
-        sale:
-          ownerSale && row
-            ? {
-                listTerms: row.terms as ModelVersionTerms,
-                buyerTerms: (ownerBuyerTerms ?? row.terms) as ModelVersionTerms,
-                endsAt: ownerSale.endsAt,
-                discountType: ownerSale.discountType,
-                discountAmount: ownerSale.discountAmount,
-              }
-            : null,
-        licensingFee: storedFee,
-        effectiveLicensingFee: effectiveFee,
-      };
-      continue;
-    }
-    const tier = capTiers.get(ownerOf(v) as number) ?? null;
-    const mediaType = capMediaType(v.baseModel);
-    // cappedTerms no-ops for a timed window: its price isn't ceilinged, so what's stored is what buyers
-    // pay. The licensing fee below is capped either way — charged per generation forever, not for the
-    // length of a window.
-    // Sale AFTER cap, never before: the ceiling decides what the creator may charge and the discount comes
-    // off what this buyer would actually be billed. Discounting first lets the cap swallow the sale whole
-    // for a lapsed creator.
-    const listTerms = row
-      ? cappedTerms(row.terms as ModelVersionTerms, tier, {
-          permanent: isPermanentGate(row),
-          mediaType,
-        })
-      : undefined;
+    const listTerms = row?.terms as ModelVersionTerms | undefined;
     const saleTerms = listTerms ? discountedTerms(listTerms, row?.sales) : undefined;
     const activeSale = row?.sales?.length
       ? bestSaleFor(saleAnchorPrice(listTerms), row.sales)
       : undefined;
+    // Only report a sale that actually moved a price: one whose discount rounds to nothing must not
+    // draw a strikethrough over an unchanged number.
+    const sale =
+      activeSale &&
+      listTerms &&
+      saleTerms &&
+      saleAnchorPrice(saleTerms) < saleAnchorPrice(listTerms)
+        ? {
+            listTerms,
+            buyerTerms: saleTerms,
+            endsAt: activeSale.endsAt,
+            discountType: activeSale.discountType,
+            discountAmount: activeSale.discountAmount,
+          }
+        : null;
+
+    const ownerId = ownerOf(v);
+    const isOwnerOrMod = ownerId != null && isOwnerOrModView(viewer, ownerId);
     out[v.id] = {
-      paidAccess: row && saleTerms ? { ...row, terms: saleTerms } : undefined,
-      // Only report a sale that actually moved a price this viewer is quoted: a sale whose discount
-      // rounds to nothing must not draw a strikethrough over an unchanged number.
-      sale:
-        activeSale &&
-        listTerms &&
-        saleTerms &&
-        saleAnchorPrice(saleTerms) < saleAnchorPrice(listTerms)
-          ? {
-              listTerms,
-              buyerTerms: saleTerms,
-              endsAt: activeSale.endsAt,
-              discountType: activeSale.discountType,
-              discountAmount: activeSale.discountAmount,
-            }
-          : null,
-      licensingFee:
-        storedFee != null ? effectiveLicensingFee(storedFee, tier, v.modelType, mediaType) : null,
-      effectiveLicensingFee: effectiveFee,
+      // The owner keeps the stored terms — their editors resubmit them, and a discounted price written
+      // back would make the sale permanent.
+      paidAccess: row && !isOwnerOrMod && saleTerms ? { ...row, terms: saleTerms } : row,
+      sale,
+      licensingFee: v.licensingFee ?? null,
     };
   }
   return out;
 }
 
-/** Per-tier paid-access caps (CU 868kj4q4j). Shared because the tRPC handler and the REST endpoint both write gates. */
-export async function assertPaidAccessCaps({
-  userId,
+/**
+ * The write-path gate for every monetization change on a model version: the flat fee ceiling, the 10k
+ * eligibility floor, and the monthly allowance. Shared because the tRPC handler and the REST endpoint
+ * both write gates and fees, and a rule enforced in only one of them is not enforced.
+ *
+ * Paid-access PRICES are not checked at all — they are uncapped. Only the licensing fee has a ceiling.
+ *
+ * Returns what the write owes the pricing ledger: a slot to record with recordPricingSlot, or one to
+ * offer back with releasePricingSlot, once the version is written.
+ */
+export async function assertMonetizationWrite({
+  ownerId,
   isModerator,
   versionId,
   paidAccess,
+  licensingFee,
+  storedLicensingFee,
   tier,
+  userMeta,
   baseModel,
+  storedBaseModel,
 }: {
-  userId: number;
+  /**
+   * The model's OWNER — never the actor. A moderator saving someone else's version must not lend them
+   * their creator score, their tier, or their monthly allowance.
+   */
+  ownerId: number;
   isModerator?: boolean;
+  /**
+   * The version this write lands on, or undefined when it CREATES one. A templated write carries an
+   * `id` and still creates a new version, so a caller must not pass `input.id` blindly: the stored
+   * price would be read off the template source, and one already-priced version would vouch for
+   * unlimited new priced ones.
+   */
   versionId?: number;
+  /** An object sets the gate, `null` clears it, `undefined` leaves it alone. */
   paidAccess: ModelVersionPaidAccessInputSchema | null | undefined;
-  tier: string | null | undefined;
+  /** The fee this write sets, if it sets one. `undefined` means unchanged; `null`/0 means cleared. */
+  licensingFee?: number | null;
+  /** The fee currently stored on the version. */
+  storedLicensingFee?: number | null;
+  tier: TierInput;
+  userMeta?: unknown;
+  /** The base model this write leaves the version on — it decides the media axis of the fee ceiling. */
   baseModel?: string | null;
-}) {
-  if (isModerator || !paidAccess) return;
-
+  /** The base model the version is on NOW, when that differs. See the ceiling check below. */
+  storedBaseModel?: string | null;
+}): Promise<PricingWriteOutcome> {
+  // Read fresh from the primary rather than through getPaidAccess, whose cache is an hour old. This
+  // decides whether the version counts as ALREADY priced, and the fee half of that same question comes
+  // from a caller's live read — a stale gate makes the two disagree and charges a slot for a version
+  // that is already priced.
   const existing = versionId
-    ? (await getPaidAccess('ModelVersion', [versionId]))[versionId]
+    ? await dbWrite.paidAccess.findUnique({
+        where: { entityType_entityId: { entityType: 'ModelVersion', entityId: versionId } },
+        select: { timeframeDays: true },
+      })
     : undefined;
-  // The price ceiling governs PERMANENT gates only. A timed early-access window prices itself out — the
-  // version becomes free when the window closes — so a creator may charge what they like for one.
-  if (paidAccess.permanent) {
-    const priceCap = maxPaidAccessPrice(tier, capMediaType(baseModel));
-    const next = gatePrices(paidAccess.terms);
-    const prev = gatePrices(existing?.terms as ModelVersionTerms);
-    // Per-component: collapsing to max(download, generation) would let a cheap generation tier be raised
-    // to the download price under an over-cap umbrella (200 → 3000) without exceeding the collapsed value.
-    if (
-      raisesOverCap(next.download, prev.download, priceCap) ||
-      raisesOverCap(next.generation, prev.generation, priceCap)
-    )
+  const hadPermanentGate = existing != null && existing.timeframeDays == null;
+
+  // An upsert that omits `licensingFee` leaves the stored fee in place, and the media axis below can
+  // still move under it.
+  const feeAfterWrite = licensingFee !== undefined ? licensingFee : storedLicensingFee;
+  if (!isModerator && feeAfterWrite != null && feeAfterWrite > 0) {
+    // Whole cents: the stored value is a Prisma Decimal and the input a JSON float, so a raw `>` can
+    // read "raised" on an untouched fee.
+    const toCents = (v: number) => Math.round(v * 100);
+    const mediaType = capMediaType(baseModel);
+    const ceiling = maxLicensingFeeCeiling(mediaType);
+    // Raise-only, so a fee stored above the ceiling stays savable — EXCEPT when this write moves the
+    // version onto a stricter media axis. A video model earns 5x, so re-saving an untouched 500 while
+    // switching to an image base model is not a raise by the numbers, and the fee would then bill at 5x
+    // the image ceiling forever.
+    const movesToStricterMedia =
+      storedBaseModel != null && mediaType !== capMediaType(storedBaseModel);
+    const over = movesToStricterMedia
+      ? feeAfterWrite > ceiling
+      : raisesOverCap(toCents(feeAfterWrite), toCents(storedLicensingFee ?? 0), toCents(ceiling));
+    if (over)
       throw throwBadRequestError(
-        `Your tier allows a permanent paid-access price of up to ${priceCap} Buzz. Lower the price, use a timed early-access window, or upgrade your membership.`
+        `A licensing fee can be at most ${ceiling} Buzz per generation${
+          movesToStricterMedia ? ' on this base model' : ''
+        }. Lower the fee to continue.`
       );
   }
 
-  // Only the free tier keeps a COUNT limit, and only NEW permanent grants count against it.
-  if (paidAccess.permanent) {
-    const alreadyPermanent = existing != null && existing.timeframeDays == null;
-    const limit = maxPermanentAccessModels(tier);
-    if (!alreadyPermanent && Number.isFinite(limit)) {
-      const used = await countUserPermanentAccessVersions(userId, versionId);
-      if (used + 1 > limit)
-        throw throwBadRequestError(
-          `Your tier allows up to ${limit} permanent paid-access model${
-            limit === 1 ? '' : 's'
-          }. Upgrade your membership for more.`
-        );
-    }
-  }
+  const wasPriced = isAlreadyPriced({
+    licensingFee: storedLicensingFee,
+    hasPermanentGate: hadPermanentGate,
+  });
+  const willBePriced = isAlreadyPriced({
+    // Collapsing absent and null reads a gate removal as a version that still charges.
+    licensingFee: licensingFee !== undefined ? licensingFee : storedLicensingFee,
+    hasPermanentGate:
+      paidAccess === undefined ? hadPermanentGate : paidAccess !== null && !!paidAccess.permanent,
+  });
+
+  return assertPricingAllowed({ userId: ownerId, wasPriced, willBePriced, tier, userMeta });
 }
 
 /**

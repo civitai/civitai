@@ -31,7 +31,9 @@ describe('marketplace-categories taxonomy (F-E E3)', () => {
       expect(MARKETPLACE_CATEGORY_LABELS[c]).toBeTruthy();
     }
     // No stray labels for non-existent categories.
-    expect(Object.keys(MARKETPLACE_CATEGORY_LABELS).sort()).toEqual([...MARKETPLACE_CATEGORIES].sort());
+    expect(Object.keys(MARKETPLACE_CATEGORY_LABELS).sort()).toEqual(
+      [...MARKETPLACE_CATEGORIES].sort()
+    );
   });
 
   it('isMarketplaceCategory accepts exactly the taxonomy and rejects everything else', () => {

@@ -39,10 +39,7 @@ export const MARKETPLACE_CATEGORY_LABELS: Record<MarketplaceCategory, string> = 
 
 /** Type guard — is the given string one of the known marketplace categories. */
 export function isMarketplaceCategory(value: unknown): value is MarketplaceCategory {
-  return (
-    typeof value === 'string' &&
-    (MARKETPLACE_CATEGORIES as readonly string[]).includes(value)
-  );
+  return typeof value === 'string' && (MARKETPLACE_CATEGORIES as readonly string[]).includes(value);
 }
 
 /**

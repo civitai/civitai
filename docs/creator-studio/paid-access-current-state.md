@@ -1,5 +1,11 @@
 # PaidAccess — current state (continued-work reference)
 
+> ⚠️ **Superseded for caps.** The per-tier price ceilings and the concurrent permanent-gate limit
+> described below were removed in the monetization revamp — membership now limits how many NEW prices a
+> creator may set per month, and there is a 10k creator-score floor on monetizing at all. See R3 in
+> [../features/monetization-rules.md](../features/monetization-rules.md). Everything here about the gate
+> mechanics themselves still holds.
+
 **Start here to continue paid-access work.** This is the living "where things are now" doc, written after the
 permanent Paid Access + usage-control pricing work landed (2026-07-29, commit `a0535931f5` on
 `creator-studio-implementation`). For the data shapes + terms semantics see
@@ -17,10 +23,12 @@ generation too. Early-access state is derived **live** from an active `PaidAcces
 
 ## What's built
 
-- **Timed Early Access + Permanent Paid Access.** Permanent = `endsAt IS NULL`. Permanent is a Creator Program
-  perk, **capped per tier** (`PERMANENT_ACCESS_LIMIT_BY_TIER` = bronze 3 / silver 10 / gold ∞) via
-  `maxPermanentAccessModels(tier)`. Enforced server-side on every write path, with an **already-permanent
-  carve-out** (a lapsed/at-cap creator can still re-save a version that's already permanent). Permanent is
+- **Timed Early Access + Permanent Paid Access.** Permanent = `endsAt IS NULL`. Permanent is open to every
+  creator who meets the eligibility floor; applying it to a version that carries no price yet spends one of
+  the owner's monthly pricing slots (free 3 / bronze 10 / silver 25 / gold ∞ — see R3 in
+  [../features/monetization-rules.md](../features/monetization-rules.md)). Enforced server-side on every
+  write path, with an **already-priced carve-out** (re-saving a version that already carries a price is
+  always free, at any score and any remaining allowance). Permanent is
   **settable post-publish**; a *timed* window can't be *started* after publish.
 - **Usage-control-aware pricing.** One required **"Price for access"** everywhere:
   - `Download` → `download.price` (bundle) + an optional cheaper **generation-only** tier (`generation.price`).
@@ -31,34 +39,37 @@ generation too. Early-access state is derived **live** from an active `PaidAcces
 - **Donation goal** — timed-only (it ends a window early; permanent never ends) and **create-once** (the endpoint
   never updates/removes it, so the spoke shows an existing goal read-only).
 - **Bulk permanent paid access** (Creator Studio) — scoped by a **usage-type filter** (`?usage=download|generation`
-  drives the list + select-all so the price fields are unambiguous); selection is capped at `cap − current`.
+  drives the list + select-all so the price fields are unambiguous); selection is not capped — the dialog
+  warns when the selection exceeds the remaining monthly allowance, or when the owner is below the
+  eligibility floor.
 
 ## Where the code lives
 
 **Shared — `packages/civitai-buzz/src/paid-access.ts`**: the terms types, `buildModelVersionTerms()` (the single
-config→terms mapper both apps call), the grant/gating helpers (`grantsGeneration`, `isPaidAccessActive`,
-`generationPrice`, `generationTrialLimit`), and `PERMANENT_ACCESS_LIMIT_BY_TIER` / `maxPermanentAccessModels`.
+config→terms mapper both apps call), and the grant/gating helpers (`grantsGeneration`, `isPaidAccessActive`,
+`generationPrice`, `generationTrialLimit`). The per-tier permanent cap that used to live here is gone — the
+monthly allowance is in `packages/civitai-buzz/src/pricing-allowance.ts`.
 
 **Main app**
 - Form: `src/components/Resource/Forms/ModelVersionUpsertForm.tsx` — `toPaidAccessInput`/`toFormEarlyAccessConfig`/
   `toGate`, the pricing `.refine()`s, `canConfigurePaidAccess`, `isGenOnly`/`paidAccessUsageOk` UI gating.
-- Server: `controllers/model-version.controller.ts` (permanent membership + tier-cap + carve-out);
+- Server: `controllers/model-version.controller.ts` (permanent membership + `assertMonetizationWrite` + carve-out);
   `services/model-version.service.ts` (usage-control guards on **both** the upsert path and
   `updateModelVersionPaidAccess`); `services/paid-access.service.ts` (`getPaidAccess`,
-  `countUserPermanentAccessVersions`, `assertPaidAccessInput`); `services/generation/paid-access-gating.ts` (the
+  `assertMonetizationWrite`, `assertPaidAccessInput`); `services/pricing-slot.service.ts` (the floor + allowance); `services/generation/paid-access-gating.ts` (the
   **sole** generation-gate enforcement); download gate in `services/file.service.ts`.
 - REST boundary (the spoke calls this): `pages/api/v1/model-versions/early-access.ts` — body `{ id, paidAccess,
   donationGoal }`; permanent requires the `WEBHOOK_TOKEN`.
 
 **Creator Studio spoke** (`apps/creator-studio/`)
-- Page: `src/routes/(app)/models/+page.svelte` (drawer + list) using components
-  `src/lib/components/PaidAccessEditor.svelte`, `PaidAccessBulkBar.svelte`, `BulkLicensingFeesBar.svelte`.
-- Actions/schemas: `src/routes/(app)/models/+page.server.ts` (`setEarlyAccess`, `bulkSetPaidAccess`, the query +
-  bulk schemas); field factories in `src/lib/server/monetization/form-fields.ts`.
+- Page: `src/routes/(app)/models/+page.svelte` (drawer + list) using
+  `src/lib/components/PaidAccessEditor.svelte`, `BulkBar.svelte` and `BulkActionDialog.svelte`.
+- Actions/schemas: `src/routes/(app)/models/+page.server.ts` (`setPaidAccess`, `bulkSetPaidAccess`, the query +
+  bulk schemas); schemas in `src/lib/server/monetization/paid-access-schema.ts`.
 - Reads: `src/lib/server/models.ts` (`paidAccessToConfig`, the `usage` filter, `paidAccessFilter`).
-- Writes/counts: `src/lib/server/monetization/early-access.ts` (`setEarlyAccessConfig` → REST endpoint,
-  `bulkSetPermanentAccess`, the count helpers, `isVersionPermanent`).
-- Shared type/constants: `src/lib/monetization/early-access.ts` (`EarlyAccessConfig`, `MIN_ACCESS_PRICE`, etc.).
+- Writes: `src/lib/server/monetization/paid-access.ts` (`setPaidAccessConfig` → REST endpoint) and
+  `pricing-slot.ts` (the floor + allowance for this app's direct-SQL writes).
+- Shared type/constants: `src/lib/monetization/paid-access.ts` (`PaidAccessConfig`, `MIN_ACCESS_PRICE`, etc.).
 
 ## Verified
 

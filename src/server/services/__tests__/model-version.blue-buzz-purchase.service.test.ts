@@ -15,7 +15,6 @@ const {
   mockCreateMultiAccountBuzzTransaction,
   mockGetPaidAccess,
   mockGetFreshSalesForVersion,
-  mockGetCachedCapTier,
   mockGetFreshSalesForPermanentGate,
   mockGetOwnerDonationGoals,
   mockHasEntityAccess,
@@ -24,7 +23,6 @@ const {
   mockCreateMultiAccountBuzzTransaction: vi.fn(),
   mockGetPaidAccess: vi.fn(),
   mockGetFreshSalesForVersion: vi.fn(),
-  mockGetCachedCapTier: vi.fn(),
   mockGetFreshSalesForPermanentGate: vi.fn(),
   mockGetOwnerDonationGoals: vi.fn(),
   mockHasEntityAccess: vi.fn(),
@@ -53,7 +51,6 @@ vi.mock('~/server/services/paid-access.service', () => ({
   getPaidAccess: mockGetPaidAccess,
   getFreshSalesForVersion: mockGetFreshSalesForVersion,
   getFreshSalesForPermanentGate: mockGetFreshSalesForPermanentGate,
-  getCachedCapTier: mockGetCachedCapTier,
   bustModelSaleCache: vi.fn(),
 }));
 vi.mock('~/server/services/auction.service', () => ({ deleteBidsForModelVersion: vi.fn() }));
@@ -133,7 +130,6 @@ const seed = ({
   });
   mockGetFreshSalesForVersion.mockResolvedValue([]);
   mockGetFreshSalesForPermanentGate.mockResolvedValue([]);
-  mockGetCachedCapTier.mockResolvedValue(null);
 };
 
 beforeEach(() => {
@@ -330,12 +326,13 @@ describe('earlyAccessPurchase — a sale on a PERMANENT gate, where the price ce
         terms,
       },
     });
-    mockGetCachedCapTier.mockResolvedValue(null);
   };
 
   const charged = () => mockCreateMultiAccountBuzzTransaction.mock.calls[0][0].amount;
 
-  it('takes the sale off the CAPPED price, not the stored one', async () => {
+  // Nothing sits between the creator's number and the buyer's: the tier ceiling this used to compose
+  // over was removed, so the discount comes off the stored price.
+  it('takes the sale off the stored price', async () => {
     seedPermanent();
     mockGetFreshSalesForPermanentGate.mockResolvedValue([liveSale]);
 
@@ -346,15 +343,14 @@ describe('earlyAccessPurchase — a sale on a PERMANENT gate, where the price ce
       buzzType: 'yellow',
     });
 
-    // 5000 stored -> 500 at the free cap -> 20% off -> 400. Discounting first gives 4000, which the cap
-    // flattens back to 500 and the sale vanishes.
-    expect(charged()).toBe(400);
+    // 5000 stored, 20% off.
+    expect(charged()).toBe(4000);
     expect(mockCreateMultiAccountBuzzTransaction).toHaveBeenCalledTimes(1);
     // The gate type is what decides whether sales are consulted at all, so pin that it is passed.
     expect(mockGetFreshSalesForPermanentGate).toHaveBeenCalledWith(VERSION_ID, true, OWNER);
   });
 
-  it('bills the capped price untouched when no sale is live', async () => {
+  it('bills the stored price untouched when no sale is live', async () => {
     seedPermanent();
 
     await earlyAccessPurchase({
@@ -364,7 +360,7 @@ describe('earlyAccessPurchase — a sale on a PERMANENT gate, where the price ce
       buzzType: 'yellow',
     });
 
-    expect(charged()).toBe(500);
+    expect(charged()).toBe(5000);
   });
 
   it('discounts a GENERATION purchase too, not only a download', async () => {

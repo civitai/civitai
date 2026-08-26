@@ -4,13 +4,17 @@
   import { Label } from '@civitai/ui/components/ui/label/index.js';
   import { RadioGroup, RadioGroupItem } from '@civitai/ui/components/ui/radio-group/index.js';
   import NumberInput from '$lib/components/NumberInput.svelte';
-  import CapUpsell from '$lib/components/CapUpsell.svelte';
   import {
     MIN_ACCESS_PRICE,
     MIN_GENERATION_PRICE,
     MAX_GENERATION_TRIAL_LIMIT,
   } from '$lib/monetization/paid-access';
-  import { ACCEPTS_BLUE_BUZZ_HINT, type CapTier } from '@civitai/buzz';
+  import {
+    ACCEPTS_BLUE_BUZZ_HINT,
+    formatPricingAllowance,
+    pricingAllowanceState,
+    type CapTier,
+  } from '@civitai/buzz';
   import type { PaidAccessFormValue, PaidAccessContext } from '$lib/monetization/paid-access-form';
 
   // The timed-vs-permanent gate form, shared by the per-version sidebar and the bulk dialog.
@@ -28,14 +32,16 @@
     gateNotice?: Snippet;
   } = $props();
 
-  const priceCap = $derived(ctx.accessCapFor(ctx.capTier, ea.permanent));
-  const accessMax = $derived(
-    priceCap == null ? undefined : Math.max(priceCap, ctx.storedAccessPrice)
-  );
-  const overCap = $derived(priceCap != null && (ea.accessPrice ?? 0) > priceCap);
-  // The generation-only tier can't exceed the access price, and neither may exceed the tier's ceiling.
-  const genPriceMax = $derived(
-    accessMax == null ? ea.accessPrice : Math.min(ea.accessPrice ?? accessMax, accessMax)
+  // Paid-access prices are uncapped, so the only bound left is the product one: a generation-only tier
+  // can't cost more than full access.
+  const genPriceMax = $derived(ea.accessPrice);
+  // `permBlocked` already carries the caller's exemption, so it decides atLimit rather than the raw count.
+  const allowanceState = $derived(
+    pricingAllowanceState({
+      used: ctx.pricingUsed,
+      limit: ctx.pricingLimit,
+      exempt: !ctx.permBlocked,
+    })
   );
 </script>
 
@@ -82,8 +88,12 @@
   {/if}
   {#if !ctx.canChoosePermanent}
     <span class="text-xs text-dark-2">
-      You've reached your permanent paid-access limit ({ctx.permanentUsed} of {ctx.permanentCap}) —
-      upgrade your membership for more.
+      {#if ctx.permBlockedReason}
+        {ctx.permBlockedReason}
+      {:else}
+        You've used this month's monetization limit ({formatPricingAllowance(allowanceState)}) —
+        upgrade your membership to monetize more model versions.
+      {/if}
     </span>
   {/if}
   {#if !ea.permanent && gateNotice}
@@ -94,15 +104,7 @@
 {#if ea.permanent}
   <input type="hidden" name="timeframe" value="0" />
   <div class="text-xs {ctx.permBlocked ? 'text-yellow-5' : 'text-dark-2'}">
-    {#if ctx.permanentCap === null}
-      Paid access {ctx.permanentUsed} set · unlimited{ctx.tierLabel
-        ? ` · ${ctx.tierLabel} tier`
-        : ''}
-    {:else}
-      Paid access {ctx.permanentUsed} of {ctx.permanentCap} used{ctx.tierLabel
-        ? ` · ${ctx.tierLabel} tier`
-        : ''}{ctx.permBlocked ? ' — limit reached' : ''}
-    {/if}
+    {formatPricingAllowance(allowanceState)}{ctx.tierLabel ? ` · ${ctx.tierLabel} tier` : ''}
   </div>
 {:else}
   <label class="flex flex-col gap-1 text-sm">
@@ -132,32 +134,14 @@
     <NumberInput
       name="accessPrice"
       min={MIN_ACCESS_PRICE}
-      max={accessMax}
       bind:value={ea.accessPrice}
       class="w-40"
     />
     <span class="text-xs text-dark-2">
       {isGenOnly
         ? 'What buyers pay to generate with this version on-site.'
-        : 'Buyers unlock download + generation.'}{#if priceCap != null}
-        Your membership allows up to {priceCap.toLocaleString()} ⚡.
-      {/if}
+        : 'Buyers unlock download + generation.'}
     </span>
-    <div>
-      <CapUpsell
-        value={ea.accessPrice}
-        cap={priceCap ?? Infinity}
-        capTier={ctx.capTier}
-        capFor={(t: CapTier) => ctx.accessCapFor(t, ea.permanent) ?? Infinity}
-        title="Price for access"
-      />
-    </div>
-    {#if overCap}
-      <span class="text-xs text-yellow-5">
-        This price is above your membership's cap. You can keep or lower it, but not raise it —
-        upgrade to charge more.
-      </span>
-    {/if}
   </label>
   {#if !isGenOnly}
     <div class="flex flex-col gap-2">

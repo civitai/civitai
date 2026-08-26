@@ -1,7 +1,9 @@
 import { TRPCError } from '@trpc/server';
-import { capMediaType, maxLicensingFee, raisesOverCap } from '@civitai/buzz';
+
+import { licensingFeeBlockedFor, paidAccessBlockedFor } from '@civitai/buzz';
+import { recordPricingSlot, releasePricingSlot } from '~/server/services/pricing-slot.service';
 import {
-  assertPaidAccessCaps,
+  assertMonetizationWrite,
   getViewerMonetization,
   toModelVersionPaidAccessDto,
 } from '~/server/services/paid-access.service';
@@ -310,8 +312,6 @@ const loadModelVersion = async ({
             id,
             ownerId: version.model.user.id,
             licensingFee: version.licensingFee != null ? Number(version.licensingFee) : null,
-            modelType: version.model.type,
-            baseModel: version.baseModel,
           },
         ],
         viewer: { id: ctx?.user?.id, isModerator: ctx?.user?.isModerator },
@@ -401,14 +401,6 @@ export const upsertModelVersionHandler = async ({
         )}`
       );
     }
-
-    // Monetization is open to every creator, free tier included (CU 868kj4q49 / 868kj4q4j) — the tier caps
-    // only how much may be charged. Read fresh (not off the session) so a lapse applies immediately, and
-    // memoized because the usage-control audit, paid-access and licensing-fee checks all need it:
-    // getAllUserSubscriptions is uncached and hits the primary.
-    // Memoize the PROMISE, not the value: getCapTier returns null for anyone without a good-standing
-    // subscription, and `??=` re-assigns on null — so the users this gate denies would re-run an uncached
-    // primary-DB query on every call.
     let capTierPromise: Promise<string | null> | undefined;
     const actorTier = () => (capTierPromise ??= getCapTier(ctx.user.id));
 
@@ -422,15 +414,20 @@ export const upsertModelVersionHandler = async ({
     // unlimited new ones. Same trap resolveRightsAffirmation documents in the service.
     const updatesExistingVersion = !!input.id && !input.templateId;
     // dbWrite, and a miss counts as a grant: this decides an entitlement, and the edit wizard saves again
-    // fast enough to beat replication — a replica miss must not read as "already generation-only".
-    const storedUsageControl = updatesExistingVersion
-      ? (
-          await dbWrite.modelVersion.findUnique({
-            where: { id: input.id },
-            select: { usageControl: true },
-          })
-        )?.usageControl
-      : undefined;
+    // fast enough to beat replication — a replica miss must not read as "already generation-only". The
+    // monetization gate below reads the same row, so it is selected once here.
+    const storedVersion = updatesExistingVersion
+      ? await dbWrite.modelVersion.findUnique({
+          where: { id: input.id },
+          select: {
+            usageControl: true,
+            licensingFee: true,
+            licensingFeeSettlementCurrency: true,
+            baseModel: true,
+          },
+        })
+      : null;
+    const storedUsageControl = storedVersion?.usageControl;
     const grantsGenerationOnly =
       input.usageControl !== ModelUsageControl.Download &&
       (!updatesExistingVersion || storedUsageControl !== ModelUsageControl.Generation);
@@ -488,13 +485,43 @@ export const upsertModelVersionHandler = async ({
       input.trainingDetails = undefined;
     }
 
-    await assertPaidAccessCaps({
-      userId: ctx.user.id,
+    const storedFee = storedVersion?.licensingFee != null ? Number(storedVersion.licensingFee) : 0;
+
+    // The rules are about the model's OWNER. A moderator may save anyone's version, and passing the
+    // actor would check the moderator's score and spend the moderator's allowance on someone else's
+    // model — the exemption moderators explicitly do not get, reached sideways.
+    const owner = await getModel({
+      id: input.modelId,
+      select: { userId: true, poi: true, availability: true },
+    });
+    const ownerId = owner?.userId ?? ctx.user.id;
+    const actingOnOwnModel = ownerId === ctx.user.id;
+
+    // A POI or private model has its price STRIPPED by applyModelMonetizationPolicy rather than being
+    // refused, so gating on the submitted value would spend a slot for a version that ends up unpriced.
+    const policyKeepsFee = !owner || !licensingFeeBlockedFor(owner);
+    const policyKeepsGate = !owner || !paidAccessBlockedFor(owner);
+
+    const { spendsSlot, releasesSlot } = await assertMonetizationWrite({
+      ownerId,
       isModerator: ctx.user.isModerator,
-      versionId: input.id,
-      paidAccess: input.paidAccess,
-      tier: input.paidAccess && !ctx.user.isModerator ? await actorTier() : null,
+      // `updatesExistingVersion`, never `input.id`: a templated write creates a NEW version even with
+      // an id present, so reading the stored price off it would let one already-priced version vouch
+      // for unlimited new priced ones — the trap the usage-control gate above documents.
+      versionId: updatesExistingVersion ? input.id : undefined,
+      // `?? null` because that is literally what the write does: both upsert branches call
+      // writeModelVersionGateAndGoal unconditionally, which passes `paidAccess ?? null` on to
+      // writePaidAccessForModelVersion — and null DELETES the row. Passing undefined through would
+      // have the ledger read "gate unchanged" for a save that removes it, so the version ends up
+      // unpriced with its slot never returned.
+      paidAccess: policyKeepsGate ? input.paidAccess ?? null : null,
+      licensingFee: policyKeepsFee ? input.licensingFee : 0,
+      storedLicensingFee: storedFee,
+      tier: actingOnOwnModel ? actorTier : () => getCapTier(ownerId),
+      // Only the actor's session meta is to hand; the service reads the owner's score itself otherwise.
+      userMeta: actingOnOwnModel ? ctx.user.meta : undefined,
       baseModel: input.baseModel,
+      storedBaseModel: storedVersion?.baseModel,
     });
 
     await assertUserEarlyAccessLimits({
@@ -509,32 +536,14 @@ export const upsertModelVersionHandler = async ({
     // The service migrates the price onto the surviving tier; nothing to reject here.
 
     if (input.licensingFee != null && input.licensingFee > 0) {
-      const existing = input.id
-        ? await dbRead.modelVersion.findUnique({
-            where: { id: input.id },
-            select: { licensingFee: true, licensingFeeSettlementCurrency: true },
-          })
-        : null;
-      const hadExistingFee = existing?.licensingFee != null && Number(existing.licensingFee) > 0;
+      const hadExistingFee = storedFee > 0;
       if (!ctx.features.licensingFee && !ctx.user.isModerator && !hadExistingFee) {
         throw throwBadRequestError('License fees are not enabled for your account.');
-      }
-      // Per-tier ceiling, varying by model type. Compared in whole cents: the stored value is a Prisma
-      // Decimal and the input a JSON float, so a raw > can read "raised" on an untouched fee.
-      if (!ctx.user.isModerator) {
-        const toCents = (v: number) => Math.round(v * 100);
-        const model = await getModel({ id: input.modelId, select: { type: true } });
-        const cap = maxLicensingFee(await actorTier(), model?.type, capMediaType(input.baseModel));
-        const stored = toCents(Number(existing?.licensingFee ?? 0));
-        if (raisesOverCap(toCents(input.licensingFee), stored, toCents(cap)))
-          throw throwBadRequestError(
-            `Your tier allows a licensing fee of up to ${cap} Buzz per generation for this model type. Lower the fee or upgrade your membership.`
-          );
       }
       if (
         input.licensingFeeSettlementCurrency === LicensingFeeSettlementCurrency.Cash &&
         !ctx.user.isModerator &&
-        existing?.licensingFeeSettlementCurrency !== LicensingFeeSettlementCurrency.Cash
+        storedVersion?.licensingFeeSettlementCurrency !== LicensingFeeSettlementCurrency.Cash
       ) {
         throw throwBadRequestError('Cash settlement is restricted; please contact support.');
       }
@@ -649,6 +658,13 @@ export const upsertModelVersionHandler = async ({
       licensingSourceCoercedReason,
     });
     if (!version) throw throwNotFoundError(`No model version with id ${input.id as number}`);
+
+    // After the write, so a failed one never costs the creator a slot — and so a release is judged
+    // against the version's post-write state.
+    if (spendsSlot)
+      await recordPricingSlot({ entityType: 'ModelVersion', entityId: version.id, ownerId });
+    else if (releasesSlot)
+      await releasePricingSlot({ entityType: 'ModelVersion', entityId: version.id, ownerId });
 
     // Just update early access deadline if updating the model version
     if (input.id)

@@ -283,8 +283,6 @@ export const getModelHandler = async ({
         id: x.id,
         ownerId: model.user.id,
         licensingFee: x.licensingFee != null ? Number(x.licensingFee) : null,
-        modelType: model.type,
-        baseModel: x.baseModel,
       })),
       viewer: { id: ctx.user?.id, isModerator: ctx.user?.isModerator },
     });
@@ -374,8 +372,7 @@ export const getModelHandler = async ({
     const hideIf = (hidden: boolean, value: number) => (hidden ? null : value);
 
     const mappedVersions = filteredVersions.map((version) => {
-      const { paidAccess, licensingFee, effectiveLicensingFee, sale } =
-        monetizationByVersion[version.id];
+      const { paidAccess, licensingFee, sale } = monetizationByVersion[version.id];
       const eaDonationGoal = donationGoalsByVersion[version.id] ?? null;
       const paidAccessGated =
         features.earlyAccessModel && !!paidAccess && isPaidAccessActive(paidAccess);
@@ -441,7 +438,6 @@ export const getModelHandler = async ({
       return {
         ...version,
         licensingFee,
-        effectiveLicensingFee,
         metrics: undefined,
         hiddenMetrics: versionHidden,
         rank: {

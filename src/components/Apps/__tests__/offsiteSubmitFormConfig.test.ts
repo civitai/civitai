@@ -56,7 +56,9 @@ describe('validateOffsiteSubmitForm', () => {
   });
 
   it('rejects a non-https URL', () => {
-    expect(validateOffsiteSubmitForm({ ...valid, externalUrl: 'http://x.com' }).externalUrl).toBeDefined();
+    expect(
+      validateOffsiteSubmitForm({ ...valid, externalUrl: 'http://x.com' }).externalUrl
+    ).toBeDefined();
   });
 
   it('rejects javascript: and data: URLs (phishing/XSS schemes)', () => {
@@ -83,7 +85,9 @@ describe('validateOffsiteSubmitForm', () => {
 
   it('rejects an empty name and an over-long name', () => {
     expect(validateOffsiteSubmitForm({ ...valid, name: '' }).name).toBeDefined();
-    expect(validateOffsiteSubmitForm({ ...valid, name: 'a'.repeat(OFFSITE_NAME_MAX + 1) }).name).toBeDefined();
+    expect(
+      validateOffsiteSubmitForm({ ...valid, name: 'a'.repeat(OFFSITE_NAME_MAX + 1) }).name
+    ).toBeDefined();
   });
 
   it('rejects an over-long description', () => {
@@ -101,7 +105,9 @@ describe('validateOffsiteSubmitForm', () => {
 
   it('rejects an unknown content rating', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    expect(validateOffsiteSubmitForm({ ...valid, contentRating: 'xxx' as any }).contentRating).toBeDefined();
+    expect(
+      validateOffsiteSubmitForm({ ...valid, contentRating: 'xxx' as any }).contentRating
+    ).toBeDefined();
   });
 });
 

@@ -87,49 +87,19 @@ export async function setPaidAccessConfig(
   }
 }
 
-// Counts the creator's permanent paid-access versions, excluding the one being edited. Permanent =
-// timeframeDays IS NULL (endsAt stays NULL on unpublished timed gates too, so it can't distinguish
-// them). Feeds the tier cap in the setPaidAccess action.
-export async function countPermanentAccessVersions(
-  userId: number,
-  excludeVersionId?: number
-): Promise<number> {
-  let query = dbRead
-    .selectFrom('ModelVersion as mv')
-    .innerJoin('Model as m', 'm.id', 'mv.modelId')
-    .innerJoin('PaidAccess as pa', (join) =>
-      join.onRef('pa.entityId', '=', 'mv.id').on('pa.entityType', '=', 'ModelVersion')
-    )
-    .where('m.userId', '=', userId)
-    .where('m.deletedAt', 'is', null)
-    .where('pa.timeframeDays', 'is', null);
-  if (excludeVersionId != null) query = query.where('mv.id', '!=', excludeVersionId);
-  const row = await query.select((eb) => eb.fn.countAll<string>().as('count')).executeTakeFirst();
-  return Number(row?.count ?? 0);
-}
-
-// Permanent versions the creator owns that are NOT in `excludeIds` — the baseline for the tier cap when
-// bulk-setting permanent access (the selected versions replace their own slots, so they're excluded).
-export async function countPermanentAccessVersionsExcluding(
-  userId: number,
-  excludeIds: number[]
-): Promise<number> {
-  let query = dbRead
-    .selectFrom('ModelVersion as mv')
-    .innerJoin('Model as m', 'm.id', 'mv.modelId')
-    .innerJoin('PaidAccess as pa', (join) =>
-      join.onRef('pa.entityId', '=', 'mv.id').on('pa.entityType', '=', 'ModelVersion')
-    )
-    .where('m.userId', '=', userId)
-    .where('m.deletedAt', 'is', null)
-    .where('pa.timeframeDays', 'is', null);
-  if (excludeIds.length) query = query.where('mv.id', 'not in', excludeIds);
-  const row = await query.select((eb) => eb.fn.countAll<string>().as('count')).executeTakeFirst();
-  return Number(row?.count ?? 0);
-}
-
 export type BulkPaidAccessResult =
-  { ok: true; updated: number; failed: number } | { ok: false; status: number; error: string };
+  | {
+      ok: true;
+      updated: number;
+      failed: number;
+      /**
+       * The versions that were actually written. A partial bulk is reported `ok` with a `failed` count,
+       * so the caller cannot infer this from the selection — and a pricing slot recorded for a version
+       * that failed is never returned, which would burn a creator's month for a price they do not have.
+       */
+      updatedIds: number[];
+    }
+  | { ok: false; status: number; error: string };
 
 // Applies the same permanent paid-access pricing to every selected version, one main-app write each
 // (the endpoint owns ownership + side effects). Sequential so a shared failure surfaces once and we
@@ -188,8 +158,8 @@ export async function bulkSetPaidAccess(
     ? await versionsWithDonationGoal(eligibleIds)
     : new Set<number>();
 
-  let updated = 0;
   let failed = 0;
+  const updatedIds: number[] = [];
   const errors: { status: number; error: string }[] = [];
   await mapWithConcurrency(eligibleIds, MAIN_APP_WRITE_CONCURRENCY, async (id) => {
     const usage = byId.get(id)?.usageControl as string | undefined;
@@ -218,14 +188,14 @@ export async function bulkSetPaidAccess(
       donationGoal: wantsGoal && !alreadyHasGoal.has(id) ? pricing.donationGoal : undefined,
     };
     const res = await setPaidAccessConfig(cookie, id, config, genOnly, rightsAffirmed);
-    if (res.ok) updated++;
+    if (res.ok) updatedIds.push(id);
     else {
       failed++;
       errors.push({ status: res.status, error: res.error });
     }
   });
-  if (updated === 0 && errors.length > 0) return { ok: false, ...errors[0] };
-  return { ok: true, updated, failed, skippedPublished };
+  if (updatedIds.length === 0 && errors.length > 0) return { ok: false, ...errors[0] };
+  return { ok: true, updated: updatedIds.length, failed, skippedPublished, updatedIds };
 }
 
 // Early access can't be started on a version that has EVER been published, which is what
@@ -311,20 +281,21 @@ export async function bulkRemovePaidAccess(
   cookie: string,
   versionIds: number[]
 ): Promise<BulkPaidAccessResult> {
-  let updated = 0;
+  const cleared: number[] = [];
   let failed = 0;
   const errors: { status: number; error: string }[] = [];
   await mapWithConcurrency(versionIds, MAIN_APP_WRITE_CONCURRENCY, async (id) => {
     // No affirmation: it's required to START monetizing, never to stop.
     const res = await setPaidAccessConfig(cookie, id, null);
-    if (res.ok) updated++;
+    if (res.ok) cleared.push(id);
     else {
       failed++;
       errors.push({ status: res.status, error: res.error });
     }
   });
-  if (updated === 0 && errors.length > 0) return { ok: false, ...errors[0] };
-  return { ok: true, updated, failed };
+  if (cleared.length === 0 && errors.length > 0) return { ok: false, ...errors[0] };
+  // Clearing prices nothing, so it reports no newly-priced ids — and never returns a spent slot.
+  return { ok: true, updated: cleared.length, failed, updatedIds: [] };
 }
 
 /** A gated version whose terms have to move when its usage control flips. */
@@ -567,48 +538,6 @@ export async function setUsageControl(
     )
     .executeTakeFirst();
   return { ok: true, updated: Number(result.numUpdatedRows ?? 0) > 0 };
-}
-
-export async function isVersionPermanent(versionId: number): Promise<boolean> {
-  const row = await dbRead
-    .selectFrom('PaidAccess')
-    .select('timeframeDays')
-    .where('entityType', '=', 'ModelVersion')
-    .where('entityId', '=', versionId)
-    .executeTakeFirst();
-  return row != null && row.timeframeDays == null;
-}
-
-// The version's stored gate prices (0 when ungated), kept per-component. Feeds the "only an INCREASE is
-// capped" rule so an over-cap gate stays editable and can be lowered — and keeping download/generation
-// separate stops a cheap generation tier being raised under an over-cap download umbrella.
-export async function currentAccessPrices(
-  versionId: number
-): Promise<{ download: number; generation: number }> {
-  const row = await dbRead
-    .selectFrom('PaidAccess')
-    .select('terms')
-    .where('entityType', '=', 'ModelVersion')
-    .where('entityId', '=', versionId)
-    .executeTakeFirst();
-  return gatePrices(row?.terms as ModelVersionTerms | undefined);
-}
-
-/**
- * The media axis a set of versions must be capped on. A bulk edit applies ONE price to every selected
- * version, so the whole set is held to the strictest applicable ceiling — image unless every version is
- * video. Matches how bulkSetLicensingFee picks the strictest model-type cap.
- */
-export async function strictestCapMediaType(versionIds: number[]): Promise<CapMediaType> {
-  if (!versionIds.length) return 'image';
-  const rows = await dbRead
-    .selectFrom('ModelVersion')
-    .select('baseModel')
-    .where('id', 'in', versionIds)
-    .execute();
-  return rows.length && rows.every((r) => capMediaType(r.baseModel) === 'video')
-    ? 'video'
-    : 'image';
 }
 
 // Counts versions in a *currently running* timed early-access window (permanent ones are capped separately,

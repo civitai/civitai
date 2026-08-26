@@ -77,9 +77,7 @@ describe('ManifestEditForm — per-scope justification authoring', () => {
     await expect
       .element(page.getByRole('textbox', { name: 'models:read:self' }))
       .toBeInTheDocument();
-    await expect
-      .element(page.getByRole('textbox', { name: 'user:read:self' }))
-      .toBeInTheDocument();
+    await expect.element(page.getByRole('textbox', { name: 'user:read:self' })).toBeInTheDocument();
     // The seeded justification is pre-filled.
     await expect
       .element(page.getByRole('textbox', { name: 'models:read:self' }))
@@ -121,12 +119,8 @@ describe('ManifestEditForm — per-scope justification authoring', () => {
       />
     );
     // The declared scopes render as CHECKBOXES (selector), seeded checked.
-    await expect
-      .element(page.getByRole('checkbox', { name: 'models:read:self' }))
-      .toBeChecked();
-    await expect
-      .element(page.getByRole('checkbox', { name: 'user:read:self' }))
-      .toBeChecked();
+    await expect.element(page.getByRole('checkbox', { name: 'models:read:self' })).toBeChecked();
+    await expect.element(page.getByRole('checkbox', { name: 'user:read:self' })).toBeChecked();
   });
 
   test('the deferred "Target slots" editor is GONE from the form', async () => {
@@ -179,9 +173,9 @@ describe('ManifestEditForm — per-scope justification authoring', () => {
       .toHaveValue('Does a thing.');
     // New version defaults to a patch bump of the current version.
     await expect.element(page.getByRole('textbox', { name: 'New version' })).toHaveValue('1.0.1');
-    await expect.element(page.getByRole('textbox', { name: 'Block ID (immutable)' })).toHaveValue(
-      'my-block'
-    );
+    await expect
+      .element(page.getByRole('textbox', { name: 'Block ID (immutable)' }))
+      .toHaveValue('my-block');
   });
 
   test('clearing all justification inputs submits an explicit empty object (not undefined) so stored rationale is overwritten', async () => {
@@ -227,9 +221,9 @@ describe('ManifestEditForm — tagline + category (manifest-governed store field
         manifest={{ ...BASE_MANIFEST, tagline: 'Does the thing', category: 'utility' }}
       />
     );
-    await expect.element(page.getByRole('textbox', { name: 'Tagline' })).toHaveValue(
-      'Does the thing'
-    );
+    await expect
+      .element(page.getByRole('textbox', { name: 'Tagline' }))
+      .toHaveValue('Does the thing');
     // Mantine Select renders as a combobox whose display value is the LABEL.
     await expect.element(page.getByRole('textbox', { name: 'Category' })).toHaveValue('Utility');
   });

@@ -95,12 +95,14 @@ export function activeNavHref(pathname: string): string | undefined {
 // not subscription tier. Callers pass `membership.isCreatorProgramMember`.
 export function navForMember(isMember: boolean, enabledFlags: string[] = []): NavItem[] {
   const allowed = (flag?: string) => !flag || enabledFlags.includes(flag);
-  return NAV.filter((item) => (item.nonMemberOnly ? !isMember : true))
-    .filter((item) => allowed(item.flag))
-    // A flagged-off child is dropped, not disabled: a link whose page answers "not available on your
-    // account" is a worse gate than no link. Children are filtered as well as items because a section
-    // can be unflagged while one of its subpages is not — Monetization is open, Sales is gated.
-    .map((item) =>
-      item.children ? { ...item, children: item.children.filter((c) => allowed(c.flag)) } : item
+  return (
+    NAV.filter((item) => (item.nonMemberOnly ? !isMember : true))
+      .filter((item) => allowed(item.flag))
+      // A flagged-off child is dropped, not disabled: a link whose page answers "not available on your
+      // account" is a worse gate than no link. Children are filtered as well as items because a section
+      // can be unflagged while one of its subpages is not — Monetization is open, Sales is gated.
+      .map((item) =>
+        item.children ? { ...item, children: item.children.filter((c) => allowed(c.flag)) } : item
+      )
   );
 }

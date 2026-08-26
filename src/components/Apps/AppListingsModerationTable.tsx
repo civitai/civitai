@@ -133,10 +133,7 @@ export function AppListingsModerationTable({
 }: {
   /** Opens the PAGE-OWNED off-site review modal. The second arg is fired after a
    *  successful approve/reject so this table can invalidate + reset its own paging. */
-  openOffsiteReview: (
-    row: OffsitePendingRow,
-    onActioned?: () => void | Promise<void>
-  ) => void;
+  openOffsiteReview: (row: OffsitePendingRow, onActioned?: () => void | Promise<void>) => void;
 }) {
   const features = useFeatureFlags();
   const utils = trpc.useUtils();
@@ -216,7 +213,9 @@ export function AppListingsModerationTable({
           const seen = new Set(accumulated.map((r) => r.id));
           return [...accumulated, ...page.filter((r) => !seen.has(r.id))];
         })();
-    return merged.filter((r) => !(r.kind === 'onsite' && effectiveModerationStatus(r) === 'pending'));
+    return merged.filter(
+      (r) => !(r.kind === 'onsite' && effectiveModerationStatus(r) === 'pending')
+    );
   }, [accumulated, page, cursor]);
 
   // Group (one group per listing — the mod view isn't version-collapsed), apply the

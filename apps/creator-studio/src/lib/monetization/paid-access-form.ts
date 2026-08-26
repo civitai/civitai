@@ -20,20 +20,18 @@ export type PaidAccessContext = {
   permBlocked: boolean;
   /** Why timed is unavailable, in the caller's own words — publish state for one version, a count for many. */
   timedBlockedReason?: string;
+  /**
+   * Why a PERMANENT gate is unavailable when the reason is the eligibility floor rather than the
+   * allowance. The two are different refusals and only one of them is fixed by buying a membership.
+   */
+  permBlockedReason?: string;
   maxEarlyAccessDays: number;
-  permanentUsed: number;
-  permanentCap: number | null;
+  /** Prices applied this calendar month, and how many the tier allows (null = unlimited). */
+  pricingUsed: number;
+  pricingLimit: number | null;
   earlyAccessUsed: number;
   earlyAccessCap: number;
   tierLabel: string;
   capTier: CapTier;
-  /** Null means uncapped — always the case for a timed window. Pass ctx.capTier for the creator's own. */
-  accessCapFor: (tier: CapTier, permanent: boolean) => number | null;
-  /**
-   * The price already stored, so the max never clamps below it: the server blocks only RAISES, and
-   * clamping down would silently cut a grandfathered price on an unrelated edit. Zero for bulk, which
-   * has no single stored price to protect.
-   */
-  storedAccessPrice: number;
   hadDonationGoal: boolean;
 };

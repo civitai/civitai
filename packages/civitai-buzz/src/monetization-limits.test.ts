@@ -8,7 +8,7 @@ import {
   suggestedFee,
   suggestedFeeRatio,
 } from './monetization-limits';
-import { maxLicensingFee, SUGGESTED_FEE_PER_IMAGE } from './licensing-fee';
+import { maxLicensingFeeCeiling, SUGGESTED_FEE_PER_IMAGE } from './licensing-fee';
 
 describe('resolveCapTier — the one tier rule, shared by both apps', () => {
   it('a member gets their own tier', () => {
@@ -32,74 +32,64 @@ describe('resolveCapTier — the one tier rule, shared by both apps', () => {
 });
 
 describe('monetizationLimits — one call replaces the per-site composition', () => {
-  it('caps a video model 5x higher than the same image model', () => {
-    const image = monetizationLimits({
-      tier: 'bronze',
-      modelType: 'Checkpoint',
-      baseModel: 'SDXL 1.0',
-    });
-    const video = monetizationLimits({
-      tier: 'bronze',
-      modelType: 'Checkpoint',
-      baseModel: 'Hunyuan Video',
-    });
+  it('lets a video model earn 5x the fee of the same image model', () => {
+    const image = monetizationLimits({ tier: 'bronze', baseModel: 'SDXL 1.0' });
+    const video = monetizationLimits({ tier: 'bronze', baseModel: 'Hunyuan Video' });
     expect(video.fee.maxPerGeneration).toBe(image.fee.maxPerGeneration * 5);
-    expect(video.access.maxPrice).toBe((image.access.maxPrice as number) * 5);
   });
 
   it('resolves the media axis from the base model, so no caller can name the wrong one', () => {
-    const unmatched = monetizationLimits({ tier: 'bronze', modelType: 'Checkpoint' });
-    const image = monetizationLimits({
-      tier: 'bronze',
-      modelType: 'Checkpoint',
-      baseModel: 'SDXL 1.0',
-    });
+    const unmatched = monetizationLimits({ tier: 'bronze' });
+    const image = monetizationLimits({ tier: 'bronze', baseModel: 'SDXL 1.0' });
     // An unmatched base model prices as image — the stricter of the two.
     expect(unmatched.fee.maxPerGeneration).toBe(image.fee.maxPerGeneration);
   });
 
-  it('offers only denominators that can express at least 1 buzz', () => {
-    // free/other caps at 0.1 per generation, so "per 1 generation" has no whole-number entry.
-    const { fee } = monetizationLimits({ tier: 'free', modelType: 'LORA', baseModel: 'SDXL 1.0' });
-    expect(fee.denominators).not.toContain(1);
-    expect(fee.denominators).toContain(10);
+  it('gives every tier the same fee ceiling — membership governs how often, not how much', () => {
+    const perGeneration = (tier: 'free' | 'bronze' | 'silver' | 'gold') =>
+      monetizationLimits({ tier, baseModel: 'SDXL 1.0' }).fee.maxPerGeneration;
+    expect(perGeneration('free')).toBe(perGeneration('gold'));
+    expect(perGeneration('bronze')).toBe(perGeneration('silver'));
   });
 
-  it('reports unlimited as null so it survives a JSON boundary', () => {
-    const gold = monetizationLimits({ tier: 'gold' });
-    expect(gold.access.maxPrice).toBeNull();
-    expect(gold.permanent.limit).toBeNull();
-    expect(monetizationLimits({ tier: 'free' }).permanent.limit).toBe(3);
+  it('offers every denominator, since the flat ceiling can express all of them', () => {
+    const { fee } = monetizationLimits({ tier: 'free', baseModel: 'SDXL 1.0' });
+    expect(fee.denominators).toContain(1);
+    expect(fee.denominators).toContain(100);
   });
 
-  it('exempts moderators from the tier caps, and offers them every denominator', () => {
-    const mod = monetizationLimits({ tier: 'free', modelType: 'LORA', isModerator: true });
-    expect(mod.access.maxPrice).toBeNull();
-    expect(mod.permanent.limit).toBeNull();
-    expect(mod.fee.denominators).toContain(1);
-    expect(mod.fee.maxPerGeneration).toBeGreaterThan(
-      monetizationLimits({ tier: 'free', modelType: 'LORA' }).fee.maxPerGeneration
-    );
+  it('varies the monthly allowance by tier, reporting unlimited as null', () => {
+    expect(monetizationLimits({ tier: 'free' }).allowance.monthlyPrices).toBe(3);
+    expect(monetizationLimits({ tier: 'bronze' }).allowance.monthlyPrices).toBe(10);
+    expect(monetizationLimits({ tier: 'silver' }).allowance.monthlyPrices).toBe(25);
+    expect(monetizationLimits({ tier: 'gold' }).allowance.monthlyPrices).toBeNull();
+  });
+
+  // Moderators are exempt from the fee CEILING, applied on the write path — never from the allowance.
+  // Reporting them unlimited here promised something assertPricingAllowed then refuses.
+  it('does not exempt moderators from the allowance', () => {
+    expect(monetizationLimits({ tier: 'free' }).allowance.monthlyPrices).toBe(3);
+  });
+
+  it('does not scale the allowance for video — it counts prices rather than sizing them', () => {
+    expect(
+      monetizationLimits({ tier: 'free', baseModel: 'Hunyuan Video' }).allowance.monthlyPrices
+    ).toBe(monetizationLimits({ tier: 'free', baseModel: 'SDXL 1.0' }).allowance.monthlyPrices);
   });
 });
 
 describe('feeMaxFor — the editor bound, in whole buzz', () => {
-  // The regression this guards: a lookup keyed by the OFFERED denominators has no entry for one the tier
-  // can't express, and falling back to another overstates the ceiling. A silver creator who set
-  // 5 buzz/generation and then lapsed opens the editor at images=1, which free tier cannot express — the
-  // bound must be 0, not a value borrowed from images=10.
-  it('matches the enforced cap at every denominator, offered or not', () => {
-    const limits = monetizationLimits({ tier: 'free', modelType: 'LORA' });
+  it('matches the enforced ceiling at every denominator, offered or not', () => {
+    const limits = monetizationLimits({ tier: 'free', baseModel: 'SDXL 1.0' });
     for (const images of [1, 2, 10, 20, 50, 100]) {
-      expect(feeMaxFor(limits, images)).toBe(maxFeeBuzzForRatio('free', 'LORA', images));
+      expect(feeMaxFor(limits, images)).toBe(maxFeeBuzzForRatio(images));
     }
-    expect(feeMaxFor(limits, 1)).toBe(0);
   });
 
   it('scales with the denominator the editor is showing', () => {
-    const limits = monetizationLimits({ tier: 'silver', modelType: 'Checkpoint' });
-    expect(feeMaxFor(limits, 1)).toBe(10);
-    expect(feeMaxFor(limits, 10)).toBe(100);
+    const limits = monetizationLimits({ tier: 'silver', baseModel: 'SDXL 1.0' });
+    expect(feeMaxFor(limits, 1)).toBe(100);
+    expect(feeMaxFor(limits, 10)).toBe(1000);
   });
 });
 
@@ -146,8 +136,7 @@ describe('a suggestion is dropped when the editor cannot offer its denominator',
   });
 
   it('falls back to the flat denominator with no amount when it does not', () => {
-    // A checkpoint filter over a free-capped selection: 1 ⚡ / 1 generation, against a list that starts
-    // at 10. Seeding it renders a select with no matching item and a ceiling of 0.
+    // Seeding a denominator the select has no item for renders an editor with nothing selected.
     expect(suggestedFeeRatio(1, [10, 20, 50, 100])).toEqual({ buzz: 0, images: 10 });
   });
 
@@ -156,50 +145,23 @@ describe('a suggestion is dropped when the editor cannot offer its denominator',
       buzz: 0,
       images: 10,
     });
-    // A lapsed creator keeps the denominator they were grandfathered on, ceiling of 0 and all.
+    // A stored fee always opens on the denominator it was actually saved with.
     expect(
       seedFeeRatio({ licensingFee: 1, modelType: 'Checkpoint', denominators: [10, 20, 50, 100] })
     ).toEqual({ buzz: 1, images: 1 });
   });
 });
 
-describe('every seeded suggestion is saveable on the free tier', () => {
-  // The suggestion and the free cap are separate tables. Raise one or lower the other and a fresh editor
-  // opens on a value the server rejects at submit — a failure with no ceiling in the UI to explain it.
+describe('every seeded suggestion is saveable', () => {
+  // The suggestion and the ceiling are separate constants. Raise one or lower the other and a fresh
+  // editor opens on a value the server rejects at submit, with nothing in the UI to explain it.
   const types = [...Object.keys(SUGGESTED_FEE_PER_IMAGE), 'LORA'];
 
-  it.each(types)('%s stays within the free-tier cap for image and video', (modelType) => {
+  it.each(types)('%s stays within the ceiling for image and video', (modelType) => {
     for (const baseModel of ['SDXL 1.0', 'Hunyuan Video']) {
       expect(suggestedFee({ modelType, baseModel })).toBeLessThanOrEqual(
-        maxLicensingFee('free', modelType, baseModel === 'Hunyuan Video' ? 'video' : 'image')
+        maxLicensingFeeCeiling(baseModel === 'Hunyuan Video' ? 'video' : 'image')
       );
     }
-  });
-});
-
-describe('access price ceiling applies to permanent gates only', () => {
-  it('caps a permanent gate at the tier ceiling', () => {
-    expect(monetizationLimits({ tier: 'free', permanent: true }).access.maxPrice).toBe(500);
-    expect(monetizationLimits({ tier: 'silver', permanent: true }).access.maxPrice).toBe(5000);
-  });
-
-  it('leaves a timed early-access window uncapped — it becomes free when the window closes', () => {
-    expect(monetizationLimits({ tier: 'free', permanent: false }).access.maxPrice).toBeNull();
-    expect(monetizationLimits({ tier: 'silver', permanent: false }).access.maxPrice).toBeNull();
-  });
-
-  it('defaults to capped, so a caller that forgets cannot accidentally uncap a permanent gate', () => {
-    expect(monetizationLimits({ tier: 'free' }).access.maxPrice).toBe(500);
-  });
-
-  it('leaves the LICENSING fee capped either way — it is charged per generation, not per window', () => {
-    const timed = monetizationLimits({ tier: 'free', modelType: 'Checkpoint', permanent: false });
-    const perm = monetizationLimits({ tier: 'free', modelType: 'Checkpoint', permanent: true });
-    expect(timed.fee.maxPerGeneration).toBe(perm.fee.maxPerGeneration);
-    expect(timed.fee.maxPerGeneration).toBe(1);
-  });
-
-  it('leaves the permanent-gate COUNT limit alone — that is about how many, not how much', () => {
-    expect(monetizationLimits({ tier: 'free', permanent: false }).permanent.limit).toBe(3);
   });
 });

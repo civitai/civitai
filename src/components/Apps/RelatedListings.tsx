@@ -10,9 +10,7 @@ import {
   selectRelatedListings,
 } from '~/components/Apps/related-listings';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import {
-  isMarketplaceCategory,
-} from '~/server/services/blocks/marketplace-categories.constants';
+import { isMarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
 import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
 import { hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
 import { trpc } from '~/utils/trpc';

@@ -117,10 +117,7 @@ export function ReviewListingModal({
   const close = onClose;
 
   const enabled = !!currentUser && opened;
-  const { data: myReview } = trpc.appListings.getMyReview.useQuery(
-    { appListingId },
-    { enabled }
-  );
+  const { data: myReview } = trpc.appListings.getMyReview.useQuery({ appListingId }, { enabled });
 
   // Seed the form from the viewer's existing review once it loads (keyed on the
   // review id so a fresh load reseeds without clobbering in-progress typing).

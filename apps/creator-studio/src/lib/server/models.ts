@@ -18,8 +18,8 @@ function paidAccessFilter(alias: string) {
   return sql<boolean>`exists (select 1 from "PaidAccess" pa where pa."entityType" = 'ModelVersion' and pa."entityId" = ${p}"id" and (pa."endsAt" is null or pa."endsAt" > now()))`;
 }
 
-// A stored 0 counts as OFF, matching every fee read (effectiveLicensingFee, the mini endpoint, feeChip) —
-// legacy rows still hold 0 from the old clear path, and an IS NOT NULL test lists them as "fee set".
+// A stored 0 counts as OFF: legacy rows still hold 0 from the old clear path, and an IS NOT NULL
+// test would list them as "fee set".
 // Parenthesized because this is AND'd into a larger WHERE: OR binds looser, so an unwrapped `x is null or
 // x <= 0` would reassociate and drop every other filter.
 function feeFilter(alias: string, mode: 'set' | 'off') {

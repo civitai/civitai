@@ -5,7 +5,7 @@
   // carries the full pitch + the external Creator Program CTA.
   let {
     title,
-    body = 'Fees and paid access are open to everyone. A membership raises your caps.',
+    body = 'Fees and paid access are open to everyone. A membership raises how many new prices you can set each month.',
     cta = 'See tiers',
     class: className = '',
   }: { title?: string; body?: string; cta?: string; class?: string } = $props();

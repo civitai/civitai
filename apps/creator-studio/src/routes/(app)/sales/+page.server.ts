@@ -118,19 +118,13 @@ export const load: PageServerLoad = async ({ locals, parent, cookies }) => {
 export const actions: Actions = {
   // What the sale form needs about a selection it can't see: how much of it a sale would cover, why
   // the rest is out, and the cheapest price among the covered ones (a fixed discount must stay under it).
-  salePreview: async ({ request, locals, cookies }) => {
+  salePreview: async ({ request, locals }) => {
     if (await salesOff(locals.user))
       return fail(403, { error: 'Scheduled sales are not available yet.' });
     const form = await request.formData();
     const parsed = versionIdsSchema.safeParse(form.get('versionIds'));
     if (!parsed.success) return fail(400, { error: firstError(parsed.error) });
-    // cappedTier, not the display label: the floor is measured against what a buyer is charged, and a
-    // lapsed membership keeps its name but is capped at free.
-    const selection = await summarizeSaleSelection(
-      locals.user.id,
-      parsed.data,
-      cappedTier(resolveMembership(locals.user, cookies.get(TEST_MEMBERSHIP_COOKIE)))
-    );
+    const selection = await summarizeSaleSelection(locals.user.id, parsed.data);
     return salePreviewPayload(selection);
   },
 
@@ -216,22 +210,14 @@ export const actions: Actions = {
     return { shortened: true };
   },
 
-  deepenSale: async ({ request, locals, cookies }) => {
+  deepenSale: async ({ request, locals }) => {
     if (await salesOff(locals.user))
       return fail(403, { error: 'Scheduled sales are not available yet.' });
     const form = await request.formData();
     const parsed = deepenSaleSchema.safeParse(Object.fromEntries(form));
     if (!parsed.success) return fail(400, { error: firstError(parsed.error) });
 
-    // cappedTier, never the display tier: the zero-floor is measured against what a buyer is charged,
-    // and a lapsed membership is capped at free however its label reads.
-    const membership = resolveMembership(locals.user, cookies.get(TEST_MEMBERSHIP_COOKIE));
-    const result = await deepenSale(
-      locals.user.id,
-      parsed.data.saleId,
-      parsed.data.discountAmount,
-      cappedTier(membership)
-    );
+    const result = await deepenSale(locals.user.id, parsed.data.saleId, parsed.data.discountAmount);
     if (!result.ok) return fail(400, { error: result.error });
     await bustVersionCache(request.headers.get('cookie') ?? '', result.versionIds);
     return { deepened: true };

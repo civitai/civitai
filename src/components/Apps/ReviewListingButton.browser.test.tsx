@@ -20,7 +20,12 @@ import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
 const mocks = vi.hoisted(() => ({
   upsert: vi.fn(),
   invalidate: vi.fn().mockResolvedValue(undefined),
-  myReview: null as null | { id: number; recommended: boolean; details: string | null; createdAt: Date },
+  myReview: null as null | {
+    id: number;
+    recommended: boolean;
+    details: string | null;
+    createdAt: Date;
+  },
   currentUser: { id: 42, username: 'viewer' } as null | { id: number; username: string },
 }));
 

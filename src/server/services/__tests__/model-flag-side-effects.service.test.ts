@@ -323,4 +323,3 @@ describe('applyModelFlagSideEffects — gallery browsing-level cache bust', () =
     expect(mockRedisDel).not.toHaveBeenCalled();
   });
 });
-

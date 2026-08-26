@@ -152,9 +152,7 @@ describe('OffsiteReviewQueue — kind-aware review row', () => {
     renderWithProviders(<OffsiteReviewQueue />);
     await page.getByRole('button', { name: 'Review' }).click();
     // Content checklist items — the off-site (content-only) set.
-    await expect
-      .element(page.getByText('URL is https and opens externally'))
-      .toBeInTheDocument();
+    await expect.element(page.getByText('URL is https and opens externally')).toBeInTheDocument();
     await expect.element(page.getByText('Icon present')).toBeInTheDocument();
     // NO on-site code items.
     expect(page.getByText('Code diff reviewed').elements()).toHaveLength(0);
@@ -186,9 +184,7 @@ describe('OffsiteReviewModal — scan-clean dimension (Item 1)', () => {
     };
     renderWithProviders(<OffsiteReviewQueue />);
     await page.getByRole('button', { name: 'Review' }).click();
-    await expect
-      .element(page.getByTestId('apps-offsite-assets-scan-pending'))
-      .toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-offsite-assets-scan-pending')).toBeInTheDocument();
     expect(page.getByTestId('apps-offsite-assets-scan-blocked').elements()).toHaveLength(0);
   });
 
@@ -209,9 +205,7 @@ describe('OffsiteReviewModal — scan-clean dimension (Item 1)', () => {
     };
     renderWithProviders(<OffsiteReviewQueue />);
     await page.getByRole('button', { name: 'Review' }).click();
-    await expect
-      .element(page.getByTestId('apps-offsite-approve-open'))
-      .toBeDisabled();
+    await expect.element(page.getByTestId('apps-offsite-approve-open')).toBeDisabled();
   });
 
   test('the Approve button is DISABLED while an asset is still scanning', async () => {
@@ -222,17 +216,13 @@ describe('OffsiteReviewModal — scan-clean dimension (Item 1)', () => {
     };
     renderWithProviders(<OffsiteReviewQueue />);
     await page.getByRole('button', { name: 'Review' }).click();
-    await expect
-      .element(page.getByTestId('apps-offsite-approve-open'))
-      .toBeDisabled();
+    await expect.element(page.getByTestId('apps-offsite-approve-open')).toBeDisabled();
   });
 
   test('the Approve button is ENABLED when every asset is scan-clean', async () => {
     renderWithProviders(<OffsiteReviewQueue />);
     await page.getByRole('button', { name: 'Review' }).click();
-    await expect
-      .element(page.getByTestId('apps-offsite-approve-open'))
-      .not.toBeDisabled();
+    await expect.element(page.getByTestId('apps-offsite-approve-open')).not.toBeDisabled();
   });
 });
 
@@ -389,9 +379,7 @@ describe('OffsiteReviewModal — readOnly (history) posture hides the action but
   test('readOnly HIDES both entry action buttons but keeps the content detail view', async () => {
     renderWithProviders(<OffsiteReviewModal request={OFFSITE_ROW} onClose={vi.fn()} readOnly />);
     // Detail still renders — the external URL + the content checklist.
-    await expect
-      .element(page.getByText('URL is https and opens externally'))
-      .toBeInTheDocument();
+    await expect.element(page.getByText('URL is https and opens externally')).toBeInTheDocument();
     await expect.element(page.getByText('Icon present')).toBeInTheDocument();
     // But NEITHER Approve… nor Reject… action button renders in read-only mode.
     expect(page.getByTestId('apps-offsite-approve-open').elements()).toHaveLength(0);
@@ -432,9 +420,9 @@ describe('OffsiteReviewModal — on-site listing-media revision (kind: onsite)',
   test('renders the listing-media header, the asset checklist, and NO URL / connect panel', async () => {
     renderWithProviders(<OffsiteReviewModal request={ONSITE_MEDIA_ROW} onClose={vi.fn()} />);
     // Kind-aware header — the "listing media" badge, not "external".
-    await expect.element(page.getByTestId('apps-offsite-kind-badge')).toHaveTextContent(
-      'listing media'
-    );
+    await expect
+      .element(page.getByTestId('apps-offsite-kind-badge'))
+      .toHaveTextContent('listing media');
     expect(page.getByText('external', { exact: true }).elements()).toHaveLength(0);
     // The on-site explainer note renders.
     await expect.element(page.getByTestId('apps-offsite-onsite-note')).toBeInTheDocument();
@@ -474,9 +462,7 @@ describe('OffsiteReviewModal — content-rating derive + mod override', () => {
     await expect.element(derived).toBeInTheDocument();
     expect(derived.element().textContent).toBe('R');
     // Assets more mature than declared → the mismatch warning renders.
-    await expect
-      .element(page.getByTestId('apps-offsite-rating-mismatch'))
-      .toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-offsite-rating-mismatch')).toBeInTheDocument();
   });
 
   test('the approve rating Select defaults to the derived value and approve passes it', async () => {
