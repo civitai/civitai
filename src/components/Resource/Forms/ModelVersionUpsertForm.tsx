@@ -1304,11 +1304,11 @@ export function ModelVersionUpsertForm({
                   <Alert
                     color="yellow"
                     icon={<IconAlertTriangle size={18} />}
-                    title="You can't charge for this version yet"
+                    title="You can't monetize this version yet"
                     mb="sm"
                   >
                     <Text size="sm">
-                      Charging for a model needs a creator score of{' '}
+                      Monetizing a model version needs a creator score of{' '}
                       {eligibility.required.toLocaleString()}. Yours is{' '}
                       {eligibility.score.toLocaleString()} —{' '}
                       {eligibility.shortfall.toLocaleString()} to go. Prices you have already set
@@ -1318,7 +1318,7 @@ export function ModelVersionUpsertForm({
                 )}
                 {!monetizationBlocked && (showPaidAccessInput || showLicensingFeeBlock) && (
                   <Switch
-                    label="I want to charge for this version"
+                    label="I want to monetize this version"
                     description="Sell access to the version, charge a fee per generation, or both."
                     checked={chargeEnabled}
                     onChange={(e) => {
@@ -1329,6 +1329,23 @@ export function ModelVersionUpsertForm({
                     disabled={belowPricingFloor || (isEarlyAccessOver && !!version?.paidAccess)}
                   />
                 )}
+                {!monetizationBlocked &&
+                  (showPaidAccessInput || showLicensingFeeBlock) &&
+                  allowanceState && (
+                    <Group gap={6}>
+                      <Text size="xs" c={allowanceState.atLimit ? 'yellow.5' : 'dimmed'}>
+                        {formatPricingAllowance(allowanceState)}
+                        {hasExistingCharge ? ' · editing this one is free' : ''}
+                      </Text>
+                      {!allowanceState.unlimited && (
+                        <CapUpsell
+                          used={allowanceState.used}
+                          limit={pricingAllowance?.limit ?? Infinity}
+                          capTier={feeCapTier}
+                        />
+                      )}
+                    </Group>
+                  )}
                 {removingStoredCharge && !monetizationBlocked && (
                   <Stack gap={4} mt="sm" align="flex-start">
                     {/* Red only when the control the sentence is about is off screen — that's the case
@@ -1845,19 +1862,6 @@ export function ModelVersionUpsertForm({
                                 </Text>
                               </Group>
                             </Input.Wrapper>
-                            {allowanceState && !allowanceState.unlimited && (
-                              <Group gap={6}>
-                                <Text size="xs" c={allowanceState.atLimit ? 'yellow.5' : 'dimmed'}>
-                                  {formatPricingAllowance(allowanceState)}
-                                  {hasExistingCharge ? ' · editing this one is free' : ''}
-                                </Text>
-                                <CapUpsell
-                                  used={allowanceState.used}
-                                  limit={pricingAllowance?.limit ?? Infinity}
-                                  capTier={feeCapTier}
-                                />
-                              </Group>
-                            )}
                             {showLicensingFeeSettlementCurrency && (
                               <InputSelect
                                 name="licensingFeeSettlementCurrency"

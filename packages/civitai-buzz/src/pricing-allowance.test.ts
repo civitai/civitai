@@ -128,13 +128,13 @@ describe('pricingAllowanceState', () => {
 describe('formatPricingAllowance', () => {
   it('says the same thing everywhere it is rendered', () => {
     expect(formatPricingAllowance(pricingAllowanceState({ used: 1, limit: 3 }))).toBe(
-      '1 of 3 versions priced this month'
+      '1 of 3 versions monetized this month'
     );
     expect(formatPricingAllowance(pricingAllowanceState({ used: 3, limit: 3 }))).toBe(
-      '3 of 3 versions priced this month · allowance used up'
+      '3 of 3 versions monetized this month · limit reached'
     );
     expect(formatPricingAllowance(pricingAllowanceState({ used: 7, limit: null }))).toBe(
-      '7 versions priced this month · unlimited'
+      '7 versions monetized this month · unlimited'
     );
   });
 });
@@ -166,7 +166,18 @@ describe('refusal messages', () => {
     expect(formatPricingAllowance(pricingAllowanceState({ used: 1, limit: 3 }))).toContain(
       'versions'
     );
-    expect(pricingAllowanceMessage(3, 3)).not.toMatch(/d models/);
+    expect(pricingAllowanceMessage(3, 3)).not.toMatch(/\d+ models\b/);
+  });
+
+  // "monetize" is the verb everywhere a slot is counted; "price" survives only as the NOUN for what
+  // is already set ("changing a price you have already set").
+  it('use monetize as the verb, not price', () => {
+    expect(pricingAllowanceMessage(3, 3)).toMatch(/monetized 3 of 3/);
+    expect(pricingAllowanceMessage(3, 3)).not.toMatch(/\bpriced\b/);
+    expect(pricingFloorMessage()).toMatch(/to monetize a model version/);
+    expect(formatPricingAllowance(pricingAllowanceState({ used: 1, limit: 3 }))).toMatch(
+      /monetized/
+    );
   });
 
   it('both say an existing price is unaffected', () => {

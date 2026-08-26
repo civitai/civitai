@@ -17,14 +17,14 @@
 <div class={className}>
   <div class="mb-3 overflow-x-auto">
     <p class="mb-1 text-xs font-medium text-white">
-      Model versions you can price each month
+      Model versions you can monetize each month
       <span class="font-normal text-dark-2">— a licensing fee or paid access</span>
     </p>
     <table class="w-full min-w-72 border-collapse text-left text-xs">
       <thead>
         <tr class="text-dark-2">
           <th class="py-1.5 pr-3 font-medium">Tier</th>
-          <th class="py-1.5 pr-2 text-right font-medium">Priced / month</th>
+          <th class="py-1.5 pr-2 text-right font-medium">Monetized / month</th>
         </tr>
       </thead>
       <tbody>

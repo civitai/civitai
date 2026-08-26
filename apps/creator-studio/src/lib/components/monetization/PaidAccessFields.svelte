@@ -91,8 +91,8 @@
       {#if ctx.permBlockedReason}
         {ctx.permBlockedReason}
       {:else}
-        You've used this month's pricing allowance ({formatPricingAllowance(allowanceState)}) —
-        upgrade your membership to price more model versions.
+        You've used this month's monetization limit ({formatPricingAllowance(allowanceState)}) —
+        upgrade your membership to monetize more model versions.
       {/if}
     </span>
   {/if}

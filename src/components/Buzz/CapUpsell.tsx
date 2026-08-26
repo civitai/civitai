@@ -10,7 +10,7 @@ export function CapUpsell({
   used,
   limit,
   capTier,
-  title = 'Model versions you can price each month',
+  title = 'Model versions you can monetize each month',
   expanded = false,
 }: {
   /** Slots spent this calendar month. */
@@ -81,7 +81,7 @@ export function CapUpsell({
     <Popover width={300} withArrow shadow="md" position="top-start" withinPortal>
       <Popover.Target>
         <Anchor component="button" type="button" size="xs">
-          Want to price more model versions?
+          Want to monetize more model versions?
         </Anchor>
       </Popover.Target>
       <Popover.Dropdown>{body}</Popover.Dropdown>

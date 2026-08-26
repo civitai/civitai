@@ -454,16 +454,16 @@
         <Alert.Root variant="destructive">
           <IconAlertTriangle />
           {#if eligibility.permBlockedReason}
-            <Alert.Title>You can't charge for a model yet</Alert.Title>
+            <Alert.Title>You can't monetize a model version yet</Alert.Title>
             <Alert.Description>{eligibility.permBlockedReason}</Alert.Description>
           {:else}
-            <Alert.Title>Over this month's pricing allowance</Alert.Title>
+            <Alert.Title>Over this month's monetization limit</Alert.Title>
             <Alert.Description>
-              You can price {pricingSlotsRemaining} more model version{pricingSlotsRemaining === 1
+              You can monetize {pricingSlotsRemaining} more model version{pricingSlotsRemaining === 1
                 ? ''
                 : 's'} this
-              month, but this selection would price {unpricedCount}. Deselect some, or the save will
-              be rejected. Versions you already charge for don't count.
+              month, but this selection would monetize {unpricedCount}. Deselect some, or the save
+              will be rejected. Versions you already monetize don't count.
             </Alert.Description>
           {/if}
         </Alert.Root>

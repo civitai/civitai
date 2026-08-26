@@ -256,7 +256,7 @@
       {#if eligibility.permBlockedReason}
         {eligibility.permBlockedReason}
       {:else}
-        You've also used this month's pricing allowance ({formatPricingAllowance(allowance)}).
+        You've also used this month's monetization limit ({formatPricingAllowance(allowance)}).
       {/if}
     </p>
   {:else}

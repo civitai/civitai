@@ -409,7 +409,7 @@
       {#if !data.caps.pricingFloor.eligible}
         <span class="font-medium text-yellow-5">
           Creator score {data.caps.pricingFloor.score.toLocaleString()} of {data.caps.pricingFloor.required.toLocaleString()}
-          to charge
+          to monetize
         </span>
       {:else}
         <span class="font-medium {permAtCap ? 'text-yellow-5' : 'text-white'}">
@@ -444,7 +444,7 @@
         class="cursor-pointer select-none text-dark-2 marker:text-dark-2 hover:text-white"
         data-testid="tier-caps-toggle"
       >
-        Pricing limits · {data.caps.tier}
+        Monetization limits · {data.caps.tier}
       </summary>
       <TierCapsTable capTier={data.caps.capTier} class="mt-3" />
     </details>

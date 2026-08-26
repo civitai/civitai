@@ -45,10 +45,10 @@ const defaultBenefits = [
       return (
         <Text>
           {limit === undefined ? (
-            <>Price more model versions each month</>
+            <>Monetize more model versions each month</>
           ) : (
             <>
-              Put a price on{' '}
+              Monetize{' '}
               <Text component="span" fw={600}>
                 {limit === null
                   ? 'unlimited model versions'

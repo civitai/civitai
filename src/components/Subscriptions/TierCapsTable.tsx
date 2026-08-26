@@ -12,7 +12,7 @@ export const TierCapsTable = () => {
     <Stack gap="lg">
       <Stack gap={4}>
         <Text size="sm" fw={600}>
-          Model versions you can price each month{' '}
+          Model versions you can monetize each month{' '}
           <Text component="span" size="sm" c="dimmed" fw={400}>
             — a licensing fee or paid access
           </Text>
@@ -22,7 +22,7 @@ export const TierCapsTable = () => {
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>Tier</Table.Th>
-                <Table.Th ta="right">Priced / month</Table.Th>
+                <Table.Th ta="right">Monetized / month</Table.Th>
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>

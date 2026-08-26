@@ -14,7 +14,7 @@
     used,
     limit,
     capTier,
-    title = 'Model versions you can price each month',
+    title = 'Model versions you can monetize each month',
     expanded = false,
   }: {
     /** Slots spent this calendar month. */
@@ -63,7 +63,7 @@
 {:else if show}
   <Popover.Root>
     <Popover.Trigger class="text-xs text-blue-4 underline-offset-2 hover:underline">
-      Want to price more model versions?
+      Want to monetize more model versions?
     </Popover.Trigger>
     <Popover.Content class="w-72 border-dark-4 bg-dark-7 p-3 text-sm text-white">
       {@render capRows()}

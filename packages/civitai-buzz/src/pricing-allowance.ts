@@ -110,11 +110,11 @@ export function pricingEligibility(score: number | null | undefined): PricingEli
 export function pricingFloorMessage(score?: number | null): string {
   const standing =
     score == null ? '' : ` Yours is ${pricingEligibility(score).score.toLocaleString()}.`;
-  return `You need a creator score of ${MONETIZATION_MIN_CREATOR_SCORE.toLocaleString()} to charge for a model version.${standing} Prices you have already set are unaffected.`;
+  return `You need a creator score of ${MONETIZATION_MIN_CREATOR_SCORE.toLocaleString()} to monetize a model version.${standing} Prices you have already set are unaffected.`;
 }
 
 export function pricingAllowanceMessage(used: number, limit: number): string {
-  return `You have priced ${used} of ${limit} model versions this month. Upgrade your membership to price more, or wait until next month — changing a price you have already set is always free.`;
+  return `You have monetized ${used} of ${limit} model versions this month. Upgrade your membership to monetize more, or wait until next month — changing a price you have already set is always free.`;
 }
 
 /** What the creator's allowance looks like right now, for every counter and gate in either UI. */
@@ -154,9 +154,9 @@ export function pricingAllowanceState({
 
 /** One vocabulary for the counter, shared by the server's refusal and every UI that renders it. */
 export function formatPricingAllowance(state: PricingAllowanceState): string {
-  if (state.unlimited) return `${state.used} versions priced this month · unlimited`;
-  return `${state.used} of ${state.limit} versions priced this month${
-    state.atLimit ? ' · allowance used up' : ''
+  if (state.unlimited) return `${state.used} versions monetized this month · unlimited`;
+  return `${state.used} of ${state.limit} versions monetized this month${
+    state.atLimit ? ' · limit reached' : ''
   }`;
 }
 
