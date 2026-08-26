@@ -13,6 +13,7 @@
 import { Alert, List, Text } from '@mantine/core';
 
 import { useGenerationConfig } from '~/components/ImageGeneration/GenerationForm/generation.utils';
+import { useAppContext } from '~/providers/AppProvider';
 import { isWorkflowOrVariant } from '~/shared/data-graph/generation/config/workflows';
 import { useWhatIfContext } from './WhatIfProvider';
 
@@ -78,6 +79,7 @@ function getSelectedResources(model: unknown, resources: unknown, vae: unknown):
  */
 export function ResourceAlerts({ model, resources, vae }: ResourceAlertsProps) {
   const { unstableResources: allUnstableResources } = useGenerationConfig();
+  const { domain } = useAppContext();
 
   // Extract resource-related values (may be undefined depending on active discriminator branch)
   const selectedResources = getSelectedResources(model, resources, vae);
@@ -87,13 +89,13 @@ export function ResourceAlerts({ model, resources, vae }: ResourceAlertsProps) {
     allUnstableResources.some((r) => r === x.id)
   );
 
-  // Filter to get content restricted resources
-  const minorFlaggedResources = selectedResources.filter((x) => x.model?.minor);
-  const sfwFlaggedResources = selectedResources.filter((x) => x.model?.sfwOnly);
-  const hasContentRestriction = minorFlaggedResources.length > 0 || sfwFlaggedResources.length > 0;
+  // On green nothing mature can be generated regardless of resource, so the alert says nothing.
+  const restrictedResources = domain.green
+    ? []
+    : selectedResources.filter((x) => x.model?.minor || x.model?.sfwOnly);
 
   // Early return if no alerts
-  if (unstableResources.length === 0 && !hasContentRestriction) {
+  if (unstableResources.length === 0 && restrictedResources.length === 0) {
     return null;
   }
 
@@ -118,27 +120,25 @@ export function ResourceAlerts({ model, resources, vae }: ResourceAlertsProps) {
       )}
 
       {/* Content Restricted Alert */}
-      {hasContentRestriction && (
+      {restrictedResources.length > 0 && (
         <Alert color="yellow" title="Content Restricted" radius="md">
           <Text size="xs">
-            {minorFlaggedResources.length > 0
-              ? `A resource you selected does not allow the generation of non-PG level content. If you attempt to generate non-PG`
-              : `A resource you selected does not allow the generation of content rated above PG level. If you attempt to generate sexualized`}{' '}
-            content with this resource the image will not be returned, but you{' '}
+            {restrictedResources.length > 1
+              ? `The following resources cannot be used to generate mature content. If you attempt to generate mature content with them,`
+              : `The following resource cannot be used to generate mature content. If you attempt to generate mature content with it,`}{' '}
+            the image will not be returned, but you{' '}
             <Text span italic inherit>
               will
             </Text>
             {` be charged Buzz.`}
           </Text>
-          {minorFlaggedResources.length > 0 && (
-            <List size="xs" mt="xs">
-              {minorFlaggedResources.map((resource) => (
-                <List.Item key={resource.id}>
-                  {resource.model.name} - {resource.name}
-                </List.Item>
-              ))}
-            </List>
-          )}
+          <List size="xs" mt="xs">
+            {restrictedResources.map((resource) => (
+              <List.Item key={resource.id}>
+                {resource.model.name} - {resource.name}
+              </List.Item>
+            ))}
+          </List>
         </Alert>
       )}
     </div>
