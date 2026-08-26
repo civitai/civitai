@@ -1283,9 +1283,26 @@ export function ModelVersionUpsertForm({
             monetizationBlocked) && (
             <Card withBorder p="md">
               <Stack gap={0}>
-                <Text fw={600} mb="sm">
-                  Monetization
-                </Text>
+                <Stack gap={4} mb="sm">
+                  <Text fw={600}>Monetization</Text>
+                  {!monetizationBlocked &&
+                    (showPaidAccessInput || showLicensingFeeBlock) &&
+                    allowanceState && (
+                      <Group gap={6}>
+                        <Text size="xs" c={allowanceState.atLimit ? 'yellow.5' : 'dimmed'}>
+                          {formatPricingAllowance(allowanceState)}
+                          {hasExistingCharge ? ' · editing this one is free' : ''}
+                        </Text>
+                        {!allowanceState.unlimited && (
+                          <CapUpsell
+                            used={allowanceState.used}
+                            limit={pricingAllowance?.limit ?? Infinity}
+                            capTier={feeCapTier}
+                          />
+                        )}
+                      </Group>
+                    )}
+                </Stack>
                 {monetizationBlocked && (
                   <Alert
                     color="red"
@@ -1344,23 +1361,6 @@ export function ModelVersionUpsertForm({
                     disabled={belowPricingFloor || (isEarlyAccessOver && !!version?.paidAccess)}
                   />
                 )}
-                {!monetizationBlocked &&
-                  (showPaidAccessInput || showLicensingFeeBlock) &&
-                  allowanceState && (
-                    <Group gap={6}>
-                      <Text size="xs" c={allowanceState.atLimit ? 'yellow.5' : 'dimmed'}>
-                        {formatPricingAllowance(allowanceState)}
-                        {hasExistingCharge ? ' · editing this one is free' : ''}
-                      </Text>
-                      {!allowanceState.unlimited && (
-                        <CapUpsell
-                          used={allowanceState.used}
-                          limit={pricingAllowance?.limit ?? Infinity}
-                          capTier={feeCapTier}
-                        />
-                      )}
-                    </Group>
-                  )}
                 {removingStoredCharge && !monetizationBlocked && (
                   <Stack gap={4} mt="sm" align="flex-start">
                     {/* Red only when the control the sentence is about is off screen — that's the case
