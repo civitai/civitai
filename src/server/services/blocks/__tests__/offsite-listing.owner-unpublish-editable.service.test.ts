@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import {
   getMyListingForApp,
   getMyListingForEdit,
@@ -34,50 +35,17 @@ import {
 
 type Row = Record<string, unknown> & { id: string };
 
-const { mockRead, mockWrite, seq } = vi.hoisted(() => {
-  const makeClient = () => ({
-    appListing: {
-      findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
-      findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
-      create: vi.fn(async (args: { data: unknown }) => args.data),
-      update: vi.fn(async (args: { data: unknown }) => args.data),
-      updateMany: vi.fn(async (..._a: unknown[]) => ({ count: 1 })),
-      deleteMany: vi.fn(async (..._a: unknown[]) => ({ count: 1 })),
-    },
-    appCollaborator: { findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    appListingScreenshot: {
-      count: vi.fn(async (..._a: unknown[]) => 0),
-      findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
-      createMany: vi.fn(async (..._a: unknown[]) => ({ count: 0 })),
-    },
-    appListingPublishRequest: {
-      findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
-      findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
-    },
-    appListingModerationEvent: {
-      findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
-      findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
-      create: vi.fn(async (args: { data: unknown }) => args.data),
-    },
-    image: { findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []) },
-    $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
-  });
-  const mockRead = makeClient();
-  const mockWrite = makeClient() as ReturnType<typeof makeClient> & {
-    $transaction: ReturnType<typeof vi.fn>;
-  };
-  mockWrite.$transaction = vi.fn(async (cb: (tx: unknown) => Promise<unknown>) => cb(mockWrite));
-  return { mockRead, mockWrite, seq: { n: 0 } };
-});
-
-vi.mock('~/server/db/client', () => ({ dbRead: mockRead, dbWrite: mockWrite }));
-vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: (url: string) => `edge:${url}` }));
-vi.mock('~/server/utils/app-block-ids', () => ({
-  newAppListingId: () => `apl_new_${++seq.n}`,
-  newAppListingPublishRequestId: () => `alpr_new_${++seq.n}`,
-  newAppListingScreenshotId: () => `apls_new_${++seq.n}`,
-  newUlid: () => `ULID${++seq.n}`,
-}));
+/**
+ * 🔴 THE CANONICAL `~/server/db/client` MOCK, not a per-file `vi.mock`. Registered once in
+ * `src/__tests__/setup.ts`; a hand-rolled one here would freeze this file's mock shape into
+ * every later file in the same worker under `isolate: false`. See
+ * docs/testing/shared-module-mocks.md and `no-direct-shared-module-mock.test.ts`.
+ *
+ * `dbRead` and `dbWrite` are DISTINCT nodes here, which is what makes the "the gate reads
+ * the PRIMARY" case below able to say anything at all.
+ */
+const mockRead = dbMock.dbRead;
+const mockWrite = dbMock.dbWrite;
 
 const OWNER = 42;
 const LISTING_ID = 'apl_parent';
@@ -164,22 +132,25 @@ function wireLastModerationEvent(action: string | null) {
 }
 
 beforeEach(() => {
+  // 🔴 The canonical mock resets between FILES, not between tests — several cases here
+  // assert `not.toHaveBeenCalled()`, which silently reads a previous test's calls without
+  // this. Implementations survive `mockClear`, so the defaults below are re-declared after.
+  vi.clearAllMocks();
+  // The canonical mock resets every node between files; these are this file's DEFAULTS.
   for (const client of [mockRead, mockWrite]) {
-    client.appListing.findUnique.mockReset().mockResolvedValue(null);
-    client.appListing.findFirst.mockReset().mockResolvedValue(null);
-    client.appListing.create.mockReset().mockImplementation(async (a: { data: unknown }) => a.data);
-    client.appListing.update.mockReset().mockImplementation(async (a: { data: unknown }) => a.data);
-    client.appCollaborator.findFirst.mockReset().mockResolvedValue(null);
-    client.appListingScreenshot.findMany.mockReset().mockResolvedValue([]);
-    client.appListingPublishRequest.findFirst.mockReset().mockResolvedValue(null);
-    client.appListingModerationEvent.findFirst.mockReset().mockResolvedValue(null);
-    client.appListingModerationEvent.findMany.mockReset().mockResolvedValue([]);
-    client.image.findMany.mockReset().mockResolvedValue([]);
+    client.appListing.findUnique.mockResolvedValue(null);
+    client.appListing.findFirst.mockResolvedValue(null);
+    client.appListing.create.mockImplementation(async (a: { data: unknown }) => a.data);
+    client.appListing.update.mockImplementation(async (a: { data: unknown }) => a.data);
+    client.appCollaborator.findFirst.mockResolvedValue(null);
+    client.appListingScreenshot.findMany.mockResolvedValue([]);
+    client.appListingPublishRequest.findFirst.mockResolvedValue(null);
+    client.appListingModerationEvent.findFirst.mockResolvedValue(null);
+    client.image.findMany.mockResolvedValue([]);
   }
-  mockWrite.$transaction
-    .mockReset()
-    .mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => cb(mockWrite));
-  seq.n = 0;
+  mockWrite.$transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) =>
+    cb(mockWrite)
+  );
 });
 
 // ---------------------------------------------------------------------------
