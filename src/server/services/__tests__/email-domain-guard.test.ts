@@ -120,7 +120,75 @@ describe('assertEmailAllowed', () => {
     expect(resolveMx).not.toHaveBeenCalled();
   });
 
+  it('does not throw when the cached blocklist value carries NO `data` key', async () => {
+    // `getBlocklistDTO` returns `JSON.parse(cached)` verbatim, and this shape is one three
+    // separately-released apps can write into the shared key — the auth hub's blocklist test
+    // asserts it directly. Without the `?? []` in getBlockedEmailDomains this is a TypeError on
+    // `.some`, i.e. a 500 on every signup, which is how it surfaced in the full suite.
+    redisGet.mockResolvedValue(JSON.stringify({ type: BlocklistType.EmailDomain }));
+
+    await expect(assertEmailAllowed('someone@no-data-key.test')).resolves.toBeUndefined();
+  });
+
+  it('DEGRADES OPEN when the blocklist lookup itself fails', async () => {
+    // The lookup is a redis GET falling back to a `dbWrite` read. Rejecting on a failure there
+    // would take down signup, profile-email set and email change together, for as long as the blip
+    // lasts — and Reddit accounts arrive with no address, so that is the whole funnel.
+    redisGet.mockRejectedValue(new Error('redis unreachable'));
+
+    await expect(assertEmailAllowed('someone@lookup-down.test')).resolves.toBeUndefined();
+  });
+
+  it('strips a trailing FQDN dot before comparing against the list', async () => {
+    // `provider.com.` resolves identically to `provider.com` but is a distinct string, so without
+    // this it misses every entry AND takes a second slot in a citext-unique column.
+    setBlockedDomains(['blocked-fqdn.test']);
+
+    expect(await reject('someone@blocked-fqdn.test.')).toBeInstanceOf(TRPCError);
+  });
+
+  it('rejects a malformed domain the resolver refuses to look up (EBADNAME)', async () => {
+    // EBADNAME is an answer — "this cannot be a hostname" — not a failed lookup. Folding it into
+    // the fail-open branch would ACCEPT exactly the invented input this check exists to reject.
+    resolveMx.mockRejectedValue(dnsError('EBADNAME'));
+
+    expect(await reject('someone@!!!')).toBeInstanceOf(TRPCError);
+  });
+
   it('rejects an address with no domain part', async () => {
     expect(await reject('not-an-email')).toBeInstanceOf(TRPCError);
+  });
+
+  it('rejects an address that is all local part and a trailing @', async () => {
+    expect(await reject('someone@')).toBeInstanceOf(TRPCError);
+  });
+
+  it('reads the domain after the LAST @, not the first', async () => {
+    // A quoted-local address carries more than one `@`. Taking the first segment yields a domain
+    // that matches no list entry, which admits a blocked address rather than rejecting it.
+    setBlockedDomains(['blocked-last-at.test']);
+
+    expect(await reject('"a@b"@blocked-last-at.test')).toBeInstanceOf(TRPCError);
+  });
+
+  it('matches the WHOLE domain, not a substring of it', async () => {
+    // Negative control for the matcher. Without an allowed address tested against a NON-empty list,
+    // widening the comparison to `domain.includes(entry)` passes every other test in this file — and
+    // in production an entry of `com` would then block everything, on a list moderators hand-edit.
+    setBlockedDomains(['owed-substring.test', 'test']);
+
+    await expect(assertEmailAllowed('someone@allowed-substring.test')).resolves.toBeUndefined();
+  });
+
+  it('matches a list entry that carries surrounding whitespace', async () => {
+    setBlockedDomains(['  blocked-untrimmed.test  ']);
+
+    expect(await reject('someone@blocked-untrimmed.test')).toBeInstanceOf(TRPCError);
+  });
+
+  it('matches an address typed with surrounding whitespace', async () => {
+    setBlockedDomains(['blocked-input-space.test']);
+
+    expect(await reject('someone@ blocked-input-space.test ')).toBeInstanceOf(TRPCError);
   });
 });

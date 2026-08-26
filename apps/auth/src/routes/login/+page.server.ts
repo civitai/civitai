@@ -8,13 +8,22 @@ import { readReturnUrl, readSync, buildPostLoginRedirect } from '$lib/server/aut
 import { buildPostLoginOriginCheck } from '$lib/server/oauth/first-party';
 import { createVerificationToken } from '$lib/server/auth/email-tokens';
 import { sendVerificationEmail } from '$lib/server/email/verification.email';
-import { captchaSiteKey, captchaManagedSiteKey, verifyCaptchaToken } from '$lib/server/auth/captcha';
-import { getBlockedEmailDomains } from '$lib/server/auth/blocklist';
+import {
+  captchaSiteKey,
+  captchaManagedSiteKey,
+  verifyCaptchaToken,
+} from '$lib/server/auth/captcha';
+import {
+  emailDomain,
+  getBlockedEmailDomains,
+  isBlockedDomain,
+  normalizeEmailAddress,
+} from '$lib/server/auth/blocklist';
 import { checkRateLimit } from '$lib/server/auth/rate-limit';
 import { getClientIp } from '$lib/server/auth/request';
 import { trackLoginRedirect } from '$lib/server/tracking';
 import { userExistsByEmail } from '$lib/server/auth/users';
-import { emailLoginFailuresTotal } from '$lib/server/metrics';
+import { blockedEmailDomainSignupsTotal, emailLoginFailuresTotal } from '$lib/server/metrics';
 import { logAxiomError } from '$lib/server/axiom';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -76,9 +85,7 @@ export const actions: Actions = {
   // and the blocked-email-domain list.
   email: async ({ request, url }) => {
     const data = await request.formData();
-    const email = String(data.get('email') ?? '')
-      .trim()
-      .toLowerCase();
+    const email = normalizeEmailAddress(String(data.get('email') ?? ''));
     const returnUrl = String(data.get('returnUrl') ?? '/');
     const sync = data.get(SYNC_PARAM) ? String(data.get(SYNC_PARAM)) : null;
 
@@ -99,7 +106,9 @@ export const actions: Actions = {
     //    can be split. Passes through when captcha is disabled (dev / no secret).
     const mode = data.get('captchaMode')?.toString() === 'managed' ? 'managed' : 'invisible';
     const captchaToken = (
-      mode === 'managed' ? data.get('managed-turnstile-response') : data.get('cf-turnstile-response')
+      mode === 'managed'
+        ? data.get('managed-turnstile-response')
+        : data.get('cf-turnstile-response')
     )?.toString();
     const failReason = data.get('captchaFailReason')?.toString() || undefined;
     if (!(await verifyCaptchaToken(captchaToken, ip ?? undefined, { mode, failReason }))) {
@@ -109,12 +118,13 @@ export const actions: Actions = {
     // 3. Blocked email domains: reject NEW signups on a blocklisted domain, but don't retroactively
     //    lock out EXISTING accounts when a domain is later appended to the upstream list (mirrors the
     //    existing-user exemption in step 4).
-    const domain = email.split('@')[1];
+    const domain = emailDomain(email);
     if (
       domain &&
-      (await getBlockedEmailDomains()).some((entry) => entry.trim().toLowerCase() === domain) &&
+      isBlockedDomain(await getBlockedEmailDomains(), domain) &&
       !(await userExistsByEmail(email))
     ) {
+      blockedEmailDomainSignupsTotal.inc({ path: 'email' });
       return fail(400, { email, blockedDomain: true });
     }
 

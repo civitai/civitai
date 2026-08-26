@@ -7,11 +7,7 @@
 // All counters are registered at module load with their full label sets pre-declared, so they export `0`
 // before the first increment (no "metric appears only after the first event" gaps in dashboards).
 
-import {
-  Registry,
-  collectDefaultMetrics,
-  Counter,
-} from 'prom-client';
+import { Registry, collectDefaultMetrics, Counter } from 'prom-client';
 
 // Single default registry for the whole process. `register.metrics()` (in the /metrics route) serializes
 // everything registered here.
@@ -40,6 +36,20 @@ export const oauthEventsTotal = new Counter({
 export const emailLoginFailuresTotal = new Counter({
   name: 'hub_email_login_failures_total',
   help: 'Email magic-link login failures (send/token error caught in the login action).',
+  registers: [register],
+});
+
+/**
+ * Signups refused because the email domain is blocklisted, by which half of the gate refused.
+ * Without this the gate is unobservable: a refusal increments nothing else (`loginsTotal` is past
+ * the OAuth throw, `emailLoginFailuresTotal` counts only server errors), so nobody could tell a gate
+ * that fired ten thousand times from one that never fired, or measure the false-positive rate the
+ * change was justified with.
+ */
+export const blockedEmailDomainSignupsTotal = new Counter({
+  name: 'hub_blocked_email_domain_signups_total',
+  help: 'Signups refused because the email domain is on the blocklist, labeled by login path.',
+  labelNames: ['path'] as const,
   registers: [register],
 });
 

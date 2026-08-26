@@ -2,16 +2,25 @@ import dns from 'dns/promises';
 import { createLruCache } from '~/server/utils/lru-cache';
 
 /**
- * Domains resolve to the same answer for every user and change on the order of days, so a short
- * pod-local TTL is the whole cache story — a burst of signups from one ring hits DNS once.
+ * A repeat of the SAME domain inside the window skips the lookup. It does NOT coalesce concurrent
+ * misses — `fetch` is get / miss / await / set, so N simultaneous signups on one new domain issue N
+ * queries — and the entry cap is trivially flushed by an attacker cycling fresh domains. Sized for
+ * ordinary repetition, not as a rate limit.
+ *
+ * The window is deliberately short. A NEGATIVE is cached on the same TTL as a positive, and a
+ * forged or transient NXDOMAIN for a major provider would otherwise refuse every user on it for the
+ * whole window, on the signup path, with no way to bust the entry.
  */
 const mxCache = createLruCache<string, { deliverable: boolean }>({
   name: 'email-domain-mx',
-  ttl: 10 * 60 * 1000,
+  ttl: 60 * 1000,
   max: 5000,
   keyFn: (domain) => domain,
   fetchFn: async (domain) => ({ deliverable: await resolveDeliverable(domain) }),
 });
+
+/** c-ares has no deadline of its own; without this an unresponsive resolver holds the mutation. */
+const DNS_TIMEOUT_MS = 3000;
 
 /**
  * 🔴 FAIL OPEN on anything that is not a definitive "this domain has no mail exchanger".
@@ -22,11 +31,19 @@ const mxCache = createLruCache<string, { deliverable: boolean }>({
  */
 async function resolveDeliverable(domain: string) {
   try {
-    const records = await dns.resolveMx(domain);
+    const records = await Promise.race([
+      dns.resolveMx(domain),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('dns-timeout')), DNS_TIMEOUT_MS).unref?.()
+      ),
+    ]);
     return records.length > 0;
   } catch (error) {
     const code = (error as NodeJS.ErrnoException)?.code;
-    return code !== 'ENOTFOUND' && code !== 'ENODATA';
+    // EBADNAME is an ANSWER, not a failure: the resolver is saying this cannot be a hostname. It is
+    // what `x@!!!`, `gmail.com..` and an embedded NUL produce, so treating it as "no answer" would
+    // ACCEPT exactly the malformed input this check exists to reject.
+    return code !== 'ENOTFOUND' && code !== 'ENODATA' && code !== 'EBADNAME';
   }
 }
 
@@ -42,6 +59,7 @@ async function resolveDeliverable(domain: string) {
  */
 export async function domainAcceptsMail(domain: string) {
   if (!domain) return false;
+  if (domain.length > 253) return false;
   const { deliverable } = await mxCache.fetch(domain.toLowerCase());
   return deliverable;
 }

@@ -217,7 +217,16 @@ async function readBlocklistRow(type: BlocklistType): Promise<BlocklistDTO> {
 
 export async function getBlocklistDTO({ type }: { type: BlocklistType }) {
   const cached = await redis.get(getBlocklistKey(type));
-  if (cached) return JSON.parse(cached) as BlocklistDTO;
+  if (cached) {
+    // 🔴 `data ?? []` is load-bearing. A cached value with no `data` key is a shape three
+    // separately-released apps can write into this key, and every consumer here calls `.some`,
+    // `.map` or `.join` on the result — one of them gates account signup, so letting `undefined`
+    // through turns a cache-shape surprise into a 500. Defaulted HERE rather than per-caller so a
+    // new BlocklistType consumer inherits it. The spread preserves the absent-`id` sentinel that
+    // `getClientBenignLists` reads as "no moderator row yet".
+    const parsed = JSON.parse(cached) as BlocklistDTO;
+    return { ...parsed, data: parsed.data ?? [] };
+  }
 
   const result = await readBlocklistRow(type);
 
@@ -496,6 +505,8 @@ export async function throwOnBlockedCommentContent(
 // #endregion
 
 // #region [blocked emails]
+
+const TRAILING_DOTS = /\.+$/;
 export async function getBlockedEmailDomains() {
   return await getBlocklistData(BlocklistType.EmailDomain);
 }
@@ -514,13 +525,37 @@ export async function getBlockedEmailDomains() {
  * later must not lock out an account that predates it — same rule as the hub's login action.
  */
 export async function assertEmailAllowed(email: string) {
-  const domain = email.split('@')[1]?.trim().toLowerCase();
+  // `lastIndexOf`, not `split('@')[1]`: a quoted-local address ("a@b"@host) has more than one `@`,
+  // and taking the first segment yields a domain that matches nothing. A trailing dot is the FQDN
+  // root and resolves identically, so `provider.com.` would otherwise miss every list entry, pass
+  // the MX probe, and take a second slot in a citext-unique column for one real mailbox.
+  // Kept identical to the hub's `emailDomain` -- fixing one side only is how the two diverge.
+  const at = email.lastIndexOf('@');
+  const rawDomain = at === -1 ? '' : email.slice(at + 1);
+  const domain = rawDomain.trim().toLowerCase().replace(TRAILING_DOTS, '');
   if (!domain) throw throwBadRequestError('Please provide a valid email address');
 
-  const blocked = await getBlockedEmailDomains();
+  // 🔴 DEGRADE OPEN. This lookup is a redis GET falling back to a `dbWrite` read, neither of which
+  // is guarded. A redis failover or a saturated writer pool would otherwise reject every signup,
+  // every profile-email set and every email change for its duration -- and Reddit accounts arrive
+  // with no address at all, so that is the whole funnel for that provider. The auth hub's mirror of
+  // this lookup already ends in `catch { return [] }` for the same reason; the two must agree.
+  let blocked: string[];
+  try {
+    blocked = await getBlockedEmailDomains();
+  } catch (error) {
+    logToAxiom({
+      name: 'email-blocklist-lookup-failed',
+      type: 'error',
+      message: 'Email domain blocklist unreadable; signup allowed without the blocklist check',
+      details: { error: error instanceof Error ? error.message : String(error) },
+    }).catch(() => undefined);
+    blocked = [];
+  }
+
   // Normalize BOTH sides: the upstream sync writes lowercase today, but the same row is hand-edited
   // by moderators, and a single capital letter would silently make an entry match nothing.
-  if (blocked.some((entry) => entry.trim().toLowerCase() === domain))
+  if (blocked.some((entry) => entry.trim().toLowerCase().replace(TRAILING_DOTS, '') === domain))
     throw throwBadRequestError('Please use a different email address');
 
   if (!(await domainAcceptsMail(domain)))

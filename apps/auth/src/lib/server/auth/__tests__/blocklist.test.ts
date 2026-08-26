@@ -18,7 +18,12 @@ vi.mock('../../db/db', () => ({
   },
 }));
 
-import { getBlockedEmailDomains } from '../blocklist';
+import {
+  emailDomain,
+  getBlockedEmailDomains,
+  isBlockedDomain,
+  normalizeEmailAddress,
+} from '../blocklist';
 
 const BLOCKLIST_KEY = 'system:blocklist:EmailDomain';
 
@@ -41,7 +46,10 @@ beforeEach(() => vi.clearAllMocks());
 describe('getBlockedEmailDomains', () => {
   it('returns the warm redis cache without touching the DB', async () => {
     const redis = makeRedis();
-    redis._store.set(BLOCKLIST_KEY, JSON.stringify({ type: 'EmailDomain', data: ['evil.com', 'bad.io'] }));
+    redis._store.set(
+      BLOCKLIST_KEY,
+      JSON.stringify({ type: 'EmailDomain', data: ['evil.com', 'bad.io'] })
+    );
     h.getRedis.mockReturnValue(redis);
 
     expect(await getBlockedEmailDomains()).toEqual(['evil.com', 'bad.io']);
@@ -127,5 +135,65 @@ describe('getBlockedEmailDomains', () => {
     h.getRedis.mockReturnValue(redis);
     h.executeTakeFirst.mockResolvedValue({ data: ['db.com'] });
     expect(await getBlockedEmailDomains()).toEqual(['db.com']);
+  });
+});
+
+describe('emailDomain', () => {
+  // Both hub call sites go through this, so reverting either one to `split('@')[1]` cannot pass
+  // unnoticed. The main app carries its own copy of the rule and its own test for it.
+  it('reads the domain after the LAST @, not the first', () => {
+    expect(emailDomain('"a@b"@example.com')).toBe('example.com');
+  });
+
+  it('lowercases and trims', () => {
+    expect(emailDomain('someone@ Example.COM ')).toBe('example.com');
+  });
+
+  it('returns empty string for an address with no @', () => {
+    expect(emailDomain('not-an-email')).toBe('');
+  });
+
+  it('returns empty string for a trailing @', () => {
+    expect(emailDomain('someone@')).toBe('');
+  });
+});
+
+describe('isBlockedDomain', () => {
+  // Both sides must go through the same normalizer. Stripping the input but not the entry would
+  // make a hand-typed `provider.com.` enforced by the main app and silently inert here.
+  it('matches a list entry that carries a trailing FQDN dot', () => {
+    expect(isBlockedDomain(['blocked.test.'], 'blocked.test')).toBe(true);
+  });
+
+  it('matches an entry with case and whitespace', () => {
+    expect(isBlockedDomain(['  Blocked.TEST  '], 'blocked.test')).toBe(true);
+  });
+
+  it('matches the WHOLE domain, not a substring', () => {
+    expect(isBlockedDomain(['ocked.test', 'test'], 'blocked.test')).toBe(false);
+  });
+
+  it('never matches an empty domain, whatever the list holds', () => {
+    expect(isBlockedDomain([''], '')).toBe(false);
+  });
+});
+
+describe('normalizeEmailAddress', () => {
+  // `userExistsByEmail` is both the returning-user exemption and the `+`-alias gate, and both key
+  // on the exact stored string, so a trailing dot would be a free second identity against both.
+  it('strips a trailing FQDN dot from the domain', () => {
+    expect(normalizeEmailAddress('someone@gmail.com.')).toBe('someone@gmail.com');
+  });
+
+  it('lowercases the domain and leaves the local part intact', () => {
+    expect(normalizeEmailAddress('Someone@GMAIL.com')).toBe('Someone@gmail.com');
+  });
+
+  it('normalizes the domain after the LAST @', () => {
+    expect(normalizeEmailAddress('"a@b"@GMAIL.com.')).toBe('"a@b"@gmail.com');
+  });
+
+  it('leaves an address with no @ alone beyond trim and case', () => {
+    expect(normalizeEmailAddress(' NotAnEmail ')).toBe('notanemail');
   });
 });

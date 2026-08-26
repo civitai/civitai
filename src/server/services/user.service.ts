@@ -1251,6 +1251,9 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
 
   const { imageRemoval: _removalChoice, ...meta } = (user.meta ?? {}) as UserMeta;
 
+  // Deliberately NOT domain-guarded, same exempt class as `forceUpdateUserIdentity`: this is a
+  // moderator putting back the address a closed account already had, and re-judging it against a
+  // list that moved since would make some accounts unrestorable.
   await dbWrite.$transaction([
     dbWrite.user.update({
       where: { id },

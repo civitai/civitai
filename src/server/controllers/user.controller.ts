@@ -477,7 +477,10 @@ export const completeOnboardingHandler = async ({
     if (isComplete && changed && onboardingCompletedCounter) onboardingCompletedCounter.inc();
   } catch (e) {
     const err = e as Error;
-    if (!err.message.includes('constraint failed')) onboardingErrorCounter?.inc();
+    // A TRPCError here is a policy REFUSAL (blocked domain, undeliverable domain, rejected
+    // username), not a fault. Counting those inflates the error signal and hides the refusal rate.
+    if (!(e instanceof TRPCError) && !err.message.includes('constraint failed'))
+      onboardingErrorCounter?.inc();
     if (e instanceof TRPCError) throw e;
     throw throwDbError(e);
   }
