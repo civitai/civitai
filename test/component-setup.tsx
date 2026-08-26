@@ -45,95 +45,82 @@ import globalsCss from '~/styles/globals.css?raw';
  * here would be a fourth copy of a constant that civitai#4379 existed to
  * consolidate, and it would drift silently the first time the header is resized.
  * The values come from `globals.css` itself, so there is nothing to keep in step.
+ *
+ * 🔴 WHY THE BROWSER PARSES IT AND NOT A REGEX — THE EXPENSIVE LESSON HERE.
+ * Three successive attempts to extract the block with regexes each shipped a
+ * defect, and each fix introduced the next one: a comment glued to the following
+ * property dropped it; a `}` inside a comment or a string truncated the capture
+ * and silently dropped everything after it; a "refuse more than one `:root`" rule
+ * blacked out all 2079 component tests on an ordinary dark-mode override; and a
+ * name sweep with `[^{]*` attributed an unrelated rule's properties to `:root`
+ * because the string `":root"` appeared in a `content:` value. The common cause
+ * was asking several regexes to agree about where a CSS block ends. They cannot.
+ *
+ * `CSSStyleSheet.replaceSync` hands the whole problem to the engine that will
+ * actually evaluate these properties, so comments, strings, nesting and at-rules
+ * are simply not our problem — and the CONDITIONAL/UNCONDITIONAL distinction that
+ * mattered most falls out of the rule types for free: a `:root` inside `@media` /
+ * `@supports` / `@container` is a `CSSMediaRule` &c and is deliberately skipped
+ * (its properties are undefined outside that condition, so injecting them
+ * unconditionally would be a lie), while `@layer` merely orders the cascade and is
+ * descended into.
  */
-{
-  // 🔴 STRIP COMMENTS ONCE, FROM THE WHOLE FILE, BEFORE ANYTHING ELSE LOOKS AT IT.
-  // Doing it later — to the already-extracted block — leaves three silent failures,
-  // all measured: a comment between `;` and the next property glues onto it and the
-  // property vanishes; a `}` inside a comment TRUNCATES the `[^}]*` capture and
-  // drops everything after it; and prose that merely mentions `:root {` is counted
-  // as a real block. Comments are the most ordinary edit in a stylesheet, and every
-  // one of those failures ends with components laying out against properties that
-  // are missing, with the suite green.
-  const css = globalsCss.replace(/\/\*[\s\S]*?\*\//g, '');
+const injectedRootProperties: string[] = (() => {
+  const sheet = new CSSStyleSheet();
+  sheet.replaceSync(globalsCss);
 
-  const rootBlock = /:root\s*\{([^}]*)\}/.exec(css)?.[1];
-  if (!rootBlock) {
-    // Loud, not silent: if this stops matching, every component test goes back to
-    // laying out against undefined custom properties, and nothing else would say so.
-    throw new Error(
-      'component-setup: no `:root { … }` block found in src/styles/globals.css (after ' +
-        'stripping comments) — the custom-property injection below is inert. Note the ' +
-        'extraction wants a bare `:root {`; a grouped or qualified selector (`:root, html {`) ' +
-        'will not match and must be handled deliberately, not by deleting this.'
-    );
-  }
-  const customProps = rootBlock
-    .split(';')
-    .map((d) => d.trim())
-    .filter((d) => d.startsWith('--'));
+  const rootRules: CSSStyleRule[] = [];
+  const walk = (rules: CSSRuleList) => {
+    for (const rule of Array.from(rules)) {
+      if (rule instanceof CSSStyleRule) {
+        // A grouped selector (`:root, html`) still applies unconditionally to the
+        // root, so match on the parts rather than the whole string.
+        if (rule.selectorText.split(',').some((s) => s.trim() === ':root')) rootRules.push(rule);
+      } else if (typeof CSSLayerBlockRule !== 'undefined' && rule instanceof CSSLayerBlockRule) {
+        walk(rule.cssRules);
+      }
+      // @media / @supports / @container are CONDITIONAL — skipped on purpose.
+    }
+  };
+  walk(sheet.cssRules);
 
-  // 🔴 THE COVERAGE CHECK IS DERIVED FROM THE FILE, NOT FROM THE CAPTURED BLOCK.
-  // An earlier version compared the parsed count against a count taken from the
-  // same captured substring — so it graded a truncated string against itself and
-  // could not see a truncation at all, and a comment-glued property vanished from
-  // BOTH sides symmetrically, leaving the counts equal. Comparing against every
-  // property NAME declared by any `:root` block in the file removes both blind
-  // spots, and needs no brace-counting or block-ordering logic:
-  //
-  //   - the FIRST `:root` being a conditional one (inside `@media`) is caught,
-  //     because the real block's other properties are then missing from the set;
-  //   - a truncated capture is caught, for the same reason;
-  //   - a legitimate later override (a dark-mode `:root`) declares the SAME names,
-  //     so it is NOT a false failure — which a "refuse more than one `:root`" rule
-  //     got wrong, blacking out all 2079 component tests on an ordinary edit.
-  const declaredNames = new Set(
-    [...css.matchAll(/:root[^{]*\{([^}]*)\}/g)].flatMap((block) =>
-      [...block[1].matchAll(/(?:^|[;{])\s*(--[\w-]+)\s*:/g)].map((d) => d[1])
-    )
-  );
-  const injectedNames = new Set(customProps.map((d) => d.slice(0, d.indexOf(':')).trim()));
-  const missing = [...declaredNames].filter((n) => !injectedNames.has(n));
-  if (missing.length > 0) {
+  // Later declarations win, as they would in the real cascade.
+  const values = new Map<string, string>();
+  for (const rule of rootRules) {
+    for (const name of Array.from(rule.style)) {
+      if (name.startsWith('--')) values.set(name, rule.style.getPropertyValue(name).trim());
+    }
+  }
+
+  if (values.size === 0) {
+    // Loud, not silent: with no properties injected, every component test goes
+    // back to laying out against undefined custom properties and nothing else
+    // would report it. If `globals.css` legitimately stopped declaring any, delete
+    // this block deliberately rather than letting it sit here doing nothing.
     throw new Error(
-      `component-setup: ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} declared ` +
-        'on `:root` in globals.css but did not survive extraction, so it would be UNDEFINED in ' +
-        'every component test — the exact divergence this injection removes. Likely causes: the ' +
-        'first `:root` in the file is a conditional block, or a `}` / `;` inside a value ' +
-        'truncated the capture.'
+      'component-setup: found no custom properties on an unconditional `:root` rule in ' +
+        'src/styles/globals.css. Either they moved, or they are now declared only inside a ' +
+        'conditional at-rule (@media/@supports/@container), which this deliberately does not ' +
+        'inject because such a property is undefined outside its condition.'
     );
   }
-  if (customProps.length === 0) {
-    throw new Error(
-      'component-setup: the `:root` block in globals.css declares no custom properties. ' +
-        'Either it moved, or the extraction regex is matching the wrong block.'
-    );
-  }
+
   const style = document.createElement('style');
   style.setAttribute('data-source', 'component-setup:globals.css :root');
-  style.textContent = `:root { ${customProps.join('; ')}; }`;
+  style.textContent = `:root { ${[...values].map(([n, v]) => `${n}: ${v}`).join('; ')}; }`;
   document.head.appendChild(style);
-}
+  return [...values.keys()];
+})();
 
-// `vi.waitFor` defaults to a 1000ms timeout. That's fine for a DOM mount, but
-// the browser suite has ~80 waitFor sites and many await an async round-trip
-// (postMessage → consent dialog, a tRPC query settling, a zustand store update).
-// On the saturated preview CI box (browser tests share the host with the image
-// build) a genuinely-correct round-trip can exceed 1000ms, so the waitFor times
-// out and the test PASS→FAILs on load, not on code. Raise the DEFAULT timeout
-// globally (calls that pass their own timeout are untouched) — one root-cause fix
-// for the whole 1000ms-vs-contention class instead of editing every call site.
-{
-  const DEFAULT_WAITFOR_TIMEOUT_MS = 10000;
-  const original = vi.waitFor.bind(vi);
-  vi.waitFor = ((callback: Parameters<typeof original>[0], options?: number | object) => {
-    const opts = typeof options === 'number' ? { timeout: options } : { ...(options ?? {}) };
-    if ((opts as { timeout?: number }).timeout == null) {
-      (opts as { timeout?: number }).timeout = DEFAULT_WAITFOR_TIMEOUT_MS;
-    }
-    return original(callback, opts);
-  }) as typeof vi.waitFor;
-}
+/**
+ * The custom-property names this setup injected. Exported so the guard in
+ * `src/components/AppLayout/rootCustomProperties.browser.test.tsx` can assert that
+ * EVERY one of them actually resolves in the document — not just the one property
+ * a hand-written test happened to name. An earlier guard checked only
+ * `--header-height`, and two other properties were silently undefined across all
+ * 190 component files while it stayed green.
+ */
+export const INJECTED_ROOT_PROPERTIES = injectedRootProperties;
 
 // Stub the Next pages-router. Returns vi.fn()s so tests can assert navigation
 // without a real router; extend per-test via `vi.mocked(useRouter)` if needed.
