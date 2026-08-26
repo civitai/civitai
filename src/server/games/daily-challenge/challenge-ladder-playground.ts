@@ -70,6 +70,7 @@ export async function runLadderDryRun(input: {
   entries: PlaygroundEntry[];
   theme: string;
   themeElements?: string[];
+  resourceConcept?: string;
   categories: JudgingCategory[];
   criteriaByKey?: Record<string, string>;
   /** Defaults to production's K. Lower it to see how much the bound is costing the ranking. */
@@ -85,6 +86,7 @@ export async function runLadderDryRun(input: {
   const systemPrompt = buildComparisonPrompt({
     theme: input.theme,
     themeElements: input.themeElements,
+    resourceConcept: input.resourceConcept,
     categories: input.categories,
     criteriaByKey: input.criteriaByKey,
   });

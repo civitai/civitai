@@ -81,6 +81,7 @@ import {
   estimateBuzzCost,
   generateArticle,
   generateCollectionDetails,
+  generateResourceConcept,
   generateReview,
   generateWinners,
 } from '~/server/games/daily-challenge/generative-content';
@@ -159,6 +160,12 @@ type ChallengeCreationContext = {
   };
 };
 
+/**
+ * Showcase images handed to the resource-concept step. Four is enough to show what a resource
+ * renders across its versions without turning a per-challenge call into a per-challenge album.
+ */
+const RESOURCE_CONCEPT_IMAGE_COUNT = 4;
+
 type PreSelectedChallenge = {
   targetDate: Date;
   challengeDate: Date;
@@ -166,6 +173,8 @@ type PreSelectedChallenge = {
   resourceUserId: number;
   modelVersionIds: number[];
   image: { id: number; url: string };
+  /** Cover first, then further showcase images. Only the concept step reads past the first. */
+  showcaseImages: { id: number; url: string }[];
 };
 
 // Pre-compute shared context (runs 3 DB queries with Promise.all instead of 5 sequential)
@@ -278,7 +287,8 @@ async function selectResourceForDate(
       SELECT
         m.id as "modelId",
         u."username" as creator,
-        m.name as title
+        m.name as title,
+        m.description
       FROM "Model" m
       JOIN "User" u ON u.id = m."userId"
       WHERE m.id = ${randomResourceId.id}
@@ -287,25 +297,30 @@ async function selectResourceForDate(
   }
   if (!randomUser || !resource) throw new Error('Failed to pick resource');
 
-  // Get model versions and cover image in parallel
-  const [modelVersionRows, image] = await Promise.all([
-    dbRead.$queryRaw<{ id: number }[]>`
-      SELECT mv.id
+  // Get model versions and showcase images in parallel
+  const [modelVersionRows, showcaseImages] = await Promise.all([
+    dbRead.$queryRaw<{ id: number; trainedWords: string[] }[]>`
+      SELECT mv.id, mv."trainedWords"
       FROM "ModelVersion" mv
       WHERE mv."modelId" = ${resource.modelId}
       AND mv.status = 'Published'
       ORDER BY mv.index ASC
     `,
-    getCoverOfModel(resource.modelId),
+    getShowcaseImagesOfModel(resource.modelId, RESOURCE_CONCEPT_IMAGE_COUNT),
   ]);
 
   return {
     targetDate,
     challengeDate,
-    resource,
+    resource: {
+      ...resource,
+      trainedWords: [...new Set(modelVersionRows.flatMap((v) => v.trainedWords ?? []))],
+    },
     resourceUserId: randomUser.userId,
     modelVersionIds: modelVersionRows.map((v) => v.id),
-    image,
+    // Same row getCoverOfModel returned: reordering the query below changes every challenge cover.
+    image: showcaseImages[0],
+    showcaseImages,
   };
 }
 
@@ -315,9 +330,19 @@ async function createChallengeFromSelection(
   selection: PreSelectedChallenge,
   ctx: ChallengeCreationContext
 ): Promise<number> {
-  const { resource, image, challengeDate, modelVersionIds, resourceUserId } = selection;
+  const { resource, image, showcaseImages, challengeDate, modelVersionIds, resourceUserId } =
+    selection;
   const { judgingConfig, config, prizeConfig } = ctx;
   const endsAt = dayjs(challengeDate).add(1, 'day').toDate();
+
+  // Sequenced before the article on purpose: the article's theme and themeElements ARE the judge's
+  // scoring anchor, and this is the only step that knows what the resource depicts.
+  const resourceConcept = await generateResourceConcept({
+    resource,
+    images: showcaseImages,
+    config: judgingConfig,
+  });
+  log('Resource concept:', resourceConcept ?? '(none derived)');
 
   // Run both AI calls in parallel - they share inputs but outputs are independent
   log('Generating AI content in parallel for', dayjs(challengeDate).format('YYYY-MM-DD'));
@@ -325,6 +350,7 @@ async function createChallengeFromSelection(
     generateCollectionDetails({ resource, image, config: judgingConfig }),
     generateArticle({
       resource,
+      resourceConcept,
       image,
       challengeDate: endsAt,
       allowedNsfwLevel: sfwBrowsingLevelsFlag,
@@ -397,6 +423,7 @@ async function createChallengeFromSelection(
       resourceUserId,
       resourceModelId: resource.modelId,
       themeElements: challengeContent.themeElements,
+      resourceConcept,
     },
   });
 
@@ -697,6 +724,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
   const allowedNsfwLevel = challengeRecord?.allowedNsfwLevel ?? 1;
   const challengeMetadata = parseChallengeMetadata(challengeRecord?.metadata);
   const themeElements = challengeMetadata.themeElements;
+  const resourceConcept = challengeMetadata.resourceConcept;
   // Parse defensively — a malformed value falls back to the fixed schema instead of failing the
   // review.
   const userJudgingCategories = challengeJudgingCategoriesSchema.safeParse(
@@ -710,6 +738,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
     collectionId: currentChallenge.collectionId,
     theme: currentChallenge.theme,
     themeElements,
+    resourceConcept,
     categories: userCategories,
   });
 
@@ -1014,6 +1043,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
       const review = await generateReview({
         theme: currentChallenge.theme,
         themeElements,
+        resourceConcept,
         creator: entry.username,
         imageUrl: getEdgeUrl(entry.url, { width: 1200, name: 'image' }),
         config: judgingConfig,
@@ -1604,6 +1634,7 @@ export async function pickWinnersForChallenge(
         collectionId: currentChallenge.collectionId,
         theme: currentChallenge.theme,
         themeElements: parseChallengeMetadata(challengeJudgeRow?.metadata).themeElements,
+        resourceConcept: parseChallengeMetadata(challengeJudgeRow?.metadata).resourceConcept,
         categories: userCategories,
       });
       const ranked = await judgingEngine.rankField(engineContext, judgedEntries);
@@ -2074,8 +2105,14 @@ async function duplicateImage(imageId: number, userId: number) {
   return newImage[0].id;
 }
 
-export async function getCoverOfModel(modelId: number) {
-  const [image] = await dbRead.$queryRaw<{ id: number; url: string }[]>`
+/**
+ * The model's SFW showcase images, best-first by the same ordering the cover has always used.
+ *
+ * One image was never enough to tell the concept step what a resource depicts: TagineXL's first
+ * showcase image is a closed tagine with no food in frame, which reads as generic cookware.
+ */
+export async function getShowcaseImagesOfModel(modelId: number, limit = 1) {
+  const images = await dbRead.$queryRaw<{ id: number; url: string }[]>`
     SELECT
       i.id, i."url"
     FROM "Image" i
@@ -2086,10 +2123,17 @@ export async function getCoverOfModel(modelId: number) {
     AND p."userId" = m."userId"
     AND i."nsfwLevel" = 1
     ORDER BY mv.index, p.id, i.index
-    LIMIT 1;
+    LIMIT ${limit};
   `;
-  if (!image) throw new Error('Failed to get cover image');
-  image.url = getEdgeUrl(image.url, { width: 1200, name: 'cover' });
+  if (!images.length) throw new Error(`No SFW showcase image found for model ${modelId}`);
+  return images.map((image) => ({
+    ...image,
+    url: getEdgeUrl(image.url, { width: 1200, name: 'cover' }),
+  }));
+}
+
+export async function getCoverOfModel(modelId: number) {
+  const [image] = await getShowcaseImagesOfModel(modelId, 1);
   return image;
 }
 

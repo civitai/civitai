@@ -151,12 +151,16 @@ import {
 } from '~/server/games/daily-challenge/daily-challenge.utils';
 import {
   generateArticle,
+  generateResourceConcept,
   generateReview,
   generateThemeElements,
   generateWinners,
 } from '~/server/games/daily-challenge/generative-content';
 import { reviewTemplateSchema } from '~/server/games/daily-challenge/template-engine';
-import { getCoverOfModel, getJudgedEntries } from '~/server/jobs/daily-challenge-processing';
+import {
+  getJudgedEntries,
+  getShowcaseImagesOfModel,
+} from '~/server/jobs/daily-challenge-processing';
 import {
   buildJudgingEngineContext,
   resolveJudgingEngine,
@@ -1346,13 +1350,16 @@ export async function upsertChallenge({
   const coverImageId = await resolveCoverImageId({ coverImage, userId });
 
   // Helper: resolve judging config and generate theme elements.
-  async function tryGenerateThemeElements(theme: string): Promise<string[] | undefined> {
+  async function tryGenerateThemeElements(
+    theme: string,
+    resourceConcept?: string
+  ): Promise<string[] | undefined> {
     const challengeConfig = await getChallengeConfig();
     const resolvedJudgeId = judgeId ?? challengeConfig.defaultJudgeId;
     if (!resolvedJudgeId) return undefined;
 
     const judgingConfig = await getJudgingConfig(resolvedJudgeId);
-    const elements = await generateThemeElements({ theme, config: judgingConfig });
+    const elements = await generateThemeElements({ theme, resourceConcept, config: judgingConfig });
 
     return elements.length ? elements : undefined;
   }
@@ -1439,7 +1446,7 @@ export async function upsertChallenge({
       themeElements = inputThemeElements;
     } else if (data.theme && !existingThemeElements?.length) {
       // No existing elements and none provided — auto-generate
-      themeElements = await tryGenerateThemeElements(data.theme);
+      themeElements = await tryGenerateThemeElements(data.theme, existingMetadata.resourceConcept);
     }
 
     // Use transaction to update both challenge and collection metadata atomically
@@ -2666,11 +2673,13 @@ export async function endChallengeAndPickWinners(challengeId: number): Promise<E
         return { success: true, winnersCount: 0, queued: false };
       }
 
+      const challengeMetadata = parseChallengeMetadata(challenge.metadata);
       const engineContext = buildJudgingEngineContext({
         challengeId,
         collectionId: challenge.collectionId,
         theme: challenge.theme ?? '',
-        themeElements: parseChallengeMetadata(challenge.metadata).themeElements,
+        themeElements: challengeMetadata.themeElements,
+        resourceConcept: challengeMetadata.resourceConcept,
         categories: userCategories,
       });
       const ranked = await judgingEngine.rankField(engineContext, judgedEntries);
@@ -3746,6 +3755,9 @@ function applyPromptOverrides(
   };
 }
 
+/** Showcase images the playground samples for the concept step. Matches the job's sample size. */
+const PLAYGROUND_CONCEPT_IMAGE_COUNT = 4;
+
 /**
  * Playground: Generate challenge content for a model version.
  */
@@ -3763,20 +3775,45 @@ export async function playgroundGenerateContent(input: PlaygroundGenerateContent
     where: { id: input.modelVersionId },
     select: {
       id: true,
-      model: { select: { id: true, name: true, user: { select: { username: true } } } },
+      trainedWords: true,
+      model: {
+        select: {
+          id: true,
+          name: true,
+          description: true,
+          user: { select: { username: true } },
+        },
+      },
     },
   });
   if (!modelVersion) throw new TRPCError({ code: 'NOT_FOUND', message: 'Model version not found' });
 
-  const coverImage = await getCoverOfModel(modelVersion.model.id);
+  const showcaseImages = await getShowcaseImagesOfModel(
+    modelVersion.model.id,
+    PLAYGROUND_CONCEPT_IMAGE_COUNT
+  );
+
+  const resource = {
+    modelId: modelVersion.model.id,
+    title: modelVersion.model.name,
+    creator: modelVersion.model.user.username ?? 'Unknown',
+    description: modelVersion.model.description,
+    trainedWords: modelVersion.trainedWords,
+  };
+
+  // Mirrors the job: the playground is where these prompts get tuned, so it has to show the same
+  // inputs the real pipeline gives the model.
+  const resourceConcept = await generateResourceConcept({
+    resource,
+    images: showcaseImages,
+    config: judgingConfig,
+    model: (input.aiModel || undefined) as AIModel | undefined,
+  });
 
   const result = await generateArticle({
-    resource: {
-      modelId: modelVersion.model.id,
-      title: modelVersion.model.name,
-      creator: modelVersion.model.user.username ?? 'Unknown',
-    },
-    image: coverImage,
+    resource,
+    resourceConcept,
+    image: showcaseImages[0],
     challengeDate: new Date(),
     prizes: config.prizes,
     entryPrizeRequirement: config.entryPrizeRequirement,
@@ -3872,11 +3909,13 @@ export async function playgroundRunLadder(input: PlaygroundRunLadderInput) {
       message: `Need at least 2 judged entries, found ${entries.length}`,
     });
 
+  const challengeMetadata = parseChallengeMetadata(challenge.metadata);
   const ctx = buildJudgingEngineContext({
     challengeId: challenge.id,
     collectionId: challenge.collectionId,
     theme: challenge.theme ?? '',
-    themeElements: parseChallengeMetadata(challenge.metadata).themeElements,
+    themeElements: challengeMetadata.themeElements,
+    resourceConcept: challengeMetadata.resourceConcept,
     categories: userCategories,
   });
 
@@ -3885,6 +3924,7 @@ export async function playgroundRunLadder(input: PlaygroundRunLadderInput) {
     entries: entries.map((e) => ({ imageId: e.imageId, userId: e.userId, username: e.username })),
     theme: ctx.theme,
     themeElements: ctx.themeElements,
+    resourceConcept: ctx.resourceConcept,
     categories: ctx.categories,
     criteriaByKey: ctx.criteriaByKey,
     topK: input.topK,

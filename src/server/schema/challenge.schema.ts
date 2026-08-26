@@ -137,6 +137,10 @@ export const challengeMetadataSchema = z.object({
   resourceModelId: z.number().optional(),
   articleId: z.number().optional(),
   themeElements: z.array(z.string()).optional(),
+  // The featured resource's concrete subject, derived at creation. Permissive by design (see the
+  // note above): the only writer is a truncated string from generateResourceConcept, but a wrong
+  // type here would fail the whole safeParse and wipe the metadata column.
+  resourceConcept: z.string().optional(),
   completionSummary: challengeCompletionSummarySchema.optional(),
   // Epoch millis of the last review pass, written as a bare JSON number by a raw jsonb merge in
   // daily-challenge-processing. TWO readers, and the second is the one that matters:
