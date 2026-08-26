@@ -1906,7 +1906,15 @@ export const getAllImages = async (
 
   if (!isModerator) {
     AND.push(
-      Prisma.sql`((p."availability" != ${Availability.Private} AND i."ingestion" != 'Blocked') OR p."userId" = ${userId})`
+      // ::"Availability" is defensive here rather than a live fix. This fragment
+      // is executed through the node-postgres pool (`queryWithTimeout(imageDb, …)`),
+      // which sends parameters untyped and lets Postgres infer the enum — so the
+      // uncast form has worked. The same shape under Prisma's `$queryRaw` binds
+      // `text` and dies with 42883 (`operator does not exist: "Availability" <> text`),
+      // which is what broke the remix gallery. The commented-out
+      // `dbRead.$queryRaw(query)` below is one edit away from re-arming that, so
+      // pin the cast now and make the fragment executor-independent.
+      Prisma.sql`((p."availability" != ${Availability.Private}::"Availability" AND i."ingestion" != 'Blocked') OR p."userId" = ${userId})`
     );
   }
 

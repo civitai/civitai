@@ -149,6 +149,7 @@ const {
   setRemixGalleryPins,
   parseGalleryCursor,
   getRemixGallery,
+  getRemixGalleryCardSummaries,
   getRemixGalleryVisibility,
   getRemixGalleryFreeEligibility,
   getMyRemixGallerySubmissions,
@@ -2399,5 +2400,181 @@ describe('the removal cooldown on a free entry', () => {
         isModerator: true,
       })
     ).resolves.toMatchObject({ removed: true });
+  });
+});
+
+/**
+ * Every `Availability` value bound into raw SQL carries its `::"Availability"` cast.
+ *
+ * 🔴 This is a REGRESSION guard, not a style rule. Prisma binds an interpolated
+ * string as a `text` parameter, and Postgres has no `"Availability" <> text`
+ * operator, so an uncast comparison does not filter fewer rows — it aborts the
+ * whole statement at parse time with SQLSTATE 42883 (`operator does not exist`).
+ * Every read composing the predicate then 500s deterministically, whatever the
+ * data looks like. That is exactly what happened when the shared entry predicate
+ * gained its private-post guard: `placement.getRemixGalleryCardSummaries`,
+ * `getRemixGalleryVisibility`, `getRemixGallery` and
+ * `getMyRemixGallerySubmissions` all failed together.
+ *
+ * ⚠️ What this cannot do: with no database in this suite it asserts on the SQL
+ * the service COMPOSES, so it proves the cast is written, not that Postgres
+ * accepts the statement. It is aimed at the one failure mode that has actually
+ * shipped — the cast being absent.
+ *
+ * Deliberately NOT a search for the literal `::"Availability"` anywhere in the
+ * query. That passes while a *second*, different comparison in the same
+ * statement is still uncast, which is the whole shape of this defect: three
+ * queries shared one broken fragment. The guard walks every bound parameter
+ * instead, so it is as wide as the class.
+ */
+describe('Availability parameters are cast to the enum, not bound as text', () => {
+  const AVAILABILITY_VALUES = new Set<unknown>(Object.values(Availability));
+
+  type SqlLike = { strings: readonly string[]; values: readonly unknown[] };
+
+  /**
+   * Duck-typed rather than `instanceof Prisma.Sql`: `@prisma/client` may resolve
+   * to a stub here, where `Prisma.Sql` is `undefined` and `instanceof` throws.
+   */
+  const isSql = (value: unknown): value is SqlLike =>
+    !!value &&
+    typeof value === 'object' &&
+    Array.isArray((value as SqlLike).strings) &&
+    Array.isArray((value as SqlLike).values);
+
+  /**
+   * The statement Prisma would send, with each scalar replaced by the `$N`
+   * placeholder it is bound to — nested fragments spliced inline and numbered
+   * left to right, which is Prisma's own rule. `flatten` above cannot serve
+   * here: it drops the values entirely, so the text it returns has nothing
+   * where the parameter goes and cannot say what follows one.
+   *
+   * 🔴 `--` line comments are stripped BEFORE any assertion reads this. The
+   * service explains this very cast in a comment beside the clause, so a naive
+   * substring check would be satisfied by the prose whether or not the cast is
+   * in the SQL.
+   */
+  function render(call: unknown[]) {
+    const [strings, ...values] = call as [readonly string[], ...unknown[]];
+    const params: unknown[] = [];
+    const expand = (parts: readonly string[], vals: readonly unknown[]): string =>
+      parts.reduce((out, part, i) => {
+        if (i >= vals.length) return out + part;
+        const value = vals[i];
+        if (isSql(value)) return out + part + expand(value.strings, value.values);
+        params.push(value);
+        return `${out}${part}$${params.length}`;
+      }, '');
+    const sql = expand(strings, values)
+      .replace(/--[^\n]*/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return { sql, params };
+  }
+
+  /** Every placeholder an Availability member is bound to, with the text that follows it. */
+  const availabilityBindings = () =>
+    queryRaw.mock.calls.flatMap((call) => {
+      const { sql, params } = render(call as unknown[]);
+      return params.flatMap((param, index) => {
+        if (!AVAILABILITY_VALUES.has(param)) return [];
+        const placeholder = `$${index + 1}`;
+        // `(?!\d)` so `$1` does not match inside `$12`.
+        const at = sql.search(new RegExp(`\\${placeholder}(?!\\d)`));
+        return [
+          {
+            param,
+            placeholder,
+            follows: at < 0 ? null : sql.slice(at + placeholder.length),
+          },
+        ];
+      });
+    });
+
+  const expectEveryBindingCast = (route: string) => {
+    const bindings = availabilityBindings();
+    // 🔴 Positive control. A read that stopped comparing availability at all
+    // binds nothing, and the loop below would then assert over an empty list and
+    // pass — the reassuring zero this repo keeps getting caught by. Naming the
+    // route makes the failure say which read went quiet.
+    expect(
+      bindings.length,
+      `${route} bound no Availability parameter at all — the guard has nothing to check`
+    ).toBeGreaterThan(0);
+    for (const binding of bindings)
+      expect(
+        binding.follows,
+        `${route}: ${binding.placeholder} (${String(binding.param)}) is bound as text; ` +
+          'append ::"Availability" or Postgres rejects the statement with 42883'
+      ).toMatch(/^::"Availability"/);
+  };
+
+  beforeEach(() => {
+    queryRaw.mockImplementation(async () => []);
+  });
+
+  it('in the batched card-summary read', async () => {
+    await getRemixGalleryCardSummaries({
+      imageIds: [HOST_IMAGE],
+      browsingLevel: sfwBrowsingLevelsFlag,
+    });
+    expectEveryBindingCast('getRemixGalleryCardSummaries');
+  });
+
+  it('in the gallery ordering read', async () => {
+    await getRemixGallery({ hostImageId: HOST_IMAGE, browsingLevel: sfwBrowsingLevelsFlag });
+    expectEveryBindingCast('getRemixGallery');
+  });
+
+  // Its own case rather than folded into the one above: `galleryHasEntries` is a
+  // separate statement that composes the same fragment, and it runs on every
+  // image detail view.
+  it('in the has-entries read behind the visibility card', async () => {
+    resolvePlacementSpaceFor.mockResolvedValue(openSpace);
+    await getRemixGalleryVisibility({
+      hostImageId: HOST_IMAGE,
+      browsingLevel: sfwBrowsingLevelsFlag,
+      domainLevels: allBrowsingLevelsFlag,
+    });
+    expectEveryBindingCast('getRemixGalleryVisibility');
+  });
+
+  // The second copy of the clause, written out inline rather than composed from
+  // the shared fragment — so fixing the fragment does not fix this one.
+  it("in the submitter's own-submissions host read", async () => {
+    placementFindMany.mockResolvedValue([
+      { id: 1, targetId: HOST_IMAGE, ownerId: OWNER, data: { imageId: REMIX_IMAGE } },
+    ]);
+    await getMyRemixGallerySubmissions({
+      placerId: PLACER,
+      domainLevels: allBrowsingLevelsFlag,
+      viewerLevels: allBrowsingLevelsFlag,
+    });
+    expectEveryBindingCast('getMyRemixGallerySubmissions');
+  });
+
+  /**
+   * The whole clause, its cast and both of its neighbours, as one normalised
+   * string — not a substring of it.
+   *
+   * The leading and trailing `AND`s are load-bearing for the same reason the
+   * host-read test above says they are: pinning the fragment alone pins the
+   * spelling of a predicate without pinning how it joins the others, and
+   * flipping one `AND` to `OR` makes the entire WHERE permissive while every
+   * fragment-shaped assertion stays green.
+   */
+  it('pins the shared entry predicate as a whole, cast included', async () => {
+    await getRemixGalleryCardSummaries({
+      imageIds: [HOST_IMAGE],
+      browsingLevel: sfwBrowsingLevelsFlag,
+    });
+    expect(queryRaw).toHaveBeenCalledTimes(1);
+    const { sql, params } = render(queryRaw.mock.calls[0] as unknown[]);
+    const n = params.indexOf(Availability.Private) + 1;
+    expect(n, 'Availability.Private is not bound by this read').toBeGreaterThan(0);
+    expect(sql).toContain(
+      `AND p."publishedAt" < now() AND p."availability" != $${n}::"Availability" ` +
+        `AND i.ingestion = 'Scanned'`
+    );
   });
 });
