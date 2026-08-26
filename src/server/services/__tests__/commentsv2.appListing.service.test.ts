@@ -28,13 +28,11 @@ const { tx } = vi.hoisted(() => ({
   },
 }));
 
-// 🔴 One local served both clients, and `thread.findUnique` is driven here by FOUR entry points
-// that do not agree on the client — so this file splits per CASE, not per path:
-//   getCommentCount        commentsv2.service:433   dbRead
-//   getCommentsInfinite                      :741   dbRead
-//   upsertComment                            :267   dbWrite
-//   toggleLockCommentsThread                 :471   dbWrite   (+ .create :478, .update :487)
-// and togglePinComment reads `commentV2` on dbRead (:505) and writes it on dbWrite (:508).
+// 🔴 One local served both clients, and `thread.findUnique` is driven here by entry points that do
+// not agree on the client — so this file splits per CASE, not per path: `getCommentsInfinite` reads
+// it on dbRead, `upsertComment` and `toggleLockCommentsThread` write it on dbWrite, and
+// `togglePinComment` reads `commentV2` on dbRead but writes it on dbWrite. `getCommentCount` no
+// longer resolves a thread at all — it filters on the relation, so it asserts on `commentV2.count`.
 const read = dbMock.dbRead;
 const write = dbMock.dbWrite;
 
@@ -80,12 +78,11 @@ beforeEach(() => {
 
 describe('CommentsV2 appListing thread resolution', () => {
   it('getCommentCount resolves the thread by appListingId', async () => {
-    read.thread.findUnique.mockResolvedValueOnce({ id: 100 });
     read.commentV2.count.mockResolvedValueOnce(7);
     const count = await getCommentCount({ entityType: 'appListing', entityId: 42 });
     expect(count).toBe(7);
-    // The crux: entityType 'appListing' → column `appListingId`.
-    expect(lastWhere(read.thread.findUnique)).toEqual({ appListingId: 42 });
+    // The crux: entityType 'appListing' → column `appListingId`, here as a relation filter.
+    expect(lastWhere(read.commentV2.count)).toMatchObject({ thread: { appListingId: 42 } });
   });
 
   it('getCommentsInfinite resolves the thread by appListingId (returns null when absent)', async () => {
@@ -114,9 +111,8 @@ describe('CommentsV2 appListing thread resolution', () => {
   });
 
   it('is generic — a different entityType maps to its own column (model → modelId)', async () => {
-    read.thread.findUnique.mockResolvedValueOnce({ commentCount: 1 });
     await getCommentCount({ entityType: 'model', entityId: 7 });
-    expect(lastWhere(read.thread.findUnique)).toEqual({ modelId: 7 });
+    expect(lastWhere(read.commentV2.count)).toMatchObject({ thread: { modelId: 7 } });
   });
 });
 

@@ -156,7 +156,6 @@ describe('CommentV2 reads and the ToS flag', () => {
  */
 describe('CommentV2 counts and the ToS flag', () => {
   it('counts what the viewer can be shown, not the thread counter', async () => {
-    threadFindUnique.mockResolvedValue({ id: 10 });
     commentCount.mockResolvedValue(3);
 
     await expect(getCommentCount({ entityId: 1, entityType: 'image' })).resolves.toBe(3);
@@ -166,8 +165,6 @@ describe('CommentV2 counts and the ToS flag', () => {
   });
 
   it('counts everything for a moderator', async () => {
-    threadFindUnique.mockResolvedValue({ id: 10 });
-
     await getCommentCount({ entityId: 1, entityType: 'image', isModerator: true });
 
     expect(commentCount).toHaveBeenCalledWith(
@@ -175,11 +172,15 @@ describe('CommentV2 counts and the ToS flag', () => {
     );
   });
 
-  it('is zero when the entity has no thread, without counting anything', async () => {
-    threadFindUnique.mockResolvedValue(null);
+  // The thread is reached through the relation on purpose. Resolving it first is the obvious
+  // refactor and costs a second round trip on a query the comment list fires per comment.
+  it('reaches the thread through the relation, in a single query', async () => {
+    await getCommentCount({ entityId: 1, entityType: 'image' });
 
-    await expect(getCommentCount({ entityId: 1, entityType: 'image' })).resolves.toBe(0);
-    expect(commentCount).not.toHaveBeenCalled();
+    expect(threadFindUnique).not.toHaveBeenCalled();
+    expect(commentCount).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ thread: { imageId: 1 } }) })
+    );
   });
 
   it('seeds each reply thread from a filtered count rather than the thread counter', async () => {

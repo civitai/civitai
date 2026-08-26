@@ -571,21 +571,22 @@ export async function bulkSetCommentV2TosViolation({
 
 // Counts rows rather than reading `Thread.commentCount`: an INSERT/DELETE trigger maintains that
 // counter, so a ToS flag never decrements it and the count keeps advertising a removed comment.
+//
+// Reached through the thread relation rather than resolving the thread first, so this stays ONE
+// round trip. Do not reach for a filtered Prisma `_count` on `Thread` instead: that compiles to an
+// uncorrelated aggregate subquery, which seq-scans all of CommentV2 (measured 1.7s on production
+// against 0.08ms for this).
 export const getCommentCount = async ({
   entityId,
   entityType,
   isModerator = false,
-}: CommentConnectorInput & { isModerator?: boolean }) => {
-  const thread = await dbRead.thread.findUnique({
-    where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
-    select: { id: true },
+}: CommentConnectorInput & { isModerator?: boolean }) =>
+  dbRead.commentV2.count({
+    where: {
+      thread: { [`${entityType}Id`]: entityId } as Prisma.ThreadWhereInput,
+      tosViolation: isModerator ? undefined : false,
+    },
   });
-  if (!thread) return 0;
-
-  return dbRead.commentV2.count({
-    where: { threadId: thread.id, tosViolation: isModerator ? undefined : false },
-  });
-};
 
 // Get thread metadata including hidden comment count - optimized for separate thread meta queries
 export async function getCommentsThreadDetails2({
