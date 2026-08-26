@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TRPCError } from '@trpc/server';
 
+import { APP_LISTING_REPORT_REASONS } from '~/server/schema/blocks/offsite-moderation.schema';
+
 import {
   OffsiteModerationError,
   claimListing,
@@ -40,7 +42,13 @@ type WriteMock = {
     // republish reads the LATEST event on the primary inside the tx.
     findFirst: ReturnType<typeof vi.fn>;
   };
-  appListingReport: { updateMany: ReturnType<typeof vi.fn> };
+  appListingReport: {
+    updateMany: ReturnType<typeof vi.fn>;
+    // The on-site over-rated-media review queue: republish check-then-inserts an
+    // advisory `AppListingReport` in the SAME tx as the status flip.
+    findFirst: ReturnType<typeof vi.fn>;
+    create: ReturnType<typeof vi.fn>;
+  };
   // claim validates the target owner on the primary inside the tx.
   user: { findUnique: ReturnType<typeof vi.fn> };
   // claim NEVER writes this (submitter preserved); reset CREATES a fresh pending request.
@@ -81,7 +89,12 @@ const { mockRead, mockWrite, mockNotify, mockLogToAxiom, ids } = vi.hoisted(() =
       create: vi.fn(async (a: { data: unknown }) => a.data),
       findFirst: vi.fn(async () => null),
     },
-    appListingReport: { updateMany: vi.fn(async () => ({ count: 1 })) },
+    appListingReport: {
+      updateMany: vi.fn(async () => ({ count: 1 })),
+      // Default: no OPEN review for this listing+reporter → the queue write proceeds.
+      findFirst: vi.fn(async (): Promise<{ id: string } | null> => null),
+      create: vi.fn(async (a: { data: unknown }) => a.data),
+    },
     user: { findUnique: vi.fn(async () => ({ id: 1 })) },
     appListingPublishRequest: {
       updateMany: vi.fn(async () => ({ count: 1 })),
@@ -1770,5 +1783,381 @@ describe('OffsiteModerationError (PR3/PR4 + W13 codes)', () => {
     expect(new OffsiteModerationError('INVALID_TARGET_USER', 'x').code).toBe('INVALID_TARGET_USER');
     expect(new OffsiteModerationError('NOT_OWNED', 'x').code).toBe('NOT_OWNED');
     expect(new OffsiteModerationError('FORBIDDEN', 'x').code).toBe('FORBIDDEN');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 🔴 republishOwnListing — GO-LIVE MATURITY GATE (kind-aware).
+//
+// The hole this closes: republish is an OWNER-driven go-live with NO human in the
+// loop, and a `removed` listing is directly asset-editable. The attach path rejects
+// only `Blocked`/`NotFound` images, never a `Scanned` MATURE one, and neither
+// pre-existing gate inspects maturity — so `unpublish → attach mature media →
+// republish` put mature store art back under an unchanged declared rating, which
+// passes `listingMatureFilter(redCapable=false)` (`content_rating NOT IN ('r','x')`).
+//
+// KIND-AWARE by design:
+//   OFF-SITE → RAISE the stored rating to the media-derived one (raise-only).
+//   ON-SITE  → do NOT raise (the rating mirrors `AppBlock.content_rating`); allow the
+//              republish and queue an advisory `AppListingReport` for a moderator.
+//
+// 🔴 COVERAGE HONESTY. Of the 15 cases below, SEVEN are RED at `origin/main` and green
+// at HEAD — those are the regression coverage:
+//   off-site ABOVE · on-site ABOVE (+ its CHECK-set case) · screenshots-contribute ·
+//   idempotence · fail-closed · transactional.
+// The other EIGHT are green at `origin/main` too and are labelled `[INVARIANT GUARD]`:
+// they pin behaviour this change must NOT alter (raise-only never lowers, no-assets,
+// absent row, the pre-existing scan gate, the mod relist path). They are preservation
+// guards and are deliberately NOT counted as regression coverage.
+//
+// Levels are the REAL enum (`src/server/common/enums.ts`): PG=1, PG13=2, R=4, X=8.
+// The ladder is `['g','pg','pg13','r','x']`; `deriveContentRatingFromAssets` picks the
+// minimal rating covering the MAX asset level, so R(4)→'r' and X(8)→'x' — those are
+// exactly the two values `listingMatureFilter` hides, which is why the fixtures use
+// them rather than the level-2 art that happens to be live today.
+// ---------------------------------------------------------------------------
+describe('republishOwnListing — go-live MATURITY gate (kind-aware)', () => {
+  /** Pairwise-distinct asset ids, so a wrong-bind mutant cannot alias two of them. */
+  const ICON_ID = 101;
+  const COVER_ID = 202;
+  const SHOT_ID = 303;
+  /** Real `NsfwLevel` members — not magic numbers. */
+  const LVL_PG = 1;
+  const LVL_PG13 = 2;
+  const LVL_R = 4;
+  const LVL_X = 8;
+
+  function ownerPrimary(opts: {
+    kind: string;
+    contentRating: string | null;
+    appBlockId?: string | null;
+  }) {
+    return {
+      userId: OWNER,
+      status: 'removed',
+      kind: opts.kind,
+      slug: SLUG,
+      name: 'Cool App',
+      appBlockId: opts.appBlockId ?? (opts.kind === 'onsite' ? BLOCK_ID : null),
+      contentRating: opts.contentRating,
+      externalUrl: opts.kind === 'offsite' ? EXTERNAL_URL : null,
+      connectClientId: null,
+    };
+  }
+
+  /**
+   * Wire the three `appListing.findUnique` reads republish performs, in order:
+   *   1. `loadOwnedListingInTx`      → the owned-listing snapshot (with contentRating)
+   *   2. `assertListingAssetsScanCleanInTx` → the asset ids for the scan gate
+   *   3. `resolveListingRatingFloorInTx`    → the asset ids for the maturity derive
+   * plus the screenshot + image reads BOTH (2) and (3) share.
+   *
+   * `levels` maps image id → nsfwLevel; every image also carries `ingestion` so the
+   * pre-existing scan gate is satisfied and the maturity code is REACHABLE (an input
+   * no earlier check rejects).
+   */
+  function wire(opts: {
+    kind: string;
+    contentRating: string | null;
+    icon?: number | null;
+    cover?: number | null;
+    shots?: number[];
+    levels?: Record<number, number>;
+    ingestion?: string;
+  }) {
+    const icon = opts.icon === undefined ? ICON_ID : opts.icon;
+    const cover = opts.cover === undefined ? COVER_ID : opts.cover;
+    const shots = opts.shots ?? [SHOT_ID];
+    const levels = opts.levels ?? {};
+    const ingestion = opts.ingestion ?? 'Scanned';
+
+    // 🔴 Re-established on EVERY wire(), not left to `beforeEach`: `vi.clearAllMocks()`
+    // clears call history but NOT implementations, so a `mockResolvedValue` set by an
+    // earlier test leaks forward. That leak silently disarmed the transactional test
+    // (the idempotence test's "an open review exists" stub made the queue write a
+    // no-op, so nothing could throw) — a green-for-the-wrong-reason, caught only
+    // because the assertion happened to be a rejection.
+    mockWrite.appListingReport.findFirst.mockResolvedValue(null);
+    mockWrite.appListingReport.create.mockImplementation(async (a: { data: unknown }) => a.data);
+    mockWrite.appListing.findUnique.mockResolvedValue({ iconId: icon, coverId: cover });
+    mockWrite.appListing.findUnique.mockResolvedValueOnce(
+      ownerPrimary({ kind: opts.kind, contentRating: opts.contentRating })
+    );
+    mockWrite.appListingScreenshot.findMany.mockResolvedValue(shots.map((imageId) => ({ imageId })));
+    mockWrite.image.findMany.mockImplementation(
+      async (args: { where?: { id?: { in?: number[] } } }) =>
+        (args?.where?.id?.in ?? []).map((id) => ({ id, ingestion, nsfwLevel: levels[id] ?? 0 }))
+    );
+    mockWrite.appListingModerationEvent.findFirst.mockResolvedValueOnce({
+      action: 'owner-unpublish',
+    });
+  }
+
+  /** The `data` payload of the listing status flip. */
+  function flipData() {
+    const call = mockWrite.appListing.updateMany.mock.calls.find(
+      (c: [{ where?: { status?: string } }]) => c[0]?.where?.status === 'removed'
+    );
+    return call?.[0]?.data;
+  }
+
+  // ---- OFF-SITE × media-vs-declared -------------------------------------------------
+
+  it('[INVARIANT GUARD — green at origin/main] OFF-SITE, media BELOW declared → rating UNCHANGED (raise-only never lowers)', async () => {
+    // Max asset level R(4) → derived 'r'; declared 'x' (level 8) is HIGHER, so a
+    // raise-only floor must leave it alone. A lower-vs-raise inversion mutant would
+    // write 'r' here and lose a deliberately mature rating.
+    wire({
+      kind: 'offsite',
+      contentRating: 'x',
+      levels: { [ICON_ID]: LVL_PG13, [COVER_ID]: LVL_R, [SHOT_ID]: LVL_PG },
+    });
+    const res = await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
+    expect(res).toEqual({ appListingId: APP_ID, status: 'approved' });
+    expect(flipData()).toEqual({ status: 'approved' });
+    expect(flipData()).not.toHaveProperty('contentRating');
+    expect(mockWrite.appListingReport.create).not.toHaveBeenCalled();
+  });
+
+  it('[INVARIANT GUARD — green at origin/main] OFF-SITE, media EQUAL to declared → rating UNCHANGED (no needless write)', async () => {
+    // Max R(4) → derived 'r' === declared 'r'. Strict-inequality boundary: a `>` → `>=`
+    // mutant in the floor would still produce 'r', but the ABOVE case below pins the
+    // raise, and this pins that EQUAL does not emit a contentRating key at all.
+    wire({
+      kind: 'offsite',
+      contentRating: 'r',
+      levels: { [ICON_ID]: LVL_PG, [COVER_ID]: LVL_R, [SHOT_ID]: LVL_PG13 },
+    });
+    await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
+    expect(flipData()).toEqual({ status: 'approved' });
+    expect(mockWrite.appListingReport.create).not.toHaveBeenCalled();
+  });
+
+  it('🔴 OFF-SITE, media ABOVE declared → rating RAISED to the derived value', async () => {
+    // THE DEFECT. Declared 'g' with X(8) cover art: pre-fix this went live as 'g' and
+    // `content_rating NOT IN ('r','x')` showed it to SFW-only users.
+    wire({
+      kind: 'offsite',
+      contentRating: 'g',
+      levels: { [ICON_ID]: LVL_PG13, [COVER_ID]: LVL_X, [SHOT_ID]: LVL_R },
+    });
+    await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
+    expect(flipData()).toEqual({ status: 'approved', contentRating: 'x' });
+    // Off-site is fixed by the raise alone — it must NOT also spend a moderator slot.
+    expect(mockWrite.appListingReport.create).not.toHaveBeenCalled();
+  });
+
+  // ---- ON-SITE × media-vs-declared --------------------------------------------------
+
+  it('[INVARIANT GUARD — green at origin/main] ON-SITE, media BELOW declared → republishes normally, rating untouched, NO queue entry', async () => {
+    wire({
+      kind: 'onsite',
+      contentRating: 'x',
+      levels: { [ICON_ID]: LVL_PG13, [COVER_ID]: LVL_R, [SHOT_ID]: LVL_PG },
+    });
+    const res = await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
+    expect(res).toEqual({ appListingId: APP_ID, status: 'approved' });
+    expect(flipData()).toEqual({ status: 'approved' });
+    expect(mockWrite.appListingReport.create).not.toHaveBeenCalled();
+    // The backing block is still restored — the maturity gate must not disturb that.
+    expect(mockWrite.appBlock.updateMany).toHaveBeenCalled();
+  });
+
+  it('[INVARIANT GUARD — green at origin/main] ON-SITE, media EQUAL to declared → republishes normally, NO queue entry', async () => {
+    wire({
+      kind: 'onsite',
+      contentRating: 'r',
+      levels: { [ICON_ID]: LVL_PG, [COVER_ID]: LVL_R, [SHOT_ID]: LVL_PG13 },
+    });
+    await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
+    expect(flipData()).toEqual({ status: 'approved' });
+    expect(mockWrite.appListingReport.create).not.toHaveBeenCalled();
+  });
+
+  it('🔴 ON-SITE, media ABOVE declared → stored rating UNCHANGED (manifest mirror) + queue entry created', async () => {
+    // The kind-aware half. An on-site listing's rating mirrors AppBlock.content_rating,
+    // so it is deliberately NOT auto-raised — a kind-branch-inversion mutant would
+    // write contentRating here and break the manifest-mirror invariant.
+    wire({
+      kind: 'onsite',
+      contentRating: 'g',
+      levels: { [ICON_ID]: LVL_PG13, [COVER_ID]: LVL_X, [SHOT_ID]: LVL_R },
+    });
+    const res = await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
+    expect(res).toEqual({ appListingId: APP_ID, status: 'approved' });
+    // INVARIANT: the rating is NOT raised.
+    expect(flipData()).toEqual({ status: 'approved' });
+    expect(flipData()).not.toHaveProperty('contentRating');
+    // ...and a moderator IS queued.
+    expect(mockWrite.appListingReport.create).toHaveBeenCalledTimes(1);
+    const queued = mockWrite.appListingReport.create.mock.calls[0][0].data;
+    expect(queued).toMatchObject({
+      appListingId: APP_ID,
+      reporterUserId: OWNER,
+      reason: 'inappropriate',
+      status: 'pending',
+    });
+    // The details string names the DERIVED rating first and the DECLARED second — a
+    // wrong-bind mutant that swaps them produces a plausible sentence, so pin both
+    // fragments positionally rather than merely asserting the two words appear.
+    expect(queued.details).toContain('media rated "x"');
+    expect(queued.details).toContain('declared content rating of "g"');
+  });
+
+  it('ON-SITE over-rated: the queue reason is a member of the CHECK-constrained reason set', async () => {
+    // A value outside the DB CHECK (impersonation|phishing-malware|broken|
+    // inappropriate|spam|other) would be rejected at 23514 in production, where the
+    // mock happily accepts anything.
+    wire({
+      kind: 'onsite',
+      contentRating: 'g',
+      levels: { [ICON_ID]: LVL_PG, [COVER_ID]: LVL_X, [SHOT_ID]: LVL_PG13 },
+    });
+    await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
+    const queued = mockWrite.appListingReport.create.mock.calls[0][0].data;
+    expect(APP_LISTING_REPORT_REASONS as readonly string[]).toContain(queued.reason);
+    expect(['pending', 'resolved', 'dismissed']).toContain(queued.status);
+  });
+
+  // ---- Edge cases -------------------------------------------------------------------
+
+  it('[INVARIANT GUARD — green at origin/main] listing with NO attached assets → rating unchanged, no queue entry, no crash', async () => {
+    wire({ kind: 'offsite', contentRating: 'g', icon: null, cover: null, shots: [] });
+    const res = await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
+    expect(res).toEqual({ appListingId: APP_ID, status: 'approved' });
+    expect(flipData()).toEqual({ status: 'approved' });
+    expect(mockWrite.appListingReport.create).not.toHaveBeenCalled();
+  });
+
+  it('[INVARIANT GUARD — green at origin/main] absent listing row on the FLOOR read → declared rating preserved, republish still succeeds', async () => {
+    // The floor helper returns `declaredRating` when its own findUnique misses (a race
+    // with a concurrent purge). Pre-existing behaviour must survive.
+    mockWrite.appListing.findUnique.mockResolvedValue(null);
+    mockWrite.appListing.findUnique.mockResolvedValueOnce(
+      ownerPrimary({ kind: 'offsite', contentRating: 'pg13' })
+    );
+    mockWrite.appListingModerationEvent.findFirst.mockResolvedValueOnce({
+      action: 'owner-unpublish',
+    });
+    const res = await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
+    expect(res).toEqual({ appListingId: APP_ID, status: 'approved' });
+    expect(flipData()).toEqual({ status: 'approved' });
+  });
+
+  it('🔴 SCREENSHOTS contribute to the derived max, not just icon/cover', async () => {
+    // Icon and cover are both tame; the ONLY mature asset is a screenshot. A mutant
+    // that derives from `[iconId, coverId]` and drops the screenshot spread survives
+    // every icon/cover-driven case above and dies here.
+    wire({
+      kind: 'offsite',
+      contentRating: 'g',
+      levels: { [ICON_ID]: LVL_PG, [COVER_ID]: LVL_PG, [SHOT_ID]: LVL_X },
+    });
+    await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
+    expect(flipData()).toEqual({ status: 'approved', contentRating: 'x' });
+  });
+
+  it('IDEMPOTENCE: a repeat republish with an OPEN review does NOT create a duplicate queue entry', async () => {
+    wire({
+      kind: 'onsite',
+      contentRating: 'g',
+      levels: { [ICON_ID]: LVL_PG13, [COVER_ID]: LVL_X, [SHOT_ID]: LVL_R },
+    });
+    // An open advisory review already exists for this listing+reporter — mirroring the
+    // DB's partial-unique `(app_listing_id, reporter_user_id) WHERE status='pending'`.
+    mockWrite.appListingReport.findFirst.mockResolvedValue({ id: 'alrp_existing' });
+    const res = await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
+    // The republish still succeeds — an existing review must never block the owner.
+    expect(res).toEqual({ appListingId: APP_ID, status: 'approved' });
+    expect(mockWrite.appListingReport.create).not.toHaveBeenCalled();
+    // The dedup probe is scoped to pending + this listing + this reporter.
+    expect(mockWrite.appListingReport.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { appListingId: APP_ID, reporterUserId: OWNER, status: 'pending' },
+      })
+    );
+  });
+
+  it('[INVARIANT GUARD — green at origin/main] 🔴 a BLOCKED asset still refuses via the PRE-EXISTING scan gate (the new code did not displace it)', async () => {
+    // Reachability/attribution: the media is also over-rated (X), so BOTH gates would
+    // have something to say. The scan gate runs FIRST, so the listing must not flip and
+    // no queue entry may be written — proving the maturity code did not take over.
+    wire({
+      kind: 'onsite',
+      contentRating: 'g',
+      levels: { [ICON_ID]: LVL_PG13, [COVER_ID]: LVL_X, [SHOT_ID]: LVL_R },
+      ingestion: 'Blocked',
+    });
+    await expect(
+      republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER })
+    ).rejects.toThrow();
+    expect(flipData()).toBeUndefined();
+    expect(mockWrite.appListingReport.create).not.toHaveBeenCalled();
+    expect(mockWrite.appListingModerationEvent.create).not.toHaveBeenCalled();
+  });
+
+  it('🔴 FAIL-CLOSED: a throwing rating derivation leaves the listing NOT live', async () => {
+    wire({
+      kind: 'offsite',
+      contentRating: 'g',
+      levels: { [ICON_ID]: LVL_PG13, [COVER_ID]: LVL_X, [SHOT_ID]: LVL_R },
+    });
+    // First image.findMany (the scan gate) succeeds; the SECOND (the maturity derive)
+    // throws — so the failure is attributable to the derive, not the scan gate.
+    let call = 0;
+    mockWrite.image.findMany.mockImplementation(
+      async (args: { where?: { id?: { in?: number[] } } }) => {
+        if (++call >= 2) throw new Error('nsfwLevel read failed');
+        return (args?.where?.id?.in ?? []).map((id) => ({ id, ingestion: 'Scanned', nsfwLevel: 0 }));
+      }
+    );
+    await expect(
+      republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER })
+    ).rejects.toThrow('nsfwLevel read failed');
+    // NOT live, and no audit event claiming it was.
+    expect(flipData()).toBeUndefined();
+    expect(mockWrite.appListingModerationEvent.create).not.toHaveBeenCalled();
+  });
+
+  it('🔴 TRANSACTIONAL: a failing queue write aborts the whole republish (nothing half-committed)', async () => {
+    wire({
+      kind: 'onsite',
+      contentRating: 'g',
+      levels: { [ICON_ID]: LVL_PG13, [COVER_ID]: LVL_X, [SHOT_ID]: LVL_R },
+    });
+    mockWrite.appListingReport.create.mockRejectedValueOnce(new Error('queue write failed'));
+    await expect(
+      republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER })
+    ).rejects.toThrow('queue write failed');
+    // The queue write is INSIDE the tx callback, so the error escapes $transaction and
+    // the status flip rolls back with it. The audit event (written after the queue)
+    // never happens — if it did, the two would be able to disagree.
+    expect(mockWrite.appListingModerationEvent.create).not.toHaveBeenCalled();
+  });
+
+  // ---- Regression: the sibling flips are untouched -----------------------------------
+
+  it('[INVARIANT GUARD — green at origin/main] relistListing (mod, human in the loop) applies NO floor and queues NOTHING', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('removed'));
+    mockWrite.appListing.findUnique.mockResolvedValue({ iconId: ICON_ID, coverId: COVER_ID });
+    mockWrite.appListingScreenshot.findMany.mockResolvedValue([{ imageId: SHOT_ID }]);
+    // Deliberately over-rated media — the mod path must still not auto-raise or queue.
+    mockWrite.image.findMany.mockImplementation(
+      async (args: { where?: { id?: { in?: number[] } } }) =>
+        (args?.where?.id?.in ?? []).map((id) => ({
+          id,
+          ingestion: 'Scanned',
+          nsfwLevel: id === COVER_ID ? LVL_X : LVL_PG,
+        }))
+    );
+    await relistListing({
+      input: { appListingId: APP_ID, reason: GOOD_REASON },
+      userId: REVIEWER,
+    });
+    const relistCall = mockWrite.appListing.updateMany.mock.calls.find(
+      (c: [{ data?: Record<string, unknown> }]) => c[0]?.data?.status === 'approved'
+    );
+    expect(relistCall?.[0]?.data).not.toHaveProperty('contentRating');
+    expect(mockWrite.appListingReport.create).not.toHaveBeenCalled();
   });
 });

@@ -22,7 +22,10 @@ import {
 import { safeCollaboratorQuery } from '~/server/services/blocks/app-access.service';
 import { recordOwnershipEvent } from '~/server/services/blocks/app-collaborator.service';
 import { notifyAppListingOwner } from '~/server/services/blocks/app-listing-notify';
-import { assertListingAssetsScanCleanInTx } from '~/server/services/blocks/app-listing-assets.service';
+import {
+  assertListingAssetsScanCleanInTx,
+  resolveListingRatingFloorInTx,
+} from '~/server/services/blocks/app-listing-assets.service';
 import { assertOffsiteListingActionableInTx } from '~/server/services/blocks/app-listing-actionable.service';
 import { isOwnerUnpublishedListing } from '~/server/services/blocks/app-listing-owner-unpublish';
 import {
@@ -1369,10 +1372,22 @@ async function loadOwnedListingInTx(
   slug: string;
   name: string | null;
   appBlockId: string | null;
+  contentRating: string | null;
 }> {
   const listing = await tx.appListing.findUnique({
     where: { id: appListingId },
-    select: { userId: true, status: true, kind: true, slug: true, name: true, appBlockId: true },
+    select: {
+      userId: true,
+      status: true,
+      kind: true,
+      slug: true,
+      name: true,
+      appBlockId: true,
+      // The DECLARED rating, needed by `republishOwnListing`'s go-live rating floor
+      // (off-site) / over-rated-media review queue (on-site). `unpublishOwnListing`
+      // ignores it — a self-hide never touches the rating.
+      contentRating: true,
+    },
   });
   if (!listing) {
     throw new OffsiteModerationError('NOT_FOUND', 'Listing not found.');
@@ -1387,6 +1402,7 @@ async function loadOwnedListingInTx(
     slug: listing.slug,
     name: listing.name,
     appBlockId: listing.appBlockId,
+    contentRating: listing.contentRating,
   };
 }
 
@@ -1471,8 +1487,22 @@ export type RepublishOwnListingResult = { appListingId: string; status: 'approve
  *
  * ON-SITE: the backing `AppBlock` is also restored suspended → approved in the SAME
  * tx (via {@link flipBackingBlockStatus}), so the app serves again. OFF-SITE: only the
- * listing flips. Pure visibility toggle — no re-derive, no publish request. `reason`
- * optional.
+ * listing flips. `reason` optional.
+ *
+ * 🔴 MATURITY IS RE-DERIVED AT GO-LIVE, KIND-AWARE (this used to be a pure visibility
+ * toggle with NO re-derive, which was the hole). A `removed` listing is directly
+ * asset-editable and the attach path never rejects a `Scanned` MATURE image, so
+ * `unpublish → attach mature media → republish` re-published mature store art under an
+ * unchanged declared rating:
+ *   - OFF-SITE → the declared rating is RAISED to the media-derived one
+ *     ({@link resolveListingRatingFloorInTx}, RAISE-ONLY — tame media never lowers a
+ *     deliberately higher rating). Off-site listings carry their own rating.
+ *   - ON-SITE → the rating is NOT raised (it mirrors `AppBlock.content_rating`; the
+ *     listing must not override the runtime serving gate). The republish is allowed and
+ *     an `AppListingReport` is queued for a moderator instead. The over-rated art is
+ *     LIVE while queued — a documented, deliberate cost; see the in-body comment.
+ * Fail-closed: the derive runs INSIDE the tx and is not caught, so a throw leaves the
+ * listing `removed`.
  */
 export async function republishOwnListing(opts: {
   input: RepublishOwnListingInput;
@@ -1516,9 +1546,50 @@ export async function republishOwnListing(opts: {
     // (`tx`), row-consistent with the flip. On-site republishes no-op.
     await assertOffsiteListingActionableInTx(tx, input.appListingId);
     const isOnsite = listing.kind === 'onsite';
+
+    // 🔴 GO-LIVE RATING FLOOR / OVER-RATED-MEDIA gate — KIND-AWARE.
+    //
+    // Republish is an OWNER-DRIVEN go-live with NO human in the loop, and a `removed`
+    // listing is DIRECTLY asset-editable (`assertOwnerAssetEditable` refuses only an
+    // `approved` non-shadow row). The attach path rejects only `Blocked`/`NotFound`
+    // images — never a `Scanned` MATURE one — and neither gate above inspects maturity:
+    // `assertListingAssetsScanCleanInTx` reads scan STATUS, `assertOffsiteListingActionableInTx`
+    // reads the href. So `unpublish → attach mature media → republish` put mature store
+    // art back on a `g`-rated card, which passes `listingMatureFilter(redCapable=false)`
+    // (`content_rating NOT IN ('r','x')`) and shows it to SFW-ONLY users.
+    //
+    // Derived BEFORE the flip and NOT wrapped in try/catch: a throw here aborts the tx,
+    // so a listing whose rating cannot be derived does NOT go live (fail-closed).
+    const derivedRating = await resolveListingRatingFloorInTx(
+      tx,
+      input.appListingId,
+      listing.contentRating
+    );
+    // RAISE-ONLY is already the helper's contract (it returns `declaredRating` unchanged
+    // unless the derived ceiling is strictly higher), so an inequality here means
+    // "the media is MORE mature than the declared rating" and nothing else. Tame media
+    // can never lower a deliberately higher declaration.
+    const mediaOverRated = derivedRating !== listing.contentRating;
+
     const flipped = await tx.appListing.updateMany({
       where: { id: input.appListingId, kind: listing.kind, status: 'removed' },
-      data: { status: 'approved' },
+      data: {
+        status: 'approved',
+        // OFF-SITE: apply the floor, exactly as the off-site approve path does — an
+        // off-site listing carries its OWN rating (schema: "Off-site listings carry
+        // their own"), so raising it is the correct, complete fix.
+        //
+        // ON-SITE: DELIBERATELY NOT RAISED. An on-site listing's `contentRating`
+        // MIRRORS `AppBlock.content_rating` (schema comment on `AppListing.contentRating`:
+        // "For on-site listings this MIRRORS AppBlock.content_rating (single source —
+        // the listing must NOT override the runtime .red/.com serving gate)"), and the
+        // on-site revision path states the same policy: "over-rated media is a
+        // mod-reject at review, never an auto-raise" (`offsite-listing.service`, the
+        // ONSITE = ASSETS-ONLY branch). Auto-raising here would silently diverge the
+        // store card from the app's manifest rating. Instead the republish is ALLOWED
+        // and the listing is QUEUED for a moderator (below).
+        ...(!isOnsite && mediaOverRated ? { contentRating: derivedRating } : {}),
+      },
     });
     if (flipped.count === 0) {
       throw new OffsiteModerationError(
@@ -1542,6 +1613,65 @@ export async function republishOwnListing(opts: {
       });
       if (!flippedBlock) onsiteBlockRestoreDrift = true;
     }
+
+    // 🔴 ON-SITE OVER-RATED MEDIA → MODERATOR REVIEW QUEUE (the on-site half of the
+    // kind-aware gate above). The rating was deliberately left mirroring the manifest,
+    // so nothing else would ever surface that this listing's media is more mature than
+    // its card claims. File an `AppListingReport` — the ONLY advisory queue in this
+    // codebase: it is filed against an already-`approved` (live) listing, it NEVER
+    // touches `AppListing.status`, and a moderator works it from the Reports tab of
+    // `/apps/review` (`listListingReports`), resolving via `resolveReport` /
+    // `dismissReport` or escalating to `delistListing`. The gating queues
+    // (`AppListingPublishRequest` / `AppBlockPublishRequest`) are deliberately NOT used
+    // — they hold the object in a non-visible status, which is a different decision.
+    //
+    // 🔴 KNOWN COST, stated rather than papered over: the over-rated art IS LIVE while
+    // the report sits in the queue. There is no cheap display-layer interim guard —
+    // the public store query gates on `al.status = 'approved'` AND
+    // `listingMatureFilter` (`content_rating NOT IN ('r','x')`) only, so hiding this
+    // listing without mutating `content_rating` would need a new column (manual-apply
+    // migration) or a join on `app_listing_reports` (which would let ANY single user
+    // report hide ANY listing). Both are disproportionate here; see the PR body.
+    //
+    // `reporterUserId` is the OWNER: the column is NOT NULL with an FK to `User` and
+    // this codebase has no system-user sentinel, so the acting user is the only honest
+    // value — and it buys idempotence for free, because the DB carries a PARTIAL-UNIQUE
+    // `(app_listing_id, reporter_user_id) WHERE status='pending'`. The check-then-insert
+    // below mirrors that constraint IN-TX rather than catching P2002: a constraint
+    // violation inside a Postgres transaction aborts the WHOLE transaction, so a caught
+    // P2002 could not be recovered from here — it would roll the republish back.
+    if (isOnsite && mediaOverRated) {
+      const openReview = await tx.appListingReport.findFirst({
+        where: {
+          appListingId: input.appListingId,
+          reporterUserId: userId,
+          status: 'pending',
+        },
+        select: { id: true },
+      });
+      if (!openReview) {
+        await tx.appListingReport.create({
+          data: {
+            id: newAppListingReportId(),
+            appListingId: input.appListingId,
+            reporterUserId: userId,
+            // `inappropriate` is the closest member of the CHECK-constrained reason set
+            // (impersonation | phishing-malware | broken | inappropriate | spam | other)
+            // — a maturity mismatch is a content-appropriateness call. Writing a value
+            // outside that set would be rejected by the DB (23514).
+            reason: 'inappropriate',
+            details:
+              `Automated review: on-site listing republished by its owner with media rated ` +
+              `"${derivedRating ?? 'unknown'}" but a declared content rating of ` +
+              `"${listing.contentRating ?? 'none'}". The declared rating mirrors the app ` +
+              `manifest and was deliberately NOT auto-raised — a moderator should either ` +
+              `reject the media or have the author raise the manifest rating.`,
+            status: 'pending',
+          },
+        });
+      }
+    }
+
     await tx.appListingModerationEvent.create({
       data: {
         id: newAppListingModerationEventId(),
