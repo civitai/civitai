@@ -15,6 +15,7 @@ import { searchIndexMap } from '~/components/Search/search.types';
 import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { filterableAttributesByIndex } from '~/server/search-index/filterable-attributes';
 import {
+  bountiesSortableAttributes,
   modelsSortableAttributes,
   sortableAttributesByIndex,
 } from '~/server/search-index/sortable-attributes';
@@ -126,8 +127,8 @@ describe('search sort options', () => {
 });
 
 describe('the models index sort contract', () => {
-  // Literal, not derived: these are the attributes the live models index is provisioned with.
-  // `sortableAttributes` only ever reach a live index through `onIndexSetup`, which runs solely
+  // Literal, and read back from the live search index rather than derived from the code under
+  // test. `sortableAttributes` only ever reach a live index through `onIndexSetup`, which runs solely
   // inside the manual (`UNRUNNABLE_JOB_CRON`) index-reset job — so renaming an attribute here and
   // pointing the client at the new name in the same release leaves the client asking for something
   // the live index has never heard of, and every sorted model search 400s until someone runs a
@@ -157,6 +158,35 @@ describe('the models index sort contract', () => {
       'models_v9:metrics.collectedCount:desc',
       'models_v9:metrics.tippedAmountCount:desc',
       'models_v9:createdAt:desc',
+    ]);
+  });
+});
+
+describe('the bounties index sort contract', () => {
+  // Literal, and verified against the live search index rather than inferred. A bounty document
+  // carries its counts only under `stats`, so a bare `favoriteCountAllTime` names a field no
+  // document has: declaring it sortable would not surface an error, it would let Meilisearch
+  // accept the sort and answer in an arbitrary order — a silent wrong answer where the prefixed
+  // spelling gives a correct one.
+  it('declares exactly the sortable attributes the live bounties index is provisioned with', () => {
+    expect(bountiesSortableAttributes.slice().sort()).toEqual([
+      'createdAt',
+      'id',
+      'stats.entryCountAllTime',
+      'stats.favoriteCountAllTime',
+      'stats.unitAmountCountAllTime',
+    ]);
+  });
+
+  it('offers exactly the sort options those attributes support, in label order', () => {
+    // Order is load-bearing: src/pages/search/bounties.tsx maps its dropdown labels
+    // ("Relevancy", "Most Buzz", "Entry Count", "Favorite", "Newest") onto these by position.
+    expect(BountiesSearchIndexSortBy.slice()).toEqual([
+      'bounties_v3',
+      'bounties_v3:stats.unitAmountCountAllTime:desc',
+      'bounties_v3:stats.entryCountAllTime:desc',
+      'bounties_v3:stats.favoriteCountAllTime:desc',
+      'bounties_v3:createdAt',
     ]);
   });
 });

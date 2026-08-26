@@ -23,6 +23,14 @@ import {
 // using that sort answers `Attribute ... is not sortable` and the results page fails outright.
 // The sort options the client may request live in src/components/Search/parsers/*.parser.ts and are
 // pinned against these lists by src/components/Search/__tests__/search-index-contract.test.ts.
+//
+// The models, images and bounties lists were read back from the live search index and match it
+// exactly. The rest are what the code declared before this module existed, and have NOT been
+// checked against a live index — treat them as a starting point, not as ground truth.
+//
+// Adding an attribute no document carries is not free either: after a reset Meilisearch would
+// ACCEPT a sort on it and answer in an arbitrary order, which is a silent wrong answer rather than
+// a loud `Attribute ... is not sortable`. Every entry must be a real field path.
 
 // `id` is sortable on every index because the keyset cleanup scan in
 // src/server/meilisearch/cleanup.ts pages on it.
@@ -39,11 +47,6 @@ export const articlesSortableAttributes = [
 export const bountiesSortableAttributes = [
   'createdAt',
   'id',
-  // The bounties sort options ask for a bare `favoriteCountAllTime`, while the document only
-  // carries it as `stats.favoriteCountAllTime`. Declared so the option cannot answer
-  // `Attribute ... is not sortable`; re-pointing the option at the `stats.` spelling is a
-  // behaviour change and is tracked separately.
-  'favoriteCountAllTime',
   'stats.unitAmountCountAllTime',
   'stats.entryCountAllTime',
   'stats.favoriteCountAllTime',
