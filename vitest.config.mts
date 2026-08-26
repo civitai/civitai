@@ -217,9 +217,28 @@ const unitTestConfig = {
     // (exports going missing as the graph grows). Measured: adding `redis` and `@aws-sdk/client-s3`
     // here takes four mock-holding files from 92 tests passing to 7 collected.
     //
-    // Before adding a package, check `vi.mock('<pkg>'` across `src` returns nothing. The three
-    // excluded on those grounds — `redis`, `@aws-sdk/client-s3`, `@aws-sdk/lib-storage` — are worth
-    // ~275s and need `default` added to six mock factories first; that is a separate change.
+    // Before adding a package, check `vi.mock('<pkg>'` across `src`, `test`, `packages` and `apps`
+    // returns nothing — a subpath form (`vi.mock('pg/lib/x')`) counts. The four excluded on those
+    // grounds:
+    //   `redis`, `@aws-sdk/client-s3`, `@aws-sdk/lib-storage` (5 / 2 / 3 mocking files) — worth
+    //     ~275s, and need `default` added to six mock factories first.
+    //   `pg` (2 mocking files, both in `packages/civitai-db`) — dropped from this list for exactly
+    //     that reason, not because it is cheap.
+    //
+    // 🔴 A zero-mocker package can still be unsafe, for a SECOND reason: a package that loads a
+    // non-JS SIDECAR at runtime breaks when it is relocated. `@electric-sql/pglite` passes the
+    // mock check and was still reverted out of this list — pre-bundling moves the module into
+    // `node_modules/.vite/vitest/<hash>/deps_ssr/` while its WASM payload stays behind, so every
+    // PGlite-backed suite dies on
+    //   ENOENT: open '…/deps_ssr/pglite.data'
+    // Measured: 7 `*.behavior.test.ts` files went from 87 passing to 0, reported as SKIPPED rather
+    // than failed, so the suite total stayed at 22,636 while 87 fewer tests actually executed.
+    // Compare the PASSED count, never the total, when changing this list.
+    // The three biggest fan-in packages measured over the test-reachable graph are blocked the same
+    // way and are the follow-up this list is building toward:
+    //   `@tabler/icons-react` 5,952 package files / 166 importers — 2 mocking files
+    //   `next`                3,459 / 114                        — 10 mocking files
+    //   `@mantine/core`       1,180 / 249                        — 4 mocking files
     optimizer: {
       ssr: {
         enabled: true,
@@ -229,10 +248,37 @@ const unitTestConfig = {
           '@tiptap/html',
           '@axiomhq/axiom-node',
           '@aws-sdk/s3-request-presigner',
+          // Added below: each verified to have ZERO `vi.mock` callers anywhere in the workspace,
+          // and the whole suite re-run to confirm the collected test count is unchanged.
+          'zod',
+          'react',
+          'react-dom',
+          'zustand',
+          'immer',
+          'clsx',
+          'uuid',
+          'prom-client',
+          '@tanstack/react-query',
+          '@paddle/paddle-node-sdk',
         ],
       },
     },
   },
+  // A transform cache on disk, keyed per module and shared between separate `vitest run`
+  // invocations — where `node_modules/.vite` only collapses the optimizer's work, this survives the
+  // process boundary that `pool: 'forks'` + `isolate: true` creates for every single test file.
+  //
+  // Scoped to `unit`/`unit-native` rather than set at the root `test` block on purpose. A root-level
+  // value is inherited by EVERY project (vitest resolves it into each project's config even without
+  // `extends: true`), which would silently opt in the browser `component` project and the
+  // `packages/*` + `apps/*` suites — none of which are covered by the run that verified this.
+  // Widening it is a follow-up with its own verification, not a freebie.
+  //
+  // Staleness is self-correcting rather than something to remember: the cache carries a format
+  // version, and `ensureCacheIntegrity()` hashes the lockfile on startup and nukes the whole cache
+  // when it moves, so a dependency bump can't leave a stale transform behind. It writes to
+  // `node_modules/.experimental-vitest-cache`, so it is gitignored with the rest of `node_modules`.
+  experimental: { fsModuleCache: true },
 };
 
 // Three Vitest projects sharing one config/runner:
