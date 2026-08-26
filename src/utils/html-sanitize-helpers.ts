@@ -76,8 +76,7 @@ export const DEFAULT_ALLOWED_ATTRIBUTES = {
   'edge-media': ['url', 'type', 'filename', 'className'],
 };
 
-// What may appear INSIDE a blurb span. Shared by `blurbContentSchema` (the save gate) and
-// RenderRichText's blurb node mapping (the render gate), so the two cannot drift.
+// What may appear INSIDE a blurb span.
 //
 // 🔴 INLINE ONLY — never add a block element here. A blurb's text is spliced inside
 // `<span data-type="blurb">`, which sits inside the host document's `<p>`. In the HTML parsing
@@ -109,8 +108,7 @@ export const BLURB_INTERIOR_SANITIZE_OPTIONS = {
  * `replaceBlurbSpans` at splice (both the save path and the fan-out reach it there), and
  * RenderRichText's blurb node mapping at render.
  *
- * Idempotent, so a caller that cannot tell whether its input was already sanitized should just
- * call it.
+ * Idempotent — call it whenever you are unsure.
  */
 export function sanitizeBlurbInterior(html: string) {
   return sanitizeHtml(html, BLURB_INTERIOR_SANITIZE_OPTIONS);
@@ -130,10 +128,10 @@ export function sanitizeBlurbInterior(html: string) {
 const isStickerSpan = (frame: { tag: string; attribs: Record<string, string> }) =>
   frame.tag === 'span' && frame.attribs['data-type']?.trim().toLowerCase() === 'sticker';
 
-// Blurb spans carry text the fan-out job later rewrites. `span` and its data-* attributes are in
-// the default allowlist, so without this the markup would survive on every rich-text surface —
-// and the job would then rewrite content on a surface nobody registered. Denied by default so a
-// surface added later fails closed.
+// `span` and its data-* attributes are in the default allowlist, so without this a blurb span
+// survives wherever it was pasted. Nothing creates a BlurbReference for an unregistered surface,
+// so that copy is frozen at the text it was pasted with and silently never updates. Denied by
+// default so a surface added later fails closed.
 // Normalised deliberately: the matcher here must stay strictly BROADER than every consumer, all
 // of which are exact-lowercase today.
 const isBlurbAttribs = (attribs: Record<string, string>) =>

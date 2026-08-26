@@ -170,8 +170,6 @@ export function RichTextEditor({
       .map((x) => ({ ...x, remaining: loaded ? balances.get(x.id) ?? null : undefined }));
   }, [stickersEnabled, ownedStickers, stickerBalances]);
 
-  // The flag gates the toolbar control and the `//` picker; the node is registered whenever the
-  // surface opted in, so a span already in a draft keeps its reference either way.
   const currentUser = useCurrentUser();
   const blurbsEnabled = useFeatureFlags().textBlurbs && addBlurbs;
   const [docHasBlurb, setDocHasBlurb] = useState(false);
@@ -362,8 +360,6 @@ export function RichTextEditor({
     storage.refresh?.();
   }, [editor, blurbs, blurbsQuery.isLoading, blurbsEnabled]);
 
-  // One walk feeds both: whether to fetch the list at all, and — once it has resolved, since
-  // before that every chip would read as deleted — whether anything in the document is orphaned.
   useEffect(() => {
     if (!editor || !addBlurbs) return;
     const known = blurbsQuery.isSuccess ? new Set(blurbs.map((blurb) => blurb.id)) : null;

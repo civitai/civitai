@@ -304,8 +304,6 @@ export const upsertCosmeticShopItem = async ({
     });
   }
 
-  // Skipped when the flag was off for this owner: `expandBlurbs` did not evaluate anything, so
-  // reconciling would delete reference rows the fan-out is still meant to maintain.
   if (expansion.evaluated)
     await reconcileBlurbReferences({
       entityType: 'CosmeticShopItem',
@@ -321,9 +319,8 @@ export const upsertCosmeticShopItem = async ({
  * the blurb fan-out. `upsertCosmeticShopItem` takes a whole form payload, so a partial call to
  * it would clear title, price, availability window and quantity rather than update a column.
  *
- * The write is the whole of it: shop items are not indexed, not text-moderated, and carry no
- * per-row cache. So unlike the other surfaces there is no shared follow-up for the interactive
- * path to route through.
+ * A column write and nothing else: there is no shared follow-up here for the interactive path to
+ * route through, unlike the other surfaces.
  *
  * `CosmeticShopItem` has no `updatedAt` column, so this is a plain Prisma update rather than the
  * `$executeRaw` the other adapters need to keep a background rewrite out of "recently updated".

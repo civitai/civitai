@@ -11,9 +11,6 @@ import { insertBlurb } from '~/components/RichTextEditor/blurb.util';
  * result without rebuilding the extension on every render. The plugin only re-evaluates `items` on
  * a query or selection change, so `refresh()` exists to push a later-arriving list into an already
  * open popover.
- *
- * `manage` is returned as well as wired into the popover so the behaviour is reachable from a test:
- * it is what the footer's `Manage` link runs.
  */
 export function createBlurbSuggestion({
   getItems,
@@ -38,11 +35,8 @@ export function createBlurbSuggestion({
   let latestProps: SuggestionProps<BlurbItem> | null = null;
 
   /**
-   * Opening the manager is not an insert, so nothing else consumes the `//sup` the creator typed:
-   * the document is unchanged, the plugin's next `apply()` finds the same match and stays active,
-   * and the popover keeps drawing above the modal. Worse, the eventual insert lands AFTER the
-   * literal trigger text. Removing the range is what picking an item does, and the trigger is a
-   * command affordance rather than prose — cancelling the manager costs a retype, not content.
+   * Opening the manager consumes nothing, so the `//sup` stays matched, the popover keeps drawing
+   * over the modal, and the eventual insert lands after the literal trigger text.
    */
   const manage = () => {
     const props = latestProps;

@@ -311,6 +311,15 @@ describe('applyArticleContentChange', () => {
     expect(contentWrites()).toEqual([]);
   });
 
+  it('issues no Prisma update at all on a fan-out rewrite', async () => {
+    await applyArticleContentChange({ id: ARTICLE_ID, userId: OWNER_ID, content: EXPANDED_HTML });
+
+    // Any `article.update` on this path re-stamps `@updatedAt` and undoes the raw write above.
+    // The raw-SQL assertion cannot see one whose payload omits `content` — which is how the
+    // `Rescan` stamp bumped every referencing article on every blurb edit.
+    expect(dbMock.dbWrite.article.update).not.toHaveBeenCalled();
+  });
+
   it('rejects a blocked link domain before writing anything', async () => {
     throwOnBlockedLinkDomain.mockRejectedValue(new Error('invalid urls: blocked.example'));
 

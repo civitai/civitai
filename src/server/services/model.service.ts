@@ -2494,8 +2494,6 @@ export const upsertModel = async (
       );
     }
 
-    // Skipped when the flag was off for this owner: `expandBlurbs` did not evaluate anything, so
-    // reconciling would delete reference rows the fan-out is still meant to maintain.
     if (expansion.evaluated)
       await reconcileBlurbReferences({
         entityType: 'Model',
@@ -2682,8 +2680,7 @@ export const upsertModel = async (
     // cached body) stops serving a stale 200 on an edge-miss for up to the cache
     // TTL. preventReplicationLag('model', id) above already guards the rebuild
     // read against the replication window. Fail-open (the helper swallows Redis
-    // errors). Unconditional, unlike the content-change call below: the fields it
-    // covers are wider than the two that one gates on.
+    // errors).
     await bustPublicModelResponseCache(result.id);
 
     // Skipped when neither field moved. contentHash dedup would drop the moderation submit

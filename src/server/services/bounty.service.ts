@@ -534,8 +534,6 @@ export const upsertBounty = async ({
       isModerator,
       addLockedProperties,
     });
-    // Skipped when the flag was off for this owner: `expandBlurbs` did not evaluate anything, so
-    // reconciling would delete reference rows the fan-out is still meant to maintain.
     if (updated && expansion.evaluated)
       await reconcileBlurbReferences({
         entityType: 'Bounty',
@@ -593,11 +591,9 @@ export async function applyBountyContentChange({
 }
 
 /**
- * `name`, `description` and `tags` are all indexed (bounties.search-index.ts), and until this
- * existed NOTHING on the bounty save path enqueued the document — an edited bounty stayed
- * searchable under its old text until a metric or entry event happened to re-enqueue it. Called
- * from BOTH `upsertBounty` and `applyBountyContentChange`, so the interactive edit and the blurb
- * fan-out cannot diverge on it.
+ * The bounty save path enqueued nothing before this, so an edited bounty served its old
+ * `description` in search results until a metric or entry event re-enqueued it. Called from
+ * both `upsertBounty` and `applyBountyContentChange` so the two cannot diverge.
  *
  * The enqueue itself, not `bountiesSearchIndex.queueUpdate`, which is exactly this call with
  * `indexName` bound (base.search-index.ts) — reaching it through the index module would pull

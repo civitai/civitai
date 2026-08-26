@@ -31,8 +31,8 @@ export async function createBlurb({
   name: string;
   content: string;
 }) {
-  // Checked here as well as on every surface that expands a blurb: a blurb body is
-  // spliced into entities that were domain-checked before it arrived.
+  // A blurb body is spliced into entities whose own domain check already ran, so it has to be
+  // caught on this write too.
   await throwOnBlockedLinkDomain(content);
 
   const existing = await dbWrite.blurb.count({ where: { userId, deletedAt: null } });

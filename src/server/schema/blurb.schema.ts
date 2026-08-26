@@ -6,7 +6,7 @@ import { BLURB_INTERIOR_SANITIZE_OPTIONS } from '~/utils/html-sanitize-helpers';
 // blurb's text becoming a large multiple of itself across every entity using it.
 export const MAX_BLURB_LENGTH = 3000;
 
-// The blurb editor is a full RichTextEditor, so `editor.getHTML()` wraps even one line in
+// The blurb editor is a RichTextEditor, so `editor.getHTML()` wraps even one line in
 // `<p>…</p>`. Paragraph BOUNDARIES become `<br>` before the block tags are stripped below —
 // without this the strip concatenates `<p>a</p><p>b</p>` into `ab`, silently running the
 // author's words together.

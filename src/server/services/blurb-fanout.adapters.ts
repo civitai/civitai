@@ -9,12 +9,7 @@ import { applyModelVersionContentChange } from '~/server/services/model-version.
 export type BlurbFanoutAdapter = {
   /** `null` means the entity no longer exists and the reference should be dropped. */
   load: (entityId: number) => Promise<{ userId: number; html: string } | null>;
-  /**
-   * Persist through the entity's NORMAL update function. Writing the column
-   * directly would skip the moderation scan, the search-index sync, the cache
-   * invalidation and Prisma's `@updatedAt` — which is the entire reason the text
-   * is materialised in the first place.
-   */
+  /** Persist through the entity's `apply<Entity>ContentChange`, never a direct column write. */
   save: (args: { entityId: number; userId: number; html: string }) => Promise<void>;
 };
 
@@ -35,9 +30,6 @@ const adapters: Record<string, BlurbFanoutAdapter> = {
       });
       return row ? { userId: row.userId, html: row.content } : null;
     },
-    // `applyArticleContentChange`, NOT `upsertArticle`. The upsert takes a whole form
-    // payload — title, tags, attachments, cover — and a partial call to it does not
-    // update a column, it clears every field it omits.
     save: ({ entityId, userId, html }) =>
       applyArticleContentChange({ id: entityId, userId, content: html }),
   },
@@ -49,9 +41,6 @@ const adapters: Record<string, BlurbFanoutAdapter> = {
       });
       return row ? { userId: row.userId, html: row.description ?? '' } : null;
     },
-    // NOT `updateModelById`: that runs neither the text-moderation submit nor the
-    // response-cache bust, so a rewritten description would go unscanned and keep
-    // serving its old text from the public model API.
     save: ({ entityId, html }) => applyModelContentChange({ id: entityId, description: html }),
   },
   ModelVersion: {

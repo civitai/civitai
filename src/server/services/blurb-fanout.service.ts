@@ -19,8 +19,8 @@ export async function processBlurbReference(ref: Ref, blurb: Blurb): Promise<Fan
   const loaded = await adapter.load(ref.entityId);
   if (!loaded) {
     // A reference can outlive its entity — entityType/entityId is a loose pair, not a
-    // foreign key. Dropping it here is what stops one deleted article sitting in the
-    // backlog forever and poisoning the backlog-age metric.
+    // foreign key. Dropping it stops one deleted article being re-selected on every pass
+    // forever.
     await dropReference(ref);
     return 'gone';
   }
@@ -63,16 +63,10 @@ function recordReference(ref: Ref, contentHash: string) {
   });
 }
 
-// Deliberately leaves `materializedHash` untouched — the row is still stale and stays
-// eligible — but bumps `materializedAt` so it moves to the BACK of the `ORDER BY
-// materializedAt ASC` window instead of heading it again next pass. That bounds a
-// permanently-failing row to one selected slot per pass and stops it crowding out other
-// rows once the backlog exceeds `limit` — it does NOT reduce how often the row itself is
-// retried: whenever the whole backlog fits in one batch (the common case), every stale row
-// is selected on every run regardless of position, so a row that fails every time is still
-// retried every run. There's no separate cap on that; the `failed` counter and the row-level
-// log are what surface it to a person, and a permanent count-then-stop would just hide the
-// same row more quietly.
+// Leaves `materializedHash` stale so the row stays eligible, but bumps `materializedAt` so it
+// moves to the back of the `ORDER BY materializedAt ASC` window. That stops a permanently-failing
+// row crowding out others once the backlog exceeds `limit`; it does not reduce retries, since a
+// backlog under `limit` selects every stale row on every run.
 function recordFailure(ref: Ref) {
   return dbWrite.blurbReference.update({
     where: {
@@ -138,21 +132,13 @@ export async function runBlurbFanout({
       // such row would abort every other row in the same pass, forever, on every run.
       try {
         const outcome = await processBlurbReference(row, row);
-        // The selector above already filters to supported entityTypes, so `outcome` is
-        // never really 'unsupported' here — folding it into `failed` just keeps the type
-        // checker honest about processBlurbReference's full return type without a key
-        // that doesn't exist on this batch-scoped counter.
         if (outcome === 'unsupported') counts.failed++;
         else counts[outcome]++;
       } catch (error) {
         counts.failed++;
         const err = error as Error;
-        // `warn`, not `error`: with the backlog under `limit` this fires every run for as
-        // long as the row keeps failing (see the comment on recordFailure), and the job's
-        // own aggregate log already carries `warn` for a nonzero `failed`. There's no
-        // persisted per-row attempt count to downgrade this further after N repeats —
-        // `materializedAt` can't stand in for one, since this same handler resets it on
-        // every failure, so a row failing every run always reads as "just touched."
+        // `warn`, not `error`: a permanently-failing row logs this on every run, and the job's
+        // aggregate log already warns on a nonzero `failed`.
         await logToAxiom({
           type: 'error',
           level: 'warn',
@@ -163,14 +149,10 @@ export async function runBlurbFanout({
           entityType: row.entityType,
           entityId: row.entityId,
         }).catch(() => undefined);
-        // try/catch, not `.catch()` chained off the call: this already runs inside the
-        // handler built to stop one row's failure from escaping, so a second failure here
-        // must not escape either. If it fails too, the row keeps its old materializedAt
-        // and is simply retried (from the front of the queue) next pass.
         try {
           await recordFailure(row);
         } catch {
-          // best effort — see above
+          // best effort: a row that keeps its old materializedAt is simply retried next pass
         }
       }
     }),

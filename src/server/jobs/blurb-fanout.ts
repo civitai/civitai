@@ -4,9 +4,9 @@ import { createJob } from './job';
 
 const BATCH_LIMIT = 500;
 
-// Rewrites entities whose stored blurb text is behind the blurb itself. Each rewrite
-// goes through that entity's normal update function, so its existing moderation scan,
-// search-index sync and cache invalidation fire without any of it being duplicated here.
+// Rewrites entities whose stored blurb text is behind the blurb itself, through each entity's
+// `apply<Entity>ContentChange` — which owns whatever follow-up that entity needs, so none of it
+// is duplicated here.
 //
 // Every 5 minutes. A blurb edit is not urgent, and a shorter period buys nothing while
 // making a large fan-out overlap itself.

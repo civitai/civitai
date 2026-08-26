@@ -998,8 +998,6 @@ export const upsertArticle = async ({
         });
       }
 
-      // Skipped when the flag was off for this owner: `expandBlurbs` did not evaluate anything,
-      // so reconciling would delete reference rows the fan-out is still meant to maintain.
       if (expansion.evaluated)
         await reconcileBlurbReferences({
           entityType: 'Article',
@@ -1220,12 +1218,8 @@ export const upsertArticle = async ({
       },
     });
 
-    // Skipped when the flag was off for this owner: `expandBlurbs` did not evaluate anything, so
-    // reconciling would delete reference rows the fan-out is still meant to maintain.
-    //
-    // No try/catch around it, deliberately: a failure here 500s a save that already committed,
-    // but swallowing it leaves the reference rows stale and the fan-out then skips this article
-    // forever — a silently unmaintained body is the worse of the two.
+    // No try/catch, deliberately: swallowing a failure here leaves the reference rows stale and
+    // the fan-out never maintains this article.
     if (expansion.evaluated)
       await reconcileBlurbReferences({ entityType: 'Article', entityId: id, uses: expansion.uses });
 
@@ -1267,10 +1261,6 @@ type ArticleContentChangeContext = {
  *
  * Deliberately narrow. The full upsert is form-shaped, so a caller holding only new
  * HTML cannot use it without clearing title, tags, attachments and cover.
- *
- * `scanContent` defaults on, deliberately: the fan-out ingests images that arrive inside a
- * blurb. `upsertArticle` overrides it from `ctx.features.articleImageScanning`, which the
- * fan-out has no session to read — so narrowing that flag would not reach this path.
  */
 export async function applyArticleContentChange({
   id,
@@ -1321,7 +1311,11 @@ export async function applyArticleContentChange({
   await preventReplicationLag('article', id);
   await preventReplicationLag('userArticles', ownerId);
 
-  if (content) {
+  // Interactive saves only. A fan-out rewrite replaces blurb-span interiors, and
+  // BLURB_INTERIOR_ALLOWED_TAGS admits no `img` or `edge-media`, so the body's image set is
+  // unchanged by construction — while the `article.update` below would re-stamp the `updatedAt`
+  // the raw write above exists to keep off it.
+  if (context && content) {
     const hasContentChanged = previousContent !== content;
 
     if (hasContentChanged) {

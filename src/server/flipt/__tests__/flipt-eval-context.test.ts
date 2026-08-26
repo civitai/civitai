@@ -188,10 +188,9 @@ const ENTITY_WITHOUT_CONTEXT_LEDGER: Record<string, string> = {
   // carries — so it costs a user fetch on a path that runs on every content write.
   //
   // 🔴 So this flag can only be ramped by PERCENTAGE or BOOLEAN. A SEGMENT rollout silently
-  // matches nothing here and looks exactly like "blurbs are off". The same warning is written at
-  // the gate itself (blurb-materialize.service.ts), because that is where someone running the
-  // ramp will look.
-  'server/services/blurb-materialize.service.ts:62':
+  // matches nothing here and looks exactly like "blurbs are off". The full warning is on
+  // FLIPT_FEATURE_FLAGS.TEXT_BLURBS, which is where someone running the ramp will look.
+  'server/services/blurb-materialize.service.ts:56':
     'text-blurbs has no segment rollouts; entityId is the CONTENT OWNER (not the actor) so the intended threshold rollout is sticky per creator; no SessionUser for the owner exists on either the moderator-edit path or the fan-out job',
 };
 

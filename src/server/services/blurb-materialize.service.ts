@@ -46,19 +46,13 @@ export async function expandBlurbs({
 }): Promise<BlurbExpansion> {
   // Keyed on the owner rather than the actor so a rollout picks a sticky subset of creators.
   //
-  // 🔴 ROLL THIS FLAG OUT BY PERCENTAGE OR BOOLEAN ONLY — NEVER BY SEGMENT. The evaluation
-  // passes an entityId and no evaluation context, and every identity/tier/cohort segment in
-  // flipt-state is a STRING_COMPARISON constraint that reads the CONTEXT. A segment rollout
-  // therefore matches nothing here and looks exactly like "blurbs are off". Supplying a context
-  // would mean assembling a SessionUser for the OWNER — whose session neither a moderator's
-  // request nor the fan-out job carries — so it costs a user fetch on every save, on a path that
-  // runs on every model/article/bounty write. The same note is on FLIPT_FEATURE_FLAGS.TEXT_BLURBS
-  // and in flipt-eval-context.test.ts's ledger.
+  // 🔴 Percentage or boolean rollouts only — a segment rollout matches nothing here. See the note
+  // on FLIPT_FEATURE_FLAGS.TEXT_BLURBS.
   //
   // Off returns `evaluated: false`, not an empty result: the spans are left exactly as the
   // client sent them and — critically — the caller must NOT reconcile, or a creator who falls
   // out of the rollout loses every reference row on their next save. The fan-out job is not
-  // gated on this; see blurb-fanout.service.ts.
+  // gated on this.
   if (!(await isFlipt(FLIPT_FEATURE_FLAGS.TEXT_BLURBS, String(userId))))
     return { evaluated: false, html };
 

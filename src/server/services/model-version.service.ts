@@ -746,8 +746,6 @@ export const upsertModelVersion = async ({
     // timed window), and create the EA donation goal here (option A) instead of at publish.
     await writeModelVersionGateAndGoal(version, model.userId, paidAccess, donationGoal);
 
-    // Skipped when the flag was off for this owner: `expandBlurbs` did not evaluate anything, so
-    // reconciling would delete reference rows the fan-out is still meant to maintain.
     if (expansion.evaluated)
       await reconcileBlurbReferences({
         entityType: 'ModelVersion',
@@ -984,13 +982,8 @@ export const upsertModelVersion = async ({
  * Deliberately narrow. `upsertModelVersion` is form-shaped, so a caller holding only new HTML
  * cannot use it without clearing the base model, files, monetization and recommended resources.
  *
- * Note what is NOT here: no text-moderation submit. Nothing scans a ModelVersion description
- * today — the submits in this file belong to publish/unpublish, and cover the MODEL's text.
- * That is pre-existing, and this function does not change it.
- *
- * The follow-up is the pair `upsertModelVersionHandler` runs after the save
- * (`queueModelEarlyAccessReindex` + `dataForModelsCache.refresh`), inlined rather than imported:
- * it lives in model.service.ts, which already imports this module.
+ * The follow-up mirrors what `upsertModelVersionHandler` runs after a save, inlined rather than
+ * imported: it lives in model.service.ts, which already imports this module.
  */
 export async function applyModelVersionContentChange({
   id,
