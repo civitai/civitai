@@ -20,11 +20,7 @@ import { TimestampNode } from '~/shared/tiptap/timestamp.node';
 import { LocalTimestamp } from '~/components/LocalTimestamp/LocalTimestamp';
 import { MentionHoverCard } from '~/components/UserAvatar/MentionHoverCard';
 import { BlurbNode } from '~/shared/tiptap/blurb.node';
-import {
-  BLURB_INTERIOR_ALLOWED_ATTRIBUTES,
-  BLURB_INTERIOR_ALLOWED_TAGS,
-  sanitizeHtml,
-} from '~/utils/html-sanitize-helpers';
+import { sanitizeBlurbInterior } from '~/utils/html-sanitize-helpers';
 
 const extensions = [
   StarterKit.configure({ heading: false }),
@@ -61,20 +57,17 @@ export function RenderRichText({
               <LocalTimestamp value={node.attrs.value} style={node.attrs.style} />
             ),
             // The static renderer's default output puts `node.attrs.text` in as an escaped text
-            // child, but it's markup (bold/italic/link/list) meant to render as such. Only
-            // `blurbContentSchema` actually sanitizes it — the fan-out that expands a blurb's
-            // stored span writes via raw SQL, not zod, so this string never passes the article
-            // body's own sanitizer. Re-sanitize here with the blurb-specific allowlist, since that
-            // pass — not an assumed upstream one — is what makes injecting it as markup safe.
+            // child, but it's markup (bold/italic/link/code) meant to render as such. The string
+            // comes out of the stored article body, which the fan-out writes via raw SQL rather
+            // than zod, so this pass — not an assumed upstream one — is what makes injecting it as
+            // markup safe. The save gate and the splice apply the same allowlist; this is the
+            // third and last place it has to hold.
             blurb: ({ node }) => (
               <span
                 data-type="blurb"
                 data-id={node.attrs.id}
                 dangerouslySetInnerHTML={{
-                  __html: sanitizeHtml(node.attrs.text ?? '', {
-                    allowedTags: BLURB_INTERIOR_ALLOWED_TAGS,
-                    allowedAttributes: BLURB_INTERIOR_ALLOWED_ATTRIBUTES,
-                  }),
+                  __html: sanitizeBlurbInterior(node.attrs.text ?? ''),
                 }}
               />
             ),

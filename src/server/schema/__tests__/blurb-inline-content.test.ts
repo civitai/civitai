@@ -7,9 +7,25 @@
 //   - happy-dom does not hoist
 //   - jsdom (parse5) hoists, exactly as Chrome does
 // So a version of this file in either other environment passes whether or not the bug is fixed.
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as FliptClient from '~/server/flipt/client';
 import { createBlurbInputSchema } from '~/server/schema/blurb.schema';
 import { BLURB_INTERIOR_ALLOWED_TAGS } from '~/utils/html-sanitize-helpers';
+
+const { isFlipt } = vi.hoisted(() => ({ isFlipt: vi.fn() }));
+const adapter = vi.hoisted(() => ({ load: vi.fn(), save: vi.fn() }));
+
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptClient>()),
+  isFlipt,
+}));
+vi.mock('~/server/services/blurb-fanout.adapters', () => ({
+  getBlurbFanoutAdapter: () => adapter,
+}));
+
+const { expandBlurbs } = await import('~/server/services/blurb-materialize.service');
+const { processBlurbReference } = await import('~/server/services/blurb-fanout.service');
 
 const store = (content: string) => createBlurbInputSchema.parse({ name: 'n', content }).content;
 
@@ -91,5 +107,44 @@ describe('a spliced blurb survives the browser re-parse', () => {
 
     expect(blurbSpanText(host)).toBe('');
     expect(host.querySelector('ul')?.closest('[data-type="blurb"]')).toBeNull();
+  });
+});
+
+// The row this guards against: `blurbContentSchema` cannot have sanitized it, because it never
+// went through the API. A backfill, an admin script, or a row predating the inline-only rule.
+const LEGACY_ROW = { id: 7, contentHash: 'h7', content: '<p>legacy body</p>' };
+const HOST = '<p>before <span data-type="blurb" data-id="7">stale</span> after</p>';
+
+describe('a stored block tag never reaches an entity body', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    isFlipt.mockResolvedValue(true);
+    dbMock.dbRead.blurb.findMany.mockResolvedValue([LEGACY_ROW]);
+    adapter.load.mockResolvedValue({ userId: 10, html: HOST });
+  });
+
+  it('sanitizes it on the SAVE path', async () => {
+    const result = await expandBlurbs({ userId: 10, html: HOST });
+    if (!result.evaluated) throw new Error('expected the flag to be on');
+
+    expect(result.html).toBe(
+      '<p>before <span data-type="blurb" data-id="7">legacy body</span> after</p>'
+    );
+    expect(blurbSpanText(reparse(result.html))).toBe('legacy body');
+  });
+
+  it('sanitizes it on the FAN-OUT path', async () => {
+    // Both paths reach the same splice, which is where the sanitize lives — enforcing it at the
+    // two callers instead is what would let them drift.
+    await processBlurbReference(
+      { blurbId: 7, entityType: 'Article', entityId: 1, materializedHash: 'old' },
+      { ...LEGACY_ROW, deletedAt: null }
+    );
+
+    const [saved] = adapter.save.mock.calls[0];
+    expect(saved.html).toBe(
+      '<p>before <span data-type="blurb" data-id="7">legacy body</span> after</p>'
+    );
+    expect(blurbSpanText(reparse(saved.html))).toBe('legacy body');
   });
 });

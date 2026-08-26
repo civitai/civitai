@@ -98,6 +98,24 @@ export const BLURB_INTERIOR_ALLOWED_ATTRIBUTES = {
   a: DEFAULT_ALLOWED_ATTRIBUTES.a,
 };
 
+export const BLURB_INTERIOR_SANITIZE_OPTIONS = {
+  allowedTags: BLURB_INTERIOR_ALLOWED_TAGS,
+  allowedAttributes: BLURB_INTERIOR_ALLOWED_ATTRIBUTES,
+};
+
+/**
+ * The one way to make a blurb's stored text safe to put inside an inline span. Every consumer
+ * goes through this rather than re-stating the allowlist: `blurbContentSchema` at save,
+ * `replaceBlurbSpans` at splice (both the save path and the fan-out reach it there), and
+ * RenderRichText's blurb node mapping at render.
+ *
+ * Idempotent, so a caller that cannot tell whether its input was already sanitized should just
+ * call it.
+ */
+export function sanitizeBlurbInterior(html: string) {
+  return sanitizeHtml(html, BLURB_INTERIOR_SANITIZE_OPTIONS);
+}
+
 // Stickers are paid goods. `span` and its data-* attributes are in the default
 // allowlist (mentions need them), so sticker markup would otherwise survive on
 // every rich-text surface — model descriptions, bounties, reviews, changelogs —

@@ -1,9 +1,6 @@
 import * as z from 'zod';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
-import {
-  BLURB_INTERIOR_ALLOWED_ATTRIBUTES,
-  BLURB_INTERIOR_ALLOWED_TAGS,
-} from '~/utils/html-sanitize-helpers';
+import { BLURB_INTERIOR_SANITIZE_OPTIONS } from '~/utils/html-sanitize-helpers';
 
 // A blurb is a footer or a settings block, not an article. The cap is what stops one
 // blurb's text becoming a large multiple of itself across every entity using it.
@@ -22,10 +19,7 @@ const paragraphBreaksToLineBreaks = (value: unknown) =>
 const blurbContentSchema = z
   .preprocess(
     paragraphBreaksToLineBreaks,
-    getSanitizedStringSchema({
-      allowedTags: BLURB_INTERIOR_ALLOWED_TAGS,
-      allowedAttributes: BLURB_INTERIOR_ALLOWED_ATTRIBUTES,
-    })
+    getSanitizedStringSchema(BLURB_INTERIOR_SANITIZE_OPTIONS)
   )
   .refine(
     (v) => v.length <= MAX_BLURB_LENGTH,

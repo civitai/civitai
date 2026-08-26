@@ -430,7 +430,7 @@ function BlurbForm({
           <RichTextEditor
             value={content}
             onChange={setContent}
-            includeControls={['formatting', 'link', 'list']}
+            includeControls={['formatting', 'link']}
             withLinkValidation
             editorSize="md"
           />

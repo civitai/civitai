@@ -1,4 +1,5 @@
 import { Parser } from 'htmlparser2';
+import { sanitizeBlurbInterior } from '~/utils/html-sanitize-helpers';
 
 export type BlurbSpan = {
   blurbId: number;
@@ -81,13 +82,28 @@ function spliceAll(html: string, edits: Array<{ start: number; end: number; text
   return out + html.slice(cursor);
 }
 
+/**
+ * Both paths that materialise a blurb into an entity body land here — `expandBlurbs` on save and
+ * the fan-out's rewrite — which is why the interior sanitize lives at this splice rather than at
+ * either caller. A rule enforced at two call sites is a rule that drifts, and drift between the
+ * interactive path and the fan-out is the failure this whole feature keeps running into.
+ *
+ * `blurbContentSchema` already sanitizes at save, so for a row written through the API this is
+ * redundant. It is here for the row that was not: a backfill, an admin script, or a row that
+ * predates the schema's inline-only rule. A block element spliced inside an inline
+ * `<span data-type="blurb">` is hoisted out by the browser's parser, leaving the chip empty — see
+ * the note on BLURB_INTERIOR_ALLOWED_TAGS.
+ *
+ * Only the INSERTED text is sanitized. The host document is still spliced by position and never
+ * re-serialised, which is the property the rest of this module exists to preserve.
+ */
 export function replaceBlurbSpans(html: string, contentByBlurbId: Map<number, string>): string {
   const edits = findBlurbSpans(html)
     .filter((s) => contentByBlurbId.has(s.blurbId))
     .map((s) => ({
       start: s.innerStart,
       end: s.innerEnd,
-      text: contentByBlurbId.get(s.blurbId) as string,
+      text: sanitizeBlurbInterior(contentByBlurbId.get(s.blurbId) as string),
     }));
   return spliceAll(html, edits);
 }
