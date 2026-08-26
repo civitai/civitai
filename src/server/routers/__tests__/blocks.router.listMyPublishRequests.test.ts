@@ -64,6 +64,10 @@ vi.mock('~/server/middleware.trpc', async () => {
 });
 
 import { blocksRouter } from '../blocks.router';
+import {
+  LISTING_STATUS_CHANGING_MODERATION_ACTIONS,
+  STATE_NEUTRAL_MODERATION_ACTIONS,
+} from '~/server/services/blocks/app-listing-owner-unpublish';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
@@ -241,6 +245,87 @@ describe('listMyPublishRequests — P4 owner-control augmentation', () => {
     // No app-block ids on the page → no backing-listing / moderation queries at all.
     expect(mockDbRead.appListing.findMany).not.toHaveBeenCalled();
     expect(mockDbRead.appListingModerationEvent.findMany).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * 🔴 THE LAST-ACTION READ MUST ASK THE SAME QUESTION THE SERVER GATE ASKS.
+ *
+ * `lastModerationAction` is what /apps/mine maps to `owner-hidden` (Republish offered) vs
+ * `mod-removed` (Republish hidden, "removed by a moderator"). The SERVER gate that decides
+ * whether Republish actually works — `republishOwnListing`, and the author edit paths —
+ * reads `readLastModerationAction`, which filters to
+ * `LISTING_STATUS_CHANGING_MODERATION_ACTIONS`. This read was UNFILTERED, so the two
+ * disagreed the moment a state-neutral event landed on top: a moderator's `message-owner`
+ * ("fix X and republish"), a `claim`, or a `report-resolve` became the newest row, the
+ * client saw "not owner-unpublish" and hid Republish on a listing the server would happily
+ * republish — killing the exact repair loop this feature exists for.
+ *
+ * These pin the WHERE clause (the guard itself), not the projected shape.
+ */
+describe('listMyPublishRequests — the last-action read is FILTERED to status-changing actions', () => {
+  const removedRow = (id: string, blockId: string) => ({
+    id,
+    appBlockId: null,
+    slug: `${id}-app`,
+    version: '1.0.0',
+    status: 'approved',
+    submittedAt: new Date('2026-01-01'),
+    reviewedAt: new Date('2026-01-02'),
+    rejectionReason: null,
+    approvalNotes: null,
+    deployState: 'live',
+    deployDetail: null,
+    deployUpdatedAt: null,
+    fileSummary: null,
+    manifestDiffSummary: null,
+    appBlock: { id: blockId, manifest: PAGE_MANIFEST, _count: { userSubscriptions: 0 } },
+  });
+
+  async function lastEventWhere() {
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([removedRow('req-h', 'block-h')]);
+    mockDbRead.appListing.findMany.mockResolvedValue([
+      { id: 'l-h', appBlockId: 'block-h', status: 'removed', _count: { screenshots: 3 } },
+    ]);
+    mockDbRead.appListingModerationEvent.findMany.mockResolvedValue([
+      { appListingId: 'l-h', action: 'owner-unpublish' },
+    ]);
+    const caller = blocksRouter.createCaller(fakeCtx(owner) as never);
+    await caller.listMyPublishRequests();
+    expect(mockDbRead.appListingModerationEvent.findMany).toHaveBeenCalledTimes(1);
+    return (
+      mockDbRead.appListingModerationEvent.findMany.mock.calls[0][0] as {
+        where: { action?: { in?: string[] } };
+      }
+    ).where;
+  }
+
+  it('🔴 carries an `action IN (…)` predicate at all — the clause whose absence is the bug', async () => {
+    const where = await lastEventWhere();
+    expect(where.action).toBeDefined();
+    // POSITIVE CONTROL on the same read: the list is non-empty, so a `not.toContain`
+    // below cannot pass merely because nothing is there.
+    expect(where.action?.in?.length).toBeGreaterThan(0);
+  });
+
+  it('🔴 uses the SHARED constant verbatim — not a second hand-typed spelling', async () => {
+    const where = await lastEventWhere();
+    expect(where.action?.in).toEqual([...LISTING_STATUS_CHANGING_MODERATION_ACTIONS]);
+  });
+
+  it.each([...STATE_NEUTRAL_MODERATION_ACTIONS])(
+    '🔴 %s cannot displace the removal event — excluded by the WHERE clause',
+    async (neutral) => {
+      const where = await lastEventWhere();
+      expect(where.action?.in).not.toContain(neutral);
+    }
+  );
+
+  it('still admits both an owner unpublish and a moderator takedown', async () => {
+    const where = await lastEventWhere();
+    expect(where.action?.in).toContain('owner-unpublish');
+    expect(where.action?.in).toContain('delist');
+    expect(where.action?.in).toContain('purge');
   });
 });
 

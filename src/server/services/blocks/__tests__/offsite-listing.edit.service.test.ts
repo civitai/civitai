@@ -11,6 +11,10 @@ import {
   updateListing,
   withdrawExternalRequest,
 } from '~/server/services/blocks/offsite-listing.service';
+import {
+  LISTING_STATUS_CHANGING_MODERATION_ACTIONS,
+  STATE_NEUTRAL_MODERATION_ACTIONS,
+} from '~/server/services/blocks/app-listing-owner-unpublish';
 import type { UpdateListingPatch } from '~/server/schema/blocks/offsite-listing.schema';
 
 /**
@@ -1042,6 +1046,88 @@ describe('listMySubmissions (lastModerationAction for removed listings)', () => 
     const res = await listMySubmissions({ userId: OWNER });
     expect(mockRead.$queryRaw).not.toHaveBeenCalled();
     expect(res.items[0]).toMatchObject({ lastModerationAction: null });
+  });
+
+  // -------------------------------------------------------------------------
+  // 🔴 THE RAW STATEMENT IS PINNED AS TEXT, IN FULL.
+  //
+  // This is the PRIMARY surface for owner republish, and it is the one last-action read
+  // written in SQL, so it is the one place a second hand-maintained spelling of the
+  // status-changing set would live and never be noticed. It was UNFILTERED: a
+  // `message-owner` / `claim` / `report-resolve` newer than the owner's own
+  // `owner-unpublish` became "the last action", the page badged the listing "removed by a
+  // moderator" and hid Republish on a listing `republishOwnListing` would have allowed.
+  //
+  // Every other test in this describe mocks `$queryRaw`'s RESULT, so no behavioural
+  // assertion can see the statement at all — deleting the new `AND action IN (…)` changes
+  // nothing any of them observe.
+  //
+  // 🔴 AND IT IS PINNED AS THE WHOLE NORMALISED STRING, not a regex feature of it. A
+  // partial pattern ("contains `action IN`") is satisfied by semantically INVERTED SQL
+  // (`action NOT IN`), by a predicate `OR`-ed instead of `AND`-ed, and by a token sitting
+  // inside a `--` comment — "the token is present" and "the clause is live" are different
+  // facts. A cosmetic reword of this SQL will fail this test; that is the price of a
+  // machine-readable claim, and it is worth paying here.
+  // -------------------------------------------------------------------------
+  describe('the DISTINCT ON statement (pinned as whole text)', () => {
+    /** Collapse all runs of whitespace so indentation changes don't churn the pin. */
+    const norm = (s: string) => s.replace(/\s+/g, ' ').trim();
+
+    async function rawCall() {
+      mockRead.appListingPublishRequest.findMany
+        .mockResolvedValueOnce([removedRequestRow])
+        .mockResolvedValueOnce([]);
+      mockRead.$queryRaw.mockResolvedValueOnce([
+        { appListingId: 'apl_removed', action: 'owner-unpublish' },
+      ]);
+      await listMySubmissions({ userId: OWNER });
+      expect(mockRead.$queryRaw).toHaveBeenCalledTimes(1);
+      // `Prisma.sql` builds a `Sql` object: `.strings` is the static text, `.values` the
+      // bound parameters. `$queryRaw(Prisma.sql`…`)` passes that object as calls[0][0].
+      const arg = mockRead.$queryRaw.mock.calls[0][0] as {
+        strings: string[];
+        values: unknown[];
+      };
+      return { sql: norm(arg.strings.join('?')), values: arg.values };
+    }
+
+    it('POSITIVE CONTROL: the pin is reading real SQL, not an empty string', async () => {
+      const { sql } = await rawCall();
+      // Without this, a `toBe('')`-shaped accident would read as a pass.
+      expect(sql.length).toBeGreaterThan(80);
+      expect(sql).toMatch(/\bSELECT DISTINCT ON\b/);
+    });
+
+    it('🔴 is EXACTLY this statement — filter, table, ordering and all', async () => {
+      const { sql } = await rawCall();
+      expect(sql).toBe(
+        norm(`
+          SELECT DISTINCT ON (app_listing_id)
+            app_listing_id AS "appListingId",
+            action
+          FROM app_listing_moderation_events
+          WHERE app_listing_id IN (?)
+            AND action IN (?,?,?,?,?,?)
+          ORDER BY app_listing_id, created_at DESC, id DESC
+        `)
+      );
+    });
+
+    it('🔴 the action list is BOUND from the shared constant, in order — not typed out', async () => {
+      const { sql, values } = await rawCall();
+      // One removed listing id, then the six status-changing actions, as parameters.
+      expect(values).toEqual(['apl_removed', ...LISTING_STATUS_CHANGING_MODERATION_ACTIONS]);
+      // A verb appearing in the STATIC half would mean a string-built second spelling.
+      for (const a of LISTING_STATUS_CHANGING_MODERATION_ACTIONS) expect(sql).not.toContain(a);
+    });
+
+    it.each([...STATE_NEUTRAL_MODERATION_ACTIONS])(
+      '🔴 %s is not bound — it cannot displace the event that explains the removal',
+      async (neutral) => {
+        const { values } = await rawCall();
+        expect(values).not.toContain(neutral);
+      }
+    );
   });
 });
 

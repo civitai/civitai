@@ -24,6 +24,7 @@ import { recordOwnershipEvent } from '~/server/services/blocks/app-collaborator.
 import { notifyAppListingOwner } from '~/server/services/blocks/app-listing-notify';
 import { assertListingAssetsScanCleanInTx } from '~/server/services/blocks/app-listing-assets.service';
 import { assertOffsiteListingActionableInTx } from '~/server/services/blocks/app-listing-actionable.service';
+import { isOwnerUnpublishedListing } from '~/server/services/blocks/app-listing-owner-unpublish';
 import {
   newAppListingModerationEventId,
   newAppListingPublishRequestId,
@@ -1495,12 +1496,7 @@ export async function republishOwnListing(opts: {
     // the PRIMARY inside the tx (a concurrent mod delist/purge would otherwise race
     // between a replica read and the flip). A mod delist/purge (or NO event) → the
     // owner may not self-restore.
-    const lastEvent = await tx.appListingModerationEvent.findFirst({
-      where: { appListingId: input.appListingId },
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-      select: { action: true },
-    });
-    if (!lastEvent || lastEvent.action !== 'owner-unpublish') {
+    if (!(await isOwnerUnpublishedListing(tx, input.appListingId))) {
       throw new OffsiteModerationError(
         'FORBIDDEN',
         'This listing was removed by a moderator and cannot be restored by its owner.'

@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import {
+  LISTING_STATUS_CHANGING_MODERATION_ACTIONS,
+  STATE_NEUTRAL_MODERATION_ACTIONS,
+} from '~/server/services/blocks/app-listing-owner-unpublish';
 
 /**
  * `listMyAppListings` — the `lastModerationAction` widening that makes the `/apps/mine`
@@ -137,7 +141,7 @@ type Event = { action: string; createdAt: Date; id: string };
 function historyFake(byListingId: Record<string, Event[]>) {
   return async (...a: unknown[]): Promise<unknown[]> => {
     const args = (a[0] ?? {}) as {
-      where?: { appListingId?: { in: string[] } };
+      where?: { appListingId?: { in: string[] }; action?: { in: string[] } };
       orderBy?: Array<Record<string, 'asc' | 'desc'>>;
       distinct?: string[];
     };
@@ -145,6 +149,12 @@ function historyFake(byListingId: Record<string, Event[]>) {
     let rows: Array<Event & { appListingId: string }> = ids.flatMap((id) =>
       (byListingId[id] ?? []).map((e) => ({ ...e, appListingId: id }))
     );
+    // 🔴 HONOUR `where.action` — the fake has to be able to answer DIFFERENTLY depending on
+    // whether the caller filtered, or a case built on it cannot see the filter at all. It
+    // could not before: a mutant that dropped the action filter from this read SURVIVED the
+    // whole battery, because the fake returned the same rows either way.
+    const allowedActions = args.where?.action?.in;
+    if (allowedActions) rows = rows.filter((r) => allowedActions.includes(r.action));
     // Apply the query's OWN sort, key by key, rather than a hardcoded newest-first.
     for (const clause of [...(args.orderBy ?? [])].reverse()) {
       const [key, dir] = Object.entries(clause)[0] as ['createdAt' | 'id', 'asc' | 'desc'];
@@ -258,6 +268,47 @@ describe('listMyAppListings — lastModerationAction', () => {
       orderBy: Array<Record<string, string>>;
     };
     expect(args.orderBy).toEqual([{ createdAt: 'desc' }, { id: 'desc' }]);
+  });
+
+  it('🔴 a moderator MESSAGE does not hide the owner-unpublish underneath it', async () => {
+    /**
+     * 🔴 THE WORKFLOW THAT BREAKS THIS ROW. A moderator messaging the owner *"fix X and
+     * republish"* writes `action:'message-owner'` — an `AppListingModerationEvent` that
+     * changes NO listing status. It is then the newest event, so an unfiltered
+     * most-recent-event read reports `other`, the row hides **Republish**, and the owner is
+     * told a moderator removed their app. That is the exact false attribution this whole
+     * arc exists to delete, re-introduced by the most ordinary moderator action there is.
+     *
+     * The server-side gate (`republishOwnListing`, and the three author edit paths) reads
+     * the same filtered predicate, so an unfiltered read here ALSO puts the page and the
+     * server into disagreement: no button, on a listing the server would happily republish.
+     *
+     * `report-resolve` / `report-dismiss` / `claim` are the same class; `closeTerminalListing`
+     * was already bitten by `report-resolve`, in the opposite direction.
+     */
+    mockDb.appListing.findMany.mockImplementation(findManyFake([stored({ id: 'apl_msg' })]));
+    mockDb.appListingModerationEvent.findMany.mockImplementation(
+      historyFake({
+        apl_msg: [
+          { action: 'owner-unpublish', createdAt: new Date('2026-05-01T00:00:00Z'), id: 'ev_a' },
+          // Newest overall, but state-neutral — it cannot explain the `removed` status.
+          { action: 'message-owner', createdAt: new Date('2026-05-02T00:00:00Z'), id: 'ev_b' },
+        ],
+      })
+    );
+
+    const rows = await listMyAppListings({ userId: OWNER });
+    expect(rows[0].lastModerationAction).toBe('owner-unpublish');
+
+    // Structural half: the filter is in the WHERE, and it excludes every state-neutral verb.
+    const args = mockDb.appListingModerationEvent.findMany.mock.calls[0]?.[0] as {
+      where: { action: { in: string[] } };
+    };
+    for (const neutral of STATE_NEUTRAL_MODERATION_ACTIONS) {
+      expect(args.where.action.in).not.toContain(neutral);
+    }
+    // Positive control on the same read — the set is not simply empty.
+    expect(args.where.action.in).toEqual([...LISTING_STATUS_CHANGING_MODERATION_ACTIONS]);
   });
 
   it('reads events ONLY for the removed subset', async () => {

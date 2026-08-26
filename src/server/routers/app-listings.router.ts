@@ -367,6 +367,17 @@ function mapOffsiteError(err: unknown): TRPCError {
         // the sibling mod-only limiter (`blocks.retriggerBuild`) already returns.
         code === 'RATE_LIMITED'
         ? 'TOO_MANY_REQUESTS'
+        : // 🔴 MAPPED EXPLICITLY even though it lands on the same TRPC code as the
+        // default. The default is a FALLTHROUGH, and this table's own note above warns
+        // that an unmapped code silently becomes BAD_REQUEST — so an entry here is the
+        // difference between "we decided" and "nobody looked". BAD_REQUEST is the honest
+        // code: the caller's AUTHORITY is fine (they own the listing and may edit it),
+        // it is the specific field in this specific state that is refused, and the
+        // message names the field and the way forward. FORBIDDEN would read as "you may
+        // not edit this listing", which is exactly the false attribution this arc exists
+        // to remove.
+        code === 'MATERIAL_CHANGE_BLOCKED'
+        ? 'BAD_REQUEST'
         : 'BAD_REQUEST';
     return new TRPCError({ code: trpcCode, message: err.message, cause: err });
   }
@@ -660,7 +671,9 @@ export const appListingsRouter = router({
    * contentRating) → in place; approved-material (externalUrl/name) → staged on a
    * shadow-draft revision (`requiresReview:true` + the `shadowId` to edit assets
    * against, then `submitListingRevision`). Owner-bound in the service. Rejected →
-   * MUST_RESUBMIT; removed → FORBIDDEN. Typed failures map via `mapOffsiteError`.
+   * MUST_RESUBMIT. `removed` is SPLIT: a moderator takedown → FORBIDDEN, an OWNER
+   * self-unpublish → trivial fields edit in place and a MATERIAL field →
+   * MATERIAL_CHANGE_BLOCKED. Typed failures map via `mapOffsiteError`.
    *
    * ## CLI-reachable (`listingMediaCliScope`) — a WRITE, so the three checks stated
    *
@@ -677,20 +690,34 @@ export const appListingsRouter = router({
    *       `buildListingPatchData`, whose entire output surface is author-owned scalars
    *       (externalUrl / sourceRepoUrl / name / tagline / description / category /
    *       contentRating / the derived connect-scope snapshot). No `status`, no
-   *       moderation event, no publish-request row. A `removed` listing is refused
-   *       outright (FORBIDDEN) and a `rejected` one steered to resubmit.
-   *   (c) IT RESPECTS THE SHADOW-REVISION MODEL. `approved` + a MATERIAL change stages
-   *       onto a shadow via `beginListingRevision` and leaves the live parent untouched;
-   *       only trivial edits touch an approved row in place, which is the documented
-   *       design. A shadow passed here is REFUSED (`revisionOfId != null` →
-   *       INVALID_REVISION) — shadows are `updateRevisionDraft`'s job.
+   *       moderation event, no publish-request row. A `rejected` listing is steered to
+   *       resubmit; a `removed` one is refused (FORBIDDEN) when a MODERATOR took it down.
+   *   (c) IT CANNOT PUT AN UNREVIEWED MATERIAL VALUE ON THE STORE, IN EITHER OF THE TWO
+   *       STATES THAT LOOK EDITABLE. This is the claim that actually carries the scope
+   *       annotation, so it is stated by mechanism rather than by status:
+   *         - `approved` + MATERIAL → staged onto a shadow via `beginListingRevision`;
+   *           the live parent is untouched until a moderator approves the revision. Only
+   *           trivial edits touch an approved row in place.
+   *         - `removed` + last status-changing event `owner-unpublish` (the owner's own
+   *           repair state, which this proc now admits) + MATERIAL →
+   *           MATERIAL_CHANGE_BLOCKED, refused. It is NOT applied and NOT staged. This
+   *           refusal is what stops the owner-driven loop `approved` →
+   *           `unpublishOwnListing` → patch `externalUrl`/`contentRating` in place →
+   *           `republishOwnListing` → `approved`, which would otherwise swap the store's
+   *           destination or lower its content rating after approval. Neither republish
+   *           gate is a content review (one checks image scans, the other that an https
+   *           href exists), so the refusal — not the republish path — is the guarantee.
+   *         - A shadow passed here is REFUSED (`revisionOfId != null` →
+   *           INVALID_REVISION) — shadows are `updateRevisionDraft`'s job.
+   *       Net: the ONLY route from a token to a changed material value on a live store
+   *       page still runs through moderator re-approval.
    *
    * 🔴 The scope-disclosure keys (`requestedScopes`/`scopeJustifications`) are reachable
    * through this patch, but they are SERVER-DERIVED: `deriveScopePatch` re-resolves the
    * linked OAuth client's `allowedScopes` ceiling and `assertConnectScopesValid` re-checks
    * the subset + justifications, so a token cannot request a scope its client does not
-   * already allow. A material scope change also routes to a shadow, i.e. back through mod
-   * review.
+   * already allow. A scope change is MATERIAL, so it follows (c): on `approved` it routes
+   * to a shadow, on an owner-unpublished `removed` it is refused.
    */
   updateListing: appDeveloperProcedure
     .meta(listingMediaCliScope)
@@ -725,7 +752,15 @@ export const appListingsRouter = router({
    * assets (edge-resolved) + status + hasPendingRevision, resolving an approved
    * parent's in-progress shadow so a resumed revision prefills its edited state.
    * Owner-bound in the service (NOT_OWNED→FORBIDDEN, NOT_FOUND, rejected→
-   * MUST_RESUBMIT/BAD_REQUEST, removed→FORBIDDEN). Typed failures via `mapOffsiteError`.
+   * MUST_RESUBMIT/BAD_REQUEST). `removed` is SPLIT on the last status-changing moderation
+   * event: a moderator takedown → FORBIDDEN, the owner's own `owner-unpublish` → the
+   * prefill resolves (the listing is in the owner's repair state). It agrees with
+   * `updateListing`'s gate by construction — both read the same predicate — so this read
+   * never hands back an editor the write path then refuses. Note the prefill is still
+   * WIDER than what the write accepts: a material field prefills but cannot be SAVED while
+   * unpublished (MATERIAL_CHANGE_BLOCKED), which is deliberate — the author has to be able
+   * to SEE the current value of a field they may not change. Typed failures via
+   * `mapOffsiteError`.
    */
   getMyListingForEdit: appDeveloperProcedure
     .meta(listingMediaCliScope)
