@@ -43,6 +43,7 @@
     suggestedFee,
     needsAffirmation,
     pricingSlotsLeft,
+    pricingSlotsRemaining,
     capTier,
     caps,
     feeCapsByType,
@@ -52,7 +53,13 @@
     limits: MonetizationLimits;
     suggestedFee: number | undefined;
     needsAffirmation: boolean;
+    /**
+     * An eligibility PREDICATE, not a count — valid only as `> 0`, and it already has the selection
+     * netted out of it. Do not do arithmetic on it; use pricingSlotsRemaining for that.
+     */
     pricingSlotsLeft: number;
+    /** Slots the owner has left this month before this selection: limit - used. */
+    pricingSlotsRemaining: number;
     capTier: CapTier;
 
     /** Per model/media type caps across the selection, lowest first. */
@@ -261,9 +268,10 @@
       maxEarlyAccessDays: caps.maxEarlyAccessDays,
       pricingSlotsLeft,
       pricingFloor: caps.pricingFloor,
-      // A bulk write prices whatever in the selection is unpriced, so nothing here is exempt: the
-      // per-version carve-out belongs to the sidebar editor, which knows which version it is on.
-      alreadyPriced: false,
+      // A bulk write only prices what is UNPRICED, so a selection with nothing unpriced spends no
+      // allowance and faces no floor — which is how the server answers it too (unpricedVersionIds ->
+      // assertPricingAllowed short-circuits). Null means the count has not arrived; assume it prices.
+      alreadyPriced: unpricedCount === 0,
       resolving: loadingPublished,
     })
   );
@@ -296,7 +304,7 @@
 
   // Both a fee and a permanent gate spend allowance, so both need the warning — the fee path is
   // all-or-nothing, so without it a 20-version selection just returns 403 with nothing on screen first.
-  const remainingAllowance = $derived(pricingSlotsLeft - count);
+  const remainingAllowance = $derived(pricingSlotsRemaining);
   const overSlots = $derived(
     (action === 'paidAccess' || action === 'fee') &&
       ((unpricedCount !== null && unpricedCount > remainingAllowance) ||

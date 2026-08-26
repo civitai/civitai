@@ -653,6 +653,7 @@
   suggestedFee={bulkSuggested}
   needsAffirmation={selectionNeedsAffirmation}
   pricingSlotsLeft={remainingPricingSlots - newSlotsUsed + selected.size}
+  pricingSlotsRemaining={remainingPricingSlots}
 />
 
 {#if data.models.length === 0}
