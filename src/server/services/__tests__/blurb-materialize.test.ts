@@ -28,10 +28,20 @@ beforeEach(() => {
   dbRead.blurbReference.findMany.mockResolvedValue([]);
 });
 
+// Narrows the discriminated result so `uses` is readable. Destructuring it straight off
+// `expandBlurbs` is a TS2339 that nothing catches — tsconfig.json excludes the __tests__ dirs and
+// Vitest transpiles without typechecking — so the "unrepresentable" property BlurbExpansion exists
+// for has to be honoured here by hand.
+async function expandEvaluated(...args: Parameters<typeof expandBlurbs>) {
+  const result = await expandBlurbs(...args);
+  if (!result.evaluated) throw new Error('expected the flag to be on for this fixture');
+  return result;
+}
+
 describe('expandBlurbs', () => {
   it('replaces span content with the blurb row, ignoring what the client sent', async () => {
     dbRead.blurb.findMany.mockResolvedValue([{ id: 7, contentHash: 'h7', content: 'REAL' }]);
-    const { html } = await expandBlurbs({
+    const { html } = await expandEvaluated({
       userId: 10,
       html: '<span data-type="blurb" data-id="7">ATTACKER SUPPLIED</span>',
     });
@@ -41,7 +51,7 @@ describe('expandBlurbs', () => {
   it('unwraps a span whose blurb belongs to another user', async () => {
     // The ownership filter is in the query, so a foreign blurb simply does not come back.
     dbRead.blurb.findMany.mockResolvedValue([]);
-    const { html, uses } = await expandBlurbs({
+    const { html, uses } = await expandEvaluated({
       userId: 10,
       html: '<p>x</p><span data-type="blurb" data-id="99">someone elses</span>',
     });
@@ -60,7 +70,7 @@ describe('expandBlurbs', () => {
 
   it('reports one use per distinct blurb, with its hash', async () => {
     dbRead.blurb.findMany.mockResolvedValue([{ id: 7, contentHash: 'h7', content: 'A' }]);
-    const { uses } = await expandBlurbs({
+    const { uses } = await expandEvaluated({
       userId: 10,
       html: '<span data-type="blurb" data-id="7">x</span><span data-type="blurb" data-id="7">y</span>',
     });
@@ -68,7 +78,7 @@ describe('expandBlurbs', () => {
   });
 
   it('does not query at all when the html has no blurb spans', async () => {
-    const { html, uses } = await expandBlurbs({ userId: 10, html: '<p>plain</p>' });
+    const { html, uses } = await expandEvaluated({ userId: 10, html: '<p>plain</p>' });
     expect(html).toBe('<p>plain</p>');
     expect(uses).toEqual([]);
     expect(dbRead.blurb.findMany).not.toHaveBeenCalled();
@@ -103,7 +113,7 @@ describe('expandBlurbs', () => {
 
   it('resolves one span and unwraps another in the same document, on both sides of it', async () => {
     dbRead.blurb.findMany.mockResolvedValue([{ id: 7, contentHash: 'h7', content: 'REAL' }]);
-    const { html, uses } = await expandBlurbs({
+    const { html, uses } = await expandEvaluated({
       userId: 10,
       html:
         '<p>a</p><span data-type="blurb" data-id="99">orphan-before</span>' +

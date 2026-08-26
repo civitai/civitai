@@ -183,15 +183,15 @@ const ENTITY_WITHOUT_CONTEXT_LEDGER: Record<string, string> = {
   //
   // Entity-keyed on purpose. The entityId is the CONTENT OWNER's user id, not the actor's, so a
   // threshold rollout buckets a sticky subset of creators and a moderator editing someone else's
-  // page resolves the same blurbs the owner would. A context cannot be supplied here even in
-  // principle: `buildFliptContext` takes a full SessionUser, and the OWNER's session is not what
-  // a moderator's request carries — the fan-out job carries none at all.
+  // page resolves the same blurbs the owner would. Supplying a context would mean assembling a
+  // SessionUser for the OWNER — whose session neither a moderator's request nor the fan-out job
+  // carries — so it costs a user fetch on a path that runs on every content write.
   //
   // 🔴 So this flag can only be ramped by PERCENTAGE or BOOLEAN. A SEGMENT rollout silently
   // matches nothing here and looks exactly like "blurbs are off". The same warning is written at
   // the gate itself (blurb-materialize.service.ts), because that is where someone running the
   // ramp will look.
-  'server/services/blurb-materialize.service.ts:61':
+  'server/services/blurb-materialize.service.ts:62':
     'text-blurbs has no segment rollouts; entityId is the CONTENT OWNER (not the actor) so the intended threshold rollout is sticky per creator; no SessionUser for the owner exists on either the moderator-edit path or the fan-out job',
 };
 

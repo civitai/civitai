@@ -310,11 +310,17 @@ export const modelVersionUpsertSchema = z.object({
       'pre',
       'span',
     ],
-    // Admitting `span` re-opens two vectors this surface did not have. Narrowing its attributes
-    // to the two a blurb needs closes both: no `style`/`class` (CSS injection) and no
-    // `data-label`, which is the username a mention span renders from (RenderHtml.tsx:109).
-    // What survives is an attribute-stripped `<span>` around its own text, which renders as
-    // that text — a deliberate residual, not an oversight.
+    // Admitting `span` re-opens what this surface used to strip outright, so its attributes are
+    // narrowed to the two a blurb needs. That closes `style`/`class` (CSS injection) and
+    // `data-label`.
+    //
+    // It does NOT make a mention inert, and the residual is worth stating exactly: `data-type`
+    // and `data-id` are precisely what a mention carries, so
+    // `<span data-type="mention" data-id="123">@name</span>` survives here and RenderHtml — which
+    // mounts MentionHoverCard unconditionally — will hydrate a real hover card for that user id.
+    // Accepted as PARITY, not a new class: every other rich-text surface in the app already
+    // admits mention spans, and this one is now the same rather than stricter. It does not become
+    // a link, and the label the card shows comes from the id it looks up, not from the markup.
     allowedAttributes: { ...DEFAULT_ALLOWED_ATTRIBUTES, span: ['data-type', 'data-id'] },
     stripEmpty: true,
     allowBlurbs: true,
@@ -499,11 +505,17 @@ export const modelVersionUpsertSchema2 = z.object({
       'pre',
       'span',
     ],
-    // Admitting `span` re-opens two vectors this surface did not have. Narrowing its attributes
-    // to the two a blurb needs closes both: no `style`/`class` (CSS injection) and no
-    // `data-label`, which is the username a mention span renders from (RenderHtml.tsx:109).
-    // What survives is an attribute-stripped `<span>` around its own text, which renders as
-    // that text — a deliberate residual, not an oversight.
+    // Admitting `span` re-opens what this surface used to strip outright, so its attributes are
+    // narrowed to the two a blurb needs. That closes `style`/`class` (CSS injection) and
+    // `data-label`.
+    //
+    // It does NOT make a mention inert, and the residual is worth stating exactly: `data-type`
+    // and `data-id` are precisely what a mention carries, so
+    // `<span data-type="mention" data-id="123">@name</span>` survives here and RenderHtml — which
+    // mounts MentionHoverCard unconditionally — will hydrate a real hover card for that user id.
+    // Accepted as PARITY, not a new class: every other rich-text surface in the app already
+    // admits mention spans, and this one is now the same rather than stricter. It does not become
+    // a link, and the label the card shows comes from the id it looks up, not from the markup.
     allowedAttributes: { ...DEFAULT_ALLOWED_ATTRIBUTES, span: ['data-type', 'data-id'] },
     stripEmpty: true,
     allowBlurbs: true,

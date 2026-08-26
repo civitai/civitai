@@ -1220,9 +1220,12 @@ export const upsertArticle = async ({
       },
     });
 
-    // Deliberately unguarded: a failure here 500s a save that already committed, but
-    // swallowing it leaves the reference rows stale, and the fan-out then skips this
-    // article forever — a silently unmaintained body is the worse of the two.
+    // Skipped when the flag was off for this owner: `expandBlurbs` did not evaluate anything, so
+    // reconciling would delete reference rows the fan-out is still meant to maintain.
+    //
+    // No try/catch around it, deliberately: a failure here 500s a save that already committed,
+    // but swallowing it leaves the reference rows stale and the fan-out then skips this article
+    // forever — a silently unmaintained body is the worse of the two.
     if (expansion.evaluated)
       await reconcileBlurbReferences({ entityType: 'Article', entityId: id, uses: expansion.uses });
 

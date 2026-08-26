@@ -76,27 +76,23 @@ export const DEFAULT_ALLOWED_ATTRIBUTES = {
   'edge-media': ['url', 'type', 'filename', 'className'],
 };
 
-// Everything the blurb mini-editor's toolbar can produce (`includeControls={['formatting', 'link',
-// 'list']}` in BlurbManagerModal — bold/italic/underline/strikethrough/code block, link, list).
-// Deliberately narrower than DEFAULT_ALLOWED_TAGS/DEFAULT_ALLOWED_ATTRIBUTES: `blurbContentSchema`
-// sanitizes a blurb's own `content` at SAVE time with the wider default set, so a direct
-// `blurb.update` call (no toolbar in the way) can still write `iframe`, `span[style]`, or
+// What may appear INSIDE a blurb span. Shared by `blurbContentSchema` (the save gate) and
+// RenderRichText's blurb node mapping (the render gate), so the two cannot drift.
+//
+// 🔴 INLINE ONLY — never add a block element here. A blurb's text is spliced inside
+// `<span data-type="blurb">`, which sits inside the host document's `<p>`. In the HTML parsing
+// algorithm a block start tag (`p`, `div`, `ul`, `ol`, `li`, `pre`, `blockquote`, `h1`-`h3`)
+// closes that open `<p>`, and `span` is not a formatting element so it is popped rather than
+// reconstructed. The chip is left EMPTY and the text lands as a detached sibling — then the next
+// save re-splices the body into the empty span and the text appears twice. Pinned against
+// parse5/jsdom in blurb-inline-content.test.ts; happy-dom does not reproduce it, which is why
+// this went unnoticed.
+//
+// Deliberately narrower than DEFAULT_ALLOWED_TAGS/DEFAULT_ALLOWED_ATTRIBUTES: a direct
+// `blurb.update` call (no toolbar in the way) would otherwise write `iframe`, `span[style]`, or
 // `edge-media` into stored content. No `span` at all, so mention/sticker/nested-blurb spoofing and
 // the `style` vector both close the same way: the tag that would carry them isn't allowed.
-export const BLURB_INTERIOR_ALLOWED_TAGS = [
-  'p',
-  'strong',
-  'em',
-  'u',
-  's',
-  'a',
-  'ul',
-  'ol',
-  'li',
-  'br',
-  'pre',
-  'code',
-];
+export const BLURB_INTERIOR_ALLOWED_TAGS = ['strong', 'em', 'u', 's', 'a', 'br', 'code'];
 
 export const BLURB_INTERIOR_ALLOWED_ATTRIBUTES = {
   a: DEFAULT_ALLOWED_ATTRIBUTES.a,

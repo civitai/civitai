@@ -56,10 +56,6 @@ import {
   getReferencedBlurbIds,
   reconcileBlurbReferences,
 } from '~/server/services/blurb-materialize.service';
-// The queue writer itself, NOT `bountiesSearchIndex` — that would pull `~/server/search-index`
-// (or `bounties.search-index`) and with it `meilisearch/client`, whose module-scope pLimit and
-// prom collectors this service's suites do not load today. `bountiesSearchIndex.queueUpdate` is
-// exactly this call with `indexName` bound (base.search-index.ts:465).
 import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
 import { BOUNTIES_SEARCH_INDEX } from '~/server/common/constants';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
@@ -546,6 +542,7 @@ export const upsertBounty = async ({
         entityId: updated.id,
         uses: expansion.uses,
       });
+    if (updated) await queueBountySearchIndexUpdate(updated.id);
     return updated;
   } else {
     if (data.poi) {
@@ -562,6 +559,7 @@ export const upsertBounty = async ({
         entityId: created.id,
         uses: expansion.uses,
       });
+    await queueBountySearchIndexUpdate(created.id);
     return created;
   }
 };
@@ -591,10 +589,22 @@ export async function applyBountyContentChange({
     await dbWrite.$executeRaw`UPDATE "Bounty" SET description = ${description} WHERE id = ${id}`;
   if (!affected) throw throwNotFoundError(`No bounty with id ${id}`);
 
-  // `description` is an indexed field (bounties.search-index.ts:257) and nothing else on the
-  // bounty save path enqueues this, so without it a rewritten body stays searchable under its
-  // old text until a metric or entry event happens to re-enqueue the bounty.
-  await SearchIndexUpdate.queueUpdate({
+  await queueBountySearchIndexUpdate(id);
+}
+
+/**
+ * `name`, `description` and `tags` are all indexed (bounties.search-index.ts), and until this
+ * existed NOTHING on the bounty save path enqueued the document — an edited bounty stayed
+ * searchable under its old text until a metric or entry event happened to re-enqueue it. Called
+ * from BOTH `upsertBounty` and `applyBountyContentChange`, so the interactive edit and the blurb
+ * fan-out cannot diverge on it.
+ *
+ * The enqueue itself, not `bountiesSearchIndex.queueUpdate`, which is exactly this call with
+ * `indexName` bound (base.search-index.ts) — reaching it through the index module would pull
+ * `meilisearch/client` and its module-scope pLimit and prom collectors into this service's graph.
+ */
+function queueBountySearchIndexUpdate(id: number) {
+  return SearchIndexUpdate.queueUpdate({
     indexName: BOUNTIES_SEARCH_INDEX,
     items: [{ id, action: SearchIndexUpdateQueueAction.Update }],
   });
