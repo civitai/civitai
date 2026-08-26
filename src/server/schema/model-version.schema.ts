@@ -640,3 +640,9 @@ export const mergeVersionsSchema = z.object({
     .optional(),
   appendDescriptions: z.boolean().default(false),
 });
+
+export const setModelVersionNsfwSchema = z.object({
+  id: z.number(),
+  nsfw: z.boolean(),
+});
+export type SetModelVersionNsfwInput = z.infer<typeof setModelVersionNsfwSchema>;

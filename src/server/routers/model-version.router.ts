@@ -38,6 +38,7 @@ import {
   setLinkedComponentsSchema,
   upsertExplorationPromptSchema,
   getModelVersionsByIdsInput,
+  setModelVersionNsfwSchema,
 } from '~/server/schema/model-version.schema';
 import { declineReviewSchema, unpublishModelSchema } from '~/server/schema/model.schema';
 import { enqueueJobs } from '~/server/services/job-queue.service';
@@ -57,6 +58,7 @@ import {
   bustMvCache,
   mergeVersions,
   getUserEarlyAccessModelVersions,
+  setModelVersionNsfw,
 } from '~/server/services/model-version.service';
 import { getModel } from '~/server/services/model.service';
 import {
@@ -247,6 +249,17 @@ export const modelVersionRouter = router({
         type: JobQueueType.UpdateNsfwLevel,
       },
     ])
+  ),
+  // The moderator override on the automatic version-name flag. It is the only clear path
+  // outside a rename, and the flag fails closed, so a scan that never returns has no other
+  // remedy.
+  setNsfw: moderatorProcedure.input(setModelVersionNsfwSchema).mutation(({ input, ctx }) =>
+    setModelVersionNsfw({
+      ...input,
+      userId: ctx.user.id,
+      isModerator: !!ctx.user.isModerator,
+      tracker: ctx.track,
+    })
   ),
   recheckTrainingStatus: guardedProcedure
     .meta({ requiredScope: TokenScope.ModelsWrite })

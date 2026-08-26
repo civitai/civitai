@@ -62,6 +62,16 @@ const LEVEL_LABEL_SET: ReadonlySet<string> = new Set(MODEL_MODERATION_LEVEL_LABE
 const MAX_PERSISTED_META_ITEMS = 50;
 
 /**
+ * The same budget spent on version findings, where the unit is an object rather than a term
+ * string and version names carry no length bound anywhere in the schema. Fifty untrimmed
+ * entries reach ~57 KB — some 180x this column's p99, on a column every model-feed row selects.
+ * Ten trimmed ones hold it near 4 KB. The full set stays on the scan's own row.
+ */
+const MAX_PERSISTED_META_VERSIONS = 10;
+const MAX_PERSISTED_VERSION_NAME_CHARS = 100;
+const MAX_PERSISTED_VERSION_LABELS = 5;
+
+/**
  * The single definition of the scanned string.
  *
  * The submit path, `resolveContent`, and the backfill all call this. A second copy that
@@ -200,7 +210,19 @@ export async function recordModelVersionNameForensics({
     labels: { label: string; score: number; threshold: number }[];
   }[];
 }) {
-  const versionsJson = JSON.stringify(versions.slice(0, MAX_PERSISTED_META_ITEMS));
+  // Highest-scoring first, so a model with more flagged versions than the cap keeps the entries
+  // a moderator would open rather than whichever came back first.
+  const topScore = (v: { labels: { score: number }[] }) =>
+    v.labels.length ? Math.max(...v.labels.map((l) => l.score)) : 0;
+  const trimmed = [...versions]
+    .sort((a, b) => topScore(b) - topScore(a))
+    .slice(0, MAX_PERSISTED_META_VERSIONS)
+    .map(({ versionId, name, labels }) => ({
+      versionId,
+      name: name.slice(0, MAX_PERSISTED_VERSION_NAME_CHARS),
+      labels: [...labels].sort((a, b) => b.score - a.score).slice(0, MAX_PERSISTED_VERSION_LABELS),
+    }));
+  const versionsJson = JSON.stringify(trimmed);
   await dbWrite.$executeRaw`
     UPDATE "Model" m
     SET meta = COALESCE(m.meta, '{}'::jsonb) || jsonb_build_object(

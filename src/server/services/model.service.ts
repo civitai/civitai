@@ -4241,10 +4241,20 @@ export async function getModelModerationDetail({ id }: { id: number }) {
   });
   if (!model) throw throwNotFoundError(`No model with id ${id}`);
 
+  // Mod-only. The automatic version-name flag has no other surface: it is not on the model row,
+  // and the version payload the page renders is creator-facing, so widening that to carry a
+  // moderator-only fact would hand it to the owner too.
+  const flaggedVersions = await dbRead.modelVersion.findMany({
+    where: { modelId: id, nsfw: true },
+    select: { id: true, name: true },
+    orderBy: { index: 'asc' },
+  });
+
   const meta = (model.meta ?? {}) as ModelMeta;
   return {
     id: model.id,
     name: model.name,
+    flaggedVersions,
     nsfw: model.nsfw,
     nsfwLevel: model.nsfwLevel,
     status: model.status,

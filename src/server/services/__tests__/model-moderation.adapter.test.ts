@@ -886,9 +886,38 @@ describe('recordModelVersionNameForensics', () => {
       })),
     });
 
-    // Same bound and same reason as the matched terms: `Model.meta` is read for every row of
-    // the model feed.
-    expect(JSON.parse(forensicsCall()?.values[0] as string)).toHaveLength(50);
+    // A tighter bound than the matched terms, for the same reason: `Model.meta` is read for
+    // every row of the model feed, and the unit here is an object rather than a term string.
+    // Fifty untrimmed entries reach ~57 KB against a column whose p99 is 310 bytes.
+    expect(JSON.parse(forensicsCall()?.values[0] as string)).toHaveLength(10);
+  });
+
+  // The cap alone does not bound an entry: version names carry no length limit anywhere in the
+  // schema, so one pathological name would blow the budget the cap exists to keep.
+  it('trims each finding — name length and label count', async () => {
+    const { recordModelVersionNameForensics } = await import(
+      '~/server/services/model-moderation.adapter'
+    );
+    await recordModelVersionNameForensics({
+      modelId: 7,
+      versions: [
+        {
+          versionId: 71,
+          name: 'x'.repeat(500),
+          labels: Array.from({ length: 15 }, (_, i) => ({
+            label: `l${i}`,
+            score: i / 100,
+            threshold: 0.5,
+          })),
+        },
+      ],
+    });
+
+    const [persisted] = JSON.parse(forensicsCall()?.values[0] as string);
+    expect(persisted.name).toHaveLength(100);
+    expect(persisted.labels).toHaveLength(5);
+    // Highest-scoring kept, not the first five.
+    expect(persisted.labels[0].label).toBe('l14');
   });
 
   // Both writers merge INTO the existing `textModeration` object. Reverting either to a bare

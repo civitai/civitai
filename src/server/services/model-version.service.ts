@@ -42,7 +42,15 @@ import type { DonationGoalWithTotal } from '~/server/redis/caches';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { resourceDataCache } from '~/server/redis/resource-data.redis';
+import {
+  bustPublicModelResponseCache,
+  publicModelResponseKey,
+} from '~/server/services/model-response-cache';
 import { moderateModelVersionName } from '~/server/services/model-version-moderation.adapter';
+import {
+  updateModelNsfwLevels,
+  updateModelVersionNsfwLevels,
+} from '~/server/services/nsfwLevels.service';
 import {
   allBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
@@ -68,6 +76,7 @@ import type {
   LinkedComponentSettings,
   LinkOfficialFileByHashInput,
   SetLinkedComponentsInput,
+  SetModelVersionNsfwInput,
   UpdateModelVersionPaidAccessInput,
   UpsertExplorationPromptInput,
 } from '~/server/schema/model-version.schema';
@@ -2537,35 +2546,71 @@ export const modelVersionDonationGoal = async ({
   return (await getOwnerDonationGoals('ModelVersion', [id]))[id] ?? null;
 };
 
-// Public-response cache (origin-side cache for GET /api/v1/models/[id]) toggle —
-// only populated on Datapacket (see PUBLIC_MODEL_RESPONSE_TTL in the handler).
-const PUBLIC_MODEL_RESPONSE_CACHE_ENABLED = env.IS_DATAPACKET;
+// Re-exported so the existing call sites keep importing it from here; the implementation
+// moved to a leaf module that `nsfwLevels.service` can reach without an import cycle.
+export { publicModelResponseKey, bustPublicModelResponseCache };
 
-export function publicModelResponseKey(
-  modelId: number,
-  browsingLevel: number
-): RedisKeyTemplateCache {
-  return `${REDIS_KEYS.CACHES.PUBLIC_MODEL_RESPONSE}:${modelId}:${browsingLevel}`;
-}
+/**
+ * The moderator override on the automatic version-name flag, and the only path that clears it
+ * outside a rename.
+ *
+ * It is required rather than a convenience: the flag fails CLOSED. A scan that never returns
+ * leaves the term list's verdict standing, so without this a classifier outage or a term the
+ * scan agrees with has no remedy short of hand-written SQL.
+ *
+ * `nsfw` is an INPUT to the derived level, so the write alone is not the change — the level has
+ * to be recomputed and the caches that embed it dropped before anything reads them.
+ */
+export async function setModelVersionNsfw({
+  id,
+  nsfw,
+  userId,
+  isModerator,
+  tracker,
+}: SetModelVersionNsfwInput & { userId: number; isModerator: boolean; tracker?: Tracker }) {
+  if (!isModerator) throw throwAuthorizationError();
 
-// Best-effort, fail-open invalidation of the origin-side public response cache for
-// GET /api/v1/models/[id] (see the handler). Called from bustMvCache so an
-// unpublish / takedown / update / delete drops the cached 200 immediately rather
-// than serving stale for up to the cache TTL globally. Busts BOTH browsing-level
-// keys the handler can write (all-levels for unrestricted regions, sfw-only for
-// region-restricted ones). Deletes the physical key — the handler's read keys off
-// key PRESENCE, so a clean delete forces a rebuild. A Redis error here must NOT
-// throw into the mutation path, so it is swallowed (the entry otherwise expires
-// via its TTL).
-export async function bustPublicModelResponseCache(modelId: number | number[]) {
-  if (!PUBLIC_MODEL_RESPONSE_CACHE_ENABLED) return;
-  const modelIds = Array.isArray(modelId) ? modelId : [modelId];
-  if (modelIds.length === 0) return;
-  const keys = modelIds.flatMap((id) => [
-    publicModelResponseKey(id, allBrowsingLevelsFlag),
-    publicModelResponseKey(id, sfwBrowsingLevelsFlag),
-  ]);
-  await redis.del(keys).catch(() => undefined);
+  const version = await dbWrite.modelVersion.findUnique({
+    where: { id },
+    select: { id: true, nsfw: true, modelId: true, model: { select: { userId: true } } },
+  });
+  if (!version) throw throwNotFoundError(`No model version with id ${id}`);
+  if (version.nsfw === nsfw) return { id, nsfw };
+
+  // Refused in BOTH directions. Raising the flag on a system-owned model is refused by a
+  // database trigger anyway; lowering it is not, and is worse — the level derivation has no
+  // branch for an unflagged system-owned version, so the row would keep the NSFW level with the
+  // flag gone and nothing would ever revisit it.
+  if (version.model.userId === -1)
+    throw throwBadRequestError('ModelVersion.nsfw cannot be changed on a system-owned model');
+
+  await dbWrite.modelVersion.update({ where: { id }, data: { nsfw } });
+
+  // The trigger enqueues both of these a minute out. Inline so the moderator sees the result of
+  // their own action; the trigger stays the backstop for every other writer.
+  await updateModelVersionNsfwLevels([id]);
+  await updateModelNsfwLevels([version.modelId]);
+  await bustMvCache(id, version.modelId, userId);
+
+  tracker
+    ?.entityChanges(
+      diffEntityChanges({
+        entityType: 'ModelVersion',
+        entityId: id,
+        ownerId: version.model.userId,
+        before: { nsfw: version.nsfw },
+        after: { nsfw },
+        actorRole: resolveActorRole({
+          actorUserId: userId,
+          ownerId: version.model.userId,
+          isModerator,
+        }),
+        reason: 'moderator-version-nsfw-override',
+      })
+    )
+    .catch(() => null);
+
+  return { id, nsfw };
 }
 
 export const bustMvCache = async (

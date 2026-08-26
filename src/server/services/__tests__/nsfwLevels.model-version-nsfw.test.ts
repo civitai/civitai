@@ -265,7 +265,21 @@ describe('the ModelVersion nsfw trigger', () => {
 
   it('adds the column with a safe default so the migration is inert on arrival', () => {
     expect(migration).toContain(
-      `ALTER TABLE "ModelVersion" ADD COLUMN "nsfw" BOOLEAN NOT NULL DEFAULT FALSE`
+      `ALTER TABLE "ModelVersion" ADD COLUMN IF NOT EXISTS "nsfw" BOOLEAN NOT NULL DEFAULT FALSE`
+    );
+  });
+
+  // Applied by hand, so a partial apply has to be re-runnable from the top — and the concurrent
+  // index is what makes a partial apply likely. Without IF NOT EXISTS the re-run dies on the
+  // ALTER before it ever reaches the triggers.
+  it('is re-runnable, and builds the concurrent index last', () => {
+    expect(migration).toContain('ADD COLUMN IF NOT EXISTS');
+    expect(migration).toContain('CREATE INDEX CONCURRENTLY IF NOT EXISTS');
+    // The statement, not the phrase — the top banner names it too.
+    expect(
+      migration.indexOf('CREATE INDEX CONCURRENTLY IF NOT EXISTS "ModelVersion_modelId_nsfw_idx"')
+    ).toBeGreaterThan(
+      migration.indexOf('CREATE OR REPLACE TRIGGER model_version_nsfw_system_guard')
     );
   });
 

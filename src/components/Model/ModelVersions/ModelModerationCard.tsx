@@ -29,13 +29,20 @@ import classes from './ModelVersionDetails.module.scss';
 // badges come from `modelVersionFlagLabels`, so a new flag surfaces here for free.
 export function ModelModerationCard({
   modelId,
+  versionId,
   versionFlags,
 }: {
   modelId: number;
+  versionId?: number;
   versionFlags?: number;
 }) {
   const colorScheme = useComputedColorScheme('dark');
+  const queryUtils = trpc.useUtils();
   const { data, isLoading } = trpc.moderator.models.getModerationDetail.useQuery({ id: modelId });
+  const flaggedVersions = data?.flaggedVersions ?? [];
+  const setNsfw = trpc.modelVersion.setNsfw.useMutation({
+    onSuccess: () => queryUtils.moderator.models.getModerationDetail.invalidate({ id: modelId }),
+  });
   const [open, setOpen] = useLocalStorage<string[]>({
     key: 'model-moderation-card',
     defaultValue: [],
@@ -49,11 +56,14 @@ export function ModelModerationCard({
   if (data?.cannotPublish) flags.push({ label: 'Cannot publish', color: 'orange' });
   if (data?.cannotPromote) flags.push({ label: 'Promo banned', color: 'orange' });
   if (data?.commentsLocked) flags.push({ label: 'Comments locked', color: 'gray' });
+  if (versionId && flaggedVersions.some((v) => v.id === versionId))
+    flags.push({ label: 'Version name NSFW', color: 'red' });
   for (const label of getModelVersionFlagLabels(versionFlags ?? 0))
     flags.push({ label, color: 'orange' });
 
   const locked = data?.lockedProperties ?? [];
   const hasFooter = !!(
+    flaggedVersions.length ||
     data?.profanity ||
     data?.textModeration ||
     data?.unpublishedAt ||
@@ -157,6 +167,32 @@ export function ModelModerationCard({
 
               {hasFooter && (
                 <Stack gap={6} px="md" py="sm">
+                  {!!flaggedVersions.length && (
+                    <Stack gap={4}>
+                      <Text size="xs" fw={600} c="red">
+                        Version names flagged NSFW
+                      </Text>
+                      {flaggedVersions.map((v) => (
+                        <Group key={v.id} gap={6} wrap="nowrap">
+                          <Text size="xs" style={{ flex: 1 }}>
+                            {v.name}
+                          </Text>
+                          <Button
+                            size="compact-xs"
+                            variant="light"
+                            loading={setNsfw.isPending && setNsfw.variables?.id === v.id}
+                            onClick={() => setNsfw.mutate({ id: v.id, nsfw: false })}
+                          >
+                            Clear
+                          </Button>
+                        </Group>
+                      ))}
+                      <Text size="xs" c="dimmed">
+                        Set by the curated term list and left standing by the scan. Clearing is the
+                        only remedy when the scan never returned.
+                      </Text>
+                    </Stack>
+                  )}
                   {data.profanity && (
                     <Stack gap={4}>
                       <Text size="xs" fw={600} c="orange">

@@ -4,6 +4,8 @@ import { ImageConnectionType, SearchIndexUpdateQueueAction } from '~/server/comm
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { dataForModelsCache } from '~/server/redis/caches';
+import { bustPublicModelResponseCache } from '~/server/services/model-response-cache';
 import {
   articlesSearchIndex,
   bountiesSearchIndex,
@@ -590,6 +592,7 @@ export async function updateModelNsfwLevels(modelIds: number[]) {
   await modelsSearchIndex.queueUpdate(
     models.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
   );
+  await bustPublicModelResponseCache(models.map(({ id }) => id));
 }
 
 /**
@@ -708,10 +711,18 @@ export async function updateModelVersionNsfwLevels(modelVersionIds: number[]) {
   // flagged by name no longer moves the model's own level, so there is nothing to ride on and
   // the indexed copy would stay stale until a full rebuild.
   const modelIds = uniq(versions.map((v) => v.modelId));
-  if (modelIds.length)
+  if (modelIds.length) {
     await modelsSearchIndex.queueUpdate(
       modelIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
     );
+    // Both caches, and in this order. `dataForModelsCache` holds `versions[].nsfwLevel` for a
+    // day and is what rebuilds the public response, so busting the response alone would rebuild
+    // it from the stale level. The version's own level is in that payload whether or not the
+    // model's level moved, and it drives the licence-restricted visibility filter — so this is
+    // unconditional on a version-level change, not conditional on the rollup changing.
+    await dataForModelsCache.refresh(modelIds);
+    await bustPublicModelResponseCache(modelIds);
+  }
 }
 
 export async function updateComicChapterNsfwLevels(projectIds: number[]) {
