@@ -611,8 +611,19 @@ describe('🔴 scope drift — the save dead end, and the copy that denies it', 
   // pre-existing; this pins it so a half-fix cannot land quietly.
   it('🟡 the drifted state is a HARD dead end — the save aborts CLIENT-side before any server call', () => {
     // This is the mechanism the browser test exercises end-to-end, pinned here as pure
-    // logic so it runs in the `unit` project — the tier CI actually executes. The browser
-    // suite that drives the real click path runs in NO CI job (see the PR body).
+    // logic so it also runs in the `unit` project.
+    //
+    // 🔴 CORRECTION — an earlier version of this comment said the browser suite "runs in NO
+    // CI job". That was WRONG: `preview / component-tests` (Tekton preview pipeline) runs
+    // the `component` project and reported "Component suite passed (report-only)" on
+    // civitai/civitai#4431. The claim came from enumerating `.github/workflows/`, which is a
+    // complete population of GitHub ACTIONS and silent about Tekton.
+    //
+    // What is true, and why this duplicate still earns its place: NEITHER tier BLOCKS. The
+    // component check is report-only, the `unit` job is `continue-on-error` on pull
+    // requests, and the preview tier only exists when the preview pipeline runs at all
+    // (opt-in for non-maintainers) and registers ~40 min after the Actions rollup goes
+    // green. Two independent report-only paths to the same fact is the point.
     const form = editContextToForm(driftedCtx());
 
     // The prefill carries the drifted mask…

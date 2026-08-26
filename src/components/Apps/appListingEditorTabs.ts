@@ -112,9 +112,19 @@ export type EditorTabContext = {
    * call sites pass the field (and `appListingEditorTabs.callers.test.ts` does, as
    * defence-in-depth for a caller added in a way the compiler cannot see — a `.js` file, an
    * `as any`, a spread of a wider object). But the compiler is what makes the NEXT caller
-   * impossible to get wrong, and it runs on every PR as `tekton / typecheck`, which the
-   * browser suite that covers this function does NOT. Pass `null` explicitly when the
-   * caller genuinely does not know — that is a decision, and it now reads as one.
+   * impossible to get wrong, and it runs on every PR as `tekton / typecheck` — which is the
+   * only check covering this function that actually BLOCKS.
+   *
+   * 🔴 BE PRECISE ABOUT THAT, because an earlier version of this comment overstated it as
+   * "the browser suite that covers this function does NOT run in CI". It does:
+   * `preview / component-tests` runs the `component` project. The real distinction is
+   * BLOCKING vs ANNOTATING — that check is report-only, and the `unit` job is
+   * `continue-on-error` on pull requests. So every test covering this field annotates; only
+   * the type gates. That is the argument for making it required, and it survives the
+   * correction intact.
+   *
+   * Pass `null` explicitly when the caller genuinely does not know — that is a decision, and
+   * it now reads as one.
    */
   lastModerationAction: string | null;
 };
