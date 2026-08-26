@@ -105,9 +105,23 @@ describe('LISTING_STATUS_CHANGING_MODERATION_ACTIONS', () => {
    * INVARIANT GUARD (not regression coverage — it passed before this change too, because
    * the derived complement produced exactly this list). It exists to pin the two halves
    * as WHOLE ARRAYS so a member cannot be quietly dropped from one and appear in the
-   * other while the partition assertion above stays satisfied. Order is asserted too:
-   * these feed a SQL `IN` list, and a stable order keeps the pinned statement text in
-   * `offsite-listing.edit.service.test.ts` deterministic.
+   * other while the partition assertion above stays satisfied.
+   *
+   * 🔴 ORDER IS ASSERTED TOO, AND THIS IS THE ONLY TEST THAT SEES A REORDER. An earlier
+   * version of this comment justified that by claiming the order keeps the pinned SQL text
+   * in `offsite-listing.edit.service.test.ts` deterministic. That is FALSE and is corrected
+   * rather than softened: the statement is pinned as `... AND action IN (?,?,?,?,?,?)`, so
+   * only the COUNT of the verbs reaches the text — the values are bound parameters and the
+   * pin is order-insensitive by construction. The companion assertion there,
+   * `expect(values).toEqual(['apl_removed', ...LISTING_STATUS_CHANGING_MODERATION_ACTIONS])`,
+   * derives its own expectation from the same constant, so it moves WITH a reorder and
+   * cannot see one either. Measured: reordering the constant leaves both of those GREEN and
+   * is caught here and nowhere else.
+   *
+   * What the order assertion actually buys, then, is a REVIEW property, not a runtime one:
+   * the two halves are written out as literals, so a reorder or a membership change shows up
+   * as a diff on this list and has to be looked at, instead of being absorbed silently by
+   * assertions computed from the constant itself.
    */
   it('pins BOTH halves as whole literal arrays, so neither can be silently re-derived', () => {
     expect([...LISTING_STATUS_CHANGING_MODERATION_ACTIONS]).toEqual([

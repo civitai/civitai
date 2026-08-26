@@ -11,16 +11,27 @@ import { LISTING_STATUS_CHANGING_MODERATION_ACTIONS } from '~/server/services/bl
  * answered by the MOST-RECENT event whose action actually WRITES `app_listings.status`.
  * `LISTING_STATUS_CHANGING_MODERATION_ACTIONS` is that set, and it is supposed to have ONE
  * spelling. It did not: the predicate was open-coded, and each round of review found
- * another copy — SIX read sites by the time anyone counted, two of them unfiltered, one of
- * those in raw SQL where no behavioural test could see it. Every unfiltered copy fails the
- * same way and in the same direction: a moderator's `message-owner` ("fix X and republish"),
- * a `claim`, or a `report-resolve` is newer than the owner's own `owner-unpublish`, so the
- * page tells the owner a moderator removed a listing the server would happily republish.
+ * another copy — TWO of them unfiltered, one of those in raw SQL where no behavioural test
+ * could see it. Every unfiltered copy fails the same way and in the same direction: a
+ * moderator's `message-owner` ("fix X and republish"), a `claim`, or a `report-resolve` is
+ * newer than the owner's own `owner-unpublish`, so the page tells the owner a moderator
+ * removed a listing the server would happily republish.
  *
- * 🔴 THIS PINS A RELATIONSHIP, NOT A COMPONENT — which is the point. Each of those six sites
- * was individually reviewed and individually tested; the defect lived in the SEAM, in the
- * fact that nobody owned the SET of readers. So this asserts the whole set: it fails when a
- * SEVENTH read appears (an unclassified reader) AND when one disappears (a stale ledger
+ * 🔴 TWO DIFFERENT COUNTING BASES APPEAR IN THIS ARC — do not read either as the other.
+ *   (a) READ SITES IN THIS LEDGER: **5** — the direct reads of the table that the scanner
+ *       below finds under `src/**` excluding tests. 4 `filtered` + 1 `full-timeline`. This
+ *       is the number the assertions here are about, and it is measured, not asserted from
+ *       memory: the scanner reports it on every run.
+ *   (b) OPEN-CODED COPIES FOUND ACROSS THE ARC: a running tally kept by the review rounds,
+ *       which also counted DELEGATING callers of `readLastModerationAction`, not only
+ *       direct table reads. That tally is where the "sixth copy" / "seventh copy" labels on
+ *       two ledger entries below come from. It is history, not a count of anything in this
+ *       file, and it is deliberately NOT reconciled with (a).
+ *
+ * 🔴 THIS PINS A RELATIONSHIP, NOT A COMPONENT — which is the point. Each of those read
+ * sites was individually reviewed and individually tested; the defect lived in the SEAM, in
+ * the fact that nobody owned the SET of readers. So this asserts the whole set: it fails
+ * when a SIXTH read appears (an unclassified reader) AND when one disappears (a stale ledger
  * entry, the direction allowlists routinely get wrong).
  *
  * 🔴 IT IS STRUCTURAL, SO IT IS NOT SUFFICIENT ON ITS OWN. It proves each `filtered` reader
@@ -83,6 +94,10 @@ type Kind = 'filtered' | 'full-timeline';
  * 🔴 THE LEDGER. Every non-test read of `AppListingModerationEvent` in the repo, and what
  * question it asks. Adding a reader means adding a line here and stating which it is.
  *
+ * There are FIVE entries, which is the read-site count — basis (a) in the header. The
+ * "sixth copy" / "seventh copy" labels in two `why` strings are basis (b), the arc-wide
+ * open-coded-copy tally; they are provenance, not a position in this list.
+ *
  * `filtered`      — asks "what explains this removal?"; MUST restrict to
  *                   `LISTING_STATUS_CHANGING_MODERATION_ACTIONS`.
  * `full-timeline` — renders the audit history; deliberately reads EVERY action, because a
@@ -99,11 +114,11 @@ const LEDGER: Record<string, { kind: Kind; why: string }> = {
   },
   'src/server/routers/blocks.router.ts': {
     kind: 'filtered',
-    why: 'listMyPublishRequests — same affordance for on-site apps. Was UNFILTERED (the sixth copy).',
+    why: 'listMyPublishRequests — same affordance for on-site apps. Was UNFILTERED (arc tally: the sixth open-coded copy; basis (b), not a read-site index).',
   },
   'src/server/services/blocks/offsite-listing.service.ts': {
     kind: 'filtered',
-    why: 'listMySubmissions — raw DISTINCT ON, the off-site my-submissions page. Was UNFILTERED (the seventh copy).',
+    why: 'listMySubmissions — raw DISTINCT ON, the off-site my-submissions page. Was UNFILTERED (arc tally: the seventh open-coded copy; basis (b), not a read-site index).',
   },
   'src/server/services/blocks/offsite-moderation.service.ts': {
     kind: 'full-timeline',
@@ -154,12 +169,38 @@ describe('AppListingModerationEvent read ledger', () => {
     expect(unfiltered).toEqual([]);
   });
 
+  /**
+   * 🔴 READ WHAT THIS ASSERTS, NOT WHAT IT SOUNDS LIKE. `readIsFiltered` is a NAME-PROXIMITY
+   * check: it asks only whether the string `LISTING_STATUS_CHANGING_MODERATION_ACTIONS`
+   * appears in the window around the read, on a non-comment line. So this test pins exactly
+   * one thing — the deliberate exception is not quietly routed through the SHARED constant
+   * like its four filtered siblings. That is the mutation the ledger exists to catch here
+   * (round-2 `L6`), and it is all this test can see.
+   *
+   * 🔴 IT IS THEREFORE **NOT** THE GUARD AGAINST THE NAMED REGRESSION. A `where` clause
+   * typed out by hand — `action: { in: ['delist', 'relist', …] }` — never mentions the
+   * constant, so `readIsFiltered` stays false and this assertion stays GREEN while the audit
+   * history silently stops showing the owner the moderator's `message-owner`. Measured on
+   * this tip: that exact hand-typed filter survives the whole battery, this test included.
+   *
+   * WHAT ACTUALLY PREVENTS IT is a pair of PRE-EXISTING behavioural pins this PR neither
+   * adds nor changes, both in `offsite-moderation.service.mod-actions.test.ts`: the
+   * `listModerationEvents` (mod-scoped) and `listMyListingModerationEvents` (owner-scoped)
+   * cases each assert the WHOLE `where` — `expect(args.where).toEqual({ appListingId })` —
+   * and both callers funnel into this same `queryModerationEvents` read. Any added filter,
+   * spelled any way, fails both. Measured on this tip: the hand-typed filter above leaves
+   * this file's 12 tests green and turns exactly those two red. Cite them, not this test,
+   * when someone asks what stops the tightening.
+   *
+   * POSSIBLE FOLLOW-UP (a code change, deliberately not made in a comments-only pass):
+   * strengthen this to assert the ABSENCE of any `action` filter in the window — a
+   * `/\baction\s*:\s*\{/` probe — so the structural guard covers the hand-typed shape too
+   * and stops depending on a sibling file for the property its title implies.
+   */
   it('the full-timeline reader is deliberately NOT filtered — stated, not assumed', () => {
     const file = 'src/server/services/blocks/offsite-moderation.service.ts';
     const lines = found[file] ?? [];
     expect(lines.length).toBeGreaterThan(0);
-    // If this ever starts filtering, the audit history silently stops showing the owner the
-    // moderator's message — a real regression that would otherwise look like a tightening.
     expect(lines.every((l) => !readIsFiltered(stripped[file], l))).toBe(true);
   });
 });
