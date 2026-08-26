@@ -17,6 +17,14 @@ Status: **proposal, decisions settled 2026-08-24** (Briant):
    old join tables FK-reference the old comment tables, so deferring it would block Phase 6
    teardown indefinitely).
 5. The table is named **`CommentV3` permanently** — no post-teardown rename.
+6. Deletion semantics (settled 2026-08-25, via Koen's counter-proposal): **tombstone when a
+   comment has replies, hard-delete when childless**, enforced by `deletedAt` +
+   `parentId ON DELETE RESTRICT`.
+
+The target schema below is the **merged design** (2026-08-25): Koen's counter-proposal — ltree
+path as the single source of tree truth, with `rootId`/`depth` generated from it — adopted with
+three adjustments: `clubPost` dropped from the enum (dead surface), `CommentTopic.commentCount`
+kept (hot list-page reads), and the ltree operational constraints documented.
 
 ## Why the current system is expensive
 
@@ -42,67 +50,126 @@ the tree is a join through a second table, and reply counts require trigger-main
 ## Target data model
 
 One row per comment. Every row knows its entity, its parent, its root, and its depth — no
-resolution chain, no second table on the read path.
+resolution chain, no second table on the read path. The DDL is authoritative (ltree is
+`Unsupported(...)` in Prisma — see the notes below):
 
-```prisma
-enum CommentEntityType {
-  model
-  image
-  post
-  article
-  review
-  bounty
-  bountyEntry
-  challenge
-  comicChapter
-  appListing
-  model3d
-  model3dReview
-}
+```sql
+CREATE EXTENSION IF NOT EXISTS ltree;  -- needs infra sign-off on prod
 
-model CommentV3 {
-  id           Int       @id @default(autoincrement()) // sequence seeded past max(CommentV2.id, Comment.id)
-  entityType   CommentEntityType
-  entityId     Int
-  parentId     Int?      // null = top-level
-  parent       CommentV3? @relation("Replies", fields: [parentId], references: [id], onDelete: Cascade)
-  rootId       Int?      // top-level ancestor; null for top-level comments
-  depth        Int       @default(0) // 0 = top-level
+CREATE TYPE "CommentEntityType" AS ENUM (
+  'model', 'image', 'post', 'article', 'review', 'bounty', 'bountyEntry',
+  'comicChapter', 'challenge', 'model3d', 'model3dReview', 'appListing'
+);
 
-  userId       Int
-  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  content      String
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-  tosViolation Boolean   @default(false)
-  hidden       Boolean   @default(false) // NOT NULL — fixes v1/v2's nullable booleans
-  locked       Boolean   @default(false) // "no new replies under me"
-  pinnedAt     DateTime?
+-- Standalone so Comment / CommentV2 id defaults can be re-pointed at it for dual-write.
+-- Seeded past max(Comment.id, CommentV2.id) at migration time.
+CREATE SEQUENCE comment_shared_id_seq AS integer;
 
-  reactionCount Int      @default(0) // maintained as today
-  childCount    Int      @default(0) // direct replies, trigger-maintained
-  legacyV1Id    Int?     @unique     // original legacy Comment.id, for old permalinks/notifications
+-- Exists to lock an entity (including before any comment exists) and to hold the
+-- entity-level count. Required parent of every comment: entity cleanup = delete one row.
+CREATE TABLE "CommentTopic" (
+  "entityType"   "CommentEntityType" NOT NULL,
+  "entityId"     integer             NOT NULL,
+  "locked"       boolean             NOT NULL DEFAULT false,
+  "commentCount" integer             NOT NULL DEFAULT 0,  -- trigger-maintained; hot list reads stay O(1)
+  PRIMARY KEY ("entityType", "entityId")
+);
 
-  replies      CommentV3[] @relation("Replies")
-}
+CREATE TABLE "CommentV3" (
+  "id"            integer             NOT NULL DEFAULT nextval('comment_shared_id_seq'),
+  "entityType"    "CommentEntityType" NOT NULL,
+  "entityId"      integer             NOT NULL,
 
-model CommentTopic {
-  entityType   CommentEntityType
-  entityId     Int
-  locked       Boolean           @default(false)
-  commentCount Int               @default(0) // trigger-maintained, replaces Thread.commentCount
+  "parentId"      integer,                 -- NULL = top-level
+  "replyToId"     integer,                 -- display-only "@user" when the depth clamp re-parented the reply
 
-  @@id([entityType, entityId])
-}
+  -- '<rootId>.<...>.<parentId>.<id>'; filled by the BEFORE INSERT trigger
+  "path"          ltree               NOT NULL,
+  "rootId"        integer             GENERATED ALWAYS AS ((subltree(path, 0, 1)::text)::integer) STORED,
+  "depth"         integer             GENERATED ALWAYS AS (nlevel(path) - 1) STORED,  -- 0 = top-level
+
+  "userId"        integer             NOT NULL,
+  "content"       text                NOT NULL,
+  "createdAt"     timestamptz         NOT NULL DEFAULT now(),
+  "updatedAt"     timestamptz         NOT NULL DEFAULT now(),
+  "deletedAt"     timestamptz,                -- tombstone: had replies, so the row stays and content is cleared
+
+  "tosViolation"  boolean             NOT NULL DEFAULT false,
+  "hidden"        boolean             NOT NULL DEFAULT false,
+  "locked"        boolean             NOT NULL DEFAULT false,  -- refuses new replies anywhere under this row
+  "pinnedAt"      timestamptz,
+
+  "reactionCount" integer             NOT NULL DEFAULT 0,  -- sort key, so stored; maintained by reaction trigger
+  "legacyV1Id"    integer,                                 -- old Comment.id
+
+  PRIMARY KEY ("id"),
+  FOREIGN KEY ("entityType", "entityId") REFERENCES "CommentTopic" ON DELETE CASCADE,
+  FOREIGN KEY ("parentId")  REFERENCES "CommentV3" ("id") ON DELETE RESTRICT,  -- a childless-delete that loses a race fails, never orphans
+  FOREIGN KEY ("replyToId") REFERENCES "CommentV3" ("id") ON DELETE SET NULL,
+  FOREIGN KEY ("userId")    REFERENCES "User" ("id")      ON DELETE CASCADE,
+
+  CONSTRAINT commentv3_depth_cap             CHECK (nlevel(path) <= 21),
+  CONSTRAINT commentv3_reply_to_needs_parent CHECK ("replyToId" IS NULL OR "parentId" IS NOT NULL),
+  CONSTRAINT commentv3_reaction_count_nonneg CHECK ("reactionCount" >= 0)
+);
+
+-- The one tree trigger: path = parent.path || own id. rootId and depth are GENERATED from
+-- path, so no writer — Prisma service, backfill, dual-write, moderator Kysely — can corrupt
+-- the tree. Lock checks, entity checks and the topic upsert live in the service.
+CREATE FUNCTION commentv3_set_path() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW."parentId" IS NULL THEN
+    NEW.path := NEW.id::text::ltree;
+  ELSE
+    SELECT p.path || NEW.id::text INTO NEW.path FROM "CommentV3" p WHERE p.id = NEW."parentId";
+  END IF;
+  RETURN NEW;
+END $$;
+
+CREATE TRIGGER commentv3_set_path
+  BEFORE INSERT ON "CommentV3" FOR EACH ROW EXECUTE FUNCTION commentv3_set_path();
 ```
 
-Schema-review notes (2026-08-25 pass, complexity trimmed):
-- **No `path` column / no GIN index.** An earlier draft carried `path Int[]` + GIN for
-  subtree-of-a-non-root fetches. Dropped: `rootId` + `depth` + `(parentId, id)` cover every hot
-  path, and the one thing `path` served — prefetching a *re-rooted* comment's subtree — is rare,
-  bounded (budget × depth ≤ 20), and fine as per-parent paging or a small recursive CTE. If deep
-  subtree ops ever become hot, `path` is derivable from `parentId` and can be added with a
-  backfill later. This also removes the array-maintenance from insert/clamp logic and backfill.
+Schema-review notes (2026-08-25, merged with Koen's counter-proposal):
+- **`path` is back — as the single source of tree truth, which changes the earlier calculus.**
+  A first draft carried `path Int[]` + GIN; a review pass dropped it because `rootId`/`depth`
+  covered the hot paths and every writer would have had to maintain the array. Koen's version
+  inverts the risk: `path` (ltree) is set by one `BEFORE INSERT` trigger, and `rootId`/`depth`
+  are **GENERATED from it** — so no writer population (Prisma service, backfill, dual-write,
+  moderator Kysely) can compute them wrong. Tree integrity moves from N application code paths
+  into the database. The GiST index buys subtree reads, ancestry checks, and the subtree-scoped
+  lock below.
+- **No `childCount` — reply counts are queried.** With `(parentId, hidden, ...)` indexes, a
+  capped per-parent reply count for a page of comments is one index-only `GROUP BY`. That
+  re-introduces the per-page count query the plan once celebrated killing, at index-only cost —
+  Phase 0 EXPLAINs it at prod scale before this is final. `CommentTopic.commentCount` **stays
+  stored** (our one divergence from Koen's draft): entity-level counts are read per-row on hot
+  list pages (resource-review cards), where count-on-read would mean N subqueries per page.
+- **`replyToId`** preserves who a clamped reply was answering (display-only, `SET NULL` on
+  delete, CHECK'd to require a parent) — replaces the earlier "keep an @mention in the content".
+- **Deletion is structural.** `deletedAt` tombstones a comment that has replies;
+  `parentId ON DELETE RESTRICT` makes a childless hard-delete that races a new reply *fail*
+  instead of orphaning. Tombstones stay in indexes and pages — they render as "[deleted]"
+  placeholders, which is the point.
+- **`CommentTopic` is a required parent** (FK with CASCADE): the service upserts the topic on
+  first comment (replacing lazy Thread creation 1:1), and entity cleanup becomes "delete the
+  topic row".
+- **`locked` is subtree-scoped**: it refuses new replies anywhere under the row — one ancestor
+  check via `path` (`@>` on the GiST index) at write time. Stronger and simpler than v1's
+  one-level propagation; note it in the moderation section.
+- **ltree operational constraints**: `CREATE EXTENSION ltree` needs infra sign-off on prod, and
+  Prisma models the column as `Unsupported("ltree")` — path is invisible to the Prisma client, so
+  path operations are raw SQL. The generated `rootId`/`depth` integers are normal Prisma-readable
+  columns and are what the hot queries use.
+- **`clubPost` is NOT in the enum** (it was in Koen's draft) — clubs are dead code and their
+  threads aren't migrated.
+- **`tosViolation`/`hidden`/`locked` stay booleans, not a bitwise `flags` int** (considered
+  2026-08-25, Koen). The repo's bitwise wins come from set-membership queries
+  (`nsfwLevel & browsingLevel`), and nothing ever queries these three as a set. Booleans keep the
+  `(parentId, hidden, …)` indexes plain-column (bit-tests need expression indexes the planner
+  only matches on exact expression repeats, with guessed selectivity), keep Prisma/Kysely filters
+  expressible, and `ADD COLUMN boolean DEFAULT false` is a metadata-only ALTER anyway. Revisit
+  only if moderation states multiply *and* gain set-style queries.
 - **No `nsfw`, no `metadata` — pending a Phase 0 check.** `CommentV2.metadata` appears in no
   selector and has no writer we could find; comment `nsfw` is accepted on upsert input but read
   nowhere in the v2 UI, and v1's NSFW comment filter is commented out. Phase 0 counts
@@ -147,35 +214,34 @@ for v2 and via `legacyV1Id` for v1. Report rows re-point the same way — the `R
 
 `CommentTopic` is the one Thread responsibility that can't live on a comment row: an entity-level
 lock must exist before any comment does (today's `toggleLockCommentsThread` creates a locked empty
-thread), and `challenge.service.ts` + `getCommentCount` read an entity-level count. It is created
-lazily, exactly like `Thread` is today — but keyed by `(entityType, entityId)` instead of 15 FK
-columns. Entity FKs are dropped entirely; entity deletion cleans up comments via an
-`onDelete` handled in the service (see Phase 5 note) or a periodic sweep, since polymorphic keys
-can't carry a real FK. (Today `Thread` FKs are `SetNull`, which already orphans comments silently —
-we are not losing integrity we currently have.)
+thread), and `challenge.service.ts` + `getCommentCount` read an entity-level count. The service
+upserts it on first comment (replacing lazy Thread creation 1:1), and every comment FK-references
+it — so entity cleanup is "delete the topic row", with comments cascading. That's *more* integrity
+than today, where `Thread` FKs are `SetNull` and orphan comments silently.
 
-### Indexes (raw SQL, several partial)
+### Indexes
 
 ```sql
--- top-level pages, Oldest/Newest keyset. Deliberately NOT filtered on hidden: hidden rows are
--- rare, a residual filter is cheap, and the same index then serves the moderator hidden-comments
--- view (which would otherwise have no index at all).
-CREATE INDEX ... ON "CommentV3" ("entityType", "entityId", id)
-  WHERE "parentId" IS NULL AND "pinnedAt" IS NULL;
--- top-level pages, MostReactions keyset
-CREATE INDEX ... ON "CommentV3" ("entityType", "entityId", "reactionCount" DESC, id DESC)
-  WHERE "parentId" IS NULL AND "pinnedAt" IS NULL;
--- pinned comments (small, first page only)
-CREATE INDEX ... ON "CommentV3" ("entityType", "entityId") WHERE "pinnedAt" IS NOT NULL;
--- reply pages + reply hidden counts
-CREATE INDEX ... ON "CommentV3" ("parentId", id);
--- whole-subtree fetch for auto-expand
-CREATE INDEX ... ON "CommentV3" ("rootId", depth, id);
--- moderation / user lookup / account deletion / judge gate
-CREATE INDEX ... ON "CommentV3" ("userId", id);
+-- Top-level pages, three sort modes (Oldest scans the newest index backward). Deliberately NOT
+-- filtered on hidden: hidden rows are rare, a residual filter is cheap, and the same index then
+-- serves the moderator hidden-comments view (which would otherwise have no index at all).
+-- Tombstoned rows stay in — they render as "[deleted]" placeholders.
+CREATE INDEX commentv3_top_newest    ON "CommentV3" ("entityType", "entityId", "id" DESC)                       WHERE "parentId" IS NULL;
+CREATE INDEX commentv3_top_reactions ON "CommentV3" ("entityType", "entityId", "reactionCount" DESC, "id" DESC) WHERE "parentId" IS NULL;
+CREATE INDEX commentv3_top_pinned    ON "CommentV3" ("entityType", "entityId", "pinnedAt" DESC)                 WHERE "pinnedAt" IS NOT NULL;
+-- Entity-wide reads at any depth (hidden counts, moderation)
+CREATE INDEX commentv3_entity ON "CommentV3" ("entityType", "entityId");
+-- Reply pages and capped reply counts under one parent (hidden second so count branches don't cross)
+CREATE INDEX commentv3_replies_newest    ON "CommentV3" ("parentId", "hidden", "id");
+CREATE INDEX commentv3_replies_reactions ON "CommentV3" ("parentId", "hidden", "reactionCount" DESC, "id" DESC);
+-- Auto-expand a page of roots
+CREATE INDEX commentv3_root_depth ON "CommentV3" ("rootId", "depth");
+-- Subtree reads: re-root, ancestry / lock checks, on-demand totals
+CREATE INDEX commentv3_path_gist ON "CommentV3" USING gist ("path");
+-- Account deletion, per-user counts, moderation, judge gate
+CREATE INDEX commentv3_user ON "CommentV3" ("userId", "id" DESC);
+CREATE UNIQUE INDEX commentv3_legacy_v1 ON "CommentV3" ("legacyV1Id") WHERE "legacyV1Id" IS NOT NULL;
 ```
-
-(If the tombstone decision lands, the two top-level partials gain `AND "deletedAt" IS NULL`.)
 
 ## The interactions, as queries
 
@@ -184,10 +250,11 @@ Every interaction is one index-backed query on one table:
 | Interaction | Query |
 |---|---|
 | First page of an entity's comments | `WHERE entityType/entityId AND parentId IS NULL ORDER BY <sort> LIMIT n` (keyset cursor, same 3 sort modes as today) |
-| Does this comment have replies? / "Show N replies" | `childCount` on the row — **no query**, kills v1's per-page `GROUP BY parentId` and the childless-comment bookkeeping in `reply-threads.ts` |
-| Load more replies under a comment | `WHERE parentId = ? AND id > cursor ORDER BY id LIMIT k` |
-| Auto-expand replies d levels deep for a page of roots | `WHERE rootId = ANY(pageIds) AND depth <= d AND NOT hidden ORDER BY rootId, depth, id` — **no recursive CTE**; the existing budget selector (`selectReplyThreadsWithinBudget`) ports over using `childCount` |
-| Drill into / re-root on a deep comment | `parentId = commentId` page-by-page (each level pages the same way); bulk prefetch of its subtree, if ever needed, is a small recursive CTE bounded by budget × depth cap |
+| Does this comment have replies? / "Show N replies" | one capped `GROUP BY parentId` over the page's ids on the `(parentId, hidden, …)` index — index-only, replaces the childless-comment bookkeeping in `reply-threads.ts` (Phase 0 EXPLAINs it at prod scale) |
+| Load more replies under a comment | `WHERE parentId = ? AND id > cursor ORDER BY id LIMIT k` (MostReactions replies get their own index) |
+| Auto-expand replies d levels deep for a page of roots | `WHERE rootId = ANY(pageIds) AND depth <= d AND NOT hidden` — **no recursive CTE**; the existing budget selector (`selectReplyThreadsWithinBudget`) ports over |
+| Drill into / re-root on a deep comment | subtree via `path <@ comment.path` on the GiST index, or `parentId = commentId` page-by-page |
+| Is any ancestor locked? (write-time check) | `WHERE path @> new.path AND locked` — one GiST lookup |
 | Deep-link / notification / moderation "what is this on?" | the row itself carries `entityType`, `entityId`, `rootId` — **single-row read**, replaces the 15-column COALESCE chain in 9 call sites |
 | Entity comment count / locked | one `CommentTopic` row |
 
@@ -203,33 +270,26 @@ The new model makes both real:
 - **Display depth** stays per-surface in `constants.comments`, driving auto-expand and the re-root
   behavior exactly as now. Model comments become `entityType: 'model'` with display depth 1,
   reproducing today's flat UX — the model page keeps its current presentation (decision 2).
-- **Stored depth gets a hard cap** (propose 20, as a `CHECK (depth <= 20)`): the write path clamps a
-  reply that would exceed it to be a *sibling* (parent = ancestor at cap−1), preserving the
-  @mention-style conversation without unbounded trees. `depth`/`rootId` come from the parent row
-  at insert (`parent.depth + 1`, `parent.rootId ?? parent.id`) — clients never send them; the
-  rare clamp walks `parentId` upward, which only ever happens at the cap.
+- **Stored depth gets a hard cap** (20, as `CHECK (nlevel(path) <= 21)`): the write path clamps a
+  reply that would exceed it to be a *sibling* (parent = ancestor at cap−1, one `subltree` on the
+  parent's path), recording who was actually answered in `replyToId` for the "@user" display.
+  Clients never send tree fields — the `BEFORE INSERT` trigger derives `path` from `parentId`,
+  and `rootId`/`depth` are generated from `path`.
 
-## Deletion semantics — open decision
+## Deletion semantics — decided (D6)
 
-The schema above says `parentId ... onDelete: Cascade`, which makes deleting a comment destroy its
-**entire subtree — including other users' replies**. That is what legacy v1 does, but it is *not*
-what v2 does: deleting a CommentV2 `SetNull`s its child thread's `commentId`, so replies are
-retained but become unreachable. Neither is obviously right, and the cascade is the dangerous
-default (a user — or an account deletion via `user.service.ts` — hard-deleting other people's
-writing).
+**Tombstone when a comment has replies; hard-delete when childless.** For context: legacy v1
+cascades a delete through the whole subtree (destroying other users' replies), while v2 `SetNull`s
+the child thread and quietly orphans them. Neither survives into the new model. Instead:
 
-**Recommendation: soft-delete when `childCount > 0`, hard-delete otherwise.** A deleted comment
-with replies becomes a tombstone (`deletedAt` set, content blanked at read time, author hidden);
-a childless comment deletes outright. This matches what users *see* today on both systems (the
-parent disappears or hollows out, replies keep rendering or not per surface), avoids destroying
-other users' content, and keeps `childCount`/`commentCount` trigger math simple. Requires a
-`deletedAt DateTime?` column and `AND "deletedAt" IS NULL` in the partial indexes. Account
-deletion then tombstones the user's parented comments and hard-deletes the rest — a behavior to
-confirm against privacy/GDPR expectations (today's code hard-deletes the rows; replies to them
-already survive in v2, so retention of *other users'* replies is unchanged either way).
-
-If instead we keep hard-delete-with-cascade everywhere, that's a deliberate product change from
-v2's behavior and should be called out at rollout.
+- A deleted comment with replies gets `deletedAt` set; content is blanked and the author hidden at
+  read time; the row keeps rendering as a "[deleted]" placeholder so its replies stay in place.
+- A childless comment hard-deletes. `parentId ON DELETE RESTRICT` makes this race-proof: a
+  hard-delete that loses a race against a new reply **fails** (and the service retries as a
+  tombstone) rather than orphaning the reply.
+- Account deletion tombstones the user's parented comments and hard-deletes the rest — confirm
+  against privacy/GDPR expectations that a tombstone (no content, no author) satisfies erasure;
+  retention of *other users'* replies is unchanged from v2 either way.
 
 ## Moderation, blocking, and comment-gating — preserve-behavior checklist
 
@@ -243,10 +303,13 @@ must be explicitly re-verified on the new service, because they're what a naive 
   `parentId IS NULL`); v2 pins within any thread page. The new model pins within a comment's
   sibling page (`pinnedAt` ordered first, as today), which subsumes both — the v1 restriction
   becomes moot rather than ported.
-- **Lock**: three semantics exist today; the new model reproduces two and *improves* one:
+- **Lock**: three semantics exist today; the new model reproduces one, strengthens one, and
+  *improves* one:
   (a) entity-level lock (`toggleLockCommentsThread`, can pre-exist comments) → `CommentTopic.locked`;
   (b) v1's per-comment lock, which propagates to **direct children only** (`updateMany where
-  parentId = id`) → per-comment `locked` checked against the direct parent on write, same reach;
+  parentId = id`) → per-comment `locked` is now **subtree-scoped**: the write path checks
+  `WHERE path @> new.path AND locked` (one GiST lookup), refusing replies anywhere under a locked
+  row — a strict superset of v1's reach;
   (c) **known gap being closed**: v2's entity lock is only checked when a comment lands in the
   entity's own thread — a reply to a nested comment checks its parent's child-thread lock, so a
   locked article can still receive deep replies server-side (the UI hides the button; the API
@@ -325,11 +388,13 @@ lists (`Model.threads Thread[]` etc.) — verify they are truly 1:1 in prod befo
 `AppListing.serialId` — note `Thread.appListingId` already references that surrogate, not the TEXT
 ULID) because its Thread key is composite `(projectId, position)`.
 
-**Phase 1 — schema.** New tables (`CommentV3`, `CommentTopic`, `CommentV3Reaction`,
-`CommentV3Report`), indexes, `CHECK` constraints, count triggers (`childCount`,
-`CommentTopic.commentCount`, and a port of `update_comment_reaction_count` — the trigger on
-`CommentV2Reaction` from migration `20251020155046` — onto `CommentV3Reaction`). Two more
-DB-level items found in the sweep:
+**Phase 1 — schema.** `CREATE EXTENSION ltree` (infra sign-off), then the DDL above: new tables
+(`CommentV3`, `CommentTopic`, `CommentV3Reaction`, `CommentV3Report`), indexes, `CHECK`
+constraints, the `commentv3_set_path` tree trigger, plus the count triggers
+(`CommentTopic.commentCount`, and a port of `update_comment_reaction_count` — the trigger on
+`CommentV2Reaction` from migration `20251020155046` — onto `CommentV3Reaction`). Prisma models
+`path` as `Unsupported("ltree")` and `rootId`/`depth` as `dbgenerated` — confirm
+`db:check-generated` stays clean with that shape. Two more DB-level items found in the sweep:
 - **Clavata auto-moderation triggers**: `trg_moderation_comment`/`trg_moderation_commentv2`
   (migration `20250521094141`) enqueue `('ModerationRequest', entityType, id)` into `JobQueue` on
   insert/content-update. CommentV3 needs the equivalent trigger, which needs a `CommentV3` value in
@@ -362,9 +427,11 @@ here silently stops comment-driven metrics for rows that only exist in the new t
 (`ON CONFLICT (id) DO NOTHING` — a dual-written row is always at least as fresh as the copy).
 Idempotent, batched copy jobs:
 - v2 comments: `threadId → (entityType, entityId)` via the thread's root chain; `parentId` = the
-  thread's `commentId`; `depth`/`rootId` computed by walking `parentThreadId` (one recursive
-  pass, offline). Ids and `createdAt`/`updatedAt` preserved; nullable `hidden`/`locked` coalesce to
-  false.
+  thread's `commentId`. **Insert in depth order** (parents before children — one recursive pass
+  over `parentThreadId` produces the order) so the `commentv3_set_path` trigger finds each
+  parent's path; `rootId`/`depth` are then generated, not computed by the backfill. Ids and
+  `createdAt`/`updatedAt` preserved; nullable `hidden`/`locked` coalesce to false; `replyToId`
+  stays null for migrated rows.
 - v1 comments: direct copy with `entityType='model'`, `legacyV1Id` set, new ids from the shared
   sequence.
 - Topics: one `CommentTopic` per entity-bearing Thread, copying `locked`; `commentCount` recomputed

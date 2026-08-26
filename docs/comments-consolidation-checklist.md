@@ -4,8 +4,10 @@ Working checklist for [comments-consolidation.md](comments-consolidation.md) —
 rationale and detail; this one is the order of operations. Check items off as they land; each phase
 ends with a **gate** that must be true before the next phase starts.
 
-**Open decision (blocks Phase 1 schema finalization):** deletion semantics — soft-delete tombstone
-when `childCount > 0` vs hard cascade. See "Deletion semantics" in the plan doc.
+Schema is the **merged design** (2026-08-25, Koen's counter-proposal + adjustments): ltree `path`
+set by a `BEFORE INSERT` trigger with `rootId`/`depth` GENERATED from it, `replyToId`, tombstone
+deletion (`deletedAt` + `parentId ON DELETE RESTRICT`), comments FK'd to `CommentTopic`. Deletion
+semantics are **decided** (D6): tombstone with replies, hard-delete childless.
 
 ## Phase 0 — Measure & decide
 
@@ -24,10 +26,13 @@ Prod measurements (read-only replica):
 - [ ] CommentV2 id growth rate (sanity input for the shared-sequence approach)
 - [ ] Dead-column check: `CommentV2.metadata IS NOT NULL` count and `nsfw = true` counts on both
       tables — if ~0, `nsfw`/`metadata` stay out of the new schema
+- [ ] EXPLAIN the capped per-parent reply-count `GROUP BY` at prod scale (replaces stored
+      `childCount`; must be index-only on `(parentId, hidden, …)`)
+- [ ] Infra sign-off: `CREATE EXTENSION ltree` on prod
 
 Decisions & prerequisites:
 
-- [ ] Deletion semantics decided (recommendation: tombstone when `childCount > 0`)
+- [x] Deletion semantics decided — D6: tombstone with replies, hard-delete childless (2026-08-25)
 - [ ] `ComicChapter` integer surrogate id added (pattern: `AppListing.serialId`) + migration applied
 - [ ] Flip order confirmed from volume data (default: bounty/article → review/challenge/misc →
       image/post → comicChapter → model last)
@@ -36,17 +41,20 @@ Decisions & prerequisites:
 
 ## Phase 1 — Schema (expand)
 
-- [ ] `CommentV3`, `CommentTopic`, `CommentV3Reaction`, `CommentV3Report` in `schema.full.prisma`
-      (+ `deletedAt` if tombstone decision)
-- [ ] Indexes from the plan doc (top-level ×2 sorts — NOT filtered on hidden, pinned partial,
-      `(parentId, id)`, `(rootId, depth, id)`, `(userId, id)`; add `"deletedAt" IS NULL` to the
-      top-level partials if tombstoning)
-- [ ] `CHECK (depth <= 20)`
-- [ ] Shared sequence: seed past `max(CommentV2.id, Comment.id)`, re-point `Comment` and
-      `CommentV2` id defaults at it
-- [ ] Triggers: `childCount` maintenance, `CommentTopic.commentCount` (counted set = ALL rows incl.
-      hidden/self, matching today's `update_thread_comment_count`), reaction-count port of
+- [ ] `CREATE EXTENSION ltree` applied to prod (signed off in Phase 0)
+- [ ] DDL from the plan doc: `CommentV3` (ltree `path`, generated `rootId`/`depth`, `replyToId`,
+      `deletedAt`, FK to `CommentTopic`, `parentId ON DELETE RESTRICT`, CHECKs), `CommentTopic`,
+      `CommentV3Reaction`, `CommentV3Report`
+- [ ] `commentv3_set_path` BEFORE INSERT trigger
+- [ ] Index set from the plan doc (top ×3, entity, replies ×2 with `hidden` second,
+      `(rootId, depth)`, GiST `path`, `(userId, id DESC)`, `legacyV1Id` unique partial)
+- [ ] Shared sequence `comment_shared_id_seq`: seed past `max(CommentV2.id, Comment.id)`, re-point
+      `Comment` and `CommentV2` id defaults at it
+- [ ] Triggers: `CommentTopic.commentCount` (counted set = ALL rows incl. hidden/self, matching
+      today's `update_thread_comment_count`), reaction-count port of
       `update_comment_reaction_count`
+- [ ] Prisma shape: `path` as `Unsupported("ltree")`, `rootId`/`depth` as `dbgenerated`;
+      `db:check-generated` clean with it
 - [ ] Clavata trigger `trg_moderation_commentv3` + `EntityType` enum value `CommentV3`
       (**deploy regenerated client first**, then apply enum migration — expand/contract rule)
 - [ ] `entity-moderation.ts` consumes the `CommentV3` JobQueue entity type
@@ -81,8 +89,9 @@ Runs under live dual-write, so every copy job uses skip-existing semantics
 (`ON CONFLICT (id) DO NOTHING` — a dual-written row is always at least as fresh as the copy):
 
 - [ ] v2 comment copy job: `threadId → (entityType, entityId)` via root chain; `parentId` = thread's
-      `commentId`; `depth`/`rootId` from one offline recursive pass; ids + timestamps
-      preserved; nullable `hidden`/`locked` → false; idempotent + batched + resumable
+      `commentId`; **inserted in depth order** so the path trigger finds each parent (`rootId`/
+      `depth` are generated, not computed); ids + timestamps preserved; nullable
+      `hidden`/`locked` → false; `replyToId` null; idempotent + batched + resumable
 - [ ] v1 comment copy job: `entityType='model'`, `legacyV1Id` set, ids from shared sequence
 - [ ] Topic copy: one `CommentTopic` per entity-bearing Thread (locked carried, count recomputed)
 - [ ] Reaction copy: `CommentV2Reaction` as-is, `CommentReaction` via `legacyV1Id`;
