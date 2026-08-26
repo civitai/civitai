@@ -1,8 +1,13 @@
 # Reusable Text Blurbs
 
-**Status**: Approach agreed in review, not built
+**Status**: Built, behind `FLIPT_FEATURE_FLAGS.TEXT_BLURBS` (default off) and `featureFlags.textBlurbs` (`availability: ['mod']`)
 **Tracking**: CU 868kv243c
 **Last Updated**: 2026-08-25
+
+⚠️ **As of 2026-08-25 the migration is committed and has not been applied in any
+environment.** `packages/civitai-db-schema/prisma/migrations/20260825000000_add_blurbs/migration.sql`
+— nothing here works until a human runs it; migrations in this repo are never auto-applied
+(CLAUDE.md → Database). See "What is not done" at the end.
 
 A creator defines named blurbs of text once and drops them into any rich text editor by
 reference. **Editing the blurb updates every place it is used, automatically.**
@@ -26,7 +31,6 @@ Maintenance, not authoring. A creator with a donation link in the footer of fort
 recommended-settings block across every Flux resource they publish, has no way to change that
 text once. They edit forty pages by hand, or the text goes stale.
 
-Authoring shortcuts do not solve this. A template you paste is still forty copies afterwards.
 The feature only earns its place if a later edit reaches content that is already published.
 
 ---
@@ -50,7 +54,17 @@ Two consequences follow, and they are the reason for the design:
 REST API returns `description` verbatim, the Meilisearch document indexes it, RSS and SSR read
 it, and `<RenderHtml html={...} />` renders it. A reference that carried no text would render as
 an empty span in all of them, because none of those consumers can call a resolver. Storing the
-text means the render path, the API and the search index need no knowledge of blurbs at all.
+text means the API and the search index need no knowledge of blurbs at all.
+
+The render path has one exception, found in the build: `RenderRichText` (the article detail page)
+parses the HTML back into a ProseMirror document, so it needs `BlurbNode` registered and a node
+mapping — the static renderer's default emits `node.attrs.text` as an escaped text child, so a
+blurb's bold/italic/link markup would render as literal tags. That mapping re-applies
+`sanitizeBlurbInterior` before injecting it, because the fan-out writes bodies via raw SQL rather
+than through zod, so this is the pass that makes it safe rather than an assumed upstream one.
+`RenderHtml` surfaces (model, version, bounty, shop) need nothing: they strip `data-type`/`data-id`
+off the span at render — they do not pass `allowBlurbs` — and the words render as ordinary inline
+markup.
 
 **A blurb edit becomes an ordinary entity edit.** Because the text lives in the column, changing
 a blurb means writing that column — which means going through the entity's normal update
@@ -58,8 +72,9 @@ function, which means everything hanging off that function fires: its moderation
 search-index sync, its cache invalidation. None of that has to be rebuilt for blurbs. This is
 what keeps the feature small.
 
-It also degrades well. Delete every blurb, revert the feature, drop the table — the text is
-still sitting in the content, and the span is inert markup the sanitizer already permits.
+It also degrades well. Delete every blurb, revert the feature, drop the table — the text is still
+sitting in the content. The span's `data-*` attributes are stripped at the next save and at render,
+leaving the words as plain inline markup.
 
 ### Why not resolve at render time
 
@@ -110,6 +125,7 @@ model BlurbReference {
 
   @@id([blurbId, entityType, entityId])
   @@index([entityType, entityId])
+  @@index([materializedAt])
 }
 ```
 
@@ -138,31 +154,39 @@ constraint no schema can carry safely, because the person who breaks it is someo
 field years from now who never reads this file.
 
 Hashing the content removes the constraint instead of documenting it. Only `content` feeds the
-hash, so no field anyone adds can make a reference go stale. It is also self-enforcing in a way
-a convention is not: a raw SQL backfill or an admin script that changes content still moves the
-hash, because the hash is computed from the value rather than promised by a code path.
+hash, so no field anyone adds can make a reference go stale.
 
-Reuse `hashContent` (`entity-moderation.service.ts:97`) rather than adding a second hashing
+⚠️ **It is not self-enforcing at the database level.** `contentHash` is a plain column with no
+trigger and no generated expression — `hashContent(content)` runs in `blurb.service.ts` and nowhere
+else. A raw SQL backfill or admin script that changes `Blurb.content` without recomputing the hash
+leaves every reference looking fresh and the fan-out silently skipping it. Anything touching
+`Blurb.content` must write `contentHash` in the same statement.
+
+Reuse `hashContent` (`entity-moderation.service.ts`) rather than adding a second hashing
 helper.
 
-Three layers do the work, each protecting the one below it:
+Two layers do the work, the second protecting the first:
 
 | Layer | Job | Cost when it is wrong |
 |---|---|---|
-| `updatedAt > lastRun` | select candidate blurbs, indexed | over-selects; harmless |
-| hash comparison | decide staleness | exact |
+| hash comparison in the selector | decide staleness | exact |
 | no-op guard in the writer | span already correct → skip | one read, never a write or a scan |
 
-The top layer is what Justin described — find blurbs touched since the last run, via
-`getJobDate`, then look at their references. It is now **allowed to be sloppy**. A rename bumps
-`updatedAt`, the job picks the blurb up, the hash matches, and it stops. Over-selection is free
-because it terminates at a comparison rather than at a write.
+**The `updatedAt > lastRun` watermark this design started with was dropped.** It was Justin's
+suggestion — find blurbs touched since the last run via `getJobDate`, then look at their references
+— and once staleness became hash-derived it bought nothing: the hash join is exact and indexed, and
+a watermark can only lose work when a run is missed. Nothing reads `getJobDate` for this job, and
+`Blurb.@@index([updatedAt])` is consequently read by nothing today.
 
-It is also self-healing with no queue state to reconcile. A reference whose hash does not match
+It is self-healing with no queue state to reconcile. A reference whose hash does not match
 is stale, whatever went wrong before, so a crashed or half-finished run needs no recovery logic.
 It is simply picked up next pass.
 
-`materializedAt` carries no correctness weight. It exists so backlog age is measurable.
+`materializedAt` orders the fan-out's selection window, and a failing row is bumped to the back of
+it rather than heading the queue again next pass — that bounds a permanently-failing row to one
+selected slot per pass once the backlog exceeds the batch limit. It does **not** reduce how often
+that row is retried: with the whole backlog inside one batch (the common case) every stale row is
+selected on every run regardless of position. It is also what makes backlog age measurable.
 
 **Names cannot be changed.** Not for any mechanical reason — the markup carries `data-id`, and
 with hash-derived staleness a rename provably fans out nothing. It is a product call: a blurb's
@@ -178,23 +202,49 @@ one zod preprocessor used by every rich-text schema, article and model and versi
 rest. Blurb handling attaches in two layers, because that preprocessor has neither database
 access nor the acting user.
 
-**At the schema layer**, blurb spans are stripped unless the surface opted in. This mirrors the
-sticker strip in `html-sanitize-helpers.ts` and exists for the same reason: `span` and its
-`data-*` attributes are already in `DEFAULT_ALLOWED_ATTRIBUTES`, so blurb markup would
-otherwise survive on *every* rich-text surface, including ones that never enabled the feature.
-Default-deny means a surface added later fails closed.
+**At the schema layer**, a blurb span's `data-type`/`data-id` are stripped unless the surface passed
+`allowBlurbs`. It exists for the same reason as the sticker strip in `html-sanitize-helpers.ts` —
+`span` and its `data-*` attributes are already in `DEFAULT_ALLOWED_ATTRIBUTES`, so blurb markup
+would otherwise survive on *every* rich-text surface, and the fan-out would then rewrite content on
+a surface nobody registered. The mechanism differs from the sticker strip, though: that one drops
+the whole element via `exclusiveFilter`, while this removes only the two attributes via a
+`transformTags.span` composed **after** the caller's spread, so a caller-supplied span transform
+cannot reinstate them. The span and its words survive; only the reference does not. Default-deny
+means a surface added later fails closed.
 
-**At the service layer**, each opted-in upsert calls a shared
-`materializeBlurbs({ userId, entityType, entityId, html })` before writing, which:
+⚠️ `allowBlurbs` is an attribute **strip** toggle, not a tag admission. A schema that narrows
+`allowedTags` below the app default has to admit `span` itself — `modelVersionUpsertSchema` did not,
+and without that the span is stripped at save, `expandBlurbs` sees plain text, and the control
+renders and silently does nothing on that surface alone.
 
-1. verifies each `data-id` belongs to the saving user, dropping the span otherwise,
-2. replaces the span's inner content with the blurb row's current text,
-3. reconciles this entity's `BlurbReference` rows against the spans that survived.
+**At the service layer**, each opted-in upsert calls two functions in
+`blurb-materialize.service.ts`. This design called them one function, `materializeBlurbs`; they were
+split because expansion must happen before the write and reconciliation after it.
 
-Step 1 and step 2 are a security requirement, not an optimisation. The inner text arrives from
-the client and cannot be trusted: a hand-crafted request could claim blurb 7 says anything at
-all, or reference a blurb belonging to somebody else. The server re-expands from the row on
-every save, so what is stored is always what the owner's blurb actually says.
+1. `expandBlurbs({ userId, html, restrictToBlurbIds })` — resolves each `data-id` against the
+   owner's rows, replaces the span's inner content with the row's current text, and unwraps to
+   plain text any span it may not resolve.
+2. `reconcileBlurbReferences({ entityType, entityId, uses })` — reconciles this entity's
+   `BlurbReference` rows against the spans that survived.
+
+Step 1 is a security requirement, not an optimisation. The inner text arrives from the client and
+cannot be trusted: a hand-crafted request could claim blurb 7 says anything at all, or reference a
+blurb belonging to somebody else. The server re-expands from the row on every save, so what is
+stored is always what the owner's blurb actually says.
+
+**`expandBlurbs` is keyed on the content's OWNER, not the acting user.** Keying on the actor would
+mean a moderator saving someone else's model resolves none of that creator's blurbs and strips every
+span out of the body. The obvious hole that opens is closed by `restrictToBlurbIds`: a non-owner may
+keep the ids the entity already references (`getReferencedBlurbIds`) and nothing else, so a
+`data-id` they invent resolves to nothing rather than splicing a stranger's private blurb text into
+a response they read back.
+
+🔴 **`expandBlurbs` returns a discriminated union and both arms are load-bearing.**
+`{ evaluated: true; html; uses }` when the flag resolved for that owner, `{ evaluated: false; html }`
+when it did not. Both leave the html alone, but only the first means the entity's references should
+be reconciled — so every call site gates `reconcileBlurbReferences` on `expansion.evaluated`.
+Reconciling on the false arm deletes every reference row the moment a creator falls out of the
+rollout, and the fan-out then has nothing left to maintain.
 
 ---
 
@@ -209,20 +259,21 @@ save blurb 7
   |
   v   nothing else happens synchronously
 
-blurb-fanout job
+blurb-fanout job   (*/5 * * * *, lockExpiration 15m)
   |
-  +-- candidate blurbs: updatedAt > lastRun          (indexed, may over-select)
-  +-- their references WHERE materializedHash <> contentHash
+  +-- stale references: JOIN Blurb ON materializedHash <> contentHash OR deletedAt IS NOT NULL
+  |     AND entityType = ANY(<registered adapter keys>)  ORDER BY materializedAt ASC  LIMIT 500
   |
-  +-- for each, through limitConcurrency:
-        if the span already holds this text -> record and skip
+  +-- for each, through limitConcurrency(5):
+        entity no longer exists -> drop the reference row
+        span already holds this text -> record and skip
         otherwise:
-          rewrite the blurb span's inner text
-          save via that entity's normal update function
-            -> its moderation scan fires
-            -> its search-index sync fires
-            -> its cache invalidation fires
+          rewrite the blurb span (or, for a soft-deleted blurb, unwrap it)
+          save via that entity's apply<Entity>ContentChange
+            -> whatever follow-up that surface has: see the tracking task
         set materializedHash, materializedAt
+  |
+  +-- hard-delete soft-deleted blurbs that now have no references
 ```
 
 The skip is not an optimisation for the expected path — the hash comparison already handles
@@ -233,33 +284,66 @@ Dispatch is a registry keyed by `entityType`, deliberately shaped like
 `moderation-adapters.ts` — one map, one registration per supported surface:
 
 ```ts
-const blurbFanoutAdapters: Record<string, BlurbFanoutAdapter> = {
-  Article: { rewrite: ... },   // upsertArticle
-  Model: { rewrite: ... },     // updateModelById
-  ModelVersion: { rewrite: ... }, // upsertModelVersion
-  // ...
+const adapters: Record<string, BlurbFanoutAdapter> = {
+  Article: { load, save },           // save -> applyArticleContentChange
+  Model: { load, save },             // save -> applyModelContentChange
+  ModelVersion: { load, save },      // save -> applyModelVersionContentChange
+  Bounty: { load, save },            // save -> applyBountyContentChange
+  CosmeticShopItem: { load, save },  // save -> applyCosmeticShopItemContentChange
 };
 ```
 
 Each adapter calls a **narrow content-update function** on its entity's service — not the
 form-shaped upsert, and never raw SQL.
 
+🔴 **The registry's keys are also the selector.** `getSupportedBlurbEntityTypes()` filters the stale
+query, so an `entityType` that does not match a key is not merely skipped per row — it is invisible
+to the job while `reconcileBlurbReferences` keeps writing rows under it. Excluding them at the
+selector rather than in the batch is what stops them starving the queue: a row the job cannot
+rewrite never gets its `materializedAt` touched, so once there were `limit` of them they would
+permanently occupy the head of the `ORDER BY materializedAt` window. The `unsupportedBacklog`
+counter — a table-wide count, emitted on the half-hour because it cannot range-scan — is the only
+thing that surfaces the mismatch.
+
 The distinction matters and is easy to get wrong. `upsertArticle` and its siblings take a whole
 form payload: title, tags, attachments, cover image. A background job holds none of that, and
 calling one with a partial payload does not update a column — it clears every field it omitted.
 
-Writing the column directly is the other wrong answer: it skips the moderation scan, the
-search-index sync, the cache invalidation and Prisma's `@updatedAt`, which is to say it skips
-the entire reason for materializing.
+Writing the column and stopping there is the other wrong answer: it skips the moderation scan, the
+search-index sync and the cache invalidation, which is to say it skips the entire reason for
+materializing.
 
 So each surface needs a small function that owns "this entity's rich text changed" — the column
-write plus the follow-up work — which the full upsert calls too. The fan-out then reuses the
-hooks rather than reimplementing them, and neither path can drift from the other.
+write plus the follow-up work — which the full upsert calls too. The fan-out then reuses the hooks
+rather than reimplementing them, and neither path can drift from the other. They are
+`applyArticleContentChange`, `applyModelContentChange`, `applyModelVersionContentChange`,
+`applyBountyContentChange` and `applyCosmeticShopItemContentChange`.
 
-The job is registered in the `jobs` array in `src/pages/api/webhooks/run-jobs/[[...run]].ts`,
-which per the repo's conventions is the whole registration. Concurrency within a pass is bounded
-by `limitConcurrency` (`src/server/utils/concurrency-helpers.ts:15`), and a pass is capped so a
-single run stays bounded — an oversized backlog drains across several runs rather than in one.
+🔴 **The column write inside them is raw SQL, and `@updatedAt` is the one thing the fan-out must NOT
+inherit from a normal edit.** Prisma stamps `@updatedAt` on every client-side `update()`, and a
+blurb re-materialization is not a creator edit: bumping `Article.updatedAt` or `Model.updatedAt`
+would reorder the "recently updated" feeds on every pass, and on articles it would reopen the
+rating-dispute re-edit window keyed on `updatedAt > resolvedAt`. A caller that has already written
+the body passes its snapshot in `context`, which skips both the raw write and the image-linking
+pass — the fan-out needs neither. A blurb's interior cannot hold an image (`img` and `edge-media`
+are not in `BLURB_INTERIOR_ALLOWED_TAGS`), so a re-materialization never changes the body's image
+set, and the `Rescan` stamp that pass used to write was itself a Prisma update — which put
+`@updatedAt` back on the row the raw write had just avoided.
+
+Each `apply…ContentChange` also re-runs `throwOnBlockedLinkDomain` on the post-splice body: the
+blocklist can move after a blurb was saved and the fan-out has no user in the loop to catch it. That
+is also the likeliest reason a single row throws, which is why the job catches per row rather than
+per batch — `limitConcurrency` rejects its whole batch on the first thrown error, so without the
+catch one newly-blocklisted domain in one article would abort every other row in the pass, on every
+run, forever.
+
+The job is registered in the `jobs` array in `src/pages/api/webhooks/run-jobs/[[...run]].ts`, which
+per the repo's conventions is the whole registration. It runs `*/5 * * * *` with `lockExpiration` at
+15 minutes — deliberately longer than the cadence, because at `lockExpiration == the cron period` a
+long pass self-releases mid-run and the next tick starts a second overlapping pass over unclaimed
+rows (the selector is a plain SELECT, no row locking). Concurrency within a pass is bounded by
+`limitConcurrency` (`concurrency-helpers.ts`) at 5, and the batch at 500, so an oversized backlog
+drains across several runs rather than in one.
 
 ### Volume, and why it is not capped
 
@@ -275,11 +359,8 @@ A creator with two thousand models editing one blurb is two thousand of each.
 **So the fan-out needs monitoring before the flag ramps**, not after: entities rewritten per
 run, per blurb and per creator, and how far the backlog is behind. The expectation is that most
 creators never use this and the real numbers stay small, but that is a prediction, and the
-instrumentation is how it stops being one.
-
-The job is also an operational surface. It can wedge, it needs a way to tell that it has, and
-someone has to look. That is the honest price of live update, and it should be weighed as such
-rather than waved through because the mechanism is small.
+instrumentation is how it stops being one. The job can also wedge, and nothing tells you it has
+except those numbers.
 
 ### Deleting a blurb, and entities that vanish
 
@@ -297,18 +378,17 @@ Published content never breaks because a blurb went away — it keeps the words 
 ordinary markup.
 
 **References can outlive their entity.** `entityType`/`entityId` is a loose pair, not a foreign
-key, so deleting an article leaves its reference row behind. Each adapter's `rewrite` reports
-back when its entity no longer exists, and the job drops the row rather than retrying it
-forever. Without that, one deleted article is a permanent item in the backlog and the
-backlog-age metric degrades into noise.
+key, so deleting an article leaves its reference row behind. Each adapter's `load` returns `null`
+when its entity no longer exists, and the job drops the row rather than retrying it forever. Without
+that, one deleted article is a permanent item in the backlog and the backlog-age metric degrades
+into noise.
 
 ---
 
 ## Moderation
 
-**A blurb is not a moderated object.** It is text a creator stores and the editor pastes. This
-proposal adds nothing to the moderation system at all — the list below is exhaustive and
-deliberate:
+**A blurb is not a moderated object.** It is text a creator stores and the editor pastes. Nothing is
+added to the moderation system for it — the list below is exhaustive and deliberate:
 
 | Not added | |
 |---|---|
@@ -316,6 +396,10 @@ deliberate:
 | A blurb scan | the `Blurb` table has no `auditStatus`, `nsfw`, `nsfwLevel` or `auditedAt` |
 | A review queue | nothing routes a blurb anywhere for review |
 | nsfwLevel propagation | a blurb has no rating to propagate |
+
+One check does run against a blurb itself: `throwOnBlockedLinkDomain` on create and update, because
+a blurb body is spliced into entities that were domain-checked before it arrived. Every
+`apply<Entity>ContentChange` re-runs it on the post-splice body for the same reason.
 
 What happens instead: the fan-out write is an ordinary edit by the content's owner, so whatever
 moderation that entity's update path already runs is what runs — unchanged, and uninvoked by
@@ -340,13 +424,21 @@ Per-surface moderation coverage is recorded on the tracking task rather than her
 
 ## Surfaces
 
-Enabled in v1, all via the existing `includeControls` opt-in on the shared editor:
+Enabled in v1:
 
-- model descriptions and model version descriptions
-- articles
-- bounties, challenges, changelogs, cosmetic shop
+- model descriptions (`Model`) and model version descriptions (`ModelVersion`)
+- articles (`Article`)
+- bounties (`Bounty`)
+- the cosmetic shop (`CosmeticShopItem`)
 
-Not in v1: **comments and reviews.** They are the highest-volume surfaces in the app, and a
+**Challenges and changelogs were dropped during the build**, neither for effort:
+
+- **Challenge** — a description change resets `ingestion` to `Pending`, which hides a live challenge
+  from the feed. A fan-out rewrite would take a running challenge down.
+- **Changelog** — it has no author column, so a blurb span in one resolves against the acting
+  moderator rather than a content owner. `expandBlurbs` has no owner to key on.
+
+Not in v1 either: **comments and reviews.** They are the highest-volume surfaces in the app, and a
 single blurb edit reaching thousands of comment rows is a different risk and cost profile than
 one reaching a creator's own catalogue. Worth revisiting once the fan-out has run in production
 at a smaller scale.
@@ -369,13 +461,15 @@ the generator's prompt editor and solves most of the same problems.
   form in `editor.getHTML()`.
 - A node view renders it as a distinguishable chip so a creator can see which parts of a
   document are shared.
-- Orphan handling — a chip whose blurb no longer resolves — already exists in `SnippetCategory`
-  via `data-orphan` and carries over.
+- Orphan handling — a chip whose blurb no longer resolves — is derived at render from the picker's
+  resolved list (`BlurbNode.tsx`), **not** carried as a `data-orphan` attribute the way
+  `SnippetCategory` does it: an attribute would be written into the stored body, where nothing would
+  ever clear it. No chip reads as orphaned until the list has resolved at least once, or a pending
+  query flags every chip in the document as deleted.
 
 Two entry points, one list component:
 
-- a toolbar control, gated by adding `'blurb'` to `ControlType` in
-  `RichTextEditorComponent.tsx:503`
+- a toolbar control, gated by adding `'blurb'` to `ControlType` in `RichTextEditorComponent.tsx`
 - an inline `//` trigger, built with the suggestion factory pattern from
   `snippetCategorySuggestion.ts`. `//` rather than `/` because a lone slash is common in prose;
   the trigger fires only at input start or after whitespace, so `https://` does not open it.
@@ -400,15 +494,50 @@ what would justify it.
 |---|---|---|
 | References per blurb | none | Capping it would exclude the creators who most want this |
 | Blurbs per user | 20 | The lever we pull instead; raise on evidence |
-| Blurb length | Same cap as the target surface | Blurb text is ordinary content |
+| Blurb length | 3,000 characters | A blurb is a footer or a settings block, not an article — and the cap bounds how large a multiple of itself one blurb becomes across every entity using it |
+| Blurb name | 60 characters | Set once, immutable |
 
-The two move together deliberately. With no ceiling on how far one blurb reaches, the way to
-bound a creator's total footprint is to bound how many blurbs they keep — so the per-creator
-limit is tighter than it would otherwise be, and monitoring covers what neither number does.
+The first two move together deliberately. With no ceiling on how far one blurb reaches, the way to
+bound a creator's total footprint is to bound how many blurbs they keep — so the per-creator limit
+is tighter than it would otherwise be, and monitoring covers what neither number does.
 
-Blurb content passes the same sanitizer as the surface it lands on.
+`MAX_BLURBS_PER_USER` is duplicated by hand: `blurb.service.ts` is the enforcement point, and
+`src/shared/constants/blurb.constants.ts` is the copy the picker reads, because the service module
+reaches Prisma and cannot be imported client-side. Change both.
 
-Shipped behind a Flipt flag (`FLIPT_FEATURE_FLAGS`, default off, like every flag there).
+🔴 **Blurb content is INLINE-ONLY and is NOT sanitized like the surface it lands on.** It passes
+`BLURB_INTERIOR_SANITIZE_OPTIONS` — `strong`, `em`, `u`, `s`, `a`, `br`, `code`, and no `span` at
+all. A block element (`p`, `div`, `ul`, `ol`, `li`, `pre`, `blockquote`, `h1`-`h3`) stored in a blurb
+is spliced inside an inline `<span data-type="blurb">` sitting inside the host document's `<p>`; the
+HTML parsing algorithm closes that `<p>` on the block start tag, and `span` is not a formatting
+element so it is popped rather than reconstructed. The chip is left EMPTY and the text lands as a
+detached sibling — then the next save re-splices the body into the empty span and the text appears
+twice. Pinned against parse5/jsdom in `blurb-inline-content.test.ts`; happy-dom does not reproduce
+it, which is why it went unnoticed.
+
+`sanitizeBlurbInterior` is the single definition of that allowlist and three places enforce it:
+`blurbContentSchema` at save, `replaceBlurbSpans` at every splice (both the interactive path and the
+fan-out), and `RenderRichText`'s blurb mapping at render. The blurb editor is a full RichTextEditor,
+so paragraph boundaries are converted to `<br />` before the strip runs — without that,
+`<p>a</p><p>b</p>` sanitizes to `ab` and silently runs the author's words together.
+
+Two gates, covering different things. `featureFlags.textBlurbs` (`availability: ['mod']`,
+`fliptKey: 'text-blurbs'`) gates the two INSERTION paths — the toolbar control and the `//` picker —
+and never the node, so a blurb span already in a draft keeps parsing. `FLIPT_FEATURE_FLAGS.TEXT_BLURBS`
+gates the server-side expansion in `expandBlurbs`, evaluated against the content OWNER so a rollout
+picks a sticky subset of creators. Both default off; `isFlipt` returns false for an unknown flag,
+and not expanding is the safe failure for a feature that rewrites published content.
+
+🔴 **Ramp `text-blurbs` by percentage or boolean ONLY — a segment rollout matches nothing.**
+`expandBlurbs` evaluates it with an entityId and no evaluation context, and every identity/tier/cohort
+segment in flipt-state is a `STRING_COMPARISON` constraint that reads the context. A segment rule
+there returns the flag default and looks exactly like "blurbs are off". Supplying a context would
+mean assembling a `SessionUser` for the owner — whose session neither a moderator's request nor the
+fan-out job carries — on a path that runs on every model, article and bounty write. The site is
+recorded in `ENTITY_WITHOUT_CONTEXT_LEDGER` (`flipt-eval-context.test.ts`).
+
+**The fan-out job is gated on neither flag**, deliberately: a creator who leaves the rollout keeps
+their existing references maintained rather than stranded.
 
 ---
 
@@ -422,8 +551,7 @@ Shipped behind a Flipt flag (`FLIPT_FEATURE_FLAGS`, default off, like every flag
 | Fail-closed strip for a `data-type` span | `isStickerSpan`, `html-sanitize-helpers.ts` |
 | Per-entity dispatch registry | `moderation-adapters.ts` |
 | Bounded concurrent work | `limitConcurrency`, `concurrency-helpers.ts` |
-| Content hashing | `hashContent`, `entity-moderation.service.ts:97` |
-| Job's last-run watermark | `getJobDate`, `src/server/jobs/job.ts` |
+| Content hashing | `hashContent`, `entity-moderation.service.ts` |
 
 ---
 
@@ -436,16 +564,21 @@ next person extends the design rather than working around it.
 hash-derived, so nothing you add can trigger a fan-out. This is the whole point of the previous
 section.
 
-**Sharing blurbs — team, org, or public** — changes exactly one function. `materializeBlurbs`
-holds the single ownership check that decides whose blurb a given `data-id` may resolve to.
-Widen that predicate and nothing else moves; the editor, the fan-out and the render path never
-learn about it. Keep the check there rather than letting call sites decide, or sharing becomes a
-sweep instead of an edit.
+**Sharing blurbs — team, org, or public** — changes exactly one function. `expandBlurbs` holds the
+single ownership check that decides whose blurb a given `data-id` may resolve to (the query's
+`userId` filter, narrowed further by `restrictToBlurbIds` for a non-owner editor). Widen that
+predicate and nothing else moves; the editor, the fan-out and the render path never learn about it.
+Keep the check there rather than letting call sites decide, or sharing becomes a sweep instead of an
+edit.
 
-**A new surface** — two registrations: `'blurb'` in that editor's `includeControls`, and an
-entry in the fan-out adapter registry pointing at its existing update function. The sanitizer
-strip is default-deny, so a surface that registers neither stays closed rather than silently
-half-enabled.
+**A new surface** — four registrations, not the two this section used to claim: `'blurb'` in that
+editor's `includeControls`; `allowBlurbs: true` on its zod schema (plus `span` in `allowedTags` if
+that schema narrows below the app default — `allowBlurbs` is an attribute strip, not a tag
+admission); `expandBlurbs` + a gated `reconcileBlurbReferences` in its service, keyed on the owner;
+and an entry in the fan-out adapter registry pointing at its `apply<Entity>ContentChange`. The
+sanitizer strip is default-deny, so a surface that registers none of them stays closed. A surface
+that registers the first three and not the fourth is the half-enabled state: references accumulate
+under an `entityType` the selector filters out, and nothing ever rewrites them.
 
 **Per-surface or variant content** — a blurb that renders differently in an article than in a
 model description. This is the one that does not fit: `content` is a single string, and the
@@ -454,22 +587,20 @@ change rather than an extension, so it deserves its own design rather than being
 
 ---
 
-## Build order
+## What is not done
 
-1. `Blurb` + `BlurbReference` tables, migration, CRUD service and tRPC router.
-2. `materializeBlurbs` plus the schema-layer strip; wire into one surface end to end.
-3. Tiptap node, toolbar control, `//` suggestion, management modal.
-4. Usage display — reference counts per blurb in the modal.
-5. Fan-out registry and job.
-6. Fan-out monitoring: entities rewritten per run, per blurb and per creator, plus backlog age.
-7. Remaining surfaces, then the flag ramp.
+1. **Apply the migration.** `20260825000000_add_blurbs/migration.sql` is committed and has not been
+   run in any environment as of 2026-08-25. Nothing here works until a human runs it; migrations in
+   this repo are never auto-applied (CLAUDE.md → Database).
+2. **Fan-out monitoring, partially.** The job emits per-run counts to Axiom — `rewritten`,
+   `skipped`, `gone`, `failed`, `batchLimit`, `saturated`, and `unsupportedBacklog` on the half-hour
+   — plus a `warn` per failing row. Not emitted: **per blurb, per creator, and backlog age**.
+   `materializedAt` exists so backlog age is measurable; nothing measures it.
+3. **The flag ramp** — percentage or boolean only. See Limits.
 
-Step 2 is the one to get right first: it is where ownership is enforced and where the stored
-form is decided, and everything downstream assumes it holds.
-
-Step 6 is not optional and does not belong after the ramp. With no cap on how far a blurb
-reaches, the instrumentation is the only thing standing between "most creators won't use this"
-as an expectation and as a measured fact.
+Monitoring is not optional and does not belong after the ramp. With no cap on how far a blurb
+reaches, the instrumentation is the only thing standing between "most creators won't use this" as an
+expectation and as a measured fact.
 
 ---
 
