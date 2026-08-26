@@ -147,6 +147,55 @@ function materialControl(field: string): HTMLInputElement | HTMLSelectElement | 
   return tagged.querySelector<HTMLInputElement>('input, select');
 }
 
+/**
+ * A notice's whole rendered text, whitespace-normalised.
+ *
+ * 🔴 `toHaveTextContent(string)` is a SUBSTRING match, so it cannot pin a whole message —
+ * anything APPENDED to the notice still satisfies it. That is precisely the mutation shape
+ * this file has to see (see `DRIFTED_NOTICE_TEXT`), so the drifted-state assertion compares
+ * the normalised string with `toBe` instead. Read SYNCHRONOUSLY, so every call site must
+ * already have awaited an assertion on the same element.
+ */
+function noticeText(testId: string): string {
+  const el = document.querySelector<HTMLElement>(`[data-testid="${testId}"]`);
+  return (el?.textContent ?? '').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * 🔴 THE WHOLE DRIFTED-STATE NOTICE, PINNED AS ONE STRING — and the cost is deliberate.
+ *
+ * The previous guard here asserted the ABSENCE of one substring (`/can be edited now/i`),
+ * which is a guard on a WORD rather than on the message. It is walkable by REWORDING:
+ * re-appending the old false promise as `' You may still edit the tagline, description and
+ * category.'` says the same untrue thing, matches no part of that regex, and SURVIVED the
+ * whole 14-case battery. Absence-of-a-phrase can only ever catch the one spelling somebody
+ * already thought of.
+ *
+ * So this pins the entire normalised render instead. The trade is real and accepted: a
+ * COSMETIC reword of this copy now fails this test and has to be re-pinned here. That is
+ * the right exchange for a sentence that was factually wrong in production once already —
+ * the notice tells an author whether their work can be saved, and a machine-readable claim
+ * about it is worth a line of churn per reword.
+ *
+ * 🔴 IT IS A LITERAL, NOT `materialEditBlockedReason(ctx)`. Deriving the expectation from
+ * the function under test would make this pass for any copy that function emits, which is
+ * half of what has to be pinned — the original defect lived in the JSX, APPENDING to a
+ * return value that was itself correct.
+ *
+ * The leading duplication is the Mantine Alert TITLE running into the body in
+ * `textContent`; they are separate elements on screen. Spelled out via `ALERT_TITLE` so it
+ * reads as structure rather than as a copy defect.
+ */
+const ALERT_TITLE = 'This app is unpublished';
+const DRIFTED_NOTICE_TEXT =
+  ALERT_TITLE +
+  `This app is unpublished, so its name, App URL, source repository and content rating ` +
+  `are locked — and your OAuth app's permissions have changed since this listing was last ` +
+  `reviewed. That changed permission set rides along on every save, so while the app stays ` +
+  `unpublished NOTHING on this screen can be saved — not the tagline, description or ` +
+  `category either. To edit anything, ask the app's owner to republish it; the new ` +
+  `permissions are then reviewed along with your changes.`;
+
 beforeEach(() => {
   mocks.meta = { data: undefined, isFetching: false, isError: false, isSuccess: false };
   mocks.refetch.mockClear();
@@ -345,6 +394,41 @@ describe('🔴 the ASSETS step carries the repair frame too', () => {
     await expect.element(notice).toHaveTextContent(/its owner unpublished it/i);
     await expect.element(notice).not.toHaveTextContent(/you unpublished it/i);
   });
+
+  /**
+   * 🔴 THE OWNER ARM — the other direction of the same branch, and without it the branch is
+   * not covered at all.
+   *
+   * The editor case above and the default fixture BOTH land on the non-owner arm
+   * (`makeCtx()` carries no `role`, and `isOwnerEdit` fails safe to `false`), so replacing
+   * `isOwnerEdit(edit)` in `ExternalListingEditForm.tsx` with a bare `false` changes nothing
+   * either of them can see and SURVIVED all 14 cases. A branch only one side of which is
+   * ever exercised is a constant with extra steps.
+   *
+   * This is the same pair `ListingMediaEditor` already keeps
+   * (`src/tests/pages/apps/listing-media-page.browser.test.tsx`), and it is kept for the
+   * same reason stated there: a mutant that emits ONE role's copy for everybody passes every
+   * assertion on the other side. Run the two as a pair.
+   *
+   * The two attributions are mutually exclusive by construction — "you unpublished it" and
+   * "its owner unpublished it" cannot both be true of one reader — so each arm asserts the
+   * presence of its own and the ABSENCE of the other's. The role-independent half ("not
+   * visible in the store") is asserted on both, so collapsing the branch into an empty
+   * string cannot pass either.
+   */
+  test('🔴 the OWNER gets the owner attribution — the branch is not a blanket reword', async () => {
+    renderWithProviders(<ExternalSubmitForm edit={makeCtx({ role: 'owner' })} />);
+    await openAssets();
+
+    const notice = page.getByTestId('apps-offsite-edit-assets-unpublished-notice');
+    await expect.element(notice).toBeInTheDocument();
+    // Role-independent, and true on both arms — so this cannot be what carries the case.
+    await expect.element(notice).toHaveTextContent(/not visible in the store/i);
+    // The owner's own attribution…
+    await expect.element(notice).toHaveTextContent(/you unpublished it/i);
+    // …and NOT the editor's, which would be false for the person who did it.
+    await expect.element(notice).not.toHaveTextContent(/its owner unpublished it/i);
+  });
 });
 
 describe('🔴 the OAuth scope disclosure follows the DRIFT, not the status', () => {
@@ -380,15 +464,22 @@ describe('🔴 the OAuth scope disclosure follows the DRIFT, not the status', ()
     // message and was satisfied. The notice now states the actual consequence.
     const notice = page.getByTestId('apps-offsite-edit-material-locked-notice');
     await expect.element(notice).toHaveTextContent(/nothing on this screen can be saved/i);
-    // 🔴 AND THE FALSE SENTENCE IS ABSENT FROM THE RENDER, not merely from the function's
-    // return value. This second assertion is not redundant with the unit test that pins
-    // `materialEditBlockedReason`'s output: the contradiction originally lived in the JSX,
-    // as a `{scopeLocked ? '…' : ''}` APPENDED after the reason. A mutant that re-adds any
-    // such append is invisible to a unit test of the copy function — the function's return
-    // is still correct — and invisible to a presence-only assertion here, because appending
-    // does not disturb the text already matched. Found exactly that way: this mutation
-    // SURVIVED the whole battery until this line existed.
-    await expect.element(notice).not.toHaveTextContent(/can be edited now/i);
+    // 🔴 AND THE WHOLE RENDERED MESSAGE IS PINNED, not merely the function's return value.
+    // This is not redundant with the unit test of `materialEditBlockedReason`'s output: the
+    // contradiction originally lived in the JSX, as a `{scopeLocked ? '…' : ''}` APPENDED
+    // after the reason. A mutant that re-adds any such append is invisible to a unit test of
+    // the copy function — the function's return is still correct — and invisible to a
+    // presence-only assertion here, because appending does not disturb text already matched.
+    //
+    // 🔴 IT IS ALSO NOT AN ABSENCE ASSERTION ANY MORE, and that is the point of this round.
+    // The previous line here was `.not.toHaveTextContent(/can be edited now/i)`, which pins
+    // one SPELLING of the false promise. Re-appending the exact old sentence died; appending
+    // a reworded equivalent ("You may still edit the tagline, description and category.")
+    // said the same untrue thing and SURVIVED all 14 cases. Equality over the normalised
+    // string cannot be walked that way — any append, in any wording, moves it.
+    // The awaited assertion above has already settled this element, so the synchronous read
+    // is safe here.
+    expect(noticeText('apps-offsite-edit-material-locked-notice')).toBe(DRIFTED_NOTICE_TEXT);
     await page.getByRole('button', { name: 'Next' }).click();
     await expect.element(page.getByTestId('apps-offsite-justification-8')).toBeDisabled();
   });
