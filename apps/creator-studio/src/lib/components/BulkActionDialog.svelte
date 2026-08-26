@@ -54,8 +54,8 @@
     suggestedFee: number | undefined;
     needsAffirmation: boolean;
     /**
-     * An eligibility PREDICATE, not a count — valid only as `> 0`, and it already has the selection
-     * netted out of it. Do not do arithmetic on it; use pricingSlotsRemaining for that.
+     * An eligibility PREDICATE, not a count — valid only as `> 0`, and inflated by the selection's
+     * already-priced versions so re-pricing them stays allowed. Use pricingSlotsRemaining for arithmetic.
      */
     pricingSlotsLeft: number;
     /** Slots the owner has left this month before this selection: limit - used. */
@@ -304,10 +304,9 @@
 
   // Both a fee and a permanent gate spend allowance, so both need the warning — the fee path is
   // all-or-nothing, so without it a 20-version selection just returns 403 with nothing on screen first.
-  const remainingAllowance = $derived(pricingSlotsRemaining);
   const overSlots = $derived(
     (action === 'paidAccess' || action === 'fee') &&
-      ((unpricedCount !== null && unpricedCount > remainingAllowance) ||
+      ((unpricedCount !== null && unpricedCount > pricingSlotsRemaining) ||
         !!eligibility.permBlockedReason)
   );
 
@@ -460,7 +459,7 @@
           {:else}
             <Alert.Title>Over this month's pricing allowance</Alert.Title>
             <Alert.Description>
-              You can price {remainingAllowance} more model{remainingAllowance === 1 ? '' : 's'} this
+              You can price {pricingSlotsRemaining} more model{pricingSlotsRemaining === 1 ? '' : 's'} this
               month, but this selection would price {unpricedCount}. Deselect some, or the save will
               be rejected. Versions you already charge for don't count.
             </Alert.Description>

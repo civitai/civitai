@@ -78,10 +78,10 @@ import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
-// `authorizeInputModelId` is per-procedure because `modelId` does not mean the same thing in every
-// input on this router. On upsert it names the model the write LANDS on, and on the exploration-prompt
-// and merge inputs it restates the host's own model — all three must be owned. On addLinkedComponent it
-// names the LINKED resource's model, which the caller is expected NOT to own.
+// Per-procedure because `modelId` does not mean the same thing in every input here. On `upsert` it
+// names the model the write LANDS on, and on the exploration-prompt inputs it restates the host's own
+// model — both must be owned. On `addLinkedComponent` it names the LINKED resource's model, which the
+// caller is expected NOT to own.
 const ownershipGuard = ({ authorizeInputModelId }: { authorizeInputModelId: boolean }) =>
   middleware(async ({ ctx, input, next }) => {
     if (!ctx.user) throw throwAuthorizationError();
@@ -90,8 +90,9 @@ const ownershipGuard = ({ authorizeInputModelId }: { authorizeInputModelId: bool
     const { id: userId } = ctx.user;
     const { id, modelId: inputModelId } = input as { id?: number; modelId?: number };
 
-    // EVERY model the input names has to be owned, not just one of them. `id` names the version's
-    // current model; `modelId` names the one the write will actually land on — upsertModelVersion reads
+    // Under `authorizeInputModelId`, EVERY model the input names has to be owned, not just one of
+    // them. `id` names the version's current model; `modelId` names the one the write will actually
+    // land on — upsertModelVersion reads
     // `data.modelId` on both its create and update branches, so a request carrying both moves the
     // version between them. Authorizing either alone leaves the other unchecked.
     const modelIds = new Set<number>();

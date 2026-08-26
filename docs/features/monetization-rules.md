@@ -1,8 +1,8 @@
 # Monetization rules: paid access, licensing fees, donation goals
 
 How the four monetization concepts on a model version interact. Written 2026-08-05 from the code, with
-the surprising claims verified against the prod replica; R3 rewritten 2026-08-21 and 2026-08-24 for the
-monetization revamp. Where a rule is enforced matters as much as what
+the surprising claims verified against the prod replica; R3 rewritten 2026-08-21, 2026-08-24 and
+2026-08-25 for the monetization revamp. Where a rule is enforced matters as much as what
 it is — several are enforced in only one of two write paths, and those are called out.
 
 **Scope**: `ModelVersion` only. `ComicChapter` has its own gate and is not covered here.
@@ -105,13 +105,16 @@ video model. Paid access has no ceiling at all. What a tier buys is **allowance*
 `monthlyPricingAllowance` — free 3, bronze 10, silver 25, gold unlimited.
 
 **A lapse cannot change any price, but it lowers the allowance immediately.** `getCapTier` reads live
-subscription state at write time, and `past_due`/`unpaid` count as lapsed, so a membership ending
-mid-month drops that month's allowance to free's from that moment. Slots already spent stand and
-nothing already priced is undone — but a creator who spent 8 as bronze and lapses on the 8th sets
-nothing new until the month turns. An unknown or absent tier resolves to the FREE allowance rather than
-zero, so losing a membership never takes away the ability to price at all. This is why no read path
-resolves a subscription tier any more — `getViewerMonetization` reads the gate rows and returns the
-stored numbers.
+subscription state at write time, and `incomplete`/`past_due`/`unpaid` all count as lapsed, so a
+membership ending mid-month drops that month's allowance to free's from that moment — in the main app.
+Creator Studio resolves the tier from the session instead (4h TTL, busted by
+`invalidateSubscriptionCaches`), so its own writes can honour the old allowance for up to that long.
+Slots already spent stand: a creator who spent 8 as bronze and lapses on the 8th sets nothing new until
+the month turns, or until clearing prices releases enough slots (R3b) to get back under 3. An unknown or
+absent tier resolves to the FREE allowance rather than zero, so losing a membership never takes away the
+ability to price at all. No path that reads a *price* resolves a subscription tier any more —
+`getViewerMonetization` reads the gate rows and returns the stored numbers. The one read that still
+resolves a tier is `modelVersion.getPricingAllowance`, which reports the allowance and names no price.
 
 Considered and declined (2026-08-25): granting the lapsed tier's allowance for the whole calendar month
 it lapsed in, which would fix the involuntary case (a failed card is the most common mid-month drop).

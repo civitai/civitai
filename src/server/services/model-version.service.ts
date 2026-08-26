@@ -2212,8 +2212,7 @@ export const earlyAccessPurchase = async ({
   // Generation `price` is optional — `generationPrice` applies the download-price fallback (and is
   // unit-tested in @civitai/buzz, so the charged amount stays covered).
   //
-  // Paid access carries no ceiling, so nothing here resolves the owner's membership: the stored price
-  // is the pre-sale price, permanent or timed alike.
+  // The stored price is the pre-sale price, permanent or timed alike.
   const storedPrice = (type === 'download' ? terms.download?.price : generationPrice(terms)) ?? 0;
   const permanent = isPermanentGate(paidAccess);
   // Sales are read from the PRIMARY, not the cached gate: a cancelled sale must stop discounting the

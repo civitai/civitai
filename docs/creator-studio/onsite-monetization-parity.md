@@ -531,14 +531,16 @@ The accessor answers *"for these ids I already have, what is the access state?"*
 set**. That is the hot path (feed, generation, cards): fetch the entity (its own cache) + `getPaidAccess`
 (this cache) + zip. No join, and the two caches invalidate independently.
 
-A **DB-side predicate** (`paidAccessSql()` → `JOIN` / `EXISTS` / `IN`) is required *only* when access state
+A **DB-side predicate** (a hand-written `JOIN` / `EXISTS` / `IN` — the `paidAccessSql()` helper no longer
+exists) is required *only* when access state
 participates in **selecting, ordering, or counting** rows — those must run in the DB to be correct:
 
 - **Filtered pagination** — `WHERE (gated|not) … LIMIT/OFFSET`. You cannot page in the DB then drop gated rows
   in app code: the page shrinks and the counts lie.
 - **Sort by access state** — order by `endsAt` ("ending soon") *before* `LIMIT`.
-- **Aggregation / counts** — the owner cap count (a standalone `PaidAccess` query on the `ownerId` index — no
-  join), paid-vs-free analytics.
+- **Aggregation / counts** — paid-vs-free analytics. The owner cap count that used to sit here is gone:
+  the per-owner permanent cap was replaced by the monthly `PricingSlot` allowance, and nothing queries
+  `PaidAccess` by `ownerId` any more.
 - **PaidAccess-as-driver** — the expiry cron scans `endsAt <= now` to *find* entities; there are no ids to hand
   the accessor yet.
 - **`EXISTS` in a larger entity query** — "does this model have *any* gated version", pushed down instead of

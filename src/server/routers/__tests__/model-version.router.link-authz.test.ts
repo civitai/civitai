@@ -4,10 +4,8 @@ import type * as ModelVersionService from '~/server/services/model-version.servi
 import type * as ModelService from '~/server/services/model.service';
 
 /**
- * `modelId` does not mean the same thing in every input on this router, and the ownership middleware
- * reads it by name. On `upsert` it names the model the write LANDS on and must be owned; on
- * `addLinkedComponent` it names the LINKED resource's model, which the caller is normally NOT the owner
- * of — linking a stranger's VAE or CLIP is the ordinary case.
+ * Pins which procedures' `modelId` the ownership middleware authorizes — see the note on
+ * `ownershipGuard` in the router.
  *
  * Driven through `createCaller` so the middleware WIRING is what decides. Asserting the guard functions
  * in isolation would not catch the regression this pins: re-attaching the strict guard to
@@ -58,7 +56,6 @@ const ctx = () =>
 
 beforeEach(() => {
   vi.clearAllMocks();
-  // The host version belongs to the caller; the linked resource's model does not.
   mockGetVersionById.mockResolvedValue({ modelId: HOST_MODEL });
   mockGetModel.mockImplementation(async ({ id }: { id: number }) =>
     id === HOST_MODEL ? { userId: OWNER } : { userId: STRANGER }

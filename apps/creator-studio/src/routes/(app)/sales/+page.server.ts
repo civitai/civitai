@@ -212,22 +212,14 @@ export const actions: Actions = {
     return { shortened: true };
   },
 
-  deepenSale: async ({ request, locals, cookies }) => {
+  deepenSale: async ({ request, locals }) => {
     if (await salesOff(locals.user))
       return fail(403, { error: 'Scheduled sales are not available yet.' });
     const form = await request.formData();
     const parsed = deepenSaleSchema.safeParse(Object.fromEntries(form));
     if (!parsed.success) return fail(400, { error: firstError(parsed.error) });
 
-    // cappedTier, never the display tier: the zero-floor is measured against what a buyer is charged,
-    // and a lapsed membership is capped at free however its label reads.
-    const membership = resolveMembership(locals.user, cookies.get(TEST_MEMBERSHIP_COOKIE));
-    const result = await deepenSale(
-      locals.user.id,
-      parsed.data.saleId,
-      parsed.data.discountAmount,
-      cappedTier(membership)
-    );
+    const result = await deepenSale(locals.user.id, parsed.data.saleId, parsed.data.discountAmount);
     if (!result.ok) return fail(400, { error: result.error });
     await bustVersionCache(request.headers.get('cookie') ?? '', result.versionIds);
     return { deepened: true };

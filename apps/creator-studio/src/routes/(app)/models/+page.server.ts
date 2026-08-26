@@ -435,8 +435,6 @@ export const actions: Actions = {
     };
   },
 
-  // Same reason as the preview above: "select all matching" reaches versions the page never loaded,
-  // so the count can't come from the client.
   publishedPreview: async ({ request, locals }) => {
     const form = await request.formData();
     const versionIds = versionIdsSchema.safeParse(String(form.get('versionIds') ?? ''));

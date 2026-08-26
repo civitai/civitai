@@ -256,8 +256,7 @@ describe('transferModelOwnership moves the PaidAccess owner', () => {
       'no "PricingSlot" statement in the transfer transaction — the slot strands on the previous owner, where it can never be released and blocks every future insert for that version'
     ).toBeDefined();
     expect(extra).toHaveLength(0);
-    // 🔴 DELETE, never UPDATE. Moving ownerId would charge the recipient a slot for a price they
-    // inherited rather than set — the thing #4309 rejected for PaidAccess in the other direction.
+    // DELETE, never UPDATE: moving ownerId charges the recipient a slot for a price they inherited.
     expect(statement.sql).toMatch(/DELETE\s+FROM\s+"PricingSlot"/);
     expect(statement.sql).not.toMatch(/SET\s+"ownerId"/);
     // Without the join predicate this drops EVERY slot on the site, and `USING "ModelVersion"` alone
@@ -266,8 +265,8 @@ describe('transferModelOwnership moves the PaidAccess owner', () => {
     expect(statement.sql).toMatch(/ps\."entityId"\s*=\s*mv\.id/);
     expect(statement.sql).toMatch(/ps\."entityType"\s*=\s*'ModelVersion'::"PaidAccessEntityType"/);
     expect(valueAfter(statement, /"modelId"\s*=\s*ANY\($/)).toEqual(MODEL_IDS);
-    // No `ownerId <> target` guard, unlike the UPDATEs above: the row goes whoever holds it, because
-    // what makes it harmful is the primary key blocking a re-insert, not whose name is on it.
+    // No `ownerId <> target` guard, unlike the UPDATEs above: the row goes regardless of who holds it,
+    // because the harm is the primary key blocking a re-insert, not whose name is on it.
     expect(statement.sql).not.toMatch(/"ownerId"/);
   });
 

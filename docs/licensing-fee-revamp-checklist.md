@@ -313,10 +313,6 @@ that have to happen, or be decided, before it reaches creators.
   the merge from main. Verified pre-existing there; this branch contributes none. As of the 2026-08-24
   merge only the `civitai-telemetry` type error survives; the rest were stale Prisma output and went
   away with `db:generate`.
-- **`PricingSlot.ownerId` deliberately does NOT move with a model transfer**, unlike `PaidAccess.ownerId`
-  and `DonationGoal.userId` (#4309). Those two are denormalised copies of the current owner and decide
-  who gets paid; a slot is a record of who spent an allowance and when. Moving it would refund the
-  seller a slot they did spend and charge the recipient for a pricing they never made.
 
 ### Closed in review, 2026-08-24
 
@@ -346,9 +342,11 @@ that have to happen, or be decided, before it reaches creators.
 - [x] **A model transfer stranded the PricingSlot.** The key is the entity alone while release refuses
       on an owner mismatch, so a row left behind was unreleasable AND un-insertable — the recipient
       could re-price that version forever without it counting against their allowance. Transfer now
-      deletes the slots rather than moving them; moving `ownerId` would charge the recipient for a
-      pricing they never made. Transfer is the one case where a stranded row does not go inert at the
-      month turn.
+      DELETES the slots rather than moving them: `PaidAccess.ownerId` and `DonationGoal.userId` move
+      (#4309) because they are denormalised copies of the current owner deciding who gets paid, while a
+      slot records who spent an allowance and when — moving it would refund the seller a slot they did
+      spend and charge the recipient for a pricing they never made. Transfer is the one case where a
+      stranded row does not go inert at the month turn, because the entity outlives it.
 - [x] **Comments describing the reverted clamp.** Six referenced `cappedTerms` or tier ceilings as
       current, one instructed a reader to compose over a function that no longer exists, and the
       migration header stated the old release rule then retracted it two lines later.

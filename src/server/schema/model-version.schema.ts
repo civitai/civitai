@@ -333,7 +333,7 @@ export const setLinkedComponentsSchema = z.object({
 export type SetLinkedComponentsInput = z.infer<typeof setLinkedComponentsSchema>;
 
 export const addLinkedComponentSchema = z.object({
-  id: z.number(), // source model version ID (named `id` for isOwnerOrModerator middleware compat)
+  id: z.number(), // source model version ID (named `id` for the ownership middleware)
   targetVersionId: z.number(), // linked resource's version ID
   targetFileId: z.number().optional(), // explicit file to link; falls back to auto-picking the primary
   replaceFileId: z.number().optional(), // redundant file on the source version to delete after linking

@@ -145,8 +145,8 @@ export type PaidAccessRow = {
  * A gate that never expires. Reads timeframeDays, NOT endsAt: a timed gate on an unpublished version also
  * carries endsAt null until publish materializes it, so endsAt cannot tell the two kinds apart.
  *
- * The price ceiling turns on this — a timed early-access window prices itself out when the window closes,
- * so only a permanent gate is capped.
+ * A permanent gate spends a pricing slot and a sale can cover it; a timed window does neither, because
+ * it prices itself out when it closes.
  */
 export const isPermanentGate = (row: Pick<PaidAccessRow, 'timeframeDays'>): boolean =>
   row.timeframeDays == null;

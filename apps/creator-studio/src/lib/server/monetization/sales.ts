@@ -100,7 +100,7 @@ function lowestBuyerPrice(rows: CoveredPriceRow[]): number | null {
   for (const row of rows) {
     const { download, generation } = gatePrices(row.terms as ModelVersionTerms | null);
     for (const stored of [download, generation]) {
-      // The stored price IS the buyer-facing one — paid access carries no ceiling.
+      // The stored price IS the buyer-facing one.
       if (stored > 0 && (lowest === null || stored < lowest)) lowest = stored;
     }
   }
@@ -183,7 +183,7 @@ export async function scheduleSale(
         error: "None of the selected versions can go on sale — a sale can't run on early access.",
       };
 
-    const refusal = await zeroFloorRefusal(trx, userId, eligible, tier, {
+    const refusal = await zeroFloorRefusal(trx, userId, eligible, {
       discountType: input.discountType,
       discountAmount: input.discountAmount,
     });
@@ -247,7 +247,6 @@ async function zeroFloorRefusal(
   trx: typeof dbWrite,
   userId: number,
   versionIds: number[],
-  tier: string | null,
   discount: { discountType: 'Fixed' | 'Percent'; discountAmount: number }
 ): Promise<string | null> {
   if (discount.discountType === 'Percent')
@@ -337,8 +336,7 @@ export async function shortenSale(
 export async function deepenSale(
   userId: number,
   saleId: number,
-  discountAmount: number,
-  tier: string | null
+  discountAmount: number
 ): Promise<SaleEditResult> {
   return await dbWrite.transaction().execute(async (trx) => {
     // Inside the transaction and on the primary: the zero-floor is measured over these ids, and a
@@ -354,7 +352,7 @@ export async function deepenSale(
       .executeTakeFirst();
     if (!sale) return { ok: false as const, error: 'That sale is no longer editable.' };
 
-    const refusal = await zeroFloorRefusal(trx, userId, versionIds, tier, {
+    const refusal = await zeroFloorRefusal(trx, userId, versionIds, {
       discountType: sale.discountType,
       discountAmount,
     });

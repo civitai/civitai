@@ -460,8 +460,7 @@ export type ViewerMonetization = {
 /**
  * The gate, the live sale and the licensing fee for a set of versions, in one batched lookup.
  *
- * Prices are no longer clamped to the owner's membership tier, so no subscription is resolved here at
- * all. The viewer still matters, but only for the sale: an OWNER is shown their stored terms, because
+ * The viewer matters only for the sale: an OWNER is shown their stored terms, because
  * their editors write those back, and is told about the sale separately through `sale`. A buyer is
  * quoted the discounted terms directly.
  */
@@ -575,8 +574,8 @@ export async function assertMonetizationWrite({
     : undefined;
   const hadPermanentGate = existing != null && existing.timeframeDays == null;
 
-  // The stored fee when the write does not restate one: an upsert that omits `licensingFee` leaves it
-  // in place, and the media axis below can still move under it.
+  // An upsert that omits `licensingFee` leaves the stored fee in place, and the media axis below can
+  // still move under it.
   const feeAfterWrite = licensingFee !== undefined ? licensingFee : storedLicensingFee;
   if (!isModerator && feeAfterWrite != null && feeAfterWrite > 0) {
     // Whole cents: the stored value is a Prisma Decimal and the input a JSON float, so a raw `>` can
@@ -587,7 +586,7 @@ export async function assertMonetizationWrite({
     // Raise-only, so a fee stored above the ceiling stays savable — EXCEPT when this write moves the
     // version onto a stricter media axis. A video model earns 5x, so re-saving an untouched 500 while
     // switching to an image base model is not a raise by the numbers, and the fee would then bill at 5x
-    // the image ceiling forever — nothing clamps at charge time.
+    // the image ceiling forever.
     const movesToStricterMedia =
       storedBaseModel != null && mediaType !== capMediaType(storedBaseModel);
     const over = movesToStricterMedia

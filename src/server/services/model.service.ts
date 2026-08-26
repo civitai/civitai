@@ -4828,13 +4828,11 @@ export async function transferModelOwnership({
       SET "userId" = ${targetUserId}
       WHERE id = ANY(${affectedImageIds}::int[])
     `,
-    // PricingSlot is DELETED rather than moved. Its ownerId is a record of who spent an allowance,
-    // like ModelVersionSale.userId above, so moving it would charge the recipient for a pricing they
-    // never made. But the primary key is the entity alone, so a row left behind is unreleasable
-    // (releasePricingSlot refuses on the owner mismatch) AND blocks any future insert
-    // (recordPricingSlot skips duplicates) — the recipient could then re-price that version forever
-    // without it ever counting against their allowance. Every other way a slot is stranded expires at
-    // the month turn because the entity is gone; a transferred entity outlives it.
+    // DELETED, not moved: ownerId records who spent an allowance, so moving it charges the recipient
+    // for a pricing they never made. Leaving it is worse — the key is the entity alone, so the row is
+    // both unreleasable (owner mismatch) and un-insertable, letting the recipient re-price that version
+    // forever off the books. Every other stranded slot goes inert at the month turn; a transferred
+    // entity outlives it.
     dbWrite.$executeRaw`
       DELETE FROM "PricingSlot" ps
       USING "ModelVersion" mv

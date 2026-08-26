@@ -19,10 +19,7 @@ export type CapMediaType = 'image' | 'video';
 const mediaMultiplier = (mediaType: CapMediaType | undefined) =>
   mediaType === 'video' ? VIDEO_CAP_MULTIPLIER : 1;
 
-/**
- * The ceiling a fee may be stored at. The same number for every creator — a tier governs how many new
- * prices they may set in a month, not how large. See monthlyPricingAllowance.
- */
+/** Tier does not narrow this — what a tier governs is monthlyPricingAllowance, not fee size. */
 export function maxLicensingFeeCeiling(mediaType?: CapMediaType): number {
   return MAX_LICENSING_FEE * mediaMultiplier(mediaType);
 }

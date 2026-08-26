@@ -17,7 +17,7 @@
 -- That needs no history, which is why there is no backfill below.
 --
 -- The row is deleted when the last price comes off an entity nothing has transacted against, which
--- returns the slot. No schema change was needed for that; the SQL below is what ran.
+-- returns the slot.
 --
 -- There is deliberately no foreign key to the entity. The key is polymorphic so there is nothing
 -- to point at, and the consequence is wanted: deleting a version does not refund its slot. Rows
