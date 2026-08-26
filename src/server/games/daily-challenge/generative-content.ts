@@ -24,18 +24,27 @@ import {
   type ReviewTemplateVariables,
 } from './template-engine';
 
-// Default models for the daily-challenge pipeline. Routed through OpenRouter.
+// Default model for the daily-challenge pipeline. Routed through OpenRouter.
 //
-// Split rationale:
-//   - Content + winner selection use warm, varied creative output → GPT-4o Mini.
-//   - Image review needs critical scoring that doesn't inflate; GPT-5 Nano
-//     runs stricter in practice → GPT-5 Nano.
+// One model drives every stage, chosen against the two failure modes this pipeline actually has:
+//
+//   - REVIEW must handle NSFW entries without bailing. GPT-5 Nano silently returned "No content
+//     in response" on 1-4 of 24 explicit entries per run (R, X and XXX alike), which surfaces as
+//     a failed review rather than an error. MiMo refused none of 24 and writes markedly more
+//     specific NSFW critique.
+//   - CONTENT must keep `themeElements` anchored to the featured resource, because those strings
+//     are the judge's only scoring anchor. Measured over 6 resources, GPT-4o Mini emitted generic
+//     mood words in 9.8% of elements and turned a Warhammer 40K Necron world-morph into
+//     "Futuristic Coffee"; MiMo emitted 4.3% and stayed on the resource's subject.
+//
+// MiMo is also cheaper on both token rates than GPT-4o Mini. It is slower per call (~29s vs ~13s
+// on an article), which is irrelevant for the once-per-challenge content stages.
 //
 // To experiment with a Civitai-hosted model (e.g. Qwen via the orchestrator),
 // pass the URN as `input.model` from the call site or the Playground; the
 // `pickClient` dispatcher routes `urn:air:*` to the civitai-llm client.
-const DEFAULT_CONTENT_MODEL: AIModel = AI_MODELS.GPT_4O_MINI;
-const DEFAULT_REVIEW_MODEL: AIModel = AI_MODELS.GPT_5_NANO;
+const DEFAULT_CONTENT_MODEL: AIModel = AI_MODELS.MIMO;
+const DEFAULT_REVIEW_MODEL: AIModel = AI_MODELS.MIMO;
 
 // URN-prefixed models go through the orchestrator's OpenAI-compatible endpoint
 // (Civitai-hosted Qwen, etc.). Everything else (openai/*, anthropic/*, x-ai/*,
@@ -55,6 +64,8 @@ function pickClient(model: string) {
 export const MODEL_BUZZ_RATES: Record<string, { input: number; output: number }> = {
   [AI_MODELS.GPT_5_NANO]: { input: 0.05, output: 0.4 },
   [AI_MODELS.GPT_4O_MINI]: { input: 0.15, output: 0.6 },
+  [AI_MODELS.MIMO]: { input: 0.14, output: 0.28 },
+  [AI_MODELS.GROK_4_3]: { input: 1.25, output: 2.5 },
   // Pairwise judging routes. Published OpenRouter rates, verified 2026-08-11. Neither model
   // exposes a separate pricing.image component — per-image cost is already inside the
   // prompt-token rate.
