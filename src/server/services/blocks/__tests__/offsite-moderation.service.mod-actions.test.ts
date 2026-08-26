@@ -2088,9 +2088,15 @@ describe('republishOwnListing — go-live MATURITY gate (kind-aware)', () => {
       levels: { [ICON_ID]: LVL_PG13, [COVER_ID]: LVL_X, [SHOT_ID]: LVL_R },
       ingestion: 'Blocked',
     });
+    // ATTRIBUTION: assert the SCAN gate's own error, not merely "something threw" —
+    // otherwise this passes just as well if the maturity code throws first, which is
+    // the exact displacement it is meant to rule out.
     await expect(
       republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER })
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('blocked'),
+    });
     expect(flipData()).toBeUndefined();
     expect(mockWrite.appListingReport.create).not.toHaveBeenCalled();
     expect(mockWrite.appListingModerationEvent.create).not.toHaveBeenCalled();
