@@ -29,6 +29,7 @@ import {
   type PersistListingAssetImageInput,
   type SubmitExternalListingInput,
 } from '~/server/schema/blocks/offsite-listing.schema';
+import { MATERIAL_LISTING_PATCH_FIELDS } from '~/shared/constants/app-capabilities.constants';
 import { isAppBlockOauthClientId } from '~/shared/constants/block-scope.constants';
 import {
   connectScopesSubsetOfCeiling,
@@ -747,8 +748,16 @@ async function closeTerminalListing(
  * rather than going live silently. Like `externalUrl` it compares against the
  * validator's CANONICAL form, so re-saving `…/a/b` as `…/a/b.git` is correctly seen
  * as no change and does not cost a pointless mod re-review.
+ *
+ * 🔴 THE LIST ITSELF NOW LIVES IN `shared/`, and this is an ALIAS of it — not a copy. The
+ * EDIT FORM has to disable exactly these inputs while a listing is unpublished (the
+ * `removed` branch below refuses them with `MATERIAL_CHANGE_BLOCKED`), and it cannot import
+ * this module: `offsite-listing.service` top-level-imports `~/server/db/client`, so reading
+ * the list from here would drag Prisma into the browser bundle. A second literal in the
+ * component is how the form starts offering a field the server refuses. See
+ * {@link MATERIAL_LISTING_PATCH_FIELDS}.
  */
-const MATERIAL_PATCH_FIELDS = ['externalUrl', 'name', 'contentRating', 'sourceRepoUrl'] as const;
+const MATERIAL_PATCH_FIELDS = MATERIAL_LISTING_PATCH_FIELDS;
 
 /**
  * Validate + normalize an update patch (shared by the in-place + shadow paths).
@@ -959,6 +968,15 @@ type EditableListing = {
   kind: string;
   slug: string;
   status: string;
+  /**
+   * The CALLER's role on this listing, as resolved by the access gate in
+   * {@link loadOwnedEditableListing} — never `null`, because a null role throws there.
+   *
+   * 🔴 NOT THE SAME THING AS `userId` BELOW, and conflating them is the bug this exists to
+   * prevent. `userId` is the listing's denormalized OWNER column; `callerRole` is who the
+   * CALLER is relative to this row. They differ for every accepted editor seat.
+   */
+  callerRole: AppRole;
   userId: number;
   revisionOfId: string | null;
   name: string;
@@ -1084,7 +1102,14 @@ async function loadOwnedEditableListing(
   if (!listing) {
     throw new OffsiteRequestError('NOT_FOUND', `listing ${listingId} not found`);
   }
-  if ((await resolveListingRole(listingId, userId)) === null) {
+  // 🔴 THE RESOLVED ROLE IS KEPT AND RETURNED, not merely null-checked — and note that
+  // this function's NAME oversells its gate. It admits the OWNER *or* an accepted editor
+  // seat (that is what `resolveListingRole` returns non-null for); "Owned" here means "you
+  // hold a role on it", not "you own it". Callers that need to distinguish the two — the
+  // repair-state copy does, because Republish is owner-only — read `callerRole` rather
+  // than re-deriving it from a second read or from the session.
+  const callerRole = await resolveListingRole(listingId, userId);
+  if (callerRole === null) {
     throw new OffsiteRequestError('NOT_OWNED', 'you can only edit your own listings');
   }
   // Guarded second read for the MANUAL-APPLY `source_repo_url` column — see the
@@ -1094,6 +1119,7 @@ async function loadOwnedEditableListing(
   const sourceRepo: ListingSourceRepoRead = await readListingSourceRepoUrl(listingId, dbRead);
   return {
     ...listing,
+    callerRole,
     sourceRepoUrl: sourceRepo.value,
     sourceRepoAvailable: sourceRepo.available,
   };
@@ -1636,6 +1662,18 @@ export type GetMyListingForEditResult = {
   slug: string;
   /** The parent's status (draft | pending | approved). */
   status: string;
+  /**
+   * The CALLER's role on this listing — `owner` or an accepted `editor` seat.
+   *
+   * 🔴 SAME REASON AS `GetMyListingForAppResult.role`, AND THE SAME MISREADING TO CORRECT.
+   * `loadOwnedEditableListing` is named for ownership but gates on
+   * `resolveListingRole(...) === null`, so an accepted editor reaches this prefill. The
+   * unpublished-state copy (`materialEditBlockedReason`) tells the caller to "republish the
+   * app from the Publishing tab" — owner-only in `editorTabsFor`, so for an editor that is
+   * an instruction they cannot follow. The role is resolved by the gate anyway; returning
+   * it is what lets the copy say the true thing to each.
+   */
+  role: AppRole;
   /** True when an in-flight shadow revision is already under review. */
   hasPendingRevision: boolean;
   /**
@@ -1899,6 +1937,7 @@ export async function getMyListingForEdit(opts: {
     kind: listing.kind,
     slug: listing.slug,
     status: listing.status,
+    role: listing.callerRole,
     hasPendingRevision,
     shadowId,
     scalars: view.scalars,
@@ -1915,6 +1954,19 @@ export type GetMyListingForAppResult = {
   appListingId: string;
   /** The listing's TRUE lifecycle status (`draft|pending|approved|rejected|removed`). */
   status: string;
+  /**
+   * The CALLER's role on this listing — `owner` or an accepted `editor` seat.
+   *
+   * 🔴 THIS PROC HAS NEVER BEEN OWNER-ONLY, and the media editor's copy assumed it was.
+   * The gate below is `resolveListingRole(...) === null`, which admits an accepted
+   * collaborator; the role it resolves was then thrown away. So `ListingMediaEditor` had no
+   * way to tell the two apart and told an editor "you unpublished it" and "republish it
+   * from the Publishing tab" — a thing they did not do, and a tab `editorTabsFor` does not
+   * give them (`publishing` is owner-only). Returning the role the gate ALREADY computes is
+   * what lets the copy be true for both, without a second access read and without the
+   * component guessing from the session.
+   */
+  role: AppRole;
   /** The listing's stored content rating (drives the asset NSFW-scan threshold). */
   contentRating: string;
   /** Whether a shadow-revision publish request is already under review for this listing. */
@@ -2091,7 +2143,12 @@ export async function getMyListingForApp(opts: {
   // it for every caller to improve one error string on a race with a moderator delete.
   // Written down rather than left as a puzzle for whoever next reads a NOT_OWNED in the
   // logs for a listing that no longer exists.
-  if ((await resolveListingRole(listing.id, userId)) === null) {
+  // 🔴 KEEP THE RESOLVED ROLE — it is returned, not just null-checked. The copy in
+  // `ListingMediaEditor` branches on it (an editor is not told they unpublished the app,
+  // nor pointed at an owner-only Publishing tab). Discarding it here is what forced that
+  // component to have no answer.
+  const callerRole = await resolveListingRole(listing.id, userId);
+  if (callerRole === null) {
     throw new OffsiteRequestError('NOT_OWNED', 'you can only manage your own listings');
   }
   // A pending revision REQUEST (not mere shadow existence) drives the "already
@@ -2145,6 +2202,7 @@ export async function getMyListingForApp(opts: {
   return {
     appListingId: listing.id,
     status: listing.status,
+    role: callerRole,
     // Nullable column; fall back to the safest rating so the asset step's scan
     // threshold is always defined.
     contentRating: listing.contentRating ?? 'g',

@@ -1373,11 +1373,37 @@ export async function getAppListingAuthoringContext(opts: {
    * did. Same keyset (`orderBy desc` + `take 1`) the batched list read uses, and the same
    * NORMALISATION on the way out.
    *
-   * 🔴 THE REPLICA IS CORRECT HERE and it is the opposite call from the one the SERVER
-   * gates make. This value only decides which BUTTON the Publishing tab renders; the
-   * mutation behind it re-checks on the primary inside its own transaction
-   * (`republishOwnListing`), so a stale read costs at worst one refused click. The gates
-   * in `offsite-listing.service` pass `dbWrite` because there a stale read would GRANT.
+   * 🔴 THE REPLICA IS STILL CORRECT HERE, BUT NOT FOR THE REASON THIS COMMENT USED TO GIVE.
+   * It said the value "only decides which BUTTON the Publishing tab renders". That stopped
+   * being true in civitai/civitai#4431: the field is now also an input to `editorTabsFor`,
+   * so it decides the TAB SET — whether the owner-repair branch opens `details` and `media`
+   * on a `removed` listing at all. It is a wider blast radius than one button, and anyone
+   * re-deriving the replica-vs-primary choice from the old sentence would be reasoning from
+   * a premise that no longer holds.
+   *
+   * 🔴 THE CHOICE SURVIVES THAT WIDENING BECAUSE THE DIRECTION IS SAFE, WHICH IS A CLAIM
+   * ABOUT THE LAG'S SIGN, NOT ABOUT ITS SIZE. The only value this read can be stale in
+   * FAVOUR of is an older event — concretely, a lagging replica can still show the owner's
+   * own `owner-unpublish` after a moderator has just written a `delist`. That is the
+   * PERMISSIVE direction, and it is the one that matters, so spell out why it is still not
+   * an escalation:
+   *
+   *   - The wide tab set is a UI narrowing, never a gate — the standing rule for this
+   *     function. A stale-wide `details`/`media` offers surfaces whose procs
+   *     (`getMyListingForEdit`, `updateListing`, `getMyListingForApp`, and the owner asset
+   *     procs) each re-read the last moderation action on the PRIMARY inside their own
+   *     gate. So the tab opens and the panel behind it refuses. One wasted click, not a
+   *     write.
+   *   - `publishing` does not widen at all here: it is gated on `isPublishableListingStatus`
+   *     + `role`, neither of which reads this value, and `republishOwnListing` re-checks on
+   *     the primary in its own transaction.
+   *   - The reverse staleness (a fresh `delist` visible, an older `owner-unpublish` hidden)
+   *     is the RESTRICTIVE direction and costs the owner nothing but a refresh.
+   *
+   * The gates in `offsite-listing.service` pass `dbWrite` precisely because there the same
+   * permissive staleness would GRANT rather than merely OFFER. That asymmetry — offer here,
+   * grant there — is the whole reason the two callers read different pools, and it is what
+   * must be re-checked if this value ever gains a THIRD consumer that acts on it directly.
    */
   const lastAction =
     row.status === 'removed' ? await readLastModerationAction(dbRead, access.seatListingId) : null;

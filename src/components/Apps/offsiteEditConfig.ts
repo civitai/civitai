@@ -49,6 +49,19 @@ export type ListingEditContext = {
    */
   kind?: 'onsite' | 'offsite';
   status: string;
+  /**
+   * The CALLER's role on this listing — `owner`, or `editor` for an accepted seat.
+   *
+   * 🔴 OPTIONAL, AND ABSENT IS TREATED AS "ROLE UNKNOWN" RATHER THAN AS "OWNER". Optional
+   * for the same reason `kind` is: every pre-existing fixture predates the field. But the
+   * fail-safe here runs the OTHER way from a normal narrowing — an unknown role must not
+   * be told "you unpublished it" or "republish it from the Publishing tab", because those
+   * are false for an editor and there is no way to tell from absence. So
+   * {@link materialEditBlockedReason} emits ROLE-NEUTRAL wording when this is absent,
+   * which is true for both, and the owner-specific phrasing only on a positive `'owner'`.
+   * See {@link isOwnerEdit}.
+   */
+  role?: 'owner' | 'editor';
   hasPendingRevision: boolean;
   shadowId: string | null;
   scalars: {
@@ -88,6 +101,165 @@ export type ListingEditContext = {
 /** True for an edit context whose live parent is APPROVED (→ shadow-revision path). */
 export function isApprovedEdit(ctx: ListingEditContext): boolean {
   return ctx.status === 'approved';
+}
+
+/**
+ * True for an edit context whose live parent is UNPUBLISHED — the owner-repair state.
+ * PURE.
+ *
+ * 🔴 `status === 'removed'` IS SUFFICIENT *HERE*, AND ONLY BECAUSE OF WHERE THIS CONTEXT
+ * COMES FROM. `ListingEditContext` is `getMyListingForEdit`'s result, and that proc's
+ * `removed` branch reads the last STATUS-CHANGING moderation action on the PRIMARY and
+ * throws `FORBIDDEN` unless it is the owner's own `owner-unpublish`
+ * (`app-listing-owner-unpublish`). So a moderator takedown never produces a context at all
+ * — the form is not reached, `AppsListingDetailsEditor` renders its error alert instead.
+ * A `removed` context that EXISTS is therefore owner-unpublished by construction.
+ *
+ * 🔴 AND THE FAILURE DIRECTION IS SAFE IF THAT EVER STOPS BEING TRUE. Should a mod-removed
+ * listing somehow reach this form, this predicate still returns `true`, the material inputs
+ * are still disabled, and the author is still told the truth — the server would refuse
+ * every one of those edits anyway. The mistake this CANNOT make is enabling an input the
+ * server refuses, which is the whole point.
+ */
+export function isUnpublishedEdit(ctx: Pick<ListingEditContext, 'status'>): boolean {
+  return ctx.status === 'removed';
+}
+
+/**
+ * Why this listing's MATERIAL scalar fields cannot be edited right now, or `null` when they
+ * can. PURE.
+ *
+ * 🔴 THIS MIRRORS A REFUSAL THAT ALREADY EXISTS SERVER-SIDE; it does not invent a rule.
+ * `updateListing`'s `removed` branch throws `MATERIAL_CHANGE_BLOCKED` (→ `BAD_REQUEST`) for
+ * any change to a field in `MATERIAL_LISTING_PATCH_FIELDS`, and it does so AFTER the author
+ * has typed the change and pressed Save. Until the editor tabs opened on this state that
+ * was unreachable; opening them without this makes it four inputs an author can fill and
+ * can never save, which is strictly worse than not offering the field at all. The PREFILL
+ * being wider than the write is deliberate — an author must be able to READ their current
+ * name and URL — and that is a different thing from offering an EDIT.
+ *
+ * 🔴 THE COPY NAMES THE WAY OUT, because the server's message does and an author who is
+ * only told "no" has nowhere to go: republish, then edit, and the edit is staged for
+ * review.
+ *
+ * Kind-aware for the same reason the header is (`listingEditHeaderCopy`): an on-site
+ * listing has no App URL and is rendered no step that could change one, so naming it here
+ * would describe a field that is not on screen.
+ */
+export function materialEditBlockedReason(
+  ctx: Pick<
+    ListingEditContext,
+    | 'status'
+    | 'kind'
+    | 'role'
+    | 'connectClientId'
+    | 'connectAllowedScopes'
+    | 'connectRequestedScopes'
+  >
+): string | null {
+  if (!isUnpublishedEdit(ctx)) return null;
+  const fields = isOnsiteEdit(ctx)
+    ? 'name, source repository and content rating'
+    : 'name, App URL, source repository and content rating';
+
+  // 🔴 ROLE-AWARE, AND THE DEFAULT IS THE NEUTRAL ONE — see `ListingEditContext.role`.
+  // `loadOwnedEditableListing` admits an accepted editor seat, so this copy is read by
+  // people who did NOT unpublish the app and who cannot see the Publishing tab
+  // (`editorTabsFor` makes `publishing` owner-only). Naming that tab at an editor is an
+  // instruction they cannot follow, so they are pointed at the person who can.
+  const wayOut = isOwnerEdit(ctx)
+    ? `Republish the app from the Publishing tab first, then edit those fields — the ` +
+      `edit is staged for review.`
+    : `The app's owner has to republish it before those fields can be edited — the ` +
+      `Publishing tab that does it is theirs, not yours.`;
+
+  // 🔴 THE SCOPE-DRIFT ARM, AND IT EXISTS BECAUSE THE OLD LAST SENTENCE WAS FALSE IN
+  // EXACTLY THE STATE `scopeDisclosureLockedForEdit` EXISTS FOR.
+  //
+  // It ended "Tagline, description and category can be edited now." When the connect
+  // client's `allowedScopes` have DRIFTED from the stored snapshot, that is untrue and the
+  // screen is a hard dead end:
+  //
+  //   - `buildScalarPatch` emits the drifted `requestedScopes` on EVERY save, so even a
+  //     tagline-only edit carries a material change and the server refuses it; and
+  //   - `handleSave` runs `scopeJustificationError(values)` for any connect listing, and a
+  //     newly-added sensitive scope has no prefilled justification (`editContextToForm`
+  //     prunes justifications to the DERIVED mask), so the save aborts CLIENT-side first
+  //     and steers the author to Details — where `scopeDisclosureLockedForEdit` has
+  //     disabled the very boxes that would clear the error.
+  //
+  // So the author was invited to edit three fields, and could not save any of them, with
+  // the copy insisting otherwise. The outcome is honest (the server would refuse too); the
+  // sentence was not. Say the true thing instead — nothing here can be saved until the
+  // scopes are re-reviewed — rather than describing an edit that cannot land.
+  if (scopeDisclosureLockedForEdit(ctx)) {
+    const scopeWayOut = isOwnerEdit(ctx)
+      ? `republish the app from the Publishing tab`
+      : `ask the app's owner to republish it`;
+    return (
+      `This app is unpublished, so its ${fields} are locked — and your OAuth app's ` +
+      `permissions have changed since this listing was last reviewed. That changed ` +
+      `permission set rides along on every save, so while the app stays unpublished ` +
+      `NOTHING on this screen can be saved — not the tagline, description or category ` +
+      `either. To edit anything, ${scopeWayOut}; the new permissions are then reviewed ` +
+      `along with your changes.`
+    );
+  }
+
+  return (
+    `This app is unpublished, so its ${fields} are locked. Changing any of them needs ` +
+    `moderator review, and an unpublished listing has no way to reach it. ${wayOut} ` +
+    `Tagline, description and category can be edited now.`
+  );
+}
+
+/**
+ * Is the caller the listing's OWNER? PURE.
+ *
+ * 🔴 FAIL-SAFE DEFAULT IS `false`, i.e. "not proven to be the owner" — and that direction is
+ * the opposite of what a narrowing usually wants, so it is worth stating why. This predicate
+ * does not gate a capability; it only picks which SENTENCE the author reads. The owner
+ * phrasing asserts two things an editor would find false ("you unpublished it", "republish
+ * it from the Publishing tab" — a tab `editorTabsFor` withholds from an editor). The
+ * role-neutral phrasing is true for BOTH. So an absent role must resolve to the neutral
+ * copy, never to the owner copy.
+ */
+export function isOwnerEdit(ctx: Pick<ListingEditContext, 'role'>): boolean {
+  return ctx.role === 'owner';
+}
+
+/**
+ * Does the OAuth scope disclosure ALSO have to be locked in the repair state? PURE.
+ *
+ * 🔴 A JUSTIFICATION EDIT IS NORMALLY TRIVIAL, SO THIS IS NOT "LOCK IT WHEN UNPUBLISHED".
+ * `buildScalarPatch` emits `requestedScopes` when the justifications changed OR when the
+ * connect client's CURRENT `allowedScopes` has DRIFTED from the stored snapshot, and
+ * `materialPatchChanges` counts that key as material only when the two masks actually
+ * differ. So while they agree, a justification edit is trivial and saves fine here.
+ *
+ * 🔴 WHEN THEY HAVE DRIFTED, EVERY SAVE IS REFUSED — including a tagline-only one, because
+ * the drifted mask rides along on the patch. Leaving the justification boxes live in that
+ * state is the same defect as the material inputs, one field further out, so they are
+ * disabled and the reason says so. Detectable client-side because both masks are on the
+ * edit context; absent values read as `0` exactly as the server's `?? 0` does.
+ */
+export function scopeDisclosureLockedForEdit(
+  ctx: Pick<
+    ListingEditContext,
+    'status' | 'kind' | 'connectClientId' | 'connectAllowedScopes' | 'connectRequestedScopes'
+  >
+): boolean {
+  // 🔴 `isUnpublishedEdit`, NOT `materialEditBlockedReason` — AND THE TWO ARE EQUIVALENT
+  // HERE BY CONSTRUCTION, so this is not a weakening. `materialEditBlockedReason` returns
+  // non-null IFF `isUnpublishedEdit(ctx)` is true; its first line IS that check. This used
+  // to call it and read the result for null, which was fine until
+  // `materialEditBlockedReason` grew a scope-drift arm that calls THIS function — a cycle
+  // (`materialEditBlockedReason` → `scopeDisclosureLockedForEdit` → `materialEditBlocked-
+  // Reason` → …). Depending on the narrower predicate breaks it and states the real
+  // precondition directly: the lock applies in the unpublished state.
+  if (!isUnpublishedEdit(ctx)) return false;
+  if (ctx.connectClientId == null) return false;
+  return (ctx.connectAllowedScopes ?? 0) !== (ctx.connectRequestedScopes ?? 0);
 }
 
 /**
@@ -200,10 +372,7 @@ export function listingEditHeaderCopy(showUrlStep: boolean): ListingEditHeaderCo
 }
 
 /** True iff two string→string maps have identical keys + values. PURE. */
-function shallowEqualStringMap(
-  a: Record<string, string>,
-  b: Record<string, string>
-): boolean {
+function shallowEqualStringMap(a: Record<string, string>, b: Record<string, string>): boolean {
   const ak = Object.keys(a);
   if (ak.length !== Object.keys(b).length) return false;
   return ak.every((k) => a[k] === b[k]);

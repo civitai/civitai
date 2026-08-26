@@ -44,7 +44,10 @@ import {
   isOnsiteEdit,
   hasScalarChanges,
   isApprovedEdit,
+  isOwnerEdit,
   listingEditHeaderCopy,
+  materialEditBlockedReason,
+  scopeDisclosureLockedForEdit,
   type ListingEditContext,
 } from '~/components/Apps/offsiteEditConfig';
 import type { MarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
@@ -95,6 +98,23 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
   const showUrlStep = !isOnsiteEdit(edit);
   // 🔴 The HEADER reads the SAME flag the wizard shape does — see `listingEditHeaderCopy`.
   const headerCopy = listingEditHeaderCopy(showUrlStep);
+
+  /**
+   * 🔴 THE REPAIR-STATE LOCK. Non-null while this listing is UNPUBLISHED, in which case the
+   * server refuses any MATERIAL change with `MATERIAL_CHANGE_BLOCKED` — see
+   * `materialEditBlockedReason` and `updateListing`'s `removed` branch. Every input this
+   * gates is one the author could otherwise fill and never save.
+   *
+   * 🔴 THE VALUE IS THE GUARD *AND* THE COPY, deliberately one expression rather than a
+   * boolean beside a string. A separate `materialBlocked` flag is how the inputs get
+   * disabled with no explanation on screen, or explained while still enabled.
+   */
+  const materialBlockedReason = materialEditBlockedReason(edit);
+  const materialBlocked = materialBlockedReason != null;
+  // See `scopeDisclosureLockedForEdit`: a DRIFTED scope mask makes every save material, so
+  // the justification boxes are unsaveable too and must not stay live. Not implied by
+  // `materialBlocked` — while the masks agree, a justification edit is trivial and saves.
+  const scopeLocked = scopeDisclosureLockedForEdit(edit);
   const STEP_DETAILS = showUrlStep ? 1 : 0;
   const STEP_ASSETS = showUrlStep ? 2 : 1;
 
@@ -301,6 +321,33 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
         </Alert>
       )}
 
+      {/* 🔴 THE REPAIR-STATE NOTICE. Rendered ABOVE the stepper so the reason is on screen
+          before the author reaches a locked field — a disabled input with its explanation
+          somewhere else reads as a bug. The copy is the server's refusal, restated ahead of
+          time instead of after a failed Save, and it names the way out.
+          🔴 THE `scopeLocked` APPEND IS GONE, and its removal is the point rather than a
+          tidy-up. It read "…so the scope justifications are locked until you republish",
+          which understated the state by a long way: in the drifted state NOTHING on this
+          screen can be saved, because the drifted mask rides along on every patch and
+          `handleSave` aborts client-side before any of it. Worse, it sat directly after a
+          sentence that said "Tagline, description and category can be edited now" — two
+          claims that cannot both be true. `materialEditBlockedReason` now owns the whole
+          drifted-state message, so there is ONE sentence to keep honest instead of two
+          that disagreed. */}
+      {materialBlockedReason && (
+        <Alert
+          color="yellow"
+          variant="light"
+          icon={<IconLock size={16} />}
+          title="This app is unpublished"
+          data-testid="apps-offsite-edit-material-locked-notice"
+        >
+          <Text size="sm">
+            {materialBlockedReason}
+          </Text>
+        </Alert>
+      )}
+
       {edit.hasPendingRevision && (
         <Alert
           color="orange"
@@ -352,6 +399,12 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
                 maxLength={OFFSITE_SUBMIT_LIMITS.urlMax}
                 data-autofocus
                 data-testid="apps-offsite-edit-url"
+                // 🔴 MATERIAL. See `materialBlockedReason`. The `data-material-field` tag is
+                // what lets the ledger test walk `MATERIAL_LISTING_PATCH_FIELDS` and assert
+                // an input exists AND is disabled for every member — so a field added to
+                // that set with no input here turns the ledger red.
+                data-material-field="externalUrl"
+                disabled={materialBlocked}
               />
               {values.externalUrl.trim().length === 0 && (
                 <Alert
@@ -437,6 +490,9 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
               maxLength={OFFSITE_SUBMIT_LIMITS.nameMax}
               required
               data-testid="apps-offsite-edit-name"
+              // 🔴 MATERIAL — the listing's identity. See `materialBlockedReason`.
+              data-material-field="name"
+              disabled={materialBlocked}
             />
 
             <TextInput
@@ -484,6 +540,10 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
               error={errors.sourceRepoUrl}
               maxLength={OFFSITE_SUBMIT_LIMITS.sourceRepoUrlMax}
               data-testid="apps-offsite-edit-source-repo"
+              // 🔴 MATERIAL — a public outbound link a moderator approved. See
+              // `materialBlockedReason`.
+              data-material-field="sourceRepoUrl"
+              disabled={materialBlocked}
             />
 
             <Group grow align="flex-start">
@@ -509,6 +569,11 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
                 error={errors.contentRating}
                 allowDeselect={false}
                 data-testid="apps-offsite-edit-rating"
+                // 🔴 MATERIAL, and the sharpest of the four: `contentRating` drives the
+                // public SFW filter (`content_rating NOT IN ('r','x')`), so an in-place
+                // change with no re-review would surface a mature listing to SFW users.
+                data-material-field="contentRating"
+                disabled={materialBlocked}
               />
             </Group>
 
@@ -520,7 +585,12 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
                 requestedScopes={values.requestedScopes}
                 justifications={values.scopeJustifications}
                 onJustificationChange={handleJustificationChange}
-                disabled={saving}
+                // 🔴 `scopeLocked`, NOT `materialBlocked` — see `scopeDisclosureLockedForEdit`.
+                // A justification edit is trivial and saves fine on an unpublished listing
+                // while the scope masks agree; it is only unsaveable once they have DRIFTED,
+                // because the drifted mask then rides along on every patch and the server
+                // counts it as material.
+                disabled={saving || scopeLocked}
                 forceShowErrors={showScopeErrors}
                 intro="These are your OAuth app's allowed scopes — they're derived from the app and can't be changed here. Editing a justification (or a change to your app's scopes) is sent for review on a live listing."
               />
@@ -545,6 +615,49 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
           data-testid="apps-offsite-wizard-step-assets"
         >
           <div data-testid="apps-offsite-wizard-assets-panel">
+            {/* 🔴 THE ASSETS STEP NEEDS THE REPAIR FRAME TOO, AND IT IS THE ONLY IMAGE
+                SURFACE AN OFF-SITE LISTING HAS. `capabilitiesForKind('offsite').listingMedia`
+                is `false`, so `editorTabsFor` withholds the Media tab entirely and
+                `ListingMediaEditor` — which DID get an unpublished frame — never mounts for
+                these listings. This step is where their icon, cover and screenshots are
+                edited, it became newly reachable in the repair state, and it shipped with no
+                framing at all.
+                🔴 AND THE WRITE SEMANTICS ARE THE SURPRISING PART, which is exactly why the
+                frame has to say them. `ListingAssetStep` writes EAGERLY, one mutation per
+                change, against `edit.parentId` — there is no shadow for a non-approved
+                listing, so nothing here is staged and nothing is undone by leaving without
+                pressing Save. That differs from the approved case the author has seen
+                before AND from the scalar fields on the previous step, which do wait for
+                Save. An author who assumes either would be wrong in a way that costs them
+                their live imagery.
+                🔴 Deliberately NOT gated on `scopeLocked`: the scope-drift dead end blocks
+                the SAVE path (scalars), and these writes do not go through it. Media stays
+                editable in that state, which is worth saying plainly rather than leaving
+                the author to infer it from a notice that talks about saving. */}
+            {materialBlockedReason && (
+              <Alert
+                color="yellow"
+                variant="light"
+                icon={<IconAlertTriangle size={16} />}
+                title="This app is unpublished"
+                mb="md"
+                data-testid="apps-offsite-edit-assets-unpublished-notice"
+              >
+                <Text size="sm">
+                  This app is <b>not visible in the store</b>
+                  {isOwnerEdit(edit) ? (
+                    <> — you unpublished it</>
+                  ) : (
+                    <> — its owner unpublished it</>
+                  )}
+                  . Image changes here save <b>immediately</b> and are <b>not</b> staged for
+                  review — they are not held until you press Save, and leaving this page does
+                  not undo them. They appear in the store when the app is republished. Media
+                  can be added while it is still scanning; it only appears once its scan
+                  finishes cleanly.
+                </Text>
+              </Alert>
+            )}
             {effectiveId ? (
               <ListingAssetStep
                 listingId={effectiveId}

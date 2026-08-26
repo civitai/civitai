@@ -285,12 +285,53 @@ describe('🔴 myAppListingHref follows the STATUS-narrowed tab set', () => {
     appBlockId: 'ab_h',
     role: 'owner',
     capabilities: capabilitiesForKind('onsite'),
+    // 🔴 SPELLED, and `null` is the fail-closed value ("not proven to be the owner's own").
+    // The field is REQUIRED on this row type; leaving fixtures to omit it is precisely the
+    // ergonomics decision that let the production caller drop it.
+    lastModerationAction: null,
   } as const;
 
-  it('an owner on a REMOVED listing lands on Publishing — their route back', () => {
+  it('an owner on a MODERATOR-removed listing lands on Publishing — their route back', () => {
+    // `lastModerationAction: null` reads as a moderator removal (fail-closed), so the tab
+    // set is the narrowed publishing/history pair and `tabs[0]` is Publishing.
     expect(myAppListingHref({ ...base, status: 'removed' })).toBe(
       '/apps/listing/apl_h/edit?tab=publishing'
     );
+  });
+
+  /**
+   * 🔴 THE BEHAVIOURAL CASE FOR THE DROPPED-FIELD DEFECT — and the reason a structural
+   * guard is not enough on its own.
+   *
+   * `appListingEditorTabs.callers.test.ts` asserts that every call site PASSES
+   * `lastModerationAction`. That is a claim about the argument list, and a structural check
+   * like it type-checks straight past a WRONG argument — passing the field but reading it
+   * off the wrong object, or hardcoding it, would satisfy the ledger completely. This pins
+   * the OUTCOME instead: the same listing, distinguished only by the moderation action,
+   * must produce a DIFFERENT href.
+   *
+   * It is also the user-visible half of the defect. While the field was dropped, an
+   * owner-unpublished listing produced `?tab=publishing` from this function while the
+   * authoring page offered `details` + `media` for the very same row — two surfaces
+   * disagreeing about one listing.
+   */
+  it('🔴 an OWNER-unpublished listing lands on Details — the row now agrees with the page', () => {
+    expect(
+      myAppListingHref({ ...base, status: 'removed', lastModerationAction: 'owner-unpublish' })
+    ).toBe('/apps/listing/apl_h/edit?tab=details');
+  });
+
+  it('🔴 the pair DIFFERS on the moderation action alone — one field, two answers', () => {
+    // The discriminating control. Both fixtures are `removed`, same kind, same role, same
+    // capabilities; only `lastModerationAction` moves. A mutant that ignores the field
+    // makes these two equal, and this is the assertion that says so directly.
+    const modRemoved = myAppListingHref({ ...base, status: 'removed' });
+    const ownerUnpublished = myAppListingHref({
+      ...base,
+      status: 'removed',
+      lastModerationAction: 'owner-unpublish',
+    });
+    expect(modRemoved).not.toBe(ownerUnpublished);
   });
 
   it('an owner on a REJECTED listing lands on History — a different answer, same branch', () => {

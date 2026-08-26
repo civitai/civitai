@@ -58,6 +58,15 @@ import { trpc } from '~/utils/trpc';
  * its own enforcement point (`inviteCollaborator` / `respondToInvite` refuse a non-authorable
  * listing), because a tab set is a UI narrowing and never a gate.
  *
+ * 🔴 AND THE SET NOW ALSO READS `lastModerationAction`, because `status` alone cannot answer
+ * the question on `removed`. civitai/civitai#4413 taught the SERVER to tell an owner
+ * self-unpublish from a moderator takedown and to accept repair edits on the former; this
+ * page is what makes that reachable. An owner-unpublished listing regains Details + Media
+ * (each rendered in a repair-aware mode — see `ExternalListingEditForm`'s locked material
+ * fields and `ListingMediaEditor`'s unpublished frame); a moderator-delisted one still gets
+ * the narrowed set, and `AUTHORABLE_LISTING_STATUSES` is deliberately NOT widened, because
+ * its other consumer is the server gate on collaborator invites.
+ *
  * Access is single-sourced at the tRPC layer: `appListings.getAuthoringContext` resolves
  * the caller's role (owner OR accepted editor) and throws FORBIDDEN/NOT_FOUND otherwise
  * — both settle to `NotFound` here, which is the established non-enumerable posture.
@@ -155,6 +164,14 @@ export default function AppListingEditPage() {
     // set to at most Publishing + History — no Details, and above all no Collaborators.
     // See `editorTabsFor`; the page must never hardcode a tab past this derivation.
     status: context.status,
+    // 🔴 THE SECOND HALF OF THAT INPUT, and without it `status` cannot answer the question.
+    // `removed` is written by BOTH an owner self-unpublish and a moderator takedown; the
+    // server (civitai/civitai#4413) lets the owner repair the FIRST and still refuses the
+    // second, so the tab set has to read the same bit or the page offers a surface the
+    // procs refuse (or withholds one they accept). Arrives NORMALISED
+    // (`owner-unpublish` | `other` | null) — a seated editor never receives a moderator's
+    // actual verb. Same field the Publishing tab already branches on, two panels down.
+    lastModerationAction: context.lastModerationAction,
     capabilities: context.capabilities,
   });
   const tab = resolveEditorTab(router.query.tab, tabs);

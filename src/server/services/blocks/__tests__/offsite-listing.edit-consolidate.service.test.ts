@@ -151,6 +151,11 @@ beforeEach(() => {
   seq.n = 0;
   mockRead.appListing.findUnique.mockResolvedValue(null);
   mockRead.appListing.findFirst.mockResolvedValue(null);
+  // 🔴 EXPLICIT, because `vi.clearAllMocks()` clears CALLS but not IMPLEMENTATIONS — a
+  // `mockResolvedValue` set by one case survives into every later case in the file. The
+  // hoisted factory's "no seat" default therefore only holds until the first test that
+  // wires a seat, and the leak lands on the NEXT non-owner case as a spurious pass.
+  mockRead.appCollaborator.findFirst.mockResolvedValue(null);
   mockRead.appListingScreenshot.findMany.mockResolvedValue([]);
   mockRead.appListingPublishRequest.findFirst.mockResolvedValue(null);
   mockRead.oauthClient.findUnique.mockResolvedValue(null);
@@ -471,6 +476,56 @@ describe('getMyListingForEdit', () => {
     await expect(getMyListingForEdit({ listingId: 'nope', userId: 7 })).rejects.toBeInstanceOf(
       OffsiteRequestError
     );
+  });
+
+  /**
+   * 🔴 THE RESOLVED ROLE, ASSERTED BY VALUE — the sibling `getMyListingForApp` already has
+   * this pair (`offsite-listing.get-my-listing-for-app.service.test.ts`) and this proc did
+   * not, which is a real hole rather than a symmetry nit.
+   *
+   * ~20 cases above call `getMyListingForEdit` and none of them mentions `role`. The
+   * explicit `Promise<GetMyListingForEditResult>` annotation catches the field being
+   * DROPPED, so the surviving mutation is the one that keeps the field and gets its VALUE
+   * wrong: hardcode `role: 'owner'` in place of `listing.callerRole` and the whole unit
+   * suite stays green. Downstream that is not cosmetic — `isOwnerEdit` branches the entire
+   * repair-state copy on this one string, so a seated editor would be told "you unpublished
+   * it" and sent to a Publishing tab `editorTabsFor` withholds from them.
+   *
+   * The pair is what makes it discriminating. One case on an owner fixture cannot see a
+   * hardcoded `'owner'` at all; the editor case is the arm that can, and it is built on a
+   * listing owned by SOMEBODY ELSE so the fixture is incapable of producing `'owner'` by
+   * accident.
+   */
+  describe('🔴 the CALLER ROLE is returned by value, not assumed', () => {
+    const EDITOR = 42;
+
+    it('returns the OWNER role for the listing owner', async () => {
+      wireFindUnique(ownedRow({ status: 'draft' }), { apl_parent: editViewRow('ss_parent') });
+
+      const res = await getMyListingForEdit({ listingId: 'apl_parent', userId: 7 });
+      expect(res.role).toBe('owner');
+    });
+
+    it('🔴 returns the EDITOR role for an ACCEPTED SEAT — this proc is not owner-only', async () => {
+      // 🔴 `userId: 7` stays on the ROW while the CALLER is 42, so the caller cannot be the
+      // owner however `resolveCanonicalListingOwner` resolves it (offsite ⇒ the column). A
+      // fixture whose caller is also the owner could only ever produce `'owner'` and would
+      // be blind to the hardcoding mutant — which is exactly how this survived.
+      wireFindUnique(ownedRow({ status: 'draft' }), { apl_parent: editViewRow('ss_parent') });
+      mockRead.appCollaborator.findFirst.mockResolvedValue({
+        id: 'acol_1',
+        appListingId: 'apl_parent',
+        userId: EDITOR,
+        status: 'accepted',
+        role: 'editor',
+      });
+
+      const res = await getMyListingForEdit({ listingId: 'apl_parent', userId: EDITOR });
+      expect(res.role).toBe('editor');
+      // The discriminating control: the two roles must actually DIFFER on this proc, or a
+      // mutant that hardcodes `'owner'` passes the case above and nothing here can see it.
+      expect(res.role).not.toBe('owner');
+    });
   });
 });
 
