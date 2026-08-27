@@ -1,7 +1,7 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import { enhance } from '$app/forms';
-  import { SvelteSet } from 'svelte/reactivity';
+  import { SvelteMap, SvelteSet } from 'svelte/reactivity';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
@@ -17,7 +17,8 @@
   import { imageLookupUrl, userLookupUrl } from '$lib/entity-url';
   import { urlWith } from '$lib/url';
   import { BULK_SOURCE_LABELS, BULK_SOURCES } from './sources';
-  import { DEFAULT_LIMIT, LIMIT_OPTIONS } from './limits';
+  import { DEFAULT_LIMIT, LIMIT_OPTIONS, MAX_SELECTION } from './limits';
+  import { batchKey } from './selection';
   import ImageActionBar from '$lib/components/ImageActionBar.svelte';
   import ListFilterBar, { type FilterField } from '$lib/components/ListFilterBar.svelte';
   import { NsfwLevel } from '@civitai/shared';
@@ -30,9 +31,9 @@
   // half-typed id the moment the previous action's invalidation lands.
   let source = $state(untrack(() => data.source));
   let term = $state(untrack(() => data.q));
-  const subject = $derived(page.url.search);
+  const urlSubject = $derived(page.url.search);
   $effect(() => {
-    subject;
+    urlSubject;
     untrack(() => {
       source = data.source;
       term = data.q;
@@ -41,18 +42,39 @@
 
   const selected = new SvelteSet<string | number>();
 
-  // Same reason: a FAILED action also invalidates, and clearing on `data.batch` identity would empty
-  // the selection under an error that says "narrow the selection".
+  const batchSubject = $derived(batchKey(page.url));
+
+  /** Entries outlive the page they were recorded on, because the actions act on the whole selection. */
+  const seen = new SvelteMap<string | number, { userId: number; blocked: boolean }>();
+  const seenOwners = new SvelteMap<number, { username: string | null; bannedAt: Date | null }>();
+
+  // One effect, not two: the clear and the fill maintain the same maps against the same subject, and
+  // as siblings the whole thing rested on which was declared first.
+  //
+  // Cleared on the BATCH, not on `data`: a failed action invalidates too, and clearing there would
+  // empty the selection under an error that says "narrow the selection".
+  let currentBatch = '';
   $effect(() => {
-    subject;
-    untrack(() => selected.clear());
+    const batch = batchSubject;
+    const items = data.batch?.items ?? [];
+    const owners = data.owners;
+    untrack(() => {
+      if (batch !== currentBatch) {
+        currentBatch = batch;
+        selected.clear();
+        seen.clear();
+        seenOwners.clear();
+      }
+      for (const i of items) seen.set(i.id, { userId: i.userId, blocked: i.ingestion === 'Blocked' });
+      for (const o of owners) seenOwners.set(o.id, { username: o.username, bannedAt: o.bannedAt });
+    });
   });
 
   // Restore is only safe on already-blocked images; the bar warns when a selection includes others.
+  // Read when each page loaded, so for pages the moderator has left this is a snapshot — the server
+  // reports the count it actually found.
   const blockedIds = $derived(
-    new Set<string | number>(
-      (data.batch?.items ?? []).filter((i) => i.ingestion === 'Blocked').map((i) => i.id)
-    )
+    new Set<string | number>([...seen].filter(([, v]) => v.blocked).map(([id]) => id))
   );
 
   // Retool filtered the fetched batch client-side, and so does this: the batch is one query the
@@ -99,9 +121,20 @@
     })
   );
 
-  const ownerOfImage = $derived(new Map((data.batch?.items ?? []).map((i) => [i.id, i.userId])));
-  const selectedOwnerCount = $derived(
-    new Set([...selected].map((id) => ownerOfImage.get(Number(id))).filter((id) => id != null)).size
+  /**
+   * 🔴 Named, not counted. A selection can now span pages, so the Owners row below — which is the
+   * batch's current page — is no longer the list of accounts an action reaches. Striking is offered
+   * in the same gesture as removing, and a strike against an account the moderator never saw is one
+   * they could not check for a ban, a note, or whether it is the same person twice.
+   */
+  const batchOwners = $derived(
+    [...seenOwners].map(([id, o]) => ({ id, ...o }))
+  );
+
+  const selectedOwners = $derived(
+    [...new Set([...selected].map((id) => seen.get(id)?.userId).filter((id) => id != null))].map(
+      (id) => ({ id, ...(seenOwners.get(id) ?? { username: null, bannedAt: null }) })
+    )
   );
 
   // The account-wide removal is armed separately from everything else on the page: it is the only
@@ -109,7 +142,7 @@
   let nuking = $state(false);
   let nukeConfirm = $state('');
   $effect(() => {
-    subject;
+    urlSubject;
     untrack(() => {
       nuking = false;
       nukeConfirm = '';
@@ -245,9 +278,8 @@
     </h2>
     <p class="mb-3 text-xs text-dark-2">
       {#if batch.truncated || batch.offset > 0}
-        <span class="text-amber-300">
-          An action here covers only this page, not all {num(batch.total)}.
-        </span>
+        A selection survives Previous and Next, so you can gather images across pages and act on them
+        once — <span class="text-amber-300">up to {num(MAX_SELECTION)} per action</span>.
       {:else}
         The whole set.
       {/if}
@@ -292,10 +324,12 @@
       {/if}
     </div>
 
-    {#if data.owners.length}
+    <!-- Every owner seen in this batch, not just this page's: the selection spans pages, so a row
+         scoped to the current window understates who an action reaches. -->
+    {#if batchOwners.length}
       <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm">
         <span class="text-xs tracking-wide text-dark-2 uppercase">Owners</span>
-        {#each data.owners as owner (owner.id)}
+        {#each batchOwners as owner (owner.id)}
           <span class="flex items-baseline gap-1">
             <a href={userLookupUrl(owner.username ?? owner.id)} class={LINK_CLASS}>
               {owner.username ?? `#${owner.id}`}
@@ -322,7 +356,8 @@
       selectable={filteredItems.map((i) => i.id)}
       onSubmit={onSubmit.enhance}
       submitting={onSubmit.submitting}
-      ownerCount={selectedOwnerCount}
+      owners={selectedOwners}
+      maxSelection={MAX_SELECTION}
       blockedIds={blockedIds}
     />
   {/if}

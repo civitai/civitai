@@ -17,26 +17,34 @@
     selectable,
     onSubmit,
     submitting,
-    ownerCount = 1,
+    owners = [],
     notify = true,
     flags = true,
     blockedIds,
+    maxSelection,
   }: {
     selected: SvelteSet<string | number>;
     /** Every id currently on screen, for the select-all helpers. */
     selectable: (string | number)[];
     onSubmit: SubmitFunction;
     submitting: boolean;
-    /** How many accounts the selection spans — a removal here can touch accounts not looked up. */
-    ownerCount?: number;
+    /**
+     * The accounts the selection spans. Named rather than counted because the caller's own owner list
+     * may be scoped to one page while the selection is not, and a strike is offered from here.
+     */
+    owners?: { id: number; username: string | null; bannedAt?: Date | null }[];
     notify?: boolean;
     flags?: boolean;
-    /** Which of `selectable` are currently blocked, so Restore can warn about the rest. */
+    /** Which selected ids are known to be blocked, so Restore can warn about the rest. */
     blockedIds?: Set<string | number>;
+    /** The action's id cap, when the caller has one. Submitting past it is refused server-side. */
+    maxSelection?: number;
   } = $props();
 
   const ids = $derived([...selected].join(','));
   const count = $derived(selected.size);
+  const ownerCount = $derived(Math.max(1, owners.length));
+  const overCap = $derived(maxSelection != null && count > maxSelection);
   const unblockedSelected = $derived(
     blockedIds ? [...selected].filter((id) => !blockedIds.has(id)).length : 0
   );
@@ -134,7 +142,14 @@
     </div>
   </div>
 
-  {#if count > 0 && !confirming && !notifying && !flagging}
+  {#if overCap}
+    <p class="mt-3 rounded-md border border-red-500/40 bg-red-500/10 p-2 text-sm text-red-200">
+      {num(count)} selected — one action takes {num(maxSelection ?? 0)}. Unselect
+      {num(count - (maxSelection ?? 0))} before acting.
+    </p>
+  {/if}
+
+  {#if count > 0 && !overCap && !confirming && !notifying && !flagging}
     <div class="mt-3 flex flex-wrap gap-2">
       <Button size="sm" variant="destructive" onclick={() => (confirming = 'remove')}>
         Remove selected
@@ -212,6 +227,15 @@
             class="min-w-48 flex-1"
           />
         </div>
+        {#if owners.length > 1}
+          <!-- The accounts this reaches, by name. The strike below is issued against every one of
+               them, and the page's own owner list may only cover what is on screen. -->
+          <p class="mb-2 text-xs text-amber-200">
+            Owners:
+            {#each owners as owner, i (owner.id)}{i > 0 ? ', ' : ''}{owner.username ??
+                `#${owner.id}`}{owner.bannedAt ? ' (banned)' : ''}{/each}
+          </p>
+        {/if}
         <!-- Retool's strikeCheckbox. The removal and the strike for it were one gesture there; without
              it a moderator leaves for User Lookup once per owner. -->
         <label class="mb-2 flex items-start gap-2 text-sm text-white">
