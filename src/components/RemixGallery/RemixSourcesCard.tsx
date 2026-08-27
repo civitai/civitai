@@ -98,9 +98,9 @@ export function RemixSourcesCard({
               rel="noreferrer"
               className="shrink-0"
             >
-              {source.url ? (
+              {source.image?.viewable ? (
                 <EdgeMedia
-                  src={source.url}
+                  src={source.image.url}
                   type="image"
                   width={64}
                   className="size-12 rounded object-cover"

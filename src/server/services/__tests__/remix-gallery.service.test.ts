@@ -1422,6 +1422,10 @@ describe('startReadyRemixSubmissionClocks', () => {
     imageId: SUBMITTED_IMAGE,
     nsfwLevel: 1,
     doomed: false,
+    // Selected AND live. The SQL filters on this too, but the loop re-checks it:
+    // a unit test cannot execute a WHERE clause, so the in-memory guard is the
+    // only part of that rule any test here can see.
+    listable: true,
     needsReview: null,
     ...over,
   });
@@ -1471,8 +1475,18 @@ describe('startReadyRemixSubmissionClocks', () => {
     // A deadline was written, and the marker went with it in the SAME statement.
     // Two statements would let a crash between them leave a row whose clock is
     // running and whose marker still invites another restamp.
-    expect(args.data).toHaveProperty('expiresAt');
+    // The VALUE, not just the key. `* 3_600` instead of `* 3_600_000` expires
+    // every submission in 48 seconds and refunds it, and `toHaveProperty` is
+    // satisfied by both.
+    const stamped = (args.data.expiresAt as Date).getTime() - Date.now();
+    expect(
+      stamped,
+      'the restamped deadline must be the configured window, not an arbitrary one'
+    ).toBeGreaterThan(47 * 3_600_000);
+    expect(stamped).toBeLessThanOrEqual(48 * 3_600_000);
     expect(args.data.data).not.toHaveProperty('awaitingReadiness');
+    // The payload survives the strip.
+    expect(args.data.data).toMatchObject({ imageId: SUBMITTED_IMAGE });
     expect(args.where).toMatchObject({ data: { path: ['awaitingReadiness'], equals: true } });
     expect(settlePlacement).not.toHaveBeenCalled();
   });
@@ -1492,11 +1506,42 @@ describe('startReadyRemixSubmissionClocks', () => {
     // Named individually. A single toContain survives deleting any of the
     // others, and a pass that stopped filtering on ingestion would read as
     // covered.
-    for (const clause of ['publishedAt', 'Scanned', 'tosViolation', 'ORDER BY'])
-      expect(readinessSql, clause + ' is not in the readiness select').toContain(clause);
+    // Comments stripped FIRST. The sweep block below measured this exploit:
+    // commenting a clause out passed the whole file before its strip existed,
+    // because the text is still there. Without this, wrapping the listability
+    // disjunction in a block comment satisfies every token below.
+    const sql = readinessSql.replace(/--[^\n]*|\/\*[\s\S]*?\*\//g, ' ');
+
+    // 🔴 Asserted against the SELECT LIST ALONE, not the whole statement. The
+    // first version of this checked the full text and passed while
+    // `img."needsReview"` was MISSING from the select — the token was satisfied
+    // by its other occurrence in the WHERE, and production read `undefined` for
+    // every row, silently reopening the moderation bypass. A token assertion is
+    // only as good as the region it is scoped to.
+    const selectList = sql.slice(0, sql.indexOf('FROM "Placement"'));
+
+    // The columns the LOOP reads, not just the ones the WHERE filters on:
+    // dropping `needsReview` from the SELECT re-opens the moderation bypass this
+    // whole change exists to close, and every loop-level test would stay green
+    // because each supplies the field in its own fixture.
+    for (const column of ['needsReview', 'nsfwLevel', 'pl.data', 'imageId'])
+      expect(selectList, column + ' is not in the SELECT list').toContain(column);
+    for (const clause of ['publishedAt', 'Scanned', 'tosViolation', 'ORDER BY', 'LIMIT'])
+      expect(sql, clause + ' is not in the readiness statement').toContain(clause);
     // LEFT, so a submission whose image was DELETED still comes back to be
     // refunded rather than being dropped and left holding escrow forever.
-    expect(readinessSql).toContain('LEFT JOIN');
+    expect(sql).toContain('LEFT JOIN');
+    // 🔴 The alias must not be `i`: queueImageIsListable declares its own
+    // `FROM "Image" i`, so an outer alias named `i` is captured by it and the
+    // correlation collapses to `i.id = i.id` — a constant TRUE that made the
+    // entire filter inert and refunded every still-scanning submission.
+    expect(sql, 'the outer Image alias must not collide with the fragment').toContain(
+      'LEFT JOIN "Image" img'
+    );
+    // Scoping. Without these the pass would restamp and expire STICKER
+    // placements, or re-settle rows that are already resolved.
+    expect(sql).toContain('remixGallery');
+    expect(sql).toContain("status = 'pending'");
   });
 
   it('refunds and marks undeliverable when the image is blocked', async () => {
@@ -1508,12 +1553,36 @@ describe('startReadyRemixSubmissionClocks', () => {
     // `expire` is the full refund - the whole escrow back to the placer with no
     // decline fee, which is right because nobody declined them.
     expect(lastSettleArgs()).toMatchObject({ placementId: PLACEMENT_ID, action: 'expire' });
-    const [updateArgs] = placementUpdate.mock.calls.at(-1) as [{ data: MixedObject }];
-    expect(updateArgs.data.data).toMatchObject({ undeliverable: true });
+    // Exactly once. A refactor that settles twice per row satisfies a bare
+    // `refunded: 1` and `lastSettleArgs()` identically.
+    expect(settlePlacement).toHaveBeenCalledTimes(1);
+    const [updateArgs] = placementUpdate.mock.calls.at(-1) as [
+      { where: MixedObject; data: MixedObject }
+    ];
+    // WHICH row. Marking `row.targetId` instead of `row.id` writes the flag onto
+    // an unrelated placement AND overwrites its payload, so a stranger is told
+    // we could not deliver something of theirs while this placer gets silence.
+    expect(updateArgs.where, 'the marker must land on THIS placement').toEqual({
+      id: PLACEMENT_ID,
+    });
+    // The rest of the payload has to survive. Writing `{ undeliverable: true }`
+    // alone satisfies `toMatchObject` and permanently loses `imageId`, so the
+    // queue cannot render the row and the notification links to /images/undefined.
+    expect(updateArgs.data.data).toMatchObject({
+      imageId: SUBMITTED_IMAGE,
+      undeliverable: true,
+    });
   });
 
   it('refunds when the image was deleted out from under the submission', async () => {
-    respondReadiness({ rows: [actionable({ imageId: null })] });
+    // Every image column is NULL on a deleted row, because they come from the
+    // LEFT JOIN rather than from the placement payload. The previous fixture set
+    // only `imageId: null`, which the SQL could never produce — it read imageId
+    // from pl.data, so that branch was dead in production and the test passed
+    // for the wrong reason.
+    respondReadiness({
+      rows: [actionable({ imageId: null, nsfwLevel: null, doomed: null, listable: null })],
+    });
 
     await expect(startReadyRemixSubmissionClocks({})).resolves.toMatchObject({ refunded: 1 });
   });
@@ -1564,6 +1633,52 @@ describe('startReadyRemixSubmissionClocks', () => {
       refunded: 1,
     });
     expect(lastSettleArgs()).toMatchObject({ action: 'expire' });
+  });
+
+  /**
+   * 🔴 The silent-refund case an intent review found.
+   *
+   * A needsReview row is left pending on purpose, because a moderator may clear
+   * it. But when its deadline passes, the ORDINARY expiry sweep settles it — and
+   * that sweep knows nothing about why. Without a marker written here the placer
+   * paid, was never delivered to, and gets their Buzz back with no message: the
+   * exact case the undelivered notification exists for, going unannounced.
+   *
+   * Not a corner case. Measured 2026-08-27: needsReview p90 age is 146h against a
+   * 48h window, and 95 of 297 rows in review were already past 48h.
+   */
+  it('marks a needsReview row so its later expiry is explained, not silent', async () => {
+    respondReadiness({ rows: [actionable({ needsReview: 'tag' })] });
+
+    await startReadyRemixSubmissionClocks({});
+
+    const [updateArgs] = placementUpdate.mock.calls.at(-1) as [{ data: MixedObject }];
+    expect(
+      updateArgs.data.data,
+      'a needsReview row must carry undeliverable, or its refund is silent'
+    ).toMatchObject({ undeliverable: true });
+    // Still not settled — the review can clear, and refunding now would take the
+    // decision away from a moderator who has not made it yet.
+    expect(settlePlacement).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The other half of the same marker. A review that CLEARS makes the row
+   * deliverable after all, so the flag must come off — otherwise a submission
+   * that goes on to be approved still carries a failure marker, and any later
+   * expiry announces a delivery failure that never happened.
+   */
+  it("clears the undeliverable flag when a review resolves in the submission's favour", async () => {
+    respondReadiness({
+      rows: [actionable({ data: { imageId: 555, awaitingReadiness: true, undeliverable: true } })],
+    });
+
+    const result = await startReadyRemixSubmissionClocks({});
+
+    expect(result.started).toBe(1);
+    const [args] = placementUpdateMany.mock.calls.at(-1) as [{ data: MixedObject }];
+    expect(args.data.data).not.toHaveProperty('undeliverable');
+    expect(args.data.data).not.toHaveProperty('awaitingReadiness');
   });
 
   it('does not count a restamp the claim lost', async () => {
@@ -1625,20 +1740,29 @@ describe('getRemixSourcesForImage', () => {
   });
 
   /**
-   * 🔴 DELIBERATE DIVERGENCE — do not "harmonise" this with the image-detail
-   * remix-of card, which reads the NEW standard only.
+   * 🔴 DELIBERATE DIVERGENCE — do not "harmonise" this with
+   * `ImageRemixOfDetails` / `getImageGenerationData`, which read the NEW
+   * standard only. Both are correct. Justin ruled on them separately on
+   * 2026-08-27, and the discriminator is NOT old-vs-new provenance.
    *
-   * Justin ruled on both, separately, 2026-08-27. The detail card asserts a
-   * lineage about someone ELSE's image in public, so it may only say what the
-   * server established: new standard only, "the old one isn't trustable". This
-   * card offers YOU a shortcut to submit YOUR OWN image, and the old field buys
-   * only a PAID submission — which grants no capability the existing submit
-   * modal did not already give, since anyone can pay to submit any of their
-   * images to any open gallery.
+   * It is whether a human gates the thing before anyone sees it.
    *
-   * Dropping the old field here would cost ~42% of remixes (28 old vs 39 new
-   * over an 8h prod window, no downward trend) and close nothing. The trust
-   * concern is handled by the free gate, not by this list.
+   * That card publishes attribution automatically, on a public page, to every
+   * viewer — so it can only stand on what the server itself verified. This one
+   * hands a candidate to the host, who approves or declines it, and THAT REVIEW
+   * IS THE TRUST BOUNDARY. An unverifiable claim costs nothing here because
+   * nobody sees it until its subject has agreed.
+   *
+   * So the two files cite the same prod measurement (28 old vs 39 new over 8h,
+   * no downward trend) and reach opposite conclusions, on purpose. Without this
+   * note the next competent reviewer correctly recommends unifying them. If they
+   * ever do become one function, the parameter is not `verifiedOnly` — it is
+   * "does a human gate this before it is seen".
+   *
+   * Dropping the old field here would cost ~42% of remixes and close nothing:
+   * paying to submit any of your images to any open gallery is already possible
+   * through the submit modal. The free path is gated on verified provenance
+   * separately, and that gate is where the trust question actually lives.
    */
   it('finds the host behind the OLD provenance standard, not just the new one', async () => {
     respondWith({ remixOfId: OLD_HOST, sourceImageIds: [] });

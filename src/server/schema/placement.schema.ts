@@ -335,6 +335,7 @@ export const getPendingRemixGallerySubmissionsSchema = z.object({
  */
 export const getRemixSourcesForImageSchema = z.object({
   imageId: z.number().int().positive(),
+  browsingLevel: z.number().min(0).default(allBrowsingLevelsFlag),
 });
 
 /** Same marking rule as the owner queue: the submitter's own band, not a filter. */

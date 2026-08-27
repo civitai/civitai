@@ -448,7 +448,17 @@ export const placementRouter = router({
   // somebody else's image.
   getRemixSourcesForImage: protectedProcedure
     .input(getRemixSourcesForImageSchema)
-    .query(({ input, ctx }) => getRemixSourcesForImage({ ...input, placerId: ctx.user.id })),
+    .query(({ input, ctx }) =>
+      getRemixSourcesForImage({
+        imageId: input.imageId,
+        placerId: ctx.user.id,
+        // From the request's own feature flags, never from input: a
+        // client-supplied ceiling would be the client choosing what it is
+        // allowed to be sent.
+        domainLevels: domainServableLevels(ctx),
+        viewerLevels: viewerBrowsingLevel(ctx, input.browsingLevel),
+      })
+    ),
 
   /**
    * Not flag-gated, for the same reason `actOnStickers` isn't: turning the flag
