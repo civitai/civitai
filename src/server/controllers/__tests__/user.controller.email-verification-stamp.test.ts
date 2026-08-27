@@ -1,5 +1,8 @@
+import { readFileSync } from 'fs';
+import path from 'path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as BlocklistService from '~/server/services/blocklist.service';
+import type * as BuzzService from '~/server/services/buzz.service';
 
 /**
  * 🔴 The WRITE half of the email-verification gate.
@@ -26,6 +29,15 @@ vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
 
 vi.mock('~/server/email/templates/emailVerification.email', () => ({
   emailVerificationEmail: { send: mockSend },
+}));
+
+vi.mock('~/server/recaptcha/client', () => ({
+  verifyCaptchaToken: vi.fn().mockResolvedValue(true),
+}));
+
+vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof BuzzService>()),
+  createBuzzTransaction: vi.fn().mockResolvedValue({}),
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -108,6 +120,9 @@ beforeEach(() => {
   mockSend.mockResolvedValue(undefined);
   dbMock.dbWrite.user.update.mockResolvedValue({ id: USER_ID });
   dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
+  // `patchUserSettings` (the ToS steps) raw-UPDATEs and refuses an empty result set, so the
+  // retroactivity arms below reach their assertions instead of throwing on the way there.
+  dbMock.dbWrite.$queryRawUnsafe.mockResolvedValue([{ settings: {} }]);
   dbMock.dbRead.user.findFirst.mockResolvedValue(null);
   redisMock.redis.set.mockResolvedValue('OK');
 });
@@ -310,22 +325,38 @@ describe('onboarding Profile step — email-verification stamp', () => {
    * was not enough: a ToS-step writer was green against the single-step version of this test.
    */
   it.each([
-    ['BrowsingLevels', OnboardingSteps.BrowsingLevels],
-    ['TOS', OnboardingSteps.TOS],
-    ['RedTOS', OnboardingSteps.RedTOS],
-    ['Buzz', OnboardingSteps.Buzz],
-  ])('writes no stamp on the %s step', async (_label, step) => {
+    ['BrowsingLevels', OnboardingSteps.BrowsingLevels, {}],
+    ['TOS', OnboardingSteps.TOS, {}],
+    ['RedTOS', OnboardingSteps.RedTOS, {}],
+    ['Buzz', OnboardingSteps.Buzz, { recaptchaToken: 'ok' }],
+  ])('writes no stamp on the %s step', async (_label, step, extra) => {
     dbMock.dbWrite.user.findUnique.mockResolvedValue(row());
     dbMock.dbRead.user.findUnique.mockResolvedValue({ id: USER_ID, settings: {}, meta: {} });
 
     await completeOnboardingHandler({
-      input: { step },
+      input: { step, ...extra },
       ctx: ctx(),
-    } as Parameters<typeof completeOnboardingHandler>[0]).catch(() => undefined);
+    } as Parameters<typeof completeOnboardingHandler>[0]);
 
+    // 🔴 The arm's own positive control. Every one of these steps writes the user row, so if the
+    // handler threw before reaching it, the zero below means "the step never ran" rather than "the
+    // step wrote no stamp" — and the assertion is theatre. The Buzz arm was exactly that until this
+    // was added: without `recaptchaToken` it threw on the captcha check, and a stamp writer placed in
+    // that step passed with the suite green.
+    expect(dbMock.dbWrite.user.update).toHaveBeenCalled();
     expect(stampWrites()).toHaveLength(0);
-    for (const call of dbMock.dbWrite.user.update.mock.calls) {
-      expect(call[0].data).not.toHaveProperty('meta');
-    }
+  });
+
+  /**
+   * The behavioural loop can only drive steps it can satisfy. This covers every step at once: the
+   * controller may reach the marker's only writer from exactly one place.
+   */
+  it('calls the marker writer from exactly one place in the controller', () => {
+    const source = readFileSync(
+      path.resolve(__dirname, '../../../../src/server/controllers/user.controller.ts'),
+      'utf8'
+    );
+    const calls = source.match(/setEmailVerificationRequired\(/g) ?? [];
+    expect(calls).toHaveLength(1);
   });
 });
