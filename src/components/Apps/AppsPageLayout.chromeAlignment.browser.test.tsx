@@ -19,13 +19,22 @@
  *
  * 🔴 READ THIS BEFORE TRUSTING IT AS A GATE: it is not one. This file is in the
  * Vitest browser-mode `component` project, which CI runs only as the preview
- * pipeline's `preview / component-tests` — REPORT-ONLY, non-blocking, and red
- * repo-wide at time of writing for an unrelated pre-existing failure in
- * `AppBlockChrome.browser.test.tsx`. The ENFORCEABLE half lives as source guards in
- * the blocking `unit` project (`__tests__/appsPageLayout.test.ts` — no `size` prop,
- * every rendering page mounts the layout; `__tests__/appsPageWidths.test.ts` — the
- * measures and the route taxonomy). This file exists because those guards pin
- * SYMBOLS and only a real render can pin PIXELS.
+ * pipeline's `preview / component-tests` — REPORT-ONLY, non-blocking, and RED on this
+ * branch for a reason that has nothing to do with `/apps`: measured 2026-08-27, the
+ * whole project is 192 files / 2119 tests passing with ONE file failing,
+ * `src/components/Resource/Forms/ModelVersionUpsertForm.browser.test.tsx` (17 tests),
+ * whose entire subtree is byte-identical to `origin/main` here. (An older note in
+ * `AppsPageLayout.geometry.browser.test.tsx` blames `AppBlockChrome.browser.test.tsx`
+ * — that is STALE: it now passes, 21/21. Do not re-derive the culprit from either
+ * comment; run the project and read the file list.)
+ *
+ * A permanently-red non-blocking gate trains everyone to click through it, so anything
+ * only this file catches is effectively unguarded. The ENFORCEABLE half therefore lives
+ * in the blocking `unit` project: `__tests__/appsPageLayoutRender.test.ts` (the measure
+ * box, on the rendered tree), `__tests__/appsPageLayout.test.ts` (no container-width
+ * prop) and `__tests__/appsPageWidths.test.ts` (the AST adoption walk + the measures and
+ * route taxonomy). This file exists because those pin STRUCTURE, and only a real browser
+ * can pin PIXELS.
  *
  * 🔴 WHY THIS FILE LOADS `@mantine/core/styles.css` AND MOST SIBLINGS MUST NOT.
  * The shared component scaffold deliberately omits Mantine's stylesheet, so the
@@ -222,6 +231,58 @@ describe.each(VIEWPORTS)(
         ROUTES.filter((r) => typeof r.measure === 'number').map((r) => seen[r.route][1])
       );
       expect(measuredWidths.size).toBe(3);
+    });
+
+    test('🔴 a measured page HEADER is bounded too, and the band keeps its 16/32 grouping', async () => {
+      // The audit finding this pins: with only the body bounded, a measured page's header
+      // PROSE ran to the full container (/apps/submit's real subtitle measured 1224.13px
+      // against a 1068 measure). Both are bounded now — and the vertical grouping must
+      // survive the extra wrapper, which the sibling geometry file cannot check because
+      // it renders a header with NO measure.
+      await page.viewport(width, height);
+      renderWithProviders(
+        <AppsPageLayout
+          measure={1068}
+          title="Submit an app"
+          subtitle="Choose how you want to list your app, on-platform or as an external link."
+        >
+          <div data-testid="body" style={{ height: 200 }}>
+            body
+          </div>
+        </AppsPageLayout>
+      );
+      await expect.element(page.getByTestId('body')).toBeInTheDocument();
+      await new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(res)));
+
+      const firstTab = document.querySelector('[role="tab"]') as HTMLElement;
+      expect(parseFloat(getComputedStyle(firstTab).paddingLeft) > 0).toBe(true);
+
+      const nav = document.querySelector('nav[aria-label="App sections"]') as HTMLElement;
+      const title = document.querySelector('h2') as HTMLElement;
+      const bodyEl = document.querySelector('[data-testid="body"]') as HTMLElement;
+      const titleRect = title.getBoundingClientRect();
+
+      // The header is capped at the measure, not the container…
+      const headerBox = title.closest('[style*="max-width"]') as HTMLElement;
+      expect(headerBox).not.toBeNull();
+      expect(Math.round(headerBox.getBoundingClientRect().width)).toBe(1068);
+      // …and shares its LEFT edge with both the nav above and the body below.
+      expect(Math.round(titleRect.left)).toBe(Math.round(nav.getBoundingClientRect().left));
+      expect(Math.round(headerBox.getBoundingClientRect().left)).toBe(
+        Math.round(bodyEl.getBoundingClientRect().left)
+      );
+
+      // THE GROUPING, unchanged by the new wrapper: 16px tabs→title inside the band,
+      // 32px band→body outside it. These are the two numbers the layout's own comments
+      // call load-bearing.
+      const tabRect = firstTab.getBoundingClientRect();
+      const band = nav.parentElement as HTMLElement;
+      expect(Math.round((titleRect.top - tabRect.bottom) * 100) / 100).toBe(16);
+      expect(
+        Math.round(
+          (bodyEl.getBoundingClientRect().top - band.getBoundingClientRect().bottom) * 100
+        ) / 100
+      ).toBe(32);
     });
   }
 );

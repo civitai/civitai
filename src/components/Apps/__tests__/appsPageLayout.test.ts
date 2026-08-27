@@ -143,24 +143,25 @@ describe('AppsPageLayout takes NO per-page container width', () => {
     expect(src).not.toMatch(/^\s*size\s*=/m);
   });
 
-  it('the BODY measure is applied below the chrome, and left-aligned', () => {
-    const src = layoutSrc();
-    // The measure wraps `{children}` ONLY — a `maw` on the Stack or Container
-    // would take the sub-nav with it, which is the defect.
-    // 🔴 THE EXACT TAG, and that is what makes the left-alignment ban airtight
-    // rather than a keyword hunt: this shape admits `maw` and NOTHING ELSE, so no
-    // `mx="auto"`, `style={{ marginInline: 'auto' }}` or `ta`/`align` prop can be
-    // added to the measure box without failing here.
+  it('the measure never reaches the CONTAINER or the root stack', () => {
+    // 🔴 THIS TEST DELIBERATELY NO LONGER CLAIMS "and left-aligned", AND THAT IS THE
+    // FIX, not a weakening. It used to assert the exact tag
+    // `<Box maw={measure}>{children}</Box>` and call the left-alignment ban "airtight".
+    // It was not, in two independent ways, both of which passed the whole blocking suite:
     //
-    // Scoped to TAGS, deliberately — a whole-file ban on a centring idiom fails on
-    // the component's own docstring, which names those idioms in order to forbid
-    // them. (A comment-stripping helper is NOT the fix: the layout's prose contains
-    // the literal `/apps/*`, whose `/*` opens a false block comment and eats the
-    // JSX after it. Measured — it swallowed the `<Container>` line.)
-    expect(src).toMatch(/<Box\s+maw=\{measure\}>\{children\}<\/Box>/);
-    expect(src).not.toMatch(/<Box[^>]*\b(mx|ml|mr|style|className)=/s);
-    expect(src).not.toMatch(/<Container[^>]*\b(maw|mx)=/s);
-    expect(src).not.toMatch(/<Stack[^>]*\b(maw|mx)=/s);
+    //   • move that exact tag into a JSX COMMENT and render a bare `{children}` — the
+    //     regex matches the comment, and the feature is dead;
+    //   • leave that exact tag BYTE-IDENTICAL and wrap it in `<Center>` — no banned prop
+    //     is on the Box, and the body renders centred.
+    //
+    // A source-text match cannot see either, because text does not care whether the code
+    // runs or what encloses it. Both are now killed on the RENDERED tree in
+    // `appsPageLayoutRender.test.ts`, which is in this same blocking project. What is
+    // left here is the one claim source text CAN carry honestly: the measure is not
+    // applied to the two elements that would take the chrome with it.
+    const src = layoutSrc();
+    expect(src).not.toMatch(/<Container[^>]*\b(maw|mx|w)=/s);
+    expect(src).not.toMatch(/<Stack[^>]*\b(maw|mx|w)=/s);
   });
 
   it('the guard is reading a real file (not a silently-empty read)', () => {

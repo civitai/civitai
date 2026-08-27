@@ -1,5 +1,7 @@
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
+import ts from 'typescript';
 import { describe, expect, test } from 'vitest';
 import {
   APPS_CONTAINER_GUTTER,
@@ -31,6 +33,111 @@ import {
  * `AppsPageLayout.chromeAlignment.browser.test.tsx` (browser-mode, report-only). This
  * file pins the CONSTANTS and the route taxonomy in the tier that actually gates.
  */
+
+/**
+ * Tags a page's default export may render WITHOUT mounting the shared chrome: the
+ * access-denied leaf and the document-head element that is a sibling of the layout
+ * rather than a substitute for it.
+ */
+const CHROME_EXEMPT_TAGS = new Set(['Meta', 'NotFound']);
+
+/**
+ * Components a page may render INSTEAD of mounting the chrome itself, because they mount
+ * it one level down. `/apps/submit`'s `?edit=<listingId>` branch is the only such case:
+ * it returns `<AppsSubmitEditView …/>`, and that component owns its own `AppsPageLayout`
+ * (nesting a second one inside it would double the chrome).
+ *
+ * 🔴 EVERY ENTRY IS VERIFIED, NOT TRUSTED. An allowlist is exactly where a real orphan
+ * would hide — "it's fine, that component handles it" is the sentence that stops anyone
+ * looking. The test below parses each delegate's own source and fails if it does not in
+ * fact render `AppsPageLayout`, so adding a name here cannot silence the guard.
+ */
+const CHROME_DELEGATES: Record<string, { file: string; exportName: string }> = {
+  AppsSubmitEditView: {
+    file: 'src/components/Apps/AppsSubmitEditView.tsx',
+    exportName: 'AppsSubmitEditView',
+  },
+};
+
+/**
+ * The top-level JSX tag names of each `return` in a page's default-export component,
+ * one array per return statement, fragments unwrapped.
+ *
+ * 🔴 THIS IS AN AST WALK BECAUSE A TEXT GUARD IS WALKABLE BY A COMMENT. `/<AppsPageLayout[\s>]/`
+ * over the file's source matches a `{/* <AppsPageLayout …> *​/}` just as happily as a real
+ * render, so a page can be re-orphaned while the guard stays green. Comments are TRIVIA in
+ * the TypeScript AST — they are not nodes — so a commented-out element simply is not here.
+ *
+ * Nested functions are deliberately NOT descended into: a `.map()` callback or a locally
+ * declared sub-component has its own returns, and they are not the page's outermost render.
+ */
+function pageReturnTags(file: string, exportName?: string): string[][] {
+  const source = ts.createSourceFile(
+    file,
+    fs.readFileSync(file, 'utf8'),
+    ts.ScriptTarget.Latest,
+    /* setParentNodes */ true,
+    ts.ScriptKind.TSX
+  );
+
+  let component: ts.FunctionDeclaration | undefined;
+  source.forEachChild((node) => {
+    if (!ts.isFunctionDeclaration(node)) return;
+    const matches = exportName
+      ? node.name?.getText(source) === exportName
+      : node.modifiers?.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword);
+    if (matches) component = node;
+  });
+  if (!component?.body) {
+    throw new Error(
+      exportName
+        ? `no \`export function ${exportName}\` found`
+        : 'no `export default function` component found'
+    );
+  }
+
+  /** Tag names at the TOP level of one returned expression. */
+  const topLevelTags = (expr: ts.Expression | undefined): string[] => {
+    if (!expr) return [];
+    if (ts.isParenthesizedExpression(expr)) return topLevelTags(expr.expression);
+    // `cond ? <A/> : <B/>` renders one of two trees; both must satisfy the rule.
+    if (ts.isConditionalExpression(expr))
+      return [...topLevelTags(expr.whenTrue), ...topLevelTags(expr.whenFalse)];
+    // `cond && <A/>` — the JSX side is what can render.
+    if (ts.isBinaryExpression(expr)) return topLevelTags(expr.right);
+    if (ts.isJsxElement(expr)) return [expr.openingElement.tagName.getText(source)];
+    if (ts.isJsxSelfClosingElement(expr)) return [expr.tagName.getText(source)];
+    if (ts.isJsxFragment(expr)) {
+      const tags: string[] = [];
+      for (const child of expr.children) {
+        if (ts.isJsxElement(child)) tags.push(child.openingElement.tagName.getText(source));
+        else if (ts.isJsxSelfClosingElement(child)) tags.push(child.tagName.getText(source));
+        else if (ts.isJsxExpression(child)) tags.push(...topLevelTags(child.expression));
+      }
+      return tags;
+    }
+    return [];
+  };
+
+  const groups: string[][] = [];
+  const visit = (node: ts.Node) => {
+    // Do not descend into a nested function — its returns are not the page's render.
+    if (
+      ts.isFunctionDeclaration(node) ||
+      ts.isFunctionExpression(node) ||
+      ts.isArrowFunction(node)
+    ) {
+      return;
+    }
+    if (ts.isReturnStatement(node)) {
+      groups.push(topLevelTags(node.expression));
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(component.body, visit);
+  return groups;
+}
 
 describe('the container is uniform, and it is the only container', () => {
   test('every `/apps/*` route renders in ONE container width (1920)', () => {
@@ -383,38 +490,118 @@ describe('every /apps page on disk is classified', () => {
       expect(RENDERING_ROUTES).toHaveLength(13);
     });
 
-    test('each of them imports AND mounts AppsPageLayout', () => {
+    test('every RETURN of every page renders the layout (AST, not text)', () => {
+      // 🔴 PARSED, NOT GREPPED, and that is the whole point — see `pageReturnTags`.
+      // A text guard here was walkable two ways at once: move `<AppsPageLayout …>` into
+      // a JSX comment (the regex matches the COMMENT) and render `<Box maw={…}
+      // mx="auto">` instead (no `<Container>`, so the sibling ban never fires). The page
+      // is re-orphaned with no sub-nav and both text guards stay green.
       const offenders: string[] = [];
-      let filesRead = 0;
+      let filesParsed = 0;
+      let returnsInspected = 0;
       for (const route of RENDERING_ROUTES) {
         const file = pageFile(route);
         if (!fs.existsSync(file)) {
           offenders.push(`${route} (no page file at ${file})`);
           continue;
         }
-        const src = fs.readFileSync(file, 'utf8');
-        filesRead += 1;
-        if (
-          !/import\s*\{[^}]*\bAppsPageLayout\b[^}]*\}\s*from\s*'~\/components\/Apps\/AppsPageLayout'/.test(
-            src
-          )
-        ) {
-          offenders.push(`${route} (does not import AppsPageLayout)`);
+        let groups: string[][];
+        try {
+          groups = pageReturnTags(file);
+        } catch (err) {
+          offenders.push(`${route} (could not parse: ${(err as Error).message})`);
           continue;
         }
-        if (!/<AppsPageLayout[\s>]/.test(src)) {
-          offenders.push(`${route} (imports AppsPageLayout but never renders it)`);
+        filesParsed += 1;
+        if (groups.length === 0) {
+          offenders.push(`${route} (default export has no return statement)`);
+          continue;
+        }
+        for (const tags of groups) {
+          returnsInspected += 1;
+          // A return that renders nothing renderable, or only an access-denied leaf, is
+          // not required to mount the chrome — those are the gate returns.
+          const rendered = tags.filter((t) => !CHROME_EXEMPT_TAGS.has(t));
+          if (rendered.length === 0) continue;
+          if (rendered.includes('AppsPageLayout')) continue;
+          // A delegate satisfies the rule only because it mounts the chrome itself —
+          // which the sibling test proves, rather than this list asserting it.
+          if (rendered.some((t) => CHROME_DELEGATES[t])) continue;
+          offenders.push(
+            `${route} (a return renders [${rendered.join(', ')}] with no AppsPageLayout)`
+          );
         }
       }
-      // Guard-the-guard: a reassuring empty `offenders` is indistinguishable from a
-      // loop that read nothing.
-      expect(filesRead).toBe(RENDERING_ROUTES.length);
+      // Guard-the-guard, twice: an empty `offenders` is indistinguishable from a loop
+      // that parsed nothing, AND from one that parsed files but found no returns.
+      expect(filesParsed, 'the AST walk parsed no page files').toBe(RENDERING_ROUTES.length);
+      expect(returnsInspected, 'the AST walk found no returns to inspect').toBeGreaterThanOrEqual(
+        RENDERING_ROUTES.length
+      );
       expect(
         offenders,
         'Rendering /apps route(s) not on the shared chrome. Wrap the page body in ' +
           '<AppsPageLayout> (passing `measure` only if it is in APPS_PAGE_MEASURES) ' +
-          'instead of a bare <Container>.'
+          'instead of any container of its own.'
       ).toEqual([]);
+    });
+
+    test('🔴 every chrome DELEGATE really does mount the chrome', () => {
+      // The allowlist above is the one place a genuine orphan could hide behind a
+      // reassuring name. Parse each delegate and require it to render AppsPageLayout in
+      // every return that renders anything — the same rule the pages are held to.
+      const names = Object.keys(CHROME_DELEGATES);
+      expect(names.length, 'the delegate list is empty — nothing to verify').toBeGreaterThan(0);
+      const offenders: string[] = [];
+      for (const name of names) {
+        const { file, exportName } = CHROME_DELEGATES[name];
+        const abs = path.resolve(__dirname, '../../../..', file);
+        if (!fs.existsSync(abs)) {
+          offenders.push(`${name} (no file at ${abs})`);
+          continue;
+        }
+        const groups = pageReturnTags(abs, exportName);
+        const renders = groups.some((tags) => tags.includes('AppsPageLayout'));
+        if (!renders) offenders.push(`${name} (does not render AppsPageLayout)`);
+      }
+      expect(
+        offenders,
+        'A component allowlisted as mounting the shared chrome does not actually mount it.'
+      ).toEqual([]);
+    });
+
+    test('🔴 the AST walk can SEE a violation (negative control on the guard above)', () => {
+      // The guard above returns a reassuring empty list; this proves the machinery that
+      // produces it can produce a non-empty one. A synthetic page whose layout call sits
+      // in a comment — mutant M5b exactly — must be reported, and the comment must NOT
+      // count as a render.
+      const tmp = path.join(os.tmpdir(), `apps-chrome-negative-control-${process.pid}.tsx`);
+      fs.writeFileSync(
+        tmp,
+        [
+          "import { Box } from '@mantine/core';",
+          "import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';",
+          'export default function FakePage() {',
+          '  return (',
+          '    <>',
+          '      {/* <AppsPageLayout measure={1068}> */}',
+          '      <Box maw={1068} mx="auto" />',
+          '      {/* </AppsPageLayout> */}',
+          '    </>',
+          '  );',
+          '}',
+        ].join('\n')
+      );
+      try {
+        const groups = pageReturnTags(tmp);
+        expect(groups).toHaveLength(1);
+        const rendered = groups[0].filter((t) => !CHROME_EXEMPT_TAGS.has(t));
+        // The comment is trivia in the AST, so it cannot masquerade as a render.
+        expect(rendered).not.toContain('AppsPageLayout');
+        expect(rendered).toContain('Box');
+      } finally {
+        fs.unlinkSync(tmp);
+      }
     });
 
     test('🔴 no rendering page hand-rolls its own top-level Mantine Container', () => {

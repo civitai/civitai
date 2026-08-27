@@ -50,6 +50,14 @@ export const LISTING_GRID_SPAN = {
  * DERIVATION the grid span is tuned against rather than a value the page hands the
  * layout.
  *
+ * 🔴 IT HAS NO PRODUCTION CONSUMER ANY MORE — it is read only by
+ * `__tests__/appListingGrid.test.ts` and `__tests__/appsPageWidths.test.ts`. That is
+ * deliberate, not dead code left behind: the pair below is arithmetic nobody executes at
+ * runtime (the container width is applied by `AppsPageLayout`, the span by the grid), so
+ * a named constant read by the tests is the only place the coupling can be STATED and
+ * checked. Deleting it would not remove any behaviour; it would remove the only thing
+ * that fails when someone moves one half of the pair.
+ *
  * The full-width pass moved it 1600 → 1920. The `xl` span was DELIBERATELY left at 3
  * (four columns): at 1920 that yields ~460 px cards (vs ~383 at 1600), so the
  * 2026-07 "make app cover images larger" pass gets larger still rather than being

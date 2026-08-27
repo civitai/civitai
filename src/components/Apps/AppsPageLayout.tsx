@@ -58,8 +58,21 @@ export function AppsPageLayout({
   /** Right-aligned header controls (e.g. a "Submit a new app" button). */
   actions?: ReactNode;
   /**
-   * Optional CONTENT measure (px) for the page BODY — a max-width applied BELOW the
-   * chrome, never around it. Omit it and the body fills the container.
+   * Optional CONTENT measure (px) for the page's OWN content — the header band's
+   * title/subtitle/actions AND the body. Applied BELOW the chrome, never around it.
+   * Omit it and the content fills the container.
+   *
+   * 🔴 IT BOUNDS THE HEADER TOO, and that is not symmetry for its own sake. The sub-nav
+   * is the only thing this change is allowed to move; if the measure bounded the body
+   * alone, a measured page's header PROSE would stretch to the full container while its
+   * body stayed narrow. Measured on a real render with the live `/apps/submit` subtitle
+   * copy: the subtitle laid out at 1224.13px where before it could never exceed 1068.
+   * Bounding both is what makes "only the chrome moved" a true statement rather than an
+   * aspiration. It also closes a latent trap by construction: `actions` is right-aligned
+   * by `Group justify="space-between"`, so against the CONTAINER the first measured page
+   * to add a header button would have put it ~520px (`/apps/review`) to ~820px
+   * (`/apps/submit`) right of the body it acts on at 2560. Against the measure, the
+   * header and the body share both edges.
    *
    * 🔴 LEFT-ALIGNED, NOT CENTRED, and that is load-bearing rather than taste: a
    * centred body would put its left edge at a different x on every route, which is
@@ -77,11 +90,29 @@ export function AppsPageLayout({
   children: ReactNode;
 }) {
   const hasHeader = Boolean(title || subtitle || actions);
+  /**
+   * Cap `node` at the page's measure, or hand it back untouched when there is none.
+   *
+   * 🔴 ONE HELPER, TWO CALL SITES, so the header band and the body cannot drift apart —
+   * a second copy of this conditional is exactly how they would end up with different
+   * left and right edges. It never wraps `AppsSubNav`: the chrome is a sibling of both
+   * call sites, one level up, which is the entire fix.
+   *
+   * No auto margins, deliberately. The parent `Stack` is a column flexbox with the
+   * default `align="stretch"`, so a bare `maw` resolves LEFT-ALIGNED; anything that
+   * re-centres it puts each route's content at a different x and re-creates the defect
+   * one level down. Pinned on the RENDERED tree in
+   * `__tests__/appsPageLayoutRender.test.ts` — a source-text pin was walkable both by a
+   * comment and by a centring wrapper.
+   */
+  const bounded = (node: ReactNode) => (measure != null ? <Box maw={measure}>{node}</Box> : node);
   // `pb` only — NO `py`. The top pad is deliberately gone so `/apps/*` starts
   // directly under the global header instead of 16px below it; the BOTTOM pad
   // stays because this Container is the outermost element on every apps page, so
   // its `pb` is the only thing keeping the last grid row / table row off whatever
-  // follows. Horizontal padding is untouched (Container's own responsive gutter).
+  // follows. Horizontal padding is untouched — Container's own gutter, a FLAT 16px per
+  // side in Mantine v7 (there is no responsive step), which is why
+  // `APPS_CONTAINER_GUTTER = 32` is right at every breakpoint, not only at wide ones.
   return (
     <Container size={APPS_PAGE_CONTAINER_WIDTH} pb="md">
       {/* `xl` (32px), not `lg` (20px). With the band's own rule removed, the ONLY
@@ -136,19 +167,20 @@ export function AppsPageLayout({
         */}
         <Stack gap="md">
           <AppsSubNav />
-          {hasHeader && (
-            <Group justify="space-between" align="flex-end" wrap="nowrap" gap="md">
-              <Stack gap={4} style={{ minWidth: 0 }}>
-                {title && <Title order={2}>{title}</Title>}
-                {subtitle && (
-                  <Text c="dimmed" size="sm">
-                    {subtitle}
-                  </Text>
-                )}
-              </Stack>
-              {actions && <div style={{ flexShrink: 0 }}>{actions}</div>}
-            </Group>
-          )}
+          {hasHeader &&
+            bounded(
+              <Group justify="space-between" align="flex-end" wrap="nowrap" gap="md">
+                <Stack gap={4} style={{ minWidth: 0 }}>
+                  {title && <Title order={2}>{title}</Title>}
+                  {subtitle && (
+                    <Text c="dimmed" size="sm">
+                      {subtitle}
+                    </Text>
+                  )}
+                </Stack>
+                {actions && <div style={{ flexShrink: 0 }}>{actions}</div>}
+              </Group>
+            )}
         </Stack>
 
         {/*
@@ -164,7 +196,7 @@ export function AppsPageLayout({
           wrapper is a DOM node the vertical-geometry pins would have to be re-derived
           against for no benefit.
         */}
-        {measure != null ? <Box maw={measure}>{children}</Box> : children}
+        {bounded(children)}
       </Stack>
     </Container>
   );

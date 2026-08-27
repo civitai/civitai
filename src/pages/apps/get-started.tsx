@@ -53,18 +53,35 @@ export default function AppsGetStartedPage() {
         deIndex
       />
       {/*
-        🔴 THE ONE ADOPTED PAGE WHOSE GATE DOES NOT IMPLY THE SUB-NAV'S. This page
+        🔴 ONE OF THREE ADOPTED PAGES WHOSE GATE DOES NOT IMPLY THE SUB-NAV'S. This page
         gates on `appBlocksGetStarted` ALONE (see the docstring above), while
-        `AppsSubNav` renders only for `hasAppsStoreAccess` (`appListings || appBlocks`).
-        Those are independent flags, so a viewer can hold this page's flag and not the
-        nav's — and then the chrome band renders empty (the sub-nav returns `null`),
-        costing the `Stack gap="xl"` above the body and nothing else.
+        `AppsSubNav` renders only for `hasAppsStoreAccess` (`appListings || appBlocks`)
+        AND hides itself below two qualifying tabs. Those are independent flags, so a
+        viewer can hold this page's flag and not the nav's — and then the chrome band
+        renders empty (the sub-nav returns `null`), costing the `Stack gap="xl"` above
+        the body and nothing else. The other two are `/apps/[appBlockId]/edit` and
+        `/apps/listing/[appListingId]/edit`, which gate on `appBlocks` alone; see the
+        matching note in each. (`/apps/[appBlockId]/revenue` is NOT affected — it gates
+        on `appBlocksAuthor` + `isAppDeveloper`, which guarantees the Create tab and so
+        clears the two-tab floor.)
+
         NOT REACHABLE TODAY: `appBlocksGetStarted` is staged mod-only, and a moderator
         holds `appBlocks` (hence the store predicate) and is an `isAppDeveloper`, so the
-        bar clears its own two-tab floor with Marketplace + Create. It becomes reachable
-        the moment this flag widens to `['public']` — which is a one-line change in
-        feature-flags.service.ts. TODO(launch): widen the sub-nav's gate with it, or
-        keep this page off the shared chrome.
+        bar clears its floor with Marketplace + Create.
+
+        🔴 BUT THE TRIGGER IS A RUNTIME TOGGLE, NOT A DEPLOY. An earlier version of this
+        note said it becomes reachable "the moment this flag widens to ['public'] — a
+        one-line change in feature-flags.service.ts". That is wrong, and wrong in the
+        dangerous direction: it pins the hazard to an event a reviewer would see in a
+        diff. `appBlocksGetStarted` is `{ availability: ['mod'], fliptKey:
+        'app-blocks-get-started' }`, and `getFeatureFlags` returns the Flipt answer
+        BEFORE it ever evaluates `availability` ("Flipt overrides role checks (both
+        enable AND disable)"). So `availability` is only the Flipt-DOWN fallback: this
+        page can widen to the public by flipping `app-blocks-get-started` in Flipt, with
+        no code change, no PR and no deploy. All four App-Blocks flags are shaped this
+        way (`appBlocks`, `appListings`, `appBlocksAuthor`, `appBlocksGetStarted`).
+        TODO(launch): before any Flipt widening, either widen the sub-nav's gate with it
+        or keep this page off the shared chrome.
       */}
       <AppsPageLayout measure={APPS_PAGE_MEASURES['/apps/get-started']}>
         <GetStartedBody />
