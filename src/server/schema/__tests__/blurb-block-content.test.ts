@@ -6,7 +6,7 @@
 //   - node (@tiptap/html's own DOM shim) does not hoist
 //   - happy-dom does not hoist
 //   - jsdom (parse5) hoists, exactly as Chrome does
-// So a version of this file in either other environment passes whether or not the bug is fixed.
+// So a version of this file in either other environment passes whether or not the wrapper is a block.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as FliptClient from '~/server/flipt/client';
@@ -120,12 +120,11 @@ describe('a spliced blurb survives the browser re-parse', () => {
     );
   });
 
-  it('🔴 EMPTIES an INLINE span holding the same content — why the wrapper is a div', () => {
-    // The regression the block conversion fixed, kept as the witness for it. Put this content in
-    // a `<span>` inside the host's `<p>` and the parser closes that paragraph on the block start
-    // tag and pops the span rather than reconstructing it: an empty chip, the words hoisted into
-    // a sibling, and — because `expandBlurbs` re-splices into the now-empty span on the author's
-    // next save — the words twice.
+  it('🔴 EMPTIES the same content in an INLINE wrapper — why the wrapper is a block', () => {
+    // Why `div` and not `span`. Inside the host's `<p>`, the parser closes that paragraph on the
+    // block start tag and pops an inline wrapper rather than reconstructing it: an empty chip, the
+    // words hoisted into a sibling, and — because `expandBlurbs` re-splices into the now-empty
+    // wrapper on the author's next save — the words twice.
     const host = reparse(
       '<p>before <span data-type="blurb" data-id="7"><h2>Terms</h2></span> after</p>'
     );

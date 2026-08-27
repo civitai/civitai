@@ -25,7 +25,7 @@ const row = {
   deletedAt: null as Date | null,
 };
 
-const BODY = '<span data-type="blurb" data-id="7">OLD</span>';
+const BODY = '<div data-type="blurb" data-id="7">OLD</div>';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -42,7 +42,7 @@ describe('processBlurbEntity', () => {
     expect(adapter.save).toHaveBeenCalledWith({
       entityId: 1,
       userId: 10,
-      html: '<span data-type="blurb" data-id="7">NEW</span>',
+      html: '<div data-type="blurb" data-id="7">NEW</div>',
       expectedHtml: BODY,
     });
   });
@@ -50,7 +50,7 @@ describe('processBlurbEntity', () => {
   it('skips the write when the span already holds the right text', async () => {
     adapter.load.mockResolvedValue({
       userId: 10,
-      html: '<span data-type="blurb" data-id="7">NEW</span>',
+      html: '<div data-type="blurb" data-id="7">NEW</div>',
     });
     const result = await processBlurbEntity([row]);
     expect(result).toBe('skipped');
@@ -102,8 +102,8 @@ describe('processBlurbEntity — two stale blurbs in one entity', () => {
     adapter.load.mockResolvedValue({
       userId: 10,
       html:
-        '<span data-type="blurb" data-id="7">A-OLD</span>' +
-        '<span data-type="blurb" data-id="8">B-OLD</span>',
+        '<div data-type="blurb" data-id="7">A-OLD</div>' +
+        '<div data-type="blurb" data-id="8">B-OLD</div>',
     });
   });
 
@@ -116,8 +116,8 @@ describe('processBlurbEntity — two stale blurbs in one entity', () => {
     expect(result).toBe('rewritten');
     expect(adapter.save).toHaveBeenCalledTimes(1);
     expect(adapter.save.mock.calls[0][0].html).toBe(
-      '<span data-type="blurb" data-id="7">A-NEW</span>' +
-        '<span data-type="blurb" data-id="8">B-NEW</span>'
+      '<div data-type="blurb" data-id="7">A-NEW</div>' +
+        '<div data-type="blurb" data-id="8">B-NEW</div>'
     );
   });
 
@@ -154,7 +154,7 @@ describe('processBlurbEntity — two stale blurbs in one entity', () => {
     await processBlurbEntity([rowA, { ...rowB, deletedAt: new Date() }]);
 
     expect(adapter.save.mock.calls[0][0].html).toBe(
-      '<span data-type="blurb" data-id="7">A-NEW</span>B-OLD'
+      '<div data-type="blurb" data-id="7">A-NEW</div>B-OLD'
     );
     // The deleted one's row goes; the live one's is recorded.
     expect(dbMock.dbWrite.blurbReference.deleteMany).toHaveBeenCalledWith({

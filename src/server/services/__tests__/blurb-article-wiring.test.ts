@@ -65,10 +65,10 @@ const CREATED_ID = 99;
 const OWNER_ID = 7;
 const MODERATOR_ID = 9;
 
-const CLIENT_HTML = '<span data-type="blurb" data-id="7">ATTACKER SUPPLIED</span>';
-const EXPANDED_HTML = '<span data-type="blurb" data-id="7">REAL</span>';
+const CLIENT_HTML = '<div data-type="blurb" data-id="7">ATTACKER SUPPLIED</div>';
+const EXPANDED_HTML = '<div data-type="blurb" data-id="7">REAL</div>';
 const BLOCKED_HTML =
-  '<span data-type="blurb" data-id="7"><a href="https://blocked.example">x</a></span>';
+  '<div data-type="blurb" data-id="7"><a href="https://blocked.example">x</a></div>';
 const USES = [{ blurbId: 7, contentHash: 'h7' }];
 
 const storedArticle = {

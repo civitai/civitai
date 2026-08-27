@@ -43,9 +43,9 @@ describe('expandBlurbs', () => {
     dbRead.blurb.findMany.mockResolvedValue([{ id: 7, contentHash: 'h7', content: 'REAL' }]);
     const { html } = await expandEvaluated({
       userId: 10,
-      html: '<span data-type="blurb" data-id="7">ATTACKER SUPPLIED</span>',
+      html: '<div data-type="blurb" data-id="7">ATTACKER SUPPLIED</div>',
     });
-    expect(html).toBe('<span data-type="blurb" data-id="7">REAL</span>');
+    expect(html).toBe('<div data-type="blurb" data-id="7">REAL</div>');
   });
 
   it('unwraps a span the query returned nothing for', async () => {
@@ -55,7 +55,7 @@ describe('expandBlurbs', () => {
     dbRead.blurb.findMany.mockResolvedValue([]);
     const { html, uses } = await expandEvaluated({
       userId: 10,
-      html: '<p>x</p><span data-type="blurb" data-id="99">someone elses</span>',
+      html: '<p>x</p><div data-type="blurb" data-id="99">someone elses</div>',
     });
     expect(html).toBe('<p>x</p>someone elses');
     expect(uses).toEqual([]);
@@ -63,7 +63,7 @@ describe('expandBlurbs', () => {
 
   it('scopes the lookup to the saving user and to live blurbs', async () => {
     dbRead.blurb.findMany.mockResolvedValue([]);
-    await expandBlurbs({ userId: 10, html: '<span data-type="blurb" data-id="7">x</span>' });
+    await expandBlurbs({ userId: 10, html: '<div data-type="blurb" data-id="7">x</div>' });
     expect(dbRead.blurb.findMany).toHaveBeenCalledWith({
       where: { id: { in: [7] }, userId: 10, deletedAt: null },
       select: { id: true, content: true, contentHash: true },
@@ -74,7 +74,7 @@ describe('expandBlurbs', () => {
     dbRead.blurb.findMany.mockResolvedValue([{ id: 7, contentHash: 'h7', content: 'A' }]);
     const { uses } = await expandEvaluated({
       userId: 10,
-      html: '<span data-type="blurb" data-id="7">x</span><span data-type="blurb" data-id="7">y</span>',
+      html: '<div data-type="blurb" data-id="7">x</div><div data-type="blurb" data-id="7">y</div>',
     });
     expect(uses).toEqual([{ blurbId: 7, contentHash: 'h7' }]);
   });
@@ -88,7 +88,7 @@ describe('expandBlurbs', () => {
 
   it('reports NOT EVALUATED, with the html untouched, when the flag is off for the owner', async () => {
     isFlipt.mockResolvedValue(false);
-    const html = '<span data-type="blurb" data-id="7">CLIENT TEXT</span>';
+    const html = '<div data-type="blurb" data-id="7">CLIENT TEXT</div>';
 
     const result = await expandBlurbs({ userId: 10, html });
 
@@ -131,11 +131,11 @@ describe('expandBlurbs', () => {
     it('resolves an id the entity already references', async () => {
       const { html, uses } = await expandEvaluated({
         userId: 10,
-        html: '<span data-type="blurb" data-id="7">stale</span>',
+        html: '<div data-type="blurb" data-id="7">stale</div>',
         restrictToBlurbIds: [7],
       });
 
-      expect(html).toBe('<span data-type="blurb" data-id="7">REFERENCED</span>');
+      expect(html).toBe('<div data-type="blurb" data-id="7">REFERENCED</div>');
       expect(uses).toEqual([{ blurbId: 7, contentHash: 'h7' }]);
     });
 
@@ -144,7 +144,7 @@ describe('expandBlurbs', () => {
       // for the test above, and the whole reason the parameter exists.
       const { html, uses } = await expandEvaluated({
         userId: 10,
-        html: '<span data-type="blurb" data-id="8">guessed</span>',
+        html: '<div data-type="blurb" data-id="8">guessed</div>',
         restrictToBlurbIds: [7],
       });
 
@@ -157,8 +157,8 @@ describe('expandBlurbs', () => {
       await expandBlurbs({
         userId: 10,
         html:
-          '<span data-type="blurb" data-id="7">a</span>' +
-          '<span data-type="blurb" data-id="8">b</span>',
+          '<div data-type="blurb" data-id="7">a</div>' +
+          '<div data-type="blurb" data-id="8">b</div>',
         restrictToBlurbIds: [7],
       });
 
@@ -170,7 +170,7 @@ describe('expandBlurbs', () => {
     it('skips the query entirely when no span survives the restriction', async () => {
       const { html, uses } = await expandEvaluated({
         userId: 10,
-        html: '<span data-type="blurb" data-id="8">guessed</span>',
+        html: '<div data-type="blurb" data-id="8">guessed</div>',
         restrictToBlurbIds: [],
       });
 
@@ -182,10 +182,10 @@ describe('expandBlurbs', () => {
     it('leaves an owner passing no list unrestricted', async () => {
       const { html } = await expandEvaluated({
         userId: 10,
-        html: '<span data-type="blurb" data-id="8">stale</span>',
+        html: '<div data-type="blurb" data-id="8">stale</div>',
       });
 
-      expect(html).toBe('<span data-type="blurb" data-id="8">PRIVATE</span>');
+      expect(html).toBe('<div data-type="blurb" data-id="8">PRIVATE</div>');
     });
   });
 
@@ -194,12 +194,12 @@ describe('expandBlurbs', () => {
     const { html, uses } = await expandEvaluated({
       userId: 10,
       html:
-        '<p>a</p><span data-type="blurb" data-id="99">orphan-before</span>' +
-        '<span data-type="blurb" data-id="7">ATTACKER</span>' +
-        '<span data-type="blurb" data-id="99">orphan-after</span><p>b</p>',
+        '<p>a</p><div data-type="blurb" data-id="99">orphan-before</div>' +
+        '<div data-type="blurb" data-id="7">ATTACKER</div>' +
+        '<div data-type="blurb" data-id="99">orphan-after</div><p>b</p>',
     });
     expect(html).toBe(
-      '<p>a</p>orphan-before<span data-type="blurb" data-id="7">REAL</span>orphan-after<p>b</p>'
+      '<p>a</p>orphan-before<div data-type="blurb" data-id="7">REAL</div>orphan-after<p>b</p>'
     );
     expect(uses).toEqual([{ blurbId: 7, contentHash: 'h7' }]);
   });

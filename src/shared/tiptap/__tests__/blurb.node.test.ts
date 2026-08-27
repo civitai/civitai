@@ -7,10 +7,8 @@ import StarterKit from '@tiptap/starter-kit';
 
 const extensions = [StarterKit.configure({ heading: false }), BlurbNode];
 
-// `@tiptap/html`'s server serializer (zeed-dom) stamps `xmlns` on every TOP-LEVEL element — the
-// `<p>` siblings here carry it too. A blurb is top-level now that it is a block, so the attribute
-// shows up where it never did on the inline shape. It is not in any sanitize allowlist, so it
-// never reaches a stored body.
+// `@tiptap/html`'s server serializer (zeed-dom) stamps `xmlns` on every TOP-LEVEL element, which
+// a blurb is. It is not in any sanitize allowlist, so it never reaches a stored body.
 const stripXmlns = (html: string) => html.replaceAll(' xmlns="http://www.w3.org/1999/xhtml"', '');
 
 const render = (html: string) =>
@@ -30,18 +28,7 @@ describe('BlurbNode', () => {
     expect(render(html)).toContain('<div data-type="blurb" data-id="7">hi</div>');
   });
 
-  // The pre-block storage shape. Parsing it is what migrates an old body: opened and saved, it
-  // comes back out as a div, so nothing has to rewrite the rows.
-  it('still parses the legacy inline span, and re-renders it as a div', () => {
-    const html = '<p><span data-type="blurb" data-id="7">hi</span></p>';
-    const json = generateJSON(html, extensions);
-    expect(JSON.stringify(json)).toContain('"type":"blurb"');
-    expect(stripXmlns(generateHTML(json, extensions))).toContain(
-      '<div data-type="blurb" data-id="7">hi</div>'
-    );
-  });
-
-  it('holds a heading and a list, which the inline shape could not', () => {
+  it('holds a heading and a list', () => {
     const html = '<div data-type="blurb" data-id="7"><h2>Terms</h2><ul><li>one</li></ul></div>';
     expect(render(html)).toContain(
       '<div data-type="blurb" data-id="7"><h2>Terms</h2><ul><li>one</li></ul></div>'

@@ -21,7 +21,6 @@ export function findBlurbSpans(html: string): BlurbSpan[] {
     outerStart: number;
     innerStart: number;
     depth: number;
-    tag: string;
   }> = [];
   let depth = 0;
 
@@ -29,10 +28,7 @@ export function findBlurbSpans(html: string): BlurbSpan[] {
     {
       onopentag(name, attribs) {
         depth++;
-        // `span` is the pre-block storage shape. Both are matched because the fan-out rewrites
-        // bodies that were stored either way, and an old one it skipped would stop updating with
-        // nothing to show for it.
-        if (name !== 'div' && name !== 'span') return;
+        if (name !== 'div') return;
         if (attribs['data-type'] !== 'blurb') return;
         const raw = attribs['data-id'];
         if (!isBlurbId(raw)) return;
@@ -42,14 +38,12 @@ export function findBlurbSpans(html: string): BlurbSpan[] {
           outerStart: parser.startIndex,
           innerStart: parser.endIndex + 1,
           depth,
-          tag: name,
         });
       },
       onclosetag(name) {
         const top = open[open.length - 1];
-        // Matched on the tag that OPENED it, not on either tag: a `div` blurb holding a `span`
-        // for colour would otherwise be closed by that span and report a truncated interior.
-        if (top && top.tag === name && top.depth === depth) {
+        // Both clauses matter: the interior carries other tags, and it can nest plain `div`s.
+        if (top && name === 'div' && top.depth === depth) {
           open.pop();
           found.push({
             blurbId: top.blurbId,

@@ -76,9 +76,7 @@ export const BlurbNode = Node.create({
   },
 
   parseHTML() {
-    // `span` is the shape blurbs were stored in before they could hold blocks. Parsing it here is
-    // the whole migration: an old body opened in an editor comes back out as a `div` on save.
-    return [{ tag: 'div[data-type="blurb"]' }, { tag: 'span[data-type="blurb"]' }];
+    return [{ tag: 'div[data-type="blurb"]' }];
   },
 
   renderHTML({ node, HTMLAttributes }) {

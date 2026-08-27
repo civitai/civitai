@@ -69,7 +69,7 @@ beforeEach(() => {
           userId: 10,
           html: table
             .filter((r) => r.entityId === entityId)
-            .map((r) => `<span data-type="blurb" data-id="${r.blurbId}">OLD-${r.blurbId}</span>`)
+            .map((r) => `<div data-type="blurb" data-id="${r.blurbId}">OLD-${r.blurbId}</div>`)
             .join(''),
         }
   );
@@ -330,8 +330,8 @@ describe('runBlurbFanout — two stale blurbs on one entity', () => {
 
     expect(adapter.save).toHaveBeenCalledTimes(1);
     expect(adapter.save.mock.calls[0][0].html).toBe(
-      '<span data-type="blurb" data-id="1">NEW-1</span>' +
-        '<span data-type="blurb" data-id="2">NEW-2</span>'
+      '<div data-type="blurb" data-id="1">NEW-1</div>' +
+        '<div data-type="blurb" data-id="2">NEW-2</div>'
     );
     expect(result.rewritten).toBe(2);
 

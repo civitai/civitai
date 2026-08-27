@@ -157,7 +157,7 @@ export function sanitizeBlurbInterior(html: string) {
 const isStickerSpan = (frame: { tag: string; attribs: Record<string, string> }) =>
   frame.tag === 'span' && frame.attribs['data-type']?.trim().toLowerCase() === 'sticker';
 
-// `div`/`span` and their data-* attributes are in the default allowlist, so without this a blurb
+// `div` and its data-* attributes are in the default allowlist, so without this a blurb
 // survives wherever it was pasted. Nothing creates a BlurbReference for an unregistered surface,
 // so that copy is frozen at the text it was pasted with and silently never updates. Denied by
 // default so a surface added later fails closed.
@@ -185,23 +185,19 @@ export function sanitizeHtml(html: string, args?: santizeHtmlOptions) {
     ...options
   } = args ?? {};
 
-  // Built per tag rather than written twice: a blurb is a `div` today and was a `span` before it
-  // could hold headings and lists, and a body reaching here may still carry either.
-  const stripBlurbMarker =
-    (tag: 'div' | 'span'): Transformer =>
-    (tagName, attribs) => {
-      const supplied = transformTags?.[tag];
-      const applied =
-        typeof supplied === 'string'
-          ? { tagName: supplied, attribs }
-          : supplied
-          ? (supplied as Transformer)(tagName, attribs)
-          : { tagName, attribs };
-      const next = applied.attribs ?? {};
-      if (allowBlurbs || !isBlurbAttribs(next)) return applied;
-      const { 'data-type': _type, 'data-id': _id, ...rest } = next;
-      return { ...applied, attribs: rest };
-    };
+  const stripBlurbMarker: Transformer = (tagName, attribs) => {
+    const supplied = transformTags?.div;
+    const applied =
+      typeof supplied === 'string'
+        ? { tagName: supplied, attribs }
+        : supplied
+        ? (supplied as Transformer)(tagName, attribs)
+        : { tagName, attribs };
+    const next = applied.attribs ?? {};
+    if (allowBlurbs || !isBlurbAttribs(next)) return applied;
+    const { 'data-type': _type, 'data-id': _id, ...rest } = next;
+    return { ...applied, attribs: rest };
+  };
 
   return sanitize(html, {
     allowedTags: DEFAULT_ALLOWED_TAGS,
@@ -230,8 +226,7 @@ export function sanitizeHtml(html: string, args?: santizeHtmlOptions) {
       // After the spread on purpose: a caller-supplied transform must not be able to reinstate
       // the attributes. Mirrors why exclusiveFilter is composed rather than passed through, and
       // the sticker suite already pins that property.
-      div: stripBlurbMarker('div'),
-      span: stripBlurbMarker('span'),
+      div: stripBlurbMarker,
     },
     ...options,
   });
