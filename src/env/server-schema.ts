@@ -559,6 +559,11 @@ export const serverSchema = z
     SIGNALS_CIRCUIT_COOLDOWN_SECONDS: z.coerce.number().int().min(1).optional().default(30),
     CACHE_DNS: zc.booleanString,
     MINOR_FALLBACK_SYSTEM: zc.booleanString,
+    // Permutes the alphabet that encodes a hub's public id. SERVER ONLY — as a
+    // NEXT_PUBLIC_ var it would ship in the JS bundle and the encoding would be
+    // decorative. Empty means the alphabet as written, which is what dev runs with;
+    // changing it in an environment changes every hub URL there.
+    HUB_ID_SALT: z.string().default(''),
     CSAM_UPLOAD_KEY: z.string().default(''),
     CSAM_UPLOAD_SECRET: z.string().default(''),
     CSAM_BUCKET_NAME: z.string().default(''),

@@ -19,13 +19,24 @@ import {
   resolveModelHiddenMetrics,
 } from '~/server/utils/model-metric-privacy';
 import { isDefined } from '~/utils/type-guards';
+import { getHubCardData } from '~/server/services/user-hub.service';
+import { decodeHubId } from '~/server/utils/hub-id';
 
 // --- Schema & Types ---
 
 const querySchema = z.object({
-  type: z.enum(['model', 'post', 'image', 'article', 'bounty', 'challenge']),
-  id: z.coerce.number().int().positive(),
+  type: z.enum(['model', 'post', 'image', 'article', 'bounty', 'challenge', 'hub']),
+  // Read as text and resolved per type below: a hub's is its ENCODED key, not the
+  // row's int. This endpoint is unauthenticated and id-addressable, so an int there
+  // would make every public hub walkable by counting.
+  id: z.string().min(1),
 });
+
+// Every type but `hub` is addressed by the row's own int.
+function asEntityId(raw: string) {
+  const id = Number(raw);
+  return Number.isSafeInteger(id) && id > 0 ? id : null;
+}
 
 type StatItem = { value: string; label: string };
 
@@ -486,6 +497,33 @@ async function fetchChallengeData(id: number): Promise<EntityData | null> {
   };
 }
 
+async function fetchHubData(id: number): Promise<EntityData | null> {
+  const hub = await getHubCardData(id);
+  if (!hub) return null;
+
+  // No cover: a hub has no image of its own, and the first image of its FEED is not
+  // a safe substitute — this card is served unauthenticated, so it would show that
+  // image to everyone the link reaches whatever their own browsing level is. The
+  // shared card already falls back to the Civitai mark. Justin's call, 2026-08-26.
+  return {
+    title: hub.name,
+    description: cleanDescription(hub.description ?? ''),
+    creator: hub.username ?? 'Unknown',
+    imageUrl: null,
+    imageAspectRatio: 1,
+    stats: [
+      { value: formatStat(hub.sourceCount), label: 'Sources' },
+      ...(hub.followerCount > 0
+        ? [{ value: formatStat(hub.followerCount), label: 'Followers' }]
+        : []),
+    ],
+  };
+}
+
+// Entity types whose visibility the owner can withdraw after a link is shared. They
+// take the short cache below, so revocation is not deferred by the edge.
+const REVOCABLE_TYPES = new Set(['hub']);
+
 const dataFetchers: Record<string, (id: number) => Promise<EntityData | null>> = {
   model: fetchModelData,
   post: fetchPostData,
@@ -493,6 +531,7 @@ const dataFetchers: Record<string, (id: number) => Promise<EntityData | null>> =
   article: fetchArticleData,
   bounty: fetchBountyData,
   challenge: fetchChallengeData,
+  hub: fetchHubData,
 };
 
 // --- Layout components ---
@@ -745,9 +784,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(400).json({ error: 'Invalid parameters. Expected ?type=model&id=123' });
   }
 
-  const { type, id } = parsed.data;
+  const { type, id: rawId } = parsed.data;
 
   try {
+    // Inside the try: `decodeHubId` builds on the codec, and anything it can throw
+    // belongs to this handler's own fallback path rather than to an unhandled 500.
+    const id = type === 'hub' ? decodeHubId(rawId) : asEntityId(rawId);
+    if (!id) {
+      return res.status(400).json({ error: 'Invalid parameters. Expected ?type=model&id=123' });
+    }
+
     const fetcher = dataFetchers[type];
     const data = await fetcher(id);
 
@@ -782,7 +828,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const buffer = Buffer.from(await imageResponse.arrayBuffer());
 
     res.setHeader('Content-Type', 'image/png');
-    if (data && !coverFetchFailed) {
+    if (data && !coverFetchFailed && REVOCABLE_TYPES.has(type)) {
+      // A hub's sharing can be switched back off, and the share dialog tells the
+      // owner every link they handed out stops working. The long branch below would
+      // keep serving that hub's name, description and owner from the CDN edge for a
+      // week after revocation, so a revocable entity takes a short cache instead.
+      res.setHeader('Cache-Control', 'public, max-age=300, s-maxage=300');
+    } else if (data && !coverFetchFailed) {
       // Real entity card with the cover embedded, OR no cover by design (NSFW /
       // video / genuinely no image — a PERMANENT placeholder) → long edge cache.
       res.setHeader(

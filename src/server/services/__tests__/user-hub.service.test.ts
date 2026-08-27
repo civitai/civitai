@@ -17,6 +17,9 @@ vi.mock('~/server/services/collection.service', () => ({
 import {
   addUserHubSource,
   getUserHubs,
+  getHubCardData,
+  getUserHubByKey,
+  hubRouteIsDark,
   getUserHubForRoute,
   getHubSourceSuggestions,
   deleteUserHub,
@@ -43,6 +46,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { ImageSort } from '~/server/common/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { encodeHubId } from '~/server/utils/hub-id';
 const findFirstHub = dbMock.dbRead.userHub.findFirst;
 // The source mutations read the hub through the WRITER — the duplicate check, the cap
 // and the next index all come off that row.
@@ -1320,6 +1324,52 @@ describe('getUserHubForRoute', () => {
     expect(await getUserHubForRoute({ id: 1, userId: 5 })).toMatchObject({ name: 'Cute Models' });
   });
 
+  it('asks for the columns the route gate and the meta tags read', async () => {
+    // `availability` in particular: a mocked Prisma call ignores `select`, so dropping
+    // it leaves every test here green while `hubRouteIsDark` reads `undefined` in
+    // production, treats every hub as non-public, and 404s the previews.
+    findFirstHub.mockResolvedValue({ id: 1, name: 'Cute Models', availability: 'Public' });
+
+    await getUserHubForRoute({ id: 1, userId: 5 });
+
+    expect(findFirstHub.mock.calls[0][0].select).toEqual({
+      id: true,
+      name: true,
+      availability: true,
+      metadata: true,
+    });
+  });
+
+  it('returns the description, which the page renders as og:description', async () => {
+    // Server-side, because the hub the page body uses arrives through a client query
+    // — a description read off that never reaches the HTML an unfurler fetches.
+    findFirstHub.mockResolvedValue({
+      id: 1,
+      name: 'Cute Models',
+      availability: Availability.Public,
+      metadata: { description: 'Models I think are neat' },
+    });
+
+    expect(await getUserHubForRoute({ id: 1, userId: 5 })).toMatchObject({
+      description: 'Models I think are neat',
+      // The value the whole feature turns on, and it is COMPUTED here — `UserHub` has
+      // no `key` column. Passing one through from the row would be `undefined` in
+      // production while a mock that supplies it stays green.
+      key: encodeHubId(1),
+    });
+  });
+
+  it('returns a null description rather than whatever metadata happens to hold', async () => {
+    findFirstHub.mockResolvedValue({
+      id: 1,
+      name: 'Cute Models',
+      availability: Availability.Public,
+      metadata: { description: { nope: true } },
+    });
+
+    expect(await getUserHubForRoute({ id: 1, userId: 5 })).toMatchObject({ description: null });
+  });
+
   it('returns null for a hub this viewer may not open', async () => {
     // Null is what the route turns into a real 404 rather than a 200 carrying a
     // not-found component. Returning a truthy value here restores exactly the
@@ -1327,6 +1377,138 @@ describe('getUserHubForRoute', () => {
     findFirstHub.mockResolvedValue(null);
 
     expect(await getUserHubForRoute({ id: 1, userId: 999 })).toBeNull();
+  });
+});
+
+describe('hubRouteIsDark', () => {
+  // The gate the /hubs/[id] route runs. A public hub is deliberately exempt from the
+  // `user-hubs` flag so a link unfurler — which fetches signed out — gets a 200 with
+  // meta instead of a 404. Restoring a flat `!hubsEnabled` here is what puts hub link
+  // previews back to producing nothing, and no other test would notice.
+  it.each([
+    { hubsEnabled: false, availability: Availability.Public, dark: false },
+    { hubsEnabled: false, availability: Availability.Private, dark: true },
+    { hubsEnabled: false, availability: Availability.Unsearchable, dark: true },
+    { hubsEnabled: true, availability: Availability.Public, dark: false },
+    { hubsEnabled: true, availability: Availability.Private, dark: false },
+    // With the flag on the gate must be inert for EVERY availability, including this
+    // one. Without the row, a predicate that special-cases Unsearchable passes.
+    { hubsEnabled: true, availability: Availability.Unsearchable, dark: false },
+  ])('flag $hubsEnabled + $availability -> dark $dark', ({ hubsEnabled, availability, dark }) => {
+    expect(hubRouteIsDark({ hubsEnabled, availability })).toBe(dark);
+  });
+});
+
+describe('getUserHubByKey', () => {
+  // The enumeration gate itself. `getById` is the one procedure open to signed-out
+  // callers, so if this accepted the pre-encoding format every public hub would be
+  // walkable by counting through tRPC — the exact hole the encoding closes.
+  it('decodes a real key and reads that id', async () => {
+    findFirstHub.mockResolvedValue({
+      id: 19,
+      userId: 5,
+      sources: [],
+      metadata: {},
+      availability: Availability.Public,
+    });
+
+    await getUserHubByKey({ key: encodeHubId(19), userId: 5 });
+
+    expect(findFirstHub.mock.calls[0][0].where.id).toBe(19);
+  });
+
+  it.each(['19', '0', 'not-a-key', ''])(
+    'refuses %j without reading anything at all',
+    async (key) => {
+      // `not.toHaveBeenCalled` is the load-bearing half: a decode that fell through to
+      // the lookup would still 404 for a private hub and pass a result-only assertion,
+      // while resolving every public one.
+      await expect(getUserHubByKey({ key, userId: 5 })).rejects.toThrow(/not found/i);
+      expect(findFirstHub).not.toHaveBeenCalled();
+    }
+  );
+});
+
+describe('getHubCardData', () => {
+  it('resolves a PUBLIC hub only, whoever is asking', async () => {
+    // The card is served unauthenticated, so this `where` is the only thing between a
+    // private hub's NAME and anyone who guesses its id. There is no viewer to scope
+    // to — an ownership arm here would be a hole, not a courtesy.
+    findFirstHub.mockResolvedValue({
+      name: 'Cute Models',
+      metadata: {},
+      user: { username: 'ellie' },
+      _count: { sources: 3, followers: 0 },
+    });
+
+    await getHubCardData(1);
+
+    // Read off `hubViewerWhere` rather than restated here, so the card and the three
+    // authenticated reads cannot drift: a rule added to the helper later reaches this
+    // assertion too. The control below pins what the helper answers for no viewer.
+    expect(findFirstHub).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 1, ...hubViewerWhere({}) } })
+    );
+    expect(hubViewerWhere({})).toEqual({ OR: [{ availability: Availability.Public }] });
+  });
+
+  it('asks for every column the card reads', async () => {
+    // A mocked Prisma call IGNORES `select` and returns whatever the mock holds, so a
+    // dropped column is invisible to every assertion on the RESULT. Only the argument
+    // shows it.
+    findFirstHub.mockResolvedValue({
+      name: 'Cute Models',
+      metadata: {},
+      user: { username: 'ellie' },
+      _count: { sources: 3, followers: 0 },
+    });
+
+    await getHubCardData(1);
+
+    expect(findFirstHub.mock.calls[0][0].select).toEqual({
+      name: true,
+      metadata: true,
+      user: { select: { username: true } },
+      // Enabled only — the count a visitor can see, not the owner's full list.
+      _count: { select: { sources: { where: { enabled: true } }, followers: true } },
+    });
+  });
+
+  it('drops a description that is not a string, as the route reader does', async () => {
+    findFirstHub.mockResolvedValue({
+      name: 'Cute Models',
+      metadata: { description: { nope: true } },
+      user: { username: 'ellie' },
+      _count: { sources: 1, followers: 0 },
+    });
+
+    expect(await getHubCardData(1)).toMatchObject({ description: null });
+  });
+
+  it('returns null when the hub is not public', async () => {
+    // Note this is NOT a 404 at the endpoint: null renders the generic Civitai card at
+    // 200, which is what keeps a private hub and a nonexistent id indistinguishable.
+    // Do not "fix" that into a real 404 — it hands back the oracle this closes.
+    findFirstHub.mockResolvedValue(null);
+
+    expect(await getHubCardData(1)).toBeNull();
+  });
+
+  it('carries the counts the card puts in its stats bar', async () => {
+    findFirstHub.mockResolvedValue({
+      name: 'Cute Models',
+      metadata: { description: 'neat' },
+      user: { username: 'ellie' },
+      _count: { sources: 3, followers: 12 },
+    });
+
+    expect(await getHubCardData(1)).toEqual({
+      name: 'Cute Models',
+      description: 'neat',
+      username: 'ellie',
+      sourceCount: 3,
+      followerCount: 12,
+    });
   });
 });
 

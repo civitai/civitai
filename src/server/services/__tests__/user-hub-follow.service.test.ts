@@ -16,6 +16,7 @@ import {
 import { hubLimits } from '~/server/schema/user-hub.schema';
 import { Availability } from '~/shared/utils/prisma/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { encodeHubId } from '~/server/utils/hub-id';
 
 const writerHub = dbMock.dbWrite.userHub.findFirst;
 const followCount = dbMock.dbWrite.userHubFollow.count;
@@ -24,6 +25,11 @@ const followDeleteMany = dbMock.dbWrite.userHubFollow.deleteMany;
 const followFindMany = dbMock.dbRead.userHubFollow.findMany;
 
 const VIEWER = 3;
+// A REAL encoding of hub 5, not a placeholder: the service decodes it, so a made-up
+// string would turn every case below into a not-found and they would pass for the
+// wrong reason.
+const HUB_ID = 5;
+const HUB_KEY = encodeHubId(HUB_ID);
 const OWNER = 9;
 
 const hubRow = (over: Partial<{ id: number; userId: number; name: string }> = {}) => ({
@@ -76,6 +82,22 @@ beforeEach(() => {
 });
 
 describe('followUserHub', () => {
+  it('refuses an INT where the key goes — the encoding is worthless otherwise', async () => {
+    // `getFollowed` returns each hub's `key`. While follow took an int, any signed-in
+    // caller could follow public hub 1..N and read the keys back for the price of
+    // counting — defeating the URL encoding without touching the salt. The hub lookup
+    // must not even run.
+    await expect(followUserHub({ key: String(HUB_ID), userId: VIEWER })).rejects.toThrow(
+      /not found/i
+    );
+    await expect(unfollowUserHub({ key: String(HUB_ID), userId: VIEWER })).rejects.toThrow(
+      /not found/i
+    );
+
+    expect(dbMock.dbWrite.userHub.findFirst).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.userHubFollow.deleteMany).not.toHaveBeenCalled();
+  });
+
   it('refuses a hub this viewer cannot open, and writes nothing', async () => {
     // A private hub belonging to someone else does not match `hubViewerWhere`, so the
     // scoped read returns nothing. The refusal has to be a NOT-FOUND with no row
@@ -83,14 +105,14 @@ describe('followUserHub', () => {
     // shown, and it would come back the day the read filter is relaxed.
     writerHub.mockResolvedValue(null);
 
-    await expect(followUserHub({ hubId: 5, userId: VIEWER })).rejects.toThrow();
+    await expect(followUserHub({ key: HUB_KEY, userId: VIEWER })).rejects.toThrow();
     expect(followUpsert).not.toHaveBeenCalled();
   });
 
   it('reads the hub through hubViewerWhere, on the WRITER', async () => {
     writerHub.mockResolvedValue({ id: 5, userId: OWNER });
 
-    await followUserHub({ hubId: 5, userId: VIEWER });
+    await followUserHub({ key: HUB_KEY, userId: VIEWER });
 
     expect(writerHub).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -108,7 +130,7 @@ describe('followUserHub', () => {
   it('never passes isModerator: a view privilege is not a follow privilege', async () => {
     writerHub.mockResolvedValue({ id: 5, userId: OWNER });
 
-    await followUserHub({ hubId: 5, userId: VIEWER });
+    await followUserHub({ key: HUB_KEY, userId: VIEWER });
 
     // `hubViewerWhere({ isModerator: true })` is `{}`. If it ever reaches this read,
     // the `OR` disappears and a moderator can follow anything.
@@ -118,7 +140,7 @@ describe('followUserHub', () => {
   it('refuses your own hub', async () => {
     writerHub.mockResolvedValue({ id: 5, userId: VIEWER });
 
-    await expect(followUserHub({ hubId: 5, userId: VIEWER })).rejects.toThrow(/your own hub/i);
+    await expect(followUserHub({ key: HUB_KEY, userId: VIEWER })).rejects.toThrow(/your own hub/i);
     expect(followUpsert).not.toHaveBeenCalled();
   });
 
@@ -126,14 +148,14 @@ describe('followUserHub', () => {
     writerHub.mockResolvedValue({ id: 5, userId: OWNER });
     followCount.mockResolvedValue(hubLimits.followedHubs);
 
-    await expect(followUserHub({ hubId: 5, userId: VIEWER })).rejects.toThrow(/at most/i);
+    await expect(followUserHub({ key: HUB_KEY, userId: VIEWER })).rejects.toThrow(/at most/i);
     expect(followUpsert).not.toHaveBeenCalled();
   });
 
   it('is idempotent — a second click is not an error', async () => {
     writerHub.mockResolvedValue({ id: 5, userId: OWNER });
 
-    await expect(followUserHub({ hubId: 5, userId: VIEWER })).resolves.toStrictEqual({
+    await expect(followUserHub({ key: HUB_KEY, userId: VIEWER })).resolves.toStrictEqual({
       hubId: 5,
       following: true,
     });
@@ -201,7 +223,7 @@ describe('getFollowedHubs', () => {
 
 describe('unfollowUserHub', () => {
   it('deletes the CALLER’s row, scoped on the delete itself', async () => {
-    await unfollowUserHub({ hubId: 5, userId: VIEWER });
+    await unfollowUserHub({ key: HUB_KEY, userId: VIEWER });
 
     // `userId` on the DELETE, not a lookup then a delete by id: without it this
     // unfollows the hub for every follower.
@@ -211,7 +233,7 @@ describe('unfollowUserHub', () => {
   it('reports nothing removed when the row was already gone', async () => {
     followDeleteMany.mockResolvedValue({ count: 0 });
 
-    await expect(unfollowUserHub({ hubId: 5, userId: VIEWER })).resolves.toStrictEqual({
+    await expect(unfollowUserHub({ key: HUB_KEY, userId: VIEWER })).resolves.toStrictEqual({
       hubId: 5,
       following: false,
       removed: false,

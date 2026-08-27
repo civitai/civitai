@@ -50,7 +50,10 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { getUserHubForRoute } from '~/server/services/user-hub.service';
+import { getUserHubForRoute, hubRouteIsDark } from '~/server/services/user-hub.service';
+import { decodeHubId } from '~/server/utils/hub-id';
+import { removeTags } from '~/utils/string-helpers';
+import { truncate } from 'lodash-es';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { Availability } from '~/shared/utils/prisma/enums';
 import { getCanonicalSlugDestination } from '~/utils/canonical-slug';
@@ -61,15 +64,17 @@ import { trpc } from '~/utils/trpc';
 export const getServerSideProps = createServerSideProps({
   useSession: true,
   resolver: async ({ ctx, session, features }) => {
-    if (!features?.userHubs) return { notFound: true };
-
     // No session check: a public hub opens for anyone holding the link, signed out
     // included. The visibility check is the same one the tRPC read uses, done here
     // so that a link whose hub went back to private is a real 404 rather than a 200
     // carrying a not-found component. A private hub and a hub that never existed
     // are the same answer, so this confirms nothing to a stranger.
-    const id = Number(ctx.params?.id);
-    if (!Number.isInteger(id)) return { notFound: true };
+    // The path carries the ENCODED id. A bare integer decodes to null on purpose:
+    // accepting the pre-encoding format back would leave every public hub walkable by
+    // counting, which is the whole reason the encoding exists.
+    const key = Array.isArray(ctx.params?.id) ? ctx.params?.id[0] : ctx.params?.id;
+    const id = decodeHubId(key);
+    if (!id) return { notFound: true };
 
     const hub = await getUserHubForRoute({
       id,
@@ -78,13 +83,20 @@ export const getServerSideProps = createServerSideProps({
     });
     if (!hub) return { notFound: true };
 
+    // The flag gate runs AFTER the lookup and spares a public hub, because a link
+    // unfurler fetches this URL signed out and a 404 gives it nothing to preview.
+    // It gets a 200 carrying the meta tags below; the body still needs the flag,
+    // since the hub and its feed both arrive through flag-gated tRPC reads.
+    if (hubRouteIsDark({ hubsEnabled: !!features?.userHubs, availability: hub.availability }))
+      return { notFound: true };
+
     // Same canonicalisation both other `[[...slug]]` routes use, including its
     // empty-slug redirect-loop guard. Without it a hub renders at any slug and the
     // links people share never converge on one URL.
     const slug = ctx.params?.slug;
     const destination = getCanonicalSlugDestination({
       basePath: '/hubs',
-      id,
+      id: key as string,
       title: hub.name,
       currentSlug: Array.isArray(slug) ? slug.join('/') : slug,
       // Every other `[[...slug]]` route passes this. Without it the redirect strips
@@ -92,6 +104,10 @@ export const getServerSideProps = createServerSideProps({
       queryString: buildPassthroughQuery(ctx.query),
     });
     if (destination) return { redirect: { destination, permanent: false } };
+
+    return {
+      props: { hubMeta: { key: hub.key, name: hub.name, description: hub.description } },
+    };
   },
 });
 
@@ -139,16 +155,49 @@ function AdjustBrowsingLevelButton() {
   );
 }
 
+type HubMeta = { key: string; name: string; description: string | null };
+
+/**
+ * Rendered from the SERVER's copy of the hub, above every early return, because the
+ * hub the rest of the page uses arrives through a client query — nothing read off
+ * that appears in the HTML a link unfurler fetches. It collapses back into that query
+ * the day `user-hubs` opens to everyone, since the prefetch will then succeed for a
+ * signed-out request and hydrate the client copy at SSR.
+ */
+function HubMetaTags({ meta }: { meta?: HubMeta }) {
+  if (!meta) return null;
+  return (
+    <Meta
+      title={`${meta.name} | Civitai`}
+      // Truncated and stripped the way every sibling `[[...slug]]` page does it: a
+      // hub description is user-authored and goes out to whatever unfurls the link.
+      description={
+        meta.description ? truncate(removeTags(meta.description), { length: 150 }) : undefined
+      }
+      ogEndpoint={`/api/og?type=hub&id=${meta.key}`}
+      canonical={hubUrl(meta)}
+      deIndex
+    />
+  );
+}
+
 export default Page(
-  function HubFeedPage() {
+  function HubFeedPage({ hubMeta }: { hubMeta?: HubMeta }) {
     const router = useRouter();
-    const hubId = Number(router.query.id);
+    // The URL carries the encoded key; only the server can turn it back into an id,
+    // so everything numeric below comes off the hub this returns.
+    const hubKey = typeof router.query.id === 'string' ? router.query.id : '';
     const utils = trpc.useUtils();
 
     const { data: hub, isLoading } = trpc.userHub.getById.useQuery(
-      { id: hubId },
-      { enabled: Number.isInteger(hubId) }
+      { key: hubKey },
+      { enabled: !!hubKey }
     );
+    // Session state is keyed by the numeric id, which is not known until the hub
+    // loads. Nothing writes to the store before then — every write is a user action
+    // on a rendered hub — so the placeholder is only ever read, and reads an empty
+    // slot.
+    const hubId = hub?.id ?? 0;
 
     const excludedSources = useHubExcludedSources(hubId);
     const sessionBrowsingLevel = useHubSessionBrowsingLevel(hubId);
@@ -197,11 +246,20 @@ export default Page(
 
     if (isLoading)
       return (
-        <Center py="xl">
-          <Loader />
-        </Center>
+        <>
+          <HubMetaTags meta={hubMeta} />
+          <Center py="xl">
+            <Loader />
+          </Center>
+        </>
       );
-    if (!hub) return <NotFound />;
+    if (!hub)
+      return (
+        <>
+          <HubMetaTags meta={hubMeta} />
+          <NotFound />
+        </>
+      );
 
     const hasSources = hub.sources.some((s) => s.enabled);
     const isPublic = hub.availability === Availability.Public;
@@ -219,7 +277,10 @@ export default Page(
 
     return (
       <>
-        <Meta title={`${hub.name} | Civitai`} deIndex />
+        {/* The client copy WINS here: it is the fresher of the two, so a rename or a
+            new description shows up without a full reload. The server copy is only
+            the answer in the two early returns above, where there is no client hub. */}
+        <HubMetaTags meta={{ key: hub.key, name: hub.name, description: hub.description }} />
         {/* Same container the feed itself renders in, so the title lines up with
             the first card instead of hugging the rail. */}
         <MasonryContainer className="min-h-full">

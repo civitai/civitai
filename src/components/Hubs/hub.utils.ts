@@ -16,7 +16,11 @@ export function useInvalidateHub() {
   return async (hubId: number) => {
     await Promise.all([
       utils.userHub.getAll.invalidate(),
-      utils.userHub.getById.invalidate({ id: hubId }),
+      // Unfiltered: `getById` is now addressed by the hub's encoded KEY, which this
+      // caller does not always hold. A viewer has a handful of hubs, so dropping the
+      // filter costs a refetch of those and removes a key/id mismatch that would
+      // silently invalidate nothing.
+      utils.userHub.getById.invalidate(),
       utils.image.getInfinite.invalidate({ hubId }),
     ]);
   };
@@ -24,9 +28,15 @@ export function useInvalidateHub() {
 
 // The id stays canonical and the slug is decoration, the same way articles do it:
 // a renamed hub keeps working from every link anyone was already given.
-export function hubUrl(hub: { id: number; name: string }) {
+/**
+ * `key`, never `id`. The path carries the hub's ENCODED id — an int there makes every
+ * public hub walkable by counting, since the page and its preview card both answer
+ * unauthenticated. The encoding happens server-side (`~/server/utils/hub-id`) and
+ * arrives on the hub, so the client never holds the salt.
+ */
+export function hubUrl(hub: { key: string; name: string }) {
   const slug = slugit(hub.name);
-  return slug ? `/hubs/${hub.id}/${slug}` : `/hubs/${hub.id}`;
+  return slug ? `/hubs/${hub.key}/${slug}` : `/hubs/${hub.key}`;
 }
 
 /**

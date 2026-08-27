@@ -95,10 +95,10 @@ function SectionHeader({
  * not change when they do.
  */
 function HubsSidebarContent({
-  activeHubId,
+  activeHubKey,
   onNewHub,
 }: {
-  activeHubId?: number;
+  activeHubKey?: string;
   onNewHub: () => void;
 }) {
   const currentUser = useCurrentUser();
@@ -114,8 +114,8 @@ function HubsSidebarContent({
   // above the feed — the position the 2026-08-19 meeting moved away from, because
   // a full-width source list "covers up like a third of your screen".
   const { data: activeHub } = trpc.userHub.getById.useQuery(
-    { id: activeHubId as number },
-    { enabled: !!activeHubId }
+    { key: activeHubKey as string },
+    { enabled: !!activeHubKey }
   );
 
   const sourcesOpen = sourcesOpenOverride ?? (activeHub ? !activeHub.isOwner : false);
@@ -130,7 +130,7 @@ function HubsSidebarContent({
       </Text>
       <Divider />
 
-      {activeHubId && activeHub && (
+      {activeHubKey && activeHub && (
         <>
           <SectionHeader
             // Not the hub's name: it can run to 60 characters and this header is
@@ -212,7 +212,7 @@ function HubsSidebarContent({
                     href={hubUrl(hub)}
                     className={clsx(
                       'rounded-md px-2 py-1.5',
-                      hub.id === activeHubId
+                      hub.key === activeHubKey
                         ? 'bg-gray-2 dark:bg-dark-5'
                         : 'hover:bg-gray-1 dark:hover:bg-dark-6'
                     )}
@@ -233,7 +233,7 @@ function HubsSidebarContent({
 
           {/* Renders nothing until you follow something, so it costs an empty list no
               space and no heading. */}
-          <FollowedHubsSection activeHubId={activeHubId} />
+          <FollowedHubsSection activeHubKey={activeHubKey} />
         </>
       )}
     </Stack>
@@ -247,9 +247,9 @@ export function HubsLayout({ children }: { children: React.ReactNode }) {
   const [showSidebar, setShowSidebar] = useState(true);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
-  const activeHubId = Number.isInteger(Number(router.query.id))
-    ? Number(router.query.id)
-    : undefined;
+  // The route's `id` is the hub's ENCODED key, not the row's int — only the server
+  // can turn it back, so the numeric id below comes off the hub this fetches.
+  const activeHubKey = typeof router.query.id === 'string' ? router.query.id : undefined;
 
   const openCreate = () => {
     setDrawerOpen(false);
@@ -258,7 +258,7 @@ export function HubsLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <Container fluid className={classes.container}>
-      {(!!currentUser || !!activeHubId) && !isMobile && (
+      {(!!currentUser || !!activeHubKey) && !isMobile && (
         <Card
           className={classes.sidebar}
           w={300}
@@ -280,13 +280,13 @@ export function HubsLayout({ children }: { children: React.ReactNode }) {
               needs) puts the overflow outside the border and past the viewport,
               with nothing to scroll it. */}
           <ScrollArea.Autosize mah="calc(100dvh - var(--header-height) - var(--footer-height) - 68px)">
-            <HubsSidebarContent activeHubId={activeHubId} onNewHub={openCreate} />
+            <HubsSidebarContent activeHubKey={activeHubKey} onNewHub={openCreate} />
           </ScrollArea.Autosize>
         </Card>
       )}
 
       <div className={classes.content}>
-        {(!!currentUser || !!activeHubId) && isMobile && (
+        {(!!currentUser || !!activeHubKey) && isMobile && (
           <>
             <Button
               className={classes.drawerButton}
@@ -304,7 +304,7 @@ export function HubsLayout({ children }: { children: React.ReactNode }) {
               size="100%"
               title="Civitai Hubs"
             >
-              <HubsSidebarContent activeHubId={activeHubId} onNewHub={openCreate} />
+              <HubsSidebarContent activeHubKey={activeHubKey} onNewHub={openCreate} />
             </Drawer>
           </>
         )}

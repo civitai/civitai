@@ -35,10 +35,13 @@ export function useHubFollows() {
   return {
     followed,
     isLoading,
-    isFollowing: (hubId: number) => followed.some((hub) => hub.id === hubId),
+    // Keyed, not int: an int-addressed follow of a public hub returns that hub's
+    // `key` through `getFollowed`, which hands out the encoded id for the price of
+    // counting.
+    isFollowing: (key: string) => followed.some((hub) => hub.key === key),
     pending: follow.isPending || unfollow.isPending,
-    follow: (hubId: number) => follow.mutate({ hubId }),
-    unfollow: (hubId: number) => unfollow.mutate({ hubId }),
+    follow: (key: string) => follow.mutate({ key }),
+    unfollow: (key: string) => unfollow.mutate({ key }),
   };
 }
 
@@ -47,7 +50,7 @@ export function FollowHubButton({
   iconOnly,
   ...props
 }: {
-  hub: { id: number; isOwner: boolean };
+  hub: { key: string; isOwner: boolean };
   /** Render as a bare action icon with a tooltip, for a crowded header row. */
   iconOnly?: boolean;
 } & Pick<ButtonProps, 'size' | 'fullWidth' | 'className'>) {
@@ -59,7 +62,7 @@ export function FollowHubButton({
   // follow button here could put you in.
   if (!currentUser || hub.isOwner) return null;
 
-  const following = isFollowing(hub.id);
+  const following = isFollowing(hub.key);
 
   const label = following ? 'Following' : 'Follow';
   const icon = following ? <IconBookmarkFilled size={18} /> : <IconBookmark size={18} />;
@@ -75,7 +78,7 @@ export function FollowHubButton({
           color={following ? 'blue' : 'gray'}
           loading={pending}
           aria-label={label}
-          onClick={() => (following ? unfollow(hub.id) : follow(hub.id))}
+          onClick={() => (following ? unfollow(hub.key) : follow(hub.key))}
         >
           {icon}
         </LegacyActionIcon>
@@ -87,7 +90,7 @@ export function FollowHubButton({
       variant={following ? 'light' : 'filled'}
       loading={pending}
       leftSection={icon}
-      onClick={() => (following ? unfollow(hub.id) : follow(hub.id))}
+      onClick={() => (following ? unfollow(hub.key) : follow(hub.key))}
       {...props}
     >
       {label}

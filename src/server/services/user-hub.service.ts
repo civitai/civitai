@@ -1,4 +1,5 @@
 import { dbRead, dbWrite } from '~/server/db/client';
+import { decodeHubId, encodeHubId } from '~/server/utils/hub-id';
 import { Prisma } from '@prisma/client';
 import type {
   AddUserHubSourceInput,
@@ -71,6 +72,7 @@ const hubSelect = {
 } as const;
 
 type HubRow = {
+  id: number;
   metadata: Prisma.JsonValue;
   userId: number;
   sources: { enabled: boolean }[];
@@ -84,14 +86,37 @@ export type HubViewer = { userId?: number; isModerator?: boolean };
  * not-found, never a row plus a refusal.
  *
  * A moderator may open any hub — subtask 868kwp5kc, view only. Everyone else gets
- * their own hubs plus whatever is Public. There is no discovery surface, so Public
- * means "anyone holding the link", not "listed".
+ * their own hubs plus whatever is Public.
+ *
+ * 🔴 Public means FULLY public — Justin's call, 2026-08-27, superseding an earlier
+ * reading of "anyone holding the link, not listed". `UserHub.id` is a dense
+ * autoincrement and the link-preview card at `/api/og?type=hub&id=N` answers
+ * unauthenticated, so every public hub's name, description, owner and counts are
+ * walkable by id whether or not a discovery surface exists. That is accepted, not
+ * overlooked: do not add a check here on the theory that Public is semi-private.
  */
 export function hubViewerWhere({ userId, isModerator }: HubViewer) {
   if (isModerator) return {};
   return {
     OR: [...(userId ? [{ userId }] : []), { availability: Availability.Public }],
   };
+}
+
+/**
+ * Whether the hub ROUTE stays dark for this viewer. Public hubs are spared the
+ * `user-hubs` flag because a link unfurler fetches the page signed out: a 404 gives
+ * it nothing to preview, where a 200 carries the meta tags. It buys the meta only —
+ * the body still needs the flag, since the hub and its feed both arrive through
+ * flag-gated tRPC reads.
+ */
+export function hubRouteIsDark({
+  hubsEnabled,
+  availability,
+}: {
+  hubsEnabled: boolean;
+  availability: Availability;
+}) {
+  return !hubsEnabled && availability !== Availability.Public;
 }
 
 /**
@@ -112,14 +137,25 @@ function readMetadata(metadata: Prisma.JsonValue | undefined) {
     : {};
 }
 
+// Three readers now — the app's own detail shape, the route's SSR meta, and the
+// link-preview card — and the last two publish it off-site. One function so that
+// sanitising or capping it later reaches all three rather than the one someone opens.
+function readDescription(metadata: Prisma.JsonValue | undefined) {
+  const description = readMetadata(metadata).description;
+  return typeof description === 'string' ? description : null;
+}
+
 // `metadata` never leaves the service: callers get the fields it carries, so a key
 // added to it later is not published to every client by default.
 function toHubDetail<T extends HubRow>({ metadata, ...hub }: T, viewerId?: number) {
   const stored = readMetadata(metadata);
-  const description = stored.description;
   const isOwner = !!viewerId && hub.userId === viewerId;
   return {
     ...hub,
+    // The id the CLIENT builds URLs from. Encoded here rather than there because the
+    // salt is a server env var — shipping it to the browser would make the encoding
+    // decorative. `hubUrl` takes this, never `id`.
+    key: encodeHubId(hub.id),
     // What the client branches its whole chrome on. Computed here rather than
     // compared client-side, because the client's idea of who it is and the row the
     // server just authorised are two different facts.
@@ -128,7 +164,7 @@ function toHubDetail<T extends HubRow>({ metadata, ...hub }: T, viewerId?: numbe
     // shown, so shipping it to a viewer publishes part of their curation for no
     // reason. The owner still gets the whole list, which is the one they edit.
     sources: isOwner ? hub.sources : hub.sources.filter((source) => source.enabled),
-    description: typeof description === 'string' ? description : null,
+    description: readDescription(metadata),
     // Re-validated on the way out: what is on the row was written by an older
     // shape of this schema, and the feed refuses some combinations outright.
     filters: hubFeedFiltersSchema.catch({}).parse(stored.filters ?? {}),
@@ -153,6 +189,17 @@ export async function getUserHubs({ userId }: { userId: number }) {
 // may not open is a not-found rather than a leak. Revoking `Public` therefore makes
 // every link anyone was given 404 on the next read — subtask 868kwp5g8 — with no
 // separate revocation list to keep in step.
+/**
+ * The public read, addressed the way the URL addresses it. A key that does not decode
+ * is the same not-found as a hub this viewer may not open — including a bare integer,
+ * which is what the pre-encoding links carried.
+ */
+export async function getUserHubByKey({ key, ...viewer }: { key: string } & HubViewer) {
+  const id = decodeHubId(key);
+  if (!id) throw throwNotFoundError('Hub not found');
+  return getUserHubById({ id, ...viewer });
+}
+
 export async function getUserHubById({ id, userId, isModerator }: { id: number } & HubViewer) {
   const hub = await dbRead.userHub.findFirst({
     where: { id, ...hubViewerWhere({ userId, isModerator }) },
@@ -169,10 +216,51 @@ export async function getUserHubById({ id, userId, isModerator }: { id: number }
  * slug redirect needs it, and two facts off one primary-key read beats two reads.
  */
 export async function getUserHubForRoute({ id, userId, isModerator }: { id: number } & HubViewer) {
-  return dbRead.userHub.findFirst({
+  const hub = await dbRead.userHub.findFirst({
     where: { id, ...hubViewerWhere({ userId, isModerator }) },
-    select: { id: true, name: true },
+    select: { id: true, name: true, availability: true, metadata: true },
   });
+  if (!hub) return null;
+
+  // The description rides along because the page's <Meta> has to render on the
+  // SERVER: the hub itself arrives through a client query, so anything read off that
+  // is absent from the HTML a link unfurler fetches.
+  const { metadata, ...rest } = hub;
+  return { ...rest, key: encodeHubId(hub.id), description: readDescription(metadata) };
+}
+
+/**
+ * What the link-preview card renders. Public only, and scoped in the `where` like
+ * every other hub read, so a private hub and an id that never existed are the same
+ * answer — a card that resolved a private hub would publish its name to anyone who
+ * guessed the id.
+ */
+export async function getHubCardData(id: number) {
+  const hub = await dbRead.userHub.findFirst({
+    // Through the shared guard with an EMPTY viewer, not a hand-written Public check:
+    // this endpoint has no session, so no-viewer is the exact case, and the card is
+    // the one read that publishes off-site and CDN-caches. A rule added to
+    // `hubViewerWhere` later — a soft delete, a hub-level ban — must not miss it.
+    where: { id, ...hubViewerWhere({}) },
+    select: {
+      name: true,
+      metadata: true,
+      user: { select: { username: true } },
+      // Enabled only, because that is the number a visitor can see: `toHubDetail`
+      // strips disabled sources for everyone but the owner, so counting all of them
+      // advertises a hub as larger than the page it opens.
+      _count: { select: { sources: { where: { enabled: true } }, followers: true } },
+    },
+  });
+  if (!hub) return null;
+
+  return {
+    name: hub.name,
+    description: readDescription(hub.metadata),
+    username: hub.user.username,
+    sourceCount: hub._count.sources,
+    followerCount: hub._count.followers,
+  };
 }
 
 export async function upsertUserHub({
@@ -413,7 +501,13 @@ export async function getFollowedHubs({ userId }: { userId: number }) {
   return follows.map((follow) => toHubDetail(follow.hub, userId));
 }
 
-export async function followUserHub({ hubId, userId }: { hubId: number; userId: number }) {
+export async function followUserHub({ key, userId }: { key: string; userId: number }) {
+  // Addressed by the encoded key, like every other public hub verb: an int here is a
+  // second address for the same row, and this one returns through `getFollowed`,
+  // which carries `key`.
+  const hubId = decodeHubId(key);
+  if (!hubId) throw throwNotFoundError('Hub not found');
+
   // Through the WRITER, and scoped by the same fragment every hub read uses: a hub
   // this viewer cannot open must be a not-found here, never a follow row pointing at
   // something they will never be shown.
@@ -440,7 +534,10 @@ export async function followUserHub({ hubId, userId }: { hubId: number; userId: 
   return { hubId, following: true };
 }
 
-export async function unfollowUserHub({ hubId, userId }: { hubId: number; userId: number }) {
+export async function unfollowUserHub({ key, userId }: { key: string; userId: number }) {
+  const hubId = decodeHubId(key);
+  if (!hubId) throw throwNotFoundError('Hub not found');
+
   // Scoped to the caller's own row on the DELETE itself, like every other write in
   // this file — `deleteMany`, not a lookup followed by a delete by id.
   const { count } = await dbWrite.userHubFollow.deleteMany({ where: { userId, hubId } });
