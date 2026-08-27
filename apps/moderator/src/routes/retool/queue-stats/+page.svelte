@@ -13,6 +13,8 @@
 
   const peak = (points: { count: number }[]) => Math.max(...points.map((p) => p.count), 0);
 
+  const localZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
   // `@civitai/ui`'s themed Chart.js wrapper, as five creator-studio pages use. Category labels, not a
   // time axis — the wrapper registers no date adapter, so the hour is pre-formatted here.
   const hourLabel = (iso: string | Date) =>
@@ -47,6 +49,9 @@
     Upload rate and who has been working the rating queues. Retool loaded these on demand — they are
     unindexed aggregates, so this page is deliberately separate from the dashboard.
   </p>
+  <!-- Said once here rather than per tick: the hour labels are chart axis categories, where repeating a
+       zone on every one is noise. Everywhere else `dateTime` carries it. -->
+  <p class="text-sm text-dark-2">Times below are in your local timezone ({localZone}).</p>
 </header>
 
 {#if form?.error}

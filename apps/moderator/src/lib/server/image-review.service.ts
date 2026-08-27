@@ -336,14 +336,30 @@ export async function getAppealImageQueue({
           .as('appeal'),
       (join) => join.onTrue()
     )
-    .innerJoin('User as au', 'au.id', 'appeal.userId')
-    .leftJoin('ModActivity as ma', (join) =>
-      join
-        .onRef('ma.entityId', '=', 'i.id')
-        .on('ma.entityType', '=', 'image')
-        .on('ma.activity', '=', 'review')
+    // LEFT, not INNER: an appeal whose author has since deleted their account still counts toward the
+    // sidebar badge — that count is `Image WHERE needsReview = 'appeal'` and joins nothing — so an inner
+    // join here left it counted and unlistable, inflating the queue forever with rows no one can rule
+    // on. Both the item type and the card's `[deleted] #id` fallback were already written for this.
+    .leftJoin('User as au', 'au.id', 'appeal.userId')
+    // Lateral with LIMIT 1, like the appeal join above — NOT a plain leftJoin. `ModActivity` holds one
+    // row per review, and an appealed image has been reviewed at least once and usually more, so a plain
+    // join multiplies the image by its review count. The grid keys on image id, so the second copy threw
+    // `each_key_duplicate` and Svelte tore the page down mid-render — reported as the Appeals tab going
+    // black. Ordered `desc` because the card reads "Removed ... by X", which is the LATEST review.
+    .leftJoinLateral(
+      (eb) =>
+        eb
+          .selectFrom('ModActivity as ma')
+          .select(['ma.userId', 'ma.createdAt'])
+          .whereRef('ma.entityId', '=', 'i.id')
+          .where('ma.entityType', '=', 'image')
+          .where('ma.activity', '=', 'review')
+          .orderBy('ma.createdAt', 'desc')
+          .limit(1)
+          .as('review'),
+      (join) => join.onTrue()
     )
-    .leftJoin('User as mu', 'mu.id', 'ma.userId')
+    .leftJoin('User as mu', 'mu.id', 'review.userId')
     .select([
       'i.id',
       'i.url',
@@ -363,7 +379,7 @@ export async function getAppealImageQueue({
       'appeal.userId as appealUserId',
       'au.username as appealUsername',
       'mu.username as moderatorUsername',
-      'ma.createdAt as removedAt',
+      'review.createdAt as removedAt',
     ])
     .where(sql<boolean>`(i."nsfwLevel" = 0 OR (i."nsfwLevel" & ${browsingLevel}) != 0)`)
     .where('i.needsReview', '=', 'appeal')

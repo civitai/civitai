@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { dateTime } from '$lib/format';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { IconDownload } from '@tabler/icons-svelte';
@@ -29,7 +30,7 @@
   let { data }: { data: PageData } = $props();
 
   const totalPages = $derived(Math.max(1, Math.ceil(data.total / data.limit)));
-  const fmtDate = (d: string) => new Date(d).toLocaleString();
+  const fmtDate = dateTime;
 
   function urlWith(params: Record<string, string | number | null>) {
     const url = new URL(page.url);

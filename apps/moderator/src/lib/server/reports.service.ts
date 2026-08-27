@@ -315,6 +315,8 @@ export type MostReportedRow = {
   reason: ReportReason;
   createdAt: Date;
   reportCount: number;
+  /** The reporter's own free-form fields. The only thing left to judge an `other` row on. */
+  details: unknown;
   /** `other` only when the report has no row in ANY of the fifteen report tables. */
   entity: ReportEntity | 'other';
   entityId: number | null;
@@ -364,13 +366,14 @@ async function fetchMostReported(limit: number): Promise<MostReportedRow[]> {
       reason: ReportReason;
       createdAt: Date;
       reportCount: number;
+      details: unknown;
       reportedByUsername: string | null;
       commentContext: string | null;
       commentV2Context: string | null;
     }
   >`
     WITH top AS (
-      SELECT t.id, t.reason, t."createdAt", t."userId", ${reportCount} AS "reportCount"
+      SELECT t.id, t.reason, t."createdAt", t."userId", t.details, ${reportCount} AS "reportCount"
       FROM "Report" t
       LEFT JOIN "ImageReport" ir ON ir."reportId" = t.id
       LEFT JOIN "Image" i ON i.id = ir."imageId"
@@ -382,7 +385,7 @@ async function fetchMostReported(limit: number): Promise<MostReportedRow[]> {
       LIMIT ${limit}
     )
     SELECT
-      top.id, top.reason, top."createdAt", top."reportCount",
+      top.id, top.reason, top."createdAt", top."reportCount", top.details,
       u.username AS "reportedByUsername",
       ${sql.join(
         reportEntities.map((type) => sql`${entityId(type)} AS ${sql.ref(type)}`),
@@ -402,6 +405,7 @@ async function fetchMostReported(limit: number): Promise<MostReportedRow[]> {
       reason: r.reason,
       createdAt: r.createdAt,
       reportCount: Number(r.reportCount ?? 0),
+      details: r.details,
       entity: entity ?? 'other',
       entityId: entity ? Number(r[entity]) : null,
       contextUrl:

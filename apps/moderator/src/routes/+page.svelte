@@ -14,7 +14,12 @@
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { userLookupUrl } from '$lib/entity-url';
-  import { getReportItemUrl, reportEntityLabels, ReportEntity } from '$lib/reports';
+  import {
+    getReportItemUrl,
+    reportDetailEntries,
+    reportEntityLabels,
+    ReportEntity,
+  } from '$lib/reports';
   import type { Jsonified } from '$lib/format';
   import type { MostReportedRow } from '$lib/server/reports.service';
   import type { BoardPayload } from './api/moderation-board/types';
@@ -100,6 +105,11 @@
   const UNLINKED_HINT =
     'This report is not attached to any content — no row exists in any report table for it. Nothing to open.';
 
+  // An unlinked row has no content to open, so the reporter's own fields are the only thing left to
+  // rule on. Every other row links to the thing itself, where the details are already shown.
+  const unlinkedDetails = (row: Reported) =>
+    row.entity === 'other' ? reportDetailEntries(row.details) : [];
+
   const contentUrl = (row: Reported) =>
     row.entity === 'other'
       ? null
@@ -140,7 +150,8 @@
 
   // Mod queries are slow (~200ms), so resolved rows are dimmed in place rather than refetched — and kept
   // rather than removed, so you can see what you just did. Cleared on reload.
-  let outcome = $state<Record<number, 'Actioned' | 'Unactioned' | 'failed'>>({});
+  type Outcome = { kind: 'Actioned' | 'Unactioned' } | { kind: 'failed'; message: string };
+  let outcome = $state<Record<number, Outcome>>({});
 
   // `count: null` = nothing to count (no countKey), which is not the same as an empty queue — the
   // empty-row collapsing below keys off that difference.
@@ -281,7 +292,7 @@
       <TableBody>
         {#each reported as row (row.id)}
           {@const done = outcome[row.id]}
-          <TableRow class={done && done !== 'failed' ? 'opacity-40' : undefined}>
+          <TableRow class={done && done.kind !== 'failed' ? 'opacity-40' : undefined}>
             <TableCell>
               <Badge variant={row.reportCount >= URGENT_REPORT_COUNT ? 'destructive' : 'secondary'}>
                 {row.reportCount}
@@ -302,23 +313,36 @@
                   {entityLabel(row)} {row.entityId}
                 </a>
               {:else}
+                {@const details = unlinkedDetails(row)}
                 <span
                   class="text-dark-2"
                   title={row.entity === 'other' ? UNLINKED_HINT : undefined}
                 >
                   {entityLabel(row)} {row.entityId ?? ''}
                 </span>
+                {#if details.length > 0}
+                  <div class="mt-1 flex flex-col gap-0.5 text-xs text-dark-2">
+                    {#each details as [key, value] (key)}
+                      <span><span class="font-semibold">{key}:</span> {value}</span>
+                    {/each}
+                  </div>
+                {:else if row.entity === 'other'}
+                  <p class="mt-1 text-xs text-dark-2">
+                    The reported content is gone and the report carries no details — nothing left to
+                    rule on. Dismiss it.
+                  </p>
+                {/if}
               {/if}
             </TableCell>
             <TableCell class="text-sm">{row.reason}</TableCell>
             <TableCell class="text-sm whitespace-nowrap">{age(row.createdAt)}</TableCell>
             <TableCell class="text-sm">{row.reportedByUsername ?? '—'}</TableCell>
             <TableCell>
-              {#if done === 'failed'}
-                <span class="text-sm whitespace-nowrap text-red-400">failed — retry</span>
+              {#if done?.kind === 'failed'}
+                <span class="text-sm text-red-400">{done.message}</span>
               {:else if done}
                 <span class="text-sm whitespace-nowrap text-dark-2">
-                  {done === 'Actioned' ? 'actioned' : 'dismissed'}
+                  {done.kind === 'Actioned' ? 'actioned' : 'dismissed'}
                 </span>
               {:else}
                 <div class="flex gap-1.5">
@@ -327,12 +351,28 @@
                       method="POST"
                       action="?/actionReport"
                       use:enhance={() => {
-                        outcome = { ...outcome, [row.id]: choice.status as 'Actioned' | 'Unactioned' };
+                        outcome = {
+                          ...outcome,
+                          [row.id]: { kind: choice.status as 'Actioned' | 'Unactioned' },
+                        };
                         return async ({ result }) => {
                           // Only the row's own state changes — no invalidateAll, which would rerun every
                           // load on the page for a change nothing else reads.
-                          if (result.type !== 'success')
-                            outcome = { ...outcome, [row.id]: 'failed' };
+                          if (result.type === 'success') return;
+                          // 409 is the report no longer being Pending — someone else resolved it, or a
+                          // ban purge closed it, while this list was still inside its 60s cache. No
+                          // retry can succeed, so take the row off the screen instead of asking for one.
+                          if (result.type === 'failure' && result.status === 409) {
+                            reported = (reported ?? []).filter((r) => r.id !== row.id);
+                            const { [row.id]: _dropped, ...rest } = outcome;
+                            outcome = rest;
+                            return;
+                          }
+                          const message =
+                            result.type === 'failure' && typeof result.data?.error === 'string'
+                              ? result.data.error
+                              : 'Failed — retry.';
+                          outcome = { ...outcome, [row.id]: { kind: 'failed', message } };
                         };
                       }}
                     >

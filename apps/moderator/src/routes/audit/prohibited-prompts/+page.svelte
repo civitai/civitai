@@ -9,7 +9,11 @@
 
   const fmtTime = (iso: string) => {
     const d = new Date(iso.includes('Z') || iso.includes('+') ? iso : iso + 'Z');
-    return Number.isNaN(d.getTime()) ? iso : d.toLocaleTimeString();
+    // Time only, zone named: these are all from today, so `dateTime`'s date and UTC suffix would
+    // repeat down every row for the one fact that varies.
+    return Number.isNaN(d.getTime())
+      ? iso
+      : d.toLocaleTimeString(undefined, { timeStyle: 'medium', timeZoneName: 'short' });
   };
 </script>
 

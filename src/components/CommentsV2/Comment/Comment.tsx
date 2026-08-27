@@ -9,6 +9,7 @@ import {
   Stack,
   Text,
   ThemeIcon,
+  Tooltip,
   UnstyledButton,
 } from '@mantine/core';
 import {
@@ -17,6 +18,7 @@ import {
   IconCaretDownFilled,
   IconDotsVertical,
   IconEdit,
+  IconExclamationCircle,
   IconEye,
   IconEyeOff,
   IconFlag,
@@ -235,6 +237,13 @@ export function CommentContent({
               <ThemeIcon size="sm" color="orange">
                 <IconPinned size={16} stroke={2} />
               </ThemeIcon>
+            )}
+            {currentUser?.isModerator && comment.tosViolation && (
+              <Tooltip label="Has TOS Violation">
+                <ThemeIcon color="orange" size="xs">
+                  <IconExclamationCircle />
+                </ThemeIcon>
+              </Tooltip>
             )}
           </Group>
 

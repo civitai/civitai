@@ -1,14 +1,14 @@
-# Mod Studio feedback — round 2026-08-24
+# Mod Studio feedback — rounds 2026-08-24 and 2026-08-25
 
 The moderation team reviews the app in a feedback channel and reports as they go. This file is the single
-place to see what this round asked for and whether it is done.
+place to see what these rounds asked for and whether it is done.
 
-**Scope:** the comment-spam round raised on 2026-08-24, PLUS everything still open from earlier rounds,
-carried into the second half of this file.
+**Scope:** the comment-spam round raised on 2026-08-24, the follow-up round raised on 2026-08-25 after
+that push and its changelog, PLUS everything still open from earlier rounds — in that order.
 
-**This is the live list.** A round gets its own dated file so it is clear when something was first asked
-for, and unfinished items move to the newest file rather than being ticked across several — so the
-newest file is the only one with open boxes. Earlier rounds:
+**This is the live list.** A round gets its own dated section so it is clear when something was first
+asked for, and unfinished items move forward rather than being ticked across several files — so this is
+the only file with open boxes. Earlier rounds:
 [`mod-studio-feedback-2026-08-21.md`](mod-studio-feedback-2026-08-21.md),
 [`mod-studio-feedback-2026-08-19.md`](mod-studio-feedback-2026-08-19.md),
 [`mod-studio-feedback-2026-08-17.md`](mod-studio-feedback-2026-08-17.md).
@@ -33,7 +33,7 @@ cost is per-account rather than one-off: an extra reload, a second purge step, a
 Each box records what the code actually does today, verified by reading it — every report here is
 accurate, but four of the seven have a cause that is not what the symptom suggests.
 
-## This round
+## Round 2026-08-24
 
 - [x] **User Lookup → Comments has no bulk-select.** Both lists carry a **select-all** now, and it
       follows the **filtered** set rather than the raw one — the search box above each list is what a
@@ -293,6 +293,247 @@ look on paper.
 
 ---
 
+# Round 2026-08-25
+
+Reported after the 08-25 push and its changelog. Kept in this file rather than a new dated one so
+there is still exactly one list with open boxes; each item carries the date it was raised.
+
+## Reported defects
+
+- [x] **Most reported: pressing "Actioned" fails.** *(08-25)* The write was never the problem. Two
+      things compounded: `getMostReported` filters `status = Pending` but is cached for 60 s, so a
+      report someone else resolved — or that a ban purge closed — keeps rendering for up to a minute,
+      and clicking it hits `setReportStatus`'s `where status != status`, which answers **409 "Someone
+      else already actioned that report"**. The dashboard then threw that message away: `actionReport`'s
+      `enhance` handler treated every non-success alike and printed **"failed — retry"**, so a row that
+      could never succeed asked to be retried forever. A missing `/reports` grant landed in the same
+      place with the same unreadable text.
+
+      The dashboard now renders what the server actually said, and on a 409 drops the row instead of
+      marking it failed — retrying it cannot work, and the empty state below the table already handles
+      the list emptying out. `outcome` carries the message with the verdict rather than a bare
+      `'failed'` string.
+
+      The 60 s cache is left alone: shortening it trades a stale row nobody can action for a ~200 ms
+      six-table join on every dashboard load, and the stale row is now self-clearing.
+
+- [x] **Images → Appeals loads nothing, then goes black.** *(08-25)* **A duplicate row, not a render
+      bug.** Reproduced against production on 2026-08-27; the browser console named it exactly:
+
+      ```
+      each_key_duplicate — Keyed each block has duplicate key `140920383` at indexes 9 and 10
+        in ImageQueueGrid.svelte
+      ```
+
+      `getAppealImageQueue` reached `ModActivity` with a plain `leftJoin` on
+      `entityId`/`entityType`/`activity` and **no LIMIT**. That table holds one row per review, and an
+      appealed image has been reviewed at least once and usually more — so the join returned the image
+      once per review. `ImageQueueGrid` keys its `{#each}` on the image id, so the second copy threw and
+      Svelte tore the page down mid-render. That is the black screen, and it is also why the sidebar link
+      "did nothing": on a client-side navigation the same throw aborts the render while leaving the
+      previous page on screen.
+
+      Two things worth keeping from the diagnosis. The duplicate landing at **adjacent** indexes 9 and 10
+      is the signature of a fan-out — the copies sort together under `ORDER BY i.id DESC` — so that
+      detail is diagnostic, not incidental. And **this file had already learned the lesson**: the
+      `ImageConnection` join twenty lines up carries a comment explaining that a multiply-matching join
+      duplicates rows and breaks cursor paging, and uses `LATERAL … LIMIT 1` for exactly that reason.
+      The appeal query used the pattern for its `Appeal` join and not for this one.
+
+      Fixed as a `leftJoinLateral` ordered `createdAt desc, limit 1` — the ordering is load-bearing,
+      since the card reads "Removed … by X" and an unordered `LIMIT 1` credits an arbitrary moderator.
+      Covered by `appeal-queue-sql.test.ts`, which compiles the real query against a driver that never
+      connects and asserts `ModActivity` is unreachable except through a capped lateral. Mutation-checked:
+      restoring the original join fails two of its three tests.
+
+      **Also changed: the appellant join is `leftJoin`, not `innerJoin`.** It now agrees with the item
+      type (`username: string | null`) and the card's `[deleted] #id` fallback — both already written for
+      a left join — and stops a future hard-deleted account from silently dropping an appeal out of the
+      queue.
+
+      ⚠️ **Defensive, not a fix for anything happening now. Measured rather than assumed.** The sidebar
+      badge is `Image WHERE needsReview = 'appeal'` and joins nothing, so in principle it can count rows
+      the list cannot render. On production on 2026-08-27 it does not: of **137** flagged images, **137**
+      have an `Appeal` row, **0** have a deleted appellant, and all 137 are `Pending`. Badge and queue
+      agree exactly, there is no backlog of unrulable appeals, and nothing needs cleaning up.
+
+      So there is **no `needsReview` work item here.** The divergence is a property of the two queries,
+      not a state the data is in — worth knowing only if the badge and the list ever disagree.
+
+      **A sweep for the same shape found nothing else.** Every other join in `image-review.service.ts` is
+      on a primary key; `getReportedImageQueue` fans out deliberately and keys on report id; and
+      `image-tags.service.ts` already guards its CTE with `SELECT DISTINCT "imageId"`. Appeals was the
+      only one.
+
+- [ ] **Mod Studio bounces to civitai.com after switching user on .red.** *(08-25)* Reported as "Lookup
+      user takes me to civitai.com", then narrowed by the reporter: switching account on `.red` switches
+      it on `.com` too, and switching back on `.red` does not switch back on `.com`. The split is
+      deliberate — `civitaiLinkUrl()` is `.red` for links a moderator follows, `civitaiAppUrl()` is
+      `.com` because the relayed session cookie is issued for `.civitai.com`, and it is also the redirect
+      target for an authenticated non-moderator. So a session that reads as non-moderator to the spoke
+      lands the moderator on `.com`, which is exactly the symptom. Confirm against a real switch before
+      deciding whether the fix is the cookie scope or the redirect.
+
+      **Found since:** the redirect is `hooks.server.ts`'s `NON_MODERATOR_REDIRECT = civitaiAppUrl()`,
+      returned as a 303 on a `forbidden` verdict. That is the **API base** standing in for a link a human
+      follows — `civitai-url.ts` says so in as many words, and names `civitaiLinkUrl` as the other
+      decision — so the destination half of "it takes me to civitai.com" is a one-line defect,
+      independent of whatever made the session read as non-moderator in the first place.
+
+      **Deliberately not changed yet.** Swapping the constant relocates the dead end without fixing being
+      locked out, and changing it before the cause is known makes the remaining bug harder to see. It
+      also decides where a genuine non-moderator lands, which is not what either constant is named for.
+      *Closes when:* a moderator who switches account on `.red` reaches Mod Studio without being
+      redirected, verified by the reporter — with the redirect target settled at the same time.
+
+- [x] **A ToS'd v2 comment shows moderators nothing on-site.** *(08-25)* v1 rendered an orange
+      `IconExclamationCircle` for moderators when `comment.tosViolation` was set
+      (`src/components/Model/ModelDiscussion/CommentDiscussionItem.tsx:124`) and
+      `CommentsV2/Comment/Comment.tsx` rendered no equivalent — `tosViolation` there only hid the
+      "Remove as ToS violation" menu item — so on every v2 surface a moderator could not tell a removed
+      comment from a live one. v2 now carries the same badge, beside the pinned icon in the comment
+      header, same icon and same tooltip so the two surfaces read alike.
+
+      **Not covered by a test.** The only browser test that mounts this tree
+      (`AppListingComments.browser.test.tsx`) mocks `Comment` out entirely, and standing up
+      `CommentsProvider` + `CommentProvider` + trpc + `useCurrentUser` to assert one badge buys less
+      than it costs. Worth knowing rather than assuming.
+
+- [ ] **Confirm the orphan thread line is gone.** *(08-25)* A ToS'd reply vanished for signed-out viewers
+      but its parent kept the reply indicator. `Comment.tsx` draws `repliesIndicator` on
+      `replyCount > 0`, and both count paths — the `groupBy` that seeds it and `getCommentCount` —
+      exclude `tosViolation` for non-moderators as of **0589461b97** *(fix(comments): stop ToS-removed v2
+      comments from being counted, #4430)*, which landed the day after the report. Ticking this needs the
+      signed-out re-check, not another read.
+      *Closes when:* the reporter re-checks a ToS'd reply from a logged-out browser and sees no line.
+
+- [x] **Say which timezone a timestamp is in.** *(08-25)* **Answered, not fixed.** The zone is the
+      **viewer's own local zone** — `$lib/format.ts`'s `dateTime` is
+      `toLocaleString(undefined, { dateStyle, timeStyle })`, which resolves against the browser, and the
+      five one-off formatters elsewhere (`articles/ratings`, `audit/prohibited-prompts`,
+      `audit/scanner-audit/[mode]`, `reports/[slug]`, `retool/queue-stats`) all do the same. So two
+      moderators in different countries read the same row differently, and nothing on screen says so.
+
+      **Decided 2026-08-27: both, in the text.** `dateTime` now renders local time with its zone named
+      and the UTC equivalent after it — "Aug 25, 2026, 4:15 PM EDT (20:15 UTC)". Local is what matches
+      the moderator's own clock; UTC is what matches logs, ClickHouse and everyone else. The suffix is
+      dropped for a viewer already on UTC, where it would restate the line.
+
+      **In the text rather than a `title` tooltip** — this team reports by screenshot, and a tooltip does
+      not appear in one. That is the whole reason the cheaper option was not taken.
+
+      Three of the five one-off formatters (`articles/ratings`, `audit/scanner-audit/[mode]`,
+      `reports/[slug]`) now call `dateTime` instead of their own `toLocaleString`, so the answer is the
+      same on those pages too. Two are deliberate exceptions: `audit/prohibited-prompts` is time-only and
+      all from today, so it gained the zone but not the date or the UTC suffix, which would repeat down
+      every row; and `retool/queue-stats` formats **chart axis labels**, where a zone on every tick is
+      noise — that chart still needs its zone said once in its caption.
+      The queue-stats chart now names its zone once in the page header — "Times below are in your local
+      timezone (Europe/Berlin)" — rather than per tick. **Done.**
+
+- [ ] **Changelog wording: "Strikes — 1 point nothing happens".** *(08-25)* **The reporter is right, and
+      the code confirms it.** `createStrike` fires a `strike-issued` notification and sends
+      `strikeIssuedEmail` on **every** strike, before any points arithmetic — neither is behind a points
+      threshold, so a 1-point strike notifies exactly like any other. What is gated on points is
+      escalation (`evaluateStrikeEscalation` → mute/flag at `MUTE_POINTS` / `REVIEW_MUTE_POINTS`), which
+      is what the line was trying to say. It should read "nothing FURTHER happens".
+
+      One real caveat found while checking: `createStrike` returns `null` early for a rate-limited strike
+      — max one per user per day — and that path sends neither notification nor email. It applies only to
+      **auto** strikes; a moderator-issued strike is `ManualModAction` and skips the limit, so it cannot
+      hit a moderator by hand.
+
+      What is left is the copy, and it lives in the changelog artifact rather than this repo, so whoever
+      owns that link has to edit it.
+      *Closes when:* the changelog line says "nothing further happens".
+
+## Decisions
+
+- [ ] **Reopened: should a blocklist match on a comment HIDE it, not just report it?** *(08-25)* Declined
+      on 08-24 as report-only (the decision is above). The counter-argument from the mod team:
+      report-only still needs a human before the content comes off the page, so obscene or spam content
+      posted at 04:00 stays visible until someone wakes up — which is the thing the blocklist exists to
+      prevent. Proposed middle ground: hide the comment from everyone except moderators until one
+      confirms or denies it, with the author told nothing, so a spam run cannot learn which word tripped
+      it.
+
+      This is the same trade the 08-24 decision turned down, so rule on it **with** the unflag path above
+      rather than instead of it — a false positive that nothing can clear is what made hiding the worse
+      option.
+      *Closes when:* the person who took the 08-24 call rules on the hide-from-non-moderators variant, in
+      this file.
+
+- [x] **A "no linked content" report gives a moderator nothing to judge.** *(08-25)* The label was
+      honest — `entity === 'other'` means no row in any of the fifteen report tables — but the row
+      offered only **Actioned** and **Dismiss** with nothing to base either on. `Report.details` is the
+      reporter's own free-form fields and survives the content being deleted, so it is the one thing
+      left to rule on; the query now carries it and unlinked rows render it under the label. A report
+      that has no details either says so and tells the moderator to dismiss it, rather than leaving them
+      to guess which button is right.
+
+      Only unlinked rows render it. Every other row links to the content, where the details already
+      show — repeating them on the dashboard would be noise on nineteen rows out of twenty.
+
+      `detailEntries` moved out of the images queue into `$lib/reports` as `reportDetailEntries`; it was
+      already used twice in that one file and this would have been the third copy.
+
+## Found while in there *(08-27)*
+
+- [x] **The error page was the least legible thing in the app.** Nobody reported this, and it is why the
+      Appeals report could not say more than "black screen". The status code rendered `text-6xl` in
+      `text-dark-4` (`#373a40`) on the `#1a1b1e` background — roughly **1.6:1** — inside a
+      `min-h-[60vh]` centred grid, so depending on scroll position a real 500 presented as an empty dark
+      page. The one screen whose entire job is naming a failure was the one hiding it. Now `text-dark-2`
+      (~5.2:1), the app's own muted token, so the next outage reports itself.
+
+## Improvements
+
+- [x] **Link a model back to the account that trained it.** *(08-25, three reporters)* The abuse shape,
+      as reported: train on ToS-breaking data, leave the model in draft on the main account, re-upload it
+      from a burner with no IP link and tamer preview images. The training id was still in the metadata,
+      which is the only reason the origin account was found — by hand, through a second person. The data
+      exists, and **both halves of the lookup are already built — pointing opposite ways.**
+
+      - **workflowId → model.** `/audit/training-models` already filters on
+        `mf.metadata->'trainingResults'->>'workflowId'`. Give it a training id and it finds the model.
+      - **user → workflowId.** `getTrainingOrchestration(userId)` reads ClickHouse `buzzTransactions`
+        `WHERE type = 'training' AND fromAccountId = <id>`, taking `details.workflowId` off each charge.
+
+      What is missing is one query and a comparison: invert that second one to
+      `WHERE type = 'training' AND JSONExtractString(details, 'workflowId') = <id>` returning
+      `fromAccountId` — workflowId → the account that PAID — then compare against `Model.userId` and badge
+      the mismatch. Same table, same column, filter swapped.
+
+      🔴 **Scope it honestly before building.** It reads the workflow id off the model's own training
+      file, so it catches the careless case the reporter described — metadata left intact — and nothing
+      else. Someone who strips it, or who uploads a bare safetensors with no training file at all, leaves
+      nothing on the model to join on, and this finds them no better than today. Worth casting anyway,
+      because the abuse it does catch is invisible right now — but it is not a closed door.
+
+      Note what it does **not** need — the dataset itself is still unrecoverable, and nobody asked for it
+      back. The id is enough.
+
+      **Built 2026-08-27.** `training-provenance.service.ts` inverts that charge query, and the training
+      data review page (`/audit/training-data/<versionId>`) now says who paid for the run under the
+      "Uploaded by" line, badging **Trained by another account** when payer and uploader differ.
+
+      Three things worth knowing about how it behaves:
+
+      - **The window is the cost, so the workflow id pays it.** `buzzTransactions` has no index on
+        workflow, and the service this inverts measures 19.1s over 912 days against 0.7s over 7. The id
+        carries its own submit second, so the lookup is bounded to ±2 minutes around it. A test asserts
+        those bounds are in the emitted SQL — dropping them fails rather than quietly scanning history.
+      - **An outage is never reported as agreement.** ClickHouse being unreachable returns
+        `reachable: false`, rendered as "could not reach the charge history", not as "same account". That
+        is the one wrong answer that would be invisible.
+      - **Its own endpoint, not the list load.** One query per workflow, so folding it into
+        `/audit/training-models` would run one per card.
+
+      Seven tests, two of them mutation-checked: dropping the window bound and reporting an outage as
+      reachable each fail loudly.
+      *Closes when:* a moderator confirms it against a real re-upload — the shape has never been run
+      against the account that prompted the report.
+
 # Carried forward from earlier rounds
 
 Everything still open when this round opened, moved here so there is one live list. Each keeps the date
@@ -360,7 +601,6 @@ four have a root cause that is not what the symptom suggests.
       Open question for the reporters before this is built: is the axis two-valued (challenges /
       contests), or does an explicit "everything" state need to stay selectable in the UI rather than
       only being the legacy default?
-
 
 ## P0 — operational, nothing to build
 

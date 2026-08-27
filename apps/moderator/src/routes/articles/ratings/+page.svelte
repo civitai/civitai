@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { dateTime } from '$lib/format';
   import { untrack } from 'svelte';
   import { applyAction, enhance } from '$app/forms';
   import { goto } from '$app/navigation';
@@ -42,7 +43,7 @@
 
   const total = $derived(counts[data.status] ?? 0);
   const totalPages = $derived(Math.max(1, Math.ceil(total / data.limit)));
-  const fmtDate = (d: Date | null) => (d ? new Date(d).toLocaleString() : '—');
+  const fmtDate = dateTime;
 
   // Applied level → Approved (matched the suggestion) vs Rejected (overrode); the action returns which.
   const resolveReview =

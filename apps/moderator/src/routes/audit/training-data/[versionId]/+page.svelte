@@ -3,6 +3,7 @@
   import { LINK_CLASS } from '$lib/format';
   import { userLookupUrl, modelVersionUrl } from '$lib/entity-url';
   import ReviewActions from './ReviewActions.svelte';
+  import TrainingProvenance from './TrainingProvenance.svelte';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -19,6 +20,7 @@
       {detail.username ?? `#${detail.userId}`}
     </a>
   </p>
+  <TrainingProvenance versionId={detail.versionId} />
 </header>
 
 {#key detail.versionId}

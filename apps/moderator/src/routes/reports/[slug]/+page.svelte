@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { dateTime } from '$lib/format';
   import { enhance } from '$app/forms';
   import { goto, invalidateAll } from '$app/navigation';
   import { page } from '$app/state';
@@ -85,7 +86,7 @@
   );
 
   const totalPages = $derived(Math.max(1, Math.ceil(data.totalItems / data.limit)));
-  const fmtDate = (d: Date) => new Date(d).toLocaleString();
+  const fmtDate = dateTime;
 
   function urlWith(params: Record<string, string | number | null>) {
     const url = new URL(page.url);

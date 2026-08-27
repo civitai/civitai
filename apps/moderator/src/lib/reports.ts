@@ -186,3 +186,12 @@ export const getReportItemUrl = (
     : contextUrl
     ? `${base}${contextUrl}`
     : entityUrl(base, type, entityId);
+
+/** `Report.details` is free-form JSON; list its primitive key/value pairs for the moderator. Shared
+ *  because it is the only view of a report whose target is gone — see the dashboard's unlinked rows. */
+export const reportDetailEntries = (details: unknown): [string, string][] => {
+  if (!details || typeof details !== 'object') return [];
+  return Object.entries(details as Record<string, unknown>)
+    .filter(([, v]) => v != null && typeof v !== 'object' && String(v).trim() !== '')
+    .map(([k, v]) => [k, String(v)]);
+};

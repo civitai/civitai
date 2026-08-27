@@ -12,6 +12,7 @@
   import AppealActions from './AppealActions.svelte';
   import PromptHighlight from '$lib/components/PromptHighlight.svelte';
   import { userLookupUrl } from '$lib/entity-url';
+  import { reportDetailEntries } from '$lib/reports';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -111,14 +112,6 @@
       .replace(/([a-z])([A-Z])/g, '$1 $2')
       .replace(/_/g, ' ')
       .replace(/^\w/, (c) => c.toUpperCase());
-
-  // Report.details is free-form JSON; list its primitive key/value pairs for the moderator.
-  const detailEntries = (details: unknown): [string, string][] => {
-    if (!details || typeof details !== 'object') return [];
-    return Object.entries(details as Record<string, unknown>)
-      .filter(([, v]) => v != null && typeof v !== 'object' && String(v).trim() !== '')
-      .map(([k, v]) => [k, String(v)]);
-  };
 </script>
 
 {#if form?.error}
@@ -270,7 +263,7 @@
           </a>
           · {new Date(item.report.createdAt).toLocaleDateString()}
         </div>
-        {#each detailEntries(item.report.details) as [k, v] (k)}
+        {#each reportDetailEntries(item.report.details) as [k, v] (k)}
           <p class="mt-1 text-muted-foreground/90">
             <span class="font-semibold">{formatEnum(k)}:</span>
             {v}
@@ -323,7 +316,7 @@
             {#each item.reports as report (report.id)}
               <div class="flex flex-col gap-0.5">
                 <Badge class="w-fit bg-orange-500/15 text-orange-400">{report.reason}</Badge>
-                {#each detailEntries(report.details) as [k, v] (k)}
+                {#each reportDetailEntries(report.details) as [k, v] (k)}
                   <p class="ml-1 text-muted-foreground/90">
                     <span class="font-semibold">{formatEnum(k)}:</span>
                     {v}

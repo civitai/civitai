@@ -1,9 +1,32 @@
 export const LINK_CLASS = 'text-blue-4 hover:underline';
 
-export const dateTime = (value: Date | string | null) =>
-  value
-    ? new Date(value).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
-    : '—';
+/**
+ * Local time, its zone named, and the UTC equivalent — in the text, not a tooltip.
+ *
+ * The zone was never stated, so two moderators in different countries read the same row as different
+ * times and neither could tell. Both are printed because the two uses are different: local is what
+ * matches the moderator's own clock, UTC is what matches logs, ClickHouse and what everyone else sees.
+ * A `title` tooltip would carry UTC for free, but this team reports by screenshot and a tooltip does
+ * not appear in one.
+ *
+ * Dropped when the viewer is already on UTC, where the suffix would restate the line.
+ */
+export const dateTime = (value: Date | string | null) => {
+  if (!value) return '—';
+  const date = new Date(value);
+  const local = date.toLocaleString(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+    timeZoneName: 'short',
+  });
+  if (Intl.DateTimeFormat().resolvedOptions().timeZone === 'UTC') return local;
+  const utc = date.toLocaleTimeString('en-GB', {
+    timeZone: 'UTC',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  return `${local} (${utc} UTC)`;
+};
 
 export const num = (value: number) => value.toLocaleString();
 
