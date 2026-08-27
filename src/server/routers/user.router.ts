@@ -91,11 +91,13 @@ import {
 } from '~/server/services/user.service';
 import {
   requestEmailChange,
+  sendEmailVerification,
   confirmEmailChange,
   validateEmailChangeToken,
 } from '~/server/services/email-verification.service';
 import {
   guardedProcedure,
+  guardedProcedureAllowUnverifiedEmail,
   isFlagProtected,
   moderatorProcedure,
   protectedProcedure,
@@ -204,6 +206,21 @@ export const userRouter = router({
     .mutation(async ({ input, ctx }) => {
       return requestEmailChange(ctx.user.id, input.newEmail);
     }),
+  // `protectedProcedure`, deliberately NOT `guardedProcedure`: the accounts that need this are exactly
+  // the ones `guardedProcedure` now refuses.
+  resendEmailVerification: protectedProcedure
+    .meta({ requiredScope: TokenScope.UserWrite })
+    .use(
+      rateLimit({
+        limit: 3,
+        period: 60 * 60,
+        errorMessage:
+          'You can only request 3 verification emails per hour. Please try again later.',
+      })
+    )
+    .mutation(async ({ ctx }) => {
+      return sendEmailVerification(ctx.user.id);
+    }),
   validateEmailToken: publicProcedure
     .meta({ requiredScope: TokenScope.UserRead })
     .input(validateEmailTokenSchema)
@@ -216,7 +233,8 @@ export const userRouter = router({
     .mutation(async ({ input }) => {
       return confirmEmailChange(input.token);
     }),
-  updateBrowsingMode: guardedProcedure
+  // A browsing preference, not a content action.
+  updateBrowsingMode: guardedProcedureAllowUnverifiedEmail
     .meta({ requiredScope: TokenScope.UserWrite })
     .input(updateBrowsingModeSchema)
     .mutation(async ({ input, ctx }) => {

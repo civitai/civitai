@@ -471,6 +471,9 @@ export const userMeta = z.object({
   muteReason: z.string().optional(),
   mutedBy: z.number().optional(),
   imageRemoval: z.enum(['grace', 'immediate']).optional(),
+  // Stamped at onboarding when the account ends up without a verified address. Read by
+  // `requiresEmailVerification`; see the 🔴 there for why the gate is a stamp and not a date.
+  emailVerificationRequired: z.boolean().optional(),
 });
 export type UserMeta = z.infer<typeof userMeta>;
 
