@@ -143,7 +143,11 @@ function renderNewVersionForm(onSubmit: (v?: unknown) => void = vi.fn()) {
   );
 }
 
-const chargeSwitch = () => page.getByRole('switch', { name: /I want to charge for this version/ });
+// Matches the switch's own label in ModelVersionUpsertForm. The copy moved from "charge for" to
+// "monetize" in acd61ae136 ("say 'monetize'"), which silently broke every test reaching the fee UI
+// through this locator — 16 of them, all reporting `Cannot find element` rather than anything about
+// copy. Keep this string in step with the `label=` prop, not with the surrounding prose.
+const chargeSwitch = () => page.getByRole('switch', { name: /I want to monetize this version/ });
 const accessSwitch = () => page.getByRole('switch', { name: /Charge for access to this version/ });
 const feeSwitch = () =>
   page.getByRole('switch', { name: /Charge a fee to generate with this version/ });
@@ -718,22 +722,26 @@ describe('ModelVersionUpsertForm — monetization disclosure', () => {
     expect(terms?.download?.price).toBe(3000);
   });
 
-  // The other half of the same expression, and the reason it can't simply drop to the tier cap: a stored
-  // price above the cap stays chargeable (the server rejects raises only), so clamping the input down
-  // would cut a lapsed creator's price on the next unrelated save.
-  test('keeps a grandfathered over-cap price rather than clamping to the tier cap', async () => {
-    // Free caps paid access at 500; this version stores 5000.
+  // The other half of the same expression. This used to assert the opposite — that a raise was pulled
+  // back down to the stored price — because a tier-based clamp existed. 307e35f8d7 removed it on
+  // purpose ("revert(monetization): drop the tier price clamps — the article stands"): membership
+  // governs how OFTEN a creator prices and never how much, so there is no cap to clamp to and a free
+  // creator's raise must go through untouched. Re-pointed rather than deleted, because a
+  // reintroduced clamp is exactly what that revert says must not come back.
+  test('submits a raise above the old tier cap unchanged — membership limits how often, not how much', async () => {
+    // Free would once have capped paid access at 500; this version stores 5000.
     renderChargingForm();
 
     await userEvent.fill(page.getByLabelText('Price for access'), '6000');
-    // An edit the clamp can't undo, so the save isn't short-circuited as pristine once 6000 comes back
-    // down to the stored 5000.
+    // Edit a second field too, so the save cannot be short-circuited as pristine on any path — that
+    // would pass this assertion without the price ever being submitted.
     await userEvent.fill(page.getByLabelText('Name'), 'v1.1');
     await userEvent.click(page.getByRole('button', { name: 'Save' }));
     await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
     const terms = (mutateAsync.mock.calls[0][0] as { paidAccess?: { terms?: ModelVersionTerms } })
       .paidAccess?.terms;
-    expect(terms?.download?.price).toBe(5000);
+    // A reintroduced clamp reports `expected 5000 to be 6000` — the stored price winning over the edit.
+    expect(terms?.download?.price).toBe(6000);
   });
 
   // A pristine edit short-circuits the mutation, so the observable is the form's own onSubmit: it fires
