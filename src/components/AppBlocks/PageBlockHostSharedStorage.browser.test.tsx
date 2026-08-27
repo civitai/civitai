@@ -1,4 +1,5 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
+import { BLOCK_STORAGE_READ_STALE_TIME_MS } from '~/components/AppBlocks/blockStorageCache';
 import { page } from 'vitest/browser';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
@@ -62,6 +63,7 @@ const mocks = vi.hoisted(() => ({
   storageDelete: vi.fn(),
   storageList: vi.fn(),
   storageGetQuota: vi.fn(),
+  storageInvalidate: vi.fn(),
 }));
 
 // AppBlockChrome (in the host frame) calls useCurrentUser() for the platform-nav
@@ -121,6 +123,7 @@ vi.mock('~/utils/trpc', () => ({
           get: { fetch: mocks.storageGet },
           list: { fetch: mocks.storageList },
           getQuota: { fetch: mocks.storageGetQuota },
+          invalidate: mocks.storageInvalidate,
         },
         shared: {
           list: { fetch: mocks.list },
@@ -267,7 +270,7 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
         prefix: 'p',
         limit: 100,
         cursor: 'cur1',
-      });
+      }, { staleTime: BLOCK_STORAGE_READ_STALE_TIME_MS });
     });
     await vi.waitFor(() => {
       const r = replies.last('SHARED_LIST_RESULT');
@@ -319,7 +322,7 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
     postFromBlock('SHARED_GET_COUNT', { requestId: 'rq_gc', key: '01ABC', blockToken: 'SPOOFED' });
 
     await vi.waitFor(() => {
-      expect(mocks.getCount).toHaveBeenCalledWith({ blockToken: 'tok_abc', key: '01ABC' });
+      expect(mocks.getCount).toHaveBeenCalledWith({ blockToken: 'tok_abc', key: '01ABC' }, { staleTime: BLOCK_STORAGE_READ_STALE_TIME_MS });
     });
     await vi.waitFor(() => {
       const r = replies.last('SHARED_GET_COUNT_RESULT');
@@ -359,7 +362,7 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
     });
 
     await vi.waitFor(() => {
-      expect(mocks.getCounts).toHaveBeenCalledWith({ blockToken: 'tok_abc', keys: ['a', 'b'] });
+      expect(mocks.getCounts).toHaveBeenCalledWith({ blockToken: 'tok_abc', keys: ['a', 'b'] }, { staleTime: BLOCK_STORAGE_READ_STALE_TIME_MS });
     });
     await vi.waitFor(() => {
       const r = replies.last('SHARED_GET_COUNTS_RESULT');
@@ -652,7 +655,7 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
     postFromBlock('SHARED_GET', { requestId: 'rq_get', key: '01ABC', blockToken: 'SPOOFED' });
 
     await vi.waitFor(() => {
-      expect(mocks.get).toHaveBeenCalledWith({ blockToken: 'tok_abc', key: '01ABC' });
+      expect(mocks.get).toHaveBeenCalledWith({ blockToken: 'tok_abc', key: '01ABC' }, { staleTime: BLOCK_STORAGE_READ_STALE_TIME_MS });
     });
     await vi.waitFor(() => {
       const r = replies.last('SHARED_GET_RESULT');
@@ -1023,13 +1026,17 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
     });
     // ...but the reply must NOT have been posted while invalidation is pending.
     //
-    // 🔴 The flush is load-bearing, and its absence made an earlier version of
+    // 🔴 The wait is load-bearing, and its absence made an earlier version of
     // this test VACUOUS. `send` posts via postMessage, whose delivery is itself
     // async, so asserting absence immediately passes even when the reply was
     // already sent — it simply has not been DELIVERED yet. Measured: with the
-    // invalidation moved to AFTER the send, the un-flushed assertion still
-    // passed (mutant survived). Draining the task queue first is what makes the
-    // absence mean "not sent" instead of "not yet delivered".
+    // invalidation moved to AFTER the send, the un-waited assertion still
+    // passed (mutant survived).
+    //
+    // This is a fixed delay, not a queue drain: a postMessage task is queued
+    // ahead of a 100ms timer, so by the time this resolves any already-posted
+    // reply has been delivered. Its failure mode under extreme load is a
+    // vacuous PASS, which is why the mutant above is re-run rather than trusted.
     await new Promise((r) => setTimeout(r, 100));
     expect(replies.last('SHARED_APPEND_RESULT')).toBeUndefined();
 
@@ -1059,6 +1066,33 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
       expect((r.payload as { error?: string }).error).toBeTruthy();
     });
     expect(mocks.invalidate).not.toHaveBeenCalled();
+    replies.stop();
+  });
+
+  test('an invalidation FAILURE still reports the write as succeeded', async () => {
+    // The helper swallows invalidation errors, and that property is
+    // load-bearing rather than defensive: the write is already COMMITTED when
+    // invalidation runs, so a throw escaping into the handler's try/catch would
+    // send SHARED_APPEND_RESULT { error } for a row that exists. The block
+    // would tell the user it failed, and a retry would duplicate it.
+    //
+    // Without this test the property had ZERO coverage — deleting the entire
+    // try/catch left the whole suite green (found by adversarial audit).
+    mocks.invalidate.mockRejectedValue(new Error('invalidation exploded'));
+    mocks.append.mockResolvedValue({ key: '01COMMITTED' });
+
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SHARED_APPEND', { requestId: 'rq_inv_fail', value: { title: 'x' } });
+
+    await vi.waitFor(() => {
+      const r = replies.last('SHARED_APPEND_RESULT');
+      if (!r) throw new Error('no reply yet');
+      // Success shape, NOT an error shape.
+      expect(r.payload).toEqual({ requestId: 'rq_inv_fail', key: '01COMMITTED' });
+    });
     replies.stop();
   });
 

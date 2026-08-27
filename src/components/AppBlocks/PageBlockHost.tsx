@@ -77,7 +77,11 @@ import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-s
 import { getBaseModelGroup, getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
 import { deriveScopeFromInstanceId } from '~/server/schema/blocks/attribution.schema';
 import { trpc } from '~/utils/trpc';
-import { invalidateSharedStorageReads } from '~/components/AppBlocks/sharedStorageInvalidation';
+import {
+  BLOCK_STORAGE_READ_OPTS,
+  invalidatePrivateStorageReads,
+  invalidateSharedStorageReads,
+} from '~/components/AppBlocks/blockStorageCache';
 
 // Lazy-consent UI (REQUEST_CONSENT). Opened on demand when a logged-in viewer
 // clicks an action whose consent-gated scope the page token is missing. Mirrors
@@ -2314,7 +2318,7 @@ export function PageBlockHost({
           const result = await trpcUtils.apps.storage.get.fetch({
             blockToken: token,
             key: raw.key,
-          });
+          }, BLOCK_STORAGE_READ_OPTS);
           send('APP_STORAGE_GET_RESULT', { requestId, value: result.value });
         } catch (err) {
           send('APP_STORAGE_GET_RESULT', {
@@ -2352,6 +2356,9 @@ export function PageBlockHost({
             key: raw.key,
             value: raw.value,
           });
+          // Invalidate BEFORE replying: the block may re-read the moment this
+          // reply resolves. See blockStorageCache.ts (ordering is load-bearing).
+          await invalidatePrivateStorageReads(trpcUtils);
           send('APP_STORAGE_SET_RESULT', {
             requestId,
             ok: true,
@@ -2367,7 +2374,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, storageSetMutation, reviewNack]);
+  }, [onMessage, send, token, trpcUtils, storageSetMutation, reviewNack]);
 
   // APP_STORAGE_DELETE → apps.storage.delete → APP_STORAGE_DELETE_RESULT.
   useEffect(() => {
@@ -2393,6 +2400,9 @@ export function PageBlockHost({
             blockToken: token,
             key: raw.key,
           });
+          // Invalidate BEFORE replying: the block may re-read the moment this
+          // reply resolves. See blockStorageCache.ts (ordering is load-bearing).
+          await invalidatePrivateStorageReads(trpcUtils);
           send('APP_STORAGE_DELETE_RESULT', {
             requestId,
             ok: true,
@@ -2409,7 +2419,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, storageDeleteMutation, reviewNack]);
+  }, [onMessage, send, token, trpcUtils, storageDeleteMutation, reviewNack]);
 
   // APP_STORAGE_LIST → apps.storage.list → APP_STORAGE_LIST_RESULT.
   useEffect(() => {
@@ -2446,7 +2456,7 @@ export function PageBlockHost({
           prefix,
           limit,
           cursor,
-        });
+        }, BLOCK_STORAGE_READ_OPTS);
         send('APP_STORAGE_LIST_RESULT', {
           requestId,
           keys: result.keys.map((k) => ({
@@ -2486,7 +2496,7 @@ export function PageBlockHost({
       if (!raw || typeof raw.requestId !== 'string' || !token) return;
       const requestId = raw.requestId;
       try {
-        const result = await trpcUtils.apps.storage.getQuota.fetch({ blockToken: token });
+        const result = await trpcUtils.apps.storage.getQuota.fetch({ blockToken: token }, BLOCK_STORAGE_READ_OPTS);
         send('APP_STORAGE_QUOTA_RESULT', {
           requestId,
           usedBytes: result.usedBytes,
@@ -2563,7 +2573,7 @@ export function PageBlockHost({
           prefix,
           limit,
           cursor,
-        });
+        }, BLOCK_STORAGE_READ_OPTS);
         send('SHARED_LIST_RESULT', {
           requestId,
           items: result.items.map((it) => ({
@@ -2599,7 +2609,7 @@ export function PageBlockHost({
           const result = await trpcUtils.apps.shared.getCount.fetch({
             blockToken: token,
             key: raw.key,
-          });
+          }, BLOCK_STORAGE_READ_OPTS);
           send('SHARED_GET_COUNT_RESULT', { requestId, count: result.count });
         } catch (err) {
           send('SHARED_GET_COUNT_RESULT', { requestId, error: storageErrorMessage(err) });
@@ -2620,7 +2630,7 @@ export function PageBlockHost({
           const result = await trpcUtils.apps.shared.getCounts.fetch({
             blockToken: token,
             keys: raw.keys as string[],
-          });
+          }, BLOCK_STORAGE_READ_OPTS);
           send('SHARED_GET_COUNTS_RESULT', { requestId, counts: result.counts });
         } catch (err) {
           send('SHARED_GET_COUNTS_RESULT', { requestId, error: storageErrorMessage(err) });
@@ -2662,7 +2672,7 @@ export function PageBlockHost({
             value: raw.value as { title: string; body?: string },
           });
           // Invalidate BEFORE replying: the block may re-read the moment this
-          // reply resolves. See sharedStorageInvalidation.ts (ordering is load-bearing).
+          // reply resolves. See blockStorageCache.ts (ordering is load-bearing).
           await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_APPEND_RESULT', { requestId, key: result.key });
         } catch (err) {
@@ -2716,7 +2726,7 @@ export function PageBlockHost({
             value: raw.value as { title: string; body?: string },
           });
           // Invalidate BEFORE replying: the block may re-read the moment this
-          // reply resolves. See sharedStorageInvalidation.ts (ordering is load-bearing).
+          // reply resolves. See blockStorageCache.ts (ordering is load-bearing).
           await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_UPDATE_RESULT', { requestId, ok: true });
         } catch (err) {
@@ -2745,7 +2755,7 @@ export function PageBlockHost({
         try {
           const result = await sharedVoteMutation.mutateAsync({ blockToken: token, key: raw.key });
           // Invalidate BEFORE replying: the block may re-read the moment this
-          // reply resolves. See sharedStorageInvalidation.ts (ordering is load-bearing).
+          // reply resolves. See blockStorageCache.ts (ordering is load-bearing).
           await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_VOTE_RESULT', { requestId, count: result.count });
         } catch (err) {
@@ -2777,7 +2787,7 @@ export function PageBlockHost({
             key: raw.key,
           });
           // Invalidate BEFORE replying: the block may re-read the moment this
-          // reply resolves. See sharedStorageInvalidation.ts (ordering is load-bearing).
+          // reply resolves. See blockStorageCache.ts (ordering is load-bearing).
           await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_UNVOTE_RESULT', { requestId, count: result.count });
         } catch (err) {
@@ -2812,7 +2822,7 @@ export function PageBlockHost({
             key: raw.key,
           });
           // Invalidate BEFORE replying: the block may re-read the moment this
-          // reply resolves. See sharedStorageInvalidation.ts (ordering is load-bearing).
+          // reply resolves. See blockStorageCache.ts (ordering is load-bearing).
           await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_WITHDRAW_RESULT', { requestId, ok: result.ok, deleted: result.deleted });
         } catch (err) {
@@ -2839,7 +2849,7 @@ export function PageBlockHost({
           const result = await trpcUtils.apps.shared.get.fetch({
             blockToken: token,
             key: raw.key,
-          });
+          }, BLOCK_STORAGE_READ_OPTS);
           const it = result.item;
           send('SHARED_GET_RESULT', {
             requestId,
@@ -2896,7 +2906,7 @@ export function PageBlockHost({
         try {
           await sharedReportMutation.mutateAsync({ blockToken: token, key: raw.key, reason });
           // Invalidate BEFORE replying: the block may re-read the moment this
-          // reply resolves. See sharedStorageInvalidation.ts (ordering is load-bearing).
+          // reply resolves. See blockStorageCache.ts (ordering is load-bearing).
           await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_REPORT_RESULT', { requestId, ok: true });
         } catch (err) {
