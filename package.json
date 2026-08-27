@@ -315,6 +315,7 @@
     "slugify": "^1.6.5",
     "socket.io-client": "^4.5.4",
     "source-map": "^0.7.4",
+    "sqids": "^0.3.0",
     "stacktrace-parser": "^0.1.10",
     "stream-to-blob": "^2.0.1",
     "stripe": "^11.6.0",

@@ -46,14 +46,13 @@ const HubSourcePanel = dynamic(
  */
 export function HubFeedFilters({ ...groupProps }: GroupProps) {
   const router = useRouter();
-  const hubId = Number(router.query.id);
+  // The URL carries the hub's encoded key; the numeric id comes back on the hub.
+  const hubKey = typeof router.query.id === 'string' ? router.query.id : '';
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const invalidateHub = useInvalidateHub();
 
-  const { data: hub } = trpc.userHub.getById.useQuery(
-    { id: hubId },
-    { enabled: Number.isInteger(hubId) }
-  );
+  const { data: hub } = trpc.userHub.getById.useQuery({ key: hubKey }, { enabled: !!hubKey });
+  const hubId = hub?.id ?? 0;
   const sessionFilters = useHubSessionFeedFilters(hubId);
   const setSessionFilters = useSetHubSessionFeedFilters();
 

@@ -2,6 +2,7 @@ import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   addUserHubSourceSchema,
   getHubSourceSuggestionsSchema,
+  getUserHubByKeySchema,
   resolveHubSourceSchema,
   setUserHubOrderSchema,
   userHubFollowSchema,
@@ -13,7 +14,7 @@ import {
   deleteUserHub,
   followUserHub,
   getFollowedHubs,
-  getUserHubById,
+  getUserHubByKey,
   getHubSourceSuggestions,
   getUserHubs,
   removeUserHubSource,
@@ -42,10 +43,10 @@ export const userHubRouter = router({
     .mutation(({ input, ctx }) => unfollowUserHub({ ...input, userId: ctx.user.id })),
   getById: publicUserHubProcedure
     .meta({ requiredScope: TokenScope.UserRead })
-    .input(getByIdSchema)
+    .input(getUserHubByKeySchema)
     .query(({ input, ctx }) =>
-      getUserHubById({
-        id: input.id,
+      getUserHubByKey({
+        key: input.key,
         userId: ctx.user?.id,
         isModerator: ctx.user?.isModerator,
       })

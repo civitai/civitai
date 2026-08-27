@@ -14,7 +14,7 @@ import { hubUrl } from '~/components/Hubs/hub.utils';
  * The list it reads is already filtered by what the viewer may open, so a hub whose
  * owner has made it Private again is simply absent here.
  */
-export function FollowedHubsSection({ activeHubId }: { activeHubId?: number }) {
+export function FollowedHubsSection({ activeHubKey }: { activeHubKey?: string }) {
   const { followed, pending, unfollow } = useHubFollows();
 
   if (!followed.length) return null;
@@ -37,7 +37,7 @@ export function FollowedHubsSection({ activeHubId }: { activeHubId?: number }) {
               href={hubUrl(hub)}
               className={clsx(
                 'block rounded-md py-1.5 pl-2 pr-9',
-                hub.id === activeHubId
+                hub.key === activeHubKey
                   ? 'bg-gray-2 dark:bg-dark-5'
                   : 'hover:bg-gray-1 dark:hover:bg-dark-6'
               )}

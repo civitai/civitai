@@ -1,4 +1,5 @@
 import { dbRead, dbWrite } from '~/server/db/client';
+import { decodeHubId, encodeHubId } from '~/server/utils/hub-id';
 import { Prisma } from '@prisma/client';
 import type {
   AddUserHubSourceInput,
@@ -71,6 +72,7 @@ const hubSelect = {
 } as const;
 
 type HubRow = {
+  id: number;
   metadata: Prisma.JsonValue;
   userId: number;
   sources: { enabled: boolean }[];
@@ -150,6 +152,10 @@ function toHubDetail<T extends HubRow>({ metadata, ...hub }: T, viewerId?: numbe
   const isOwner = !!viewerId && hub.userId === viewerId;
   return {
     ...hub,
+    // The id the CLIENT builds URLs from. Encoded here rather than there because the
+    // salt is a server env var — shipping it to the browser would make the encoding
+    // decorative. `hubUrl` takes this, never `id`.
+    key: encodeHubId(hub.id),
     // What the client branches its whole chrome on. Computed here rather than
     // compared client-side, because the client's idea of who it is and the row the
     // server just authorised are two different facts.
@@ -183,6 +189,17 @@ export async function getUserHubs({ userId }: { userId: number }) {
 // may not open is a not-found rather than a leak. Revoking `Public` therefore makes
 // every link anyone was given 404 on the next read — subtask 868kwp5g8 — with no
 // separate revocation list to keep in step.
+/**
+ * The public read, addressed the way the URL addresses it. A key that does not decode
+ * is the same not-found as a hub this viewer may not open — including a bare integer,
+ * which is what the pre-encoding links carried.
+ */
+export async function getUserHubByKey({ key, ...viewer }: { key: string } & HubViewer) {
+  const id = decodeHubId(key);
+  if (!id) throw throwNotFoundError('Hub not found');
+  return getUserHubById({ id, ...viewer });
+}
+
 export async function getUserHubById({ id, userId, isModerator }: { id: number } & HubViewer) {
   const hub = await dbRead.userHub.findFirst({
     where: { id, ...hubViewerWhere({ userId, isModerator }) },
@@ -209,7 +226,7 @@ export async function getUserHubForRoute({ id, userId, isModerator }: { id: numb
   // SERVER: the hub itself arrives through a client query, so anything read off that
   // is absent from the HTML a link unfurler fetches.
   const { metadata, ...rest } = hub;
-  return { ...rest, description: readDescription(metadata) };
+  return { ...rest, key: encodeHubId(hub.id), description: readDescription(metadata) };
 }
 
 /**

@@ -22,7 +22,7 @@ vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
 
 vi.mock('~/server/services/user-hub.service', () => ({
   getUserHubs: vi.fn().mockResolvedValue([]),
-  getUserHubById: vi.fn().mockResolvedValue({ id: 1 }),
+  getUserHubByKey: vi.fn().mockResolvedValue({ id: 1 }),
   upsertUserHub: vi.fn().mockResolvedValue({ id: 1 }),
   deleteUserHub: vi.fn().mockResolvedValue(undefined),
   setUserHubOrder: vi.fn().mockResolvedValue(undefined),
@@ -35,7 +35,7 @@ vi.mock('~/server/services/user-hub.service', () => ({
   unfollowUserHub: vi.fn().mockResolvedValue({ hubId: 1, followed: false }),
 }));
 
-import { getUserHubById } from '~/server/services/user-hub.service';
+import { getUserHubByKey } from '~/server/services/user-hub.service';
 import { userHubRouter } from '~/server/routers/user-hub.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
@@ -44,7 +44,7 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 // than silently going unexercised.
 const inputs: Record<string, unknown> = {
   getAll: undefined,
-  getById: { id: 1 },
+  getById: { key: 'Xk3p9aBc' },
   upsert: { name: 'a hub' },
   delete: { id: 1 },
   setOrder: { ids: [] },
@@ -84,22 +84,26 @@ describe('a signed-out visitor can open a hub and do nothing else', () => {
     // `userId: ctx.user?.id` -> `undefined` 404s every private hub for its own owner;
     // dropping `isModerator` silently removes moderator access. Both stay green
     // everywhere else.
-    await anonymousCaller().getById({ id: 1 });
-    expect(getUserHubById).toHaveBeenLastCalledWith({
-      id: 1,
+    await anonymousCaller().getById({ key: 'Xk3p9aBc' });
+    expect(getUserHubByKey).toHaveBeenLastCalledWith({
+      key: 'Xk3p9aBc',
       userId: undefined,
       isModerator: undefined,
     });
 
-    await caller().getById({ id: 1 });
-    expect(getUserHubById).toHaveBeenLastCalledWith({ id: 1, userId: 7, isModerator: false });
+    await caller().getById({ key: 'Xk3p9aBc' });
+    expect(getUserHubByKey).toHaveBeenLastCalledWith({
+      key: 'Xk3p9aBc',
+      userId: 7,
+      isModerator: false,
+    });
   });
 
   it('getById serves a signed-out caller', async () => {
     // Reverting `getById` to `userHubProcedure` UNAUTHORIZEDs every shared link, and
     // reading `ctx.user.id` instead of `ctx.user?.id` throws on the same request.
     // Both are one-token edits and nothing else in the repo sees either.
-    await expect(anonymousCaller().getById({ id: 1 })).resolves.not.toThrow();
+    await expect(anonymousCaller().getById({ key: 'Xk3p9aBc' })).resolves.not.toThrow();
   });
 
   for (const name of procedureNames.filter((n) => n !== 'getById')) {

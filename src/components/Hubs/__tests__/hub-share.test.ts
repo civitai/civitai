@@ -5,16 +5,25 @@ import { hubLimits } from '~/server/schema/user-hub.schema';
 import { UserHubSourceType } from '~/shared/utils/prisma/enums';
 
 describe('hubUrl', () => {
-  it('keeps the id canonical and adds the slug after it', () => {
-    // Articles do it this way, which is what the ticket asked for: the id is what
-    // resolves the hub, so a rename cannot break a link anyone already has.
-    expect(hubUrl({ id: 12, name: 'Cute Models' })).toBe('/hubs/12/cute-models');
+  it('keeps the KEY canonical and adds the slug after it', () => {
+    // Articles do it this way: the identifier resolves the hub, so a rename cannot
+    // break a link anyone already has. Unlike articles it is the hub's ENCODED key
+    // rather than the row's int, because this route answers unauthenticated and a
+    // dense autoincrement there is a directory of every public hub.
+    expect(hubUrl({ key: 'Xk3p9aBc', name: 'Cute Models' })).toBe('/hubs/Xk3p9aBc/cute-models');
   });
 
-  it('falls back to the bare id when the name slugs to nothing', () => {
+  it('falls back to the bare key when the name slugs to nothing', () => {
     // A hub named entirely in a script `slugit` strips would otherwise produce
-    // `/hubs/12/`, which is a different route and 404s.
-    expect(hubUrl({ id: 12, name: '???' })).toBe('/hubs/12');
+    // `/hubs/Xk3p9aBc/`, which is a different route and 404s.
+    expect(hubUrl({ key: 'Xk3p9aBc', name: '???' })).toBe('/hubs/Xk3p9aBc');
+  });
+
+  it('never puts the numeric id in the path', () => {
+    // The control for the two above, which a `hubUrl` that ignored `key` and read
+    // `id` off the same object would otherwise pass by coincidence.
+    const url = hubUrl({ key: 'Xk3p9aBc', name: 'Cute Models', id: 12 } as never);
+    expect(url).not.toContain('/12');
   });
 });
 
@@ -25,12 +34,12 @@ describe('hubUrl agrees with the canonical redirect', () => {
   // suites green.
   for (const name of ['Cute Models', 'Ellie & Co.', '???']) {
     it(`does not redirect a link it built itself: ${name}`, () => {
-      const hub = { id: 12, name };
+      const hub = { key: 'Xk3p9aBc', name };
 
       expect(
         getCanonicalSlugDestination({
           basePath: '/hubs',
-          id: hub.id,
+          id: hub.key,
           title: hub.name,
           currentSlug: hubUrl(hub).split('/')[3],
         })

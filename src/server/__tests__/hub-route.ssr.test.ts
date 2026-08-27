@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getServerSideProps } from '~/pages/hubs/[id]/[[...slug]]';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { Availability } from '~/shared/utils/prisma/enums';
+import { encodeHubId } from '~/server/utils/hub-id';
 
 /**
  * `/hubs/<id>` — the SSR WIRING, as distinct from `hubRouteIsDark`'s logic.
@@ -44,27 +45,29 @@ vi.mock('~/server/flipt/client', () => ({
 const findFirstHub = dbMock.dbRead.userHub.findFirst;
 
 const HUB_ID = 19;
+const HUB_KEY = encodeHubId(HUB_ID);
 const SLUG = 'neat-models';
 
 // `getFeatureFlags` memoizes for 10s on (user identity, host, region) and the flipt
 // RESULT is not part of that key, so two cases sharing a host would share one answer
 // and the second would read whatever the first evaluated. Each case takes its own.
 let nextHost = 0;
-const run = async () =>
+const run = async (id: string = HUB_KEY) =>
   (await (getServerSideProps as any)({
-    params: { id: String(HUB_ID), slug: [SLUG] },
+    params: { id, slug: [SLUG] },
     req: {
-      url: `/hubs/${HUB_ID}/${SLUG}`,
+      url: `/hubs/${id}/${SLUG}`,
       headers: { host: `case-${nextHost++}.civitai.com`, 'cf-ipcountry': 'US' },
       cookies: {},
     },
     res: { setHeader: vi.fn(), getHeader: vi.fn() },
     query: {},
-    resolvedUrl: `/hubs/${HUB_ID}/${SLUG}`,
+    resolvedUrl: `/hubs/${id}/${SLUG}`,
   })) as any;
 
 const hubRow = (availability: Availability) => ({
   id: HUB_ID,
+  key: HUB_KEY,
   name: 'Neat models!',
   availability,
   metadata: { description: 'Models I think are neat' },
@@ -88,6 +91,17 @@ describe('/hubs/<id> — getServerSideProps wiring', () => {
     expect(result.props).toMatchObject({
       hubMeta: { name: 'Neat models!', description: 'Models I think are neat' },
     });
+  });
+
+  it('404s a BARE INTEGER, which is what the pre-encoding links carried', async () => {
+    // The encoding buys nothing if the int still resolves: `UserHub.id` is a dense
+    // autoincrement and this route answers unauthenticated, so accepting it back
+    // leaves every public hub walkable by counting. The hub lookup must not even run.
+    fliptResult.value = false;
+    findFirstHub.mockResolvedValue(hubRow(Availability.Public));
+
+    expect(await run(String(HUB_ID))).toEqual({ notFound: true });
+    expect(findFirstHub).not.toHaveBeenCalled();
   });
 
   it('still 404s a PRIVATE hub with the flag off', async () => {

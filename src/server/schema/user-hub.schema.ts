@@ -42,6 +42,12 @@ export const hubLimits = {
 // Flip this to true in the same change that confirms the attribute is live.
 export const HUB_COLLECTION_SOURCES_ENABLED = false;
 
+// The hub's public identifier, as it appears in the URL. A string, because the route
+// carries the ENCODED id — an int here would be the pre-encoding format and would put
+// enumeration straight back.
+export const getUserHubByKeySchema = z.object({ key: z.string().trim().min(1).max(64) });
+export type GetUserHubByKeyInput = z.infer<typeof getUserHubByKeySchema>;
+
 export const hubSortSchema = z.enum([
   ImageSort.Newest,
   ImageSort.Oldest,

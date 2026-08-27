@@ -51,6 +51,7 @@ import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getUserHubForRoute, hubRouteIsDark } from '~/server/services/user-hub.service';
+import { decodeHubId } from '~/server/utils/hub-id';
 import { removeTags } from '~/utils/string-helpers';
 import { truncate } from 'lodash-es';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -68,8 +69,12 @@ export const getServerSideProps = createServerSideProps({
     // so that a link whose hub went back to private is a real 404 rather than a 200
     // carrying a not-found component. A private hub and a hub that never existed
     // are the same answer, so this confirms nothing to a stranger.
-    const id = Number(ctx.params?.id);
-    if (!Number.isInteger(id)) return { notFound: true };
+    // The path carries the ENCODED id. A bare integer decodes to null on purpose:
+    // accepting the pre-encoding format back would leave every public hub walkable by
+    // counting, which is the whole reason the encoding exists.
+    const key = Array.isArray(ctx.params?.id) ? ctx.params?.id[0] : ctx.params?.id;
+    const id = decodeHubId(key);
+    if (!id) return { notFound: true };
 
     const hub = await getUserHubForRoute({
       id,
@@ -91,7 +96,7 @@ export const getServerSideProps = createServerSideProps({
     const slug = ctx.params?.slug;
     const destination = getCanonicalSlugDestination({
       basePath: '/hubs',
-      id,
+      id: key as string,
       title: hub.name,
       currentSlug: Array.isArray(slug) ? slug.join('/') : slug,
       // Every other `[[...slug]]` route passes this. Without it the redirect strips
@@ -100,7 +105,9 @@ export const getServerSideProps = createServerSideProps({
     });
     if (destination) return { redirect: { destination, permanent: false } };
 
-    return { props: { hubMeta: { name: hub.name, description: hub.description } } };
+    return {
+      props: { hubMeta: { key: hub.key, name: hub.name, description: hub.description } },
+    };
   },
 });
 
@@ -148,7 +155,7 @@ function AdjustBrowsingLevelButton() {
   );
 }
 
-type HubMeta = { name: string; description: string | null };
+type HubMeta = { key: string; name: string; description: string | null };
 
 /**
  * Rendered from the SERVER's copy of the hub, above every early return, because the
@@ -157,7 +164,7 @@ type HubMeta = { name: string; description: string | null };
  * the day `user-hubs` opens to everyone, since the prefetch will then succeed for a
  * signed-out request and hydrate the client copy at SSR.
  */
-function HubMetaTags({ meta, id }: { meta?: HubMeta; id: number }) {
+function HubMetaTags({ meta }: { meta?: HubMeta }) {
   if (!meta) return null;
   return (
     <Meta
@@ -167,8 +174,8 @@ function HubMetaTags({ meta, id }: { meta?: HubMeta; id: number }) {
       description={
         meta.description ? truncate(removeTags(meta.description), { length: 150 }) : undefined
       }
-      ogEndpoint={`/api/og?type=hub&id=${id}`}
-      canonical={hubUrl({ id, name: meta.name })}
+      ogEndpoint={`/api/og?type=hub&id=${meta.key}`}
+      canonical={hubUrl(meta)}
       deIndex
     />
   );
@@ -177,13 +184,20 @@ function HubMetaTags({ meta, id }: { meta?: HubMeta; id: number }) {
 export default Page(
   function HubFeedPage({ hubMeta }: { hubMeta?: HubMeta }) {
     const router = useRouter();
-    const hubId = Number(router.query.id);
+    // The URL carries the encoded key; only the server can turn it back into an id,
+    // so everything numeric below comes off the hub this returns.
+    const hubKey = typeof router.query.id === 'string' ? router.query.id : '';
     const utils = trpc.useUtils();
 
     const { data: hub, isLoading } = trpc.userHub.getById.useQuery(
-      { id: hubId },
-      { enabled: Number.isInteger(hubId) }
+      { key: hubKey },
+      { enabled: !!hubKey }
     );
+    // Session state is keyed by the numeric id, which is not known until the hub
+    // loads. Nothing writes to the store before then — every write is a user action
+    // on a rendered hub — so the placeholder is only ever read, and reads an empty
+    // slot.
+    const hubId = hub?.id ?? 0;
 
     const excludedSources = useHubExcludedSources(hubId);
     const sessionBrowsingLevel = useHubSessionBrowsingLevel(hubId);
@@ -233,7 +247,7 @@ export default Page(
     if (isLoading)
       return (
         <>
-          <HubMetaTags meta={hubMeta} id={hubId} />
+          <HubMetaTags meta={hubMeta} />
           <Center py="xl">
             <Loader />
           </Center>
@@ -242,7 +256,7 @@ export default Page(
     if (!hub)
       return (
         <>
-          <HubMetaTags meta={hubMeta} id={hubId} />
+          <HubMetaTags meta={hubMeta} />
           <NotFound />
         </>
       );
@@ -266,7 +280,7 @@ export default Page(
         {/* The client copy WINS here: it is the fresher of the two, so a rename or a
             new description shows up without a full reload. The server copy is only
             the answer in the two early returns above, where there is no client hub. */}
-        <HubMetaTags meta={{ name: hub.name, description: hub.description }} id={hubId} />
+        <HubMetaTags meta={{ key: hub.key, name: hub.name, description: hub.description }} />
         {/* Same container the feed itself renders in, so the title lines up with
             the first card instead of hugging the rail. */}
         <MasonryContainer className="min-h-full">

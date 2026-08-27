@@ -20,13 +20,23 @@ import {
 } from '~/server/utils/model-metric-privacy';
 import { isDefined } from '~/utils/type-guards';
 import { getHubCardData } from '~/server/services/user-hub.service';
+import { decodeHubId } from '~/server/utils/hub-id';
 
 // --- Schema & Types ---
 
 const querySchema = z.object({
   type: z.enum(['model', 'post', 'image', 'article', 'bounty', 'challenge', 'hub']),
-  id: z.coerce.number().int().positive(),
+  // Read as text and resolved per type below: a hub's is its ENCODED key, not the
+  // row's int. This endpoint is unauthenticated and id-addressable, so an int there
+  // would make every public hub walkable by counting.
+  id: z.string().min(1),
 });
+
+// Every type but `hub` is addressed by the row's own int.
+function asEntityId(raw: string) {
+  const id = Number(raw);
+  return Number.isSafeInteger(id) && id > 0 ? id : null;
+}
 
 type StatItem = { value: string; label: string };
 
@@ -774,7 +784,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(400).json({ error: 'Invalid parameters. Expected ?type=model&id=123' });
   }
 
-  const { type, id } = parsed.data;
+  const { type, id: rawId } = parsed.data;
+
+  const id = type === 'hub' ? decodeHubId(rawId) : asEntityId(rawId);
+  if (!id) {
+    return res.status(400).json({ error: 'Invalid parameters. Expected ?type=model&id=123' });
+  }
 
   try {
     const fetcher = dataFetchers[type];
