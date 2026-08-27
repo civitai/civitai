@@ -47,7 +47,8 @@ type RoutedDialogProps<T extends DialogKey> = { name: T; state: DialogState<T> }
 
 export type AspectRatioImageCardProps<T extends DialogKey> = {
   href?: string;
-  aspectRatio?: 'portrait' | 'landscape' | 'square';
+  /** Named ratio, or a raw width/height number to follow the media's own shape. */
+  aspectRatio?: 'portrait' | 'landscape' | 'square' | number;
   onClick?: React.MouseEventHandler;
   cosmetic?: ContentDecorationCosmetic['data'];
   className?: string;

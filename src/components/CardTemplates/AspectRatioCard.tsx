@@ -15,7 +15,12 @@ const aspectRatioMap = {
 } as const;
 
 export type AspectRatioCardProps = {
-  aspectRatio?: AspectRatio;
+  /**
+   * A named ratio, or a raw width/height number to follow the media's own shape.
+   * The number form exists so a card can stop cropping — see the remix-of card,
+   * which passes the source image's ratio clamped so it never grows past square.
+   */
+  aspectRatio?: AspectRatio | number;
   cosmetic?: ContentDecorationCosmetic['data'];
   className?: string;
   header?: React.ReactNode;
@@ -36,7 +41,9 @@ export function AspectRatioCard({
   render,
   impressions,
 }: AspectRatioCardProps) {
-  const wrapperStyle = { aspectRatio: aspectRatioMap[aspectRatio] };
+  const wrapperStyle = {
+    aspectRatio: typeof aspectRatio === 'number' ? aspectRatio : aspectRatioMap[aspectRatio],
+  };
   const impressionRef = useTrackImpression<HTMLDivElement>(impressions);
 
   return (

@@ -8422,7 +8422,31 @@ export async function getImageGenerationData({ id }: { id: number }) {
     external,
     canRemix: !image.hideMeta && !!meta?.prompt,
     remixOfId: meta?.extra?.remixOfId,
+    remixOfIds: getRemixSourceIds(id, meta?.extra),
   };
+}
+
+/**
+ * Every image this one was VERIFIED to have been derived from.
+ *
+ * `meta.extra.sourceImageIds` only. It is server-written by `sanitizeProvenance`
+ * after the orchestrator workflow was checked, and nothing else can put it on a
+ * row — a client-supplied value is stripped on the way in (see
+ * remix-provenance.ts).
+ *
+ * ⚠️ The older `meta.extra.remixOfId` is deliberately NOT read here, and adding
+ * it back is a product decision, not a bug fix. It is a client-declared claim
+ * with no verification behind it, and Justin ruled on 2026-08-27 that public
+ * attribution must not rest on it. This costs real coverage rather than only
+ * legacy rows: measured on prod that day, 28 images carried the old field
+ * against 39 with the new one over 8 hours, interleaved hour by hour with no
+ * downward trend, and zero images carried both. So roughly half of all remixes
+ * intentionally show no card. That is the accepted trade, not a gap to close.
+ */
+function getRemixSourceIds(imageId: number, extra: { sourceImageIds?: number[] } | undefined) {
+  // Self-reference is not a derivation, and it would render the image as its own
+  // source. Dedupe as well, so a repeated id shows once.
+  return [...new Set(extra?.sourceImageIds ?? [])].filter((sourceId) => sourceId !== imageId);
 }
 
 // LRU cache for contest collection items lookup - caches by imageId

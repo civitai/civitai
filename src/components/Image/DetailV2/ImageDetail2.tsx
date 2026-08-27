@@ -67,6 +67,7 @@ import { ImageExternalMeta } from '~/components/Image/DetailV2/ImageExternalMeta
 import { ImageGenerationData } from '~/components/Image/DetailV2/ImageGenerationData';
 import { RemixGalleryCard } from '~/components/RemixGallery/RemixGalleryCard';
 import { ImageProcess } from '~/components/Image/DetailV2/ImageProcess';
+import { ImageRemixOfDetails } from '~/components/Image/DetailV2/ImageRemixOfDetails';
 import { DownloadImage } from '~/components/Image/DownloadImage';
 import { useImageContestCollectionDetails } from '~/components/Image/image.utils';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
@@ -657,10 +658,10 @@ export function ImageDetail2() {
                       </Card>
                     )}
                     <ImageProcess imageId={image.id} />
+                    <ImageRemixOfDetails imageId={image.id} />
                     <RemixGalleryCard imageId={image.id} />
                     <ImageGenerationData imageId={image.id} collapsible />
-                    {/* <ImageRemixOfDetails imageId={image.id} />
-                    <ImageRemixesDetails imageId={image.id} /> */}
+                    {/* <ImageRemixesDetails imageId={image.id} /> */}
                     {/* {!hideAds && <AdUnitSide_3 />} */}
                     <CollapsibleCard
                       title="Discussion"
