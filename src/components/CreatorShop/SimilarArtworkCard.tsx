@@ -3,7 +3,6 @@ import { IconAlertTriangle, IconCircleCheck, IconFingerprint } from '@tabler/ico
 import { ChecksCard } from '~/components/CreatorShop/ChecksCard';
 import { CREATOR_SHOP_BORDER } from '~/components/CreatorShop/creator-shop.constants';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { COSMETIC_SIMILARITY_CLOSE_RATIO } from '~/shared/constants/cosmetic-shop.constants';
 import type {
   CosmeticSimilarityResult,
   SimilarCosmetic,
@@ -104,7 +103,6 @@ export function SimilarArtworkCard({
           </Text>
           <Stack gap={0}>
             {result.matches.map((match) => {
-              const close = match.distance <= match.bits * COSMETIC_SIMILARITY_CLOSE_RATIO;
               return (
                 <Group
                   key={match.id}
@@ -144,10 +142,10 @@ export function SimilarArtworkCard({
                   </Stack>
                   <Badge
                     size="sm"
-                    variant={close ? 'filled' : 'light'}
-                    color={close ? 'red' : 'gray'}
+                    variant={match.close ? 'filled' : 'light'}
+                    color={match.close ? 'red' : 'gray'}
                   >
-                    {close ? 'near-identical' : `${match.distance}/${match.bits}`}
+                    {match.close ? 'near-identical' : `${match.distance}/${match.bits}`}
                   </Badge>
                 </Group>
               );
