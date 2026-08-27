@@ -609,23 +609,26 @@ export function GenerationForm() {
               />
             </div>
 
-            {/* API version selector (e.g., Veo 3.0 vs 3.1) */}
+            {/* API version selector (e.g. Veo 3.1). Hidden while a single
+                version is offered — the value is still sent. */}
             <Controller
               graph={graph}
               name="version"
-              render={({ value, meta, onChange }) => (
-                <Radio.Group
-                  value={value}
-                  onChange={(v) => onChange(v as typeof value)}
-                  label="API Version"
-                >
-                  <Group mt="xs">
-                    {meta.options.map((o: { label: string; value: string }) => (
-                      <Radio key={o.value} value={o.value} label={o.label} />
-                    ))}
-                  </Group>
-                </Radio.Group>
-              )}
+              render={({ value, meta, onChange }) =>
+                meta.options.length < 2 ? null : (
+                  <Radio.Group
+                    value={value}
+                    onChange={(v) => onChange(v as typeof value)}
+                    label="API Version"
+                  >
+                    <Group mt="xs">
+                      {meta.options.map((o: { label: string; value: string }) => (
+                        <Radio key={o.value} value={o.value} label={o.label} />
+                      ))}
+                    </Group>
+                  </Radio.Group>
+                )
+              }
             />
 
             {/* Additional resources (LoRA, etc.) */}

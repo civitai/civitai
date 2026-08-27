@@ -3451,7 +3451,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       'Skip weight syntax and negative prompts — neither is supported. There is no (word:1.5) and no "no blur" list; describe what you want positively instead.',
       'Keep it to one continuous take. For longer clips describe gradual progression ("transitioning from day to night") rather than discrete scene cuts, and remember Veo 3 is a PG/SFW model — explicit prompts are filtered, so keep it clean.',
     ],
-    generatorVersionId: 1885367,
+    generatorVersionId: 2827945,
     featuredModels: [
       {
         modelId: 1665714,
