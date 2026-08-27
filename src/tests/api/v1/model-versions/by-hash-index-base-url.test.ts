@@ -19,14 +19,34 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
  * and fall back to localhost when it is absent. This suite pins that this
  * endpoint agrees with them.
  *
- * 🔴 `isProd` is mocked TRUE deliberately. It is `NODE_ENV === 'production'`,
- * evaluated at module load, so under Vitest it is FALSE and the handler takes
- * its `'http://localhost:3000'` dev branch — the production expression that
- * carries the defect never executes. Without this mock every assertion below
- * passes on the BROKEN code.
+ * 🔴 `isProd` is mocked rather than inherited, and it is what gives this suite
+ * any discriminating power at all. It is `NODE_ENV === 'production'` evaluated
+ * at module load, so under Vitest it is really FALSE and the handler always
+ * takes its `'http://localhost:3000'` branch — the production expression that
+ * carried the defect never executes.
+ *
+ * Measured with the mock removed, on both trees:
+ *
+ *   pre-fix (`req.headers.posthost`)  2 failed / 2 passed
+ *   post-fix (`req.headers.host`)     2 failed / 2 passed   — IDENTICAL
+ *
+ * So without it the suite does not go vacuously green; it goes red on both
+ * trees and tells them apart on nothing. The two production-host cases fail
+ * whatever the source says, and the two that survive (`hostname` is never
+ * `undefined`, and the no-Host fallback) pass whatever the source says. The
+ * mock is what makes the pre-fix and post-fix trees produce different results.
+ *
+ * `isProd` is a mutable holder rather than a literal so the `isProd &&` operand
+ * of the expression under test is itself reachable — see the development case
+ * at the bottom of this file. Pinned to a constant, dropping `isProd &&` from
+ * the source is a mutation no test in this file can see.
  */
+const envState = vi.hoisted(() => ({ isProd: true }));
+
 vi.mock('~/env/other', () => ({
-  isProd: true,
+  get isProd() {
+    return envState.isProd;
+  },
   isDev: false,
   isTest: false,
   isPreview: false,
@@ -156,6 +176,8 @@ function downloadUrls(res: any): string[] {
 describe('POST /api/v1/model-versions/by-hash — downloadUrl host', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Restored per test so the development case below cannot leak into the rest.
+    envState.isProd = true;
     dbMock.dbRead.modelFile.findMany.mockResolvedValue([{ modelVersion: modelVersion() }]);
     dbMock.dbRead.modelVersion.findUnique.mockResolvedValue(null);
   });
@@ -204,6 +226,26 @@ describe('POST /api/v1/model-versions/by-hash — downloadUrl host', () => {
    */
   it('falls back to localhost when the request carries no host header', async () => {
     const urls = downloadUrls(await invokeByHash({}));
+    expect(urls).toHaveLength(3);
+    for (const url of urls) {
+      expect(new URL(url).origin, `downloadUrl ${url}`).toBe('http://localhost:3000');
+    }
+  });
+
+  /**
+   * Covers the `isProd &&` operand, which every case above leaves unreachable
+   * because they all pin `isProd` true.
+   *
+   * A Host header IS present here, so the only thing that can send the result
+   * to localhost is `isProd` being false. Dropping `isProd &&` from the source
+   * leaves `req.headers.host ? … : …`, which would emit
+   * `https://models.example.test` and break local development — a mutation no
+   * other test in this file can observe.
+   */
+  it('ignores the request host outside production', async () => {
+    envState.isProd = false;
+
+    const urls = downloadUrls(await invokeByHash({ host: 'models.example.test' }));
     expect(urls).toHaveLength(3);
     for (const url of urls) {
       expect(new URL(url).origin, `downloadUrl ${url}`).toBe('http://localhost:3000');
