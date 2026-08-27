@@ -106,7 +106,12 @@ describe('normalizeListingScreenshots', () => {
 
 describe('buildApprovedAssetSnapshot', () => {
   it('reads the screenshots and takes icon/cover from the ALREADY-LOADED listing row', async () => {
-    const findMany = vi.fn(async () => [{ imageId: 5, order: 0, caption: 'shot' }]);
+    // Declared with the argument the real `appListingScreenshot.findMany` receives, so
+    // the `mock.calls[0][0]` assertion below is typed against a real parameter rather
+    // than an empty tuple.
+    const findMany = vi.fn(async (_args: { where: { appListingId: string } }) => [
+      { imageId: 5, order: 0, caption: 'shot' },
+    ]);
     const snapshot = await buildApprovedAssetSnapshot(
       { appListingScreenshot: { findMany } } as never,
       'apl_1',

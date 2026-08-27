@@ -29,6 +29,18 @@ import { NsfwLevel } from '~/server/common/enums';
  *   - global.fetch is mocked for the Discord webhook path.
  */
 
+/**
+ * The repo-standard signature for a mocked Prisma delegate (see
+ * `scope-grant.service.test.ts`): it takes an args object and resolves a row shape.
+ *
+ * 🔴 Declare it on every delegate that carries a DEFAULT implementation. `vi.fn(async
+ * () => null)` infers `() => Promise<null>` — a mock that takes NO argument and can
+ * only ever resolve `null` — so a per-test `mockResolvedValue(row)` or
+ * `mockImplementation((args) => …)` on the same delegate stops typechecking, even
+ * though both are exactly what the real delegate does at runtime.
+ */
+type DelegateMock = (...args: any[]) => Promise<any>;
+
 const {
   mockDbRead,
   mockDbWrite,
@@ -63,15 +75,15 @@ const {
       oauthClient: { findUnique: vi.fn() },
       // W13 auto-create-on-approve: approveRequest checks for an existing onsite
       // AppListing (idempotency, keyed on appBlockId) before creating one.
-      appListing: { findUnique: vi.fn(), findFirst: vi.fn(async () => null) },
+      appListing: { findUnique: vi.fn(), findFirst: vi.fn<DelegateMock>(async () => null) },
       // Fix #1 (onsite): withdrawRequest probes the listing's latest mod event to
       // decide whether a reset withdraw closes the listing. Null → no reset in flight.
-      appListingModerationEvent: { findFirst: vi.fn(async () => null) },
+      appListingModerationEvent: { findFirst: vi.fn<DelegateMock>(async () => null) },
       // A `pending` onsite listing is no longer proof that THIS block request is the
       // review open on it — the owner-republish asset-review route parks a listing in
       // `pending` with an `AppListingPublishRequest` and no block request. Null → no
       // listing-side review, i.e. the mod-reset case this suite's assertions describe.
-      appListingPublishRequest: { findFirst: vi.fn(async () => null) },
+      appListingPublishRequest: { findFirst: vi.fn<DelegateMock>(async () => null) },
     },
     mockDbWrite: {
       // `updateMany` added (no-trust-on-push fix): approveRequest now supersedes
@@ -119,13 +131,13 @@ const {
       // (gate skipped; the existing updateMany still runs), image → every id Scanned.
       appListing: {
         create: vi.fn(),
-        updateMany: vi.fn(async () => ({ count: 0 })),
-        findFirst: vi.fn(async () => null),
+        updateMany: vi.fn<DelegateMock>(async () => ({ count: 0 })),
+        findFirst: vi.fn<DelegateMock>(async () => null),
         // The shared assertListingAssetsScanCleanInTx wrapper re-reads the reset
         // listing's icon/cover by id from the PRIMARY.
-        findUnique: vi.fn(async () => null),
+        findUnique: vi.fn<DelegateMock>(async () => null),
       },
-      appListingScreenshot: { findMany: vi.fn(async () => []) },
+      appListingScreenshot: { findMany: vi.fn<DelegateMock>(async () => []) },
       image: {
         findMany: vi.fn(async (args: { where?: { id?: { in?: number[] } } }) =>
           (args?.where?.id?.in ?? []).map((id) => ({ id, ingestion: 'Scanned' }))
@@ -134,7 +146,7 @@ const {
       // Fix #1 (onsite) withdraw close: the reset-withdraw path flips the listing
       // pending→removed + writes a delist event inside a tx. `$transaction` is wired
       // post-hoist (below) to run its callback against this same write mock.
-      appListingModerationEvent: { create: vi.fn(async () => ({})) },
+      appListingModerationEvent: { create: vi.fn<DelegateMock>(async () => ({})) },
       $transaction: vi.fn(),
     },
     mockS3Send: vi.fn(),
@@ -2661,7 +2673,7 @@ describe('approveRequest', () => {
       // manifest-governed on exactly the same terms, so it MUST re-sync (this
       // fixture's manifest declares none, so it re-syncs as null).
       const syncCalls = mockDbWrite.appListing.updateMany.mock.calls.filter(
-        (c: [{ data?: Record<string, unknown> }]) => c[0]?.data != null && !('status' in c[0].data) // exclude the (3b-reset) status flip
+        (c: { data?: Record<string, unknown> }[]) => c[0]?.data != null && !('status' in c[0].data) // exclude the (3b-reset) status flip
       );
       expect(syncCalls).toHaveLength(1);
       expect(Object.keys(syncCalls[0][0].data).sort()).toEqual([

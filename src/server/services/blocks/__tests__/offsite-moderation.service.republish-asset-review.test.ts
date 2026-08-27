@@ -32,28 +32,13 @@ const mockWrite = dbMock.dbWrite;
  * abort BEFORE any audit event is written.
  */
 
-type WriteMock = {
-  $transaction: ReturnType<typeof vi.fn>;
-  appListing: {
-    findUnique: ReturnType<typeof vi.fn>;
-    updateMany: ReturnType<typeof vi.fn>;
-  };
-  appBlock: { updateMany: ReturnType<typeof vi.fn> };
-  appListingModerationEvent: {
-    findFirst: ReturnType<typeof vi.fn>;
-    create: ReturnType<typeof vi.fn>;
-  };
-  appListingPublishRequest: {
-    findFirst: ReturnType<typeof vi.fn>;
-    create: ReturnType<typeof vi.fn>;
-  };
-  appBlockPublishRequest: {
-    findFirst: ReturnType<typeof vi.fn>;
-    create: ReturnType<typeof vi.fn>;
-  };
-  appListingScreenshot: { findMany: ReturnType<typeof vi.fn> };
-  image: { findMany: ReturnType<typeof vi.fn> };
-};
+/**
+ * The transaction callback is handed the SAME write mock, so its parameter type is that
+ * mock's own type. A hand-written structural stand-in was used here and did not match:
+ * `dbMock.dbWrite` is a `HybridNode` (auto-vivifying proxy), not a fixed record of
+ * `vi.fn()`s, so the annotation described a shape the suite never passes.
+ */
+type WriteMock = typeof mockWrite;
 
 const { mockNotify, ids } = vi.hoisted(() => {
   return {
@@ -187,7 +172,7 @@ function wire(opts: {
 /** The `data` of the guarded `removed → …` status flip. */
 function flipData() {
   const call = mockWrite.appListing.updateMany.mock.calls.find(
-    (c: [{ where?: { status?: string } }]) => c[0]?.where?.status === 'removed'
+    (c: { where?: { status?: string } }[]) => c[0]?.where?.status === 'removed'
   );
   return call?.[0]?.data;
 }

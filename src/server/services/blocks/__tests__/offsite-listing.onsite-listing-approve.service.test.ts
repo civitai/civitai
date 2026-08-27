@@ -113,7 +113,7 @@ function wire(
 /** The `data` of the guarded listing flip → approved. */
 function flipData() {
   const call = mockWrite.appListing.updateMany.mock.calls.find(
-    (c: [{ data?: { status?: string } }]) => c[0]?.data?.status === 'approved'
+    (c: { data?: { status?: string } }[]) => c[0]?.data?.status === 'approved'
   );
   return call?.[0]?.data;
 }

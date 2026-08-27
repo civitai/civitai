@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TRPCError } from '@trpc/server';
+import type { WithdrawExternalRequestResult } from '~/server/services/blocks/offsite-listing.service';
 
 /**
  * W13 P3a — off-site submission router AUTHZ matrix.
@@ -42,7 +43,10 @@ const {
   // Returns the real service shape: the close OUTCOME, which the router now passes
   // through so the UI can distinguish "a draft was discarded" from "your live listing is
   // now delisted and only a moderator can restore it".
-  mockWithdraw: vi.fn(async () => ({ outcome: 'none' as const })),
+  // Typed with the SERVICE's own result type, not a narrowed literal: the router
+  // must be free to receive any `CloseTerminalListingOutcome`, and a mock pinned to
+  // `'none'` would make the `'removed'` pass-through case below untypeable.
+  mockWithdraw: vi.fn(async (): Promise<WithdrawExternalRequestResult> => ({ outcome: 'none' })),
   mockListMy: vi.fn(async () => ({ items: [], nextCursor: null })),
   mockListPending: vi.fn(async () => ({ items: [{ id: 'alpr_1' }], nextCursor: null })),
   mockListApproved: vi.fn(async () => ({ items: [], nextCursor: null })),
