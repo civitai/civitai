@@ -107,7 +107,13 @@ export function RemixSourcesList({
               rel="noreferrer"
               className="shrink-0"
             >
-              {source.image?.viewable ? (
+              {/* `withinViewerLevel`, not `viewable` alone. `toQueueImage` gates the
+                  URL on the DOMAIN ceiling and carries the viewer's own band as a
+                  mark rather than a filter, so a source rated above what this
+                  viewer accepts arrives with a real URL. Rendering on `viewable`
+                  drew it unblurred — the payload already ships the field to say
+                  so. */}
+              {source.image?.viewable && source.image.withinViewerLevel ? (
                 <EdgeMedia
                   src={source.image.url}
                   type="image"

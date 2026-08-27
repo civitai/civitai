@@ -1,9 +1,9 @@
 import { Menu } from '@mantine/core';
 import { IconArrowBackUp, IconPhotoUp } from '@tabler/icons-react';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openRemixSourcesModal } from '~/components/Dialog/triggers/remix-sources';
+import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useRemixSources } from '~/components/RemixGallery/RemixSourcesList';
-import { RemixSourcesModal } from '~/components/RemixGallery/RemixSourcesModal';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '~/utils/trpc';
 
@@ -56,9 +56,7 @@ function SubmitRemixMenuItem({ imageId, published }: { imageId: number; publishe
   return (
     <Menu.Item
       leftSection={<IconPhotoUp size={14} stroke={1.5} />}
-      onClick={() =>
-        dialogStore.trigger({ component: RemixSourcesModal, props: { imageId, published } })
-      }
+      onClick={() => openRemixSourcesModal({ imageId, published })}
     >
       Submit this remix
     </Menu.Item>
@@ -87,7 +85,30 @@ function ViewOriginalMenuItem({ imageId }: { imageId: number }) {
   // exactly one (101 of 101); the detail page's "Remixed From" card is where a
   // multi-source image shows all of them.
   const [sourceId] = data?.remixOfIds ?? [];
-  if (!sourceId) return null;
+
+  /**
+   * 🔴 Fetched and filtered before the link is offered, not just linked to.
+   *
+   * `ImageRemixOfDetails` reads the same ids and then runs each source through
+   * `image.get` and `useApplyHiddenPreferences` — hidden users, blocked users,
+   * hidden images, POI and minor — before it renders a tile. Linking straight to
+   * `/images/<id>` skipped all of that, so this menu offered a viewer a link to
+   * an image their own preferences suppress two screens away.
+   *
+   * The extra request is bounded by the id existing at all: 0.076% of images
+   * carry verified provenance, so this fires almost nowhere.
+   */
+  const { data: source } = trpc.image.get.useQuery(
+    { id: sourceId as number },
+    { enabled: !!sourceId }
+  );
+  const { items } = useApplyHiddenPreferences({
+    type: 'images',
+    data: source ? [source] : [],
+    allowLowerLevels: true,
+  });
+
+  if (!sourceId || !items.length) return null;
 
   return (
     <Menu.Item

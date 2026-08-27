@@ -1884,6 +1884,91 @@ describe('getRemixSourcesForImage', () => {
     expect(source.freeAvailable).toBe(true);
     expect(source.unavailable).toBe(null);
   });
+
+  /**
+   * The other control for the same rule, and the one its author missed.
+   *
+   * The first two controls above mutate the LEFT half of
+   * `!freeAvailable && !paidSubmissionOpen(price)` or the whole conjunction.
+   * Deleting only the RIGHT half — `!freeAvailable ? 'closed' : null` — closes
+   * every source that is not free-eligible, which is the entire paid path and
+   * this surface's only revenue, and it survived all eight tests in this block
+   * because none of them asserted `unavailable === null` for a PAID source. The
+   * one `toBe(null)` beside it sits on a free-eligible fixture, so it pins the
+   * free rung and says nothing about this one.
+   *
+   * A button vanishing is silent. Nothing throws, nothing logs, and the only
+   * symptom is that submissions stop arriving.
+   */
+  it('still offers a PAID submission on a properly priced gallery with no free slots', async () => {
+    respondWith({ remixOfId: null, sourceImageIds: [NEW_HOST] });
+    resolvePlacementSpaceFor.mockResolvedValue({
+      ownerId: OWNER,
+      mode: 'review',
+      // Exactly the floor, so this also pins the boundary at the service rather
+      // than only in the helper's own unit test.
+      price: PLACEMENT_SURFACES.remixGallery.serverMinPrice,
+      freeSlots: 0,
+      freeSlotsRemaining: 0,
+      settings: {},
+    });
+
+    const [source] = await getRemixSourcesForImage({ imageId: MY_IMAGE, placerId: PLACER });
+
+    expect(source.freeAvailable, 'the arrangement under test is paid-only').toBe(false);
+    expect(source.unavailable, 'a priced gallery must stay submittable').toBe(null);
+    expect(source.price).toBe(PLACEMENT_SURFACES.remixGallery.serverMinPrice);
+  });
+
+  /**
+   * Each of `freeAvailable`'s conjuncts, refused one at a time.
+   *
+   * 🔴 The first case is the point of this block: every other fixture in the file
+   * moves `freeSlots` and `freeSlotsRemaining` TOGETHER, so reading the wrong one
+   * of the two is invisible. `freeSlots` is the capacity the owner configured and
+   * `freeSlotsRemaining` is what is left — swapping them offers "Submit free" on a
+   * gallery whose slots are already taken, and the mutation then refuses under its
+   * lock. This is the only fixture in the suite where they disagree.
+   */
+  it.each([['the last free slot is already held', { freeSlots: 1, freeSlotsRemaining: 0 }]])(
+    'refuses free when %s',
+    async (_label, space) => {
+      respondWith({ remixOfId: null, sourceImageIds: [NEW_HOST] });
+      resolvePlacementSpaceFor.mockResolvedValue({
+        ownerId: OWNER,
+        mode: 'review',
+        price: PRICE,
+        settings: {},
+        ...space,
+      });
+
+      const [source] = await getRemixSourcesForImage({ imageId: MY_IMAGE, placerId: PLACER });
+
+      expect(source.freeAvailable).toBe(false);
+      // The gallery is properly priced, so refusing free must NOT close the row.
+      expect(source.unavailable).toBe(null);
+    }
+  );
+
+  it('refuses free when the placer has no daily allowance left', async () => {
+    respondWith({ remixOfId: null, sourceImageIds: [NEW_HOST] });
+    getFreePlacementAllowance.mockResolvedValue({ remaining: 0 });
+
+    const [source] = await getRemixSourcesForImage({ imageId: MY_IMAGE, placerId: PLACER });
+
+    expect(source.freeAvailable).toBe(false);
+    expect(source.unavailable).toBe(null);
+  });
+
+  it('refuses free when the placer already used their free submission here', async () => {
+    respondWith({ remixOfId: null, sourceImageIds: [NEW_HOST] });
+    hasUsedFreePlacementOn.mockResolvedValue(true);
+
+    const [source] = await getRemixSourcesForImage({ imageId: MY_IMAGE, placerId: PLACER });
+
+    expect(source.freeAvailable).toBe(false);
+    expect(source.unavailable).toBe(null);
+  });
 });
 
 describe('getPendingRemixGallerySubmissions paging', () => {

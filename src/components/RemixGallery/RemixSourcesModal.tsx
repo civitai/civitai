@@ -16,14 +16,13 @@ import { RemixSourcesList, useRemixSources } from '~/components/RemixGallery/Rem
  * with no sources gets a sentence rather than nothing — the alternative is a
  * menu item that opens an empty dialog.
  */
-export function RemixSourcesModal({
-  imageId,
-  published,
-}: {
+export type RemixSourcesModalProps = {
   imageId: number;
   /** Only changes what the success message promises; both states submit here. */
   published: boolean;
-}) {
+};
+
+export function RemixSourcesModal({ imageId, published }: RemixSourcesModalProps) {
   const dialog = useDialogContext();
   const { sources, isLoading } = useRemixSources(imageId);
 
