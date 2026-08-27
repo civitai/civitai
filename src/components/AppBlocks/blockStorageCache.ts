@@ -55,7 +55,9 @@ import type { trpc } from '~/utils/trpc';
  * Both hosts must apply BOTH halves — see `hostHandlerParity.ts` for why the
  * two hosts move in lockstep. `blockStorageCacheParity.test.ts` enforces it,
  * and `blockStorageCacheSemantics.test.ts` pins the query-core behaviour all of
- * the above depends on (nothing else in the repo exercises the real client).
+ * the above depends on (no other test OF THIS POLICY exercises the real client —
+ * the browser suites mock `~/utils/trpc` wholesale; other unrelated suites do
+ * construct a QueryClient).
  */
 
 type TrpcUtils = ReturnType<typeof trpc.useUtils>;

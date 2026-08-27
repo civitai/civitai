@@ -265,12 +265,15 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
     });
 
     await vi.waitFor(() => {
-      expect(mocks.list).toHaveBeenCalledWith({
-        blockToken: 'tok_abc',
-        prefix: 'p',
-        limit: 100,
-        cursor: 'cur1',
-      }, { staleTime: BLOCK_STORAGE_READ_STALE_TIME_MS });
+      expect(mocks.list).toHaveBeenCalledWith(
+        {
+          blockToken: 'tok_abc',
+          prefix: 'p',
+          limit: 100,
+          cursor: 'cur1',
+        },
+        { staleTime: BLOCK_STORAGE_READ_STALE_TIME_MS }
+      );
     });
     await vi.waitFor(() => {
       const r = replies.last('SHARED_LIST_RESULT');
@@ -322,7 +325,10 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
     postFromBlock('SHARED_GET_COUNT', { requestId: 'rq_gc', key: '01ABC', blockToken: 'SPOOFED' });
 
     await vi.waitFor(() => {
-      expect(mocks.getCount).toHaveBeenCalledWith({ blockToken: 'tok_abc', key: '01ABC' }, { staleTime: BLOCK_STORAGE_READ_STALE_TIME_MS });
+      expect(mocks.getCount).toHaveBeenCalledWith(
+        { blockToken: 'tok_abc', key: '01ABC' },
+        { staleTime: BLOCK_STORAGE_READ_STALE_TIME_MS }
+      );
     });
     await vi.waitFor(() => {
       const r = replies.last('SHARED_GET_COUNT_RESULT');
@@ -362,7 +368,10 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
     });
 
     await vi.waitFor(() => {
-      expect(mocks.getCounts).toHaveBeenCalledWith({ blockToken: 'tok_abc', keys: ['a', 'b'] }, { staleTime: BLOCK_STORAGE_READ_STALE_TIME_MS });
+      expect(mocks.getCounts).toHaveBeenCalledWith(
+        { blockToken: 'tok_abc', keys: ['a', 'b'] },
+        { staleTime: BLOCK_STORAGE_READ_STALE_TIME_MS }
+      );
     });
     await vi.waitFor(() => {
       const r = replies.last('SHARED_GET_COUNTS_RESULT');
@@ -655,7 +664,10 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
     postFromBlock('SHARED_GET', { requestId: 'rq_get', key: '01ABC', blockToken: 'SPOOFED' });
 
     await vi.waitFor(() => {
-      expect(mocks.get).toHaveBeenCalledWith({ blockToken: 'tok_abc', key: '01ABC' }, { staleTime: BLOCK_STORAGE_READ_STALE_TIME_MS });
+      expect(mocks.get).toHaveBeenCalledWith(
+        { blockToken: 'tok_abc', key: '01ABC' },
+        { staleTime: BLOCK_STORAGE_READ_STALE_TIME_MS }
+      );
     });
     await vi.waitFor(() => {
       const r = replies.last('SHARED_GET_RESULT');
@@ -795,7 +807,11 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
     await vi.waitFor(() => {
       const r = replies.last('SAVE_IMAGE_RESULT');
       if (!r) throw new Error('no reply yet');
-      expect(r.payload).toEqual({ requestId: 'rq_save_evil', ok: false, error: 'image url is not allowed' });
+      expect(r.payload).toEqual({
+        requestId: 'rq_save_evil',
+        ok: false,
+        error: 'image url is not allowed',
+      });
     });
     // The disallowed URL was NEVER fetched host-side.
     expect(mocks.saveDownload).not.toHaveBeenCalled();
@@ -828,7 +844,10 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
       expect(mocks.getImagesByIds).toHaveBeenCalledWith({ blockToken: 'tok_abc', imageIds: [55] });
     });
     await vi.waitFor(() => {
-      expect(mocks.saveDownload).toHaveBeenCalledWith('https://image.civitai.com/edge/55.jpeg', '55.jpeg');
+      expect(mocks.saveDownload).toHaveBeenCalledWith(
+        'https://image.civitai.com/edge/55.jpeg',
+        '55.jpeg'
+      );
     });
     await vi.waitFor(() => {
       const r = replies.last('SAVE_IMAGE_RESULT');
@@ -849,7 +868,11 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
     await vi.waitFor(() => {
       const r = replies.last('SAVE_IMAGE_RESULT');
       if (!r) throw new Error('no reply yet');
-      expect(r.payload).toEqual({ requestId: 'rq_save_hidden', ok: false, error: 'image is not available' });
+      expect(r.payload).toEqual({
+        requestId: 'rq_save_hidden',
+        ok: false,
+        error: 'image is not available',
+      });
     });
     // The gated read ran, but a hidden image is never handed to the downloader.
     expect(mocks.getImagesByIds).toHaveBeenCalled();
@@ -868,7 +891,11 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
     await vi.waitFor(() => {
       const r = replies.last('SAVE_IMAGE_RESULT');
       if (!r) throw new Error('no reply yet');
-      expect(r.payload).toEqual({ requestId: 'rq_save_gone', ok: false, error: 'image is not available' });
+      expect(r.payload).toEqual({
+        requestId: 'rq_save_gone',
+        ok: false,
+        error: 'image is not available',
+      });
     });
     expect(mocks.saveDownload).not.toHaveBeenCalled();
     replies.stop();
@@ -888,7 +915,11 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
     await vi.waitFor(() => {
       const r = replies.last('SAVE_IMAGE_RESULT');
       if (!r) throw new Error('no reply yet');
-      expect(r.payload).toEqual({ requestId: 'rq_save_both', ok: false, error: 'invalid save-image request' });
+      expect(r.payload).toEqual({
+        requestId: 'rq_save_both',
+        ok: false,
+        error: 'invalid save-image request',
+      });
     });
     expect(mocks.saveDownload).not.toHaveBeenCalled();
     expect(mocks.getImagesByIds).not.toHaveBeenCalled();

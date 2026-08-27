@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { BLOCK_STORAGE_READ_STALE_TIME_MS } from './blockStorageCache';
+import { stripSourceComments } from './stripSourceComments';
 
 /**
  * Block storage read-cache PARITY guard — both hosts, every read AND every write.
@@ -56,36 +57,14 @@ const PRIVATE_WRITE_MUTATIONS = ['storageSetMutation', 'storageDeleteMutation'] 
 const EXPECTED_READS = 7; // shared: list/get/getCount/getCounts · storage: get/list/getQuota
 
 /**
- * Strip block and line comments so the assertions below cannot be satisfied by
- * commented-out code.
- *
- * Still naive — it does not parse string or regex literals, so a `/*` inside a
- * string would over-strip. The line-comment half is anchored to line-start
- * precisely because the unanchored version DID over-strip real code. An
- * over-strip removes a real call and causes a spurious FAILURE a human then
- * investigates, which is the safe direction; the theoretical way it could
- * invent coverage is by deleting a `send(` and widening an ordering window
- * into a neighbouring handler. No such construction was reachable when this was
- * checked, but it is not proven impossible — hence "safe direction", not
- * "cannot".
- *
- * Mirrors `hostHandlerParity.test.ts`'s `stripComments`, same rationale.
+ * Comment-stripping is shared with `hostHandlerParity.test.ts` and lives in
+ * `stripSourceComments.ts` — see that module for why it is a quote-aware
+ * scanner rather than a regex, and for the two opposite failures that got it
+ * there. Both guards depend on the SAME property, so they must not drift.
  */
-function stripComments(src: string): string {
-  return (
-    src
-      .replace(/\/\*[\s\S]*?\*\//g, '')
-      // Line comments ONLY where `//` opens the line (after indentation). A
-      // commented-out call is always that shape, and anchoring here avoids
-      // truncating real code that merely CONTAINS `//` — e.g. the open-redirect
-      // guard `cleaned.includes('//')` in PageBlockHost, which the previous
-      // unanchored version chopped mid-condition.
-      .replace(/^[ \t]*\/\/[^\n]*$/gm, '')
-  );
-}
 
 function readHost(f: HostFile): string {
-  return stripComments(readFileSync(join(HOST_DIR, f), 'utf8'));
+  return stripSourceComments(readFileSync(join(HOST_DIR, f), 'utf8'));
 }
 
 /** Raw (un-stripped) source — only for asserting the comment-strip itself works. */
@@ -133,8 +112,11 @@ describe('block storage cache policy — both hosts', () => {
         const from = m.index ?? 0;
         const window = src.slice(from, from + 800);
         const replyAt = window.indexOf('send(');
-        const callText = replyAt === -1 ? window : window.slice(0, replyAt);
-        return callText.includes('BLOCK_STORAGE_READ_OPTS') ? null : m[0];
+        // If the reply is not inside the window the window is mis-sized, and a
+        // 'bounded' verdict would be borrowed from whatever text followed.
+        // Treat that as unbounded rather than silently trusting it.
+        if (replyAt === -1) return `${m[0]} (no reply within window — window too small?)`;
+        return window.slice(0, replyAt).includes('BLOCK_STORAGE_READ_OPTS') ? null : m[0];
       })
       .filter(Boolean);
     expect(
@@ -181,6 +163,9 @@ describe('block storage cache policy — both hosts', () => {
 
   // ── Controls on the guard itself ────────────────────────────────────────────
   it('the comment-strip actually removes a commented-out call', () => {
+    // Kept here as an integration check that this guard uses the scanner at
+    // all; the exhaustive both-directions cases live in
+    // stripSourceComments.test.ts.
     // The guard above is only as good as this. Without it, `// await
     // invalidateSharedStorageReads(...)` satisfies every assertion in this file
     // — measured: an audit walked past the previous version exactly that way.
@@ -190,7 +175,7 @@ describe('block storage cache policy — both hosts', () => {
       '      /* await invalidatePrivateStorageReads(trpcUtils); */',
       '      await realCall();',
     ].join('\n');
-    const stripped = stripComments(withComment);
+    const stripped = stripSourceComments(withComment);
     expect(stripped).not.toContain('invalidateSharedStorageReads');
     expect(stripped).not.toContain('invalidatePrivateStorageReads');
     expect(stripped).toContain('realCall');
@@ -198,11 +183,11 @@ describe('block storage cache policy — both hosts', () => {
 
   it('the comment-strip preserves real code containing // (regression)', () => {
     // A URL, and the actual line the unanchored version truncated.
-    expect(stripComments("const u = 'https://example.com/x'; // trailing")).toContain(
+    expect(stripSourceComments("const u = 'https://example.com/x'; // trailing")).toContain(
       'https://example.com/x'
     );
     const redirectGuard = "    if (cleaned.startsWith('/') || cleaned.includes('//')) {";
-    expect(stripComments(redirectGuard)).toContain("includes('//')");
+    expect(stripSourceComments(redirectGuard)).toContain("includes('//')");
   });
 
   it('every host really does carry comments (the strip is not a no-op)', () => {
