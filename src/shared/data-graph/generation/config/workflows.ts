@@ -69,9 +69,7 @@ const EDIT_IMG_IDS = [
   ECO.Boogu,
   ECO.Reve,
   ECO.MageFlow,
-  // Krea 2 edit is fully wired (graph variants + handler branch + diffusionModel
-  // base selection) but held back from the picker. Re-enable by uncommenting.
-  // ECO.Krea2,
+  ECO.Krea2,
 ];
 
 /** Image ecosystems that support image:create */
