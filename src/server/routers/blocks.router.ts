@@ -3959,7 +3959,7 @@ export const blocksRouter = router({
       // step's cost comes from its declared billing mode, not a whatIf. The
       // textToImage path below stays byte-identical (we only ADD a branch).
       if (input.body.kind === 'step') {
-        return await estimateStepWorkflow({ claims, body: input.body });
+        return await estimateStepWorkflow({ ctx, claims, body: input.body });
       }
       // Context binding. A MODEL token pins `ctx.modelId`; the body must match
       // it. A PAGE token (ctx.entityType==='none') has NO model binding — it
@@ -7166,29 +7166,160 @@ async function assertStepRequestAllowed(claims: BlockClaims): Promise<number> {
 }
 
 /**
- * STEP ESTIMATE. Returns the registry's DECLARED, deterministic estimate — no
- * orchestrator round-trip. For `prepaidFixed`, registry load enforces that this
- * number equals the entry's declared price (`estimateBuzz === priceForVariant`),
- * so the estimate and the declared price can never disagree with each other.
+ * Build the orchestrator step this registry entry will actually submit, and
+ * re-assert on the BUILT value the two properties the registry could only check
+ * at load time.
  *
- * 🔴 THE ESTIMATE AND THE SUBMIT CAN DIVERGE, and that is deliberate. Submit no
- * longer trusts the declared price as the ceiling: it runs a real `whatif:true`
- * quote against the orchestrator and gates + reserves `max(declared, quoted)`
- * (see the ORCHESTRATOR QUOTE section in `submitStepWorkflow`). So when the
- * orchestrator's live price is ABOVE the declared one — a rate-card move — the
- * block is shown the declared number here and the submit enforces the higher
- * one. Concretely, at a live price of 40 against a declared 1: this returns
- * `cost.total: 1`, and the submit either returns
- * `insufficient buzz budget: step price 40 exceeds budget <n>` or reserves 40
- * against every cap.
+ * 🔴 SHARED BY THE QUOTE AND THE SUBMIT ON PURPOSE. Both the estimate's
+ * `whatif:true` quote and the real submit go through here, so the two can never
+ * price different things and neither can be given a step the other would have
+ * refused. Extracting it is what makes "estimate quotes what submit bills" a
+ * property of the code rather than of two call sites staying in step.
+ */
+function buildStepOrchestratorStep(
+  step: ReturnType<typeof resolveBlockStep>,
+  params: unknown,
+  plan: Pick<ReturnType<typeof planStepSpend>, 'stepTimeoutSeconds'>
+) {
+
+  const built = step.buildStep(params);
+
+  // ── STEP IDENTITY, re-asserted at REQUEST time on the value actually
+  // submitted. Same shape and same reason as the entitlement re-assert below,
+  // on the axis every `$type`-keyed guard depends on.
+  //
+  // 🔴 WHY IT IS NEEDED DESPITE CLAUSE 7a. The registry's load-time check
+  // asserts `buildStep(canonicalParamsFor(v)).$type === orchestratorType` for
+  // each variant — the CANONICAL params. A `buildStep` that switches its
+  // `$type` ON PARAMS therefore registers cleanly and diverges only at request
+  // time, when the untrusted iframe supplies the params that flip it. That is
+  // not hypothetical: it was demonstrated by execution in review against the
+  // load-time check alone.
+  //
+  // What that buys an attacker without this clause is the whole point:
+  // `runStepModeration` (above) dispatches on the DECLARED posture, so a step
+  // declaring `'none'` that builds a text-producing `$type` reaches the
+  // orchestrator with no audit — the exact shape the registry's posture gate
+  // exists to prevent. Load time proved a property of one fixed input; this
+  // proves it of THIS input.
+  //
+  // Placed before the quote and before every reservation, so a rejection costs
+  // no orchestrator call and has nothing to refund.
+  if (built.$type !== step.orchestratorType) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message:
+        `step '${step.id}' declares orchestratorType '${step.orchestratorType}' but the ` +
+        `submitted step is '${built.$type}' — every $type-keyed guard, including the ` +
+        'moderation-posture constraint, was evaluated against a type this step does not submit',
+    });
+  }
+
+  // ── ENTITLEMENT posture, re-asserted at REQUEST time on the value actually
+  // submitted. Mirrors the `moderationPosture` re-assertion above, on the axis
+  // this PR's own triage named as the real risk (`imageUpscaler` was
+  // disqualified precisely because its `model` field takes an arbitrary AIR
+  // URN).
+  //
+  // 🔴 WHY IT IS NEEDED DESPITE CLAUSE 7. The registry's load-time AIR probe
+  // (clause 7) scans `buildStep(canonicalParamsFor(v))` — the CANONICAL params.
+  // An entry whose AIR-bearing field is OPTIONAL and absent from its canonical
+  // params therefore registers cleanly, and at request time `buildStep` forwards
+  // whatever the untrusted iframe sent straight into the submitted input. Load
+  // time proved a property of one fixed input; this proves it of THIS input.
+  // Without it, `resourcePolicy` was enforced at registry load only — a
+  // review-process guard, not a runtime one — while `moderationPosture` was
+  // enforced at both.
+  //
+  // Placed before the quote and before every reservation, so a rejection here
+  // costs no orchestrator call and has nothing to refund.
+  //
+  // FAIL-CLOSED DIRECTION, stated honestly: the scan is a substring test for
+  // `urn:air:` anywhere in the built input, so a param that merely EMBEDS that
+  // literal (e.g. a Civitai-hosted image URL whose path contains it) is rejected
+  // too. That is a false positive, and it is the direction we want — refusing a
+  // pathological url costs a caller one bounced request; forwarding an
+  // unentitled AIR costs the entitlement belt.
+  //
+  // 🔴 THAT COST SENTENCE WAS WRITTEN WHEN EVERY SCANNED STRING WAS A URL THE
+  // APP CONSTRUCTS, AND IT NO LONGER DESCRIBES EVERY ENTRY. `chat-completion`
+  // (registered later) submits `messages[].content` — free prose an END USER
+  // typed — and that prose is the ONLY attacker-controlled string in its built
+  // input; `model` is `z.enum`-bounded and every key is a fixed literal. So for
+  // that entry this guard reduces exactly to "reject any chat message
+  // containing the literal `urn:air:`", and the bounced request is the user's
+  // message rather than the app's own url. The guard is KEPT anyway — see the
+  // FALSE-POSITIVE SURFACE section in `chat-completion.step.ts` for the
+  // orchestrator-side evidence that such prose is inert today, why that
+  // evidence is not sufficient to scope the scan, and the app-side workaround.
+  // What changed here is only the MESSAGE: it used to assert the submitted step
+  // "carries an AIR reference", which is FALSE for prose — the caller typed a
+  // fragment, not a reference — so the rejection read as a platform bug rather
+  // than as something the app can fix in its own payload.
+  //
+  // "Anywhere" covers object KEYS as well as values — the orchestrator's own
+  // `additionalNetworks` / `WorkflowCost.fees` shapes are AIR-KEYED maps, and
+  // the scan used to recurse over `Object.values` only. See
+  // `containsAirReference` for the mechanism and the depth cap that keeps the
+  // scan total.
+  if (step.resourcePolicy.kind === 'none' && containsAirReference(built.input)) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message:
+        `step '${step.id}' declares resourcePolicy 'none' but the submitted step contains the ` +
+        `literal text '${AIR_URN_PREFIX}' — a step that reaches an AIR resource bypasses the ` +
+        'generation-graph entitlement belt. The check is a case-insensitive SUBSTRING scan ' +
+        'over every string, array element, object value AND object key in the step input; it ' +
+        'does not parse, so a value that merely EMBEDS that literal — a url whose path ' +
+        'contains it, or free text a user typed — is rejected too. That is the deliberate ' +
+        'fail-closed direction: strip or escape the literal in the params you submit.',
+    });
+  }
+
+  return {
+    $type: built.$type,
+    name: BLOCK_STEP_NAME,
+    ...(plan.stepTimeoutSeconds !== null
+      ? { timeout: formatStepTimeout(plan.stepTimeoutSeconds) }
+      : {}),
+    input: built.input,
+  };
+}
+
+/**
+ * STEP ESTIMATE. Quotes the ORCHESTRATOR, and falls back to the registry's
+ * declared estimate only when no quote can be had.
  *
- * That is fail-closed and correct — the caller is never billed more than the
- * caps it reserved against, and the divergence is counted as
- * `civitai_app_block_step_price_check_total{outcome="over"}`. But do NOT read
- * this estimate as a binding quote: it is the declared floor, not the enforced
- * ceiling. (This comment previously asserted the inverse — that an estimate can
- * never quote a different number than the submit bills. That was true before the
- * quote-backed gate existed and is now false.)
+ * 🔴 THIS USED TO RETURN THE DECLARED CONSTANT AND NEVER ASK ANYONE, AND THAT
+ * WAS THE BUG. `kind: 'step'` was the only branch of `estimateWorkflow` that did
+ * not whatif — `customComfy` returns a server-authored display estimate because
+ * a fixed recipe has no whatif-able cost, and `textToImage` quotes. The step
+ * branch quoted a number the platform had merely asserted, so a block was SHOWN
+ * one price and CHARGED another, with nothing anywhere that re-measured the
+ * assertion.
+ *
+ * MEASURED 2026-08-27 (clawgate #386). `chat-completion` declares
+ * `CHAT_COMPLETION_PRICE_BUZZ = 1`, and its header claimed `cost.total = 1` had
+ * been measured "for every model in `CHAT_COMPLETION_MODELS` and for `maxTokens`
+ * from 1 to 200,000". Free `whatif` quotes against the live orchestrator, on one
+ * identical 4,680-char conversation at `maxTokens: 2048`:
+ *
+ *     deepseek/deepseek-chat                       4 Buzz
+ *     cognitivecomputations/dolphin-mistral-24b…   3 Buzz
+ *     openai/gpt-4o-mini                           2 Buzz
+ *
+ * and, on one model, 1 at `maxTokens: 256`, 6 at 4096, 86 at 64000. The
+ * orchestrator prices a third-party chat model from the provider's live
+ * per-token rate, floored at 1 — so the declared constant is that floor, not a
+ * price, and NO constant could have been right. Two real sends were charged
+ * 4 Buzz each while a published store listing told the viewer 1.
+ *
+ * 🔴 THE FALLBACK IS THE DECLARED ESTIMATE, NOT A THROW, and that is deliberate.
+ * An unquotable step is exactly today's behaviour, so this can only ever be more
+ * accurate than what it replaces — it never turns a working estimate into an
+ * error. The SUBMIT still fails closed on a missing quote (`recordStepPriceCheck
+ * (step.id, 'absent')` + a recoverable failed snapshot), because that is the path
+ * where the number bounds real money; an estimate binds nothing.
  *
  * Fail-closed on an out-of-bounds param (BAD_REQUEST via `parseStepParams`),
  * exactly as submit does — the same `.strict()` schema runs on both paths.
@@ -7200,21 +7331,79 @@ async function assertStepRequestAllowed(claims: BlockClaims): Promise<number> {
  * whose variant is its model, an out-of-set model returned HTTP 200 with
  * `cost: { total: undefined }` here while the submit threw — estimate/submit
  * drift on the surface whose entire job is to predict the submit.
+ *
+ * 🔴 THE QUOTE IS BUILT BY THE SAME HELPER THE SUBMIT USES
+ * (`buildStepOrchestratorStep`), so the `$type` and entitlement re-asserts run on
+ * this path too and the two can never price different steps. It is one extra
+ * orchestrator round-trip per estimate, on a surface already restricted to app
+ * developers by `assertStepRequestAllowed`.
  */
-async function estimateStepWorkflow(opts: { claims: BlockClaims; body: StepBody }) {
-  const { claims, body } = opts;
-  await assertStepRequestAllowed(claims);
+async function estimateStepWorkflow(opts: {
+  ctx: Context;
+  claims: BlockClaims;
+  body: StepBody;
+}) {
+  const { ctx, claims, body } = opts;
+  const userId = await assertStepRequestAllowed(claims);
   const step = resolveBlockStep(body);
   const params = parseStepParams(step, body.params);
+  const variant = resolveStepVariant(step, params);
+  const declaredBuzz = estimateStepBuzz(step, params, variant);
+
+  const quotedBuzz = await quoteStepBuzz({ ctx, claims, step, params, variant, userId });
+
   return {
     snapshot: {
       // Non-empty sentinel: the SDK's inbound validator drops empty-workflowId
       // snapshots. The block treats estimate as a cost quote and never polls it.
       workflowId: 'wf_estimate',
       status: 'pending' as const,
-      cost: { total: estimateStepBuzz(step, params) },
+      cost: { total: quotedBuzz ?? declaredBuzz },
     },
   };
+}
+
+/**
+ * The orchestrator's live price for a step, or `null` if it could not be had.
+ *
+ * Swallows every failure on purpose — see the fallback note on
+ * `estimateStepWorkflow`. A quote failure must degrade an estimate to the
+ * pre-existing declared number, never turn it into an error the block has no way
+ * to act on. The SUBMIT path runs its own quote and does NOT swallow.
+ *
+ * No `externalId` on the quote, mirroring the submit's whatIf preflight and the
+ * txt2img one: the idempotency key belongs to a real submit only.
+ */
+async function quoteStepBuzz(opts: {
+  ctx: Context;
+  claims: BlockClaims;
+  step: ReturnType<typeof resolveBlockStep>;
+  params: unknown;
+  variant: ReturnType<typeof resolveStepVariant>;
+  userId: number;
+}): Promise<number | null> {
+  const { ctx, claims, step, params, variant, userId } = opts;
+  try {
+    const plan = planStepSpend(step, params, variant);
+    const orchestratorStep = buildStepOrchestratorStep(step, params, plan);
+    const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
+    const token = await getOrchestratorToken(userId, ctx);
+    const quote = await submitWorkflow({
+      token,
+      body: {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        steps: [orchestratorStep as any],
+        tags: buildWorkflowTags(claims, step.id, 'step'),
+        currencies: resolveBlockCurrenciesForAccount(isGreen, undefined),
+        ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
+      },
+      query: { whatif: true },
+    });
+    const total = quote.cost?.total;
+    return typeof total === 'number' && Number.isFinite(total) ? Math.ceil(total) : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -7331,108 +7520,11 @@ async function submitStepWorkflow(opts: {
   // whose cap IS a timeout (`timeBounded`); `prepaidFixed` returns null, because
   // a timeout on a fixed-price step would be a liveness knob and stamping one
   // here would imply a Buzz-cap relationship that does not exist.
-  const built = step.buildStep(params);
-
-  // ── STEP IDENTITY, re-asserted at REQUEST time on the value actually
-  // submitted. Same shape and same reason as the entitlement re-assert below,
-  // on the axis every `$type`-keyed guard depends on.
-  //
-  // 🔴 WHY IT IS NEEDED DESPITE CLAUSE 7a. The registry's load-time check
-  // asserts `buildStep(canonicalParamsFor(v)).$type === orchestratorType` for
-  // each variant — the CANONICAL params. A `buildStep` that switches its
-  // `$type` ON PARAMS therefore registers cleanly and diverges only at request
-  // time, when the untrusted iframe supplies the params that flip it. That is
-  // not hypothetical: it was demonstrated by execution in review against the
-  // load-time check alone.
-  //
-  // What that buys an attacker without this clause is the whole point:
-  // `runStepModeration` (above) dispatches on the DECLARED posture, so a step
-  // declaring `'none'` that builds a text-producing `$type` reaches the
-  // orchestrator with no audit — the exact shape the registry's posture gate
-  // exists to prevent. Load time proved a property of one fixed input; this
-  // proves it of THIS input.
-  //
-  // Placed before the quote and before every reservation, so a rejection costs
-  // no orchestrator call and has nothing to refund.
-  if (built.$type !== step.orchestratorType) {
-    throw new TRPCError({
-      code: 'FORBIDDEN',
-      message:
-        `step '${step.id}' declares orchestratorType '${step.orchestratorType}' but the ` +
-        `submitted step is '${built.$type}' — every $type-keyed guard, including the ` +
-        'moderation-posture constraint, was evaluated against a type this step does not submit',
-    });
-  }
-
-  // ── ENTITLEMENT posture, re-asserted at REQUEST time on the value actually
-  // submitted. Mirrors the `moderationPosture` re-assertion above, on the axis
-  // this PR's own triage named as the real risk (`imageUpscaler` was
-  // disqualified precisely because its `model` field takes an arbitrary AIR
-  // URN).
-  //
-  // 🔴 WHY IT IS NEEDED DESPITE CLAUSE 7. The registry's load-time AIR probe
-  // (clause 7) scans `buildStep(canonicalParamsFor(v))` — the CANONICAL params.
-  // An entry whose AIR-bearing field is OPTIONAL and absent from its canonical
-  // params therefore registers cleanly, and at request time `buildStep` forwards
-  // whatever the untrusted iframe sent straight into the submitted input. Load
-  // time proved a property of one fixed input; this proves it of THIS input.
-  // Without it, `resourcePolicy` was enforced at registry load only — a
-  // review-process guard, not a runtime one — while `moderationPosture` was
-  // enforced at both.
-  //
-  // Placed before the quote and before every reservation, so a rejection here
-  // costs no orchestrator call and has nothing to refund.
-  //
-  // FAIL-CLOSED DIRECTION, stated honestly: the scan is a substring test for
-  // `urn:air:` anywhere in the built input, so a param that merely EMBEDS that
-  // literal (e.g. a Civitai-hosted image URL whose path contains it) is rejected
-  // too. That is a false positive, and it is the direction we want — refusing a
-  // pathological url costs a caller one bounced request; forwarding an
-  // unentitled AIR costs the entitlement belt.
-  //
-  // 🔴 THAT COST SENTENCE WAS WRITTEN WHEN EVERY SCANNED STRING WAS A URL THE
-  // APP CONSTRUCTS, AND IT NO LONGER DESCRIBES EVERY ENTRY. `chat-completion`
-  // (registered later) submits `messages[].content` — free prose an END USER
-  // typed — and that prose is the ONLY attacker-controlled string in its built
-  // input; `model` is `z.enum`-bounded and every key is a fixed literal. So for
-  // that entry this guard reduces exactly to "reject any chat message
-  // containing the literal `urn:air:`", and the bounced request is the user's
-  // message rather than the app's own url. The guard is KEPT anyway — see the
-  // FALSE-POSITIVE SURFACE section in `chat-completion.step.ts` for the
-  // orchestrator-side evidence that such prose is inert today, why that
-  // evidence is not sufficient to scope the scan, and the app-side workaround.
-  // What changed here is only the MESSAGE: it used to assert the submitted step
-  // "carries an AIR reference", which is FALSE for prose — the caller typed a
-  // fragment, not a reference — so the rejection read as a platform bug rather
-  // than as something the app can fix in its own payload.
-  //
-  // "Anywhere" covers object KEYS as well as values — the orchestrator's own
-  // `additionalNetworks` / `WorkflowCost.fees` shapes are AIR-KEYED maps, and
-  // the scan used to recurse over `Object.values` only. See
-  // `containsAirReference` for the mechanism and the depth cap that keeps the
-  // scan total.
-  if (step.resourcePolicy.kind === 'none' && containsAirReference(built.input)) {
-    throw new TRPCError({
-      code: 'FORBIDDEN',
-      message:
-        `step '${step.id}' declares resourcePolicy 'none' but the submitted step contains the ` +
-        `literal text '${AIR_URN_PREFIX}' — a step that reaches an AIR resource bypasses the ` +
-        'generation-graph entitlement belt. The check is a case-insensitive SUBSTRING scan ' +
-        'over every string, array element, object value AND object key in the step input; it ' +
-        'does not parse, so a value that merely EMBEDS that literal — a url whose path ' +
-        'contains it, or free text a user typed — is rejected too. That is the deliberate ' +
-        'fail-closed direction: strip or escape the literal in the params you submit.',
-    });
-  }
-
-  const orchestratorStep = {
-    $type: built.$type,
-    name: BLOCK_STEP_NAME,
-    ...(plan.stepTimeoutSeconds !== null
-      ? { timeout: formatStepTimeout(plan.stepTimeoutSeconds) }
-      : {}),
-    input: built.input,
-  };
+  // Built ONCE by the shared helper, so the quote and the real submit can never
+  // price different things — and so the $type / entitlement re-asserts run on
+  // BOTH paths. Both throws land before the orchestrator call and before every
+  // reservation, so a rejection costs nothing and has nothing to refund.
+  const orchestratorStep = buildStepOrchestratorStep(step, params, plan);
   // Parameterized tags: emit the step id as both the workflow-type tag and the
   // `baseModel` slot (a registry step has no base model), preserving the
   // `app-block:*` provenance tags the per-app subqueue read depends on.
@@ -7719,10 +7811,32 @@ async function submitStepWorkflow(opts: {
   if (plan.correctReservationOverage) {
     const realizedCost = snapshot.cost?.total;
     if (typeof realizedCost === 'number' && Number.isFinite(realizedCost)) {
-      const overage = Math.ceil(realizedCost) - reserveBuzz;
-      if (overage > 0) {
-        // 🔴 The declared price is wrong (or the rate card moved). Alert on this.
-        recordStepPriceCheck(step.id, 'over');
+      const billed = Math.ceil(realizedCost);
+      // ── TWO COMPARISONS, BECAUSE THEY ANSWER TWO DIFFERENT QUESTIONS. ───────
+      //
+      // 🔴 THE PRICE CHECK USED TO SHARE THE CAP'S COMPARISON, AND THAT MADE IT
+      // STRUCTURALLY BLIND TO THE ONE THING ITS OWN DESCRIPTION CLAIMS TO
+      // DETECT. `reserveBuzz` is `max(declaredBuzz, quotedBuzz)` — it has
+      // ALREADY absorbed the orchestrator's live quote — so a call declared at
+      // 1 and billed at 4 computed `4 - 4 = 0` and was recorded `exact`, while
+      // `app-block-runtime.metrics.ts` documents `over` as meaning "the declared
+      // price is wrong". A guard whose description is wider than its
+      // implementation, and it read as coverage while providing none.
+      //
+      // Measured 2026-08-27 (clawgate #386): `chat-completion` declared 1 and
+      // billed 4 on two consecutive real sends, and this counter reported
+      // `exact` both times. Nothing else in the system compares the declared
+      // number against reality.
+      //
+      // - `capOverage` vs `reserveBuzz` drives the RESERVATION CORRECTION. That
+      //   comparison was and remains right: the three counters were reserved at
+      //   `reserveBuzz`, so that is what they are short against.
+      // - `priceOverage` vs `declaredBuzz` drives the PRICE-CHECK SIGNAL. That
+      //   is the number the registry asserts and the number a block is shown.
+      const capOverage = billed - reserveBuzz;
+      const priceOverage = billed - declaredBuzz;
+      recordStepPriceCheck(step.id, priceOverage > 0 ? 'over' : 'exact');
+      if (capOverage > 0) {
         // Best-effort on ALL THREE keys; each guarded independently so one
         // failing cannot skip the others, and none can break an already-billed
         // submit.
@@ -7733,7 +7847,7 @@ async function submitStepWorkflow(opts: {
         // a divergent submit inside a dev tunnel left that counter under-reading
         // by the overage: precisely the drift direction the same comment forbids.
         try {
-          await reserveBlockBuzzSpendForClaims(claims, userId, overage);
+          await reserveBlockBuzzSpendForClaims(claims, userId, capOverage);
         } catch {
           /* best-effort correction — a lost one under-counts by the overage only */
         }
@@ -7742,7 +7856,7 @@ async function submitStepWorkflow(opts: {
             const { chargeAppSpendOverage } = await import(
               '~/server/services/blocks/app-spend-cap.service'
             );
-            await chargeAppSpendOverage(appSpendReserve.key, overage);
+            await chargeAppSpendOverage(appSpendReserve.key, capOverage);
           } catch {
             /* best-effort correction */
           }
@@ -7752,17 +7866,17 @@ async function submitStepWorkflow(opts: {
             const { chargeDevSessionOverage } = await import(
               '~/server/services/blocks/dev-tunnel.service'
             );
-            await chargeDevSessionOverage(devSessionReserve.sessionId, overage);
+            await chargeDevSessionOverage(devSessionReserve.sessionId, capOverage);
           } catch {
             /* best-effort correction */
           }
         }
-      } else {
-        // Healthy — AND the proof that this check runs at all. Without this
-        // emit, a flat divergence line could not be told apart from a detector
-        // that never executed.
-        recordStepPriceCheck(step.id, 'exact');
       }
+      // NOTE: the `exact` emit is now UNCONDITIONAL above rather than an `else`
+      // on the cap branch. It still serves its original purpose — proving the
+      // detector executed at all, so a flat `over` line can be told apart from a
+      // check that never ran — but it now reports on the DECLARED price, which
+      // is what the metric's description has always claimed it reports on.
     } else {
       // No numeric cost on the snapshot → nothing to compare. Distinguished from
       // `exact` on purpose: this is the state in which the correction is inert.

@@ -7328,24 +7328,69 @@ describe("step-type registry bridge (kind: 'step')", () => {
   const caller = () => blocksRouter.createCaller(fakeCtx() as never);
 
   describe('estimateWorkflow', () => {
-    it('returns the registry DISPLAY estimate with NO orchestrator round-trip', async () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // 🔴 THE ESTIMATE NOW QUOTES THE ORCHESTRATOR (clawgate #386).
+    //
+    // The first test here used to be "returns the registry DISPLAY estimate with
+    // NO orchestrator round-trip", asserting `mockSubmitWorkflow` was never
+    // called. That was the bug, pinned: `kind: 'step'` was the ONLY branch of
+    // `estimateWorkflow` that did not whatif, so a block was shown a number the
+    // platform had merely asserted while the submit billed whatever the
+    // orchestrator said. Measured on `chat-completion`: declared 1, charged 4,
+    // twice, with a published listing quoting the 1 to users.
+    // ─────────────────────────────────────────────────────────────────────────
+    it('returns the ORCHESTRATOR QUOTE, not the declared constant', async () => {
       mockVerifyBlockToken.mockResolvedValue(stepClaims());
       happyUser();
+      stepSubmitQuoting(4, 4);
       const result = await caller().estimateWorkflow({ blockToken: 'tok', body: stepBody() });
       expect(result.snapshot).toMatchObject({
         workflowId: 'wf_estimate',
         status: 'pending',
-        cost: { total: STEP_PRICE },
+        cost: { total: 4 },
       });
-      // 🔴 "Deterministic cost knowable BEFORE execution" — no whatIf, no submit.
-      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      // 🔴 THE CONTROL. `STEP_PRICE` is 1, so a quote of 4 is a value the
+      // declared constant CANNOT produce — the assertion cannot be satisfied by
+      // the old code path.
+      expect(result.snapshot.cost.total).not.toBe(STEP_PRICE);
+    });
+
+    it('quotes with whatif ONLY — an estimate never makes a real submit', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      stepSubmitQuoting(4, 4);
+      await caller().estimateWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
+      expect(mockSubmitWorkflow.mock.calls[0][0]).toMatchObject({ query: { whatif: true } });
+      expect(realSubmitCalls()).toHaveLength(0);
+    });
+
+    it('falls back to the DECLARED estimate when the quote throws', async () => {
+      // 🔴 DEGRADE, NEVER ERROR. An unquotable step is exactly the pre-#386
+      // behaviour, so this path can only be more accurate than what it replaced
+      // — it must not turn a working estimate into a failure the block cannot
+      // act on. (The SUBMIT still fails closed on a missing quote; that is the
+      // path where the number bounds real money.)
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      mockSubmitWorkflow.mockRejectedValue(new Error('orchestrator down'));
+      const result = await caller().estimateWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(result.snapshot.cost.total).toBe(STEP_PRICE);
+    });
+
+    it('falls back to the DECLARED estimate when the quote carries no numeric cost', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      stepSubmitQuoting(null, 1);
+      const result = await caller().estimateWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(result.snapshot.cost.total).toBe(STEP_PRICE);
     });
 
     it('the estimate EQUALS what submit reserves and charges', async () => {
       mockVerifyBlockToken.mockResolvedValue(stepClaims());
       happyUser();
-      const estimate = await caller().estimateWorkflow({ blockToken: 'tok', body: stepBody() });
       happyStepSubmit();
+      const estimate = await caller().estimateWorkflow({ blockToken: 'tok', body: stepBody() });
       await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
       expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', estimate.snapshot.cost.total);
     });
@@ -7932,6 +7977,52 @@ describe("step-type registry bridge (kind: 'step')", () => {
       await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
       expect(mockRecordStepPriceCheck).toHaveBeenCalledWith(STEP_ID, 'over');
       expect(mockRecordStepPriceCheck).not.toHaveBeenCalledWith(STEP_ID, 'exact');
+      // The cap correction is still driven by the RESERVATION gap: reserved
+      // max(1, 1) = 1, billed 9, so the three counters are short by 8.
+      expect(mockChargeAppSpendOverage).toHaveBeenCalledWith(expect.anything(), 8);
+    });
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 🔴 THE CASE THE OLD COMPARISON WAS STRUCTURALLY BLIND TO (clawgate #386).
+    //
+    // `reserveBuzz` is `max(declaredBuzz, quotedBuzz)`, so it has ALREADY
+    // absorbed the orchestrator's live quote. A step declared at 1 and quoted +
+    // billed at 4 therefore computed `4 - 4 = 0` and was recorded `exact` —
+    // while `app-block-runtime.metrics.ts` documents `over` as meaning "the
+    // declared price is wrong". The metric's description was wider than its
+    // implementation, which is worse than no metric: it read as coverage.
+    //
+    // Measured 2026-08-27 on the live platform: `chat-completion` declared 1 and
+    // billed 4 on two consecutive real sends, and this counter said `exact` both
+    // times.
+    //
+    // 🔴 THIS TEST FAILS AGAINST THE `reserveBuzz` COMPARISON. Verified by
+    // reverting the comparison at the pre-fix commit: it records `exact`, so
+    // both assertions below flip. It is a regression test, not an invariant
+    // guard.
+    // ─────────────────────────────────────────────────────────────────────────
+    it("records 'over' when the DECLARED price is wrong but the quote absorbed it", async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      // declared STEP_PRICE (1) · quoted 4 · billed 4 → reserve = max(1,4) = 4.
+      stepSubmitQuoting(4, 4);
+      await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(mockRecordStepPriceCheck).toHaveBeenCalledWith(STEP_ID, 'over');
+      expect(mockRecordStepPriceCheck).not.toHaveBeenCalledWith(STEP_ID, 'exact');
+    });
+
+    it('…and does NOT invent a cap correction for a reservation that was already right', async () => {
+      // 🔴 THE OTHER HALF, AND THE ONE A CARELESS FIX BREAKS. Switching the cap
+      // correction to `declaredBuzz` as well would top the counters up by 3 for
+      // money nobody spent — the caps were reserved at 4 and billed 4. The
+      // signal moved; the money did not.
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      stepSubmitQuoting(4, 4);
+      await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(mockReserveAppSpend).toHaveBeenCalledTimes(1);
+      expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', 4);
+      expect(mockChargeAppSpendOverage).not.toHaveBeenCalled();
     });
 
     it("records outcome 'absent' when the submit snapshot carries NO numeric cost", async () => {

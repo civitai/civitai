@@ -46,6 +46,17 @@ import type { BlockStep, OrchestratorStepTemplate } from './index';
 // per-call `buzzBudget` gate and reserves `max(declared, quoted)`. See the
 // ORCHESTRATOR QUOTE section in `blocks.router.ts`. A single measurement is one
 // point on a rate card that can change; the gate must not depend on it.
+//
+// ✅ RE-MEASURED 2026-08-27 and STILL 1 — clawgate #386's sweep of every other
+// declared step price, after `chat-completion` was found declaring 1 and billing
+// 4. A fresh `whatif:true` of this exact step shape against the live
+// orchestrator returned
+// `cost: {base:1, factors:{base:1}, fixed:{}, tips:{civitai:0,creators:0}, total:1}`.
+// So the drift is chat-only and this entry is clean. The reason it is clean is
+// structural, not luck: `convertImage` is CPU work the orchestrator prices
+// itself, whereas `chatCompletion` is repriced from a third-party rate card that
+// moves under it. A future entry that resells a third-party per-token price has
+// the same exposure, and no constant will hold for it either.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**

@@ -13,10 +13,15 @@ import type { BlockStep, OrchestratorStepTemplate } from './index';
 //     step standalone (Civitai's own `xGuardModeration` scanning is implemented
 //     as `chatCompletion` jobs).
 //
-//  2. FLAT, MEASURED COST. A real submit was quoted and charged **1 Buzz**, and
-//     that held across every model below AND across `maxTokens` 1 → 200,000 — so
-//     the price is knowable before execution → `prepaidFixed`. See
-//     `CHAT_COMPLETION_PRICE_BUZZ`.
+//  2. COST KNOWABLE BEFORE EXECUTION → `prepaidFixed`. 🔴 THIS BAR USED TO READ
+//     "FLAT, MEASURED COST… charged **1 Buzz**, and that held across every model
+//     below AND across `maxTokens` 1 → 200,000". THAT WAS FALSE — re-measured
+//     2026-08-27 it is 2, 3 and 4 Buzz for the three models below on one
+//     identical conversation, and 1 → 86 across the `maxTokens` range. What
+//     survives is the bar itself: the orchestrator can QUOTE the price before
+//     execution (`whatif:true`), which is what `prepaidFixed` actually requires.
+//     Flatness was never the requirement, and the entry qualifies without it.
+//     See `CHAT_COMPLETION_PRICE_BUZZ` and clawgate #386.
 //
 //  3. A FREE-TEXT OUTPUT, WITH A POSTURE THAT COVERS IT. This is the whole
 //     reason the entry could not be written until `'textOutput'` existed. The
@@ -162,18 +167,50 @@ import type { BlockStep, OrchestratorStepTemplate } from './index';
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * The declared exact price, in Buzz.
+ * The declared price floor, in Buzz. NOT the price.
  *
- * MEASURED, not declared: real submits against the live orchestrator returned
- * `cost.total = 1` for every model in `CHAT_COMPLETION_MODELS` and for
- * `maxTokens` from 1 to 200,000. `estimateBuzz` returns this same constant —
- * the registry's load-time invariant forces the two to agree, because the block
- * is SHOWN the estimate and CHARGED the price.
+ * 🔴 THIS COMMENT USED TO SAY THE PRICE WAS "MEASURED, not declared" — that
+ * `cost.total = 1` had been observed "for every model in
+ * `CHAT_COMPLETION_MODELS` and for `maxTokens` from 1 to 200,000". THAT WAS
+ * FALSE, and it was cited rather than re-derived for as long as it stood. Free
+ * `whatif` quotes against the live orchestrator on 2026-08-27, one identical
+ * 4,680-char conversation at `maxTokens: 2048`:
+ *
+ *     deepseek/deepseek-chat                       4 Buzz
+ *     cognitivecomputations/dolphin-mistral-24b…   3 Buzz
+ *     openai/gpt-4o-mini                           2 Buzz
+ *
+ * and on `deepseek/deepseek-chat` alone: 1 at `maxTokens: 256`, 4 at 2048, 6 at
+ * 4096 (`MAX_OUTPUT_TOKENS` in the app SDK), 86 at 64000. Two real sends through
+ * a published App Block were each charged 4 while its store listing told the
+ * viewer 1 (clawgate #386).
+ *
+ * WHY NO CONSTANT CAN BE RIGHT. Every model in `CHAT_COMPLETION_MODELS` is a
+ * third-party (OpenRouter) model, and the orchestrator prices those from the
+ * provider's LIVE per-token rate against an estimate of the input tokens and
+ * `maxTokens × n` output tokens — so the charge moves with the model, with the
+ * conversation, with `maxTokens`, and with the provider's rate card, none of
+ * which this repo can see. (The exact rate expression lives in the
+ * orchestrator's chat-completion cost handler; it is not restated here.) The
+ * flat-rate branch beside it applies only to `urn:air:` models, and this entry
+ * allows none. The one part of it this constant IS: the price is floored at 1,
+ * and that floor is what this number means — nothing more.
+ *
+ * 🔴 IT IS NOT WHAT THE BLOCK IS SHOWN ANY MORE, EITHER. `estimateStepWorkflow`
+ * now quotes the orchestrator and falls back to this only when no quote can be
+ * had, so a block sees the live price rather than this floor. The registry's
+ * load-time invariant still forces `estimateBuzz === priceForVariant`, which is
+ * why both still return it: they are the fallback and the reservation floor.
  *
  * 🔴 It is NOT the enforced ceiling. The step submit path runs its own `whatif`
  * before the per-call `buzzBudget` gate and reserves `max(declared, quoted)`, so
  * a rate-card change is caught at submit rather than by a human reading a
  * counter later. See the ORCHESTRATOR QUOTE section in `blocks.router.ts`.
+ *
+ * 🔴 DO NOT "CORRECT" THIS TO 4. It is not a stale number that wants a newer
+ * one; it is the wrong SHAPE for a usage-priced step. Raising it would make the
+ * reservation floor over-reserve on cheap models and still under-declare on
+ * expensive ones, and would go stale again on the next OpenRouter rate move.
  */
 export const CHAT_COMPLETION_PRICE_BUZZ = 1;
 
