@@ -1496,7 +1496,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
   {
     ecosystemId: ECO.Veo3,
     defaults: {
-      model: { id: 1885367 },
+      model: { id: 2827945 },
       modelLocked: true,
       engine: 'veo3',
     },

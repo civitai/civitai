@@ -20,10 +20,8 @@ type Veo3Ctx = EcosystemGraphOutput & { ecosystem: 'Veo3' };
 // Map from version ID to mode (fast/standard)
 type Veo3Mode = 'fast' | 'standard';
 const versionIdToMode = new Map<number, Veo3Mode>([
-  [veo3VersionIds.txt2vid_fast, 'fast'],
-  [veo3VersionIds.txt2vid_standard, 'standard'],
-  [veo3VersionIds.img2vid_fast, 'fast'],
-  [veo3VersionIds.img2vid_standard, 'standard'],
+  [veo3VersionIds.fast, 'fast'],
+  [veo3VersionIds.standard, 'standard'],
 ]);
 
 /** Derive aspect ratio from the first source image's dimensions */
@@ -82,13 +80,15 @@ export const createVeo3Input = defineHandler<Veo3Ctx, [VideoGenStepTemplate]>((d
         aspectRatio: (data.aspectRatio?.value ??
           getImageAspectRatio(images)) as Veo3VideoGenInput['aspectRatio'],
         duration: 'duration' in data ? data.duration : undefined,
-        version: 'version' in data ? data.version : undefined,
+        // Never let this fall through as undefined: the orchestrator's
+        // Veo3Version zero value is 3.0, whose endpoints Google retired.
+        version: ('version' in data ? data.version : undefined) ?? '3.1',
         generateAudio: 'generateAudio' in data ? data.generateAudio : undefined,
         images: refImages ?? sourceImages,
         quantity: data.quantity ?? 1,
         seed: data.seed,
-        enablePromptEnhancer:
-          'enablePromptEnhancer' in data ? data.enablePromptEnhancer : undefined,
+        // Veo 3.1 requires it, so it isn't offered as a control.
+        enablePromptEnhancer: true,
         loras: loras.length > 0 ? loras : undefined,
       }) as Veo3VideoGenInput,
     },
