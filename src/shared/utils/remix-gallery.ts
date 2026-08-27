@@ -97,6 +97,26 @@ export const REMIX_GALLERY_REMOVAL_LOCK_HOURS = 24 * 7;
 export const remixGalleryRemovableAt = (approvedAt: Date | string) =>
   new Date(new Date(approvedAt).getTime() + REMIX_GALLERY_REMOVAL_LOCK_HOURS * 60 * 60 * 1000);
 
+/**
+ * Whether this gallery would accept a PAID submission.
+ *
+ * Not the same question as `open`, which `getRemixGalleryVisibility` answers
+ * from `mode !== 'off'` alone. Price and free capacity are independent in the
+ * schema, so a gallery can be open, take free submissions, and refuse every paid
+ * one — unpriced, where the submit button is disabled, or priced below the
+ * surface floor, where the button works and the mutation refuses.
+ *
+ * Mirrors the two refusals on the paid path in `createRemixGallerySubmission`.
+ * A third rule there needs one here, or the offer starts recommending a refusal
+ * again.
+ *
+ * Shared rather than client-side because `getRemixSourcesForImage` reads it too:
+ * that read decides whether a Submit button is drawn at all, so a second copy of
+ * these two comparisons would decide it differently from the mutation.
+ */
+export const paidSubmissionOpen = (price: number | null | undefined) =>
+  price != null && price >= PLACEMENT_SURFACES.remixGallery.serverMinPrice;
+
 export type RemixGalleryContentRule =
   /** The submission may not exceed the host image's rating. */
   | 'atOrBelow'

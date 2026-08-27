@@ -37,6 +37,7 @@ import {
 import type { RemixGalleryPlacementData } from '~/shared/utils/remix-gallery';
 import {
   isRemixGalleryPlacementData,
+  paidSubmissionOpen,
   REMIX_GALLERY_MAX_PENDING_PER_OWNER,
   REMIX_GALLERY_MAX_PINNED,
   REMIX_GALLERY_DEFAULT_CONTENT_RULE,
@@ -1930,6 +1931,12 @@ export async function getRemixSourcesForImage({
           ? ('closed' as const)
           : submitted
           ? ('submitted' as const)
+          : // Last, because it is the only rung free can walk past. A gallery
+          // that is unpriced or priced below the floor refuses every PAID
+          // submission (`createRemixGallerySubmission`), so offering one here
+          // draws a Submit button for 0 Buzz that the mutation then refuses.
+          !freeAvailable && !paidSubmissionOpen(space.price)
+          ? ('closed' as const)
           : null,
       price: space?.price ?? null,
       freeAvailable,

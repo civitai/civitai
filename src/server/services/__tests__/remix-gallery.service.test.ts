@@ -5,6 +5,7 @@ import {
   allBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
+import { PLACEMENT_SURFACES } from '~/shared/utils/placement';
 import type * as MetricHelpers from '~/server/utils/metric-helpers';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -1830,6 +1831,58 @@ describe('getRemixSourcesForImage', () => {
     const [source] = await getRemixSourcesForImage({ imageId: MY_IMAGE, placerId: PLACER });
 
     expect(source.unavailable).toBe('closed');
+  });
+
+  /**
+   * A gallery can be open, take free submissions, and refuse every PAID one:
+   * price and free capacity are independent in the schema, and
+   * `createRemixGallerySubmission` refuses an unpriced or below-floor paid
+   * submission outright. Before this, the card drew a `BuzzTransactionButton`
+   * for `price ?? 0` on such a gallery — a Submit button for 0 Buzz that the
+   * mutation then refused.
+   */
+  it.each([
+    ['unpriced', null],
+    ['priced below the surface floor', PLACEMENT_SURFACES.remixGallery.serverMinPrice - 1],
+  ])('marks a gallery %s as closed rather than offering a paid submission', async (_l, price) => {
+    respondWith({ remixOfId: null, sourceImageIds: [NEW_HOST] });
+    resolvePlacementSpaceFor.mockResolvedValue({
+      ownerId: OWNER,
+      mode: 'review',
+      price,
+      // No free capacity, so the paid path is the only one left.
+      freeSlots: 0,
+      freeSlotsRemaining: 0,
+      settings: {},
+    });
+
+    const [source] = await getRemixSourcesForImage({ imageId: MY_IMAGE, placerId: PLACER });
+
+    expect(source.freeAvailable, 'the arrangement under test is paid-only').toBe(false);
+    expect(source.unavailable).toBe('closed');
+  });
+
+  /**
+   * The control for the rule above: the paid gate must not swallow a gallery
+   * that takes FREE submissions and no paid ones. Dropping the `!freeAvailable`
+   * half of that condition closes this source and takes the free offer with it,
+   * which is the mistake the rule is one line away from.
+   */
+  it('still offers a free submission on an unpriced gallery that takes them', async () => {
+    respondWith({ remixOfId: null, sourceImageIds: [NEW_HOST] });
+    resolvePlacementSpaceFor.mockResolvedValue({
+      ownerId: OWNER,
+      mode: 'review',
+      price: null,
+      freeSlots: 1,
+      freeSlotsRemaining: 1,
+      settings: {},
+    });
+
+    const [source] = await getRemixSourcesForImage({ imageId: MY_IMAGE, placerId: PLACER });
+
+    expect(source.freeAvailable).toBe(true);
+    expect(source.unavailable).toBe(null);
   });
 });
 
