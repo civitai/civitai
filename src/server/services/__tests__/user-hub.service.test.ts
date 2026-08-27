@@ -1194,6 +1194,22 @@ describe('getUserHubForRoute', () => {
     expect(await getUserHubForRoute({ id: 1, userId: 5 })).toMatchObject({ name: 'Cute Models' });
   });
 
+  it('asks for the columns the route gate and the meta tags read', async () => {
+    // `availability` in particular: a mocked Prisma call ignores `select`, so dropping
+    // it leaves every test here green while `hubRouteIsDark` reads `undefined` in
+    // production, treats every hub as non-public, and 404s the previews.
+    findFirstHub.mockResolvedValue({ id: 1, name: 'Cute Models', availability: 'Public' });
+
+    await getUserHubForRoute({ id: 1, userId: 5 });
+
+    expect(findFirstHub.mock.calls[0][0].select).toEqual({
+      id: true,
+      name: true,
+      availability: true,
+      metadata: true,
+    });
+  });
+
   it('returns the description, which the page renders as og:description', async () => {
     // Server-side, because the hub the page body uses arrives through a client query
     // — a description read off that never reaches the HTML an unfurler fetches.
@@ -1241,6 +1257,9 @@ describe('hubRouteIsDark', () => {
     { hubsEnabled: false, availability: Availability.Unsearchable, dark: true },
     { hubsEnabled: true, availability: Availability.Public, dark: false },
     { hubsEnabled: true, availability: Availability.Private, dark: false },
+    // With the flag on the gate must be inert for EVERY availability, including this
+    // one. Without the row, a predicate that special-cases Unsearchable passes.
+    { hubsEnabled: true, availability: Availability.Unsearchable, dark: false },
   ])('flag $hubsEnabled + $availability -> dark $dark', ({ hubsEnabled, availability, dark }) => {
     expect(hubRouteIsDark({ hubsEnabled, availability })).toBe(dark);
   });
@@ -1265,7 +1284,43 @@ describe('getHubCardData', () => {
     );
   });
 
-  it('returns null when the hub is not public, so the card 404s', async () => {
+  it('asks for every column the card reads', async () => {
+    // A mocked Prisma call IGNORES `select` and returns whatever the mock holds, so a
+    // dropped column is invisible to every assertion on the RESULT. Only the argument
+    // shows it.
+    findFirstHub.mockResolvedValue({
+      name: 'Cute Models',
+      metadata: {},
+      user: { username: 'ellie' },
+      _count: { sources: 3, followers: 0 },
+    });
+
+    await getHubCardData(1);
+
+    expect(findFirstHub.mock.calls[0][0].select).toEqual({
+      name: true,
+      metadata: true,
+      user: { select: { username: true } },
+      // Enabled only — the count a visitor can see, not the owner's full list.
+      _count: { select: { sources: { where: { enabled: true } }, followers: true } },
+    });
+  });
+
+  it('drops a description that is not a string, as the route reader does', async () => {
+    findFirstHub.mockResolvedValue({
+      name: 'Cute Models',
+      metadata: { description: { nope: true } },
+      user: { username: 'ellie' },
+      _count: { sources: 1, followers: 0 },
+    });
+
+    expect(await getHubCardData(1)).toMatchObject({ description: null });
+  });
+
+  it('returns null when the hub is not public', async () => {
+    // Note this is NOT a 404 at the endpoint: null renders the generic Civitai card at
+    // 200, which is what keeps a private hub and a nonexistent id indistinguishable.
+    // Do not "fix" that into a real 404 — it hands back the oracle this closes.
     findFirstHub.mockResolvedValue(null);
 
     expect(await getHubCardData(1)).toBeNull();

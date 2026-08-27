@@ -51,6 +51,8 @@ import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getUserHubForRoute, hubRouteIsDark } from '~/server/services/user-hub.service';
+import { removeTags } from '~/utils/string-helpers';
+import { truncate } from 'lodash-es';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { Availability } from '~/shared/utils/prisma/enums';
 import { getCanonicalSlugDestination } from '~/utils/canonical-slug';
@@ -151,15 +153,22 @@ type HubMeta = { name: string; description: string | null };
 /**
  * Rendered from the SERVER's copy of the hub, above every early return, because the
  * hub the rest of the page uses arrives through a client query — nothing read off
- * that appears in the HTML a link unfurler fetches.
+ * that appears in the HTML a link unfurler fetches. It collapses back into that query
+ * the day `user-hubs` opens to everyone, since the prefetch will then succeed for a
+ * signed-out request and hydrate the client copy at SSR.
  */
 function HubMetaTags({ meta, id }: { meta?: HubMeta; id: number }) {
   if (!meta) return null;
   return (
     <Meta
       title={`${meta.name} | Civitai`}
-      description={meta.description ?? undefined}
+      // Truncated and stripped the way every sibling `[[...slug]]` page does it: a
+      // hub description is user-authored and goes out to whatever unfurls the link.
+      description={
+        meta.description ? truncate(removeTags(meta.description), { length: 150 }) : undefined
+      }
       ogEndpoint={`/api/og?type=hub&id=${id}`}
+      canonical={hubUrl({ id, name: meta.name })}
       deIndex
     />
   );
@@ -254,10 +263,10 @@ export default Page(
 
     return (
       <>
-        <HubMetaTags
-          meta={hubMeta ?? { name: hub.name, description: hub.description }}
-          id={hubId}
-        />
+        {/* The client copy WINS here: it is the fresher of the two, so a rename or a
+            new description shows up without a full reload. The server copy is only
+            the answer in the two early returns above, where there is no client hub. */}
+        <HubMetaTags meta={{ name: hub.name, description: hub.description }} id={hubId} />
         {/* Same container the feed itself renders in, so the title lines up with
             the first card instead of hugging the rail. */}
         <MasonryContainer className="min-h-full">

@@ -498,7 +498,7 @@ async function fetchHubData(id: number): Promise<EntityData | null> {
   return {
     title: hub.name,
     description: cleanDescription(hub.description ?? ''),
-    creator: hub.username ?? '',
+    creator: hub.username ?? 'Unknown',
     imageUrl: null,
     imageAspectRatio: 1,
     stats: [
@@ -509,6 +509,10 @@ async function fetchHubData(id: number): Promise<EntityData | null> {
     ],
   };
 }
+
+// Entity types whose visibility the owner can withdraw after a link is shared. They
+// take the short cache below, so revocation is not deferred by the edge.
+const REVOCABLE_TYPES = new Set(['hub']);
 
 const dataFetchers: Record<string, (id: number) => Promise<EntityData | null>> = {
   model: fetchModelData,
@@ -807,7 +811,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const buffer = Buffer.from(await imageResponse.arrayBuffer());
 
     res.setHeader('Content-Type', 'image/png');
-    if (data && !coverFetchFailed) {
+    if (data && !coverFetchFailed && REVOCABLE_TYPES.has(type)) {
+      // A hub's sharing can be switched back off, and the share dialog tells the
+      // owner every link they handed out stops working. The long branch below would
+      // keep serving that hub's name, description and owner from the CDN edge for a
+      // week after revocation, so a revocable entity takes a short cache instead.
+      res.setHeader('Cache-Control', 'public, max-age=300, s-maxage=300');
+    } else if (data && !coverFetchFailed) {
       // Real entity card with the cover embedded, OR no cover by design (NSFW /
       // video / genuinely no image — a PERMANENT placeholder) → long edge cache.
       res.setHeader(

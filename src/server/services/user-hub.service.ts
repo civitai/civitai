@@ -129,11 +129,18 @@ function readMetadata(metadata: Prisma.JsonValue | undefined) {
     : {};
 }
 
+// Three readers now — the app's own detail shape, the route's SSR meta, and the
+// link-preview card — and the last two publish it off-site. One function so that
+// sanitising or capping it later reaches all three rather than the one someone opens.
+function readDescription(metadata: Prisma.JsonValue | undefined) {
+  const description = readMetadata(metadata).description;
+  return typeof description === 'string' ? description : null;
+}
+
 // `metadata` never leaves the service: callers get the fields it carries, so a key
 // added to it later is not published to every client by default.
 function toHubDetail<T extends HubRow>({ metadata, ...hub }: T, viewerId?: number) {
   const stored = readMetadata(metadata);
-  const description = stored.description;
   const isOwner = !!viewerId && hub.userId === viewerId;
   return {
     ...hub,
@@ -145,7 +152,7 @@ function toHubDetail<T extends HubRow>({ metadata, ...hub }: T, viewerId?: numbe
     // shown, so shipping it to a viewer publishes part of their curation for no
     // reason. The owner still gets the whole list, which is the one they edit.
     sources: isOwner ? hub.sources : hub.sources.filter((source) => source.enabled),
-    description: typeof description === 'string' ? description : null,
+    description: readDescription(metadata),
     // Re-validated on the way out: what is on the row was written by an older
     // shape of this schema, and the feed refuses some combinations outright.
     filters: hubFeedFiltersSchema.catch({}).parse(stored.filters ?? {}),
@@ -196,8 +203,7 @@ export async function getUserHubForRoute({ id, userId, isModerator }: { id: numb
   // SERVER: the hub itself arrives through a client query, so anything read off that
   // is absent from the HTML a link unfurler fetches.
   const { metadata, ...rest } = hub;
-  const description = readMetadata(metadata).description;
-  return { ...rest, description: typeof description === 'string' ? description : null };
+  return { ...rest, description: readDescription(metadata) };
 }
 
 /**
@@ -213,15 +219,17 @@ export async function getHubCardData(id: number) {
       name: true,
       metadata: true,
       user: { select: { username: true } },
-      _count: { select: { sources: true, followers: true } },
+      // Enabled only, because that is the number a visitor can see: `toHubDetail`
+      // strips disabled sources for everyone but the owner, so counting all of them
+      // advertises a hub as larger than the page it opens.
+      _count: { select: { sources: { where: { enabled: true } }, followers: true } },
     },
   });
   if (!hub) return null;
 
-  const description = readMetadata(hub.metadata).description;
   return {
     name: hub.name,
-    description: typeof description === 'string' ? description : null,
+    description: readDescription(hub.metadata),
     username: hub.user.username,
     sourceCount: hub._count.sources,
     followerCount: hub._count.followers,
