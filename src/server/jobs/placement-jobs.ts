@@ -11,6 +11,7 @@ import {
   sweepUncountedPlacements,
 } from '~/server/services/placement-metrics.service';
 import { sweepDeletedRemixGallerySubmissions } from '~/server/services/remix-gallery-sweep.service';
+import { startReadyRemixSubmissionClocks } from '~/server/services/remix-gallery.service';
 
 const BATCH = 100;
 
@@ -56,6 +57,35 @@ const sum = <T>(runs: T[], pick: (run: T) => number) =>
  * answers has done none of the work the decline fee pays for, so both holds
  * return in full. Nothing else releases a placement nobody actioned.
  */
+/**
+ * Submissions paid for before their image was finished, resolved once it is.
+ *
+ * Runs more often than the expiry sweep because it is the thing standing between
+ * a published image and the owner ever seeing the submission: until this runs the
+ * row is invisible to them, and its deadline is still counting down the
+ * submitter's drafting window rather than the owner's answering one.
+ */
+export const startReadyRemixSubmissionClocksJob = createJob(
+  'remix-gallery-readiness',
+  '*/5 * * * *',
+  async (jobContext) => {
+    const { runs, hitCap } = await drain(
+      'remix-gallery-readiness',
+      jobContext,
+      () => startReadyRemixSubmissionClocks({ limit: BATCH }),
+      (result) => result.considered
+    );
+
+    return {
+      considered: sum(runs, (run) => run.considered),
+      started: sum(runs, (run) => run.started),
+      refunded: sum(runs, (run) => run.refunded),
+      hitCap,
+    };
+  },
+  { lockExpiration: 10 * 60 }
+);
+
 export const expirePlacementsJob = createJob(
   'placement-expire',
   '*/10 * * * *',
@@ -227,6 +257,7 @@ export const sweepUncountedPlacementsJob = createJob(
 
 export const placementJobs = [
   expirePlacementsJob,
+  startReadyRemixSubmissionClocksJob,
   sweepUnpaidPlacementLegsJob,
   sweepUnplannedPlacementSettlementsJob,
   sweepDeletedRemixGallerySubmissionsJob,

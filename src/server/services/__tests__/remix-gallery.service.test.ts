@@ -83,6 +83,8 @@ vi.mock('~/server/services/placement-space.service', () => ({ resolvePlacementSp
 vi.mock('~/server/services/placement.service', () => ({
   getPlacementConfig: async () => ({
     declineFeeRate: () => 0.3,
+    // The readiness pass restamps the deadline from this.
+    expiryHours: () => 48,
     // Not the real defaults — no test here asserts an owner payout. Anything
     // that starts to must set these, or it will read 100% to the owner.
     approvalShares: () => ({ seller: 0, platform: 0 }),
@@ -154,6 +156,7 @@ const {
   getRemixGalleryVisibility,
   getRemixGalleryFreeEligibility,
   getRemixSourcesForImage,
+  startReadyRemixSubmissionClocks,
   getMyRemixGallerySubmissions,
   getPendingRemixGallerySubmissions,
   declineOutOfBandRemixGallerySubmissions,
@@ -605,15 +608,34 @@ describe('submission refusals', () => {
     await expect(submit()).rejects.toThrow(/your own images/i);
   });
 
-  it('refuses an unpublished image', async () => {
+  /**
+   * These two used to refuse. They now ACCEPT and mark, and the change is
+   * deliberate: a submission is paid for from the post editor, before the post
+   * is published, so "not published yet" and "still scanning" are states to wait
+   * on rather than refuse. `startReadyRemixSubmissionClocks` resolves them, and
+   * the row is invisible to the owner meanwhile because the queue selects on
+   * `queueImageIsListable`.
+   *
+   * 🔴 Named for the decision so the next reader does not restore the refusal.
+   * Only the two states that resolve BY THEMSELVES are deferred — every
+   * moderation verdict below still refuses, and the test after this one pins
+   * that half.
+   */
+  it('accepts an unpublished image, marking it to be resolved when it goes live', async () => {
     primeQueries({ submission: { ...goodSubmission, publishedAt: null } });
-    await expect(submit()).rejects.toThrow(/publish/i);
+
+    await expect(submit()).resolves.toBeTruthy();
+
+    const [args] = placementCreate.mock.calls.at(-1) as [{ data: MixedObject }];
+    expect(args.data.data).toMatchObject({ awaitingReadiness: true });
   });
 
-  it('refuses an image still being scanned or flagged for review', async () => {
+  it('accepts an image still scanning, but still refuses one a review has flagged', async () => {
     primeQueries({ submission: { ...goodSubmission, ingestion: 'Pending' } });
-    await expect(submit()).rejects.toThrow(/still being reviewed/i);
+    await expect(submit()).resolves.toBeTruthy();
 
+    // `needsReview` on a SCANNED image is a verdict, not pending work, so it
+    // refuses exactly as before. Waiting cannot turn it into a pass.
     primeQueries({ submission: { ...goodSubmission, needsReview: 'minor' } });
     await expect(submit()).rejects.toThrow(/still being reviewed/i);
   });
@@ -1343,6 +1365,143 @@ describe('an approved submission counts toward the host image buzz counter', () 
  * returns nothing for about half of all remixes, because the half it keeps still
  * works. That is the failure these pin.
  */
+/**
+ * Submissions paid for before their image was finished.
+ *
+ * A submission made from the post editor is charged while the post may still be
+ * a draft and the scan may still be running, so it is created `awaitingReadiness`
+ * and is invisible to the owner. This pass resolves those: it starts the owner's
+ * clock once the image is genuinely live, and refunds the ones whose image never
+ * gets there.
+ *
+ * 🔴 Two things here move money with nobody watching — the restamp decides whose
+ * 48 hours are being spent, and the refund decides whether someone gets their
+ * Buzz back at all. Both get a control below.
+ */
+describe('startReadyRemixSubmissionClocks', () => {
+  const PLACEMENT_ID = 4242;
+  const SUBMITTED_IMAGE = 555;
+
+  const pendingRow = {
+    id: PLACEMENT_ID,
+    targetId: HOST_IMAGE,
+    placerId: PLACER,
+    data: { imageId: SUBMITTED_IMAGE, awaitingReadiness: true },
+  };
+
+  const respondImages = ({
+    listable,
+    doomed = false,
+    nsfwLevel = 1,
+    hostShowable = true,
+    hostLevel = 1,
+  }: {
+    listable: boolean;
+    doomed?: boolean;
+    nsfwLevel?: number;
+    hostShowable?: boolean;
+    hostLevel?: number;
+  }) =>
+    queryRaw.mockImplementation(async (...args: unknown[]) => {
+      const [strings] = args as [string[], ...unknown[]];
+      const sql = Array.isArray(strings) ? strings.join(' ') : '';
+      // Told apart by the alias only the readiness query asks for. NOT by
+      // `minor`, which appears in BOTH — the readiness query names it inside its
+      // `doomed` expression, so that discriminator silently answered every call
+      // with the host row and made the pass find no images at all.
+      if (sql.includes('listable')) return [{ id: SUBMITTED_IMAGE, nsfwLevel, listable, doomed }];
+      return [{ nsfwLevel: hostLevel, minor: false, showable: hostShowable }];
+    });
+
+  beforeEach(() => {
+    placementFindMany.mockResolvedValue([pendingRow]);
+    placementUpdateMany.mockResolvedValue({ count: 1 });
+    resolvePlacementSpaceFor.mockResolvedValue({
+      ownerId: OWNER,
+      mode: 'review',
+      price: PRICE,
+      freeSlots: 1,
+      settings: {},
+    });
+  });
+
+  it('starts the clock only once the image is actually live', async () => {
+    respondImages({ listable: true });
+
+    const result = await startReadyRemixSubmissionClocks({});
+
+    expect(result.started).toBe(1);
+    const [args] = placementUpdateMany.mock.calls.at(-1) as [
+      { where: MixedObject; data: MixedObject }
+    ];
+    // A deadline was written, and the marker went with it in the SAME statement.
+    // Two statements would let a crash between them leave a row whose clock is
+    // running and whose marker still invites another restamp.
+    expect(args.data).toHaveProperty('expiresAt');
+    expect(args.data.data).not.toHaveProperty('awaitingReadiness');
+    // Claimed on the marker, so a concurrent pass is a no-op rather than a race
+    // that extends a deadline already running.
+    expect(args.where).toMatchObject({ data: { path: ['awaitingReadiness'], equals: true } });
+    expect(settlePlacement).not.toHaveBeenCalled();
+  });
+
+  it('leaves a still-unpublished submission alone rather than starting or refunding it', async () => {
+    // The draft case. Its existing `expiresAt` is the window to get the image
+    // live, and letting THAT lapse is the refund — so this pass must do nothing.
+    respondImages({ listable: false });
+
+    const result = await startReadyRemixSubmissionClocks({});
+
+    expect(result).toMatchObject({ started: 0, refunded: 0 });
+    expect(settlePlacement).not.toHaveBeenCalled();
+    expect(placementUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it('refunds and marks undeliverable when the image is blocked', async () => {
+    respondImages({ listable: true, doomed: true });
+
+    const result = await startReadyRemixSubmissionClocks({});
+
+    expect(result.refunded).toBe(1);
+    // `expire` is the full refund — it returns the whole escrow to the placer
+    // with no decline fee, which is right because nobody declined them.
+    expect(lastSettleArgs()).toMatchObject({ placementId: PLACEMENT_ID, action: 'expire' });
+    // Marked BEFORE the settle, so the notification query — which reads the row
+    // after it is resolved — cannot see a settled row that is not yet marked.
+    expect(placementUpdate).toHaveBeenCalled();
+    const [updateArgs] = placementUpdate.mock.calls.at(-1) as [{ data: MixedObject }];
+    expect(updateArgs.data.data).toMatchObject({ undeliverable: true });
+  });
+
+  it('refunds when the finished rating is above what the gallery accepts', async () => {
+    // The check that CANNOT be made at submission: an unscanned image has no
+    // rating, so this comparison waits until there is one. Someone can pay and
+    // then be refused on rating grounds, which is a normal outcome rather than
+    // an error.
+    respondImages({ listable: true, nsfwLevel: NsfwLevel.X, hostLevel: NsfwLevel.PG });
+
+    const result = await startReadyRemixSubmissionClocks({});
+
+    expect(result, 'an over-rated submission must be refunded, not admitted').toMatchObject({
+      started: 0,
+      refunded: 1,
+    });
+    expect(lastSettleArgs()).toMatchObject({ action: 'expire' });
+  });
+
+  it('does not count a restamp the claim lost', async () => {
+    // Another pass got there first. `updateMany` matches nothing, and the result
+    // must not report a clock it did not start — otherwise a double run reads as
+    // two submissions going live.
+    respondImages({ listable: true });
+    placementUpdateMany.mockResolvedValue({ count: 0 });
+
+    const result = await startReadyRemixSubmissionClocks({});
+
+    expect(result.started).toBe(0);
+  });
+});
+
 describe('getRemixSourcesForImage', () => {
   const MY_IMAGE = 900;
   const OLD_HOST = 901;
@@ -1388,6 +1547,22 @@ describe('getRemixSourcesForImage', () => {
     hasUsedFreePlacementOn.mockResolvedValue(false);
   });
 
+  /**
+   * 🔴 DELIBERATE DIVERGENCE — do not "harmonise" this with the image-detail
+   * remix-of card, which reads the NEW standard only.
+   *
+   * Justin ruled on both, separately, 2026-08-27. The detail card asserts a
+   * lineage about someone ELSE's image in public, so it may only say what the
+   * server established: new standard only, "the old one isn't trustable". This
+   * card offers YOU a shortcut to submit YOUR OWN image, and the old field buys
+   * only a PAID submission — which grants no capability the existing submit
+   * modal did not already give, since anyone can pay to submit any of their
+   * images to any open gallery.
+   *
+   * Dropping the old field here would cost ~42% of remixes (28 old vs 39 new
+   * over an 8h prod window, no downward trend) and close nothing. The trust
+   * concern is handled by the free gate, not by this list.
+   */
   it('finds the host behind the OLD provenance standard, not just the new one', async () => {
     respondWith({ remixOfId: OLD_HOST, sourceImageIds: [] });
 

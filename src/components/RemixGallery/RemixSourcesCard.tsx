@@ -1,15 +1,14 @@
-import { Badge, Checkbox, Group, Loader, Text } from '@mantine/core';
-import { IconWand } from '@tabler/icons-react';
-import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
+import { Button, Group, Text } from '@mantine/core';
+import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { useRemixSubmitSelection } from '~/components/RemixGallery/remix-submit-selection.store';
-import { Currency } from '~/shared/utils/prisma/enums';
+import { CustomCard } from '~/components/Post/EditV2/PostImageCards/CustomCard';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 /**
- * Why a source cannot be submitted to, in the poster's words rather than the
- * server's.
+ * Why a source cannot be submitted to.
  *
  * `unavailable` deliberately says nothing about WHY the host cannot be shown.
  * The host's moderation state is not the poster's business, and this surface
@@ -17,69 +16,77 @@ import { trpc } from '~/utils/trpc';
  * submit mutation's refusals are anonymised.
  */
 const reasonLabel: Record<string, string> = {
-  own: 'This is your own image',
-  closed: 'Not available for this image',
+  own: 'Your own image',
+  closed: 'Not available',
   submitted: 'Already submitted',
-  unavailable: 'Not available for this image',
+  unavailable: 'Not available',
 };
 
 /**
- * The galleries this image could be submitted to, as checkboxes, inside the post
- * editor's image card.
+ * The galleries this image could be submitted to, in the post editor's image
+ * card, directly under the image.
  *
  * Renders nothing when the image has no remix provenance, which is the ordinary
  * case: 0.2% of on-site generations carried any (measured 2026-08-27). A card
- * that always drew a header would put an empty section on almost every post.
+ * that always drew a header would sit empty on almost every post.
  */
-export function RemixSourcesCard({ imageId }: { imageId: number }) {
+export function RemixSourcesCard({
+  imageId,
+  /**
+   * A published post has nothing left to hook a promise to — the image is
+   * already live, so submitting is something to DO now rather than something to
+   * schedule. Each source gets a button instead of a checkbox, and the publish
+   * handler never sees these at all.
+   */
+  published,
+}: {
+  imageId: number;
+  published: boolean;
+}) {
+  const utils = trpc.useUtils();
+  const spendTypes = useAvailableBuzz();
   const { data, isLoading } = trpc.placement.getRemixSourcesForImage.useQuery({ imageId });
-  const selected = useRemixSubmitSelection((state) => state.selected[imageId] ?? []);
-  const toggle = useRemixSubmitSelection((state) => state.toggle);
+
+  const submit = trpc.placement.submitToRemixGallery.useMutation({
+    onSuccess: () => {
+      // Re-read rather than patched in place: the row comes back as
+      // `unavailable: 'submitted'`, the same state a submission made anywhere
+      // else produces. Patching locally would invent a second route to it that
+      // could drift from the server's.
+      void utils.placement.getRemixSourcesForImage.invalidate({ imageId });
+      showSuccessNotification({
+        title: 'Remix submitted',
+        message: published
+          ? 'The creator will see it in their gallery queue.'
+          : 'Publish your post to finalise it — the creator sees it once the image is live.',
+      });
+    },
+    onError: (error) =>
+      showErrorNotification({ title: "Couldn't submit that", error: new Error(error.message) }),
+  });
+
+  // Keyed to the row, not the mutation. A bare `submit.isPending` spins every
+  // button in the list on any one click — the same bug the manage modal's
+  // per-row keying exists to avoid.
+  const submitting = submit.isPending ? submit.variables?.hostImageId : undefined;
 
   if (isLoading) return null;
   if (!data?.length) return null;
 
   return (
-    <div className="flex flex-col gap-2">
-      <Group gap={6} wrap="nowrap">
-        <IconWand size={18} className="shrink-0 text-yellow-6" />
-        <h3 className="text-lg font-semibold leading-none text-dark-7 dark:text-gray-0">
-          Submit this remix
-        </h3>
-      </Group>
-      <Text size="xs" c="dimmed">
-        {data.length === 1
-          ? 'You made this from someone else’s image. Ask them to add it to their remix gallery.'
-          : 'You made this from these images. Ask their creators to add it to their remix galleries.'}
-      </Text>
+    <CustomCard className="flex flex-col gap-2">
+      <h3 className="text-lg font-semibold leading-none text-dark-7 dark:text-gray-0">
+        Submit this remix
+      </h3>
 
       {data.map((source) => {
         const blocked = !!source.unavailable;
-        const checked = selected.some((item) => item.hostImageId === source.hostImageId);
 
         return (
-          <Group key={source.hostImageId} gap="sm" wrap="nowrap" align="center">
-            <Checkbox
-              checked={checked}
-              disabled={blocked}
-              onChange={(event) =>
-                toggle(
-                  imageId,
-                  {
-                    hostImageId: source.hostImageId,
-                    // What is on screen right now. The mutation refuses a stale
-                    // one rather than charging the new price silently.
-                    expectedPrice: source.freeAvailable ? null : source.price ?? 0,
-                    free: source.freeAvailable,
-                  },
-                  event.currentTarget.checked
-                )
-              }
-              aria-label={`Submit to the gallery for image ${source.hostImageId}`}
-            />
+          <Group key={source.hostImageId} gap="sm" wrap="nowrap" align="flex-start">
             {/* Links out rather than opening the detail dialog: this sits inside
-                a post the poster is mid-way through editing, and a dialog over
-                it invites them to navigate away from unsaved work. */}
+                a post the poster is mid-way through editing, and a dialog over it
+                invites them to navigate away from unsaved work. */}
             <Link
               href={`/images/${source.hostImageId}`}
               target="_blank"
@@ -99,39 +106,62 @@ export function RemixSourcesCard({ imageId }: { imageId: number }) {
               )}
             </Link>
 
-            <div className="flex min-w-0 flex-col gap-1">
+            <div className="flex min-w-0 flex-1 flex-col gap-1">
               {blocked ? (
-                <Text size="sm" c="dimmed">
+                <Text size="xs" c="dimmed">
                   {reasonLabel[source.unavailable as string] ?? reasonLabel.unavailable}
                 </Text>
-              ) : source.freeAvailable ? (
-                <Badge size="sm" variant="light" color="green" className="w-fit">
-                  Free
-                </Badge>
               ) : (
-                <Group gap={4} wrap="nowrap">
-                  <CurrencyIcon currency={Currency.BUZZ} size={14} />
-                  <Text size="sm">{(source.price ?? 0).toLocaleString()}</Text>
-                </Group>
-              )}
-              {/* Only for a remix we could not verify, and only when it costs
-                  money — otherwise it is an unexplained absence of the word
-                  "free" next to a price. Says what it is, not what is missing:
-                  "unverified" reads as an accusation about a real remix. */}
-              {!blocked && !source.freeAvailable && !source.verified && (
-                <Text size="xs" c="dimmed">
-                  Free submissions need a remix we can trace to the original
-                </Text>
+                <>
+                  <Text size="xs" c="dimmed" ta="center" className="leading-tight">
+                    Get seen with this image
+                  </Text>
+                  {source.freeAvailable ? (
+                    <Button
+                      size="compact-sm"
+                      variant="light"
+                      color="green"
+                      fullWidth
+                      loading={submitting === source.hostImageId}
+                      onClick={() =>
+                        submit.mutate({ imageId, hostImageId: source.hostImageId, free: true })
+                      }
+                    >
+                      Submit free
+                    </Button>
+                  ) : (
+                    /* `BuzzTransactionButton`, not a plain one: it checks
+                       affordability against the same number it displays, and is
+                       what every other Buzz spend on the site uses. A plain
+                       button here would be the one place we charge without that
+                       check. */
+                    <BuzzTransactionButton
+                      buzzAmount={source.price ?? 0}
+                      accountTypes={spendTypes}
+                      label="Submit"
+                      size="compact-sm"
+                      // Matches the free button beside it. `BuzzTransactionButton`
+                      // forwards unknown props to the underlying Mantine Button.
+                      fullWidth
+                      loading={submitting === source.hostImageId}
+                      // The price this render displayed travels with it, so the
+                      // server refuses rather than charging a number the poster
+                      // never agreed to.
+                      onPerformTransaction={() =>
+                        submit.mutate({
+                          imageId,
+                          hostImageId: source.hostImageId,
+                          expectedPrice: source.price ?? 0,
+                        })
+                      }
+                    />
+                  )}
+                </>
               )}
             </div>
           </Group>
         );
       })}
-    </div>
+    </CustomCard>
   );
-}
-
-/** Shown while the query is in flight, where a caller wants a placeholder. */
-export function RemixSourcesLoading() {
-  return <Loader size="xs" />;
 }

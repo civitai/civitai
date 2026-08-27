@@ -227,21 +227,40 @@ export async function createRemixGallerySubmission({
   const submission = await loadSubmissionImage(imageId);
   if (submission.userId !== placerId)
     throw throwAuthorizationError('remix gallery: you can only submit your own images');
-  if (!submission.publishedAt)
-    throw throwBadRequestError('remix gallery: publish the image before submitting it');
-  if (submission.ingestion !== 'Scanned' || submission.needsReview)
-    throw throwBadRequestError('remix gallery: that image is still being reviewed');
+  // A draft is accepted. The submitter pays here, from the post editor, before
+  // the post is published — so "not published yet" and "still scanning" are
+  // states this has to WAIT on rather than refuse. `pendingReadiness` below is
+  // what defers the checks that need a finished image, and the row stays
+  // invisible to the owner meanwhile because the queue selects on
+  // `queueImageIsListable`.
+  //
+  // 🔴 This is deliberately NOT a general relaxation. Every refusal below is a
+  // moderation VERDICT — a decision already made about the image — and none of
+  // them can turn into a pass by waiting. Only the two states that resolve on
+  // their own are deferred. Do not extend this to the flags underneath it: see
+  // `no-unverified-provenance-write` for the adjacent rule about trusting
+  // unfinished state.
+  const pendingReadiness = !submission.publishedAt || submission.ingestion !== 'Scanned';
 
   // Not creator preferences, so they are refused under either content rule.
   if (submission.tosViolation || submission.minor || submission.poi)
     throw throwBadRequestError('remix gallery: that image cannot be submitted');
+  // `needsReview` is a verdict on a SCANNED image, so it refuses. On an unscanned
+  // one it is simply not set yet, and the readiness pass re-reads it.
+  if (!pendingReadiness && submission.needsReview)
+    throw throwBadRequestError('remix gallery: that image is still being reviewed');
 
   const host = await loadHostImage(hostImageId);
   if (!host.showable)
     throw throwBadRequestError('remix gallery: this image cannot show a gallery right now');
 
   const rule = remixGalleryContentRule(space.settings);
+  // An unscanned image has `nsfwLevel` 0, which every rule reads as "no rating
+  // yet" and refuses. That is the right answer for a finished image and the
+  // wrong one for an unfinished one, so the comparison waits until there is a
+  // rating to compare — the readiness pass makes it, and refunds if it fails.
   if (
+    !pendingReadiness &&
     !remixGalleryLevelAllowed({
       rule,
       submissionLevel: submission.nsfwLevel,
@@ -273,6 +292,9 @@ export async function createRemixGallerySubmission({
   const data = {
     imageId,
     remixOfId: submission.remixOfId,
+    // Only when true, so an ordinary submission's payload is unchanged and no
+    // existing row reads as awaiting anything.
+    ...(pendingReadiness ? { awaitingReadiness: true } : {}),
     // Present only when the server itself resolved this host image as an input
     // to the generation. Left off rather than set false: "made elsewhere" and
     // "no signal" are the same state, and the owner-review UI must keep saying
@@ -1890,6 +1912,146 @@ export async function getRemixGalleryFreeEligibility({
     usedHere,
     verifiedImageIds: verified.map((row) => row.id),
   };
+}
+
+/**
+ * Records that a submission was refused for something about the IMAGE, not by a
+ * deadline passing.
+ *
+ * Both end as `expired` with the same full refund, and only this tells them
+ * apart. The difference is what the placer is told: we took their money and
+ * could not deliver, versus they never published and it timed out. Justin's
+ * call, 2026-08-27 — the notification is for the first case only, so the second
+ * stays as silent as every other expiry.
+ *
+ * Written BEFORE the settle so the notification query, which reads the row after
+ * it is resolved, cannot see a settled row that has not been marked yet.
+ */
+async function markUndeliverable(placementId: number, data: RemixGalleryPlacementData) {
+  await dbWrite.placement.update({
+    where: { id: placementId },
+    data: { data: { ...data, undeliverable: true } as Prisma.InputJsonValue },
+  });
+}
+
+/**
+ * Starts the clock on submissions whose image has since gone live, and refunds
+ * the ones whose image never will.
+ *
+ * A submission paid for from the post editor is charged before its image is
+ * finished — the post may still be a draft, the scan may still be running. Those
+ * rows carry `awaitingReadiness` and are invisible to the owner, because the
+ * queue selects on `queueImageIsListable`. This is the pass that resolves them.
+ *
+ * 🔴 Why the clock is restamped rather than set once at creation: `expiresAt` on
+ * one of these rows is the window to get the image LIVE, not the owner's window
+ * to answer. Leaving the original deadline would spend the owner's 48 hours on
+ * the submitter's drafting time, and a post drafted overnight would reach the
+ * queue with hours left on a clock the owner never saw start. Justin's call,
+ * 2026-08-27: the clock starts when the post is published AND the image is fully
+ * accessible.
+ *
+ * The refusals here are the ones that could not be made at submission because
+ * they need a finished image — the rating comparison above all, since an
+ * unscanned image has no rating and every content rule reads that as "no". A
+ * failure refunds in full: `expired` returns the whole escrow to the placer with
+ * no decline fee, which is right because nobody declined them.
+ */
+export async function startReadyRemixSubmissionClocks({ limit = 200 }: { limit?: number } = {}) {
+  const rows = await dbWrite.placement.findMany({
+    where: {
+      surface: SURFACE,
+      targetType: TARGET_TYPE,
+      status: 'pending',
+      data: { path: ['awaitingReadiness'], equals: true },
+    },
+    select: { id: true, targetId: true, placerId: true, data: true },
+    take: limit,
+  });
+  if (!rows.length) return { considered: 0, started: 0, refunded: 0 };
+
+  const entries = rows.filter((row) => isRemixGalleryPlacementData(row.data));
+  const imageIds = entries.map((row) => (row.data as RemixGalleryPlacementData).imageId);
+  if (!imageIds.length) return { considered: rows.length, started: 0, refunded: 0 };
+
+  // The same listability the queue selects on, plus the fields the deferred
+  // checks need. Read through `queueImageIsListable` rather than a hand-written
+  // copy: a second definition of "live" is exactly the thing that drifts, and
+  // the owner's queue would then disagree with the pass that admitted the row.
+  const images = await dbWrite.$queryRaw<
+    { id: number; nsfwLevel: number; listable: boolean; doomed: boolean }[]
+  >`
+    SELECT i.id,
+           i."nsfwLevel",
+           ${queueImageIsListable(Prisma.sql`i.id`)} AS listable,
+           (i."tosViolation" OR i.minor OR i.poi OR i.ingestion = 'Blocked') AS doomed
+    FROM "Image" i
+    WHERE i.id IN (${Prisma.join(imageIds)})
+  `;
+  const byId = new Map(images.map((image) => [image.id, image]));
+
+  const config = await getPlacementConfig();
+  const expiryHours = config.expiryHours(SURFACE);
+  let started = 0;
+  let refunded = 0;
+
+  for (const row of entries) {
+    const data = row.data as RemixGalleryPlacementData;
+    const image = byId.get(data.imageId);
+
+    // Deleted outright, or a moderation verdict landed. Neither resolves by
+    // waiting, so the money goes back now rather than at the deadline.
+    if (!image || image.doomed) {
+      await markUndeliverable(row.id, data);
+      await settlePlacement({ placementId: row.id, action: 'expire' });
+      refunded++;
+      continue;
+    }
+
+    // Still a draft, or still scanning. Left alone: its existing `expiresAt` is
+    // the window to get it live, and letting that lapse is the refund.
+    if (!image.listable) continue;
+
+    const space = await resolvePlacementSpaceFor({
+      surface: SURFACE,
+      targetType: TARGET_TYPE,
+      targetId: row.targetId,
+    });
+    const host = await loadHostImage(row.targetId);
+
+    // Now that there IS a rating, the comparison that was deferred at submission.
+    const allowed =
+      !!host &&
+      host.showable &&
+      remixGalleryLevelAllowed({
+        rule: remixGalleryContentRule(space.settings),
+        submissionLevel: image.nsfwLevel,
+        hostLevel: host.nsfwLevel,
+        hostMinor: host.minor,
+      });
+
+    if (!allowed) {
+      await markUndeliverable(row.id, data);
+      await settlePlacement({ placementId: row.id, action: 'expire' });
+      refunded++;
+      continue;
+    }
+
+    // The marker is cleared in the same statement that starts the clock, so a
+    // second pass cannot extend a deadline that is already running. `updateMany`
+    // with the marker still in the WHERE makes that a no-op rather than a race.
+    const { awaitingReadiness: _cleared, ...rest } = data;
+    const claimed = await dbWrite.placement.updateMany({
+      where: { id: row.id, status: 'pending', data: { path: ['awaitingReadiness'], equals: true } },
+      data: {
+        data: rest as Prisma.InputJsonValue,
+        expiresAt: new Date(Date.now() + expiryHours * 3_600_000),
+      },
+    });
+    if (claimed.count) started++;
+  }
+
+  return { considered: rows.length, started, refunded };
 }
 
 /**

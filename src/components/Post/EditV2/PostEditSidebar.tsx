@@ -1,8 +1,4 @@
 import { PlacementSpaceToggle } from '~/components/Sticker/PlacementSpaceToggle';
-import {
-  pendingRemixSubmissions,
-  useRemixSubmitSelection,
-} from '~/components/RemixGallery/remix-submit-selection.store';
 import type { TooltipProps } from '@mantine/core';
 import {
   Alert,
@@ -37,7 +33,7 @@ import { useTourContext } from '~/components/Tours/ToursProvider';
 import type { PostDetailEditable } from '~/server/services/post.service';
 import { CollectionType } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
-import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -150,7 +146,6 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
 
   // #region [mutations]
   const updatePostMutation = trpc.post.update.useMutation();
-  const submitRemix = trpc.placement.submitToRemixGallery.useMutation();
   const mutating = useIsMutating({
     predicate: (mutation) => mutation.options.mutationKey?.flat().includes('post') ?? false,
     exact: false,
@@ -159,60 +154,6 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   // #endregion
 
   // #region [publish post]
-  /**
-   * Sends the remix-gallery submissions the poster ticked in the image cards.
-   *
-   * After the post is published, never before: the mutation requires a published
-   * image, and a submission made against a draft would be refused with an error
-   * the poster cannot act on.
-   *
-   * Failures are reported and swallowed rather than thrown. The post IS
-   * published by this point — rejecting here would leave the poster looking at
-   * an error over work that succeeded, and a failed submission costs them
-   * nothing because escrow is only held once the row exists. Each pair is
-   * settled independently for the same reason: one closed gallery must not take
-   * the others down with it.
-   */
-  async function submitTickedRemixes() {
-    const { selected, clearAll } = useRemixSubmitSelection.getState();
-    const pending = pendingRemixSubmissions(selected);
-    if (!pending.length) return;
-
-    const results = await Promise.allSettled(
-      pending.map(({ imageId, hostImageId, expectedPrice, free }) =>
-        submitRemix.mutateAsync({
-          imageId,
-          hostImageId,
-          // Omitted entirely on the free path rather than sent as 0 — the schema
-          // requires it only for a paid submission, and a 0 here would be a
-          // price agreement the poster never made.
-          ...(free ? { free: true } : { expectedPrice: expectedPrice ?? 0 }),
-        })
-      )
-    );
-
-    // Cleared unconditionally: every pair has now had its one attempt, and a
-    // selection left armed would resubmit on the next publish of the same post.
-    clearAll();
-
-    const failed = results.filter((result) => result.status === 'rejected').length;
-    const sent = results.length - failed;
-
-    if (sent > 0)
-      showSuccessNotification({
-        title: sent === 1 ? 'Remix submitted' : `${sent} remixes submitted`,
-        message: 'The creator will see it in their gallery queue.',
-      });
-
-    // Named as its own count rather than folded into the success line. A poster
-    // told "2 submitted" over 3 ticks has to work out which one is missing.
-    if (failed > 0)
-      showErrorNotification({
-        title: failed === 1 ? "A remix wasn't submitted" : `${failed} remixes weren't submitted`,
-        error: new Error('Your post published fine. You can submit from the image page instead.'),
-      });
-  }
-
   const publish = (publishedAt = new Date()) =>
     updatePostMutation.mutate(
       {
@@ -228,7 +169,6 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
           updatePost((data) => {
             data.publishedAt = publishedAt ?? null;
           });
-          if (publishedAt) await submitTickedRemixes();
           if (publishedAt && afterPublish) await afterPublish({ postId: id, publishedAt });
           else {
             if (returnUrl) router.push(safeInternalPath(returnUrl, `/posts/${post.id}`));

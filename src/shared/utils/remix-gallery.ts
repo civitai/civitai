@@ -20,6 +20,24 @@ export type RemixGalleryPlacementData = {
    * nothing about the submission and must never read as a demerit.
    */
   derivedFromHost?: boolean;
+  /**
+   * The submission was paid for before its image was finished — submitted from
+   * the post editor on a draft, or on an image still being scanned. It is
+   * charged and held, but not yet the owner's to answer: the queue cannot list
+   * it, and the checks that need a finished image have not run.
+   *
+   * Cleared by the readiness pass, which runs those checks and starts the
+   * expiry clock. While it is set, the row's `expiresAt` is the window to get
+   * the image LIVE, not the owner's window to answer.
+   */
+  awaitingReadiness?: boolean;
+  /**
+   * The readiness pass refused it for something about the image — blocked,
+   * deleted, or rated above what the creator accepts — rather than a deadline
+   * passing. Both outcomes are `expired` with the same full refund; only this
+   * says which, and only this one is worth telling the placer about.
+   */
+  undeliverable?: boolean;
   /** Set by the owner. Pinned entries render before the rotation. */
   pinnedAt?: string | null;
   /** Order among pinned entries only. The rest are shuffled. */
