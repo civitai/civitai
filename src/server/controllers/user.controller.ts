@@ -425,6 +425,18 @@ export const completeOnboardingHandler = async ({
         // verified provider, then type someone else's address here.
         const verified = emailChanged ? null : current?.emailVerified ?? null;
 
+        // 🔴 BEFORE the row write, and the order is the whole point. These are three statements with
+        // no transaction between them. Stamped second, a failure here after the row had committed
+        // would leave the user retrying a step whose `changed` and `emailChanged` are now both false —
+        // so the retry writes no stamp and the account finishes ungated, permanently, with nothing
+        // left to re-stamp it. Stamped first, the same failure commits nothing and the retry is clean.
+        //
+        // Only when this step is genuinely ESTABLISHING the address — the first time it completes, or
+        // when it changes the address. A bare re-submit must not stamp: `onboarding` is caller-supplied
+        // input, so without that condition any account could mark itself, including one that predates
+        // the rule and has been posting for years.
+        if (changed || emailChanged) await setEmailVerificationRequired(id, !verified);
+
         await dbWrite.user.update({
           where: { id },
           data: {
@@ -435,18 +447,18 @@ export const completeOnboardingHandler = async ({
           },
         });
 
-        // 🔴 Only when this step is genuinely ESTABLISHING the address — the first time it completes,
-        // or when it changes the address. A bare re-submit must not be able to stamp: `onboarding` is
-        // caller-supplied input, so without this any account could mark itself, including one that
-        // predates the rule and has been posting for years.
-        if (changed || emailChanged) await setEmailVerificationRequired(id, !verified);
-
-        // The address is passed rather than re-read: `sendEmailVerification` reads the replica, which
-        // right after this write can still hold the OLD row — and a token minted for the old address
-        // silently reverts the change when its link is clicked (`confirmEmailChange` writes the address
-        // the token carries). Best-effort: the step is committed above, and a mail failure must not
-        // report a step the user then re-submits. They can resend from the banner.
-        if (!verified && input.email)
+        // 🔴 `changed` only — NOT `emailChanged`. This procedure carries no rate limit of its own and
+        // the caller picks the recipient, so sending on every address change made it an unmetered way
+        // to mail an arbitrary third party from Civitai's sending domain: alternate two addresses and
+        // loop. `changed` can be true at most once per account, so this path sends at most once. A
+        // user who mistypes their address corrects it and uses the banner's resend, which IS limited.
+        //
+        // The address is passed rather than re-read: a replica read right after this write can still
+        // hold the OLD row, and a token minted for the old address silently reverts the change when
+        // its link is clicked — `confirmEmailChange` writes the address the TOKEN carries, not the one
+        // the mail reached. Best-effort: the step is committed above, and a mail failure must not
+        // report a step the user then re-submits.
+        if (changed && !verified && input.email)
           await issueEmailVerification(
             id,
             input.email,

@@ -79,10 +79,27 @@ function writtenData() {
 function stampWrites() {
   return dbMock.dbWrite.$executeRaw.mock.calls
     .map((call) => ({
-      sql: (call[0] as unknown as string[]).join('?'),
+      sql: (call[0] as unknown as string[]).join('?').replace(/\s+/g, ' ').trim(),
       values: call.slice(1),
     }))
     .filter((c) => c.sql.includes('emailVerificationRequired'));
+}
+
+/**
+ * The `newEmail` each verification token carries — NOT the address the mail was delivered to.
+ * `redis.set` serves several callers in this handler, so select by payload shape rather than by
+ * hand-typing the key constant.
+ */
+function tokenPayloads() {
+  return redisMock.redis.set.mock.calls
+    .map((call) => {
+      try {
+        return JSON.parse(call[1] as string) as Record<string, unknown>;
+      } catch {
+        return null;
+      }
+    })
+    .filter((p): p is Record<string, unknown> => !!p && 'newEmail' in p);
 }
 
 beforeEach(() => {
@@ -104,6 +121,40 @@ describe('onboarding Profile step — email-verification stamp', () => {
     const [stamp] = stampWrites();
     expect(stamp.sql).toContain('jsonb_set');
     expect(stamp.values).toEqual([true, USER_ID]);
+  });
+
+  /**
+   * 🔴 The WHOLE statement, not fragments. Every fragment assertion — `toContain('jsonb_set')`, the
+   * bound values — stays green if `COALESCE(meta, '{}'::jsonb)` is dropped, and `jsonb_set(NULL, …)`
+   * returns NULL in Postgres: on a row with `meta IS NULL` the marker is never written and the
+   * account is silently never gated. `$executeRaw` is mocked everywhere, so no test in this repo
+   * executes this SQL — pinning the text is the only coverage the semantics get here.
+   */
+  it('writes the exact merge statement', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(row({ email: null }));
+
+    await runProfile(TYPED_EMAIL);
+
+    expect(stampWrites()[0].sql).toBe(
+      'UPDATE "User" SET meta = jsonb_set(COALESCE(meta, \'{}\'::jsonb), ' +
+        "'{emailVerificationRequired}', to_jsonb(?::boolean)) WHERE id = ?"
+    );
+  });
+
+  /**
+   * 🔴 Three statements, no transaction. Stamped AFTER the row write, a failure here once the row had
+   * committed would leave the retry with `changed` and `emailChanged` both false — no stamp is
+   * written, ever, and the account finishes ungated with nothing left to re-stamp it. Stamped first,
+   * the same failure commits nothing.
+   */
+  it('stamps BEFORE it writes the row', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(row({ email: null }));
+
+    await runProfile(TYPED_EMAIL);
+
+    const [stampOrder] = dbMock.dbWrite.$executeRaw.mock.invocationCallOrder;
+    const [updateOrder] = dbMock.dbWrite.user.update.mock.invocationCallOrder;
+    expect(stampOrder).toBeLessThan(updateOrder);
   });
 
   it('does NOT stamp an account whose address is already verified', async () => {
@@ -222,6 +273,38 @@ describe('onboarding Profile step — email-verification stamp', () => {
   });
 
   /**
+   * 🔴 The address that matters is the one inside the TOKEN, not the one the mail reached:
+   * `confirmEmailChange` writes `email: newEmail` from the token payload. A revert that mails the
+   * right address while minting the token off a stale replica read leaves a recipient assertion green
+   * and silently reverts the user's address when they click the link — which is exactly the bug this
+   * fix exists for.
+   */
+  it('mints the token for the address just written', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(row({ email: 'stale@example.test' }));
+    dbMock.dbRead.user.findUnique.mockResolvedValue(row({ email: 'stale@example.test' }));
+
+    await runProfile(TYPED_EMAIL);
+
+    expect(tokenPayloads()[0]).toMatchObject({ newEmail: TYPED_EMAIL, userId: USER_ID });
+  });
+
+  /**
+   * 🔴 This procedure carries no per-send ceiling and the CALLER picks the recipient. Sending on every
+   * address change made it an unmetered way to mail an arbitrary third party from Civitai's sending
+   * domain — alternate two addresses and loop. `changed` is true at most once per account, so this
+   * path sends at most once. The banner's resend, which IS rate-limited, covers a mistyped address.
+   */
+  it('sends no mail when a re-submit merely changes the address', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(row());
+
+    await runProfile(TYPED_EMAIL, { onboarding: OnboardingSteps.Profile });
+
+    expect(mockSend).not.toHaveBeenCalled();
+    // Still stamped — the account has an unproven address either way.
+    expect(stampWrites()[0].values).toEqual([true, USER_ID]);
+  });
+
+  /**
    * 🔴 The retroactivity guard. EVERY other step must leave the marker alone — a stamp written in the
    * ToS step in particular reaches every legacy account that re-accepts the Terms. Driving one step
    * was not enough: a ToS-step writer was green against the single-step version of this test.
@@ -230,6 +313,7 @@ describe('onboarding Profile step — email-verification stamp', () => {
     ['BrowsingLevels', OnboardingSteps.BrowsingLevels],
     ['TOS', OnboardingSteps.TOS],
     ['RedTOS', OnboardingSteps.RedTOS],
+    ['Buzz', OnboardingSteps.Buzz],
   ])('writes no stamp on the %s step', async (_label, step) => {
     dbMock.dbWrite.user.findUnique.mockResolvedValue(row());
     dbMock.dbRead.user.findUnique.mockResolvedValue({ id: USER_ID, settings: {}, meta: {} });
