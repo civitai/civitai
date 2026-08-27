@@ -570,6 +570,7 @@ model User {
   voidedStrikes               UserStrike[]                    @relation("strikeVoidedBy")
   generationPresets           GenerationPreset[]
   ownedWildcardSets           WildcardSet[]                   @relation("WildcardSetOwner")
+  blurbs                      Blurb[]
 
   // 3D Models
   model3ds                    Model3D[]                       @relation("model3dCreator")
@@ -8215,4 +8216,43 @@ model UserHubSource {
   @@unique([hubId, type, targetId])
   @@index([hubId])
   @@index([type, targetId])
+}
+
+model Blurb {
+  id          Int       @id @default(autoincrement())
+  userId      Int
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String    @db.Citext
+  content     String
+  contentHash String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  references BlurbReference[]
+
+  // RAW partial unique index (NOT expressible in Prisma @@unique — it carries a WHERE):
+  // "Blurb_userId_name_key" UNIQUE (userId, name) WHERE "deletedAt" IS NULL. Created in
+  // 20260825000000_add_blurbs (manual-apply). createBlurb relies on its P2002 to report a
+  // duplicate name.
+  @@index([updatedAt])
+}
+
+model BlurbReference {
+  blurbId          Int
+  blurb            Blurb    @relation(fields: [blurbId], references: [id], onDelete: Cascade)
+  entityType       String
+  entityId         Int
+  materializedHash String
+  materializedAt   DateTime
+  /// Set when the blurb is edited or soft-deleted, cleared once the entity is rewritten. The
+  /// fan-out selector filters on it because the cross-table hash inequality it replaced cannot be
+  /// indexed — see the note in 20260825000000_add_blurbs.
+  pendingSince     DateTime?
+
+  @@id([blurbId, entityType, entityId])
+  @@index([entityType, entityId])
+  // RAW partial index (NOT expressible in Prisma — it carries a WHERE):
+  // "BlurbReference_pending_idx" ON ("materializedAt") WHERE "pendingSince" IS NOT NULL.
+  // Created in 20260825000000_add_blurbs (manual-apply).
 }

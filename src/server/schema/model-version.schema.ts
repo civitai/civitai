@@ -10,6 +10,7 @@ import { imageSchema } from '~/server/schema/image.schema';
 import { modelFileSchema } from '~/server/schema/model-file.schema';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
+import { CSS_COLOR, DEFAULT_ALLOWED_ATTRIBUTES } from '~/utils/html-sanitize-helpers';
 import {
   LicensingFeeSettlementCurrency,
   LicensingFeeType,
@@ -452,8 +453,44 @@ export const modelVersionUpsertSchema2 = z.object({
   baseModel: baseModelSchema,
   baseModelType: z.enum(constants.baseModelTypes).nullish(),
   description: getSanitizedStringSchema({
-    allowedTags: ['div', 'strong', 'p', 'em', 'u', 's', 'a', 'br', 'ul', 'ol', 'li', 'code', 'pre'],
+    // `div` is the blurb wrapper and is already in this narrowed list; `data-id` on it comes from
+    // the app-wide attribute defaults. `span` is here for what goes INSIDE a blurb — the colour
+    // span, and mentions. `allowBlurbs` is an attribute STRIP toggle, not a tag admission, so it
+    // cannot admit either tag on its own: drop one and the markup is stripped at save,
+    // `expandBlurbs` sees plain text, and the control renders and silently does nothing on this
+    // surface alone.
+    allowedTags: [
+      'div',
+      'strong',
+      'p',
+      'em',
+      'u',
+      's',
+      'a',
+      'br',
+      'ul',
+      'ol',
+      'li',
+      'code',
+      'pre',
+      'span',
+    ],
+    // Admitting `span` re-opens what this surface used to strip outright, so its attributes are
+    // narrowed to the three a blurb needs. That closes `class` and `data-label`.
+    // `data-type` + `data-id` are exactly what a mention carries, so a mention span survives here
+    // and gets a real hover card. Parity with every other rich-text surface, not a new exposure.
+    // `style` is admitted for a blurb's text colour and bounded by `allowedStyles` below to the
+    // `color` property alone — STRICTER than the other blurb surfaces, which take the app-wide
+    // `span: [... 'style']` with no property allowlist at all. Without it a blurb's colour is
+    // stripped here and nowhere else, which is the silent per-surface divergence this whole
+    // paragraph exists to prevent.
+    allowedAttributes: {
+      ...DEFAULT_ALLOWED_ATTRIBUTES,
+      span: ['data-type', 'data-id', 'style'],
+    },
+    allowedStyles: { span: { color: CSS_COLOR } },
     stripEmpty: true,
+    allowBlurbs: true,
   }).nullish(),
   steps: z.number().min(0).nullish(),
   epochs: z.number().min(0).max(100000).nullish(),

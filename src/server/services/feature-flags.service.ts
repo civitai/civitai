@@ -406,6 +406,10 @@ const featureFlags = createFeatureFlags({
   // See ClickUp 868kdkv93 / 868ke4d0f. (Mirrors the `creatorControls` /
   // `hiddenPrefsCompact` `availability: []` fail-closed precedent.)
   ruOrchestratorProxy: { availability: [], fliptKey: 'ru-orchestrator-proxy' },
+  // Reusable text blurbs. Gates the two INSERTION paths — the toolbar control and the `//`
+  // picker — and not the node: a blurb span already in a draft must keep parsing, or turning
+  // this off would unwrap references the fan-out job still owns.
+  textBlurbs: { availability: ['mod'], fliptKey: 'text-blurbs' },
   // #region [Domain Specific Features]
   isGreen: ['public', 'green'],
   isBlue: ['public', 'blue', 'red'],

@@ -1,0 +1,112 @@
+import { Prisma } from '@prisma/client';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import { hashContent } from '~/server/services/entity-moderation.service';
+import {
+  throwBadRequestError,
+  throwConflictError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
+
+export const MAX_BLURBS_PER_USER = 20;
+
+// The index is PARTIAL (`WHERE "deletedAt" IS NULL`, so a deleted snippet stops squatting its name),
+// which Prisma cannot express and therefore does not know about — it reports the raw index name
+// rather than mapping it back to `['userId', 'name']`. Both shapes are accepted so this keeps
+// working either way.
+const BLURB_NAME_INDEX = 'Blurb_userId_name_key';
+
+function isUniqueNameViolation(error: unknown) {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002')
+    return false;
+  const target = error.meta?.target;
+  if (typeof target === 'string') return target === BLURB_NAME_INDEX;
+  return Array.isArray(target) && (target as string[]).includes('name');
+}
+
+// Names are immutable by design: a snippet's name is how a creator refers to it,
+// and there is no update path that writes it. See "Names cannot be changed" in
+// docs/features/reusable-text-blurbs.md.
+export async function createBlurb({
+  userId,
+  name,
+  content,
+}: {
+  userId: number;
+  name: string;
+  content: string;
+}) {
+  // A snippet body is spliced into entities whose own domain check already ran, so it has to be
+  // caught on this write too.
+  await throwOnBlockedLinkDomain(content);
+
+  const existing = await dbWrite.blurb.count({ where: { userId, deletedAt: null } });
+  if (existing >= MAX_BLURBS_PER_USER)
+    throw throwBadRequestError(`You have reached the limit of ${MAX_BLURBS_PER_USER} snippets.`);
+
+  try {
+    return await dbWrite.blurb.create({
+      data: { userId, name, content, contentHash: hashContent(content), updatedAt: new Date() },
+    });
+  } catch (error) {
+    if (isUniqueNameViolation(error))
+      throw throwConflictError(`You already have a snippet named "${name}".`);
+    throw error;
+  }
+}
+
+export async function updateBlurbContent({
+  userId,
+  id,
+  content,
+}: {
+  userId: number;
+  id: number;
+  content: string;
+}) {
+  await throwOnBlockedLinkDomain(content);
+
+  const blurb = await dbWrite.blurb.findFirst({ where: { id, userId, deletedAt: null } });
+  if (!blurb) throw throwNotFoundError('Snippet not found.');
+
+  const updated = await dbWrite.blurb.update({
+    where: { id },
+    data: { content, contentHash: hashContent(content) },
+  });
+  await markReferencesPending(id);
+  return updated;
+}
+
+/**
+ * What makes the fan-out's work findable. Only rows that are not ALREADY pending are stamped, so
+ * a blurb edited twice before the job catches up keeps the timestamp of the first edit and the
+ * backlog age stays honest.
+ */
+function markReferencesPending(blurbId: number) {
+  return dbWrite.blurbReference.updateMany({
+    where: { blurbId, pendingSince: null },
+    data: { pendingSince: new Date() },
+  });
+}
+
+export async function softDeleteBlurb({ userId, id }: { userId: number; id: number }) {
+  const blurb = await dbWrite.blurb.findFirst({ where: { id, userId, deletedAt: null } });
+  if (!blurb) throw throwNotFoundError('Snippet not found.');
+
+  // Soft, because BlurbReference cascades: a hard delete destroys the rows naming
+  // the entities whose markup still needs unwrapping. The fan-out job does that work
+  // and hard-deletes the row once no references remain.
+  await dbWrite.blurb.update({ where: { id }, data: { deletedAt: new Date() } });
+  // The unwrap is work too, and the selector only sees pending rows.
+  await markReferencesPending(id);
+}
+
+// No reference counts. BlurbReference rows still exist and the fan-out still needs them — what
+// went is only the aggregate over them, which cost a groupBy on every open of the manager to
+// print a number nothing was decided on.
+export async function getBlurbsForUser(userId: number) {
+  return dbRead.blurb.findMany({
+    where: { userId, deletedAt: null },
+    orderBy: { name: 'asc' },
+  });
+}

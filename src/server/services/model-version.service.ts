@@ -30,6 +30,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import {
   getDbWithoutLag,
   preventModelVersionLag,
+  preventModelVersionLagBatch,
   preventReplicationLag,
 } from '~/server/db/db-lag-helpers';
 import { dbReadFallbackCounter } from '~/server/prom/client';
@@ -102,6 +103,11 @@ import {
 import { applyModelMonetizationPolicy } from '~/server/services/model-monetization-policy';
 import { resolveRightsAffirmation } from '~/server/services/monetization-rights.service';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import {
+  expandBlurbs,
+  getReferencedBlurbIds,
+  reconcileBlurbReferences,
+} from '~/server/services/blurb-materialize.service';
 import { findOfficialFileByHash } from '~/server/services/model-file.service';
 import {
   createMultiAccountBuzzTransaction,
@@ -574,6 +580,40 @@ export const upsertModelVersion = async ({
     data.licensingFeeSettlementCurrency = null;
   }
 
+  // Re-expanded from the OWNER's rows rather than trusted from the client, and before the write
+  // so what is stored is what the blurb actually says. A moderator saving someone else's version
+  // resolves none of their blurbs, so they get the ids the version already references instead of
+  // stripping every span.
+  const actorId = actorUserId ?? model.userId;
+  // `id` alone is not "the row this lands on" — a templated write creates a NEW version even with
+  // an id present, and that new row references nothing yet.
+  const editsExistingVersion = !!id && !templateId;
+  const restrictToBlurbIds =
+    model.userId === actorId
+      ? undefined
+      : editsExistingVersion
+      ? await getReferencedBlurbIds({ entityType: 'ModelVersion', entityId: id as number })
+      : // A new row references nothing yet, so there is no set to keep — and `undefined` here
+        // would leave a moderator adding a version to someone else's model free to guess
+        // `data-id`s and read the creator's private blurb text out of the response.
+        [];
+  // Whether the CALLER supplied the column, captured before the expansion overwrites it below.
+  // A write that omits `description` — the review handlers select without it — must not
+  // reconcile: Prisma leaves the column alone, so an empty expansion would delete every
+  // reference row while the blurb markup stays in the body, stranding it permanently.
+  const descriptionSupplied = data.description != null;
+  const expansion = await expandBlurbs({
+    userId: model.userId,
+    html: data.description ?? '',
+    restrictToBlurbIds,
+  });
+  if (descriptionSupplied) {
+    data.description = expansion.html;
+    // The guard at the top of this function saw the CLIENT's html. Blurb bodies were spliced in
+    // since, so the string about to be written is one it never checked.
+    await throwOnBlockedLinkDomain(data.description);
+  }
+
   // Validate NSFW + restricted base model combination
   if (
     model.nsfw &&
@@ -721,6 +761,13 @@ export const upsertModelVersion = async ({
     // Native: derive the gate straight from the config input (endsAt materialized at publish for a
     // timed window), and create the EA donation goal here (option A) instead of at publish.
     await writeModelVersionGateAndGoal(version, model.userId, paidAccess, donationGoal);
+
+    if (descriptionSupplied && expansion.evaluated)
+      await reconcileBlurbReferences({
+        entityType: 'ModelVersion',
+        entityId: version.id,
+        uses: expansion.uses,
+      });
 
     return version;
   } else {
@@ -932,9 +979,91 @@ export const upsertModelVersion = async ({
     if (feeBefore !== feeAfter)
       await bustMvCache(version.id, version.modelId, actorUserId).catch(() => undefined);
 
+    if (version.description !== existingVersion.description)
+      await applyModelVersionContentChange({
+        id: version.id,
+        description: version.description ?? '',
+        context: { modelId: version.modelId },
+      });
+
+    if (descriptionSupplied && expansion.evaluated)
+      await reconcileBlurbReferences({
+        entityType: 'ModelVersion',
+        entityId: version.id,
+        uses: expansion.uses,
+      });
+
     return version;
   }
 };
+
+/**
+ * The one path for "a model version's description changed": the column write plus the follow-up
+ * that change implies. `upsertModelVersion` calls it, and so does the blurb fan-out — which is
+ * what stops the two drifting.
+ *
+ * Deliberately narrow. `upsertModelVersion` is form-shaped, so a caller holding only new HTML
+ * cannot use it without clearing the base model, files, monetization and recommended resources.
+ *
+ * The follow-up mirrors what `upsertModelVersionHandler` runs after a save, inlined rather than
+ * imported: it lives in model.service.ts, which already imports this module.
+ */
+export async function applyModelVersionContentChange({
+  id,
+  description,
+  context,
+  expectedDescription,
+}: {
+  /**
+   * Compare-and-set: the body this caller READ before splicing. The fan-out does load → splice →
+   * save with nothing held across it, so a creator saving in that window had their edit silently
+   * reverted by the replay — no error, and the save it clobbered had already returned success.
+   * Supplied, a mismatch writes nothing and returns false; the reference stays pending and the
+   * next pass re-reads. Omitted, the write is unconditional as before.
+   */
+  expectedDescription?: string;
+  id: number;
+  description: string;
+  /**
+   * A caller that has ALREADY written this body passes its post-write snapshot here. Delete it
+   * from such a call site and the write below replays the body over a save that committed in
+   * between.
+   */
+  context?: { modelId: number };
+}) {
+  // The blocklist can move after a blurb was saved, and the fan-out has no user in the loop to
+  // catch it — same reason `applyArticleContentChange` re-checks.
+  await throwOnBlockedLinkDomain(description);
+
+  let modelId: number;
+  if (context) {
+    modelId = context.modelId;
+  } else {
+    const stored = await dbWrite.modelVersion.findUnique({
+      where: { id },
+      select: { modelId: true },
+    });
+    if (!stored) throw throwNotFoundError(`No model version with id ${id}`);
+    modelId = stored.modelId;
+
+    // Raw SQL because Prisma's @updatedAt fires on every client-side update(), and a blurb
+    // re-materialization is not a creator edit.
+    const affected =
+      await dbWrite.$executeRaw`UPDATE "ModelVersion" SET description = ${description} WHERE id = ${id}${
+        expectedDescription === undefined
+          ? Prisma.empty
+          : Prisma.sql` AND description = ${expectedDescription}`
+      }`;
+    if (expectedDescription !== undefined && !affected) return false;
+    await preventModelVersionLagBatch(modelId, [id]);
+  }
+
+  // The public GET /api/v1/models/[id] body carries the version rows, so all of these serve the
+  // pre-rewrite text until they are dropped.
+  await bustModelLevelVersionCaches(modelId);
+
+  return true;
+}
 
 // Narrow write for just the paid-access config — the studio (and any caller that only wants to edit
 // monetization) doesn't have to round-trip the whole version payload through `upsertModelVersion`.
@@ -2560,6 +2689,27 @@ export async function bustPublicModelResponseCache(modelId: number | number[]) {
   await redis.del(keys).catch(() => undefined);
 }
 
+/**
+ * The model-level caches that carry a version's data. Both callers below reach it: `bustMvCache`
+ * after a status/takedown change, and `applyModelVersionContentChange` after a fan-out rewrite.
+ *
+ * One function because cache invalidation is the worst place for a second copy — the next cache
+ * added here would otherwise reach one path and not the other, and the symptom ("the fan-out ran
+ * but the model page still shows the old text") points nowhere near the omission.
+ */
+export async function bustModelLevelVersionCaches(modelIds: number | number[]) {
+  const mIds = Array.isArray(modelIds) ? modelIds : [modelIds];
+  // Stale entries here filter the model out of feeds (versions with status='Draft' get dropped by
+  // the post-fetch transform), and `dataForModelsCache` carries `mv."description"`.
+  await dataForModelsCache.refresh(mIds);
+  // Drop the origin-side public GET /api/v1/models/[id] response cache for these models so a
+  // takedown / unpublish / update stops serving a stale 200.
+  await bustPublicModelResponseCache(mIds);
+  await modelsSearchIndex.queueUpdate(
+    mIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+  );
+}
+
 export const bustMvCache = async (
   ids: number | number[],
   modelIds?: number | number[],
@@ -2595,19 +2745,7 @@ export const bustMvCache = async (
   // from feeds (the feed render drops items with no images for non-self
   // viewers) until the next image upload or natural expiry.
   await imagesForModelVersionsCache.refresh(versionIds);
-  if (modelIds) {
-    const mIds = Array.isArray(modelIds) ? modelIds : [modelIds];
-    // Refresh dataForModelsCache so callers don't have to remember to do it
-    // separately. Stale entries here filter the model out of feeds (versions
-    // with status='Draft' get dropped by the post-fetch transform).
-    await dataForModelsCache.refresh(mIds);
-    // Drop the origin-side public GET /api/v1/models/[id] response cache for these
-    // models so a takedown / unpublish / update stops serving a stale 200.
-    await bustPublicModelResponseCache(mIds);
-    await modelsSearchIndex.queueUpdate(
-      mIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
-    );
-  }
+  if (modelIds) await bustModelLevelVersionCaches(modelIds);
 };
 
 export const getWorkflowIdFromModelVersion = async ({ id }: GetByIdInput) => {

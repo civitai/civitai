@@ -95,7 +95,7 @@ export type UpsertArticleInput = z.infer<typeof upsertArticleInput>;
 export const upsertArticleInput = z.object({
   id: z.number().optional(),
   title: z.string().min(1).max(100),
-  content: getSanitizedStringSchema().refine((data) => {
+  content: getSanitizedStringSchema({ allowBlurbs: true }).refine((data) => {
     return data && data.length > 0 && data !== '<p></p>';
   }, 'Cannot be empty'),
   coverImage: imageSchema.nullish(),

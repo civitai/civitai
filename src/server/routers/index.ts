@@ -22,6 +22,7 @@ export const appRouter = router({
   apiKey: lazy(() => import('./apiKey.router').then((m) => m.apiKeyRouter)),
   article: lazy(() => import('./article.router').then((m) => m.articleRouter)),
   auth: lazy(() => import('./auth.router').then((m) => m.authRouter)),
+  blurb: lazy(() => import('./blurb.router').then((m) => m.blurbRouter)),
   bounty: lazy(() => import('./bounty.router').then((m) => m.bountyRouter)),
   bountyEntry: lazy(() => import('./bountyEntry.router').then((m) => m.bountyEntryRouter)),
   buzz: lazy(() => import('./buzz.router').then((m) => m.buzzRouter)),

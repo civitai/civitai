@@ -179,6 +179,19 @@ const ENTITY_WITHOUT_CONTEXT_LEDGER: Record<string, string> = {
     'model-text-moderation-xguard has no segment rollouts; entityId is a MODEL id (no user segment can describe it) and the rollout is threshold-keyed; webhook path with no SessionUser',
   'server/services/model-moderation.adapter.ts:228':
     'model-text-moderation-xguard-apply has no segment rollouts; entityId is a MODEL id (no user segment can describe it) and the rollout is threshold-keyed; webhook path with no SessionUser',
+  // flag `text-blurbs`: default-off, no rules and no rollouts.
+  //
+  // Entity-keyed on purpose. The entityId is the CONTENT OWNER's user id, not the actor's, so a
+  // threshold rollout buckets a sticky subset of creators and a moderator editing someone else's
+  // page resolves the same blurbs the owner would. Supplying a context would mean assembling a
+  // SessionUser for the OWNER — whose session neither a moderator's request nor the fan-out job
+  // carries — so it costs a user fetch on a path that runs on every content write.
+  //
+  // 🔴 So this flag can only be ramped by PERCENTAGE or BOOLEAN. A SEGMENT rollout silently
+  // matches nothing here and looks exactly like "blurbs are off". The full warning is on
+  // FLIPT_FEATURE_FLAGS.TEXT_BLURBS, which is where someone running the ramp will look.
+  'server/services/blurb-materialize.service.ts:56':
+    'text-blurbs has no segment rollouts; entityId is the CONTENT OWNER (not the actor) so the intended threshold rollout is sticky per creator; no SessionUser for the owner exists on either the moderator-edit path or the fan-out job',
 };
 
 describe('flipt evaluation context — source gate', () => {

@@ -106,7 +106,7 @@ Re-read off the live ticket 2026-08-21; the section above had captured the middl
       wrong.** It said `poi` has "no cascade" and that marking a model poi first needs its semantics
       invented. The cascade exists and is shared with `minor`.
 
-      `applyModelFlagSideEffects` (`model.service.ts:2097`) treats `poiChanged` symmetrically with
+      `applyModelFlagSideEffects` (`model.service.ts:2102`) treats `poiChanged` symmetrically with
       `minorChanged`: it refreshes the tag cache, queues the model search-index update, and propagates to
       every gallery image via `UPDATE "Image" SET minor = …, poi = …`, queueing those ids into the image
       index. `poi` is on `modelUpsertSchema` beside `minor` and `upsertModel` calls that fan-out, so

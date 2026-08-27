@@ -1116,7 +1116,7 @@ export function ModelVersionUpsertForm({
                 key="description"
                 name="description"
                 label="Version changes or notes"
-                includeControls={['formatting', 'list', 'link']}
+                includeControls={['formatting', 'list', 'link', 'blurb']}
                 editorSize="xl"
               />
               <Stack gap="xs">

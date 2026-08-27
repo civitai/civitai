@@ -88,6 +88,7 @@ import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors
 import { associatedResourceSelect } from '~/server/selectors/model.selector';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { evaluateAutoNsfw } from '~/server/services/auto-nsfw';
 import { deleteBidsForModel, getLastAuctionReset } from '~/server/services/auction.service';
 import { enforceBlockedBrowsingTagsForModels } from '~/server/services/blocked-browsing-tags.service';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
@@ -105,6 +106,11 @@ import {
   queueImageSearchIndexUpdate,
 } from '~/server/services/image.service';
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
+import {
+  expandBlurbs,
+  getReferencedBlurbIds,
+  reconcileBlurbReferences,
+} from '~/server/services/blurb-materialize.service';
 import { submitModelTextModeration } from '~/server/services/model-moderation.adapter';
 import {
   bustMvCache,
@@ -2370,6 +2376,33 @@ export const upsertModel = async (
   const storedLockedProperties = beforeUpdate?.lockedProperties ?? [];
   enforceLockedProperties({ data, storedLockedProperties, isModerator });
 
+  // Re-expanded from the OWNER's rows rather than trusted from the client, and before the write
+  // so what is stored is what the blurb actually says — and before the profanity filter below,
+  // which must evaluate the text that will actually be published. A moderator saving someone
+  // else's model resolves none of their blurbs, so they get the ids the model already
+  // references instead of stripping every span.
+  const ownerId = beforeUpdate?.userId ?? userId;
+  const restrictToBlurbIds =
+    beforeUpdate && ownerId !== userId
+      ? await getReferencedBlurbIds({ entityType: 'Model', entityId: id as number })
+      : undefined;
+  // Whether the CALLER supplied the column, captured before the expansion overwrites it below.
+  // A write that omits `description` — the review handlers select without it — must not
+  // reconcile: Prisma leaves the column alone, so an empty expansion would delete every
+  // reference row while the blurb markup stays in the body, stranding it permanently.
+  const descriptionSupplied = data.description != null;
+  const expansion = await expandBlurbs({
+    userId: ownerId,
+    html: data.description ?? '',
+    restrictToBlurbIds,
+  });
+  if (descriptionSupplied) {
+    data.description = expansion.html;
+    // The guard at the top of this function saw the CLIENT's html. Blurb bodies were spliced in
+    // since, so the string about to be written is one it never checked.
+    await throwOnBlockedLinkDomain(data.description);
+  }
+
   let profanityAutoNsfw = false;
   if (!isModerator) {
     // Check model name and description for profanity using threshold-based evaluation
@@ -2466,6 +2499,13 @@ export const upsertModel = async (
         })
       );
     }
+
+    if (descriptionSupplied && expansion.evaluated)
+      await reconcileBlurbReferences({
+        entityType: 'Model',
+        entityId: result.id,
+        uses: expansion.uses,
+      });
 
     await modelTagCache.refresh(result.id);
     // Model tag set changed → the votable-tags list (score>0 ModelTag rows) changed too.
@@ -2646,27 +2686,136 @@ export const upsertModel = async (
     // cached body) stops serving a stale 200 on an edge-miss for up to the cache
     // TTL. preventReplicationLag('model', id) above already guards the rebuild
     // read against the replication window. Fail-open (the helper swallows Redis
-    // errors); the only post-commit write left in this branch.
+    // errors).
     await bustPublicModelResponseCache(result.id);
 
-    // Fire-and-forget: the helper owns its own flag check and swallows its own errors, so a
-    // moderation outage can never fail a model save. `result` carries the post-update
-    // name/description, not the pre-update values in `beforeUpdate`.
-    //
-    // Skipped when neither field moved. contentHash dedup would drop it anyway, but only
-    // after a round trip and an EntityModeration upsert on every unrelated model edit.
+    // Skipped when neither field moved. contentHash dedup would drop the moderation submit
+    // anyway, but only after a round trip and an EntityModeration upsert on every unrelated
+    // model edit. `result` carries the post-update values, not `beforeUpdate`'s.
     if (result.name !== beforeUpdate.name || result.description !== beforeUpdate.description) {
-      submitModelTextModeration({
+      await applyModelContentChange({
         id: result.id,
-        name: result.name,
-        description: result.description,
-        isModerator,
-      }).catch(() => null);
+        description: result.description ?? '',
+        context: { name: result.name, isModerator },
+      });
     }
+
+    if (descriptionSupplied && expansion.evaluated)
+      await reconcileBlurbReferences({
+        entityType: 'Model',
+        entityId: result.id,
+        uses: expansion.uses,
+      });
 
     return withoutMinorHashMeta(result);
   }
 };
+
+/**
+ * The one path for "a model's description changed": the column write plus the follow-up that
+ * change implies. `upsertModel` calls it, and so does the blurb fan-out — which is what stops
+ * the two drifting.
+ *
+ * Deliberately narrow. `upsertModel` is form-shaped, so a caller holding only new HTML cannot
+ * use it without clearing tags, gallery settings and the whole licensing block. `updateModelById`
+ * is not the answer either: it takes an arbitrary Prisma update and runs neither the moderation
+ * submit nor the response-cache bust below.
+ */
+export async function applyModelContentChange({
+  id,
+  description,
+  context,
+  expectedDescription,
+}: {
+  id: number;
+  description: string;
+  /**
+   * Compare-and-set: the body this caller READ before splicing. The fan-out does load → splice →
+   * save with nothing held across it, so a creator saving in that window had their edit silently
+   * reverted by the replay — no error, and the save it clobbered had already returned success.
+   * Supplied, a mismatch writes nothing and returns false; the reference stays pending and the
+   * next pass re-reads. Omitted, the write is unconditional as before.
+   */
+  expectedDescription?: string;
+  /**
+   * A caller that has ALREADY written this body passes its post-write snapshot here. Delete it
+   * from such a call site and the write below replays the body over a save that committed in
+   * between.
+   */
+  context?: { name: string; isModerator?: boolean };
+}) {
+  // The blocklist can move after a blurb was saved, and the fan-out has no user in the loop to
+  // catch it — same reason `applyArticleContentChange` re-checks.
+  await throwOnBlockedLinkDomain(description);
+
+  let resolved = context;
+  if (!resolved) {
+    const stored = await dbWrite.model.findUnique({
+      where: { id },
+      select: { name: true, nsfw: true, lockedProperties: true, meta: true },
+    });
+    if (!stored) throw throwNotFoundError(`No model with id ${id}`);
+    resolved = { name: stored.name };
+
+    // Raw SQL because Prisma's @updatedAt fires on every client-side update(), and a blurb
+    // re-materialization is not a creator edit: `updatedAt` orders the "recently updated"
+    // model lists.
+    const affected =
+      await dbWrite.$executeRaw`UPDATE "Model" SET description = ${description} WHERE id = ${id}${
+        expectedDescription === undefined
+          ? Prisma.empty
+          : Prisma.sql` AND description = ${expectedDescription}`
+      }`;
+    if (expectedDescription !== undefined && !affected) return false;
+    await preventReplicationLag('model', id);
+
+    // A caller passing `context` has already written the body AND already run this gate on it.
+    // This branch is the fan-out, which has neither — and the text it just wrote is text the
+    // upsert's gate never saw. Without this, editing a blurb is a way to put profanity into a
+    // published description while it keeps the SFW classification it earned with the old text.
+    const flagged = evaluateAutoNsfw({
+      name: stored.name,
+      description,
+      alreadyNsfw: stored.nsfw,
+      lockedProperties: stored.lockedProperties,
+    });
+    if (flagged) {
+      const meta = {
+        ...((stored.meta as MixedObject | null) ?? {}),
+        ...flagged.metaPatch,
+      } as Prisma.InputJsonObject;
+      // Prisma rather than raw SQL, unlike the body write above: this fires rarely, and hand-
+      // rolling the jsonb + text[] binds is where that trade stops being worth it. The
+      // `updatedAt` bump it carries is honest — the model's rating actually changed.
+      await dbWrite.model.update({
+        where: { id },
+        data: flagged.lock
+          ? { nsfw: true, lockedProperties: uniq([...stored.lockedProperties, 'nsfw']), meta }
+          : { meta },
+      });
+    }
+  }
+
+  // The description is carried in the cached public GET /api/v1/models/[id] body, so without
+  // this an edge-miss keeps serving the pre-rewrite text for up to the cache TTL. Fail-open
+  // (the helper swallows Redis errors).
+  //
+  // Only when nobody handed us a `context`: a caller that passes one has already written the
+  // body, and `upsertModel` busts unconditionally a few lines before it calls this — so doing it
+  // here too was a second identical bust on every content-changing model save.
+  if (!context) await bustPublicModelResponseCache(id);
+
+  // Fire-and-forget: the helper owns its own flag check and swallows its own errors, so a
+  // moderation outage can never fail a model save.
+  submitModelTextModeration({
+    id,
+    name: resolved.name,
+    description,
+    isModerator: resolved.isModerator,
+  }).catch(() => null);
+
+  return true;
+}
 
 export const publishModelById = async ({
   id,

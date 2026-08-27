@@ -114,6 +114,18 @@ export enum FLIPT_FEATURE_FLAGS {
   // a bare `isFlipt(EARLY_ADOPTER)` as "is the programme switched on at all", never as
   // "is this user an early adopter".
   EARLY_ADOPTER = 'early-adopter',
+  // Gates the blurb editor control and the save-path expansion — NOT the fan-out job, which
+  // stays ungated so a creator who leaves the rollout keeps their existing references maintained.
+  // DEFAULT-OFF — isFlipt returns false for an unknown flag, and not expanding is
+  // the safe failure for a feature that rewrites published content.
+  //
+  // 🔴 RAMP BY PERCENTAGE OR BOOLEAN ONLY — A SEGMENT ROLLOUT MATCHES NOTHING. The server-side
+  // gate (blurb-materialize.service.ts) evaluates this with an entityId and NO context, because
+  // the entity is the content OWNER and no SessionUser for the owner is on hand there. Every
+  // identity/tier/cohort segment in flipt-state is a STRING_COMPARISON constraint that reads the
+  // context, so a segment rule here returns the flag default and looks exactly like "blurbs are
+  // off". The site is recorded in ENTITY_WITHOUT_CONTEXT_LEDGER (flipt-eval-context.test.ts).
+  TEXT_BLURBS = 'text-blurbs',
 }
 
 // Flags exempt from caching: incident kill-switches where an operator expects a

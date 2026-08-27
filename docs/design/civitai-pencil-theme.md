@@ -189,3 +189,21 @@ an id map at the end of each call and paste the literal ids into the next one.
 **Overlapping canvas regions leak into exports.** `export_html` renders everything in the bounding
 box of the requested nodes, not just those nodes. Keep components and screens in disjoint bands
 (here: components above `y 830`, screens below `y 1000`) or exports pick up stray fragments.
+
+**`TakeScreenshot` can also come back completely empty**, not merely text-less — on
+`designs/reusable-blurbs.pen`, a finished screen rendering as a flat background rectangle, no fills
+or strokes or icons, while `Get` reported correct bounds for every node. Same response as above:
+renderer failure, not a broken document. Export.
+
+**The HTML export writes `box-sizing: content-box` on padded frames**, so every frame renders its
+padding *outside* the width the document gives it. A 640-wide header with `padding: [18, 20]` comes out
+680×102 in the browser where pencil says 640×65, and the error compounds down a nesting chain — child
+rows visibly overhang their parent's right edge. Composition, colour and copy are faithful; **spacing
+and alignment are not**. Measure those against the document's own numbers rather than the export —
+with the `ctx.bounds` caveat above: the sizes it reports are trustworthy, the child offsets it
+derives clipping warnings from are not. Read the export only for "does this look right".
+
+Two mechanics for the export loop, since neither is guessable: the Playwright MCP refuses to write
+outside the repo root, so screenshots have to land in `.playwright-mcp/`; and exports tag every node
+with `data-pencil-name`, which makes `[data-pencil-name="<frame name>"]` a per-screen screenshot target
+and saves cropping a 6,000px strip.

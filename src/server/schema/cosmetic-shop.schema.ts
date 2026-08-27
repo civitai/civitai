@@ -170,7 +170,10 @@ export type UpsertCosmeticShopItemInput = z.infer<typeof upsertCosmeticShopItemI
 export const upsertCosmeticShopItemInput = z.object({
   id: z.number().optional(),
   title: z.string().max(255),
-  description: getSanitizedStringSchema().nullish(),
+  // Only the SHOP ITEM opts in. `upsertCosmeticInput` and `upsertCosmeticShopSectionInput`
+  // carry a description too, and neither reconciles references — a span stored there would be
+  // frozen text that never updates.
+  description: getSanitizedStringSchema({ allowBlurbs: true }).nullish(),
   videoUrl: z.string().nullish(),
   cosmeticId: z.number(),
   unitAmount: z.number(),
