@@ -1,6 +1,6 @@
 # Model Text Moderation
 
-**Status**: Model text — shipping dark, flags exist, ramp not started · Version names — live path built, term list unseeded
+**Status**: Model text — shipping dark, flags exist, ramp not started · Version names — path built, not yet enabled
 **Tracking**: CU 868ktb1wb
 **Last Updated**: 2026-08-25
 
@@ -236,9 +236,19 @@ On **create, and on rename** — not on every save. An unchanged name has alread
 
 ### The two stages
 
-**A curated term list selects; XGuard decides.** The list is a local regex pass cheap enough to
+**A curated term list decides; XGuard reviews.** The list is a local regex pass cheap enough to
 run on every save, and it keeps the classifier off the overwhelming majority of names, which are
-`v1.0` and `epoch2` and carry nothing to read. Only a name that matches a term is sent onward.
+`v1.0` and `epoch2` and carry nothing to read. A name that matches a term is flagged on the spot,
+and the same name is sent onward for review.
+
+⚠️ **That order is the opposite of the model path's, deliberately.** XGuard reads a two-word title
+badly — see the score-floor section below for the measurements — so it is not asked to decide. It
+is asked the narrow question it is good at: given a name the list already matched, is the list
+wrong? A scan can therefore only ever CLEAR the flag, never raise it, which also means a callback
+arriving late cannot undo a moderator's decision.
+
+**Failure leaves the flag on.** A submit that fails or a callback that never arrives means the
+review did not happen and the list's verdict stands.
 
 **The list is not in this repository.** It lives in system Redis, so a term that turns out to
 fire on something innocent can be pulled without a deploy — and because "these are the words we
@@ -259,16 +269,16 @@ switch: nothing is selected, so nothing is scanned or flagged.
 - Only about a quarter of versions have one, so including it would make the flag mean different
   things depending on whether a creator happened to write a description.
 
-### The score floor
+### Why there is no score floor
 
-A verdict is applied only when the highest sexual-axis score clears a configured floor, stored
-beside the term list and tunable without a deploy.
+A name is too short to give the classifier much to read, so asked to *decide* it flags far too
+much. That is why the term list decides instead. Asked the narrower question — is this match a
+false positive — it is reliable, which is the job it is given here.
 
-⚠️ **This is not belt-and-braces on top of the classifier's own thresholds — it is load-bearing.**
-A name that short gives the classifier almost nothing to read, so on contentless strings like
-`v1.0` it returns a mid-range _suggestive_ score that clears its own threshold; at the default it
-would flag four names in five. The measurements are in the version-NSFW plan §5.2. Do not lower
-the floor without re-measuring.
+⚠️ **Do not add a floor on top of its own thresholds.** The classifier's own per-label thresholds
+are the comparison this path was tuned against; a floor stacked above them would clear most of
+what the list flagged. The measurements behind that sit alongside the term list, outside this
+repository — a trigger list is a decision rule, not configuration (CLAUDE.md → Security).
 
 ### What happens when a version is flagged
 
