@@ -18,6 +18,7 @@ import {
   addUserHubSource,
   getUserHubs,
   getHubCardData,
+  getUserHubByKey,
   hubRouteIsDark,
   getUserHubForRoute,
   getHubSourceSuggestions,
@@ -45,6 +46,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { ImageSort } from '~/server/common/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { encodeHubId } from '~/server/utils/hub-id';
 const findFirstHub = dbMock.dbRead.userHub.findFirst;
 // The source mutations read the hub through the WRITER — the duplicate check, the cap
 // and the next index all come off that row.
@@ -1222,6 +1224,10 @@ describe('getUserHubForRoute', () => {
 
     expect(await getUserHubForRoute({ id: 1, userId: 5 })).toMatchObject({
       description: 'Models I think are neat',
+      // The value the whole feature turns on, and it is COMPUTED here — `UserHub` has
+      // no `key` column. Passing one through from the row would be `undefined` in
+      // production while a mock that supplies it stays green.
+      key: encodeHubId(1),
     });
   });
 
@@ -1265,6 +1271,36 @@ describe('hubRouteIsDark', () => {
   });
 });
 
+describe('getUserHubByKey', () => {
+  // The enumeration gate itself. `getById` is the one procedure open to signed-out
+  // callers, so if this accepted the pre-encoding format every public hub would be
+  // walkable by counting through tRPC — the exact hole the encoding closes.
+  it('decodes a real key and reads that id', async () => {
+    findFirstHub.mockResolvedValue({
+      id: 19,
+      userId: 5,
+      sources: [],
+      metadata: {},
+      availability: Availability.Public,
+    });
+
+    await getUserHubByKey({ key: encodeHubId(19), userId: 5 });
+
+    expect(findFirstHub.mock.calls[0][0].where.id).toBe(19);
+  });
+
+  it.each(['19', '0', 'not-a-key', ''])(
+    'refuses %j without reading anything at all',
+    async (key) => {
+      // `not.toHaveBeenCalled` is the load-bearing half: a decode that fell through to
+      // the lookup would still 404 for a private hub and pass a result-only assertion,
+      // while resolving every public one.
+      await expect(getUserHubByKey({ key, userId: 5 })).rejects.toThrow(/not found/i);
+      expect(findFirstHub).not.toHaveBeenCalled();
+    }
+  );
+});
+
 describe('getHubCardData', () => {
   it('resolves a PUBLIC hub only, whoever is asking', async () => {
     // The card is served unauthenticated, so this `where` is the only thing between a
@@ -1279,9 +1315,13 @@ describe('getHubCardData', () => {
 
     await getHubCardData(1);
 
+    // Read off `hubViewerWhere` rather than restated here, so the card and the three
+    // authenticated reads cannot drift: a rule added to the helper later reaches this
+    // assertion too. The control below pins what the helper answers for no viewer.
     expect(findFirstHub).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: 1, availability: Availability.Public } })
+      expect.objectContaining({ where: { id: 1, ...hubViewerWhere({}) } })
     );
+    expect(hubViewerWhere({})).toEqual({ OR: [{ availability: Availability.Public }] });
   });
 
   it('asks for every column the card reads', async () => {

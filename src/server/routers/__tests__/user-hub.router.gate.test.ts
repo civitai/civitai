@@ -53,8 +53,8 @@ const inputs: Record<string, unknown> = {
   addSource: { hubId: 1, type: 'User', targetId: 2 },
   removeSource: { hubId: 1, type: 'User', targetId: 2 },
   getFollowed: undefined,
-  follow: { hubId: 1 },
-  unfollow: { hubId: 1 },
+  follow: { key: 'Xk3p9aBc' },
+  unfollow: { key: 'Xk3p9aBc' },
 };
 
 const procedureNames = Object.keys(

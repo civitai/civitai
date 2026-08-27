@@ -1,5 +1,7 @@
+import { createHmac } from 'crypto';
 import Sqids from 'sqids';
 import { env } from '~/env/server';
+import { isProd } from '~/env/other';
 
 /**
  * The public identifier for a hub. `UserHub.id` is a dense autoincrement, and a hub's
@@ -15,37 +17,64 @@ import { env } from '~/env/server';
  * a decoded id buys nothing a guessed one would not — this only removes cheap
  * enumeration. Justin's call, 2026-08-27, over a random key column: one fewer value
  * to store and one fewer index.
+ *
+ * 🔴 That property is only worth anything while NO other procedure both accepts an
+ * int and returns hub data. `follow`/`unfollow` used to, and `getFollowed` returns
+ * `key` — which handed the key to any signed-in caller for the counting price. They
+ * are keyed now. Adding a fourth int-addressed hub verb re-opens it.
  */
 const MIN_LENGTH = 8;
 
 // Characters that survive being read aloud, hand-copied out of a chat message, or
-// double-clicked as one word. Sqids shuffles this with the salt, so the alphabet is
-// the character SET, not the output order.
+// double-clicked as one word. The salt permutes this, so it is the character SET,
+// not the output order.
 const ALPHABET = 'abcdefghijkmnopqrstuvwxyzACDEFGHJKLMNPQRSTUVWXYZ23456789';
 
-const sqids = new Sqids({ alphabet: shuffle(ALPHABET), minLength: MIN_LENGTH });
-
-// Sqids has no salt parameter — the alphabet order IS the secret, so the salt is
-// applied by permuting it deterministically. An empty salt leaves the alphabet as
-// written, which is what dev and test run with.
-function shuffle(alphabet: string) {
-  const salt = env.HUB_ID_SALT;
+/**
+ * Sqids has no salt parameter — the alphabet ORDER is the secret, so the salt is
+ * applied by permuting it.
+ *
+ * Keyed hash, deliberately, and exported so it can be tested without the env: the
+ * first version folded the salt into a 32-bit seed and drove Fisher-Yates from an
+ * LCG, which capped the whole space at ~2^24 alphabets no matter how long the salt
+ * was — measured at ~530k derivations/sec, so every one of them was reachable in
+ * under a minute from the alphabet above, which is committed in a PUBLIC repo. Here
+ * the full salt is the HMAC key and the digest is the sort rank, so there is no fold,
+ * no modulo bias and no hand-rolled arithmetic.
+ *
+ * Ties are broken by the character itself so the result is a function of the salt
+ * alone — two pods must produce identical URLs.
+ */
+export function permuteAlphabet(alphabet: string, salt: string) {
   if (!salt) return alphabet;
 
-  const chars = alphabet.split('');
-  // Fisher-Yates driven by the salt's bytes rather than randomness, so every
-  // environment holding the same salt produces the same URLs.
-  let seed = 0;
-  for (let i = 0; i < salt.length; i++) seed = (seed * 31 + salt.charCodeAt(i)) >>> 0;
-  for (let i = chars.length - 1; i > 0; i--) {
-    seed = (seed * 1103515245 + 12345) >>> 0;
-    const j = seed % (i + 1);
-    [chars[i], chars[j]] = [chars[j], chars[i]];
-  }
-  return chars.join('');
+  return alphabet
+    .split('')
+    .map((char) => ({ char, rank: createHmac('sha256', salt).update(char).digest('hex') }))
+    .sort((a, b) => (a.rank === b.rank ? (a.char < b.char ? -1 : 1) : a.rank < b.rank ? -1 : 1))
+    .map(({ char }) => char)
+    .join('');
 }
 
+const sqids = new Sqids({
+  alphabet: permuteAlphabet(ALPHABET, env.HUB_ID_SALT),
+  minLength: MIN_LENGTH,
+});
+
 export function encodeHubId(id: number) {
+  // Fail LOUD rather than fail decorative. With no salt the alphabet is the constant
+  // above, which is committed in a public repo, so every key is decodable and
+  // forgeable by anyone — and nothing about the output looks any different, which is
+  // what makes an unset value in production the dangerous case rather than the safe
+  // one.
+  //
+  // Checked here and not in the env schema on purpose: `~/env/server` validates at
+  // import with no build-time escape, so a required var would have to be present for
+  // `next build` too, in every image and preview pipeline. Nothing encodes a hub id
+  // during a build — `/hubs/[id]` is SSR, never prerendered — so this placement
+  // catches a misconfigured deploy without adding a build-time surface.
+  if (isProd && !env.HUB_ID_SALT) throw new Error('HUB_ID_SALT is not set');
+
   return sqids.encode([id]);
 }
 

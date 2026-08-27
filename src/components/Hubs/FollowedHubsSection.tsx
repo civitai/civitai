@@ -61,7 +61,7 @@ export function FollowedHubsSection({ activeHubKey }: { activeHubKey?: string })
               className="absolute right-1 top-1/2 -translate-y-1/2 opacity-0 focus:opacity-100 group-hover:opacity-100"
               aria-label={`Unfollow ${hub.name}`}
               disabled={pending}
-              onClick={() => unfollow(hub.id)}
+              onClick={() => unfollow(hub.key)}
             >
               <IconTrash size={16} />
             </LegacyActionIcon>

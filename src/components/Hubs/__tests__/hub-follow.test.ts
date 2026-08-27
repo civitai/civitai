@@ -112,7 +112,7 @@ describe('FollowedHubsSection', () => {
     });
 
     expect(unfollowMutate).toHaveBeenCalledTimes(1);
-    expect(unfollowMutate).toHaveBeenCalledWith({ hubId: 6 });
+    expect(unfollowMutate).toHaveBeenCalledWith({ key: 'Qm7r2dEf' });
   });
 
   it('keeps the unfollow control OUTSIDE the link', () => {
@@ -143,7 +143,9 @@ describe('FollowedHubsSection', () => {
 
 describe('FollowHubButton', () => {
   it('renders nothing for the hub owner', () => {
-    const container = render(createElement(FollowHubButton, { hub: { id: 5, isOwner: true } }));
+    const container = render(
+      createElement(FollowHubButton, { hub: { key: 'Xk3p9aBc', isOwner: true } })
+    );
 
     expect(visibleText(container)).toBe('');
     expect(container.querySelector('button')).toBeNull();
@@ -152,33 +154,39 @@ describe('FollowHubButton', () => {
   it('renders nothing for a signed-out viewer', () => {
     currentUser.value = null;
 
-    const container = render(createElement(FollowHubButton, { hub: { id: 5, isOwner: false } }));
+    const container = render(
+      createElement(FollowHubButton, { hub: { key: 'Xk3p9aBc', isOwner: false } })
+    );
 
     expect(visibleText(container)).toBe('');
     expect(container.querySelector('button')).toBeNull();
   });
 
   it('follows a hub that is not in the list', () => {
-    const container = render(createElement(FollowHubButton, { hub: { id: 5, isOwner: false } }));
+    const container = render(
+      createElement(FollowHubButton, { hub: { key: 'Xk3p9aBc', isOwner: false } })
+    );
 
     expect(container.querySelector('button')?.textContent).toBe('Follow');
     act(() => {
       container.querySelector('button')?.click();
     });
-    expect(followMutate).toHaveBeenCalledWith({ hubId: 5 });
+    expect(followMutate).toHaveBeenCalledWith({ key: 'Xk3p9aBc' });
     expect(unfollowMutate).not.toHaveBeenCalled();
   });
 
   it('shows Following, and unfollows, for a hub already in the list', () => {
     followedHubs.value = [{ id: 5, key: 'Xk3p9aBc', name: 'First', sources: [] }];
 
-    const container = render(createElement(FollowHubButton, { hub: { id: 5, isOwner: false } }));
+    const container = render(
+      createElement(FollowHubButton, { hub: { key: 'Xk3p9aBc', isOwner: false } })
+    );
 
     expect(container.querySelector('button')?.textContent).toBe('Following');
     act(() => {
       container.querySelector('button')?.click();
     });
-    expect(unfollowMutate).toHaveBeenCalledWith({ hubId: 5 });
+    expect(unfollowMutate).toHaveBeenCalledWith({ key: 'Xk3p9aBc' });
     expect(followMutate).not.toHaveBeenCalled();
   });
 });

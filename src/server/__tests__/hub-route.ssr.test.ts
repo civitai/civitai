@@ -65,9 +65,11 @@ const run = async (id: string = HUB_KEY) =>
     resolvedUrl: `/hubs/${id}/${SLUG}`,
   })) as any;
 
+// No `key` here on purpose: `UserHub` has no such column and the service COMPUTES it.
+// A fixture that supplied one would let `getUserHubForRoute` pass the row's value
+// through instead, which is `undefined` in production and green here.
 const hubRow = (availability: Availability) => ({
   id: HUB_ID,
-  key: HUB_KEY,
   name: 'Neat models!',
   availability,
   metadata: { description: 'Models I think are neat' },
@@ -89,7 +91,13 @@ describe('/hubs/<id> — getServerSideProps wiring', () => {
     expect(result.notFound).toBeUndefined();
     expect(result.redirect).toBeUndefined();
     expect(result.props).toMatchObject({
-      hubMeta: { name: 'Neat models!', description: 'Models I think are neat' },
+      hubMeta: {
+        name: 'Neat models!',
+        description: 'Models I think are neat',
+        // What `HubMetaTags` builds og:image and canonical from. A key that is not a
+        // real encoding makes both a 400 and a 404 in production.
+        key: HUB_KEY,
+      },
     });
   });
 

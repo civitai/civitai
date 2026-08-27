@@ -237,7 +237,11 @@ export async function getUserHubForRoute({ id, userId, isModerator }: { id: numb
  */
 export async function getHubCardData(id: number) {
   const hub = await dbRead.userHub.findFirst({
-    where: { id, availability: Availability.Public },
+    // Through the shared guard with an EMPTY viewer, not a hand-written Public check:
+    // this endpoint has no session, so no-viewer is the exact case, and the card is
+    // the one read that publishes off-site and CDN-caches. A rule added to
+    // `hubViewerWhere` later — a soft delete, a hub-level ban — must not miss it.
+    where: { id, ...hubViewerWhere({}) },
     select: {
       name: true,
       metadata: true,
@@ -497,7 +501,13 @@ export async function getFollowedHubs({ userId }: { userId: number }) {
   return follows.map((follow) => toHubDetail(follow.hub, userId));
 }
 
-export async function followUserHub({ hubId, userId }: { hubId: number; userId: number }) {
+export async function followUserHub({ key, userId }: { key: string; userId: number }) {
+  // Addressed by the encoded key, like every other public hub verb: an int here is a
+  // second address for the same row, and this one returns through `getFollowed`,
+  // which carries `key`.
+  const hubId = decodeHubId(key);
+  if (!hubId) throw throwNotFoundError('Hub not found');
+
   // Through the WRITER, and scoped by the same fragment every hub read uses: a hub
   // this viewer cannot open must be a not-found here, never a follow row pointing at
   // something they will never be shown.
@@ -524,7 +534,10 @@ export async function followUserHub({ hubId, userId }: { hubId: number; userId: 
   return { hubId, following: true };
 }
 
-export async function unfollowUserHub({ hubId, userId }: { hubId: number; userId: number }) {
+export async function unfollowUserHub({ key, userId }: { key: string; userId: number }) {
+  const hubId = decodeHubId(key);
+  if (!hubId) throw throwNotFoundError('Hub not found');
+
   // Scoped to the caller's own row on the DELETE itself, like every other write in
   // this file — `deleteMany`, not a lookup followed by a delete by id.
   const { count } = await dbWrite.userHubFollow.deleteMany({ where: { userId, hubId } });

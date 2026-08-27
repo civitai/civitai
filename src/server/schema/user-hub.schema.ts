@@ -162,8 +162,11 @@ export type HubSourceExclusionInput = z.infer<typeof hubSourceExclusionSchema>;
 export const hubSourceKey = (source: HubSourceExclusionInput) =>
   `${source.type}:${source.targetId}`;
 
+// 🔴 Keyed, not int. `getFollowed` returns each hub's `key`, so an int-addressed
+// follow of a public hub handed that key to any signed-in caller for the price of
+// counting — defeating the URL encoding without touching the salt.
 export const userHubFollowSchema = z.object({
-  hubId: z.number().int().positive(),
+  key: z.string().trim().min(1).max(64),
 });
 
 export type UserHubFollowInput = z.infer<typeof userHubFollowSchema>;
