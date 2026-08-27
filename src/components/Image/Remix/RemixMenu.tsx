@@ -13,6 +13,7 @@ import {
   type RemixSourceImage,
 } from '~/components/Image/Remix/remix.utils';
 import { remixMenuZIndex } from '~/shared/constants/app-layout.constants';
+import { waitForElement } from '~/utils/html-helpers';
 
 type RemixOption = {
   label: string;
@@ -75,6 +76,8 @@ export function RemixMenu({
   source,
   sourceModelVersionId,
   onAction,
+  onOpen,
+  tourTarget,
   children,
   zIndex,
 }: {
@@ -84,6 +87,13 @@ export function RemixMenu({
   /** Known only where the surface is scoped to a version (the model carousel). */
   sourceModelVersionId?: number;
   onAction?: () => void;
+  /**
+   * The menu became visible. Separate from `onAction` so a tour can put one
+   * step on the button and the next on the options themselves.
+   */
+  onOpen?: () => void;
+  /** `data-tour` for the dropdown, where a tour step describes the options. */
+  tourTarget?: string;
   children: React.ReactNode;
   zIndex?: number;
 }) {
@@ -116,27 +126,37 @@ export function RemixMenu({
     onAction?.();
   };
 
-  // A menu holding nothing but a disabled refusal has no item to click, so an
-  // `onAction` that only fires from an item would strand a tour step whose only
-  // way forward is clicking through this button. Latched because `onOpen` fires
-  // on every open, and `onAction` advances a tour a step at a time.
+  // Latched: Mantine fires this on every open, while a tour advances a step at
+  // a time, so reopening the menu must not move it on again.
+  //
+  // The fallback keeps a caller that only passes `onAction` unstuck. A menu
+  // holding nothing but a disabled refusal has no item to click, so there an
+  // `onAction` that only fires from an item would strand a tour step whose sole
+  // exit is clicking through this button.
   const hasActionableItem = (!engineRefusal && kinds.length > 0) || showReuse;
-  const announcedRefusal = useRef(false);
-  const handleRefusalOpen = () => {
-    if (announcedRefusal.current) return;
-    announcedRefusal.current = true;
-    onAction?.();
+  const announcedOpen = useRef(false);
+  const handleOpen = () => {
+    if (announcedOpen.current) return;
+    announcedOpen.current = true;
+    if (!onOpen) {
+      if (!hasActionableItem) onAction?.();
+      return;
+    }
+    if (!tourTarget) return onOpen();
+    // Mantine calls this from the state setter, before the dropdown commits, so
+    // announcing the open straight away points a tour step at a target that is
+    // not in the document yet — Joyride reads that as `TARGET_NOT_FOUND` and
+    // skips the step it was meant to land on.
+    waitForElement({ selector: `[data-tour="${tourTarget}"]`, interval: 50, timeout: 2000 })
+      .catch(() => null)
+      .then(() => onOpen());
   };
 
   return (
-    <Menu
-      withinPortal
-      position="bottom-end"
-      zIndex={zIndex ?? remixMenuZIndex}
-      onOpen={hasActionableItem ? undefined : handleRefusalOpen}
-    >
+    <Menu withinPortal position="bottom-end" zIndex={zIndex ?? remixMenuZIndex} onOpen={handleOpen}>
       <Menu.Target>{children}</Menu.Target>
       <Menu.Dropdown
+        data-tour={tourTarget}
         className="w-[290px] p-1.5"
         onClick={(e) => {
           // These live inside RoutedDialogLink on the feed cards, which would

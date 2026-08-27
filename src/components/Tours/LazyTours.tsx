@@ -12,6 +12,7 @@ import { IsClient } from '~/components/IsClient/IsClient';
 import { TourPopover } from '~/components/Tour/TourPopover';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import type { StepData } from '~/types/tour';
+import { tourScrollBlock } from '~/components/Tours/tour-scroll';
 import { tourOverlayZIndex } from '~/shared/constants/app-layout.constants';
 
 const completeStatus: string[] = [STATUS.SKIPPED, STATUS.FINISHED];
@@ -28,7 +29,10 @@ export default function LazyTours({ getHelpers }: Pick<JoyrideProps, 'getHelpers
       if (action === ACTIONS.UPDATE && lifecycle === LIFECYCLE.TOOLTIP) {
         const target = document.querySelector(step?.target as string);
         if (target && step.placement !== 'center')
-          target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          target.scrollIntoView({
+            behavior: 'smooth',
+            block: tourScrollBlock(target.getBoundingClientRect().height, window.innerHeight),
+          });
         window.dispatchEvent(new Event('resize'));
       }
 

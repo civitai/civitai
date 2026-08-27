@@ -261,9 +261,7 @@ export function ImagesAsPostsInfinite({
         <MasonryContainer>
           <Stack gap="md">
             <Group gap="xs">
-              <Title order={2} data-tour="model:gallery">
-                Gallery
-              </Title>
+              <Title order={2}>Gallery</Title>
               {!isMuted && (
                 <Group>
                   <LoginRedirect reason="post-images">

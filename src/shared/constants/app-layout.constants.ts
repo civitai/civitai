@@ -40,6 +40,23 @@ export const imageGenerationDrawerZIndex = 301;
 export const tourOverlayZIndex = 100000;
 
 /**
+ * How far above its overlay `react-joyride` draws the step tooltip — its
+ * `getStyles` hardcodes `options.zIndex + 100` and reports it nowhere, so
+ * `tour-click-through-z-index.test.ts` pins this against the installed package.
+ */
+export const tourTooltipZIndexOffset = 100;
+
+/**
+ * For anything a tour step expects the user to click that is not the target
+ * itself — the menu a spotlit button opens.
+ *
+ * Clearing `tourOverlayZIndex` is not enough. The overlay swallows clicks, but
+ * the tooltip is drawn above it, so a menu at overlay+1 opens *under* the
+ * tooltip; a step with `hideFooter` then has no reachable way forward.
+ */
+export const tourClickThroughZIndex = tourOverlayZIndex + tourTooltipZIndexOffset + 1;
+
+/**
  * The remix menu opens from cards that sit inside routed dialogs, which stack at
  * `300 + index` (DialogProvider), so Mantine's popover default of 300 only wins
  * on mount order. This clears a few levels of dialog stacking outright.

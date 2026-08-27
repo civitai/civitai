@@ -30,7 +30,7 @@ import { RemixMenu, isRemixMenuVisible } from '~/components/Image/Remix/RemixMen
 import { REMIX_FRAME } from '~/components/RemixGallery/remix-card-demo';
 import { useRemixCardData } from '~/components/RemixGallery/use-remix-card-data';
 import { RemixedCardFlyout } from '~/components/RemixGallery/RemixedCardFlyout';
-import { tourOverlayZIndex } from '~/shared/constants/app-layout.constants';
+import { tourClickThroughZIndex } from '~/shared/constants/app-layout.constants';
 import { useImageStore } from '~/store/image.store';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { BlockedReason } from '~/server/common/enums';
@@ -81,8 +81,9 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
     e.stopPropagation();
   }, []);
 
-  const handleRemixAction = useCallback(() => {
-    // Go to next step in tour when clicking
+  // The content-gen tour spends two steps here — one on the button, one on the
+  // options it opens — so both the open and the choice move it on by one.
+  const advanceTour = useCallback(() => {
     if (running) helpers?.next();
   }, [running, helpers]);
 
@@ -183,11 +184,12 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                       <RemixMenu
                         image={image}
                         source="remix:image-card"
-                        onAction={handleRemixAction}
-                        // The content-gen tour's remix step can only be advanced
-                        // by clicking through to an option, and its overlay both
-                        // dims and swallows clicks below it.
-                        zIndex={running ? tourOverlayZIndex + 1 : undefined}
+                        onAction={advanceTour}
+                        onOpen={advanceTour}
+                        tourTarget={image.type === MediaType.image ? 'gen:remix-menu' : undefined}
+                        // The first of those has no footer, so the menu has to
+                        // clear the layers Joyride draws over it.
+                        zIndex={running ? tourClickThroughZIndex : undefined}
                       >
                         <HoverActionButton
                           label="Remix"

@@ -1,3 +1,4 @@
+import { useCallback } from 'react';
 import { Card, Center, Indicator, Loader, Stack } from '@mantine/core';
 import { IconBrush, IconInfoCircle } from '@tabler/icons-react';
 import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
@@ -23,7 +24,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { ImageSort } from '~/server/common/enums';
 import { RemixMenu, isRemixMenuVisible } from '~/components/Image/Remix/RemixMenu';
-import { tourOverlayZIndex } from '~/shared/constants/app-layout.constants';
+import { tourClickThroughZIndex } from '~/shared/constants/app-layout.constants';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
@@ -54,6 +55,11 @@ export function ModelCarousel(props: Props) {
 function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10 }: Props) {
   const features = useFeatureFlags();
   const { running, helpers } = useTourContext();
+  // Both model-page tours spend two steps here — one on the button, one on the
+  // options it opens — so the open and the choice each move on by one.
+  const advanceTour = useCallback(() => {
+    if (running) helpers?.next();
+  }, [running, helpers]);
   const { images, flatData, isLoading } = useQueryImages({
     modelVersionId: modelVersionId,
     prioritizedUserIds: [modelUserId],
@@ -122,14 +128,13 @@ function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10
                                   image={image}
                                   source="remix:model-carousel"
                                   sourceModelVersionId={modelVersionId}
-                                  onAction={() => {
-                                    if (running) helpers?.next();
-                                  }}
-                                  // Both model-page tours put a step on this
-                                  // button whose only way forward is clicking
-                                  // through it, and the overlay swallows clicks
-                                  // below it.
-                                  zIndex={running ? tourOverlayZIndex + 1 : undefined}
+                                  onAction={advanceTour}
+                                  onOpen={advanceTour}
+                                  tourTarget="model:remix-menu"
+                                  // Both model-page tours spend a step on this
+                                  // button and the next on the options it
+                                  // opens, over the layers Joyride draws.
+                                  zIndex={running ? tourClickThroughZIndex : undefined}
                                 >
                                   <HoverActionButton
                                     label="Remix"
