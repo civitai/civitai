@@ -745,6 +745,130 @@ describe('source suggestions stay inside the viewer', () => {
     expect(names.orderBy).toEqual({ username: 'asc' });
   });
 
+  // Reported 2026-08-26: a viewer following 2,738 creators could not find one of them
+  // in the picker. The name filter runs over what the relationship query returns, so
+  // the window is not a page size — it is the whole searchable set, and the creator
+  // sat at position 1,905 of the follow list. Do not lower these back to one window
+  // without re-measuring the search: they are what makes a rare name reachable.
+  it('reaches past the recent-relationships window when there is a term to search', async () => {
+    dbMock.dbRead.userEngagement.findMany.mockResolvedValue([{ targetUserId: 11 }]);
+    dbMock.dbRead.user.findMany.mockResolvedValue([{ id: 11, username: 'someone' }]);
+
+    await getHubSourceSuggestions({ userId: 5, type: UserHubSourceType.User });
+    const listing = dbMock.dbRead.userEngagement.findMany.mock.calls[0][0].take;
+
+    await getHubSourceSuggestions({ userId: 5, type: UserHubSourceType.User, query: 'some' });
+    const searching = dbMock.dbRead.userEngagement.findMany.mock.calls[1][0].take;
+
+    expect(searching).toBeGreaterThan(listing);
+    expect(searching).toBeGreaterThan(2738);
+  });
+
+  it('treats a one-character term as no term at all', async () => {
+    // Measured on the prod replica: a term costs the whole relationship read whatever
+    // its length — up to 1.02 GB of buffer touches on the models arm — and one
+    // character matches most of the window anyway. So the first keystroke lists
+    // instead of searching.
+    dbMock.dbRead.userEngagement.findMany.mockResolvedValue([{ targetUserId: 11 }]);
+    dbMock.dbRead.user.findMany.mockResolvedValue([{ id: 11, username: 'someone' }]);
+
+    await getHubSourceSuggestions({ userId: 5, type: UserHubSourceType.User, query: 's' });
+
+    const names = dbMock.dbRead.user.findMany.mock.calls[0][0];
+    expect(names.where.username).toBeUndefined();
+    expect(names.orderBy).toBeUndefined();
+
+    // The half that costs something: the RELATIONSHIP read must stay at the listing
+    // window too. Reading it with `trimmed` instead of `term` produces an identical
+    // name query while paying the full 5,000-row read this gate exists to avoid.
+    const follows = dbMock.dbRead.userEngagement.findMany.mock.calls[0][0];
+    expect(follows.take).toBe(500);
+
+    // The boundary, in the same test: two characters must SEARCH. Without this the
+    // constant is only pinned to (1, 4] — raising it to 3 or 4 silently turns the
+    // shortest terms people actually type into a recency list, and every other query
+    // in this file is four characters, so nothing else would notice.
+    await getHubSourceSuggestions({ userId: 5, type: UserHubSourceType.User, query: 'so' });
+
+    const searched = dbMock.dbRead.user.findMany.mock.calls[1][0];
+    expect(searched.where.username).toEqual({ contains: 'so', mode: 'insensitive' });
+  });
+
+  it('hands the WHOLE window to the name query, not a page of it', async () => {
+    // The window only helps if `scopeSuggestionIds` passes all of it through. Slicing
+    // there unconditionally collapses the searchable set to 50 — a worse regression
+    // than the bug this fixes, and invisible to every other search test in this file,
+    // which all mock a handful of ids.
+    const followed = Array.from({ length: 600 }, (_, i) => ({ targetUserId: 100 + i }));
+    dbMock.dbRead.userEngagement.findMany.mockResolvedValue(followed);
+    dbMock.dbRead.user.findMany.mockResolvedValue([{ id: 100, username: 'someone' }]);
+
+    await getHubSourceSuggestions({ userId: 5, type: UserHubSourceType.User, query: 'some' });
+
+    const names = dbMock.dbRead.user.findMany.mock.calls[0][0];
+    expect(names.where.id.in).toHaveLength(600);
+    expect(names.take).toBe(25);
+  });
+
+  // Skipped while collections are dark, following the four `skipIf` cases above: the
+  // arm returns before its query, so an assertion on it would pass with the widened
+  // window reverted. It runs the day the constant flips, which is the day it means
+  // something.
+  it.skipIf(!HUB_COLLECTION_SOURCES_ENABLED)(
+    'widens the collections relationship query for a search too',
+    async () => {
+      dbMock.dbRead.collectionContributor.findMany.mockResolvedValue([{ collectionId: 3 }]);
+      dbMock.dbRead.collection.findMany.mockResolvedValue([{ id: 3, name: 'stuff' }]);
+
+      await getHubSourceSuggestions({ userId: 5, type: UserHubSourceType.Collection });
+      const listing = dbMock.dbRead.collectionContributor.findMany.mock.calls[0][0].take;
+
+      await getHubSourceSuggestions({
+        userId: 5,
+        type: UserHubSourceType.Collection,
+        query: 'stu',
+      });
+      const searchCall = dbMock.dbRead.collectionContributor.findMany.mock.calls[1][0];
+
+      expect(searchCall.take).toBeGreaterThan(listing);
+      // `nulls: 'last'` because the column is nullable and Postgres sorts DESC as
+      // NULLS FIRST — without it the window fills with rows carrying no date at all,
+      // which is the opposite of the recency cut this claims to be.
+      expect(searchCall.orderBy).toEqual({ createdAt: { sort: 'desc', nulls: 'last' } });
+      // And the whole window must reach the names query here too, the same way it
+      // does on the creators arm.
+      expect(dbMock.dbRead.collection.findMany.mock.calls[1][0].where.id.in).toEqual([3]);
+    }
+  );
+
+  it('widens every models relationship query for a search, not just the creators one', async () => {
+    dbMock.dbRead.collection.findFirst.mockResolvedValue({ id: 77 });
+    dbMock.dbRead.model.findMany.mockResolvedValue([{ id: 1 }]);
+    dbMock.dbRead.modelEngagement.findMany.mockResolvedValue([{ modelId: 2 }]);
+    dbMock.dbRead.collectionItem.findMany.mockResolvedValue([{ modelId: 3 }]);
+
+    await getHubSourceSuggestions({ userId: 5, type: UserHubSourceType.Model });
+    const listing = [
+      dbMock.dbRead.model.findMany.mock.calls[0][0].take,
+      dbMock.dbRead.modelEngagement.findMany.mock.calls[0][0].take,
+      dbMock.dbRead.collectionItem.findMany.mock.calls[0][0].take,
+    ];
+
+    await getHubSourceSuggestions({ userId: 5, type: UserHubSourceType.Model, query: 'nova' });
+    // The names query is call 1 on `model.findMany` with no term and call 3 with one,
+    // so the id queries are 0 and 2 — reading the wrong one is how a widened window
+    // gets asserted against a page size.
+    const searching = [
+      dbMock.dbRead.model.findMany.mock.calls[2][0].take,
+      dbMock.dbRead.modelEngagement.findMany.mock.calls[1][0].take,
+      dbMock.dbRead.collectionItem.findMany.mock.calls[1][0].take,
+    ];
+
+    expect(listing).toEqual([listing[0], listing[0], listing[0]]);
+    expect(searching).toEqual([searching[0], searching[0], searching[0]]);
+    expect(searching[0]).toBeGreaterThan(listing[0]);
+  });
+
   it('keeps the most recent relationships when there is nothing to search', async () => {
     // Ordering by name sits above `take`, so with no term it would decide WHICH
     // suggestions survive: a viewer following more than a page of creators would
@@ -804,6 +928,10 @@ describe('source suggestions stay inside the viewer', () => {
     // the planner walk every bookmark and every Notify row.
     expect(own.where.name).toBeUndefined();
     expect(engaged.where.model).toBeUndefined();
+    // The shape `ModelEngagement_notify_userId_createdAt_idx` was built to serve.
+    // Changing this to any other column silently makes that index unusable and the
+    // arm goes back to reading every row — 250,491 of them on the largest account.
+    expect(engaged.orderBy).toEqual({ createdAt: 'desc' });
     const names = dbMock.dbRead.model.findMany.mock.calls[1][0];
     expect(names.where.id).toEqual({ in: [1, 2, 3] });
     expect(names.where.name).toEqual({ contains: 'nova', mode: 'insensitive' });

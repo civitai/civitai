@@ -731,22 +731,62 @@ export async function resolveHubSourceFromUrl({
 
 const SUGGESTIONS_LIMIT = 25;
 
-// How much of the viewer's relationship list the type-ahead searches. A name filter
-// expressed as a relation filter does NOT bound the work: Prisma emits it as a
-// subquery, the planner walks every one of the viewer's rows probing the target
-// table, and `take` only stops it early when matches are dense. Measured on the
-// prod replica: a viewer following 130,006 people paid 4.8s and ~4.85GB of buffers
-// for a term matching none of them — worst exactly for the rare term that makes a
-// type-ahead worth having.
+// How much of the viewer's relationship list a bare suggestion LIST reads. The name
+// filter is not expressed as a relation filter because that does NOT bound the work:
+// Prisma emits it as a subquery, the planner walks every one of the viewer's rows
+// probing the target table, and `take` only stops it early when matches are dense.
+// Measured on the prod replica: a viewer following 130,006 people paid 4.8s and
+// ~4.85GB of buffers for a term matching none of them — worst exactly for the rare
+// term that makes a type-ahead worth having.
 //
-// So the relationship list drives, bounded, and the name filter runs over the ids
-// it returns — a search of your most recent relationships, not all of them.
+// So the relationship list drives, bounded, and the name filter runs over the ids it
+// returns. Which makes the window the searchable SET, not a page size — see
+// SUGGESTIONS_SEARCH_WINDOW.
 const SUGGESTIONS_WINDOW = 500;
+
+// What a SEARCH reads instead, because it has to reach the whole relationship list
+// rather than the recent end of it: a viewer following 2,738 creators had the one
+// they were looking for at position 1,905, so the 500-row window meant the type-ahead
+// could never return them.
+//
+// 🔴 Raising this is close to FREE, and lowering it buys nothing — measured on the
+// prod replica at both windows, per arm, worst case (term matching nothing):
+//
+//   follows, 118,609 rows   500 -> 444 ms / 165,001 buffers ; 5000 -> 181 ms warm,
+//                           723 ms cold / 48,212 buffers
+//   Notify, 250,491 rows    identical plan and ~130,800 buffers at BOTH windows;
+//                           283 ms warm, 1.56 s cold
+//   bookmarks, 258,105      identical at both; ~86 ms / 32k buffers
+//   15,000-id union + ILIKE 34.5 ms / 19.4k buffers (477 index searches, not 15,000)
+//
+// Every arm orders by a column no composite index covers, so the viewer's WHOLE
+// relationship list is read either way and the `take` only sizes the top-N heap. At
+// 500 the follows arm picks a worse plan off the global createdAt index. The real
+// cost of this endpoint is the unindexed `ORDER BY createdAt` on ModelEngagement, at
+// any window; an index on (userId, type, createdAt DESC) INCLUDE (modelId) is what
+// would move it.
+//
+// Only 57 accounts follow more than this and 1,066 watch more models than this, so
+// above the window a search is still partial; closing that needs a trigram index so
+// the term can drive instead of the relationship list.
+const SUGGESTIONS_SEARCH_WINDOW = 5000;
+
+// A one-character term matches most of the window and costs the same relationship
+// read as a useful one, so it is treated as no term at all: the viewer gets their
+// most recent relationships, which is what one character was going to show anyway.
+const MIN_SEARCH_TERM = 2;
 
 // A margin over the page size, because the name queries filter deleted rows AFTER the
 // id restriction: slicing to exactly `SUGGESTIONS_LIMIT` returns a short page whenever
 // one of the ids has since been deleted (measured on prod: 2 of 500 on one account).
 const SUGGESTIONS_SLICE = SUGGESTIONS_LIMIT * 2;
+
+// How far back the relationship queries read. Every one of them orders most-recent
+// first, so this is a recency cut — keep it that way when adding an arm, or the
+// widened window becomes an arbitrary slice that moves between keystrokes.
+function suggestionWindow(term: string | undefined) {
+  return term ? SUGGESTIONS_SEARCH_WINDOW : SUGGESTIONS_WINDOW;
+}
 
 // The relationship queries above return their ids most-recent-first. With no search
 // term that IS the answer, so the window is cut before the names query rather than
@@ -785,14 +825,15 @@ export async function getHubSourceSuggestions({
   query,
   isModerator,
 }: GetHubSourceSuggestionsInput & { userId: number; isModerator?: boolean }) {
-  const term = query?.trim();
+  const trimmed = query?.trim();
+  const term = trimmed && trimmed.length >= MIN_SEARCH_TERM ? trimmed : undefined;
 
   if (type === UserHubSourceType.User) {
     const follows = await dbRead.userEngagement.findMany({
       where: { userId, type: UserEngagementType.Follow },
       select: { targetUserId: true },
       orderBy: { createdAt: 'desc' },
-      take: SUGGESTIONS_WINDOW,
+      take: suggestionWindow(term),
     });
     if (!follows.length) return [];
 
@@ -836,7 +877,12 @@ export async function getHubSourceSuggestions({
     const followed = await dbRead.collectionContributor.findMany({
       where: { userId, permissions: { has: CollectionContributorPermission.VIEW } },
       select: { collectionId: true },
-      take: SUGGESTIONS_WINDOW,
+      // `nulls: 'last'` because the column is nullable and Postgres sorts DESC as
+      // NULLS FIRST, which would fill the window with the rows carrying no date at
+      // all — the opposite of the recency cut this is. 0 nulls of 2,294,541 rows on
+      // prod today, so it holds the invariant rather than fixing a live bug.
+      orderBy: { createdAt: { sort: 'desc', nulls: 'last' } },
+      take: suggestionWindow(term),
     });
     if (!followed.length) return [];
 
@@ -879,20 +925,20 @@ export async function getHubSourceSuggestions({
       where: { userId, deletedAt: null },
       select: { id: true },
       orderBy: { id: 'desc' },
-      take: SUGGESTIONS_WINDOW,
+      take: suggestionWindow(term),
     }),
     dbRead.modelEngagement.findMany({
       where: { userId, type: ModelEngagementType.Notify },
       select: { modelId: true },
       orderBy: { createdAt: 'desc' },
-      take: SUGGESTIONS_WINDOW,
+      take: suggestionWindow(term),
     }),
     bookmarkCollection
       ? dbRead.collectionItem.findMany({
           where: { collectionId: bookmarkCollection.id, modelId: { not: null } },
           select: { modelId: true },
           orderBy: { id: 'desc' },
-          take: SUGGESTIONS_WINDOW,
+          take: suggestionWindow(term),
         })
       : Promise.resolve([]),
   ]);
