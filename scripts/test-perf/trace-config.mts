@@ -8,7 +8,9 @@
  * deliberately names its project `unit-trace` (see below), so the pairing this docstring used to
  * advertise now exits 1 with `No projects matched the filter "unit"`. It fails loudly, so it is
  * recorded here rather than papered over by widening bench.mjs's filter, which would silently drag
- * the `unit-native` project into every yardstick run.
+ * the `unit-native` project into every yardstick run. ⚠️ Loudly, but not harmlessly: the snapshot
+ * clear below runs at CONFIG LOAD, before the project filter is evaluated, so that failed
+ * invocation still empties the trace directory first.
  *
  * The suite's cost is module EXECUTION, not assertions, and a static import graph can't see it:
  * a `vi.mock` factory stops the real module (and its subtree) from ever running, so the static
@@ -42,16 +44,29 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../
 // Wrapped because a throw here happens at CONFIG LOAD and would abort the entire run with a raw
 // stack — e.g. a directory that happens to match the pattern (`force` is not `recursive`), or
 // TESTPERF_TRACE_DIR pointing at a file.
+function warnStaleSnapshot(what: string, err: unknown) {
+  process.stderr.write(
+    `[trace-config] could not clear old snapshot ${what}: ${String(err)}\n` +
+      `[trace-config] the report SUMS snapshots, so stale ones will inflate this run's numbers\n`
+  );
+}
+
 const traceDir = process.env.TESTPERF_TRACE_DIR ?? path.join(repoRoot, '.test-perf/trace');
 try {
   if (existsSync(traceDir))
-    for (const f of readdirSync(traceDir))
-      if (SNAPSHOT_FILE_RE.test(f)) rmSync(path.join(traceDir, f), { force: true });
+    for (const f of readdirSync(traceDir)) {
+      if (!SNAPSHOT_FILE_RE.test(f)) continue;
+      // Per ENTRY, not around the loop: one undeletable snapshot (EACCES, or a directory that
+      // happens to match) must not abandon every other stale file, because what survives is then
+      // summed into this run's numbers.
+      try {
+        rmSync(path.join(traceDir, f), { force: true });
+      } catch (err) {
+        warnStaleSnapshot(f, err);
+      }
+    }
 } catch (err) {
-  process.stderr.write(
-    `[trace-config] could not clear old snapshots in ${traceDir}: ${String(err)}\n` +
-      `[trace-config] the report SUMS snapshots, so stale ones will inflate this run's numbers\n`
-  );
+  warnStaleSnapshot(traceDir, err);
 }
 
 const tracer = {

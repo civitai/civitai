@@ -1,8 +1,10 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
+
+import { resolveIntervalMs, SNAPSHOT_FILE_RE } from '../trace-snapshot-name';
 
 /**
  * Regression tests for the module tracer (scripts/test-perf/trace-setup.ts + trace-config.mts).
@@ -31,7 +33,6 @@ const TRACE_CONFIG = 'scripts/test-perf/trace-config.mts';
 const FIXTURES = [
   'scripts/test-perf/__tests__/trace-smoke-fixture.test.ts',
   'scripts/test-perf/__tests__/trace-smoke-fixture-b.test.ts',
-  'scripts/test-perf/__tests__/trace-smoke-fixture-c.test.ts',
 ];
 const FIXTURE_MODULE = 'scripts/test-perf/trace-smoke-fixture-module.ts';
 
@@ -82,7 +83,9 @@ function mergeSnapshots(traceDir: string) {
   // Tolerate a missing directory rather than letting readdirSync throw: "no snapshot" is the
   // failure these tests exist to report, and it should read as an assertion, not as an ENOENT
   // stack trace from the test's own plumbing.
-  const files = existsSync(traceDir) ? readdirSync(traceDir).filter((f) => f.endsWith('.json')) : [];
+  const files = existsSync(traceDir)
+    ? readdirSync(traceDir).filter((f) => SNAPSHOT_FILE_RE.test(f))
+    : [];
   const merged: Record<string, { loads: number }> = {};
   for (const f of files) {
     const snapshot = JSON.parse(readFileSync(join(traceDir, f), 'utf8')) as Record<
@@ -96,93 +99,104 @@ function mergeSnapshots(traceDir: string) {
 }
 
 describe('module tracer flush', () => {
-  it(
-    'writes a per-worker snapshot for a traced run that ends normally',
-    () => {
-      expect(existsSync(VITEST_BIN)).toBe(true);
-      const traceDir = freshTraceDir();
+  it('writes a per-worker snapshot for a traced run that ends normally', () => {
+    expect(existsSync(VITEST_BIN)).toBe(true);
+    const traceDir = freshTraceDir();
 
-      const run = runTraced({ traceDir, extraArgs: ['--max-workers=1'] });
-      // Positive control on the child: a run that collected nothing would leave an empty trace
-      // directory for a reason that has nothing to do with the flush.
-      expect(run.stdout + run.stderr).toContain('1 passed');
-      expect(run.status).toBe(0);
+    // The clear must remove this tool's snapshots and NOTHING else: TESTPERF_TRACE_DIR is
+    // caller-supplied and the README promises other JSON there is safe. Widening the predicate
+    // back to `*.json` passes every other assertion in this file, so without this line the
+    // promise is unguarded.
+    const foreign = join(traceDir, 'important-notes.json');
+    writeFileSync(foreign, '{"keep":true}');
 
-      const { files, merged } = mergeSnapshots(traceDir);
-      expect(files.length).toBeGreaterThan(0);
+    const run = runTraced({ traceDir, extraArgs: ['--max-workers=1'] });
+    expect(existsSync(foreign)).toBe(true);
+    // Positive control on the child: a run that collected nothing would leave an empty trace
+    // directory for a reason that has nothing to do with the flush.
+    expect(run.stdout + run.stderr).toContain('1 passed');
+    expect(run.status).toBe(0);
 
-      // Not just "a file exists": the snapshot has to name the module the fixture imported, with a
-      // real execution count. An empty `{}` would satisfy a file-exists check.
-      expect(Object.keys(merged)).toContain(FIXTURE_MODULE);
-      expect(merged[FIXTURE_MODULE]?.loads ?? 0).toBeGreaterThanOrEqual(1);
-    },
-    180_000
-  );
+    const { files, merged } = mergeSnapshots(traceDir);
+    expect(files.length).toBeGreaterThan(0);
 
-  it(
-    'does not accumulate a previous run into the next one',
-    () => {
-      // trace-report.mjs SUMS every snapshot in the directory, and snapshots outlive the run that
-      // wrote them, so without the clear in trace-config.mts a second traced run silently reports
-      // roughly doubled loads/selfMs/totalMs — a wrong number rather than a missing one, which is
-      // the harder kind to notice. Both runs go to the SAME directory on purpose.
-      const traceDir = freshTraceDir();
+    // Not just "a file exists": the snapshot has to name the module the fixture imported, with a
+    // real execution count. An empty `{}` would satisfy a file-exists check.
+    expect(Object.keys(merged)).toContain(FIXTURE_MODULE);
+    expect(merged[FIXTURE_MODULE]?.loads ?? 0).toBeGreaterThanOrEqual(1);
+  }, 180_000);
 
-      runTraced({ traceDir, extraArgs: ['--max-workers=1'] });
-      const first = mergeSnapshots(traceDir).merged[FIXTURE_MODULE]?.loads ?? 0;
-      expect(first).toBeGreaterThan(0);
+  it('does not accumulate a previous run into the next one', () => {
+    // trace-report.mjs SUMS every snapshot in the directory, and snapshots outlive the run that
+    // wrote them, so without the clear in trace-config.mts a second traced run silently reports
+    // roughly doubled loads/selfMs/totalMs — a wrong number rather than a missing one, which is
+    // the harder kind to notice. Both runs go to the SAME directory on purpose.
+    const traceDir = freshTraceDir();
 
-      runTraced({ traceDir, extraArgs: ['--max-workers=1'] });
-      const second = mergeSnapshots(traceDir).merged[FIXTURE_MODULE]?.loads ?? 0;
+    runTraced({ traceDir, extraArgs: ['--max-workers=1'] });
+    const first = mergeSnapshots(traceDir).merged[FIXTURE_MODULE]?.loads ?? 0;
+    expect(first).toBeGreaterThan(0);
 
-      expect(second).toBe(first);
-    },
-    240_000
-  );
+    runTraced({ traceDir, extraArgs: ['--max-workers=1'] });
+    const second = mergeSnapshots(traceDir).merged[FIXTURE_MODULE]?.loads ?? 0;
 
-  it(
-    'keeps every worker on a thread pool, where they all share one pid',
-    () => {
-      // `forks` gives one process per file, so a bare `<pid>.json` is accidentally unique there and
-      // this hazard is invisible. On `threads` every worker lives in ONE process — measured: 3
-      // files produce 3 snapshots under the per-worker id and exactly 1 under a bare pid, i.e. two
-      // workers' counters silently lost with valid JSON and no error. vitest.config.mts:152-162
-      // explicitly invites `--pool=threads` experiments, so this is a configuration people reach.
-      const traceDir = freshTraceDir();
+    expect(second).toBe(first);
+  }, 240_000);
 
-      const run = runTraced({
-        traceDir,
-        files: FIXTURES,
-        extraArgs: ['--pool=threads', '--max-workers=3'],
-      });
-      expect(run.stdout + run.stderr).toContain('3 passed');
-      expect(run.status).toBe(0);
+  it('keeps every worker on a thread pool, where they all share one pid', () => {
+    // `forks` gives one process per file, so a bare `<pid>.json` is accidentally unique there and
+    // this hazard is invisible. On `threads` every worker lives in ONE process — measured: under
+    // a bare pid, N files collapse to ONE snapshot, i.e. every earlier file's counters lost to a
+    // last-wins overwrite with valid JSON and no error. Two files is enough to see it and the
+    // worker count does not matter, because the tracer re-initialises per FILE rather than per
+    // worker (measured identical at --max-workers=1, 2 and 3, so this cannot flake on a
+    // low-core runner). vitest.config.mts:152-162 explicitly invites `--pool=threads`.
+    const traceDir = freshTraceDir();
 
-      // Assert the DATA survived rather than the filename shape: each fixture file is itself a
-      // first-party module the tracer brackets, so all three must appear in the merged result. An
-      // overwrite leaves only the last worker's.
-      const { merged } = mergeSnapshots(traceDir);
-      for (const f of FIXTURES) expect(Object.keys(merged)).toContain(f);
-    },
-    240_000
-  );
+    const run = runTraced({
+      traceDir,
+      files: FIXTURES,
+      extraArgs: ['--pool=threads', '--max-workers=2'],
+    });
+    expect(run.stdout + run.stderr).toContain('2 passed');
+    expect(run.status).toBe(0);
 
-  it(
-    'does not define a project named "unit"',
-    () => {
-      // Closes the hole the delta re-audit found: every assertion above names `unit-trace`, so
-      // renaming the project back to `unit` in BOTH trace-config.mts and this file would pass green
-      // while fully restoring the cache collision that took 16 of 53 files red. This one fails in
-      // that world, because the filter would then match.
-      const run = runTraced({
-        traceDir: freshTraceDir(),
-        project: 'unit',
-        extraArgs: ['--max-workers=1'],
-      });
+    // Assert the DATA survived rather than the filename shape: each fixture file is itself a
+    // first-party module the tracer brackets, so every one of them must appear in the merged
+    // result. An overwrite leaves only the last file's.
+    const { merged } = mergeSnapshots(traceDir);
+    for (const f of FIXTURES) expect(Object.keys(merged)).toContain(f);
+  }, 240_000);
 
-      expect(run.status).not.toBe(0);
-      expect(run.stdout + run.stderr).toContain('No projects matched');
-    },
-    180_000
-  );
+  it('does not define a project named "unit"', () => {
+    // Closes the hole the delta re-audit found: every assertion above names `unit-trace`, so
+    // renaming the project back to `unit` in BOTH trace-config.mts and this file would pass green
+    // while fully restoring the cache collision that took 16 of 53 files red. This one fails in
+    // that world, because the filter would then match.
+    const run = runTraced({
+      traceDir: freshTraceDir(),
+      project: 'unit',
+      extraArgs: ['--max-workers=1'],
+    });
+
+    expect(run.status).not.toBe(0);
+    expect(run.stdout + run.stderr).toContain('No projects matched');
+  }, 180_000);
+
+  // The interval backstop exists so a long run still leaves a snapshot; every wrong value makes it
+  // a 1ms synchronous write loop instead. Pinned directly rather than through a child run — the
+  // previous round called this "hard to pin", which was giving up early.
+  it.each([
+    ['abc', 15000],
+    ['', 15000],
+    [undefined, 15000],
+    ['-5', 15000],
+    ['0', 15000],
+    ['0.5', 15000],
+    ['1e10', 1e10],
+    ['15s', 15000],
+    ['42', 42],
+  ])('resolveIntervalMs(%o) -> %o', (raw, expected) => {
+    expect(resolveIntervalMs(raw as string | undefined)).toBe(expected);
+  });
 });
