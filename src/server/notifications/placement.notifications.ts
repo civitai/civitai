@@ -522,8 +522,15 @@ export const placementNotifications = createNotificationProcessor({
   'remix-gallery-undelivered': {
     displayName: 'A remix submission could not be delivered',
     category: NotificationCategory.Creator,
+    // The money sentence comes from `amount`, not from `free` — a free row moved
+    // no Buzz, and telling someone their Buzz came back when none was spent is
+    // false in a way they can check. Same rule the sticker type follows, and the
+    // reason one type can serve both.
     prepareMessage: ({ details }) => ({
-      message: `Your remix couldn't be submitted to ${details.ownerUsername}'s gallery, so your Buzz has been returned.`,
+      message:
+        Number(details.amount ?? 0) > 0
+          ? `Your remix couldn't be submitted to ${details.ownerUsername}'s gallery, so your Buzz has been returned.`
+          : `Your remix couldn't be submitted to ${details.ownerUsername}'s gallery.`,
       url: `/images/${details.imageId}`,
     }),
     prepareQuery: async ({ lastSent }) => `
@@ -538,7 +545,10 @@ export const placementNotifications = createNotificationProcessor({
             -- the PLACER, so the other party is the owner; without the id the row
             -- falls back to a generic bell.
             'ownerId', p."ownerId",
-            'ownerUsername', u.username
+            'ownerUsername', u.username,
+            -- Decides the money sentence above. A free row is 0 and must not be
+            -- told about Buzz that never moved.
+            'amount', p.amount
           ) as "details"
         FROM "Placement" p
         JOIN "User" u ON u.id = p."ownerId"

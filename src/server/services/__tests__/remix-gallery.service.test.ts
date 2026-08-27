@@ -1378,55 +1378,89 @@ describe('an approved submission counts toward the host image buzz counter', () 
  * 48 hours are being spent, and the refund decides whether someone gets their
  * Buzz back at all. Both get a control below.
  */
+/**
+ * Renders a tagged-template call with its interpolated fragments IN ORDER.
+ *
+ * Reading only the outer strings misses everything composed in: an interpolated
+ * `Prisma.sql` arrives as a VALUE, so `queueImageIsListable` — the whole point of
+ * the readiness select — is invisible to `strings.join()`. Measured here: an
+ * assertion for `publishedAt` failed against a statement that contains it.
+ *
+ * ⚠️ This is a THIRD copy of logic that already exists twice in this file (the
+ * paging block and the sweep block below). Consolidating all three into one
+ * module-scope helper is worth doing and is deliberately NOT done here: it would
+ * mean editing two working, unrelated test blocks inside a bug-fix change, which
+ * is how a fix round breaks something it never meant to touch.
+ */
+const renderInterleaved = (args: unknown[]): string => {
+  const render = (value: unknown): string => {
+    if (!!value && typeof value === 'object' && 'strings' in value) {
+      const node = value as { strings: string[]; values: unknown[] };
+      return node.strings
+        .map((part, i) => part + (i < node.values.length ? render(node.values[i]) : ''))
+        .join('');
+    }
+    if (Array.isArray(value)) return value.map(render).join(' ');
+    return typeof value === 'string' ? value : '';
+  };
+
+  const [strings, ...values] = args as [string[], ...unknown[]];
+  if (!Array.isArray(strings)) return '';
+  return strings.map((part, i) => part + (i < values.length ? render(values[i]) : '')).join('');
+};
+
 describe('startReadyRemixSubmissionClocks', () => {
   const PLACEMENT_ID = 4242;
   const SUBMITTED_IMAGE = 555;
 
-  const pendingRow = {
+  let readinessSql = '';
+
+  const actionable = (over: MixedObject = {}) => ({
     id: PLACEMENT_ID,
     targetId: HOST_IMAGE,
-    placerId: PLACER,
     data: { imageId: SUBMITTED_IMAGE, awaitingReadiness: true },
-  };
+    imageId: SUBMITTED_IMAGE,
+    nsfwLevel: 1,
+    doomed: false,
+    needsReview: null,
+    ...over,
+  });
 
-  const respondImages = ({
-    listable,
-    doomed = false,
-    nsfwLevel = 1,
+  const respondReadiness = ({
+    rows,
+    hostRows,
     hostShowable = true,
     hostLevel = 1,
   }: {
-    listable: boolean;
-    doomed?: boolean;
-    nsfwLevel?: number;
+    rows: MixedObject[];
+    hostRows?: MixedObject[];
     hostShowable?: boolean;
     hostLevel?: number;
   }) =>
     queryRaw.mockImplementation(async (...args: unknown[]) => {
-      const [strings] = args as [string[], ...unknown[]];
-      const sql = Array.isArray(strings) ? strings.join(' ') : '';
-      // Told apart by the alias only the readiness query asks for. NOT by
-      // `minor`, which appears in BOTH — the readiness query names it inside its
-      // `doomed` expression, so that discriminator silently answered every call
-      // with the host row and made the pass find no images at all.
-      if (sql.includes('listable')) return [{ id: SUBMITTED_IMAGE, nsfwLevel, listable, doomed }];
-      return [{ nsfwLevel: hostLevel, minor: false, showable: hostShowable }];
+      const sql = renderInterleaved(args);
+      if (sql.includes('awaitingReadiness')) {
+        readinessSql = sql;
+        return rows;
+      }
+      return hostRows ?? [{ nsfwLevel: hostLevel, minor: false, showable: hostShowable }];
     });
 
   beforeEach(() => {
-    placementFindMany.mockResolvedValue([pendingRow]);
+    readinessSql = '';
     placementUpdateMany.mockResolvedValue({ count: 1 });
     resolvePlacementSpaceFor.mockResolvedValue({
       ownerId: OWNER,
       mode: 'review',
       price: PRICE,
       freeSlots: 1,
+      freeSlotsRemaining: 1,
       settings: {},
     });
   });
 
   it('starts the clock only once the image is actually live', async () => {
-    respondImages({ listable: true });
+    respondReadiness({ rows: [actionable()] });
 
     const result = await startReadyRemixSubmissionClocks({});
 
@@ -1439,46 +1473,89 @@ describe('startReadyRemixSubmissionClocks', () => {
     // running and whose marker still invites another restamp.
     expect(args.data).toHaveProperty('expiresAt');
     expect(args.data.data).not.toHaveProperty('awaitingReadiness');
-    // Claimed on the marker, so a concurrent pass is a no-op rather than a race
-    // that extends a deadline already running.
     expect(args.where).toMatchObject({ data: { path: ['awaitingReadiness'], equals: true } });
     expect(settlePlacement).not.toHaveBeenCalled();
   });
 
-  it('leaves a still-unpublished submission alone rather than starting or refunding it', async () => {
-    // The draft case. Its existing `expiresAt` is the window to get the image
-    // live, and letting THAT lapse is the refund — so this pass must do nothing.
-    respondImages({ listable: false });
+  /**
+   * The draft case moved into SQL, so it is asserted on the STATEMENT rather
+   * than on a return value: a batch that fetched unready rows and skipped them
+   * in memory starves `drain`, which re-runs while `considered` fills the batch,
+   * and rows behind the unready ones would never be reached at all. A mock
+   * cannot observe a WHERE clause any other way.
+   */
+  it('asks the database for actionable rows only, so drafts cannot starve the batch', async () => {
+    respondReadiness({ rows: [actionable()] });
 
-    const result = await startReadyRemixSubmissionClocks({});
+    await startReadyRemixSubmissionClocks({});
 
-    expect(result).toMatchObject({ started: 0, refunded: 0 });
-    expect(settlePlacement).not.toHaveBeenCalled();
-    expect(placementUpdateMany).not.toHaveBeenCalled();
+    // Named individually. A single toContain survives deleting any of the
+    // others, and a pass that stopped filtering on ingestion would read as
+    // covered.
+    for (const clause of ['publishedAt', 'Scanned', 'tosViolation', 'ORDER BY'])
+      expect(readinessSql, clause + ' is not in the readiness select').toContain(clause);
+    // LEFT, so a submission whose image was DELETED still comes back to be
+    // refunded rather than being dropped and left holding escrow forever.
+    expect(readinessSql).toContain('LEFT JOIN');
   });
 
   it('refunds and marks undeliverable when the image is blocked', async () => {
-    respondImages({ listable: true, doomed: true });
+    respondReadiness({ rows: [actionable({ doomed: true })] });
 
     const result = await startReadyRemixSubmissionClocks({});
 
     expect(result.refunded).toBe(1);
-    // `expire` is the full refund — it returns the whole escrow to the placer
-    // with no decline fee, which is right because nobody declined them.
+    // `expire` is the full refund - the whole escrow back to the placer with no
+    // decline fee, which is right because nobody declined them.
     expect(lastSettleArgs()).toMatchObject({ placementId: PLACEMENT_ID, action: 'expire' });
-    // Marked BEFORE the settle, so the notification query — which reads the row
-    // after it is resolved — cannot see a settled row that is not yet marked.
-    expect(placementUpdate).toHaveBeenCalled();
     const [updateArgs] = placementUpdate.mock.calls.at(-1) as [{ data: MixedObject }];
     expect(updateArgs.data.data).toMatchObject({ undeliverable: true });
   });
 
+  it('refunds when the image was deleted out from under the submission', async () => {
+    respondReadiness({ rows: [actionable({ imageId: null })] });
+
+    await expect(startReadyRemixSubmissionClocks({})).resolves.toMatchObject({ refunded: 1 });
+  });
+
+  /**
+   * 🔴 Submitting EARLY must not walk past a gate that submitting late enforces.
+   * `queueImageIsListable` does NOT check `needsReview`, so without this the
+   * moderation gate the mutation applies to a scanned image is bypassed simply
+   * by paying before the scan finished.
+   */
+  it('does not admit an image a moderator still has to look at', async () => {
+    respondReadiness({ rows: [actionable({ needsReview: 'tag' })] });
+
+    const result = await startReadyRemixSubmissionClocks({});
+
+    // Left pending rather than refunded: a review can clear, and if it does not
+    // the row's own deadline refunds it.
+    expect(result, 'a needsReview image must not start its clock').toMatchObject({
+      started: 0,
+      refunded: 0,
+    });
+    expect(settlePlacement).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 🔴 `loadHostImage` THROWS when the host is gone. Uncaught, that aborts the
+   * whole batch - and because the row stays pending and awaiting, the next tick
+   * reads it again and throws again, every five minutes, with no clock ever
+   * started and no refund ever issued for ANY submission.
+   */
+  it('refunds rather than wedging when the host image is gone', async () => {
+    respondReadiness({ rows: [actionable()], hostRows: [] });
+
+    await expect(startReadyRemixSubmissionClocks({})).resolves.toMatchObject({ refunded: 1 });
+    expect(lastSettleArgs()).toMatchObject({ action: 'expire' });
+  });
+
   it('refunds when the finished rating is above what the gallery accepts', async () => {
-    // The check that CANNOT be made at submission: an unscanned image has no
-    // rating, so this comparison waits until there is one. Someone can pay and
-    // then be refused on rating grounds, which is a normal outcome rather than
-    // an error.
-    respondImages({ listable: true, nsfwLevel: NsfwLevel.X, hostLevel: NsfwLevel.PG });
+    respondReadiness({
+      rows: [actionable({ nsfwLevel: NsfwLevel.X })],
+      hostLevel: NsfwLevel.PG,
+    });
 
     const result = await startReadyRemixSubmissionClocks({});
 
@@ -1490,10 +1567,7 @@ describe('startReadyRemixSubmissionClocks', () => {
   });
 
   it('does not count a restamp the claim lost', async () => {
-    // Another pass got there first. `updateMany` matches nothing, and the result
-    // must not report a clock it did not start — otherwise a double run reads as
-    // two submissions going live.
-    respondImages({ listable: true });
+    respondReadiness({ rows: [actionable()] });
     placementUpdateMany.mockResolvedValue({ count: 0 });
 
     const result = await startReadyRemixSubmissionClocks({});
@@ -1541,6 +1615,9 @@ describe('getRemixSourcesForImage', () => {
       mode: 'review',
       price: PRICE,
       freeSlots: 1,
+      // What is LEFT, which is what the card must offer against - capacity alone
+      // renders "Submit free" on a gallery whose slots are already taken.
+      freeSlotsRemaining: 1,
       settings: {},
     });
     getFreePlacementAllowance.mockResolvedValue({ remaining: 5 });

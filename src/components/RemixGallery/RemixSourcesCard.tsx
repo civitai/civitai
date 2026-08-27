@@ -5,6 +5,7 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { CustomCard } from '~/components/Post/EditV2/PostImageCards/CustomCard';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -32,20 +33,23 @@ const reasonLabel: Record<string, string> = {
  */
 export function RemixSourcesCard({
   imageId,
-  /**
-   * A published post has nothing left to hook a promise to — the image is
-   * already live, so submitting is something to DO now rather than something to
-   * schedule. Each source gets a button instead of a checkbox, and the publish
-   * handler never sees these at all.
-   */
+  /** Only changes what the success message promises; both states submit here. */
   published,
 }: {
   imageId: number;
   published: boolean;
 }) {
+  const features = useFeatureFlags();
   const utils = trpc.useUtils();
   const spendTypes = useAvailableBuzz();
-  const { data, isLoading } = trpc.placement.getRemixSourcesForImage.useQuery({ imageId });
+  // Every other entry point to this surface gates on the flag, and
+  // `submitToRemixGallery` refuses when it is off. Without this the card renders
+  // for everyone during rollout, with live buttons that fail on click — and asks
+  // a protected query per image on every post editor open.
+  const { data, isLoading } = trpc.placement.getRemixSourcesForImage.useQuery(
+    { imageId },
+    { enabled: !!features.remixGallery }
+  );
 
   const submit = trpc.placement.submitToRemixGallery.useMutation({
     onSuccess: () => {
@@ -70,6 +74,7 @@ export function RemixSourcesCard({
   // per-row keying exists to avoid.
   const submitting = submit.isPending ? submit.variables?.hostImageId : undefined;
 
+  if (!features.remixGallery) return null;
   if (isLoading) return null;
   if (!data?.length) return null;
 

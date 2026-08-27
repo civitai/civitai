@@ -240,13 +240,21 @@ export async function createRemixGallerySubmission({
   // their own are deferred. Do not extend this to the flags underneath it: see
   // `no-unverified-provenance-write` for the adjacent rule about trusting
   // unfinished state.
-  const pendingReadiness = !submission.publishedAt || submission.ingestion !== 'Scanned';
+  // `Blocked` is excluded deliberately: it is `!== 'Scanned'` like `Pending` is,
+  // but it is a terminal VERDICT rather than work in progress, so folding it in
+  // here would take someone's Buzz for a submission that can never be delivered
+  // and refund it minutes later with an apology.
+  const pendingReadiness =
+    !submission.publishedAt ||
+    (submission.ingestion !== 'Scanned' && submission.ingestion !== 'Blocked');
 
   // Not creator preferences, so they are refused under either content rule.
   if (submission.tosViolation || submission.minor || submission.poi)
     throw throwBadRequestError('remix gallery: that image cannot be submitted');
   // `needsReview` is a verdict on a SCANNED image, so it refuses. On an unscanned
-  // one it is simply not set yet, and the readiness pass re-reads it.
+  // one it is simply not set yet, and `startReadyRemixSubmissionClocks` applies
+  // the same rule before it admits the row — without that, submitting EARLY
+  // would walk past a gate that submitting late enforces.
   if (!pendingReadiness && submission.needsReview)
     throw throwBadRequestError('remix gallery: that image is still being reviewed');
 
@@ -1762,7 +1770,15 @@ export async function getRemixSourcesForImage({
     { userId: number; sourceImageIds: number[] | null; remixOfId: number | null }[]
   >`
     SELECT i."userId",
-           (i.meta -> 'extra' ->> 'remixOfId')::int AS "remixOfId",
+           -- Guarded cast. sanitizeProvenance strips provenance and
+           -- sourceImageIds from extra but carries remixOfId through from
+           -- client-authored meta unchanged, so a non-numeric value raises
+           -- invalid input syntax for type integer and 500s the card for that
+           -- image. Junk must read as no old-standard source, not as a crash.
+           CASE
+             WHEN i.meta -> 'extra' ->> 'remixOfId' ~ '^[0-9]+$'
+             THEN (i.meta -> 'extra' ->> 'remixOfId')::int
+           END AS "remixOfId",
            ${sourceImageIdsSql()} AS "sourceImageIds"
     FROM "Image" i
     WHERE i.id = ${imageId}
@@ -1840,8 +1856,16 @@ export async function getRemixSourcesForImage({
     // the mutation refuses `free` on it regardless of what this says, and the
     // card must agree with that refusal rather than offer something that fails.
     const verified = verifiedIds.has(hostImageId);
+    // `freeSlotsRemaining`, not `freeSlots`: the latter is the capacity the owner
+    // configured, and offering against it renders "Submit free" on a gallery
+    // whose slots are already taken — the mutation then refuses under its lock.
+    // Stale by construction and that is fine; the mutation re-counts. What
+    // matters is not OFFERING something already visibly gone.
     const freeAvailable =
-      verified && (space.freeSlots ?? 0) > 0 && allowance.remaining > 0 && !usedHere[index];
+      verified &&
+      (space.freeSlotsRemaining ?? 0) > 0 &&
+      allowance.remaining > 0 &&
+      !usedHere[index];
 
     return {
       hostImageId,
@@ -1958,100 +1982,125 @@ async function markUndeliverable(placementId: number, data: RemixGalleryPlacemen
  * no decline fee, which is right because nobody declined them.
  */
 export async function startReadyRemixSubmissionClocks({ limit = 200 }: { limit?: number } = {}) {
-  const rows = await dbWrite.placement.findMany({
-    where: {
-      surface: SURFACE,
-      targetType: TARGET_TYPE,
-      status: 'pending',
-      data: { path: ['awaitingReadiness'], equals: true },
-    },
-    select: { id: true, targetId: true, placerId: true, data: true },
-    take: limit,
-  });
-  if (!rows.length) return { considered: 0, started: 0, refunded: 0 };
-
-  const entries = rows.filter((row) => isRemixGalleryPlacementData(row.data));
-  const imageIds = entries.map((row) => (row.data as RemixGalleryPlacementData).imageId);
-  if (!imageIds.length) return { considered: rows.length, started: 0, refunded: 0 };
-
-  // The same listability the queue selects on, plus the fields the deferred
-  // checks need. Read through `queueImageIsListable` rather than a hand-written
-  // copy: a second definition of "live" is exactly the thing that drifts, and
-  // the owner's queue would then disagree with the pass that admitted the row.
-  const images = await dbWrite.$queryRaw<
-    { id: number; nsfwLevel: number; listable: boolean; doomed: boolean }[]
+  // Selected in SQL, already joined to the image, so a batch contains only rows
+  // this pass can ACT on. Fetching every awaiting row and skipping the unready
+  // ones in memory starves the queue: `drain` re-runs while `considered` fills
+  // the batch, so 200 drafts waiting to be published would be re-read every tick
+  // forever and any row behind them would never be reached at all.
+  const actionable = await dbWrite.$queryRaw<
+    {
+      id: number;
+      targetId: number;
+      imageId: number;
+      nsfwLevel: number;
+      doomed: boolean;
+      needsReview: string | null;
+      data: RemixGalleryPlacementData;
+    }[]
   >`
-    SELECT i.id,
+    SELECT pl.id,
+           pl."targetId",
+           pl.data,
+           (pl.data ->> 'imageId')::int AS "imageId",
            i."nsfwLevel",
-           ${queueImageIsListable(Prisma.sql`i.id`)} AS listable,
-           (i."tosViolation" OR i.minor OR i.poi OR i.ingestion = 'Blocked') AS doomed
-    FROM "Image" i
-    WHERE i.id IN (${Prisma.join(imageIds)})
+           (i."tosViolation" OR i.minor OR i.poi OR i.ingestion = 'Blocked') AS doomed,
+           i."needsReview"
+    FROM "Placement" pl
+    -- LEFT, so a submission whose image was DELETED still comes back and is
+    -- refunded. An inner join would drop it, and the row would sit pending until
+    -- its deadline with the placer's Buzz held for an image that no longer exists.
+    LEFT JOIN "Image" i ON i.id = (pl.data ->> 'imageId')::int
+    WHERE pl.surface = ${SURFACE}
+      AND pl."targetType" = ${TARGET_TYPE}
+      AND pl.status = 'pending'
+      AND pl.data ->> 'awaitingReadiness' = 'true'
+      AND (
+        i.id IS NULL
+        OR (i."tosViolation" OR i.minor OR i.poi OR i.ingestion = 'Blocked')
+        OR ${queueImageIsListable(Prisma.sql`i.id`)}
+      )
+    ORDER BY pl.id ASC
+    LIMIT ${limit}
   `;
-  const byId = new Map(images.map((image) => [image.id, image]));
+  if (!actionable.length) return { considered: 0, started: 0, refunded: 0 };
 
   const config = await getPlacementConfig();
   const expiryHours = config.expiryHours(SURFACE);
   let started = 0;
   let refunded = 0;
 
-  for (const row of entries) {
-    const data = row.data as RemixGalleryPlacementData;
-    const image = byId.get(data.imageId);
-
+  for (const row of actionable) {
     // Deleted outright, or a moderation verdict landed. Neither resolves by
     // waiting, so the money goes back now rather than at the deadline.
-    if (!image || image.doomed) {
-      await markUndeliverable(row.id, data);
+    if (!row.imageId || row.doomed) {
+      await markUndeliverable(row.id, row.data);
       await settlePlacement({ placementId: row.id, action: 'expire' });
       refunded++;
       continue;
     }
 
-    // Still a draft, or still scanning. Left alone: its existing `expiresAt` is
-    // the window to get it live, and letting that lapse is the refund.
-    if (!image.listable) continue;
+    // Scanned, but a moderator has to look at it. The same rule the mutation
+    // applies to an already-scanned image — without this, submitting BEFORE the
+    // scan finishes walks past a gate that submitting after it enforces. Left
+    // pending rather than refunded: a review can clear, and if it does not the
+    // row's existing deadline refunds it.
+    if (row.needsReview) continue;
 
-    const space = await resolvePlacementSpaceFor({
-      surface: SURFACE,
-      targetType: TARGET_TYPE,
-      targetId: row.targetId,
-    });
-    const host = await loadHostImage(row.targetId);
+    // Per row, and caught: `loadHostImage` THROWS when the host is gone, so an
+    // uncaught call here aborts the whole batch — and because the row stays
+    // pending and awaiting, the next tick reads it again and throws again, every
+    // five minutes, with no clock ever started and no refund ever issued.
+    let host: Awaited<ReturnType<typeof loadHostImage>> | null = null;
+    let space: Awaited<ReturnType<typeof resolvePlacementSpaceFor>> | null = null;
+    try {
+      [space, host] = await Promise.all([
+        resolvePlacementSpaceFor({
+          surface: SURFACE,
+          targetType: TARGET_TYPE,
+          targetId: row.targetId,
+        }),
+        loadHostImage(row.targetId),
+      ]);
+    } catch {
+      // The host is gone or unreadable. There is nothing left to deliver to.
+      await markUndeliverable(row.id, row.data);
+      await settlePlacement({ placementId: row.id, action: 'expire' });
+      refunded++;
+      continue;
+    }
 
     // Now that there IS a rating, the comparison that was deferred at submission.
     const allowed =
-      !!host &&
       host.showable &&
       remixGalleryLevelAllowed({
         rule: remixGalleryContentRule(space.settings),
-        submissionLevel: image.nsfwLevel,
+        submissionLevel: row.nsfwLevel,
         hostLevel: host.nsfwLevel,
         hostMinor: host.minor,
       });
 
     if (!allowed) {
-      await markUndeliverable(row.id, data);
+      await markUndeliverable(row.id, row.data);
       await settlePlacement({ placementId: row.id, action: 'expire' });
       refunded++;
       continue;
     }
 
+    const { awaitingReadiness: _cleared, ...strippedOfMarker } = row.data;
     // The marker is cleared in the same statement that starts the clock, so a
     // second pass cannot extend a deadline that is already running. `updateMany`
     // with the marker still in the WHERE makes that a no-op rather than a race.
-    const { awaitingReadiness: _cleared, ...rest } = data;
     const claimed = await dbWrite.placement.updateMany({
       where: { id: row.id, status: 'pending', data: { path: ['awaitingReadiness'], equals: true } },
       data: {
-        data: rest as Prisma.InputJsonValue,
+        data: strippedOfMarker as Prisma.InputJsonValue,
         expiresAt: new Date(Date.now() + expiryHours * 3_600_000),
       },
     });
     if (claimed.count) started++;
   }
 
-  return { considered: rows.length, started, refunded };
+  return { considered: actionable.length, started, refunded };
 }
 
 /**
