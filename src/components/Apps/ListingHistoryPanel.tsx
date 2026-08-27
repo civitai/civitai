@@ -1,6 +1,7 @@
 import { Alert, Badge, Button, Group, Loader, Stack, Text } from '@mantine/core';
 import { useCallback } from 'react';
 
+import { withdrawSuccessMessage } from '~/components/Apps/listingPublishingActions';
 import { historyStatusColor } from '~/components/Apps/myAppsView';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { formatDate } from '~/utils/date-helpers';
@@ -174,6 +175,19 @@ export function ListingHistoryPanelView({
               color="gray"
               disabled={withdrawing}
               onClick={() => onWithdraw(e)}
+              /*
+                🔴 THE ONE-WAY WARNING IS ON THE CONTROL, not only in the toast that
+                follows it. Withdrawing the review of a listing that was previously LIVE
+                does not return it to how it was: the server closes it to `removed` behind
+                a `delist` event, which the owner-republish guard reads as a moderator
+                takedown, so only a moderator can put it back. That is deliberate (it
+                closes a self-restore exploit — see `closeTerminalListing`), which is
+                exactly why it has to be disclosed BEFORE the click rather than defended
+                afterwards. Worded for the case it warns about without asserting the
+                listing IS in it — this component cannot tell, and a warning that
+                over-claims gets ignored.
+              */
+              title="Withdraws this submission. If the listing was previously live, withdrawing takes it off the store and a moderator has to restore it."
               data-testid={`apps-history-withdraw-${e.id}`}
             >
               Withdraw
@@ -236,8 +250,16 @@ export function ListingHistoryPanel({ appListingId }: { appListingId: string }) 
     onError: (e) => onWithdrawError(e.message),
   });
   const withdrawListing = trpc.appListings.withdrawExternalRequest.useMutation({
-    onSuccess: () => {
-      showSuccessNotification({ message: 'Submission withdrawn.' });
+    /**
+     * 🔴 THE SERVER SAYS WHAT IT DID; DO NOT ASSUME. `outcome: 'removed'` means this
+     * withdraw closed the review of a formerly-LIVE listing, so the listing is now OFF the
+     * store behind a `delist` and the owner cannot republish it — a moderator must relist.
+     * `'deleted'` merely discarded a draft. Announcing both as "Submission withdrawn."
+     * left an owner looking at a "removed by a moderator" state they had caused
+     * themselves, with nothing having told them it would happen.
+     */
+    onSuccess: (data) => {
+      showSuccessNotification({ message: withdrawSuccessMessage(data?.outcome) });
       refetchHistory();
     },
     onError: (e) => onWithdrawError(e.message),

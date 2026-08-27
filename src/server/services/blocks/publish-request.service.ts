@@ -1434,11 +1434,11 @@ export class WithdrawRequestError extends Error {
  * 🔴 THERE ARE NOW TWO WRITERS OF ONSITE `status='pending'`, and this comment used to
  * name only one. Besides `resetOnsiteListingToPending` (the mod reset), the owner-facing
  * `republishOwnListing` routes a republish to `pending` when the listing's assets changed
- * since the last approval. This close therefore also fires for an OWNER-INITIATED review,
- * and treats it identically — `delist`, so a moderator must relist. Deliberate and
- * fail-CLOSED (nothing unreviewed serves), but it does mean an owner who withdraws their
- * own re-review needs a moderator to get back. See the matching note in
- * `closeTerminalListing` (`offsite-listing.service`).
+ * since the last approval. Those two are reviewed on DIFFERENT queues — the mod reset
+ * re-queues an `AppBlockPublishRequest`, the owner republish an
+ * `AppListingPublishRequest` — so a `pending` on-site listing is no longer proof that
+ * THIS block request is the review that is open on it. The in-body check refuses to act
+ * when a pending listing request owns the row; read it before changing anything here.
  * Flip the listing `pending → removed` (status-guarded TOCTOU) + write a `delist` audit
  * event with the OWNER as actor: the last event is now a takedown, so
  * `republishOwnListing`'s guard FORBIDS the owner and a mod must `relistListing`
@@ -1460,9 +1460,36 @@ async function closeOnsiteResetListingOnWithdraw(opts: {
   });
   if (!listing) return; // not a reset withdraw (first-time submission, or already closed)
 
-  // A `pending` onsite listing is unconditionally a mod reset → close it. Imported here
-  // (only on the rare reset branch) to keep the common no-reset withdraw path free of
-  // the id-gen module.
+  // 🔴 NOT EVERY `pending` ON-SITE LISTING IS THIS WITHDRAW'S BUSINESS ANY MORE, and
+  // acting on one that is not would close a review this request has nothing to do with.
+  //
+  // This function reasons from a SLUG and a listing STATUS — it never looked at which
+  // queue owns the review, because there was only one: a `pending` on-site listing meant a
+  // mod reset, and a mod reset always leaves a `pending` `AppBlockPublishRequest`, so the
+  // withdrawing request WAS the review. The owner-republish asset-review route breaks that
+  // coupling: it parks the listing in `pending` with a pending `AppListingPublishRequest`
+  // and NO block request at all. The owner can then submit an ordinary new app VERSION —
+  // nothing stops them, since the one-pending-per-slug index is empty — and withdrawing
+  // that version would, without this check, delist a listing whose image review is sitting
+  // untouched in the other queue, taking the owner from "waiting for review" to
+  // "removed by a moderator, ask a moderator to relist" for pressing Withdraw on something
+  // else entirely.
+  //
+  // So: if a pending LISTING request points at this row, that request owns the review and
+  // this one does not. `withdrawExternalRequest` → `closeTerminalListing` is the path that
+  // closes it, and it writes the identical `pending → removed` + `delist`. This is a
+  // discriminator, NOT a relaxation: nothing here decides whether an owner may self-restore
+  // (that is still `republishOwnListing`'s last-event guard), and the mod-reset case —
+  // which has no listing request — is completely unaffected.
+  const listingReviewOwnsIt = await dbRead.appListingPublishRequest.findFirst({
+    where: { appListingId: listing.id, status: 'pending' },
+    select: { id: true },
+  });
+  if (listingReviewOwnsIt) return;
+
+  // A `pending` onsite listing with no listing-request review is a mod reset → close it.
+  // Imported here (only on the rare reset branch) to keep the common no-reset withdraw
+  // path free of the id-gen module.
   const { newAppListingModerationEventId } = await import('~/server/utils/app-block-ids');
   await dbWrite.$transaction(async (tx) => {
     const flipped = await tx.appListing.updateMany({
@@ -2866,7 +2893,9 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // count 0) does NOT touch the block, and a delisted-then-resubmitted app is never
   // auto-un-suspended here (its listing is `removed`, not `pending`, so count 0 too).
   // Both flips are status-guarded (never clobber a drifted/curated state) — the listing
-  // flip touches only `status`. Same log-and-continue posture: the store listing +
+  // flip touches `status` and the go-live rating floor (see the 🔴 note at the flip; the
+  // floor is raise-only, so it can never lower a curated rating). Same log-and-continue
+  // posture: the store listing +
   // block restore are a convenience and must NEVER gate the approve/deploy.
   try {
     // 🔴 Scan-clean go-live gate (same invariant + shared helper as the mod/owner
@@ -2881,17 +2910,45 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     // PrismaClient is structurally a TransactionClient for these reads).
     const resetListing = await dbWrite.appListing.findFirst({
       where: { appBlockId, kind: 'onsite', status: 'pending' },
-      select: { id: true },
+      select: { id: true, contentRating: true },
     });
+    // 🔴 RATING FLOOR (go-live) — this restore is a PUBLISH, and it had no floor.
+    //
+    // The sibling (3b-transition) branch above floors a draft→approved transition at the
+    // media-derived rating for a reason that applies here VERBATIM: while the listing sat
+    // `pending` it was DIRECTLY asset-editable by its owner (`assertOwnerAssetEditable`
+    // refuses only an `approved` non-shadow row, and `pending` is in
+    // `AUTHORABLE_LISTING_STATUSES`, so the Media tab is offered normally), and the attach
+    // path rejects only `Blocked`/`NotFound` — it never compares an image's `nsfwLevel`
+    // against the listing rating. `reDeriveContentRatingForModLiveEdit` does not cover it
+    // either: it no-ops for a non-moderator AND for any status other than `approved`.
+    //
+    // So without this line, `reset-to-pending → owner swaps in a Scanned-but-mature cover →
+    // mod re-approves` restored the listing to `approved` carrying its OLD rating, and a
+    // mature store card passed `listingMatureFilter(redCapable=false)` to SFW-only users.
+    // Raise-only, so a deliberately higher rating is never lowered — same helper, same
+    // discipline as (3b-transition) and the owner-republish path.
+    let flooredRating: string | null = null;
     if (resetListing) {
-      const { assertListingAssetsScanCleanInTx } = await import(
+      const { assertListingAssetsScanCleanInTx, resolveListingRatingFloorInTx } = await import(
         '~/server/services/blocks/app-listing-assets.service'
       );
       await assertListingAssetsScanCleanInTx(dbWrite, resetListing.id);
+      flooredRating = await resolveListingRatingFloorInTx(
+        dbWrite,
+        resetListing.id,
+        resetListing.contentRating
+      );
     }
     const restored = await dbWrite.appListing.updateMany({
       where: { appBlockId, kind: 'onsite', status: 'pending' },
-      data: { status: 'approved' },
+      data: {
+        status: 'approved',
+        // Only written when the pre-read found the listing — otherwise this `updateMany`
+        // matches nothing anyway and naming the column would stamp a `null` rating on a
+        // row that raced into `pending` between the two statements.
+        ...(resetListing ? { contentRating: flooredRating } : {}),
+      },
     });
     if (restored.count > 0) {
       // Reset re-approve confirmed → un-suspend the backing block so it serves again.

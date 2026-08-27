@@ -7,7 +7,7 @@ import {
   buildApprovedAssetSnapshot,
   normalizeListingScreenshots,
   parseApprovedAssetSnapshot,
-  readRecordedAssetSnapshot,
+  readRecordedAssetBaseline,
   resolveRepublishReviewReason,
 } from '~/server/services/blocks/app-listing-approved-assets';
 
@@ -174,14 +174,14 @@ describe('parseApprovedAssetSnapshot — 🔴 unknown must never round-trip as e
   });
 });
 
-describe('readRecordedAssetSnapshot', () => {
+describe('readRecordedAssetBaseline — 🔴 absent and unreadable are DIFFERENT answers', () => {
   it('pulls the snapshot out of an event `before` payload', () => {
     expect(
-      readRecordedAssetSnapshot({
+      readRecordedAssetBaseline({
         status: 'approved',
         assets: { v: 1, iconId: 3, coverId: null, screenshots: [] },
       })
-    ).toEqual(snap({ iconId: 3 }));
+    ).toEqual({ kind: 'snapshot', snapshot: snap({ iconId: 3 }) });
   });
 
   it.each([
@@ -189,8 +189,30 @@ describe('readRecordedAssetSnapshot', () => {
     ['no payload at all', null],
     ['an undefined payload', undefined],
     ['a non-object payload', 'approved'],
-  ])('returns null for %s', (_label, before) => {
-    expect(readRecordedAssetSnapshot(before as never)).toBeNull();
+    ['an ARRAY payload', [{ v: 1 }]],
+  ])('reports ABSENT for %s — nothing was ever recorded', (_label, before) => {
+    expect(readRecordedAssetBaseline(before as never)).toEqual({ kind: 'absent' });
+  });
+
+  it.each([
+    ['an explicit null baseline', null],
+    ['a number where a snapshot should be', 7],
+    ['a snapshot from an UNKNOWN future version', { v: 2, iconId: 1, coverId: 2, screenshots: [] }],
+    ['a snapshot with a malformed screenshot', { v: 1, iconId: 1, coverId: 2, screenshots: [{}] }],
+    ['a snapshot missing `screenshots`', { v: 1, iconId: 1, coverId: 2 }],
+  ])('reports UNREADABLE for %s — a baseline was written and cannot be read', (_label, assets) => {
+    expect(readRecordedAssetBaseline({ status: 'approved', assets } as never)).toEqual({
+      kind: 'unreadable',
+    });
+  });
+
+  it('🔴 the two absences are NOT interchangeable', () => {
+    // The whole reason this function returns three things instead of `Snapshot | null`.
+    // A caller that collapses them either sweeps the entire pre-feature population into
+    // review, or silently disarms the gate the first time a payload goes bad.
+    expect(readRecordedAssetBaseline({ status: 'approved' } as never)).not.toEqual(
+      readRecordedAssetBaseline({ status: 'approved', assets: null } as never)
+    );
   });
 });
 
@@ -228,24 +250,41 @@ describe('approvedAssetSnapshotsEqual', () => {
 
 describe('resolveRepublishReviewReason — 🔴 the gate itself', () => {
   const live = snap({ iconId: 1, coverId: 2, screenshots: [{ imageId: 3, caption: null }] });
+  const recorded = (snapshot: ReturnType<typeof snap>) => ({ kind: 'snapshot' as const, snapshot });
 
   it('recorded === live ⇒ null (republish stays IMMEDIATE)', () => {
-    expect(resolveRepublishReviewReason(snap({ ...live }), live)).toBeNull();
+    expect(resolveRepublishReviewReason(recorded(snap({ ...live })), live)).toBeNull();
   });
 
   it('recorded !== live ⇒ assets-changed', () => {
-    expect(resolveRepublishReviewReason(snap({ ...live, iconId: 42 }), live)).toBe(
+    expect(resolveRepublishReviewReason(recorded(snap({ ...live, iconId: 42 })), live)).toBe(
       'assets-changed'
     );
   });
 
-  it('🔴 NO recorded baseline ⇒ no-recorded-assets, NOT null — absence is MISSING, not SAME', () => {
-    expect(resolveRepublishReviewReason(null, live)).toBe('no-recorded-assets');
+  it('🔴 an UNREADABLE baseline ⇒ review — a broken comparison point is not a pass', () => {
+    expect(resolveRepublishReviewReason({ kind: 'unreadable' }, live)).toBe('unreadable-baseline');
   });
 
-  it('🔴 NO recorded baseline against an ASSET-LESS listing still ⇒ review', () => {
+  it('🔴 an UNREADABLE baseline reviews even when the listing has NO assets', () => {
     // The case a coercing parser would get wrong: an empty snapshot compares EQUAL to a
-    // listing with no assets, so "unknown" would silently become "unchanged".
-    expect(resolveRepublishReviewReason(null, snap())).toBe('no-recorded-assets');
+    // listing with no assets, so "cannot read it" would silently become "unchanged".
+    expect(resolveRepublishReviewReason({ kind: 'unreadable' }, snap())).toBe(
+      'unreadable-baseline'
+    );
+  });
+
+  it('🔴 an ABSENT baseline ⇒ null — republish is IMMEDIATE, exactly as before the gate', () => {
+    // Deliberately fail-OPEN, and the ONLY arm that is. Nothing was ever recorded for
+    // this listing, so there is no change to show a moderator — routing it to review buys
+    // no review, and costs every already-removed listing its way back. Bounded and
+    // shrinking: only listings unpublished before the recording shipped land here.
+    expect(resolveRepublishReviewReason({ kind: 'absent' }, live)).toBeNull();
+  });
+
+  it('🔴 ABSENT and UNREADABLE do not share a verdict', () => {
+    expect(resolveRepublishReviewReason({ kind: 'absent' }, live)).not.toBe(
+      resolveRepublishReviewReason({ kind: 'unreadable' }, live)
+    );
   });
 });

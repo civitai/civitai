@@ -41,13 +41,31 @@ import type { Prisma } from '@prisma/client';
  * This module IS that stored baseline, on the server, for a different question. Merging
  * them would drag a React-tree module onto the transaction path for no gain.
  *
- * 🔴 ABSENCE IS A REAL BRANCH AND IT FAILS CLOSED. {@link parseApprovedAssetSnapshot}
- * returns `null` for a missing, malformed or future-versioned payload — it never returns
- * an empty snapshot, because an empty snapshot would COMPARE EQUAL to a listing that
- * happens to have no assets and would silently read as "nothing changed". A comparison
- * against an absent operand must report MISSING, not SAME. The caller routes a `null` to
- * re-review. That is the whole population of listings unpublished BEFORE this shipped:
- * for them we genuinely cannot tell, so they get one re-review on their next republish.
+ * 🔴 ABSENCE IS A REAL BRANCH — AND THERE ARE **TWO** OF THEM, WHICH GO OPPOSITE WAYS.
+ * {@link parseApprovedAssetSnapshot} still returns `null` for anything it does not fully
+ * recognise, and it never returns an empty snapshot (an empty snapshot would COMPARE EQUAL
+ * to a listing that happens to have no assets and would silently read as "nothing
+ * changed"). But {@link readRecordedAssetBaseline} splits that `null` in two, because the
+ * two causes are not the same fact about the world:
+ *
+ *   - `absent`     — the event carries NO `assets` key at all. That is the signature of a
+ *                    listing unpublished BEFORE this feature shipped: a bounded, strictly
+ *                    SHRINKING population for which no baseline was ever written and none
+ *                    ever can be. Routing these to review is not a safety win — it does
+ *                    not make anyone look at a change, because there is no change to
+ *                    describe — while it DOES take every already-removed listing offline
+ *                    behind a moderator on ship day (measured against production at the
+ *                    time of writing: every removable on-site listing in this state). So
+ *                    `absent` keeps the PRE-EXISTING behaviour: republish goes live.
+ *   - `unreadable` — the event HAS an `assets` key and it does not parse (malformed, or a
+ *                    version this build does not understand). That is not history, it is
+ *                    something being WRONG right now, and the population is unbounded.
+ *                    It FAILS CLOSED → review.
+ *
+ * 🔴 THE DISTINCTION IS THE WHOLE POINT, so do not collapse it back to one `null`. A
+ * single "unknown ⇒ review" rule is the version that sweeps the legacy population; a
+ * single "unknown ⇒ allow" rule is the version that silently disarms the gate the first
+ * time a payload goes bad. Neither is safe on its own.
  */
 
 /**
@@ -202,16 +220,37 @@ export function parseApprovedAssetSnapshot(value: unknown): ApprovedAssetSnapsho
 }
 
 /**
- * Read the recorded asset snapshot out of a moderation event's `before` payload, or
- * `null` when the event carries none. Both arms of the absence — an event written before
- * this feature existed, and a payload that is not a snapshot — collapse to `null` here,
- * and the caller must treat `null` as UNKNOWN rather than as "no assets".
+ * What a moderation event's `before` payload tells us about the last-approved assets.
+ *
+ * 🔴 THREE OUTCOMES, NOT TWO, and the two non-`snapshot` ones are decided DIFFERENTLY by
+ * the gate — see the module docstring. `absent` is "this event predates the feature"
+ * (bounded, shrinking, no change to review); `unreadable` is "this event claims to carry a
+ * baseline and it is broken" (unbounded, fail closed).
  */
-export function readRecordedAssetSnapshot(
+export type RecordedAssetBaseline =
+  | { kind: 'absent' }
+  | { kind: 'unreadable' }
+  | { kind: 'snapshot'; snapshot: ApprovedAssetSnapshot };
+
+/**
+ * Read the recorded asset baseline out of a moderation event's `before` payload.
+ *
+ * 🔴 THE `absent` TEST IS ON THE **KEY**, NOT ON THE PARSE RESULT. `undefined` means the
+ * writer never wrote one; ANY other value — including `null`, a number, or a snapshot from
+ * a version this build does not understand — means a baseline was written and we cannot
+ * read it, which is a different fact and gets the opposite answer. A `before` that is not
+ * an object at all is likewise `absent`: that is the shape every pre-feature event has.
+ */
+export function readRecordedAssetBaseline(
   before: Prisma.JsonValue | null | undefined
-): ApprovedAssetSnapshot | null {
-  if (typeof before !== 'object' || before === null || Array.isArray(before)) return null;
-  return parseApprovedAssetSnapshot((before as Record<string, unknown>).assets);
+): RecordedAssetBaseline {
+  if (typeof before !== 'object' || before === null || Array.isArray(before)) {
+    return { kind: 'absent' };
+  }
+  const raw = (before as Record<string, unknown>).assets;
+  if (raw === undefined) return { kind: 'absent' };
+  const snapshot = parseApprovedAssetSnapshot(raw);
+  return snapshot === null ? { kind: 'unreadable' } : { kind: 'snapshot', snapshot };
 }
 
 /**
@@ -234,27 +273,33 @@ export function approvedAssetSnapshotsEqual(
 }
 
 /** Why an owner republish has to go back through review, or `null` when it does not. */
-export type RepublishReviewReason = 'assets-changed' | 'no-recorded-assets';
+export type RepublishReviewReason = 'assets-changed' | 'unreadable-baseline';
 
 /**
  * THE GATE. Decide whether an owner republish may go live immediately or must re-enter
  * the review queue.
  *
- * - no recorded snapshot → `'no-recorded-assets'` (FAIL CLOSED — we cannot tell)
- * - recorded snapshot differs from the live assets → `'assets-changed'`
- * - recorded snapshot matches → `null`, republish stays immediate exactly as before
+ * - `snapshot` that DIFFERS from the live assets → `'assets-changed'` (the point of all this)
+ * - `snapshot` that MATCHES → `null`; republish stays immediate exactly as before
+ * - `unreadable` → `'unreadable-baseline'` (FAIL CLOSED — a baseline exists and is broken)
+ * - `absent`   → `null`; NO baseline was ever recorded, so there is no change to review and
+ *                the pre-existing immediate republish stands. See the module docstring for
+ *                why this one arm is deliberately fail-OPEN — it is the only arm whose
+ *                population is bounded and shrinking, and closing it takes every
+ *                already-removed listing offline behind a moderator for no review value.
  */
 export function resolveRepublishReviewReason(
-  recorded: ApprovedAssetSnapshot | null,
+  recorded: RecordedAssetBaseline,
   live: ApprovedAssetSnapshot
 ): RepublishReviewReason | null {
-  if (recorded === null) return 'no-recorded-assets';
-  return approvedAssetSnapshotsEqual(recorded, live) ? null : 'assets-changed';
+  if (recorded.kind === 'absent') return null;
+  if (recorded.kind === 'unreadable') return 'unreadable-baseline';
+  return approvedAssetSnapshotsEqual(recorded.snapshot, live) ? null : 'assets-changed';
 }
 
 /** Human-readable `detail` for the audit event, so the history says WHY it re-queued. */
 export const REPUBLISH_REVIEW_DETAIL: Record<RepublishReviewReason, string> = {
   'assets-changed': 'listing assets changed since the last approval — routed to review',
-  'no-recorded-assets':
-    'no recorded assets from the last approval to compare against — routed to review',
+  'unreadable-baseline':
+    'the recorded assets from the last approval could not be read — routed to review',
 };

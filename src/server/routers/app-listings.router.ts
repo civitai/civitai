@@ -650,11 +650,12 @@ export const appListingsRouter = router({
       const { withdrawExternalRequest } = await import(
         '~/server/services/blocks/offsite-listing.service'
       );
+      let outcome;
       try {
-        await withdrawExternalRequest({
+        ({ outcome } = await withdrawExternalRequest({
           publishRequestId: input.publishRequestId,
           userId: ctx.user.id,
-        });
+        }));
       } catch (err) {
         throw new TRPCError({
           code: 'BAD_REQUEST',
@@ -662,7 +663,11 @@ export const appListingsRouter = router({
           cause: err,
         });
       }
-      return { ok: true };
+      // 🔴 `outcome` is NOT decoration. `'removed'` means this withdraw closed the review
+      // of a formerly-LIVE listing, which leaves it delisted and only a moderator can put
+      // it back; `'deleted'` merely discarded a draft. The UI must be able to say which,
+      // so it is returned rather than collapsed into `{ ok: true }`.
+      return { ok: true, outcome };
     }),
 
   /**

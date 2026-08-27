@@ -43,7 +43,10 @@ type WriteMock = {
     findFirst: ReturnType<typeof vi.fn>;
     create: ReturnType<typeof vi.fn>;
   };
-  appListingPublishRequest: { create: ReturnType<typeof vi.fn> };
+  appListingPublishRequest: {
+    findFirst: ReturnType<typeof vi.fn>;
+    create: ReturnType<typeof vi.fn>;
+  };
   appBlockPublishRequest: {
     findFirst: ReturnType<typeof vi.fn>;
     create: ReturnType<typeof vi.fn>;
@@ -223,6 +226,10 @@ beforeEach(() => {
   mockWrite.appListingPublishRequest.create.mockImplementation(
     async (a: { data: unknown }) => a.data
   );
+  // No review already open on the row, unless a test says otherwise. Set EXPLICITLY:
+  // `clearAllMocks` clears calls, not implementations, so a `mockResolvedValue` left by an
+  // earlier test would otherwise make every later republish refuse.
+  mockWrite.appListingPublishRequest.findFirst.mockReset().mockResolvedValue(null);
   mockWrite.appBlockPublishRequest.create.mockImplementation(
     async (a: { data: unknown }) => a.data
   );
@@ -297,8 +304,12 @@ describe('republishOwnListing — assets UNCHANGED ⇒ immediate (no behaviour c
 describe('republishOwnListing — assets CHANGED ⇒ routed to review', () => {
   it.each([
     ['the ICON was swapped', { iconId: 99 }, undefined],
-    ['the ICON was cleared', { iconId: null }, undefined],
     ['the COVER was swapped', { coverId: 99 }, undefined],
+    ['BOTH the icon and the cover were swapped', { iconId: 99, coverId: 88 }, undefined],
+    // NOTE: "the icon was CLEARED" is deliberately not here. Clearing the icon or cover is
+    // a change, but it drops the listing below the publish floor, so it is refused with an
+    // actionable error instead of being queued for a review no moderator could approve —
+    // see the floor cases in the on-site block below.
     ['an ICON was ADDED where there was none', { iconId: ICON_ID }, { iconId: null }],
   ])('%s', async (_label, listingOver, baselineOver) => {
     wire({ ...listingOver, recorded: baseline(baselineOver ?? {}) });
@@ -368,7 +379,7 @@ describe('republishOwnListing — assets CHANGED ⇒ routed to review', () => {
     expect(mockWrite.appBlock.updateMany).not.toHaveBeenCalled();
   });
 
-  it('🔴 ON-SITE: clones the approved block request and LEAVES THE BLOCK SUSPENDED', async () => {
+  it('🔴 ON-SITE: re-queues on the LISTING surface and LEAVES THE BLOCK SUSPENDED', async () => {
     wire({ kind: 'onsite', iconId: 99, recorded: baseline() });
     const res = await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
 
@@ -378,49 +389,43 @@ describe('republishOwnListing — assets CHANGED ⇒ routed to review', () => {
       data: { status: 'pending', contentRating: 'g' },
     });
     // 🔴 THE LOAD-BEARING ABSENCE: an app awaiting review of its store card must NOT be
-    // serving. `approveRequest`'s (3b-reset) branch un-suspends it on re-approve, gated
-    // on exactly the `pending` listing status written above.
+    // serving. `approveExternalRequest` un-suspends it on approve, gated on exactly the
+    // `pending` on-site listing written above.
     expect(mockWrite.appBlock.updateMany).not.toHaveBeenCalled();
-    // Re-queued through the BLOCK request table (the onsite review queue), owner-submitted,
-    // carrying the approved version's bytes + provenance verbatim.
-    expect(mockWrite.appBlockPublishRequest.create).toHaveBeenCalledTimes(1);
-    expect(mockWrite.appBlockPublishRequest.create.mock.calls[0][0].data).toMatchObject({
-      appBlockId: BLOCK_ID,
+    // 🔴 THE FIX FOR THE ARM THAT COULD NOT SHOW WHAT IT WAS REVIEWING. What changed is
+    // the listing's IMAGERY, so it re-queues on the surface whose moderator modal reads
+    // `AppListing.iconId` / `coverId` / `AppListingScreenshot` — NOT the block-request
+    // queue, whose modal draws screenshots out of the bundle ZIP and would have shown a
+    // byte-identical re-submission of an already-approved version instead.
+    expect(mockWrite.appBlockPublishRequest.create).not.toHaveBeenCalled();
+    expect(mockWrite.appListingPublishRequest.create).toHaveBeenCalledTimes(1);
+    expect(mockWrite.appListingPublishRequest.create.mock.calls[0][0].data).toMatchObject({
+      appListingId: APP_ID,
+      kind: 'onsite',
       slug: SLUG,
       submittedByUserId: OWNER,
       status: 'pending',
-      version: '1.2.0',
-      bundleSha256: 'deadbeef',
-      sourceCommit: lastApprovedBlockRequest.sourceCommit,
-      sourceDirty: true,
     });
-    // The off-site listing-request table is NOT the onsite queue — writing there would
-    // strand the app where no moderator looks.
-    expect(mockWrite.appListingPublishRequest.create).not.toHaveBeenCalled();
   });
 
-  it('🔴 ON-SITE with NO approved version to clone → NOT_TRANSITIONABLE, and NOTHING is written', async () => {
-    // Stranding the listing in `pending` with nothing in any queue would be unrecoverable
-    // for the owner, so the whole republish must refuse instead.
-    wire({ kind: 'onsite', iconId: 99, recorded: baseline() });
-    mockWrite.appBlockPublishRequest.findFirst.mockReset().mockResolvedValue(null);
-    await expect(
-      republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER })
-    ).rejects.toMatchObject({
-      name: 'OffsiteModerationError',
-      code: 'NOT_TRANSITIONABLE',
-      message: expect.stringContaining('no approved version'),
+  it('🔴 ON-SITE does NOT consult `AppBlockPublishRequest` at all', async () => {
+    // The old on-site arm threw NOT_TRANSITIONABLE when a slug had no approved block
+    // request, no `appBlockId`, or a block review already open — three hard refusals that
+    // `republishOwnListing` never had before, on a path an owner reaches by pressing one
+    // button. Re-queueing on the listing surface removes the dependency, so none of the
+    // three can fire. Both block-request mocks are armed to fail loudly if touched.
+    mockWrite.appBlockPublishRequest.findFirst.mockReset().mockImplementation(async () => {
+      throw new Error('the review arm must not read AppBlockPublishRequest');
     });
-    expect(mockWrite.appListing.updateMany).not.toHaveBeenCalled();
-    expect(mockWrite.appListingModerationEvent.create).not.toHaveBeenCalled();
+    wire({ kind: 'onsite', iconId: 99, recorded: baseline() });
+    const res = await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
+    expect(res.status).toBe('pending');
+    expect(mockWrite.appBlockPublishRequest.findFirst).not.toHaveBeenCalled();
   });
 
-  it('🔴 ON-SITE with a review already in flight → NOT_TRANSITIONABLE, and NOTHING is written', async () => {
+  it('🔴 a review already open on THIS listing → NOT_TRANSITIONABLE, and NOTHING is written', async () => {
     wire({ kind: 'onsite', iconId: 99, recorded: baseline() });
-    mockWrite.appBlockPublishRequest.findFirst
-      .mockReset()
-      .mockResolvedValueOnce(lastApprovedBlockRequest)
-      .mockResolvedValueOnce({ id: 'pubreq_open' });
+    mockWrite.appListingPublishRequest.findFirst.mockResolvedValue({ id: 'alpr_open' });
     await expect(
       republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER })
     ).rejects.toMatchObject({
@@ -428,8 +433,32 @@ describe('republishOwnListing — assets CHANGED ⇒ routed to review', () => {
       message: expect.stringContaining('already pending'),
     });
     expect(mockWrite.appListing.updateMany).not.toHaveBeenCalled();
-    expect(mockWrite.appBlockPublishRequest.create).not.toHaveBeenCalled();
+    expect(mockWrite.appListingPublishRequest.create).not.toHaveBeenCalled();
+    expect(mockWrite.appListingModerationEvent.create).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ['no icon', { iconId: null }],
+    ['no cover', { coverId: null }],
+  ])(
+    '🔴 refuses with an actionable floor error when the listing has %s, leaving it `removed`',
+    async (_label, over) => {
+      // `approveExternalRequest` asserts icon+cover and does NOT exempt on-site, while the
+      // on-site FIRST-publish path never asserts it — so an approved on-site listing may
+      // genuinely have neither. Routing such a listing to review would strand it: pending
+      // listing, suspended app, and a moderator approve that fails the floor every time.
+      // Failing HERE keeps the listing `removed`, where its owner can still fix it.
+      wire({ kind: 'onsite', shots: [shot(99)], ...over, recorded: baseline() });
+      await expect(
+        republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER })
+      ).rejects.toMatchObject({
+        message: expect.stringContaining('icon and cover'),
+      });
+      expect(mockWrite.appListing.updateMany).not.toHaveBeenCalled();
+      expect(mockWrite.appListingPublishRequest.create).not.toHaveBeenCalled();
+      expect(mockWrite.appListingModerationEvent.create).not.toHaveBeenCalled();
+    }
+  );
 
   it('a raced 0-count on the pending flip aborts BEFORE any audit event or queue entry', async () => {
     wire({ iconId: 99, recorded: baseline() });
@@ -443,47 +472,57 @@ describe('republishOwnListing — assets CHANGED ⇒ routed to review', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 🔴 The FAIL-CLOSED arm: no usable baseline.
+// 🔴 The two ABSENCES, which go OPPOSITE ways.
 // ---------------------------------------------------------------------------
 
-describe('republishOwnListing — 🔴 NO usable baseline ⇒ review, never a silent pass', () => {
-  it('a legacy `owner-unpublish` event with no recorded assets routes to review', async () => {
-    // The whole population of listings unpublished BEFORE the snapshot shipped.
+describe('republishOwnListing — 🔴 absent baseline vs unreadable baseline', () => {
+  it('🔴 a legacy `owner-unpublish` with NO recorded assets republishes IMMEDIATELY', async () => {
+    // The entire population of listings unpublished BEFORE the snapshot shipped. Nothing
+    // was ever recorded for them, so there is no "before" to show a moderator — routing
+    // them to review buys no review and takes every one of them offline behind a
+    // moderator on ship day. Measured against production at the time of writing: this is
+    // EVERY republish-eligible removed listing that exists. Deliberately fail-OPEN, and
+    // the only arm that is.
     wire({ iconId: 99, recorded: undefined });
     mockWrite.appListingModerationEvent.findFirst.mockResolvedValue({
       action: 'owner-unpublish',
       before: { status: 'approved' },
     });
     const res = await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
-    expect(res).toEqual({
-      appListingId: APP_ID,
-      status: 'pending',
-      reviewReason: 'no-recorded-assets',
+    expect(res).toEqual({ appListingId: APP_ID, status: 'approved' });
+    expect(mockWrite.appListingPublishRequest.create).not.toHaveBeenCalled();
+    expect(mockWrite.appListing.updateMany).toHaveBeenCalledWith({
+      where: { id: APP_ID, kind: 'offsite', status: 'removed' },
+      data: { status: 'approved', contentRating: 'g' },
     });
-    expect(eventData().detail).toContain('no recorded assets');
   });
 
-  it('🔴 an ASSET-LESS listing with no baseline ALSO routes to review', async () => {
-    // The case a coercing parser gets wrong: an "empty" snapshot compares EQUAL to a
-    // listing with no assets, so unknown would silently read as unchanged and go live.
+  it('🔴 an ASSET-LESS listing with no baseline is likewise IMMEDIATE, not review', async () => {
     wire({ iconId: null, coverId: null, shots: [] });
     mockWrite.appListingModerationEvent.findFirst.mockResolvedValue({
       action: 'owner-unpublish',
       before: { status: 'approved' },
     });
     const res = await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
-    expect(res.status).toBe('pending');
-    expect(res.reviewReason).toBe('no-recorded-assets');
+    expect(res.status).toBe('approved');
   });
 
   it.each([
     ['a FUTURE snapshot version', { v: 2, iconId: ICON_ID, coverId: COVER_ID, screenshots: [] }],
     ['a malformed payload', { v: 1, iconId: 'eleven', coverId: COVER_ID, screenshots: [] }],
-    ['a non-object payload', 'approved'],
-  ])('%s is UNKNOWN, not empty → review', async (_label, recorded) => {
+    ['an explicit null baseline', null],
+    ['a non-object baseline', 'approved'],
+  ])('🔴 a baseline that EXISTS and cannot be read → review (%s)', async (_label, recorded) => {
+    // The opposite of the absent arm and the reason the two must not share a verdict:
+    // this population is unbounded and is evidence something is wrong RIGHT NOW, so it
+    // fails CLOSED. Note every fixture here differs from the live surface only in being
+    // unreadable — the live assets are UNCHANGED, so a gate that fell back to a plain
+    // equality check would let all four through.
     wire({ recorded });
     const res = await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
-    expect(res.reviewReason).toBe('no-recorded-assets');
+    expect(res.status).toBe('pending');
+    expect(res.reviewReason).toBe('unreadable-baseline');
+    expect(eventData().detail).toContain('could not be read');
   });
 });
 
@@ -518,9 +557,10 @@ describe('republishOwnListing — composition with the gates that were already t
   });
 
   it('🔴 #4418 RATING FLOOR is applied on the REVIEW arm too, not deferred to the approve', async () => {
-    // Declared `g`, an X-rated cover swapped in. On-site is the case that matters most:
-    // `approveRequest`'s (3b-reset) restore writes ONLY `status` and runs no floor of its
-    // own, so a review arm that skipped the floor would let mature art come back rated `g`.
+    // Declared `g`, an X-rated cover swapped in. The floor is applied on BOTH arms so the
+    // #4418 guarantee never depends on which arm a republish takes — a listing must not be
+    // sitting in a queue under a rating its own media contradicts, whatever the approve
+    // later does.
     wire({
       kind: 'onsite',
       contentRating: 'g',

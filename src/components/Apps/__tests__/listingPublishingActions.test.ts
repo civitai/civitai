@@ -7,6 +7,7 @@ import {
   OWNER_ACTIONS_BY_STATE,
   PUBLISHING_PANEL_ACTIONS,
   republishSuccessMessage,
+  withdrawSuccessMessage,
   showModRemovedNotice,
   showRepublish,
   showUnpublish,
@@ -222,14 +223,19 @@ describe('sortPublishingActions', () => {
 describe('republishSuccessMessage — 🔴 the UI must not claim "live" when it went to review', () => {
   it('says the listing is LIVE when the server approved it', () => {
     expect(republishSuccessMessage({ status: 'approved' }, 'onsite')).toContain('live');
-    expect(republishSuccessMessage({ status: 'approved' }, 'offsite')).toContain('live in the store');
+    expect(republishSuccessMessage({ status: 'approved' }, 'offsite')).toContain(
+      'live in the store'
+    );
   });
 
   it('🔴 says REVIEW when the server routed it to pending — for BOTH kinds', () => {
     // The wording is asserted on the PENDING arm for each kind separately: a mutant that
     // branched on `kind` before `status` would still satisfy a single-kind assertion.
     for (const kind of ['onsite', 'offsite'] as const) {
-      const message = republishSuccessMessage({ status: 'pending' }, kind);
+      const message = republishSuccessMessage(
+        { status: 'pending', reviewReason: 'assets-changed' },
+        kind
+      );
       expect(message).toContain('review');
       // 🔴 The load-bearing ABSENCE: the old hardcoded copy said "it is live again", which
       // is a lie on this arm. Pin that the word cannot come back.
@@ -242,4 +248,47 @@ describe('republishSuccessMessage — 🔴 the UI must not claim "live" when it 
       republishSuccessMessage({ status: 'approved' }, 'offsite')
     );
   });
+
+  it('🔴 only `assets-changed` claims the images changed', () => {
+    // The reason exists on the wire; using one sentence for every reason told an owner
+    // their images had changed on a path where nothing about their images necessarily
+    // did. Asserted as an EXCLUSIVE pair, so a mutant that returns the specific sentence
+    // unconditionally fails on the second half.
+    expect(
+      republishSuccessMessage({ status: 'pending', reviewReason: 'assets-changed' })
+    ).toContain('images changed');
+    expect(
+      republishSuccessMessage({ status: 'pending', reviewReason: 'unreadable-baseline' })
+    ).not.toContain('images changed');
+  });
+
+  it('🔴 an UNRECOGNISED reason falls back to the NEUTRAL wording, never the specific one', () => {
+    // A reason added server-side must not silently inherit a factual claim about the
+    // owner's actions that it does not support. `undefined` (an older client, or a server
+    // that omitted the field) takes the same safe branch.
+    for (const reviewReason of ['some-future-reason', undefined, null]) {
+      const message = republishSuccessMessage({ status: 'pending', reviewReason });
+      expect(message).toContain('review');
+      expect(message).not.toContain('images changed');
+    }
+  });
+});
+
+describe('withdrawSuccessMessage — 🔴 a one-way close must SAY it is one-way', () => {
+  it('🔴 a `removed` close tells the owner a moderator has to restore it', () => {
+    const message = withdrawSuccessMessage('removed');
+    expect(message).toContain('off the store');
+    expect(message).toContain('moderator');
+  });
+
+  it.each([['deleted'], ['none'], [undefined], [null]])(
+    'every other outcome (%s) keeps the plain wording — no moderator claim',
+    (outcome) => {
+      // The exclusive half. Without it a mutant returning the scary sentence
+      // unconditionally would pass the case above, and every draft withdraw would tell
+      // its author to go find a moderator for no reason.
+      const message = withdrawSuccessMessage(outcome);
+      expect(message).toBe('Submission withdrawn.');
+    }
+  );
 });
