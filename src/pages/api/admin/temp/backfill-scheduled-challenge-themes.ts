@@ -87,14 +87,22 @@ type Result = {
   resource?: string;
   resourceConcept?: string;
   error?: string;
-  before: { theme: string | null; themeElements: string[] };
-  after?: { theme: string; themeElements: string[]; title: string };
+  // Bodies are included so a dry run shows the prose that would replace the published article,
+  // not just the scoring anchor. They are the largest field here; page with `limit` accordingly.
+  before: {
+    theme: string | null;
+    themeElements: string[];
+    title: string | null;
+    description: string | null;
+  };
+  after?: { theme: string; themeElements: string[]; title: string; description: string };
 };
 
 type Row = {
   id: number;
   title: string | null;
   theme: string | null;
+  description: string | null;
   visibleAt: Date;
   startsAt: Date;
   judgeId: number | null;
@@ -113,7 +121,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   // The guards live in the query, not in a filter applied afterwards, so a future edit cannot
   // widen the blast radius by dropping a condition further down.
   const candidates = await dbRead.$queryRaw<Row[]>`
-    SELECT id, title, theme, "visibleAt", "startsAt", "judgeId", "judgingPrompt", metadata
+    SELECT id, title, theme, description, "visibleAt", "startsAt", "judgeId", "judgingPrompt", metadata
     FROM "Challenge"
     WHERE source = 'System'
       AND status = 'Scheduled'
@@ -133,7 +141,12 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   const results: Result[] = [];
   const tasks = eligible.map((challenge) => async () => {
     const meta = parseChallengeMetadata(challenge.metadata);
-    const before = { theme: challenge.theme, themeElements: meta.themeElements ?? [] };
+    const before = {
+      theme: challenge.theme,
+      themeElements: meta.themeElements ?? [],
+      title: challenge.title,
+      description: challenge.description,
+    };
     try {
       const judgeId = challenge.judgeId ?? config.defaultJudgeId;
       if (!judgeId) throw new Error('no judge assigned and no defaultJudgeId configured');
@@ -207,7 +220,12 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
         status: apply ? 'updated' : 'dry-run',
         resourceConcept,
         before,
-        after: { theme: article.theme, themeElements: article.themeElements, title: article.title },
+        after: {
+          theme: article.theme,
+          themeElements: article.themeElements,
+          title: article.title,
+          description: article.content,
+        },
       });
     } catch (e) {
       results.push({
