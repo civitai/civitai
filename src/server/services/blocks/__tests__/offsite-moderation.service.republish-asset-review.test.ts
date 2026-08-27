@@ -197,21 +197,6 @@ function eventData() {
   return mockWrite.appListingModerationEvent.create.mock.calls[0]?.[0]?.data;
 }
 
-/** The approved block request the onsite re-queue clones. */
-const lastApprovedBlockRequest = {
-  appBlockId: BLOCK_ID,
-  version: '1.2.0',
-  manifest: { blockId: SLUG, scopes: [] },
-  bundleKey: 'bundles/deadbeef.zip',
-  bundleSha256: 'deadbeef',
-  bundleSizeBytes: BigInt(1024),
-  fileSummary: { files: [], added: [], removed: [], changed: [] },
-  manifestDiffSummary: { kind: 'update' },
-  forgejoCommitSha: 'sha_server_side',
-  sourceCommit: '4f3a9c2e17b06d85fa1c39e470b28d6ac519e0f3',
-  sourceDirty: true,
-};
-
 beforeEach(() => {
   ids.n = 0;
   vi.clearAllMocks();
@@ -230,13 +215,12 @@ beforeEach(() => {
   // `clearAllMocks` clears calls, not implementations, so a `mockResolvedValue` left by an
   // earlier test would otherwise make every later republish refuse.
   mockWrite.appListingPublishRequest.findFirst.mockReset().mockResolvedValue(null);
-  mockWrite.appBlockPublishRequest.create.mockImplementation(
-    async (a: { data: unknown }) => a.data
-  );
-  // Onsite default: one approved version to clone, no review already in flight.
-  mockWrite.appBlockPublishRequest.findFirst
-    .mockResolvedValueOnce(lastApprovedBlockRequest)
-    .mockResolvedValueOnce(null);
+  // 🔴 `appBlockPublishRequest` IS DELIBERATELY LEFT UNARMED. Nothing in `republishOwnListing`
+  // reads or writes that table any more — the review arm re-queues on the LISTING surface,
+  // because the block-request queue's modal cannot render listing imagery. Arming it with a
+  // plausible approved row would hand a regression a usable answer instead of a loud failure;
+  // the canonical mock's `findFirst` default is `null` and `create` is unstubbed, so a
+  // reintroduced clone shows up rather than quietly working.
   mockRead.appListing.findUnique.mockResolvedValue(null);
   mockNotify.mockResolvedValue(undefined);
 });
