@@ -24,7 +24,9 @@ const A = (n: number) => 'a'.repeat(n);
 const OK_SUBJECT = A(MOD_MESSAGE_SUBJECT_MIN + 5);
 const OK_BODY = A(MOD_MESSAGE_BODY_MIN + 5);
 
-const LISTING = { appListingId: 'apl_1', slug: 'prompt-vault', ownerLabel: '@dev' };
+// 🔴 NO OWNER FIELD, and the prop type refuses one: the recipient is resolved
+// server-side at send time and the mod table only holds a denormalised copy of it.
+const LISTING = { appListingId: 'apl_1', slug: 'prompt-vault' };
 
 const mocks = vi.hoisted(() => ({
   mutate: vi.fn(),
@@ -224,6 +226,49 @@ describe('MessageAppOwnerModal — success and failure posture', () => {
     expect(mocks.onSent).toHaveBeenCalled();
   });
 
+  /**
+   * 🔴 OPT IN PER MESSAGE, NEVER PER SESSION. An accepted collaborator consented to EDIT
+   * the app, not to receive moderation correspondence about it — and a moderator's
+   * message can be adverse. The composer is not unmounted between sends (the parent owns
+   * `listing`), so a tick that survived a send would silently fan the NEXT message out to
+   * third parties the moderator never opted in for.
+   *
+   * Until this test existed, deleting `setIncludeCollaborators(false)` from `reset()`
+   * survived both suites — the property was a comment, not behaviour. The second send
+   * below is the half that catches it: the checkbox assertion alone would still pass a
+   * composer that re-rendered unchecked while holding stale state.
+   */
+  test('a successful send clears the collaborator opt-in, and the NEXT message does not carry it', async () => {
+    render();
+    await page.getByTestId('apps-mod-message-subject').fill(OK_SUBJECT);
+    await page.getByTestId('apps-mod-message-body').fill(OK_BODY);
+    await page.getByTestId('apps-mod-message-collaborators').click();
+    await expect.element(page.getByTestId('apps-mod-message-collaborators')).toBeChecked();
+
+    await page.getByTestId('apps-mod-message-send').click();
+    await vi.waitFor(() => expect(mocks.onClose).toHaveBeenCalled());
+    expect(mocks.mutate).toHaveBeenLastCalledWith(
+      expect.objectContaining({ includeCollaborators: true })
+    );
+
+    // Every field is back to its initial state — the opt-in included.
+    await expect.element(page.getByTestId('apps-mod-message-collaborators')).not.toBeChecked();
+    await expect.element(page.getByTestId('apps-mod-message-subject')).toHaveValue('');
+    await expect.element(page.getByTestId('apps-mod-message-body')).toHaveValue('');
+
+    // …and the state behind it, not merely the rendered tick: a second message composed
+    // in the same still-mounted modal must omit `includeCollaborators` entirely.
+    mocks.mutate.mockClear();
+    await page.getByTestId('apps-mod-message-subject').fill(OK_SUBJECT);
+    await page.getByTestId('apps-mod-message-body').fill(OK_BODY);
+    await page.getByTestId('apps-mod-message-send').click();
+    expect(mocks.mutate).toHaveBeenCalledWith({
+      appListingId: 'apl_1',
+      subject: OK_SUBJECT,
+      body: OK_BODY,
+    });
+  });
+
   test('the success toast names the RECIPIENT COUNT once collaborators were included', async () => {
     mocks.recipientCount = 3;
     render();
@@ -256,7 +301,7 @@ describe('MessageAppOwnerModal — success and failure posture', () => {
 });
 
 describe('MessageAppOwnerModal — the delivery notice', () => {
-  test('says the message is one-way and audited, and shows the owner chip', async () => {
+  test('says the message is one-way, audited, and resolved at send time', async () => {
     render();
     await expect
       .element(page.getByText('replies are not delivered', { exact: false }))
@@ -264,6 +309,30 @@ describe('MessageAppOwnerModal — the delivery notice', () => {
     await expect
       .element(page.getByText('moderation history', { exact: false }))
       .toBeInTheDocument();
-    await expect.element(page.getByText('@dev')).toBeInTheDocument();
+    await expect
+      .element(page.getByText('resolved when you send', { exact: false }))
+      .toBeInTheDocument();
+  });
+
+  /**
+   * 🔴 It must not name a specific person. For an on-site listing the send resolves the
+   * BACKING BLOCK's owner, which can differ from the listing column the mod table
+   * displays — so a composer that echoed a handle would let a moderator address copy to
+   * one developer while the platform delivered it to another.
+   */
+  test('names no recipient — no @handle or #id appears in the composer', async () => {
+    render();
+    // Await the notice first: the modal is portalled and `render()` returns before it is
+    // in the DOM, so a synchronous read of `document.body` sees an empty string — which
+    // would make the negative assertion below pass over nothing at all.
+    await expect
+      .element(page.getByText('resolved when you send', { exact: false }))
+      .toBeInTheDocument();
+    // Scoped to the dialog, not `document.body`: the body also carries Mantine's
+    // injected <style> block, whose `@media` rules match the handle pattern below and
+    // would fail this for a reason that has nothing to do with the copy.
+    const composer = page.getByRole('dialog').element().textContent ?? '';
+    expect(composer).toContain('resolved when you send');
+    expect(composer).not.toMatch(/[@#]\w/);
   });
 });

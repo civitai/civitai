@@ -13,6 +13,11 @@ import {
 } from '@mantine/core';
 import { IconAlertTriangle } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
+
+import {
+  reasonGatedFieldDescription,
+  reasonGatedFieldError,
+} from '~/components/Apps/reasonGatedFieldCopy';
 import { OFFSITE_MOD_REASON_MIN } from '~/server/schema/blocks/offsite-moderation.schema';
 
 /**
@@ -86,8 +91,11 @@ export function ReasonGatedField({
   maxRows?: number;
 }) {
   const len = value.trim().length;
-  const tooShort = required && len < minLength;
-  const tooLong = maxLength != null && len > maxLength;
+  // Both strings come from the pure `reasonGatedFieldCopy` module rather than being
+  // built inline. Built here they were pinned ONLY by the report-only browser tier, so
+  // dropping the ceiling from the counter — the one thing this prop was added for —
+  // left every blocking suite green. See that module's header.
+  const copy = { length: len, minLength, maxLength, required };
   return (
     <Textarea
       label={label}
@@ -95,24 +103,8 @@ export function ReasonGatedField({
       minRows={minRows}
       maxRows={maxRows}
       placeholder={placeholder}
-      // Live counter — only meaningful when a floor applies. The ceiling is appended
-      // only when one was given, so the no-ceiling callers keep their exact copy.
-      description={
-        required
-          ? `${len}/${minLength} characters minimum` +
-            (maxLength != null ? ` (max ${maxLength})` : '')
-          : undefined
-      }
-      // Inline error once the mod has typed SOMETHING but not enough (an empty field
-      // shows the neutral counter, not a red error) — or once they have typed too much,
-      // which needs no such grace period since it can only happen after typing.
-      error={
-        tooLong
-          ? `Keep it to ${maxLength} characters or fewer (currently ${len}).`
-          : tooShort && len > 0
-          ? `Enter at least ${minLength} characters.`
-          : undefined
-      }
+      description={reasonGatedFieldDescription(copy)}
+      error={reasonGatedFieldError(copy)}
       value={value}
       onChange={(e) => onChange(e.currentTarget.value)}
       disabled={disabled}

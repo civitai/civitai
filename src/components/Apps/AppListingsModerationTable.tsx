@@ -23,6 +23,7 @@ import { listingStatusChip } from '~/components/Apps/appListingModerationView';
 import { LISTING_KIND_LABELS } from '~/components/Apps/listingKindLabels';
 import {
   actionOpensOwnerMessage,
+  actionRequiresReason,
   effectiveModerationStatus,
   isDestructiveListingModAction,
   listingKindChip,
@@ -216,9 +217,20 @@ export function AppListingsModerationTable({
   const nextCursor = query.data?.nextCursor ?? null;
 
   // Merge the current page into the accumulated set (dedupe by id — defensive), then
-  // drop on-site + pending rows: those live in the actionable on-site review FIFO queue
-  // (with a Review action); here they'd render as a dead-end `—`-action row. Off-site
-  // pending stays (it carries the Review action).
+  // drop on-site + pending rows: those live in the actionable on-site review FIFO
+  // queue, and listing them here too would put one item in two moderator surfaces with
+  // different action sets. Off-site pending stays (it carries the Review action).
+  //
+  // 🔴 THE OLD REASON FOR THIS FILTER IS NO LONGER TRUE, and the gap it leaves is real.
+  // It used to read "here they'd render as a dead-end `—`-action row" — that stopped
+  // being the case the moment `message-owner` became unconditional, since such a row now
+  // offers Message owner. So this table cannot message the owner of an on-site listing
+  // while it is awaiting review, which is one of the states a developer most needs to
+  // hear from a moderator in. Deliberately NOT widened here: which rows a live
+  // moderator surface lists is a product decision about surface duplication, not a
+  // should-fix on the composer. Closing it means giving the on-site review queue its own
+  // composer entry point (which also means adding that queue to the mount ledger in
+  // `__tests__/appModeratorMessageForm.callSites.test.ts`).
   const items = useMemo(() => {
     const merged = !cursor
       ? page
@@ -280,7 +292,14 @@ export function AppListingsModerationTable({
       setMessageRow(row);
       return;
     }
-    setPendingAction({ action, row });
+    // 🔴 BRANCHED ON, not a fall-through. `actionRequiresReason` is the third and last
+    // route out of this function, so the three predicates have to be jointly total over
+    // `ListingModAction` or an action opens nothing — which is the loud failure, and the
+    // one `appListingModerationTableView.test.ts` pins. A bare `setPendingAction(...)`
+    // here is the quiet one: a future action with no `reason` of its own would land in
+    // the reason-gated modal and call its proc with an input the schema rejects, which
+    // is exactly the mis-route `message-owner` was carved out of.
+    if (actionRequiresReason(action)) setPendingAction({ action, row });
   };
 
   const renderTable = (groups: SubmissionGroup<ModerationListingRow>[]) => (
@@ -517,20 +536,14 @@ export function AppListingsModerationTable({
           would throw away every page the moderator had loaded in exchange for a
           byte-identical result. If this row ever gains a "last moderator action"
           column, wire the callback then. */}
+      {/* 🔴 NO OWNER IS PASSED, and the composer's prop shape refuses one. `row.owner`
+          is `AppListing.userId`'s denormalised copy; for an on-site listing the proc
+          resolves the backing block's owner instead, so handing that copy to a composer
+          that presented it as the delivery target would let a moderator address the
+          wrong developer. The Owner COLUMN above still shows it — as a column, not as a
+          promise about where this message goes. */}
       <MessageAppOwnerModal
-        listing={
-          messageRow
-            ? {
-                appListingId: messageRow.id,
-                slug: messageRow.slug,
-                ownerLabel: messageRow.owner?.username
-                  ? `@${messageRow.owner.username}`
-                  : messageRow.owner?.id != null
-                  ? `#${messageRow.owner.id}`
-                  : null,
-              }
-            : null
-        }
+        listing={messageRow ? { appListingId: messageRow.id, slug: messageRow.slug } : null}
         onClose={() => setMessageRow(null)}
       />
     </Stack>

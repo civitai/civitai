@@ -1,4 +1,4 @@
-import { Alert, Button, Checkbox, Code, Group, Modal, Stack, Text, TextInput } from '@mantine/core';
+import { Alert, Button, Checkbox, Group, Modal, Stack, Text, TextInput } from '@mantine/core';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { useState } from 'react';
 
@@ -51,6 +51,9 @@ import { trpc } from '~/utils/trpc';
  * No draft persistence, no template picker, no thread. The proc is one-way by design
  * (there is no reply route and no message table), so a composer that implied otherwise
  * would be lying about the channel.
+ *
+ * It also NAMES NO RECIPIENT — see the `listing` prop below. The only owner a caller
+ * could hand it is the denormalised column, which the send may resolve past.
  */
 export function MessageAppOwnerModal({
   listing,
@@ -62,12 +65,21 @@ export function MessageAppOwnerModal({
    * `apl_<ULID>` (`ModerationListingRow.id`); the proc also accepts a shadow revision
    * id and resolves it to the parent, so no caller has to know which it holds.
    *
-   * 🔴 The RECIPIENT is not passed and cannot be: `messageAppOwner` derives the owner
-   * server-side through `resolveListingAccess`. `ownerLabel` below is DISPLAY ONLY —
-   * it is the table's denormalised owner chip, and the proc may resolve a different
-   * (correct) user if that column has drifted. Never present it as the delivery target.
+   * 🔴 THE RECIPIENT IS NOT PASSED, AND THIS TYPE DELIBERATELY CANNOT CARRY ONE.
+   * `messageAppOwner` derives the owner server-side through `resolveListingAccess`,
+   * which for an ON-SITE listing resolves the backing block's owner and NOT the
+   * listing's own `userId` column — `resolveCanonicalListingOwner` exists precisely to
+   * override that denormalised copy. The mod table holds only the copy, so any owner
+   * this composer could be handed is a value the send may disagree with, and a
+   * composer that displayed it would let a moderator write to the person on screen
+   * while the platform delivered to a different one. That is a disclosure, not merely
+   * a mislabel. So the composer names no recipient at all: the table's own Owner
+   * column stays the (clearly denormalised) display, and the send resolves the real
+   * one. An earlier revision of this file said exactly that in prose and then
+   * rendered the label anyway — hence the prop-shape ledger in
+   * `__tests__/appModeratorMessageForm.callSites.test.ts`.
    */
-  listing: { appListingId: string; slug: string; ownerLabel?: string | null } | null;
+  listing: { appListingId: string; slug: string } | null;
   onClose: () => void;
   /** Fired after a successful send (the table's invalidate). */
   onSent?: () => void | Promise<void>;
@@ -130,15 +142,12 @@ export function MessageAppOwnerModal({
     >
       <Stack gap="md">
         <Alert color="blue" variant="light" icon={<IconInfoCircle size={16} />}>
+          {/* 🔴 NAMES NO RECIPIENT. The owner is resolved when the message is sent, and
+              for an on-site listing that resolution can disagree with the owner this
+              table displays — see the `listing` prop's docstring. */}
           <Text size="sm">
-            Delivered as a notification to the app&apos;s owner
-            {listing.ownerLabel ? (
-              <>
-                {' '}
-                (currently <Code>{listing.ownerLabel}</Code>)
-              </>
-            ) : null}
-            . One-way — replies are not delivered — and the subject and message are recorded in this
+            Delivered as a notification to the app&apos;s owner, resolved when you send. One-way —
+            replies are not delivered — and the subject and message are recorded in this
             listing&apos;s moderation history.
           </Text>
         </Alert>

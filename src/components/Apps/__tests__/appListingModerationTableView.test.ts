@@ -170,9 +170,16 @@ describe('action metadata', () => {
   /**
    * 🔴 `message-owner` is NOT reason-gated, and that is a claim about the SURFACE it
    * opens: `MessageAppOwnerModal` has no `reason` field at all — it has a subject and a
-   * body with their own floors. Answering `true` here would send it to
-   * `ListingModActionModal`, which renders one `reason` textarea and would call
-   * `messageAppOwner` with an input its schema rejects.
+   * body with their own floors.
+   *
+   * 🔴 Stated precisely, because the looser version of this sentence was WRONG.
+   * `openAction` checks `actionOpensOwnerMessage` BEFORE this predicate, so answering
+   * `true` here would NOT on its own send `message-owner` to `ListingModActionModal` —
+   * it would put the action in two routers at once, which the exclusivity test below is
+   * what actually forbids. The mis-route this pair prevents is the one that arrives via
+   * a NEW action: an action neither router claims must open nothing, and an action this
+   * one claims must genuinely carry a `reason`, or `ListingModActionModal` calls its
+   * proc with an input the schema rejects.
    */
   it('every mutating action except message-owner requires a reason; review requires none', () => {
     expect(actionRequiresReason('review')).toBe(false);

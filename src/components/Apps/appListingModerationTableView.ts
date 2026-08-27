@@ -119,11 +119,26 @@ export function isDestructiveListingModAction(action: ListingModAction): boolean
  * Whether an action opens the shared REASON-gated modal (`ListingModActionModal`,
  * whose one free-text field is `reason` and whose floor is `OFFSITE_MOD_REASON_MIN`).
  *
+ * 🔴 THIS IS THE MGMT TABLE'S THIRD ROUTE, AND IT IS BRANCHED ON.
+ * `AppListingsModerationTable.openAction` tries `review`, then
+ * {@link actionOpensOwnerMessage}, then this — so an action this answers `false` for
+ * opens NOTHING. That is deliberate: the three predicates are jointly total over
+ * `ListingModAction`, and a future action claimed by none of them should visibly do
+ * nothing rather than quietly land in a reason-gated modal whose one field it does not
+ * carry.
+ *
  * 🔴 `message-owner` is FALSE, and it is not an oversight. That action does not carry a
  * `reason` at all: `appListings.messageAppOwner` takes a SUBJECT and a BODY with their
- * own, different floors (`MOD_MESSAGE_SUBJECT_MIN` / `MOD_MESSAGE_BODY_MIN`), so it
- * routes to `MessageAppOwnerModal` instead. Answering `true` here would be a
- * predicate that reads "shows a reason textarea" while the surface shows none.
+ * own, different floors (`MOD_MESSAGE_SUBJECT_MIN` / `MOD_MESSAGE_BODY_MIN`), so the
+ * router above claims it first. Answering `true` here would put one action in two
+ * routers at once and leave this predicate reading "shows a reason textarea" for a
+ * surface that shows none.
+ *
+ * Both halves are pinned: the vocabulary in `appListingModerationTableView.test.ts`,
+ * and that the table still CALLS this at all in
+ * `__tests__/appModeratorMessageForm.callSites.test.ts` — this predicate spent one
+ * revision referenced by nothing but its own test, which is the shape that lets a
+ * "🔴 routing depends on this" comment describe dead code.
  */
 export function actionRequiresReason(action: ListingModAction): boolean {
   return action !== 'review' && action !== 'message-owner';
