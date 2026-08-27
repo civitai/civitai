@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import type * as UserHubService from '~/server/services/user-hub.service';
 import { encodeHubId } from '~/server/utils/hub-id';
 // The CANONICAL db mock, registered once in `src/__tests__/setup.ts`. A per-file mock
 // of `~/server/db/client` is what `no-direct-shared-module-mock` refuses: under
@@ -20,7 +21,14 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
  */
 
 const { getHubCardData } = vi.hoisted(() => ({ getHubCardData: vi.fn() }));
-vi.mock('~/server/services/user-hub.service', () => ({ getHubCardData }));
+// Spread the real module rather than replacing it: `og.tsx` imports `image.service`,
+// which itself imports `hubBrowsingLevel` and `resolveHubSources` from here. A factory
+// listing one export replaces the module for that consumer too, and the day an og path
+// reaches either symbol this file fails pointing at the harness, not the behaviour.
+vi.mock('~/server/services/user-hub.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof UserHubService>()),
+  getHubCardData,
+}));
 
 import handler from '~/pages/api/og';
 
@@ -101,8 +109,9 @@ describe('/api/og?type=hub', () => {
     // description and owner for a week after they revoke it.
     const res = await render({ type: 'hub', id: encodeHubId(HUB_ID) });
 
-    expect(res._headers['cache-control']).toContain('max-age=300');
-    expect(res._headers['cache-control']).not.toContain('604800');
+    // Whole value: `toContain('max-age=300')` also matches `s-maxage=300`, so dropping
+    // the browser half alone would pass.
+    expect(res._headers['cache-control']).toBe('public, max-age=300, s-maxage=300');
   });
 
   it('still resolves the INT for every other type', async () => {

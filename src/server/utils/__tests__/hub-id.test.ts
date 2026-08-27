@@ -16,13 +16,35 @@ const ALPHABET = 'abcdefghijkmnopqrstuvwxyzACDEFGHJKLMNPQRSTUVWXYZ23456789';
  */
 describe('hub id encoding', () => {
   it('emits these exact keys — every shared hub link depends on it', () => {
-    // 🔴 Golden vectors, not decoration. Changing ALPHABET, MIN_LENGTH, the
-    // permutation, or bumping the `sqids` dependency silently invalidates EVERY hub
-    // URL anyone has ever shared, and every property test below stays green while it
-    // happens. If these three change, that is the change — it is not a test to update.
+    // 🔴 Golden vectors, not decoration. If these change, that IS the change — it is
+    // not a test to update. They catch a change to ALPHABET, to MIN_LENGTH, or to the
+    // `sqids` version, each of which silently invalidates every hub URL anyone has
+    // ever shared while the property tests below stay green.
+    //
+    // What they CANNOT catch: the permutation. `HUB_ID_SALT` is empty here, so
+    // `permuteAlphabet` early-returns and never runs — flipping its comparator
+    // changes every production URL and leaves these three bytes for byte. The salted
+    // vectors below are that half; neither set replaces the other.
     expect(encodeHubId(1)).toBe('v87ycDn6');
     expect(encodeHubId(19)).toBe('F2H4AkZM');
     expect(encodeHubId(12345)).toBe('s88C6Fdz');
+  });
+
+  it('emits these exact keys once a salt is set — the half prod actually runs', () => {
+    // 🔴 The same rule as above, for the configuration that ships. Reached through a
+    // constructed codec rather than `encodeHubId`, because the module's own instance
+    // is built at import with the empty salt and cannot be re-salted from a test.
+    const salted = new Sqids({
+      alphabet: permuteAlphabet(ALPHABET, 'test-salt'),
+      minLength: 8,
+    });
+
+    expect(permuteAlphabet(ALPHABET, 'test-salt')).toBe(
+      '2etESUusFfKV3JmpkoaPq9Dny45MAwH8gdrzjhGZ6xi7YbLvQRCTXcNW'
+    );
+    expect(salted.encode([1])).toBe('6FwNrAix');
+    expect(salted.encode([19])).toBe('2t4jNyE9');
+    expect(salted.encode([12345])).toBe('RMM5EQWU');
   });
 
   it('round-trips', () => {

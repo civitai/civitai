@@ -786,12 +786,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   const { type, id: rawId } = parsed.data;
 
-  const id = type === 'hub' ? decodeHubId(rawId) : asEntityId(rawId);
-  if (!id) {
-    return res.status(400).json({ error: 'Invalid parameters. Expected ?type=model&id=123' });
-  }
-
   try {
+    // Inside the try: `decodeHubId` builds on the codec, and anything it can throw
+    // belongs to this handler's own fallback path rather than to an unhandled 500.
+    const id = type === 'hub' ? decodeHubId(rawId) : asEntityId(rawId);
+    if (!id) {
+      return res.status(400).json({ error: 'Invalid parameters. Expected ?type=model&id=123' });
+    }
+
     const fetcher = dataFetchers[type];
     const data = await fetcher(id);
 

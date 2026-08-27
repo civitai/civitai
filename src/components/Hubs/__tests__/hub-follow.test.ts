@@ -95,8 +95,8 @@ describe('FollowedHubsSection', () => {
   });
 
   it('unfollows the row that was clicked, not the first one', () => {
-    // The assertion that catches an id read off the wrong row: with one hub in the
-    // list, `followed[0].id` and `hub.id` are the same number.
+    // The assertion that catches a key read off the wrong row: with one hub in the
+    // list, `followed[0].key` and `hub.key` are the same string.
     followedHubs.value = [
       { id: 5, key: 'Xk3p9aBc', name: 'First', sources: [] },
       { id: 6, key: 'Qm7r2dEf', name: 'Second', sources: [] },

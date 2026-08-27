@@ -18,10 +18,19 @@ import { isProd } from '~/env/other';
  * enumeration. Justin's call, 2026-08-27, over a random key column: one fewer value
  * to store and one fewer index.
  *
- * 🔴 That property is only worth anything while NO other procedure both accepts an
- * int and returns hub data. `follow`/`unfollow` used to, and `getFollowed` returns
- * `key` — which handed the key to any signed-in caller for the counting price. They
- * are keyed now. Adding a fourth int-addressed hub verb re-opens it.
+ * 🔴 The property is only as good as the WEAKEST hub address. `follow`/`unfollow` used
+ * to take an int while `getFollowed` returned `key`, which handed the key to any
+ * signed-in caller for the price of counting; they are keyed now. One int-addressed
+ * surface remains and is NOT closed: `image.getInfinite`'s `hubId`
+ * (`src/server/schema/image.schema.ts`) is a public rung, so counting still reveals
+ * whether hub N exists, whether it is Public, and what its feed contains — not its
+ * name, owner or key. Do not read this file as though that were shut.
+ *
+ * Nor is the salt the attacker's only obstacle: `toHubDetail` returns `id` alongside
+ * `key`, so any signed-in user collects exact (id, key) pairs. Sqids is not
+ * encryption — its own authors say so — and the alphabet order is the only secret.
+ * This removes CHEAP enumeration. It is not a confidentiality boundary, and adding a
+ * new int-addressed hub verb gives the whole thing back.
  */
 const MIN_LENGTH = 8;
 
@@ -61,6 +70,13 @@ const sqids = new Sqids({
   minLength: MIN_LENGTH,
 });
 
+// Unguarded, so `decodeHubId`'s round-trip check does not inherit the production
+// assertion below: a missing salt must not turn every hub READ into a 500 on a route
+// whose contract is a 404.
+function encode(id: number) {
+  return sqids.encode([id]);
+}
+
 export function encodeHubId(id: number) {
   // Fail LOUD rather than fail decorative. With no salt the alphabet is the constant
   // above, which is committed in a public repo, so every key is decodable and
@@ -75,7 +91,7 @@ export function encodeHubId(id: number) {
   // catches a misconfigured deploy without adding a build-time surface.
   if (isProd && !env.HUB_ID_SALT) throw new Error('HUB_ID_SALT is not set');
 
-  return sqids.encode([id]);
+  return encode(id);
 }
 
 /**
@@ -94,5 +110,5 @@ export function decodeHubId(key: string | undefined) {
 
   // Sqids decodes strings it never emitted, so the round trip is the check: only a
   // key this alphabet and minLength would have produced survives it.
-  return encodeHubId(id) === key ? id : null;
+  return encode(id) === key ? id : null;
 }
