@@ -74,8 +74,8 @@ describe('createImageResources — unmatched resource meta', () => {
   });
 
   it('clears a stored list once nothing is unmatched, even though no flag has to flip', async () => {
-    // The headline flow: user uploads the missing model, hits refresh. Nothing is unmatched now, so
-    // the old `unmatchedHashes.size > 0` guard would skip the meta block and strand the warning.
+    // The case the removed `unmatchedHashes.size > 0` guard skipped: no flag flips, but the stored
+    // list still has to be cleared.
     givenDetected([row({ name: 'now-published', hash: 'abcdef012345', modelversionid: 99 })], {
       resources: [{ type: 'lora', name: 'now-published', hash: 'abcdef012345' }],
       unmatchedResources: [{ hash: 'abcdef012345', name: 'now-published' }],

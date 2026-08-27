@@ -8803,14 +8803,14 @@ export async function createImageResources({
     `;
   }
 
-  // Recomputed in full rather than only stamped: a user who uploads the missing model and hits
-  // refresh has to see the warning clear, so a flag that no longer holds must come back off.
   const unmatchedHashes = new Set(
     resources
       .filter((r) => r.detected && !r.modelversionid && r.hash)
       .map((r) => r.hash!.toLowerCase())
   );
 
+  // Unguarded on purpose: an `unmatchedHashes.size > 0` guard skips the whole block for an image
+  // that just became fully matched, so the warning never clears after the user uploads the model.
   const image = await dbClient.image.findUnique({
     where: { id: imageId },
     select: { meta: true },
@@ -8828,8 +8828,8 @@ export async function createImageResources({
   for (const resource of metaResources) {
     const unmatched = !!resource.hash && unmatchedHashes.has(resource.hash.toLowerCase());
     if (unmatched === !!resource.unmatched) continue;
-    // Set false rather than deleted: a client that predates meta.unmatchedResources reads the key's
-    // absence as "legacy image" and falls through to a count heuristic that over-reports.
+    // Set false, not deleted: bundles deployed before meta.unmatchedResources read an absent key as
+    // "legacy" and fall through to a count heuristic that over-reports. Removable once those are gone.
     resource.unmatched = unmatched;
     updated = true;
   }

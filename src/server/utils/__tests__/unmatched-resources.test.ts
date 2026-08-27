@@ -13,8 +13,6 @@ const detected = (over: Partial<DetectedResource>): DetectedResource => ({
 
 describe('deriveUnmatchedResources', () => {
   it('surfaces a resource detected only via meta.hashes, with no meta.resources entry', () => {
-    // The reported bug: an unpublished local LoRA reaches get_image_resources() through the
-    // meta.hashes union branch, so nothing in meta.resources can carry a flag for it.
     const result = deriveUnmatchedResources(
       [
         detected({ name: 'Some Checkpoint', hash: 'aabbccddee', modelversionid: 42 }),
@@ -24,8 +22,7 @@ describe('deriveUnmatchedResources', () => {
     );
 
     expect(result).toHaveLength(1);
-    // toStrictEqual, not toEqual: an absent `type` key and `type: undefined` are different here —
-    // the latter cannot survive jsonb and would make the caller rewrite meta on every run.
+    // toStrictEqual: a `type: undefined` key passes toEqual but cannot survive jsonb.
     expect(result[0]).toStrictEqual({ hash: '0123456789ab', name: 'my-turbo-lora' });
   });
 
@@ -73,7 +70,6 @@ describe('deriveUnmatchedResources', () => {
   });
 
   it('dedupes by hash across detection branches', () => {
-    // meta.resources and meta.hashes both report the same LoRA
     const result = deriveUnmatchedResources([
       detected({ name: 'my-lora', hash: 'abcdef012345' }),
       detected({ name: 'lora:my-lora', hash: 'ABCDEF012345' }),
@@ -100,8 +96,7 @@ describe('deriveUnmatchedResources', () => {
   });
 
   it('equals its own stored form, so the caller does not rewrite meta on every run', () => {
-    // jsonb cannot hold undefined. A `type: undefined` key survives in memory but not through
-    // storage, so carrying one makes isEqual false forever and rewrites Image.meta every call.
+    // jsonb cannot hold undefined, so a `type: undefined` key makes the caller's isEqual false forever.
     const derived = deriveUnmatchedResources([
       detected({ name: 'lora:orphan-with-no-type', hash: 'aabbccddeeff' }),
     ]);

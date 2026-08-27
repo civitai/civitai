@@ -641,7 +641,7 @@ function EditDetail() {
       }));
   }, [meta?.unmatchedResources, meta?.resources]);
   const hasLegacyUnmatched = useMemo(() => {
-    if (meta?.unmatchedResources) return false; // server computed the full list; trust it
+    if (meta?.unmatchedResources) return false;
     if (unmatchedResources.length > 0) return false; // new-style flags take precedence
     const metaResources = (meta?.resources ?? []) as { hash?: string; unmatched?: boolean }[];
     const resourcesWithHashes = metaResources.filter((r) => !!r.hash);
