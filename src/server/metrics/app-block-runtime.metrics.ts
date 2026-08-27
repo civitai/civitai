@@ -555,7 +555,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   const stepPriceCheckTotal = getOrCreateCounter(
     reg,
     'civitai_app_block_step_price_check_total',
-    "App Block `kind:'step'` price checks, by step id and outcome. Submit-phase outcomes are prepaidFixed-only; estimate-phase outcomes fire for any kind:'step' estimate. Submit phase: exact = billed within both the declared price and the reservation; over = billed above the DECLARED price but within the quote-backed reservation (the declared constant is wrong; no money or cap impact — expected to be ~100% for a usage-priced step, do NOT alert on it); over_reserved = billed above the RESERVATION, so every cap counter was short until corrected (ALERT ON THIS); absent = no numeric cost on the snapshot. Estimate phase: estimate_quoted = the block was shown a live orchestrator quote; estimate_absent = the quote failed and it was shown the declared price instead (read as a ratio against estimate_quoted, never alone)",
+    "App Block `kind:'step'` price checks, by step id and outcome. Submit-phase outcomes are prepaidFixed-only; estimate-phase outcomes fire for any kind:'step' estimate. Submit phase: exact = billed within both the declared price and the reservation; over = billed above the DECLARED price but within the quote-backed reservation (the declared constant is wrong; no money or cap impact — expected to be ~100% for a usage-priced step, do NOT alert on it); over_reserved = billed above the RESERVATION, so every cap counter was short until corrected (ALERT ON THIS); absent = EITHER the submit was refused because the orchestrator returned no price quote (no spend, no generation - triage as availability) OR a billed submit carried no numeric cost. Estimate phase: estimate_quoted = the block was shown a live orchestrator quote; estimate_absent = the quote failed and it was shown the declared price instead (read as a ratio against estimate_quoted, never alone)",
     ['step', 'outcome']
   );
 
@@ -704,9 +704,20 @@ export type StepPriceCheckOutcome =
  * has already moved" — that is now only half true, and the missing half is the
  * dangerous one to assume:
  *
- *   - SUBMIT (`exact` / `over` / `over_reserved` / `absent`) — one emit per
- *     submit, AFTER the money has moved, gated on
+ *   - SUBMIT, POST-BILLING (`exact` / `over` / `over_reserved`) — one emit per
+ *     billed submit, AFTER the money has moved, gated on
  *     `plan.correctReservationOverage` and therefore on `prepaidFixed`.
+ *   - SUBMIT, PRE-BILLING (`absent`) — 🔴 TWO DIFFERENT SITES SHARE THIS VALUE,
+ *     AND THEY HAVE OPPOSITE POLARITY. One is post-billing (the submit
+ *     succeeded but its snapshot carried no numeric cost, so no comparison was
+ *     possible). The other is the FAIL-CLOSED no-quote path: the orchestrator
+ *     returned no price, so the submit is REFUSED, nothing is reserved, no
+ *     generation happens, and this fires before any money exists and outside the
+ *     `correctReservationOverage` gate. A spike in `absent` is therefore far
+ *     more likely to mean SUBMITS ARE BEING REFUSED than a bookkeeping gap —
+ *     triage it as an availability signal first. (Splitting the two is the
+ *     obvious improvement and is deliberately not done here: it would change a
+ *     label's meaning in the same change that already widened the set.)
  *   - ESTIMATE (`estimate_quoted` / `estimate_absent`) — one emit per estimate,
  *     BEFORE any spend exists, and NOT gated on billing mode: it fires for any
  *     `kind:'step'` estimate. Unreachable for a non-`prepaidFixed` entry today
@@ -717,8 +728,9 @@ export type StepPriceCheckOutcome =
  *     blend a mode the submit half never reports on. Gate it here, or widen the
  *     label, when that day comes.
  *
- * 🔴 DO NOT ADD A POST-BILLING SIDE EFFECT BESIDE THIS CALL. The estimate phase
- * runs on an app-developer-driven surface with no spend behind it.
+ * 🔴 DO NOT ADD A POST-BILLING SIDE EFFECT BESIDE THIS CALL. Only the three
+ * outcomes in the first bullet are reached with money behind them; the estimate
+ * phase and the fail-closed `absent` both run with no spend at all.
  *
  * 🔴 Emitted unconditionally within each phase — including `outcome: 'exact'` —
  * so a flat divergence line can be told apart from a detector that never ran.

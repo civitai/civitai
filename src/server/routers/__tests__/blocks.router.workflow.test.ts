@@ -271,6 +271,16 @@ const { DIVERGENT_STEP_ID } = vi.hoisted(() => ({
 const { SPLIT_FLOOR_STEP_ID } = vi.hoisted(() => ({
   SPLIT_FLOOR_STEP_ID: 'fixture-split-floor-step',
 }));
+// 🔴 THE MIRROR OF THE SPLIT-FLOOR FIXTURE, and it exists because the FIRST
+// attempt at that fix reasoned wrongly. The claim was that `estimateBuzz` can
+// only differ UPWARD from `priceForVariant`; the split-floor entry disproves it
+// downward, and this one disproves it upward — the direction is simply not
+// fixed. This one makes the no-quote FALLBACK observable: canonical params take
+// the cheap branch so the load-time invariant holds, while a `{pricey: true}`
+// request answers `estimateBuzz` 9 against `priceForVariant` 5.
+const { HIGH_ESTIMATE_STEP_ID } = vi.hoisted(() => ({
+  HIGH_ESTIMATE_STEP_ID: 'fixture-high-estimate-step',
+}));
 vi.mock('~/server/services/blocks/steps', async (importOriginal) => {
   const actual = await importOriginal<typeof BlockStepsModule>();
   const z = await import('zod');
@@ -331,9 +341,6 @@ vi.mock('~/server/services/blocks/steps', async (importOriginal) => {
     canonicalOutputFor: () => ({}),
   };
   actual.assertStepInvariants(AUDITED_STEP_ID, auditedFixtureStep as never);
-  // 🔴 THIS ASSERTION IS THE EXPLOIT, WRITTEN DOWN. It passes — a
-  // params-dependent builder is registrable — which is precisely why the
-  // load-time gate alone is not sufficient.
   const splitFloorFixtureStep = {
     id: SPLIT_FLOOR_STEP_ID,
     orchestratorType: 'fixtureSplitFloorType',
@@ -357,10 +364,27 @@ vi.mock('~/server/services/blocks/steps', async (importOriginal) => {
     ],
     canonicalOutputFor: () => ({}),
   };
+  // 🔴 THIS ASSERTION IS THE EXPLOIT, WRITTEN DOWN. It passes — a
+  // params-dependent builder is registrable — which is precisely why the
+  // load-time gate alone is not sufficient.
   actual.assertStepInvariants(DIVERGENT_STEP_ID, divergentFixtureStep as never);
   // 🔴 IT REGISTERS CLEANLY — the second half of the exploit written down. Only a
   // request supplying `cheap: true` splits the two floors apart.
   actual.assertStepInvariants(SPLIT_FLOOR_STEP_ID, splitFloorFixtureStep as never);
+  const highEstimateFixtureStep = {
+    ...splitFloorFixtureStep,
+    id: HIGH_ESTIMATE_STEP_ID,
+    orchestratorType: 'fixtureHighEstimateType',
+    paramSchema: z.object({ pricey: z.boolean() }).strict(),
+    canonicalParamsFor: () => ({ pricey: false }),
+    priceForVariant: () => 5,
+    estimateBuzz: (p: { pricey: boolean }) => (p.pricey ? 9 : 5),
+    buildStep: (p: { pricey: boolean }) => ({
+      $type: 'fixtureHighEstimateType',
+      input: { pricey: p.pricey },
+    }),
+  };
+  actual.assertStepInvariants(HIGH_ESTIMATE_STEP_ID, highEstimateFixtureStep as never);
   return {
     ...actual,
     // The wire `step` enum is DERIVED from this, so widening it is what lets the
@@ -370,6 +394,7 @@ vi.mock('~/server/services/blocks/steps', async (importOriginal) => {
       AUDITED_STEP_ID,
       DIVERGENT_STEP_ID,
       SPLIT_FLOOR_STEP_ID,
+      HIGH_ESTIMATE_STEP_ID,
     ],
     getStep: (id: string) =>
       id === AUDITED_STEP_ID
@@ -378,6 +403,8 @@ vi.mock('~/server/services/blocks/steps', async (importOriginal) => {
         ? (divergentFixtureStep as never)
         : id === SPLIT_FLOOR_STEP_ID
         ? (splitFloorFixtureStep as never)
+        : id === HIGH_ESTIMATE_STEP_ID
+        ? (highEstimateFixtureStep as never)
         : actual.getStep(id),
   };
 });
@@ -7511,10 +7538,30 @@ describe("step-type registry bridge (kind: 'step')", () => {
       expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', 5);
     });
 
-    it('mirrors the submit’s max(declared, quoted) — a quote BELOW the floor never under-displays', async () => {
+    it('falls back to the entry’s DECLARED estimate, not to the floor, when no quote is had', async () => {
+      // 🔴 THE OPERAND NO MUTATION COULD KILL — until this fixture existed.
+      // `quotedBuzz ?? declaredBuzz` → `?? 0` (or `?? submitFloorBuzz`) survived
+      // the whole suite, and that was written up as "unreachable, and in the safe
+      // direction". BOTH claims were wrong. `fixture-high-estimate-step` answers
+      // `estimateBuzz` 9 against a `priceForVariant` of 5 for `{pricey: true}`,
+      // and it registers cleanly — so with the quote unavailable the fallback is
+      // 9 and the mutants show 5: a 44% UNDER-display, on the degraded path,
+      // which is exactly the direction this whole area exists to prevent.
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      mockSubmitWorkflow.mockRejectedValue(new Error('orchestrator down'));
+      const estimate = await caller().estimateWorkflow({
+        blockToken: 'tok',
+        body: { kind: 'step' as const, step: HIGH_ESTIMATE_STEP_ID, params: { pricey: true } },
+      });
+      expect(estimate.snapshot.cost.total).toBe(9);
+    });
+
+    it('mirrors the submit’s max(floor, quoted) — a quote BELOW the floor never under-displays', async () => {
       // 🔴 THE UNDER-DISPLAY DIRECTION, which a block cannot defend against: the
-      // submit gates and reserves `max(declared, quoted)`, so an estimate that
-      // simply preferred the quote would show less than the submit reserves.
+      // submit gates and reserves `max(Math.ceil(plan.reserveBuzz), quoted)`, so
+      // an estimate that simply preferred the quote would show less than the
+      // submit reserves.
       // Latent today; reachable the moment an entry is declared above its real
       // orchestrator price.
       mockVerifyBlockToken.mockResolvedValue(stepClaims());

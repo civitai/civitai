@@ -7385,12 +7385,27 @@ async function estimateStepWorkflow(opts: { ctx: Context; claims: BlockClaims; b
   // below what the submit reserves" is then a property of the code, not of an
   // invariant that holds only at canonical params.
   //
-  // 🔴 `declaredBuzz` IS DELIBERATELY NOT A THIRD OPERAND. It can only differ
-  // upward from the submit floor, which is the SAFE direction (the block is told
-  // more than it will be charged), so including it guarded nothing — no mutation
-  // could kill it, which is how it announced itself as decoration rather than a
-  // bound. It stays as the no-quote FALLBACK, where it is the entry's own
-  // declared display estimate and is what the block was shown before this change.
+  // 🔴 `declaredBuzz` IS DELIBERATELY NOT A THIRD OPERAND — because it would
+  // OVER-display, not because it is inert.
+  //
+  // ⚠️ AN EARLIER VERSION OF THIS COMMENT SAID IT "can only differ upward from
+  // the submit floor" AND THAT NO MUTATION COULD KILL IT. Both were wrong, and
+  // the counterexample to the first ships in this repo: `fixture-split-floor-step`
+  // answers `estimateBuzz` 1 against a `priceForVariant` of 5, i.e. DOWNWARD.
+  // The direction is not fixed at all — `estimateBuzz` takes params and
+  // `priceForVariant` does not, so the two can diverge either way for a
+  // request, and only the canonical-params case is pinned by registry load.
+  //
+  // What is true, and is the actual reason: taking the max of all three would
+  // show `max(9, 5, 2) = 9` for an entry whose `estimateBuzz` answers 9 where
+  // `priceForVariant` is 5 — an 80% OVER-display against a submit that reserves
+  // 5. Over-display is the safe direction for a spend gate but it is still a
+  // wrong number quoted to a block, and the whole point of this change is that
+  // the estimate tells the truth. Flooring on the submit's own value alone is
+  // both necessary and sufficient for "never below what the submit reserves".
+  //
+  // It stays as the no-quote FALLBACK, where it is the entry's own declared
+  // display estimate and is what the block was shown before this change.
   const submitFloorBuzz = Math.ceil(plan.reserveBuzz);
   const shownBuzz = Math.max(submitFloorBuzz, quotedBuzz ?? declaredBuzz);
 
@@ -7660,9 +7675,10 @@ async function submitStepWorkflow(opts: {
   //
   // ⚠️ IT IS NO LONGER "what `estimateBuzz` SHOWED the block" — that clause was
   // true only while the estimate returned the declared constant. The estimate
-  // now quotes the orchestrator and shows `max(declared, thisFloor, quoted)`, so
-  // the two paths agree by construction rather than by the block having been
-  // shown this number. See `estimateStepWorkflow`.
+  // now quotes the orchestrator and computes this SAME expression —
+  // `max(Math.ceil(plan.reserveBuzz), quoted)` — so the two paths agree by
+  // construction rather than by the block having been shown this number. See
+  // `estimateStepWorkflow`.
   const reserveBuzz = Math.max(declaredBuzz, quotedBuzz);
 
   // (1) Pre-submit gate against the token's per-call budget — now enforced
@@ -7900,8 +7916,8 @@ async function submitStepWorkflow(opts: {
       // - `priceOverage` vs `declaredBuzz` drives the PRICE-CHECK SIGNAL. That
       //   is the number the REGISTRY ASSERTS. 🔴 It is no longer the number the
       //   block is SHOWN — the estimate quotes the orchestrator and shows
-      //   `max(declared, submitFloor, quoted)`, so for a usage-priced entry the
-      //   viewer sees the quote. `over` therefore means "the registry constant
+      //   `max(submitFloor, quoted ?? declared)`, so for a usage-priced entry
+      //   the viewer sees the quote. `over` therefore means "the registry constant
       //   does not describe reality", NOT "a user was shown the wrong price";
       //   triaging it as a display bug hunts something that does not exist.
       //
