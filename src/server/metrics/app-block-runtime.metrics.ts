@@ -555,7 +555,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   const stepPriceCheckTotal = getOrCreateCounter(
     reg,
     'civitai_app_block_step_price_check_total',
-    "App Block `kind:'step'` price checks, by step id and outcome. Submit-phase outcomes are prepaidFixed-only; estimate-phase outcomes fire for any kind:'step' estimate. Submit phase: exact = billed within both the declared price and the reservation; over = billed above the DECLARED price but within the quote-backed reservation (the declared constant is wrong; no money or cap impact — expected to be ~100% for a usage-priced step, do NOT alert on it); over_reserved = billed above the RESERVATION, so every cap counter was short until corrected (ALERT ON THIS); absent = EITHER the submit was refused because the orchestrator returned no price quote (no spend, no generation - triage as availability) OR a billed submit carried no numeric cost. Estimate phase: estimate_quoted = the block was shown a live orchestrator quote; estimate_absent = the quote failed and it was shown the declared price instead (read as a ratio against estimate_quoted, never alone)",
+    "App Block `kind:'step'` price checks, by step id and outcome. Only the post-billing submit outcomes are prepaidFixed-gated; the fail-closed absent and the estimate-phase outcomes fire for any kind:'step' request. Submit phase: exact = billed within both the declared price and the reservation; over = billed above the DECLARED price but within the quote-backed reservation (the declared constant is wrong; no money or cap impact — expected to be ~100% for a usage-priced step, do NOT alert on it); over_reserved = billed above the RESERVATION, so every cap counter was short until corrected (ALERT ON THIS); absent = EITHER the submit was refused because the orchestrator returned no price quote (no spend, no generation - triage as availability) OR a billed submit carried no numeric cost. Estimate phase: estimate_quoted = the block was shown a live orchestrator quote; estimate_absent = the quote failed and it was shown the declared price instead (read as a ratio against estimate_quoted, never alone)",
     ['step', 'outcome']
   );
 
@@ -707,8 +707,8 @@ export type StepPriceCheckOutcome =
  *   - SUBMIT, POST-BILLING (`exact` / `over` / `over_reserved`) — one emit per
  *     billed submit, AFTER the money has moved, gated on
  *     `plan.correctReservationOverage` and therefore on `prepaidFixed`.
- *   - SUBMIT, PRE-BILLING (`absent`) — 🔴 TWO DIFFERENT SITES SHARE THIS VALUE,
- *     AND THEY HAVE OPPOSITE POLARITY. One is post-billing (the submit
+ *   - SUBMIT, EITHER SIDE OF BILLING (`absent`) — 🔴 TWO DIFFERENT SITES SHARE
+ *     THIS VALUE, AND THEY HAVE OPPOSITE POLARITY. One is post-billing (the submit
  *     succeeded but its snapshot carried no numeric cost, so no comparison was
  *     possible). The other is the FAIL-CLOSED no-quote path: the orchestrator
  *     returned no price, so the submit is REFUSED, nothing is reserved, no
@@ -718,6 +718,10 @@ export type StepPriceCheckOutcome =
  *     triage it as an availability signal first. (Splitting the two is the
  *     obvious improvement and is deliberately not done here: it would change a
  *     label's meaning in the same change that already widened the set.)
+ *     🔴 The fail-closed site is NOT mode-gated either — it sits above the
+ *     `correctReservationOverage` block — so the same caveat as the estimate
+ *     bullet applies: it is `prepaidFixed`-only today because registry load
+ *     rejects every other mode, not because this site checks.
  *   - ESTIMATE (`estimate_quoted` / `estimate_absent`) — one emit per estimate,
  *     BEFORE any spend exists, and NOT gated on billing mode: it fires for any
  *     `kind:'step'` estimate. Unreachable for a non-`prepaidFixed` entry today
