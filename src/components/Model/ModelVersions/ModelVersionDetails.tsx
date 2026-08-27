@@ -138,7 +138,11 @@ import { getBaseModelGroup } from '~/shared/constants/basemodel.constants';
 import { getEcosystemSeoPageForKey } from '~/shared/constants/ecosystem-seo.constants';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
-import { getPrimaryFile, groupFilesByVariant } from '~/server/utils/model-helpers';
+import {
+  getPrimaryFile,
+  groupFilesByVariant,
+  resolveActiveFile,
+} from '~/server/utils/model-helpers';
 import {
   Availability,
   CollectionType,
@@ -233,7 +237,6 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
   const primaryFile = getPrimaryFile(version.files, {
     metadata: user?.filePreferences,
   });
-  const hashes = primaryFile?.hashes ?? [];
 
   const filesCount = version.files?.length;
   // ExternalGeneration versions are intentionally file-less (routed via external engines),
@@ -264,8 +267,19 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
   const tensorMetadataEnabled = detailAccordions.includes('tensor-metadata');
 
   // Shared active-file selection: the download variant picker drives it, and the
-  // Tensors panel follows it (instead of having its own file selector).
+  // Tensors panel and the details rows below follow it (instead of each having
+  // its own file selector).
   const [selectedFileId, setSelectedFileId] = useState<number | null>(null);
+  // modelFilesVisible is empty for component-only and ExternalGeneration
+  // versions, which still need a file for the Hash/AIR rows below.
+  const activeFile = useMemo(
+    () =>
+      resolveActiveFile(modelFilesVisible, selectedFileId, {
+        metadata: user?.filePreferences,
+      }) ?? primaryFile,
+    [modelFilesVisible, selectedFileId, user?.filePreferences, primaryFile]
+  );
+  const hashes = activeFile?.hashes ?? [];
 
   // Check if this is a component-only model (no model files, only components)
   const isComponentOnlyModel =
@@ -1616,7 +1630,8 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                         type={model.type}
                         modelId={model.id}
                         modelVersionId={version.id}
-                        fileType={primaryFile?.type}
+                        fileId={activeFile?.id}
+                        fileType={activeFile?.type}
                       />
                     </div>
                   )}
