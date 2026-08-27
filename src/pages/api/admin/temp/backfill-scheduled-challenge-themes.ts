@@ -23,10 +23,14 @@ import { limitConcurrency } from '~/server/utils/concurrency-helpers';
  * drifted, mood-word themes the fix exists to prevent — including a repeat of the challenge in the
  * original report. This regenerates them through the fixed pipeline.
  *
- * WHY visibleAt AND NOT startsAt: a challenge publishes three days before it starts. Once it is
- * visible its theme is the contract entrants are generating against, and themeElements are what
- * they are scored on — moving that anchor underneath them is worse than leaving the drift. So
- * anything already visible is skipped, unconditionally, and that is not overridable by query param.
+ * WHAT IT REFUSES TO TOUCH, and why that is the entry count rather than visibility: a challenge
+ * publishes three days before it opens, so "visible" and "open for entries" are different states —
+ * a Scheduled challenge can be on the site with submissions still closed. What actually must not
+ * move is the anchor of a challenge someone has already entered: the theme is what they generated
+ * against and themeElements are what they are scored on. So the guard is the real invariant —
+ * status is Scheduled AND the collection holds no items — not a proxy for it. Neither is
+ * overridable by query param. (Measured at cutover: challenge 452 was Active with 806 entries;
+ * three visible Scheduled challenges had none.)
  *
  * WHY the whole article and not just the theme: the article body names and elaborates on the
  * theme, so writing a new theme beside the old prose leaves the page contradicting its own
@@ -98,8 +102,10 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     FROM "Challenge"
     WHERE source = 'System'
       AND status = 'Scheduled'
-      AND "visibleAt" > now()
       AND metadata ? 'resourceModelId'
+      AND NOT EXISTS (
+        SELECT 1 FROM "CollectionItem" ci WHERE ci."collectionId" = "Challenge"."collectionId"
+      )
     ORDER BY "startsAt"
   `;
 
@@ -174,7 +180,9 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
           WHERE id = ${challenge.id}
             AND source = 'System'
             AND status = 'Scheduled'
-            AND "visibleAt" > now()
+            AND NOT EXISTS (
+              SELECT 1 FROM "CollectionItem" ci WHERE ci."collectionId" = "Challenge"."collectionId"
+            )
         `;
       }
 
