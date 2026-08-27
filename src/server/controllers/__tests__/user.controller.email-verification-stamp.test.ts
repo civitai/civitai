@@ -32,6 +32,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { OnboardingSteps } from '~/server/common/enums';
 import { completeOnboardingHandler } from '~/server/controllers/user.controller';
+import { refreshSession } from '~/server/auth/session-invalidation';
 
 const USER_ID = 4242;
 const TYPED_EMAIL = 'typed@example.test';
@@ -205,6 +206,19 @@ describe('onboarding Profile step — email-verification stamp', () => {
 
     expect(mockSend).toHaveBeenCalledTimes(1);
     expect(mockSend.mock.calls[0][0]).toMatchObject({ to: TYPED_EMAIL });
+  });
+
+  /**
+   * The stamp and `emailVerified` both live on the SESSION shape, which is cached for up to 4h. Without
+   * the bust the gate keeps refusing an account that just verified, and the banner keeps nagging one
+   * that did not need to — for hours, with the database already correct.
+   */
+  it('busts the cached session so the stamp takes effect', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(row({ email: null }));
+
+    await runProfile(TYPED_EMAIL);
+
+    expect(refreshSession).toHaveBeenCalledWith(USER_ID, expect.objectContaining({}));
   });
 
   /**
