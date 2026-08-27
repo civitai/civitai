@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { INVENTORY, type HostFile } from './hostHandlerParity';
+import { stripSourceComments } from './stripSourceComments';
 
 /**
  * App Blocks host↔SDK handler PARITY guard (runtime half).
@@ -46,20 +47,15 @@ const HOST_SRC: Record<HostFile, string> = {
 };
 
 /**
- * Strip `/* *​/` block comments and `//` line comments from a source string so
- * the handler grep can't FALSE-POSITIVE on a `'TYPE'` mention that merely sits
- * in a comment/JSDoc next to the word `onMessage` (which would mark a message
- * "covered" with no real handler).
+ * Delegates to the shared quote-aware scanner (`stripSourceComments.ts`).
  *
- * SAFETY: this is a deliberately naive strip (it does not parse strings/regex
- * literals), so it could over-strip in a pathological case — but an over-strip
- * can only REMOVE a real `onMessage('TYPE'` and cause a spurious FAILURE
- * (safe-fail, a human investigates), never a false PASS. It never adds coverage.
+ * This used to be a local regex. It was the SAME rule as
+ * `blockStorageCacheParity.test.ts`'s, duplicated — and when that copy was
+ * fixed, this one silently kept the defect: an unanchored line-comment rule
+ * truncates real code containing `//`. One rule, one place.
  */
 function stripComments(src: string): string {
-  return src
-    .replace(/\/\*[\s\S]*?\*\//g, '') // block comments
-    .replace(/(^|[^:])\/\/.*$/gm, '$1'); // line comments (keep `://` in URLs)
+  return stripSourceComments(src);
 }
 
 /**
@@ -83,10 +79,7 @@ function handlesMessage(src: string, type: string): boolean {
   // onMessage  [<...generic...>]  (  [ws/newlines]  'TYPE'
   // The generic arg can itself contain `>` (union types), so match it
   // non-greedily up to the opening `(` rather than a naive `<[^>]*>`.
-  const re = new RegExp(
-    String.raw`onMessage\s*(?:<[\s\S]*?>)?\s*\(\s*` + `'${type}'`,
-    'm'
-  );
+  const re = new RegExp(String.raw`onMessage\s*(?:<[\s\S]*?>)?\s*\(\s*` + `'${type}'`, 'm');
   return re.test(src);
 }
 
@@ -99,7 +92,9 @@ describe('App Blocks host↔SDK handler parity (gotcha-#73 "spins forever" guard
       for (const [type, spec] of Object.entries(INVENTORY)) {
         const req = spec[host.replace('.tsx', '') as 'IframeHost' | 'PageBlockHost' | 'InlineHost'];
         if (req === 'required') {
-          it(`handles '${type}'${spec.request ? ` (REQUEST → ${spec.reply})` : ' (fire-and-forget)'}`, () => {
+          it(`handles '${type}'${
+            spec.request ? ` (REQUEST → ${spec.reply})` : ' (fire-and-forget)'
+          }`, () => {
             // If this fails: the host is MISSING an onMessage('<TYPE>', …)
             // registration. For a REQUEST-style message that means a block
             // calling the corresponding hook HANGS to its SDK timeout (spins
