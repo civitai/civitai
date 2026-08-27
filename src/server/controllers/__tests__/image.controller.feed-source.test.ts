@@ -42,6 +42,18 @@ const ctx = {
 // regardless of the flag.
 const dbBoundInput = { limit: 10, browsingLevel: 1, include: [], postId: 5 } as never;
 const indexBoundInput = { limit: 10, browsingLevel: 1, include: [] } as never;
+// What the remix / challenge / add-to-collection submit pickers send: "show me
+// something of mine to submit". The index can serve this shape, which is why it
+// used to — and why a freshly published image was missing from the picker for
+// as long as the index took to catch up (measured on prod 2026-08-27: 26 of a
+// 40-image cohort were still unindexed 13 minutes after publish).
+const pickerInput = {
+  limit: 50,
+  browsingLevel: 1,
+  include: [],
+  userId: 7,
+  publishedOnly: true,
+} as never;
 
 describe('getInfiniteImagesHandler names the backend that served the page', () => {
   beforeEach(() => {
@@ -75,6 +87,37 @@ describe('getInfiniteImagesHandler names the backend that served the page', () =
 
     expect(getAllImagesIndexMock).toHaveBeenCalledTimes(1);
     expect(result.source).toBe('bitdex');
+  });
+
+  // 🔴 The picker beats BitDex on purpose, and that is the point of the test.
+  // `requiresImageDbPath` is evaluated BEFORE the Flipt call, so a DB-bound
+  // query never even asks what BitDex mode is in. If someone moves the Flipt
+  // evaluation above that check, or reorders the `useIndex` expression so
+  // `useBitdex` wins, this goes red — and nothing else in the suite would.
+  it('serves the own-content submit picker from the database even with BitDex primary', async () => {
+    getFliptVariantMock.mockResolvedValue('primary');
+
+    const result = await getInfiniteImagesHandler({ input: pickerInput, ctx });
+
+    expect(getAllImagesMock).toHaveBeenCalledTimes(1);
+    expect(getAllImagesIndexMock).not.toHaveBeenCalled();
+    expect(result.source).toBe('db');
+    // Not merely unused — never consulted. The short-circuit is what keeps a
+    // BitDex rollout from silently taking the picker back to the index.
+    expect(getFliptVariantMock).not.toHaveBeenCalled();
+  });
+
+  it('leaves a broad feed on the index when only publishedOnly is set', async () => {
+    // The control for the case above: it is the PAIR that routes. Without a
+    // userId this is a site-wide feed, and routing it to the DB would be a
+    // broad-feed escape hatch anyone could type into a URL.
+    const result = await getInfiniteImagesHandler({
+      input: { limit: 10, browsingLevel: 1, include: [], publishedOnly: true } as never,
+      ctx,
+    });
+
+    expect(getAllImagesIndexMock).toHaveBeenCalledTimes(1);
+    expect(getAllImagesMock).not.toHaveBeenCalled();
   });
 
   it('reports meili when BitDex fell back and the index said so', async () => {
