@@ -27,7 +27,17 @@ import {
   resolveListingRatingFloorInTx,
 } from '~/server/services/blocks/app-listing-assets.service';
 import { assertOffsiteListingActionableInTx } from '~/server/services/blocks/app-listing-actionable.service';
-import { isOwnerUnpublishedListing } from '~/server/services/blocks/app-listing-owner-unpublish';
+import {
+  isOwnerUnpublishAction,
+  readLastStatusChangingModerationEvent,
+} from '~/server/services/blocks/app-listing-owner-unpublish';
+import {
+  REPUBLISH_REVIEW_DETAIL,
+  type RepublishReviewReason,
+  buildApprovedAssetSnapshot,
+  readRecordedAssetSnapshot,
+  resolveRepublishReviewReason,
+} from '~/server/services/blocks/app-listing-approved-assets';
 import {
   newAppListingModerationEventId,
   newAppListingPublishRequestId,
@@ -1144,6 +1154,98 @@ export type ResetOnsiteListingToPendingResult = {
 };
 
 /**
+ * The columns a re-queue clones out of the most-recent APPROVED `AppBlockPublishRequest`.
+ *
+ * ONE SPELLING, shared by every caller that re-queues an on-site app for review
+ * ({@link resetOnsiteListingToPending} — the moderator reset — and the owner-republish
+ * asset-review route). The select and the create below are a matched pair: a column added
+ * to one and forgotten in the other silently drops that field from every re-queued
+ * request, which is exactly how the #4059 provenance columns nearly went missing.
+ */
+const APPROVED_BLOCK_REQUEST_CLONE_SELECT = {
+  appBlockId: true,
+  version: true,
+  manifest: true,
+  bundleKey: true,
+  bundleSha256: true,
+  bundleSizeBytes: true,
+  fileSummary: true,
+  manifestDiffSummary: true,
+  forgejoCommitSha: true,
+  // #4059 — selected so the clone can CARRY them. See the create.
+  sourceCommit: true,
+  sourceDirty: true,
+} as const;
+
+type ApprovedBlockRequestClone = Prisma.AppBlockPublishRequestGetPayload<{
+  select: typeof APPROVED_BLOCK_REQUEST_CLONE_SELECT;
+}>;
+
+/**
+ * Clone an approved on-site publish request into a FRESH `pending` one so the app
+ * re-enters `listPendingRequests` with the SAME assets/version/manifest — no owner
+ * resubmit, and a moderator re-approves it through the existing `approveRequest` flow.
+ *
+ * 🔴 #4059 — the client's provenance CLAIM is carried forward, VERBATIM.
+ *
+ * The justification is narrow and it is the only one: this clone re-submits
+ * BYTE-IDENTICAL bundle bytes (same `bundleKey`, same `bundleSha256` as the approved
+ * row). A claim about which tree those exact bytes came from is still the SAME claim
+ * about the SAME bytes — copying it invents nothing. Dropping it would permanently lose
+ * the answer to "which tree did these bytes come from?" for any app that goes through a
+ * suspend → reset-to-pending cycle, which is the archaeology #4059 exists to make
+ * unnecessary.
+ *
+ * Copied RAW, including NULL: a NULL on the source row means UNKNOWN and must stay
+ * UNKNOWN here. No `??` fallback of any kind — least of all to `forgejoCommitSha`, which
+ * is a SERVER-side sha in the platform's own repo and would fabricate an author's-tree
+ * claim nobody made. `false` likewise stays `false` (asserted CLEAN), never folded into
+ * UNKNOWN.
+ *
+ * 🔴 NOT the `recordPendingFromPush` case, which correctly writes NEITHER: that path has
+ * no client and no author work tree, so there is no claim in existence to carry.
+ *
+ * The partial-unique `app_block_publish_requests_one_pending_per_slug` index is the real
+ * guard against a second in-flight review; callers pre-check it for a friendly error and
+ * must still catch its P2002 as a race backstop.
+ */
+async function cloneApprovedBlockRequestToPending(
+  tx: Prisma.TransactionClient,
+  args: {
+    lastApproved: ApprovedBlockRequestClone;
+    publishRequestId: string;
+    slug: string;
+    appBlockId: string;
+    /**
+     * The LISTING OWNER, never the acting moderator — my-submissions and the mod queue
+     * attribute a re-queued request to the person whose app it is.
+     */
+    submittedByUserId: number;
+  }
+): Promise<void> {
+  const { lastApproved } = args;
+  await tx.appBlockPublishRequest.create({
+    data: {
+      id: args.publishRequestId,
+      appBlockId: lastApproved.appBlockId ?? args.appBlockId,
+      slug: args.slug,
+      submittedByUserId: args.submittedByUserId,
+      version: lastApproved.version,
+      manifest: lastApproved.manifest as Prisma.InputJsonValue,
+      bundleKey: lastApproved.bundleKey,
+      bundleSha256: lastApproved.bundleSha256,
+      bundleSizeBytes: lastApproved.bundleSizeBytes,
+      fileSummary: lastApproved.fileSummary as Prisma.InputJsonValue,
+      manifestDiffSummary: lastApproved.manifestDiffSummary as Prisma.InputJsonValue,
+      forgejoCommitSha: lastApproved.forgejoCommitSha,
+      sourceCommit: lastApproved.sourceCommit,
+      sourceDirty: lastApproved.sourceDirty,
+      status: 'pending',
+    },
+  });
+}
+
+/**
  * MOD reset an APPROVED ON-SITE (hosted app-block) listing back into the block
  * review queue (the W13-deferred onsite reset-to-pending — now built). Mirrors the
  * offsite `resetListingToPending` semantics across the DIFFERENT onsite plumbing:
@@ -1209,20 +1311,7 @@ export async function resetOnsiteListingToPending(opts: {
   const lastApproved = await dbRead.appBlockPublishRequest.findFirst({
     where: { slug: listing.slug, status: 'approved' },
     orderBy: [{ submittedAt: 'desc' }],
-    select: {
-      appBlockId: true,
-      version: true,
-      manifest: true,
-      bundleKey: true,
-      bundleSha256: true,
-      bundleSizeBytes: true,
-      fileSummary: true,
-      manifestDiffSummary: true,
-      forgejoCommitSha: true,
-      // #4059 — selected so the clone below can CARRY them. See the create.
-      sourceCommit: true,
-      sourceDirty: true,
-    },
+    select: APPROVED_BLOCK_REQUEST_CLONE_SELECT,
   });
   if (!lastApproved) {
     throw new OffsiteModerationError(
@@ -1277,45 +1366,15 @@ export async function resetOnsiteListingToPending(opts: {
       // it to the owner, not the acting mod). Same assets/version/manifest → a mod
       // re-approves with no owner resubmit. The partial-unique index (one pending per
       // slug) is satisfied (we pre-checked); a raced create fires P2002 → caught below.
-      await tx.appBlockPublishRequest.create({
-        data: {
-          id: publishRequestId,
-          appBlockId: lastApproved.appBlockId ?? appBlockId,
-          slug: listing.slug,
-          submittedByUserId: listing.userId,
-          version: lastApproved.version,
-          manifest: lastApproved.manifest as Prisma.InputJsonValue,
-          bundleKey: lastApproved.bundleKey,
-          bundleSha256: lastApproved.bundleSha256,
-          bundleSizeBytes: lastApproved.bundleSizeBytes,
-          fileSummary: lastApproved.fileSummary as Prisma.InputJsonValue,
-          manifestDiffSummary: lastApproved.manifestDiffSummary as Prisma.InputJsonValue,
-          forgejoCommitSha: lastApproved.forgejoCommitSha,
-          // #4059 — carry the client's provenance CLAIM forward, verbatim.
-          //
-          // The justification is narrow and it is the only one: this clone
-          // re-submits BYTE-IDENTICAL bundle bytes (same `bundleKey`, same
-          // `bundleSha256` as the approved row above). A claim about which tree
-          // those exact bytes came from is still the SAME claim about the SAME
-          // bytes — copying it invents nothing. Dropping it would permanently
-          // lose the answer to "which tree did these bytes come from?" for any
-          // app that goes through a suspend → reset-to-pending cycle, which is
-          // the archaeology #4059 exists to make unnecessary.
-          //
-          // Copied RAW, including NULL: a NULL on the source row means UNKNOWN
-          // and must stay UNKNOWN here. No `??` fallback of any kind — least of
-          // all to `forgejoCommitSha`, which is a SERVER-side sha in the
-          // platform's own repo and would fabricate an author's-tree claim
-          // nobody made. `false` likewise stays `false` (asserted CLEAN), never
-          // folded into UNKNOWN.
-          //
-          // 🔴 NOT the `recordPendingFromPush` case, which correctly writes
-          // NEITHER: that path has no client and no author work tree, so there
-          // is no claim in existence to carry.
-          sourceCommit: lastApproved.sourceCommit,
-          sourceDirty: lastApproved.sourceDirty,
-          status: 'pending',
-        },
+      // The clone payload (incl. the #4059 provenance rules) lives in
+      // {@link cloneApprovedBlockRequestToPending}, shared with the owner-republish
+      // asset-review route so the two can never drift a column apart.
+      await cloneApprovedBlockRequestToPending(tx, {
+        lastApproved,
+        publishRequestId,
+        slug: listing.slug,
+        appBlockId,
+        submittedByUserId: listing.userId,
       });
 
       // (4) audit event.
@@ -1373,6 +1432,8 @@ async function loadOwnedListingInTx(
   name: string | null;
   appBlockId: string | null;
   contentRating: string | null;
+  iconId: number | null;
+  coverId: number | null;
 }> {
   const listing = await tx.appListing.findUnique({
     where: { id: appListingId },
@@ -1386,6 +1447,13 @@ async function loadOwnedListingInTx(
       // The DECLARED rating, the input to `republishOwnListing`'s go-live rating floor.
       // `unpublishOwnListing` ignores it — a self-hide never touches the rating.
       contentRating: true,
+      // The two scalar halves of the reviewable ASSET SURFACE (the third — screenshots —
+      // is a child table). Selected HERE, on the row both owner procs already load on the
+      // primary inside their transaction, so `buildApprovedAssetSnapshot` neither re-reads
+      // them nor opens a second window in which they could move relative to the
+      // screenshots it does read. See `app-listing-approved-assets`.
+      iconId: true,
+      coverId: true,
     },
   });
   if (!listing) {
@@ -1402,6 +1470,8 @@ async function loadOwnedListingInTx(
     name: listing.name,
     appBlockId: listing.appBlockId,
     contentRating: listing.contentRating,
+    iconId: listing.iconId,
+    coverId: listing.coverId,
   };
 }
 
@@ -1453,6 +1523,22 @@ export async function unpublishOwnListing(opts: {
       from: 'approved',
       to: 'suspended',
     });
+    // 🔴 RECORD THE APPROVED ASSET SURFACE. This is the ONLY place the store learns what
+    // imagery a moderator last signed off on — nothing else in the schema captures it (no
+    // approve path writes a moderation event at all, and every existing `before`/`after`
+    // payload is `{status}`/`{userId}`). `republishOwnListing` compares against it to
+    // decide whether a republish may go live immediately or has to re-enter review.
+    //
+    // WHY IT IS SOUND HERE AND NOWHERE CHEAPER: the flip above ran on a listing that was
+    // `approved`, and an approved non-shadow listing is NOT owner-asset-editable
+    // (`assertOwnerAssetEditable`), so the assets read here ARE the last-approved ones. It
+    // is read on the PRIMARY inside the SAME tx as the flip, so a concurrent asset write
+    // cannot slip between the snapshot and the removal.
+    //
+    // It goes in `before` because that is the state this event moved AWAY from — the
+    // approved one. `after` describes the `removed` state, whose assets are about to
+    // become freely editable and therefore mean nothing to a later reviewer.
+    const approvedAssets = await buildApprovedAssetSnapshot(tx, input.appListingId, listing);
     await tx.appListingModerationEvent.create({
       data: {
         id: newAppListingModerationEventId(),
@@ -1461,7 +1547,7 @@ export async function unpublishOwnListing(opts: {
         action: 'owner-unpublish',
         actorUserId: userId,
         reason,
-        before: { status: 'approved' },
+        before: { status: 'approved', assets: approvedAssets },
         after: { status: 'removed' },
       },
     });
@@ -1470,23 +1556,81 @@ export async function unpublishOwnListing(opts: {
   return { appListingId: input.appListingId, status: 'removed' };
 }
 
-export type RepublishOwnListingResult = { appListingId: string; status: 'approved' };
+/**
+ * Where an owner republish LANDED.
+ *
+ * 🔴 `'pending'` IS A REAL, EXPECTED OUTCOME, NOT AN ERROR — the listing did not go live
+ * and every surface that reports the result must branch on this field rather than
+ * assuming success means "live". Telling an owner "it is live again" when it is sitting
+ * in a review queue is a lie the type system now refuses to let you tell silently.
+ */
+export type RepublishOwnListingResult = {
+  appListingId: string;
+  status: 'approved' | 'pending';
+  /** Set only on the `'pending'` arm — why the republish had to be reviewed. */
+  reviewReason?: RepublishReviewReason;
+};
 
 /**
- * OWNER restore their OWN owner-unpublished listing (removed → approved) — DUAL-KIND
- * (W13 P4).
+ * OWNER restore their OWN owner-unpublished listing — DUAL-KIND (W13 P4).
  *
- * 🔴 SAFETY GUARD (load-bearing): republish is allowed ONLY when the MOST-RECENT
- * `AppListingModerationEvent` for the listing is an `owner-unpublish`. If the last
- * event is a moderator `delist`/`purge` (a takedown-for-cause), republish is
+ * 🔴 ASSET-CHANGE REVIEW GATE (removed → approved, OR removed → pending). An owner may
+ * unpublish their own listing, swap the icon/cover/screenshots — a `removed` listing is
+ * DIRECTLY asset-editable, `assertOwnerAssetEditable` refuses only an `approved`
+ * non-shadow row — and republish. Before this gate that put brand-new imagery on a public
+ * store card with NO content review: the two go-live gates below read scan STATUS and the
+ * destination href, and #4418's floor reads MATURITY. None of them is a review.
+ *
+ * So: if ANY listing asset differs from what was live at the last approval, the republish
+ * routes the listing to `pending` (re-review) instead of `approved`, and re-queues it —
+ * off-site by minting a fresh pending `AppListingPublishRequest` (which
+ * `approveExternalRequest`'s widened `{draft,pending}` guard re-approves), on-site by
+ * cloning the latest approved `AppBlockPublishRequest` (which `approveRequest`'s
+ * `(3b-reset)` branch re-approves AND un-suspends the block for). Both are the EXISTING
+ * reset-to-pending machinery — see {@link resetListingToPending} /
+ * {@link resetOnsiteListingToPending}, whose writes this mirrors exactly.
+ *
+ * If NOTHING changed, republish is immediate exactly as it was — no extra queue entry, no
+ * moderator involvement, no behaviour change at all.
+ *
+ * 🔴 THE SIGNAL IS RECORDED, NOT INFERRED, AND ITS ABSENCE FAILS CLOSED. Nothing in the
+ * schema previously captured the approved asset set (no approve path writes a moderation
+ * event; every existing `before`/`after` payload is `{status}`/`{userId}`; `updatedAt` is
+ * bumped by the republish flip itself and a DELETED screenshot leaves no timestamp at
+ * all). {@link unpublishOwnListing} now records it into the `owner-unpublish` event's
+ * `before.assets`. A listing unpublished BEFORE that shipped has no snapshot, and a
+ * comparison against an absent operand reports MISSING, not SAME — those route to review
+ * (`reviewReason: 'no-recorded-assets'`) rather than being waved through. See
+ * `app-listing-approved-assets`.
+ *
+ * 🔴 THIS ADDS A SECOND WRITER OF `app_listings.status = 'pending'` ON A FORMERLY-LIVE
+ * LISTING. `closeTerminalListing` (`offsite-listing.service`) and
+ * `closeOnsiteResetListingOnWithdraw` (`publish-request.service`) both reason that such a
+ * listing is ALWAYS mod-mandated and unconditionally write a `delist` on withdraw/reject.
+ * That is now narrower than the truth, and the consequence is deliberate but not free:
+ * an owner who routes themselves into review and then WITHDRAWS the request lands on
+ * `removed` + `delist`, so `republishOwnListing` forbids them and a moderator must
+ * `relistListing`. Fail-CLOSED, and no content reaches the store unreviewed — but it is a
+ * self-inflicted lockout that did not exist before. Left as-is on purpose rather than
+ * loosened here: that predicate was made unconditional to close a real exploit (an
+ * intervening `report-resolve` shifted the newest event and let an owner self-restore
+ * mod-mandated content), and re-opening it is a product decision, not an implementation
+ * detail. Both comments are corrected in place; see the PR body.
+ *
+ * 🔴 SAFETY GUARD (load-bearing, unchanged): republish is allowed ONLY when the
+ * MOST-RECENT status-changing `AppListingModerationEvent` is an `owner-unpublish`. If the
+ * last event is a moderator `delist`/`purge` (a takedown-for-cause), republish is
  * FORBIDDEN — an owner must NOT be able to self-restore a listing a moderator
  * removed. No events at all → also FORBIDDEN (can't prove owner-initiated removal).
  * The latest-event read + the flip are in ONE tx on the PRIMARY so a concurrent mod
  * takedown can't slip between the check and the restore.
  *
- * ON-SITE: the backing `AppBlock` is also restored suspended → approved in the SAME
- * tx (via {@link flipBackingBlockStatus}), so the app serves again. OFF-SITE: only the
- * listing flips. `reason` optional.
+ * ON-SITE: on the IMMEDIATE arm the backing `AppBlock` is also restored suspended →
+ * approved in the SAME tx (via {@link flipBackingBlockStatus}), so the app serves again.
+ * On the REVIEW arm it is deliberately LEFT SUSPENDED — the app must not serve while its
+ * store card is unreviewed — and `approveRequest`'s `(3b-reset)` branch un-suspends it on
+ * re-approve, gated on exactly the `pending` listing status this route writes. OFF-SITE:
+ * only the listing flips. `reason` optional.
  *
  * 🔴 MATURITY IS RE-DERIVED AT GO-LIVE, UNIFORMLY FOR BOTH KINDS (this used to be a
  * pure visibility toggle with NO re-derive, which was the hole). A `removed` listing is
@@ -1508,6 +1652,8 @@ export async function republishOwnListing(opts: {
   // Set when the on-site block-restore flip matched 0 rows (drift — mirrors relist).
   let onsiteBlockRestoreDrift = false;
   let onsiteBlockId: string | null = null;
+  // Set by the REVIEW arm; `null` means the republish went live immediately.
+  let reviewReason: RepublishReviewReason | null = null;
 
   await dbWrite.$transaction(async (tx) => {
     const listing = await loadOwnedListingInTx(tx, input.appListingId, userId);
@@ -1521,7 +1667,12 @@ export async function republishOwnListing(opts: {
     // the PRIMARY inside the tx (a concurrent mod delist/purge would otherwise race
     // between a replica read and the flip). A mod delist/purge (or NO event) → the
     // owner may not self-restore.
-    if (!(await isOwnerUnpublishedListing(tx, input.appListingId))) {
+    //
+    // ONE read, not two: the same row also carries the asset snapshot the review gate
+    // below compares against, and the verb and the payload MUST come from the same event
+    // (see `readLastStatusChangingModerationEvent`).
+    const lastEvent = await readLastStatusChangingModerationEvent(tx, input.appListingId);
+    if (!isOwnerUnpublishAction(lastEvent?.action)) {
       throw new OffsiteModerationError(
         'FORBIDDEN',
         'This listing was removed by a moderator and cannot be restored by its owner.'
@@ -1591,6 +1742,40 @@ export async function republishOwnListing(opts: {
       listing.contentRating
     );
 
+    // 🔴 THE ASSET-CHANGE REVIEW GATE. Compare the listing's CURRENT reviewable asset
+    // surface against the one recorded when the owner unpublished it (= the one a
+    // moderator last approved — see the function doc). Read on the PRIMARY, inside this
+    // tx, so it is row-consistent with the flip it decides.
+    //
+    // 🔴 The absent-snapshot arm is EXPLICIT, and it is the whole reason this is not a
+    // bare `!==`: `resolveRepublishReviewReason` is handed `null` for a missing or
+    // malformed payload and returns `'no-recorded-assets'`, never `null`-meaning-fine.
+    // A comparison against an absent operand reports MISSING, not SAME.
+    //
+    // 🔴 IT RUNS AFTER THE RATING FLOOR ON PURPOSE. The floor is applied on BOTH arms —
+    // #4418's guarantee must not depend on which arm a republish takes. It especially
+    // must not be skipped on the review arm: the on-site re-approve that later restores
+    // a `pending` listing (`approveRequest`'s `(3b-reset)` branch) writes ONLY `status`
+    // and runs no floor of its own, so deferring the floor to "the approve will do it"
+    // would silently drop it for every on-site review-arm republish.
+    const liveAssets = await buildApprovedAssetSnapshot(tx, input.appListingId, listing);
+    reviewReason = resolveRepublishReviewReason(
+      readRecordedAssetSnapshot(lastEvent?.before),
+      liveAssets
+    );
+
+    if (reviewReason) {
+      await routeRepublishToReviewInTx(tx, {
+        appListingId: input.appListingId,
+        listing,
+        userId,
+        reason,
+        reviewReason,
+        flooredRating,
+      });
+      return;
+    }
+
     const flipped = await tx.appListing.updateMany({
       where: { id: input.appListingId, kind: listing.kind, status: 'removed' },
       data: { status: 'approved', contentRating: flooredRating },
@@ -1653,7 +1838,145 @@ export async function republishOwnListing(opts: {
       .catch(() => undefined);
   }
 
-  return { appListingId: input.appListingId, status: 'approved' };
+  // 🔴 The narrowing is on the LOCAL, not on a re-read: `reviewReason` is assigned inside
+  // the transaction callback and TypeScript cannot see through the closure, so it is
+  // widened back to the union here explicitly rather than trusted.
+  const landedReviewReason: RepublishReviewReason | null = reviewReason;
+  return landedReviewReason
+    ? { appListingId: input.appListingId, status: 'pending', reviewReason: landedReviewReason }
+    : { appListingId: input.appListingId, status: 'approved' };
+}
+
+/**
+ * REVIEW ARM of {@link republishOwnListing}: instead of going live, put the listing into
+ * `pending` and re-queue it so a moderator sees the changed assets.
+ *
+ * Every write here MIRRORS the existing reset-to-pending machinery rather than inventing
+ * a parallel concept — the re-approve paths that will bring the listing back
+ * (`approveExternalRequest` for off-site, `approveRequest`'s `(3b-reset)` branch for
+ * on-site) already recognise exactly this state and nothing else needed teaching:
+ *
+ *   OFF-SITE — flip `removed → pending`, mint a FRESH `pending` `AppListingPublishRequest`
+ *   owned by the listing owner (a NON-shadow request, which `approveExternalRequest`'s
+ *   widened `{draft,pending}` listing guard re-approves). Identical to
+ *   {@link resetListingToPending}'s writes.
+ *
+ *   ON-SITE — flip `removed → pending` and clone the latest approved
+ *   `AppBlockPublishRequest` into a fresh `pending` one (same assets/version/manifest, no
+ *   owner resubmit), exactly as {@link resetOnsiteListingToPending} does. The backing
+ *   block is LEFT SUSPENDED (`unpublishOwnListing` suspended it and nothing here restores
+ *   it) — an app whose store card is awaiting review must not be serving — and the
+ *   `(3b-reset)` re-approve branch un-suspends it, gated on the `pending` listing status
+ *   this writes.
+ *
+ * 🔴 `contentRating` IS WRITTEN ON THIS ARM TOO. It carries #4418's raise-only floor,
+ * already derived by the caller; see the call site for why deferring it to the approve is
+ * not equivalent.
+ *
+ * The audit event is an `owner-republish` whose `after.status` is `pending`, so the
+ * history reads "the owner asked for this back, and it went to review" rather than
+ * implying it went live. `detail` names WHY (changed assets vs. no recorded baseline).
+ *
+ * A guarded 0-count on the flip throws, rolling back the whole tx — including the
+ * re-queued request — so a raced listing can never leave a stray queue entry behind.
+ */
+async function routeRepublishToReviewInTx(
+  tx: Prisma.TransactionClient,
+  args: {
+    appListingId: string;
+    listing: { kind: string; slug: string; userId: number; appBlockId: string | null };
+    userId: number;
+    reason: string | null;
+    reviewReason: RepublishReviewReason;
+    flooredRating: string | null;
+  }
+): Promise<void> {
+  const { appListingId, listing, reviewReason, flooredRating } = args;
+  const isOnsite = listing.kind === 'onsite';
+
+  // Resolve the on-site clone source BEFORE the flip: no approved version to re-review
+  // (or a review already in flight) must refuse the whole republish rather than strand
+  // the listing in `pending` with nothing in any queue — which no owner could recover
+  // from without a moderator.
+  let lastApproved: ApprovedBlockRequestClone | null = null;
+  if (isOnsite) {
+    if (!listing.appBlockId) {
+      throw new OffsiteModerationError(
+        'NOT_TRANSITIONABLE',
+        'This app has no approved version to re-review.'
+      );
+    }
+    lastApproved = await tx.appBlockPublishRequest.findFirst({
+      where: { slug: listing.slug, status: 'approved' },
+      orderBy: [{ submittedAt: 'desc' }],
+      select: APPROVED_BLOCK_REQUEST_CLONE_SELECT,
+    });
+    if (!lastApproved) {
+      throw new OffsiteModerationError(
+        'NOT_TRANSITIONABLE',
+        'This app has no approved version to re-review.'
+      );
+    }
+    // Friendly pre-check for the partial-unique `one pending per slug` index (mirrors
+    // `resetOnsiteListingToPending`); a raced create still surfaces as P2002.
+    const openPending = await tx.appBlockPublishRequest.findFirst({
+      where: { slug: listing.slug, status: 'pending' },
+      select: { id: true },
+    });
+    if (openPending) {
+      throw new OffsiteModerationError(
+        'NOT_TRANSITIONABLE',
+        'A review is already pending for this app.'
+      );
+    }
+  }
+
+  const flipped = await tx.appListing.updateMany({
+    where: { id: appListingId, kind: listing.kind, status: 'removed' },
+    data: { status: 'pending', contentRating: flooredRating },
+  });
+  if (flipped.count === 0) {
+    throw new OffsiteModerationError(
+      'NOT_TRANSITIONABLE',
+      'This listing can no longer be republished.'
+    );
+  }
+
+  if (isOnsite && lastApproved && listing.appBlockId) {
+    await cloneApprovedBlockRequestToPending(tx, {
+      lastApproved,
+      publishRequestId: `pubreq_${newUlid()}`,
+      slug: listing.slug,
+      appBlockId: listing.appBlockId,
+      submittedByUserId: listing.userId,
+    });
+  } else {
+    await tx.appListingPublishRequest.create({
+      data: {
+        id: newAppListingPublishRequestId(),
+        appListingId,
+        kind: listing.kind,
+        slug: listing.slug,
+        // The LISTING OWNER, so my-submissions and the mod queue attribute it to them.
+        submittedByUserId: listing.userId,
+        status: 'pending',
+      },
+    });
+  }
+
+  await tx.appListingModerationEvent.create({
+    data: {
+      id: newAppListingModerationEventId(),
+      appListingId,
+      slug: listing.slug,
+      action: 'owner-republish',
+      actorUserId: args.userId,
+      reason: args.reason,
+      detail: REPUBLISH_REVIEW_DETAIL[reviewReason],
+      before: { status: 'removed' },
+      after: { status: 'pending' },
+    },
+  });
 }
 
 /**

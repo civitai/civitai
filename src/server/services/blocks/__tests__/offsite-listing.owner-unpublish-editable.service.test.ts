@@ -259,7 +259,10 @@ describe('updateListing on a `removed` listing', () => {
         action: { in: [...LISTING_STATUS_CHANGING_MODERATION_ACTIONS] },
       },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-      select: { action: true },
+      // `before` rides along: the same query now also carries the approved-asset
+      // baseline the owner-republish review gate compares against — one row, so the verb
+      // and the payload can never describe different events.
+      select: { action: true, before: true },
     });
     expect(mockRead.appListingModerationEvent.findFirst).not.toHaveBeenCalled();
   });

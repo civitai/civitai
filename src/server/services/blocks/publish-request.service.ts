@@ -1425,12 +1425,20 @@ export class WithdrawRequestError extends Error {
  * offsite `closeTerminalListing` pending→removed+`delist` withdraw path.
  *
  * 🔴 DETERMINISTIC (mirrors the offsite `closeTerminalListing` rule): fires whenever an
- * ONSITE `AppListing` for this slug is currently `pending` — which is ALWAYS a mod
- * reset. Onsite listings are created `approved` on approve; the ONLY writer of
- * `status='pending'` on an onsite listing is `resetOnsiteListingToPending`, so a
- * `pending` onsite listing == a mod-mandated re-review. It therefore does NOT probe the
- * most-recent moderation event (an intervening report-resolve/dismiss event on the same
- * listing could shift the newest event off `reset-to-pending` and defeat such a probe).
+ * ONSITE `AppListing` for this slug is currently `pending` — i.e. it is IN REVIEW.
+ * Onsite listings are created `approved` on approve, so `pending` always means something
+ * bounced it back to the queue. It does NOT probe the most-recent moderation event (an
+ * intervening report-resolve/dismiss event on the same listing could shift the newest
+ * event off `reset-to-pending` and defeat such a probe).
+ *
+ * 🔴 THERE ARE NOW TWO WRITERS OF ONSITE `status='pending'`, and this comment used to
+ * name only one. Besides `resetOnsiteListingToPending` (the mod reset), the owner-facing
+ * `republishOwnListing` routes a republish to `pending` when the listing's assets changed
+ * since the last approval. This close therefore also fires for an OWNER-INITIATED review,
+ * and treats it identically — `delist`, so a moderator must relist. Deliberate and
+ * fail-CLOSED (nothing unreviewed serves), but it does mean an owner who withdraws their
+ * own re-review needs a moderator to get back. See the matching note in
+ * `closeTerminalListing` (`offsite-listing.service`).
  * Flip the listing `pending → removed` (status-guarded TOCTOU) + write a `delist` audit
  * event with the OWNER as actor: the last event is now a takedown, so
  * `republishOwnListing`'s guard FORBIDS the owner and a mod must `relistListing`

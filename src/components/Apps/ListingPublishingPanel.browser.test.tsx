@@ -9,6 +9,7 @@ import {
   OWNER_ACTIONS_BY_STATE,
   sortPublishingActions,
 } from '~/components/Apps/listingPublishingActions';
+import { showSuccessNotification } from '~/utils/notifications';
 
 /**
  * THE OWNER PUBLISHING LEDGER, now on the authoring page's **Publishing** tab.
@@ -57,6 +58,15 @@ const mocks = vi.hoisted(() => ({
   /** `[procedureName, input]` for every mutation fired, in order. */
   calls: [] as Array<[string, unknown]>,
   republishPending: false,
+  /**
+   * What `republishOwnListing` resolves to. `'pending'` is a REAL success outcome (the
+   * asset-change review route), not an error, and the panel must say so — see
+   * `republishSuccessMessage`.
+   */
+  republishResult: { appListingId: 'apl_1', status: 'approved' } as {
+    appListingId: string;
+    status: 'approved' | 'pending';
+  },
   /** Every `utils.appListings.<proc>.invalidate()` the panel issues, by procedure name. */
   invalidated: [] as string[],
 }));
@@ -80,7 +90,12 @@ function mutationStub(name: string, isPending = false) {
     useMutation: (opts?: MutationOpts) => ({
       mutate: (input: unknown) => {
         mocks.calls.push([name, input]);
-        void opts?.onSuccess?.(undefined);
+        // 🔴 A REALISTIC payload, not `undefined`: `republishOwnListing` resolves to
+        // `{ appListingId, status }` and the panel DERIVES its success message from that
+        // status (a republish whose assets changed lands in `pending`, not live). A stub
+        // that hands the handler `undefined` is an unfaithful fake — it cannot see the
+        // wrong message and it crashes the handler that reads the field.
+        void opts?.onSuccess?.(mocks.republishResult);
       },
       isPending,
     }),
@@ -187,6 +202,7 @@ function renderedActions(): string[] {
 beforeEach(() => {
   mocks.calls = [];
   mocks.republishPending = false;
+  mocks.republishResult = { appListingId: 'apl_1', status: 'approved' };
   mocks.invalidated = [];
 });
 
@@ -340,6 +356,40 @@ describe('the wiring — each control fires the right procedure with the right i
     // fails in one of the two tests. Republish is not confirm-gated on purpose: it restores
     // the previous state, so the recovery from a misclick is the button next to it.
     expect(mocks.calls).toEqual([['republishOwnListing', { appListingId: 'apl_hidden_q2' }]]);
+  });
+
+  test('🔴 a republish routed to REVIEW tells the owner so, instead of claiming it is live', async () => {
+    /**
+     * 🔴 THE MESSAGE IS A CLAIM ABOUT THE SERVER'S ANSWER. `republishOwnListing` routes a
+     * republish to `pending` — a re-review — whenever the listing's assets changed since
+     * the last approval. The panel used to hardcode "App republished — it is live again",
+     * which is FALSE on that arm and survives review precisely because the mutation really
+     * did succeed. This drives the real click path and reads the notification the owner
+     * would actually see.
+     */
+    mocks.republishResult = { appListingId: 'apl_hidden_q2', status: 'pending' };
+    renderWithProviders(<ListingPublishingPanel {...OWNER_HIDDEN} />);
+    const button = page.getByTestId('apps-publishing-republish');
+    await expect.element(button).toBeInTheDocument();
+    await userEvent.click(button);
+
+    const message = vi.mocked(showSuccessNotification).mock.calls.at(-1)?.[0]?.message as string;
+    expect(message).toContain('review');
+    // The load-bearing ABSENCE — the old copy must not come back on this arm.
+    expect(message).not.toContain('live');
+  });
+
+  test('🔴 a republish that DID go live still says so (the other arm of the same branch)', async () => {
+    // Positive control on the same assertion: without this, a mutant that always returned
+    // the review wording would satisfy the test above.
+    mocks.republishResult = { appListingId: 'apl_hidden_q2', status: 'approved' };
+    renderWithProviders(<ListingPublishingPanel {...OWNER_HIDDEN} />);
+    const button = page.getByTestId('apps-publishing-republish');
+    await expect.element(button).toBeInTheDocument();
+    await userEvent.click(button);
+
+    const message = vi.mocked(showSuccessNotification).mock.calls.at(-1)?.[0]?.message as string;
+    expect(message).toContain('live');
   });
 
   test('a republish in flight DISABLES the button rather than allowing a second fire', async () => {

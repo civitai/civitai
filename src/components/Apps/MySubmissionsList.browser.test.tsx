@@ -51,10 +51,12 @@ vi.mock('~/utils/trpc', () => {
   // notification paths run.
   const mutation =
     (name: string) =>
-    (opts?: { onSuccess?: () => void; onError?: (e: { message: string }) => void }) => ({
+    (opts?: { onSuccess?: (data?: unknown) => void; onError?: (e: { message: string }) => void }) => ({
       mutate: (vars: unknown) => {
         mocks.mutate(name, vars);
-        void opts?.onSuccess?.();
+        // Realistic mutation payload — the republish handler derives its message from
+        // the returned `status` (see `republishSuccessMessage`).
+        void opts?.onSuccess?.({ appListingId: 'apl_1', status: 'approved' });
       },
       isPending: false,
     });

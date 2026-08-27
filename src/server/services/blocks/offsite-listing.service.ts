@@ -627,11 +627,12 @@ export type CloseTerminalListingOutcome = 'deleted' | 'removed' | 'none';
  *                 `removed` (recoverable via mod `relistListing`) AND write a `delist`
  *                 `AppListingModerationEvent`. 🔴 The action is UNCONDITIONALLY `delist`
  *                 (Fix #1 authz), for BOTH the reject and the withdraw caller: a
- *                 formerly-live `pending` listing is ALWAYS mod-mandated (only the mod
- *                 reset fns set `pending` on a live listing), so an owner who withdraws
- *                 the re-review must NOT be able to self-restore — `delist` makes the
- *                 last event a takedown, so `republishOwnListing` FORBIDS the owner and
- *                 a mod must relist. (This replaced a most-recent-event probe that an
+ *                 formerly-live `pending` listing is in review — mod-mandated, or (since
+ *                 the owner-republish asset-change gate) owner-initiated — and an owner
+ *                 who withdraws a re-review must NOT be able to self-restore, so `delist`
+ *                 makes the last event a takedown: `republishOwnListing` FORBIDS the owner
+ *                 and a mod must relist. Written UNCONDITIONALLY for both; see the
+ *                 in-branch note. (This replaced a most-recent-event probe that an
  *                 intervening report-resolve/dismiss event could defeat.)
  *   - anything else (approved/removed) → no-op (a terminal request never targets one;
  *                 guarded defensively).
@@ -674,14 +675,24 @@ async function closeTerminalListing(
     // ALWAYS mod-mandated, so the close ALWAYS writes a `delist` event (never
     // `owner-unpublish`), regardless of which caller (reject or withdraw) reached here.
     //
-    // WHY the pending branch is unconditionally mod-mandated: the ONLY writers of
-    // `status='pending'` for a formerly-LIVE listing are the two mod reset fns
-    // (`resetListingToPending` / `resetOnsiteListingToPending`). A first-time submission
-    // is `draft` (handled by the branch above → deleted); a revision is a `draft`
-    // shadow (also the `draft` branch); owner unpublish/republish only move
-    // approved↔removed and never touch `pending`. So reaching here means a mod bounced
-    // a live listing back to review — an owner withdrawing that re-review must NOT be
-    // able to self-restore the pre-reset content with no re-review.
+    // WHY the pending branch is written unconditionally: a first-time submission is
+    // `draft` (handled by the branch above → deleted) and a revision is a `draft` shadow
+    // (also the `draft` branch), so reaching here means a formerly-LIVE listing was
+    // bounced back to review — and an owner withdrawing a re-review must NOT be able to
+    // self-restore the pre-reset content with no re-review.
+    //
+    // 🔴 THE WRITER SET IS NO LONGER ONLY THE TWO MOD RESET FNS, and this comment used to
+    // say it was. `republishOwnListing`'s ASSET-CHANGE REVIEW GATE
+    // (`offsite-moderation.service`) also writes `pending` on a formerly-live listing:
+    // when an owner republishes a listing whose assets changed since the last approval, it
+    // routes to review instead of going live. So this branch can now close an
+    // OWNER-INITIATED review as well as a mod-mandated one, and it treats both the same —
+    // `delist`, i.e. the owner must ask a moderator to relist rather than self-restoring.
+    // For the mod-mandated case that is the point. For the owner-initiated case it is a
+    // deliberate FAIL-CLOSED choice, not an oversight: distinguishing them means
+    // re-introducing a most-recent-event probe here, and the last one was removed because
+    // it was exploitable (below). Nothing unreviewed reaches the store either way; the
+    // cost is that an owner who withdraws their own re-review needs a moderator.
     //
     // This REPLACES an earlier most-recent-event probe (`last event == reset-to-pending
     // ? delist : owner-unpublish`), which was BOTH exploitable and unsafe-by-default: an

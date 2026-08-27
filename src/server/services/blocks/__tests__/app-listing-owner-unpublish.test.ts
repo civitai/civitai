@@ -166,7 +166,7 @@ describe('LISTING_STATUS_CHANGING_MODERATION_ACTIONS', () => {
 });
 
 describe('readLastModerationAction', () => {
-  it('🔴 orders newest-first with the id tiebreak and selects only `action`', async () => {
+  it('🔴 orders newest-first with the id tiebreak and selects `action` + `before`', async () => {
     // `createdAt` alone is not a total order — two events written in one transaction
     // share a timestamp, and without the id tiebreak "most recent" is whichever row the
     // planner returned first, which flips an owner capability on and off at random.
@@ -180,7 +180,11 @@ describe('readLastModerationAction', () => {
         action: { in: [...LISTING_STATUS_CHANGING_MODERATION_ACTIONS] },
       },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-      select: { action: true },
+      // `before` rides along because the owner-republish asset-review gate needs the verb
+      // and the payload to come from the SAME row — see
+      // `readLastStatusChangingModerationEvent`. Reading them in two queries would let a
+      // concurrent write pair one event's verb with another's payload.
+      select: { action: true, before: true },
     });
   });
 

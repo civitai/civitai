@@ -26,6 +26,7 @@ import {
 } from '~/components/Apps/ListingProblemsIndicator';
 import { getDetailPrimaryAction } from '~/components/Apps/appListingDetailView';
 import { isStaleDeploy, isStrandedDeploy } from '~/components/Apps/deploy-status';
+import { republishSuccessMessage } from '~/components/Apps/listingPublishingActions';
 import {
   canOwnerRepublish,
   canOwnerUnpublish,
@@ -556,8 +557,11 @@ export function MySubmissionsList({
   const invalidateSubmissions = () => utils.blocks.listMyPublishRequests.invalidate();
 
   const republishMutation = trpc.appListings.republishOwnListing.useMutation({
-    onSuccess: async () => {
-      showSuccessNotification({ message: 'App republished — it is live again.' });
+    // 🔴 The message is DERIVED from the server's answer, never assumed: a republish whose
+    // assets changed since the last approval lands in `pending`, not live. See
+    // {@link republishSuccessMessage}.
+    onSuccess: async (data) => {
+      showSuccessNotification({ message: republishSuccessMessage(data, 'onsite') });
       await invalidateSubmissions();
     },
     onError: (e) => showErrorNotification({ title: 'Republish failed', error: new Error(e.message) }),

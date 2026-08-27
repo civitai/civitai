@@ -6,6 +6,7 @@ import {
   listingPublishingActions,
   OWNER_ACTIONS_BY_STATE,
   PUBLISHING_PANEL_ACTIONS,
+  republishSuccessMessage,
   showModRemovedNotice,
   showRepublish,
   showUnpublish,
@@ -215,5 +216,30 @@ describe('sortPublishingActions', () => {
       'republish',
       'zz-new',
     ]);
+  });
+});
+
+describe('republishSuccessMessage — 🔴 the UI must not claim "live" when it went to review', () => {
+  it('says the listing is LIVE when the server approved it', () => {
+    expect(republishSuccessMessage({ status: 'approved' }, 'onsite')).toContain('live');
+    expect(republishSuccessMessage({ status: 'approved' }, 'offsite')).toContain('live in the store');
+  });
+
+  it('🔴 says REVIEW when the server routed it to pending — for BOTH kinds', () => {
+    // The wording is asserted on the PENDING arm for each kind separately: a mutant that
+    // branched on `kind` before `status` would still satisfy a single-kind assertion.
+    for (const kind of ['onsite', 'offsite'] as const) {
+      const message = republishSuccessMessage({ status: 'pending' }, kind);
+      expect(message).toContain('review');
+      // 🔴 The load-bearing ABSENCE: the old hardcoded copy said "it is live again", which
+      // is a lie on this arm. Pin that the word cannot come back.
+      expect(message).not.toContain('live');
+    }
+  });
+
+  it('the two arms produce DIFFERENT text (a mutant returning one constant cannot pass)', () => {
+    expect(republishSuccessMessage({ status: 'pending' }, 'offsite')).not.toBe(
+      republishSuccessMessage({ status: 'approved' }, 'offsite')
+    );
   });
 });

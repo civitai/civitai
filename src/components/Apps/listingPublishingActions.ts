@@ -186,3 +186,30 @@ export function showRepublish(row: PublishingActionRow): boolean {
 export function showModRemovedNotice(row: PublishingActionRow): boolean {
   return listingOwnerState(row) === 'mod-removed';
 }
+
+/**
+ * The message to show an owner after a successful `republishOwnListing`.
+ *
+ * 🔴 ONE SPELLING, because "republish" now has TWO successful outcomes and three surfaces
+ * announce it. The server routes a republish to `pending` (re-review) instead of
+ * `approved` whenever the listing's assets changed since the last approval — see
+ * `republishOwnListing` in `offsite-moderation.service.ts`. All three call sites
+ * previously hardcoded "it is live again", which is FALSE on that arm and is exactly the
+ * kind of claim that survives a review because the mutation genuinely succeeded. Reading
+ * the returned `status` in one place is what makes the wrong message impossible to write
+ * by copying the neighbouring component.
+ *
+ * `kind` only changes the wording of the LIVE arm (an on-site app comes back online; an
+ * off-site listing returns to the store), matching what the three surfaces already said.
+ */
+export function republishSuccessMessage(
+  result: { status: 'approved' | 'pending' },
+  kind?: 'onsite' | 'offsite' | string | null
+): string {
+  if (result.status === 'pending') {
+    return 'Submitted for review — your listing images changed since it was last approved, so a moderator needs to take another look before it goes back up.';
+  }
+  return kind === 'offsite'
+    ? 'App republished — it is live in the store again.'
+    : 'App republished — it is live again.';
+}
