@@ -17,7 +17,7 @@
  * closure overstates by an unknown amount. This appends one counter call to the end of every
  * transformed first-party module, so what we count is what actually ran.
  *
- * Writes one `.test-perf/trace/<worker>.json` per worker; `node scripts/test-perf/trace-report.mjs`
+ * Writes one `.test-perf/trace/<pid>-<suffix>.json` per traced test file; `node scripts/test-perf/trace-report.mjs`
  * merges them by SUMMING, which is why the directory is cleared below at the start of every run.
  */
 import base from '../../vitest.config.mts';

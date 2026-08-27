@@ -138,7 +138,7 @@ is attribution — the merged report cannot tell you which file loaded what.
 The trace directory's snapshots are **cleared at the start of every traced run** (in
 `trace-config.mts`), because the report sums every `*.json` it finds and stale snapshots from a
 previous run would silently double the numbers. Only files matching this tool's own
-`<pid>-<worker>.json` shape are removed, so pointing `TESTPERF_TRACE_DIR` at a directory holding
+`<pid>-<suffix>.json` shape are removed, so pointing `TESTPERF_TRACE_DIR` at a directory holding
 other JSON does not destroy it. Two traced runs must not overlap; give one its own
 `TESTPERF_TRACE_DIR` if they must. Both the tracer and the report honour that variable.
 

@@ -1,4 +1,4 @@
-/** Second fixture — see trace-smoke-fixture.test.ts. `trace-flush.test.ts` traces the three
+/** Second fixture — see trace-smoke-fixture.test.ts. `trace-flush.test.ts` traces both
  *  fixtures together on a THREAD pool, where every worker shares one pid, to prove that two
  *  workers cannot overwrite each other's snapshot. Kept trivial on purpose. */
 import { describe, expect, it } from 'vitest';

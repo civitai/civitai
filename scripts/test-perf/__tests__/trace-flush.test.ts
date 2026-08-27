@@ -115,7 +115,7 @@ function mergeSnapshots(traceDir: string) {
 }
 
 describe('module tracer flush', () => {
-  it('writes a per-worker snapshot for a traced run that ends normally', () => {
+  it('writes a snapshot for a traced run that ends normally', () => {
     expect(existsSync(VITEST_BIN)).toBe(true);
     const traceDir = freshTraceDir();
 
@@ -225,6 +225,13 @@ describe('module tracer flush', () => {
   // 1e10 fired 281 times in 300ms. An earlier version of this table asserted `1e10 -> 1e10` as
   // correct and enshrined exactly that.
   it.each([
+    // 🔴 The first two rows are LITERAL on purpose. Every other row derives its expectation from
+    // the constant it is testing, which means the table cannot see a wrong CONSTANT — measured:
+    // `DEFAULT -> 1` and `MAX -> 2**31` both survived a fully green suite, and both are the 1ms
+    // flush loop this function exists to prevent. That is round 4's defect one notch out,
+    // introduced by round 4's own fix.
+    ['abc', 15000],
+    ['2147483648', 15000],
     ['abc', DEFAULT_TRACE_INTERVAL_MS],
     ['', DEFAULT_TRACE_INTERVAL_MS],
     [undefined, DEFAULT_TRACE_INTERVAL_MS],
@@ -283,9 +290,17 @@ describe('module tracer flush', () => {
     // makes every total NaN — a report that looks like a measurement. Measured before the fix:
     // `20 distinct modules | NaN executions | NaNs self time`.
     const dir = freshTraceDir();
+    // TWO snapshots naming the SAME module: with one, summing and overwriting are
+    // indistinguishable, and the shipped reader's `+=` survived every mutant because the only
+    // test that ran it had a single-file fixture. The test's own mergeSnapshots is a mirror —
+    // guarding the mirror is not guarding the tool.
     writeFileSync(
       join(dir, '4242-eeee.json'),
-      JSON.stringify({ 'a/b.ts': { loads: 2, selfMs: 1, totalMs: 3 } })
+      JSON.stringify({ 'a/b.ts': { loads: 2, selfMs: 1000, totalMs: 3000 } })
+    );
+    writeFileSync(
+      join(dir, '4243-ffff.json'),
+      JSON.stringify({ 'a/b.ts': { loads: 3, selfMs: 2000, totalMs: 4000 } })
     );
     writeFileSync(join(dir, 'important-notes.json'), JSON.stringify({ keep: true }));
 
@@ -301,7 +316,25 @@ describe('module tracer flush', () => {
 
     expect(report.status).toBe(0);
     expect(report.stdout).not.toContain('NaN');
-    expect(report.stdout).toContain('1 snapshots');
-    expect(report.stdout).toContain('2 executions');
+    expect(report.stdout).toContain('2 snapshots');
+    // The sums the tool itself computed: loads 2+3, selfMs 1000+2000. An overwriting merge reports
+    // 3 and 2000ms.
+    expect(report.stdout).toContain('5 executions');
+    expect(report.stdout).toContain('3000ms');
+  });
+
+  it('falls back to the default trace dir when TESTPERF_TRACE_DIR is exported empty', () => {
+    // The .mjs reader cannot import the shared TS resolver, so it carries its own copy of the rule
+    // — the exact drift the shared module exists to stop, in the one place the module cannot
+    // reach. Under `??` semantics the empty string survives and the tool announces `no  — run a
+    // traced suite first`, naming no path at all: the dead-instrument failure this PR removes.
+    const report = spawnSync(
+      process.execPath,
+      [resolve(repoRoot, 'scripts/test-perf/trace-report.mjs')],
+      { cwd: repoRoot, encoding: 'utf8', env: { ...childEnv, TESTPERF_TRACE_DIR: '' } }
+    );
+
+    expect([0, 2]).toContain(report.status);
+    expect(report.stdout + report.stderr).not.toMatch(/no\s+—/);
   });
 });
