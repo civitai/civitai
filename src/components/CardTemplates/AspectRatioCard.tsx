@@ -17,8 +17,13 @@ const aspectRatioMap = {
 export type AspectRatioCardProps = {
   /**
    * A named ratio, or a raw width/height number to follow the media's own shape.
-   * The number form exists so a card can stop cropping — see the remix-of card,
-   * which passes the source image's ratio clamped so it never grows past square.
+   *
+   * The number form exists so a card can stop cropping. Its caller is the
+   * remix-of card, which passes the source image's ratio UNCLAMPED and bounds
+   * the height with a square wrapper instead. Clamping the number was tried
+   * (`Math.max(ratio, 1)`) and is wrong: it re-squares every portrait source,
+   * which is most of them, silently and with nothing to show for it. Cap the
+   * box, never the ratio.
    */
   aspectRatio?: AspectRatio | number;
   cosmetic?: ContentDecorationCosmetic['data'];

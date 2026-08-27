@@ -53,26 +53,53 @@ function sourceAspectRatio(image: { width?: number | null; height?: number | nul
  * caption "remixed from". Anyone moving this back to the feed helper must first
  * assert on the returned IDS, never on the count.
  *
- * `image.get` gates `needsReview IS NULL`, `imageReviewedSql()` and
- * `nsfwLevel != Blocked` server-side; `useApplyHiddenPreferences` then drops what
- * this viewer specifically may not see.
+ * What actually gates a source tile, stated precisely because an earlier version
+ * of this comment overclaimed it twice:
+ *
+ * - `image.get` server-side: unpublished or private post, `nsfwLevel = Blocked`,
+ *   `needsReview`, `imageReviewedSql()`. `getImageHandler` adds `amIBlockedByUser`.
+ * - `useApplyHiddenPreferences`: hidden users, hidden images, POI and minor.
+ * - ⚠️ NOT hidden tags. That filter reads `image.tagIds`, and `getImage` selects
+ *   no tag data, so `image.tagIds ?? []` is empty and both the viewer's
+ *   `hiddenTags` and the platform's `excludedTagIds` loops are no-ops here. The
+ *   feed path fetches tag ids from cache for exactly this reason
+ *   (image.service.ts, "Fetch tagIds from cache so client-side hidden-tag
+ *   filtering works"). Known and accepted — Justin, 2026-08-27 — rather than
+ *   overlooked. Closing it means giving `getImage` an opt-in tag fetch.
+ * - ⚠️ The browsing level here is NOT the viewer's saved preference.
+ *   `ImageDetail2` wraps this sidebar in
+ *   `<BrowsingLevelProvider browsingLevel={image.nsfwLevel}>`, so the strict
+ *   `Flags.intersects` test below compares the source against the REMIX's level.
+ *   The domain cap still wins (`forcedBrowsingLevel` takes priority) and
+ *   `ImageGuard2` still blurs from the viewer's own level, and `RemixGalleryCard`
+ *   beside this reads the same overridden value — so this is the established
+ *   detail-page pattern, not something this card invents. Do not describe it as
+ *   the viewer-specific gate; it is not one.
  */
 export const ImageRemixOfDetails = ({ imageId }: { imageId: number }) => {
   const { data: generationData } = trpc.image.getGenerationData.useQuery({ id: imageId });
   const remixOfIds = generationData?.remixOfIds ?? [];
 
-  // Bounded by the writer: `sanitizeProvenance` caps `sourceImageIds` at
-  // MAX_SOURCE_IMAGES (8), so this fans out to at most 8 queries.
+  // Bounded at 8 by `getRemixSourceIds`, which re-applies MAX_SOURCE_IMAGES on
+  // the READ path. Do not move that bound: `sanitizeProvenance` writes what it is
+  // given verbatim, so nothing about a stored row limits this list. An earlier
+  // version of this comment claimed the writer capped it; it does not.
+  //
+  // In practice it is one query, not eight — measured on the prod replica
+  // 2026-08-27, every image carrying the field over a 5-day window (309 rows) had
+  // exactly one source, max and average both 1. And 0.1% of images carry it at
+  // all, so 999 detail views in 1000 fan out to nothing.
   const queries = trpc.useQueries((t) => remixOfIds.map((id) => t.image.get({ id })));
   const sources = queries.map((query) => query.data).filter((data) => !!data);
   const isLoading = queries.some((query) => query.isLoading);
 
   // Deliberately WITHOUT `allowLowerLevels`, which the pre-2025 version of this
   // card passed. That option swaps the strict `Flags.intersects` test for
-  // `nsfwLevel > maxBrowsingLevel`, so a level the viewer has specifically
-  // switched OFF still renders as long as something above it is on. Fine for a
-  // feed the viewer asked for; wrong for an image pulled in sideways by
-  // somebody else's provenance, which is what every tile here is.
+  // `nsfwLevel > maxBrowsingLevel`, so a level specifically switched OFF still
+  // renders as long as something above it is on. Fine for a feed that was asked
+  // for; wrong for an image pulled in sideways by somebody else's provenance,
+  // which is what every tile here is. See the docblock for which level this
+  // actually tests against — it is not the viewer's saved preference.
   const { items: images } = useApplyHiddenPreferences({ type: 'images', data: sources });
 
   if (!remixOfIds.length || isLoading || !images.length) return null;
