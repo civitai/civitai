@@ -63,6 +63,34 @@ const MUST_NOT_BE_GUARDED: Record<string, string[]> = {
   'user.router.ts': ['resendEmailVerification', 'requestEmailChange'],
 };
 
+/**
+ * 🔴 Every procedure the routers DERIVE, and the root each is built from.
+ *
+ * `MUST_STAY_GUARDED` and the alias ban both key on names at CALL SITES, and a downgrade does not
+ * have to touch one. `comicProtectedProcedure = protectedProcedure.use(...)` carries **56** bindings;
+ * editing that single line moves all 56 at once and no name changes anywhere, so every name-based
+ * check stays green. This is the list that cannot grow with the codebase — 13 definitions against
+ * 1,142 bindings — which is what makes maintaining it by hand reasonable where a call-site list is not.
+ *
+ * A red here is not automatically a bug. It means a procedure's effective gate moved, and someone has
+ * to say whether that was intended. Update the value in the same commit that moves it, or don't move it.
+ */
+const DERIVED_BASES: Record<string, string> = {
+  auctionProcedure: 'protectedProcedure',
+  buzzMembershipProcedure: 'protectedProcedure',
+  buzzProcedure: 'protectedProcedure',
+  cashManagementProcedure: 'moderatorProcedure',
+  comicGuardedProcedure: 'guardedProcedure',
+  comicModeratorProcedure: 'moderatorProcedure',
+  comicProtectedProcedure: 'protectedProcedure',
+  comicPublicProcedure: 'publicProcedure',
+  creatorShopProcedure: 'protectedProcedure',
+  experimentalProcedure: 'protectedProcedure',
+  giftProcedure: 'protectedProcedure',
+  orchestratorGuardedProcedure: 'guardedProcedure',
+  orchestratorProcedure: 'protectedProcedure',
+};
+
 const stripComments = (s: string) =>
   s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
 
@@ -139,6 +167,17 @@ describe('no unscoped email-verification exemption', () => {
       }
     }
   );
+
+  it('pins the base of every procedure the routers derive', () => {
+    const found: Record<string, string> = {};
+    for (const file of routerFiles()) {
+      const body = stripComments(readFileSync(file, 'utf8'));
+      for (const m of body.matchAll(/const\s+(\w*[Pp]rocedure)\s*=\s*(\w+)/g)) {
+        found[m[1]] = m[2];
+      }
+    }
+    expect(found).toEqual(DERIVED_BASES);
+  });
 
   /**
    * Without this the guard passes trivially the day someone renames the export: every file stops
