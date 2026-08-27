@@ -555,7 +555,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   const stepPriceCheckTotal = getOrCreateCounter(
     reg,
     'civitai_app_block_step_price_check_total',
-    "App Block `kind:'step'` prepaidFixed price checks, by step id and outcome. Submit phase: exact = billed within both the declared price and the reservation; over = billed above the DECLARED price but within the quote-backed reservation (the declared constant is wrong; no money or cap impact — expected to be ~100% for a usage-priced step, do NOT alert on it); over_reserved = billed above the RESERVATION, so every cap counter was short until corrected (ALERT ON THIS); absent = no numeric cost on the snapshot. Estimate phase: estimate_quoted = the block was shown a live orchestrator quote; estimate_absent = the quote failed and it was shown the declared price instead (read as a ratio against estimate_quoted, never alone)",
+    "App Block `kind:'step'` price checks, by step id and outcome. Submit-phase outcomes are prepaidFixed-only; estimate-phase outcomes fire for any kind:'step' estimate. Submit phase: exact = billed within both the declared price and the reservation; over = billed above the DECLARED price but within the quote-backed reservation (the declared constant is wrong; no money or cap impact — expected to be ~100% for a usage-priced step, do NOT alert on it); over_reserved = billed above the RESERVATION, so every cap counter was short until corrected (ALERT ON THIS); absent = no numeric cost on the snapshot. Estimate phase: estimate_quoted = the block was shown a live orchestrator quote; estimate_absent = the quote failed and it was shown the declared price instead (read as a ratio against estimate_quoted, never alone)",
     ['step', 'outcome']
   );
 
@@ -697,15 +697,37 @@ export type StepPriceCheckOutcome =
   | 'estimate_absent';
 
 /**
- * Fail-soft emit of ONE `prepaidFixed` step price check. Called from the step
- * submit path on EVERY submit, after the money has already moved.
+ * Fail-soft emit of ONE step price check.
  *
- * 🔴 Emitted unconditionally — including `outcome: 'exact'` — so a flat
- * divergence line can be told apart from a detector that never ran. See the
- * counter's definition above for why that distinction is load-bearing.
+ * 🔴 TWO CALL PHASES, AND THEY DIFFER IN EVERY WAY THAT MATTERS. This docstring
+ * used to say "called from the step submit path on EVERY submit, after the money
+ * has already moved" — that is now only half true, and the missing half is the
+ * dangerous one to assume:
  *
- * 🔴 TOTAL, like every emitter in this module. It reports on an already-billed
- * submit; a metrics error must never turn a successful generation into a 500.
+ *   - SUBMIT (`exact` / `over` / `over_reserved` / `absent`) — one emit per
+ *     submit, AFTER the money has moved, gated on
+ *     `plan.correctReservationOverage` and therefore on `prepaidFixed`.
+ *   - ESTIMATE (`estimate_quoted` / `estimate_absent`) — one emit per estimate,
+ *     BEFORE any spend exists, and NOT gated on billing mode: it fires for any
+ *     `kind:'step'` estimate. Unreachable for a non-`prepaidFixed` entry today
+ *     (registry load rejects every other mode), so the counter's
+ *     "prepaidFixed" framing still holds in practice — but the first
+ *     `timeBounded` entry would emit an estimate half with no submit-side
+ *     counterpart, and the `estimate_quoted : estimate_absent` ratio would then
+ *     blend a mode the submit half never reports on. Gate it here, or widen the
+ *     label, when that day comes.
+ *
+ * 🔴 DO NOT ADD A POST-BILLING SIDE EFFECT BESIDE THIS CALL. The estimate phase
+ * runs on an app-developer-driven surface with no spend behind it.
+ *
+ * 🔴 Emitted unconditionally within each phase — including `outcome: 'exact'` —
+ * so a flat divergence line can be told apart from a detector that never ran.
+ * See the counter's definition above for why that distinction is load-bearing.
+ *
+ * 🔴 TOTAL, like every emitter in this module. On the submit path it reports on
+ * an already-billed submit, so a metrics error must never turn a successful
+ * generation into a 500; on the estimate path it must never turn a working quote
+ * into an error.
  */
 export function recordStepPriceCheck(step: string, outcome: StepPriceCheckOutcome): void {
   try {

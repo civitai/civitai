@@ -261,6 +261,16 @@ const { AUDITED_STEP_ID } = vi.hoisted(() => ({ AUDITED_STEP_ID: 'fixture-audite
 const { DIVERGENT_STEP_ID } = vi.hoisted(() => ({
   DIVERGENT_STEP_ID: 'fixture-divergent-step',
 }));
+// 🔴 A FIXTURE WHOSE TWO DECLARED FLOORS LEGITIMATELY DISAGREE. The registry's
+// load-time invariant ties `estimateBuzz(canonicalParamsFor(v))` to
+// `priceForVariant(v)` — at CANONICAL params only — and nothing re-checks it at
+// request time. `estimateBuzz` takes PARAMS, so an entry can satisfy the
+// invariant and still answer differently for a request. That is registrable, it
+// is asserted below, and it is exactly the shape that makes the estimate's floor
+// and the submit's floor two different numbers.
+const { SPLIT_FLOOR_STEP_ID } = vi.hoisted(() => ({
+  SPLIT_FLOOR_STEP_ID: 'fixture-split-floor-step',
+}));
 vi.mock('~/server/services/blocks/steps', async (importOriginal) => {
   const actual = await importOriginal<typeof BlockStepsModule>();
   const z = await import('zod');
@@ -324,17 +334,50 @@ vi.mock('~/server/services/blocks/steps', async (importOriginal) => {
   // 🔴 THIS ASSERTION IS THE EXPLOIT, WRITTEN DOWN. It passes — a
   // params-dependent builder is registrable — which is precisely why the
   // load-time gate alone is not sufficient.
+  const splitFloorFixtureStep = {
+    id: SPLIT_FLOOR_STEP_ID,
+    orchestratorType: 'fixtureSplitFloorType',
+    billingMode: 'prepaidFixed' as const,
+    moderationPosture: 'none' as const,
+    resourcePolicy: { kind: 'none' as const },
+    paramSchema: z.object({ cheap: z.boolean() }).strict(),
+    variants: ['default'],
+    resolveVariant: () => 'default',
+    // Canonical params take the EXPENSIVE branch, so the load-time invariant
+    // (estimateBuzz(canonical) === priceForVariant) holds and this registers.
+    canonicalParamsFor: () => ({ cheap: false }),
+    priceForVariant: () => 5,
+    estimateBuzz: (p: { cheap: boolean }) => (p.cheap ? 1 : 5),
+    buildStep: (p: { cheap: boolean }) => ({
+      $type: 'fixtureSplitFloorType',
+      input: { cheap: p.cheap },
+    }),
+    extractOutput: () => [
+      { url: 'https://blobs.example/s.webp', width: null, height: null, nsfwLevel: null },
+    ],
+    canonicalOutputFor: () => ({}),
+  };
   actual.assertStepInvariants(DIVERGENT_STEP_ID, divergentFixtureStep as never);
+  // 🔴 IT REGISTERS CLEANLY — the second half of the exploit written down. Only a
+  // request supplying `cheap: true` splits the two floors apart.
+  actual.assertStepInvariants(SPLIT_FLOOR_STEP_ID, splitFloorFixtureStep as never);
   return {
     ...actual,
     // The wire `step` enum is DERIVED from this, so widening it is what lets the
     // fixture id past `blockStepBodySchema` and into the handler.
-    REGISTERED_STEP_IDS: [...actual.REGISTERED_STEP_IDS, AUDITED_STEP_ID, DIVERGENT_STEP_ID],
+    REGISTERED_STEP_IDS: [
+      ...actual.REGISTERED_STEP_IDS,
+      AUDITED_STEP_ID,
+      DIVERGENT_STEP_ID,
+      SPLIT_FLOOR_STEP_ID,
+    ],
     getStep: (id: string) =>
       id === AUDITED_STEP_ID
         ? (auditedFixtureStep as never)
         : id === DIVERGENT_STEP_ID
         ? (divergentFixtureStep as never)
+        : id === SPLIT_FLOOR_STEP_ID
+        ? (splitFloorFixtureStep as never)
         : actual.getStep(id),
   };
 });
@@ -7366,7 +7409,7 @@ describe("step-type registry bridge (kind: 'step')", () => {
     });
 
     it('falls back to the DECLARED estimate when the quote throws', async () => {
-      // 🔴 DEGRADE, NEVER ERROR. An unquotable step is exactly the pre-#386
+      // 🔴 DEGRADE, NEVER ERROR. An unquotable step is exactly the pre-change
       // behaviour, so this path can only be more accurate than what it replaced
       // — it must not turn a working estimate into a failure the block cannot
       // act on. (The SUBMIT still fails closed on a missing quote; that is the
@@ -7445,6 +7488,27 @@ describe("step-type registry bridge (kind: 'step')", () => {
       ).rejects.toMatchObject({ code: 'FORBIDDEN' });
       // …and it refused BEFORE the orchestrator was called at all.
       expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('floors on the SUBMIT’s declared value too, not only the estimate’s', async () => {
+      // 🔴 THE TWO FLOORS ARE DIFFERENT DERIVATIONS. `estimateStepBuzz` is
+      // params-driven and un-ceiled (`step.estimateBuzz(params)`); the submit's
+      // is variant-driven and ceiled (`Math.ceil(priceForVariant(variant))`).
+      // Registry load ties them only at CANONICAL params and nothing re-checks
+      // at request time — so flooring on the estimate alone would reintroduce
+      // the under-display hazard through the other operand.
+      //
+      // `fixture-split-floor-step` registers cleanly and answers `estimateBuzz`
+      // 1 for `{cheap: true}` while `priceForVariant` stays 5. With a quote of 2
+      // below both, the estimate must still show the 5 the submit reserves.
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      stepSubmitQuoting(2, 2);
+      const body = { kind: 'step' as const, step: SPLIT_FLOOR_STEP_ID, params: { cheap: true } };
+      const estimate = await caller().estimateWorkflow({ blockToken: 'tok', body });
+      expect(estimate.snapshot.cost.total).toBe(5);
+      await caller().submitWorkflow({ blockToken: 'tok', body });
+      expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', 5);
     });
 
     it('mirrors the submit’s max(declared, quoted) — a quote BELOW the floor never under-displays', async () => {

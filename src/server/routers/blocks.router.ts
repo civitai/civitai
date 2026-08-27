@@ -7364,13 +7364,35 @@ async function estimateStepWorkflow(opts: { ctx: Context; claims: BlockClaims; b
 
   const quotedBuzz = await quoteStepBuzz({ ctx, claims, step, orchestratorStep, userId });
 
-  // 🔴 MIRROR THE SUBMIT'S OWN `max()`, do not merely prefer the quote. The
-  // submit gates and reserves `max(declaredBuzz, quotedBuzz)`, so a quote BELOW
-  // the declared floor would otherwise have the estimate show less than the
-  // submit reserves — the under-display direction, and the one a block cannot
-  // defend against. Latent today (no registered entry quotes below its floor)
-  // and reachable the moment one is declared above its real orchestrator price.
-  const shownBuzz = Math.max(declaredBuzz, quotedBuzz ?? declaredBuzz);
+  // 🔴 NEVER SHOW LESS THAN THE SUBMIT WILL RESERVE. The submit gates and
+  // reserves `max(Math.ceil(plan.reserveBuzz), quotedBuzz)`, so an estimate that
+  // merely preferred the quote would under-display whenever the quote falls
+  // below the floor — the one direction a block cannot defend against.
+  //
+  // 🔴 THE FLOOR IS THE SUBMIT'S OWN, NOT `estimateStepBuzz`'s — they are
+  // DIFFERENT DERIVATIONS and only one of them binds. `estimateStepBuzz` is
+  // params-driven and un-ceiled (`step.estimateBuzz(params)`); the submit
+  // reserves `Math.ceil(plan.reserveBuzz)`, i.e. variant-driven and ceiled.
+  // Registry load asserts the two agree only at CANONICAL params
+  // (`steps/index.ts` — `estimateBuzz(canonicalParamsFor(v)) === priceForVariant(v)`)
+  // and nothing re-checks it at request time, so an entry whose `estimateBuzz`
+  // varies with params — the interface permits it — can answer 1 where
+  // `priceForVariant` is 5. Flooring on the estimate's value would then
+  // under-display by 4: the exact hazard this line exists to close,
+  // reintroduced through the other operand.
+  //
+  // So this computes the SAME expression the submit does. "The estimate is never
+  // below what the submit reserves" is then a property of the code, not of an
+  // invariant that holds only at canonical params.
+  //
+  // 🔴 `declaredBuzz` IS DELIBERATELY NOT A THIRD OPERAND. It can only differ
+  // upward from the submit floor, which is the SAFE direction (the block is told
+  // more than it will be charged), so including it guarded nothing — no mutation
+  // could kill it, which is how it announced itself as decoration rather than a
+  // bound. It stays as the no-quote FALLBACK, where it is the entry's own
+  // declared display estimate and is what the block was shown before this change.
+  const submitFloorBuzz = Math.ceil(plan.reserveBuzz);
+  const shownBuzz = Math.max(submitFloorBuzz, quotedBuzz ?? declaredBuzz);
 
   return {
     snapshot: {
@@ -7633,9 +7655,14 @@ async function submitStepWorkflow(opts: {
   // 🔴 The reservation is the LARGER of the two. The quote is what makes the
   // ceiling real (a quote above the declared price must be gated and reserved at
   // the real number, not the asserted one); the declared price is the floor
-  // because it is what `estimateBuzz` SHOWED the block, and the registry's
-  // load-time invariant forces those to agree. Over-reserving only makes a cap
-  // stricter.
+  // because the registry asserts it and the load-time invariant ties it to
+  // `estimateBuzz`. Over-reserving only makes a cap stricter.
+  //
+  // ⚠️ IT IS NO LONGER "what `estimateBuzz` SHOWED the block" — that clause was
+  // true only while the estimate returned the declared constant. The estimate
+  // now quotes the orchestrator and shows `max(declared, thisFloor, quoted)`, so
+  // the two paths agree by construction rather than by the block having been
+  // shown this number. See `estimateStepWorkflow`.
   const reserveBuzz = Math.max(declaredBuzz, quotedBuzz);
 
   // (1) Pre-submit gate against the token's per-call budget — now enforced
@@ -7871,7 +7898,12 @@ async function submitStepWorkflow(opts: {
       //   comparison was and remains right: the three counters were reserved at
       //   `reserveBuzz`, so that is what they are short against.
       // - `priceOverage` vs `declaredBuzz` drives the PRICE-CHECK SIGNAL. That
-      //   is the number the registry asserts and the number a block is shown.
+      //   is the number the REGISTRY ASSERTS. 🔴 It is no longer the number the
+      //   block is SHOWN — the estimate quotes the orchestrator and shows
+      //   `max(declared, submitFloor, quoted)`, so for a usage-priced entry the
+      //   viewer sees the quote. `over` therefore means "the registry constant
+      //   does not describe reality", NOT "a user was shown the wrong price";
+      //   triaging it as a display bug hunts something that does not exist.
       //
       // 🔴 AND THEY ARE SEPARATE OUTCOME VALUES, NOT ONE. Collapsing both into
       // `over` would trade one blindness for another: for a usage-priced entry
