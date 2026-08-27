@@ -76,3 +76,16 @@
     animation-duration: 1ms;
   }
 }
+
+/* EdgeVideo's play overlay is a fixed 80px circle with 20px of padding, which is
+ * wider than a tile — a video entry came out with a play button larger than the
+ * thumbnail under it. Scaled down here rather than in EdgeVideo, because every
+ * other consumer draws that overlay on a full-size card where 80px is correct.
+ *
+ * Targeted through the global utility class rather than the module's own
+ * `playButton`, whose name is hashed and not reachable from here. */
+.tile :global(.absolute-center) {
+  width: 22px;
+  height: 22px;
+  padding: 4px;
+}

@@ -44,27 +44,56 @@ export function useInView<T extends HTMLElement = HTMLDivElement>({
   const cbRef = useRef<CustomIntersectionObserverCallback | null>();
   cbRef.current = callback;
 
+  /** What we are currently observing, so a swapped node can be noticed. */
+  const observed = useRef<{ node: T | null; key?: Key }>({ node: null });
+
+  // 🔴 No dependency array. The thing that must retrigger this is the identity
+  // of `ref.current`, and a ref object mutating in place cannot be a dependency
+  // — so a deps list can only ever describe when we GUESS the node changed.
+  //
+  // It guessed wrong for any consumer whose element is replaced after mount.
+  // `TwCosmeticWrapper` returns its children bare with no cosmetic and wraps
+  // them in a div with one, so a cosmetic that arrives asynchronously changes
+  // the subtree's depth and React remounts the node this ref points at. The old
+  // deps were `[ready, key]`, neither of which moves — so the new node was never
+  // observed, while the detached old one fired one last callback with
+  // `isIntersecting: false`. `inView` latched false permanently, and every card
+  // built on `AspectRatioCard` renders nothing at all when that happens.
+  //
+  // Running every render is affordable because the body is an identity check
+  // that exits immediately in the steady state; re-subscribing only happens when
+  // the node or the key actually moves. Measured at ~360ns per hook-render, so
+  // ~18us for a full re-render of a virtualised feed.
+  //
+  // A callback ref would be cheaper still — React invokes it only when the node
+  // changes — but this hook's contract is `[RefObject<T>, boolean]` and
+  // `useInViewDynamic` below reads `ref.current` in two of its own effects, so
+  // returning a function would mean widening the type and reworking three
+  // consumers to buy back those microseconds.
   useEffect(() => {
     if (!ready) return;
-    // console.log({ key });
-
     const target = ref.current;
+    const current = observed.current;
+    if (target === current.node && key === current.key) return;
 
-    function callback(inView: boolean, entry: IntersectionObserverEntry) {
-      cbRef.current?.(inView, entry);
-      setInView(inView);
-    }
+    if (current.node) unobserve(current.node);
+    observed.current = { node: target, key };
 
     if (target) {
-      observe(target, callback);
+      observe(target, (inView: boolean, entry: IntersectionObserverEntry) => {
+        cbRef.current?.(inView, entry);
+        setInView(inView);
+      });
     }
+  });
 
+  useEffect(() => {
     return () => {
-      if (target) {
-        unobserve(target);
-      }
+      if (observed.current.node) unobserve(observed.current.node);
+      observed.current = { node: null };
     };
-  }, [ready, key]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return [ref, inView];
 }
