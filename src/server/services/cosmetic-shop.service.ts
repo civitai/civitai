@@ -254,7 +254,7 @@ export const upsertCosmeticShopItem = async ({
   const ownerId = existingItem?.addedById ?? userId;
   const restrictToBlurbIds =
     existingItem && ownerId !== userId
-      ? await getReferencedBlurbIds({ entityType: 'CosmeticShopItem', entityId: existingItem.id })
+      ? () => getReferencedBlurbIds({ entityType: 'CosmeticShopItem', entityId: existingItem.id })
       : undefined;
   const expansion = await expandBlurbs({
     userId: ownerId,
