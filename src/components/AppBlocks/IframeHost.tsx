@@ -46,6 +46,7 @@ import type { BuyBuzzModalProps } from '~/components/Modals/BuyBuzzModal';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import { getBaseModelGroup, getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
 import { trpc } from '~/utils/trpc';
+import { invalidateSharedStorageReads } from '~/components/AppBlocks/sharedStorageInvalidation';
 import { deriveScopeFromInstanceId } from '~/server/schema/blocks/attribution.schema';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -1992,6 +1993,9 @@ export function IframeHost({
             blockToken: token,
             value: raw.value as { title: string; body?: string },
           });
+          // Invalidate BEFORE replying: the block may re-read the moment this
+          // reply resolves. See sharedStorageInvalidation.ts (ordering is load-bearing).
+          await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_APPEND_RESULT', { requestId, key: result.key });
         } catch (err) {
           send('SHARED_APPEND_RESULT', { requestId, error: storageErrorMessage(err) });
@@ -1999,7 +2003,7 @@ export function IframeHost({
       }
     );
     return off;
-  }, [onMessage, send, token, sharedAppendMutation]);
+  }, [onMessage, send, token, trpcUtils, sharedAppendMutation]);
 
   // SHARED_UPDATE → apps.shared.update → SHARED_UPDATE_RESULT (author-scoped
   // in-place edit; #3146). Reply is `{ ok, error? }` (SHARED_WITHDRAW-style, NOT
@@ -2025,6 +2029,9 @@ export function IframeHost({
             key: raw.key,
             value: raw.value as { title: string; body?: string },
           });
+          // Invalidate BEFORE replying: the block may re-read the moment this
+          // reply resolves. See sharedStorageInvalidation.ts (ordering is load-bearing).
+          await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_UPDATE_RESULT', { requestId, ok: true });
         } catch (err) {
           send('SHARED_UPDATE_RESULT', { requestId, ok: false, error: storageErrorMessage(err) });
@@ -2032,7 +2039,7 @@ export function IframeHost({
       }
     );
     return off;
-  }, [onMessage, send, token, sharedUpdateMutation]);
+  }, [onMessage, send, token, trpcUtils, sharedUpdateMutation]);
 
   useEffect(() => {
     const off = onMessage<{ requestId?: unknown; key?: unknown } | undefined>(
@@ -2042,6 +2049,9 @@ export function IframeHost({
         const requestId = raw.requestId;
         try {
           const result = await sharedVoteMutation.mutateAsync({ blockToken: token, key: raw.key });
+          // Invalidate BEFORE replying: the block may re-read the moment this
+          // reply resolves. See sharedStorageInvalidation.ts (ordering is load-bearing).
+          await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_VOTE_RESULT', { requestId, count: result.count });
         } catch (err) {
           send('SHARED_VOTE_RESULT', { requestId, error: storageErrorMessage(err) });
@@ -2049,7 +2059,7 @@ export function IframeHost({
       }
     );
     return off;
-  }, [onMessage, send, token, sharedVoteMutation]);
+  }, [onMessage, send, token, trpcUtils, sharedVoteMutation]);
 
   useEffect(() => {
     const off = onMessage<{ requestId?: unknown; key?: unknown } | undefined>(
@@ -2059,6 +2069,9 @@ export function IframeHost({
         const requestId = raw.requestId;
         try {
           const result = await sharedUnvoteMutation.mutateAsync({ blockToken: token, key: raw.key });
+          // Invalidate BEFORE replying: the block may re-read the moment this
+          // reply resolves. See sharedStorageInvalidation.ts (ordering is load-bearing).
+          await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_UNVOTE_RESULT', { requestId, count: result.count });
         } catch (err) {
           send('SHARED_UNVOTE_RESULT', { requestId, error: storageErrorMessage(err) });
@@ -2066,7 +2079,7 @@ export function IframeHost({
       }
     );
     return off;
-  }, [onMessage, send, token, sharedUnvoteMutation]);
+  }, [onMessage, send, token, trpcUtils, sharedUnvoteMutation]);
 
   useEffect(() => {
     const off = onMessage<{ requestId?: unknown; key?: unknown } | undefined>(
@@ -2079,6 +2092,9 @@ export function IframeHost({
             blockToken: token,
             key: raw.key,
           });
+          // Invalidate BEFORE replying: the block may re-read the moment this
+          // reply resolves. See sharedStorageInvalidation.ts (ordering is load-bearing).
+          await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_WITHDRAW_RESULT', { requestId, ok: result.ok, deleted: result.deleted });
         } catch (err) {
           send('SHARED_WITHDRAW_RESULT', { requestId, error: storageErrorMessage(err) });
@@ -2086,7 +2102,7 @@ export function IframeHost({
       }
     );
     return off;
-  }, [onMessage, send, token, sharedWithdrawMutation]);
+  }, [onMessage, send, token, trpcUtils, sharedWithdrawMutation]);
 
   // SHARED_GET → apps.shared.get → SHARED_GET_RESULT (single-row deep-link fetch).
   // Mirrors SHARED_LIST's item mapping (createdAt/updatedAt → ISO; additive
@@ -2137,6 +2153,9 @@ export function IframeHost({
         const reason = typeof raw.reason === 'string' ? raw.reason : undefined;
         try {
           await sharedReportMutation.mutateAsync({ blockToken: token, key: raw.key, reason });
+          // Invalidate BEFORE replying: the block may re-read the moment this
+          // reply resolves. See sharedStorageInvalidation.ts (ordering is load-bearing).
+          await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_REPORT_RESULT', { requestId, ok: true });
         } catch (err) {
           send('SHARED_REPORT_RESULT', { requestId, ok: false, error: storageErrorMessage(err) });
@@ -2144,7 +2163,7 @@ export function IframeHost({
       }
     );
     return off;
-  }, [onMessage, send, token, sharedReportMutation]);
+  }, [onMessage, send, token, trpcUtils, sharedReportMutation]);
 
   useEffect(() => {
     if (status !== 'ready') return;

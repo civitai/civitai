@@ -77,6 +77,7 @@ import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-s
 import { getBaseModelGroup, getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
 import { deriveScopeFromInstanceId } from '~/server/schema/blocks/attribution.schema';
 import { trpc } from '~/utils/trpc';
+import { invalidateSharedStorageReads } from '~/components/AppBlocks/sharedStorageInvalidation';
 
 // Lazy-consent UI (REQUEST_CONSENT). Opened on demand when a logged-in viewer
 // clicks an action whose consent-gated scope the page token is missing. Mirrors
@@ -2660,6 +2661,9 @@ export function PageBlockHost({
             blockToken: token,
             value: raw.value as { title: string; body?: string },
           });
+          // Invalidate BEFORE replying: the block may re-read the moment this
+          // reply resolves. See sharedStorageInvalidation.ts (ordering is load-bearing).
+          await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_APPEND_RESULT', { requestId, key: result.key });
         } catch (err) {
           send('SHARED_APPEND_RESULT', { requestId, error: storageErrorMessage(err) });
@@ -2667,7 +2671,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, sharedAppendMutation, reviewMode]);
+  }, [onMessage, send, token, trpcUtils, sharedAppendMutation, reviewMode]);
 
   // SHARED_UPDATE → apps.shared.update → SHARED_UPDATE_RESULT (mutation).
   // Author-scoped in-place edit of an OWN row: the auth/author-gate/belt/quota all
@@ -2711,6 +2715,9 @@ export function PageBlockHost({
             key: raw.key,
             value: raw.value as { title: string; body?: string },
           });
+          // Invalidate BEFORE replying: the block may re-read the moment this
+          // reply resolves. See sharedStorageInvalidation.ts (ordering is load-bearing).
+          await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_UPDATE_RESULT', { requestId, ok: true });
         } catch (err) {
           send('SHARED_UPDATE_RESULT', { requestId, ok: false, error: storageErrorMessage(err) });
@@ -2718,7 +2725,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, sharedUpdateMutation, reviewMode]);
+  }, [onMessage, send, token, trpcUtils, sharedUpdateMutation, reviewMode]);
 
   // SHARED_VOTE → apps.shared.vote → SHARED_VOTE_RESULT (mutation).
   useEffect(() => {
@@ -2737,6 +2744,9 @@ export function PageBlockHost({
         const requestId = raw.requestId;
         try {
           const result = await sharedVoteMutation.mutateAsync({ blockToken: token, key: raw.key });
+          // Invalidate BEFORE replying: the block may re-read the moment this
+          // reply resolves. See sharedStorageInvalidation.ts (ordering is load-bearing).
+          await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_VOTE_RESULT', { requestId, count: result.count });
         } catch (err) {
           send('SHARED_VOTE_RESULT', { requestId, error: storageErrorMessage(err) });
@@ -2744,7 +2754,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, sharedVoteMutation, reviewMode]);
+  }, [onMessage, send, token, trpcUtils, sharedVoteMutation, reviewMode]);
 
   // SHARED_UNVOTE → apps.shared.unvote → SHARED_UNVOTE_RESULT (mutation).
   useEffect(() => {
@@ -2766,6 +2776,9 @@ export function PageBlockHost({
             blockToken: token,
             key: raw.key,
           });
+          // Invalidate BEFORE replying: the block may re-read the moment this
+          // reply resolves. See sharedStorageInvalidation.ts (ordering is load-bearing).
+          await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_UNVOTE_RESULT', { requestId, count: result.count });
         } catch (err) {
           send('SHARED_UNVOTE_RESULT', { requestId, error: storageErrorMessage(err) });
@@ -2773,7 +2786,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, sharedUnvoteMutation, reviewMode]);
+  }, [onMessage, send, token, trpcUtils, sharedUnvoteMutation, reviewMode]);
 
   // SHARED_WITHDRAW → apps.shared.withdraw → SHARED_WITHDRAW_RESULT (mutation).
   useEffect(() => {
@@ -2798,6 +2811,9 @@ export function PageBlockHost({
             blockToken: token,
             key: raw.key,
           });
+          // Invalidate BEFORE replying: the block may re-read the moment this
+          // reply resolves. See sharedStorageInvalidation.ts (ordering is load-bearing).
+          await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_WITHDRAW_RESULT', { requestId, ok: result.ok, deleted: result.deleted });
         } catch (err) {
           send('SHARED_WITHDRAW_RESULT', { requestId, error: storageErrorMessage(err) });
@@ -2805,7 +2821,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, sharedWithdrawMutation, reviewMode]);
+  }, [onMessage, send, token, trpcUtils, sharedWithdrawMutation, reviewMode]);
 
   // SHARED_GET → apps.shared.get → SHARED_GET_RESULT (query). Single-row deep-link
   // fetch-by-key. READ (anon-allowed server-side; no reviewMode NACK — reads stay
@@ -2879,6 +2895,9 @@ export function PageBlockHost({
         const reason = typeof raw.reason === 'string' ? raw.reason : undefined;
         try {
           await sharedReportMutation.mutateAsync({ blockToken: token, key: raw.key, reason });
+          // Invalidate BEFORE replying: the block may re-read the moment this
+          // reply resolves. See sharedStorageInvalidation.ts (ordering is load-bearing).
+          await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_REPORT_RESULT', { requestId, ok: true });
         } catch (err) {
           send('SHARED_REPORT_RESULT', { requestId, ok: false, error: storageErrorMessage(err) });
@@ -2886,7 +2905,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, sharedReportMutation, reviewMode]);
+  }, [onMessage, send, token, trpcUtils, sharedReportMutation, reviewMode]);
 
   // F2 concurrency-cap counter for SAVE_IMAGE (see the handler below). A ref (not
   // state) so increment/decrement never re-renders and the count is read

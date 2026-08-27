@@ -42,6 +42,8 @@ const mocks = vi.hoisted(() => ({
   get: vi.fn(),
   getCount: vi.fn(),
   getCounts: vi.fn(),
+  // shared read-cache invalidation (apps.shared namespace-level)
+  invalidate: vi.fn(),
   // shared writes
   append: vi.fn(),
   update: vi.fn(),
@@ -125,6 +127,11 @@ vi.mock('~/utils/trpc', () => ({
           get: { fetch: mocks.get },
           getCount: { fetch: mocks.getCount },
           getCounts: { fetch: mocks.getCounts },
+          // Router-level invalidate: what the hosts call after every shared
+          // WRITE so the next read is not served from the staleTime:Infinity
+          // cache. Present on the real utils; omitting it here would let a
+          // broken wiring pass silently (the helper swallows throws by design).
+          invalidate: mocks.invalidate,
         },
       },
     }),
@@ -216,6 +223,8 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
     mocks.unvote.mockReset();
     mocks.withdraw.mockReset();
     mocks.report.mockReset();
+    mocks.invalidate.mockReset();
+    mocks.invalidate.mockResolvedValue(undefined);
     mocks.getImagesByIds.mockReset();
     mocks.saveDownload.mockReset();
     useDialogStore.getState().closeAll();
@@ -939,5 +948,134 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
     });
     expect(mocks.vote).not.toHaveBeenCalled();
     expect(mocks.list).not.toHaveBeenCalled();
+  });
+  // ── Shared read-cache invalidation (write → own next read) ───────────────────
+  //
+  // civitai's QueryClient is `staleTime: Infinity` (~/utils/trpc), and every
+  // shared READ here goes through `trpcUtils.apps.shared.*.fetch` — React Query
+  // `fetchQuery`, which never refetches a non-stale entry. So without an explicit
+  // invalidation a block's own write is invisible to its own next read for the
+  // whole page lifetime. See sharedStorageInvalidation.ts.
+
+  test('SHARED_APPEND invalidates the shared read cache', async () => {
+    mocks.append.mockResolvedValue({ key: '01NEW' });
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SHARED_APPEND', { requestId: 'rq_inv', value: { title: 'x' } });
+
+    await vi.waitFor(() => {
+      const r = replies.last('SHARED_APPEND_RESULT');
+      if (!r) throw new Error('no reply yet');
+    });
+    expect(mocks.invalidate).toHaveBeenCalledTimes(1);
+    replies.stop();
+  });
+
+  test('SHARED_VOTE invalidates the shared read cache', async () => {
+    mocks.vote.mockResolvedValue({ count: 2 });
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SHARED_VOTE', { requestId: 'rq_inv_v', key: '01ABC' });
+
+    await vi.waitFor(() => {
+      const r = replies.last('SHARED_VOTE_RESULT');
+      if (!r) throw new Error('no reply yet');
+    });
+    expect(mocks.invalidate).toHaveBeenCalledTimes(1);
+    replies.stop();
+  });
+
+  test('the reply is WITHHELD until invalidation settles (ordering, not just presence)', async () => {
+    // The ordering is the load-bearing half: the SDK hook resolves on the reply
+    // and the block may re-read IMMEDIATELY, so invalidating after the reply
+    // races the very read it exists to serve.
+    //
+    // This cannot be asserted by recording a call-order array: `send` posts a
+    // message and the listener fires asynchronously, so a synchronous
+    // `invalidate` would be recorded first whether it ran before or after the
+    // send — a vacuous pass. Instead, hold invalidation OPEN and prove no reply
+    // escapes while it is pending.
+    let release!: () => void;
+    mocks.invalidate.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          release = () => resolve();
+        })
+    );
+    mocks.append.mockResolvedValue({ key: '01GATED' });
+
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SHARED_APPEND', { requestId: 'rq_gate', value: { title: 'gated' } });
+
+    // The write itself has landed...
+    await vi.waitFor(() => {
+      expect(mocks.append).toHaveBeenCalledTimes(1);
+    });
+    await vi.waitFor(() => {
+      expect(mocks.invalidate).toHaveBeenCalledTimes(1);
+    });
+    // ...but the reply must NOT have been posted while invalidation is pending.
+    //
+    // 🔴 The flush is load-bearing, and its absence made an earlier version of
+    // this test VACUOUS. `send` posts via postMessage, whose delivery is itself
+    // async, so asserting absence immediately passes even when the reply was
+    // already sent — it simply has not been DELIVERED yet. Measured: with the
+    // invalidation moved to AFTER the send, the un-flushed assertion still
+    // passed (mutant survived). Draining the task queue first is what makes the
+    // absence mean "not sent" instead of "not yet delivered".
+    await new Promise((r) => setTimeout(r, 100));
+    expect(replies.last('SHARED_APPEND_RESULT')).toBeUndefined();
+
+    release();
+
+    await vi.waitFor(() => {
+      const r = replies.last('SHARED_APPEND_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_gate', key: '01GATED' });
+    });
+    replies.stop();
+  });
+
+  test('a FAILED write does not invalidate (nothing changed server-side)', async () => {
+    // Positive control on the negative: proves the invalidation is wired to the
+    // success path specifically, not fired unconditionally on every message.
+    mocks.append.mockRejectedValue(new Error('nope'));
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SHARED_APPEND', { requestId: 'rq_fail', value: { title: 'x' } });
+
+    await vi.waitFor(() => {
+      const r = replies.last('SHARED_APPEND_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect((r.payload as { error?: string }).error).toBeTruthy();
+    });
+    expect(mocks.invalidate).not.toHaveBeenCalled();
+    replies.stop();
+  });
+
+  test('a READ does not invalidate', async () => {
+    // The other half of the same control: reads must not churn the cache.
+    mocks.list.mockResolvedValue({ items: [], nextCursor: undefined });
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SHARED_LIST', { requestId: 'rq_read' });
+
+    await vi.waitFor(() => {
+      const r = replies.last('SHARED_LIST_RESULT');
+      if (!r) throw new Error('no reply yet');
+    });
+    expect(mocks.invalidate).not.toHaveBeenCalled();
+    replies.stop();
   });
 });
