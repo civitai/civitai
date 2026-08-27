@@ -20,13 +20,17 @@
  * 🔴 READ THIS BEFORE TRUSTING IT AS A GATE: it is not one. This file is in the
  * Vitest browser-mode `component` project, which CI runs only as the preview
  * pipeline's `preview / component-tests` — REPORT-ONLY, non-blocking, and RED on this
- * branch for a reason that has nothing to do with `/apps`: measured 2026-08-27, the
- * whole project is 192 files / 2119 tests passing with ONE file failing,
- * `src/components/Resource/Forms/ModelVersionUpsertForm.browser.test.tsx` (17 tests),
- * whose entire subtree is byte-identical to `origin/main` here. (An older note in
- * `AppsPageLayout.geometry.browser.test.tsx` blames `AppBlockChrome.browser.test.tsx`
- * — that is STALE: it now passes, 21/21. Do not re-derive the culprit from either
- * comment; run the project and read the file list.)
+ * branch for reasons that have nothing to do with `/apps`. The failing files are outside
+ * `src/components/Apps` and their subtrees are byte-identical to `origin/main` here; one
+ * of them (`RemixGallery/RemixGallerySubmitModal`) fails to IMPORT, which reports as
+ * "no tests" rather than as a failure.
+ *
+ * 🔴 NO TOTALS RECORDED ON PURPOSE. This note used to carry a census ("192 files / 2119
+ * tests, ONE failing") and it was stale within a day — as was the older note in
+ * `AppsPageLayout.geometry.browser.test.tsx` naming `AppBlockChrome.browser.test.tsx` as
+ * the culprit, which now passes. A count checked in beside the thing it counts drifts,
+ * and a stale count is worse than none because it reads as a measurement. Do not
+ * re-derive the culprit from any comment: run the project and read the file list.
  *
  * A permanently-red non-blocking gate trains everyone to click through it, so anything
  * only this file catches is effectively unguarded. The ENFORCEABLE half therefore lives

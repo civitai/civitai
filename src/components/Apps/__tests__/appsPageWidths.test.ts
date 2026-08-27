@@ -60,13 +60,53 @@ const CHROME_DELEGATES: Record<string, { file: string; exportName: string }> = {
 };
 
 /**
- * The top-level JSX tag names of each `return` in a page's default-export component,
- * one array per return statement, fragments unwrapped.
+ * Components a page may render as a SIBLING of the chrome because they are portaled
+ * overlays — they leave the container's layout flow entirely, so "outside the measure
+ * box" is where they belong rather than a defect.
  *
- * 🔴 THIS IS AN AST WALK BECAUSE A TEXT GUARD IS WALKABLE BY A COMMENT. `/<AppsPageLayout[\s>]/`
- * over the file's source matches a `{/* <AppsPageLayout …> *​/}` just as happily as a real
- * render, so a page can be re-orphaned while the guard stays green. Comments are TRIVIA in
- * the TypeScript AST — they are not nodes — so a commented-out element simply is not here.
+ * 🔴 VERIFIED, NOT TRUSTED — the same rule as {@link CHROME_DELEGATES}, and for the same
+ * reason: an allowlist keyed on a NAME is exactly where real page content would hide, and
+ * "…Modal" is a naming convention, not a guarantee. The test below parses each entry and
+ * fails unless it actually renders a portaling overlay at its top level. Adding a name
+ * here cannot silence the guard.
+ */
+const CHROME_PORTAL_SIBLINGS: Record<string, { file: string; exportName: string }> = {
+  OnsiteReviewModal: {
+    file: 'src/components/Apps/OnsiteReviewModal.tsx',
+    exportName: 'OnsiteReviewModal',
+  },
+  OffsiteReviewModal: {
+    file: 'src/components/Apps/OffsiteReviewQueue.tsx',
+    exportName: 'OffsiteReviewModal',
+  },
+  CombinedReviewModal: {
+    file: 'src/components/Apps/CombinedReviewModal.tsx',
+    exportName: 'CombinedReviewModal',
+  },
+};
+
+/** Tags that mean "a portaled overlay root" when a portal sibling renders one. */
+const PORTAL_ROOT_TAGS = new Set(['Modal', 'Modal.Stack', 'Drawer', 'Drawer.Stack', 'Portal']);
+
+/** Tag names that mean "a fragment", i.e. unwrap the children rather than count the tag. */
+const FRAGMENT_TAGS = new Set(['React.Fragment', 'Fragment']);
+
+/**
+ * EVERY top-level renderable JSX tag a component can render, one array per `return`.
+ *
+ * 🔴 AN AST WALK BECAUSE A TEXT GUARD IS WALKABLE BY A COMMENT. `/<AppsPageLayout[\s>]/`
+ * over the file's source matches a commented-out element just as happily as a real render,
+ * so a page could be re-orphaned while the guard stayed green. Comments are TRIVIA in the
+ * TypeScript AST — not nodes — so a commented-out element simply is not here.
+ *
+ * 🔴 EVERY BRANCH IS COLLECTED, AND THAT IS LOAD-BEARING GIVEN HOW THE RESULT IS USED.
+ * A ternary contributes BOTH arms, a fragment contributes ALL its children, and a
+ * `&&` contributes its JSX side. That is only safe because {@link chromeOffenders}
+ * requires EVERY tag to be allowed rather than asking whether the layout appears
+ * SOMEWHERE. An earlier version paired this same flattening with an `includes` check, so
+ * one good ternary arm covered for a re-orphaned one — the union hid the violation
+ * instead of exposing it. Union + "all must be allowed" is the combination that works;
+ * union + "any may match" is strictly worse than not flattening at all.
  *
  * Nested functions are deliberately NOT descended into: a `.map()` callback or a locally
  * declared sub-component has its own returns, and they are not the page's outermost render.
@@ -80,19 +120,52 @@ function pageReturnTags(file: string, exportName?: string): string[][] {
     ts.ScriptKind.TSX
   );
 
-  let component: ts.FunctionDeclaration | undefined;
+  // 🔴 THREE DEFAULT-EXPORT SHAPES, because rejecting a legitimate one turns the BLOCKING
+  // suite red on a page that is perfectly correct: `export default function P() {}`,
+  // `const P = () => {}; export default P;`, and `export default () => {}`. A guard that
+  // only understands one spelling is a guard against a spelling, not against the hazard.
+  let body: ts.Node | undefined;
+  const defaultExportedNames = new Set<string>();
   source.forEachChild((node) => {
-    if (!ts.isFunctionDeclaration(node)) return;
-    const matches = exportName
-      ? node.name?.getText(source) === exportName
-      : node.modifiers?.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword);
-    if (matches) component = node;
+    if (ts.isExportAssignment(node) && !node.isExportEquals) {
+      if (ts.isIdentifier(node.expression))
+        defaultExportedNames.add(node.expression.getText(source));
+      // `export default () => …` / `export default function () {}`
+      else if (ts.isArrowFunction(node.expression) || ts.isFunctionExpression(node.expression)) {
+        if (!exportName) body = node.expression.body;
+      }
+    }
   });
-  if (!component?.body) {
+  source.forEachChild((node) => {
+    if (ts.isFunctionDeclaration(node)) {
+      const name = node.name?.getText(source);
+      const matches = exportName
+        ? name === exportName
+        : node.modifiers?.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword) ||
+          (name != null && defaultExportedNames.has(name));
+      if (matches && node.body) body = node.body;
+      return;
+    }
+    if (ts.isVariableStatement(node)) {
+      for (const decl of node.declarationList.declarations) {
+        const name = decl.name.getText(source);
+        const isExported = node.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
+        const matches = exportName
+          ? name === exportName && isExported
+          : defaultExportedNames.has(name);
+        if (!matches || !decl.initializer) continue;
+        if (ts.isArrowFunction(decl.initializer) || ts.isFunctionExpression(decl.initializer)) {
+          body = decl.initializer.body;
+        }
+      }
+    }
+  });
+  if (!body) {
     throw new Error(
       exportName
-        ? `no \`export function ${exportName}\` found`
-        : 'no `export default function` component found'
+        ? `no exported component \`${exportName}\` found`
+        : 'no default-exported component found (tried: export default function, ' +
+          'const X = () => …; export default X, export default () => …)'
     );
   }
 
@@ -100,22 +173,32 @@ function pageReturnTags(file: string, exportName?: string): string[][] {
   const topLevelTags = (expr: ts.Expression | undefined): string[] => {
     if (!expr) return [];
     if (ts.isParenthesizedExpression(expr)) return topLevelTags(expr.expression);
-    // `cond ? <A/> : <B/>` renders one of two trees; both must satisfy the rule.
+    // Both arms — see the 🔴 note above on why the union is safe here.
     if (ts.isConditionalExpression(expr))
       return [...topLevelTags(expr.whenTrue), ...topLevelTags(expr.whenFalse)];
-    // `cond && <A/>` — the JSX side is what can render.
-    if (ts.isBinaryExpression(expr)) return topLevelTags(expr.right);
-    if (ts.isJsxElement(expr)) return [expr.openingElement.tagName.getText(source)];
-    if (ts.isJsxSelfClosingElement(expr)) return [expr.tagName.getText(source)];
-    if (ts.isJsxFragment(expr)) {
+    // `cond && <A/>` / `a ?? <B/>` — either side may be the JSX.
+    if (ts.isBinaryExpression(expr))
+      return [...topLevelTags(expr.left), ...topLevelTags(expr.right)];
+    const childTags = (children: ts.NodeArray<ts.JsxChild>): string[] => {
       const tags: string[] = [];
-      for (const child of expr.children) {
-        if (ts.isJsxElement(child)) tags.push(child.openingElement.tagName.getText(source));
-        else if (ts.isJsxSelfClosingElement(child)) tags.push(child.tagName.getText(source));
-        else if (ts.isJsxExpression(child)) tags.push(...topLevelTags(child.expression));
+      for (const child of children) {
+        if (ts.isJsxElement(child) || ts.isJsxSelfClosingElement(child)) {
+          tags.push(...topLevelTags(child as unknown as ts.Expression));
+        } else if (ts.isJsxExpression(child)) tags.push(...topLevelTags(child.expression));
       }
       return tags;
+    };
+    if (ts.isJsxElement(expr)) {
+      const tag = expr.openingElement.tagName.getText(source);
+      // `<React.Fragment>` is a fragment written the long way — unwrap it, or a perfectly
+      // correct page reads as rendering an unknown element called `React.Fragment`.
+      return FRAGMENT_TAGS.has(tag) ? childTags(expr.children) : [tag];
     }
+    if (ts.isJsxSelfClosingElement(expr)) {
+      const tag = expr.tagName.getText(source);
+      return FRAGMENT_TAGS.has(tag) ? [] : [tag];
+    }
+    if (ts.isJsxFragment(expr)) return childTags(expr.children);
     return [];
   };
 
@@ -135,8 +218,44 @@ function pageReturnTags(file: string, exportName?: string): string[][] {
     }
     ts.forEachChild(node, visit);
   };
-  ts.forEachChild(component.body, visit);
+  // A concise arrow body (`() => <X/>`) is an expression, not a block: it IS the return.
+  if (ts.isBlock(body as ts.Node)) ts.forEachChild(body as ts.Node, visit);
+  else groups.push(topLevelTags(body as ts.Expression));
   return groups;
+}
+
+/**
+ * The ONE rule, applied to pages and to chrome delegates alike: in every return that
+ * renders anything, EVERY top-level tag must be the shared layout, a verified delegate,
+ * or an exempt leaf.
+ *
+ * 🔴 "EVERY", NOT "CONTAINS ONE". The predicate used to be
+ * `rendered.includes('AppsPageLayout')`, which three different shapes walked straight
+ * past because they put an un-chromed element ALONGSIDE a chromed one: a ternary whose
+ * other arm rendered a bare centred `<Box>`, a fragment child ternary of the same shape,
+ * and a plain un-chromed sibling inside the top-level fragment. In all three the layout
+ * WAS present somewhere in the group, so `includes` was satisfied while real page content
+ * rendered outside the chrome entirely.
+ */
+function chromeOffenders(label: string, groups: string[][]): string[] {
+  const allowed = new Set([
+    'AppsPageLayout',
+    ...Object.keys(CHROME_DELEGATES),
+    ...Object.keys(CHROME_PORTAL_SIBLINGS),
+  ]);
+  const offenders: string[] = [];
+  for (const tags of groups) {
+    const rendered = tags.filter((t) => !CHROME_EXEMPT_TAGS.has(t));
+    if (rendered.length === 0) continue;
+    const stray = rendered.filter((t) => !allowed.has(t));
+    if (stray.length > 0) {
+      offenders.push(
+        `${label} (a return renders [${rendered.join(', ')}] outside the shared chrome — ` +
+          `stray: ${stray.join(', ')})`
+      );
+    }
+  }
+  return offenders;
 }
 
 describe('the container is uniform, and it is the only container', () => {
@@ -517,39 +636,39 @@ describe('every /apps page on disk is classified', () => {
           offenders.push(`${route} (default export has no return statement)`);
           continue;
         }
-        for (const tags of groups) {
-          returnsInspected += 1;
-          // A return that renders nothing renderable, or only an access-denied leaf, is
-          // not required to mount the chrome — those are the gate returns.
-          const rendered = tags.filter((t) => !CHROME_EXEMPT_TAGS.has(t));
-          if (rendered.length === 0) continue;
-          if (rendered.includes('AppsPageLayout')) continue;
-          // A delegate satisfies the rule only because it mounts the chrome itself —
-          // which the sibling test proves, rather than this list asserting it.
-          if (rendered.some((t) => CHROME_DELEGATES[t])) continue;
-          offenders.push(
-            `${route} (a return renders [${rendered.join(', ')}] with no AppsPageLayout)`
-          );
-        }
+        returnsInspected += groups.length;
+        // ONE rule, shared with the delegate check below — see `chromeOffenders`.
+        offenders.push(...chromeOffenders(route, groups));
       }
-      // Guard-the-guard, twice: an empty `offenders` is indistinguishable from a loop
-      // that parsed nothing, AND from one that parsed files but found no returns.
-      expect(filesParsed, 'the AST walk parsed no page files').toBe(RENDERING_ROUTES.length);
-      expect(returnsInspected, 'the AST walk found no returns to inspect').toBeGreaterThanOrEqual(
-        RENDERING_ROUTES.length
-      );
+      // 🔴 THE OFFENDER LIST IS ASSERTED FIRST, DELIBERATELY. When a page uses a shape the
+      // walk cannot parse, `filesParsed` also comes up short — and if the count assertion
+      // ran first it would fail with "expected 12 to be 13", burying the one message that
+      // says WHICH page and WHY. Vitest stops at the first failing expect, so the
+      // informative assertion has to be the first one.
       expect(
         offenders,
         'Rendering /apps route(s) not on the shared chrome. Wrap the page body in ' +
           '<AppsPageLayout> (passing `measure` only if it is in APPS_PAGE_MEASURES) ' +
           'instead of any container of its own.'
       ).toEqual([]);
+      // Guard-the-guard, twice: an empty `offenders` is indistinguishable from a loop
+      // that parsed nothing, AND from one that parsed files but found no returns.
+      expect(filesParsed, 'the AST walk parsed no page files').toBe(RENDERING_ROUTES.length);
+      expect(returnsInspected, 'the AST walk found no returns to inspect').toBeGreaterThanOrEqual(
+        RENDERING_ROUTES.length
+      );
     });
 
     test('🔴 every chrome DELEGATE really does mount the chrome', () => {
-      // The allowlist above is the one place a genuine orphan could hide behind a
-      // reassuring name. Parse each delegate and require it to render AppsPageLayout in
-      // every return that renders anything — the same rule the pages are held to.
+      // The allowlist is the one place a genuine orphan could hide behind a reassuring
+      // name, so the delegate is held to LITERALLY the same rule as a page — the same
+      // `chromeOffenders` function, not a paraphrase of it.
+      //
+      // 🔴 IT USED TO BE `groups.some(tags => tags.includes('AppsPageLayout'))` while this
+      // test's own description said "every return that renders anything". Giving
+      // `AppsSubmitEditView` an early return rendering a bare centred `<Box>` walked
+      // straight past it: one good return vouched for a bad one, in the very check whose
+      // job is to stop the allowlist being taken on trust.
       const names = Object.keys(CHROME_DELEGATES);
       expect(names.length, 'the delegate list is empty — nothing to verify').toBeGreaterThan(0);
       const offenders: string[] = [];
@@ -561,12 +680,120 @@ describe('every /apps page on disk is classified', () => {
           continue;
         }
         const groups = pageReturnTags(abs, exportName);
+        if (groups.length === 0) {
+          offenders.push(`${name} (has no return statement)`);
+          continue;
+        }
         const renders = groups.some((tags) => tags.includes('AppsPageLayout'));
         if (!renders) offenders.push(`${name} (does not render AppsPageLayout)`);
+        offenders.push(...chromeOffenders(name, groups));
       }
       expect(
         offenders,
         'A component allowlisted as mounting the shared chrome does not actually mount it.'
+      ).toEqual([]);
+    });
+
+    /**
+     * 🔴 THE RULE ITSELF, TABLE-DRIVEN — because every other test here consumes
+     * `chromeOffenders` and none of them PINS it.
+     *
+     * Found by mutating the guard rather than the code: weakening `chromeOffenders` back
+     * to its old "does the layout appear anywhere in this group" semantics, together with
+     * a real un-chromed sibling on a page, passed the entire blocking suite. The AST
+     * negative control below could not see it — it exercises `pageReturnTags` and
+     * inspects the tags itself, never routing through the rule. So the rule was the one
+     * piece of this machinery with no guard of its own.
+     *
+     * The `[AppsPageLayout, Box]` rows are the load-bearing ones: they are exactly the
+     * shapes an `includes`-style predicate waves through, because the layout IS present —
+     * alongside page content rendering outside it.
+     */
+    describe('🔴 chromeOffenders — the rule, pinned directly', () => {
+      const cases: { name: string; group: string[]; offends: boolean }[] = [
+        { name: 'the layout alone', group: ['AppsPageLayout'], offends: false },
+        { name: 'Meta beside the layout', group: ['Meta', 'AppsPageLayout'], offends: false },
+        { name: 'a bare access-denied leaf', group: ['NotFound'], offends: false },
+        { name: 'nothing renderable', group: [], offends: false },
+        { name: 'a verified delegate', group: ['AppsSubmitEditView'], offends: false },
+        {
+          name: 'a portaled overlay beside the layout',
+          group: ['AppsPageLayout', 'OnsiteReviewModal'],
+          offends: false,
+        },
+        { name: 'page content with NO layout', group: ['Box'], offends: true },
+        // 🔴 The two an `includes` check passes.
+        {
+          name: 'an un-chromed SIBLING alongside the layout',
+          group: ['AppsPageLayout', 'Box'],
+          offends: true,
+        },
+        {
+          name: 'a ternary whose other arm is un-chromed (flattened to one group)',
+          group: ['AppsPageLayout', 'Container'],
+          offends: true,
+        },
+      ];
+
+      test.each(cases)('$name', ({ group, offends }) => {
+        const out = chromeOffenders('fixture', [group]);
+        expect(out.length > 0).toBe(offends);
+      });
+
+      test('the offender message names the stray tag, not just the route', () => {
+        // A guard whose message does not say WHAT is wrong sends the next reader hunting.
+        const [msg] = chromeOffenders('/apps/x', [['AppsPageLayout', 'Box']]);
+        expect(msg).toContain('/apps/x');
+        expect(msg).toContain('stray: Box');
+      });
+
+      test('every case fixture is distinct (no row silently duplicates another)', () => {
+        // Guard-the-guard: duplicated rows inflate the table without adding coverage.
+        const keys = cases.map((c) => c.group.join('|'));
+        expect(new Set(keys).size).toBe(keys.length);
+        // …and the table exercises BOTH verdicts, so it cannot pass by always agreeing.
+        expect(cases.some((c) => c.offends)).toBe(true);
+        expect(cases.some((c) => !c.offends)).toBe(true);
+      });
+    });
+
+    test('🔴 every PORTAL SIBLING really is a portaled overlay', () => {
+      // Same contract as the delegate check: the exemption is earned by what the
+      // component renders, not by what it is called. A page-content component wrongly
+      // listed here would be waved past the chrome rule, which is the whole hazard an
+      // allowlist introduces.
+      const names = Object.keys(CHROME_PORTAL_SIBLINGS);
+      expect(names.length, 'the portal-sibling list is empty — nothing to verify').toBeGreaterThan(
+        0
+      );
+      const offenders: string[] = [];
+      for (const name of names) {
+        const { file, exportName } = CHROME_PORTAL_SIBLINGS[name];
+        const abs = path.resolve(__dirname, '../../../..', file);
+        if (!fs.existsSync(abs)) {
+          offenders.push(`${name} (no file at ${abs})`);
+          continue;
+        }
+        const groups = pageReturnTags(abs, exportName);
+        if (groups.length === 0) {
+          offenders.push(`${name} (has no return statement)`);
+          continue;
+        }
+        // Every return that renders anything must render a portal root — an early
+        // return of ordinary markup would put real content outside the chrome.
+        for (const tags of groups) {
+          const rendered = tags.filter((t) => !CHROME_EXEMPT_TAGS.has(t));
+          if (rendered.length === 0) continue;
+          const stray = rendered.filter((t) => !PORTAL_ROOT_TAGS.has(t));
+          if (stray.length > 0) {
+            offenders.push(`${name} (a return renders non-portal roots: ${stray.join(', ')})`);
+          }
+        }
+      }
+      expect(
+        offenders,
+        'A component allowlisted as a portaled overlay renders ordinary markup instead — ' +
+          'it would place page content outside the shared chrome.'
       ).toEqual([]);
     });
 

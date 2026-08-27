@@ -101,9 +101,20 @@ export function AppsPageLayout({
    * No auto margins, deliberately. The parent `Stack` is a column flexbox with the
    * default `align="stretch"`, so a bare `maw` resolves LEFT-ALIGNED; anything that
    * re-centres it puts each route's content at a different x and re-creates the defect
-   * one level down. Pinned on the RENDERED tree in
-   * `__tests__/appsPageLayoutRender.test.ts` — a source-text pin was walkable both by a
-   * comment and by a centring wrapper.
+   * one level down.
+   *
+   * 🔴 WHERE THAT IS ACTUALLY PINNED, AND HOW FAR EACH PIN REACHES — stated precisely,
+   * because an earlier version of this sentence claimed "pinned on the RENDERED tree"
+   * full stop, while the check read the inline `style` attribute only and a
+   * `className="mx-auto"` walked past it.
+   *   • `__tests__/appsPageLayoutRender.test.ts` (BLOCKING) pins the STRUCTURE — the box
+   *     is a direct child of the root stack, so no wrapper can centre it — and pins the
+   *     CARRIERS: the box may hold a max-width and nothing else, and no class at all.
+   *     It cannot resolve stylesheets (node tier, no CSS loaded), which is exactly why
+   *     it bans the class rather than trying to read a computed margin.
+   *   • `AppsPageLayout.chromeAlignment.browser.test.tsx` (report-only) pins the
+   *     RESOLVED geometry — body left edge == nav left edge on every route — which is
+   *     the check that catches a centring mechanism of any spelling.
    */
   const bounded = (node: ReactNode) => (measure != null ? <Box maw={measure}>{node}</Box> : node);
   // `pb` only — NO `py`. The top pad is deliberately gone so `/apps/*` starts

@@ -53,17 +53,28 @@ export default function AppsGetStartedPage() {
         deIndex
       />
       {/*
-        🔴 ONE OF THREE ADOPTED PAGES WHOSE GATE DOES NOT IMPLY THE SUB-NAV'S. This page
+        🔴 THIS PAGE'S GATE DOES NOT IMPLY THE SUB-NAV'S. This page
         gates on `appBlocksGetStarted` ALONE (see the docstring above), while
         `AppsSubNav` renders only for `hasAppsStoreAccess` (`appListings || appBlocks`)
         AND hides itself below two qualifying tabs. Those are independent flags, so a
         viewer can hold this page's flag and not the nav's — and then the chrome band
         renders empty (the sub-nav returns `null`), costing the `Stack gap="xl"` above
-        the body and nothing else. The other two are `/apps/[appBlockId]/edit` and
-        `/apps/listing/[appListingId]/edit`, which gate on `appBlocks` alone; see the
-        matching note in each. (`/apps/[appBlockId]/revenue` is NOT affected — it gates
-        on `appBlocksAuthor` + `isAppDeveloper`, which guarantees the Create tab and so
-        clears the two-tab floor.)
+        the body and nothing else.
+
+        🔴 THE CRITERION, NOT A COUNT — apply it, do not trust a total written here. An
+        earlier version of this note said "one of three", and it was wrong: it stated the
+        two-tab floor as part of the test and then counted only the pages whose FLAG
+        mismatches, missing `/apps` and `/apps/store-preview/[slug]`, which gate on
+        `hasAppsStoreAccess` — a predicate that likewise does not imply two tabs (see
+        `AppsSubNav.tsx`, which names the reachable cohort outright: `app-listings=true`,
+        `app-blocks-author=false`, non-author, no installs ⇒ Marketplace alone). That was
+        the second hand-maintained integer in this change to go stale, so there is no
+        third one. THE TEST: a page can show an empty band iff its gate does not
+        guarantee the viewer ≥2 qualifying sub-nav tabs. Read the page's
+        `getServerSideProps`, then read `SUB_NAV_LINKS` + `if (links.length < 2) return
+        null` in `AppsSubNav.tsx`, and decide. `/apps/[appBlockId]/revenue` is the useful
+        contrast — it gates on `appBlocksAuthor` + `isAppDeveloper`, which guarantees the
+        Create tab and therefore clears the floor.
 
         NOT REACHABLE TODAY: `appBlocksGetStarted` is staged mod-only, and a moderator
         holds `appBlocks` (hence the store predicate) and is an `isAppDeveloper`, so the

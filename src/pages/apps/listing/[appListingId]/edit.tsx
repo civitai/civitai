@@ -186,8 +186,8 @@ export default function AppListingEditPage() {
     <>
       <Meta title={`Edit ${context.name} — Civitai Apps`} deIndex />
       {/*
-        🔴 THIS PAGE'S GATE DOES NOT IMPLY THE SUB-NAV'S — one of three adopted pages
-        where that is true. The `getServerSideProps` above gates on `appBlocks` ALONE,
+        🔴 THIS PAGE'S GATE DOES NOT IMPLY THE SUB-NAV'S. The `getServerSideProps` above
+        gates on `appBlocks` ALONE,
         with no author requirement, while `AppsSubNav` hides itself entirely below TWO
         qualifying tabs. Only "Marketplace" is unconditional; every other tab needs an
         author capability, an install, an approved app, a pending invite or reviewer

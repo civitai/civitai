@@ -189,11 +189,34 @@ describe('the measure box, on the rendered tree', () => {
     ).toBe(true);
   });
 
-  it('🔴 M3 — and the box does not centre ITSELF', () => {
-    // The other side of the same relationship: the wrapper route is closed above, this
-    // closes the `mx="auto"` / `margin-inline:auto` route on the box itself.
+  it('🔴 M3 — and the box does not centre ITSELF, by ANY carrier', () => {
+    // The other side of the relationship: the wrapper route is closed above, this closes
+    // centring applied to the box itself.
+    //
+    // 🔴 BOTH CARRIERS, NOT JUST INLINE STYLE. An earlier version checked only
+    // `getAttribute('style')`, so `className="mx-auto"` — one Tailwind utility, the most
+    // natural way anyone here would actually centre something — walked straight past it
+    // while the isolated `mx="auto"` control died. A style-attribute check is a check on
+    // ONE SPELLING of centring, and the docstring claimed to cover centring as such.
+    //
+    // ⚠️ WHAT THIS CANNOT DO, stated rather than implied: happy-dom resolves no
+    // stylesheet here (none is loaded in the node tier), so `getComputedStyle` cannot
+    // tell us the RESOLVED margin — a class's effect is invisible to it. So this asserts
+    // the CARRIERS instead: the box may carry a max-width and nothing else. The resolved
+    // geometry is asserted where a real engine can compute it, in
+    // `AppsPageLayout.chromeAlignment.browser.test.tsx`, which checks on every route that
+    // the body's left edge equals the nav's — that one catches any mechanism at all.
     const t = renderLayout(1068);
-    expect(t.measureBox!.getAttribute('style') ?? '').not.toMatch(/margin/i);
+    const style = t.measureBox!.getAttribute('style') ?? '';
+    expect(style).not.toMatch(/margin/i);
+    // Only the cap may be present, so no `inset`/`transform`/`position` route either.
+    expect(style.replace(/max-width:[^;]*;?/, '').trim()).toBe('');
+    // No class may be carried at all — that is what closes the stylesheet route.
+    expect(
+      (t.measureBox!.getAttribute('class') ?? '').trim(),
+      'the measure box carries a CSS class; a class can centre it and this tier cannot ' +
+        'resolve stylesheets, so no class is permitted on it'
+    ).toBe('');
   });
 
   it('without a measure, nothing bounds the body and it stays a direct child', () => {
@@ -275,6 +298,8 @@ describe('the measure box, on the rendered tree', () => {
       expect(style, `${name} box must not margin`).not.toMatch(/margin/i);
       // Only the cap, nothing else.
       expect(style.replace(/max-width:[^;]*;?/, '').trim()).toBe('');
+      // …and no class, which is the other carrier that could pad, margin or centre it.
+      expect((box!.getAttribute('class') ?? '').trim(), `${name} box must carry no class`).toBe('');
     }
   });
 
