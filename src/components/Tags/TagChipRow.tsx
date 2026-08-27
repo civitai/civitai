@@ -1,4 +1,5 @@
 import { Button, useComputedColorScheme } from '@mantine/core';
+import clsx from 'clsx';
 
 import { TwScrollX } from '~/components/TwScrollX/TwScrollX';
 
@@ -74,8 +75,12 @@ export function TagChipRow({
   // placeholder and the scroller separately. Two elements holding the same height is a
   // coupling nothing points at: give `TwScrollX` a border or padding later and the loaded
   // branch grows while the placeholder does not, and the shift comes back.
+  //
+  // `min-w-0` because this wrapper is a flex item in the resource-select modal. Callers
+  // used to put `TwScrollX` there directly, and its `overflow-hidden` bought the automatic
+  // `min-width: 0` that lets the row shrink and scroll instead of pushing its siblings out.
   return (
-    <div className={CHIP_ROW_MIN_HEIGHT}>
+    <div className={clsx('min-w-0', CHIP_ROW_MIN_HEIGHT)}>
       {!loading && (
         <TwScrollX className="flex gap-1">
           {includeAll && <TagChip label="All" active={activeId === undefined} onClick={onClear} />}
