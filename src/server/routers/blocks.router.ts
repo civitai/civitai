@@ -3956,8 +3956,10 @@ export const blocksRouter = router({
         return await estimateCustomComfyWorkflow({ claims, body: input.body });
       }
       // App Blocks STEP-TYPE bridge (RFC #3515 migration step 1). A registered
-      // step's cost comes from its declared billing mode, not a whatIf. The
-      // textToImage path below stays byte-identical (we only ADD a branch).
+      // step's cost now comes from a real `whatif` quote, with the declared
+      // billing mode as the FLOOR and the fallback — this used to read "not a
+      // whatIf", which was the defect, not the design. The textToImage path
+      // below stays byte-identical (we only ADD a branch).
       if (input.body.kind === 'step') {
         return await estimateStepWorkflow({ ctx, claims, body: input.body });
       }
@@ -7181,7 +7183,6 @@ function buildStepOrchestratorStep(
   params: unknown,
   plan: Pick<ReturnType<typeof planStepSpend>, 'stepTimeoutSeconds'>
 ) {
-
   const built = step.buildStep(params);
 
   // ── STEP IDENTITY, re-asserted at REQUEST time on the value actually
@@ -7298,21 +7299,16 @@ function buildStepOrchestratorStep(
  * one price and CHARGED another, with nothing anywhere that re-measured the
  * assertion.
  *
- * MEASURED 2026-08-27 (clawgate #386). `chat-completion` declares
+ * MEASURED 2026-08-27. `chat-completion` declares
  * `CHAT_COMPLETION_PRICE_BUZZ = 1`, and its header claimed `cost.total = 1` had
  * been measured "for every model in `CHAT_COMPLETION_MODELS` and for `maxTokens`
- * from 1 to 200,000". Free `whatif` quotes against the live orchestrator, on one
- * identical 4,680-char conversation at `maxTokens: 2048`:
- *
- *     deepseek/deepseek-chat                       4 Buzz
- *     cognitivecomputations/dolphin-mistral-24b…   3 Buzz
- *     openai/gpt-4o-mini                           2 Buzz
- *
- * and, on one model, 1 at `maxTokens: 256`, 6 at 4096, 86 at 64000. The
- * orchestrator prices a third-party chat model from the provider's live
- * per-token rate, floored at 1 — so the declared constant is that floor, not a
- * price, and NO constant could have been right. Two real sends were charged
- * 4 Buzz each while a published store listing told the viewer 1.
+ * from 1 to 200,000". `whatif` quotes against the live orchestrator refuted
+ * that: the real price is several times the constant for an ordinary
+ * conversation, differs per model, and rises with `maxTokens`. The orchestrator
+ * prices a third-party chat model per token and floors it at 1 — so the declared
+ * constant is that floor, not a price, and NO constant could have been right.
+ * Real sends were being charged the live price while a published store listing
+ * quoted the constant. Figures and derivation: the internal tracker.
  *
  * 🔴 THE FALLBACK IS THE DECLARED ESTIMATE, NOT A THROW, and that is deliberate.
  * An unquotable step is exactly today's behaviour, so this can only ever be more
@@ -7334,15 +7330,13 @@ function buildStepOrchestratorStep(
  *
  * 🔴 THE QUOTE IS BUILT BY THE SAME HELPER THE SUBMIT USES
  * (`buildStepOrchestratorStep`), so the `$type` and entitlement re-asserts run on
- * this path too and the two can never price different steps. It is one extra
- * orchestrator round-trip per estimate, on a surface already restricted to app
- * developers by `assertStepRequestAllowed`.
+ * this path too, they REFUSE here exactly as they refuse on submit, and the two
+ * can never price different steps. It is one extra orchestrator round-trip per
+ * estimate, on a surface already restricted to app developers by
+ * `assertStepRequestAllowed`; that call is bounded by the orchestrator client's
+ * own whatIf attempt timeout and retry budget.
  */
-async function estimateStepWorkflow(opts: {
-  ctx: Context;
-  claims: BlockClaims;
-  body: StepBody;
-}) {
+async function estimateStepWorkflow(opts: { ctx: Context; claims: BlockClaims; body: StepBody }) {
   const { ctx, claims, body } = opts;
   const userId = await assertStepRequestAllowed(claims);
   const step = resolveBlockStep(body);
@@ -7350,7 +7344,33 @@ async function estimateStepWorkflow(opts: {
   const variant = resolveStepVariant(step, params);
   const declaredBuzz = estimateStepBuzz(step, params, variant);
 
-  const quotedBuzz = await quoteStepBuzz({ ctx, claims, step, params, variant, userId });
+  // ── BUILT HERE, OUTSIDE THE QUOTE'S CATCH, SO ITS REFUSALS PROPAGATE. ───────
+  //
+  // 🔴 THIS WAS A REAL DEFECT WHEN THE BUILD SAT INSIDE `quoteStepBuzz`'s `try`.
+  // `buildStepOrchestratorStep` throws FORBIDDEN on a `$type` divergence and on
+  // an AIR reference in the built input — the two request-time re-asserts — and
+  // a blanket catch turned both into "no quote", so the estimate answered
+  // HTTP 200 with the declared price for a body the submit refuses outright.
+  // Measured: `content: "what does urn:air: mean?"` → estimate 200 `{total: 1}`,
+  // submit FORBIDDEN. That is estimate/submit drift on the surface whose entire
+  // job is to predict the submit, and the number it fell back to was exactly the
+  // misleading `1` this change exists to stop showing.
+  //
+  // These throws are DETERMINISTIC — the same params refuse identically on both
+  // paths — so surfacing them is what makes the estimate honest. Only the
+  // orchestrator ROUND-TRIP, which is transient, is allowed to degrade.
+  const plan = planStepSpend(step, params, variant);
+  const orchestratorStep = buildStepOrchestratorStep(step, params, plan);
+
+  const quotedBuzz = await quoteStepBuzz({ ctx, claims, step, orchestratorStep, userId });
+
+  // 🔴 MIRROR THE SUBMIT'S OWN `max()`, do not merely prefer the quote. The
+  // submit gates and reserves `max(declaredBuzz, quotedBuzz)`, so a quote BELOW
+  // the declared floor would otherwise have the estimate show less than the
+  // submit reserves — the under-display direction, and the one a block cannot
+  // defend against. Latent today (no registered entry quotes below its floor)
+  // and reachable the moment one is declared above its real orchestrator price.
+  const shownBuzz = Math.max(declaredBuzz, quotedBuzz ?? declaredBuzz);
 
   return {
     snapshot: {
@@ -7358,34 +7378,50 @@ async function estimateStepWorkflow(opts: {
       // snapshots. The block treats estimate as a cost quote and never polls it.
       workflowId: 'wf_estimate',
       status: 'pending' as const,
-      cost: { total: quotedBuzz ?? declaredBuzz },
+      cost: { total: shownBuzz },
     },
   };
 }
 
 /**
- * The orchestrator's live price for a step, or `null` if it could not be had.
+ * The orchestrator's live price for an ALREADY-BUILT step, or `null` if it could
+ * not be had.
  *
- * Swallows every failure on purpose — see the fallback note on
- * `estimateStepWorkflow`. A quote failure must degrade an estimate to the
- * pre-existing declared number, never turn it into an error the block has no way
- * to act on. The SUBMIT path runs its own quote and does NOT swallow.
+ * Takes the built step rather than building it, so the caller's deterministic
+ * refusals stay outside this catch — see the note at the build site. What IS
+ * swallowed here is the transient half: token mint and the orchestrator
+ * round-trip. A quote failure must degrade an estimate to the pre-existing
+ * declared number, never turn it into an error the block has no way to act on.
+ * The SUBMIT path runs its own quote and does NOT swallow.
+ *
+ * 🔴 EVERY OUTCOME IS COUNTED, INCLUDING THE DEGRADED ONE. A silent fallback
+ * would make "the block saw a live quote" and "the orchestrator was down and the
+ * block saw the floor again" indistinguishable in production — which is the same
+ * shape of unmeasured assertion this whole change exists to remove. The pair is
+ * deliberate: `estimate_absent` alone is unreadable, because a flat zero cannot
+ * be told apart from an estimate path that never runs. Read the ratio.
  *
  * No `externalId` on the quote, mirroring the submit's whatIf preflight and the
  * txt2img one: the idempotency key belongs to a real submit only.
+ *
+ * 🔴 MODERATION IS DELIBERATELY *NOT* RUN HERE, and that is not an oversight of
+ * the shared build. `runStepModeration` is a submit-path gate: it exists to keep
+ * unaudited content off the EXECUTION path, and a `whatif` executes nothing and
+ * publishes nothing. Every registered entry today is `'none'` (`convert-image`)
+ * or `'textOutput'` (`chat-completion`, output-phase only), so nothing is skipped
+ * in practice. 🔴 A future `'promptAudit'` entry changes that — its prompt would
+ * reach the orchestrator unaudited on this path — so an entry declaring an
+ * INPUT-phase posture must either audit here or be excluded from quoting.
  */
 async function quoteStepBuzz(opts: {
   ctx: Context;
   claims: BlockClaims;
   step: ReturnType<typeof resolveBlockStep>;
-  params: unknown;
-  variant: ReturnType<typeof resolveStepVariant>;
+  orchestratorStep: ReturnType<typeof buildStepOrchestratorStep>;
   userId: number;
 }): Promise<number | null> {
-  const { ctx, claims, step, params, variant, userId } = opts;
+  const { ctx, claims, step, orchestratorStep, userId } = opts;
   try {
-    const plan = planStepSpend(step, params, variant);
-    const orchestratorStep = buildStepOrchestratorStep(step, params, plan);
     const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
     const token = await getOrchestratorToken(userId, ctx);
     const quote = await submitWorkflow({
@@ -7400,8 +7436,14 @@ async function quoteStepBuzz(opts: {
       query: { whatif: true },
     });
     const total = quote.cost?.total;
-    return typeof total === 'number' && Number.isFinite(total) ? Math.ceil(total) : null;
+    if (typeof total !== 'number' || !Number.isFinite(total)) {
+      recordStepPriceCheck(step.id, 'estimate_absent');
+      return null;
+    }
+    recordStepPriceCheck(step.id, 'estimate_quoted');
+    return Math.ceil(total);
   } catch {
+    recordStepPriceCheck(step.id, 'estimate_absent');
     return null;
   }
 }
@@ -7515,15 +7557,12 @@ async function submitStepWorkflow(opts: {
   const plan = planStepSpend(step, params, variant);
   const declaredBuzz = Math.ceil(plan.reserveBuzz);
 
-  // Built ONCE, then used for the quote and the real submit, so the two can
-  // never price different things. `timeout` is stamped ONLY for a billing mode
-  // whose cap IS a timeout (`timeBounded`); `prepaidFixed` returns null, because
-  // a timeout on a fixed-price step would be a liveness knob and stamping one
-  // here would imply a Buzz-cap relationship that does not exist.
   // Built ONCE by the shared helper, so the quote and the real submit can never
   // price different things — and so the $type / entitlement re-asserts run on
   // BOTH paths. Both throws land before the orchestrator call and before every
   // reservation, so a rejection costs nothing and has nothing to refund.
+  // (`timeout` is stamped ONLY for a billing mode whose cap IS a timeout; see
+  // the helper.)
   const orchestratorStep = buildStepOrchestratorStep(step, params, plan);
   // Parameterized tags: emit the step id as both the workflow-type tag and the
   // `baseModel` slot (a registry step has no base model), preserving the
@@ -7823,9 +7862,9 @@ async function submitStepWorkflow(opts: {
       // price is wrong". A guard whose description is wider than its
       // implementation, and it read as coverage while providing none.
       //
-      // Measured 2026-08-27 (clawgate #386): `chat-completion` declared 1 and
-      // billed 4 on two consecutive real sends, and this counter reported
-      // `exact` both times. Nothing else in the system compares the declared
+      // Measured 2026-08-27: `chat-completion` billed several times its
+      // declared price on consecutive real sends, and this counter reported
+      // `exact` every time. Nothing else in the system compares the declared
       // number against reality.
       //
       // - `capOverage` vs `reserveBuzz` drives the RESERVATION CORRECTION. That
@@ -7833,9 +7872,21 @@ async function submitStepWorkflow(opts: {
       //   `reserveBuzz`, so that is what they are short against.
       // - `priceOverage` vs `declaredBuzz` drives the PRICE-CHECK SIGNAL. That
       //   is the number the registry asserts and the number a block is shown.
+      //
+      // 🔴 AND THEY ARE SEPARATE OUTCOME VALUES, NOT ONE. Collapsing both into
+      // `over` would trade one blindness for another: for a usage-priced entry
+      // the declared constant is a FLOOR, so `over` sits at ~100% forever by
+      // design — and a genuinely expensive event (billed above the RESERVATION,
+      // which shorts every cap counter) would then be invisible inside a
+      // saturated line, exactly as declared-price drift used to be invisible
+      // inside `exact`. `over_reserved` is the one to alert on; `over` is a
+      // report that a declared constant does not describe reality.
       const capOverage = billed - reserveBuzz;
       const priceOverage = billed - declaredBuzz;
-      recordStepPriceCheck(step.id, priceOverage > 0 ? 'over' : 'exact');
+      recordStepPriceCheck(
+        step.id,
+        capOverage > 0 ? 'over_reserved' : priceOverage > 0 ? 'over' : 'exact'
+      );
       if (capOverage > 0) {
         // Best-effort on ALL THREE keys; each guarded independently so one
         // failing cannot skip the others, and none can break an already-billed

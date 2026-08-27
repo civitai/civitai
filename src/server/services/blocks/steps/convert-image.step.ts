@@ -47,9 +47,9 @@ import type { BlockStep, OrchestratorStepTemplate } from './index';
 // ORCHESTRATOR QUOTE section in `blocks.router.ts`. A single measurement is one
 // point on a rate card that can change; the gate must not depend on it.
 //
-// ✅ RE-MEASURED 2026-08-27 and STILL 1 — clawgate #386's sweep of every other
-// declared step price, after `chat-completion` was found declaring 1 and billing
-// 4. A fresh `whatif:true` of this exact step shape against the live
+// ✅ RE-MEASURED 2026-08-27 and STILL 1 — a sweep of every other declared step
+// price, prompted by `chat-completion` being found to declare a price well below
+// what it bills. A fresh `whatif:true` of this exact step shape against the live
 // orchestrator returned
 // `cost: {base:1, factors:{base:1}, fixed:{}, tips:{civitai:0,creators:0}, total:1}`.
 // So the drift is chat-only and this entry is clean. The reason it is clean is
