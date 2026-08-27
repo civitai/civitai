@@ -1,5 +1,9 @@
+import { readdirSync, readFileSync, statSync } from 'fs';
+import { join, relative, sep } from 'path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+// `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
+import { stripCommentsAndStrings } from '../../../../../test/strip-comments';
 import {
   approveExternalRequest,
   rejectExternalRequest,
@@ -445,7 +449,141 @@ describe('mod queue procs — widened to kind IN (onsite, offsite), each row car
   });
 });
 
-describe('INVARIANT — the only producer of a kind:onsite AppListingPublishRequest is submitListingRevision on an onsite shadow', () => {
+/**
+ * 🔴 PRODUCER LEDGER for `AppListingPublishRequest`.
+ *
+ * `offsite-listing.service` used to carry a one-sentence INVARIANT above
+ * `REVIEWABLE_LISTING_KINDS`: *"the ONLY producer of a `kind='onsite'`
+ * `AppListingPublishRequest` is `submitListingRevision` on an onsite SHADOW"*. Six
+ * consumers of that constant reason from it, and it is what justifies
+ * `listMySubmissions`'s unconditional `{ kind: 'onsite' }` OR-branch.
+ *
+ * It went FALSE — the owner-republish asset-review route mints a NON-SHADOW onsite
+ * request — and the test named for it stayed green the whole time, because it asserted
+ * only that `submitListingRevision` produces a well-shaped row. Proving one member of a
+ * set is in it says nothing about whether the set has grown. So the shape assertion is
+ * kept below (it pins the VALUES) and this ledger is added beside it to pin the
+ * POPULATION: it enumerates every production site that creates a row in that table and
+ * FAILS when the set GROWS (a producer added without a decision recorded) **or** SHRINKS
+ * (one removed or renamed and the reasoning here went stale).
+ *
+ * Test files are out of scope — a test may construct any row for any reason.
+ */
+const LISTING_REQUEST_PRODUCERS: Record<string, string> = {
+  'src/server/services/blocks/offsite-listing.service.ts::submitExternalListing':
+    "OFF-SITE only (`kind: 'offsite'`), NON-shadow — a first-time off-site store " +
+    'submission, minted alongside the draft listing it targets.',
+  'src/server/services/blocks/offsite-listing.service.ts::submitListingRevision':
+    'BOTH kinds, always SHADOW (`revisionOfId` set on the target listing; the PARENT ' +
+    'slug is denormalized onto the request). This is the producer the old invariant ' +
+    'sentence named, and for on-site it was once the only one.',
+  'src/server/services/blocks/offsite-moderation.service.ts::resetListingToPending':
+    'OFF-SITE only, NON-shadow — the moderator reset. The ON-SITE reset is a different ' +
+    'function (`resetOnsiteListingToPending`) and re-queues on `AppBlockPublishRequest`, ' +
+    'which is why the on-site half of this table was shadow-only.',
+  'src/server/services/blocks/offsite-moderation.service.ts::routeRepublishToReviewInTx':
+    '🔴 THE SECOND ON-SITE PRODUCER, and the one that falsified the invariant. BOTH ' +
+    "kinds (`kind: listing.kind`), NON-shadow — an owner republish whose assets differ " +
+    'from the recorded approval baseline. Any consumer that reads `kind:onsite` as ' +
+    '"therefore a shadow revision" is wrong about this row; discriminate on ' +
+    '`revisionOfId`, never on `kind`.',
+};
+
+describe('🔴 AppListingPublishRequest PRODUCER LEDGER — fails when the set grows or shrinks', () => {
+  const ROOT = process.cwd();
+  const walk = (dir: string, out: string[] = []): string[] => {
+    for (const entry of readdirSync(dir)) {
+      if (entry === 'node_modules' || entry === '.next' || entry === '.git') continue;
+      const full = join(dir, entry);
+      if (statSync(full).isDirectory()) walk(full, out);
+      else if (/\.tsx?$/.test(entry)) out.push(full);
+    }
+    return out;
+  };
+  const FILES = walk(join(ROOT, 'src'))
+    .map((f) => relative(ROOT, f).split(sep).join('/'))
+    .filter((f) => !/__tests__|\.test\.tsx?$|(^|\/)src\/tests\//.test(f));
+
+  /** `<file>::<enclosing top-level function>` for every `…PublishRequest.create(` site. */
+  const findProducers = (needle: RegExp) => {
+    const found: string[] = [];
+    for (const file of FILES) {
+      // Comments and string literals stripped: this codebase discusses these tables at
+      // length in prose, and only real code is a producer.
+      const code = stripCommentsAndStrings(readFileSync(join(ROOT, file), 'utf8'));
+      for (const m of code.matchAll(needle)) {
+        const before = code.slice(0, m.index);
+        const decls = [
+          ...before.matchAll(/^(?:export )?(?:async )?function (\w+)|^(?:export )?const (\w+) = /gm),
+        ];
+        const last = decls[decls.length - 1];
+        const fn = last ? last[1] ?? last[2] : '<module scope>';
+        found.push(`${file}::${fn}`);
+      }
+    }
+    return [...new Set(found)].sort();
+  };
+
+  const PRODUCERS = findProducers(/appListingPublishRequest\.create\(/g);
+
+  it('POSITIVE CONTROL: the scan enumerates a real population and can match', () => {
+    // A broken walk, a wrong regex or a stripper that ate the file would make the ledger
+    // assertion vacuously true. Prove the instrument works before reading its verdict.
+    expect(FILES.length).toBeGreaterThan(500);
+    expect(FILES).toContain('src/server/services/blocks/offsite-listing.service.ts');
+    expect(PRODUCERS.length).toBeGreaterThan(1);
+  });
+
+  it('NEGATIVE CONTROL: a definitely-absent producer matches nothing', () => {
+    expect(findProducers(/appListingPublishRequestNoSuchTable\.create\(/g)).toEqual([]);
+  });
+
+  it('🔴 the producer set is EXACTLY the ledger', () => {
+    expect(PRODUCERS).toEqual(Object.keys(LISTING_REQUEST_PRODUCERS).sort());
+  });
+
+  it('🔴 the on-site half is NO LONGER shadow-only — at least two producers can emit kind:onsite', () => {
+    // The claim the stale sentence made, stated so it can be checked: a producer emits
+    // on-site rows when it writes `kind: 'onsite'` or forwards a listing's own kind.
+    const onsiteCapable = Object.keys(LISTING_REQUEST_PRODUCERS).filter((k) =>
+      /BOTH kinds/.test(LISTING_REQUEST_PRODUCERS[k])
+    );
+    expect(onsiteCapable.sort()).toEqual([
+      'src/server/services/blocks/offsite-listing.service.ts::submitListingRevision',
+      'src/server/services/blocks/offsite-moderation.service.ts::routeRepublishToReviewInTx',
+    ]);
+  });
+
+  it('🔴 `routeRepublishToReviewInTx` really does forward the listing kind (not a hardcoded offsite)', () => {
+    // The ledger entry above is prose; this is the code it describes. Without it the
+    // ledger could record a producer that does not actually reach the on-site half.
+    const code = stripCommentsAndStrings(
+      readFileSync(
+        join(ROOT, 'src/server/services/blocks/offsite-moderation.service.ts'),
+        'utf8'
+      )
+    );
+    const fnStart = code.indexOf('function routeRepublishToReviewInTx');
+    expect(fnStart).toBeGreaterThan(-1); // the ledger key must still name a real function
+    const body = code.slice(fnStart);
+    const create = body.slice(body.indexOf('appListingPublishRequest.create('));
+    expect(create.slice(0, 400)).toContain('kind: listing.kind');
+    // …and the sibling that is genuinely off-site-only still hardcodes it, so the
+    // assertion above is discriminating rather than matching any create in the file.
+    // 🔴 Read from the RAW source here, not the stripped copy: the value under test IS a
+    // string literal, and `stripCommentsAndStrings` blanks it to `kind:  ,` — asserting
+    // against the stripped text would be asserting the stripper's output.
+    const raw = readFileSync(
+      join(ROOT, 'src/server/services/blocks/offsite-moderation.service.ts'),
+      'utf8'
+    );
+    const reset = raw.slice(raw.indexOf('async function resetListingToPending'));
+    const resetCreate = reset.slice(reset.indexOf('appListingPublishRequest.create('));
+    expect(resetCreate.slice(0, 400)).toContain("kind: 'offsite'");
+  });
+});
+
+describe('the shape of a kind:onsite AppListingPublishRequest minted by submitListingRevision', () => {
   it('submitListingRevision on an onsite shadow mints a kind:onsite request targeting the shadow (revisionOfId set)', async () => {
     // The shadow: a draft revision of an approved onsite parent (revisionOfId set).
     mockRead.appListing.findUnique.mockResolvedValue({

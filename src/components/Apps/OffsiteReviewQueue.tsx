@@ -488,6 +488,21 @@ export function OffsiteReviewModalBody({
   // mod-REJECT reason, not an auto-derive. Both surface the same `ratingExceeds`
   // comparison; only the copy + the approve default differ.
   const isOnsite = request.kind === 'onsite';
+  // 🔴 `kind === 'onsite'` NO LONGER IMPLIES "a media revision". A second producer of
+  // on-site listing requests exists — the owner-republish asset-change re-review — and it
+  // is NON-shadow (`revisionOfId == null`), targeting the live listing itself rather than
+  // a shadow copy of it. The two are reviewed in this same modal but the server applies
+  // OPPOSITE rating rules to them, so telling them apart here is not cosmetic:
+  //
+  //   • on-site media REVISION  → `applyApprovedRevision`, assets-only, the app's rating
+  //     is preserved. Treating it as a CAP is right: media above the app's rating is a
+  //     reject reason, not something to auto-derive.
+  //   • on-site republish RE-REVIEW → `resolveOnsiteApprovalContentRating`, which FLOORS
+  //     the app's declared rating at the media-derived value — RAISE-only. Telling the
+  //     moderator "the media must not exceed the app's rating" states a policy the server
+  //     does not implement, and defaulting the approve control to the app's rating offers
+  //     a value the server will silently raise past.
+  const isOnsiteRepublishReview = isOnsite && (request.appListing?.revisionOfId ?? null) == null;
   const declaredRating = request.appListing?.contentRating ?? null;
   // The app's rating (the CAP for an on-site media revision), narrowed to a valid
   // enum value; null when unknown/invalid.
@@ -501,9 +516,17 @@ export function OffsiteReviewModalBody({
     nsfwLevelFromContentRating(derivedRating) > nsfwLevelFromContentRating(declaredRating);
   // Keep the offsite name for the unchanged offsite paths below.
   const ratingMismatch = ratingExceeds;
-  // Onsite approve defaults to the app's rating (the cap — media inherits it); the
-  // offsite approve defaults to the derived floor. Either way the mod may override.
-  const defaultRating: OffsiteContentRating = isOnsite ? appRating ?? derivedRating : derivedRating;
+  // Onsite media REVISION defaults to the app's rating (the cap — media inherits it); the
+  // offsite approve defaults to the derived floor. An onsite republish RE-REVIEW mirrors
+  // the server's raise-only floor — `max(declared, derived)` — so the control shows what
+  // approving would actually stamp instead of a value the server would override.
+  const defaultRating: OffsiteContentRating = isOnsiteRepublishReview
+    ? nsfwLevelFromContentRating(derivedRating) > nsfwLevelFromContentRating(appRating)
+      ? derivedRating
+      : appRating ?? derivedRating
+    : isOnsite
+    ? appRating ?? derivedRating
+    : derivedRating;
   const selectedRating: OffsiteContentRating = ratingOverride ?? defaultRating;
 
   // OAuth-CONNECT sub-kind (PR3): render the requested-scope panel + the sensitive-
@@ -572,7 +595,9 @@ export function OffsiteReviewModalBody({
     <Stack gap="md">
       {isOnsite && (
         <Text size="xs" c="dimmed" data-testid="apps-offsite-onsite-note">
-          {`Listing media update — the ${EMBEDDED_KIND_LABEL} app’s media (icon / cover / screenshots) changed. Content-only review; the media must not exceed the app’s rating.`}
+          {isOnsiteRepublishReview
+            ? `Republish review — the owner unpublished this ${EMBEDDED_KIND_LABEL} app’s listing, changed its store imagery and asked for it back. Content review of the icon / cover / screenshots below. Approving RAISES the app’s rating if the imagery is more mature; it never lowers it.`
+            : `Listing media update — the ${EMBEDDED_KIND_LABEL} app’s media (icon / cover / screenshots) changed. Content-only review; the media must not exceed the app’s rating.`}
         </Text>
       )}
       <Group gap="xs">
@@ -640,7 +665,11 @@ export function OffsiteReviewModalBody({
                   {offsiteContentRatingLabel(request.appListing.contentRating)}
                 </Badge>
                 <Text size="xs" c="dimmed">
-                  {isOnsite ? 'app rating (cap)' : 'declared'}
+                  {isOnsiteRepublishReview
+                    ? 'app rating (floor)'
+                    : isOnsite
+                    ? 'app rating (cap)'
+                    : 'declared'}
                 </Text>
               </Group>
             )}
@@ -786,7 +815,14 @@ export function OffsiteReviewModalBody({
           icon={<IconAlertTriangle size={16} />}
           data-testid="apps-offsite-rating-mismatch"
         >
-          {isOnsite ? (
+          {isOnsiteRepublishReview ? (
+            <Text size="sm">
+              Store imagery is rated higher ({offsiteContentRatingLabel(derivedRating)}) than the
+              app’s rating ({declaredRating ? offsiteContentRatingLabel(declaredRating) : '—'}).
+              Approving RAISES the app to the detected rating — it is a floor here, not a cap. If
+              the app itself is not that mature, reject and ask the owner to change the imagery.
+            </Text>
+          ) : isOnsite ? (
             <Text size="sm">
               Media assets are rated higher ({offsiteContentRatingLabel(derivedRating)}) than the
               app’s rating ({declaredRating ? offsiteContentRatingLabel(declaredRating) : '—'}).
@@ -842,7 +878,9 @@ export function OffsiteReviewModalBody({
             <Select
               label="Final content rating"
               description={
-                isOnsite
+                isOnsiteRepublishReview
+                  ? 'Defaults to the higher of the app’s rating and the rating detected from the imagery. You may rate up; a lower choice is ignored — the server floors this at the app’s own rating and raises it to the detected value.'
+                  : isOnsite
                   ? 'Defaults to the app’s rating (the cap). Listing media must not exceed the app’s rating; assets rated higher are a reject reason.'
                   : 'Defaults to the rating detected from the assets. You may rate up; an under-rating is floored to the detected value on save.'
               }

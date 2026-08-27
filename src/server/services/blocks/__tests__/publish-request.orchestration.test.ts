@@ -601,6 +601,100 @@ describe('submitVersion', () => {
     expect(mockDbWrite.appBlockPublishRequest.create).not.toHaveBeenCalled();
   });
 
+  // -------------------------------------------------------------------------
+  // 🔴 The cross-queue submit guard. `one_pending_per_slug` is partial-unique on
+  // `AppBlockPublishRequest` only; while that was the sole re-review surface for an
+  // on-site app it doubled as a mutual exclusion. The owner-republish asset-review route
+  // re-queues on `AppListingPublishRequest`, so the index sits free while a review IS
+  // open. Both cases below drive one fake `app_listing_publish_requests` table so the
+  // difference between them is the DATA, not the mock.
+  // -------------------------------------------------------------------------
+  const wireListingReviewTable = (rows: Record<string, unknown>[]) => {
+    mockDbRead.appListingPublishRequest.findFirst.mockImplementation(
+      async (args: { where?: Record<string, any> }) => {
+        const w = args?.where ?? {};
+        const hit = rows.find((r) =>
+          Object.entries(w).every(([k, v]) => {
+            if (k === 'appListing') {
+              // Relation predicate — compare each named field on the joined listing.
+              const joined = (r.appListing ?? {}) as Record<string, unknown>;
+              return Object.entries(v as Record<string, unknown>).every(
+                ([jk, jv]) => joined[jk] === jv
+              );
+            }
+            return r[k] === v;
+          })
+        );
+        return hit ? { id: hit.id } : null;
+      }
+    );
+  };
+
+  it('🔴 refuses a new version while a NON-SHADOW on-site listing review is open for the slug', async () => {
+    // The state the asset-review route creates: listing `pending`, block `suspended`, a
+    // pending listing request, and the block index FREE. Letting a version in here is how
+    // a moderator ends up approving a bundle whose approve branch would restore a listing
+    // whose imagery nobody has reviewed.
+    const { submitVersion } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findFirst.mockResolvedValue(null);
+    wireListingReviewTable([
+      {
+        id: 'alpr_imagery',
+        slug: 'hello',
+        kind: 'onsite',
+        status: 'pending',
+        appListing: { revisionOfId: null },
+      },
+    ]);
+    const buf = await makeValidBundle();
+    await expect(submitVersion({ bundleBuffer: buf, submittedByUserId: 42 })).rejects.toThrow(
+      /has a store-listing review open/
+    );
+    expect(mockS3Send).not.toHaveBeenCalled();
+    expect(mockDbWrite.appBlockPublishRequest.create).not.toHaveBeenCalled();
+  });
+
+  it('🔴 does NOT refuse while only a SHADOW media revision is open — that has always coexisted with a code submit', async () => {
+    // The negative control, and the reason the guard is scoped to `revisionOfId: null`.
+    // A pending shadow media revision denormalizes the parent slug onto its request row,
+    // so a slug-only guard would block every release for the length of an ordinary media
+    // review — a regression, not a fix.
+    const { submitVersion } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findFirst.mockResolvedValue(null);
+    wireListingReviewTable([
+      {
+        id: 'alpr_shadow',
+        slug: 'hello',
+        kind: 'onsite',
+        status: 'pending',
+        appListing: { revisionOfId: 'apl_parent' },
+      },
+    ]);
+    const buf = await makeValidBundle();
+    const result = await submitVersion({ bundleBuffer: buf, submittedByUserId: 42 });
+    expect(result.publishRequestId).toMatch(/^pubreq_/);
+  });
+
+  it('does NOT refuse on a CLOSED listing review — one completed cycle must not block every future version', async () => {
+    // The other half of the predicate: `status: 'pending'`. A slug accumulates
+    // approved/rejected/withdrawn listing requests forever, so a guard that forgot the
+    // status would permanently wedge the app's releases after its first imagery review.
+    const { submitVersion } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findFirst.mockResolvedValue(null);
+    wireListingReviewTable([
+      {
+        id: 'alpr_done',
+        slug: 'hello',
+        kind: 'onsite',
+        status: 'approved',
+        appListing: { revisionOfId: null },
+      },
+    ]);
+    const buf = await makeValidBundle();
+    const result = await submitVersion({ bundleBuffer: buf, submittedByUserId: 42 });
+    expect(result.publishRequestId).toMatch(/^pubreq_/);
+  });
+
   it('rejects other-user collision without leaking the existing request id', async () => {
     const { submitVersion } = await import('../publish-request.service');
     mockDbRead.appBlockPublishRequest.findFirst.mockResolvedValue({
@@ -832,6 +926,52 @@ describe('withdrawRequest', () => {
     expect(mockDbWrite.appBlockPublishRequest.updateMany).toHaveBeenCalledWith({
       where: { id: 'pubreq_version', status: 'pending' },
       data: { status: 'withdrawn' },
+    });
+  });
+
+  it('🔴 a CLOSED listing request on the row does NOT stop a mod-reset withdraw from delisting', async () => {
+    // The other half of the discriminator's predicate, and the case a shipped survivor
+    // exposed: `status: 'pending'`. A listing accumulates approved / rejected / withdrawn
+    // request rows forever — one completed imagery-review cycle is the ordinary shape, not
+    // an exotic one. A discriminator that only asked "is there ANY listing request on this
+    // row" would read a stale row as ownership and silently stop honouring the moderator's
+    // mandated re-review from then on, for every future withdraw on that app.
+    const { withdrawRequest } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
+      id: 'pubreq_reset',
+      status: 'pending',
+      submittedByUserId: 42,
+      slug: 'my-app',
+    });
+    mockDbWrite.appBlockPublishRequest.updateMany.mockResolvedValue({ count: 1 });
+    mockDbWrite.$transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) =>
+      cb(mockDbWrite)
+    );
+    mockDbRead.appListing.findFirst.mockResolvedValue({ id: 'apl_1', slug: 'my-app' });
+    mockDbWrite.appListing.updateMany.mockResolvedValue({ count: 1 });
+    // One fake `app_listing_publish_requests` row: a review that is OVER.
+    const rows = [{ id: 'alpr_old', appListingId: 'apl_1', status: 'withdrawn' }];
+    mockDbRead.appListingPublishRequest.findFirst.mockImplementation(
+      async (args: { where?: Record<string, unknown> }) => {
+        const w = args?.where ?? {};
+        const hit = rows.find((r) =>
+          Object.entries(w).every(([k, v]) => (r as Record<string, unknown>)[k] === v)
+        );
+        return hit ? { id: hit.id } : null;
+      }
+    );
+
+    await withdrawRequest({ publishRequestId: 'pubreq_reset', userId: 42 });
+
+    // No PENDING listing request owns the row → this block request IS the open review →
+    // the mod reset still closes, exactly as before the discriminator existed.
+    expect(mockDbWrite.appListing.updateMany).toHaveBeenCalledWith({
+      where: { id: 'apl_1', kind: 'onsite', status: 'pending' },
+      data: { status: 'removed' },
+    });
+    expect(mockDbWrite.appListingModerationEvent.create.mock.calls[0][0].data).toMatchObject({
+      action: 'delist',
+      actorUserId: 42,
     });
   });
 
@@ -1553,6 +1693,127 @@ describe('approveRequest', () => {
       where: { id: 'apb_existing', status: 'suspended' },
       data: { status: 'approved' },
     });
+  });
+
+  // -------------------------------------------------------------------------
+  // 🔴 WHICH QUEUE OWNS THE REVIEW — the (3b-reset) discriminator.
+  //
+  // `one_pending_per_slug` (partial-unique on AppBlockPublishRequest) used to be an
+  // implicit MUTUAL EXCLUSION: an on-site re-review always occupied it, so a `pending`
+  // on-site listing implied a mod reset and a mod reset implied a pending block request.
+  // The owner-republish asset-review route re-queues on `AppListingPublishRequest`
+  // instead, leaving the index free — so a slug can carry an open IMAGERY review and an
+  // open CODE review at once, and approving the code one must not publish the imagery.
+  //
+  // Both arms below drive the SAME simulation: a one-row fake `app_listings` table whose
+  // `publishRequests` relation really is evaluated (`none` / `some` / `every`, field by
+  // field), rather than a mock that pattern-matches the filter this code happens to write.
+  // The two arms differ ONLY in that relation's contents, and the "no open review" arm
+  // carries an APPROVED request — a completed prior review cycle, the realistic shape —
+  // so a filter that forgot to say `status: 'pending'` refuses the legitimate restore and
+  // fails the control rather than passing it.
+  // -------------------------------------------------------------------------
+  const wireResetListingLookup = (opts: { openListingReview: boolean }) => {
+    const row = { id: 'apl_reset', contentRating: 'g' };
+    // What sits on `AppListing.publishRequests` for the fake row.
+    const requests: Record<string, unknown>[] = opts.openListingReview
+      ? [{ status: 'pending', kind: 'onsite' }]
+      : [{ status: 'approved', kind: 'onsite' }];
+    /** Every `updateMany` that actually MATCHED the fake row — i.e. really flipped it. */
+    const flippedRows: unknown[] = [];
+    const relationMatches = (rel: Record<string, any> | undefined) => {
+      if (!rel) return true;
+      const spec = rel.none ?? rel.some ?? rel.every;
+      const pred = (r: Record<string, unknown>) =>
+        Object.entries(spec ?? {}).every(([k, v]) => r[k] === v);
+      if (rel.none) return !requests.some(pred);
+      if (rel.some) return requests.some(pred);
+      if (rel.every) return requests.every(pred);
+      return true;
+    };
+    const matches = (where: Record<string, any> | undefined) => {
+      if (where?.appBlockId !== 'apb_existing') return false;
+      if (where?.kind !== 'onsite') return false;
+      if (where?.status !== 'pending') return false;
+      return relationMatches(where?.publishRequests);
+    };
+    mockDbWrite.appListing.findFirst.mockImplementation(async (args: { where?: any }) =>
+      matches(args?.where) ? row : null
+    );
+    mockDbWrite.appListing.updateMany.mockImplementation(async (args: { where?: any }) => {
+      const hit = matches(args?.where);
+      if (hit) flippedRows.push(args);
+      return { count: hit ? 1 : 0 };
+    });
+    // Scan-clean + rating-floor reads for the arm where the lookup DOES find the row.
+    mockDbWrite.appListing.findUnique.mockResolvedValue({ iconId: 1, coverId: 2, contentRating: 'g' });
+    mockDbWrite.appListingScreenshot.findMany.mockResolvedValue([]);
+    mockDbWrite.image.findMany.mockImplementation(
+      async (args: { where?: { id?: { in?: number[] } } }) =>
+        (args?.where?.id?.in ?? []).map((id) => ({
+          id,
+          ingestion: 'Scanned',
+          nsfwLevel: NsfwLevel.PG,
+        }))
+    );
+    return { flippedRows };
+  };
+
+  const wireSubsequentVersionApprove = async () => {
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
+    mockDbRead.appBlock.findFirst.mockResolvedValue({
+      id: 'apb_existing',
+      appId: 'oc_existing',
+      repoUrl: 'https://forgejo.example/civitai-apps/hello',
+      app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
+    });
+    mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0' });
+  };
+
+  const unsuspendCall = () =>
+    mockDbWrite.appBlock.updateMany.mock.calls.find(
+      (c: any[]) => c[0]?.where?.status === 'suspended' && c[0]?.data?.status === 'approved'
+    );
+
+  it('🔴 (3b-reset) does NOT restore a pending on-site listing whose review belongs to the LISTING queue', async () => {
+    // The chain: owner unpublishes (listing `removed`, block `suspended`, asset baseline
+    // recorded) → owner swaps the icon/cover/screenshots and republishes → the assets
+    // differ, so the listing goes to `pending` with a pending `AppListingPublishRequest`
+    // and NO block request → a new app VERSION is submitted → a moderator approves THAT
+    // (a bundle review whose modal renders ZIP-extracted screenshots and nothing about
+    // listing imagery). Without the discriminator this branch flips the listing back to
+    // `approved` and un-suspends the block, putting never-reviewed store imagery live and
+    // stranding the listing request in a queue whose approve path can no longer match it.
+    const { approveRequest } = await import('../publish-request.service');
+    await wireSubsequentVersionApprove();
+    const { flippedRows } = wireResetListingLookup({ openListingReview: true });
+
+    const result = await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+    // The CODE approve still lands — the listing restore is the only thing refused.
+    expect(result.isFirstVersion).toBe(false);
+
+    // The listing row was never matched, so it is still `pending` (in review) and its
+    // swapped imagery is still not public.
+    expect(flippedRows).toEqual([]);
+    // …and the block stays `suspended`: an app whose store card is awaiting review must
+    // not be serving. (The un-suspend is gated on the restore having matched.)
+    expect(unsuspendCall()).toBeUndefined();
+  });
+
+  it('🔴 (3b-reset) DOES restore a mod-reset listing — no listing request owns it (the discriminator is not a blanket refusal)', async () => {
+    // The negative control for the test above, run through the identical simulation. A
+    // mod reset (`resetOnsiteListingToPending`) re-queues on the BLOCK surface and leaves
+    // no listing request, so this approve IS the review that is open on the row and the
+    // restore must proceed end-to-end.
+    const { approveRequest } = await import('../publish-request.service');
+    await wireSubsequentVersionApprove();
+    const { flippedRows } = wireResetListingLookup({ openListingReview: false });
+
+    await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+
+    expect(flippedRows).toHaveLength(1);
+    expect(flippedRows[0]).toMatchObject({ data: { status: 'approved' } });
+    expect(unsuspendCall()).toEqual([{ where: { id: 'apb_existing', status: 'suspended' }, data: { status: 'approved' } }]);
   });
 
   it('🔴 the reset restore FLOORS contentRating at the media-derived rating (raise-only)', async () => {

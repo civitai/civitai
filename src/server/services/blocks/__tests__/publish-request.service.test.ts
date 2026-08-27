@@ -28,6 +28,11 @@ const dbMocks = vi.hoisted(() => ({
   // W13 draft-at-submit — the pre-approval draft AppListing pre-check (read) + create (write).
   appListingFindFirst: vi.fn(),
   appListingCreate: vi.fn(),
+  // The cross-queue submit guard: `one_pending_per_slug` is partial-unique on
+  // AppBlockPublishRequest only, so submitVersion also asks whether a NON-SHADOW
+  // listing review is open for the slug. Null = no listing review, the shape every
+  // test in this file assumes.
+  listingReqFindFirst: vi.fn(async () => null),
 }));
 
 vi.mock('~/server/db/client', () => ({
@@ -35,6 +40,7 @@ vi.mock('~/server/db/client', () => ({
     appBlockPublishRequest: { findFirst: dbMocks.pubReqFindFirst },
     appBlock: { findFirst: dbMocks.appBlockFindFirst },
     appListing: { findFirst: dbMocks.appListingFindFirst },
+    appListingPublishRequest: { findFirst: dbMocks.listingReqFindFirst },
     user: { findUnique: dbMocks.userFindUnique },
   },
   dbWrite: {

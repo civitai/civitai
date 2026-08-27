@@ -407,9 +407,27 @@ describe('republishOwnListing — assets CHANGED ⇒ routed to review', () => {
     expect(mockWrite.appBlockPublishRequest.findFirst).not.toHaveBeenCalled();
   });
 
+  // -------------------------------------------------------------------------
+  // The open-review guard, exercised against a fake `app_listing_publish_requests`
+  // table rather than a blanket `mockResolvedValue`. All three cases below differ ONLY
+  // in the ROWS, so the guard's two predicates — scoped to `appListingId` (not `slug`)
+  // and to `status: 'pending'` — are each pinned by a case that fails without it.
+  // -------------------------------------------------------------------------
+  const wireOpenRequestTable = (rows: Record<string, unknown>[]) => {
+    mockWrite.appListingPublishRequest.findFirst.mockImplementation(
+      async (args: { where?: Record<string, unknown> }) => {
+        const w = args?.where ?? {};
+        const hit = rows.find((r) => Object.entries(w).every(([k, v]) => r[k] === v));
+        return hit ? { id: hit.id } : null;
+      }
+    );
+  };
+
   it('🔴 a review already open on THIS listing → NOT_TRANSITIONABLE, and NOTHING is written', async () => {
     wire({ kind: 'onsite', iconId: 99, recorded: baseline() });
-    mockWrite.appListingPublishRequest.findFirst.mockResolvedValue({ id: 'alpr_open' });
+    wireOpenRequestTable([
+      { id: 'alpr_open', appListingId: APP_ID, slug: SLUG, status: 'pending' },
+    ]);
     await expect(
       republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER })
     ).rejects.toMatchObject({
@@ -419,6 +437,36 @@ describe('republishOwnListing — assets CHANGED ⇒ routed to review', () => {
     expect(mockWrite.appListing.updateMany).not.toHaveBeenCalled();
     expect(mockWrite.appListingPublishRequest.create).not.toHaveBeenCalled();
     expect(mockWrite.appListingModerationEvent.create).not.toHaveBeenCalled();
+  });
+
+  it('🔴 a pending SHADOW media revision on the SAME SLUG does NOT block the republish', async () => {
+    // Why the guard is scoped to `appListingId` and not to `slug`, spelled as a case
+    // rather than only as a comment. A shadow revision DENORMALIZES the parent slug onto
+    // its request row while targeting a different `AppListing` — it is a legitimate
+    // concurrent review. A slug-scoped guard would refuse every republish for the length
+    // of an ordinary media review, and refuse it with a message about the wrong review.
+    wire({ kind: 'onsite', iconId: 99, recorded: baseline() });
+    wireOpenRequestTable([
+      { id: 'alpr_shadow', appListingId: 'apl_shadow', slug: SLUG, status: 'pending' },
+    ]);
+    const res = await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
+    expect(res.status).toBe('pending');
+    expect(mockWrite.appListingPublishRequest.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('🔴 a CLOSED request on THIS listing does NOT block a later republish', async () => {
+    // Why the guard says `status: 'pending'`. Request rows accumulate forever — one
+    // completed imagery-review cycle is the ordinary shape. Without the status predicate
+    // the FIRST review an app ever goes through would permanently forbid every future
+    // republish, with "A review is already pending for this listing." naming a review that
+    // finished long ago and no owner-reachable way out.
+    wire({ kind: 'onsite', iconId: 99, recorded: baseline() });
+    wireOpenRequestTable([
+      { id: 'alpr_done', appListingId: APP_ID, slug: SLUG, status: 'approved' },
+    ]);
+    const res = await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
+    expect(res.status).toBe('pending');
+    expect(mockWrite.appListingPublishRequest.create).toHaveBeenCalledTimes(1);
   });
 
   it.each([

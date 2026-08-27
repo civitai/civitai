@@ -625,12 +625,27 @@ const withAssets = <T extends object>(listing: T): T & { iconId: number; coverId
  * `before.assets` — the baseline `republishOwnListing`'s ASSET-CHANGE REVIEW GATE compares
  * the live listing against.
  *
- * 🔴 EVERY republish fixture in this file must state one. The gate FAILS CLOSED on an
- * absent baseline (`reviewReason: 'no-recorded-assets'`), so an event mocked as a bare
- * `{ action: 'owner-unpublish' }` routes the listing to `pending` instead of `approved` —
- * which is correct behaviour, but it means a fixture that forgets the baseline stops
- * testing whatever it was actually about. Tests that want the IMMEDIATE arm must record a
- * baseline that MATCHES their live assets; the review arm has its own dedicated file.
+ * 🔴 EVERY republish fixture in this file must state one, and the reason is the OPPOSITE
+ * of what this docstring used to give. It claimed the gate FAILS CLOSED on an absent
+ * baseline via `reviewReason: 'no-recorded-assets'`. Both halves are false: there is no
+ * such reason (`RepublishReviewReason` is `'assets-changed' | 'unreadable-baseline'`), and
+ * `resolveRepublishReviewReason` returns `null` for the `absent` kind — an event mocked as
+ * a bare `{ action: 'owner-unpublish' }` takes the **IMMEDIATE** arm and goes straight to
+ * `approved`. Only `unreadable` (an `assets` KEY that is present and does not parse) fails
+ * closed. See `app-listing-approved-assets.ts` for why the two absences go opposite ways.
+ *
+ * 🔴 So the failure mode a forgotten baseline produces is a SILENT PASS, not a loud
+ * re-route: a spec meaning to exercise the review arm, or meaning to prove that MATCHING
+ * assets republish immediately, gets `approved` either way — the second one while
+ * measuring nothing, because it never compared anything. Stating a baseline that MATCHES
+ * the live assets is what keeps an immediate-arm fixture on the equality path rather than
+ * on the never-recorded path. The review arm has its own dedicated file
+ * (`offsite-moderation.service.republish-asset-review.test.ts`), which owns both absences.
+ *
+ * Audited at the time of writing: every `republishOwnListing` fixture in this file stages
+ * an `assets` key (the rating-floor `wire()` derives one from its own live ids), and the
+ * ones that stage no event at all are refused earlier by the last-event guard — so none is
+ * currently passing vacuously. The hazard is for the next fixture, not this batch.
  */
 const approvedAssets = (
   over: {

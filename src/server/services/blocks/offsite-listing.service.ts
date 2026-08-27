@@ -2385,11 +2385,26 @@ export async function updateRevisionDraft(opts: {
 // Listing-request kinds surfaced by the CONSOLIDATION half of the flow
 // (approve/reject + the mod review queue + my-submissions).
 //
-// 🔴 INVARIANT: the ONLY producer of a `kind='onsite'` `AppListingPublishRequest`
-// is `submitListingRevision` on an onsite SHADOW (i.e. an onsite media revision) —
-// the onsite CODE review runs over a DIFFERENT table (`AppBlockPublishRequest`).
-// So widening these gates from `'offsite'` to this set surfaces EXACTLY onsite
-// media revisions, nothing else. (Asserted in the service tests.)
+// 🔴 THERE ARE TWO PRODUCERS OF A `kind='onsite'` `AppListingPublishRequest`, and this
+// comment used to name only one. The onsite CODE review still runs over a DIFFERENT
+// table (`AppBlockPublishRequest`); what changed is that the LISTING table now carries
+// on-site rows of two shapes:
+//
+//   1. `submitListingRevision` on an onsite SHADOW — a media revision, `revisionOfId`
+//      SET on the target listing, the parent slug denormalized onto the request.
+//   2. `routeRepublishToReviewInTx` (owner republish whose assets changed since the last
+//      approval) — NON-SHADOW, `revisionOfId` NULL, targeting the live listing itself.
+//
+// So widening these gates from `'offsite'` to this set no longer surfaces "exactly onsite
+// media revisions": it surfaces onsite media revisions AND onsite republish re-reviews.
+// Both belong in the queue — the modal reads `request.appListingId` and is kind-agnostic —
+// but any consumer that reasons "onsite request ⇒ shadow" is now wrong. Check
+// `revisionOfId` when you need to tell them apart, never `kind`.
+//
+// The producer SET is pinned as a ledger in
+// `src/server/services/blocks/__tests__/offsite-listing.onsite-revision.service.test.ts`
+// (`LISTING_REQUEST_PRODUCERS`), which fails when it GROWS or SHRINKS — this sentence went
+// stale precisely because nothing could notice a producer being added.
 // ---------------------------------------------------------------------------
 const REVIEWABLE_LISTING_KINDS = ['onsite', 'offsite'] as const;
 
@@ -2474,7 +2489,22 @@ async function resolveApprovalContentRating(
  * on-site rating sites have ONE spelling.
  *
  * A moderator override may still RAISE above the floor (a mod may always rate up) and is
- * ignored when it would lower — same discipline as the off-site clamp above.
+ * ignored when it would lower.
+ *
+ * 🔴 NOT quite "the same discipline as the off-site clamp above" — that sentence used to
+ * live here and it is inaccurate AT EQUAL LEVEL, which is a reachable case rather than a
+ * pedantic one. `nsfwLevelFromContentRating` maps BOTH `'g'` and `'pg'` to
+ * `NsfwLevel.PG`, so the two ratings are indistinguishable to these comparisons. Off-site
+ * asks `override < derived ? derived : override` and therefore returns the OVERRIDE on a
+ * tie; on-site asks `override > floored ? override : floored` and returns the FLOOR. So a
+ * moderator who explicitly picks `'pg'` for a `'g'`-declared app has that choice honoured
+ * off-site and silently dropped on-site.
+ *
+ * Left as-is deliberately: the two values carry the SAME maturity ceiling, so nothing
+ * about who can see the listing changes — the divergence is which LABEL is stored, and
+ * deciding that a tie-breaking override should overwrite an author's declaration is a
+ * product call, not a safety fix to make in passing. Recorded here so the next reader
+ * does not infer symmetry that is not there.
  */
 async function resolveOnsiteApprovalContentRating(
   tx: Prisma.TransactionClient,
@@ -3366,9 +3396,20 @@ export async function rejectExternalRequest(opts: {
     });
   });
 
-  // Post-commit, best-effort: notify the owner their first-time submission was not
-  // approved, carrying the mod reason. Skipped for a revision reject (parent still
-  // live) and when there was no listing. Keyed by the request → dedups a replay.
+  // Post-commit, best-effort: notify the owner their submission was not approved,
+  // carrying the mod reason. Skipped for a revision reject (parent still live) and when
+  // there was no listing. Keyed by the request → dedups a replay.
+  //
+  // 🔴 "FIRST-TIME submission" is what this comment used to say, and `revisionOfId == null`
+  // is no longer a test for that. The owner-republish asset-review route mints a NON-shadow
+  // request on a listing that has been live for as long as the app has existed, so a
+  // long-lived app's owner now reaches this branch. That is the right call — the reject
+  // ran `closeTerminalListing`, which took the listing OFF the store behind a `delist`, so
+  // the owner must be told — and the copy carries it: `app-listing-rejected` renders
+  // "<app> was not approved: <reason>", which claims nothing about it being a first
+  // submission. What is NOT covered is that the notice does not say the listing has been
+  // delisted and now needs a moderator to restore it; distinguishing the two cases needs a
+  // second notification type, which is a product decision rather than a correction.
   if (rejectedListing && rejectedListing.revisionOfId == null) {
     await notifyAppListingOwner({
       type: 'app-listing-rejected',
@@ -3572,11 +3613,22 @@ export async function listMySubmissions(opts: { userId: number } & ListOffsiteRe
       // surfaced as a `hasPendingRevision` flag on the PARENT's own submission row.
       // Keep requests with no listing.
       //
-      // ONSITE: an onsite listing is auto-created and has NO own publish request, so
-      // there is no parent row to badge — its ONLY representation IS the revision
-      // request (all onsite requests are shadow revisions, per the invariant). Include
-      // them directly via the `{ kind: 'onsite' }` OR branch so onsite media revisions
-      // appear on my-submissions (decision: yes).
+      // ONSITE: an onsite listing is auto-created and has NO own publish request, so a
+      // SHADOW revision has no parent row to badge — the revision request is its only
+      // representation. The `{ kind: 'onsite' }` OR branch surfaces it directly
+      // (decision: yes).
+      //
+      // 🔴 THAT BRANCH IS NO LONGER THE ONLY ROUTE FOR AN ONSITE ROW, and the sentence it
+      // used to carry — "all onsite requests are shadow revisions, per the invariant" —
+      // is false since the owner-republish asset-review route (see the producer ledger
+      // above `REVIEWABLE_LISTING_KINDS`). A republish re-review is NON-shadow, so the
+      // middle branch (`revisionOfId: null`) already matches it; `OR` is a set union, so
+      // it appears exactly once either way and this query is unchanged in behaviour. What
+      // IS affected is downstream: `hasPendingRevision` below is keyed on `revisionOfId`
+      // and is correctly `false` for such a row, and `lastActionByListing` populates only
+      // for `status: 'removed'`, so a listing sitting in republish review carries no
+      // last-action badge. Both are deliberate; neither may be re-derived from "onsite
+      // implies shadow".
       OR: [{ appListingId: null }, { appListing: { revisionOfId: null } }, { kind: 'onsite' }],
     },
     orderBy: { submittedAt: 'desc' },

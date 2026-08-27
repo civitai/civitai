@@ -186,6 +186,16 @@ export function ListingHistoryPanelView({
                 afterwards. Worded for the case it warns about without asserting the
                 listing IS in it — this component cannot tell, and a warning that
                 over-claims gets ignored.
+
+                🔴 THE VERSION ENTRIES (`source === 'version'`) ARE NOW CONDITIONAL, which
+                is why the hedged wording has to stay rather than be sharpened. Withdrawing
+                a VERSION reaches `closeOnsiteResetListingOnWithdraw`, which since the
+                asset-review route REFUSES to close a `pending` listing whose review
+                belongs to the LISTING queue. So a version withdraw delists in the
+                mod-reset case and does not in the republish-review case — and which case
+                you are in depends on a row this component does not read. Warning in both
+                is the safe direction for a one-way action; claiming either outcome
+                per-entry would be an assertion this surface cannot support.
               */
               title="Withdraws this submission. If the listing was previously live, withdrawing takes it off the store and a moderator has to restore it."
               data-testid={`apps-history-withdraw-${e.id}`}
