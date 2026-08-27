@@ -92,11 +92,17 @@ describe('upsertCosmeticShopItem — blurb expansion', () => {
   it('resolves only the blurbs the item already references when a moderator saves', async () => {
     await upsert({ userId: MODERATOR_ID });
 
+    // Handed over as a RESOLVER, not an awaited array. `expandBlurbs` owns the flag gate
+    // and the has-spans check, so resolving the set before it is called reads
+    // BlurbReference on saves where the feature is off or no blurb is named.
+    const { restrictToBlurbIds } = expandBlurbs.mock.calls[0][0];
+    expect(getReferencedBlurbIds).not.toHaveBeenCalled();
+
+    expect(await restrictToBlurbIds()).toEqual([7]);
     expect(getReferencedBlurbIds).toHaveBeenCalledWith({
       entityType: 'CosmeticShopItem',
       entityId: ITEM_ID,
     });
-    expect(expandBlurbs).toHaveBeenCalledWith(expect.objectContaining({ restrictToBlurbIds: [7] }));
   });
 
   it('leaves the owner unrestricted', async () => {

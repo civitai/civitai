@@ -132,7 +132,7 @@ describe('expandBlurbs', () => {
       const { html, uses } = await expandEvaluated({
         userId: 10,
         html: '<div data-type="blurb" data-id="7">stale</div>',
-        restrictToBlurbIds: [7],
+        restrictToBlurbIds: () => [7],
       });
 
       expect(html).toBe('<div data-type="blurb" data-id="7">REFERENCED</div>');
@@ -145,7 +145,7 @@ describe('expandBlurbs', () => {
       const { html, uses } = await expandEvaluated({
         userId: 10,
         html: '<div data-type="blurb" data-id="8">guessed</div>',
-        restrictToBlurbIds: [7],
+        restrictToBlurbIds: () => [7],
       });
 
       expect(html).toBe('guessed');
@@ -159,7 +159,7 @@ describe('expandBlurbs', () => {
         html:
           '<div data-type="blurb" data-id="7">a</div>' +
           '<div data-type="blurb" data-id="8">b</div>',
-        restrictToBlurbIds: [7],
+        restrictToBlurbIds: () => [7],
       });
 
       expect(dbRead.blurb.findMany).toHaveBeenCalledWith(
@@ -171,7 +171,7 @@ describe('expandBlurbs', () => {
       const { html, uses } = await expandEvaluated({
         userId: 10,
         html: '<div data-type="blurb" data-id="8">guessed</div>',
-        restrictToBlurbIds: [],
+        restrictToBlurbIds: () => [],
       });
 
       expect(html).toBe('guessed');
@@ -186,6 +186,47 @@ describe('expandBlurbs', () => {
       });
 
       expect(html).toBe('<div data-type="blurb" data-id="8">PRIVATE</div>');
+    });
+
+    // Producing the set means reading BlurbReference, so WHEN it is resolved decides whether a
+    // blurb table is touched on a save that has nothing to do with blurbs. The caller-side
+    // consequence is pinned in blurb-reference-read-gate.test.ts; this is the same rule at the
+    // one place that owns it.
+    describe('is resolved lazily', () => {
+      it('does not resolve when the flag is off for the owner', async () => {
+        isFlipt.mockResolvedValue(false);
+        const restrictToBlurbIds = vi.fn(async () => [7]);
+
+        await expandBlurbs({
+          userId: 10,
+          html: '<div data-type="blurb" data-id="7">x</div>',
+          restrictToBlurbIds,
+        });
+
+        expect(restrictToBlurbIds).not.toHaveBeenCalled();
+      });
+
+      it('does not resolve when the html carries no blurb spans', async () => {
+        const restrictToBlurbIds = vi.fn(async () => [7]);
+
+        await expandBlurbs({ userId: 10, html: '<p>plain</p>', restrictToBlurbIds });
+
+        expect(restrictToBlurbIds).not.toHaveBeenCalled();
+      });
+
+      it('DOES resolve once the flag is on and a span is present', async () => {
+        // Positive control for the two zeros above: a resolver that is never wired up would
+        // satisfy them both.
+        const restrictToBlurbIds = vi.fn(async () => [7]);
+
+        await expandBlurbs({
+          userId: 10,
+          html: '<div data-type="blurb" data-id="7">x</div>',
+          restrictToBlurbIds,
+        });
+
+        expect(restrictToBlurbIds).toHaveBeenCalledTimes(1);
+      });
     });
   });
 

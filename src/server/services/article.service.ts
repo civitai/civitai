@@ -852,7 +852,7 @@ export const upsertArticle = async ({
     // blurbs and would strip every span.
     const restrictToBlurbIds =
       article && article.userId !== userId
-        ? await getReferencedBlurbIds({ entityType: 'Article', entityId: article.id })
+        ? () => getReferencedBlurbIds({ entityType: 'Article', entityId: article.id })
         : undefined;
     const expansion = await expandBlurbs({
       userId: article?.userId ?? userId,

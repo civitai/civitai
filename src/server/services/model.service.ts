@@ -2384,7 +2384,7 @@ export const upsertModel = async (
   const ownerId = beforeUpdate?.userId ?? userId;
   const restrictToBlurbIds =
     beforeUpdate && ownerId !== userId
-      ? await getReferencedBlurbIds({ entityType: 'Model', entityId: id as number })
+      ? () => getReferencedBlurbIds({ entityType: 'Model', entityId: id as number })
       : undefined;
   // Whether the CALLER supplied the column, captured before the expansion overwrites it below.
   // A write that omits `description` — the review handlers select without it — must not

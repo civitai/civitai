@@ -162,11 +162,17 @@ describe('upsertModelVersion — blurb expansion', () => {
   it('resolves only the blurbs the version already references when a moderator saves', async () => {
     await upsert({ actorUserId: MODERATOR_ID, isModerator: true });
 
+    // Handed over as a RESOLVER, not an awaited array. `expandBlurbs` owns the flag gate and the
+    // has-spans check, so resolving the set before it is called reads BlurbReference on saves
+    // where the feature is off or no blurb is named.
+    const { restrictToBlurbIds } = expandBlurbs.mock.calls[0][0];
+    expect(getReferencedBlurbIds).not.toHaveBeenCalled();
+
+    expect(await restrictToBlurbIds()).toEqual([7]);
     expect(getReferencedBlurbIds).toHaveBeenCalledWith({
       entityType: 'ModelVersion',
       entityId: VERSION_ID,
     });
-    expect(expandBlurbs).toHaveBeenCalledWith(expect.objectContaining({ restrictToBlurbIds: [7] }));
   });
 
   it('leaves the owner unrestricted', async () => {
@@ -190,15 +196,21 @@ describe('upsertModelVersion — a non-owner creating a row', () => {
     // A new row references nothing yet, so the allowed set is empty — never `undefined`, which
     // means "unrestricted".
     expect(getReferencedBlurbIds).not.toHaveBeenCalled();
-    expect(expandBlurbs).toHaveBeenCalledWith(
-      expect.objectContaining({ userId: OWNER_ID, restrictToBlurbIds: [] })
-    );
+    expect(expandBlurbs).toHaveBeenCalledWith(expect.objectContaining({ userId: OWNER_ID }));
+
+    // A resolver that yields the empty set — NOT `undefined`, which means "unrestricted". The
+    // two are different values of the same parameter and only one of them is safe here.
+    const { restrictToBlurbIds } = expandBlurbs.mock.calls[0][0];
+    expect(restrictToBlurbIds).toBeInstanceOf(Function);
+    expect(await restrictToBlurbIds()).toEqual([]);
   });
 
   it('🔴 restricts a TEMPLATED write too, which creates a new row despite carrying an id', async () => {
     await upsert({ templateId: 5, actorUserId: MODERATOR_ID, isModerator: true });
 
-    expect(expandBlurbs).toHaveBeenCalledWith(expect.objectContaining({ restrictToBlurbIds: [] }));
+    const { restrictToBlurbIds } = expandBlurbs.mock.calls[0][0];
+    expect(restrictToBlurbIds).toBeInstanceOf(Function);
+    expect(await restrictToBlurbIds()).toEqual([]);
   });
 
   it('leaves the OWNER creating a version unrestricted', async () => {

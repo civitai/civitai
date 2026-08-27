@@ -183,11 +183,17 @@ describe('upsertArticle — blurb expansion', () => {
 
     // Without this a moderator could splice in guessed `data-id`s across a range and read
     // the owner's whole blurb library back out of the mutation response.
+    // Handed over as a RESOLVER, not an awaited array. `expandBlurbs` owns the flag gate
+    // and the has-spans check, so resolving the set before it is called reads
+    // BlurbReference on saves where the feature is off or no blurb is named.
+    const { restrictToBlurbIds } = expandBlurbs.mock.calls[0][0];
+    expect(getReferencedBlurbIds).not.toHaveBeenCalled();
+
+    expect(await restrictToBlurbIds()).toEqual([7]);
     expect(getReferencedBlurbIds).toHaveBeenCalledWith({
       entityType: 'Article',
       entityId: ARTICLE_ID,
     });
-    expect(expandBlurbs).toHaveBeenCalledWith(expect.objectContaining({ restrictToBlurbIds: [7] }));
   });
 
   it('leaves the owner unrestricted', async () => {

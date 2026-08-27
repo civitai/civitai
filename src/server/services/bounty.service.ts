@@ -488,7 +488,7 @@ export const upsertBounty = async ({
   const ownerId = stored?.userId ?? userId;
   const restrictToBlurbIds =
     id && ownerId !== userId
-      ? await getReferencedBlurbIds({ entityType: 'Bounty', entityId: id })
+      ? () => getReferencedBlurbIds({ entityType: 'Bounty', entityId: id })
       : undefined;
   const expansion = await expandBlurbs({
     userId: ownerId,

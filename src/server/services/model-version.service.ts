@@ -592,11 +592,11 @@ export const upsertModelVersion = async ({
     model.userId === actorId
       ? undefined
       : editsExistingVersion
-      ? await getReferencedBlurbIds({ entityType: 'ModelVersion', entityId: id as number })
+      ? () => getReferencedBlurbIds({ entityType: 'ModelVersion', entityId: id as number })
       : // A new row references nothing yet, so there is no set to keep — and `undefined` here
         // would leave a moderator adding a version to someone else's model free to guess
         // `data-id`s and read the creator's private blurb text out of the response.
-        [];
+        () => [];
   // Whether the CALLER supplied the column, captured before the expansion overwrites it below.
   // A write that omits `description` — the review handlers select without it — must not
   // reconcile: Prisma leaves the column alone, so an empty expansion would delete every

@@ -41,8 +41,17 @@ export async function expandBlurbs({
    * owner passes the ids the entity already references: they can keep the blurbs that are
    * there, but a `data-id` they invent resolves to nothing instead of splicing the owner's
    * private blurb text into a response the editor reads back.
+   *
+   * A RESOLVER, not an array, because producing that set means reading `BlurbReference` and
+   * this function owns the two conditions under which any blurb table may be read at all: the
+   * flag is on for the owner, and the content actually names a blurb. A caller that awaited the
+   * ids itself did the read before either had been evaluated — so the feature's kill switch did
+   * not switch it off, and every ordinary save (no spans, which is nearly all of them) paid for
+   * a set with nothing to filter. The thunk makes that call-site shape unrepresentable rather
+   * than merely discouraged; `undefined` still means "no restriction" and `() => []` means
+   * "restricted to nothing", which an array could not distinguish from unset.
    */
-  restrictToBlurbIds?: number[];
+  restrictToBlurbIds?: () => number[] | Promise<number[]>;
 }): Promise<BlurbExpansion> {
   // Keyed on the owner rather than the actor so a rollout picks a sticky subset of creators.
   //
@@ -60,7 +69,9 @@ export async function expandBlurbs({
   if (!spans.length) return { evaluated: true, html, uses: [] };
 
   const spanIds = [...new Set(spans.map((s) => s.blurbId))];
-  const allowed = restrictToBlurbIds && new Set(restrictToBlurbIds);
+  // Resolved HERE — after the flag gate and after the no-spans return — because that is the
+  // first point at which the set is actually needed. See the `restrictToBlurbIds` doc above.
+  const allowed = restrictToBlurbIds && new Set(await restrictToBlurbIds());
   const ids = allowed ? spanIds.filter((id) => allowed.has(id)) : spanIds;
 
   const blurbs = ids.length
