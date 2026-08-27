@@ -1,8 +1,12 @@
 import type { Prisma } from '@prisma/client';
+import { z } from 'zod';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { getPerceptualHash } from '~/server/services/orchestrator/orchestrator.service';
-import { COSMETIC_SIMILARITY_LIMIT } from '~/shared/constants/cosmetic-shop.constants';
+import {
+  COSMETIC_SIMILARITY_CLOSE_RATIO,
+  COSMETIC_SIMILARITY_LIMIT,
+} from '~/shared/constants/cosmetic-shop.constants';
 import type { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
 
 // Deliberately kept out of cosmetic.service, which reaches ~/server/search-index
@@ -19,19 +23,26 @@ import type { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma
  *
  * **Raising this is the upgrade path.** When the orchestrator offers a wider
  * hash, change this constant; the sweep drains the corpus on its own schedule
- * and matching starts using the new lane as each row lands.
+ * and matching starts using the new lane as each row lands. All three fields move
+ * together, and `hexLength` is the one to get right: a stale value now fails at
+ * the STORE, because `normalizeCosmeticHashHex` refuses a hash wider than the
+ * lane rather than leaving it unpadded. Nothing is written, every row counts as
+ * failed, and the panel reports `no-hash` across the board — loud, but only if
+ * someone reads the sweep's per-row log, since the tick's `failed` tally looks
+ * the same as a run of dead artwork.
  *
- * Measured 2026-08-14, and the reason a wider lane is wanted: at 64 bits the two
- * badges reported as imitations of official artwork sit at Hamming 17 and 22
- * against a corpus whose 1st percentile is 17. `perceptualDct` is also 64 bits
- * and does not help (14 and 24 on the same pair).
+ * Why 256 rather than the 64 this ran at until 2026-08-27: width was the whole
+ * problem. Over the 1,719 hashable cosmetics, the two badges reported as
+ * imitations of official artwork ranked 7th and 116th of their corpus at 64 bits,
+ * against a 1st percentile of 18 — inside the noise. At 256 the same two rank 1st
+ * and 5th. `perceptualDct` is also 64 bits and does not help.
  */
 export const COSMETIC_PHASH_LANE = {
-  version: 'perceptual/64',
-  hashType: 'perceptual',
+  version: 'perceptualDct256/256',
+  hashType: 'perceptualDct256',
   // The orchestrator may return a hash without leading zeros; every stored hash
   // is padded to this so a distance is never computed across two widths.
-  hexLength: 16,
+  hexLength: 64,
 } as const;
 
 export const COSMETIC_PHASH_VERSION = COSMETIC_PHASH_LANE.version;
@@ -113,6 +124,17 @@ export function legacyBigIntHash(normalizedHex: string, hashType: string) {
  * returning a distance computed against a shorter hash.
  */
 export function normalizeCosmeticHashHex(hex: string) {
+  // Padding is safe in one direction only. A hash WIDER than the lane cannot be
+  // padded down, and `padStart` returns it unchanged rather than failing — so it
+  // would be stored at full width stamped with the current version, accepted as a
+  // comparison TARGET and then excluded from every candidate set by the length
+  // filter. That reads as "nothing was close" forever, on a row that looks
+  // correctly hashed. The lane's own docblock covers the stale-`hexLength`
+  // direction; this is the other one.
+  if (hex.length > COSMETIC_PHASH_LANE.hexLength)
+    throw new Error(
+      `Hash is wider than lane ${COSMETIC_PHASH_LANE.version}: ${hex.length} > ${COSMETIC_PHASH_LANE.hexLength}`
+    );
   return hex.toLowerCase().padStart(COSMETIC_PHASH_LANE.hexLength, '0');
 }
 
@@ -150,6 +172,78 @@ export function queueCosmeticPerceptualHash({ id, url }: { id: number; url: stri
     );
 }
 
+export const COSMETIC_SIMILARITY_CLOSE_RATIO_KEY = 'cosmetic-similarity-close-ratio';
+
+/**
+ * The near-identical threshold, as a fraction of the hash width.
+ *
+ * Tunable from the `KeyValue` row so a moderator's threshold can be moved without
+ * a deploy — read per call rather than memoised, because a TTL would delay the
+ * change by the length of the TTL, which is the entire thing the row exists to
+ * avoid.
+ *
+ * ── FAIL DIRECTION ────────────────────────────────────────────────────────
+ *
+ * Falls back to the code default on anything unusable, where `client-ip`'s list
+ * splitter throws. The difference is what the value gates. Those lists are
+ * enforcement controls, and a control that silently switches itself off cannot be
+ * detected downstream. This is a REVIEW SIGNAL: it only decides whether a match
+ * already on screen is badged "near-identical" or shown as a raw distance. A
+ * throw would take out the whole panel — including the ranking, which is the part
+ * mods actually use — to fix a badge. The default is measured and known-good, so
+ * degrading to it costs a label and keeps the lookup.
+ *
+ * Out-of-range values are rejected rather than clamped. `1.5` and `-0.2` are
+ * typos, not intentions, and clamping 1.5 to 1 would badge every single match as
+ * near-identical, which reads as a working threshold rather than a rejected one.
+ */
+// `0` is allowed and means "only an exact match counts as near-identical", which
+// is a coherent thing for an operator to want. `1` is not: it badges every match
+// in the list, which is the same degenerate outcome the docblock rejects `1.5`
+// for. Rejecting 0 while accepting 1 would fail in the loosening direction on the
+// stricter of the two typos.
+const closeRatioSchema = z.number().min(0).lt(1);
+
+export async function getCosmeticSimilarityCloseRatio(): Promise<number> {
+  let value: unknown;
+
+  // The READ is guarded, not only the value it returns. This is awaited inside
+  // `getSimilarCosmetics` AFTER the candidates are ranked, so an escaping
+  // rejection discards a completed ranking — and the card renders that as "this
+  // artwork was not compared against anything", which is false and is precisely
+  // the confusion the card exists to remove.
+  try {
+    const row = await dbRead.keyValue.findUnique({
+      where: { key: COSMETIC_SIMILARITY_CLOSE_RATIO_KEY },
+    });
+    value = row?.value;
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'cosmetic-phash',
+      message: `Could not read KeyValue '${COSMETIC_SIMILARITY_CLOSE_RATIO_KEY}'; using the built-in ${COSMETIC_SIMILARITY_CLOSE_RATIO}.`,
+      error: error instanceof Error ? error.message : String(error),
+    }).catch(() => null);
+    return COSMETIC_SIMILARITY_CLOSE_RATIO;
+  }
+
+  // An absent row is the ordinary "not configured" state, not a malformed one.
+  if (value === null || value === undefined) return COSMETIC_SIMILARITY_CLOSE_RATIO;
+
+  if (!closeRatioSchema.safeParse(value).success) {
+    logToAxiom({
+      type: 'warning',
+      name: 'cosmetic-phash',
+      message: `KeyValue '${COSMETIC_SIMILARITY_CLOSE_RATIO_KEY}' is not a fraction between 0 and 1 (got ${JSON.stringify(
+        value
+      )}); using the built-in ${COSMETIC_SIMILARITY_CLOSE_RATIO}.`,
+    }).catch(() => null);
+    return COSMETIC_SIMILARITY_CLOSE_RATIO;
+  }
+
+  return value as number;
+}
+
 export type SimilarCosmetic = {
   id: number;
   name: string;
@@ -157,6 +251,10 @@ export type SimilarCosmetic = {
   url: string | undefined;
   distance: number;
   bits: number;
+  // Decided here, not in the component. The threshold is operator-tunable at
+  // runtime, and a client that recomputes it from a bundled constant silently
+  // disagrees with the server until every tab reloads.
+  close: boolean;
   createdById: number | null;
   createdByUsername: string | null;
   // `null` = never listed in a shop at all, which is what every official cosmetic
@@ -267,6 +365,8 @@ export async function getSimilarCosmetics({
   if (!nearest.length)
     return { status: 'ok', comparedAgainst: candidates.length, bits, matches: [] };
 
+  const closeRatio = await getCosmeticSimilarityCloseRatio();
+  const closeAtOrUnder = bits * closeRatio;
   const distanceById = new Map(nearest.map((n) => [n.id, n.distance]));
   const details = await dbRead.cosmetic.findMany({
     where: { id: { in: nearest.map((n) => n.id) } },
@@ -289,6 +389,7 @@ export async function getSimilarCosmetics({
       url: getCosmeticArtworkUrl(cosmetic.data),
       distance: distanceById.get(cosmetic.id) as number,
       bits,
+      close: (distanceById.get(cosmetic.id) as number) <= closeAtOrUnder,
       createdById: cosmetic.createdById,
       createdByUsername: cosmetic.creator?.username ?? null,
       shopStatus: summariseShopStatus(cosmetic.cosmeticShopItems.map((i) => i.status)),

@@ -81,8 +81,21 @@ export async function sweepCosmeticPerceptualHashes({
           await storeCosmeticPerceptualHash({ id: row.id, url: row.url, hex });
           stored = true;
         }
-      } catch {
-        // Fall through to the failure stamp.
+      } catch (error) {
+        // Fall through to the failure stamp — but say which row and why first.
+        // Everything downstream sees only the aggregate `failed` count, and that
+        // count already conflates a dead CDN object with a hash the store
+        // REFUSED (a width that disagrees with the lane). Without this line the
+        // second is indistinguishable from the first, on every row, forever.
+        // Fire-and-forget with its own catch: a logger that throws inside a catch
+        // would convert a diagnosable failure into a lost row, which is the thing
+        // this line exists to prevent.
+        logToAxiom({
+          type: 'error',
+          name: 'cosmetic-phash-sweep',
+          message: `Could not store a hash for cosmetic ${row.id} (${row.url})`,
+          error: error instanceof Error ? error.message : String(error),
+        }).catch(() => null);
       }
       if (stored) hashed++;
       else {
