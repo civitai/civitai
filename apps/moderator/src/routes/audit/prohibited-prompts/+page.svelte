@@ -13,7 +13,13 @@
     // repeat down every row for the one fact that varies.
     return Number.isNaN(d.getTime())
       ? iso
-      : d.toLocaleTimeString(undefined, { timeStyle: 'medium', timeZoneName: 'short' });
+      : d.toLocaleTimeString(undefined, {
+          // Components, not timeStyle — ECMA-402 rejects timeStyle paired with timeZoneName.
+          hour: 'numeric',
+          minute: '2-digit',
+          second: '2-digit',
+          timeZoneName: 'short',
+        });
   };
 </script>
 

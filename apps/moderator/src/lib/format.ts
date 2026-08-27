@@ -14,9 +14,14 @@ export const LINK_CLASS = 'text-blue-4 hover:underline';
 export const dateTime = (value: Date | string | null) => {
   if (!value) return '—';
   const date = new Date(value);
+  // Spelled out rather than dateStyle/timeStyle: ECMA-402 forbids combining those with any
+  // individual component, and `timeZoneName` alongside them throws TypeError on every call.
   const local = date.toLocaleString(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
     timeZoneName: 'short',
   });
   if (Intl.DateTimeFormat().resolvedOptions().timeZone === 'UTC') return local;
