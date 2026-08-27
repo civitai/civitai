@@ -1630,6 +1630,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                         type={model.type}
                         modelId={model.id}
                         modelVersionId={version.id}
+                        fileId={activeFile?.id}
                         fileType={activeFile?.type}
                       />
                     </div>

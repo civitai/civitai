@@ -1,4 +1,4 @@
-import { ActionIcon, Code, Group, Popover, Stack, Text, Tooltip } from '@mantine/core';
+import { Code, Group, Popover, Stack, Text, Tooltip } from '@mantine/core';
 import { useClipboard } from '@mantine/hooks';
 import { IconCheck, IconCopy, IconInfoSquareRounded } from '@tabler/icons-react';
 import { useMemo } from 'react';
@@ -13,13 +13,14 @@ export const ModelURN = ({
   type,
   modelId,
   modelVersionId,
+  fileId,
   fileType,
   withCopy = true,
 }: Props) => {
   const { copied, copy } = useClipboard();
   const urn = useMemo(
-    () => stringifyAIR({ baseModel, type, modelId, id: modelVersionId, fileType }),
-    [baseModel, type, modelId, modelVersionId, fileType]
+    () => stringifyAIR({ baseModel, type, modelId, id: modelVersionId, fileId, fileType }),
+    [baseModel, type, modelId, modelVersionId, fileId, fileType]
   );
   if (!urn) return null;
 
@@ -54,6 +55,24 @@ export const ModelURN = ({
               {modelVersionId}
             </Code>
           </Tooltip>
+        )}
+        {fileId !== undefined && (
+          <>
+            <Code className={classes.code}>+</Code>
+            {withCopy ? (
+              <CopyTooltip copied={copied} label="File ID">
+                <Code className={classes.code} color="blue" onClick={() => copy(fileId)}>
+                  {fileId}
+                </Code>
+              </CopyTooltip>
+            ) : (
+              <Tooltip label="File ID">
+                <Code className={classes.code} color="blue">
+                  {fileId}
+                </Code>
+              </Tooltip>
+            )}
+          </>
         )}
       </Group>
       {withCopy && (
@@ -139,6 +158,9 @@ type Props = {
   type: ModelType;
   modelId: number;
   modelVersionId: number;
+  /** Selected `ModelFile.id`; emitted as the AIR's `+<fileId>` segment so the
+   * identifier resolves to the variant the user picked. */
+  fileId?: number;
   /** Primary `ModelFile.type`; lets diffusion-model checkpoints render the
    * correct AIR type segment (`diffusionmodel`) instead of `checkpoint`. */
   fileType?: string;

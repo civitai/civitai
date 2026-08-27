@@ -250,8 +250,8 @@ export function DownloadVariantDropdown({
               className="hover:bg-gray-1 dark:hover:bg-dark-6/30"
             >
               <Group justify="space-between" wrap="nowrap">
-                <Group gap={8}>
-                  <Box w={16}>
+                <Group gap={8} wrap="nowrap">
+                  <Box w={16} miw={16} style={{ flexShrink: 0 }}>
                     {isSelected && <IconCheck size={16} color={theme.colors.green[5]} />}
                   </Box>
                   <Box>
