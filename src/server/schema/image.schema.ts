@@ -364,8 +364,42 @@ export type GetInfiniteImagesOutput = z.output<typeof getInfiniteImagesSchema>;
 //   unpublished image — so this routes the three pickers and nothing else.
 //   Paired with userId for the same reason prioritizedUserIds is paired with a
 //   model: alone it would be a broad-feed DB escape hatch anyone could type
-//   into a URL. Scoped to one user it costs what a profile feed cost before
-//   imageIndexFeed existed.
+//   into a URL. Both halves ARE URL params, so pairing narrows the hatch rather
+//   than closing it — getInfiniteImagesHandler additionally withdraws
+//   `publishedOnly` unless the userId is the caller's own, which is what closes
+//   it. Do not read the pairing here as the whole guard.
+//
+//   Three accepted differences, none of them silent once you have read this.
+//   The DB path is NARROWER than the index for own content in three places, and
+//   in each the submit mutations refuse the row anyway (remix-gallery.service
+//   re-checks publishedAt, ingestion and needsReview), so nothing submittable is
+//   lost: own unscanned (`nsfwLevel = 0`), own `acceptableMinor`, and own
+//   `needsReview`. The first is the one to know about — between publish and the
+//   level landing, the picker shows nothing where the index showed the row. That
+//   window is under a minute (over 99% of images are Scanned and levelled inside
+//   one), against the 10-30 minutes this change removes.
+//   And `getAllImages` orders `Newest` by `i."id" DESC`, i.e. by UPLOAD, while the
+//   index orders by `sortAt` = GREATEST(publishedAt, scannedAt, createdAt). For
+//   the case this exists for — post, then submit — they agree. For "publish a
+//   months-old draft, then submit it" they do not, and the draft lands at its
+//   upload rank rather than first.
+//
+//   🔴 One difference goes the OTHER way, and it is an accepted widening rather
+//   than an oversight. The index filters on `combinedNsfwLevel` whenever
+//   `useCombinedNsfwLevel` is set (i.e. for anyone without NSFW access), and that
+//   is `nsfwLevelLocked ? nsfwLevel : max(nsfwLevel, aiNsfwLevel)`. `getAllImages`
+//   has no equivalent — it filters bare `i."nsfwLevel"`. So an image the AI scored
+//   higher than its assigned level is hidden by the index and returned by the DB.
+//   In these pickers that is the caller's own image shown back to the caller, and
+//   the handler's caller check keeps it that way. Justin accepted it knowingly on
+//   2026-08-27 rather than widen this change into the shared feed query. Do not
+//   "fix" it here by reverting the routing: the fix is to teach `getAllImages`
+//   about `aiNsfwLevel`, which is a feed change and wants its own review.
+//
+//   Cost, measured on the prod replica 2026-08-27: 0.83-1.03 ms at a wide
+//   browsing level, 14-82 ms at browsingLevel=1, where the backward index walk
+//   discards thousands of rows before 51 survive. Plan is an index scan backward
+//   on image_userid_id_idx in every case.
 //
 // A hub can only be served from the index, so this list is also the set `hubId`
 // cannot be combined with. Both the dispatcher and that rejection read it here so

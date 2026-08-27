@@ -285,7 +285,26 @@ export const getInfiniteImagesHandler = async ({
   if (input.hubId && !features.userHubs)
     throw throwAuthorizationError('Hubs are not available yet');
 
-  const requiresDbPath = requiresImageDbPath(input);
+  // `publishedOnly` + `userId` routes the own-content submit pickers onto the DB
+  // (see `requiresImageDbPath`), and both are plain URL params — so without this,
+  // `/images?userId=<anyone>&publishedOnly=true` would pin an ARBITRARY creator's
+  // feed to the raw-SQL path for any caller, logged out included. That is a wider
+  // promise than the pickers need: all three only ever send `currentUser?.id`.
+  //
+  // Withdrawn rather than refused, because for a foreign `userId` the flag is
+  // genuinely inert rather than ignored: on both the index and the DB path
+  // `publishedOnly`'s only job is to suppress the carve-out that ORs in the
+  // CALLER's own unpublished rows, and that arm cannot match rows already scoped
+  // to somebody else. Refusing would break a URL that works today and means the
+  // same thing either way. The `hubId` conflict in `getInfiniteImagesSchema` still
+  // reads the un-narrowed input and so stays the stricter of the two — it refuses
+  // a combination this would have served, which is the safe direction.
+  const scopedInput =
+    input.publishedOnly && input.userId && input.userId !== user?.id
+      ? { ...input, publishedOnly: undefined }
+      : input;
+
+  const requiresDbPath = requiresImageDbPath(scopedInput);
 
   // BitDex (Flipt-gated index experiment) routes through getAllImagesIndex, so it
   // can only run when the index can serve the query.
@@ -313,12 +332,12 @@ export const getInfiniteImagesHandler = async ({
   try {
     if (useIndex) {
       return await getAllImagesIndex({
-        ...input,
+        ...scopedInput,
         user,
         domain: getRequestBoardDomainColor(ctx.req),
         useCombinedNsfwLevel: !features.canViewNsfw,
         headers: { src: 'getInfiniteImagesHandler' },
-        include: [...input.include, 'tagIds'],
+        include: [...scopedInput.include, 'tagIds'],
         dbTarget: features.datapacketRead ? 'datapacket' : 'read',
         signal,
         // Forward pre-evaluated variant so getImagesFromSearch can skip a
@@ -332,12 +351,12 @@ export const getInfiniteImagesHandler = async ({
       });
     } else {
       const result = await getAllImages({
-        ...input,
+        ...scopedInput,
         user,
         domain: getRequestBoardDomainColor(ctx.req),
         useCombinedNsfwLevel: !features.canViewNsfw,
         headers: { src: 'getInfiniteImagesHandler' },
-        include: [...input.include, 'tagIds'],
+        include: [...scopedInput.include, 'tagIds'],
         dbTarget: features.datapacketRead ? 'datapacket' : 'read',
       });
       // Name this branch too, like the index path's `source`. Stamped here rather

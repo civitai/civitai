@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { SHARED_ALLOWANCE_NOTE } from '~/shared/utils/placement';
 import { requiresImageDbPath } from '~/server/schema/image.schema';
+import { ownContentPickerFilters } from '~/components/Image/image.utils';
 import type { RemixGalleryItem } from '~/components/RemixGallery/remix-gallery.utils';
 import {
   dedupeGalleryItems,
@@ -430,6 +431,27 @@ describe('remixSubmitPickerFilters', () => {
   // image not being there.
   it('routes the picker to the database, not the search index', () => {
     expect(requiresImageDbPath(remixSubmitPickerFilters(7))).toBe(true);
+  });
+
+  // All three own-content submit pickers spread the same helper, so this one
+  // assertion covers the challenge and add-to-collection modals too. They used to
+  // write the pair out inline with no test of their own: deleting `publishedOnly`
+  // from either ten-key filter block sent that picker back to the index with a
+  // grid that still rendered and still returned rows.
+  it('routes every own-content picker, not only the remix one', () => {
+    expect(requiresImageDbPath(ownContentPickerFilters(7))).toBe(true);
+    expect(remixSubmitPickerFilters(7).publishedOnly).toBe(
+      ownContentPickerFilters(7).publishedOnly
+    );
+  });
+
+  it('routes nothing for a signed-out caller', () => {
+    // `currentUser?.id` is undefined while auth resolves, and the challenge and
+    // collection modals render their grid without waiting for it. Without a
+    // userId the pair does not form and the query stays on the index — which is
+    // correct, because a userId-less picker is a site-wide feed, not yours.
+    expect(requiresImageDbPath(ownContentPickerFilters(undefined))).toBe(false);
+    expect(requiresImageDbPath(remixSubmitPickerFilters(undefined))).toBe(false);
   });
 
   it('needs both halves to route to the database', () => {

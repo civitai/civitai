@@ -107,6 +107,24 @@ describe('getInfiniteImagesHandler names the backend that served the page', () =
     expect(getFliptVariantMock).not.toHaveBeenCalled();
   });
 
+  // 🔴 Both halves of the routing pair are plain URL params, so without the
+  // caller check in the handler this is `/images?userId=<anyone>&publishedOnly=true`
+  // pinning an arbitrary creator's feed to raw SQL for any visitor. The pickers
+  // only ever send the signed-in user's own id, so scoping costs the fix nothing.
+  it('leaves another creator on the index even with publishedOnly set', async () => {
+    const result = await getInfiniteImagesHandler({
+      input: { ...(pickerInput as object), userId: 999 } as never,
+      ctx,
+    });
+
+    expect(getAllImagesIndexMock).toHaveBeenCalledTimes(1);
+    expect(getAllImagesMock).not.toHaveBeenCalled();
+    // Withdrawn, not forwarded — the flag only suppresses the caller's own
+    // unpublished carve-out, which cannot match rows scoped to someone else.
+    expect(getAllImagesIndexMock.mock.calls[0][0].publishedOnly).toBeUndefined();
+    expect(result.source).toBe('bitdex');
+  });
+
   it('leaves a broad feed on the index when only publishedOnly is set', async () => {
     // The control for the case above: it is the PAIR that routes. Without a
     // userId this is a site-wide feed, and routing it to the DB would be a

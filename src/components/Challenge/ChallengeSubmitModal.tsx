@@ -87,6 +87,7 @@ import type {
   VideoBlob,
 } from '~/shared/orchestrator/workflow-data';
 import clsx from 'clsx';
+import { ownContentPickerFilters } from '~/components/Image/image.utils';
 
 // ---------------------------------------------------------------------------
 // Selection store (same pattern as AddUserContentModal)
@@ -499,9 +500,9 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
             icon={<IconClockHour4 size={16} />}
           >
             Less than an hour left in this challenge. Entries are judged only after an automated
-            content scan, which can lag behind submission when the queue is busy. If a scan
-            finishes after the challenge closes, that entry may not make it into judging in time —
-            but you&apos;ll still receive the participation prize for any entries that meet the
+            content scan, which can lag behind submission when the queue is busy. If a scan finishes
+            after the challenge closes, that entry may not make it into judging in time — but
+            you&apos;ll still receive the participation prize for any entries that meet the
             requirements.
           </AlertWithIcon>
         )}
@@ -535,8 +536,8 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
                     <MasonryContainer m={0} p={0} px={0}>
                       <ImagesInfinite
                         filters={{
+                          ...ownContentPickerFilters(currentUser?.id),
                           collectionId: undefined,
-                          userId: currentUser?.id,
                           period: 'AllTime',
                           sort: ImageSort.Newest,
                           hidden: undefined,
@@ -547,7 +548,6 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
                           hideAutoResources: undefined,
                           hideManualResources: undefined,
                           includeBaseModel: true,
-                          publishedOnly: true,
                         }}
                         renderItem={LibraryImageCard}
                         disableStoreFilters
@@ -667,31 +667,31 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
             }`,
           }}
         >
-        <Group gap="xs" justify="flex-end">
-          <Button variant="default" onClick={handleClose}>
-            Cancel
-          </Button>
-          {totalBuzzCost > 0 ? (
-            <BuzzTransactionButton
-              buzzAmount={totalBuzzCost}
-              onPerformTransaction={handleSubmit}
-              loading={loading || requestReviewMutation.isPending}
-              disabled={submitCount === 0 || remainingEntries === 0}
-              label={`Submit ${submitCount} ${submitCount === 1 ? 'Entry' : 'Entries'}`}
-              showPurchaseModal
-            />
-          ) : (
-            <Button
-              onClick={handleSubmit}
-              loading={loading || requestReviewMutation.isPending}
-              disabled={submitCount === 0 || remainingEntries === 0}
-            >
-              {submitCount > 0
-                ? `Submit ${submitCount} ${submitCount === 1 ? 'Entry' : 'Entries'}`
-                : 'Submit'}
+          <Group gap="xs" justify="flex-end">
+            <Button variant="default" onClick={handleClose}>
+              Cancel
             </Button>
-          )}
-        </Group>
+            {totalBuzzCost > 0 ? (
+              <BuzzTransactionButton
+                buzzAmount={totalBuzzCost}
+                onPerformTransaction={handleSubmit}
+                loading={loading || requestReviewMutation.isPending}
+                disabled={submitCount === 0 || remainingEntries === 0}
+                label={`Submit ${submitCount} ${submitCount === 1 ? 'Entry' : 'Entries'}`}
+                showPurchaseModal
+              />
+            ) : (
+              <Button
+                onClick={handleSubmit}
+                loading={loading || requestReviewMutation.isPending}
+                disabled={submitCount === 0 || remainingEntries === 0}
+              >
+                {submitCount > 0
+                  ? `Submit ${submitCount} ${submitCount === 1 ? 'Entry' : 'Entries'}`
+                  : 'Submit'}
+              </Button>
+            )}
+          </Group>
 
           {entryFeeInfo && (
             <Group gap={4} justify="flex-end" wrap="nowrap">
@@ -706,8 +706,8 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
                     <b>{entryFeeInfo.entryFee.toLocaleString()}</b> per entry
                   </>
                 )}{' '}
-                &middot; {(entryFeeInfo.houseCut * Math.max(submitCount, 1)).toLocaleString()}{' '}for AI
-                judging &middot;{' '}
+                &middot; {(entryFeeInfo.houseCut * Math.max(submitCount, 1)).toLocaleString()} for
+                AI judging &middot;{' '}
                 {(entryFeeInfo.perEntryToPool * Math.max(submitCount, 1)).toLocaleString()} to the
                 prize pool
                 {guaranteeCost > 0 && (
@@ -769,7 +769,10 @@ function GeneratorTab({ challenge }: { challenge?: ChallengeDetail }) {
   const currentUser = useCurrentUser();
 
   const { data, isFetching, isFetchingNextPage, hasNextPage, fetchNextPage } =
-    useGetTextToImageRequests({ tags: [WORKFLOW_TAGS.IMAGE] }, { enabled: !!currentUser, ignoreFilters: true });
+    useGetTextToImageRequests(
+      { tags: [WORKFLOW_TAGS.IMAGE] },
+      { enabled: !!currentUser, ignoreFilters: true }
+    );
 
   const generatedMedia = useMemo(
     () =>
