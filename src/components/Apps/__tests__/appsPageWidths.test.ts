@@ -85,8 +85,51 @@ const CHROME_PORTAL_SIBLINGS: Record<string, { file: string; exportName: string 
   },
 };
 
-/** Tags that mean "a portaled overlay root" when a portal sibling renders one. */
+/** Tags that mean "a portaled overlay root" — checked together with their IMPORT source. */
 const PORTAL_ROOT_TAGS = new Set(['Modal', 'Modal.Stack', 'Drawer', 'Drawer.Stack', 'Portal']);
+
+/** The package a portal root must come from for the name to mean anything. */
+const PORTAL_ROOT_MODULE = '@mantine/core';
+
+/**
+ * The module specifier a top-level identifier was imported from, or `null`.
+ *
+ * 🔴 THIS IS WHAT STOPS THE PORTAL CONTRACT BEING A NAME CHECK. Matching the tag `Modal`
+ * against a set of strings trusts whatever the file chose to call things: a component
+ * defining its own `const Modal = ({children}) => <Box mx="auto">{children}</Box>` and
+ * returning `<Modal>` satisfied a name-only test completely, and was then allowlisted as
+ * a "portaled overlay" — moving the trust from the component's name to the name of the
+ * tag it happens to render, which is no improvement at all. Resolving the import is the
+ * difference between "it is called Modal" and "it IS Mantine's Modal".
+ */
+function importSourceOf(source: ts.SourceFile, baseName: string): string | null {
+  let found: string | null = null;
+  source.forEachChild((node) => {
+    if (!ts.isImportDeclaration(node) || !node.importClause) return;
+    const specifier = (node.moduleSpecifier as ts.StringLiteral).text;
+    const { name, namedBindings } = node.importClause;
+    if (name?.getText(source) === baseName) found = specifier;
+    if (namedBindings && ts.isNamedImports(namedBindings)) {
+      for (const el of namedBindings.elements) {
+        if (el.name.getText(source) === baseName) found = specifier;
+      }
+    } else if (namedBindings && ts.isNamespaceImport(namedBindings)) {
+      if (namedBindings.name.getText(source) === baseName) found = specifier;
+    }
+  });
+  return found;
+}
+
+/** Parse `file` once so a caller can resolve imports in it. */
+function sourceFileOf(file: string): ts.SourceFile {
+  return ts.createSourceFile(
+    file,
+    fs.readFileSync(file, 'utf8'),
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX
+  );
+}
 
 /** Tag names that mean "a fragment", i.e. unwrap the children rather than count the tag. */
 const FRAGMENT_TAGS = new Set(['React.Fragment', 'Fragment']);
@@ -185,6 +228,13 @@ function pageReturnTags(file: string, exportName?: string): string[][] {
         if (ts.isJsxElement(child) || ts.isJsxSelfClosingElement(child)) {
           tags.push(...topLevelTags(child as unknown as ts.Expression));
         } else if (ts.isJsxExpression(child)) tags.push(...topLevelTags(child.expression));
+        // 🔴 A NESTED ANONYMOUS FRAGMENT. `<><Box/></>` sitting inside another fragment
+        // used to be dropped on the floor here: `JsxFragment` is neither a `JsxElement`
+        // nor a `JsxExpression`, so the loop skipped it and its children were never
+        // inspected. `<React.Fragment>` WAS handled, so the two spellings of the same
+        // thing disagreed — and the docstring claimed "a fragment contributes ALL its
+        // children" for both.
+        else if (ts.isJsxFragment(child)) tags.push(...childTags(child.children));
       }
       return tags;
     };
@@ -199,6 +249,8 @@ function pageReturnTags(file: string, exportName?: string): string[][] {
       return FRAGMENT_TAGS.has(tag) ? [] : [tag];
     }
     if (ts.isJsxFragment(expr)) return childTags(expr.children);
+    // `{[<Box key="a" />]}` — a list of elements renders every entry.
+    if (ts.isArrayLiteralExpression(expr)) return expr.elements.flatMap((el) => topLevelTags(el));
     return [];
   };
 
@@ -225,34 +277,99 @@ function pageReturnTags(file: string, exportName?: string): string[][] {
 }
 
 /**
- * The ONE rule, applied to pages and to chrome delegates alike: in every return that
- * renders anything, EVERY top-level tag must be the shared layout, a verified delegate,
- * or an exempt leaf.
+ * The ONE rule, applied to pages and to chrome delegates alike. In EVERY return that
+ * renders anything: every top-level tag must be permitted there, AND the chrome must
+ * actually be mounted.
  *
- * 🔴 "EVERY", NOT "CONTAINS ONE". The predicate used to be
- * `rendered.includes('AppsPageLayout')`, which three different shapes walked straight
- * past because they put an un-chromed element ALONGSIDE a chromed one: a ternary whose
- * other arm rendered a bare centred `<Box>`, a fragment child ternary of the same shape,
- * and a plain un-chromed sibling inside the top-level fragment. In all three the layout
- * WAS present somewhere in the group, so `includes` was satisfied while real page content
- * rendered outside the chrome entirely.
+ * 🔴 TWO CLAUSES, BECAUSE EACH ALONE HAS A HOLE THE OTHER CLOSES.
+ *
+ * "No stray tag" replaced an older `rendered.includes('AppsPageLayout')`, which three
+ * shapes walked past by putting un-chromed content ALONGSIDE chromed content — a ternary
+ * whose other arm rendered a bare centred `<Box>`, the same as a fragment child, and a
+ * plain un-chromed sibling. The layout WAS present, so `includes` was satisfied while
+ * real page content rendered outside it.
+ *
+ * But "no stray tag" alone is satisfied by a group containing NO chrome provider at all,
+ * because portal siblings are permitted tags: `chromeOffenders('x', [['OnsiteReviewModal']])`
+ * returned `[]`, i.e. a page whose only top-level render is an overlay passed with no
+ * chrome. Permission to appear beside the chrome is not the same as providing it, and
+ * conflating the two is what let the allowlist stand in for the layout.
+ *
+ * 🔴 EVERY GROUP IS EVALUATED — `continue`, never `break`. A page's FIRST return is
+ * routinely a gate (`return <NotFound />`), which filters to empty; a `break` there would
+ * skip every later return and report green having inspected nothing. Pinned by the
+ * multi-group rows in this file's `chromeOffenders` table.
  */
 function chromeOffenders(label: string, groups: string[][]): string[] {
-  const allowed = new Set([
-    'AppsPageLayout',
-    ...Object.keys(CHROME_DELEGATES),
-    ...Object.keys(CHROME_PORTAL_SIBLINGS),
-  ]);
+  /** Tags that MOUNT the chrome. */
+  const providers = new Set(['AppsPageLayout', ...Object.keys(CHROME_DELEGATES)]);
+  /** Tags merely PERMITTED beside it — they provide nothing on their own. */
+  const permitted = new Set([...providers, ...Object.keys(CHROME_PORTAL_SIBLINGS)]);
   const offenders: string[] = [];
   for (const tags of groups) {
     const rendered = tags.filter((t) => !CHROME_EXEMPT_TAGS.has(t));
     if (rendered.length === 0) continue;
-    const stray = rendered.filter((t) => !allowed.has(t));
+    const stray = rendered.filter((t) => !permitted.has(t));
     if (stray.length > 0) {
       offenders.push(
         `${label} (a return renders [${rendered.join(', ')}] outside the shared chrome — ` +
           `stray: ${stray.join(', ')})`
       );
+      continue;
+    }
+    if (!rendered.some((t) => providers.has(t))) {
+      offenders.push(
+        `${label} (a return renders [${rendered.join(', ')}] with NO chrome provider — ` +
+          `a portaled overlay may sit beside the layout, it cannot replace it)`
+      );
+    }
+  }
+  return offenders;
+}
+
+/**
+ * Does the component at `file` honour the portaled-overlay contract?
+ *
+ * 🔴 EXTRACTED SO IT CAN BE TESTED ON A KNOWN-BAD INPUT. While this logic was inline in
+ * its test, nothing exercised it except the three real entries — all of which pass — so
+ * disabling the import check entirely still produced a fully green suite. A guard whose
+ * only inputs are known-good cannot be shown to work; the negative control beside its
+ * test now feeds it a fixture that MUST be reported.
+ */
+function portalOffenders(name: string, abs: string, exportName: string): string[] {
+  const offenders: string[] = [];
+  if (!fs.existsSync(abs)) return [`${name} (no file at ${abs})`];
+  let groups: string[][];
+  try {
+    groups = pageReturnTags(abs, exportName);
+  } catch (err) {
+    return [`${name} (could not parse: ${(err as Error).message})`];
+  }
+  if (groups.length === 0) return [`${name} (has no return statement)`];
+  const source = sourceFileOf(abs);
+  // Every return that renders anything must render a portal root — an early return of
+  // ordinary markup would put real content outside the chrome.
+  for (const tags of groups) {
+    const rendered = tags.filter((t) => !CHROME_EXEMPT_TAGS.has(t));
+    if (rendered.length === 0) continue;
+    const stray = rendered.filter((t) => !PORTAL_ROOT_TAGS.has(t));
+    if (stray.length > 0) {
+      offenders.push(`${name} (a return renders non-portal roots: ${stray.join(', ')})`);
+      continue;
+    }
+    // 🔴 AND THE NAME MUST RESOLVE TO THE REAL COMPONENT. `Modal` is just an identifier;
+    // a file is free to define its own. Without this the contract trusted a spelling, and
+    // a locally-defined `const Modal = … <Box mx="auto">` satisfied it completely.
+    for (const tag of rendered) {
+      const base = tag.split('.')[0];
+      const from = importSourceOf(source, base);
+      if (from !== PORTAL_ROOT_MODULE) {
+        offenders.push(
+          `${name} (renders <${tag}>, but \`${base}\` is ` +
+            (from ? `imported from '${from}'` : 'not imported at all') +
+            ` — a portal root must come from '${PORTAL_ROOT_MODULE}')`
+        );
+      }
     }
   }
   return offenders;
@@ -679,7 +796,17 @@ describe('every /apps page on disk is classified', () => {
           offenders.push(`${name} (no file at ${abs})`);
           continue;
         }
-        const groups = pageReturnTags(abs, exportName);
+        // 🔴 CAUGHT, like the page loop. An allowlist entry written in a shape the walk
+        // cannot parse used to THROW out of the test, so the run died with a raw stack
+        // instead of the named offender assertion — the exact opposite of the message
+        // ordering fixed a round ago.
+        let groups: string[][];
+        try {
+          groups = pageReturnTags(abs, exportName);
+        } catch (err) {
+          offenders.push(`${name} (could not parse: ${(err as Error).message})`);
+          continue;
+        }
         if (groups.length === 0) {
           offenders.push(`${name} (has no return statement)`);
           continue;
@@ -710,33 +837,74 @@ describe('every /apps page on disk is classified', () => {
      * alongside page content rendering outside it.
      */
     describe('🔴 chromeOffenders — the rule, pinned directly', () => {
-      const cases: { name: string; group: string[]; offends: boolean }[] = [
-        { name: 'the layout alone', group: ['AppsPageLayout'], offends: false },
-        { name: 'Meta beside the layout', group: ['Meta', 'AppsPageLayout'], offends: false },
-        { name: 'a bare access-denied leaf', group: ['NotFound'], offends: false },
-        { name: 'nothing renderable', group: [], offends: false },
-        { name: 'a verified delegate', group: ['AppsSubmitEditView'], offends: false },
+      // 🔴 EVERY ROW IS A LIST OF GROUPS, NOT ONE GROUP, and that is the point of the
+      // shape. The table used to pass `[group]` — always exactly one — so the loop OVER
+      // groups was never exercised: `groups.slice(0, 1)` and `continue`→`break` both
+      // survived the whole suite, even with a real un-chromed sibling planted on
+      // /apps/review. `break` is the realistic one: a page's first return is routinely a
+      // gate that filters to empty, so it would skip every later return and report green
+      // having inspected nothing.
+      const cases: { name: string; groups: string[][]; offends: boolean }[] = [
+        { name: 'the layout alone', groups: [['AppsPageLayout']], offends: false },
+        { name: 'Meta beside the layout', groups: [['Meta', 'AppsPageLayout']], offends: false },
+        { name: 'a bare access-denied leaf', groups: [['NotFound']], offends: false },
+        { name: 'nothing renderable', groups: [[]], offends: false },
+        { name: 'no returns at all', groups: [], offends: false },
+        { name: 'a verified delegate', groups: [['AppsSubmitEditView']], offends: false },
         {
           name: 'a portaled overlay beside the layout',
-          group: ['AppsPageLayout', 'OnsiteReviewModal'],
+          groups: [['AppsPageLayout', 'OnsiteReviewModal']],
           offends: false,
         },
-        { name: 'page content with NO layout', group: ['Box'], offends: true },
+        { name: 'page content with NO layout', groups: [['Box']], offends: true },
         // 🔴 The two an `includes` check passes.
         {
           name: 'an un-chromed SIBLING alongside the layout',
-          group: ['AppsPageLayout', 'Box'],
+          groups: [['AppsPageLayout', 'Box']],
           offends: true,
         },
         {
           name: 'a ternary whose other arm is un-chromed (flattened to one group)',
-          group: ['AppsPageLayout', 'Container'],
+          groups: [['AppsPageLayout', 'Container']],
           offends: true,
+        },
+        // 🔴 F4 — permission to sit beside the chrome is not the same as providing it.
+        {
+          name: 'ONLY a portaled overlay, with no chrome provider',
+          groups: [['OnsiteReviewModal']],
+          offends: true,
+        },
+        // 🔴 THE MULTI-GROUP AXIS. Each row below is green in its first group and rotten
+        // in a later one, so anything that stops after the first return lets it through.
+        {
+          name: 'a GATE return first, then an un-chromed one (kills `break`)',
+          groups: [[], ['Box']],
+          offends: true,
+        },
+        {
+          name: 'a NotFound gate first, then an un-chromed one (kills `break`)',
+          groups: [['NotFound'], ['Box']],
+          offends: true,
+        },
+        {
+          name: 'a good return first, then an un-chromed one (kills slice(0, 1))',
+          groups: [['AppsPageLayout'], ['Box']],
+          offends: true,
+        },
+        {
+          name: 'three returns, only the LAST rotten',
+          groups: [['AppsPageLayout'], ['NotFound'], ['Container']],
+          offends: true,
+        },
+        {
+          name: 'several good returns stay clean',
+          groups: [['AppsPageLayout'], ['NotFound'], ['Meta', 'AppsPageLayout']],
+          offends: false,
         },
       ];
 
-      test.each(cases)('$name', ({ group, offends }) => {
-        const out = chromeOffenders('fixture', [group]);
+      test.each(cases)('$name', ({ groups, offends }) => {
+        const out = chromeOffenders('fixture', groups);
         expect(out.length > 0).toBe(offends);
       });
 
@@ -747,13 +915,48 @@ describe('every /apps page on disk is classified', () => {
         expect(msg).toContain('stray: Box');
       });
 
-      test('every case fixture is distinct (no row silently duplicates another)', () => {
-        // Guard-the-guard: duplicated rows inflate the table without adding coverage.
-        const keys = cases.map((c) => c.group.join('|'));
+      test('the NO-PROVIDER message is distinct from the stray-tag one', () => {
+        // Two different defects must not print the same sentence, or the message stops
+        // telling you which one you have.
+        const [stray] = chromeOffenders('/apps/x', [['AppsPageLayout', 'Box']]);
+        const [none] = chromeOffenders('/apps/x', [['OnsiteReviewModal']]);
+        expect(none).toContain('NO chrome provider');
+        expect(stray).not.toContain('NO chrome provider');
+      });
+
+      test('a later rotten return is reported even when an earlier one is fine', () => {
+        // The message must name the offending group, not merely count one.
+        const out = chromeOffenders('/apps/x', [['AppsPageLayout'], ['Box']]);
+        expect(out).toHaveLength(1);
+        expect(out[0]).toContain('stray: Box');
+      });
+
+      test('EVERY rotten group is reported, not just the first', () => {
+        // Pins that the loop keeps going after it finds one — a `break` on the offending
+        // branch would report 1 of 2 and still fail the suite, so only a count sees it.
+        const out = chromeOffenders('/apps/x', [['Box'], ['AppsPageLayout'], ['Container']]);
+        expect(out).toHaveLength(2);
+      });
+
+      test('the table exercises the multi-group axis and both verdicts', () => {
+        // Guard-the-guard: duplicated rows inflate the table without adding coverage, and
+        // a table of single-group rows cannot see a loop bug at all.
+        const keys = cases.map((c) => JSON.stringify(c.groups));
         expect(new Set(keys).size).toBe(keys.length);
-        // …and the table exercises BOTH verdicts, so it cannot pass by always agreeing.
         expect(cases.some((c) => c.offends)).toBe(true);
         expect(cases.some((c) => !c.offends)).toBe(true);
+        // At least two rows must carry MORE THAN ONE group, or the loop is unpinned again.
+        expect(cases.filter((c) => c.groups.length > 1).length).toBeGreaterThanOrEqual(2);
+        // …and at least one multi-group row must be clean ONLY in its first group, which
+        // is the precise shape `break` and `slice(0, 1)` survive.
+        expect(
+          cases.some(
+            (c) =>
+              c.groups.length > 1 &&
+              c.offends &&
+              chromeOffenders('probe', [c.groups[0]]).length === 0
+          )
+        ).toBe(true);
       });
     });
 
@@ -766,35 +969,142 @@ describe('every /apps page on disk is classified', () => {
       expect(names.length, 'the portal-sibling list is empty — nothing to verify').toBeGreaterThan(
         0
       );
-      const offenders: string[] = [];
-      for (const name of names) {
-        const { file, exportName } = CHROME_PORTAL_SIBLINGS[name];
-        const abs = path.resolve(__dirname, '../../../..', file);
-        if (!fs.existsSync(abs)) {
-          offenders.push(`${name} (no file at ${abs})`);
-          continue;
-        }
-        const groups = pageReturnTags(abs, exportName);
-        if (groups.length === 0) {
-          offenders.push(`${name} (has no return statement)`);
-          continue;
-        }
-        // Every return that renders anything must render a portal root — an early
-        // return of ordinary markup would put real content outside the chrome.
-        for (const tags of groups) {
-          const rendered = tags.filter((t) => !CHROME_EXEMPT_TAGS.has(t));
-          if (rendered.length === 0) continue;
-          const stray = rendered.filter((t) => !PORTAL_ROOT_TAGS.has(t));
-          if (stray.length > 0) {
-            offenders.push(`${name} (a return renders non-portal roots: ${stray.join(', ')})`);
-          }
-        }
-      }
+      const offenders = names.flatMap((name) =>
+        portalOffenders(
+          name,
+          path.resolve(__dirname, '../../../..', CHROME_PORTAL_SIBLINGS[name].file),
+          CHROME_PORTAL_SIBLINGS[name].exportName
+        )
+      );
       expect(
         offenders,
         'A component allowlisted as a portaled overlay renders ordinary markup instead — ' +
           'it would place page content outside the shared chrome.'
       ).toEqual([]);
+    });
+
+    describe('🔴 the portal contract, on known-BAD inputs (negative controls)', () => {
+      /**
+       * Why these exist: the portal check's only real inputs are the three genuine
+       * entries, and all three pass. So the check could be disabled outright — I removed
+       * the import comparison and the entire suite stayed green at 135/135 — because
+       * nothing ever fed it a case it had to reject. A guard tested only on known-good
+       * inputs is a guard nobody has watched work.
+       */
+      const write = (suffix: string, body: string) => {
+        const tmp = path.join(os.tmpdir(), `apps-portal-${suffix}-${process.pid}.tsx`);
+        fs.writeFileSync(tmp, body);
+        return tmp;
+      };
+
+      test('a LOCALLY DEFINED `Modal` is rejected, however convincingly named', () => {
+        // The exact shape that survived: the tag is called Modal, so a name-only check
+        // waves it through, but it is this file's own component wrapping a centred Box.
+        const tmp = write(
+          'local',
+          [
+            "import { Box } from '@mantine/core';",
+            "import type { ReactNode } from 'react';",
+            'const Modal = ({ children }: { children?: ReactNode }) => (',
+            '  <Box maw={700} mx="auto">{children}</Box>',
+            ');',
+            'export function FakeOverlay() {',
+            '  return <Modal>overlay</Modal>;',
+            '}',
+          ].join('\n')
+        );
+        try {
+          const out = portalOffenders('FakeOverlay', tmp, 'FakeOverlay');
+          expect(out).toHaveLength(1);
+          expect(out[0]).toContain('not imported at all');
+          expect(out[0]).toContain('@mantine/core');
+        } finally {
+          fs.unlinkSync(tmp);
+        }
+      });
+
+      test('a `Modal` imported from the WRONG package is rejected, and the message says which', () => {
+        const tmp = write(
+          'wrongpkg',
+          [
+            "import { Modal } from 'some-other-ui-kit';",
+            'export function FakeOverlay() {',
+            '  return <Modal>overlay</Modal>;',
+            '}',
+          ].join('\n')
+        );
+        try {
+          const out = portalOffenders('FakeOverlay', tmp, 'FakeOverlay');
+          expect(out).toHaveLength(1);
+          expect(out[0]).toContain("imported from 'some-other-ui-kit'");
+        } finally {
+          fs.unlinkSync(tmp);
+        }
+      });
+
+      test('ordinary markup is rejected even before the import question', () => {
+        const tmp = write(
+          'plain',
+          [
+            "import { Box } from '@mantine/core';",
+            'export function FakeOverlay() {',
+            '  return <Box maw={700} mx="auto" />;',
+            '}',
+          ].join('\n')
+        );
+        try {
+          const out = portalOffenders('FakeOverlay', tmp, 'FakeOverlay');
+          expect(out).toHaveLength(1);
+          expect(out[0]).toContain('non-portal roots: Box');
+        } finally {
+          fs.unlinkSync(tmp);
+        }
+      });
+
+      test('POSITIVE CONTROL — a real Mantine Modal passes', () => {
+        // Without this the three rejections above are satisfied by a function that
+        // rejects everything.
+        const tmp = write(
+          'good',
+          [
+            "import { Modal } from '@mantine/core';",
+            'export function RealOverlay() {',
+            '  return <Modal opened onClose={() => undefined}>overlay</Modal>;',
+            '}',
+          ].join('\n')
+        );
+        try {
+          expect(portalOffenders('RealOverlay', tmp, 'RealOverlay')).toEqual([]);
+        } finally {
+          fs.unlinkSync(tmp);
+        }
+      });
+
+      test('importSourceOf resolves each import form, and reports absence as null', () => {
+        const tmp = write(
+          'imports',
+          [
+            "import Default from 'pkg-default';",
+            "import { Named, Other as Aliased } from 'pkg-named';",
+            "import * as Ns from 'pkg-ns';",
+            'export function X() {',
+            '  return <Named />;',
+            '}',
+          ].join('\n')
+        );
+        try {
+          const src = sourceFileOf(tmp);
+          expect(importSourceOf(src, 'Default')).toBe('pkg-default');
+          expect(importSourceOf(src, 'Named')).toBe('pkg-named');
+          // An ALIASED import binds the local name, which is what a tag resolves against.
+          expect(importSourceOf(src, 'Aliased')).toBe('pkg-named');
+          expect(importSourceOf(src, 'Other')).toBeNull();
+          expect(importSourceOf(src, 'Ns')).toBe('pkg-ns');
+          expect(importSourceOf(src, 'NotImported')).toBeNull();
+        } finally {
+          fs.unlinkSync(tmp);
+        }
+      });
     });
 
     test('🔴 the AST walk can SEE a violation (negative control on the guard above)', () => {
