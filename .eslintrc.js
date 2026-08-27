@@ -111,9 +111,55 @@ module.exports = {
     // modified-files pass is `continue-on-error: true`. So widening this list
     // holds NEW browser tests to the pattern and annotates the rest — it does
     // not retroactively fix them.
+    //
+    // THE THREE ENTRIES BELOW WERE PICKED BY MEASUREMENT, NOT BY MOCK VOLUME.
+    // The hazard is a wide export surface reached by many `src/` modules: any
+    // one of those importers landing in a test's graph kills the whole FILE. So
+    // the admission test is three conditions, all of which must hold:
+    //
+    //   (a) >= 15 exported bindings   — a surface wide enough that a one-key
+    //       factory is a landmine rather than a complete stand-in;
+    //   (b) >= 25 non-test `src/` importers — enough reach that some importer
+    //       plausibly lands in an unrelated suite's module graph;
+    //   (c) ZERO files violating this rule today — the entry must annotate
+    //       nothing retroactively, so no pre-existing file goes newly red.
+    //
+    // Enumerated (not sampled) over all 501 `~/`-specifiers any `src/` test
+    // wholesale-mocks: 27 clear (a)+(b), and exactly 3 of those also clear (c).
+    // Those 3 are listed. The rest fail ONLY on (c) and are deliberately left
+    // out rather than baselined — e.g. `~/server/common/constants` (97 exports,
+    // 352 importers) has 14 existing violators, `~/server/services/buzz.service`
+    // (37/61) has 110. They are the NEXT candidates, each gated behind
+    // converting its own violators first.
+    //
+    // Volume is explicitly NOT the criterion, and the counterexample matters:
+    // `~/hooks/useCurrentUser` is one-key-mocked by 108 files and is harmless,
+    // because it exports 2 things — a factory naming both IS the whole module.
+    // Listing it would turn ~108 files red to guard nothing.
+    //
+    //   module                                        exports  src importers  mocked by
+    //   ~/shared/data-graph/generation/config/workflows    27        32           1
+    //   ~/components/Image/image.utils                     17        29           1
+    //   ~/components/Sticker/sticker.util                  16        25           5
+    //
+    // `image.utils` is the worked example this list gap was found through: #4450
+    // added `ownContentPickerFilters` and had `remix-gallery.utils` import it,
+    // and `RemixGallerySubmitModal.browser.test.tsx`'s one-key factory then took
+    // the whole file out at collection — `Tests no tests`, 2150 others passing,
+    // nothing red (fixed in #4463). All 7 files mocking the three modules above
+    // already use the `importOriginal` spread; listing them is what stops the
+    // next one from not doing so.
     'local-rules/no-wholesale-module-mock': [
       'error',
-      { modules: ['~/utils/trpc', '~/components/Dialog/RoutedDialogLink'] },
+      {
+        modules: [
+          '~/utils/trpc',
+          '~/components/Dialog/RoutedDialogLink',
+          '~/shared/data-graph/generation/config/workflows',
+          '~/components/Image/image.utils',
+          '~/components/Sticker/sticker.util',
+        ],
+      },
     ],
 
     // aligns closing brackets for tags
