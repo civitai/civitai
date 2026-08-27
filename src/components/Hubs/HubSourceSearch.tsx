@@ -33,8 +33,9 @@ const tabs = [
 ];
 
 /**
- * One type at a time, over a bounded window of the viewer's own relationships —
- * see SUGGESTIONS_WINDOW in user-hub.service.ts.
+ * One type at a time, over a bounded window of the viewer's own relationships. The
+ * window is wider when there is a term than when there is not — see
+ * SUGGESTIONS_SEARCH_WINDOW and SUGGESTIONS_WINDOW in user-hub.service.ts.
  */
 export function HubSourceSearch({
   onSelect,

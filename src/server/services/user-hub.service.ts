@@ -749,14 +749,32 @@ const SUGGESTIONS_WINDOW = 500;
 // they were looking for at position 1,905, so the 500-row window meant the type-ahead
 // could never return them.
 //
-// Measured on the prod replica against the largest accounts on the site, for a term
-// matching nothing (the worst case, since `take` cannot stop early): 118,609 follows
-// 402 ms, 250,491 bell-subscribed models 392 ms, and the models arm's 15,000-id union
-// 392 ms — flat against 5,000, since the planner stops probing by id and hashes.
+// 🔴 Raising this is close to FREE, and lowering it buys nothing — measured on the
+// prod replica at both windows, per arm, worst case (term matching nothing):
+//
+//   follows, 118,609 rows   500 -> 444 ms / 165,001 buffers ; 5000 -> 181 ms warm,
+//                           723 ms cold / 48,212 buffers
+//   Notify, 250,491 rows    identical plan and ~130,800 buffers at BOTH windows;
+//                           283 ms warm, 1.56 s cold
+//   bookmarks, 258,105      identical at both; ~86 ms / 32k buffers
+//   15,000-id union + ILIKE 34.5 ms / 19.4k buffers (477 index searches, not 15,000)
+//
+// Every arm orders by a column no composite index covers, so the viewer's WHOLE
+// relationship list is read either way and the `take` only sizes the top-N heap. At
+// 500 the follows arm picks a worse plan off the global createdAt index. The real
+// cost of this endpoint is the unindexed `ORDER BY createdAt` on ModelEngagement, at
+// any window; an index on (userId, type, createdAt DESC) INCLUDE (modelId) is what
+// would move it.
+//
 // Only 57 accounts follow more than this and 1,066 watch more models than this, so
 // above the window a search is still partial; closing that needs a trigram index so
 // the term can drive instead of the relationship list.
 const SUGGESTIONS_SEARCH_WINDOW = 5000;
+
+// A one-character term matches most of the window and costs the same relationship
+// read as a useful one, so it is treated as no term at all: the viewer gets their
+// most recent relationships, which is what one character was going to show anyway.
+const MIN_SEARCH_TERM = 2;
 
 // A margin over the page size, because the name queries filter deleted rows AFTER the
 // id restriction: slicing to exactly `SUGGESTIONS_LIMIT` returns a short page whenever
@@ -807,7 +825,8 @@ export async function getHubSourceSuggestions({
   query,
   isModerator,
 }: GetHubSourceSuggestionsInput & { userId: number; isModerator?: boolean }) {
-  const term = query?.trim();
+  const trimmed = query?.trim();
+  const term = trimmed && trimmed.length >= MIN_SEARCH_TERM ? trimmed : undefined;
 
   if (type === UserHubSourceType.User) {
     const follows = await dbRead.userEngagement.findMany({
@@ -858,7 +877,11 @@ export async function getHubSourceSuggestions({
     const followed = await dbRead.collectionContributor.findMany({
       where: { userId, permissions: { has: CollectionContributorPermission.VIEW } },
       select: { collectionId: true },
-      orderBy: { createdAt: 'desc' },
+      // `nulls: 'last'` because the column is nullable and Postgres sorts DESC as
+      // NULLS FIRST, which would fill the window with the rows carrying no date at
+      // all — the opposite of the recency cut this is. 0 nulls of 2,294,541 rows on
+      // prod today, so it holds the invariant rather than fixing a live bug.
+      orderBy: { createdAt: { sort: 'desc', nulls: 'last' } },
       take: suggestionWindow(term),
     });
     if (!followed.length) return [];

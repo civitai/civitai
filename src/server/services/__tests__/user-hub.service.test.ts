@@ -764,15 +764,60 @@ describe('source suggestions stay inside the viewer', () => {
     expect(searching).toBeGreaterThan(2738);
   });
 
-  // A tripwire, not a behaviour test. The collections arm returns early while
-  // HUB_COLLECTION_SOURCES_ENABLED is false, so its `take` is unreachable and a test
-  // asserting on it would pass with the widened window reverted — measured: reverting
-  // that one call alone leaves this whole file green at 79 passed. Whoever flips the
-  // constant lands here: cover the collections window the way the two tests above
-  // cover creators and models, then delete this.
-  it('collection sources are still dark, so their search window has no test yet', () => {
-    expect(HUB_COLLECTION_SOURCES_ENABLED).toBe(false);
+  it('treats a one-character term as no term at all', async () => {
+    // Measured on the prod replica: a term costs the whole relationship read whatever
+    // its length — up to 1.02 GB of buffer touches on the models arm — and one
+    // character matches most of the window anyway. So the first keystroke lists
+    // instead of searching.
+    dbMock.dbRead.userEngagement.findMany.mockResolvedValue([{ targetUserId: 11 }]);
+    dbMock.dbRead.user.findMany.mockResolvedValue([{ id: 11, username: 'someone' }]);
+
+    await getHubSourceSuggestions({ userId: 5, type: UserHubSourceType.User, query: 's' });
+
+    const names = dbMock.dbRead.user.findMany.mock.calls[0][0];
+    expect(names.where.username).toBeUndefined();
+    expect(names.orderBy).toBeUndefined();
   });
+
+  it('hands the WHOLE window to the name query, not a page of it', async () => {
+    // The window only helps if `scopeSuggestionIds` passes all of it through. Slicing
+    // there unconditionally collapses the searchable set to 50 — a worse regression
+    // than the bug this fixes, and invisible to every other search test in this file,
+    // which all mock a handful of ids.
+    const followed = Array.from({ length: 600 }, (_, i) => ({ targetUserId: 100 + i }));
+    dbMock.dbRead.userEngagement.findMany.mockResolvedValue(followed);
+    dbMock.dbRead.user.findMany.mockResolvedValue([{ id: 100, username: 'someone' }]);
+
+    await getHubSourceSuggestions({ userId: 5, type: UserHubSourceType.User, query: 'some' });
+
+    const names = dbMock.dbRead.user.findMany.mock.calls[0][0];
+    expect(names.where.id.in).toHaveLength(600);
+    expect(names.take).toBe(25);
+  });
+
+  // Skipped while collections are dark, following the four `skipIf` cases above: the
+  // arm returns before its query, so an assertion on it would pass with the widened
+  // window reverted. It runs the day the constant flips, which is the day it means
+  // something.
+  it.skipIf(!HUB_COLLECTION_SOURCES_ENABLED)(
+    'widens the collections relationship query for a search too',
+    async () => {
+      dbMock.dbRead.collectionContributor.findMany.mockResolvedValue([{ collectionId: 3 }]);
+      dbMock.dbRead.collection.findMany.mockResolvedValue([{ id: 3, name: 'stuff' }]);
+
+      await getHubSourceSuggestions({ userId: 5, type: UserHubSourceType.Collection });
+      const listing = dbMock.dbRead.collectionContributor.findMany.mock.calls[0][0].take;
+
+      await getHubSourceSuggestions({
+        userId: 5,
+        type: UserHubSourceType.Collection,
+        query: 'stu',
+      });
+      const searching = dbMock.dbRead.collectionContributor.findMany.mock.calls[1][0].take;
+
+      expect(searching).toBeGreaterThan(listing);
+    }
+  );
 
   it('widens every models relationship query for a search, not just the creators one', async () => {
     dbMock.dbRead.collection.findFirst.mockResolvedValue({ id: 77 });
