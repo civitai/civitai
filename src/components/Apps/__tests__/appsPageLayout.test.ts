@@ -88,23 +88,88 @@ describe('AppsPageLayout draws no rule of its own', () => {
     // `pb` is asserted PRESENT, not merely "no py": this Container is the
     // outermost element on every `/apps/*` page, so its bottom pad is the only
     // thing keeping the last grid/table row off whatever follows. Dropping to a
-    // bare `<Container size={size}>` would satisfy a "no py" check alone.
+    // bare `<Container size={…}>` would satisfy a "no py" check alone.
     const src = layoutSrc();
-    expect(src).toMatch(/<Container\s+size=\{size\}\s+pb="md">/);
+    expect(src).toMatch(/<Container\s+size=\{APPS_PAGE_CONTAINER_WIDTH\}\s+pb="md">/);
     expect(src).not.toMatch(/<Container[^>]*\bpy=/s);
     expect(src).not.toMatch(/<Container[^>]*\bpt=/s);
   });
 
-  it('HORIZONTAL geometry is untouched by the vertical pass', () => {
-    // INVARIANT GUARD — green before and after. The pass was scoped to vertical
-    // padding; these pin the things it was explicitly not allowed to move, so a
-    // future "tighten the apps chrome" edit can't quietly take the side gutters
-    // or the container width with it.
+  it('HORIZONTAL geometry is not overridden on the Container', () => {
+    // INVARIANT GUARD — green before and after. Pins the thing successive passes
+    // were explicitly not allowed to move, so a future "tighten the apps chrome"
+    // edit can't quietly take the side gutters with it.
     const src = layoutSrc();
-    // Width still comes from the caller's `size` prop, not a hardcoded value.
-    expect(src).toMatch(/<Container\s+size=\{size\}/);
-    // No horizontal padding override of any kind on the Container.
     expect(src).not.toMatch(/<Container[^>]*\b(px|pl|pr)=/s);
+  });
+});
+
+/**
+ * 🔴 THE CHROME SITS IN ONE CONTAINER, THE SAME ONE ON EVERY ROUTE.
+ *
+ * The defect these guards close: `AppsPageLayout` took a per-page container width
+ * and rendered `AppsSubNav` INSIDE it, so the shared tab strip inherited each
+ * page's width. Measured on a real render — nav left/width of 16/1408 on `/apps`,
+ * 36/1368 on `/apps/review`, 76/1288 on the store preview, 186/1068 on
+ * `/apps/submit` at 1440 — i.e. the one element required to be identical on every
+ * apps page moved 170px horizontally between routes (410px at 2560).
+ *
+ * 🔴 WHY SOURCE GUARDS AS WELL AS THE PIXEL ONE. The rendered proof lives in
+ * `AppsPageLayout.chromeAlignment.browser.test.tsx`, which is in the browser-mode
+ * `component` project — REPORT-ONLY and non-blocking in CI, and red repo-wide for
+ * an unrelated pre-existing failure. So it cannot block a regression on its own.
+ * These run in the blocking `unit` project. They are the enforceable half.
+ */
+describe('AppsPageLayout takes NO per-page container width', () => {
+  it('the Container width is the shared constant, not a prop', () => {
+    const src = layoutSrc();
+    // The state, not a keyword: the Container's `size` is THE shared constant.
+    expect(src).toMatch(/<Container\s+size=\{APPS_PAGE_CONTAINER_WIDTH\}/);
+    // …and it is the real import, not a same-named local.
+    expect(src).toMatch(
+      /import\s*\{\s*APPS_PAGE_CONTAINER_WIDTH\s*\}\s*from\s*'~\/components\/Apps\/appsPageWidths'/
+    );
+  });
+
+  it('🔴 no `size` prop survives anywhere in the component', () => {
+    // The regression is re-adding a caller-controlled width. Banned in every
+    // spelling a caller could reach: the destructured param, the prop type, and
+    // any `size={…}` on the Container.
+    const src = layoutSrc();
+    expect(src).not.toMatch(/^\s*size[?]?:/m);
+    expect(src).not.toMatch(/<Container[^>]*size=\{size\}/s);
+    // A default-valued `size = 'xl'` in the destructuring is the exact shape that
+    // shipped the defect.
+    expect(src).not.toMatch(/^\s*size\s*=/m);
+  });
+
+  it('the BODY measure is applied below the chrome, and left-aligned', () => {
+    const src = layoutSrc();
+    // The measure wraps `{children}` ONLY — a `maw` on the Stack or Container
+    // would take the sub-nav with it, which is the defect.
+    // 🔴 THE EXACT TAG, and that is what makes the left-alignment ban airtight
+    // rather than a keyword hunt: this shape admits `maw` and NOTHING ELSE, so no
+    // `mx="auto"`, `style={{ marginInline: 'auto' }}` or `ta`/`align` prop can be
+    // added to the measure box without failing here.
+    //
+    // Scoped to TAGS, deliberately — a whole-file ban on a centring idiom fails on
+    // the component's own docstring, which names those idioms in order to forbid
+    // them. (A comment-stripping helper is NOT the fix: the layout's prose contains
+    // the literal `/apps/*`, whose `/*` opens a false block comment and eats the
+    // JSX after it. Measured — it swallowed the `<Container>` line.)
+    expect(src).toMatch(/<Box\s+maw=\{measure\}>\{children\}<\/Box>/);
+    expect(src).not.toMatch(/<Box[^>]*\b(mx|ml|mr|style|className)=/s);
+    expect(src).not.toMatch(/<Container[^>]*\b(maw|mx)=/s);
+    expect(src).not.toMatch(/<Stack[^>]*\b(maw|mx)=/s);
+  });
+
+  it('the guard is reading a real file (not a silently-empty read)', () => {
+    // Guard-the-guard: a renamed/moved file makes every `not.toMatch` above pass
+    // vacuously, and the `toMatch`es above are what stop that going unnoticed.
+    const src = layoutSrc();
+    expect(src.length).toBeGreaterThan(1000);
+    expect(src).toMatch(/export function AppsPageLayout/);
+    expect(src).toMatch(/measure\?:\s*number/);
   });
 });
 

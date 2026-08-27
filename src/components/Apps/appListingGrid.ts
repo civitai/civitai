@@ -1,5 +1,4 @@
-import type { MantineSize } from '@mantine/core';
-import { APPS_PAGE_WIDTHS } from '~/components/Apps/appsPageWidths';
+import { APPS_PAGE_CONTAINER_WIDTH } from '~/components/Apps/appsPageWidths';
 
 /**
  * App Store Listings (W13) — the `/apps` store's GEOMETRY constants, split out of
@@ -35,20 +34,27 @@ export const LISTING_GRID_SPAN = {
 } as const;
 
 /**
- * `/apps` store container width (px), passed to `AppsPageLayout size=`.
+ * The container width the `/apps` store grid is sized against (px).
  *
- * 🔴 NO LONGER A LITERAL HERE. The number now lives in
- * `~/components/Apps/appsPageWidths` alongside every other `/apps/*` route's
- * width, because the store is one page in a set whose widths were decided
- * together; this file re-exports it so the container/span pair stays visible
- * from the grid side. Two copies of the number is exactly the drift the pairing
- * comment above is trying to prevent — don't inline it back.
+ * 🔴 NO LONGER A LITERAL HERE, AND NO LONGER A PROP. The number lives in
+ * `~/components/Apps/appsPageWidths` as {@link APPS_PAGE_CONTAINER_WIDTH}, the ONE
+ * container width every `/apps/*` route now renders in; this file re-exports it so
+ * the container/span pair stays visible and assertable from the grid side. Two
+ * copies of the number is exactly the drift the pairing comment above is trying to
+ * prevent — don't inline it back.
  *
- * The full-width pass moved it 1600 → 1920. The `xl` span was DELIBERATELY left
- * at 3 (four columns): at 1920 that yields ~460 px cards (vs ~383 at 1600), so
- * the 2026-07 "make app cover images larger" pass gets larger still rather than
- * being undone. Re-tuning to five columns at `xl` would land ~365 px — narrower
- * than what that pass shipped — so it is not a neutral "keep the density"
- * choice. The arithmetic is pinned in `__tests__/appsPageWidths.test.ts`.
+ * It used to be passed to `AppsPageLayout size=`. That prop is gone (the shared
+ * chrome rendered inside it, so a per-page width moved the sub-nav horizontally
+ * between routes). `/apps` takes NO body measure, so its content width still IS the
+ * container width and the arithmetic below is unchanged — this constant is now the
+ * DERIVATION the grid span is tuned against rather than a value the page hands the
+ * layout.
+ *
+ * The full-width pass moved it 1600 → 1920. The `xl` span was DELIBERATELY left at 3
+ * (four columns): at 1920 that yields ~460 px cards (vs ~383 at 1600), so the
+ * 2026-07 "make app cover images larger" pass gets larger still rather than being
+ * undone. Re-tuning to five columns at `xl` would land ~365 px — narrower than what
+ * that pass shipped — so it is not a neutral "keep the density" choice. The
+ * arithmetic is pinned in `__tests__/appsPageWidths.test.ts`.
  */
-export const LISTING_STORE_CONTAINER_SIZE: MantineSize | number = APPS_PAGE_WIDTHS['/apps'];
+export const LISTING_STORE_CONTAINER_SIZE: number = APPS_PAGE_CONTAINER_WIDTH;

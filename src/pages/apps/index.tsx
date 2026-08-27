@@ -2,7 +2,6 @@ import { useRouter } from 'next/router';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
 import { AppListingsMarketplaceBody } from '~/components/Apps/AppListingsMarketplaceBody';
-import { LISTING_STORE_CONTAINER_SIZE } from '~/components/Apps/appListingGrid';
 import { buildAppsStoreFeedbackContext } from '~/components/Apps/appsStoreFeedbackContext';
 import { parseAppsStoreFilters } from '~/components/Apps/appsStoreQueryParams';
 import { resolveAppsPageAccess } from '~/components/Apps/resolveAppsPageAccess';
@@ -71,7 +70,7 @@ export default function AppsPage() {
           (`blocks.backfillAppListings` → `appListings.backfillListingAssets`,
           a separate post-deploy op step) — the empty state renders sanely
           ("No apps yet"); expected + fine while dark. */}
-      <AppsPageLayout size={LISTING_STORE_CONTAINER_SIZE}>
+      <AppsPageLayout>
         {/* FEEDBACK PROMPT — above the store controls, mirroring where the images
             feed mounts it (above the grid rather than after it).
 

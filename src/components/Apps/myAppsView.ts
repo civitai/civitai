@@ -1,6 +1,5 @@
 import type { EditorTab } from '~/components/Apps/appListingEditorTabs';
 import { editorTabsFor, listingEditHref } from '~/components/Apps/appListingEditorTabs';
-import { APPS_PAGE_WIDTHS } from '~/components/Apps/appsPageWidths';
 import type { ListingProblem } from '~/server/services/blocks/listing-problems';
 import type {
   AppRole,
@@ -18,11 +17,22 @@ import type {
  */
 
 /**
- * The container width. Alias-with-a-consumer, the same shape as
- * `LISTING_STORE_CONTAINER_SIZE` — `appsPageWidths.test.ts` recognises the pattern and
- * checks the page really reads it.
+ * 🔴 `MY_APPS_CONTAINER_SIZE` LIVED HERE AND IS GONE ON PURPOSE. Do not re-add it.
+ *
+ * It aliased `APPS_PAGE_WIDTHS['/apps/mine']` so the page could hand a per-page width
+ * to `AppsPageLayout size=`. That prop no longer exists: every `/apps/*` route now
+ * renders in the ONE `APPS_PAGE_CONTAINER_WIDTH` container, because the shared sub-nav
+ * lived inside the per-page box and moved horizontally between routes. `/apps/mine`
+ * takes no body measure either — its table has a measured 1424px scroll floor
+ * (`SUBMISSIONS_TABLE_MIN_WIDTH`) that the full container is what clears.
+ *
+ * The thing the alias was protecting — "this page is wide enough for its table" — is
+ * now a RELATIONSHIP rather than a number, and is asserted directly in
+ * `__tests__/appsPageWidths.test.ts` as
+ * `APPS_PAGE_CONTAINER_WIDTH − SUBMISSIONS_CONTAINER_CHROME > SUBMISSIONS_TABLE_MIN_WIDTH`.
+ * That is strictly stronger than the old `> 1100` pin, which could not have noticed the
+ * container dropping to 1400.
  */
-export const MY_APPS_CONTAINER_SIZE: number = APPS_PAGE_WIDTHS['/apps/mine'];
 
 /** Rows per page in the Inactive collapse. */
 export const INACTIVE_PAGE_SIZE = 10;

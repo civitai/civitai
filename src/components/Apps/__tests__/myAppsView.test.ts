@@ -7,7 +7,6 @@ import {
   isInactiveListing,
   listingMediaIndex,
   listingMediaShots,
-  MY_APPS_CONTAINER_SIZE,
   myAppListingHref,
   orphanGroupStartsOpen,
   pageCount,
@@ -393,18 +392,21 @@ describe('canOpenListingAuthoringPage — the row link rule, and the only rule',
   });
 });
 
-describe('MY_APPS_CONTAINER_SIZE', () => {
-  it('is a raw px number, not a Mantine size token (tokens cap at xl = 1320)', () => {
-    expect(typeof MY_APPS_CONTAINER_SIZE).toBe('number');
-    expect(Number.isFinite(MY_APPS_CONTAINER_SIZE)).toBe(true);
-  });
-
-  it('is wider than the readable/form width the page used before the merge', () => {
-    // The page went from a single-column card list to a two-image table when it absorbed
-    // /apps/my-submissions; 1100 is the width that made the old submissions table clip.
-    expect(MY_APPS_CONTAINER_SIZE).toBeGreaterThan(1100);
-  });
-});
+/**
+ * 🔴 THE `MY_APPS_CONTAINER_SIZE` BLOCK THAT LIVED HERE IS DELETED WITH THE CONSTANT.
+ *
+ * It aliased `APPS_PAGE_WIDTHS['/apps/mine']` so the page could hand a per-page width to
+ * `AppsPageLayout size=`. That prop is gone — every `/apps/*` route renders in the one
+ * `APPS_PAGE_CONTAINER_WIDTH` container, because the shared sub-nav lived inside the
+ * per-page box and moved horizontally between routes.
+ *
+ * Its assertions are not merely dropped. `> 1100` was a weak proxy for "this page is wide
+ * enough for its table" — it could not have noticed the container falling to 1400, which
+ * would have re-opened the clip. The real relationship,
+ * `APPS_PAGE_CONTAINER_WIDTH − SUBMISSIONS_CONTAINER_CHROME > SUBMISSIONS_TABLE_MIN_WIDTH`,
+ * is asserted in `appsPageWidths.test.ts` together with the counterfactual that the
+ * readable measure would NOT clear that floor.
+ */
 
 /* ------------------------------------------------------------------ *
  * The row's two images, as ONE viewer list

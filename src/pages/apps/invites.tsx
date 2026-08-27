@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { AppInvitesBody } from '~/components/Apps/AppInvitesBody';
 import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
 import { AppTransferOffers } from '~/components/Apps/AppTransferOffers';
-import { APPS_PAGE_WIDTHS } from '~/components/Apps/appsPageWidths';
+import { APPS_PAGE_MEASURES } from '~/components/Apps/appsPageWidths';
 import { Meta } from '~/components/Meta/Meta';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { isAppDeveloper } from '~/shared/utils/app-blocks-access';
@@ -44,7 +44,7 @@ export default function AppInvitesPage() {
     <>
       <Meta title="App invitations — Civitai Apps" deIndex />
       <AppsPageLayout
-        size={APPS_PAGE_WIDTHS['/apps/invites']}
+        measure={APPS_PAGE_MEASURES['/apps/invites']}
         title="App invitations"
         subtitle="Invitations to collaborate on someone else's app, and offers to take one over."
       >

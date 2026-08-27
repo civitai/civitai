@@ -1,8 +1,9 @@
-import { Anchor, Center, Container, Group, Loader, Stack, Tabs } from '@mantine/core';
+import { Anchor, Center, Group, Loader, Stack, Tabs } from '@mantine/core';
 import { IconArrowLeft, IconPhoto, IconSettings } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { NotFound } from '~/components/AppLayout/NotFound';
-import { APPS_PAGE_WIDTHS } from '~/components/Apps/appsPageWidths';
+import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
+import { APPS_PAGE_MEASURES } from '~/components/Apps/appsPageWidths';
 import { ListingMediaEditor } from '~/components/Apps/ListingMediaEditor';
 import { ManifestEditForm } from '~/components/Apps/ManifestEditForm';
 import { ALL_EDITOR_TABS } from '~/components/Apps/appListingEditorTabs';
@@ -90,7 +91,7 @@ export default function AppEditPage() {
   return (
     <>
       <Meta title="Edit app — Civitai Apps" deIndex />
-      <Container size={APPS_PAGE_WIDTHS['/apps/[appBlockId]/edit']} py="md">
+      <AppsPageLayout measure={APPS_PAGE_MEASURES['/apps/[appBlockId]/edit']}>
         <Stack gap="lg">
           {/* Item 3: history-aware back — pop history when there's any, else fall
               back to the app details page (the media editor is now a TAB here, so
@@ -152,7 +153,7 @@ export default function AppEditPage() {
             </Tabs.Panel>
           </Tabs>
         </Stack>
-      </Container>
+      </AppsPageLayout>
     </>
   );
 }

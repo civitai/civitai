@@ -3,7 +3,7 @@ import { useRouter } from 'next/router';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { AppListingDetailBody } from '~/components/Apps/AppListingDetailBody';
 import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
-import { APPS_PAGE_WIDTHS } from '~/components/Apps/appsPageWidths';
+import { APPS_PAGE_MEASURES } from '~/components/Apps/appsPageWidths';
 import { resolveAppsPageAccess } from '~/components/Apps/resolveAppsPageAccess';
 import { Meta } from '~/components/Meta/Meta';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -63,7 +63,7 @@ export default function AppStoreListingDetailPage() {
         description={detail?.tagline ?? 'Unified app store preview'}
         deIndex
       />
-      <AppsPageLayout size={APPS_PAGE_WIDTHS['/apps/store-preview/[slug]']}>
+      <AppsPageLayout measure={APPS_PAGE_MEASURES['/apps/store-preview/[slug]']}>
         {isLoading ? (
           <Center py="xl">
             <Loader />

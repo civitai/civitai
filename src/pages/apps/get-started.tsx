@@ -1,6 +1,6 @@
-import { Container } from '@mantine/core';
-import { APPS_PAGE_WIDTHS } from '~/components/Apps/appsPageWidths';
+import { APPS_PAGE_MEASURES } from '~/components/Apps/appsPageWidths';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
 import { GetStartedBody } from '~/components/Apps/GetStartedBody';
 import { resolveGetStartedAccess } from '~/components/Apps/resolveGetStartedAccess';
 import { Meta } from '~/components/Meta/Meta';
@@ -52,9 +52,23 @@ export default function AppsGetStartedPage() {
         description="Build small web apps that run inside Civitai. Install the Civitai CLI and runtime SDK, scaffold an app, and test it locally."
         deIndex
       />
-      <Container size={APPS_PAGE_WIDTHS['/apps/get-started']} py="xl">
+      {/*
+        🔴 THE ONE ADOPTED PAGE WHOSE GATE DOES NOT IMPLY THE SUB-NAV'S. This page
+        gates on `appBlocksGetStarted` ALONE (see the docstring above), while
+        `AppsSubNav` renders only for `hasAppsStoreAccess` (`appListings || appBlocks`).
+        Those are independent flags, so a viewer can hold this page's flag and not the
+        nav's — and then the chrome band renders empty (the sub-nav returns `null`),
+        costing the `Stack gap="xl"` above the body and nothing else.
+        NOT REACHABLE TODAY: `appBlocksGetStarted` is staged mod-only, and a moderator
+        holds `appBlocks` (hence the store predicate) and is an `isAppDeveloper`, so the
+        bar clears its own two-tab floor with Marketplace + Create. It becomes reachable
+        the moment this flag widens to `['public']` — which is a one-line change in
+        feature-flags.service.ts. TODO(launch): widen the sub-nav's gate with it, or
+        keep this page off the shared chrome.
+      */}
+      <AppsPageLayout measure={APPS_PAGE_MEASURES['/apps/get-started']}>
         <GetStartedBody />
-      </Container>
+      </AppsPageLayout>
     </>
   );
 }

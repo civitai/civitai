@@ -2,7 +2,7 @@ import { Alert, Button, Group, Loader, Stack, Text } from '@mantine/core';
 import { IconAlertTriangle } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
-import { APPS_PAGE_WIDTHS } from '~/components/Apps/appsPageWidths';
+import { APPS_PAGE_MEASURES } from '~/components/Apps/appsPageWidths';
 import { ExternalSubmitForm } from '~/components/Apps/ExternalSubmitForm';
 import type { ListingEditContext } from '~/components/Apps/offsiteEditConfig';
 import { Meta } from '~/components/Meta/Meta';
@@ -50,7 +50,7 @@ export function AppsSubmitEditView({
     <>
       <Meta title="Edit an app — Civitai" deIndex />
       <AppsPageLayout
-        size={APPS_PAGE_WIDTHS['/apps/submit']}
+        measure={APPS_PAGE_MEASURES['/apps/submit']}
         title="Edit your app"
         subtitle="Update your external-link app's link, details, or assets."
       >

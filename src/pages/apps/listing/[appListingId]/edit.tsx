@@ -1,4 +1,4 @@
-import { Anchor, Center, Container, Group, Loader, Stack, Tabs } from '@mantine/core';
+import { Anchor, Center, Group, Loader, Stack, Tabs } from '@mantine/core';
 import {
   IconArrowLeft,
   IconCoin,
@@ -21,7 +21,8 @@ import {
   listingEditHref,
   resolveEditorTab,
 } from '~/components/Apps/appListingEditorTabs';
-import { APPS_PAGE_WIDTHS } from '~/components/Apps/appsPageWidths';
+import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
+import { APPS_PAGE_MEASURES } from '~/components/Apps/appsPageWidths';
 import { ListingHistoryPanel } from '~/components/Apps/ListingHistoryPanel';
 import { ListingPublishingPanel } from '~/components/Apps/ListingPublishingPanel';
 import { AppsListingDetailsEditor } from '~/components/Apps/AppsSubmitEditView';
@@ -148,11 +149,11 @@ export default function AppListingEditPage() {
 
   if (isLoading || !context) {
     return (
-      <Container size={APPS_PAGE_WIDTHS['/apps/listing/[appListingId]/edit']} py="md">
+      <AppsPageLayout measure={APPS_PAGE_MEASURES['/apps/listing/[appListingId]/edit']}>
         <Center py="xl">
           <Loader />
         </Center>
-      </Container>
+      </AppsPageLayout>
     );
   }
 
@@ -184,7 +185,7 @@ export default function AppListingEditPage() {
   return (
     <>
       <Meta title={`Edit ${context.name} — Civitai Apps`} deIndex />
-      <Container size={APPS_PAGE_WIDTHS['/apps/listing/[appListingId]/edit']} py="md">
+      <AppsPageLayout measure={APPS_PAGE_MEASURES['/apps/listing/[appListingId]/edit']}>
         <Stack gap="lg">
           <Anchor
             component="button"
@@ -290,7 +291,7 @@ export default function AppListingEditPage() {
             ) : null}
           </Tabs>
         </Stack>
-      </Container>
+      </AppsPageLayout>
     </>
   );
 }

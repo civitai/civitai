@@ -72,12 +72,16 @@ export const SUBMISSIONS_TABLE_MIN_WIDTH = 1424;
 export const SUBMISSIONS_CONTAINER_CHROME = 34;
 
 /**
- * 🔴 `MY_SUBMISSIONS_CONTAINER_SIZE` LIVED HERE AND IS GONE. `/apps/my-submissions` was
- * merged into `/apps/mine` and 301s there; the container-width alias moved with the page
- * it belongs to and is now `MY_APPS_CONTAINER_SIZE` in `myAppsView.ts`, reading through to
- * `APPS_PAGE_WIDTHS['/apps/mine']` (also 1920 — see that entry for why the merged table
- * took the wide width). {@link SUBMISSIONS_CONTAINER_CHROME} stays here because the
- * scroll-floor arithmetic it belongs to is still this module's.
+ * 🔴 `MY_SUBMISSIONS_CONTAINER_SIZE` LIVED HERE AND IS GONE, AND SO HAS ITS SUCCESSOR.
+ * `/apps/my-submissions` merged into `/apps/mine` and 301s there, so the alias moved to
+ * `MY_APPS_CONTAINER_SIZE` in `myAppsView.ts` — and that is now gone too: every `/apps/*`
+ * route renders in the single `APPS_PAGE_CONTAINER_WIDTH` (1920) container, so there is no
+ * per-page width left to alias. `/apps/mine` takes no body measure either, precisely so the
+ * table below clears the floor. The relationship that used to be implied by the alias is
+ * asserted directly in `__tests__/appsPageWidths.test.ts`:
+ * `APPS_PAGE_CONTAINER_WIDTH − SUBMISSIONS_CONTAINER_CHROME > SUBMISSIONS_TABLE_MIN_WIDTH`.
+ * {@link SUBMISSIONS_CONTAINER_CHROME} stays here because the scroll-floor arithmetic it
+ * belongs to is still this module's.
  */
 
 /** Sortable columns shared by both tables. */
