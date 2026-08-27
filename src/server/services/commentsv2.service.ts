@@ -2,6 +2,7 @@ import type { GetByIdInput } from './../schema/base.schema';
 import type { CommentV2Model } from '~/server/selectors/commentv2.selector';
 import { commentV2Select } from '~/server/selectors/commentv2.selector';
 import { recordStickerUsage, spendStickerUses } from '~/server/services/sticker.service';
+import { MAX_THREAD_CHAIN_DEPTH } from '~/server/common/thread-chain';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { Prisma } from '@prisma/client';
 import { dbWrite, dbRead } from '~/server/db/client';
@@ -273,12 +274,10 @@ export async function isViewerContentOwner({
 }
 
 /**
- * Both a cycle backstop and a ceiling on how deep a chain this can resolve. Reaching it is
- * treated as "could not resolve", not as "no lock found" — measured on the 2,000 most recent
- * threads in production the deepest chain is 17 and the mean is 2.65, so no real conversation
- * is near it, and a caller who built one past it must not get a pass out of the guard.
+ * Reaching the cap is treated as "could not resolve", not as "no lock found" — a caller who built a
+ * chain past it must not get a pass out of the guard. The number itself, and what production
+ * actually holds, live beside the constant.
  */
-const MAX_THREAD_CHAIN_DEPTH = 100;
 
 /**
  * Every owner-bearing FK on `Thread`. A thread with none of them and no parent comment is an

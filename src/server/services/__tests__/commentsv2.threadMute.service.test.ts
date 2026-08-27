@@ -17,6 +17,24 @@ beforeEach(() => {
 });
 
 describe('toggleThreadMute', () => {
+  /**
+   * Mocked Prisma ignores `select`, so nothing else here can see it go missing. Dropping
+   * `childThread` leaves every other assertion green while production reads `undefined` on every
+   * call, takes the lazy-create branch every time, and hits the unique constraint on
+   * `Thread.commentId` for any comment that already has a reply thread — i.e. the mute button fails
+   * for exactly the threads people mute.
+   */
+  it('reads the child thread it keys the mute on', async () => {
+    db.commentV2.findUnique.mockResolvedValue({ threadId: 10, childThread: { id: 77 } });
+
+    await toggleThreadMute({ commentId: 5, userId: 1 });
+
+    expect(db.commentV2.findUnique).toHaveBeenCalledWith({
+      where: { id: 5 },
+      select: { threadId: true, childThread: { select: { id: true } } },
+    });
+  });
+
   it('mutes the existing reply thread without creating one', async () => {
     db.commentV2.findUnique.mockResolvedValue({ threadId: 10, childThread: { id: 77 } });
 
@@ -88,7 +106,9 @@ describe('toggleThreadMute', () => {
   it('refuses a comment that does not exist', async () => {
     db.commentV2.findUnique.mockResolvedValue(null);
 
-    await expect(toggleThreadMute({ commentId: 5, userId: 1 })).rejects.toThrow();
+    await expect(toggleThreadMute({ commentId: 5, userId: 1 })).rejects.toThrow(
+      /could not find entity/i
+    );
     expect(db.threadMute.create).not.toHaveBeenCalled();
   });
 });

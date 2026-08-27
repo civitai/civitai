@@ -471,11 +471,15 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       AND NOT EXISTS (
       WITH RECURSIVE muteable_threads AS (
       SELECT t.id "id", 0 "depth"
-      UNION ALL
-      SELECT th."parentThreadId", mt."depth" + 1
+      UNION
+      SELECT "parentId", mt."depth" + 1
       FROM muteable_threads mt
       JOIN "Thread" th ON th.id = mt."id"
-      WHERE th."parentThreadId" IS NOT NULL AND mt."depth" < 20
+      CROSS JOIN LATERAL unnest(ARRAY[
+      th."parentThreadId",
+      (SELECT pc."threadId" FROM "CommentV2" pc WHERE pc.id = th."commentId")
+      ]) AS "parentId"
+      WHERE "parentId" IS NOT NULL AND mt."depth" < 100
       )
       SELECT 1
       FROM muteable_threads mt
@@ -529,11 +533,15 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       ) AND NOT EXISTS (
       WITH RECURSIVE muteable_threads AS (
       SELECT t.id "id", 0 "depth"
-      UNION ALL
-      SELECT th."parentThreadId", mt."depth" + 1
+      UNION
+      SELECT "parentId", mt."depth" + 1
       FROM muteable_threads mt
       JOIN "Thread" th ON th.id = mt."id"
-      WHERE th."parentThreadId" IS NOT NULL AND mt."depth" < 20
+      CROSS JOIN LATERAL unnest(ARRAY[
+      th."parentThreadId",
+      (SELECT pc."threadId" FROM "CommentV2" pc WHERE pc.id = th."commentId")
+      ]) AS "parentId"
+      WHERE "parentId" IS NOT NULL AND mt."depth" < 100
       )
       SELECT 1
       FROM muteable_threads mt
