@@ -120,7 +120,8 @@ export const veo3Graph = new DataGraph<Veo3Ctx, GenerationCtx>()
       if (ctx.workflow === 'img2vid:ref2vid') {
         return {
           ...imagesNode({
-            max: 7,
+            // Veo 3.1 accepts at most three asset reference images.
+            max: 3,
             warnOnMissingAiMetadata: true,
             aspectRatios: ['16:9', '9:16'],
           }),

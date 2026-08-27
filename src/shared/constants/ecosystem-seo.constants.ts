@@ -3428,7 +3428,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
 
   Veo3: {
     key: 'Veo3',
-    updatedAt: '2026-07-22',
+    updatedAt: '2026-08-27',
     slug: 'veo-3',
     name: 'Veo 3',
     metaDescription:
@@ -3442,7 +3442,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
     overview: [
       'Veo 3 is a state-of-the-art text-to-video and image-to-video model from Google DeepMind. Its defining advance over earlier AI video models is native audio generation: rather than producing a silent clip and bolting sound on afterward, Veo 3 generates dialogue, sound effects, and music together with the visuals in a single pass, for more realistic and immersive results. It reads detailed natural-language direction — characters, action, camera work, mood, and the sound you want — and turns it into a coherent clip.',
       'In practice, Veo 3 is tuned for cinematic, real-world scenes with strong temporal consistency and an unusually deep understanding of camera and film vocabulary — tracking shots, crane and steadicam moves, slow motion, time-lapse, whip pans, and lens/film references. It works from a text prompt, a reference image, or both, and handles temporal progression cues like "as the sun sets." Because it prompts in plain natural language, there is no weight syntax and no negative prompt — you describe everything you want, including the audio, positively.',
-      'Veo 3 is a closed, hosted model: there are no downloadable weights and no Veo LoRAs, so control comes from prompting, reference images, and camera direction rather than community fine-tunes. It is also a PG/SFW model by design — profanity or sexually explicit prompts are filtered, so it is best suited to SFW work. On Civitai several releases are hosted — Veo 3 and Veo 3 Fast for text-to-video, plus Veo 3 Image-to-Video and its Fast variant — so you can move between quality and speed without any local setup. For open weights and a stackable video LoRA ecosystem, the Wan ecosystem is the natural alternative to compare against.',
+      'Veo 3 is a closed, hosted model: there are no downloadable weights and no Veo LoRAs, so control comes from prompting, reference images, and camera direction rather than community fine-tunes. It is also a PG/SFW model by design — profanity or sexually explicit prompts are filtered, so it is best suited to SFW work. On Civitai two releases are hosted — Veo 3.1 and Veo 3.1 Fast, each handling both text-to-video and image-to-video — so you can move between quality and speed without any local setup. For open weights and a stackable video LoRA ecosystem, the Wan ecosystem is the natural alternative to compare against.',
     ],
     promptTips: [
       'Write like a mini screenplay in natural language, not tags: describe the characters, the action, the mood, and the visual style in full sentences. A reliable order is scene and characters → action sequence → camera work → visual style → audio.',
@@ -3455,31 +3455,17 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
     featuredModels: [
       {
         modelId: 1665714,
-        versionId: 1885367,
-        imageId: 130405124,
-        displayName: 'Veo 3',
-        note: 'Civitai-hosted · default · text-to-video',
+        versionId: 2827945,
+        imageId: 141016601,
+        displayName: 'Veo 3.1',
+        note: 'Civitai-hosted · default · text-to-video and image-to-video',
       },
       {
         modelId: 1665714,
-        versionId: 1995399,
-        imageId: 129368560,
-        displayName: 'Veo 3 Fast',
+        versionId: 2827948,
+        imageId: 141016658,
+        displayName: 'Veo 3.1 Fast',
         note: 'Civitai-hosted · speed-optimized',
-      },
-      {
-        modelId: 1665714,
-        versionId: 1996013,
-        imageId: 125883219,
-        displayName: 'Veo 3 Image-to-Video',
-        note: 'Civitai-hosted · animate a still',
-      },
-      {
-        modelId: 1665714,
-        versionId: 2082027,
-        imageId: 135396489,
-        displayName: 'Veo 3 Image-to-Video Fast',
-        note: 'Civitai-hosted · faster image-to-video',
       },
     ],
     featuredExamples: [
