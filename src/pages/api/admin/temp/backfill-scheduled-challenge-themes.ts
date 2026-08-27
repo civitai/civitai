@@ -65,6 +65,21 @@ const schema = z.object({
     ),
 });
 
+/**
+ * The jsonb patch merged into Challenge.metadata.
+ *
+ * 🔴 resourceConcept is OMITTED, never null, when the concept step declined to produce one.
+ * `challengeMetadataSchema` declares it as an optional STRING, so a null fails the whole
+ * safeParse — and parseChallengeMetadata then returns {}, which the write-back sites would
+ * persist, wiping every other key including reconciliation.paidUserIds. A dry run over the
+ * queue hit this: one resource in 29 returned no concept.
+ */
+export function buildMetadataPatch(themeElements: string[], resourceConcept?: string) {
+  return resourceConcept?.trim()
+    ? { themeElements, resourceConcept: resourceConcept.trim() }
+    : { themeElements };
+}
+
 type Result = {
   challengeId: number;
   startsAt: Date;
@@ -173,10 +188,9 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
               theme = ${article.theme},
               invitation = ${article.invitation},
               metadata = (CASE WHEN jsonb_typeof(metadata) = 'object' THEN metadata ELSE '{}'::jsonb END)
-                         || ${JSON.stringify({
-                           themeElements: article.themeElements,
-                           resourceConcept: resourceConcept ?? null,
-                         })}::jsonb
+                         || ${JSON.stringify(
+                           buildMetadataPatch(article.themeElements, resourceConcept)
+                         )}::jsonb
           WHERE id = ${challenge.id}
             AND source = 'System'
             AND status = 'Scheduled'
