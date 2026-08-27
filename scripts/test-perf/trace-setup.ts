@@ -49,6 +49,13 @@ if (!g.__modTrace) {
     stats.set(id, e);
   };
 
+  // 🔴 pid is NOT a unique worker id on a thread pool. `forks` gives one process per file, so
+  // `<pid>.json` happens to be unique there — but `threads`/`vmThreads` put every worker in ONE
+  // process (measured: 3 files gave 3 snapshots on forks and 1 on threads), so several workers
+  // would flush to the same path concurrently and `trace-report.mjs` would parse a truncated
+  // JSON. The suffix is generated once per worker, when this module first initialises.
+  const workerId = `${process.pid}-${Math.random().toString(36).slice(2, 10)}`;
+
   // Overridable so a test can point one run at a scratch directory instead of clobbering the
   // trace a developer is in the middle of reading.
   const flush = () => {
@@ -58,19 +65,28 @@ if (!g.__modTrace) {
       const out: Record<string, Entry> = {};
       for (const [k, v] of stats)
         out[k] = { loads: v.loads, selfMs: +v.selfMs.toFixed(1), totalMs: +v.totalMs.toFixed(1) };
-      writeFileSync(path.join(dir, `${process.pid}.json`), JSON.stringify(out));
-    } catch {}
+      writeFileSync(path.join(dir, `${workerId}.json`), JSON.stringify(out));
+    } catch (err) {
+      // Never throw out of a flush — but never swallow it either. A silently unwritten snapshot is
+      // precisely the failure this file exists to close, and `trace-report.mjs` cannot tell the
+      // difference between "nothing was traced" and "every write failed".
+      process.stderr.write(`[trace-setup] flush to ${dir} failed: ${String(err)}\n`);
+    }
   };
 
-  // The one that actually runs. Fires per test file, inside the worker, before the pool can kill
-  // it — so a snapshot exists no matter how the worker dies afterwards. Synchronous, because an
-  // async flush would not complete.
+  // The one that actually runs, and the reason this file changed. Registered once per worker (this
+  // whole block is behind a `!g.__modTrace` guard on a fresh `globalThis`), it fires at the end of
+  // each suite the worker executes — which is inside the worker, before the pool can kill it.
+  // Synchronous, because an async flush would not complete.
   afterAll(flush);
   // Backstop for a worker torn down by a real `process.exit()` rather than a signal.
   process.on('exit', flush);
   // Backstop for a long run: vitest reuses a worker across files, so a worker killed mid-file
-  // still leaves the last periodic snapshot behind.
-  const t = setInterval(flush, 15000);
+  // still leaves the last periodic snapshot behind. Overridable so a test can push it out of the
+  // way and leave `afterAll` as the ONLY path that can produce a snapshot — otherwise a slow child
+  // run satisfies the regression test through this timer whether or not the fix is present.
+  const intervalMs = Number(process.env.TESTPERF_TRACE_INTERVAL_MS ?? 15000);
+  const t = setInterval(flush, intervalMs);
   if (typeof t.unref === 'function') t.unref();
 }
 

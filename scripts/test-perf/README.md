@@ -110,13 +110,26 @@ whole subtree from executing. The tracer brackets every first-party module body,
 executions and separates a module's own cost from its imports'.
 
 ```bash
-pnpm exec vitest run --project unit --config scripts/test-perf/trace-config.mts \
+pnpm exec vitest run --project unit-trace --config scripts/test-perf/trace-config.mts \
   --max-workers=1 path/to/one.test.ts
 node scripts/test-perf/trace-report.mjs
 ```
 
-⚠️ Under `isolate: true`, `globalThis` is reset between test files, so a multi-file traced run keeps
-only the last file's counters. Trace one file at a time, or trace with `--no-isolate`.
+🔴 The project is `unit-trace`, not `unit`, and the name is load-bearing: Vitest keys the
+dep-optimizer cache on `sha1(projectName)` while Vite's config hash includes the plugin names, so a
+traced project called `unit` points at the normal suite's `deps_ssr` and makes Vite delete and
+re-bundle it. Measured while building this: a 53-file selection containing a traced child run went
+**16 files red** with `Cannot find module '…/deps_ssr/prom-client.js'`.
+
+⚠️ Under `isolate: true`, `globalThis` is reset between test files. That used to mean a multi-file
+traced run kept only the last file's counters; it no longer does, because each worker now flushes
+its own snapshot and `trace-report.mjs` sums them. The remaining reason to trace one file at a time
+is attribution — the merged report cannot tell you which file loaded what.
+
+The trace directory is **cleared at the start of every traced run** (in `trace-config.mts`), because
+the report sums every `*.json` it finds and stale snapshots from a previous run would silently
+double the numbers. Two traced runs must therefore not overlap; give one its own
+`TESTPERF_TRACE_DIR` if they must. Both the tracer and the report honour that variable.
 
 🔴 The counters flush from `afterAll`, and that is not a detail: `forks` KILLS its workers instead
 of letting them exit, so the `process.on('exit')` flush this started life with never ran. Under

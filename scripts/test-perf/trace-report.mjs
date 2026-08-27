@@ -5,9 +5,12 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const dir = path.join(repoRoot, '.test-perf/trace');
+// Must honour the same override `trace-setup.ts` writes to, or exporting it puts the snapshots
+// somewhere this tool then reports as "run a traced suite first" — the exact silent-zero this
+// tooling exists to avoid.
+const dir = process.env.TESTPERF_TRACE_DIR ?? path.join(repoRoot, '.test-perf/trace');
 if (!existsSync(dir)) {
-  console.error('no .test-perf/trace — run a traced suite first');
+  console.error(`no ${dir} — run a traced suite first`);
   process.exit(2);
 }
 
