@@ -25,7 +25,9 @@ interface StickerRevealStore {
    * "see my sticker" (Justin, 2026-08-24).
    *
    * While it is above zero the surface behaves exactly as if the toggle were on,
-   * including the count chip, and the chip does nothing when pressed.
+   * including the count chip — but the chip still works: pressing it sets
+   * `forcedDismissed` and hides them. A link may open the door; it may not hold
+   * it open against the viewer (Justin, 2026-08-27).
    *
    * 🔴 A COUNT, NOT A BOOLEAN, and the difference is a live bug rather than
    * defensiveness. Two `ImageDetail2` instances can be mounted at once — the
@@ -45,6 +47,14 @@ interface StickerRevealStore {
    * for as long as that subtree was mounted.
    */
   forced: number;
+  /**
+   * The viewer pressed the chip while `forced` was holding the reveal open, so
+   * the override is spent for this episode.
+   *
+   * Not persisted, and cleared when the last forced view leaves, so it scopes to
+   * the one link-driven visit rather than to the viewer's stored setting.
+   */
+  forcedDismissed: boolean;
   toggle: () => void;
   setRevealed: (revealed: boolean) => void;
   /** Claims the override for one view; the returned count is not for callers. */
@@ -58,16 +68,27 @@ export const useStickerRevealStore = create<StickerRevealStore>()(
     (set) => ({
       revealed: false,
       forced: 0,
-      // Inert while forced. The alternative is a chip that reads "on", turns the
-      // underlying flag off, and leaves the stickers exactly where they were —
-      // a control that reports having done something it did not do.
-      toggle: () => set((state) => (state.forced > 0 ? {} : { revealed: !state.revealed })),
+      forcedDismissed: false,
+      // The first press under a live override spends the override rather than
+      // flipping the stored flag beneath it, because flipping alone would leave
+      // the stickers exactly where they were — a control reporting it had done
+      // something it had not. Every press after that is an ordinary toggle.
+      toggle: () =>
+        set((state) =>
+          state.forced > 0 && !state.forcedDismissed
+            ? { forcedDismissed: true, revealed: false }
+            : { revealed: !state.revealed }
+        ),
       setRevealed: (revealed) => set({ revealed }),
       pushForced: () => set((state) => ({ forced: state.forced + 1 })),
       // Floored, so a stray release cannot take the override away from a view
       // that still holds one — the failure that would look like the boolean bug
       // coming back.
-      popForced: () => set((state) => ({ forced: Math.max(0, state.forced - 1) })),
+      popForced: () =>
+        set((state) => {
+          const forced = Math.max(0, state.forced - 1);
+          return forced > 0 ? { forced } : { forced, forcedDismissed: false };
+        }),
     }),
     {
       name: 'sticker-reveal',
@@ -86,7 +107,8 @@ export const useStickerRevealStore = create<StickerRevealStore>()(
  * What every surface should ask, rather than reading `revealed` directly: a
  * consumer that reads the stored flag alone renders nothing on a forced view.
  */
-export const stickersRevealed = (state: StickerRevealStore) => state.revealed || state.forced > 0;
+export const stickersRevealed = (state: StickerRevealStore) =>
+  state.revealed || (state.forced > 0 && !state.forcedDismissed);
 
 /**
  * Honours `?stickers=1` for as long as the view is mounted — see

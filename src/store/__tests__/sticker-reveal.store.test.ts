@@ -32,7 +32,7 @@ function mount(present: boolean) {
 
 describe('the reveal query param', () => {
   beforeEach(() => {
-    useStickerRevealStore.setState({ revealed: false, forced: 0 });
+    useStickerRevealStore.setState({ revealed: false, forced: 0, forcedDismissed: false });
   });
 
   const shown = () => stickersRevealed(useStickerRevealStore.getState());
@@ -98,21 +98,78 @@ describe('the reveal query param', () => {
   });
 
   /**
-   * The chip is inert while the link is forcing the reveal.
+   * 🔴 THE CHIP WINS OVER THE LINK. Do not restore the inert-while-forced
+   * toggle this replaced (Justin, 2026-08-27).
    *
-   * It reads as ON — `stickersRevealed` is what feeds it — so a toggle that
-   * flipped the stored flag underneath would leave the chip saying "on", the
-   * stickers still showing, and the viewer's actual setting silently changed by
-   * a press that appeared to do nothing.
+   * The link may open the door; it may not hold it open. The earlier design made
+   * the press a no-op so the chip could never lie about what it had done — but
+   * that left a viewer who followed a notification with a visible control that
+   * did nothing, and no way to put the overlay away short of a reload.
+   *
+   * The URL still says `stickers=1` afterwards and that is accepted, not an
+   * oversight: the address bar is not the control.
    */
-  it('does not let the chip flip the stored setting under a forced view', () => {
+  it('lets the chip hide stickers on a forced view', () => {
     const view = mount(true);
+    expect(shown()).toBe(true);
 
     useStickerRevealStore.getState().toggle();
 
-    expect(useStickerRevealStore.getState().revealed).toBe(false);
-    expect(shown()).toBe(true);
+    expect(shown()).toBe(false);
     view.unmount();
+  });
+
+  /**
+   * 🔴 THE COHORT MOST LIKELY TO BE LOOKING: someone who already had stickers on
+   * before the link arrived.
+   *
+   * Spending the override alone is not enough for them — `revealed` is still
+   * true underneath, so the selector keeps returning true and the press does
+   * nothing while the chip goes on reading "Hide". Dropping the `revealed: false`
+   * half of that branch reintroduces the inert chip for exactly these viewers,
+   * and every other test here starts from `revealed: false`, so this is the only
+   * one that can see it.
+   */
+  it('hides stickers on a forced view for a viewer who already had them on', () => {
+    useStickerRevealStore.getState().setRevealed(true);
+    const view = mount(true);
+    expect(shown()).toBe(true);
+
+    useStickerRevealStore.getState().toggle();
+
+    expect(shown()).toBe(false);
+    expect(useStickerRevealStore.getState().revealed).toBe(false);
+    view.unmount();
+  });
+
+  // A dismissed override stays dismissed for as long as the view holding it is
+  // there — otherwise the next re-render puts the stickers straight back.
+  it('keeps the reveal off while the forced view is still mounted', () => {
+    const view = mount(true);
+    useStickerRevealStore.getState().toggle();
+
+    expect(shown()).toBe(false);
+
+    // And an ordinary press still turns them back on afterwards.
+    useStickerRevealStore.getState().toggle();
+    expect(shown()).toBe(true);
+    expect(useStickerRevealStore.getState().revealed).toBe(true);
+
+    view.unmount();
+  });
+
+  // The dismissal belongs to the episode, not to the viewer: a later link must
+  // still be able to reveal.
+  it('forgets the dismissal once the last forced view leaves', () => {
+    const first = mount(true);
+    useStickerRevealStore.getState().toggle();
+    expect(shown()).toBe(false);
+    first.unmount();
+
+    const second = mount(true);
+
+    expect(shown()).toBe(true);
+    second.unmount();
   });
 
   /**
@@ -162,6 +219,7 @@ describe('the reveal query param', () => {
    */
   it('never writes the per-view override to storage', () => {
     useStickerRevealStore.getState().pushForced();
+    useStickerRevealStore.getState().toggle();
     useStickerRevealStore.getState().setRevealed(true);
 
     const stored = JSON.parse(localStorage.getItem('sticker-reveal') ?? '{}');
