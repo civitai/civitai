@@ -2,9 +2,14 @@
  * Installs the module-execution counters used by `trace-config.mts` and flushes them.
  *
  * Runs before the real setup file, so the counters exist by the time anything else is imported.
- * State hangs off `globalThis` deliberately: it has to survive the per-file module-registry reset
- * that isolation performs, or every file would report only its own modules and the per-worker
- * totals — the thing being measured — would be lost.
+ * State hangs off `globalThis` so a within-file `vi.resetModules()` cannot re-register the hooks or
+ * reset the counters mid-file.
+ *
+ * ⚠️ It does NOT accumulate across files, and an earlier version of this comment claimed it did.
+ * Measured on both pools: each test file gets a fresh registry (and on `forks` a fresh process), so
+ * each writes a snapshot naming only its own modules — 2 fixtures produced 2 disjoint snapshots on
+ * `threads` (one pid) and on `forks` (two pids). Per-run totals are correct because
+ * `trace-report.mjs` SUMS the snapshots, not because any one worker accumulates them.
  *
  * 🔴 `afterAll` is the load-bearing flush; the other two are backstops. Vitest's `forks` pool
  * KILLS its workers rather than letting them exit, so `process.on('exit')` never fires — under
@@ -17,7 +22,7 @@
 import { mkdirSync, writeFileSync } from 'fs';
 import path from 'path';
 import { afterAll } from 'vitest';
-import { resolveIntervalMs, snapshotFileName } from './trace-snapshot-name';
+import { resolveIntervalMs, resolveTraceDir, snapshotFileName } from './trace-snapshot-name';
 
 type Entry = { loads: number; selfMs: number; totalMs: number };
 
@@ -63,7 +68,10 @@ if (!g.__modTrace) {
   // Overridable so a test can point one run at a scratch directory instead of clobbering the
   // trace a developer is in the middle of reading.
   const flush = () => {
-    const dir = process.env.TESTPERF_TRACE_DIR ?? path.join(process.cwd(), '.test-perf/trace');
+    const dir = resolveTraceDir(
+      process.env.TESTPERF_TRACE_DIR,
+      path.join(process.cwd(), '.test-perf/trace')
+    );
     try {
       mkdirSync(dir, { recursive: true });
       const out: Record<string, Entry> = {};
@@ -78,10 +86,10 @@ if (!g.__modTrace) {
     }
   };
 
-  // The one that actually runs, and the reason this file changed. Registered once per worker (this
-  // whole block is behind a `!g.__modTrace` guard on a fresh `globalThis`), it fires once per test
-  // file — inside the worker, before the pool can kill it. Synchronous, because an async flush
-  // would not complete.
+  // The one that actually runs, and the reason this file changed. Registered once per tracer
+  // initialisation — which under isolation is once per test FILE — it fires at the end of that
+  // file, inside the worker, before the pool can kill it. Synchronous, because an async flush would
+  // not complete.
   afterAll(flush);
   // Backstop for a worker torn down by a real `process.exit()` rather than a signal.
   process.on('exit', flush);

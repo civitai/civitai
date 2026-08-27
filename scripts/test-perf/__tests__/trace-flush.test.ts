@@ -1,10 +1,26 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 
-import { resolveIntervalMs, SNAPSHOT_FILE_RE } from '../trace-snapshot-name';
+import {
+  clearStaleSnapshots,
+  DEFAULT_TRACE_INTERVAL_MS,
+  MAX_TRACE_INTERVAL_MS,
+  MIN_TRACE_INTERVAL_MS,
+  resolveIntervalMs,
+  resolveTraceDir,
+  SNAPSHOT_FILE_RE,
+} from '../trace-snapshot-name';
 
 /**
  * Regression tests for the module tracer (scripts/test-perf/trace-setup.ts + trace-config.mts).
@@ -104,18 +120,20 @@ describe('module tracer flush', () => {
     const traceDir = freshTraceDir();
 
     // The clear must remove this tool's snapshots and NOTHING else: TESTPERF_TRACE_DIR is
-    // caller-supplied and the README promises other JSON there is safe. Widening the predicate
-    // back to `*.json` passes every other assertion in this file, so without this line the
-    // promise is unguarded.
-    const foreign = join(traceDir, 'important-notes.json');
-    writeFileSync(foreign, '{"keep":true}');
+    // caller-supplied and the README promises other JSON there is safe. `.json.bak` is the case a
+    // partly-widened predicate lets through — dropping the `$` anchor still matches it, and an
+    // editor backup next to a caller's data is a real file to destroy.
+    // ⚠️ On its own this pair only says "these were not deleted", which is also true when the clear
+    // never runs at all; it is test 2 that proves the clear runs. Read the two together.
+    const foreign = [join(traceDir, 'important-notes.json'), join(traceDir, '1234-abcd.json.bak')];
+    for (const f of foreign) writeFileSync(f, '{"keep":true}');
 
     const run = runTraced({ traceDir, extraArgs: ['--max-workers=1'] });
-    expect(existsSync(foreign)).toBe(true);
-    // Positive control on the child: a run that collected nothing would leave an empty trace
-    // directory for a reason that has nothing to do with the flush.
+    // Positive control on the child first, so a failure below is attributable: a run that collected
+    // nothing would leave an empty trace directory for reasons unrelated to the flush.
     expect(run.stdout + run.stderr).toContain('1 passed');
     expect(run.status).toBe(0);
+    for (const f of foreign) expect(existsSync(f)).toBe(true);
 
     const { files, merged } = mergeSnapshots(traceDir);
     expect(files.length).toBeGreaterThan(0);
@@ -138,12 +156,16 @@ describe('module tracer flush', () => {
     expect(first).toBeGreaterThan(0);
 
     runTraced({ traceDir, extraArgs: ['--max-workers=1'] });
-    const second = mergeSnapshots(traceDir).merged[FIXTURE_MODULE]?.loads ?? 0;
+    const after = mergeSnapshots(traceDir);
+    const second = after.merged[FIXTURE_MODULE]?.loads ?? 0;
 
+    // Both halves: one snapshot on disk (the previous run's was cleared) AND an unchanged count.
+    // The count alone is also satisfied by a merge helper that overwrites instead of summing.
+    expect(after.files.length).toBe(1);
     expect(second).toBe(first);
   }, 240_000);
 
-  it('keeps every worker on a thread pool, where they all share one pid', () => {
+  it("keeps every file's snapshot on a thread pool, where they all share one pid", () => {
     // `forks` gives one process per file, so a bare `<pid>.json` is accidentally unique there and
     // this hazard is invisible. On `threads` every worker lives in ONE process — measured: under
     // a bare pid, N files collapse to ONE snapshot, i.e. every earlier file's counters lost to a
@@ -164,8 +186,21 @@ describe('module tracer flush', () => {
     // Assert the DATA survived rather than the filename shape: each fixture file is itself a
     // first-party module the tracer brackets, so every one of them must appear in the merged
     // result. An overwrite leaves only the last file's.
-    const { merged } = mergeSnapshots(traceDir);
+    const { files, merged } = mergeSnapshots(traceDir);
     for (const f of FIXTURES) expect(Object.keys(merged)).toContain(f);
+
+    // This is the only place two snapshots coexist, so it is the only place summing and
+    // overwriting differ: every file re-executes the shared setup closure, so a module common to
+    // both must merge to the SUM of its two counts. Without this, a merge helper that overwrites
+    // passes everything and quietly disarms the accumulation test above.
+    const perFile = files.map(
+      (f) =>
+        JSON.parse(readFileSync(join(traceDir, f), 'utf8')) as Record<string, { loads: number }>
+    );
+    expect(perFile).toHaveLength(2);
+    const shared = Object.keys(perFile[0]).filter((k) => k in perFile[1]);
+    expect(shared.length).toBeGreaterThan(0);
+    expect(merged[shared[0]].loads).toBe(perFile[0][shared[0]].loads + perFile[1][shared[0]].loads);
   }, 240_000);
 
   it('does not define a project named "unit"', () => {
@@ -183,20 +218,90 @@ describe('module tracer flush', () => {
     expect(run.stdout + run.stderr).toContain('No projects matched');
   }, 180_000);
 
-  // The interval backstop exists so a long run still leaves a snapshot; every wrong value makes it
-  // a 1ms synchronous write loop instead. Pinned directly rather than through a child run — the
-  // previous round called this "hard to pin", which was giving up early.
+  // The interval backstop exists so a long run still leaves a snapshot; every out-of-range value
+  // makes it a ~1ms synchronous write loop instead. Pinned directly rather than through a child
+  // run. 🔴 BOTH bounds matter and the upper one is the trap: setInterval stores its delay in a
+  // 32-bit signed int, so a "make it huge so it never fires" value is clamped to 1ms — measured,
+  // 1e10 fired 281 times in 300ms. An earlier version of this table asserted `1e10 -> 1e10` as
+  // correct and enshrined exactly that.
   it.each([
-    ['abc', 15000],
-    ['', 15000],
-    [undefined, 15000],
-    ['-5', 15000],
-    ['0', 15000],
-    ['0.5', 15000],
-    ['1e10', 1e10],
-    ['15s', 15000],
-    ['42', 42],
+    ['abc', DEFAULT_TRACE_INTERVAL_MS],
+    ['', DEFAULT_TRACE_INTERVAL_MS],
+    [undefined, DEFAULT_TRACE_INTERVAL_MS],
+    ['-5', DEFAULT_TRACE_INTERVAL_MS],
+    ['0', DEFAULT_TRACE_INTERVAL_MS],
+    ['0.5', DEFAULT_TRACE_INTERVAL_MS],
+    ['1', DEFAULT_TRACE_INTERVAL_MS],
+    ['15s', DEFAULT_TRACE_INTERVAL_MS],
+    [String(MIN_TRACE_INTERVAL_MS - 1), DEFAULT_TRACE_INTERVAL_MS],
+    [String(MIN_TRACE_INTERVAL_MS), MIN_TRACE_INTERVAL_MS],
+    ['3600000', 3600000],
+    [String(MAX_TRACE_INTERVAL_MS), MAX_TRACE_INTERVAL_MS],
+    [String(MAX_TRACE_INTERVAL_MS + 1), DEFAULT_TRACE_INTERVAL_MS],
+    ['1e10', DEFAULT_TRACE_INTERVAL_MS],
+    ['Infinity', DEFAULT_TRACE_INTERVAL_MS],
   ])('resolveIntervalMs(%o) -> %o', (raw, expected) => {
     expect(resolveIntervalMs(raw as string | undefined)).toBe(expected);
+  });
+
+  // `??` keeps an exported-but-empty string, and `mkdirSync('')` throws — which means no snapshot
+  // is ever written and the report says "run a traced suite first". That is the dead-instrument
+  // failure this whole change exists to remove, reachable by `export TESTPERF_TRACE_DIR=`.
+  it.each([
+    ['', '/fallback'],
+    ['   ', '/fallback'],
+    [undefined, '/fallback'],
+    ['/tmp/somewhere', '/tmp/somewhere'],
+  ])('resolveTraceDir(%o) -> %o', (raw, expected) => {
+    expect(resolveTraceDir(raw as string | undefined, '/fallback')).toBe(expected);
+  });
+
+  it('clears every stale snapshot even when one entry cannot be removed', () => {
+    // The per-entry catch is the difference between 0 and 5 survivors, and whatever survives is
+    // summed into the next run's numbers. A catch around the whole loop passes every other test in
+    // this file, so this is the only thing standing between that regression and green.
+    const dir = freshTraceDir();
+    for (const n of ['1111-aaaa.json', '2222-bbbb.json', '3333-cccc.json']) {
+      writeFileSync(join(dir, n), '{}');
+    }
+    // A DIRECTORY matching the pattern: rmSync without `recursive` throws EISDIR on it, and it is
+    // created BEFORE the others alphabetically so a loop-level catch abandons the rest.
+    mkdirSync(join(dir, '0000-dddd.json'));
+    writeFileSync(join(dir, 'keep-me.json'), '{}');
+
+    const warned: string[] = [];
+    clearStaleSnapshots(dir, (what) => warned.push(what));
+
+    const left = readdirSync(dir).sort();
+    expect(left).toEqual(['0000-dddd.json', 'keep-me.json']);
+    expect(warned).toHaveLength(1);
+    expect(warned[0]).toContain('0000-dddd.json');
+  });
+
+  it('reports nothing rather than NaN when a foreign json sits in the trace dir', () => {
+    // The tracer deliberately leaves foreign files alone, so the reader meets them. Summing one in
+    // makes every total NaN — a report that looks like a measurement. Measured before the fix:
+    // `20 distinct modules | NaN executions | NaNs self time`.
+    const dir = freshTraceDir();
+    writeFileSync(
+      join(dir, '4242-eeee.json'),
+      JSON.stringify({ 'a/b.ts': { loads: 2, selfMs: 1, totalMs: 3 } })
+    );
+    writeFileSync(join(dir, 'important-notes.json'), JSON.stringify({ keep: true }));
+
+    const report = spawnSync(
+      process.execPath,
+      [resolve(repoRoot, 'scripts/test-perf/trace-report.mjs')],
+      {
+        cwd: repoRoot,
+        encoding: 'utf8',
+        env: { ...childEnv, TESTPERF_TRACE_DIR: dir },
+      }
+    );
+
+    expect(report.status).toBe(0);
+    expect(report.stdout).not.toContain('NaN');
+    expect(report.stdout).toContain('1 snapshots');
+    expect(report.stdout).toContain('2 executions');
   });
 });

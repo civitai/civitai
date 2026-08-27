@@ -22,9 +22,8 @@
  */
 import base from '../../vitest.config.mts';
 import path from 'path';
-import { existsSync, readdirSync, rmSync } from 'fs';
 import { fileURLToPath } from 'url';
-import { SNAPSHOT_FILE_RE } from './trace-snapshot-name';
+import { clearStaleSnapshots, resolveTraceDir } from './trace-snapshot-name';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -51,23 +50,11 @@ function warnStaleSnapshot(what: string, err: unknown) {
   );
 }
 
-const traceDir = process.env.TESTPERF_TRACE_DIR ?? path.join(repoRoot, '.test-perf/trace');
-try {
-  if (existsSync(traceDir))
-    for (const f of readdirSync(traceDir)) {
-      if (!SNAPSHOT_FILE_RE.test(f)) continue;
-      // Per ENTRY, not around the loop: one undeletable snapshot (EACCES, or a directory that
-      // happens to match) must not abandon every other stale file, because what survives is then
-      // summed into this run's numbers.
-      try {
-        rmSync(path.join(traceDir, f), { force: true });
-      } catch (err) {
-        warnStaleSnapshot(f, err);
-      }
-    }
-} catch (err) {
-  warnStaleSnapshot(traceDir, err);
-}
+const traceDir = resolveTraceDir(
+  process.env.TESTPERF_TRACE_DIR,
+  path.join(repoRoot, '.test-perf/trace')
+);
+clearStaleSnapshots(traceDir, warnStaleSnapshot);
 
 const tracer = {
   name: 'civitai:module-trace',
