@@ -777,6 +777,21 @@ describe('source suggestions stay inside the viewer', () => {
     const names = dbMock.dbRead.user.findMany.mock.calls[0][0];
     expect(names.where.username).toBeUndefined();
     expect(names.orderBy).toBeUndefined();
+
+    // The half that costs something: the RELATIONSHIP read must stay at the listing
+    // window too. Reading it with `trimmed` instead of `term` produces an identical
+    // name query while paying the full 5,000-row read this gate exists to avoid.
+    const follows = dbMock.dbRead.userEngagement.findMany.mock.calls[0][0];
+    expect(follows.take).toBe(500);
+
+    // The boundary, in the same test: two characters must SEARCH. Without this the
+    // constant is only pinned to (1, 4] — raising it to 3 or 4 silently turns the
+    // shortest terms people actually type into a recency list, and every other query
+    // in this file is four characters, so nothing else would notice.
+    await getHubSourceSuggestions({ userId: 5, type: UserHubSourceType.User, query: 'so' });
+
+    const searched = dbMock.dbRead.user.findMany.mock.calls[1][0];
+    expect(searched.where.username).toEqual({ contains: 'so', mode: 'insensitive' });
   });
 
   it('hands the WHOLE window to the name query, not a page of it', async () => {
@@ -813,9 +828,16 @@ describe('source suggestions stay inside the viewer', () => {
         type: UserHubSourceType.Collection,
         query: 'stu',
       });
-      const searching = dbMock.dbRead.collectionContributor.findMany.mock.calls[1][0].take;
+      const searchCall = dbMock.dbRead.collectionContributor.findMany.mock.calls[1][0];
 
-      expect(searching).toBeGreaterThan(listing);
+      expect(searchCall.take).toBeGreaterThan(listing);
+      // `nulls: 'last'` because the column is nullable and Postgres sorts DESC as
+      // NULLS FIRST — without it the window fills with rows carrying no date at all,
+      // which is the opposite of the recency cut this claims to be.
+      expect(searchCall.orderBy).toEqual({ createdAt: { sort: 'desc', nulls: 'last' } });
+      // And the whole window must reach the names query here too, the same way it
+      // does on the creators arm.
+      expect(dbMock.dbRead.collection.findMany.mock.calls[1][0].where.id.in).toEqual([3]);
     }
   );
 
@@ -906,6 +928,10 @@ describe('source suggestions stay inside the viewer', () => {
     // the planner walk every bookmark and every Notify row.
     expect(own.where.name).toBeUndefined();
     expect(engaged.where.model).toBeUndefined();
+    // The shape `ModelEngagement_notify_userId_createdAt_idx` was built to serve.
+    // Changing this to any other column silently makes that index unusable and the
+    // arm goes back to reading every row — 250,491 of them on the largest account.
+    expect(engaged.orderBy).toEqual({ createdAt: 'desc' });
     const names = dbMock.dbRead.model.findMany.mock.calls[1][0];
     expect(names.where.id).toEqual({ in: [1, 2, 3] });
     expect(names.where.name).toEqual({ contains: 'nova', mode: 'insensitive' });
