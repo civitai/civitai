@@ -40,10 +40,16 @@ export function VerifyEmailBanner() {
           </span>
           <Button
             size="compact-xs"
-            variant="white"
+            variant="filled"
+            color="dark.9"
+            className="text-yellow-5 hover:text-yellow-4"
             onClick={() => resend.mutate()}
             disabled={resend.isPending}
-            leftSection={resend.isPending ? <Loader size={12} /> : undefined}
+            leftSection={
+              resend.isPending ? (
+                <Loader size={12} color="var(--mantine-color-yellow-5)" />
+              ) : undefined
+            }
           >
             Resend email
           </Button>
