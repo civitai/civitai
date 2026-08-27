@@ -1,13 +1,22 @@
 /**
- * Installs the module-execution counters used by `trace-config.mts` and flushes them on exit.
+ * Installs the module-execution counters used by `trace-config.mts` and flushes them.
  *
  * Runs before the real setup file, so the counters exist by the time anything else is imported.
  * State hangs off `globalThis` deliberately: it has to survive the per-file module-registry reset
  * that isolation performs, or every file would report only its own modules and the per-worker
  * totals — the thing being measured — would be lost.
+ *
+ * 🔴 `afterAll` is the load-bearing flush; the other two are backstops. Vitest's `forks` pool
+ * KILLS its workers rather than letting them exit, so `process.on('exit')` never fires — under
+ * Vitest 4.1.11 a traced run wrote nothing at all, and `trace-report.mjs` answered
+ * "no .test-perf/trace — run a traced suite first", which reads as operator error rather than as
+ * a dead instrument. The 15s interval did not cover it either: the README's own workflow is
+ * "trace one file at a time", which is a 5–10s run. Measured across four runs while diagnosing
+ * this: four `afterAll` snapshots, zero exit snapshots.
  */
 import { mkdirSync, writeFileSync } from 'fs';
 import path from 'path';
+import { afterAll } from 'vitest';
 
 type Entry = { loads: number; selfMs: number; totalMs: number };
 
@@ -40,8 +49,10 @@ if (!g.__modTrace) {
     stats.set(id, e);
   };
 
+  // Overridable so a test can point one run at a scratch directory instead of clobbering the
+  // trace a developer is in the middle of reading.
   const flush = () => {
-    const dir = path.join(process.cwd(), '.test-perf/trace');
+    const dir = process.env.TESTPERF_TRACE_DIR ?? path.join(process.cwd(), '.test-perf/trace');
     try {
       mkdirSync(dir, { recursive: true });
       const out: Record<string, Entry> = {};
@@ -51,10 +62,14 @@ if (!g.__modTrace) {
     } catch {}
   };
 
-  // `exit` only — an async flush would not complete, and vitest tears workers down abruptly.
+  // The one that actually runs. Fires per test file, inside the worker, before the pool can kill
+  // it — so a snapshot exists no matter how the worker dies afterwards. Synchronous, because an
+  // async flush would not complete.
+  afterAll(flush);
+  // Backstop for a worker torn down by a real `process.exit()` rather than a signal.
   process.on('exit', flush);
-  // Vitest reuses a worker across files, so also flush periodically: a worker killed rather than
-  // exited still leaves the last snapshot behind.
+  // Backstop for a long run: vitest reuses a worker across files, so a worker killed mid-file
+  // still leaves the last periodic snapshot behind.
   const t = setInterval(flush, 15000);
   if (typeof t.unref === 'function') t.unref();
 }

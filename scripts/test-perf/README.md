@@ -118,6 +118,19 @@ node scripts/test-perf/trace-report.mjs
 ⚠️ Under `isolate: true`, `globalThis` is reset between test files, so a multi-file traced run keeps
 only the last file's counters. Trace one file at a time, or trace with `--no-isolate`.
 
+🔴 The counters flush from `afterAll`, and that is not a detail: `forks` KILLS its workers instead
+of letting them exit, so the `process.on('exit')` flush this started life with never ran. Under
+Vitest 4.1.11 the workflow above wrote **nothing at all** — no `.test-perf/trace/`, and
+`trace-report.mjs` answering *"run a traced suite first"*, which reads as operator error rather
+than as a dead instrument. The 15s interval did not cover it either, because "trace one file at a
+time" is a 5–10s run. `scripts/test-perf/__tests__/trace-flush.test.ts` spawns a real traced run
+and fails if no snapshot lands, so it cannot go quiet again; `TESTPERF_TRACE_DIR` redirects the
+snapshots so that test cannot clobber a trace you are reading.
+
+**This is the tracer the graph model is validated against** (see "Rebuild the dashboard" above), so
+while it was dead that validation was unreproducible — treat any trace-vs-graph claim older than
+this note as unverified.
+
 ## Per-worker union
 
 ```bash
