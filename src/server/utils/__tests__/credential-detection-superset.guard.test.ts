@@ -87,6 +87,15 @@ const NON_CREDENTIAL_MODULES: Record<string, string> = {
   'env/other.ts': 'environment config; reads nothing off the request',
 };
 
+/**
+ * Workspace packages the entry point imports. Not scanned (they are whole
+ * packages), so each must be declared with a reason — fail-closed, like modules.
+ */
+const NON_CREDENTIAL_PACKAGES: Record<string, string> = {
+  '@civitai/auth':
+    'owns the cookie-NAME vocabulary (sessionCookieName / legacySessionCookieName) and the legacy cookie decode; no `req` crosses this boundary — the session path reads req.cookies itself and passes only a string',
+};
+
 /** Request HEADER reads on the session path that are not credentials. */
 const NON_CREDENTIAL_HEADERS: Record<string, string> = {
   host: 'response-side only — the cookie domain for maybeRollHubCookie / maybeUpgradeLegacySession, never read to identify a caller',
@@ -149,6 +158,25 @@ function literalConsts(src: string): Map<string, string> {
   return seen;
 }
 
+/** Split a destructuring pattern on TOP-LEVEL commas (nested braces intact). */
+function splitTopLevel(inner: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let cur = '';
+  for (const ch of inner) {
+    if (ch === '{' || ch === '[' || ch === '(') depth++;
+    else if (ch === '}' || ch === ']' || ch === ')') depth--;
+    if (ch === ',' && depth === 0) {
+      parts.push(cur);
+      cur = '';
+      continue;
+    }
+    cur += ch;
+  }
+  if (cur.trim()) parts.push(cur);
+  return parts;
+}
+
 /** Classify one bracket-expression body into a name, or a sentinel. */
 function classifyBracket(inner: string, consts: Map<string, string>): string {
   const t = inner.trim();
@@ -160,13 +188,17 @@ function classifyBracket(inner: string, consts: Map<string, string>): string {
 }
 
 /** Names read off `req.<bag>` in ONE file, by any spelling this parse can see. */
-function extractReadsIn(src: string, bag: 'headers' | 'query' | 'cookies'): string[] {
+function extractReadsIn(
+  src: string,
+  bag: 'headers' | 'query' | 'cookies',
+  opts: { applyExemptions?: boolean } = {}
+): string[] {
   const names = new Set<string>();
   const consts = literalConsts(src);
   const B = `req\\.${bag}`;
 
   // req.x.name / req.x?.name
-  for (const m of src.matchAll(new RegExp(`\\b${B}\\s*\\??\\.\\s*([A-Za-z][\\w]*)`, 'g')))
+  for (const m of src.matchAll(new RegExp(`\\b${B}\\s*\\??\\.\\s*([A-Za-z_$][\\w$]*)`, 'g')))
     names.add(m[1]);
 
   // req.x[<anything>] — the WHOLE expression, then classified. Matching only
@@ -182,18 +214,44 @@ function extractReadsIn(src: string, bag: 'headers' | 'query' | 'cookies'): stri
     names.add(call ? call[1] : classifyBracket(inner, consts));
   }
 
-  // const { authorization, 'x-api-key': alias } = req.x
+  // Destructuring, via a balanced-brace scan backwards from `= req.<bag>`.
   //
-  // 🔴 Anchored on the DECLARATION KEYWORD. `\{([^}]*)\}` alone cannot cross a
-  // `}`, so it anchored on whichever `{` had the pattern's `}` as its first —
-  // in practice the enclosing FUNCTION BODY brace — and extracted the leading
-  // tokens of the body ("authorization", "host", "if") while missing the real
-  // name entirely. It then told the maintainer to exempt `if`, which would have
-  // gone green with the credential read still invisible.
-  for (const m of src.matchAll(
-    new RegExp(`\\b(?:const|let|var)\\s*\\{([^{}]*)\\}\\s*=\\s*${B}\\b`, 'g')
-  )) {
-    for (const part of m[1].split(',')) {
+  // 🔴 A regex cannot do this. `\{([^}]*)\}` anchored on the enclosing FUNCTION
+  // BODY brace and reported a fabricated name; anchoring on the declaration
+  // keyword fixed that and silently dropped the keyword-less assignment form.
+  // And every shape a flat pattern cannot express — a type annotation on the
+  // left, a default containing braces, a nested pattern — was failing OPEN,
+  // while the bracket axis beside it failed closed. Scan, and emit a sentinel
+  // for anything unparseable.
+  // The negative lookahead is load-bearing: `= req.cookies?.[helper()]` is an
+  // ordinary READ, not an alias. Without it every such read was misread as the
+  // bag escaping and produced a false sentinel on the real source.
+  for (const m of src.matchAll(new RegExp(`=\\s*${B}\\s*(?![.?\\[])`, 'g'))) {
+    const before = src.slice(0, m.index ?? 0).trimEnd();
+    const lastBrace = before.lastIndexOf('}');
+    const tail = lastBrace >= 0 ? before.slice(lastBrace + 1).trim() : null;
+    // Allow a type annotation between the pattern and the `=`.
+    const isPattern = tail !== null && (tail === '' || /^:[^=]*$/.test(tail));
+    if (!isPattern) {
+      // `const h = req.headers` — the bag ESCAPES into a variable and every
+      // later read through it is invisible. Fail closed rather than pretend.
+      names.add(`${UNRESOLVABLE}:aliased-${bag}`);
+      continue;
+    }
+    let depth = 0;
+    let i = lastBrace;
+    for (; i >= 0; i--) {
+      if (before[i] === '}') depth++;
+      else if (before[i] === '{') {
+        depth--;
+        if (depth === 0) break;
+      }
+    }
+    if (i < 0) {
+      names.add(`${UNRESOLVABLE}:unbalanced-pattern`);
+      continue;
+    }
+    for (const part of splitTopLevel(before.slice(i + 1, lastBrace))) {
       const t = part.trim();
       if (!t || t.startsWith('...')) continue;
       const quoted = t.match(/^['"]([^'"]+)['"]\s*:/);
@@ -206,6 +264,7 @@ function extractReadsIn(src: string, bag: 'headers' | 'query' | 'cookies'): stri
     }
   }
 
+  if (opts.applyExemptions === false) return [...names];
   const exempt =
     bag === 'headers'
       ? NON_CREDENTIAL_HEADERS
@@ -213,6 +272,14 @@ function extractReadsIn(src: string, bag: 'headers' | 'query' | 'cookies'): stri
       ? NON_CREDENTIAL_QUERY
       : NON_CREDENTIAL_COOKIES;
   return [...names].filter((n) => !isExempt(exempt, n));
+}
+
+/** Every name the session path reads on `bag`, BEFORE exemptions are applied. */
+function extractReadsRaw(bag: 'headers' | 'query' | 'cookies'): string[] {
+  const out = new Set<string>();
+  for (const { src } of sessionPathSources())
+    for (const n of extractReadsIn(src, bag, { applyExemptions: false })) out.add(n);
+  return [...out];
 }
 
 /** Union across the scanned files, extracting each SEPARATELY. */
@@ -230,28 +297,54 @@ function extractQueryReads(): string[] {
   return [...out].filter((n) => !isExempt(NON_CREDENTIAL_QUERY, n));
 }
 
-/** Modules a source file imports, relative (`./x`) or aliased (`~/server/x`). */
-function moduleImports(rel: string): string[] {
+/**
+ * Modules a source file depends on: `import … from`, `export … from`, and
+ * side-effect `import '…'`.
+ *
+ * 🔴 `export … from` is a STATIC, EXECUTED dependency and belongs here. A
+ * previous version matched a bare `from '…'`, caught it by accident, and a
+ * narrowing to `import … from` silently dropped it — a re-export of a
+ * credential-reading module became invisible. That regression was introduced by
+ * the fix for the `~/` gap, which is the third time in this file's history that
+ * a fix opened the next hole. Widen deliberately, and re-measure.
+ *
+ * Workspace packages (`@civitai/*`) are dependencies of this repo's own source,
+ * NOT third-party — an earlier comment calling them "not our source" was simply
+ * wrong. They are not scanned (they are whole packages), so they must be
+ * declared in NON_CREDENTIAL_PACKAGES with a reason instead of ignored.
+ */
+function moduleImports(rel: string): { local: string[]; packages: string[] } {
   const src = readSource(rel);
   const dir = resolve(SRC, rel, '..');
-  const out = new Set<string>();
-  // Value imports only: `import type` cannot carry a runtime credential read.
-  for (const m of src.matchAll(/import\s+(?!type\s)[^;]*?from\s+['"]([^'"]+)['"]/g)) {
-    const spec = m[1];
+  const local = new Set<string>();
+  const packages = new Set<string>();
+
+  const specs: string[] = [];
+  // import/export … from '…' — `type` forms carry no runtime read.
+  for (const m of src.matchAll(/\b(?:import|export)\s+(?!type\s)[^;]*?from\s+['"]([^'"]+)['"]/g))
+    specs.push(m[1]);
+  // side-effect: import '…'
+  for (const m of src.matchAll(/\bimport\s+['"]([^'"]+)['"]/g)) specs.push(m[1]);
+
+  for (const spec of specs) {
+    if (spec.startsWith('@civitai/')) {
+      packages.add(spec);
+      continue;
+    }
     const abs = spec.startsWith('~/')
       ? resolve(SRC, spec.slice(2))
       : spec.startsWith('.')
       ? resolve(dir, spec)
       : null;
-    if (!abs) continue; // a package, not our source
+    if (!abs) continue; // genuine third-party
     for (const cand of [`${abs}.ts`, `${abs}.tsx`, `${abs}/index.ts`]) {
       if (existsSync(cand)) {
-        out.add(cand.slice(SRC.length + 1));
+        local.add(cand.slice(SRC.length + 1));
         break;
       }
     }
   }
-  return [...out];
+  return { local: [...local], packages: [...packages] };
 }
 
 /**
@@ -344,9 +437,9 @@ describe('credential detection is a superset of the session layer', () => {
   it('the import derivation is not empty (positive control)', () => {
     // Gutting moduleImports to return [] left the scope test green — every other
     // derivation here had a positive control and that one did not.
-    const imports = moduleImports(ENTRY);
-    expect(imports).toContain('server/auth/bearer-token.ts');
-    expect(imports).toContain('server/auth/session-client.ts');
+    const { local } = moduleImports(ENTRY);
+    expect(local).toContain('server/auth/bearer-token.ts');
+    expect(local).toContain('server/auth/session-client.ts');
   });
 
   it('sees every notation it claims to', () => {
@@ -445,15 +538,102 @@ describe('credential detection is a superset of the session layer', () => {
   it('scans every module the session entry point imports', () => {
     // Both spellings: `~/server/…` is this repo's dominant style, and an earlier
     // version resolved only `./…`, so the LIKELY refactor was the uncaught one.
-    const unscanned = moduleImports(ENTRY).filter(
+    const { local, packages } = moduleImports(ENTRY);
+    const unscanned = local.filter(
       (f) => !SESSION_PATH_FILES.includes(f) && !isExempt(NON_CREDENTIAL_MODULES, f)
     );
+    const undeclaredPackages = packages.filter((q) => !isExempt(NON_CREDENTIAL_PACKAGES, q));
+    expect(
+      undeclaredPackages,
+      `${ENTRY} imports these workspace packages, which are not scanned and not declared: ` +
+        `[${undeclaredPackages.join(', ')}]. They are this repo's own source, not third-party — ` +
+        `declare each in NON_CREDENTIAL_PACKAGES with a reason.`
+    ).toEqual([]);
     expect(
       unscanned,
       `${ENTRY} imports these modules, which are neither scanned for credential reads nor ` +
         `declared non-credential: [${unscanned.join(', ')}]. A credential read in one of them ` +
         `is invisible here. Add it to SESSION_PATH_FILES, or to NON_CREDENTIAL_MODULES with a reason.`
     ).toEqual([]);
+  });
+
+  it('no exemption is STALE — every declared entry must still be a real read', () => {
+    // 🔴 A non-empty derivation cannot detect a dead exemption, though a comment
+    // here once claimed it did. Measured: adding a bogus module or header name
+    // to an exemption map left the suite green. A stale entry is evidence the
+    // derivation's output was never read, and it silently widens the exemption
+    // surface.
+    const { local, packages } = moduleImports(ENTRY);
+    const staleModules = Object.keys(NON_CREDENTIAL_MODULES).filter((k) => !local.includes(k));
+    const stalePackages = Object.keys(NON_CREDENTIAL_PACKAGES).filter((k) => !packages.includes(k));
+    const staleHeaders = Object.keys(NON_CREDENTIAL_HEADERS).filter(
+      (k) => !extractReadsRaw('headers').includes(k)
+    );
+    const staleQuery = Object.keys(NON_CREDENTIAL_QUERY).filter(
+      (k) => !extractReadsRaw('query').includes(k)
+    );
+    const staleCookies = Object.keys(NON_CREDENTIAL_COOKIES).filter(
+      (k) => !extractReadsRaw('cookies').includes(k)
+    );
+    expect(
+      { staleModules, stalePackages, staleHeaders, staleQuery, staleCookies },
+      'these exemptions no longer match anything the session path reads — remove them'
+    ).toEqual({
+      staleModules: [],
+      stalePackages: [],
+      staleHeaders: [],
+      staleQuery: [],
+      staleCookies: [],
+    });
+  });
+
+  it('sees a re-export as a dependency (regression)', () => {
+    // `export … from` is a static, executed dependency. A previous version
+    // caught it by accident with a bare `from '…'` match, and narrowing to
+    // `import … from` silently dropped it — a re-exported credential-reading
+    // module became invisible.
+    const src = "export { qPeek } from './audit-quarantine';\nimport './side-effect';";
+    // Parse the same way moduleImports does, on a fixture rather than the tree.
+    const specs = [
+      ...[...src.matchAll(/\b(?:import|export)\s+(?!type\s)[^;]*?from\s+['"]([^'"]+)['"]/g)].map(
+        (m) => m[1]
+      ),
+      ...[...src.matchAll(/\bimport\s+['"]([^'"]+)['"]/g)].map((m) => m[1]),
+    ];
+    expect(specs).toContain('./audit-quarantine');
+    expect(specs).toContain('./side-effect');
+  });
+
+  it('destructuring fails CLOSED on shapes it cannot parse', () => {
+    // The bracket axis failed closed while this one failed OPEN — a type
+    // annotation, a brace-containing default, a nested pattern and an aliased
+    // bag all passed silently.
+    expect(extractReadsIn("const { 'x-a': c }: any = req.headers;", 'headers')).toContain('x-a');
+    expect(extractReadsIn("const { 'x-b': c = {} } = req.headers;", 'headers')).toContain('x-b');
+    expect(extractReadsIn("const { 'x-c': { d } } = req.headers as any;", 'headers')).toContain(
+      'x-c'
+    );
+    // The keyword-less assignment form.
+    expect(extractReadsIn("({ 'x-d': c } = req.headers as any);", 'headers')).toContain('x-d');
+    // An ordinary read is NOT an alias — this distinction produced a false
+    // sentinel on real source when the lookahead was missing.
+    expect(
+      extractReadsIn('const t = req.cookies?.[sessionCookieName()];', 'cookies').some(
+        isUnresolvable
+      ),
+      'a normal bracket read must not be mistaken for an aliased bag'
+    ).toBe(false);
+    // Aliasing the bag hides every later read — that must be a sentinel.
+    expect(
+      extractReadsIn("const h = req.headers;\nconst t = h['x-hidden'];", 'headers').some(
+        isUnresolvable
+      ),
+      'an aliased bag must fail closed'
+    ).toBe(true);
+  });
+
+  it('sees a leading-underscore property name', () => {
+    expect(extractReadsIn('const t = req.query?._apitoken;', 'query')).toContain('_apitoken');
   });
 
   // ── The relationship ───────────────────────────────────────────────────────
