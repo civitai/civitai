@@ -13,6 +13,7 @@ import {
   getPendingStickerPlacementsSchema,
   getRemixGallerySchema,
   getRemixGalleryFreeEligibilitySchema,
+  getRemixSourcesForImageSchema,
   getRemixGalleryVisibilitySchema,
   getRemixGalleryCardSummariesSchema,
   getStickerPlacementDetailSchema,
@@ -66,6 +67,7 @@ import {
   getPendingRemixGallerySubmissions,
   getRemixGallery,
   getRemixGalleryFreeEligibility,
+  getRemixSourcesForImage,
   getRemixGalleryVisibility,
   getRemixGalleryCardSummaries,
   retractRemixGallerySubmission,
@@ -441,6 +443,12 @@ export const placementRouter = router({
   getRemixGalleryFreeEligibility: protectedProcedure
     .input(getRemixGalleryFreeEligibilitySchema)
     .query(({ input, ctx }) => getRemixGalleryFreeEligibility({ ...input, placerId: ctx.user.id })),
+  // `placerId` from the session, never from input: this answers "which galleries
+  // can THIS image go to", and an input-supplied id would answer it about
+  // somebody else's image.
+  getRemixSourcesForImage: protectedProcedure
+    .input(getRemixSourcesForImageSchema)
+    .query(({ input, ctx }) => getRemixSourcesForImage({ ...input, placerId: ctx.user.id })),
 
   /**
    * Not flag-gated, for the same reason `actOnStickers` isn't: turning the flag

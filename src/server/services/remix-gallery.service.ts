@@ -1712,6 +1712,144 @@ export async function getRemixGalleryVisibility({
  * answering "was this image generated from that one" for arbitrary ids would
  * turn the endpoint into an oracle for other people's generation inputs.
  */
+/**
+ * The galleries one of your own images could be submitted to, resolved from its
+ * own provenance.
+ *
+ * The inverse of every other read on this surface, which starts from a host and
+ * asks about candidate submissions. The post editor knows only the image it just
+ * uploaded, so it needs to go the other way.
+ *
+ * Sources come from `sanitizeProvenance`'s ids and never from anything the
+ * caller sends. That is the same rule the free gate relies on — a submitter who
+ * could name their own hosts could name a host they never remixed, and be
+ * offered a free submission into it.
+ *
+ * Measured 2026-08-27: every remix in a 24h prod sample had exactly one source
+ * (101 of 101), so this returns a list because `sourceImageIds` is one, not
+ * because two is a case anyone has seen.
+ */
+export async function getRemixSourcesForImage({
+  imageId,
+  placerId,
+}: {
+  imageId: number;
+  placerId: number;
+}) {
+  const [image] = await dbRead.$queryRaw<
+    { userId: number; sourceImageIds: number[] | null; remixOfId: number | null }[]
+  >`
+    SELECT i."userId",
+           (i.meta -> 'extra' ->> 'remixOfId')::int AS "remixOfId",
+           ${sourceImageIdsSql()} AS "sourceImageIds"
+    FROM "Image" i
+    WHERE i.id = ${imageId}
+  `;
+
+  // Not an error. The post editor asks this for every image in a post, and most
+  // images are not remixes — 0.2% of on-site generations carried provenance in a
+  // 24h prod sample. An empty list is the ordinary answer.
+  if (!image) return [];
+  if (image.userId !== placerId) return [];
+
+  // Both provenance fields. `remixOfId` is the old standard and `sourceImageIds`
+  // the new one (Justin, 2026-08-27), and the old one is STILL BEING WRITTEN —
+  // measured the same day, 28 old against 39 new over 8 hours, interleaved by
+  // the hour with no downward trend, and zero images carrying both. So this is
+  // not a legacy-data allowance that can be deleted once history ages out.
+  //
+  // Reading either field alone silently ignores about half of all remixes, and
+  // it is invisible in testing because the half you kept still works.
+  //
+  // They are not interchangeable for money. `sourceImageIds` is what
+  // `sanitizeProvenance` wrote after verifying the workflow, and it is the only
+  // thing the free gate may key on; `remixOfId` is a weaker signal and buys a
+  // paid submission only. That distinction is enforced below and again by the
+  // mutation, which re-derives it rather than trusting this.
+  const verifiedIds = new Set(image.sourceImageIds ?? []);
+  const hostIds = [
+    ...new Set([...verifiedIds, ...(image.remixOfId != null ? [image.remixOfId] : [])]),
+  ].filter((id) => id !== imageId);
+  if (!hostIds.length) return [];
+
+  const [spaces, hosts, existing, allowance] = await Promise.all([
+    Promise.all(
+      hostIds.map((targetId) =>
+        resolvePlacementSpaceFor({ surface: SURFACE, targetType: TARGET_TYPE, targetId })
+      )
+    ),
+    // `hostIsShowable` rather than a bare select: a host under review or taken
+    // down cannot show a gallery, and offering it here would both fail on
+    // submit and disclose that state to someone who only remixed the image.
+    dbRead.$queryRaw<{ id: number; url: string; nsfwLevel: number; showable: boolean }[]>`
+      SELECT i.id, i.url, i."nsfwLevel", ${hostIsShowable()} AS showable
+      FROM "Image" i
+      WHERE i.id IN (${Prisma.join(hostIds)})
+    `,
+    dbRead.placement.findMany({
+      where: {
+        surface: SURFACE,
+        targetType: TARGET_TYPE,
+        targetId: { in: hostIds },
+        status: { in: ['pending', 'approved'] },
+        data: { path: ['imageId'], equals: imageId },
+      },
+      select: { targetId: true, status: true },
+    }),
+    getFreePlacementAllowance({ placerId }),
+  ]);
+
+  const hostById = new Map(hosts.map((host) => [host.id, host]));
+  const submittedByHost = new Map(existing.map((row) => [row.targetId, row.status]));
+
+  const usedHere = await Promise.all(
+    hostIds.map((targetId) =>
+      hasUsedFreePlacementOn({ placerId, surface: SURFACE, targetType: TARGET_TYPE, targetId })
+    )
+  );
+
+  return hostIds.map((hostImageId, index) => {
+    const space = spaces[index];
+    const host = hostById.get(hostImageId);
+    const submitted = submittedByHost.get(hostImageId) ?? null;
+
+    // Free needs the VERIFIED half. A `remixOfId`-only source is a real remix
+    // we cannot prove, so it is offered at the price like any other submission —
+    // the mutation refuses `free` on it regardless of what this says, and the
+    // card must agree with that refusal rather than offer something that fails.
+    const verified = verifiedIds.has(hostImageId);
+    const freeAvailable =
+      verified && (space.freeSlots ?? 0) > 0 && allowance.remaining > 0 && !usedHere[index];
+
+    return {
+      hostImageId,
+      /** Absent when the host cannot be shown; the card renders a placeholder. */
+      url: host?.showable ? host.url : null,
+      nsfwLevel: host?.showable ? host.nsfwLevel : 0,
+      ownerId: space.ownerId,
+      /**
+       * Why this source cannot be submitted to, or `null` when it can. One
+       * reason rather than a set of booleans: the card shows one sentence, and
+       * deciding which of several to show is exactly the logic that drifts
+       * between the card and the mutation.
+       */
+      unavailable: !host?.showable
+        ? ('unavailable' as const)
+        : space.ownerId === placerId
+        ? ('own' as const)
+        : space.mode !== 'review'
+        ? ('closed' as const)
+        : submitted
+        ? ('submitted' as const)
+        : null,
+      price: space.price ?? null,
+      freeAvailable,
+      /** Drives the copy: only a verified remix can be offered free. */
+      verified,
+    };
+  });
+}
+
 export async function getRemixGalleryFreeEligibility({
   hostImageId,
   placerId,

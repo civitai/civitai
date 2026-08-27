@@ -153,6 +153,7 @@ const {
   getRemixGalleryCardSummaries,
   getRemixGalleryVisibility,
   getRemixGalleryFreeEligibility,
+  getRemixSourcesForImage,
   getMyRemixGallerySubmissions,
   getPendingRemixGallerySubmissions,
   declineOutOfBandRemixGallerySubmissions,
@@ -1329,6 +1330,133 @@ describe('an approved submission counts toward the host image buzz counter', () 
  * without the owner ever being offered the choice — so "did we skip one" is the
  * only question these ask.
  */
+/**
+ * The post editor asks this about an image it just uploaded, so it runs the
+ * provenance lookup backwards: from one of your own images to the galleries it
+ * could go to.
+ *
+ * 🔴 The reason these exist at all. `remixOfId` (the OLD provenance standard) and
+ * `sourceImageIds` (the NEW one) are DISJOINT populations and BOTH are still
+ * being written — measured on prod 2026-08-27, 13,782 images in a 3h window
+ * carried 12 `remixOfId`, 15 non-empty `sourceImageIds`, and ZERO both. A
+ * resolver reading either field alone typechecks, looks correct, and silently
+ * returns nothing for about half of all remixes, because the half it keeps still
+ * works. That is the failure these pin.
+ */
+describe('getRemixSourcesForImage', () => {
+  const MY_IMAGE = 900;
+  const OLD_HOST = 901;
+  const NEW_HOST = 902;
+
+  const respondWith = ({
+    remixOfId,
+    sourceImageIds,
+    userId = PLACER,
+  }: {
+    remixOfId: number | null;
+    sourceImageIds: number[];
+    userId?: number;
+  }) =>
+    queryRaw.mockImplementation(async (...args: unknown[]) => {
+      // Only the OUTER template strings, deliberately. The paging block below
+      // has to interleave strings with interpolated fragments because its
+      // assertions are about a keyset that lives in a fragment; the
+      // discriminator here — the literal `remixOfId` column alias — is in the
+      // outer strings, so the simpler read is sufficient AND cannot drift from
+      // that helper by being a partial copy of it.
+      const [strings] = args as [string[], ...unknown[]];
+      const sql = Array.isArray(strings) ? strings.join(' ') : '';
+      // The image's own provenance row, distinguished from the host lookup by
+      // the column only it selects.
+      if (sql.includes('remixOfId')) return [{ userId, remixOfId, sourceImageIds }];
+      return [
+        { id: OLD_HOST, url: 'old.jpg', nsfwLevel: 1, showable: true },
+        { id: NEW_HOST, url: 'new.jpg', nsfwLevel: 1, showable: true },
+      ];
+    });
+
+  beforeEach(() => {
+    placementFindMany.mockResolvedValue([]);
+    resolvePlacementSpaceFor.mockResolvedValue({
+      ownerId: OWNER,
+      mode: 'review',
+      price: PRICE,
+      freeSlots: 1,
+      settings: {},
+    });
+    getFreePlacementAllowance.mockResolvedValue({ remaining: 5 });
+    hasUsedFreePlacementOn.mockResolvedValue(false);
+  });
+
+  it('finds the host behind the OLD provenance standard, not just the new one', async () => {
+    respondWith({ remixOfId: OLD_HOST, sourceImageIds: [] });
+
+    const sources = await getRemixSourcesForImage({ imageId: MY_IMAGE, placerId: PLACER });
+
+    // The whole point: reading `sourceImageIds` alone returns [] here, which is
+    // indistinguishable from "not a remix" and is what shipped in the first cut.
+    expect(sources.map((source) => source.hostImageId)).toEqual([OLD_HOST]);
+  });
+
+  it('finds the host behind the NEW provenance standard', async () => {
+    respondWith({ remixOfId: null, sourceImageIds: [NEW_HOST] });
+
+    const sources = await getRemixSourcesForImage({ imageId: MY_IMAGE, placerId: PLACER });
+
+    expect(sources.map((source) => source.hostImageId)).toEqual([NEW_HOST]);
+  });
+
+  it('offers free ONLY for a host the server itself verified', async () => {
+    // Both fields populated at once. Prod has never produced this — it is the
+    // arrangement that separates the two rules in one assertion, so a change
+    // that starts treating the old standard as verified fails here rather than
+    // in a Buzz ledger.
+    respondWith({ remixOfId: OLD_HOST, sourceImageIds: [NEW_HOST] });
+
+    const sources = await getRemixSourcesForImage({ imageId: MY_IMAGE, placerId: PLACER });
+    const byHost = new Map(sources.map((source) => [source.hostImageId, source]));
+
+    expect(byHost.get(NEW_HOST)?.freeAvailable, 'a verified source must be free-eligible').toBe(
+      true
+    );
+    expect(
+      byHost.get(OLD_HOST)?.freeAvailable,
+      'an old-standard source must NOT be free-eligible — the mutation refuses it'
+    ).toBe(false);
+    // Asserted beside `freeAvailable` because they are two different facts and a
+    // future edit could satisfy one while breaking the other: `verified` drives
+    // the card's copy, `freeAvailable` drives what it charges.
+    expect(byHost.get(OLD_HOST)?.verified).toBe(false);
+    expect(byHost.get(NEW_HOST)?.verified).toBe(true);
+  });
+
+  it('returns nothing for an image that is not yours', async () => {
+    respondWith({ remixOfId: OLD_HOST, sourceImageIds: [NEW_HOST], userId: PLACER + 1 });
+
+    await expect(getRemixSourcesForImage({ imageId: MY_IMAGE, placerId: PLACER })).resolves.toEqual(
+      []
+    );
+  });
+
+  it('marks a gallery that is not accepting submissions rather than dropping it', async () => {
+    // Justin's call 2026-08-27: a closed source is SHOWN and labelled, not
+    // hidden. Hiding it makes a source the remixer knows they used look like a
+    // bug in our provenance.
+    respondWith({ remixOfId: null, sourceImageIds: [NEW_HOST] });
+    resolvePlacementSpaceFor.mockResolvedValue({
+      ownerId: OWNER,
+      mode: 'off',
+      price: PRICE,
+      freeSlots: 1,
+      settings: {},
+    });
+
+    const [source] = await getRemixSourcesForImage({ imageId: MY_IMAGE, placerId: PLACER });
+
+    expect(source.unavailable).toBe('closed');
+  });
+});
+
 describe('getPendingRemixGallerySubmissions paging', () => {
   const queueRow = (id: number, imageId: number, createdAt: string) => ({
     id,

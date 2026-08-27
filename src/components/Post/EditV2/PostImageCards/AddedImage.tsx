@@ -84,6 +84,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { getDisplayName, getModelUrl } from '~/utils/string-helpers';
 import { queryClient, trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import { RemixSourcesCard } from '~/components/RemixGallery/RemixSourcesCard';
 import { CustomCard } from './CustomCard';
 
 // #region [types]
@@ -883,6 +884,10 @@ function EditDetail() {
                 )}
               </CustomCard>
             )}
+
+            {/* Renders nothing unless this image carries remix provenance, which
+                is the ordinary case — so no empty section on a normal post. */}
+            <RemixSourcesCard imageId={image.id} />
 
             {!resources?.length && !unmatchedResources.length && !hasLegacyUnmatched && (
               <CustomCard className="flex flex-col gap-2">
