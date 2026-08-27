@@ -325,11 +325,17 @@ export const automaticMetadataProcessor = createMetadataProcessor({
         if (!fullname) break;
         const [, name, hash] = fullname.match(automaticNameHash) ?? [];
 
+        // The extension writes `AddNet Weight A ${i}` (unet) / `B ${i}` (text encoder).
+        // A NaN weight fails imageMetaSchema validation, which discards the ENTIRE
+        // metadata object — so a missing key must yield no weight, never NaN.
+        const weight = parseFloat(
+          (metadata[`AddNet Weight A ${i}`] ?? metadata[`AddNet Weight ${i}`]) as string
+        );
         resources.push({
           type: (metadata[`AddNet Module ${i}`] as string).toLowerCase(),
           name,
           hash,
-          weight: parseFloat(metadata[`AddNet Weight ${i}`] as string),
+          weight: Number.isFinite(weight) ? weight : undefined,
         });
         i++;
       }
