@@ -107,11 +107,36 @@ async function main() {
   // the store refused all land here identically. Naming any one of those as the
   // cause would be a guess printed in the voice of a measurement — and the
   // operator's next move differs for each (nothing, re-run, fix the lane).
-  // The per-row reason is in Axiom under `cosmetic-phash-sweep`.
+  //
+  // Two earlier drafts of the line below each asserted a cause the count cannot
+  // support — first "permanently unhashable", then "the cause is not recorded".
+  // Both were wrong, in opposite directions, so the coverage is spelt out here:
+  //
+  //   LOGGED as `perceptual-hash`      a relative media url (this is a script, so
+  //                                    NEXT_PUBLIC_IMAGE_LOCATION can be unset),
+  //                                    and any network error or abort
+  //                                    (orchestrator.service.ts:284, :322)
+  //   LOGGED as `cosmetic-phash-sweep` the store refused the hash — a width that
+  //                                    disagrees with the lane
+  //   NOT LOGGED AT ALL                a workflow that simply did not succeed
+  //                                    (orchestrator.service.ts:318) — which is
+  //                                    both the 30s-wait timeout and dead artwork
+  //
+  // So the operator gets records for some rows and nothing for others, and the
+  // two that are silent are the two most likely. Say that, rather than implying
+  // Axiom explains everything or that it explains nothing. Re-running is the only
+  // thing that separates a timeout from dead artwork, and it must be after the
+  // 24h stamp expires — 24 hours, not "tomorrow": an early re-run finds an empty
+  // predicate and prints a clean zero, which reads as all-clear.
   console.log(`[drain] done — ${hashed} hashed, ${failed} not stored this run, ${batches} batches`);
   if (failed > 0)
     console.log(
-      `[drain] ${failed} row(s) are suppressed for 24h. Check Axiom 'cosmetic-phash-sweep' for the per-row reason before assuming they are dead artwork; a timed-out row will hash on a later run.`
+      `[drain] ${failed} row(s) failed and are suppressed for the next 24h; this count cannot tell ` +
+        `dead artwork from a timeout from a hash the store refused. Re-run once 24h have elapsed ` +
+        `(sooner and every row is still suppressed, so it reports a clean zero): a timeout hashes ` +
+        `then. A row failing repeatedly is dead artwork OR a lane/env problem — check Axiom ` +
+        `'perceptual-hash' and 'cosmetic-phash-sweep', which cover the error paths but not a ` +
+        `workflow that never succeeded.`
     );
 }
 
