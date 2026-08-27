@@ -48,16 +48,27 @@
 import { sweepCosmeticPerceptualHashes } from '~/server/jobs/cosmetic-phash-sweep';
 import { COSMETIC_PHASH_LANE } from '~/server/services/cosmetic-phash.service';
 
-// Larger than the cron's 200/5 because nothing else is competing for the run.
-// Concurrency is the orchestrator's limit, not ours — 10 measured ~10.5 hashes/s.
-const BATCH_SIZE = 500;
-const CONCURRENCY = 10;
+// The cron's own numbers, deliberately, rather than something faster. The speed
+// here comes from removing the 15-minute gap between ticks, not from working a
+// tick harder — the corpus drains in a few minutes either way.
+//
+// Raising concurrency would actively defeat the point. `getPerceptualHash`
+// returns `undefined` both for a real failure and for a workflow still running
+// at its 30s wait, and the sweep cannot tell those apart: either way the row is
+// counted `failed` and stamped `pHashFailedAt`, which suppresses it for 24h.
+// More concurrency means more timeouts, so a script whose whole purpose is
+// shortening the window a row spends outside the lane would EXTEND it to a day
+// for some slice of the corpus — and then print "done", because a stamped row
+// drops out of the predicate and the next batch comes back empty.
+const BATCH_SIZE = 200;
+const CONCURRENCY = 5;
 
 // A stop, not a target. The loop ends when a batch comes back empty; this only
 // bounds a predicate that never drains — a bug in the sweep, or artwork being
 // created faster than it is hashed — so the script exits loudly instead of
-// hashing forever.
-const MAX_BATCHES = 40;
+// hashing forever. 20 × 200 is ~2x the current corpus: enough slack to finish,
+// small enough that a runaway is caught before it has spent thousands of hashes.
+const MAX_BATCHES = 20;
 
 async function main() {
   console.log(`[drain] lane ${COSMETIC_PHASH_LANE.version} (${COSMETIC_PHASH_LANE.hexLength} hex)`);
@@ -90,13 +101,18 @@ async function main() {
     );
   }
 
-  // `failed` is expected to be non-zero and is not an error: artwork whose CDN
-  // object no longer resolves can never be hashed, and those rows are stamped so
-  // they stop starving the ones behind them. Printed rather than swallowed so the
-  // count is compared against the known-dead set instead of being discovered later.
-  console.log(
-    `[drain] done — ${hashed} hashed, ${failed} permanently unhashable, ${batches} batches`
-  );
+  // Say what the number IS, not what caused it. `failed` counts rows the sweep
+  // could not store on this run, and it cannot distinguish between them: dead CDN
+  // artwork, an orchestrator still working when the 30s wait elapsed, and a hash
+  // the store refused all land here identically. Naming any one of those as the
+  // cause would be a guess printed in the voice of a measurement — and the
+  // operator's next move differs for each (nothing, re-run, fix the lane).
+  // The per-row reason is in Axiom under `cosmetic-phash-sweep`.
+  console.log(`[drain] done — ${hashed} hashed, ${failed} not stored this run, ${batches} batches`);
+  if (failed > 0)
+    console.log(
+      `[drain] ${failed} row(s) are suppressed for 24h. Check Axiom 'cosmetic-phash-sweep' for the per-row reason before assuming they are dead artwork; a timed-out row will hash on a later run.`
+    );
 }
 
 main()

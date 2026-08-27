@@ -24,9 +24,12 @@ import type { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma
  * **Raising this is the upgrade path.** When the orchestrator offers a wider
  * hash, change this constant; the sweep drains the corpus on its own schedule
  * and matching starts using the new lane as each row lands. All three fields move
- * together — `hexLength` is the one that fails quietly, since a stale value pads
- * every new hash to the wrong width and `hammingDistanceHex` then throws on a
- * comparison the panel reports as an error rather than a distance.
+ * together, and `hexLength` is the one to get right: a stale value now fails at
+ * the STORE, because `normalizeCosmeticHashHex` refuses a hash wider than the
+ * lane rather than leaving it unpadded. Nothing is written, every row counts as
+ * failed, and the panel reports `no-hash` across the board — loud, but only if
+ * someone reads the sweep's per-row log, since the tick's `failed` tally looks
+ * the same as a run of dead artwork.
  *
  * Why 256 rather than the 64 this ran at until 2026-08-27: width was the whole
  * problem. Over the 1,719 hashable cosmetics, the two badges reported as
