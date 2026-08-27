@@ -3,6 +3,7 @@ import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 import type * as TrpcModule from '~/utils/trpc';
+import type * as ImageUtils from '~/components/Image/image.utils';
 
 /**
  * The three branches of the submit card that decide what somebody is CHARGED or
@@ -29,7 +30,14 @@ import type * as TrpcModule from '~/utils/trpc';
  */
 
 const HOST = 74;
-const MINE = 85;
+// 🔴 HOISTED, and it has to be. `MINE` is read inside the `~/components/Image/image.utils`
+// factory below, and that factory is async (it spreads the real module). An async factory
+// resolves during module registration, BEFORE this file's body runs, so a plain
+// `const MINE = 85` is still in its temporal dead zone when the factory reads it —
+// vitest reports that as the generic "make sure there are no top level variables inside",
+// which names the symptom and not this line. A synchronous factory does not hit it, which
+// is why the plain const worked until the spread was added.
+const MINE = vi.hoisted(() => 85);
 const PRICE = 700;
 
 const mocks = vi.hoisted(() => ({
@@ -118,7 +126,19 @@ vi.mock('~/components/Dialog/DialogProvider', () => ({
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 52 }) }));
 vi.mock('~/components/Buzz/useAvailableBuzz', () => ({ useAvailableBuzz: () => ['yellow'] }));
 
-vi.mock('~/components/Image/image.utils', () => ({
+// Spread the real module first, for exactly the reason the `~/utils/trpc` mock
+// above already states — and this mock is the one that proved it. #4450 added
+// `ownContentPickerFilters` to image.utils and had remix-gallery.utils import it;
+// this factory listed one key, so the import failed the WHOLE FILE at collection
+// with `does not provide an export named 'ownContentPickerFilters'` and the suite
+// reported `Tests no tests` — no failing assertion to point at.
+//
+// 🔴 Do NOT "fix" a recurrence by adding the missing key. That resets the drift
+// clock rather than stopping it: the next export added to this module breaks the
+// file again, the same way, and the error still names something this test never
+// mentions. The spread is what makes the mock survive the module growing.
+vi.mock('~/components/Image/image.utils', async (importOriginal) => ({
+  ...(await importOriginal<typeof ImageUtils>()),
   useQueryImages: () => ({
     images: [{ id: MINE, nsfwLevel: 1, url: 'x', width: 1, height: 1, type: 'image' }],
     isLoading: false,
