@@ -16,11 +16,14 @@ import { IconAlertTriangle, IconBox, IconThumbUp } from '@tabler/icons-react';
 import { keepPreviousData } from '@tanstack/react-query';
 import { Fragment, useMemo, useState } from 'react';
 import type { OffsitePendingRow } from '~/components/Apps/OffsiteReviewQueue';
+import { MessageAppOwnerModal } from '~/components/Apps/MessageAppOwnerModal';
 import { ModQueryError, isModAuthzError } from '~/components/Apps/ModQuerySurface';
 import { ReasonGatedActionModal } from '~/components/Apps/ReasonGatedActionModal';
 import { listingStatusChip } from '~/components/Apps/appListingModerationView';
 import { LISTING_KIND_LABELS } from '~/components/Apps/listingKindLabels';
 import {
+  actionOpensOwnerMessage,
+  actionRequiresReason,
   effectiveModerationStatus,
   isDestructiveListingModAction,
   listingKindChip,
@@ -58,7 +61,13 @@ import { trpc } from '~/utils/trpc';
  *   - pending  → Review (opens the existing off-site review modal to approve/reject),
  *   - approved → Reset to pending (off-site) + Hide (delist, dual-kind),
  *   - removed  → Relist (dual-kind) + Claim + Purge (off-site; Purge is destructive),
- *   - draft/rejected → read-only (unless a pending request offers Review).
+ *   - draft/rejected → no LIFECYCLE action (unless a pending request offers Review).
+ *
+ * Plus one action on EVERY row, of every status and both kinds: Message owner, which
+ * opens `MessageAppOwnerModal` and calls `appListings.messageAppOwner`. It is the only
+ * action here that changes no listing state, and it is unconditional because the proc
+ * has no status branch — see `listingModActions`. It is also why a draft/rejected row
+ * no longer renders a dead `—`.
  *
  * Dark + mod-only: the whole /apps/review page requires `isAppReviewer`, the query
  * is `moderatorProcedure`, and a query error (non-mod / flag off) renders nothing.
@@ -151,6 +160,11 @@ export function AppListingsModerationTable({
     action: ListingModAction;
     row: ModerationListingRow;
   } | null>(null);
+  // The owner-message composer is a SEPARATE piece of state from `pendingAction`: it
+  // opens its own modal (different fields, different floors — see
+  // `MessageAppOwnerModal`), and keeping the two apart means a lifecycle action can
+  // never render the message form's gate, or vice versa.
+  const [messageRow, setMessageRow] = useState<ModerationListingRow | null>(null);
 
   // A filter/search change = a NEW result set → reset pagination SYNCHRONOUSLY in the
   // onChange handler (batched with the filter state change in the same React event) so
@@ -203,9 +217,20 @@ export function AppListingsModerationTable({
   const nextCursor = query.data?.nextCursor ?? null;
 
   // Merge the current page into the accumulated set (dedupe by id — defensive), then
-  // drop on-site + pending rows: those live in the actionable on-site review FIFO queue
-  // (with a Review action); here they'd render as a dead-end `—`-action row. Off-site
-  // pending stays (it carries the Review action).
+  // drop on-site + pending rows: those live in the actionable on-site review FIFO
+  // queue, and listing them here too would put one item in two moderator surfaces with
+  // different action sets. Off-site pending stays (it carries the Review action).
+  //
+  // 🔴 THE OLD REASON FOR THIS FILTER IS NO LONGER TRUE, and the gap it leaves is real.
+  // It used to read "here they'd render as a dead-end `—`-action row" — that stopped
+  // being the case the moment `message-owner` became unconditional, since such a row now
+  // offers Message owner. So this table cannot message the owner of an on-site listing
+  // while it is awaiting review, which is one of the states a developer most needs to
+  // hear from a moderator in. Deliberately NOT widened here: which rows a live
+  // moderator surface lists is a product decision about surface duplication, not a
+  // should-fix on the composer. Closing it means giving the on-site review queue its own
+  // composer entry point (which also means adding that queue to the mount ledger in
+  // `__tests__/appModeratorMessageForm.callSites.test.ts`).
   const items = useMemo(() => {
     const merged = !cursor
       ? page
@@ -263,7 +288,26 @@ export function AppListingsModerationTable({
       if (reviewable) openOffsiteReview(reviewable, invalidate);
       return;
     }
-    setPendingAction({ action, row });
+    if (actionOpensOwnerMessage(action)) {
+      setMessageRow(row);
+      return;
+    }
+    // 🔴 BRANCHED ON, not a fall-through. `actionRequiresReason` is the third and last
+    // route out of this function, so a future action it answers `false` for opens
+    // nothing — loud IN THE TEST AND TYPE TIERS, where a missing route-table property is a
+    // `pnpm typecheck` failure and an unrouted action fails the jointly-total sweep. On
+    // SCREEN it is a dead button: no toast, no error, no menu close. That is still the
+    // better of the two, because a bare `setPendingAction(...)` here is the quiet one: an
+    // action with no `reason` of its own lands in the reason-gated modal and calls its
+    // proc with an input the schema rejects, the mis-route `message-owner` was carved
+    // out of.
+    //
+    // 🔴 The BRANCH alone did not deliver that, and this comment used to say it did. Both
+    // predicates now read a single exhaustive `Record<ListingModAction, …>` route table,
+    // so an action absent from it answers `false` to BOTH and reaches nothing; while
+    // `actionRequiresReason` was written as a negation, a new union member defaulted to
+    // `true` and landed here regardless of how carefully this branch was written.
+    if (actionRequiresReason(action)) setPendingAction({ action, row });
   };
 
   const renderTable = (groups: SubmissionGroup<ModerationListingRow>[]) => (
@@ -351,6 +395,10 @@ export function AppListingsModerationTable({
                     </Group>
                   </Table.Td>
                   <Table.Td>
+                    {/* The `—` branch is now UNREACHABLE from live data — `Message
+                        owner` is offered on every row — and is kept only as the total
+                        fallback for an empty action set. Do not read it as evidence
+                        that a dead-end row still exists. */}
                     {actions.length === 0 ? (
                       <Text size="xs" c="dimmed">
                         —
@@ -487,6 +535,24 @@ export function AppListingsModerationTable({
         pending={pendingAction}
         onClose={() => setPendingAction(null)}
         onDone={invalidate}
+      />
+
+      {/* 🔴 NO `onSent={invalidate}`, and that is measured rather than assumed:
+          `messageAppOwner` writes an `AppListingModerationEvent` and changes NO listing
+          state, and `ModerationListingRow` carries no moderation-event field for the
+          new row to differ in. `invalidate` also RESETS PAGING, so refetching here
+          would throw away every page the moderator had loaded in exchange for a
+          byte-identical result. If this row ever gains a "last moderator action"
+          column, wire the callback then. */}
+      {/* 🔴 NO OWNER IS PASSED, and the composer's prop shape refuses one. `row.owner`
+          is `AppListing.userId`'s denormalised copy; for an on-site listing the proc
+          resolves the backing block's owner instead, so handing that copy to a composer
+          that presented it as the delivery target would let a moderator address the
+          wrong developer. The Owner COLUMN above still shows it — as a column, not as a
+          promise about where this message goes. */}
+      <MessageAppOwnerModal
+        listing={messageRow ? { appListingId: messageRow.id, slug: messageRow.slug } : null}
+        onClose={() => setMessageRow(null)}
       />
     </Stack>
   );

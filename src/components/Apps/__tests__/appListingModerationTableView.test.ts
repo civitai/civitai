@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  actionOpensOwnerMessage,
   actionRequiresReason,
+  ALL_LISTING_MOD_ACTIONS,
   effectiveModerationStatus,
   isDestructiveListingModAction,
   listingKindChip,
   listingModActionLabel,
   listingModActions,
+  type ListingModAction,
 } from '~/components/Apps/appListingModerationTableView';
 
 const pendingReq = {
@@ -25,37 +28,37 @@ const pendingReq = {
  */
 
 describe('listingModActions — off-site rows', () => {
-  it('pending (with a pending request) → Review only', () => {
-    expect(listingModActions({ status: 'pending', kind: 'offsite', hasPendingRequest: true })).toEqual(
-      ['review']
-    );
+  it('pending (with a pending request) → Review + Message owner', () => {
+    expect(
+      listingModActions({ status: 'pending', kind: 'offsite', hasPendingRequest: true })
+    ).toEqual(['review', 'message-owner']);
   });
 
   it('approved → Reset to pending + Hide', () => {
     expect(
       listingModActions({ status: 'approved', kind: 'offsite', hasPendingRequest: false })
-    ).toEqual(['reset-to-pending', 'hide']);
+    ).toEqual(['message-owner', 'reset-to-pending', 'hide']);
   });
 
   it('removed → Relist + Claim + Purge', () => {
     expect(
       listingModActions({ status: 'removed', kind: 'offsite', hasPendingRequest: false })
-    ).toEqual(['relist', 'claim', 'purge']);
+    ).toEqual(['message-owner', 'relist', 'claim', 'purge']);
   });
 
   it('draft → no lifecycle action (unless a pending request offers Review)', () => {
-    expect(listingModActions({ status: 'draft', kind: 'offsite', hasPendingRequest: false })).toEqual(
-      []
-    );
-    expect(listingModActions({ status: 'draft', kind: 'offsite', hasPendingRequest: true })).toEqual(
-      ['review']
-    );
+    expect(
+      listingModActions({ status: 'draft', kind: 'offsite', hasPendingRequest: false })
+    ).toEqual(['message-owner']);
+    expect(
+      listingModActions({ status: 'draft', kind: 'offsite', hasPendingRequest: true })
+    ).toEqual(['review', 'message-owner']);
   });
 
-  it('rejected → read-only', () => {
+  it('rejected → read-only apart from Message owner', () => {
     expect(
       listingModActions({ status: 'rejected', kind: 'offsite', hasPendingRequest: false })
-    ).toEqual([]);
+    ).toEqual(['message-owner']);
   });
 });
 
@@ -63,44 +66,169 @@ describe('listingModActions — on-site rows hide the off-site-only actions', ()
   it('approved on-site → Reset to pending + Hide (reset is now dual-kind, #3165)', () => {
     expect(
       listingModActions({ status: 'approved', kind: 'onsite', hasPendingRequest: false })
-    ).toEqual(['reset-to-pending', 'hide']);
+    ).toEqual(['message-owner', 'reset-to-pending', 'hide']);
   });
 
   it('removed on-site → Relist ONLY (no claim / purge)', () => {
     expect(
       listingModActions({ status: 'removed', kind: 'onsite', hasPendingRequest: false })
-    ).toEqual(['relist']);
+    ).toEqual(['message-owner', 'relist']);
   });
 
   it('pending on-site → NO Review (approve/reject is off-site only; onsite uses its own queue)', () => {
     expect(
       listingModActions({ status: 'pending', kind: 'onsite', hasPendingRequest: true })
-    ).toEqual([]);
+    ).toEqual(['message-owner']);
   });
 });
+
+/**
+ * 🔴 `message-owner` IS THE ONE UNCONDITIONAL ACTION, and this block is the guard on
+ * that claim rather than a restatement of the cases above.
+ *
+ * The proc it fronts (`appListings.messageAppOwner`) resolves its recipient through
+ * `resolveListingAccess`, which branches on KIND and never on STATUS — so there is no
+ * row in this table on which the button would 4xx. The whole reason the feature was
+ * unreachable for its first release is that no surface offered it; a narrowing that
+ * silently drops it from (say) rejected rows re-creates that, and it is exactly the
+ * kind of regression the per-status cases above would NOT catch, because each of them
+ * only pins the status it names.
+ *
+ * The cross product is enumerated, not sampled.
+ */
+describe('listingModActions — the owner-message action is offered on EVERY row', () => {
+  const STATUSES = ['draft', 'pending', 'approved', 'rejected', 'removed'] as const;
+  const KINDS = ['onsite', 'offsite'] as const;
+
+  it('appears for every status × kind × pending-request combination', () => {
+    const missing: string[] = [];
+    for (const status of STATUSES) {
+      for (const kind of KINDS) {
+        for (const hasPendingRequest of [true, false]) {
+          const actions = listingModActions({ status, kind, hasPendingRequest });
+          if (!actions.includes('message-owner')) {
+            missing.push(`${kind}/${status}/pending=${hasPendingRequest}`);
+          }
+        }
+      }
+    }
+    // Positive control on the enumeration itself: 5 statuses × 2 kinds × 2 = 20 cases
+    // were actually walked, so an empty `missing` is a real sweep and not an empty loop.
+    expect(STATUSES.length * KINDS.length * 2).toBe(20);
+    expect(missing).toEqual([]);
+  });
+
+  it('is never the LAST action when a destructive one is present (purge stays rightmost)', () => {
+    const removed = listingModActions({
+      status: 'removed',
+      kind: 'offsite',
+      hasPendingRequest: false,
+    });
+    // Positive control: this row really does carry the destructive action.
+    expect(removed).toContain('purge');
+    expect(removed.at(-1)).toBe('purge');
+    expect(removed.indexOf('message-owner')).toBeLessThan(removed.indexOf('purge'));
+  });
+
+  it('never appears twice on one row', () => {
+    for (const status of STATUSES) {
+      const actions = listingModActions({ status, kind: 'offsite', hasPendingRequest: true });
+      expect(actions.filter((a) => a === 'message-owner')).toHaveLength(1);
+    }
+  });
+});
+
+/**
+ * The full action vocabulary, IMPORTED rather than re-spelled. Every `describe` below
+ * iterates THIS.
+ *
+ * 🔴 IT IS DERIVED FROM THE PRODUCTION ROUTE TABLE, AND THE EARLIER HAND-MAINTAINED
+ * ARRAY IS WHY. That array's docstring claimed "a member added to `ListingModAction`
+ * without a label / a routing decision fails here" — the label half was real (an
+ * exhaustive switch), the ROUTING half was not: `actionRequiresReason` was a negation,
+ * so a new member answered `true` by default, landed in the reason-gated modal, and
+ * every assertion below still passed. Measured: adding a member to the union left all 46
+ * unit tests green. Now a new member must appear in `LISTING_MOD_ROUTES` to exist here
+ * at all — it cannot compile otherwise — and once it does, the sweeps below walk it.
+ */
+const ALL_ACTIONS: ListingModAction[] = ALL_LISTING_MOD_ACTIONS;
 
 describe('action metadata', () => {
   it('only purge is destructive', () => {
     expect(isDestructiveListingModAction('purge')).toBe(true);
-    for (const a of ['review', 'reset-to-pending', 'hide', 'relist', 'claim'] as const) {
+    for (const a of [
+      'review',
+      'message-owner',
+      'reset-to-pending',
+      'hide',
+      'relist',
+      'claim',
+    ] as const) {
       expect(isDestructiveListingModAction(a)).toBe(false);
     }
   });
 
-  it('every action except review requires a reason', () => {
+  /**
+   * 🔴 `message-owner` is NOT reason-gated, and that is a claim about the SURFACE it
+   * opens: `MessageAppOwnerModal` has no `reason` field at all — it has a subject and a
+   * body with their own floors.
+   *
+   * 🔴 Stated precisely, because the looser version of this sentence was WRONG.
+   * `openAction` checks `actionOpensOwnerMessage` BEFORE this predicate, so answering
+   * `true` here would NOT on its own send `message-owner` to `ListingModActionModal` —
+   * it would put the action in two routers at once, which the exclusivity test below is
+   * what actually forbids. The mis-route this pair prevents is the one that arrives via
+   * a NEW action: an action neither router claims must open nothing, and an action this
+   * one claims must genuinely carry a `reason`, or `ListingModActionModal` calls its
+   * proc with an input the schema rejects.
+   */
+  it('every mutating action except message-owner requires a reason; review requires none', () => {
     expect(actionRequiresReason('review')).toBe(false);
+    expect(actionRequiresReason('message-owner')).toBe(false);
     for (const a of ['reset-to-pending', 'hide', 'relist', 'claim', 'purge'] as const) {
       expect(actionRequiresReason(a)).toBe(true);
     }
   });
 
+  /**
+   * The derived vocabulary really is the whole union. Without this, every sweep that
+   * iterates `ALL_ACTIONS` would pass vacuously if the route table were ever emptied —
+   * the positive control on the derivation itself, not on any one predicate.
+   */
+  it('the vocabulary derived from the route table is the whole union', () => {
+    expect([...ALL_ACTIONS].sort()).toEqual(
+      ['claim', 'hide', 'message-owner', 'purge', 'relist', 'reset-to-pending', 'review'].sort()
+    );
+  });
+
+  /**
+   * The two modal routers are MUTUALLY EXCLUSIVE and together they must not leave a
+   * mutating action unrouted. `review` is the deliberate third case (it opens the
+   * publish-request review modal, which is neither of these).
+   */
+  it('exactly one action opens the owner-message composer, and it opens no other modal', () => {
+    const opensMessage = ALL_ACTIONS.filter(actionOpensOwnerMessage);
+    expect(opensMessage).toEqual(['message-owner']);
+    for (const a of ALL_ACTIONS) {
+      // No action may be claimed by BOTH routers.
+      expect(actionOpensOwnerMessage(a) && actionRequiresReason(a)).toBe(false);
+      // And every action must be claimed by one of the three routes.
+      expect(actionOpensOwnerMessage(a) || actionRequiresReason(a) || a === 'review').toBe(true);
+    }
+  });
+
   it('labels each action', () => {
     expect(listingModActionLabel('review')).toBe('Review');
+    expect(listingModActionLabel('message-owner')).toBe('Message owner');
     expect(listingModActionLabel('reset-to-pending')).toBe('Reset to pending');
     expect(listingModActionLabel('hide')).toBe('Hide');
     expect(listingModActionLabel('relist')).toBe('Relist');
     expect(listingModActionLabel('claim')).toBe('Claim');
     expect(listingModActionLabel('purge')).toBe('Purge');
+    // Totality: every member of the vocabulary has a non-empty, distinct label.
+    const labels = ALL_ACTIONS.map(listingModActionLabel);
+    expect(labels.every((l) => l.length > 0)).toBe(true);
+    expect(new Set(labels).size).toBe(ALL_ACTIONS.length);
   });
 
   // 🔴 THIS CHIP WAS A THIRD, DIVERGENT KIND-LABEL IMPLEMENTATION — lowercase
@@ -125,7 +253,9 @@ describe('effectiveModerationStatus', () => {
   });
 
   it('approved → approved (unchanged)', () => {
-    expect(effectiveModerationStatus({ status: 'approved', pendingRequest: null })).toBe('approved');
+    expect(effectiveModerationStatus({ status: 'approved', pendingRequest: null })).toBe(
+      'approved'
+    );
   });
 
   it('pending → pending (unchanged)', () => {
