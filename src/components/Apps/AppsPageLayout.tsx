@@ -1,21 +1,32 @@
-import { Container, Group, Stack, Text, Title } from '@mantine/core';
-import type { MantineSize } from '@mantine/core';
+import { Box, Container, Group, Stack, Text, Title } from '@mantine/core';
 import type { ReactNode } from 'react';
 import { AppsSubNav } from '~/components/Apps/AppsSubNav';
+import { APPS_PAGE_CONTAINER_WIDTH } from '~/components/Apps/appsPageWidths';
 
 /**
  * Shared chrome for every `/apps/*` surface.
  *
- * THE POINT: the {@link AppsSubNav} tabs must sit in the IDENTICAL vertical
- * position on every apps page. Before this, each page hand-rolled its own
- * `Container size=… py=…` + a per-page title block placed ABOVE or AROUND the
- * sub-nav, so the tabs jumped around as you navigated between surfaces. This
- * layout fixes the tabs as the FIRST element of the page header region — so they
- * land in the same vertical position every time — and renders the optional
- * per-page title/actions BELOW them. (No sticky positioning: the requirement is
- * a CONSISTENT position across pages, which the uniform "tabs first" order
- * already delivers; pinning the band on scroll risks colliding with the global
- * app-shell header and was unverified.)
+ * THE POINT: the {@link AppsSubNav} tabs must sit in the IDENTICAL position on
+ * every apps page — VERTICALLY *and* HORIZONTALLY. Before this, each page
+ * hand-rolled its own `Container size=… py=…` + a per-page title block placed
+ * ABOVE or AROUND the sub-nav, so the tabs jumped around as you navigated between
+ * surfaces. This layout fixes the tabs as the FIRST element of the page header
+ * region — so they land in the same vertical position every time — and renders the
+ * optional per-page title/actions BELOW them. (No sticky positioning: the
+ * requirement is a CONSISTENT position across pages, which the uniform "tabs
+ * first" order already delivers; pinning the band on scroll risks colliding with
+ * the global app-shell header and was unverified.)
+ *
+ * 🔴 THE HORIZONTAL HALF IS WHY THERE IS NO `size` PROP. This layout used to take a
+ * per-page container width, which put the SHARED chrome inside a PER-PAGE box: the
+ * tab strip inherited each page's width and moved horizontally between routes
+ * (measured 170px of left-edge spread at 1440 and 410px at 2560 — the numbers are
+ * in `appsPageWidths.ts`). The Container is now {@link APPS_PAGE_CONTAINER_WIDTH}
+ * on every route, and the narrowing some pages genuinely need is the `measure`
+ * prop below, which constrains the BODY only — below the chrome, not around it.
+ * Re-adding a container-width prop re-opens the defect; both halves are pinned in
+ * `__tests__/appsPageLayout.test.ts` and
+ * `AppsPageLayout.chromeAlignment.browser.test.tsx`.
  *
  * Each page wraps its body in `<AppsPageLayout …>{body}</AppsPageLayout>`,
  * dropping its own `Container` + ad-hoc sub-nav placement. The per-page title,
@@ -37,7 +48,7 @@ export function AppsPageLayout({
   title,
   subtitle,
   actions,
-  size = 'xl',
+  measure,
   children,
 }: {
   /** Page heading (omit for a header with just the tabs, e.g. the marketplace). */
@@ -47,22 +58,74 @@ export function AppsPageLayout({
   /** Right-aligned header controls (e.g. a "Submit a new app" button). */
   actions?: ReactNode;
   /**
-   * Container width — pages keep their prior size (`sm` for Submit, etc.).
-   * Also accepts a raw number (px) — Mantine's `Container` supports it, used by
-   * the store index to widen past the `xl` (1320px) token.
+   * Optional CONTENT measure (px) for the page's OWN content — the header band's
+   * title/subtitle/actions AND the body. Applied BELOW the chrome, never around it.
+   * Omit it and the content fills the container.
+   *
+   * 🔴 IT BOUNDS THE HEADER TOO, and that is not symmetry for its own sake. The sub-nav
+   * is the only thing this change is allowed to move; if the measure bounded the body
+   * alone, a measured page's header PROSE would stretch to the full container while its
+   * body stayed narrow. Measured on a real render with the live `/apps/submit` subtitle
+   * copy: the subtitle laid out at 1224.13px where before it could never exceed 1068.
+   * Bounding both is what makes "only the chrome moved" a true statement rather than an
+   * aspiration. It also closes a latent trap by construction: `actions` is right-aligned
+   * by `Group justify="space-between"`, so against the CONTAINER the first measured page
+   * to add a header button would have put it ~520px (`/apps/review`) to ~820px
+   * (`/apps/submit`) right of the body it acts on at 2560. Against the measure, the
+   * header and the body share both edges.
+   *
+   * 🔴 LEFT-ALIGNED, NOT CENTRED, and that is load-bearing rather than taste: a
+   * centred body would put its left edge at a different x on every route, which is
+   * the same defect as the per-page container one level out — the page content
+   * would stop lining up with the tab strip directly above it. The parent `Stack`
+   * is a column flexbox with the default `align="stretch"`, so a `maw` alone
+   * resolves to a left-aligned capped box; no auto margins, and nothing here may
+   * introduce `margin-inline: auto`.
+   *
+   * Values come from `APPS_PAGE_MEASURES` in `~/components/Apps/appsPageWidths` —
+   * they are CONTENT widths (the old container widths minus the `Container`'s own
+   * `2 × 16px` gutter), because this box sits INSIDE that gutter.
    */
-  size?: MantineSize | number;
+  measure?: number;
   children: ReactNode;
 }) {
   const hasHeader = Boolean(title || subtitle || actions);
+  /**
+   * Cap `node` at the page's measure, or hand it back untouched when there is none.
+   *
+   * 🔴 ONE HELPER, TWO CALL SITES, so the header band and the body cannot drift apart —
+   * a second copy of this conditional is exactly how they would end up with different
+   * left and right edges. It never wraps `AppsSubNav`: the chrome is a sibling of both
+   * call sites, one level up, which is the entire fix.
+   *
+   * No auto margins, deliberately. The parent `Stack` is a column flexbox with the
+   * default `align="stretch"`, so a bare `maw` resolves LEFT-ALIGNED; anything that
+   * re-centres it puts each route's content at a different x and re-creates the defect
+   * one level down.
+   *
+   * 🔴 WHERE THAT IS ACTUALLY PINNED, AND HOW FAR EACH PIN REACHES — stated precisely,
+   * because an earlier version of this sentence claimed "pinned on the RENDERED tree"
+   * full stop, while the check read the inline `style` attribute only and a
+   * `className="mx-auto"` walked past it.
+   *   • `__tests__/appsPageLayoutRender.test.ts` (BLOCKING) pins the STRUCTURE — the box
+   *     is a direct child of the root stack, so no wrapper can centre it — and pins the
+   *     CARRIERS: the box may hold a max-width and nothing else, and no class at all.
+   *     It cannot resolve stylesheets (node tier, no CSS loaded), which is exactly why
+   *     it bans the class rather than trying to read a computed margin.
+   *   • `AppsPageLayout.chromeAlignment.browser.test.tsx` (report-only) pins the
+   *     RESOLVED geometry — body left edge == nav left edge on every route — which is
+   *     the check that catches a centring mechanism of any spelling.
+   */
+  const bounded = (node: ReactNode) => (measure != null ? <Box maw={measure}>{node}</Box> : node);
   // `pb` only — NO `py`. The top pad is deliberately gone so `/apps/*` starts
   // directly under the global header instead of 16px below it; the BOTTOM pad
   // stays because this Container is the outermost element on every apps page, so
   // its `pb` is the only thing keeping the last grid row / table row off whatever
-  // follows. Horizontal padding is untouched (Container's own responsive gutter)
-  // — this pass is vertical-only, so `size` and the side gutters are unchanged.
+  // follows. Horizontal padding is untouched — Container's own gutter, a FLAT 16px per
+  // side in Mantine v7 (there is no responsive step), which is why
+  // `APPS_CONTAINER_GUTTER = 32` is right at every breakpoint, not only at wide ones.
   return (
-    <Container size={size} pb="md">
+    <Container size={APPS_PAGE_CONTAINER_WIDTH} pb="md">
       {/* `xl` (32px), not `lg` (20px). With the band's own rule removed, the ONLY
           thing telling a viewer where the header ends and the page begins is the
           size of this gap relative to the `md` (16px) gap INSIDE the band. At
@@ -115,22 +178,36 @@ export function AppsPageLayout({
         */}
         <Stack gap="md">
           <AppsSubNav />
-          {hasHeader && (
-            <Group justify="space-between" align="flex-end" wrap="nowrap" gap="md">
-              <Stack gap={4} style={{ minWidth: 0 }}>
-                {title && <Title order={2}>{title}</Title>}
-                {subtitle && (
-                  <Text c="dimmed" size="sm">
-                    {subtitle}
-                  </Text>
-                )}
-              </Stack>
-              {actions && <div style={{ flexShrink: 0 }}>{actions}</div>}
-            </Group>
-          )}
+          {hasHeader &&
+            bounded(
+              <Group justify="space-between" align="flex-end" wrap="nowrap" gap="md">
+                <Stack gap={4} style={{ minWidth: 0 }}>
+                  {title && <Title order={2}>{title}</Title>}
+                  {subtitle && (
+                    <Text c="dimmed" size="sm">
+                      {subtitle}
+                    </Text>
+                  )}
+                </Stack>
+                {actions && <div style={{ flexShrink: 0 }}>{actions}</div>}
+              </Group>
+            )}
         </Stack>
 
-        {children}
+        {/*
+          The BODY, optionally capped. 🔴 THE CAP IS HERE, INSIDE THE `Stack gap="xl"`,
+          AND NOT ONE LEVEL OUT — that placement is the entire fix. A narrower box
+          around the whole `Stack` would take the sub-nav with it, which is exactly
+          what the per-page `Container size=` used to do. Wrapping only `{children}`
+          leaves the chrome on the uniform container while still letting a form page
+          hold a readable measure.
+
+          Rendered UNWRAPPED when there is no measure, rather than as a `<Box>` with
+          no `maw`: the full-container pages are the majority, and an always-present
+          wrapper is a DOM node the vertical-geometry pins would have to be re-derived
+          against for no benefit.
+        */}
+        {bounded(children)}
       </Stack>
     </Container>
   );

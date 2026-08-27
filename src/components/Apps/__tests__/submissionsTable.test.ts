@@ -665,12 +665,13 @@ describe('SUBMISSIONS_TABLE_MIN_WIDTH', () => {
 });
 
 /**
- * 🔴 THE `MY_SUBMISSIONS_CONTAINER_SIZE` BLOCK THAT LIVED HERE MOVED WITH ITS PAGE.
- * `/apps/my-submissions` merged into `/apps/mine` and 301s there, so the container-width
- * alias is now `MY_APPS_CONTAINER_SIZE` in `myAppsView.ts` and its assertions live in
- * `myAppsView.test.ts` (plus the consumption walk in `appsPageWidths.test.ts`, whose
- * ALIASES map now names it). The scroll-floor arithmetic below stays here because it is
- * still about THESE two tables.
+ * 🔴 THE `MY_SUBMISSIONS_CONTAINER_SIZE` BLOCK THAT LIVED HERE IS GONE FOR GOOD.
+ * `/apps/my-submissions` merged into `/apps/mine` and 301s there; the alias became
+ * `MY_APPS_CONTAINER_SIZE` in `myAppsView.ts`, and that has now been deleted too — every
+ * `/apps/*` route renders in ONE container (`APPS_PAGE_CONTAINER_WIDTH`), so no page has a
+ * width of its own to alias. What the alias was really protecting — that this page is wide
+ * enough for the floor below — is asserted as a relationship in `appsPageWidths.test.ts`.
+ * The scroll-floor arithmetic below stays here because it is still about THESE two tables.
  */
 
 describe('both my-submissions tables scroll rather than clip (S3, structural)', () => {
@@ -691,7 +692,8 @@ describe('both my-submissions tables scroll rather than clip (S3, structural)', 
    * this rewrite. Same trap for the negative `minWidth` assertion, which an
    * unrelated `minWidth={400}` anywhere in a ~700-line file would trip.
    */
-  const inTag = (prop: string) => new RegExp(String.raw`<Table\.ScrollContainer\b[^>]*?\s${prop}`, 's');
+  const inTag = (prop: string) =>
+    new RegExp(String.raw`<Table\.ScrollContainer\b[^>]*?\s${prop}`, 's');
 
   for (const file of LISTS) {
     describe(file, () => {

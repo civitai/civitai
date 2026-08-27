@@ -1,4 +1,4 @@
-import { Anchor, Center, Container, Group, Loader, Stack, Tabs } from '@mantine/core';
+import { Anchor, Center, Group, Loader, Stack, Tabs } from '@mantine/core';
 import {
   IconArrowLeft,
   IconCoin,
@@ -21,7 +21,8 @@ import {
   listingEditHref,
   resolveEditorTab,
 } from '~/components/Apps/appListingEditorTabs';
-import { APPS_PAGE_WIDTHS } from '~/components/Apps/appsPageWidths';
+import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
+import { APPS_PAGE_MEASURES } from '~/components/Apps/appsPageWidths';
 import { ListingHistoryPanel } from '~/components/Apps/ListingHistoryPanel';
 import { ListingPublishingPanel } from '~/components/Apps/ListingPublishingPanel';
 import { AppsListingDetailsEditor } from '~/components/Apps/AppsSubmitEditView';
@@ -148,11 +149,11 @@ export default function AppListingEditPage() {
 
   if (isLoading || !context) {
     return (
-      <Container size={APPS_PAGE_WIDTHS['/apps/listing/[appListingId]/edit']} py="md">
+      <AppsPageLayout measure={APPS_PAGE_MEASURES['/apps/listing/[appListingId]/edit']}>
         <Center py="xl">
           <Loader />
         </Center>
-      </Container>
+      </AppsPageLayout>
     );
   }
 
@@ -184,7 +185,26 @@ export default function AppListingEditPage() {
   return (
     <>
       <Meta title={`Edit ${context.name} — Civitai Apps`} deIndex />
-      <Container size={APPS_PAGE_WIDTHS['/apps/listing/[appListingId]/edit']} py="md">
+      {/*
+        🔴 THIS PAGE'S GATE DOES NOT IMPLY THE SUB-NAV'S. The `getServerSideProps` above
+        gates on `appBlocks` ALONE,
+        with no author requirement, while `AppsSubNav` hides itself entirely below TWO
+        qualifying tabs. Only "Marketplace" is unconditional; every other tab needs an
+        author capability, an install, an approved app, a pending invite or reviewer
+        status. So a viewer granted `app-blocks-enabled` in Flipt who is not a moderator,
+        not an author, and holds none of those — a seated collaborator on someone else's
+        listing is the realistic shape — reaches this page, qualifies for one tab, and
+        gets an EMPTY chrome band: the `Stack gap="xl"` above the body and nothing else.
+
+        Not a live defect (pre-GA the flag resolves for mods, who are authors), and not a
+        correctness problem when it does happen — it is 32px of dead space, not a broken
+        page. Recorded because the trigger is a RUNTIME Flipt toggle rather than a deploy:
+        `appBlocks` is `{ availability: ['mod'], fliptKey: 'app-blocks-enabled' }` and
+        `getFeatureFlags` returns the Flipt answer before it evaluates `availability`, so
+        this widens with no code change and no PR. See the fuller note in
+        `src/pages/apps/get-started.tsx`.
+      */}
+      <AppsPageLayout measure={APPS_PAGE_MEASURES['/apps/listing/[appListingId]/edit']}>
         <Stack gap="lg">
           <Anchor
             component="button"
@@ -290,7 +310,7 @@ export default function AppListingEditPage() {
             ) : null}
           </Tabs>
         </Stack>
-      </Container>
+      </AppsPageLayout>
     </>
   );
 }

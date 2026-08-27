@@ -58,6 +58,19 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => state.flags,
 }));
 
+// 🔴 THE SHARED SUB-NAV IS STUBBED, and that is a scoping decision rather than
+// convenience. `/apps/listing/[appListingId]/edit` moved onto `AppsPageLayout`, which
+// mounts `AppsSubNav` — a component with three context/data inputs of its own
+// (`useIsClient`, `useCurrentUser`, `blocks.getNavSummary`). Wiring them here would
+// make this suite, which is about the listing editor, fail the next time the nav
+// gains an input. The ADOPTION is covered where it belongs: structurally in
+// `__tests__/appsPageWidths.test.ts` (every rendering /apps page mounts the layout),
+// as pixels in `AppsPageLayout.chromeAlignment.browser.test.tsx`, and end-to-end on
+// one page in `AppEditPage.browser.test.tsx`.
+vi.mock('~/components/Apps/AppsSubNav', () => ({
+  AppsSubNav: () => <div data-testid="stub-apps-subnav" />,
+}));
+
 vi.mock('~/hooks/useCurrentUser', () => ({
   useCurrentUser: () => ({ id: 10, username: 'owner' }),
 }));

@@ -4,7 +4,6 @@ import Link from 'next/link';
 import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
 import { MyAppsBody } from '~/components/Apps/MyAppsBody';
 import { EMBEDDED_KIND_LABEL, STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
-import { MY_APPS_CONTAINER_SIZE } from '~/components/Apps/myAppsView';
 import { Meta } from '~/components/Meta/Meta';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { isAppDeveloper } from '~/shared/utils/app-blocks-access';
@@ -47,7 +46,6 @@ export default function MyAppsPage() {
     <>
       <Meta title="My apps — Civitai Apps" deIndex />
       <AppsPageLayout
-        size={MY_APPS_CONTAINER_SIZE}
         title="My apps"
         // 🔴 COMPOSED FROM THE KIND LABELS, not retyped. This subtitle spelled the
         // kinds by hand and drifted from every other surface; enrolled in

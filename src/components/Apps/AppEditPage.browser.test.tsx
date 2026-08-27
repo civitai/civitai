@@ -34,8 +34,21 @@ vi.mock('~/server/utils/server-side-helpers', () => ({
   createServerSideProps: () => async () => ({ props: {} }),
 }));
 
+// 🔴 `appBlocksAuthor` IS LOAD-BEARING NOW, not decoration. This page moved onto the
+// shared `AppsPageLayout`, which mounts `AppsSubNav` — and that bar hides itself below
+// TWO qualifying tabs. Without the author capability the viewer qualifies for
+// Marketplace alone, the bar renders nothing, and the chrome assertion below would
+// pass or fail for a reason that has nothing to do with this page.
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
-  useFeatureFlags: () => ({ appBlocks: true }),
+  useFeatureFlags: () => ({ appBlocks: true, appBlocksAuthor: true }),
+}));
+
+// The sub-nav's other two inputs. `useCurrentUser` is mocked rather than provided
+// because the real hook throws `missing CivitaiSessionContext` under this scaffold —
+// the same reason `AppsPageLayout`'s own browser tests mock it.
+vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => true }));
+vi.mock('~/hooks/useCurrentUser', () => ({
+  useCurrentUser: () => ({ id: 1, username: 'owner', isModerator: false }),
 }));
 
 // NOTE: this file used to carry its own `vi.mock('next/router', ...)`. It SILENTLY LOST to
@@ -57,6 +70,9 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       getMyAppManifest: {
         useQuery: () => mocks.manifestQuery,
       },
+      // Mounted by `AppsSubNav` via the shared page layout this page now uses.
+      // Undefined data ⇒ the deterministic always-on tab set.
+      getNavSummary: { useQuery: () => ({ data: undefined }) },
     },
     useUtils: () => ({}),
   },
@@ -111,5 +127,27 @@ describe('AppEditPage (/apps/[appBlockId]/edit)', () => {
     mocks.manifestQuery.error = { message: 'FORBIDDEN' };
     renderWithProviders(<AppEditPage />);
     await expect.element(page.getByTestId('mock-notfound')).toBeInTheDocument();
+  });
+
+  test('🔴 the page is on the SHARED apps chrome, not its own bare Container', async () => {
+    // Regression coverage for the adoption: this page rendered a standalone
+    // `<Container>` and showed NO sub-nav at all, so `/apps/<id>/edit` was one of
+    // four `/apps/*` routes where the navigation simply vanished. The landmark is
+    // what `AppsPageLayout` contributes, so its presence is the adoption.
+    renderWithProviders(<AppEditPage />);
+    await expect
+      .element(page.getByRole('navigation', { name: 'App sections' }))
+      .toBeInTheDocument();
+  });
+
+  test('…and the chrome does not displace the page body', async () => {
+    // Guard-the-guard for the test above: a landmark that rendered INSTEAD of the
+    // page would satisfy it. Both must be present in the same render.
+    renderWithProviders(<AppEditPage />);
+    await expect
+      .element(page.getByRole('navigation', { name: 'App sections' }))
+      .toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-edit-tab-manifest')).toBeInTheDocument();
+    await expect.element(page.getByTestId('mock-manifest-form')).toBeInTheDocument();
   });
 });

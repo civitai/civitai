@@ -4,7 +4,7 @@ import { useRouter } from 'next/router';
 import { useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
-import { APPS_PAGE_WIDTHS } from '~/components/Apps/appsPageWidths';
+import { APPS_PAGE_MEASURES } from '~/components/Apps/appsPageWidths';
 import { AppsSubmitEditView } from '~/components/Apps/AppsSubmitEditView';
 import { CliSubmitCta } from '~/components/Apps/CliSubmitCta';
 import { ExternalSubmitForm } from '~/components/Apps/ExternalSubmitForm';
@@ -71,7 +71,7 @@ export default function SubmitAppPage() {
     <>
       <Meta title="Submit an app — Civitai" deIndex />
       <AppsPageLayout
-        size={APPS_PAGE_WIDTHS['/apps/submit']}
+        measure={APPS_PAGE_MEASURES['/apps/submit']}
         title="Submit an app"
         subtitle={
           mode === null ? (

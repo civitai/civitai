@@ -4,7 +4,6 @@ import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
-import { APPS_PAGE_WIDTHS } from '~/components/Apps/appsPageWidths';
 import {
   OnsiteReviewModalTitle,
   type AnyRequest,
@@ -109,7 +108,6 @@ export default function ReviewDetailPage({ publishRequestId }: ReviewDetailPageP
     <>
       <Meta title="App submission review — Civitai" deIndex />
       <AppsPageLayout
-        size={APPS_PAGE_WIDTHS['/apps/review/[publishRequestId]']}
         title={selection ? <OnsiteReviewModalTitle selection={selection} /> : 'Submission review'}
         actions={
           <Button

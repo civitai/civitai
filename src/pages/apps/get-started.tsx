@@ -1,6 +1,6 @@
-import { Container } from '@mantine/core';
-import { APPS_PAGE_WIDTHS } from '~/components/Apps/appsPageWidths';
+import { APPS_PAGE_MEASURES } from '~/components/Apps/appsPageWidths';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
 import { GetStartedBody } from '~/components/Apps/GetStartedBody';
 import { resolveGetStartedAccess } from '~/components/Apps/resolveGetStartedAccess';
 import { Meta } from '~/components/Meta/Meta';
@@ -52,9 +52,51 @@ export default function AppsGetStartedPage() {
         description="Build small web apps that run inside Civitai. Install the Civitai CLI and runtime SDK, scaffold an app, and test it locally."
         deIndex
       />
-      <Container size={APPS_PAGE_WIDTHS['/apps/get-started']} py="xl">
+      {/*
+        🔴 THIS PAGE'S GATE DOES NOT IMPLY THE SUB-NAV'S. This page
+        gates on `appBlocksGetStarted` ALONE (see the docstring above), while
+        `AppsSubNav` renders only for `hasAppsStoreAccess` (`appListings || appBlocks`)
+        AND hides itself below two qualifying tabs. Those are independent flags, so a
+        viewer can hold this page's flag and not the nav's — and then the chrome band
+        renders empty (the sub-nav returns `null`), costing the `Stack gap="xl"` above
+        the body and nothing else.
+
+        🔴 THE CRITERION, NOT A COUNT — apply it, do not trust a total written here. An
+        earlier version of this note said "one of three", and it was wrong: it stated the
+        two-tab floor as part of the test and then counted only the pages whose FLAG
+        mismatches, missing `/apps` and `/apps/store-preview/[slug]`, which gate on
+        `hasAppsStoreAccess` — a predicate that likewise does not imply two tabs (see
+        `AppsSubNav.tsx`, which names the reachable cohort outright: `app-listings=true`,
+        `app-blocks-author=false`, non-author, no installs ⇒ Marketplace alone). That was
+        the second hand-maintained integer in this change to go stale, so there is no
+        third one. THE TEST: a page can show an empty band iff its gate does not
+        guarantee the viewer ≥2 qualifying sub-nav tabs. Read the page's
+        `getServerSideProps`, then read `SUB_NAV_LINKS` + `if (links.length < 2) return
+        null` in `AppsSubNav.tsx`, and decide. `/apps/[appBlockId]/revenue` is the useful
+        contrast — it gates on `appBlocksAuthor` + `isAppDeveloper`, which guarantees the
+        Create tab and therefore clears the floor.
+
+        NOT REACHABLE TODAY: `appBlocksGetStarted` is staged mod-only, and a moderator
+        holds `appBlocks` (hence the store predicate) and is an `isAppDeveloper`, so the
+        bar clears its floor with Marketplace + Create.
+
+        🔴 BUT THE TRIGGER IS A RUNTIME TOGGLE, NOT A DEPLOY. An earlier version of this
+        note said it becomes reachable "the moment this flag widens to ['public'] — a
+        one-line change in feature-flags.service.ts". That is wrong, and wrong in the
+        dangerous direction: it pins the hazard to an event a reviewer would see in a
+        diff. `appBlocksGetStarted` is `{ availability: ['mod'], fliptKey:
+        'app-blocks-get-started' }`, and `getFeatureFlags` returns the Flipt answer
+        BEFORE it ever evaluates `availability` ("Flipt overrides role checks (both
+        enable AND disable)"). So `availability` is only the Flipt-DOWN fallback: this
+        page can widen to the public by flipping `app-blocks-get-started` in Flipt, with
+        no code change, no PR and no deploy. All four App-Blocks flags are shaped this
+        way (`appBlocks`, `appListings`, `appBlocksAuthor`, `appBlocksGetStarted`).
+        TODO(launch): before any Flipt widening, either widen the sub-nav's gate with it
+        or keep this page off the shared chrome.
+      */}
+      <AppsPageLayout measure={APPS_PAGE_MEASURES['/apps/get-started']}>
         <GetStartedBody />
-      </Container>
+      </AppsPageLayout>
     </>
   );
 }
