@@ -280,9 +280,10 @@ export function ImageMetadataModal({ url, apply }: ImageMetadataModalProps) {
                         key={key}
                         size="xs"
                         checked={isSelected(key)}
-                        onChange={(e) =>
-                          setOverrides((state) => ({ ...state, [key]: e.currentTarget.checked }))
-                        }
+                        onChange={(e) => {
+                          const { checked } = e.currentTarget;
+                          setOverrides((state) => ({ ...state, [key]: checked }));
+                        }}
                         label={
                           <Text size="xs">
                             {fieldLabel(key)}:{' '}
