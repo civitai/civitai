@@ -30,7 +30,7 @@ export function RemixGalleryMenuItems({
 }) {
   const features = useFeatureFlags();
 
-  if (!features.remixGallery) return null;
+  if (!features.remixGalleryMenu) return null;
 
   return (
     <>
@@ -49,7 +49,7 @@ export function RemixGalleryMenuItems({
  * above is about not asking, never about the answer.
  */
 function SubmitRemixMenuItem({ imageId, published }: { imageId: number; published: boolean }) {
-  const { sources } = useRemixSources(imageId);
+  const { sources } = useRemixSources(imageId, true);
 
   if (!sources?.length) return null;
 

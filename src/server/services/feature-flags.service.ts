@@ -345,6 +345,24 @@ const featureFlags = createFeatureFlags({
   // gate rendering a gallery that already has entries, or an owner declining
   // what is already waiting on their work.
   remixGallery: { availability: ['mod'], fliptKey: 'remix-gallery' },
+  // The three entry points below are gated SEPARATELY from `remixGallery` so they
+  // can be released one at a time, and each one is checked TOGETHER with it
+  // rather than instead of it. `remixGallery` gates the submit mutation, so a
+  // surface flag on while the base is off is a live button that fails on click.
+  //
+  // Turning a surface flag off removes a way IN. It does not touch a submission
+  // already made, an owner's queue, or a gallery that already has entries -
+  // that distinction is `remixGallery`'s, above.
+  //
+  // The post editor's card, under the image in the post edit view. The oldest of
+  // the three and the only one that was ever live.
+  remixGalleryPostEditor: { availability: ['mod'], fliptKey: 'remix-gallery-post-editor' },
+  // "Submit this remix" and "View original" on the shared image context menu -
+  // so feed cards and the image detail page, which render the same menu.
+  remixGalleryMenu: { availability: ['mod'], fliptKey: 'remix-gallery-menu' },
+  // The generator and the generation queue, which share one component. Routes to
+  // the post editor rather than submitting, so this one moves no Buzz on its own.
+  remixGalleryGenerator: { availability: ['mod'], fliptKey: 'remix-gallery-generator' },
   // Gates BUILDING a pack, seeing packs in shops, and buying one. Like
   // `stickers` it does not gate what a buyer already owns: turning it off must
   // not strip cosmetics people paid for, only stop new packs being listed,

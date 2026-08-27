@@ -29,18 +29,21 @@ const reasonLabel: Record<string, string> = {
  * is a hook rather than a prop drilled down from one place: the answer is per
  * image and the flag check belongs with the query it suppresses.
  *
- * The flag check is not decoration. `submitToRemixGallery` refuses when the flag
- * is off, so without it the surface renders live buttons that fail on click, and
- * asks a protected query per image during rollout.
+ * 🔴 Two flags, ANDed, and both are load-bearing. `surface` is the entry point's
+ * own flag, so the three can be released one at a time. `remixGallery` is the
+ * base, and it gates `submitToRemixGallery` itself — without it a surface
+ * released ahead of the base renders live buttons that fail on click, and asks a
+ * protected query per image while it does.
  */
-export function useRemixSources(imageId: number) {
+export function useRemixSources(imageId: number, surface: boolean) {
   const features = useFeatureFlags();
+  const enabled = !!features.remixGallery && surface;
   const { data, isLoading } = trpc.placement.getRemixSourcesForImage.useQuery(
     { imageId },
-    { enabled: !!features.remixGallery }
+    { enabled }
   );
 
-  return { sources: data, isLoading, enabled: !!features.remixGallery };
+  return { sources: data, isLoading, enabled };
 }
 
 /**
@@ -63,7 +66,10 @@ export function RemixSourcesList({
 }) {
   const utils = trpc.useUtils();
   const spendTypes = useAvailableBuzz();
-  const { sources } = useRemixSources(imageId);
+  // The rows are only ever rendered by a caller that already resolved its own
+  // flag and found sources, so this shares that caller's query key rather than
+  // re-deciding the gate.
+  const { sources } = useRemixSources(imageId, true);
 
   const submit = trpc.placement.submitToRemixGallery.useMutation({
     onSuccess: () => {

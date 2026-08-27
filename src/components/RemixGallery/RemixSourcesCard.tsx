@@ -1,5 +1,6 @@
 import { CustomCard } from '~/components/Post/EditV2/PostImageCards/CustomCard';
 import { RemixSourcesList, useRemixSources } from '~/components/RemixGallery/RemixSourcesList';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 /**
  * The galleries this image could be submitted to, in the post editor's image
@@ -17,7 +18,8 @@ export function RemixSourcesCard({
   imageId: number;
   published: boolean;
 }) {
-  const { sources, isLoading } = useRemixSources(imageId);
+  const features = useFeatureFlags();
+  const { sources, isLoading } = useRemixSources(imageId, !!features.remixGalleryPostEditor);
 
   if (isLoading) return null;
   if (!sources?.length) return null;

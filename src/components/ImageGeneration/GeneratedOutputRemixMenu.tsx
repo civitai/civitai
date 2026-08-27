@@ -65,7 +65,7 @@ export function GeneratedOutputRemixMenu({ output }: { output: BlobData }) {
 
   // Audio has no post system and no gallery to go to; the Post button filters it
   // out for the same reason.
-  if (!features.remixGallery || !remixOfId || output.mediaType === 'audio') return null;
+  if (!features.remixGalleryGenerator || !remixOfId || output.mediaType === 'audio') return null;
 
   return (
     /* Same z-index as the workflow menu three lines up in this footer. They

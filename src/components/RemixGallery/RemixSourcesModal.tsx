@@ -24,7 +24,10 @@ export type RemixSourcesModalProps = {
 
 export function RemixSourcesModal({ imageId, published }: RemixSourcesModalProps) {
   const dialog = useDialogContext();
-  const { sources, isLoading } = useRemixSources(imageId);
+  // Reachable only from a menu item that already resolved its own flag, so this
+  // shares that query key rather than re-deciding the gate. `useRemixSources`
+  // still ANDs in the base flag, which is the one that gates the mutation.
+  const { sources, isLoading } = useRemixSources(imageId, true);
 
   return (
     <Modal
