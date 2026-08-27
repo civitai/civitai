@@ -84,8 +84,14 @@ export type HubViewer = { userId?: number; isModerator?: boolean };
  * not-found, never a row plus a refusal.
  *
  * A moderator may open any hub — subtask 868kwp5kc, view only. Everyone else gets
- * their own hubs plus whatever is Public. There is no discovery surface, so Public
- * means "anyone holding the link", not "listed".
+ * their own hubs plus whatever is Public.
+ *
+ * 🔴 Public means FULLY public — Justin's call, 2026-08-27, superseding an earlier
+ * reading of "anyone holding the link, not listed". `UserHub.id` is a dense
+ * autoincrement and the link-preview card at `/api/og?type=hub&id=N` answers
+ * unauthenticated, so every public hub's name, description, owner and counts are
+ * walkable by id whether or not a discovery surface exists. That is accepted, not
+ * overlooked: do not add a check here on the theory that Public is semi-private.
  */
 export function hubViewerWhere({ userId, isModerator }: HubViewer) {
   if (isModerator) return {};
