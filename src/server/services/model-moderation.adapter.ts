@@ -12,7 +12,11 @@ import {
   triggeredLabelKeys,
 } from '~/server/services/moderation-label-helpers';
 import { recordModelTextModerationOutcome } from '~/server/prom/model-moderation.metrics';
-import { bustPublicModelResponseCache } from '~/server/services/model-version.service';
+import { bustPublicModelResponseCache } from '~/server/services/model-response-cache';
+import {
+  MODEL_MODERATION_LEVEL_LABELS,
+  MODEL_MODERATION_SCAN_LABELS,
+} from '~/server/services/model-moderation.labels';
 import { updateModelNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
 import { diffEntityChanges } from '~/server/utils/entity-change-helpers';
@@ -21,35 +25,12 @@ import { removeTags } from '~/utils/string-helpers';
 
 export const MODEL_MODERATION_ENTITY_TYPE = 'Model';
 
-/**
- * Every label submitted on a model scan. Twelve of them are recorded and not acted on —
- * their trigger rates on real model text are the input to deciding what a v2 acts on, and
- * there is no way to collect them without scanning.
- *
- * Owned here rather than imported from another consumer: per-consumer label selection is
- * the pattern (Article sends one, Challenge two, wildcard a fail set plus a level set), and
- * importing App Blocks' list would couple two sets that are allowed to diverge.
- */
-export const MODEL_MODERATION_SCAN_LABELS = [
-  'NSFW',
-  'Suggestive',
-  'Explicit',
-  'Young',
-  'Grooming',
-  'Sex Trafficking',
-  'Exploitation',
-  'Extremism',
-  'Impersonating Civitai Staff',
-  'Bestiality',
-  'Urine',
-  'Diaper',
-  'Scat',
-  'Menstruation',
-  'Celebrity',
-] as const;
-
-/** Triggering any of these sets `nsfw = true`. Lowercase — comparisons normalize both sides. */
-export const MODEL_MODERATION_LEVEL_LABELS = ['nsfw', 'suggestive', 'explicit'] as const;
+// Re-exported so existing importers keep working; defined in a leaf module because the version
+// adapter reads them and importing this file for them closed a cycle.
+export {
+  MODEL_MODERATION_SCAN_LABELS,
+  MODEL_MODERATION_LEVEL_LABELS,
+} from '~/server/services/model-moderation.labels';
 
 const LEVEL_LABEL_SET: ReadonlySet<string> = new Set(MODEL_MODERATION_LEVEL_LABELS);
 
@@ -60,6 +41,16 @@ const LEVEL_LABEL_SET: ReadonlySet<string> = new Set(MODEL_MODERATION_LEVEL_LABE
  * exhaustive record; the full set stays on the scan's own row.
  */
 const MAX_PERSISTED_META_ITEMS = 50;
+
+/**
+ * The same budget spent on version findings, where the unit is an object rather than a term
+ * string and version names carry no length bound anywhere in the schema. Fifty untrimmed
+ * entries reach ~57 KB — some 180x this column's p99, on a column every model-feed row selects.
+ * Ten trimmed ones hold it near 4 KB. The full set stays on the scan's own row.
+ */
+const MAX_PERSISTED_META_VERSIONS = 10;
+const MAX_PERSISTED_VERSION_NAME_CHARS = 100;
+const MAX_PERSISTED_VERSION_LABELS = 5;
 
 /**
  * The single definition of the scanned string.
@@ -200,7 +191,19 @@ export async function recordModelVersionNameForensics({
     labels: { label: string; score: number; threshold: number }[];
   }[];
 }) {
-  const versionsJson = JSON.stringify(versions.slice(0, MAX_PERSISTED_META_ITEMS));
+  // Highest-scoring first, so a model with more flagged versions than the cap keeps the entries
+  // a moderator would open rather than whichever came back first.
+  const topScore = (v: { labels: { score: number }[] }) =>
+    v.labels.length ? Math.max(...v.labels.map((l) => l.score)) : 0;
+  const trimmed = [...versions]
+    .sort((a, b) => topScore(b) - topScore(a))
+    .slice(0, MAX_PERSISTED_META_VERSIONS)
+    .map(({ versionId, name, labels }) => ({
+      versionId,
+      name: name.slice(0, MAX_PERSISTED_VERSION_NAME_CHARS),
+      labels: [...labels].sort((a, b) => b.score - a.score).slice(0, MAX_PERSISTED_VERSION_LABELS),
+    }));
+  const versionsJson = JSON.stringify(trimmed);
   await dbWrite.$executeRaw`
     UPDATE "Model" m
     SET meta = COALESCE(m.meta, '{}'::jsonb) || jsonb_build_object(

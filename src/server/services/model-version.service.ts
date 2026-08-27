@@ -42,7 +42,15 @@ import type { DonationGoalWithTotal } from '~/server/redis/caches';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { resourceDataCache } from '~/server/redis/resource-data.redis';
-import { submitModelVersionNameModeration } from '~/server/services/model-version-moderation.adapter';
+import {
+  bustPublicModelResponseCache,
+  publicModelResponseKey,
+} from '~/server/services/model-response-cache';
+import { moderateModelVersionName } from '~/server/services/model-version-moderation.adapter';
+import {
+  updateModelNsfwLevels,
+  updateModelVersionNsfwLevels,
+} from '~/server/services/nsfwLevels.service';
 import {
   allBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
@@ -68,6 +76,7 @@ import type {
   LinkedComponentSettings,
   LinkOfficialFileByHashInput,
   SetLinkedComponentsInput,
+  SetModelVersionNsfwInput,
   UpdateModelVersionPaidAccessInput,
   UpsertExplorationPromptInput,
 } from '~/server/schema/model-version.schema';
@@ -210,11 +219,21 @@ export const getDefaultModelVersion = async ({
   modelVersionId,
   userId,
   isModerator,
+  preferSfw,
 }: {
   modelId: number;
   modelVersionId?: number;
   userId?: number;
   isModerator?: boolean;
+  /**
+   * On the SFW domain, pass over versions flagged NSFW by name when the viewer did not ask for
+   * one. Without it a bare model link can land on a flagged version and redirect a model whose
+   * other versions are perfectly safe.
+   *
+   * A preference, not a filter: if every published version is flagged there is nothing safe to
+   * fall back to, so one is still returned and the page's own gate redirects.
+   */
+  preferSfw?: boolean;
 }) => {
   const db = await getDbWithoutLag('model', modelId);
   const result = await db.model.findUnique({
@@ -228,6 +247,7 @@ export const getDefaultModelVersion = async ({
           id: true,
           status: true,
           publishedAt: true,
+          nsfw: true,
           model: { select: { id: true, userId: true, availability: true, status: true } },
           availability: true,
           trainingStatus: true,
@@ -249,9 +269,16 @@ export const getDefaultModelVersion = async ({
 
   // Attempt to return the first published version. Otherwise, return whatever is available.
   const now = new Date();
-  const published = result.modelVersions.find(
-    (v) => v.status === ModelStatus.Published && (isOwner || !v.publishedAt || v.publishedAt <= now)
-  );
+  const isVisible = (v: (typeof result.modelVersions)[number]) =>
+    v.status === ModelStatus.Published && (isOwner || !v.publishedAt || v.publishedAt <= now);
+
+  // Only when the viewer named no version — an explicit `modelVersionId` is a request for that
+  // one, and answering it with a different version would be a silent substitution.
+  const published =
+    (preferSfw && !modelVersionId
+      ? result.modelVersions.find((v) => isVisible(v) && !v.nsfw)
+      : undefined) ?? result.modelVersions.find(isVisible);
+
   return published ?? (isOwner ? result.modelVersions[0] : undefined);
 };
 
@@ -716,8 +743,7 @@ export const upsertModelVersion = async ({
     // timed window), and create the EA donation goal here (option A) instead of at publish.
     await writeModelVersionGateAndGoal(version, model.userId, paidAccess, donationGoal);
 
-    // Awaited so no rejection escapes; it swallows its own errors, so a scan cannot fail the save.
-    await submitModelVersionNameModeration({ id: version.id, name: version.name, isModerator });
+    await moderateModelVersionName({ id: version.id, name: version.name, isModerator });
 
     return version;
   } else {
@@ -925,11 +951,11 @@ export const upsertModelVersion = async ({
     if (feeBefore !== feeAfter)
       await bustMvCache(version.id, version.modelId, actorUserId).catch(() => undefined);
 
-    // On rename only. An unchanged name has already been ruled on, and re-submitting it every
+    // On rename only. An unchanged name has already been ruled on, and re-evaluating it every
     // save would re-audit the same string forever — the same reasoning as the model path's
     // "text that has not changed" carve-out.
     if (data.name !== undefined && data.name !== existingVersion.name)
-      await submitModelVersionNameModeration({ id: version.id, name: version.name, isModerator });
+      await moderateModelVersionName({ id: version.id, name: version.name, isModerator });
 
     return version;
   }
@@ -2538,35 +2564,112 @@ export const modelVersionDonationGoal = async ({
   return (await getOwnerDonationGoals('ModelVersion', [id]))[id] ?? null;
 };
 
-// Public-response cache (origin-side cache for GET /api/v1/models/[id]) toggle —
-// only populated on Datapacket (see PUBLIC_MODEL_RESPONSE_TTL in the handler).
-const PUBLIC_MODEL_RESPONSE_CACHE_ENABLED = env.IS_DATAPACKET;
+// Re-exported so the existing call sites keep importing it from here; the implementation
+// moved to a leaf module that `nsfwLevels.service` can reach without an import cycle.
+export { publicModelResponseKey, bustPublicModelResponseCache };
 
-export function publicModelResponseKey(
-  modelId: number,
-  browsingLevel: number
-): RedisKeyTemplateCache {
-  return `${REDIS_KEYS.CACHES.PUBLIC_MODEL_RESPONSE}:${modelId}:${browsingLevel}`;
-}
+/**
+ * The moderator override on the automatic version-name flag, and the only path that clears it
+ * outside a rename.
+ *
+ * It is required rather than a convenience: the flag fails CLOSED. A scan that never returns
+ * leaves the term list's verdict standing, so without this a classifier outage or a term the
+ * scan agrees with has no remedy short of hand-written SQL.
+ *
+ * `nsfw` is an INPUT to the derived level, so the write alone is not the change — the level has
+ * to be recomputed and the caches that embed it dropped before anything reads them.
+ */
+export async function setModelVersionNsfw({
+  id,
+  nsfw,
+  locked,
+  userId,
+  isModerator,
+  tracker,
+}: SetModelVersionNsfwInput & { userId: number; isModerator: boolean; tracker?: Tracker }) {
+  if (!isModerator) throw throwAuthorizationError();
 
-// Best-effort, fail-open invalidation of the origin-side public response cache for
-// GET /api/v1/models/[id] (see the handler). Called from bustMvCache so an
-// unpublish / takedown / update / delete drops the cached 200 immediately rather
-// than serving stale for up to the cache TTL globally. Busts BOTH browsing-level
-// keys the handler can write (all-levels for unrestricted regions, sfw-only for
-// region-restricted ones). Deletes the physical key — the handler's read keys off
-// key PRESENCE, so a clean delete forces a rebuild. A Redis error here must NOT
-// throw into the mutation path, so it is swallowed (the entry otherwise expires
-// via its TTL).
-export async function bustPublicModelResponseCache(modelId: number | number[]) {
-  if (!PUBLIC_MODEL_RESPONSE_CACHE_ENABLED) return;
-  const modelIds = Array.isArray(modelId) ? modelId : [modelId];
-  if (modelIds.length === 0) return;
-  const keys = modelIds.flatMap((id) => [
-    publicModelResponseKey(id, allBrowsingLevelsFlag),
-    publicModelResponseKey(id, sfwBrowsingLevelsFlag),
-  ]);
-  await redis.del(keys).catch(() => undefined);
+  const version = await dbWrite.modelVersion.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      nsfw: true,
+      meta: true,
+      modelId: true,
+      model: { select: { userId: true } },
+    },
+  });
+  if (!version) throw throwNotFoundError(`No model version with id ${id}`);
+
+  // Both halves, not just the flag. A moderator blessing a version that is already unflagged, or
+  // releasing one back to the scanner without changing its flag, are the two cases a
+  // `version.nsfw === nsfw` early-out silently drops — and the second leaves the ruling in place
+  // while reporting success.
+  const hadRuling = !!(version.meta as ModelVersionMeta | null)?.nsfwDecision;
+  if (version.nsfw === nsfw && hadRuling === locked) return { id, nsfw };
+
+  // Refused in BOTH directions. Raising the flag on a system-owned model is refused by a
+  // database trigger anyway; lowering it is not, and is worse — the level derivation has no
+  // branch for an unflagged system-owned version, so the row would keep the NSFW level with the
+  // flag gone and nothing would ever revisit it.
+  if (version.model.userId === -1)
+    throw throwBadRequestError('ModelVersion.nsfw cannot be changed on a system-owned model');
+
+  // The flag and the ruling in one statement: a moderator's decision that did not record itself
+  // is a decision the next rename silently overturns.
+  //
+  // A database-side jsonb merge rather than a read-modify-write, matching the model path's
+  // forensics write — anything else written to `meta` between our read above and this write
+  // would otherwise be erased.
+  const decision = JSON.stringify({
+    nsfwDecision: { by: userId, at: new Date().toISOString(), nsfw },
+  });
+  if (locked)
+    await dbWrite.$executeRaw`
+      UPDATE "ModelVersion"
+      SET nsfw = ${nsfw},
+          meta = COALESCE(meta, '{}'::jsonb) || ${decision}::jsonb
+      WHERE id = ${id}
+    `;
+  // Releasing hands the version back to the scanner, which will re-decide on the next rename.
+  else
+    await dbWrite.$executeRaw`
+      UPDATE "ModelVersion"
+      SET nsfw = ${nsfw},
+          meta = COALESCE(meta, '{}'::jsonb) - 'nsfwDecision'
+      WHERE id = ${id}
+    `;
+
+  // Only when the flag actually moved — the level is derived from it, so recording a ruling over
+  // an unchanged flag has nothing to recompute and nothing to invalidate.
+  //
+  // The trigger enqueues both of these a minute out. Inline so the moderator sees the result of
+  // their own action; the trigger stays the backstop for every other writer.
+  if (version.nsfw !== nsfw) {
+    await updateModelVersionNsfwLevels([id]);
+    await updateModelNsfwLevels([version.modelId]);
+    await bustMvCache(id, version.modelId, userId);
+  }
+
+  tracker
+    ?.entityChanges(
+      diffEntityChanges({
+        entityType: 'ModelVersion',
+        entityId: id,
+        ownerId: version.model.userId,
+        before: { nsfw: version.nsfw },
+        after: { nsfw },
+        actorRole: resolveActorRole({
+          actorUserId: userId,
+          ownerId: version.model.userId,
+          isModerator,
+        }),
+        reason: 'moderator-version-nsfw-override',
+      })
+    )
+    .catch(() => null);
+
+  return { id, nsfw };
 }
 
 export const bustMvCache = async (

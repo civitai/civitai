@@ -215,12 +215,17 @@ export const getModelHandler = async ({
     }
 
     const now = new Date();
+    // Versions flagged NSFW by NAME are dropped entirely on the SFW domain, not merely made
+    // unselectable: the switcher renders the name, and the name is the thing being flagged.
+    // Such a version does not move the model's own level (it is excluded from the rollup), so
+    // nothing above this filters it out.
     const filteredVersions = isOwner
       ? model.modelVersions
       : model.modelVersions.filter(
           (version) =>
             version.status === ModelStatus.Published &&
-            (!version.publishedAt || version.publishedAt <= now)
+            (!version.publishedAt || version.publishedAt <= now) &&
+            (features.canViewNsfw || !version.nsfw)
         );
     const modelVersionIds = filteredVersions.map((version) => version.id);
     const posts = await dbRead.post.findMany({

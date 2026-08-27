@@ -192,6 +192,7 @@ export const getServerSideProps = createServerSideProps({
       modelVersionId,
       userId: session?.user?.id,
       isModerator: session?.user?.isModerator,
+      preferSfw: !features?.canViewNsfw,
     }).catch(() => null);
     const modelVersionIdParsed = modelVersionId ?? version?.id;
 
@@ -273,7 +274,10 @@ export const getServerSideProps = createServerSideProps({
       if (model) {
         gating = {
           contentNsfwLevel: model.nsfwLevel,
-          nsfw: model.nsfw,
+          // The selected version's own flag, OR'd in: a version flagged by NAME does not move
+          // the model's level (it is excluded from the rollup), so the model can be SFW while
+          // the version on screen is not.
+          nsfw: model.nsfw || !!version?.nsfw,
         };
         suppressAds = model.status !== ModelStatus.Published;
       }

@@ -964,7 +964,11 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                 </Stack>
               </Card>
               {user?.isModerator && (
-                <ModelModerationCard modelId={model.id} versionFlags={version.flags} />
+                <ModelModerationCard
+                  modelId={model.id}
+                  versionId={version.id}
+                  versionFlags={version.flags}
+                />
               )}
               {/* Component-only model message */}
               {isComponentOnlyModel && (

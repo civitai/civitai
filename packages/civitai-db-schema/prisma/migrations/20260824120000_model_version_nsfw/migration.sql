@@ -1,3 +1,10 @@
+-- 🔴 APPLY MANUALLY, OUTSIDE A TRANSACTION (psql WITHOUT --single-transaction).
+-- The CREATE INDEX CONCURRENTLY at the end cannot run inside one. Every statement here is
+-- rerunnable, so a partial apply can simply be re-run from the top — with one exception: if
+-- the concurrent build is interrupted it leaves an INVALID index, which IF NOT EXISTS skips
+-- rather than repairs. Drop it first in that case:
+--   DROP INDEX CONCURRENTLY IF EXISTS "ModelVersion_modelId_nsfw_idx";
+
 -- ModelVersion.nsfw — a version whose NAME is NSFW, independent of its images.
 --
 -- A version's nsfwLevel is derived from the owner's first 20 posted images, so there is
@@ -9,23 +16,7 @@
 -- Inert on arrival: DEFAULT FALSE, and its only writer — version-name moderation — selects
 -- nothing until the curated term list is seeded.
 
-ALTER TABLE "ModelVersion" ADD COLUMN "nsfw" BOOLEAN NOT NULL DEFAULT FALSE;
-
--- Partial: the flagged set is a small fraction of the table and the only queries that need
--- an index ask for the true side (find the flagged versions under a model / across a sweep).
--- The rollup's `NOT nsfw` is the majority side and scans regardless.
---
--- Keyed on "modelId", not on "nsfw": the predicate already restricts every entry to the true
--- side, so keying on that column stores a constant, the index degenerates to an unordered tid
--- list, and the planner ignores it for the per-model lookup entirely. "modelId" is the same
--- width and serves both that lookup and an ordered sweep.
---
--- Not declared in schema.full.prisma: Prisma cannot express a partial index, and declaring a
--- full one there would describe an index we do not create. Matches how the other partial
--- indexes in this directory are handled.
---
--- CONCURRENTLY cannot run inside a transaction — run this statement on its own.
-CREATE INDEX CONCURRENTLY "ModelVersion_modelId_nsfw_idx" ON "ModelVersion" ("modelId") WHERE "nsfw";
+ALTER TABLE "ModelVersion" ADD COLUMN IF NOT EXISTS "nsfw" BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- Teach the version trigger about the new column.
 --
@@ -103,3 +94,18 @@ BEFORE INSERT OR UPDATE OF "nsfw" ON "ModelVersion"
 FOR EACH ROW
 WHEN (NEW."nsfw")
 EXECUTE FUNCTION reject_system_model_version_nsfw();
+
+-- Partial: the flagged set is a small fraction of the table and the only queries that need
+-- an index ask for the true side (find the flagged versions under a model / across a sweep).
+-- The rollup's `NOT nsfw` is the majority side and scans regardless.
+--
+-- Keyed on "modelId", not on "nsfw": the predicate already restricts every entry to the true
+-- side, so keying on that column stores a constant, the index degenerates to an unordered tid
+-- list, and the planner ignores it for the per-model lookup entirely. "modelId" is the same
+-- width and serves both that lookup and an ordered sweep.
+--
+-- Not declared in schema.full.prisma: Prisma cannot express a partial index, and declaring a
+-- full one there would describe an index we do not create. Matches how the other partial
+-- indexes in this directory are handled.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS "ModelVersion_modelId_nsfw_idx"
+  ON "ModelVersion" ("modelId") WHERE "nsfw";

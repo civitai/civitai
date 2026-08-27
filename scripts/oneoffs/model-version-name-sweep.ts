@@ -1,5 +1,5 @@
 /**
- * Model VERSION name sweep — the four-phase workbook.
+ * Model VERSION name sweep — the five-phase workbook.
  *
  * Phase 1 runs the curated term list over every model version in the database and writes the
  * matches to an .xlsx. Phase 2 sends those same names to XGuard and fills in the verdict
@@ -9,7 +9,7 @@
  *
  * Separate from `model-name-moderation-harness.ts` on purpose: that one answers "which detector
  * is better" over a sample. This one is the production run over the whole table, and its output
- * is a work product someone edits rather than a report they read.
+ * is a work product someone edits rather than a report they read. Phase 5 applies its verdicts.
  *
  *   # 1 — term sweep, whole table, no network calls
  *   pnpm exec tsx --env-file=.env scripts/oneoffs/model-version-name-sweep.ts \
@@ -27,9 +27,15 @@
  *   pnpm exec tsx --env-file=.env scripts/oneoffs/model-version-name-sweep.ts \
  *     --sample local/version-sweep.xlsx [--sample-size 2000] [--concurrency 4]
  *
+ *   # 5 — apply the workbook verdicts to ModelVersion.nsfw. Resumable, idempotent, dry-run
+ *   #     unless --confirm. Reuses the phase-2 scans; makes no network calls.
+ *   NODE_ENV=development pnpm exec tsx --env-file=.env \
+ *     scripts/oneoffs/model-version-name-sweep.ts \
+ *     --apply local/version-sweep.xlsx [--batch 500] [--confirm]
+ *
  * `--actionable-only` skips rows where flagging the version would change nothing — a model
  * already NSFW, an unpublished version, a system-owned one. On the first full sweep that left
- * 448 actionable rows (see docs/model-version-nsfw-plan.md §5.3).
+ * 448 actionable rows (see local/model-version-nsfw-WORKING.md §9).
  *
  * Phase 3 is regenerable: decisions already entered are carried across by modelVersionId, so
  * re-running after another XGuard pass adds new disagreements without losing rulings.
@@ -53,14 +59,20 @@ import { readFileSync } from 'fs';
 import { parseArgs } from 'node:util';
 import ExcelJS from 'exceljs';
 import { Prisma } from '@prisma/client';
-import { dbRead } from '~/server/db/client';
-import { MODEL_MODERATION_LEVEL_LABELS } from '~/server/services/model-moderation.adapter';
-import { MODEL_MODERATION_SCAN_LABELS } from '~/server/services/model-moderation.adapter';
+import { dbRead, dbWrite } from '~/server/db/client';
+import {
+  MODEL_MODERATION_LEVEL_LABELS,
+  MODEL_MODERATION_SCAN_LABELS,
+} from '~/server/services/model-moderation.labels';
 import {
   collectMatchedTerms,
   triggeredLabelDetails,
   triggeredLabelKeys,
 } from '~/server/services/moderation-label-helpers';
+import {
+  updateModelNsfwLevels,
+  updateModelVersionNsfwLevels,
+} from '~/server/services/nsfwLevels.service';
 import { createXGuardModerationRequest } from '~/server/services/orchestrator/orchestrator.service';
 import { matchSpec, type LabelRegexSpec } from '~/server/services/scanner-label-regex';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
@@ -143,6 +155,9 @@ const { values } = parseArgs({
     concurrency: { type: 'string', default: '4' },
     wait: { type: 'string', default: '30' },
     'page-size': { type: 'string', default: '20000' },
+    apply: { type: 'string' },
+    confirm: { type: 'boolean', default: false },
+    batch: { type: 'string', default: '500' },
   },
 });
 
@@ -722,9 +737,159 @@ async function buildReview() {
   console.log('The agreeing rows are not here — they are the presumed yes-set.');
 }
 
+// ---------------------------------------------------------------- phase 5
+
+/**
+ * Apply the workbook's verdicts to `ModelVersion.nsfw`.
+ *
+ * The live path flags on create and rename only, so it never reaches a version nobody has saved
+ * since the feature shipped. This is how the existing corpus gets flagged, and it reuses the
+ * scans already in the workbook rather than paying for them twice — every row carries an XGuard
+ * verdict from phase 2.
+ *
+ * The yes-set is the same one the live path would produce: a term matched AND the scan did not
+ * overturn it. Phase 3's Review tab overrides that per row for the disagreements a human ruled
+ * on — `nsfw` in its action column flags anyway, blank leaves it alone.
+ *
+ * Resumable and idempotent: each row gets an `applied` stamp, and a re-run considers only blank
+ * ones. The workbook saves after every batch, so an interrupted run resumes where it stopped.
+ */
+async function applyFlags() {
+  const file = values.apply!;
+  const batchSize = Number(values.batch);
+  if (!Number.isInteger(batchSize) || batchSize < 1) fail('--batch must be a positive integer');
+
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.readFile(file);
+  const sheet = wb.getWorksheet(SHEET);
+  if (!sheet) fail(`workbook has no "${SHEET}" sheet — was it produced by the sweep?`);
+
+  const header = sheet.getRow(1);
+  const col: Record<string, number> = {};
+  header.eachCell((cell, i) => {
+    col[String(cell.value ?? '').trim()] = i;
+  });
+  for (const need of ['modelVersionId', 'modelId', 'agree', 'systemOwned'])
+    if (!col[need]) fail(`workbook is missing the "${need}" column`);
+
+  // Added on first apply rather than by the sweep, so an older workbook still works.
+  let appliedCol = col.applied;
+  if (!appliedCol) {
+    appliedCol = header.cellCount + 1;
+    header.getCell(appliedCol).value = 'applied';
+    header.commit();
+  }
+
+  // Phase 3's rulings win over the presumed yes-set. A disagreement a human left blank was
+  // ruled DO NOT FLAG — that is a decision, not a missing value, so it has to beat `agree`.
+  const reviewed = new Map<number, boolean>();
+  const review = wb.getWorksheet('Review');
+  if (review) {
+    const rHeader = review.getRow(1);
+    const rCol: Record<string, number> = {};
+    rHeader.eachCell((cell, i) => {
+      rCol[String(cell.value ?? '').trim()] = i;
+    });
+    if (rCol.modelVersionId && rCol.action)
+      for (let r = 2; r <= review.rowCount; r++) {
+        const id = Number(review.getRow(r).getCell(rCol.modelVersionId).value);
+        if (!Number.isInteger(id)) continue;
+        const action = String(review.getRow(r).getCell(rCol.action).value ?? '')
+          .trim()
+          .toLowerCase();
+        reviewed.set(id, action === 'nsfw');
+      }
+  }
+
+  type Pending = { row: number; versionId: number; modelId: number };
+  const flag: Pending[] = [];
+  const skip = { alreadyApplied: 0, systemOwned: 0, overturned: 0, reviewedNo: 0 };
+
+  for (let r = 2; r <= sheet.rowCount; r++) {
+    const row = sheet.getRow(r);
+    const stamped = String(row.getCell(appliedCol).value ?? '').trim();
+    if (stamped) {
+      skip.alreadyApplied++;
+      continue;
+    }
+
+    const versionId = Number(row.getCell(col.modelVersionId).value);
+    const modelId = Number(row.getCell(col.modelId).value);
+    if (!Number.isInteger(versionId) || !Number.isInteger(modelId)) continue;
+
+    // A database trigger refuses the write, and clearing it later is a one-way door — the level
+    // derivation has no branch for an unflagged system-owned version.
+    if (row.getCell(col.systemOwned).value === true) {
+      skip.systemOwned++;
+      row.getCell(appliedCol).value = 'skipped:system-owned';
+      continue;
+    }
+
+    const ruling = reviewed.get(versionId);
+    if (ruling === false) {
+      skip.reviewedNo++;
+      row.getCell(appliedCol).value = 'skipped:reviewed-no';
+      continue;
+    }
+
+    const agrees = String(row.getCell(col.agree).value ?? '').trim() === 'agree';
+    if (!ruling && !agrees) {
+      skip.overturned++;
+      row.getCell(appliedCol).value = 'skipped:overturned';
+      continue;
+    }
+
+    flag.push({ row: r, versionId, modelId });
+  }
+
+  console.log({ toFlag: flag.length, ...skip });
+
+  if (!values.confirm) {
+    console.log('DRY RUN — pass --confirm to write. The workbook was not modified.');
+    return;
+  }
+
+  let flipped = 0;
+  for (let i = 0; i < flag.length; i += batchSize) {
+    const chunk = flag.slice(i, i + batchSize);
+    const versionIds = chunk.map((c) => c.versionId);
+
+    // The same guards as the live writer, in the same statement: system-owned models excluded,
+    // a moderator's ruling left alone, and the flag only ever moved from FALSE so a re-run
+    // cannot double-count. This path does NOT go through `writeVersionNameFlag`, so the guard
+    // has to be repeated here rather than inherited.
+    const count = await dbWrite.$executeRaw`
+      UPDATE "ModelVersion" mv
+      SET nsfw = TRUE
+      FROM "Model" m
+      WHERE mv.id IN (${Prisma.join(versionIds)})
+        AND m.id = mv."modelId"
+        AND m."userId" > ${SYSTEM_USER_ID}
+        AND mv.nsfw = FALSE
+        AND mv.meta -> 'nsfwDecision' IS NULL
+    `;
+    flipped += count;
+
+    // `nsfw` is an INPUT to the derived level, so the write alone changes nothing anyone reads.
+    // These also queue the search index and bust the caches that embed the level.
+    await updateModelVersionNsfwLevels(versionIds);
+    await updateModelNsfwLevels([...new Set(chunk.map((c) => c.modelId))]);
+
+    const stamp = new Date().toISOString();
+    for (const c of chunk) sheet.getRow(c.row).getCell(appliedCol).value = stamp;
+    await wb.xlsx.writeFile(file);
+
+    console.log(`  ${Math.min(i + batchSize, flag.length)}/${flag.length} (${flipped} flipped)`);
+  }
+
+  console.log({ flipped, rows: flag.length });
+  console.log('Rows already at nsfw=true count as applied — the stamp records the decision.');
+}
+
 // ----------------------------------------------------------------
 
 async function main() {
+  if (values.apply) return applyFlags();
   if (values.sample) return buildSample();
   if (values.review) return buildReview();
   if (values.xguard && values['terms-file'])

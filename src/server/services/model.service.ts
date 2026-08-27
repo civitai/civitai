@@ -1109,6 +1109,14 @@ export const getModelsRaw = async ({
             modelVersions = modelVersions.filter((mv) => mv.status === ModelStatus.Published);
           }
 
+          // Versions flagged NSFW by NAME, dropped whenever the request's browsing level has no
+          // NSFW bits. Such a version is excluded from its model's rollup, so a model can clear
+          // the model-level gate above while carrying a version whose NAME is the flagged thing —
+          // and the name is what this list and the public API render.
+          if (((browsingLevel ?? 0) & nsfwBrowsingLevelsFlag) === 0) {
+            modelVersions = modelVersions.filter((mv) => !mv.nsfw);
+          }
+
           // Filter out NSFW versions for license-restricted base models
           // Models with nsfwLevel > R cannot use base models with restricted licenses
           if (nsfwRestrictedBaseModels.length > 0) {
@@ -4241,10 +4249,33 @@ export async function getModelModerationDetail({ id }: { id: number }) {
   });
   if (!model) throw throwNotFoundError(`No model with id ${id}`);
 
+  // Mod-only. The automatic version-name flag has no other surface: it is not on the model row,
+  // and the version payload the page renders is creator-facing, so widening that to carry a
+  // moderator-only fact would hand it to the owner too.
+  // Any version carrying a ruling, not just the flagged ones — an unflagged version a moderator
+  // blessed is exactly the case the card has to show, or the next moderator re-rules it blind.
+  const ruledOrFlagged = await dbRead.modelVersion.findMany({
+    where: {
+      modelId: id,
+      OR: [{ nsfw: true }, { meta: { path: ['nsfwDecision'], not: Prisma.DbNull } }],
+    },
+    select: { id: true, name: true, nsfw: true, meta: true },
+    orderBy: { index: 'asc' },
+  });
+  const flaggedVersions = ruledOrFlagged.map(
+    ({ id: versionId, name, nsfw, meta: versionMeta }) => ({
+      id: versionId,
+      name,
+      nsfw,
+      ruling: (versionMeta as ModelVersionMeta | null)?.nsfwDecision ?? null,
+    })
+  );
+
   const meta = (model.meta ?? {}) as ModelMeta;
   return {
     id: model.id,
     name: model.name,
+    flaggedVersions,
     nsfw: model.nsfw,
     nsfwLevel: model.nsfwLevel,
     status: model.status,

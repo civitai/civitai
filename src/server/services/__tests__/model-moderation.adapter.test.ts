@@ -22,10 +22,10 @@ vi.mock('~/server/prom/model-moderation.metrics', () => ({
 
 vi.mock('~/server/services/text-moderation.service', () => ({ submitTextModeration: vi.fn() }));
 vi.mock('~/server/services/nsfwLevels.service', () => ({ updateModelNsfwLevels: vi.fn() }));
-// Hand-listed rather than spread from the original: `model-version.service` builds Redis
-// clients and prom collectors at load, and pulling that graph in here is what turns a suite
-// into a zero-collection pass. Same reasoning as the two above.
-vi.mock('~/server/services/model-version.service', () => ({
+// The bust lives in its own leaf module — importing it through `model-version.service` closed a
+// cycle back to this adapter. Mocking the leaf keeps that module's Redis-client-at-load graph
+// out of the suite, which is what turns a suite into a zero-collection pass.
+vi.mock('~/server/services/model-response-cache', () => ({
   bustPublicModelResponseCache: vi.fn(),
 }));
 vi.mock('~/server/clickhouse/tracker', () => ({
@@ -49,7 +49,7 @@ vi.mock('~/server/db/db-lag-helpers', async (importOriginal) => ({
 
 const { modelModerationAdapter } = await import('~/server/services/model-moderation.adapter');
 const { updateModelNsfwLevels } = await import('~/server/services/nsfwLevels.service');
-const { bustPublicModelResponseCache } = await import('~/server/services/model-version.service');
+const { bustPublicModelResponseCache } = await import('~/server/services/model-response-cache');
 const { isFlipt } = await import('~/server/flipt/client');
 const { submitTextModeration } = await import('~/server/services/text-moderation.service');
 const { getDbWithoutLag } = await import('~/server/db/db-lag-helpers');
@@ -886,9 +886,38 @@ describe('recordModelVersionNameForensics', () => {
       })),
     });
 
-    // Same bound and same reason as the matched terms: `Model.meta` is read for every row of
-    // the model feed.
-    expect(JSON.parse(forensicsCall()?.values[0] as string)).toHaveLength(50);
+    // A tighter bound than the matched terms, for the same reason: `Model.meta` is read for
+    // every row of the model feed, and the unit here is an object rather than a term string.
+    // Fifty untrimmed entries reach ~57 KB against a column whose p99 is 310 bytes.
+    expect(JSON.parse(forensicsCall()?.values[0] as string)).toHaveLength(10);
+  });
+
+  // The cap alone does not bound an entry: version names carry no length limit anywhere in the
+  // schema, so one pathological name would blow the budget the cap exists to keep.
+  it('trims each finding — name length and label count', async () => {
+    const { recordModelVersionNameForensics } = await import(
+      '~/server/services/model-moderation.adapter'
+    );
+    await recordModelVersionNameForensics({
+      modelId: 7,
+      versions: [
+        {
+          versionId: 71,
+          name: 'x'.repeat(500),
+          labels: Array.from({ length: 15 }, (_, i) => ({
+            label: `l${i}`,
+            score: i / 100,
+            threshold: 0.5,
+          })),
+        },
+      ],
+    });
+
+    const [persisted] = JSON.parse(forensicsCall()?.values[0] as string);
+    expect(persisted.name).toHaveLength(100);
+    expect(persisted.labels).toHaveLength(5);
+    // Highest-scoring kept, not the first five.
+    expect(persisted.labels[0].label).toBe('l14');
   });
 
   // Both writers merge INTO the existing `textModeration` object. Reverting either to a bare

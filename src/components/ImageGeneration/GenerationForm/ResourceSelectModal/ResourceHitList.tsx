@@ -14,9 +14,13 @@ import { ResourceSelectCard } from './ResourceSelectCard';
 import { skipBaseModelForOwnTabs } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { useResourceSelectInfinite } from './useResourceSelectInfinite';
 import { isDefined } from '~/utils/type-guards';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils/flags';
 
 export function ResourceHitList({ query }: { query: string }) {
   const { canGenerate, resources, selectSource, excludedIds, tab } = useResourceSelectContext();
+  const { canViewNsfw } = useFeatureFlags();
 
   const { data: featured } = trpc.model.getFeaturedModels.useQuery(undefined, {
     enabled: tab === 'featured',
@@ -58,6 +62,13 @@ export function ResourceHitList({ query }: { query: string }) {
       return model.versions.filter((version) => {
         return (
           (canGenerate ? canGenerate === version.canGenerate : true) &&
+          // The picker renders the version NAME, and a version flagged by name is stamped at the
+          // NSFW composite. Its model can still be SFW — a name-flagged version is excluded from
+          // the model rollup — so the model-level filter upstream does not catch it. Level 0 is
+          // unrated rather than safe and is left to the gates that own it.
+          (canViewNsfw ||
+            version.nsfwLevel === 0 ||
+            !Flags.intersects(version.nsfwLevel, nsfwBrowsingLevelsFlag)) &&
           (skipBaseModel ||
             modelBaseModels.length === 0 ||
             modelBaseModels.includes(version.baseModel)) &&
@@ -65,7 +76,7 @@ export function ResourceHitList({ query }: { query: string }) {
         );
       });
     },
-    [canGenerate, resources, excludedIds, tab, selectSource]
+    [canGenerate, canViewNsfw, resources, excludedIds, tab, selectSource]
   );
 
   // Build podium items from raw items (bypassing hidden preferences) so

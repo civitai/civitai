@@ -29,13 +29,20 @@ import classes from './ModelVersionDetails.module.scss';
 // badges come from `modelVersionFlagLabels`, so a new flag surfaces here for free.
 export function ModelModerationCard({
   modelId,
+  versionId,
   versionFlags,
 }: {
   modelId: number;
+  versionId?: number;
   versionFlags?: number;
 }) {
   const colorScheme = useComputedColorScheme('dark');
+  const queryUtils = trpc.useUtils();
   const { data, isLoading } = trpc.moderator.models.getModerationDetail.useQuery({ id: modelId });
+  const flaggedVersions = data?.flaggedVersions ?? [];
+  const setNsfw = trpc.modelVersion.setNsfw.useMutation({
+    onSuccess: () => queryUtils.moderator.models.getModerationDetail.invalidate({ id: modelId }),
+  });
   const [open, setOpen] = useLocalStorage<string[]>({
     key: 'model-moderation-card',
     defaultValue: [],
@@ -49,11 +56,16 @@ export function ModelModerationCard({
   if (data?.cannotPublish) flags.push({ label: 'Cannot publish', color: 'orange' });
   if (data?.cannotPromote) flags.push({ label: 'Promo banned', color: 'orange' });
   if (data?.commentsLocked) flags.push({ label: 'Comments locked', color: 'gray' });
+  // `v.nsfw` as well as the id: this list also carries versions a moderator ruled SAFE, and
+  // badging one of those as NSFW says the opposite of what the ruling decided.
+  if (versionId && flaggedVersions.some((v) => v.id === versionId && v.nsfw))
+    flags.push({ label: 'Version name NSFW', color: 'red' });
   for (const label of getModelVersionFlagLabels(versionFlags ?? 0))
     flags.push({ label, color: 'orange' });
 
   const locked = data?.lockedProperties ?? [];
   const hasFooter = !!(
+    flaggedVersions.length ||
     data?.profanity ||
     data?.textModeration ||
     data?.unpublishedAt ||
@@ -157,6 +169,60 @@ export function ModelModerationCard({
 
               {hasFooter && (
                 <Stack gap={6} px="md" py="sm">
+                  {!!flaggedVersions.length && (
+                    <Stack gap={4}>
+                      <Text size="xs" fw={600} c="red">
+                        Version name NSFW
+                      </Text>
+                      {flaggedVersions.map((v) => (
+                        <Group key={v.id} gap={6} wrap="nowrap">
+                          <Stack gap={0} style={{ flex: 1 }}>
+                            <Text size="xs">
+                              {v.name}{' '}
+                              {!v.nsfw && (
+                                <Text span c="dimmed">
+                                  (not flagged)
+                                </Text>
+                              )}
+                            </Text>
+                            {v.ruling && (
+                              <Text size="xs" c="dimmed">
+                                Ruled {v.ruling.nsfw ? 'NSFW' : 'safe'} by #{v.ruling.by} on{' '}
+                                {formatDate(v.ruling.at)} — scanner will not re-decide
+                              </Text>
+                            )}
+                          </Stack>
+                          <Button
+                            size="compact-xs"
+                            variant="light"
+                            loading={setNsfw.isPending && setNsfw.variables?.id === v.id}
+                            onClick={() =>
+                              setNsfw.mutate({ id: v.id, nsfw: !v.nsfw, locked: true })
+                            }
+                          >
+                            {v.nsfw ? 'Clear' : 'Flag'}
+                          </Button>
+                          {v.ruling && (
+                            <Button
+                              size="compact-xs"
+                              variant="subtle"
+                              color="gray"
+                              loading={setNsfw.isPending && setNsfw.variables?.id === v.id}
+                              onClick={() =>
+                                setNsfw.mutate({ id: v.id, nsfw: v.nsfw, locked: false })
+                              }
+                            >
+                              Release
+                            </Button>
+                          )}
+                        </Group>
+                      ))}
+                      <Text size="xs" c="dimmed">
+                        Set by the curated term list unless a ruling says otherwise. A ruling sticks
+                        across renames; Release hands the version back to the scanner.
+                      </Text>
+                    </Stack>
+                  )}
                   {data.profanity && (
                     <Stack gap={4}>
                       <Text size="xs" fw={600} c="orange">

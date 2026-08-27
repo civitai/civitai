@@ -608,6 +608,12 @@ type ModelVersionDetails = {
   flags: number;
   availability: Availability;
   nsfwLevel: NsfwLevel;
+  /**
+   * Flagged NSFW by NAME. Optional because entries cached before this field existed decode
+   * without it; those refresh on their next write, and the level recompute that sets the flag
+   * refreshes this cache itself, so a newly flagged version is never served from a stale shape.
+   */
+  nsfw?: boolean;
 };
 type ModelDataCache = {
   modelId: number;
@@ -643,6 +649,7 @@ export const dataForModelsCache = createCachedObject<ModelDataCache>({
         mv."flags",
         mv.availability,
         mv."nsfwLevel",
+        mv."nsfw",
         mv."description",
         mv."trainedWords",
         (SELECT rr."resourceId" FROM "RecommendedResource" rr

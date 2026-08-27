@@ -545,6 +545,15 @@ export type ModelVersionMeta = ModelMeta & {
   generationAlias?: GenerationAlias;
   /** Recorded the first time this version was monetized. See resolveRightsAffirmation. */
   rightsAffirmation?: RightsAffirmation;
+  /**
+   * A moderator's ruling on the name flag, and the reason the unattended paths leave it alone.
+   *
+   * Without it a moderator's decision survives only until the next rename: the term list runs on
+   * the new name and re-decides, silently overturning them. `Model.nsfw` has `lockedProperties`
+   * for this; `ModelVersion` has no such column, and this is the same job in the space that
+   * already exists on the row.
+   */
+  nsfwDecision?: { by: number; at: string; nsfw: boolean };
 };
 
 export type PublishVersionInput = z.infer<typeof publishVersionSchema>;
@@ -640,3 +649,14 @@ export const mergeVersionsSchema = z.object({
     .optional(),
   appendDescriptions: z.boolean().default(false),
 });
+
+export const setModelVersionNsfwSchema = z.object({
+  id: z.number(),
+  nsfw: z.boolean(),
+  /**
+   * Defaults true: a moderator touching this flag is ruling on it, and the automatic paths must
+   * not overturn that on the next rename. Pass false to release the version back to the scanner.
+   */
+  locked: z.boolean().default(true),
+});
+export type SetModelVersionNsfwInput = z.infer<typeof setModelVersionNsfwSchema>;
