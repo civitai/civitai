@@ -16,6 +16,7 @@ import { holdPlacementEscrow, settlePlacement } from '~/server/services/placemen
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
 import { getPlacementConfig } from '~/server/services/placement.service';
 import { resolvePlacementSpaceFor } from '~/server/services/placement-space.service';
+import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { imageReviewedSql } from '~/server/common/image-visibility';
 import type { QueueImage as SharedQueueImage } from '~/server/utils/queue-image';
 import { toQueueImage } from '~/server/utils/queue-image';
@@ -1784,7 +1785,7 @@ export async function getPendingRemixGallerySubmissions({
       data: true,
       createdAt: true,
       expiresAt: true,
-      placer: { select: { id: true, username: true, image: true } },
+      placer: { select: userWithCosmeticsSelect },
     },
     orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
   });

@@ -1438,6 +1438,40 @@ describe('getPendingRemixGallerySubmissions paging', () => {
     placementFindMany.mockResolvedValue([]);
   });
 
+  /**
+   * Named for the decision, because the narrow select this replaced type-checked
+   * fine: `UserAvatar` takes `Partial<UserWithCosmetics>`, so dropping the three
+   * keys below is invisible to tsc and shows up only as a wrong-looking avatar.
+   *
+   * `User.image` is what the queue used to send, and it is a dead column — of
+   * the 121 distinct placers on this surface in production, 0 have it set and 93
+   * have a `profilePicture`. So the old select handed the avatar null for every
+   * placer alive, and stripped the equipped cosmetics of 61 of them.
+   *
+   * Asserted on the ARGUMENT rather than on a returned row: the Prisma mock
+   * ignores `select` and hands back whatever the fixture holds, so an assertion
+   * made on the result passes with any select at all.
+   */
+  it('sends the placer fields the avatar renders, not just id and username', async () => {
+    // A populated page, because the service returns before it ever reaches
+    // `findMany` on an empty one — the default `beforeEach` state would make
+    // this assert against a call that never happened.
+    respond({
+      page: [{ id: 1, createdAt: new Date('2026-01-01T00:00:00.000Z') }],
+      images: [image(101), image(HOST_IMAGE)],
+    });
+    placementFindMany.mockResolvedValue([queueRow(1, 101, '2026-01-01T00:00:00.000Z')]);
+
+    await ask({ limit: 2 });
+
+    const placerSelect = placementFindMany.mock.calls[0][0].select.placer.select;
+    // Named individually so a revert says which one went missing. `deletedAt`
+    // is in here because the avatar and the username both branch on it and a
+    // deleted placer would otherwise render as a live one.
+    for (const field of ['profilePicture', 'cosmetics', 'deletedAt'])
+      expect(placerSelect, `placer select is missing ${field}`).toHaveProperty(field);
+  });
+
   it('takes the cursor from the last row of the page, not the last row it returns', async () => {
     // Three rows for a page of two: the third is the "is there more" probe. Row
     // 2 is selected but dropped afterwards for an unreadable payload — exactly
