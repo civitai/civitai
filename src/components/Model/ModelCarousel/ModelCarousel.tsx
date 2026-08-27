@@ -1,3 +1,4 @@
+import { useCallback } from 'react';
 import { Card, Center, Indicator, Loader, Stack } from '@mantine/core';
 import { IconBrush, IconInfoCircle } from '@tabler/icons-react';
 import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
@@ -54,6 +55,11 @@ export function ModelCarousel(props: Props) {
 function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10 }: Props) {
   const features = useFeatureFlags();
   const { running, helpers } = useTourContext();
+  // Both model-page tours spend two steps here — one on the button, one on the
+  // options it opens — so the open and the choice each move on by one.
+  const advanceTour = useCallback(() => {
+    if (running) helpers?.next();
+  }, [running, helpers]);
   const { images, flatData, isLoading } = useQueryImages({
     modelVersionId: modelVersionId,
     prioritizedUserIds: [modelUserId],
@@ -122,12 +128,12 @@ function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10
                                   image={image}
                                   source="remix:model-carousel"
                                   sourceModelVersionId={modelVersionId}
-                                  onAction={() => {
-                                    if (running) helpers?.next();
-                                  }}
-                                  // Both model-page tours put a step on this
-                                  // button that advances only by clicking
-                                  // through to one of these options.
+                                  onAction={advanceTour}
+                                  onOpen={advanceTour}
+                                  tourTarget="model:remix-menu"
+                                  // Both model-page tours spend a step on this
+                                  // button and the next on the options it
+                                  // opens, over the layers Joyride draws.
                                   zIndex={running ? tourClickThroughZIndex : undefined}
                                 >
                                   <HoverActionButton

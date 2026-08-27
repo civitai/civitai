@@ -1,3 +1,4 @@
+import { remixMenuStep } from '~/components/Tours/tours/remix-menu.step';
 import type { StepWithData } from '~/types/tour';
 import { waitForElement } from '~/utils/html-helpers';
 
@@ -79,6 +80,7 @@ export const modelPageTour: StepWithData[] = [
       },
     },
   },
+  remixMenuStep('model:remix-menu'),
 ];
 
 export const welcomeTour: StepWithData[] = [
@@ -116,4 +118,5 @@ export const welcomeTour: StepWithData[] = [
       },
     },
   },
+  remixMenuStep('model:remix-menu'),
 ];

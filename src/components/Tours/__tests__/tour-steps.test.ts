@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync } from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
+import { tourScrollBlock } from '~/components/Tours/tour-scroll';
 import { tourSteps } from '~/components/Tours/tours';
 
 const SRC = path.resolve(__dirname, '../../..');
@@ -55,18 +56,31 @@ describe('tour steps point at something', () => {
   });
 });
 
-describe('the content-generation remix steps', () => {
-  // Clicking the remix button opens a menu rather than the generator, so the
-  // tour spends a step on the button and the next on the options it reveals.
-  // Collapsing them back into one leaves the menu undescribed.
-  it('follows the button step with one on the menu it opens', () => {
-    const targets = tourSteps['content-generation'].map((step) => String(step.target));
-    const button = targets.indexOf('[data-tour="gen:remix"]');
+// Clicking a remix button opens a menu rather than the generator, so each tour
+// that spotlights one spends a step on the button and the next on the options it
+// reveals. Collapsing them back into one leaves the menu undescribed.
+describe.each([
+  ['content-generation', 'gen:remix'],
+  ['model-page', 'model:remix'],
+  ['welcome', 'model:remix'],
+] as const)('the %s remix steps', (tour, button) => {
+  const targets = () => tourSteps[tour].map((step) => String(step.target));
 
-    expect(button).toBeGreaterThan(-1);
-    expect(targets[button + 1]).toBe('[data-tour="gen:remix-menu"]');
+  it('follows the button step with one on the menu it opens', () => {
+    const index = targets().indexOf(`[data-tour="${button}"]`);
+
+    expect(index).toBeGreaterThan(-1);
+    expect(targets()[index + 1]).toBe(`[data-tour="${button}-menu"]`);
   });
 
+  it('leaves the menu step a way forward for an image every engine refuses', () => {
+    const menuStep = tourSteps[tour].find((step) => step.target === `[data-tour="${button}-menu"]`);
+
+    expect(menuStep?.hideFooter).not.toBe(true);
+  });
+});
+
+describe('the content-generation remix steps', () => {
   /**
    * `GenerationForm` used to cut the signed-out tour with `slice(0, 6)`, so
    * inserting a step silently pushed `gen:submit` off the end. The cuts name
@@ -80,14 +94,6 @@ describe('the content-generation remix steps', () => {
 
     expect(source).not.toMatch(/genSteps\.slice\(\s*0\s*,\s*-?\d/);
     expect(source).toContain("through(genSteps, 'gen:submit')");
-  });
-
-  it('leaves the menu step a way forward for an image every engine refuses', () => {
-    const menuStep = tourSteps['content-generation'].find(
-      (step) => step.target === '[data-tour="gen:remix-menu"]'
-    );
-
-    expect(menuStep?.hideFooter).not.toBe(true);
   });
 });
 
@@ -106,5 +112,23 @@ describe('TourPopover', () => {
 
     expect(destructured.length).toBeGreaterThan(0);
     expect(unwired).toEqual([]);
+  });
+});
+
+describe('tourScrollBlock', () => {
+  /**
+   * `model:gallery` targets the wrapper around the whole gallery so the step
+   * has something to aim at before the feed mounts. That wrapper is as tall as
+   * the feed, and centering it puts the user `(height - viewport) / 2` below
+   * its top — hundreds of images past the heading the step is describing.
+   */
+  it('scrolls to the top of a target taller than the viewport', () => {
+    expect(tourScrollBlock(5000, 806)).toBe('start');
+    expect((5000 - 806) / 2).toBeGreaterThan(2000); // what centering would cost
+  });
+
+  it('still centres a target that fits', () => {
+    expect(tourScrollBlock(40, 806)).toBe('center');
+    expect(tourScrollBlock(806, 806)).toBe('center');
   });
 });

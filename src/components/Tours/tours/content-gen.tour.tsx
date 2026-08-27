@@ -1,5 +1,6 @@
 import { Text } from '@mantine/core';
 import Router from 'next/router';
+import { remixMenuStep } from '~/components/Tours/tours/remix-menu.step';
 import { useGenerationPanelStore } from '~/store/generation-panel.store';
 import type { StepWithData } from '~/types/tour';
 import { waitForElement } from '~/utils/html-helpers';
@@ -90,47 +91,13 @@ export const contentGenerationTour: StepWithData[] = [
       },
     },
   },
-  {
-    target: '[data-tour="gen:remix-menu"]',
-    title: 'Pick How to Remix',
-    content: (
-      <Text>
-        <Text fw={600} span>
-          Edit image
-        </Text>{' '}
-        changes it with a prompt,{' '}
-        <Text fw={600} span>
-          Animate
-        </Text>{' '}
-        turns it into a video, and{' '}
-        <Text fw={600} span>
-          Reuse prompt &amp; resources
-        </Text>{' '}
-        starts from its settings. Any one of them opens the generator.
-      </Text>
-    ),
-    // The menu hangs below the button, so keep the tooltip off to the side.
-    placement: 'right',
-    disableBeacon: true,
-    spotlightClicks: true,
-    disableOverlayClose: true,
-    spotlightPadding: 6,
-    // The footer stays: an image every engine refuses opens a menu with nothing
-    // clickable in it, and this step would otherwise have no way forward.
-    data: {
-      onNext: async () => {
-        await waitForElement({ selector: '[data-tour="gen:submit"]', interval: 1000 }).catch(
-          () => null
-        );
-      },
+  remixMenuStep('gen:remix-menu', {
+    onNext: async () => {
+      await waitForElement({ selector: '[data-tour="gen:submit"]', interval: 1000 }).catch(
+        () => null
+      );
     },
-    styles: {
-      spotlight: {
-        animation: 'shadowGlow 2s infinite',
-        willChange: 'box-shadow',
-      },
-    },
-  },
+  }),
   {
     target: '[data-tour="gen:submit"]',
     title: 'Create Your Image',
