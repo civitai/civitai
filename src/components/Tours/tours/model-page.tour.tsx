@@ -55,6 +55,9 @@ export const modelPageTour: StepWithData[] = [
     content: `View images created with this resource. You can add your review and post your own images that you've created using this resource.`,
     data: {
       onNext: async () => {
+        // Reading this step scrolls the carousel out of view, and its slides
+        // only mount while they are in it.
+        document.querySelector('[data-tour="model:start"]')?.scrollIntoView({ block: 'start' });
         await waitForElement({ selector: '[data-tour="model:remix"]' }).catch(() => null);
       },
     },

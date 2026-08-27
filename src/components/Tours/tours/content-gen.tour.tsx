@@ -74,8 +74,7 @@ export const contentGenerationTour: StepWithData[] = [
   {
     target: '[data-tour="gen:remix"]',
     title: 'Remix This Image',
-    content:
-      'Click this button to see what you can make from an image — edit it with a prompt, animate it, or reuse its prompt and resources. Pick any one to carry on.',
+    content: 'Click this button to see what you can make from this image.',
     // Below the button is where the remix menu opens; a tooltip there covers it.
     placement: 'top',
     hideFooter: true,
@@ -84,6 +83,40 @@ export const contentGenerationTour: StepWithData[] = [
     disableCloseOnEsc: true,
     disableOverlayClose: true,
     spotlightPadding: 10,
+    styles: {
+      spotlight: {
+        animation: 'shadowGlow 2s infinite',
+        willChange: 'box-shadow',
+      },
+    },
+  },
+  {
+    target: '[data-tour="gen:remix-menu"]',
+    title: 'Pick How to Remix',
+    content: (
+      <Text>
+        <Text fw={600} span>
+          Edit image
+        </Text>{' '}
+        changes it with a prompt,{' '}
+        <Text fw={600} span>
+          Animate
+        </Text>{' '}
+        turns it into a video, and{' '}
+        <Text fw={600} span>
+          Reuse prompt &amp; resources
+        </Text>{' '}
+        starts from its settings. Any one of them opens the generator.
+      </Text>
+    ),
+    // The menu hangs below the button, so keep the tooltip off to the side.
+    placement: 'right',
+    disableBeacon: true,
+    spotlightClicks: true,
+    disableOverlayClose: true,
+    spotlightPadding: 6,
+    // The footer stays: an image every engine refuses opens a menu with nothing
+    // clickable in it, and this step would otherwise have no way forward.
     data: {
       onNext: async () => {
         await waitForElement({ selector: '[data-tour="gen:submit"]', interval: 1000 }).catch(

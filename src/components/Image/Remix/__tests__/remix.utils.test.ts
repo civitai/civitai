@@ -168,9 +168,9 @@ describe('the refusal-only menu state', () => {
   // to fall back on — is what wedged the onboarding tour once already: the menu
   // rendered with nothing clickable in it, so the "user acted" callback never
   // fired and a step whose only exit is clicking through had no exit. RemixMenu
-  // handles it by firing that callback on open instead. If someone makes
-  // `isRemixMenuVisible` refusal-aware, this fails and points at the `onOpen`
-  // branch that then has no reason to exist.
+  // answers it on two fronts: a caller passing only `onAction` gets it fired on
+  // open, and the tour's own menu step keeps its footer. If someone makes
+  // `isRemixMenuVisible` refusal-aware, this fails and points at both.
   it('is reachable: visible, refused, and nothing to fall back on', () => {
     const refused = image({ poi: true });
     expect(getEngineRefusal(refused)).toBeDefined();

@@ -273,12 +273,20 @@ export function GenerationForm() {
 
   // Configure tour steps based on user state
   useEffect(() => {
+    const through = (steps: typeof contentGenerationTour, target: string) => {
+      const end = steps.findIndex((step) => step.target === `[data-tour="${target}"]`);
+      return end === -1 ? steps : steps.slice(0, end + 1);
+    };
+
     if (!running || currentStep > 0 || loadingGeneratorData) return;
     const isRemix = remixOfId && activeTour === 'remix-content-generation';
     let genSteps = isRemix ? remixContentGenerationTour : contentGenerationTour;
 
-    if (!loadingGenQueueRequests && !hasGeneratedImages) genSteps = genSteps.slice(0, -2);
-    if (!currentUser) genSteps = isRemix ? genSteps.slice(0, 4) : genSteps.slice(0, 6);
+    // Both cuts name the step they end on. As positional indexes they silently
+    // re-aimed at whatever moved into the slot — inserting the remix-menu step
+    // pushed `gen:submit` out of the signed-out tour, and nothing failed.
+    if (!loadingGenQueueRequests && !hasGeneratedImages) genSteps = through(genSteps, 'gen:feed');
+    if (!currentUser) genSteps = through(genSteps, 'gen:submit');
 
     const alreadyReviewedTerms =
       window?.localStorage?.getItem('review-generation-terms') === 'true';

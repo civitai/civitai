@@ -530,7 +530,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
   });
 
   const downloadSection = showDownloadSection ? (
-    <Card withBorder>
+    <Card withBorder data-tour="model:download">
       <Card.Section withBorder inheritPadding py="xs" px="sm">
         <Group justify="space-between">
           <Text size="sm" fw={600}>
