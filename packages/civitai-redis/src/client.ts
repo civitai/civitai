@@ -2318,6 +2318,15 @@ const REDIS_KEYS_UNPREFIXED = {
     RESCAN: 'article:rescan',
     RATING_REVIEW_RATE_LIMIT: 'article:nsfw-review-rate',
   },
+  REPORT: {
+    /*
+      Use: Report ids whose status was changed in the last few minutes, so a cached queue snapshot
+      (or a lagging replica) cannot put an already-resolved report back in front of a moderator.
+      Structure: hash, field = reportId, value = '1', whole-key TTL.
+      Read by: the moderator app's dashboard, which filters its most-reported list through it.
+     */
+    RESOLVED_RECENT: 'report:resolved-recent',
+  },
 } as const;
 
 /**

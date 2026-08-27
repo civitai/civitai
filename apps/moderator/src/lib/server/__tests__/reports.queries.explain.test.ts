@@ -15,6 +15,16 @@ const h = explainHarness();
 vi.mock('../db', () => ({ dbRead: h.db, dbWrite: h.db }));
 vi.mock('../mod-activity', () => ({ recordModActivity: vi.fn() }));
 vi.mock('../rewards', () => ({ rewardReportReporters: vi.fn() }));
+// The real cache helper with only the client stubbed: a permanent miss, so every call reaches the
+// query this file is here to plan.
+vi.mock('../redis', () => ({
+  getRedis: () => ({
+    packed: { get: async () => null, set: async () => undefined },
+    del: async () => 1,
+    hmGet: async (_key: string, fields: string[]) => fields.map(() => null),
+    hSetMultiWithExpire: async () => 1,
+  }),
+}));
 
 const service = await import('../reports.service');
 
@@ -78,10 +88,16 @@ describe.skipIf(!h.hasDb)('report queries plan against the real schema', () => {
     await plans();
   });
 
+  it('getMostReportedPage — the same shape, paged, and its count', async () => {
+    // The page adds an OFFSET inside that CTE and a second statement counting the same predicate.
+    // Both plan here because neither is exercised by any other tier without a database.
+    await service.getMostReportedPage({ page: 4, limit: 25, days: 30 });
+    await plans();
+  });
   it('getMostReported — the LIMIT-in-a-CTE shape with its seventeen subplans', async () => {
     // Subplans resolve OUTSIDE the CTE: Postgres cannot project through a Sort, so flattening this
     // evaluates them for every pending report of the week.
-    await service.getMostReported(20, 1_767_225_600_000);
+    await service.getMostReported({ limit: 10 });
     await plans();
   });
 });

@@ -1,4 +1,5 @@
 import { sql } from '@civitai/db/kysely';
+import { createCache } from './cache';
 import { dbRead } from './db';
 
 /**
@@ -363,17 +364,16 @@ export type MinorQueueCounts = { pending: number; auto: number; appeals: number 
  * All three in one round trip, since a moderator reads them together and a tab labelled with a count
  * from a different moment is the thing worth avoiding.
  */
-const COUNTS_TTL_MS = 300_000;
-let countsCache: { at: number; value: Promise<MinorQueueCounts> } | null = null;
+const counts = createCache({ name: 'minor-queue-counts:v1', fetch: fetchCounts, ttlSeconds: 300 });
 
-export function getMinorQueueCounts(now = Date.now()): Promise<MinorQueueCounts> {
-  if (countsCache && now - countsCache.at < COUNTS_TTL_MS) return countsCache.value;
-  const value = fetchCounts();
-  countsCache = { at: now, value };
-  value.catch(() => {
-    if (countsCache?.value === value) countsCache = null;
-  });
-  return value;
+export function getMinorQueueCounts(): Promise<MinorQueueCounts> {
+  return counts.get({});
+}
+
+/** Every verdict moves a model out of one of these populations, and five minutes is a long time to
+ *  label a tab with a number the moderator has already changed. */
+export function bustMinorQueueCounts(): Promise<void> {
+  return counts.bust({});
 }
 
 async function fetchCounts(): Promise<MinorQueueCounts> {

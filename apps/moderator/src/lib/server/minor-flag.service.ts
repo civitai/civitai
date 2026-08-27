@@ -1,3 +1,4 @@
+import { bustMinorQueueCounts } from './minor-hash.service';
 import { callModEndpoint, type ActionResult, type JsonResult } from './user-actions.service';
 
 /**
@@ -41,7 +42,10 @@ export async function revertMinorFlag(modelId: number): Promise<ActionResult> {
   if (!result.ok) return result;
 
   const reverted = Number(result.body.reverted ?? 0);
-  if (reverted > 0) return { ok: true };
+  if (reverted > 0) {
+    await bustMinorQueueCounts();
+    return { ok: true };
+  }
   return {
     ok: false,
     error:
@@ -53,5 +57,7 @@ export async function revertMinorFlag(modelId: number): Promise<ActionResult> {
 
 const toResult = async (call: Promise<JsonResult>): Promise<ActionResult> => {
   const result = await call;
-  return result.ok ? { ok: true } : result;
+  if (!result.ok) return result;
+  await bustMinorQueueCounts();
+  return { ok: true };
 };

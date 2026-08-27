@@ -27,6 +27,16 @@ const h = explainHarness();
 vi.mock('../db', () => ({ dbRead: h.db, dbWrite: h.db }));
 vi.mock('../mod-activity', () => ({ recordModActivity: vi.fn() }));
 vi.mock('../rewards', () => ({ rewardReportReporters: vi.fn() }));
+// The real cache helper with only the client stubbed: a permanent miss, so every call reaches the
+// query this file is here to read.
+vi.mock('../redis', () => ({
+  getRedis: () => ({
+    packed: { get: async () => null, set: async () => undefined },
+    del: async () => 1,
+    hmGet: async (_key: string, fields: string[]) => fields.map(() => null),
+    hSetMultiWithExpire: async () => 1,
+  }),
+}));
 
 const service = await import('../reports.service');
 
@@ -120,7 +130,7 @@ describe('the queries that fan out over every entity at once', () => {
   });
 
   it('getMostReported keeps every entity subselect parenthesised', async () => {
-    await service.getMostReported(20, Date.parse('2026-08-21T00:00:00Z'));
+    await service.getMostReported({ limit: 10 });
 
     const statements = emitted();
     statements.forEach(noBareSubquery);
@@ -128,6 +138,67 @@ describe('the queries that fan out over every entity at once', () => {
       expect(statements.some((sql) => sql.includes(`(SELECT er."${fk}" FROM "${table}" er`))).toBe(
         true
       );
+  });
+});
+
+describe('getMostReportedPage', () => {
+  it('counts exactly what it lists', async () => {
+    await service.getMostReportedPage({ page: 2, limit: 25, days: 30 });
+
+    // The list and the count are two statements carrying the same predicate by hand, so they can
+    // drift — and a count that outruns its list renders page numbers that land on nothing.
+    const [a, b] = emitted().map((sql) => sql.toLowerCase());
+    const predicates = [a, b].map((sql) =>
+      [
+        sql.includes('t.status = '),
+        sql.includes('array_length(t."alsoreportedby", 1), 0) + 1'),
+        sql.includes('make_interval(days'),
+        sql.includes('i."blockedfor" is null'),
+      ].join()
+    );
+    expect(predicates[0]).toBe(predicates[1]);
+    expect(predicates[0]).toBe('true,true,true,true');
+  });
+
+  it('pages inside the CTE, where the LIMIT already is', async () => {
+    await service.getMostReportedPage({ page: 3, limit: 25, days: 7 });
+
+    // OFFSET applied outside it would walk the discarded rows through all seventeen subplans — the
+    // reason the LIMIT is in there in the first place.
+    const list = emitted()
+      .map((sql) => sql.toLowerCase())
+      .find((sql) => sql.includes('with top as'))!;
+    // `FROM top` opens the outer query, so an OFFSET after it is one applied to the joined result.
+    expect(list.indexOf('offset')).toBeLessThan(list.indexOf('from top'));
+  });
+});
+
+describe('report rows link to what was reported', () => {
+  it('resolves a context url for every type that has no page of its own', async () => {
+    await service.getMostReported({ limit: 10 });
+
+    const statements = emitted();
+    statements.forEach(noBareSubquery);
+    // Hardcoded, like EXPECTED above: reading these from CONTEXT_ENTITIES — which is what the query
+    // maps over — makes the assertion self-referential, so dropping a resolver would still pass.
+    for (const column of [
+      'context:comment',
+      'context:commentV2',
+      'context:bountyEntry',
+      'context:model3dReview',
+      'context:reportedUser',
+    ])
+      expect(statements.some((sql) => sql.includes('AS "' + column + '"'))).toBe(true);
+  });
+
+  it('falls back to the main app resolver for a commentV2 whose thread names no entity', async () => {
+    await service.getMostReported({ limit: 10 });
+
+    // 3,519 orphaned threads on the dev clone. Without the coalesce those rows render as dead text,
+    // which is what the mod team reported as comment reports that link nowhere.
+    const sql = emitted().find((s) => s.includes('context:commentV2'))!;
+    expect(sql).toContain("'/comments/v2/' || cv.id");
+    expect(sql.toLowerCase()).toContain('coalesce(case');
   });
 });
 

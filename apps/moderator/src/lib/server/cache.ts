@@ -1,5 +1,30 @@
-import { REDIS_KEYS, type RedisKeyTemplateCache } from '@civitai/redis';
+import {
+  createRedisCacheBuilder,
+  prefixCacheKey,
+  REDIS_KEYS,
+  type RedisKeyTemplateCache,
+} from '@civitai/redis';
 import { getRedis } from './redis';
+
+// Read-through caches for this app's own expensive reads. The mechanics — single-flight, TTL jitter,
+// fail-open, named-args-as-key — live in `@civitai/redis`; this only binds them to the client shim.
+//
+// 🔴 Never put an in-process memo in front of one: it is filled at a different moment on every server,
+// so consecutive refreshes disagree about what is still in a queue.
+//
+// Keeping one fresh: bust on the write when the moderator changed the thing themselves — a row they
+// can click that is already resolved, or the minor-queue tab labels beside the verdict they just
+// entered. Let the TTL handle what they only read: the sidebar totals cost ten queries to rebuild for
+// a number nobody clicks. A bust alone is never sufficient, since a fill that started before the write
+// lands after it — see `getMostReported`.
+//
+// The prefix carries the environment namespace that `REDIS_KEYS` gets from `applyCacheKeyPrefix` and
+// these keys, built from `name`, bypass — without it a preview deployment reads and evicts production
+// entries.
+export const createCache = createRedisCacheBuilder({
+  getClient: getRedis,
+  prefix: prefixCacheKey('mod'),
+});
 
 // createCachedObject stores one key per id at `${cacheKey}:${id}`; deleting it is the whole bust. Same keys
 // the main app reads.

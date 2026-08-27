@@ -1,5 +1,6 @@
 import { sql } from '@civitai/db/kysely';
 import { NsfwLevel } from '@civitai/shared';
+import { createCache } from './cache';
 import { dbRead } from './db';
 import { bounded } from './bounded';
 import { getImageReviewCounts } from './image-review.service';
@@ -11,18 +12,10 @@ import { getReportCounts } from './reports.service';
 
 export type SidebarCounts = Record<string, number>;
 
-const TTL_MS = 60_000;
-let cache: { at: number; value: Promise<SidebarCounts> } | null = null;
+const counts = createCache({ name: 'sidebar-counts:v1', fetch: fetchCounts, ttlSeconds: 60 });
 
-export function getSidebarCounts(now = Date.now()): Promise<SidebarCounts> {
-  if (cache && now - cache.at < TTL_MS) return cache.value;
-  const value = fetchCounts();
-  cache = { at: now, value };
-  // Don't cache a rejection — let the next navigation retry.
-  value.catch(() => {
-    if (cache?.value === value) cache = null;
-  });
-  return value;
+export function getSidebarCounts(): Promise<SidebarCounts> {
+  return counts.get({});
 }
 
 async function fetchCounts(): Promise<SidebarCounts> {

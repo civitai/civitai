@@ -38,6 +38,14 @@ export const reportReasonLabels: Record<ReportReason, string> = {
   StickerPlacement: 'Sticker Placement',
 };
 
+/** Ten at a time. The dashboard section is worked report by report rather than skimmed, and every
+ *  page of it is a fresh read — the list is deliberately uncached, so the page size is the query size. */
+export const MOST_REPORTED_PAGE_SIZE = 10;
+
+/** One save's worth of staged decisions. Each one rewards its reporters and writes a ModActivity row,
+ *  and they are applied in sequence. */
+export const MAX_REPORT_DECISIONS = 200;
+
 export const DEFAULT_REPORT_STATUSES: ReportStatus[] = [
   ReportStatus.Pending,
   ReportStatus.Processing,

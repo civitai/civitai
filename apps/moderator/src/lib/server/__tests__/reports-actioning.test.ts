@@ -9,6 +9,8 @@ import { ReportStatus } from '$lib/reports';
 const updateSpy = vi.fn();
 const recordModActivity = vi.fn();
 const rewardReportReporters = vi.fn();
+const redisMarkResolved = vi.fn().mockResolvedValue(1);
+const redisClearResolved = vi.fn().mockResolvedValue(1);
 
 let existingReportId: number | undefined;
 /** `undefined` means the guarded UPDATE matched nothing, i.e. the status was already set. */
@@ -85,6 +87,17 @@ vi.mock('../db', () => ({
 
 vi.mock('../mod-activity', () => ({ recordModActivity }));
 vi.mock('../rewards', () => ({ rewardReportReporters }));
+// The real cache helper with only the client stubbed, so the writes asserted below are the ones the
+// service would actually issue.
+vi.mock('../redis', () => ({
+  getRedis: () => ({
+    packed: { get: async () => null, set: async () => undefined },
+    del: async () => 1,
+    hmGet: async (_key: string, fields: string[]) => fields.map(() => null),
+    hSetMultiWithExpire: redisMarkResolved,
+    hDel: redisClearResolved,
+  }),
+}));
 
 const { setReportStatus, updateReportNotes } = await import('../reports.service');
 
@@ -190,6 +203,46 @@ describe('setReportStatus', () => {
     expect(rewardReportReporters).not.toHaveBeenCalled();
     expect(updateSet()).not.toHaveProperty('previouslyReviewedCount');
     expect(updateSet()).toMatchObject({ status: ReportStatus.Unactioned, statusSetBy: 7 });
+  });
+
+  it('marks the report resolved, so a lagging replica cannot hand it straight back', async () => {
+    await setReportStatus({ id: 1, status: ReportStatus.Actioned, userId: 7 });
+
+    // The dashboard re-reads the list the moment a save returns, and that read is a replica while
+    // this write went to the primary.
+    expect(redisMarkResolved).toHaveBeenCalledWith(
+      expect.stringContaining('report:resolved-recent'),
+      ['1', '1'],
+      expect.any(Number)
+    );
+  });
+
+  it('keeps the marker well past any replica lag', async () => {
+    await setReportStatus({ id: 1, status: ReportStatus.Actioned, userId: 7 });
+
+    const [, , ttl] = redisMarkResolved.mock.calls[0] as [string, string[], number];
+    expect(ttl).toBeGreaterThan(60);
+  });
+
+  it('clears the marker when a report is put back in the queue', async () => {
+    await setReportStatus({ id: 1, status: ReportStatus.Pending, userId: 7 });
+
+    // `/reports/[slug]` offers Pending like any other status. Marking that resolved would hide a
+    // report that is genuinely waiting for someone.
+    expect(redisClearResolved).toHaveBeenCalledWith(
+      expect.stringContaining('report:resolved-recent'),
+      '1'
+    );
+    expect(redisMarkResolved).not.toHaveBeenCalled();
+  });
+
+  it('marks nothing when the report was not there to action', async () => {
+    existingReportId = undefined;
+
+    await setReportStatus({ id: 404, status: ReportStatus.Actioned, userId: 7 });
+
+    expect(redisMarkResolved).not.toHaveBeenCalled();
+    expect(redisClearResolved).not.toHaveBeenCalled();
   });
 
   it('records who actioned it, on every path that touched the row', async () => {

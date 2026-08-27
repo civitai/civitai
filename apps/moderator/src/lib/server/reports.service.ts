@@ -1,5 +1,8 @@
 import { sql } from '@civitai/db/kysely';
+import { REDIS_KEYS } from '@civitai/redis';
+import { URGENT_REPORT_COUNT } from '$lib/queue-thresholds';
 import { dbRead, dbWrite } from './db';
+import { getRedis } from './redis';
 import { recordModActivity } from './mod-activity';
 import { REPORT_ENTITIES, reportEntity } from './report-entities';
 import { rewardReportReporters } from './rewards';
@@ -32,9 +35,14 @@ export type ModeratorReportRow = {
 };
 
 /**
- * A comment has no standalone page: the site opens it through whatever it hangs off. So a comment
- * report rendered as unlinked text, and the only way to the words being reported was to search for
- * them. Resolved in SQL because the parent is a join away and the queue already pays for one.
+ * Where to send a moderator for a reported thing that has no page of its own.
+ *
+ * Six of the fifteen report types name something the site only reaches through a parent — a comment
+ * through its thread, a bounty entry through its bounty — so `entityUrl` returns null for them and the
+ * row rendered as dead grey text. That was most of a moderator's clicks on the reports surfaces: the
+ * only way to the words being reported was to search for them.
+ *
+ * Resolved in SQL because every parent is a join away and the queue already pays for one.
  *
  * `commentV2` threads carry the parent as one of a dozen nullable columns, and a REPLY carries none of
  * them — its thread's parent is the comment above it — so the resolution falls back to `rootThreadId`
@@ -42,17 +50,21 @@ export type ModeratorReportRow = {
  * `bountyId` the URL needs (248 of 248), hence the join. `highlight` is what scrolls to and marks the
  * comment once the page opens, and is the whole point of linking rather than landing on the entity.
  */
-function commentContextUrl(type: ReportEntity, entityId: ReturnType<typeof sql<number | null>>) {
-  if (type === 'comment')
-    return sql<string | null>`(
+type ContextResolver = (
+  entityId: ReturnType<typeof sql<number | null>>
+) => ReturnType<typeof sql<string | null>>;
+
+const CONTEXT_RESOLVERS: Partial<Record<ReportEntity, ContextResolver>> = {
+  comment: (entityId) =>
+    sql<string | null>`(
       SELECT '/models/' || c."modelId" || '?dialog=commentThread&commentId=' ||
              coalesce(c."parentId", c.id) || '&highlight=' || c.id
       FROM "Comment" c WHERE c.id = ${entityId} AND c."modelId" IS NOT NULL
-    )`;
+    )`,
 
-  if (type === 'commentV2')
-    return sql<string | null>`(
-      SELECT CASE
+  commentV2: (entityId) =>
+    sql<string | null>`(
+      SELECT coalesce(CASE
         WHEN p."imageId"       IS NOT NULL THEN '/images/'   || p."imageId"
         WHEN p."postId"        IS NOT NULL THEN '/posts/'    || p."postId"
         WHEN p."articleId"     IS NOT NULL THEN '/articles/' || p."articleId"
@@ -65,8 +77,10 @@ function commentContextUrl(type: ReportEntity, entityId: ReturnType<typeof sql<n
         WHEN p."model3dId"     IS NOT NULL THEN '/3d-models/' || p."model3dId"
         -- Threads with no parent column at all are the remainder (3,519 on the dev clone). They are
         -- orphaned rows, not a missing mapping: one carries 110 comments and no entity of any kind.
+        -- /comments/v2/:id is the main app resolving the thread itself, the only thing left that can
+        -- find the comment — better than the dead text this used to render.
         ELSE NULL
-      END || '?highlight=' || cv.id
+      END || '?highlight=' || cv.id, '/comments/v2/' || cv.id)
       FROM "CommentV2" cv
       JOIN "Thread" t ON t.id = cv."threadId"
       -- A reply's own thread hangs off a comment; the entity is on the root.
@@ -74,9 +88,35 @@ function commentContextUrl(type: ReportEntity, entityId: ReturnType<typeof sql<n
       JOIN LATERAL (SELECT * FROM "Thread" x WHERE x.id = CASE WHEN t."commentId" IS NULL THEN t.id ELSE coalesce(root.id, t.id) END) p ON true
       LEFT JOIN "BountyEntry" be ON be.id = p."bountyEntryId"
       WHERE cv.id = ${entityId}
-    )`;
+    )`,
 
-  return sql<string | null>`null::text`;
+  // A bounty entry lives under its bounty, and the id is only on the entry's own row.
+  bountyEntry: (entityId) =>
+    sql<string | null>`(
+      SELECT '/bounties/' || be."bountyId" || '/entries/' || be.id
+      FROM "BountyEntry" be WHERE be.id = ${entityId}
+    )`,
+
+  // A 3D model's review is rendered on the model's page.
+  model3dReview: (entityId) =>
+    sql<string | null>`(
+      SELECT '/3d-models/' || r."model3dId"
+      FROM "Model3DReview" r WHERE r.id = ${entityId}
+    )`,
+
+  // The reported thing IS an account, and profiles are addressed by name rather than id.
+  reportedUser: (entityId) =>
+    sql<string | null>`(
+      SELECT '/user/' || u.username FROM "User" u WHERE u.id = ${entityId} AND u.username IS NOT NULL
+    )`,
+};
+
+/** The types `entityUrl` cannot answer for. Derived from the resolvers so a new one cannot be written
+ *  and then left unselected by the queries that render links. */
+export const CONTEXT_ENTITIES = Object.keys(CONTEXT_RESOLVERS) as ReportEntity[];
+
+function reportContextUrl(type: ReportEntity, entityId: ReturnType<typeof sql<number | null>>) {
+  return CONTEXT_RESOLVERS[type]?.(entityId) ?? sql<string | null>`null::text`;
 }
 
 /** `'all'` must be said, not implied by omission. These were optional and silently skipped, which is
@@ -162,7 +202,7 @@ export async function getReports({
       sql<number>`coalesce(array_length("Report"."alsoReportedBy", 1), 0)`.as('alsoReportedByCount')
     )
     .select(entityId.as('entityId'))
-    .select(commentContextUrl(type, entityId).as('contextUrl'))
+    .select(reportContextUrl(type, entityId).as('contextUrl'))
     .orderBy('Report.id', 'desc')
     .limit(limit)
     .offset(offset)
@@ -278,6 +318,8 @@ export async function setReportStatus({
 
   await recordModActivity({ userId, entityType: 'report', entityId: id, activity: 'review' });
 
+  await syncResolvedMarker(id, status);
+
   // `updated` is set only when the row actually changed, so re-actioning an already-Actioned report never
   // double-rewards.
   if (status === ReportStatus.Actioned && updated) {
@@ -286,6 +328,34 @@ export async function setReportStatus({
   }
 
   return { ok: true as const, changed: !!updated };
+}
+
+/**
+ * A page's worth of decisions, applied as one gesture.
+ *
+ * Sequential rather than `Promise.all`: each decision rewards its reporters and writes a ModActivity
+ * row, and firing twenty-five of those at once is a burst on the write pool for no gain a moderator
+ * can perceive.
+ *
+ * Reports every outcome instead of the first failure. A moderator who staged twenty-five decisions and
+ * gets back "that report no longer exists" has no way to tell which twenty-four landed.
+ */
+export async function setReportStatuses(
+  decisions: { id: number; status: ReportStatus }[],
+  { userId, ip }: { userId: number; ip?: string }
+): Promise<{ changed: number; unchanged: number; failed: { id: number; error: string }[] }> {
+  let changed = 0;
+  let unchanged = 0;
+  const failed: { id: number; error: string }[] = [];
+
+  for (const { id, status } of decisions) {
+    const result = await setReportStatus({ id, status, userId, ip });
+    if (!result.ok) failed.push({ id, error: result.error });
+    else if (result.changed) changed += 1;
+    else unchanged += 1;
+  }
+
+  return { changed, unchanged, failed };
 }
 
 /**
@@ -327,21 +397,130 @@ export type MostReportedRow = {
 
 // Content the community is piling reports onto — the signal moderators use to find the worst
 // live content fast. Excludes images already blocked, since those are handled.
-const MOST_REPORTED_TTL_MS = 60_000;
-let mostReportedCache: { at: number; value: Promise<MostReportedRow[]> } | null = null;
+//
+// 🔴 NOT cached, deliberately. A 60s snapshot of this list is what the mod team reported as actioned
+// reports coming back: it is held per-server unless it is in Redis, and even in Redis a fill that
+// started before an action writes its pre-action rows back after it. This is a list moderators WORK —
+// ten rows at a time, deciding on each — so it has to answer for the database, not for a snapshot.
+export async function getMostReported(params: MostReportedParams): Promise<MostReportedRow[]> {
+  const rows = await fetchMostReported(params);
+  if (!rows.length) return rows;
 
-export function getMostReported(limit = 20, now = Date.now()): Promise<MostReportedRow[]> {
-  if (mostReportedCache && now - mostReportedCache.at < MOST_REPORTED_TTL_MS)
-    return mostReportedCache.value;
-  const value = fetchMostReported(limit);
-  mostReportedCache = { at: now, value };
-  value.catch(() => {
-    if (mostReportedCache?.value === value) mostReportedCache = null;
-  });
-  return value;
+  // Even uncached, the read is a replica and the decision that just resolved these went to the
+  // primary — so the reload right after a save is exactly when lag would hand them back.
+  let resolved: (string | null)[] = [];
+  try {
+    resolved = await getRedis().hmGet(
+      REDIS_KEYS.REPORT.RESOLVED_RECENT,
+      rows.map((r) => String(r.id))
+    );
+  } catch (e) {
+    // Fail open: an unfiltered list is the behaviour before this filter existed.
+    console.error('[reports] resolved-report filter unavailable', e);
+    return rows;
+  }
+  return rows.filter((_, i) => !resolved[i]);
 }
 
-async function fetchMostReported(limit: number): Promise<MostReportedRow[]> {
+/**
+ * Outlives the snapshot TTL deliberately — a marker has to still be there when the last snapshot
+ * written before the action finally expires.
+ */
+const RESOLVED_MARKER_TTL_SECONDS = 300;
+
+/**
+ * `/reports/[slug]` offers every status, Pending included, so a moderator can put a report back in
+ * the queue. Marking that one resolved would hide a genuinely pending report for five minutes.
+ */
+async function syncResolvedMarker(id: number, status: ReportStatus): Promise<void> {
+  try {
+    const redis = getRedis();
+    if (status === ReportStatus.Pending)
+      await redis.hDel(REDIS_KEYS.REPORT.RESOLVED_RECENT, String(id));
+    else
+      await redis.hSetMultiWithExpire(
+        REDIS_KEYS.REPORT.RESOLVED_RECENT,
+        [String(id), '1'],
+        RESOLVED_MARKER_TTL_SECONDS
+      );
+  } catch (e) {
+    console.error('[reports] could not mark a report resolved for the dashboard', e);
+  }
+}
+
+/**
+ * The dashboard's twenty and the paginated page are the same query with a different window, so they
+ * share it — two copies of a seventeen-subplan statement is how one of them comes to cover five entity
+ * types.
+ *
+ * `days` is the age of the REPORT. The dashboard's week is what makes it a signal about now; the page
+ * offers wider windows because a pile-up nobody worked does not stop mattering on day eight.
+ */
+export type MostReportedParams = { limit: number; offset?: number; days?: number };
+
+/**
+ * One page of the list, with the totals the surface needs around it.
+ *
+ * `urgent` is counted over the WHOLE window rather than the page: it is the incident signal, and a
+ * banner that only counts what is on screen goes quiet the moment a moderator pages past the worst
+ * ones — which is precisely when it should not.
+ */
+export async function getMostReportedPage({
+  page = 1,
+  limit = 10,
+  days = 7,
+}: {
+  page?: number;
+  limit?: number;
+  days?: number;
+}): Promise<{
+  items: MostReportedRow[];
+  totalItems: number;
+  urgent: number;
+  worst: number;
+  page: number;
+  limit: number;
+}> {
+  const [items, totals] = await Promise.all([
+    getMostReported({ limit, offset: (page - 1) * limit, days }),
+    countMostReported(days),
+  ]);
+  return { items, ...totals, page, limit };
+}
+
+/** The same predicate as the list, and nothing else — a count that drifts from its list puts a page
+ *  number on a page that does not exist. Both totals come from one pass, since they differ only by a
+ *  threshold on a column the row already carries. */
+async function countMostReported(
+  days: number
+): Promise<{ totalItems: number; urgent: number; worst: number }> {
+  const reportCount = sql<number>`coalesce(array_length(t."alsoReportedBy", 1), 0) + 1`;
+  const { rows } = await sql<{ total: number; urgent: number; worst: number }>`
+    SELECT count(*)::int AS total,
+           count(*) FILTER (WHERE ${reportCount} >= ${URGENT_REPORT_COUNT})::int AS urgent,
+           coalesce(max(${reportCount}), 0)::int AS worst
+    FROM "Report" t
+    LEFT JOIN "ImageReport" ir ON ir."reportId" = t.id
+    LEFT JOIN "Image" i ON i.id = ir."imageId"
+    WHERE t.status = ${ReportStatus.Pending}::"ReportStatus"
+      AND ${reportCount} > 1
+      AND t."createdAt" > now() - make_interval(days => ${days})
+      AND i."blockedFor" IS NULL
+  `.execute(dbRead);
+  return {
+    totalItems: Number(rows[0]?.total ?? 0),
+    urgent: Number(rows[0]?.urgent ?? 0),
+    // The banner names the worst pile-up, which is only on the page a moderator is looking at while
+    // they are on page one.
+    worst: Number(rows[0]?.worst ?? 0),
+  };
+}
+
+async function fetchMostReported({
+  limit,
+  offset = 0,
+  days = 7,
+}: MostReportedParams): Promise<MostReportedRow[]> {
   // Raw sql throughout: `alsoReportedBy` is a Postgres array and the ordering key, and the fifteen
   // per-type id columns are generated from `reportEntityJoin` rather than written out.
   //
@@ -368,9 +547,7 @@ async function fetchMostReported(limit: number): Promise<MostReportedRow[]> {
       reportCount: number;
       details: unknown;
       reportedByUsername: string | null;
-      commentContext: string | null;
-      commentV2Context: string | null;
-    }
+    } & Record<`context:${string}`, string | null>
   >`
     WITH top AS (
       SELECT t.id, t.reason, t."createdAt", t."userId", t.details, ${reportCount} AS "reportCount"
@@ -379,10 +556,10 @@ async function fetchMostReported(limit: number): Promise<MostReportedRow[]> {
       LEFT JOIN "Image" i ON i.id = ir."imageId"
       WHERE t.status = ${ReportStatus.Pending}::"ReportStatus"
         AND ${reportCount} > 1
-        AND t."createdAt" > now() - interval '1 week'
+        AND t."createdAt" > now() - make_interval(days => ${days})
         AND i."blockedFor" IS NULL
-      ORDER BY "reportCount" DESC, t."createdAt" DESC
-      LIMIT ${limit}
+      ORDER BY "reportCount" DESC, t."createdAt" DESC, t.id DESC
+      LIMIT ${limit} OFFSET ${offset}
     )
     SELECT
       top.id, top.reason, top."createdAt", top."reportCount", top.details,
@@ -391,11 +568,15 @@ async function fetchMostReported(limit: number): Promise<MostReportedRow[]> {
         reportEntities.map((type) => sql`${entityId(type)} AS ${sql.ref(type)}`),
         sql`, `
       )},
-      ${commentContextUrl('comment', entityId('comment'))} AS "commentContext",
-      ${commentContextUrl('commentV2', entityId('commentV2'))} AS "commentV2Context"
+      ${sql.join(
+        CONTEXT_ENTITIES.map(
+          (type) => sql`${reportContextUrl(type, entityId(type))} AS ${sql.ref(`context:${type}`)}`
+        ),
+        sql`, `
+      )}
     FROM top
     JOIN "User" u ON u.id = top."userId"
-    ORDER BY top."reportCount" DESC, top."createdAt" DESC
+    ORDER BY top."reportCount" DESC, top."createdAt" DESC, top.id DESC
   `.execute(dbRead);
 
   return rows.map((r) => {
@@ -408,12 +589,7 @@ async function fetchMostReported(limit: number): Promise<MostReportedRow[]> {
       details: r.details,
       entity: entity ?? 'other',
       entityId: entity ? Number(r[entity]) : null,
-      contextUrl:
-        entity === 'comment'
-          ? r.commentContext
-          : entity === 'commentV2'
-          ? r.commentV2Context
-          : null,
+      contextUrl: entity ? r[`context:${entity}`] ?? null : null,
       reportedByUsername: r.reportedByUsername,
     };
   });
