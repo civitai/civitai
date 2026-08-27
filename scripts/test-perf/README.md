@@ -121,15 +121,30 @@ traced project called `unit` points at the normal suite's `deps_ssr` and makes V
 re-bundle it. Measured while building this: a 53-file selection containing a traced child run went
 **16 files red** with `Cannot find module '…/deps_ssr/prom-client.js'`.
 
+The price of that separation, so it is not a surprise: the traced project mints a **second full dep
+bundle** — measured at **87 MB / 44 files** under `sha1('unit-trace')`, the same file count as the
+normal suite's, built from one trivial fixture (cold 2.5s, warm 1.3s). It lands in the
+`node_modules/.vite` cache the `main` branch saves. The alternative is corrupting concurrent runs,
+so this is the right trade, but it is not free.
+
+⚠️ `bench.mjs` cannot drive this config: it hardcodes `--project unit`. Invoke vitest directly, as
+above.
+
 ⚠️ Under `isolate: true`, `globalThis` is reset between test files. That used to mean a multi-file
 traced run kept only the last file's counters; it no longer does, because each worker now flushes
 its own snapshot and `trace-report.mjs` sums them. The remaining reason to trace one file at a time
 is attribution — the merged report cannot tell you which file loaded what.
 
-The trace directory is **cleared at the start of every traced run** (in `trace-config.mts`), because
-the report sums every `*.json` it finds and stale snapshots from a previous run would silently
-double the numbers. Two traced runs must therefore not overlap; give one its own
+The trace directory's snapshots are **cleared at the start of every traced run** (in
+`trace-config.mts`), because the report sums every `*.json` it finds and stale snapshots from a
+previous run would silently double the numbers. Only files matching this tool's own
+`<pid>-<worker>.json` shape are removed, so pointing `TESTPERF_TRACE_DIR` at a directory holding
+other JSON does not destroy it. Two traced runs must not overlap; give one its own
 `TESTPERF_TRACE_DIR` if they must. Both the tracer and the report honour that variable.
+
+⚠️ The clear happens once per process, at config load — so under `vitest --watch` only the first
+re-run clears, and later ones accumulate. Tracing is a `vitest run` workflow; if you watch, expect
+inflated totals.
 
 🔴 The counters flush from `afterAll`, and that is not a detail: `forks` KILLS its workers instead
 of letting them exit, so the `process.on('exit')` flush this started life with never ran. Under

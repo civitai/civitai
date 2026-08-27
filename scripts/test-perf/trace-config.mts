@@ -1,7 +1,14 @@
 /**
  * Module-execution tracer for the unit suite.
  *
- *   node scripts/test-perf/bench.mjs --label trace --workers 4 -- --config scripts/test-perf/trace-config.mts
+ *   pnpm exec vitest run --project unit-trace --config scripts/test-perf/trace-config.mts \
+ *     --max-workers=1 path/to/one.test.ts
+ *
+ * ⚠️ NOT via `bench.mjs`: that harness hardcodes `--project unit` (bench.mjs:68) and this config
+ * deliberately names its project `unit-trace` (see below), so the pairing this docstring used to
+ * advertise now exits 1 with `No projects matched the filter "unit"`. It fails loudly, so it is
+ * recorded here rather than papered over by widening bench.mjs's filter, which would silently drag
+ * the `unit-native` project into every yardstick run.
  *
  * The suite's cost is module EXECUTION, not assertions, and a static import graph can't see it:
  * a `vi.mock` factory stops the real module (and its subtree) from ever running, so the static
@@ -15,6 +22,7 @@ import base from '../../vitest.config.mts';
 import path from 'path';
 import { existsSync, readdirSync, rmSync } from 'fs';
 import { fileURLToPath } from 'url';
+import { SNAPSHOT_FILE_RE } from './trace-snapshot-name';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -28,10 +36,23 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../
 // directory itself would destroy whatever else the caller keeps there, and it turned a clean
 // assertion in the regression test into an ENOENT crash when the directory it had just created
 // vanished underneath it.
+// Scoped to THIS tool's snapshot filenames, not to `*.json`: TESTPERF_TRACE_DIR is caller-supplied
+// and the README invites pointing it anywhere, so an unscoped delete would destroy a directory's
+// other JSON without asking. The shape is `<pid>-<suffix>.json`, written by trace-setup.ts.
+// Wrapped because a throw here happens at CONFIG LOAD and would abort the entire run with a raw
+// stack — e.g. a directory that happens to match the pattern (`force` is not `recursive`), or
+// TESTPERF_TRACE_DIR pointing at a file.
 const traceDir = process.env.TESTPERF_TRACE_DIR ?? path.join(repoRoot, '.test-perf/trace');
-if (existsSync(traceDir))
-  for (const f of readdirSync(traceDir))
-    if (f.endsWith('.json')) rmSync(path.join(traceDir, f), { force: true });
+try {
+  if (existsSync(traceDir))
+    for (const f of readdirSync(traceDir))
+      if (SNAPSHOT_FILE_RE.test(f)) rmSync(path.join(traceDir, f), { force: true });
+} catch (err) {
+  process.stderr.write(
+    `[trace-config] could not clear old snapshots in ${traceDir}: ${String(err)}\n` +
+      `[trace-config] the report SUMS snapshots, so stale ones will inflate this run's numbers\n`
+  );
+}
 
 const tracer = {
   name: 'civitai:module-trace',

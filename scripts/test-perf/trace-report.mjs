@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /** Merges the per-worker `.test-perf/trace/*.json` snapshots into a ranked report. */
-import { readdirSync, readFileSync, writeFileSync, existsSync } from 'fs';
+import { readdirSync, readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -51,7 +51,12 @@ const out = {
   all: rows,
 };
 
-writeFileSync(path.join(repoRoot, '.test-perf/trace.json'), JSON.stringify(out, null, 2));
+// `.test-perf/` is gitignored, and with TESTPERF_TRACE_DIR pointed elsewhere nothing else creates
+// it — so on a fresh clone this write used to throw ENOENT after all the merging was done and
+// before anything was printed, which reads as operator error rather than as a missing directory.
+const reportPath = path.join(repoRoot, '.test-perf/trace.json');
+mkdirSync(path.dirname(reportPath), { recursive: true });
+writeFileSync(reportPath, JSON.stringify(out, null, 2));
 console.log(`${workers} worker snapshots | ${rows.length} distinct modules | ${totalLoads.toLocaleString()} executions | ${(totalSelf / 1000).toFixed(0)}s self time`);
 console.log('\nTop 25 by total self time (the cost of the module body itself, excluding its imports):');
 for (const r of out.bySelfMs.slice(0, 25))
