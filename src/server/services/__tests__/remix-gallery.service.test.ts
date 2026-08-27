@@ -8,6 +8,7 @@ import {
 import type * as MetricHelpers from '~/server/utils/metric-helpers';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import type { HybridNode } from '~/__tests__/mocks/hybrid';
 
 const updateEntityMetricDetached = vi.fn(async () => undefined);
@@ -1443,16 +1444,18 @@ describe('getPendingRemixGallerySubmissions paging', () => {
    * fine: `UserAvatar` takes `Partial<UserWithCosmetics>`, so dropping the three
    * keys below is invisible to tsc and shows up only as a wrong-looking avatar.
    *
-   * `User.image` is what the queue used to send, and it is a dead column — of
-   * the 121 distinct placers on this surface in production, 0 have it set and 93
-   * have a `profilePicture`. So the old select handed the avatar null for every
-   * placer alive, and stripped the equipped cosmetics of 61 of them.
+   * `User.image` is what the queue used to send, and it is a dead column:
+   * measured 2026-08-27, 0 of the 121 distinct placers on this surface had it
+   * set and 93 had a `profilePicture`. So the old select handed the avatar null
+   * for every placer alive, and stripped the equipped cosmetics of 61 of them.
+   * Those counts are a snapshot and nothing rechecks them; the ratio is not
+   * what makes this true — a null `image` renders initials at any ratio.
    *
    * Asserted on the ARGUMENT rather than on a returned row: the Prisma mock
    * ignores `select` and hands back whatever the fixture holds, so an assertion
    * made on the result passes with any select at all.
    */
-  it('sends the placer fields the avatar renders, not just id and username', async () => {
+  it('sends the placer fields the avatar renders (here for the paging fixtures)', async () => {
     // A populated page, because the service returns before it ever reaches
     // `findMany` on an empty one — the default `beforeEach` state would make
     // this assert against a call that never happened.
@@ -1470,6 +1473,15 @@ describe('getPendingRemixGallerySubmissions paging', () => {
     // deleted placer would otherwise render as a live one.
     for (const field of ['profilePicture', 'cosmetics', 'deletedAt'])
       expect(placerSelect, `placer select is missing ${field}`).toHaveProperty(field);
+
+    // The loop above is existence-only, and the mutation that actually breaks
+    // the avatar keeps all three names: an inlined `cosmetics: true` returns
+    // UserCosmetic scalars with no nested `cosmetic`, so every frame and badge
+    // silently vanishes while `toHaveProperty` stays green. Compared against
+    // the imported selector rather than a copy of its shape, so this cannot
+    // drift from what production sends. `toEqual`, not `toBe`, so a spread of
+    // the same selector still passes.
+    expect(placerSelect).toEqual(userWithCosmeticsSelect);
   });
 
   it('takes the cursor from the last row of the page, not the last row it returns', async () => {
