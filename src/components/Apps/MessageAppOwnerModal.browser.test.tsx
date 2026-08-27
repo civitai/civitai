@@ -324,7 +324,10 @@ describe('MessageAppOwnerModal — the delivery notice', () => {
     render();
     // Await the notice first: the modal is portalled and `render()` returns before it is
     // in the DOM, so a synchronous read of `document.body` sees an empty string — which
-    // would make the assertions below pass over nothing at all.
+    // would make the NEGATIVE assertion below pass over nothing at all. (The whole-sentence
+    // `toContain` would fail on an empty string rather than pass, so it is the sigil check
+    // that needs this await; awaiting also keeps the positive one from failing for a timing
+    // reason that has nothing to do with the copy.)
     await expect
       .element(page.getByText('resolved when you send', { exact: false }))
       .toBeInTheDocument();
@@ -332,11 +335,12 @@ describe('MessageAppOwnerModal — the delivery notice', () => {
     // injected <style> block, whose `@media` rules match the handle pattern below and
     // would fail this for a reason that has nothing to do with the copy.
     const composer = page.getByRole('dialog').element().textContent ?? '';
-    // 🔴 THE WHOLE SENTENCE, not a pattern. The `/[@#]\w/` check this replaced was a
-    // SPELLED guard: rewriting the notice as "…to the app owner devuser, resolved when
-    // you send" names a recipient in plain prose, matches no handle sigil, and passed
-    // all 17 tests in this file. A reword now fails here on purpose — the copy is a
-    // claim about where a moderation message goes.
+    // 🔴 THE WHOLE SENTENCE, not a pattern. This was added ALONGSIDE the `/[@#]\w/` check
+    // below — it supplements it, it did not replace it — because that one is a SPELLED
+    // guard: rewriting the notice as "…to the app owner devuser, resolved when you send"
+    // names a recipient in plain prose, matches no handle sigil, and passed all 17 tests
+    // in this file. A reword now fails here on purpose — the copy is a claim about where
+    // a moderation message goes.
     expect(composer).toContain(
       "Delivered as a notification to the app's owner, resolved when you send. " +
         'One-way — replies are not delivered — and the subject and message are recorded ' +

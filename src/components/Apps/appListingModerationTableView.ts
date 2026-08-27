@@ -145,6 +145,15 @@ type ListingModRoute =
  * predicates answer `false` and the action opens nothing — the loud direction, which is
  * what the comment always said and now describes.
  *
+ * 🔴 "EVERY ACTION NAMES EXACTLY ONE ROUTE" IS TRUE OF THIS TABLE, NOT OF THE DISPATCH.
+ * The `review` value is read by nothing: `AppListingsModerationTable.openAction` and its
+ * test both branch on the literal `action === 'review'` before either predicate runs. So
+ * a NEW member mapped here to `'review'` typechecks cleanly and opens nothing at all —
+ * caught, but by the jointly-total sweep in `appListingModerationTableView.test.ts` (a
+ * blocking test), not by the type system this docstring credits above. Wiring the review
+ * branch through the table would close that; until it is, the row is documentation of the
+ * third route rather than the thing that selects it.
+ *
  * 🔴 `message-owner` routes to the composer, NOT to `reason`, and that is not an
  * oversight. It carries no `reason` at all: `appListings.messageAppOwner` takes a
  * SUBJECT and a BODY with their own, different floors (`MOD_MESSAGE_SUBJECT_MIN` /

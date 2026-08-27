@@ -32,9 +32,11 @@ import {
  * 🔴 KNOWN LIMITS, stated rather than implied. Detection is syntactic and per-file: a
  * site that mounts the modal through a wrapper or `React.createElement` is invisible
  * here. Every source assertion reads through {@link codeOf}, which strips comments with
- * a regex, so a `//` sequence inside a string literal in one of the three scanned files
- * would confuse it — none contains one today (checked), and the positive control below
- * proves the detector can still fire when it matters. The MOUNT sweep deliberately reads
+ * a regex, so a `//` sequence inside a string literal in one of the scanned modules —
+ * the `*_MODULE` constants plus {@link MOUNT_SITES}, deliberately not restated as a
+ * count that would rot the moment one is added — would confuse it. None contains one
+ * today (checked), and the positive control below proves the detector can still fire when
+ * it matters. The MOUNT sweep deliberately reads
  * RAW: a comment quoting `<MessageAppOwnerModal` there produces a loud ledger mismatch,
  * whereas a bad strip would silently hide a real second mount, and loud is the direction
  * to fail in for a sweep whose whole job is to notice a new site. That sweep also matches
@@ -50,6 +52,15 @@ import {
  * added to this file would have ITS setters demanded inside `reset()` too. That direction
  * fails loudly and is the safe one; the `useState`-only direction is the gap, and widening
  * the composer's state to a reducer means widening this with it.
+ *
+ * 🔴 It also compares the initialiser's TEXT, not the value it evaluates to. So a legal,
+ * behaviour-preserving refactor to a lazy initialiser — `useState(() => false)` — or to a
+ * computed one — `useState(props.subject ?? '')` — makes the declared initial `'() => false'`
+ * / `'props.subject ?? \'\''` and every reset read as passing the wrong value
+ * (`expected '() => false' to be 'false'`). That is a false alarm, not a finding, and it
+ * is deliberately left loud: the alternative is evaluating source text. If you hit it,
+ * teach {@link stateInitialValues} to unwrap the thunk — do not delete the assertion, and
+ * do not "fix" it by making the reset match the new text.
  *
  * 🔴 And the reset ledger reads `reset()`'s OWN body only. A `reset()` that delegates —
  * `function reset() { clearComposer(); }` — satisfies nothing it should: every setter
@@ -98,8 +109,14 @@ function stripComments(source: string): string {
  * quotes the call it demands (so a deleted branch reads as present), and a
  * `not.toContain` is broken by a comment that names the identifier it forbids (so a
  * correct file reads as an offence). Neither is hypothetical in a file whose comments
- * deliberately quote the code around them — this one included. The numeric-bounds scan
- * already stripped; four source assertions did not, and now nothing reads raw.
+ * deliberately quote the code around them — this one included.
+ *
+ * 🔴 ONE reader is deliberately raw and it is not this one: the MOUNT sweep's
+ * `read(rel).includes('<MessageAppOwnerModal')`, for the reason given in the known-limits
+ * header above (for a sweep, a false ledger entry is the safe direction and a silently
+ * hidden mount is not). Every OTHER source read goes through here. Stated as a
+ * one-exception rule rather than a count of converted assertions, because the count was
+ * wrong within one round of being written.
  */
 function codeOf(rel: string): string {
   return stripComments(read(rel));
@@ -249,17 +266,28 @@ function stateInitialValues(source: string): Map<string, string> {
  * `reset() mentions the setter`. It fails when a piece of state is added without a
  * reset, when an existing reset is deleted, AND when a reset is rewritten to a value
  * that is not what the component mounts with.
+ *
+ * 🔴 EVERY CALL IS COMPARED, not the first one. Reading only the first match let a
+ * composer that clears a setter and then OVERWRITES it —
+ * `setIncludeCollaborators(false); setIncludeCollaborators(true);` — read as correct,
+ * because the first call is the declared initial and the state the component is actually
+ * left in is the second. Measured surviving, 38/38 green, before this loop existed: the
+ * exact hazard the value comparison was introduced for, one statement further down.
+ * Flagging ANY differing call rather than only the last is the loud direction — a reset
+ * that transiently passes some other value is at best pointless — and it makes the
+ * offence name the wrong value, not just the fact of one.
  */
 function resetOffences(body: string, initials: Map<string, string>): string[] {
   const offences: string[] = [];
   for (const [setter, initial] of initials) {
-    const call = new RegExp(`\\b${setter}\\s*\\(`).exec(body);
-    if (!call) {
+    const args = [...body.matchAll(new RegExp(`\\b${setter}\\s*\\(`, 'g'))].map((call) =>
+      normalise(balanced(body, call.index + call[0].length - 1, '(', ')'))
+    );
+    if (args.length === 0) {
       offences.push(`${setter}: never called in reset() (declared initial ${initial})`);
       continue;
     }
-    const arg = normalise(balanced(body, call.index + call[0].length - 1, '(', ')'));
-    if (arg !== initial) {
+    for (const arg of new Set(args.filter((a) => a !== initial))) {
       offences.push(`${setter}: reset() passes ${arg}, declared initial is ${initial}`);
     }
   }
@@ -360,7 +388,10 @@ describe('the owner-message surface is MOUNTED (it shipped dark once already)', 
 describe('the composer bounds are single-sourced from the server schema', () => {
   it('both modules import the bounds from messageAppOwnerSchema', () => {
     for (const rel of [FORM_MODULE, MODAL_MODULE]) {
-      expect(read(rel)).toContain(SCHEMA_IMPORT);
+      // Comment-stripped, like every other source assertion: a `toContain` on a raw read
+      // is satisfied by the old path left behind in a comment while the real import is
+      // redirected somewhere else. Measured surviving, 38/38 green, before this changed.
+      expect(codeOf(rel)).toContain(SCHEMA_IMPORT);
     }
   });
 
@@ -543,7 +574,7 @@ describe('the composer resets per message and never on failure', () => {
     expect(resetOffences(functionBody(code, 'reset'), initials)).toEqual([]);
   });
 
-  it('the reset detector fires on a forgotten setter AND on one reset to the wrong value', () => {
+  it('the reset detector fires on a forgotten setter, on a wrong value, AND on an overwrite', () => {
     const declarations = [
       "const [subject, setSubject] = useState('');",
       'const [includeCollaborators, setIncludeCollaborators] = useState(false);',
@@ -572,6 +603,22 @@ describe('the composer resets per message and never on failure', () => {
     expect(resetOffences(functionBody(wrongValue, 'reset'), wrongInitials)).toEqual([
       'setIncludeCollaborators: reset() passes true, declared initial is false',
     ]);
+
+    // 🔴 THE MUTANT THE "first call only" LEDGER LET THROUGH, one round later. The
+    // declared initial IS passed — to a call that a second one immediately overwrites, so
+    // a reader that stops at the first match sees a correct reset and the component is
+    // left with the opt-in ON. Measured surviving 38/38 before the every-call loop.
+    const overwritten = [
+      ...declarations,
+      'function reset() {',
+      "  setSubject('');",
+      '  setIncludeCollaborators(false);',
+      '  setIncludeCollaborators(true);',
+      '}',
+    ].join('\n');
+    expect(
+      resetOffences(functionBody(overwritten, 'reset'), stateInitialValues(overwritten))
+    ).toEqual(['setIncludeCollaborators: reset() passes true, declared initial is false']);
 
     // And a correct composer produces no offence at all — so the detector is not simply
     // always-red, which would make the real assertion above meaningless.

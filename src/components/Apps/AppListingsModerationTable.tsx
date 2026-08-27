@@ -294,10 +294,13 @@ export function AppListingsModerationTable({
     }
     // 🔴 BRANCHED ON, not a fall-through. `actionRequiresReason` is the third and last
     // route out of this function, so a future action it answers `false` for opens
-    // nothing — the loud failure — where a bare `setPendingAction(...)` here is the quiet
-    // one: an action with no `reason` of its own lands in the reason-gated modal and
-    // calls its proc with an input the schema rejects, the mis-route `message-owner` was
-    // carved out of.
+    // nothing — loud IN THE TEST AND TYPE TIERS, where a missing route-table property is a
+    // `pnpm typecheck` failure and an unrouted action fails the jointly-total sweep. On
+    // SCREEN it is a dead button: no toast, no error, no menu close. That is still the
+    // better of the two, because a bare `setPendingAction(...)` here is the quiet one: an
+    // action with no `reason` of its own lands in the reason-gated modal and calls its
+    // proc with an input the schema rejects, the mis-route `message-owner` was carved
+    // out of.
     //
     // 🔴 The BRANCH alone did not deliver that, and this comment used to say it did. Both
     // predicates now read a single exhaustive `Record<ListingModAction, …>` route table,
