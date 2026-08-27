@@ -470,7 +470,7 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
         {entries.map((entry, index) => (
           <button
             key={index}
-            className={clsx('min-w-0', side ? 'mx-auto' : 'max-w-16 flex-1')}
+            className={clsx('min-w-0', styles.tile, side ? 'mx-auto' : 'max-w-16 flex-1')}
             style={side ? { width: tile, height: tile } : undefined}
             aria-label={entry.username ? `Open ${entry.username}'s remix` : 'Open remix'}
             onClick={(event) => {
