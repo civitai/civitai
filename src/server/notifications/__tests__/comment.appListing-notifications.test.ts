@@ -468,6 +468,20 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       WHERE (blk."userId" = pc."userId" AND blk."targetUserId" = c."userId" AND blk.type IN ('Block', 'Hide'))
       OR (blk."userId" = c."userId" AND blk."targetUserId" = pc."userId" AND blk.type = 'Block')
       )
+      AND NOT EXISTS (
+      WITH RECURSIVE muteable_threads AS (
+      SELECT t.id "id", 0 "depth"
+      UNION ALL
+      SELECT th."parentThreadId", mt."depth" + 1
+      FROM muteable_threads mt
+      JOIN "Thread" th ON th.id = mt."id"
+      WHERE th."parentThreadId" IS NOT NULL AND mt."depth" < 20
+      )
+      SELECT 1
+      FROM muteable_threads mt
+      JOIN "ThreadMute" tm ON tm."threadId" = mt."id"
+      WHERE tm."userId" = pc."userId"
+      )
       AND (root."appListingId" IS NULL OR al.slug IS NOT NULL)
       )
       SELECT
@@ -512,6 +526,19 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       SELECT 1 FROM "UserEngagement" blk
       WHERE (blk."userId" = cu."userId" AND blk."targetUserId" = c."userId" AND blk.type IN ('Block', 'Hide'))
       OR (blk."userId" = c."userId" AND blk."targetUserId" = cu."userId" AND blk.type = 'Block')
+      ) AND NOT EXISTS (
+      WITH RECURSIVE muteable_threads AS (
+      SELECT t.id "id", 0 "depth"
+      UNION ALL
+      SELECT th."parentThreadId", mt."depth" + 1
+      FROM muteable_threads mt
+      JOIN "Thread" th ON th.id = mt."id"
+      WHERE th."parentThreadId" IS NOT NULL AND mt."depth" < 20
+      )
+      SELECT 1
+      FROM muteable_threads mt
+      JOIN "ThreadMute" tm ON tm."threadId" = mt."id"
+      WHERE tm."userId" = cu."userId"
       ))) "ownerId",
       JSONB_BUILD_OBJECT(
       'version', 2,

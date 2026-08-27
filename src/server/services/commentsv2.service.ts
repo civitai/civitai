@@ -9,6 +9,7 @@ import type {
   UpsertCommentV2Input,
   CommentConnectorInput,
   GetCommentsInfiniteInput,
+  ToggleThreadMuteInput,
 } from './../schema/commentv2.schema';
 import { throwOnBlockedCommentContent } from '~/server/services/blocklist.service';
 import {
@@ -473,6 +474,62 @@ export const upsertComment = async ({
 
   return updated;
 };
+
+export async function toggleThreadMute({
+  commentId,
+  userId,
+}: ToggleThreadMuteInput & { userId: number }) {
+  const comment = await dbWrite.commentV2.findUnique({
+    where: { id: commentId },
+    select: { threadId: true, childThread: { select: { id: true } } },
+  });
+  if (!comment) throw throwNotFoundError();
+
+  let threadId = comment.childThread?.id;
+  if (!threadId) {
+    // A comment's reply thread is created lazily by the first reply, so muting can run before one
+    // exists. It must be created with the SAME ancestry `upsertComment` would give it: the reply
+    // path finds this row and skips its own create, and a thread left with a null `rootThreadId`
+    // drops out of the reply/thread-response notification queries entirely — they INNER JOIN on it.
+    const parentThread = await dbWrite.thread.findUnique({
+      where: { id: comment.threadId },
+      select: { id: true, rootThreadId: true },
+    });
+    const created = await dbWrite.thread.create({
+      data: {
+        commentId,
+        parentThreadId: comment.threadId,
+        rootThreadId: parentThread?.rootThreadId ?? parentThread?.id ?? comment.threadId,
+      },
+      select: { id: true },
+    });
+    threadId = created.id;
+  }
+
+  const { count } = await dbWrite.threadMute.deleteMany({ where: { threadId, userId } });
+  if (count > 0) return { muted: false, threadId };
+
+  await dbWrite.threadMute.create({ data: { threadId, userId } });
+  return { muted: true, threadId };
+}
+
+export async function getThreadMuted({
+  commentId,
+  userId,
+}: ToggleThreadMuteInput & { userId: number }) {
+  const comment = await dbRead.commentV2.findUnique({
+    where: { id: commentId },
+    select: { childThread: { select: { id: true } } },
+  });
+  const threadId = comment?.childThread?.id;
+  if (!threadId) return { muted: false };
+
+  const mute = await dbRead.threadMute.findUnique({
+    where: { userId_threadId: { userId, threadId } },
+    select: { userId: true },
+  });
+  return { muted: !!mute };
+}
 
 export const getComment = async ({
   id,

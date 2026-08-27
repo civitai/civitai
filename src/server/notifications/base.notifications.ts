@@ -25,6 +25,39 @@ export const notBlockedBetween = (recipient: string, actor: string) => `NOT EXIS
                OR (blk."userId" = ${actor} AND blk."targetUserId" = ${recipient} AND blk.type = 'Block')
           )`;
 
+/**
+ * SQL fragment dropping a comment notification when the recipient has muted the thread it happened
+ * in, or ANY thread above it. Comment threads nest to 10 levels on the widest surfaces, so matching
+ * only the comment's own thread and its root would leave a mute set at level 3 silent about a reply
+ * at level 5 — the exact "make sure they can do this at any level" case.
+ *
+ * The walk is up the `parentThreadId` chain by primary key, capped so a corrupted cycle cannot spin.
+ * `throwIfThreadChainLocked` walks the same chain the same way on the write path.
+ *
+ * Must be applied to EVERY processor that can emit for a `CommentV2` except `new-mention`, which is
+ * deliberately exempt — being named is not "somebody responded in a thread you're in". The comment
+ * family dedupes by `commentDedupeKey` and runs in priority batches, so a processor that wrongly
+ * omits this doesn't merely leak its own notification: it CLAIMS the dedupe key and replaces the one
+ * that was correctly suppressed. `no-unmuteable-comment-processor` pins both halves.
+ *
+ * A NULL `threadId` yields no ancestors and passes: the legacy `Comment` branches have no thread to
+ * mute and are out of scope by design.
+ */
+export const notThreadMuted = (recipient: string, threadId: string) => `NOT EXISTS (
+            WITH RECURSIVE muteable_threads AS (
+              SELECT ${threadId} "id", 0 "depth"
+              UNION ALL
+              SELECT th."parentThreadId", mt."depth" + 1
+              FROM muteable_threads mt
+              JOIN "Thread" th ON th.id = mt."id"
+              WHERE th."parentThreadId" IS NOT NULL AND mt."depth" < 20
+            )
+            SELECT 1
+            FROM muteable_threads mt
+            JOIN "ThreadMute" tm ON tm."threadId" = mt."id"
+            WHERE tm."userId" = ${recipient}
+          )`;
+
 export type NotificationProcessor = {
   displayName: string;
   priority?: number;

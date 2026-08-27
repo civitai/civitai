@@ -10,11 +10,14 @@ import {
   getCommentHandler,
   toggleHideCommentHandler,
   togglePinnedCommentHandler,
+  toggleThreadMuteHandler,
+  getThreadMutedHandler,
 } from './../controllers/commentv2.controller';
 import {
   commentConnectorSchema,
   upsertCommentv2Schema,
   getCommentsInfiniteSchema,
+  toggleThreadMuteSchema,
 } from './../schema/commentv2.schema';
 import {
   middleware,
@@ -91,4 +94,12 @@ export const commentv2Router = router({
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(toggleHideCommentSchema)
     .mutation(togglePinnedCommentHandler),
+  getThreadMuted: protectedProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(toggleThreadMuteSchema)
+    .query(getThreadMutedHandler),
+  toggleThreadMute: protectedProcedure
+    .meta({ requiredScope: TokenScope.SocialWrite })
+    .input(toggleThreadMuteSchema)
+    .mutation(toggleThreadMuteHandler),
 });

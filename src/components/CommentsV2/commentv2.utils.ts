@@ -44,6 +44,23 @@ export const useMutateComment = () => {
     },
   });
 
+  const toggleThreadMuteMutation = trpc.commentv2.toggleThreadMute.useMutation({
+    async onSuccess(result, { commentId }) {
+      queryUtils.commentv2.getThreadMuted.setData({ commentId }, { muted: result.muted });
+      showSuccessNotification({
+        message: result.muted
+          ? "You won't be notified about replies in this thread"
+          : "You'll be notified about replies in this thread again",
+      });
+    },
+    onError(error) {
+      showErrorNotification({
+        title: 'Unable to update thread notifications',
+        error: new Error(error.message),
+      });
+    },
+  });
+
   const handleToggleHide = (payload: ToggleHideCommentInput) => {
     if (toggleHideCommentMutation.isPending) return;
     return toggleHideCommentMutation.mutateAsync(payload);
@@ -64,5 +81,7 @@ export const useMutateComment = () => {
     togglePinned: handleTogglePinned,
     setTosViolation: setTosViolationMutation.mutateAsync,
     settingTosViolation: setTosViolationMutation.isPending,
+    toggleThreadMute: toggleThreadMuteMutation.mutateAsync,
+    togglingThreadMute: toggleThreadMuteMutation.isPending,
   };
 };

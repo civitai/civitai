@@ -22,10 +22,16 @@ import { updateEntityMetric } from '~/server/utils/metric-helpers';
 import { dbRead } from '../db/client';
 import { hasEntityAccess } from '../services/common.service';
 import type { GetByIdInput } from './../schema/base.schema';
-import type { CommentConnectorInput, UpsertCommentV2Input } from './../schema/commentv2.schema';
+import type {
+  CommentConnectorInput,
+  ToggleThreadMuteInput,
+  UpsertCommentV2Input,
+} from './../schema/commentv2.schema';
 import {
   deleteComment,
   getComment,
+  getThreadMuted,
+  toggleThreadMute,
   getCommentCount,
   getCommentsThreadDetails2,
   getCommentsInfinite,
@@ -196,6 +202,35 @@ export const getCommentsThreadDetailsHandler = async ({
       excludedUserIds,
       isModerator: ctx.user?.isModerator ?? false,
     });
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const toggleThreadMuteHandler = async ({
+  ctx,
+  input,
+}: {
+  ctx: ProtectedContext;
+  input: ToggleThreadMuteInput;
+}) => {
+  try {
+    return await toggleThreadMute({ ...input, userId: ctx.user.id });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+export const getThreadMutedHandler = async ({
+  ctx,
+  input,
+}: {
+  ctx: ProtectedContext;
+  input: ToggleThreadMuteInput;
+}) => {
+  try {
+    return await getThreadMuted({ ...input, userId: ctx.user.id });
   } catch (error) {
     throw throwDbError(error);
   }

@@ -84,3 +84,8 @@ export const getCommentsInfiniteSchema = commentConnectorSchema.extend({
   repliesDepth: z.number().min(0).max(20).optional(),
   repliesLimit: z.number().min(1).max(50).default(constants.comments.replyPageSize),
 });
+
+export const toggleThreadMuteSchema = z.object({
+  commentId: z.number(),
+});
+export type ToggleThreadMuteInput = z.infer<typeof toggleThreadMuteSchema>;
