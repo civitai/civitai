@@ -352,6 +352,20 @@ export type GetInfiniteImagesOutput = z.output<typeof getInfiniteImagesSchema>;
 //   Only forces the DB when scoped to a model (its sole legit use — the model
 //   showcase carousel, which always pairs it with modelVersionId). Sent alone it
 //   degrades to index ordering rather than acting as a broad-feed DB escape hatch.
+// Freshness, not correctness:
+// - publishedOnly paired with userId: the "pick something of mine to submit"
+//   modals (remix gallery, challenge, add-to-collection). The index can serve
+//   this query, but not in time: measured on prod 2026-08-27, an image is
+//   missing from metrics_images_v1 for 10-30 minutes after it is published,
+//   while it is Scanned and carries an nsfwLevel within the first minute. So
+//   someone posts an image, opens the picker to submit it, and the one image
+//   they came to submit is the one that isn't there. No browse feed sends
+//   publishedOnly — it exists only because those mutations refuse an
+//   unpublished image — so this routes the three pickers and nothing else.
+//   Paired with userId for the same reason prioritizedUserIds is paired with a
+//   model: alone it would be a broad-feed DB escape hatch anyone could type
+//   into a URL. Scoped to one user it costs what a profile feed cost before
+//   imageIndexFeed existed.
 //
 // A hub can only be served from the index, so this list is also the set `hubId`
 // cannot be combined with. Both the dispatcher and that rejection read it here so
@@ -365,6 +379,8 @@ export function requiresImageDbPath(input: {
   modelId?: number | null;
   modelVersionId?: number | null;
   prioritizedUserIds?: number[] | null;
+  publishedOnly?: boolean | null;
+  userId?: number | null;
 }) {
   return (
     !!input.postId ||
@@ -373,7 +389,8 @@ export function requiresImageDbPath(input: {
     !!input.reactions?.length ||
     !!input.imageId ||
     (!!input.modelId && !input.modelVersionId) ||
-    (!!input.prioritizedUserIds?.length && (!!input.modelId || !!input.modelVersionId))
+    (!!input.prioritizedUserIds?.length && (!!input.modelId || !!input.modelVersionId)) ||
+    (!!input.publishedOnly && !!input.userId)
   );
 }
 

@@ -27,6 +27,7 @@ const dbForcing: Record<string, Record<string, unknown>> = {
   imageId: { imageId: 5 },
   'bare modelId': { modelId: 5 },
   'prioritizedUserIds with a model': { prioritizedUserIds: [5], modelVersionId: 9 },
+  'publishedOnly with a userId': { publishedOnly: true, userId: 5 },
 };
 
 describe('hubId cannot be combined with a filter that forces the DB path', () => {
