@@ -31,24 +31,45 @@ import {
  *
  * 🔴 KNOWN LIMITS, stated rather than implied. Detection is syntactic and per-file: a
  * site that mounts the modal through a wrapper or `React.createElement` is invisible
- * here. The numeric-literal scan strips comments with a regex, so a `//` sequence
- * inside a string literal in one of the scanned files would confuse it — neither
- * scanned file contains one today, and the positive control below proves the detector
- * can still fire when it matters.
+ * here. Every source assertion reads through {@link codeOf}, which strips comments with
+ * a regex, so a `//` sequence inside a string literal in one of the three scanned files
+ * would confuse it — none contains one today (checked), and the positive control below
+ * proves the detector can still fire when it matters. The MOUNT sweep deliberately reads
+ * RAW: a comment quoting `<MessageAppOwnerModal` there produces a loud ledger mismatch,
+ * whereas a bad strip would silently hide a real second mount, and loud is the direction
+ * to fail in for a sweep whose whole job is to notice a new site. That sweep also matches
+ * a PREFIX, so a sibling named `MessageAppOwnerModalCompact` counts as a mount of this
+ * one — again the loud direction (an unexpected ledger entry), and again not a silent
+ * miss. Renaming BOTH the component and its file to a longer name is the one case it
+ * would not notice, and the `MODAL_MODULE` reads below throw ENOENT on that.
  *
- * 🔴 The reset-completeness ledger further down is scoped to `useState` DECLARATIONS in
- * the composer module. State introduced some other way — `useReducer`, a custom hook, a
- * ref — is invisible to it, so its claim is "every `useState` piece", not "every piece
- * of state that exists". It is also module-scoped rather than component-scoped: a second
- * component added to this file would have ITS setters demanded inside `reset()` too.
- * That direction fails loudly and is the safe one; the `useState`-only direction is the
- * gap, and widening the composer's state to a reducer means widening this with it.
+ * 🔴 The reset ledger further down is scoped to `useState` DECLARATIONS in the composer
+ * module. State introduced some other way — `useReducer`, a custom hook, a ref — is
+ * invisible to it, so its claim is "every `useState` piece", not "every piece of state
+ * that exists". It is also module-scoped rather than component-scoped: a second component
+ * added to this file would have ITS setters demanded inside `reset()` too. That direction
+ * fails loudly and is the safe one; the `useState`-only direction is the gap, and widening
+ * the composer's state to a reducer means widening this with it.
+ *
+ * 🔴 And the reset ledger reads `reset()`'s OWN body only. A `reset()` that delegates —
+ * `function reset() { clearComposer(); }` — satisfies nothing it should: every setter
+ * would read as uncalled and the ledger would fail LOUDLY, which is safe but is a false
+ * alarm rather than a finding. Inlining the clears, or teaching {@link resetOffences} to
+ * follow one call, are the two fixes; do not "fix" it by dropping the assertion.
  */
 
 const SRC = path.resolve(__dirname, '../../..');
 
 const FORM_MODULE = 'components/Apps/appModeratorMessageForm.ts';
 const MODAL_MODULE = 'components/Apps/MessageAppOwnerModal.tsx';
+/**
+ * The shared field the composer renders its body through. Enrolled here because it is
+ * read by NO blocking test otherwise — measured, and the reason `reasonGatedFieldCopy`
+ * was extracted in the first place. That extraction moved the STRINGS somewhere a
+ * blocking suite can see them; it left the WIRING (which copy function feeds which prop,
+ * and whether the length handed to them is trimmed) exactly as unobservable as before.
+ */
+const FIELD_MODULE = 'components/Apps/ReasonGatedActionModal.tsx';
 
 /**
  * Every PRODUCTION site that mounts `MessageAppOwnerModal`. One today: the /apps/review
@@ -67,6 +88,21 @@ function read(rel: string): string {
 /** Strip `/* *\/` and `//` comments so prose that MENTIONS a bound is not a hit. */
 function stripComments(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/.*$/gm, '$1');
+}
+
+/**
+ * 🔴 THE ONLY READER ANY ASSERTION BELOW SHOULD USE — comment-stripped source.
+ *
+ * Every check here is a claim about CODE, and prose is not code. A raw read gets the
+ * polarity wrong in BOTH directions: a `toContain` is satisfied by a comment that merely
+ * quotes the call it demands (so a deleted branch reads as present), and a
+ * `not.toContain` is broken by a comment that names the identifier it forbids (so a
+ * correct file reads as an offence). Neither is hypothetical in a file whose comments
+ * deliberately quote the code around them — this one included. The numeric-bounds scan
+ * already stripped; four source assertions did not, and now nothing reads raw.
+ */
+function codeOf(rel: string): string {
+  return stripComments(read(rel));
 }
 
 /** Standalone occurrences of `value` as a numeric token (not part of an identifier). */
@@ -95,22 +131,52 @@ function balanced(source: string, from: number, open: string, close: string): st
 }
 
 /**
- * The body of a `function <name>(…) { … }` declaration. The parameter list is skipped
- * with its own balance pass so a destructured parameter's `{` can't be mistaken for the
- * opening brace of the body.
+ * The body of `function <name>(…) { … }` OR of `const <name> = (…) => { … }`. The
+ * parameter list is skipped with its own balance pass so a destructured parameter's `{`
+ * can't be mistaken for the opening brace of the body.
+ *
+ * 🔴 BOTH FORMS, because supporting only the `function` keyword made this throw
+ * `no function reset` on a pure refactor — an error naming a syntax choice rather than a
+ * defect, which is the shape that gets a guard deleted as broken instead of read as a
+ * finding. Behaviour is identical either way, so the ledger must not have an opinion.
+ * An arrow with a CONCISE body (`const reset = () => setX('')`) is still unsupported and
+ * throws by name below; it cannot express the multi-statement reset this pins.
  */
 function functionBody(source: string, name: string): string {
-  const at = source.indexOf(`function ${name}(`);
-  if (at < 0) throw new Error(`no function ${name}`);
+  const declaration = new RegExp(
+    `(?:function\\s+${name}\\s*\\()|(?:const\\s+${name}\\s*=\\s*(?:async\\s*)?\\()`
+  ).exec(source);
+  if (!declaration) {
+    throw new Error(
+      `no \`function ${name}(\` and no \`const ${name} = (\` — if it was refactored to ` +
+        `another form, widen functionBody rather than deleting this ledger`
+    );
+  }
   let depth = 0;
-  for (let i = source.indexOf('(', at); i < source.length; i++) {
+  for (let i = source.indexOf('(', declaration.index); i < source.length; i++) {
     if (source[i] === '(') depth++;
     else if (source[i] === ')') {
       depth--;
-      if (depth === 0) return balanced(source, i + 1, '{', '}');
+      if (depth === 0) {
+        const rest = source.slice(i + 1);
+        // The arrow form puts `=> ` (and possibly a return type) between `)` and `{`;
+        // a concise-body arrow has no `{` of its own and must not silently borrow the
+        // next block in the file.
+        if (/^\s*(?::[^=]*)?=>/.test(rest) && !/^\s*(?::[^=]*)?=>\s*\{/.test(rest)) {
+          throw new Error(`${name} is a concise-body arrow — functionBody needs a block body`);
+        }
+        return balanced(source, i + 1, '{', '}');
+      }
     }
   }
   throw new Error(`unbalanced parameter list in ${name}`);
+}
+
+/** The initialiser of a `const <name> = …;` binding, up to the `;` or the line end. */
+function constInitialiser(source: string, name: string): string {
+  const m = new RegExp(`const\\s+${name}\\s*=\\s*([^;\\n]+)`).exec(source);
+  if (!m) throw new Error(`no const ${name}`);
+  return normalise(m[1]);
 }
 
 /** The single argument of a `<callee>(…)` call. */
@@ -138,15 +204,82 @@ function objectProperty(objectInner: string, key: string): string {
   return objectInner.slice(start);
 }
 
-/** Every `set…` returned by a `const [x, setX] = useState(…)` in a module. */
-function stateSetters(source: string): string[] {
-  const re = /const\s*\[\s*[A-Za-z0-9_$]+\s*,\s*(set[A-Za-z0-9_$]+)\s*\]\s*=\s*useState/g;
-  return [...source.matchAll(re)].map((m) => m[1]);
+/** Whitespace collapsed to single spaces and trimmed, so formatting is not a difference. */
+function normalise(text: string): string {
+  return text.replace(/\s+/g, ' ').trim();
 }
 
-/** Which of `setters` are NOT called anywhere in `body`. */
-function settersNotCalledIn(body: string, setters: string[]): string[] {
-  return setters.filter((s) => !new RegExp(`\\b${s}\\s*\\(`).test(body));
+/**
+ * Every `useState` piece in a module: the setter name → the NORMALISED text of the
+ * DECLARED INITIAL VALUE. Comment-stripped source only.
+ *
+ * The initial value is read with a balance pass from the `(` that follows `useState`
+ * rather than by regex, so a type argument of any shape (`useState<Foo<Bar>>('')`) and
+ * an initialiser containing its own parens both survive. A `useState` with no call
+ * parens at all would make that `(` belong to some later expression, so the text between
+ * is asserted to be argument-free first — it throws rather than silently reading the
+ * wrong span.
+ */
+function stateInitialValues(source: string): Map<string, string> {
+  const re = /const\s*\[\s*[A-Za-z0-9_$]+\s*,\s*(set[A-Za-z0-9_$]+)\s*\]\s*=\s*useState/g;
+  const out = new Map<string, string>();
+  for (const m of source.matchAll(re)) {
+    const after = m.index + m[0].length;
+    const paren = source.indexOf('(', after);
+    if (paren < 0) throw new Error(`no useState call parens for ${m[1]}`);
+    const between = source.slice(after, paren);
+    if (/[;{}=]/.test(between)) throw new Error(`useState for ${m[1]} is not called`);
+    out.set(m[1], normalise(balanced(source, paren, '(', ')')));
+  }
+  return out;
+}
+
+/**
+ * 🔴 EVERY WAY `reset()` CAN FAIL TO RESET, as human-readable offences.
+ *
+ * Two of them, and the second is why this replaced a "was the setter CALLED" check:
+ * mutating `setIncludeCollaborators(false)` to `setIncludeCollaborators(true)` inside
+ * `reset()` left the whole blocking tier green (13/13), because the setter was still
+ * called — only the report-only browser tier saw it. A ledger that asserts a call
+ * happened cannot see the value it carries, and the value is the entire hazard: a
+ * collaborator opt-in that survives a send fans the NEXT moderation message out to third
+ * parties who opted into nothing.
+ *
+ * So the assertion is the RELATIONSHIP `reset() restores the declared initial`, not
+ * `reset() mentions the setter`. It fails when a piece of state is added without a
+ * reset, when an existing reset is deleted, AND when a reset is rewritten to a value
+ * that is not what the component mounts with.
+ */
+function resetOffences(body: string, initials: Map<string, string>): string[] {
+  const offences: string[] = [];
+  for (const [setter, initial] of initials) {
+    const call = new RegExp(`\\b${setter}\\s*\\(`).exec(body);
+    if (!call) {
+      offences.push(`${setter}: never called in reset() (declared initial ${initial})`);
+      continue;
+    }
+    const arg = normalise(balanced(body, call.index + call[0].length - 1, '(', ')'));
+    if (arg !== initial) {
+      offences.push(`${setter}: reset() passes ${arg}, declared initial is ${initial}`);
+    }
+  }
+  return offences;
+}
+
+/**
+ * The literal text between `open` and the next `close`, for a JSX element whose children
+ * are prose. It refuses a span containing a `<`, so a nested element makes this throw by
+ * name rather than return a half-string that a whole-sentence assertion would then
+ * compare against and fail confusingly.
+ */
+function elementText(source: string, open: string, close: string): string {
+  const start = source.indexOf(open);
+  if (start < 0) throw new Error(`no ${open}`);
+  const end = source.indexOf(close, start + open.length);
+  if (end < 0) throw new Error(`no ${close} after ${open}`);
+  const text = source.slice(start + open.length, end);
+  if (text.includes('<')) throw new Error(`${open} has nested elements — widen elementText`);
+  return text;
 }
 
 /** A self-closing JSX element's full text, `<Name` through the matching `/>`. */
@@ -196,7 +329,7 @@ describe('the owner-message surface is MOUNTED (it shipped dark once already)', 
   });
 
   it('the mounting site routes the action through actionOpensOwnerMessage, not the reason modal', () => {
-    const table = read(MOUNT_SITES[0]);
+    const table = codeOf(MOUNT_SITES[0]);
     // The router must be CALLED, not merely imported — an import with no call site is
     // exactly how the message action would silently fall through to
     // `setPendingAction` and open the wrong modal.
@@ -210,7 +343,7 @@ describe('the owner-message surface is MOUNTED (it shipped dark once already)', 
     // gated routing — measured by reverting it to `action !== 'review'`, which left all
     // 48 component tests green. A ledger over MOUNTS has to cover the ROUTERS too, or
     // the surface stays mounted and reachable by the wrong modal.
-    const table = read(MOUNT_SITES[0]);
+    const table = codeOf(MOUNT_SITES[0]);
     expect(table).toContain('actionRequiresReason(action)');
     expect(table).toContain('setPendingAction({ action, row })');
   });
@@ -219,7 +352,7 @@ describe('the owner-message surface is MOUNTED (it shipped dark once already)', 
     // `messageAppOwner` keys on `apl_<ULID>`; a slug would come back NOT_FOUND. The
     // row carries both and they are adjacent in the object literal, so this is a
     // realistic transposition rather than a hypothetical one.
-    const table = read(MOUNT_SITES[0]);
+    const table = codeOf(MOUNT_SITES[0]);
     expect(table).toMatch(/appListingId:\s*messageRow\.id/);
   });
 });
@@ -240,7 +373,7 @@ describe('the composer bounds are single-sourced from the server schema', () => 
     };
     const offences: string[] = [];
     for (const rel of [FORM_MODULE, MODAL_MODULE]) {
-      const code = stripComments(read(rel));
+      const code = codeOf(rel);
       for (const [name, value] of Object.entries(bounds)) {
         const hits = bareNumericHits(code, value);
         if (hits > 0) offences.push(`${rel}: ${hits}× bare ${value} (use ${name})`);
@@ -275,7 +408,7 @@ describe('the composer bounds are single-sourced from the server schema', () => 
    * it was pinned only in the report-only browser tier.
    */
   it('each field is wired to ITS OWN bounds — the body to the body pair, the subject to the subject pair', () => {
-    const code = stripComments(read(MODAL_MODULE));
+    const code = codeOf(MODAL_MODULE);
 
     const body = selfClosingElement(code, 'ReasonGatedField');
     // Positive control on the extractor: it grabbed the body field and not some other
@@ -290,6 +423,50 @@ describe('the composer bounds are single-sourced from the server schema', () => 
     expect(subject).toContain('MOD_MESSAGE_SUBJECT_MIN');
     expect(subject).toContain('MOD_MESSAGE_SUBJECT_MAX');
     expect(subject).not.toContain('MOD_MESSAGE_BODY_');
+  });
+});
+
+/**
+ * 🔴 THE SEAM THE EXTRACTION CREATED, WHICH NEITHER TIER WAS WATCHING.
+ *
+ * `reasonGatedFieldCopy` was split out of `ReasonGatedField` so the counter and the
+ * inline error would be pinned by something that can block a merge. That closed half the
+ * hole: the strings are now pure functions with their own blocking suite, but the JSX
+ * that CALLS them is in a file no blocking test reads. Measured on the extracted code —
+ * both of these survived 1318 blocking + 1113 browser tests:
+ *
+ *   - swapping `description={reasonGatedFieldDescription(copy)}` with
+ *     `error={reasonGatedFieldError(copy)}`, which renders the "too long" message as the
+ *     neutral counter and the counter as a red error;
+ *   - `length: len` → `length: value.length`, which silently drops the trimming the
+ *     server's own validation assumes, so a body of spaces opens the gate and comes
+ *     straight back rejected.
+ *
+ * Two hermetically-tested halves, a defect that lives only between them. These pin the
+ * RELATIONSHIP: which function feeds which prop, and that the length both receive is the
+ * trimmed one no matter which identifier it arrives under.
+ */
+describe('the shared field is wired to the copy module it was extracted into', () => {
+  it('each prop is fed by ITS OWN copy function', () => {
+    const code = codeOf(FIELD_MODULE);
+    const textarea = selfClosingElement(code, 'Textarea');
+    // Positive control on the extractor: it grabbed the reason textarea and not some
+    // other self-closing element in the file.
+    expect(textarea).toContain('data-testid={testId}');
+    expect(textarea).toContain('description={reasonGatedFieldDescription(copy)}');
+    expect(textarea).toContain('error={reasonGatedFieldError(copy)}');
+  });
+
+  it('the copy input is built from the TRIMMED length, through however many aliases', () => {
+    const code = codeOf(FIELD_MODULE);
+    const at = code.indexOf('const copy = {');
+    expect(at).toBeGreaterThan(-1);
+    const copyLiteral = balanced(code, at, '{', '}');
+    const written = normalise(objectProperty(copyLiteral, 'length').replace(/^length:\s*/, ''));
+    // Written as a bare identifier? Resolve it to what that identifier is assigned, so
+    // the trim can't be dropped one level up where this assertion could not see it.
+    const resolved = /^[A-Za-z0-9_$]+$/.test(written) ? constInitialiser(code, written) : written;
+    expect(resolved).toBe('value.trim().length');
   });
 });
 
@@ -309,7 +486,7 @@ describe('the composer bounds are single-sourced from the server schema', () => 
  */
 describe('the composer takes no owner from its caller', () => {
   it('the exact key set of the listing prop', () => {
-    const code = stripComments(read(MODAL_MODULE));
+    const code = codeOf(MODAL_MODULE);
     const at = code.indexOf('listing: {');
     expect(at).toBeGreaterThan(-1);
     const shape = balanced(code, at, '{', '}');
@@ -319,10 +496,33 @@ describe('the composer takes no owner from its caller', () => {
 
   it('neither the composer nor its mount site carries a display owner', () => {
     for (const rel of [MODAL_MODULE, MOUNT_SITES[0]]) {
-      expect(read(rel)).not.toContain('ownerLabel');
+      expect(codeOf(rel)).not.toContain('ownerLabel');
     }
     // Positive control: the mount site DOES still build the props it is supposed to.
-    expect(read(MOUNT_SITES[0])).toMatch(/appListingId:\s*messageRow\.id/);
+    expect(codeOf(MOUNT_SITES[0])).toMatch(/appListingId:\s*messageRow\.id/);
+  });
+
+  /**
+   * 🔴 THE NOTICE, PINNED WHOLE — because a guard on WORDS is walkable by REWORDING.
+   *
+   * The browser tier asked only that no `@handle`/`#id` appear. That is a SPELLED guard:
+   * rewriting the notice as "…to the app owner devuser, resolved when you send" names a
+   * recipient in plain prose, matches no `[@#]\w`, and passed all 17 browser tests. The
+   * prop-shape ledger above already stops a CALLER handing the composer an owner, so the
+   * residual hazard is this file naming one itself — which is a change to this exact
+   * string and nothing else.
+   *
+   * So the whole normalised sentence is the assertion, and it lives in the BLOCKING tier
+   * rather than only in the report-only browser one. A deliberate reword fails this and
+   * is meant to: the copy is a claim about where a moderation message goes, and updating
+   * a machine-readable pin is the cheap half of changing it.
+   */
+  it('the delivery notice is exactly this sentence', () => {
+    expect(normalise(elementText(codeOf(MODAL_MODULE), '<Text size="sm">', '</Text>'))).toBe(
+      'Delivered as a notification to the app&apos;s owner, resolved when you send. One-way — ' +
+        'replies are not delivered — and the subject and message are recorded in this ' +
+        'listing&apos;s moderation history.'
+    );
   });
 });
 
@@ -332,35 +532,61 @@ describe('the composer takes no owner from its caller', () => {
  * claims in a comment rather than pinned behaviour.
  */
 describe('the composer resets per message and never on failure', () => {
-  it('reset() clears every useState piece the composer declares, the collaborator opt-in included', () => {
-    const code = stripComments(read(MODAL_MODULE));
-    const setters = stateSetters(code);
-    // Positive control on the detector: the composer really does declare state, and the
-    // opt-in is one of the pieces this is asserting about.
-    expect(setters.length).toBeGreaterThan(0);
-    expect(setters).toContain('setIncludeCollaborators');
-    // The RELATIONSHIP, not a fixed list: the ledger fails when state is ADDED without a
-    // matching reset just as it does when an existing reset is dropped.
-    expect(settersNotCalledIn(functionBody(code, 'reset'), setters)).toEqual([]);
+  it('reset() restores every useState piece to its DECLARED initial value, the collaborator opt-in included', () => {
+    const code = codeOf(MODAL_MODULE);
+    const initials = stateInitialValues(code);
+    // Positive control on the detector: the composer really does declare state, the
+    // opt-in is one of the pieces this is asserting about, and it mounts OFF — so the
+    // comparison below has a real, non-empty right-hand side to be wrong about.
+    expect(initials.size).toBeGreaterThan(0);
+    expect(initials.get('setIncludeCollaborators')).toBe('false');
+    expect(resetOffences(functionBody(code, 'reset'), initials)).toEqual([]);
   });
 
-  it('the reset-completeness detector fires on a composer that forgets one setter', () => {
-    const planted = [
+  it('the reset detector fires on a forgotten setter AND on one reset to the wrong value', () => {
+    const declarations = [
       "const [subject, setSubject] = useState('');",
       'const [includeCollaborators, setIncludeCollaborators] = useState(false);',
+    ];
+    const forgot = [...declarations, 'function reset() {', "  setSubject('');", '}'].join('\n');
+    const forgotInitials = stateInitialValues(forgot);
+    expect([...forgotInitials.entries()]).toEqual([
+      ['setSubject', "''"],
+      ['setIncludeCollaborators', 'false'],
+    ]);
+    expect(resetOffences(functionBody(forgot, 'reset'), forgotInitials)).toEqual([
+      'setIncludeCollaborators: never called in reset() (declared initial false)',
+    ]);
+
+    // 🔴 THE MUTANT THE OLD "was it called" LEDGER LET THROUGH. The setter is called, so
+    // a call-presence check is satisfied; the value it carries is the opposite of what
+    // the composer mounts with.
+    const wrongValue = [
+      ...declarations,
       'function reset() {',
       "  setSubject('');",
+      '  setIncludeCollaborators(true);',
       '}',
     ].join('\n');
-    const setters = stateSetters(planted);
-    expect(setters).toEqual(['setSubject', 'setIncludeCollaborators']);
-    expect(settersNotCalledIn(functionBody(planted, 'reset'), setters)).toEqual([
-      'setIncludeCollaborators',
+    const wrongInitials = stateInitialValues(wrongValue);
+    expect(resetOffences(functionBody(wrongValue, 'reset'), wrongInitials)).toEqual([
+      'setIncludeCollaborators: reset() passes true, declared initial is false',
     ]);
+
+    // And a correct composer produces no offence at all — so the detector is not simply
+    // always-red, which would make the real assertion above meaningless.
+    const correct = [
+      ...declarations,
+      'function reset() {',
+      "  setSubject('');",
+      '  setIncludeCollaborators(false);',
+      '}',
+    ].join('\n');
+    expect(resetOffences(functionBody(correct, 'reset'), stateInitialValues(correct))).toEqual([]);
   });
 
   it('a failed send does not reset — the mutation onError never calls reset()', () => {
-    const options = callArgument(stripComments(read(MODAL_MODULE)), 'useMutation');
+    const options = callArgument(codeOf(MODAL_MODULE), 'useMutation');
     // Positive control on the property extractor: the SUCCESS handler does reset, so a
     // clean `onError` is a real read of real code and not an empty match.
     expect(objectProperty(options, 'onSuccess')).toContain('reset()');

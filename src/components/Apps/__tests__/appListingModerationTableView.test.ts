@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   actionOpensOwnerMessage,
   actionRequiresReason,
+  ALL_LISTING_MOD_ACTIONS,
   effectiveModerationStatus,
   isDestructiveListingModAction,
   listingKindChip,
@@ -138,19 +139,19 @@ describe('listingModActions — the owner-message action is offered on EVERY row
 });
 
 /**
- * The full action vocabulary, spelled once. Every `describe` below iterates THIS, so a
- * member added to `ListingModAction` without a label / a routing decision fails here
- * rather than rendering an empty button or falling through both modal branches.
+ * The full action vocabulary, IMPORTED rather than re-spelled. Every `describe` below
+ * iterates THIS.
+ *
+ * 🔴 IT IS DERIVED FROM THE PRODUCTION ROUTE TABLE, AND THE EARLIER HAND-MAINTAINED
+ * ARRAY IS WHY. That array's docstring claimed "a member added to `ListingModAction`
+ * without a label / a routing decision fails here" — the label half was real (an
+ * exhaustive switch), the ROUTING half was not: `actionRequiresReason` was a negation,
+ * so a new member answered `true` by default, landed in the reason-gated modal, and
+ * every assertion below still passed. Measured: adding a member to the union left all 46
+ * unit tests green. Now a new member must appear in `LISTING_MOD_ROUTES` to exist here
+ * at all — it cannot compile otherwise — and once it does, the sweeps below walk it.
  */
-const ALL_ACTIONS: ListingModAction[] = [
-  'review',
-  'message-owner',
-  'reset-to-pending',
-  'hide',
-  'relist',
-  'claim',
-  'purge',
-];
+const ALL_ACTIONS: ListingModAction[] = ALL_LISTING_MOD_ACTIONS;
 
 describe('action metadata', () => {
   it('only purge is destructive', () => {
@@ -187,6 +188,17 @@ describe('action metadata', () => {
     for (const a of ['reset-to-pending', 'hide', 'relist', 'claim', 'purge'] as const) {
       expect(actionRequiresReason(a)).toBe(true);
     }
+  });
+
+  /**
+   * The derived vocabulary really is the whole union. Without this, every sweep that
+   * iterates `ALL_ACTIONS` would pass vacuously if the route table were ever emptied —
+   * the positive control on the derivation itself, not on any one predicate.
+   */
+  it('the vocabulary derived from the route table is the whole union', () => {
+    expect([...ALL_ACTIONS].sort()).toEqual(
+      ['claim', 'hide', 'message-owner', 'purge', 'relist', 'reset-to-pending', 'review'].sort()
+    );
   });
 
   /**

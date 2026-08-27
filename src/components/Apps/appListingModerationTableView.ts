@@ -115,42 +115,83 @@ export function isDestructiveListingModAction(action: ListingModAction): boolean
   return action === 'purge';
 }
 
+/** Which modal a mod action opens. Three routes, and every action names exactly one. */
+type ListingModRoute =
+  /** The reused off-site publish-request review modal. */
+  | 'review'
+  /** `MessageAppOwnerModal` — subject + body, no `reason`. */
+  | 'owner-message'
+  /** The shared `ListingModActionModal` — one `reason` at `OFFSITE_MOD_REASON_MIN`. */
+  | 'reason';
+
+/**
+ * 🔴 THE ROUTING TABLE, AND THE REASON IT IS A TABLE RATHER THAN TWO PREDICATES.
+ *
+ * `AppListingsModerationTable.openAction` tries `review`, then
+ * {@link actionOpensOwnerMessage}, then {@link actionRequiresReason}, and an action
+ * claimed by none of the three opens NOTHING. That "jointly total" property is what the
+ * table's own comment leans on — but while `actionRequiresReason` was written as a
+ * NEGATION (`action !== 'review' && action !== 'message-owner'`) the property was
+ * decorative: a member added to {@link ListingModAction} answered `true` by DEFAULT and
+ * landed in the reason-gated modal, which is precisely the quiet mis-route the comment
+ * claimed to prevent. Measured before this table existed: adding a member to the union
+ * left all 46 unit tests green, and the only objection came from
+ * {@link listingModActionLabel}'s exhaustive switch — the LABEL half, not the routing
+ * half.
+ *
+ * An exhaustive `Record<ListingModAction, …>` moves the claim into the type system: a
+ * new member is a MISSING PROPERTY here (`pnpm typecheck`, a blocking check) rather than
+ * a silent default, and at runtime an unlisted action resolves to `undefined`, so both
+ * predicates answer `false` and the action opens nothing — the loud direction, which is
+ * what the comment always said and now describes.
+ *
+ * 🔴 `message-owner` routes to the composer, NOT to `reason`, and that is not an
+ * oversight. It carries no `reason` at all: `appListings.messageAppOwner` takes a
+ * SUBJECT and a BODY with their own, different floors (`MOD_MESSAGE_SUBJECT_MIN` /
+ * `MOD_MESSAGE_BODY_MIN`). Routing it to `reason` would leave that predicate reading
+ * "shows a reason textarea" for a surface that shows none, and — because a table entry
+ * is single-valued — is now unrepresentable rather than merely discouraged.
+ */
+const LISTING_MOD_ROUTES: Record<ListingModAction, ListingModRoute> = {
+  review: 'review',
+  'message-owner': 'owner-message',
+  'reset-to-pending': 'reason',
+  hide: 'reason',
+  relist: 'reason',
+  claim: 'reason',
+  purge: 'reason',
+};
+
+/**
+ * Every member of {@link ListingModAction}, derived from {@link LISTING_MOD_ROUTES}
+ * rather than hand-listed, so the vocabulary has ONE spelling. Iterated by
+ * `appListingModerationTableView.test.ts` for its label/route totality sweeps — a
+ * hand-maintained copy there could silently stop covering a member the union gained.
+ */
+export const ALL_LISTING_MOD_ACTIONS = Object.keys(LISTING_MOD_ROUTES) as ListingModAction[];
+
 /**
  * Whether an action opens the shared REASON-gated modal (`ListingModActionModal`,
  * whose one free-text field is `reason` and whose floor is `OFFSITE_MOD_REASON_MIN`).
  *
- * 🔴 THIS IS THE MGMT TABLE'S THIRD ROUTE, AND IT IS BRANCHED ON.
- * `AppListingsModerationTable.openAction` tries `review`, then
- * {@link actionOpensOwnerMessage}, then this — so an action this answers `false` for
- * opens NOTHING. That is deliberate: the three predicates are jointly total over
- * `ListingModAction`, and a future action claimed by none of them should visibly do
- * nothing rather than quietly land in a reason-gated modal whose one field it does not
- * carry.
- *
- * 🔴 `message-owner` is FALSE, and it is not an oversight. That action does not carry a
- * `reason` at all: `appListings.messageAppOwner` takes a SUBJECT and a BODY with their
- * own, different floors (`MOD_MESSAGE_SUBJECT_MIN` / `MOD_MESSAGE_BODY_MIN`), so the
- * router above claims it first. Answering `true` here would put one action in two
- * routers at once and leave this predicate reading "shows a reason textarea" for a
- * surface that shows none.
- *
- * Both halves are pinned: the vocabulary in `appListingModerationTableView.test.ts`,
- * and that the table still CALLS this at all in
+ * Pinned in two places: the vocabulary in `appListingModerationTableView.test.ts`, and
+ * that the table still CALLS this at all in
  * `__tests__/appModeratorMessageForm.callSites.test.ts` — this predicate spent one
  * revision referenced by nothing but its own test, which is the shape that lets a
  * "🔴 routing depends on this" comment describe dead code.
  */
 export function actionRequiresReason(action: ListingModAction): boolean {
-  return action !== 'review' && action !== 'message-owner';
+  return LISTING_MOD_ROUTES[action] === 'reason';
 }
 
 /**
  * Whether an action routes to `MessageAppOwnerModal` rather than the shared
- * reason-gated one. The complement of `actionRequiresReason` over the MUTATING
- * actions — `review` is neither (it opens the publish-request review modal).
+ * reason-gated one. Disjoint from `actionRequiresReason` BY CONSTRUCTION — one table
+ * entry per action — where the two used to be independent predicates that merely
+ * happened to disagree on every member.
  */
 export function actionOpensOwnerMessage(action: ListingModAction): boolean {
-  return action === 'message-owner';
+  return LISTING_MOD_ROUTES[action] === 'owner-message';
 }
 
 /** Human label for a mod action button. */

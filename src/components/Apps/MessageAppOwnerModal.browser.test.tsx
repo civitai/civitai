@@ -320,11 +320,11 @@ describe('MessageAppOwnerModal — the delivery notice', () => {
    * displays — so a composer that echoed a handle would let a moderator address copy to
    * one developer while the platform delivered it to another.
    */
-  test('names no recipient — no @handle or #id appears in the composer', async () => {
+  test('names no recipient — the notice is exactly the sentence that names none', async () => {
     render();
     // Await the notice first: the modal is portalled and `render()` returns before it is
     // in the DOM, so a synchronous read of `document.body` sees an empty string — which
-    // would make the negative assertion below pass over nothing at all.
+    // would make the assertions below pass over nothing at all.
     await expect
       .element(page.getByText('resolved when you send', { exact: false }))
       .toBeInTheDocument();
@@ -332,7 +332,18 @@ describe('MessageAppOwnerModal — the delivery notice', () => {
     // injected <style> block, whose `@media` rules match the handle pattern below and
     // would fail this for a reason that has nothing to do with the copy.
     const composer = page.getByRole('dialog').element().textContent ?? '';
-    expect(composer).toContain('resolved when you send');
+    // 🔴 THE WHOLE SENTENCE, not a pattern. The `/[@#]\w/` check this replaced was a
+    // SPELLED guard: rewriting the notice as "…to the app owner devuser, resolved when
+    // you send" names a recipient in plain prose, matches no handle sigil, and passed
+    // all 17 tests in this file. A reword now fails here on purpose — the copy is a
+    // claim about where a moderation message goes.
+    expect(composer).toContain(
+      "Delivered as a notification to the app's owner, resolved when you send. " +
+        'One-way — replies are not delivered — and the subject and message are recorded ' +
+        "in this listing's moderation history."
+    );
+    // Kept beside it: the sigil pattern still catches a handle appended ANYWHERE else in
+    // the composer, which a single-string assertion on one paragraph cannot see.
     expect(composer).not.toMatch(/[@#]\w/);
   });
 });

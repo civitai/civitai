@@ -293,12 +293,17 @@ export function AppListingsModerationTable({
       return;
     }
     // 🔴 BRANCHED ON, not a fall-through. `actionRequiresReason` is the third and last
-    // route out of this function, so the three predicates have to be jointly total over
-    // `ListingModAction` or an action opens nothing — which is the loud failure, and the
-    // one `appListingModerationTableView.test.ts` pins. A bare `setPendingAction(...)`
-    // here is the quiet one: a future action with no `reason` of its own would land in
-    // the reason-gated modal and call its proc with an input the schema rejects, which
-    // is exactly the mis-route `message-owner` was carved out of.
+    // route out of this function, so a future action it answers `false` for opens
+    // nothing — the loud failure — where a bare `setPendingAction(...)` here is the quiet
+    // one: an action with no `reason` of its own lands in the reason-gated modal and
+    // calls its proc with an input the schema rejects, the mis-route `message-owner` was
+    // carved out of.
+    //
+    // 🔴 The BRANCH alone did not deliver that, and this comment used to say it did. Both
+    // predicates now read a single exhaustive `Record<ListingModAction, …>` route table,
+    // so an action absent from it answers `false` to BOTH and reaches nothing; while
+    // `actionRequiresReason` was written as a negation, a new union member defaulted to
+    // `true` and landed here regardless of how carefully this branch was written.
     if (actionRequiresReason(action)) setPendingAction({ action, row });
   };
 
