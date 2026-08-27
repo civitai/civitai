@@ -232,5 +232,6 @@ export const imageRouter = router({
   refreshImageResources: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaWrite })
     .input(getByIdSchema)
+    .use(isOwnerOrModerator)
     .mutation(({ input }) => refreshImageResources(input.id)),
 });

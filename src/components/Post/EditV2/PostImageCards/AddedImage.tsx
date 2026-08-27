@@ -65,7 +65,7 @@ import { useCurrentUserRequired } from '~/hooks/useCurrentUser';
 import { DEFAULT_EDGE_IMAGE_WIDTH, MAX_RESOURCES_PER_IMAGE } from '~/server/common/constants';
 import type { NsfwLevel } from '~/server/common/enums';
 import { BlockedReason } from '~/server/common/enums';
-import type { ImageMetaProps } from '~/server/schema/image.schema';
+import type { ImageMetaProps, UnmatchedResource } from '~/server/schema/image.schema';
 import type { VideoMetadata } from '~/server/schema/media.schema';
 import type { PostEditImageDetail, ResourceHelper } from '~/server/services/post.service';
 import {
@@ -623,15 +623,25 @@ function EditDetail() {
   const hasSimpleMeta = !!simpleMeta.length;
   const resourcesSorted = sortByModelTypes(resources);
   const unmatchedResources = useMemo(() => {
+    const derived = meta?.unmatchedResources as UnmatchedResource[] | undefined;
+    if (derived) return derived;
+    // Images ingested before the server derived this list carry a per-resource flag instead
     const metaResources = (meta?.resources ?? []) as {
-      type: string;
+      type?: string;
       name?: string;
       hash?: string;
       unmatched?: boolean;
     }[];
-    return metaResources.filter((r) => r.unmatched && r.name);
-  }, [meta?.resources]);
+    return metaResources
+      .filter((r) => r.unmatched && r.name)
+      .map((r) => ({
+        type: r.type,
+        name: r.name!.replace(/.*[/\\]/, '').replace(/\.[^/.]+$/, ''),
+        hash: r.hash ?? '',
+      }));
+  }, [meta?.unmatchedResources, meta?.resources]);
   const hasLegacyUnmatched = useMemo(() => {
+    if (meta?.unmatchedResources) return false; // server computed the full list; trust it
     if (unmatchedResources.length > 0) return false; // new-style flags take precedence
     const metaResources = (meta?.resources ?? []) as { hash?: string; unmatched?: boolean }[];
     const resourcesWithHashes = metaResources.filter((r) => !!r.hash);
@@ -640,7 +650,7 @@ function EditDetail() {
     if (hasAnyFlags) return false;
     const detectedCount = resources.filter((r) => r.detected).length;
     return resourcesWithHashes.length > detectedCount;
-  }, [meta?.resources, resources, unmatchedResources.length]);
+  }, [meta?.unmatchedResources, meta?.resources, resources, unmatchedResources.length]);
   const cannotVerifyAi =
     !isValidAIGeneration({
       id: image.id,
@@ -848,19 +858,19 @@ function EditDetail() {
                     <Text size="sm">
                       The following resources could not be matched to models on Civitai:
                     </Text>
-                    {unmatchedResources.map((r, i) => {
-                      const displayName = r.name?.replace(/.*[/\\]/, '').replace(/\.[^/.]+$/, '');
-                      return (
-                        <Group key={i} gap="xs" wrap="nowrap" mt={4}>
-                          <Text size="sm" lineClamp={1}>
-                            {displayName}
-                          </Text>
+                    {unmatchedResources.map((r, i) => (
+                      <Group key={i} gap="xs" wrap="nowrap" mt={4}>
+                        <Text size="sm" lineClamp={1}>
+                          {r.name}
+                        </Text>
+                        {/* Absent for resources detected only via meta.hashes */}
+                        {!!r.type && (
                           <Badge color="gray" size="sm" variant="filled">
                             {getDisplayName(r.type)}
                           </Badge>
-                        </Group>
-                      );
-                    })}
+                        )}
+                      </Group>
+                    ))}
                   </Alert>
                 )}
                 {hasLegacyUnmatched && (

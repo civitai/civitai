@@ -3,7 +3,7 @@ import { TRPCError } from '@trpc/server';
 import { randomUUID } from 'crypto';
 import type { ManipulateType } from 'dayjs';
 import dayjs from '~/shared/utils/dayjs';
-import { chunk, truncate, uniq, uniqBy } from 'lodash-es';
+import { chunk, isEqual, truncate, uniq, uniqBy } from 'lodash-es';
 import { MeiliSearch, type SearchParams } from 'meilisearch';
 import type { SessionUser } from '~/types/session';
 import { v4 as uuid } from 'uuid';
@@ -74,6 +74,7 @@ import {
 import { getNewCreatorUserIds } from '~/server/services/new-creators.service';
 import { imageOnSiteSql, isImageMetaOnSite } from '~/server/utils/image-onsite';
 import { stripImageForInfiniteWire } from '~/server/utils/image-infinite-wire';
+import { deriveUnmatchedResources } from '~/server/utils/unmatched-resources';
 import {
   getBaseModelFromResources,
   getUserFollows,
@@ -8713,6 +8714,7 @@ export async function getImageResourcesFromImageId({
     {
       id: number;
       modelversionid: number | null;
+      name: string | null;
       hash: string | null;
       strength: number | null;
       detected: boolean;
@@ -8758,36 +8760,45 @@ export async function createImageResources({
     `;
   }
 
-  // Flag unmatched resources on image meta
+  // Recomputed in full rather than only stamped: a user who uploads the missing model and hits
+  // refresh has to see the warning clear, so a flag that no longer holds must come back off.
   const unmatchedHashes = new Set(
     resources
       .filter((r) => r.detected && !r.modelversionid && r.hash)
       .map((r) => r.hash!.toLowerCase())
   );
 
-  if (unmatchedHashes.size > 0) {
-    const image = await dbClient.image.findUnique({
+  const image = await dbClient.image.findUnique({
+    where: { id: imageId },
+    select: { meta: true },
+  });
+
+  const meta = (image?.meta ?? {}) as Record<string, any>;
+  const metaResources = (meta.resources ?? []) as {
+    type?: string;
+    name?: string;
+    hash?: string;
+    unmatched?: boolean;
+  }[];
+  let updated = false;
+
+  for (const resource of metaResources) {
+    const unmatched = !!resource.hash && unmatchedHashes.has(resource.hash.toLowerCase());
+    if (unmatched === !!resource.unmatched) continue;
+    // Set false rather than deleted: a client that predates meta.unmatchedResources reads the key's
+    // absence as "legacy image" and falls through to a count heuristic that over-reports.
+    resource.unmatched = unmatched;
+    updated = true;
+  }
+
+  const unmatchedResources = deriveUnmatchedResources(resources, metaResources);
+  if (!isEqual(unmatchedResources, meta.unmatchedResources ?? [])) updated = true;
+
+  if (updated) {
+    await dbClient.image.update({
       where: { id: imageId },
-      select: { meta: true },
+      data: { meta: { ...meta, resources: metaResources, unmatchedResources } },
     });
-
-    const meta = (image?.meta ?? {}) as Record<string, any>;
-    const metaResources = (meta.resources ?? []) as { hash?: string; unmatched?: boolean }[];
-    let updated = false;
-
-    for (const resource of metaResources) {
-      if (resource.hash && unmatchedHashes.has(resource.hash.toLowerCase())) {
-        resource.unmatched = true;
-        updated = true;
-      }
-    }
-
-    if (updated) {
-      await dbClient.image.update({
-        where: { id: imageId },
-        data: { meta: { ...meta, resources: metaResources } },
-      });
-    }
   }
 
   await imageResourcesCache.refresh(imageId);
