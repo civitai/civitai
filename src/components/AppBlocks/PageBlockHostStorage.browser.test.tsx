@@ -203,7 +203,10 @@ describe('PageBlockHost storage bridge (W10 KV datastore wiring)', () => {
     postFromBlock('APP_STORAGE_GET', { requestId: 'rq_get', key: 'draft' });
 
     await vi.waitFor(() => {
-      expect(mocks.get).toHaveBeenCalledWith({ blockToken: 'tok_abc', key: 'draft' }, { staleTime: BLOCK_STORAGE_READ_STALE_TIME_MS });
+      expect(mocks.get).toHaveBeenCalledWith(
+        { blockToken: 'tok_abc', key: 'draft' },
+        { staleTime: BLOCK_STORAGE_READ_STALE_TIME_MS }
+      );
     });
     await vi.waitFor(() => {
       const r = replies.last('APP_STORAGE_GET_RESULT');
@@ -335,12 +338,15 @@ describe('PageBlockHost storage bridge (W10 KV datastore wiring)', () => {
     });
 
     await vi.waitFor(() => {
-      expect(mocks.list).toHaveBeenCalledWith({
-        blockToken: 'tok_abc',
-        prefix: 'a',
-        limit: 200,
-        cursor: 'cur1',
-      }, { staleTime: BLOCK_STORAGE_READ_STALE_TIME_MS });
+      expect(mocks.list).toHaveBeenCalledWith(
+        {
+          blockToken: 'tok_abc',
+          prefix: 'a',
+          limit: 200,
+          cursor: 'cur1',
+        },
+        { staleTime: BLOCK_STORAGE_READ_STALE_TIME_MS }
+      );
     });
     await vi.waitFor(() => {
       const r = replies.last('APP_STORAGE_LIST_RESULT');
@@ -384,7 +390,10 @@ describe('PageBlockHost storage bridge (W10 KV datastore wiring)', () => {
     postFromBlock('APP_STORAGE_QUOTA', { requestId: 'rq_quota' });
 
     await vi.waitFor(() => {
-      expect(mocks.getQuota).toHaveBeenCalledWith({ blockToken: 'tok_abc' }, { staleTime: BLOCK_STORAGE_READ_STALE_TIME_MS });
+      expect(mocks.getQuota).toHaveBeenCalledWith(
+        { blockToken: 'tok_abc' },
+        { staleTime: BLOCK_STORAGE_READ_STALE_TIME_MS }
+      );
     });
     await vi.waitFor(() => {
       const r = replies.last('APP_STORAGE_QUOTA_RESULT');

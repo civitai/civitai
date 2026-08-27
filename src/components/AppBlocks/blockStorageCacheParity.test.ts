@@ -23,8 +23,16 @@ import { BLOCK_STORAGE_READ_STALE_TIME_MS } from './blockStorageCache';
  * grepped raw source, so commenting a call out — `// await invalidate…` — left
  * the guard fully green while the protection was gone. An adversarial audit
  * demonstrated exactly that one-line walk-past on IframeHost, the host this
- * guard is the only coverage for. A guard on TEXT must not be satisfiable by
- * text the compiler never sees.
+ * guard is the only coverage for.
+ *
+ * 🔴 BE PRECISE ABOUT WHAT THIS CERTIFIES: it is a TEXT predicate, so what it
+ * proves is that the call's characters appear in the right window — not that
+ * the call executes. A later audit showed the remaining hole: an inert string
+ * literal containing the call's text still satisfies it. Deletion, commenting
+ * out and reordering (the regressions that actually happen) are all caught;
+ * deliberately inert look-alike text is not. Do not read a green run here as
+ * "the invalidation runs" — that claim belongs to the browser tests and to
+ * `blockStorageCacheSemantics.test.ts`.
  */
 
 const HOST_DIR = __dirname;
@@ -49,14 +57,31 @@ const EXPECTED_READS = 7; // shared: list/get/getCount/getCounts · storage: get
 
 /**
  * Strip block and line comments so the assertions below cannot be satisfied by
- * commented-out code. Deliberately naive (it does not parse string or regex
- * literals): an over-strip can only REMOVE a real call and cause a spurious
- * FAILURE a human then investigates — it can never invent coverage.
+ * commented-out code.
+ *
+ * Still naive — it does not parse string or regex literals, so a `/*` inside a
+ * string would over-strip. The line-comment half is anchored to line-start
+ * precisely because the unanchored version DID over-strip real code. An
+ * over-strip removes a real call and causes a spurious FAILURE a human then
+ * investigates, which is the safe direction; the theoretical way it could
+ * invent coverage is by deleting a `send(` and widening an ordering window
+ * into a neighbouring handler. No such construction was reachable when this was
+ * checked, but it is not proven impossible — hence "safe direction", not
+ * "cannot".
  *
  * Mirrors `hostHandlerParity.test.ts`'s `stripComments`, same rationale.
  */
 function stripComments(src: string): string {
-  return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+  return (
+    src
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      // Line comments ONLY where `//` opens the line (after indentation). A
+      // commented-out call is always that shape, and anchoring here avoids
+      // truncating real code that merely CONTAINS `//` — e.g. the open-redirect
+      // guard `cleaned.includes('//')` in PageBlockHost, which the previous
+      // unanchored version chopped mid-condition.
+      .replace(/^[ \t]*\/\/[^\n]*$/gm, '')
+  );
 }
 
 function readHost(f: HostFile): string {
@@ -77,6 +102,17 @@ describe('block storage cache policy — both hosts', () => {
     expect(BLOCK_STORAGE_READ_STALE_TIME_MS).toBeLessThanOrEqual(5_000);
   });
 
+  it('pins the stale-time VALUE, not merely its range', () => {
+    // Every other assertion references the constant, so by construction none of
+    // them can see the value move: raising it 1s -> 5s once left the whole suite
+    // green, i.e. a 5x cross-user-freshness regression would have shipped
+    // unremarked. This is the one place the number itself is asserted.
+    //
+    // Changing it is a legitimate product decision — change it HERE too, and say
+    // why in the commit. The point is that it cannot move silently.
+    expect(BLOCK_STORAGE_READ_STALE_TIME_MS).toBe(1_000);
+  });
+
   it.each(HOSTS)('%s imports the shared cache policy module', (host) => {
     expect(readHost(host)).toContain("from '~/components/AppBlocks/blockStorageCache'");
   });
@@ -88,12 +124,24 @@ describe('block storage cache policy — both hosts', () => {
     expect(reads.length, `${host}: read count moved — update EXPECTED_READS deliberately`).toBe(
       EXPECTED_READS
     );
-    const bounded = [...src.matchAll(/BLOCK_STORAGE_READ_OPTS\)/g)];
+    // Check each call SITE, not a text count. An earlier version counted
+    // `BLOCK_STORAGE_READ_OPTS)` — which pins the FORMATTING, not the state:
+    // Prettier moved the argument onto its own line and the guard read 0 of 7
+    // bounded while every read was in fact bounded. Assert the state.
+    const unbounded = reads
+      .map((m) => {
+        const from = m.index ?? 0;
+        const window = src.slice(from, from + 800);
+        const replyAt = window.indexOf('send(');
+        const callText = replyAt === -1 ? window : window.slice(0, replyAt);
+        return callText.includes('BLOCK_STORAGE_READ_OPTS') ? null : m[0];
+      })
+      .filter(Boolean);
     expect(
-      bounded.length,
-      `${host}: ${reads.length - bounded.length} storage read(s) are UNBOUNDED — under ` +
+      unbounded,
+      `${host}: ${unbounded.length} storage read(s) are UNBOUNDED — under ` +
         `staleTime:Infinity they will never observe another user's write`
-    ).toBe(reads.length);
+    ).toEqual([]);
   });
 
   // ── WRITES: every one invalidates, before it replies ─────────────────────────
@@ -136,22 +184,25 @@ describe('block storage cache policy — both hosts', () => {
     // The guard above is only as good as this. Without it, `// await
     // invalidateSharedStorageReads(...)` satisfies every assertion in this file
     // — measured: an audit walked past the previous version exactly that way.
-    const withComment = `
-      const x = 1;
-      // await invalidateSharedStorageReads(trpcUtils);
-      /* await invalidatePrivateStorageReads(trpcUtils); */
-      await realCall();
-    `;
+    const withComment = [
+      '      const x = 1;',
+      '      // await invalidateSharedStorageReads(trpcUtils);',
+      '      /* await invalidatePrivateStorageReads(trpcUtils); */',
+      '      await realCall();',
+    ].join('\n');
     const stripped = stripComments(withComment);
     expect(stripped).not.toContain('invalidateSharedStorageReads');
     expect(stripped).not.toContain('invalidatePrivateStorageReads');
     expect(stripped).toContain('realCall');
   });
 
-  it('the comment-strip preserves a URL (does not over-strip on ://)', () => {
+  it('the comment-strip preserves real code containing // (regression)', () => {
+    // A URL, and the actual line the unanchored version truncated.
     expect(stripComments("const u = 'https://example.com/x'; // trailing")).toContain(
       'https://example.com/x'
     );
+    const redirectGuard = "    if (cleaned.startsWith('/') || cleaned.includes('//')) {";
+    expect(stripComments(redirectGuard)).toContain("includes('//')");
   });
 
   it('every host really does carry comments (the strip is not a no-op)', () => {

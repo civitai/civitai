@@ -2315,10 +2315,13 @@ export function PageBlockHost({
           return;
         const requestId = raw.requestId;
         try {
-          const result = await trpcUtils.apps.storage.get.fetch({
-            blockToken: token,
-            key: raw.key,
-          }, BLOCK_STORAGE_READ_OPTS);
+          const result = await trpcUtils.apps.storage.get.fetch(
+            {
+              blockToken: token,
+              key: raw.key,
+            },
+            BLOCK_STORAGE_READ_OPTS
+          );
           send('APP_STORAGE_GET_RESULT', { requestId, value: result.value });
         } catch (err) {
           send('APP_STORAGE_GET_RESULT', {
@@ -2451,12 +2454,15 @@ export function PageBlockHost({
             ? Math.min(Math.max(Math.floor(raw.limit), 1), 200)
             : 50;
         const cursor = typeof raw.cursor === 'string' ? raw.cursor : undefined;
-        const result = await trpcUtils.apps.storage.list.fetch({
-          blockToken: token,
-          prefix,
-          limit,
-          cursor,
-        }, BLOCK_STORAGE_READ_OPTS);
+        const result = await trpcUtils.apps.storage.list.fetch(
+          {
+            blockToken: token,
+            prefix,
+            limit,
+            cursor,
+          },
+          BLOCK_STORAGE_READ_OPTS
+        );
         send('APP_STORAGE_LIST_RESULT', {
           requestId,
           keys: result.keys.map((k) => ({
@@ -2496,7 +2502,10 @@ export function PageBlockHost({
       if (!raw || typeof raw.requestId !== 'string' || !token) return;
       const requestId = raw.requestId;
       try {
-        const result = await trpcUtils.apps.storage.getQuota.fetch({ blockToken: token }, BLOCK_STORAGE_READ_OPTS);
+        const result = await trpcUtils.apps.storage.getQuota.fetch(
+          { blockToken: token },
+          BLOCK_STORAGE_READ_OPTS
+        );
         send('APP_STORAGE_QUOTA_RESULT', {
           requestId,
           usedBytes: result.usedBytes,
@@ -2568,12 +2577,15 @@ export function PageBlockHost({
             ? Math.min(Math.max(Math.floor(raw.limit), 1), 100)
             : 50;
         const cursor = typeof raw.cursor === 'string' ? raw.cursor : undefined;
-        const result = await trpcUtils.apps.shared.list.fetch({
-          blockToken: token,
-          prefix,
-          limit,
-          cursor,
-        }, BLOCK_STORAGE_READ_OPTS);
+        const result = await trpcUtils.apps.shared.list.fetch(
+          {
+            blockToken: token,
+            prefix,
+            limit,
+            cursor,
+          },
+          BLOCK_STORAGE_READ_OPTS
+        );
         send('SHARED_LIST_RESULT', {
           requestId,
           items: result.items.map((it) => ({
@@ -2606,10 +2618,13 @@ export function PageBlockHost({
           return;
         const requestId = raw.requestId;
         try {
-          const result = await trpcUtils.apps.shared.getCount.fetch({
-            blockToken: token,
-            key: raw.key,
-          }, BLOCK_STORAGE_READ_OPTS);
+          const result = await trpcUtils.apps.shared.getCount.fetch(
+            {
+              blockToken: token,
+              key: raw.key,
+            },
+            BLOCK_STORAGE_READ_OPTS
+          );
           send('SHARED_GET_COUNT_RESULT', { requestId, count: result.count });
         } catch (err) {
           send('SHARED_GET_COUNT_RESULT', { requestId, error: storageErrorMessage(err) });
@@ -2627,10 +2642,13 @@ export function PageBlockHost({
         if (!raw || typeof raw.requestId !== 'string' || !Array.isArray(raw.keys) || !token) return;
         const requestId = raw.requestId;
         try {
-          const result = await trpcUtils.apps.shared.getCounts.fetch({
-            blockToken: token,
-            keys: raw.keys as string[],
-          }, BLOCK_STORAGE_READ_OPTS);
+          const result = await trpcUtils.apps.shared.getCounts.fetch(
+            {
+              blockToken: token,
+              keys: raw.keys as string[],
+            },
+            BLOCK_STORAGE_READ_OPTS
+          );
           send('SHARED_GET_COUNTS_RESULT', { requestId, counts: result.counts });
         } catch (err) {
           send('SHARED_GET_COUNTS_RESULT', { requestId, error: storageErrorMessage(err) });
@@ -2846,10 +2864,13 @@ export function PageBlockHost({
           return;
         const requestId = raw.requestId;
         try {
-          const result = await trpcUtils.apps.shared.get.fetch({
-            blockToken: token,
-            key: raw.key,
-          }, BLOCK_STORAGE_READ_OPTS);
+          const result = await trpcUtils.apps.shared.get.fetch(
+            {
+              blockToken: token,
+              key: raw.key,
+            },
+            BLOCK_STORAGE_READ_OPTS
+          );
           const it = result.item;
           send('SHARED_GET_RESULT', {
             requestId,

@@ -44,8 +44,18 @@ import type { trpc } from '~/utils/trpc';
  * afterwards races the read it is meant to serve. The tests pin the ordering,
  * not merely the call.
  *
+ * KNOWN LIMITS, deliberate:
+ *   - A block that writes through the REST endpoints directly
+ *     (`/api/v1/blocks/shared-storage/increment`) bypasses this host entirely,
+ *     so a later bridge read can still be up to one staleTime stale. Nothing
+ *     here can see that write.
+ *   - The invalidation is namespace-wide, so one block's write drops another
+ *     block's cached shared reads on the same page. Cheap, and correctness-safe.
+ *
  * Both hosts must apply BOTH halves — see `hostHandlerParity.ts` for why the
- * two hosts move in lockstep. `blockStorageCacheParity.test.ts` enforces it.
+ * two hosts move in lockstep. `blockStorageCacheParity.test.ts` enforces it,
+ * and `blockStorageCacheSemantics.test.ts` pins the query-core behaviour all of
+ * the above depends on (nothing else in the repo exercises the real client).
  */
 
 type TrpcUtils = ReturnType<typeof trpc.useUtils>;
@@ -72,11 +82,16 @@ export const BLOCK_STORAGE_READ_OPTS = { staleTime: BLOCK_STORAGE_READ_STALE_TIM
  * The only queries under this namespace ARE those reads — the writes are
  * mutations and hold no query cache.
  *
- * Never throws. The write is already committed by the time this runs, so a
- * failure here must not turn a SUCCEEDED write into a reported failure: the
- * block would tell the user it failed and a retry could duplicate the row. The
- * honest outcome of a failed invalidation is a read that is stale for one
- * staleTime, which is what the bound above already guarantees.
+ * Never throws — but be precise about what that defends. MEASURED against
+ * query-core 5.101.0: `invalidateQueries` does NOT reject even when an active
+ * query's refetch throws, so the obvious failure this looks like it is guarding
+ * cannot occur through this path. What the swallow actually covers is a wiring
+ * mistake (a `TypeError` if the utils shape changes) or a future client that
+ * does reject. It is kept because the consequence is asymmetric: the write is
+ * already COMMITTED by the time this runs, so an escaping throw would report
+ * failure for a row that exists and invite a duplicating retry. The honest
+ * outcome of a failed invalidation is a read stale for one staleTime, which the
+ * bound above already guarantees.
  */
 export async function invalidateSharedStorageReads(utils: TrpcUtils): Promise<void> {
   try {
@@ -88,9 +103,17 @@ export async function invalidateSharedStorageReads(utils: TrpcUtils): Promise<vo
 }
 
 /**
- * The per-user (private KV) counterpart. Same defect, same reasoning: an
- * `APP_STORAGE_SET`/`DELETE` followed by the block's own `get`/`list` was
- * served the pre-write value.
+ * The per-user (private KV) counterpart.
+ *
+ * The SELF-write defect is identical — an `APP_STORAGE_SET`/`DELETE` followed
+ * by the block's own `get`/`list` was served the pre-write value — and that is
+ * what this invalidation fixes.
+ *
+ * The cross-user half of the argument does NOT carry over: nobody else writes
+ * your private KV, so the staleTime bound on `apps.storage.*` buys only the
+ * same user in a second tab. It is applied anyway for one policy across both
+ * bridges rather than because the correctness case is equally strong — worth
+ * knowing before anyone tunes it.
  */
 export async function invalidatePrivateStorageReads(utils: TrpcUtils): Promise<void> {
   try {
