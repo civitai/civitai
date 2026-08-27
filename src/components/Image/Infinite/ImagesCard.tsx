@@ -30,7 +30,7 @@ import { RemixMenu, isRemixMenuVisible } from '~/components/Image/Remix/RemixMen
 import { REMIX_FRAME } from '~/components/RemixGallery/remix-card-demo';
 import { useRemixCardData } from '~/components/RemixGallery/use-remix-card-data';
 import { RemixedCardFlyout } from '~/components/RemixGallery/RemixedCardFlyout';
-import { tourOverlayZIndex } from '~/shared/constants/app-layout.constants';
+import { tourClickThroughZIndex } from '~/shared/constants/app-layout.constants';
 import { useImageStore } from '~/store/image.store';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { BlockedReason } from '~/server/common/enums';
@@ -184,10 +184,9 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                         image={image}
                         source="remix:image-card"
                         onAction={handleRemixAction}
-                        // The content-gen tour's remix step can only be advanced
-                        // by clicking through to an option, and its overlay both
-                        // dims and swallows clicks below it.
-                        zIndex={running ? tourOverlayZIndex + 1 : undefined}
+                        // The content-gen tour's remix step advances only by
+                        // clicking through to one of these options.
+                        zIndex={running ? tourClickThroughZIndex : undefined}
                       >
                         <HoverActionButton
                           label="Remix"

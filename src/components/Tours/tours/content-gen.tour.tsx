@@ -74,7 +74,10 @@ export const contentGenerationTour: StepWithData[] = [
   {
     target: '[data-tour="gen:remix"]',
     title: 'Remix This Image',
-    content: 'Click this button to remix an image and create something new',
+    content:
+      'Click this button to see what you can make from an image — edit it with a prompt, animate it, or reuse its prompt and resources. Pick any one to carry on.',
+    // Below the button is where the remix menu opens; a tooltip there covers it.
+    placement: 'top',
     hideFooter: true,
     disableBeacon: true,
     spotlightClicks: true,

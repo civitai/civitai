@@ -23,7 +23,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { ImageSort } from '~/server/common/enums';
 import { RemixMenu, isRemixMenuVisible } from '~/components/Image/Remix/RemixMenu';
-import { tourOverlayZIndex } from '~/shared/constants/app-layout.constants';
+import { tourClickThroughZIndex } from '~/shared/constants/app-layout.constants';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
@@ -126,10 +126,9 @@ function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10
                                     if (running) helpers?.next();
                                   }}
                                   // Both model-page tours put a step on this
-                                  // button whose only way forward is clicking
-                                  // through it, and the overlay swallows clicks
-                                  // below it.
-                                  zIndex={running ? tourOverlayZIndex + 1 : undefined}
+                                  // button that advances only by clicking
+                                  // through to one of these options.
+                                  zIndex={running ? tourClickThroughZIndex : undefined}
                                 >
                                   <HoverActionButton
                                     label="Remix"
