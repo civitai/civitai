@@ -1,5 +1,6 @@
 import type { ImageGetInfinite } from '~/types/router';
 import { ImageSort } from '~/server/common/enums';
+import { ownContentPickerFilters } from '~/components/Image/image.utils';
 import { PLACEMENT_SURFACES, SHARED_ALLOWANCE_NOTE } from '~/shared/utils/placement';
 import { REMIX_GALLERY_ROW_WIDTH } from '~/shared/utils/remix-gallery';
 
@@ -335,11 +336,10 @@ export const submissionMethod = (
  */
 export const remixSubmitPickerFilters = (userId: number | undefined) =>
   ({
-    userId,
+    ...ownContentPickerFilters(userId),
     period: 'AllTime',
     limit: 50,
     sort: ImageSort.Newest,
-    publishedOnly: true,
   } as const);
 
 /**

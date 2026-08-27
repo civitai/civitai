@@ -105,6 +105,25 @@ export const imagesQueryParamSchema = z
   })
   .partial();
 
+/**
+ * The pair that routes an own-content submit picker off the search index.
+ *
+ * 🔴 These two are not two independent preferences. Together they are the signal
+ * `requiresImageDbPath` reads to serve the picker from the database instead of
+ * Meilisearch, and `getInfiniteImagesHandler` additionally requires the `userId`
+ * to be the caller's own. Measured on prod 2026-08-27: an image is absent from
+ * `metrics_images_v1` for 10-30 minutes after publish, so without this the one
+ * image someone opened the picker to submit is the one that is missing.
+ *
+ * It lives here, spread into all three pickers, because it used to be written out
+ * three times. Two of those copies had no test: deleting `publishedOnly` from an
+ * inline ten-key filter block sent that picker silently back to the index — the
+ * grid still rendered, still returned rows, and only the newest image was gone.
+ * One chokepoint means one assertion covers all three.
+ */
+export const ownContentPickerFilters = (userId: number | undefined) =>
+  ({ userId, publishedOnly: true } as const);
+
 export const useImageQueryParams = () => useZodRouteParams(imagesQueryParamSchema);
 
 // The media-type scope a feed falls back to when its filters are cleared.
