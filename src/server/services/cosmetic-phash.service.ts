@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import { z } from 'zod';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { getPerceptualHash } from '~/server/services/orchestrator/orchestrator.service';
@@ -120,6 +121,17 @@ export function legacyBigIntHash(normalizedHex: string, hashType: string) {
  * returning a distance computed against a shorter hash.
  */
 export function normalizeCosmeticHashHex(hex: string) {
+  // Padding is safe in one direction only. A hash WIDER than the lane cannot be
+  // padded down, and `padStart` returns it unchanged rather than failing — so it
+  // would be stored at full width stamped with the current version, accepted as a
+  // comparison TARGET and then excluded from every candidate set by the length
+  // filter. That reads as "nothing was close" forever, on a row that looks
+  // correctly hashed. The lane's own docblock covers the stale-`hexLength`
+  // direction; this is the other one.
+  if (hex.length > COSMETIC_PHASH_LANE.hexLength)
+    throw new Error(
+      `Hash is wider than lane ${COSMETIC_PHASH_LANE.version}: ${hex.length} > ${COSMETIC_PHASH_LANE.hexLength}`
+    );
   return hex.toLowerCase().padStart(COSMETIC_PHASH_LANE.hexLength, '0');
 }
 
@@ -182,16 +194,40 @@ export const COSMETIC_SIMILARITY_CLOSE_RATIO_KEY = 'cosmetic-similarity-close-ra
  * typos, not intentions, and clamping 1.5 to 1 would badge every single match as
  * near-identical, which reads as a working threshold rather than a rejected one.
  */
+// `0` is allowed and means "only an exact match counts as near-identical", which
+// is a coherent thing for an operator to want. `1` is not: it badges every match
+// in the list, which is the same degenerate outcome the docblock rejects `1.5`
+// for. Rejecting 0 while accepting 1 would fail in the loosening direction on the
+// stricter of the two typos.
+const closeRatioSchema = z.number().min(0).lt(1);
+
 export async function getCosmeticSimilarityCloseRatio(): Promise<number> {
-  const row = await dbRead.keyValue.findUnique({
-    where: { key: COSMETIC_SIMILARITY_CLOSE_RATIO_KEY },
-  });
-  const value = row?.value;
+  let value: unknown;
+
+  // The READ is guarded, not only the value it returns. This is awaited inside
+  // `getSimilarCosmetics` AFTER the candidates are ranked, so an escaping
+  // rejection discards a completed ranking — and the card renders that as "this
+  // artwork was not compared against anything", which is false and is precisely
+  // the confusion the card exists to remove.
+  try {
+    const row = await dbRead.keyValue.findUnique({
+      where: { key: COSMETIC_SIMILARITY_CLOSE_RATIO_KEY },
+    });
+    value = row?.value;
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'cosmetic-phash',
+      message: `Could not read KeyValue '${COSMETIC_SIMILARITY_CLOSE_RATIO_KEY}'; using the built-in ${COSMETIC_SIMILARITY_CLOSE_RATIO}.`,
+      error: error instanceof Error ? error.message : String(error),
+    }).catch(() => null);
+    return COSMETIC_SIMILARITY_CLOSE_RATIO;
+  }
 
   // An absent row is the ordinary "not configured" state, not a malformed one.
   if (value === null || value === undefined) return COSMETIC_SIMILARITY_CLOSE_RATIO;
 
-  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0 || value > 1) {
+  if (!closeRatioSchema.safeParse(value).success) {
     logToAxiom({
       type: 'warning',
       name: 'cosmetic-phash',
@@ -202,7 +238,7 @@ export async function getCosmeticSimilarityCloseRatio(): Promise<number> {
     return COSMETIC_SIMILARITY_CLOSE_RATIO;
   }
 
-  return value;
+  return value as number;
 }
 
 export type SimilarCosmetic = {

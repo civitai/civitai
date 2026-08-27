@@ -83,18 +83,6 @@ describe('hammingDistanceHex', () => {
     expect(hammingDistanceHex(IMITATION_B.official, IMITATION_B.copy)).toBe(82);
   });
 
-  // The reason the lane moved. A distance alone says nothing without the corpus it
-  // sits in: at 64 bits these two ranked 7th and 116th of 1,717, below a 1st
-  // percentile of 18, so the panel buried them among unrelated artwork. The ratio
-  // is what the UI actually thresholds on, and it has to keep them apart from the
-  // 0.484 median of unrelated pairs measured over the same corpus.
-  it('separates a real imitation from the noise floor of unrelated artwork', () => {
-    const ratioA = hammingDistanceHex(IMITATION_A.official, IMITATION_A.copy) / 256;
-    const ratioB = hammingDistanceHex(IMITATION_B.official, IMITATION_B.copy) / 256;
-    expect(ratioA).toBeLessThan(0.3);
-    expect(ratioB).toBeLessThan(0.35);
-  });
-
   it('refuses to compare across widths instead of returning a number', () => {
     // Two lanes produce independent hashes; a distance between them is noise, and
     // this is the only place that can tell.
@@ -109,6 +97,17 @@ describe('normalizeCosmeticHashHex', () => {
     // the width fails here instead of padding every hash to the old one.
     expect(normalizeCosmeticHashHex('E4')).toBe(`${'0'.repeat(62)}e4`);
     expect(normalizeCosmeticHashHex(IMITATION_A.official.toUpperCase())).toBe(IMITATION_A.official);
+  });
+
+  // Padding only works in one direction. A hash WIDER than the lane comes back
+  // from `padStart` unchanged, so it would be stored at full width stamped with
+  // the current version — accepted as a comparison TARGET, then excluded from
+  // every candidate set by the length filter. The row looks correctly hashed and
+  // reports "nothing was close" forever.
+  it('refuses a hash wider than the lane rather than storing it unpadded', () => {
+    expect(() => normalizeCosmeticHashHex('a'.repeat(COSMETIC_PHASH_LANE.hexLength + 1))).toThrow(
+      /wider than lane/i
+    );
   });
 });
 
@@ -127,7 +126,13 @@ describe('COSMETIC_PHASH_LANE', () => {
 });
 
 describe('getCosmeticSimilarityCloseRatio', () => {
-  beforeEach(() => Object.values(mocks).forEach((m) => m.mockReset()));
+  beforeEach(() => {
+    Object.values(mocks).forEach((m) => m.mockReset());
+    // `loggingMock` is reset once per FILE, not per test. Without this a later
+    // case satisfies `toHaveBeenCalledWith` on the FIRST case's warning and passes
+    // whether or not it warned itself — three of the five below did exactly that.
+    loggingMock.logToAxiom.mockClear();
+  });
 
   it('reads the operator-set fraction from the KeyValue row', async () => {
     mocks.keyValueFindUnique.mockResolvedValue({ value: 0.05 });
@@ -144,6 +149,20 @@ describe('getCosmeticSimilarityCloseRatio', () => {
     await expect(getCosmeticSimilarityCloseRatio()).resolves.toBe(COSMETIC_SIMILARITY_CLOSE_RATIO);
   });
 
+  // The read itself, not just the value it returns. This is awaited inside
+  // `getSimilarCosmetics` AFTER the distances are computed, so an unguarded
+  // rejection throws away a finished ranking to avoid mislabelling a badge —
+  // the precise trade the fail-direction block claims not to make. Nothing else
+  // in the suite notices: every other test resolves this mock.
+  it('falls back to the default when the KeyValue read itself rejects', async () => {
+    mocks.keyValueFindUnique.mockRejectedValue(new Error('replica unreachable'));
+
+    await expect(getCosmeticSimilarityCloseRatio()).resolves.toBe(COSMETIC_SIMILARITY_CLOSE_RATIO);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'error', name: 'cosmetic-phash' })
+    );
+  });
+
   // `KeyValue.value` is a Json column, so every one of these is representable. A
   // throw here would take out the ranking — the part mods use — to fix a badge,
   // so the panel degrades to the measured default instead. Out-of-range values
@@ -152,16 +171,30 @@ describe('getCosmeticSimilarityCloseRatio', () => {
   it.each([
     ['a string', '0.05'],
     ['an object', { ratio: 0.05 }],
-    ['zero', 0],
     ['negative', -0.2],
+    ['exactly one', 1],
     ['above one', 1.5],
   ])('falls back to the default and warns on %s', async (_label, value) => {
     mocks.keyValueFindUnique.mockResolvedValue({ value });
 
     await expect(getCosmeticSimilarityCloseRatio()).resolves.toBe(COSMETIC_SIMILARITY_CLOSE_RATIO);
+    // Times(1) as well as With(): the matcher alone is satisfied by a previous
+    // test's call, which is how three of these stayed green while warning nothing.
+    expect(loggingMock.logToAxiom).toHaveBeenCalledTimes(1);
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'warning', name: 'cosmetic-phash' })
     );
+  });
+
+  // Refusing 0 would fail in the LOOSENING direction: an operator asking for
+  // "exact duplicates only" would silently get MORE red badges than they asked
+  // for. 1 is refused instead — it badges the entire list, the same degenerate
+  // outcome 1.5 is rejected for.
+  it('accepts zero, which means only an exact match is near-identical', async () => {
+    mocks.keyValueFindUnique.mockResolvedValue({ value: 0 });
+
+    await expect(getCosmeticSimilarityCloseRatio()).resolves.toBe(0);
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalled();
   });
 });
 
@@ -300,6 +333,53 @@ describe('getSimilarCosmetics', () => {
       status: 'unavailable',
       reason: 'no-corpus',
     });
+  });
+
+  // The one link the moderator's badge now hangs on, and nothing else covers it:
+  // `close` moved from the component to the server so a runtime-tuned threshold
+  // could not disagree with a bundled constant, and the KeyValue read is the only
+  // thing that makes it tunable. Replacing the expression with a constant, or
+  // dropping the read and using the built-in default, both left the whole suite
+  // green before this existed — so the knob was wired to nothing and every test
+  // was silently exercising the fallback.
+  it('decides `close` on the server and moves it when the operator moves the row', async () => {
+    // 64-bit target: default ratio 0.125 => close at or under 8 bits.
+    mocks.cosmeticFindUnique.mockResolvedValue(freshTarget('0000000000000001'));
+    mocks.queryRaw.mockResolvedValue([
+      { id: 2, pHashHex: '0000000000000003' }, // 1 bit away
+      { id: 3, pHashHex: 'ffffff0000000001' }, // 24 bits away
+    ]);
+    mocks.cosmeticFindMany.mockResolvedValue(
+      [2, 3].map((id) => ({
+        id,
+        name: `C${id}`,
+        type: 'Badge',
+        data: { url: `u${id}` },
+        createdById: null,
+        creator: null,
+        cosmeticShopItems: [],
+      }))
+    );
+
+    mocks.keyValueFindUnique.mockResolvedValue(null);
+    const atDefault = await getSimilarCosmetics({ cosmeticId: 1 });
+    expect(atDefault.status).toBe('ok');
+    if (atDefault.status !== 'ok') return;
+    expect(atDefault.matches.map((m) => [m.distance, m.close])).toEqual([
+      [1, true],
+      [24, false],
+    ]);
+
+    // Operator widens the band to 0.5 => close at or under 32 bits. The 24-bit
+    // neighbour has to cross; nothing about the ranking may change with it.
+    mocks.keyValueFindUnique.mockResolvedValue({ value: 0.5 });
+    const widened = await getSimilarCosmetics({ cosmeticId: 1 });
+    expect(widened.status).toBe('ok');
+    if (widened.status !== 'ok') return;
+    expect(widened.matches.map((m) => [m.distance, m.close])).toEqual([
+      [1, true],
+      [24, true],
+    ]);
   });
 
   it('reports a real comparison that found nothing as ok, with its count', async () => {
