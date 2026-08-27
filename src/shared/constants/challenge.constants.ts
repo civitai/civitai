@@ -179,6 +179,13 @@ export const JUDGE_USER_SELECTABLE_FIELD = {
   description: 'Show this judge in the user challenge-create form',
 } as const;
 
+/**
+ * Ceiling on `Challenge.metadata.resourceConcept`, applied BOTH where it is generated and where it
+ * is parsed back. The parse-time cap matters because the column is hand-editable: an oversized
+ * value would ride into the review prompt and every pairwise comparison for the whole challenge.
+ */
+export const RESOURCE_CONCEPT_MAX_LENGTH = 200;
+
 /** Max challenges processed concurrently inside a single job run. Bounded by DB load + OpenRouter rate limits. */
 export const CHALLENGE_JOB_CONCURRENCY = 5;
 /** Max challenges a single job run pulls from a selector. Remaining work rolls to the next tick. */

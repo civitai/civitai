@@ -92,6 +92,9 @@ export default WebhookEndpoint(async function (_req: NextApiRequest, res: NextAp
       const judgingConfig = await getJudgingConfig(resolvedJudgeId);
       const elements = await generateThemeElements({
         theme: challenge.theme,
+        // Without this the regenerated elements are derived from the drifted theme STRING alone,
+        // which can only restate the drift. Absent on challenges created before the concept step.
+        resourceConcept: parseChallengeMetadata(challenge.metadata).resourceConcept,
         config: judgingConfig,
       });
 

@@ -20,6 +20,7 @@ import {
   CHALLENGE_MIN_DURATION_HOURS,
   CHALLENGE_MIN_DURATION_MS,
   CHALLENGE_MIN_ENTRY_FEE,
+  RESOURCE_CONCEPT_MAX_LENGTH,
 } from '~/shared/constants/challenge.constants';
 import { JUDGING_ENGINES } from '~/server/games/daily-challenge/challenge-judging-engine';
 import { infiniteQuerySchema } from './base.schema';
@@ -137,6 +138,12 @@ export const challengeMetadataSchema = z.object({
   resourceModelId: z.number().optional(),
   articleId: z.number().optional(),
   themeElements: z.array(z.string()).optional(),
+  // Truncated rather than rejected: a `.max()` here would fail the whole safeParse and wipe the
+  // metadata column (see the note above). Cap rationale lives with RESOURCE_CONCEPT_MAX_LENGTH.
+  resourceConcept: z
+    .string()
+    .transform((s) => s.slice(0, RESOURCE_CONCEPT_MAX_LENGTH))
+    .optional(),
   completionSummary: challengeCompletionSummarySchema.optional(),
   // Epoch millis of the last review pass, written as a bare JSON number by a raw jsonb merge in
   // daily-challenge-processing. TWO readers, and the second is the one that matters:

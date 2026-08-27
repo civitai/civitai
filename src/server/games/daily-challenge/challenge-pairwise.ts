@@ -55,6 +55,8 @@ type RawGroupVerdict = {
 export function buildComparisonPrompt(input: {
   theme: string;
   themeElements?: string[];
+  /** The featured resource's concrete subject, when the challenge has one recorded. */
+  resourceConcept?: string;
   categories: JudgingCategory[];
   criteriaByKey?: Record<string, string>;
 }): string {
@@ -72,7 +74,7 @@ export function buildComparisonPrompt(input: {
 
   return `You are judging a head-to-head between two entries in an image challenge.
 
-Theme: ${theme}${themeElements}
+Theme: ${theme}${themeElements}${resourceConceptLine(input.resourceConcept)}
 
 Weigh the two images on exactly these criteria:
 ${rubric}
@@ -83,7 +85,9 @@ ${
   themeWeight
     ? `- Theme is ${themeWeight}% of the decision. An image that merely uses the theme as a backdrop is weaker on theme than one that actually interprets it.\n`
     : ''
-}- Count of ideas is not quality of idea. So is shock, cuteness, or absurdity: they only count if the execution earns them.
+}${resourceFidelityRule(
+    input.resourceConcept
+  )}- Count of ideas is not quality of idea. So is shock, cuteness, or absurdity: they only count if the execution earns them.
 - Technical rendering counts: blur, garbled text, flat or low-detail rendering, malformed anatomy.
 - ${INTEGRITY_CLAUSE}
 - Ties are allowed but should be rare. Prefer to name a winner.
@@ -98,6 +102,21 @@ ${categories.map((c) => `    "${sanitizeCategoryLabel(c.label)}": "1" | "2" | "t
   },
   "reason": "one or two sentences citing what you see in each image"
 }`;
+}
+
+/** The featured-resource line for a comparison prompt, or '' when the challenge has no concept. */
+function resourceConceptLine(resourceConcept?: string): string {
+  if (!resourceConcept?.trim()) return '';
+  return `\nFeatured resource (every entry was required to use it): ${resourceConcept.trim()}`;
+}
+
+/**
+ * The comparison-side counterpart to the absolute pass's fidelity clause. Emitted only when a
+ * concept was derived, so a challenge without one keeps its prompt byte for byte.
+ */
+function resourceFidelityRule(resourceConcept?: string): string {
+  if (!resourceConcept?.trim()) return '';
+  return "- Where the theme points somewhere the featured resource does not go, the resource wins: an image that renders the featured resource's subject faithfully satisfies the theme, and is stronger on theme than one matching the theme wording while ignoring the resource.\n";
 }
 
 /**
@@ -178,6 +197,8 @@ export async function comparePair(input: {
 export function buildGroupComparisonPrompt(input: {
   theme: string;
   themeElements?: string[];
+  /** The featured resource's concrete subject, when the challenge has one recorded. */
+  resourceConcept?: string;
   categories: JudgingCategory[];
   criteriaByKey?: Record<string, string>;
   groupSize: number;
@@ -197,7 +218,7 @@ export function buildGroupComparisonPrompt(input: {
 
   return `You are ranking ${groupSize} entries in an image challenge from best to worst.
 
-Theme: ${theme}${themeElements}
+Theme: ${theme}${themeElements}${resourceConceptLine(input.resourceConcept)}
 
 Weigh the images on exactly these criteria:
 ${rubric}
@@ -208,7 +229,9 @@ ${
   themeWeight
     ? `- Theme is ${themeWeight}% of the decision. An image that merely uses the theme as a backdrop is weaker on theme than one that actually interprets it.\n`
     : ''
-}- Count of ideas is not quality of idea. So is shock, cuteness, or absurdity: they only count if the execution earns them.
+}${resourceFidelityRule(
+    input.resourceConcept
+  )}- Count of ideas is not quality of idea. So is shock, cuteness, or absurdity: they only count if the execution earns them.
 - Technical rendering counts: blur, garbled text, flat or low-detail rendering, malformed anatomy.
 - ${INTEGRITY_CLAUSE}
 - Produce a strict ranking. Ties are not allowed; if two are close, decide.

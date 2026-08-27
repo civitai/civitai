@@ -1051,6 +1051,10 @@ export type SelectedResource = {
   modelId: number;
   creator: string;
   title: string;
+  /** Creator-authored HTML. Only ever reaches a model through generateResourceConcept. */
+  description?: string | null;
+  /** Creator-authored, from the model's published versions. Same handling as description. */
+  trainedWords?: string[];
 };
 
 /** Event context for scoping winner cooldowns. */

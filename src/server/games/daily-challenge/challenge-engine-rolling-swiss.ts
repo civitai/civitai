@@ -297,6 +297,7 @@ async function runGroups(
   const systemPrompt = buildGroupComparisonPrompt({
     theme: ctx.theme,
     themeElements: ctx.themeElements,
+    resourceConcept: ctx.resourceConcept,
     categories: ctx.categories,
     criteriaByKey: ctx.criteriaByKey,
     groupSize: GROUP_SIZE,

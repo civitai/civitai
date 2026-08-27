@@ -28,6 +28,8 @@ export type ReviewTemplateVariables = {
   reviewPrompt: string;
   theme: string;
   themeElements: string;
+  /** Empty string when the challenge has no derived resource concept. */
+  resourceConcept: string;
 };
 
 /**
