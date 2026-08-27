@@ -95,6 +95,13 @@ export const imageMetadataResourceSchema = z.object({
   unmatched: z.boolean().optional(),
 });
 
+export type UnmatchedResource = z.infer<typeof unmatchedResourceSchema>;
+export const unmatchedResourceSchema = z.object({
+  type: z.string().optional(),
+  name: z.string(),
+  hash: z.string(),
+});
+
 export const additionalResourceSchema = z.object({
   name: z.string().optional(),
   type: z.string().optional(),
@@ -119,6 +126,7 @@ export const imageGenerationSchema = z.object({
   sampler: undefinedString,
   seed: stringToNumber,
   hashes: z.record(z.string(), z.string()).optional(),
+  unmatchedResources: z.array(unmatchedResourceSchema).optional(),
   clipSkip: z.coerce.number().optional(),
   'Clip skip': z.coerce.number().optional(),
   comfy: z.union([z.string().optional(), comfyMetaSchema.optional()]).optional(), // stored as stringified JSON
