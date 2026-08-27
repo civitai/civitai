@@ -45,7 +45,13 @@ export default PublicEndpoint(
     });
     const paidAccess = await getPublicPaidAccessForModelVersions(modelVersionIds);
 
-    const baseUrl = new URL(isProd ? `https://${req.headers.posthost}` : 'http://localhost:3000');
+    // Matches `resModelVersionDetails` in ./[id], which shapes the singular
+    // by-hash response through the same `prepareModelVersionResponse`. The two
+    // must derive the base URL identically or the batch and single lookups
+    // advertise different download hosts for the same file.
+    const baseUrl = new URL(
+      isProd && req.headers.host ? `https://${req.headers.host}` : 'http://localhost:3000'
+    );
     const modelVersions = await Promise.all(
       files.map((file) =>
         prepareModelVersionResponse(
