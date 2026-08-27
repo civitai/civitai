@@ -54,6 +54,27 @@ export function getPrimaryFile<T extends FileFormatType>(
     .sort((a, b) => b.score - a.score)[0]?.file;
 }
 
+/**
+ * The file a version's UI should describe. Every panel that shows per-file
+ * information (download picker, tensor metadata, the Hash/AIR detail rows)
+ * resolves it through here so they cannot disagree about which file is active.
+ *
+ * A `selectedFileId` left over from another version is ignored rather than
+ * blanking the panel.
+ */
+export function resolveActiveFile<T extends FileFormatType & { id: number }>(
+  files: Array<T>,
+  selectedFileId?: number | null,
+  preferences: Partial<FileFormatType> = defaultFilePreferences
+) {
+  return (
+    files.find((file) => file.id === selectedFileId) ??
+    getPrimaryFile(files, preferences) ??
+    files[0] ??
+    null
+  );
+}
+
 export const getFileDisplayName = ({
   file,
   modelType,

@@ -16,7 +16,11 @@ import { useMemo, useState } from 'react';
 import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
-import { getPrimaryFile, groupFilesByVariant } from '~/server/utils/model-helpers';
+import {
+  getPrimaryFile,
+  groupFilesByVariant,
+  resolveActiveFile,
+} from '~/server/utils/model-helpers';
 import type { ModelType } from '~/shared/utils/prisma/enums';
 import type { ModelById } from '~/types/router';
 import { getFileDescription, getFileLabel } from '~/utils/file-display-helpers';
@@ -91,8 +95,7 @@ export function DownloadVariantDropdown({
     if (isControlled) onSelectFileId!(fileId);
     else setInternalFileId(fileId);
   };
-  const activeFile =
-    modelFiles.find((f) => f.id === selectedFileId) ?? bestMatchFile ?? modelFiles[0];
+  const activeFile = resolveActiveFile(modelFiles, selectedFileId, { metadata: userPreferences });
 
   // Calculate download URL
   const downloadUrl = activeFile
