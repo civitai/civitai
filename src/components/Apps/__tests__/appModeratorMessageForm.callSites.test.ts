@@ -35,6 +35,14 @@ import {
  * inside a string literal in one of the scanned files would confuse it — neither
  * scanned file contains one today, and the positive control below proves the detector
  * can still fire when it matters.
+ *
+ * 🔴 The reset-completeness ledger further down is scoped to `useState` DECLARATIONS in
+ * the composer module. State introduced some other way — `useReducer`, a custom hook, a
+ * ref — is invisible to it, so its claim is "every `useState` piece", not "every piece
+ * of state that exists". It is also module-scoped rather than component-scoped: a second
+ * component added to this file would have ITS setters demanded inside `reset()` too.
+ * That direction fails loudly and is the safe one; the `useState`-only direction is the
+ * gap, and widening the composer's state to a reducer means widening this with it.
  */
 
 const SRC = path.resolve(__dirname, '../../..');
@@ -324,7 +332,7 @@ describe('the composer takes no owner from its caller', () => {
  * claims in a comment rather than pinned behaviour.
  */
 describe('the composer resets per message and never on failure', () => {
-  it('reset() clears EVERY piece of composer state, the collaborator opt-in included', () => {
+  it('reset() clears every useState piece the composer declares, the collaborator opt-in included', () => {
     const code = stripComments(read(MODAL_MODULE));
     const setters = stateSetters(code);
     // Positive control on the detector: the composer really does declare state, and the
