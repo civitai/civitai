@@ -1,6 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { mockSend } = vi.hoisted(() => ({ mockSend: vi.fn() }));
+import type * as BlocklistService from '~/server/services/blocklist.service';
+
+const { mockSend, mockAssertEmailAllowed } = vi.hoisted(() => ({
+  mockSend: vi.fn(),
+  mockAssertEmailAllowed: vi.fn(),
+}));
+
+vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof BlocklistService>()),
+  assertEmailAllowed: mockAssertEmailAllowed,
+}));
 
 vi.mock('~/server/email/templates/emailVerification.email', () => ({
   emailVerificationEmail: { send: mockSend },
@@ -15,6 +25,7 @@ const USER_ID = 99;
 beforeEach(() => {
   vi.clearAllMocks();
   mockSend.mockResolvedValue(undefined);
+  mockAssertEmailAllowed.mockResolvedValue(undefined);
   redisMock.redis.set.mockResolvedValue('OK');
 });
 
@@ -28,6 +39,25 @@ describe('sendEmailVerification', () => {
 
     await expect(sendEmailVerification(USER_ID)).resolves.toMatchObject({ success: true });
     expect(mockSend.mock.calls[0][0]).toMatchObject({ to: 'held@example.test' });
+  });
+
+  /**
+   * 🔴 Deliberately does NOT re-run the domain blocklist, unlike `requestEmailChange`. The address was
+   * already judged when it was written (#4432); re-judging it against a list that has moved since
+   * would leave the account unable to verify and therefore unable to ever post, with no way out.
+   * Adding the call back is the "consistency" fix that would cause that.
+   */
+  it('does not re-run the domain blocklist on the stored address', async () => {
+    dbMock.dbRead.user.findUnique.mockResolvedValue({
+      email: 'held@example.test',
+      username: 'ada',
+      emailVerified: null,
+    });
+
+    await sendEmailVerification(USER_ID);
+
+    expect(mockAssertEmailAllowed).not.toHaveBeenCalled();
+    expect(mockSend).toHaveBeenCalledTimes(1);
   });
 
   it('refuses when the address is already verified', async () => {

@@ -430,9 +430,10 @@ const isEmailVerified = middleware(({ ctx, next }) => {
   if (requiresEmailVerification(user))
     throw new TRPCError({
       code: 'FORBIDDEN',
+      // No `cause` flag: `errorFormatter` forwards only `softBlock` and `tosReacceptRequired` onto
+      // `shape.data`, so anything else set here reaches no client. The banner is the way out, and it
+      // reads the session rather than the error.
       message: 'Verify your email address to do this',
-      // Read by the client to offer the resend rather than render a bare refusal.
-      cause: { emailVerificationRequired: true },
     });
 
   return next({

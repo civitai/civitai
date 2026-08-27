@@ -97,6 +97,7 @@ import {
   restoreUser,
   setLeaderboardEligibility,
   setUserSetting,
+  setEmailVerificationRequired,
   patchUserSettings,
   splitSettingsPatch,
   toggleBan,
@@ -114,9 +115,8 @@ import {
   updateUserById,
   userByReferralCode,
 } from '~/server/services/user.service';
-import type { Prisma } from '@prisma/client';
 import { assertEmailAllowed } from '~/server/services/blocklist.service';
-import { sendEmailVerification } from '~/server/services/email-verification.service';
+import { issueEmailVerification } from '~/server/services/email-verification.service';
 import {
   handleLogError,
   throwAuthorizationError,
@@ -405,21 +405,25 @@ export const completeOnboardingHandler = async ({
           throw throwBadRequestError('Invalid username');
 
         // Off the row, not off `ctx.user`: the session shape is cached for up to 4h, so comparing
-        // against it lets a stale email skip `assertEmailAllowed` and skip the stamp below.
-        const current = await dbRead.user.findUnique({
+        // against it lets a stale email skip `assertEmailAllowed` and skip the stamp below. From the
+        // PRIMARY, because the comparison decides a write — a replica read would decide on a row that
+        // may already have moved.
+        const current = await dbWrite.user.findUnique({
           where: { id },
-          select: { email: true, emailVerified: true, meta: true },
+          select: { email: true, emailVerified: true, username: true },
         });
         // OAuth providers that hand us no email (Reddit) land here with `email: null`, and this step
         // then REQUIRES one — free text that is never verified, which is the burner ring's door in.
-        const emailChanged = !!input.email && input.email !== current?.email;
+        // Compared case-insensitively because the column is `citext`: a case-only retype is the SAME
+        // address, and treating it as a change would revoke a verification the user already earned.
+        const emailChanged =
+          !!input.email && input.email.toLowerCase() !== current?.email?.toLowerCase();
         if (emailChanged) await assertEmailAllowed(input.email);
 
         // `emailVerified` attests to ONE address. Carrying it across a change would leave the flag
         // vouching for an address nobody proved, and would hand the gate a free bypass: sign in with a
         // verified provider, then type someone else's address here.
         const verified = emailChanged ? null : current?.emailVerified ?? null;
-        const meta = (current?.meta ?? {}) as Prisma.JsonObject;
 
         await dbWrite.user.update({
           where: { id },
@@ -428,13 +432,26 @@ export const completeOnboardingHandler = async ({
             username: input.username,
             email: input.email,
             ...(emailChanged ? { emailVerified: null } : {}),
-            meta: { ...meta, emailVerificationRequired: !verified } as Prisma.InputJsonValue,
           },
         });
 
-        // Best-effort: the step is committed above, and a mail failure must not report a step the user
-        // then re-submits. They can resend from the banner.
-        if (!verified && input.email) await sendEmailVerification(id).catch(handleLogError);
+        // 🔴 Only when this step is genuinely ESTABLISHING the address — the first time it completes,
+        // or when it changes the address. A bare re-submit must not be able to stamp: `onboarding` is
+        // caller-supplied input, so without this any account could mark itself, including one that
+        // predates the rule and has been posting for years.
+        if (changed || emailChanged) await setEmailVerificationRequired(id, !verified);
+
+        // The address is passed rather than re-read: `sendEmailVerification` reads the replica, which
+        // right after this write can still hold the OLD row — and a token minted for the old address
+        // silently reverts the change when its link is clicked (`confirmEmailChange` writes the address
+        // the token carries). Best-effort: the step is committed above, and a mail failure must not
+        // report a step the user then re-submits. They can resend from the banner.
+        if (!verified && input.email)
+          await issueEmailVerification(
+            id,
+            input.email,
+            input.username ?? current?.username ?? null
+          ).catch(handleLogError);
         break;
       }
       case OnboardingSteps.BrowsingLevels: {

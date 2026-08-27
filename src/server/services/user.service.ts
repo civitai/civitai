@@ -3090,6 +3090,23 @@ export async function setUserSetting(userId: number, settings: UserSettingsInput
  * notices can now overlap without either being lost — which the previous
  * read-the-array-in-JS-and-write-it-back form could not survive.
  */
+/**
+ * Set `meta.emailVerificationRequired` without reading `meta` into JS first.
+ *
+ * `User.meta` is shared: `banDetails`, `muteReason`/`mutedBy`, contest-ban state and more live on it,
+ * written by moderation paths that know nothing about this one. A read-modify-write would clobber
+ * whichever of them landed in the window — and the read would be off the replica, so the window is
+ * replica lag rather than milliseconds. `jsonb_set` merges in the database, touching one key.
+ */
+export async function setEmailVerificationRequired(userId: number, required: boolean) {
+  await dbWrite.$executeRaw`
+    UPDATE "User"
+    SET meta = jsonb_set(COALESCE(meta, '{}'::jsonb), '{emailVerificationRequired}', to_jsonb(${required}::boolean))
+    WHERE id = ${userId}
+  `;
+  userUpdateCounter?.inc({ location: 'user.service:setEmailVerificationRequired' });
+}
+
 export async function setAlertDismissed(userId: number, alertId: string, dismissed: boolean) {
   // `settings->'dismissedAlerts'` is read inside the statement, so nothing about the
   // array is carried through JS. Add is idempotent (`@>` containment guard); `jsonb_agg`
