@@ -176,15 +176,41 @@ export async function readLastModerationAction(
   db: ModerationEventReader,
   appListingId: string
 ): Promise<string | null> {
+  return (await readLastStatusChangingModerationEvent(db, appListingId))?.action ?? null;
+}
+
+/**
+ * The row {@link readLastModerationAction} answers from, with its structured `before`
+ * payload attached.
+ *
+ * 🔴 WHY THE PAYLOAD IS EXPOSED SEPARATELY RATHER THAN FOLDED IN. A caller that needs BOTH
+ * "which verb was it?" and "what did that verb record?" must get them from ONE row — the
+ * verb and the payload have to describe the SAME event. Reading the action here and the
+ * payload in a second query would let a concurrent write land between them and pair an
+ * `owner-unpublish` verb with some other event's payload. Everything the filtering,
+ * ordering and pool-choice notes on {@link readLastModerationAction} say applies verbatim;
+ * this is the same query with one more column selected, and that function is now defined
+ * in terms of THIS one so the two can never disagree about which row is "last".
+ */
+export type LastStatusChangingModerationEvent = {
+  action: string;
+  before: Prisma.JsonValue | null;
+};
+
+export async function readLastStatusChangingModerationEvent(
+  db: ModerationEventReader,
+  appListingId: string
+): Promise<LastStatusChangingModerationEvent | null> {
   const lastEvent = await db.appListingModerationEvent.findFirst({
     where: {
       appListingId,
       action: { in: [...LISTING_STATUS_CHANGING_MODERATION_ACTIONS] },
     },
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-    select: { action: true },
+    select: { action: true, before: true },
   });
-  return lastEvent?.action ?? null;
+  if (!lastEvent) return null;
+  return { action: lastEvent.action, before: lastEvent.before ?? null };
 }
 
 /**

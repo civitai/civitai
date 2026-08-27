@@ -1164,9 +1164,20 @@ export async function loadListingAssetScansBatch(
  * never auto-lowered — mirrors `resolveApprovalContentRating`'s floor-at-derived.
  *
  * No-op for everyone else: owner edits on a live listing are blocked by the guard and
- * go through a shadow revision (re-derived at approve); draft/pending/shadow listings
- * are rated at approve. So it fires ONLY for `isModerator` on an `approved` non-shadow
- * (`revisionOfId == null`) listing. Runs INSIDE the caller's `dbWrite.$transaction`
+ * go through a shadow revision (re-derived at approve). So it fires ONLY for
+ * `isModerator` on an `approved` non-shadow (`revisionOfId == null`) listing.
+ *
+ * 🔴 "DRAFT/PENDING/SHADOW LISTINGS ARE RATED AT APPROVE" USED TO BE THE THIRD CLAUSE OF
+ * THAT SENTENCE, AND IT WAS NOT TRUE OF EVERY APPROVE. It reads as a blanket guarantee —
+ * "whatever an owner does to a non-live listing, the approve re-rates it" — and one
+ * approve did not: `approveRequest`'s `(3b-reset)` branch restored a `pending` ON-SITE
+ * listing by writing `{ status: 'approved' }` and nothing else, while its sibling
+ * `(3b-transition)` floored. A `pending` listing IS freely owner-asset-editable (this
+ * function's own guard skips it, and `assertOwnerAssetEditable` refuses only `approved`),
+ * so the two facts composed into a live mature card under a stale rating. The floor is
+ * now applied there too — but the lesson is the wording: state which approves rate, or
+ * a reader will trust the sentence instead of checking. Runs INSIDE the caller's
+ * `dbWrite.$transaction`
  * (the `tx` param) so the derive+floor is ATOMIC with the asset write that triggered
  * it — parity with approve's `resolveApprovalContentRating`. The guard short-circuits
  * BEFORE any query, so a non-mod / draft / pending / shadow edit adds ZERO queries to

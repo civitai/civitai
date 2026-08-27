@@ -1,4 +1,5 @@
 import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
+import type { Prisma } from '@prisma/client';
 import { createHash } from 'crypto';
 import { structuredPatch } from 'diff';
 import JSZip from 'jszip';
@@ -1135,6 +1136,46 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     );
   }
 
+  // 🔴 THE INDEX ABOVE NO LONGER COVERS EVERY OPEN REVIEW FOR THIS SLUG.
+  //
+  // `one_pending_per_slug` is partial-unique on `AppBlockPublishRequest`, and while that
+  // table was the ONLY place an on-site app could be re-reviewed it was also an implicit
+  // MUTUAL EXCLUSION: one open review per slug, full stop. The owner-republish
+  // asset-review route re-queues an on-site listing on `AppListingPublishRequest`
+  // instead — an imagery review the block-request modal cannot even render — so the index
+  // sits free while a review IS open, and the two queues can be occupied at once.
+  //
+  // Refusing here shrinks that state rather than teaching each consumer about the split.
+  // It costs the owner nothing they could have had anyway: the review arm deliberately
+  // leaves the backing block `suspended`, and the subsequent-version approve branch
+  // refreshes manifest/version WITHOUT setting `AppBlock.status`, so a version submitted
+  // in this window could not serve until the imagery review resolved regardless.
+  //
+  // 🔴 THIS IS A REACHABILITY REDUCTION, NOT THE GUARANTEE. It cannot restore the old
+  // invariant and must not be relied on as if it had: `recordPendingFromPush` mints a
+  // pending block request straight off a git push without passing here, and the reverse
+  // ordering (submit the version FIRST, while the listing is merely `removed`, then
+  // republish) never reaches this check at all. What actually holds the line is
+  // `approveRequest`'s (3b-reset) relation filter, which asks which queue owns the review
+  // at the point of consumption. See the 🔴 block there.
+  //
+  // Scoped to a NON-SHADOW request (`revisionOfId: null`): a pending SHADOW media
+  // revision is a legitimate concurrent review that has always coexisted with a code
+  // submit, and blocking releases on one would be a real regression — a shadow's request
+  // row denormalizes the PARENT slug, so a slug-only predicate would catch every one.
+  // `kind` is deliberately NOT named: `AppListing.slug` is `@unique`, so slug +
+  // non-shadow already pins a single row, and a clause that no fixture can make matter is
+  // a clause no mutation can test.
+  const conflictingListingReview = await dbRead.appListingPublishRequest.findFirst({
+    where: { slug, status: 'pending', appListing: { revisionOfId: null } },
+    select: { id: true },
+  });
+  if (conflictingListingReview) {
+    throw new Error(
+      `slug ${slug} has a store-listing review open — its store card is awaiting moderator review and the app is suspended until that finishes, so a new version could not go live yet; wait for the listing review to be decided before submitting`
+    );
+  }
+
   // For subsequent versions, link to the existing app row.
   const existingApp = await dbRead.appBlock.findFirst({
     where: { blockId: slug },
@@ -1425,12 +1466,20 @@ export class WithdrawRequestError extends Error {
  * offsite `closeTerminalListing` pending→removed+`delist` withdraw path.
  *
  * 🔴 DETERMINISTIC (mirrors the offsite `closeTerminalListing` rule): fires whenever an
- * ONSITE `AppListing` for this slug is currently `pending` — which is ALWAYS a mod
- * reset. Onsite listings are created `approved` on approve; the ONLY writer of
- * `status='pending'` on an onsite listing is `resetOnsiteListingToPending`, so a
- * `pending` onsite listing == a mod-mandated re-review. It therefore does NOT probe the
- * most-recent moderation event (an intervening report-resolve/dismiss event on the same
- * listing could shift the newest event off `reset-to-pending` and defeat such a probe).
+ * ONSITE `AppListing` for this slug is currently `pending` — i.e. it is IN REVIEW.
+ * Onsite listings are created `approved` on approve, so `pending` always means something
+ * bounced it back to the queue. It does NOT probe the most-recent moderation event (an
+ * intervening report-resolve/dismiss event on the same listing could shift the newest
+ * event off `reset-to-pending` and defeat such a probe).
+ *
+ * 🔴 THERE ARE NOW TWO WRITERS OF ONSITE `status='pending'`, and this comment used to
+ * name only one. Besides `resetOnsiteListingToPending` (the mod reset), the owner-facing
+ * `republishOwnListing` routes a republish to `pending` when the listing's assets changed
+ * since the last approval. Those two are reviewed on DIFFERENT queues — the mod reset
+ * re-queues an `AppBlockPublishRequest`, the owner republish an
+ * `AppListingPublishRequest` — so a `pending` on-site listing is no longer proof that
+ * THIS block request is the review that is open on it. The in-body check refuses to act
+ * when a pending listing request owns the row; read it before changing anything here.
  * Flip the listing `pending → removed` (status-guarded TOCTOU) + write a `delist` audit
  * event with the OWNER as actor: the last event is now a takedown, so
  * `republishOwnListing`'s guard FORBIDS the owner and a mod must `relistListing`
@@ -1452,9 +1501,38 @@ async function closeOnsiteResetListingOnWithdraw(opts: {
   });
   if (!listing) return; // not a reset withdraw (first-time submission, or already closed)
 
-  // A `pending` onsite listing is unconditionally a mod reset → close it. Imported here
-  // (only on the rare reset branch) to keep the common no-reset withdraw path free of
-  // the id-gen module.
+  // 🔴 NOT EVERY `pending` ON-SITE LISTING IS THIS WITHDRAW'S BUSINESS ANY MORE, and
+  // acting on one that is not would close a review this request has nothing to do with.
+  //
+  // This function reasons from a SLUG and a listing STATUS — it never looked at which
+  // queue owns the review, because there was only one: a `pending` on-site listing meant a
+  // mod reset, and a mod reset always leaves a `pending` `AppBlockPublishRequest`, so the
+  // withdrawing request WAS the review. The owner-republish asset-review route breaks that
+  // coupling: it parks the listing in `pending` with a pending `AppListingPublishRequest`
+  // and NO block request at all, so the one-pending-per-slug index is free. `submitVersion`
+  // now refuses in that window, but it is not the only producer — `recordPendingFromPush`
+  // mints a pending block request straight off a git push without passing that check, and
+  // submitting the version BEFORE the republish never passes it either — and withdrawing
+  // that version would, without this check, delist a listing whose image review is sitting
+  // untouched in the other queue, taking the owner from "waiting for review" to
+  // "removed by a moderator, ask a moderator to relist" for pressing Withdraw on something
+  // else entirely.
+  //
+  // So: if a pending LISTING request points at this row, that request owns the review and
+  // this one does not. `withdrawExternalRequest` → `closeTerminalListing` is the path that
+  // closes it, and it writes the identical `pending → removed` + `delist`. This is a
+  // discriminator, NOT a relaxation: nothing here decides whether an owner may self-restore
+  // (that is still `republishOwnListing`'s last-event guard), and the mod-reset case —
+  // which has no listing request — is completely unaffected.
+  const listingReviewOwnsIt = await dbRead.appListingPublishRequest.findFirst({
+    where: { appListingId: listing.id, status: 'pending' },
+    select: { id: true },
+  });
+  if (listingReviewOwnsIt) return;
+
+  // A `pending` onsite listing with no listing-request review is a mod reset → close it.
+  // Imported here (only on the rare reset branch) to keep the common no-reset withdraw
+  // path free of the id-gen module.
   const { newAppListingModerationEventId } = await import('~/server/utils/app-block-ids');
   await dbWrite.$transaction(async (tx) => {
     const flipped = await tx.appListing.updateMany({
@@ -2858,7 +2936,9 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // count 0) does NOT touch the block, and a delisted-then-resubmitted app is never
   // auto-un-suspended here (its listing is `removed`, not `pending`, so count 0 too).
   // Both flips are status-guarded (never clobber a drifted/curated state) — the listing
-  // flip touches only `status`. Same log-and-continue posture: the store listing +
+  // flip touches `status` and the go-live rating floor (see the 🔴 note at the flip; the
+  // floor is raise-only, so it can never lower a curated rating). Same log-and-continue
+  // posture: the store listing +
   // block restore are a convenience and must NEVER gate the approve/deploy.
   try {
     // 🔴 Scan-clean go-live gate (same invariant + shared helper as the mod/owner
@@ -2871,19 +2951,85 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     // for scan-clean assets. `dbWrite` is passed where the helper expects a tx client
     // (approveRequest is deliberately non-transactional — see the :2326 comment; a
     // PrismaClient is structurally a TransactionClient for these reads).
+    // 🔴 WHICH QUEUE OWNS THE REVIEW — a `pending` on-site listing is NO LONGER proof
+    // that THIS block request is the review open on it, and restoring one whose review
+    // lives in the other queue publishes never-reviewed store imagery.
+    //
+    // Until the owner-republish asset-review route existed, "at most one open review per
+    // slug" was enforced for free by the partial unique index `one_pending_per_slug` on
+    // `AppBlockPublishRequest`: an on-site re-review ALWAYS occupied it, so a `pending`
+    // on-site listing implied a mod reset and a mod reset implied a pending block request.
+    // That route re-queues on `AppListingPublishRequest` instead, leaving the index FREE —
+    // so the owner can submit an ordinary new app VERSION alongside an open imagery review
+    // and a moderator approving the VERSION (a bundle/code review whose modal renders
+    // ZIP-extracted screenshots and nothing about listing imagery) would land here and flip
+    // the listing `pending → approved`, publishing the swapped icon/cover/screenshots that
+    // no one has looked at — the exact invariant this feature exists to hold — while
+    // stranding the listing request (`approveExternalRequest`'s `{draft,pending}` listing
+    // guard would then match 0 rows, and the open-review pre-check would block every future
+    // republish).
+    //
+    // So ASK WHICH QUEUE OWNS IT rather than inferring it from a status. This is the same
+    // discriminator `closeOnsiteResetListingOnWithdraw` applies on the withdraw leg, and it
+    // is a DISCRIMINATOR, NOT A RELAXATION: the mod-reset case has no listing request and
+    // still restores, and nothing here decides whether an owner may self-restore.
+    //
+    // 🔴 SPELLED ONCE, AS A RELATION FILTER ON BOTH STATEMENTS, so the pre-read and the
+    // write cannot disagree — a separate probe would leave a TOCTOU window (the republish
+    // tx committing between the two statements) that is precisely the hole being closed.
+    // Scoped through the relation (= `appListingId`), NOT by slug: a pending SHADOW media
+    // revision denormalizes the parent slug but targets a different row and is a
+    // legitimate concurrent review that must not block a reset restore.
+    const resetListingWhere = {
+      appBlockId,
+      kind: 'onsite',
+      status: 'pending',
+      publishRequests: { none: { status: 'pending' } },
+    } satisfies Prisma.AppListingWhereInput;
     const resetListing = await dbWrite.appListing.findFirst({
-      where: { appBlockId, kind: 'onsite', status: 'pending' },
-      select: { id: true },
+      where: resetListingWhere,
+      select: { id: true, contentRating: true },
     });
+    // 🔴 RATING FLOOR (go-live) — this restore is a PUBLISH, and it had no floor.
+    //
+    // The sibling (3b-transition) branch above floors a draft→approved transition at the
+    // media-derived rating for a reason that applies here VERBATIM: while the listing sat
+    // `pending` it was DIRECTLY asset-editable by its owner (`assertOwnerAssetEditable`
+    // refuses only an `approved` non-shadow row, and `pending` is in
+    // `AUTHORABLE_LISTING_STATUSES`, so the Media tab is offered normally), and the attach
+    // path rejects only `Blocked`/`NotFound` — it never compares an image's `nsfwLevel`
+    // against the listing rating. `reDeriveContentRatingForModLiveEdit` does not cover it
+    // either: it no-ops for a non-moderator AND for any status other than `approved`.
+    //
+    // So without this line, `reset-to-pending → owner swaps in a Scanned-but-mature cover →
+    // mod re-approves` restored the listing to `approved` carrying its OLD rating, and a
+    // mature store card passed `listingMatureFilter(redCapable=false)` to SFW-only users.
+    // Raise-only, so a deliberately higher rating is never lowered — same helper, same
+    // discipline as (3b-transition) and the owner-republish path.
+    let flooredRating: string | null = null;
     if (resetListing) {
-      const { assertListingAssetsScanCleanInTx } = await import(
+      const { assertListingAssetsScanCleanInTx, resolveListingRatingFloorInTx } = await import(
         '~/server/services/blocks/app-listing-assets.service'
       );
       await assertListingAssetsScanCleanInTx(dbWrite, resetListing.id);
+      flooredRating = await resolveListingRatingFloorInTx(
+        dbWrite,
+        resetListing.id,
+        resetListing.contentRating
+      );
     }
     const restored = await dbWrite.appListing.updateMany({
-      where: { appBlockId, kind: 'onsite', status: 'pending' },
-      data: { status: 'approved' },
+      // Same `resetListingWhere` as the pre-read — including the which-queue-owns-it
+      // relation filter, which is what makes the discriminator atomic rather than a
+      // check-then-act.
+      where: resetListingWhere,
+      data: {
+        status: 'approved',
+        // Only written when the pre-read found the listing — otherwise this `updateMany`
+        // matches nothing anyway and naming the column would stamp a `null` rating on a
+        // row that raced into `pending` between the two statements.
+        ...(resetListing ? { contentRating: flooredRating } : {}),
+      },
     });
     if (restored.count > 0) {
       // Reset re-approve confirmed → un-suspend the backing block so it serves again.

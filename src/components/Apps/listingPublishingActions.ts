@@ -186,3 +186,63 @@ export function showRepublish(row: PublishingActionRow): boolean {
 export function showModRemovedNotice(row: PublishingActionRow): boolean {
   return listingOwnerState(row) === 'mod-removed';
 }
+
+/**
+ * The message to show an owner after a successful `republishOwnListing`.
+ *
+ * 🔴 ONE SPELLING, because "republish" now has TWO successful outcomes and three surfaces
+ * announce it. The server routes a republish to `pending` (re-review) instead of
+ * `approved` when the listing's assets differ from the ones recorded at its last
+ * approval — see `republishOwnListing` in `offsite-moderation.service.ts`. All three call
+ * sites previously hardcoded "it is live again", which is FALSE on that arm and is exactly
+ * the kind of claim that survives a review because the mutation genuinely succeeded.
+ * Reading the returned `status` in one place is what makes the wrong message impossible to
+ * write by copying the neighbouring component.
+ *
+ * 🔴 AND THE REVIEW ARM HAS MORE THAN ONE REASON, so it must not have one message. The
+ * server returns `reviewReason` alongside `status`; `'assets-changed'` is the case the
+ * feature exists for, but `'unreadable-baseline'` fires when the recorded comparison point
+ * cannot be read — nothing about the owner's images necessarily changed, and telling them
+ * "your listing images changed" would be a flat assertion about their own actions that we
+ * have no evidence for. An unrecognised reason falls back to the neutral wording rather
+ * than to the specific one, so a reason added server-side can never silently inherit a
+ * claim it does not support.
+ *
+ * `kind` only changes the wording of the LIVE arm (an on-site app comes back online; an
+ * off-site listing returns to the store), matching what the three surfaces already said.
+ */
+export function republishSuccessMessage(
+  result: { status: 'approved' | 'pending'; reviewReason?: string | null },
+  kind?: 'onsite' | 'offsite' | string | null
+): string {
+  if (result.status === 'pending') {
+    return result.reviewReason === 'assets-changed'
+      ? 'Submitted for review — your listing images changed since they were last approved, so a moderator needs to take another look before it goes back up.'
+      : 'Submitted for review — we could not confirm your listing images against the last approved version, so a moderator needs to take another look before it goes back up.';
+  }
+  return kind === 'offsite'
+    ? 'App republished — it is live in the store again.'
+    : 'App republished — it is live again.';
+}
+
+/**
+ * The message to show after a successful `withdrawExternalRequest`.
+ *
+ * 🔴 A PURE FUNCTION RATHER THAN A TERNARY IN THE PANEL, so this branch is covered by the
+ * BLOCKING node `unit` project — the browser-mode component suites are report-only, and
+ * this particular claim is the one that matters most to get right.
+ *
+ * 🔴 THE TWO OUTCOMES ARE NOT EQUALLY REVERSIBLE, and one sentence covered both.
+ * `'deleted'` discards a draft. `'removed'` closes the review of a formerly-LIVE listing:
+ * the server writes a `delist` event, which `republishOwnListing`'s guard reads as a
+ * MODERATOR takedown — so the owner cannot put the listing back and must ask a moderator.
+ * That is deliberate (it closes a self-restore exploit), which is exactly why the owner
+ * has to be told, rather than discovering it as a "removed by a moderator" state they
+ * caused themselves. `'none'` means this call changed nothing (already withdrawn, or it
+ * lost the race), so it must not narrate someone else's close.
+ */
+export function withdrawSuccessMessage(outcome?: string | null): string {
+  return outcome === 'removed'
+    ? 'Submission withdrawn — your listing is off the store. Ask a moderator to restore it when you are ready.'
+    : 'Submission withdrawn.';
+}

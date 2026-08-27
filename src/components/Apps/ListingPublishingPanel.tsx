@@ -8,6 +8,7 @@ import {
   type OwnerUnpublishVariant,
 } from '~/components/Apps/ownerListingModals';
 import {
+  republishSuccessMessage,
   showModRemovedNotice,
   showRepublish,
   showUnpublish,
@@ -88,8 +89,11 @@ export function ListingPublishingPanel({
   }, [utils, onChanged]);
 
   const republish = trpc.appListings.republishOwnListing.useMutation({
-    onSuccess: () => {
-      showSuccessNotification({ message: 'App republished — it is live again.' });
+    // 🔴 The message is DERIVED from the server's answer, never assumed: a republish whose
+    // assets changed since the last approval lands in `pending`, not live. See
+    // {@link republishSuccessMessage}.
+    onSuccess: (data) => {
+      showSuccessNotification({ message: republishSuccessMessage(data, kind) });
       refresh();
     },
     /**

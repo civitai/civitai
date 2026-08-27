@@ -413,6 +413,12 @@ describe('OffsiteReviewModal — on-site listing-media revision (kind: onsite)',
       category: 'utility',
       contentRating: 'g',
       connectClientId: null,
+      // 🔴 A media revision request targets a SHADOW, so `revisionOfId` is always set.
+      // This fixture used to omit it, which made it indistinguishable from the OTHER
+      // on-site request shape (the republish re-review, `revisionOfId: null`) — the two
+      // are governed by opposite rating rules, so a fixture that cannot tell them apart
+      // was pinning the cap copy onto a request shape that may not be under a cap.
+      revisionOfId: 'listing-parent',
     },
     submittedBy: { id: 42, username: 'author-dev', image: null },
   };
@@ -447,6 +453,74 @@ describe('OffsiteReviewModal — on-site listing-media revision (kind: onsite)',
     // getByText matches two elements (strict-mode violation). Scope the reject-reason
     // assertion to the mismatch callout itself.
     await expect.element(mismatch).toHaveTextContent('must not exceed the app’s rating');
+  });
+});
+
+// 🔴 The OTHER on-site request shape: an owner republish whose store imagery changed
+// since the last approval. Same `kind: 'onsite'`, same modal — and the server applies the
+// OPPOSITE rating rule (`resolveOnsiteApprovalContentRating` FLOORS the app's declared
+// rating at the media-derived value, raise-only). Every assertion here is the mirror of
+// one in the media-revision block above, and the ONLY fixture difference is
+// `revisionOfId: null`.
+describe('OffsiteReviewModal — on-site republish re-review (kind: onsite, NON-shadow)', () => {
+  const ONSITE_REPUBLISH_ROW = {
+    id: 'rpb-1',
+    kind: 'onsite' as const,
+    appListingId: 'listing-1',
+    slug: 'onsite-republish-app',
+    status: 'pending',
+    submittedAt: new Date('2026-02-01T00:00:00Z'),
+    changelog: null,
+    appListing: {
+      name: 'On-site Republish App',
+      externalUrl: null,
+      category: 'utility',
+      contentRating: 'g',
+      connectClientId: null,
+      // The whole discriminator: this request targets the LIVE listing, not a shadow.
+      revisionOfId: null,
+    },
+    submittedBy: { id: 42, username: 'author-dev', image: null },
+  };
+
+  test('🔴 the note describes a REPUBLISH review and says the rating is RAISED, not capped', async () => {
+    renderWithProviders(<OffsiteReviewModal request={ONSITE_REPUBLISH_ROW} onClose={vi.fn()} />);
+    const note = page.getByTestId('apps-offsite-onsite-note');
+    await expect.element(note).toBeInTheDocument();
+    await expect.element(note).toHaveTextContent('Republish review');
+    await expect.element(note).toHaveTextContent('RAISES the app’s rating');
+    // The cap sentence — correct for a media revision — must NOT appear here.
+    expect(note.element().textContent).not.toContain('must not exceed');
+  });
+
+  test('🔴 the app rating is labelled a FLOOR, not a cap', async () => {
+    renderWithProviders(<OffsiteReviewModal request={ONSITE_REPUBLISH_ROW} onClose={vi.fn()} />);
+    await expect.element(page.getByText('app rating (floor)', { exact: true })).toBeInTheDocument();
+    expect(page.getByText('app rating (cap)', { exact: true }).elements()).toHaveLength(0);
+  });
+
+  test('🔴 the mismatch callout says approving RAISES the app, not that it is a reject reason', async () => {
+    // Assets derive 'r' vs the app's declared 'g' → the callout renders. For a media
+    // revision that is "reject or trim"; here approving is what the server will do, and
+    // it will raise the app to 'r'. Telling the moderator the opposite is the finding.
+    renderWithProviders(<OffsiteReviewModal request={ONSITE_REPUBLISH_ROW} onClose={vi.fn()} />);
+    const mismatch = page.getByTestId('apps-offsite-rating-mismatch');
+    await expect.element(mismatch).toBeInTheDocument();
+    await expect.element(mismatch).toHaveTextContent('it is a floor here, not a cap');
+    expect(mismatch.element().textContent).not.toContain('reject this revision');
+  });
+
+  test('🔴 the approve Select defaults to the DERIVED rating (the floor), not the app rating', async () => {
+    // The media-revision default is the app's own rating; offering that here offers a
+    // value the server would silently raise past. Fixture ratings are deliberately
+    // distinct — app 'g' vs derived 'R' — so a default that echoed either one is visible.
+    renderWithProviders(<OffsiteReviewModal request={ONSITE_REPUBLISH_ROW} onClose={vi.fn()} />);
+    await page.getByTestId('apps-offsite-approve-open').click();
+    const ratingInput = page
+      .getByTestId('apps-offsite-approve-rating')
+      .element() as HTMLInputElement;
+    expect(ratingInput.value).toBe('R');
+    expect(ratingInput.value).not.toBe('G');
   });
 });
 

@@ -40,6 +40,7 @@ import {
 import {
   assertAssetsScanClean,
   assertListingMeetsFloor,
+  resolveListingRatingFloorInTx,
 } from '~/server/services/blocks/app-listing-assets.service';
 import { assertOffsiteListingActionable } from '~/server/services/blocks/app-listing-actionable.service';
 import {
@@ -545,11 +546,22 @@ export async function deriveScopePatch(opts: {
  * from the PRIMARY and resolve: now `withdrawn` → idempotent success; now
  * `approved`/`rejected` → NOT_PENDING. Mirrors `withdrawRequest`
  * (publish-request.service.ts).
+ *
+ * 🔴 RETURNS WHAT IT DID, because the two outcomes are not equally reversible and the
+ * caller was announcing them with one sentence. Withdrawing a first-time submission
+ * (`'deleted'`) throws away a draft. Withdrawing the review of a FORMERLY-LIVE listing
+ * (`'removed'`) leaves it `removed` behind a `delist` event, which `republishOwnListing`'s
+ * last-event guard reads as a moderator takedown — so the owner cannot put it back and a
+ * moderator must `relistListing`. That is deliberate (see `closeTerminalListing`), but
+ * "Submission withdrawn." is not an honest description of it, so the outcome is surfaced
+ * and the UI says which one happened.
  */
+export type WithdrawExternalRequestResult = { outcome: CloseTerminalListingOutcome };
+
 export async function withdrawExternalRequest(opts: {
   publishRequestId: string;
   userId: number;
-}): Promise<void> {
+}): Promise<WithdrawExternalRequestResult> {
   const { publishRequestId, userId } = opts;
 
   const row = await dbRead.appListingPublishRequest.findUnique({
@@ -562,7 +574,9 @@ export async function withdrawExternalRequest(opts: {
   if (row.submittedByUserId !== userId) {
     throw new OffsiteRequestError('NOT_OWNED', 'you can only withdraw your own publish requests');
   }
-  if (row.status === 'withdrawn') return;
+  // Already withdrawn — idempotent success. `'none'` rather than a remembered outcome:
+  // this call did nothing, and the UI must not narrate someone else's close as its own.
+  if (row.status === 'withdrawn') return { outcome: 'none' };
   if (row.status !== 'pending') {
     throw new OffsiteRequestError(
       'NOT_PENDING',
@@ -582,15 +596,14 @@ export async function withdrawExternalRequest(opts: {
       where: { id: publishRequestId, status: 'pending' },
       data: { status: 'withdrawn' },
     });
-    if (count === 0) return false;
-    await closeTerminalListing(tx, row.appListingId, {
+    if (count === 0) return null;
+    return await closeTerminalListing(tx, row.appListingId, {
       actorUserId: userId,
       reason: null,
     });
-    return true;
   });
-  if (flipped) {
-    return;
+  if (flipped !== null) {
+    return { outcome: flipped };
   }
 
   // Raced: re-read from the PRIMARY (a replica read could be lag-stale and still
@@ -601,8 +614,9 @@ export async function withdrawExternalRequest(opts: {
   });
   if (!after || after.status === 'withdrawn') {
     // Raced into withdrawn (or vanished) → idempotent success. The concurrent
-    // withdraw owns the draft cleanup, so we do NOT re-delete here.
-    return;
+    // withdraw owns the draft cleanup, so we do NOT re-delete here — and it owns the
+    // outcome too, so this call reports `'none'`.
+    return { outcome: 'none' };
   }
   // Raced into approved/rejected → the not-pending guarantee, now true under
   // concurrency.
@@ -627,11 +641,12 @@ export type CloseTerminalListingOutcome = 'deleted' | 'removed' | 'none';
  *                 `removed` (recoverable via mod `relistListing`) AND write a `delist`
  *                 `AppListingModerationEvent`. 🔴 The action is UNCONDITIONALLY `delist`
  *                 (Fix #1 authz), for BOTH the reject and the withdraw caller: a
- *                 formerly-live `pending` listing is ALWAYS mod-mandated (only the mod
- *                 reset fns set `pending` on a live listing), so an owner who withdraws
- *                 the re-review must NOT be able to self-restore — `delist` makes the
- *                 last event a takedown, so `republishOwnListing` FORBIDS the owner and
- *                 a mod must relist. (This replaced a most-recent-event probe that an
+ *                 formerly-live `pending` listing is in review — mod-mandated, or (since
+ *                 the owner-republish asset-change gate) owner-initiated — and an owner
+ *                 who withdraws a re-review must NOT be able to self-restore, so `delist`
+ *                 makes the last event a takedown: `republishOwnListing` FORBIDS the owner
+ *                 and a mod must relist. Written UNCONDITIONALLY for both; see the
+ *                 in-branch note. (This replaced a most-recent-event probe that an
  *                 intervening report-resolve/dismiss event could defeat.)
  *   - anything else (approved/removed) → no-op (a terminal request never targets one;
  *                 guarded defensively).
@@ -674,14 +689,24 @@ async function closeTerminalListing(
     // ALWAYS mod-mandated, so the close ALWAYS writes a `delist` event (never
     // `owner-unpublish`), regardless of which caller (reject or withdraw) reached here.
     //
-    // WHY the pending branch is unconditionally mod-mandated: the ONLY writers of
-    // `status='pending'` for a formerly-LIVE listing are the two mod reset fns
-    // (`resetListingToPending` / `resetOnsiteListingToPending`). A first-time submission
-    // is `draft` (handled by the branch above → deleted); a revision is a `draft`
-    // shadow (also the `draft` branch); owner unpublish/republish only move
-    // approved↔removed and never touch `pending`. So reaching here means a mod bounced
-    // a live listing back to review — an owner withdrawing that re-review must NOT be
-    // able to self-restore the pre-reset content with no re-review.
+    // WHY the pending branch is written unconditionally: a first-time submission is
+    // `draft` (handled by the branch above → deleted) and a revision is a `draft` shadow
+    // (also the `draft` branch), so reaching here means a formerly-LIVE listing was
+    // bounced back to review — and an owner withdrawing a re-review must NOT be able to
+    // self-restore the pre-reset content with no re-review.
+    //
+    // 🔴 THE WRITER SET IS NO LONGER ONLY THE TWO MOD RESET FNS, and this comment used to
+    // say it was. `republishOwnListing`'s ASSET-CHANGE REVIEW GATE
+    // (`offsite-moderation.service`) also writes `pending` on a formerly-live listing:
+    // when an owner republishes a listing whose assets changed since the last approval, it
+    // routes to review instead of going live. So this branch can now close an
+    // OWNER-INITIATED review as well as a mod-mandated one, and it treats both the same —
+    // `delist`, i.e. the owner must ask a moderator to relist rather than self-restoring.
+    // For the mod-mandated case that is the point. For the owner-initiated case it is a
+    // deliberate FAIL-CLOSED choice, not an oversight: distinguishing them means
+    // re-introducing a most-recent-event probe here, and the last one was removed because
+    // it was exploitable (below). Nothing unreviewed reaches the store either way; the
+    // cost is that an owner who withdraws their own re-review needs a moderator.
     //
     // This REPLACES an earlier most-recent-event probe (`last event == reset-to-pending
     // ? delist : owner-unpublish`), which was BOTH exploitable and unsafe-by-default: an
@@ -2277,12 +2302,19 @@ export function listingMediaEditBlockedReason(
       // destination exists. Neither asks whether a moderator ever saw the current values.
       // What actually holds the line is per-surface: for SCALARS, `updateListing`'s
       // MATERIAL_CHANGE_BLOCKED refusal on this same state. For ASSETS — which is what this
-      // verdict unblocks — nothing does, and that is PRE-EXISTING rather than opened here:
-      // `assertOwnerAssetEditable` already refuses only an `approved` top-level listing, so
-      // a `removed` listing has been directly asset-editable all along, and
-      // `republishOwnListing` runs no rating floor (`resolveListingRatingFloorInTx` is
-      // wired into the approve paths only). This verdict changes WHO IS TOLD WHAT, not what
-      // the asset procs permit. See the PR body's "known adjacent gap".
+      // verdict unblocks — `assertOwnerAssetEditable` refuses only an `approved` top-level
+      // listing, so a `removed` listing has been directly asset-editable all along. This
+      // verdict changes WHO IS TOLD WHAT, not what the asset procs permit.
+      //
+      // 🔴 THE LAST SENTENCE OF THAT PARAGRAPH USED TO SAY "`republishOwnListing` runs no
+      // rating floor (`resolveListingRatingFloorInTx` is wired into the approve paths
+      // only)". THAT HAS BEEN FALSE SINCE #4418 — republish derives and applies the
+      // raise-only floor itself, on every arm — and it is the kind of false comment that
+      // does damage rather than merely aging: it reads as a licence to skip the floor
+      // anywhere else on the republish path, which is exactly the hole #4440 had to close
+      // in `approveRequest`'s reset re-approve. The remaining "nothing reviews the assets"
+      // half was true when written and is what #4440 closed: an asset change across an
+      // owner unpublish/republish now re-enters the moderation queue.
       return ownerUnpublished
         ? null
         : 'this listing has been removed by a moderator and can no longer be edited';
@@ -2353,11 +2385,26 @@ export async function updateRevisionDraft(opts: {
 // Listing-request kinds surfaced by the CONSOLIDATION half of the flow
 // (approve/reject + the mod review queue + my-submissions).
 //
-// 🔴 INVARIANT: the ONLY producer of a `kind='onsite'` `AppListingPublishRequest`
-// is `submitListingRevision` on an onsite SHADOW (i.e. an onsite media revision) —
-// the onsite CODE review runs over a DIFFERENT table (`AppBlockPublishRequest`).
-// So widening these gates from `'offsite'` to this set surfaces EXACTLY onsite
-// media revisions, nothing else. (Asserted in the service tests.)
+// 🔴 THERE ARE TWO PRODUCERS OF A `kind='onsite'` `AppListingPublishRequest`, and this
+// comment used to name only one. The onsite CODE review still runs over a DIFFERENT
+// table (`AppBlockPublishRequest`); what changed is that the LISTING table now carries
+// on-site rows of two shapes:
+//
+//   1. `submitListingRevision` on an onsite SHADOW — a media revision, `revisionOfId`
+//      SET on the target listing, the parent slug denormalized onto the request.
+//   2. `routeRepublishToReviewInTx` (owner republish whose assets changed since the last
+//      approval) — NON-SHADOW, `revisionOfId` NULL, targeting the live listing itself.
+//
+// So widening these gates from `'offsite'` to this set no longer surfaces "exactly onsite
+// media revisions": it surfaces onsite media revisions AND onsite republish re-reviews.
+// Both belong in the queue — the modal reads `request.appListingId` and is kind-agnostic —
+// but any consumer that reasons "onsite request ⇒ shadow" is now wrong. Check
+// `revisionOfId` when you need to tell them apart, never `kind`.
+//
+// The producer SET is pinned as a ledger in
+// `src/server/services/blocks/__tests__/offsite-listing.onsite-revision.service.test.ts`
+// (`LISTING_REQUEST_PRODUCERS`), which fails when it GROWS or SHRINKS — this sentence went
+// stale precisely because nothing could notice a producer being added.
 // ---------------------------------------------------------------------------
 const REVIEWABLE_LISTING_KINDS = ['onsite', 'offsite'] as const;
 
@@ -2424,6 +2471,55 @@ async function resolveApprovalContentRating(
   return nsfwLevelFromContentRating(override) < nsfwLevelFromContentRating(derived)
     ? derived // floor: an under-rating override is clamped up to the derived value
     : override;
+}
+
+/**
+ * The ON-SITE counterpart of {@link resolveApprovalContentRating}, and the difference is
+ * the whole reason it exists rather than being one more branch inside that function.
+ *
+ * 🔴 OFF-SITE: the rating IS the assets — a listing has no other content, so the derived
+ * value REPLACES whatever was stored (`resolveApprovalContentRating` returns `derived`).
+ * 🔴 ON-SITE: the rating belongs to the APP, not to its store card. It is manifest-declared
+ * by the author and describes what the app DOES; its icon and cover are a strictly smaller
+ * surface. Replacing it with an asset-derived value would LOWER a `pg13` app to `g` because
+ * its store art happens to be tame — an under-rating of the runtime, produced by looking at
+ * a picture. So the app's declaration is a FLOOR that is raised by mature media and never
+ * lowered by tame media: exactly {@link resolveListingRatingFloorInTx}, the same helper
+ * `approveRequest`'s draft→approved transition and `republishOwnListing` use, so all three
+ * on-site rating sites have ONE spelling.
+ *
+ * A moderator override may still RAISE above the floor (a mod may always rate up) and is
+ * ignored when it would lower.
+ *
+ * 🔴 NOT quite "the same discipline as the off-site clamp above" — that sentence used to
+ * live here and it is inaccurate AT EQUAL LEVEL, which is a reachable case rather than a
+ * pedantic one. `nsfwLevelFromContentRating` maps BOTH `'g'` and `'pg'` to
+ * `NsfwLevel.PG`, so the two ratings are indistinguishable to these comparisons. Off-site
+ * asks `override < derived ? derived : override` and therefore returns the OVERRIDE on a
+ * tie; on-site asks `override > floored ? override : floored` and returns the FLOOR. So a
+ * moderator who explicitly picks `'pg'` for a `'g'`-declared app has that choice honoured
+ * off-site and silently dropped on-site.
+ *
+ * Left as-is deliberately: the two values carry the SAME maturity ceiling, so nothing
+ * about who can see the listing changes — the divergence is which LABEL is stored, and
+ * deciding that a tie-breaking override should overwrite an author's declaration is a
+ * product call, not a safety fix to make in passing. Recorded here so the next reader
+ * does not infer symmetry that is not there.
+ */
+async function resolveOnsiteApprovalContentRating(
+  tx: Prisma.TransactionClient,
+  args: {
+    appListingId: string;
+    declared: string | null;
+    override?: OffsiteContentRating | null;
+  }
+): Promise<string | null> {
+  const floored = await resolveListingRatingFloorInTx(tx, args.appListingId, args.declared);
+  const override = args.override ?? null;
+  if (override == null) return floored;
+  return nsfwLevelFromContentRating(override) > nsfwLevelFromContentRating(floored)
+    ? override
+    : floored;
 }
 
 /**
@@ -2681,6 +2777,11 @@ export async function approveExternalRequest(opts: {
         // needs the kind discriminator; `slug` names the listing in the error.
         kind: true,
         slug: true,
+        // ON-SITE approve inputs, read on the PRIMARY with everything else so they are
+        // row-consistent with the flip: the app's DECLARED rating (the raise-only floor —
+        // see `resolveOnsiteApprovalContentRating`) and the backing block to un-suspend.
+        contentRating: true,
+        appBlockId: true,
       },
     });
     if (!primaryListing) {
@@ -2789,12 +2890,26 @@ export async function approveExternalRequest(opts: {
     // Derive (+ mod-override, floored) the content rating from the assets' max
     // detected nsfwLevel and stamp it on the listing as it goes live. The author is
     // never blocked on the scanner's rating — it is confirmed HERE at review.
-    const finalRating = await resolveApprovalContentRating(tx, {
-      appListingId,
-      iconId: primaryListing.iconId,
-      coverId: primaryListing.coverId,
-      override: opts.contentRating,
-    });
+    //
+    // 🔴 ON-SITE TAKES THE RAISE-ONLY VARIANT, and this branch is NEW because until the
+    // owner-republish asset-review route existed nothing could reach this path with
+    // `kind: 'onsite'` — every other on-site listing request is a media REVISION and
+    // returns above via `applyApprovedRevision`. An on-site listing's `contentRating`
+    // describes the APP (manifest-declared), so it must be raised by mature media and
+    // never lowered by tame media. See {@link resolveOnsiteApprovalContentRating}.
+    const finalRating =
+      request.kind === 'onsite'
+        ? await resolveOnsiteApprovalContentRating(tx, {
+            appListingId,
+            declared: primaryListing.contentRating,
+            override: opts.contentRating,
+          })
+        : await resolveApprovalContentRating(tx, {
+            appListingId,
+            iconId: primaryListing.iconId,
+            coverId: primaryListing.coverId,
+            override: opts.contentRating,
+          });
     // Guard flips a `draft` OR a `pending` listing → approved. `pending` is the W13
     // post-approval-mgmt REOPEN path: `resetListingToPending` bounces an approved
     // listing back to `pending` + mints a fresh pending request pointing at it (a
@@ -2813,6 +2928,26 @@ export async function approveExternalRequest(opts: {
         'NOT_PENDING',
         `cannot approve — the draft/pending listing is no longer available`
       );
+    }
+
+    // 🔴 ON-SITE: RESTORE THE RUNTIME, NOT ONLY THE STORE CARD. `AppBlock.status` is the
+    // ONLY gate on whether a hosted app serves; `AppListing.status` gates store
+    // visibility and nothing else. `unpublishOwnListing` suspends the block, and the
+    // owner-republish review arm deliberately leaves it suspended so an app whose store
+    // card is awaiting review does not serve. Approving the card therefore has to undo
+    // BOTH halves, or the listing goes live pointing at a dead app — store-visible and
+    // not self-recoverable, the same failure `approveRequest`'s `(3b-reset)` branch
+    // exists to prevent on the block-request surface.
+    //
+    // Guarded to `suspended` so it is a 0-row no-op for every other case: a first-time
+    // on-site draft (there is no such listing request today, but the guard means one
+    // would be harmless), an on-site listing whose block is already approved, and every
+    // off-site listing (no `appBlockId` at all).
+    if (request.kind === 'onsite' && primaryListing.appBlockId) {
+      await tx.appBlock.updateMany({
+        where: { id: primaryListing.appBlockId, status: 'suspended' },
+        data: { status: 'approved' },
+      });
     }
     // Supersede any OTHER pending off-site request pointing at the SAME listing row
     // (`appListingId`), NOT merely the same slug. 🔴 A pending REVISION request
@@ -3261,9 +3396,20 @@ export async function rejectExternalRequest(opts: {
     });
   });
 
-  // Post-commit, best-effort: notify the owner their first-time submission was not
-  // approved, carrying the mod reason. Skipped for a revision reject (parent still
-  // live) and when there was no listing. Keyed by the request → dedups a replay.
+  // Post-commit, best-effort: notify the owner their submission was not approved,
+  // carrying the mod reason. Skipped for a revision reject (parent still live) and when
+  // there was no listing. Keyed by the request → dedups a replay.
+  //
+  // 🔴 "FIRST-TIME submission" is what this comment used to say, and `revisionOfId == null`
+  // is no longer a test for that. The owner-republish asset-review route mints a NON-shadow
+  // request on a listing that has been live for as long as the app has existed, so a
+  // long-lived app's owner now reaches this branch. That is the right call — the reject
+  // ran `closeTerminalListing`, which took the listing OFF the store behind a `delist`, so
+  // the owner must be told — and the copy carries it: `app-listing-rejected` renders
+  // "<app> was not approved: <reason>", which claims nothing about it being a first
+  // submission. What is NOT covered is that the notice does not say the listing has been
+  // delisted and now needs a moderator to restore it; distinguishing the two cases needs a
+  // second notification type, which is a product decision rather than a correction.
   if (rejectedListing && rejectedListing.revisionOfId == null) {
     await notifyAppListingOwner({
       type: 'app-listing-rejected',
@@ -3467,11 +3613,22 @@ export async function listMySubmissions(opts: { userId: number } & ListOffsiteRe
       // surfaced as a `hasPendingRevision` flag on the PARENT's own submission row.
       // Keep requests with no listing.
       //
-      // ONSITE: an onsite listing is auto-created and has NO own publish request, so
-      // there is no parent row to badge — its ONLY representation IS the revision
-      // request (all onsite requests are shadow revisions, per the invariant). Include
-      // them directly via the `{ kind: 'onsite' }` OR branch so onsite media revisions
-      // appear on my-submissions (decision: yes).
+      // ONSITE: an onsite listing is auto-created and has NO own publish request, so a
+      // SHADOW revision has no parent row to badge — the revision request is its only
+      // representation. The `{ kind: 'onsite' }` OR branch surfaces it directly
+      // (decision: yes).
+      //
+      // 🔴 THAT BRANCH IS NO LONGER THE ONLY ROUTE FOR AN ONSITE ROW, and the sentence it
+      // used to carry — "all onsite requests are shadow revisions, per the invariant" —
+      // is false since the owner-republish asset-review route (see the producer ledger
+      // above `REVIEWABLE_LISTING_KINDS`). A republish re-review is NON-shadow, so the
+      // middle branch (`revisionOfId: null`) already matches it; `OR` is a set union, so
+      // it appears exactly once either way and this query is unchanged in behaviour. What
+      // IS affected is downstream: `hasPendingRevision` below is keyed on `revisionOfId`
+      // and is correctly `false` for such a row, and `lastActionByListing` populates only
+      // for `status: 'removed'`, so a listing sitting in republish review carries no
+      // last-action badge. Both are deliberate; neither may be re-derived from "onsite
+      // implies shadow".
       OR: [{ appListingId: null }, { appListing: { revisionOfId: null } }, { kind: 'onsite' }],
     },
     orderBy: { submittedAt: 'desc' },

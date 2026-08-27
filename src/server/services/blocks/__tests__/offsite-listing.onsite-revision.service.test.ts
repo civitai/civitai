@@ -1,5 +1,9 @@
+import { readdirSync, readFileSync, statSync } from 'fs';
+import { join, relative, sep } from 'path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+// `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
+import { stripComments, stripCommentsAndStrings } from '../../../../../test/strip-comments';
 import {
   approveExternalRequest,
   rejectExternalRequest,
@@ -445,7 +449,288 @@ describe('mod queue procs — widened to kind IN (onsite, offsite), each row car
   });
 });
 
-describe('INVARIANT — the only producer of a kind:onsite AppListingPublishRequest is submitListingRevision on an onsite shadow', () => {
+/**
+ * 🔴 PRODUCER LEDGER for `AppListingPublishRequest`.
+ *
+ * `offsite-listing.service` used to carry a one-sentence INVARIANT above
+ * `REVIEWABLE_LISTING_KINDS`: *"the ONLY producer of a `kind='onsite'`
+ * `AppListingPublishRequest` is `submitListingRevision` on an onsite SHADOW"*. Six
+ * consumers of that constant reason from it, and it is what justifies
+ * `listMySubmissions`'s unconditional `{ kind: 'onsite' }` OR-branch.
+ *
+ * It went FALSE — the owner-republish asset-review route mints a NON-SHADOW onsite
+ * request — and the test named for it stayed green the whole time, because it asserted
+ * only that `submitListingRevision` produces a well-shaped row. Proving one member of a
+ * set is in it says nothing about whether the set has grown. So the shape assertion is
+ * kept below (it pins the VALUES) and this ledger is added beside it to pin the
+ * POPULATION: it enumerates every production site that creates a row in that table and
+ * FAILS when the set GROWS (a producer added without a decision recorded) **or** SHRINKS
+ * (one removed or renamed and the reasoning here went stale).
+ *
+ * ## 🔴 WHAT "CREATES A ROW" MEANS HERE, STATED SO THE SCAN CAN BE CHECKED AGAINST IT
+ *
+ * This sentence is the whole point of the guard, so the scan has to be as wide as the
+ * sentence rather than as wide as whichever syntax the producers happened to use on the
+ * day it was written. It first matched `appListingPublishRequest.create(` and nothing
+ * else — which left it blind to two of the three ways this codebase can insert a row.
+ * Demonstrated by execution: a file doing `…createMany({…})` and another doing
+ * ``$executeRaw`INSERT INTO app_listing_publish_requests …` `` left the suite fully
+ * green. A ledger that cannot see a new producer is worse than no ledger, because it
+ * reads as coverage while providing none. So all three write routes are scanned
+ * (`PRODUCER_PATTERNS`):
+ *
+ *   1. **Prisma client** — `appListingPublishRequest.{create,createMany,upsert}(`.
+ *      `upsert` counts: its `create` branch mints a row. Matched against source with
+ *      comments AND string literals stripped, because this codebase discusses these
+ *      tables at length in prose and only real code is a producer.
+ *   2. **Raw SQL** — `INSERT INTO [public.]app_listing_publish_requests`, case- and
+ *      whitespace-insensitive, which covers `$executeRaw` / `$queryRaw` /
+ *      `$executeRawUnsafe` and any other tagged-template or string SQL path.
+ *   3. **Kysely** — `.insertInto('app_listing_publish_requests')`. Not hypothetical:
+ *      `apps/auth`, `apps/creator-studio` and `apps/moderator` reach Postgres through
+ *      Kysely and insert that way throughout, so a producer added in one of them would
+ *      be written in this syntax rather than Prisma's.
+ *
+ * 🔴 Routes 2 and 3 are matched with string literals KEPT (`stripComments`, not
+ * `stripCommentsAndStrings`) — the table name IS the string literal being looked for, so
+ * the stronger stripper would blank the very thing under test. Comments are still
+ * removed, so the long prose passages naming this table (e.g. the header of
+ * `app-listing-history.service.ts`) cannot satisfy the scan.
+ *
+ * ## SCOPE, STATED AS LIMITS RATHER THAN LEFT IMPLIED
+ *
+ * - **Roots walked: `src/`, `apps/`, `packages/`, `scripts/`** — every repo root that
+ *   holds non-test TypeScript, so a producer added outside `src/` is visible. (It used
+ *   to scan `src/` only; nothing would have flagged an `apps/` producer.)
+ * - **Test files are out of scope** — a test may construct any row for any reason. That
+ *   is the `__tests__` / `__mocks__` / `test(s)/` / `*.test.*` / `*.spec.*` filter, and
+ *   it is why the repo's `tests/` and `test/` roots are not walked at all.
+ * - **This is a lexical scan, not a parser.** A model accessed through a computed key
+ *   (`db[name].create(…)`) or SQL assembled from fragments would not be seen. Nothing in
+ *   this table's write path does that today; if one starts, this comment is the warning
+ *   that the ledger cannot follow it.
+ */
+const LISTING_REQUEST_PRODUCERS: Record<string, string> = {
+  'src/server/services/blocks/offsite-listing.service.ts::submitExternalListing':
+    "OFF-SITE only (`kind: 'offsite'`), NON-shadow — a first-time off-site store " +
+    'submission, minted alongside the draft listing it targets.',
+  'src/server/services/blocks/offsite-listing.service.ts::submitListingRevision':
+    'BOTH kinds, always SHADOW (`revisionOfId` set on the target listing; the PARENT ' +
+    'slug is denormalized onto the request). This is the producer the old invariant ' +
+    'sentence named, and for on-site it was once the only one.',
+  'src/server/services/blocks/offsite-moderation.service.ts::resetListingToPending':
+    'OFF-SITE only, NON-shadow — the moderator reset. The ON-SITE reset is a different ' +
+    'function (`resetOnsiteListingToPending`) and re-queues on `AppBlockPublishRequest`, ' +
+    'which is why the on-site half of this table was shadow-only.',
+  'src/server/services/blocks/offsite-moderation.service.ts::routeRepublishToReviewInTx':
+    '🔴 THE SECOND ON-SITE PRODUCER, and the one that falsified the invariant. BOTH ' +
+    "kinds (`kind: listing.kind`), NON-shadow — an owner republish whose assets differ " +
+    'from the recorded approval baseline. Any consumer that reads `kind:onsite` as ' +
+    '"therefore a shadow revision" is wrong about this row; discriminate on ' +
+    '`revisionOfId`, never on `kind`.',
+};
+
+/**
+ * One WRITE ROUTE into `app_listing_publish_requests`. See the ledger header for why
+ * there are three and why `keepStrings` differs between them.
+ */
+type ProducerPattern = { label: string; keepStrings: boolean; re: RegExp };
+
+const PRODUCER_PATTERNS: ProducerPattern[] = [
+  {
+    label: 'prisma',
+    keepStrings: false,
+    re: /appListingPublishRequest\.(?:create|createMany|upsert)\(/g,
+  },
+  {
+    label: 'raw-sql',
+    keepStrings: true,
+    re: /insert\s+into\s+(?:["'`]?public["'`]?\s*\.\s*)?["'`]?app_listing_publish_requests\b/gi,
+  },
+  {
+    label: 'kysely',
+    keepStrings: true,
+    re: /\.insertInto\(\s*['"`]app_listing_publish_requests['"`]/g,
+  },
+];
+
+describe('🔴 AppListingPublishRequest PRODUCER LEDGER — fails when the set grows or shrinks', () => {
+  const ROOT = process.cwd();
+  const walk = (dir: string, out: string[] = []): string[] => {
+    for (const entry of readdirSync(dir)) {
+      // Dot-dirs cover `.git`, `.next`, `.svelte-kit`, `.turbo` in one rule.
+      if (entry === 'node_modules' || entry === 'dist' || entry.startsWith('.')) continue;
+      const full = join(dir, entry);
+      if (statSync(full).isDirectory()) walk(full, out);
+      else if (/\.tsx?$/.test(entry)) out.push(full);
+    }
+    return out;
+  };
+  /** Every repo root holding non-test TypeScript — see the header's SCOPE section. */
+  const ROOTS = ['src', 'apps', 'packages', 'scripts'];
+  const FILES = ROOTS.flatMap((r) => walk(join(ROOT, r)))
+    .map((f) => relative(ROOT, f).split(sep).join('/'))
+    .filter((f) => !/(^|\/)(__tests__|__mocks__|tests?)\/|\.(test|spec)\.tsx?$/.test(f));
+
+  /** The enclosing top-level declaration for a match at `index` WITHIN `haystack`. */
+  const enclosingFn = (haystack: string, index: number) => {
+    const decls = [
+      ...haystack
+        .slice(0, index)
+        .matchAll(/^(?:export )?(?:async )?function (\w+)|^(?:export )?const (\w+) = /gm),
+    ];
+    const last = decls[decls.length - 1];
+    return last ? last[1] ?? last[2] : '<module scope>';
+  };
+
+  /**
+   * `<file>::<enclosing top-level function>` for every producer site, over all three
+   * write routes.
+   *
+   * 🔴 The two strippers return DIFFERENT-LENGTH text, so a match index is only
+   * meaningful against the haystack it came from — `enclosingFn` is handed that same
+   * haystack rather than a canonical one.
+   */
+  const scanSource = (file: string, source: string, patterns: ProducerPattern[]) => {
+    // Comments AND string literals stripped: this codebase discusses these tables at
+    // length in prose, and only real code is a producer.
+    const codeOnly = stripCommentsAndStrings(source);
+    // Comments only — for routes whose subject IS a string literal (a SQL table name).
+    const stringsKept = stripComments(source);
+    const found: string[] = [];
+    for (const p of patterns) {
+      const text = p.keepStrings ? stringsKept : codeOnly;
+      for (const m of text.matchAll(p.re)) found.push(`${file}::${enclosingFn(text, m.index)}`);
+    }
+    return found;
+  };
+
+  const findProducers = (patterns: ProducerPattern[]) => {
+    const found: string[] = [];
+    for (const file of FILES) {
+      found.push(...scanSource(file, readFileSync(join(ROOT, file), 'utf8'), patterns));
+    }
+    return [...new Set(found)].sort();
+  };
+
+  const PRODUCERS = findProducers(PRODUCER_PATTERNS);
+
+  it('POSITIVE CONTROL: the scan enumerates a real population and can match', () => {
+    // A broken walk, a wrong regex or a stripper that ate the file would make the ledger
+    // assertion vacuously true. Prove the instrument works before reading its verdict.
+    expect(FILES.length).toBeGreaterThan(500);
+    expect(FILES).toContain('src/server/services/blocks/offsite-listing.service.ts');
+    expect(PRODUCERS.length).toBeGreaterThan(1);
+    // 🔴 The widened roots must actually be WALKED, or widening them is decorative and
+    // the header's scope claim is false. `src/` alone would satisfy every line above.
+    for (const root of ROOTS) {
+      expect(FILES.some((f) => f.startsWith(`${root}/`))).toBe(true);
+    }
+  });
+
+  it('POSITIVE CONTROL: each write route can match the syntax it claims to cover', () => {
+    // 🔴 Routes 2 and 3 have ZERO hits in the real tree, and a route wired to nothing is
+    // indistinguishable from a route that is merely unused. Feed each one source it MUST
+    // match, through the same code path the file scan uses.
+    const samples: Record<string, string> = {
+      prisma: 'await dbWrite.appListingPublishRequest.createMany({ data: [] });',
+      'raw-sql': 'await dbWrite.$executeRaw`\n  INSERT INTO app_listing_publish_requests (id)\n`;',
+      kysely: "await db.insertInto('app_listing_publish_requests').values(row).execute();",
+    };
+    for (const p of PRODUCER_PATTERNS) {
+      expect(scanSource('f.ts', samples[p.label], [p])).toHaveLength(1);
+    }
+    // …and the union really is wider than the original single-syntax scan: the two
+    // routes that were blind spots are matched by NEITHER of the other two patterns.
+    const prismaOnly = PRODUCER_PATTERNS.filter((p) => p.label === 'prisma');
+    expect(scanSource('f.ts', samples['raw-sql'], prismaOnly)).toEqual([]);
+    expect(scanSource('f.ts', samples.kysely, prismaOnly)).toEqual([]);
+    expect(scanSource('f.ts', samples.prisma, [PRODUCER_PATTERNS[1]])).toEqual([]);
+  });
+
+  it('NEGATIVE CONTROL: prose about these tables is not a producer, on any route', () => {
+    // The false-positive direction of the widening. The `keepStrings` routes deliberately
+    // scan string literals, so the ONLY thing keeping the many paragraphs that discuss
+    // this table out of the ledger is comment-stripping. Prove that for all three routes
+    // — and prove the sample is discriminating by running the SAME three lines as bare
+    // code, where all three must match. A control that matches nothing in both arms
+    // would attribute nothing.
+    const lines = [
+      'await dbWrite.appListingPublishRequest.upsert({ where: w, create: c, update: u });',
+      'await dbWrite.$executeRawUnsafe("INSERT INTO app_listing_publish_requests (id) …");',
+      "await db.insertInto('app_listing_publish_requests').values(row).execute();",
+    ];
+    expect(scanSource('bare.ts', lines.join('\n'), PRODUCER_PATTERNS)).toHaveLength(3);
+
+    const asBlockComment = ['/**', ...lines.map((l) => ` * ${l}`), ' */'].join('\n');
+    const asLineComments = lines.map((l) => `// ${l}`).join('\n');
+    expect(scanSource('doc.ts', asBlockComment, PRODUCER_PATTERNS)).toEqual([]);
+    expect(scanSource('doc.ts', asLineComments, PRODUCER_PATTERNS)).toEqual([]);
+  });
+
+  it('NEGATIVE CONTROL: a definitely-absent producer matches nothing', () => {
+    expect(
+      findProducers([
+        {
+          label: 'absent',
+          keepStrings: false,
+          re: /appListingPublishRequestNoSuchTable\.create\(/g,
+        },
+        {
+          label: 'absent-raw',
+          keepStrings: true,
+          re: /insert\s+into\s+app_listing_publish_requests_no_such_table\b/gi,
+        },
+      ])
+    ).toEqual([]);
+  });
+
+  it('🔴 the producer set is EXACTLY the ledger', () => {
+    expect(PRODUCERS).toEqual(Object.keys(LISTING_REQUEST_PRODUCERS).sort());
+  });
+
+  it('🔴 the on-site half is NO LONGER shadow-only — at least two producers can emit kind:onsite', () => {
+    // The claim the stale sentence made, stated so it can be checked: a producer emits
+    // on-site rows when it writes `kind: 'onsite'` or forwards a listing's own kind.
+    const onsiteCapable = Object.keys(LISTING_REQUEST_PRODUCERS).filter((k) =>
+      /BOTH kinds/.test(LISTING_REQUEST_PRODUCERS[k])
+    );
+    expect(onsiteCapable.sort()).toEqual([
+      'src/server/services/blocks/offsite-listing.service.ts::submitListingRevision',
+      'src/server/services/blocks/offsite-moderation.service.ts::routeRepublishToReviewInTx',
+    ]);
+  });
+
+  it('🔴 `routeRepublishToReviewInTx` really does forward the listing kind (not a hardcoded offsite)', () => {
+    // The ledger entry above is prose; this is the code it describes. Without it the
+    // ledger could record a producer that does not actually reach the on-site half.
+    const code = stripCommentsAndStrings(
+      readFileSync(
+        join(ROOT, 'src/server/services/blocks/offsite-moderation.service.ts'),
+        'utf8'
+      )
+    );
+    const fnStart = code.indexOf('function routeRepublishToReviewInTx');
+    expect(fnStart).toBeGreaterThan(-1); // the ledger key must still name a real function
+    const body = code.slice(fnStart);
+    const create = body.slice(body.indexOf('appListingPublishRequest.create('));
+    expect(create.slice(0, 400)).toContain('kind: listing.kind');
+    // …and the sibling that is genuinely off-site-only still hardcodes it, so the
+    // assertion above is discriminating rather than matching any create in the file.
+    // 🔴 Read from the RAW source here, not the stripped copy: the value under test IS a
+    // string literal, and `stripCommentsAndStrings` blanks it to `kind:  ,` — asserting
+    // against the stripped text would be asserting the stripper's output.
+    const raw = readFileSync(
+      join(ROOT, 'src/server/services/blocks/offsite-moderation.service.ts'),
+      'utf8'
+    );
+    const reset = raw.slice(raw.indexOf('async function resetListingToPending'));
+    const resetCreate = reset.slice(reset.indexOf('appListingPublishRequest.create('));
+    expect(resetCreate.slice(0, 400)).toContain("kind: 'offsite'");
+  });
+});
+
+describe('the shape of a kind:onsite AppListingPublishRequest minted by submitListingRevision', () => {
   it('submitListingRevision on an onsite shadow mints a kind:onsite request targeting the shadow (revisionOfId set)', async () => {
     // The shadow: a draft revision of an approved onsite parent (revisionOfId set).
     mockRead.appListing.findUnique.mockResolvedValue({

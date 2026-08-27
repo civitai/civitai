@@ -619,6 +619,50 @@ const withAssets = <T extends object>(listing: T): T & { iconId: number; coverId
   iconId: 1,
   coverId: 2,
 });
+
+/**
+ * The asset snapshot `unpublishOwnListing` records into the `owner-unpublish` event's
+ * `before.assets` — the baseline `republishOwnListing`'s ASSET-CHANGE REVIEW GATE compares
+ * the live listing against.
+ *
+ * 🔴 EVERY republish fixture in this file must state one, and the reason is the OPPOSITE
+ * of what this docstring used to give. It claimed the gate FAILS CLOSED on an absent
+ * baseline via `reviewReason: 'no-recorded-assets'`. Both halves are false: there is no
+ * such reason (`RepublishReviewReason` is `'assets-changed' | 'unreadable-baseline'`), and
+ * `resolveRepublishReviewReason` returns `null` for the `absent` kind — an event mocked as
+ * a bare `{ action: 'owner-unpublish' }` takes the **IMMEDIATE** arm and goes straight to
+ * `approved`. Only `unreadable` (an `assets` KEY that is present and does not parse) fails
+ * closed. See `app-listing-approved-assets.ts` for why the two absences go opposite ways.
+ *
+ * 🔴 So the failure mode a forgotten baseline produces is a SILENT PASS, not a loud
+ * re-route: a spec meaning to exercise the review arm, or meaning to prove that MATCHING
+ * assets republish immediately, gets `approved` either way — the second one while
+ * measuring nothing, because it never compared anything. Stating a baseline that MATCHES
+ * the live assets is what keeps an immediate-arm fixture on the equality path rather than
+ * on the never-recorded path. The review arm has its own dedicated file
+ * (`offsite-moderation.service.republish-asset-review.test.ts`), which owns both absences.
+ *
+ * Audited at the time of writing: every `republishOwnListing` fixture in this file stages
+ * an `assets` key (the rating-floor `wire()` derives one from its own live ids), and the
+ * ones that stage no event at all are refused earlier by the last-event guard — so none is
+ * currently passing vacuously. The hazard is for the next fixture, not this batch.
+ */
+const approvedAssets = (
+  over: {
+    iconId?: number | null;
+    coverId?: number | null;
+    screenshots?: { imageId: number; caption: string | null }[];
+  } = {}
+) => ({
+  v: 1,
+  iconId: over.iconId ?? null,
+  coverId: over.coverId ?? null,
+  screenshots: over.screenshots ?? [],
+});
+const ownerUnpublishEvent = (assets: unknown = approvedAssets()) => ({
+  action: 'owner-unpublish',
+  before: { status: 'approved', assets },
+});
 const injectIngestion = (byId: Record<number, string>) =>
   (async (args: { where?: { id?: { in?: number[] } } }) =>
     (args?.where?.id?.in ?? []).map((id) => ({ id, ingestion: byId[id] ?? 'Scanned' }))) as never;
@@ -684,9 +728,7 @@ describe('relistListing / republishOwnListing — go-live ACTIONABILITY gate', (
     // The owner-driven half of the same hazard: a removed listing stays directly
     // editable, so an owner can clear the URL and then self-restore.
     mockWrite.appListing.findUnique.mockResolvedValue(deadCta());
-    mockWrite.appListingModerationEvent.findFirst.mockResolvedValueOnce({
-      action: 'owner-unpublish',
-    });
+    mockWrite.appListingModerationEvent.findFirst.mockResolvedValueOnce(ownerUnpublishEvent());
     await expect(
       republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER })
     ).rejects.toMatchObject({
@@ -1557,7 +1599,7 @@ describe('republishOwnListing (🔴 the last-event safety guard)', () => {
   it('OWNER restores their OWN owner-unpublished OFF-SITE listing (removed → approved) + owner-republish event, no block-flip', async () => {
     mockWrite.appListing.findUnique.mockResolvedValueOnce(ownerPrimary('removed'));
     // The most-recent event is the owner's own unpublish → restore allowed.
-    mockWrite.appListingModerationEvent.findFirst.mockResolvedValueOnce({ action: 'owner-unpublish' });
+    mockWrite.appListingModerationEvent.findFirst.mockResolvedValueOnce(ownerUnpublishEvent());
     const res = await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
     expect(res).toEqual({ appListingId: APP_ID, status: 'approved' });
     expect(mockWrite.appListing.updateMany).toHaveBeenCalledWith({
@@ -1574,7 +1616,7 @@ describe('republishOwnListing (🔴 the last-event safety guard)', () => {
 
   it('🔴 ON-SITE republish restores BOTH app_listings AND the backing app_blocks (suspended → approved) in ONE tx + owner-republish event', async () => {
     mockWrite.appListing.findUnique.mockResolvedValueOnce(ownerPrimary('removed', 'onsite', OWNER, BLOCK_ID));
-    mockWrite.appListingModerationEvent.findFirst.mockResolvedValueOnce({ action: 'owner-unpublish' });
+    mockWrite.appListingModerationEvent.findFirst.mockResolvedValueOnce(ownerUnpublishEvent());
     const res = await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
     expect(res).toEqual({ appListingId: APP_ID, status: 'approved' });
     expect(mockWrite.appListing.updateMany).toHaveBeenCalledWith({
@@ -1603,7 +1645,7 @@ describe('republishOwnListing (🔴 the last-event safety guard)', () => {
 
   it('ON-SITE republish whose block-restore flip is a 0-count (drift) emits the post-commit warn (observability, mirrors mod relist)', async () => {
     mockWrite.appListing.findUnique.mockResolvedValueOnce(ownerPrimary('removed', 'onsite', OWNER, BLOCK_ID));
-    mockWrite.appListingModerationEvent.findFirst.mockResolvedValueOnce({ action: 'owner-unpublish' });
+    mockWrite.appListingModerationEvent.findFirst.mockResolvedValueOnce(ownerUnpublishEvent());
     // The backing block wasn't `suspended` → the guarded block flip matches 0 rows.
     mockWrite.appBlock.updateMany.mockResolvedValueOnce({ count: 0 });
     const res = await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
@@ -1670,7 +1712,9 @@ describe('republishOwnListing (🔴 the last-event safety guard)', () => {
   // the flip.
   it('go-live scan gate: REFUSES republish when an asset is still scanning (no flip)', async () => {
     mockWrite.appListing.findUnique.mockResolvedValue(withAssets(ownerPrimary('removed')));
-    mockWrite.appListingModerationEvent.findFirst.mockResolvedValueOnce({ action: 'owner-unpublish' });
+    mockWrite.appListingModerationEvent.findFirst.mockResolvedValueOnce(
+      ownerUnpublishEvent(approvedAssets({ iconId: 1, coverId: 2 }))
+    );
     mockWrite.image.findMany.mockImplementation(injectIngestion({ 1: 'Pending' }));
     await expect(
       republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER })
@@ -1681,7 +1725,9 @@ describe('republishOwnListing (🔴 the last-event safety guard)', () => {
 
   it('go-live scan gate: REFUSES republish when an asset was Blocked (no flip)', async () => {
     mockWrite.appListing.findUnique.mockResolvedValue(withAssets(ownerPrimary('removed')));
-    mockWrite.appListingModerationEvent.findFirst.mockResolvedValueOnce({ action: 'owner-unpublish' });
+    mockWrite.appListingModerationEvent.findFirst.mockResolvedValueOnce(
+      ownerUnpublishEvent(approvedAssets({ iconId: 1, coverId: 2 }))
+    );
     mockWrite.image.findMany.mockImplementation(injectIngestion({ 2: 'Blocked' }));
     await expect(
       republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER })
@@ -1691,7 +1737,9 @@ describe('republishOwnListing (🔴 the last-event safety guard)', () => {
 
   it('go-live scan gate: SUCCEEDS when every asset is Scanned (normal republish unaffected)', async () => {
     mockWrite.appListing.findUnique.mockResolvedValue(withAssets(ownerPrimary('removed')));
-    mockWrite.appListingModerationEvent.findFirst.mockResolvedValueOnce({ action: 'owner-unpublish' });
+    mockWrite.appListingModerationEvent.findFirst.mockResolvedValueOnce(
+      ownerUnpublishEvent(approvedAssets({ iconId: 1, coverId: 2 }))
+    );
     // Explicitly stage all-Scanned (clearAllMocks doesn't reset a prior test's impl).
     mockWrite.image.findMany.mockImplementation(injectIngestion({}));
     const res = await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
@@ -1886,17 +1934,29 @@ describe('republishOwnListing — go-live RATING FLOOR (uniform, both kinds)', (
       externalUrl: opts.kind === 'offsite' ? EXTERNAL_URL : null,
       connectClientId: null,
     });
-    mockWrite.appListing.findUnique.mockResolvedValueOnce(
-      ownerPrimary({ kind: opts.kind, contentRating: opts.contentRating })
-    );
+    mockWrite.appListing.findUnique.mockResolvedValueOnce({
+      // `loadOwnedListingInTx` now also selects the asset ids (the scalar half of the
+      // snapshot the review gate compares), so the FIRST read has to carry them.
+      ...ownerPrimary({ kind: opts.kind, contentRating: opts.contentRating }),
+      iconId: icon,
+      coverId: cover,
+    });
     mockWrite.appListingScreenshot.findMany.mockResolvedValue(shots.map((imageId) => ({ imageId })));
     mockWrite.image.findMany.mockImplementation(
       async (args: { where?: { id?: { in?: number[] } } }) =>
         (args?.where?.id?.in ?? []).map((id) => ({ id, ingestion, nsfwLevel: levels[id] ?? 0 }))
     );
-    mockWrite.appListingModerationEvent.findFirst.mockResolvedValueOnce({
-      action: 'owner-unpublish',
-    });
+    // Baseline == live assets, so these tests stay on the IMMEDIATE arm and keep
+    // measuring the rating floor rather than the (separately tested) review route.
+    mockWrite.appListingModerationEvent.findFirst.mockResolvedValueOnce(
+      ownerUnpublishEvent(
+        approvedAssets({
+          iconId: icon,
+          coverId: cover,
+          screenshots: shots.map((imageId) => ({ imageId, caption: null })),
+        })
+      )
+    );
   }
 
   /** The `data` payload of the listing status flip. */
@@ -2043,9 +2103,11 @@ describe('republishOwnListing — go-live RATING FLOOR (uniform, both kinds)', (
     mockWrite.appListing.findUnique.mockResolvedValueOnce(
       ownerPrimary({ kind: 'offsite', contentRating: 'pg13' })
     );
-    mockWrite.appListingModerationEvent.findFirst.mockResolvedValueOnce({
-      action: 'owner-unpublish',
-    });
+    // Staged explicitly, not inherited: `vi.clearAllMocks()` clears call history but not
+    // implementations, so a previous `wire()`'s screenshot rows would otherwise leak in
+    // and make the live snapshot differ from the baseline below for the wrong reason.
+    mockWrite.appListingScreenshot.findMany.mockResolvedValue([]);
+    mockWrite.appListingModerationEvent.findFirst.mockResolvedValueOnce(ownerUnpublishEvent());
     const res = await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
     expect(res).toEqual({ appListingId: APP_ID, status: 'approved' });
     expect(flipData()).toEqual({ status: 'approved', contentRating: 'pg13' });

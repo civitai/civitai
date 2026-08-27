@@ -212,7 +212,8 @@ afterAll(() => {
 function scalarSyncCalls() {
   return db.write.appListing.updateMany.mock.calls.filter((c) => {
     const arg = c[0] as { data?: Record<string, unknown> };
-    // The (3b-reset) restore writes ONLY `{ status: 'approved' }`.
+    // The (3b-reset) restore writes `status` (+ the go-live rating floor); the
+    // manifest scalar sync never writes `status`, so keying on its absence separates them.
     return arg?.data != null && !('status' in arg.data);
   });
 }

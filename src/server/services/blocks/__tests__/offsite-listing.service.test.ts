@@ -523,6 +523,35 @@ describe('withdrawExternalRequest', () => {
     });
   });
 
+  it('🔴 REPORTS WHICH CLOSE HAPPENED, so the UI can stop calling both "Submission withdrawn."', async () => {
+    // The two outcomes are not equally reversible. `'deleted'` throws away a draft;
+    // `'removed'` leaves a formerly-live listing delisted behind a `delist` event, which
+    // `republishOwnListing`'s guard reads as a moderator takedown — the owner cannot put
+    // it back and a moderator must relist. Announcing both with one sentence left an owner
+    // looking at a "removed by a moderator" state they had caused themselves, with nothing
+    // having warned them. Asserted as a PAIR so a mutant returning one constant fails.
+    async function withdrawWithListingStatus(status: string) {
+      vi.clearAllMocks();
+      mockWrite.$transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) =>
+        cb(mockWrite)
+      );
+      mockWrite.appListingPublishRequest.updateMany.mockResolvedValue({ count: 1 });
+      mockWrite.appListing.updateMany.mockResolvedValue({ count: 1 });
+      mockWrite.appListing.deleteMany.mockResolvedValue({ count: 1 });
+      mockRead.appListingPublishRequest.findUnique.mockResolvedValue({
+        id: 'alpr_1',
+        status: 'pending',
+        submittedByUserId: CALLER,
+        appListingId: 'apl_1',
+      });
+      mockWrite.appListing.findUnique.mockResolvedValue({ status, slug: 'cool-app' });
+      return withdrawExternalRequest({ publishRequestId: 'alpr_1', userId: CALLER });
+    }
+
+    expect(await withdrawWithListingStatus('pending')).toEqual({ outcome: 'removed' });
+    expect(await withdrawWithListingStatus('draft')).toEqual({ outcome: 'deleted' });
+  });
+
   it('🔴 Fix #1 regression: an intervening report-resolve event does NOT downgrade the close to owner-unpublish (still DELIST)', async () => {
     // The exploit closed: mod resets (report-driven) → mod resolves the triggering
     // report → the listing's NEWEST moderation event is now `report-resolve`, NOT
@@ -591,9 +620,11 @@ describe('withdrawExternalRequest', () => {
       submittedByUserId: CALLER,
       appListingId: 'apl_1',
     });
+    // 🔴 `'none'` rather than the outcome of whoever DID close it: this call did
+    // nothing, and the UI must not narrate someone else's close as its own.
     await expect(
       withdrawExternalRequest({ publishRequestId: 'alpr_1', userId: CALLER })
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({ outcome: 'none' });
     expect(mockWrite.appListingPublishRequest.updateMany).not.toHaveBeenCalled();
     expect(mockWrite.appListing.deleteMany).not.toHaveBeenCalled();
   });
@@ -610,9 +641,11 @@ describe('withdrawExternalRequest', () => {
     mockWrite.appListingPublishRequest.updateMany.mockResolvedValue({ count: 0 });
     mockWrite.appListingPublishRequest.findUnique.mockResolvedValue({ status: 'withdrawn' });
 
+    // Lost the race → `'none'`: the concurrent withdraw owns both the close and the
+    // description of it.
     await expect(
       withdrawExternalRequest({ publishRequestId: 'alpr_1', userId: CALLER })
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({ outcome: 'none' });
     // We did not perform the withdraw → we do NOT re-delete the draft.
     expect(mockWrite.appListing.deleteMany).not.toHaveBeenCalled();
   });
@@ -894,6 +927,11 @@ describe('approveExternalRequest', () => {
         // off-site-only and names the listing in its moderator-facing error.
         kind: true,
         slug: true,
+        // The two ON-SITE approve inputs, read on the PRIMARY with everything else so
+        // they are row-consistent with the flip: the app's DECLARED rating (the
+        // raise-only floor) and the backing block to un-suspend.
+        contentRating: true,
+        appBlockId: true,
       },
     });
     // The screenshot imageIds (for the floor count + the scan gate) are read from
