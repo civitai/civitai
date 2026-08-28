@@ -273,35 +273,38 @@ export const upsertCosmeticShopItem = async ({
     archivedAt: archived ? new Date() : null,
   };
 
-  const item = await dbWrite.$transaction(async (tx) => {
-    const saved = id
-      ? await tx.cosmeticShopItem.update({
-          where: { id },
-          data,
-          select: cosmeticShopItemSelect,
-        })
-      : await tx.cosmeticShopItem.create({
-          data: {
-            ...data,
-            addedById: userId,
-            meta: {
-              ...(cosmeticShopItem.meta ?? {}),
-              purchases: 0,
+  const item = await dbWrite.$transaction(
+    async (tx) => {
+      const saved = id
+        ? await tx.cosmeticShopItem.update({
+            where: { id },
+            data,
+            select: cosmeticShopItemSelect,
+          })
+        : await tx.cosmeticShopItem.create({
+            data: {
+              ...data,
+              addedById: userId,
+              meta: {
+                ...(cosmeticShopItem.meta ?? {}),
+                purchases: 0,
+              },
             },
-          },
-          select: cosmeticShopItemSelect,
+            select: cosmeticShopItemSelect,
+          });
+
+      if (expansion.evaluated)
+        await reconcileBlurbReferences({
+          entityType: 'CosmeticShopItem',
+          entityId: saved.id,
+          uses: expansion.uses,
+          tx,
         });
 
-    if (expansion.evaluated)
-      await reconcileBlurbReferences({
-        entityType: 'CosmeticShopItem',
-        entityId: saved.id,
-        uses: expansion.uses,
-        tx,
-      });
-
-    return saved;
-  });
+      return saved;
+    },
+    { maxWait: 10000, timeout: 30000 }
+  );
 
   // D14's fourth entry point. Archiving here stamps `archivedAt` without moving
   // `status`, and pack member resolution now excludes archived listings — so

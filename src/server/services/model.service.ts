@@ -2446,49 +2446,52 @@ export const upsertModel = async (
   }
 
   if (!id || templateId) {
-    const result = await dbWrite.$transaction(async (tx) => {
-      const created = await tx.model.create({
-        select: { id: true, nsfwLevel: true, meta: true, availability: true },
-        data: {
-          ...data,
-          status,
-          gallerySettings,
-          meta:
-            bountyId || meta
+    const result = await dbWrite.$transaction(
+      async (tx) => {
+        const created = await tx.model.create({
+          select: { id: true, nsfwLevel: true, meta: true, availability: true },
+          data: {
+            ...data,
+            status,
+            gallerySettings,
+            meta:
+              bountyId || meta
+                ? {
+                    ...((meta ?? {}) as MixedObject),
+                    bountyId,
+                  }
+                : undefined,
+            userId,
+            tagsOnModels: tagsOnModels
               ? {
-                  ...((meta ?? {}) as MixedObject),
-                  bountyId,
+                  create: tagsOnModels.map((tag) => {
+                    const name = tag.name.toLowerCase().trim();
+                    return {
+                      tag: {
+                        connectOrCreate: {
+                          where: { name },
+                          create: { name, target: [TagTarget.Model] },
+                        },
+                      },
+                    };
+                  }),
                 }
               : undefined,
-          userId,
-          tagsOnModels: tagsOnModels
-            ? {
-                create: tagsOnModels.map((tag) => {
-                  const name = tag.name.toLowerCase().trim();
-                  return {
-                    tag: {
-                      connectOrCreate: {
-                        where: { name },
-                        create: { name, target: [TagTarget.Model] },
-                      },
-                    },
-                  };
-                }),
-              }
-            : undefined,
-        },
-      });
-
-      if (descriptionSupplied && expansion.evaluated)
-        await reconcileBlurbReferences({
-          entityType: 'Model',
-          entityId: created.id,
-          uses: expansion.uses,
-          tx,
+          },
         });
 
-      return created;
-    });
+        if (descriptionSupplied && expansion.evaluated)
+          await reconcileBlurbReferences({
+            entityType: 'Model',
+            entityId: created.id,
+            uses: expansion.uses,
+            tx,
+          });
+
+        return created;
+      },
+      { maxWait: 10000, timeout: 30000 }
+    );
 
     const modelMeta = result.meta as ModelMeta | null;
     if (modelMeta?.showcaseCollectionId) {
@@ -2541,68 +2544,71 @@ export const upsertModel = async (
     const prevGallerySettings = beforeUpdate.gallerySettings as ModelGallerySettingsSchema;
     const prevMeta = beforeUpdate.meta as ModelMeta | null;
 
-    const result = await dbWrite.$transaction(async (tx) => {
-      const updated = await tx.model.update({
-        select: {
-          id: true,
-          name: true,
-          description: true,
-          nsfwLevel: true,
-          poi: true,
-          minor: true,
-          sfwOnly: true,
-          nsfw: true,
-          gallerySettings: true,
-          status: true,
-          meta: true,
-          availability: true,
-        },
-        where: { id },
-        data: {
-          ...data,
-          meta: { ...prevMeta, ...meta },
-          gallerySettings: {
-            ...prevGallerySettings,
-            level:
-              input.minor || input.sfwOnly ? sfwBrowsingLevelsFlag : prevGallerySettings?.level,
+    const result = await dbWrite.$transaction(
+      async (tx) => {
+        const updated = await tx.model.update({
+          select: {
+            id: true,
+            name: true,
+            description: true,
+            nsfwLevel: true,
+            poi: true,
+            minor: true,
+            sfwOnly: true,
+            nsfw: true,
+            gallerySettings: true,
+            status: true,
+            meta: true,
+            availability: true,
           },
-          tagsOnModels: tagsOnModels
-            ? {
-                deleteMany: {
-                  tagId: {
-                    notIn: tagsOnModels.filter(isTag).map((x) => x.id),
-                  },
-                },
-                connectOrCreate: tagsOnModels.filter(isTag).map((tag) => ({
-                  where: { modelId_tagId: { tagId: tag.id, modelId: id as number } },
-                  create: { tagId: tag.id },
-                })),
-                create: tagsOnModels.filter(isNotTag).map((tag) => {
-                  const name = tag.name.toLowerCase().trim();
-                  return {
-                    tag: {
-                      connectOrCreate: {
-                        where: { name },
-                        create: { name, target: [TagTarget.Model] },
-                      },
+          where: { id },
+          data: {
+            ...data,
+            meta: { ...prevMeta, ...meta },
+            gallerySettings: {
+              ...prevGallerySettings,
+              level:
+                input.minor || input.sfwOnly ? sfwBrowsingLevelsFlag : prevGallerySettings?.level,
+            },
+            tagsOnModels: tagsOnModels
+              ? {
+                  deleteMany: {
+                    tagId: {
+                      notIn: tagsOnModels.filter(isTag).map((x) => x.id),
                     },
-                  };
-                }),
-              }
-            : undefined,
-        },
-      });
-
-      if (descriptionSupplied && expansion.evaluated)
-        await reconcileBlurbReferences({
-          entityType: 'Model',
-          entityId: updated.id,
-          uses: expansion.uses,
-          tx,
+                  },
+                  connectOrCreate: tagsOnModels.filter(isTag).map((tag) => ({
+                    where: { modelId_tagId: { tagId: tag.id, modelId: id as number } },
+                    create: { tagId: tag.id },
+                  })),
+                  create: tagsOnModels.filter(isNotTag).map((tag) => {
+                    const name = tag.name.toLowerCase().trim();
+                    return {
+                      tag: {
+                        connectOrCreate: {
+                          where: { name },
+                          create: { name, target: [TagTarget.Model] },
+                        },
+                      },
+                    };
+                  }),
+                }
+              : undefined,
+          },
         });
 
-      return updated;
-    });
+        if (descriptionSupplied && expansion.evaluated)
+          await reconcileBlurbReferences({
+            entityType: 'Model',
+            entityId: updated.id,
+            uses: expansion.uses,
+            tx,
+          });
+
+        return updated;
+      },
+      { maxWait: 10000, timeout: 30000 }
+    );
     await preventReplicationLag('model', id);
     await userModelCountCache.refresh(userId);
 
