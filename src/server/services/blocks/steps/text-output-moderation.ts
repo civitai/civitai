@@ -511,6 +511,35 @@ export const TEXT_OUTPUT_WITHHELD_MESSAGE =
   'This response was withheld because it did not pass Civitai’s content policy.';
 
 /**
+ * The reason surfaced when a text-posture step SUCCEEDED and passed the scan,
+ * but the entry could publish none of what it produced.
+ *
+ * 🔴 WHY THIS IS A SEPARATE CONSTANT AND NOT `TEXT_OUTPUT_WITHHELD_MESSAGE`.
+ * That message asserts the content failed Civitai's policy. In this case
+ * nothing did: the scan RELEASED, and the output was dropped by the entry's own
+ * extractor bounds (a provider `id` or tool `name` outside the published
+ * charset, a response carrying no publishable field at all). Reusing the policy
+ * message would tell the app author their content was moderated when it was
+ * not, and would make a real policy withhold indistinguishable from an
+ * extraction failure — the two need different fixes, so they need different
+ * words.
+ *
+ * 🔴 WHY IT REUSES THE `textOutputWithheld` FIELD RATHER THAN ADDING ONE. That
+ * field is already the "there was output and you are not getting it, here is
+ * why" channel, and a block that renders it shows this reason with no change.
+ * A new snapshot field would be a wire-surface addition the SDK has to mirror,
+ * for a case whose entire requirement is DIAGNOSABILITY.
+ *
+ * 🔴 HONEST LIMIT: a block cannot MACHINE-distinguish this from a policy
+ * withhold without matching on the string, which is not a contract. If a
+ * consumer ever needs to branch on the difference, that is the point to add a
+ * discriminated reason code — not before.
+ */
+export const TEXT_OUTPUT_UNPUBLISHABLE_MESSAGE =
+  'This response completed but contained nothing this app could display. No content policy ' +
+  'issue was found; the model’s output did not include a usable text or tool-call result.';
+
+/**
  * How long to wait for the scan before giving up and FAILING CLOSED.
  *
  * The scan is inline and blocking on a read path, so this is a user-visible

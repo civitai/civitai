@@ -171,8 +171,22 @@ describe('chat-completion — the bounded param surface', () => {
     // `.strict()` in action. Each of these is a real `ChatCompletionInput`
     // field; forwarding any of them from an untrusted iframe is a widening
     // nobody reviewed.
+    //
+    // 🔴 `tools` WAS REMOVED FROM THIS LIST, AND THAT IS A CORRECTION, NOT A
+    // WEAKENING. This entry now DOES expose `tools`, so the field no longer
+    // belongs under a heading that says it does not. The entry stayed green
+    // only because the fixture value was `[]`, which fails the schema's
+    // `.min(1)` bound — i.e. it passed for a reason unrelated to the property
+    // the test is named for, and a reader would have concluded from a green run
+    // that tools were still rejected. `tools` acceptance is covered by the
+    // positive cases in the tool-surface describe block below.
+    //
+    // 🔴 `tool_choice` (snake_case) DELIBERATELY STAYS. The param this entry
+    // exposes is `toolChoice`; the snake_case spelling is the ORCHESTRATOR wire
+    // name and is not a param here, so `.strict()` must keep rejecting it. That
+    // distinction is load-bearing while the wire spelling is still unconfirmed
+    // against a live request — see the entry's own note.
     for (const [key, value] of [
-      ['tools', []],
       ['tool_choice', 'auto'],
       ['n', 4],
       ['stop', ['x']],
@@ -550,24 +564,33 @@ describe('chat-completion — extractText, against the REAL response', () => {
     ).toEqual([]);
   });
 
-  it('🔴 every choice in the entry’s canonical sample is a REAL captured choice, for every variant', () => {
-    // Clauses 8a and 8b both probe `canonicalOutputFor(v)`. This asserts the
-    // sample was not quietly re-written to suit the extractors: each choice must
-    // still equal a choice from one of the two captured responses held
-    // independently at the top of this file.
+  it('🔴 the canonical sample is 2 CAPTURED choices + 2 declared ADVERSARIAL ones, for every variant', () => {
+    // Clauses 8a and 8b both probe `canonicalOutputFor(v)`. This test exists to
+    // stop the sample being quietly re-written to suit the extractors — the
+    // both-wrong-blind hazard, where a probe asserts only that the code agrees
+    // with itself.
     //
-    // 🔴 THE SECOND CHOICE IS WHY THE SAMPLE CARRIES TWO, AND WHY THIS TEST
-    // CHANGED. With a content-only sample, clause 8b's containment loop iterates
-    // an EMPTY set and passes vacuously — the audit demonstrated that a real
-    // containment break in the shipped extractor loaded clean. The tool-call
-    // choice is what makes that clause execute. Asserting choice-by-choice
-    // rather than whole-object keeps the "verbatim, not invented" property that
-    // this test has always existed to pin.
+    // 🔴 IT NO LONGER SAYS "EVERY CHOICE IS CAPTURED", BECAUSE THAT STOPPED
+    // BEING TRUE. Choices 2 and 3 are adversarial: real message SHAPE, invented
+    // VALUES, added because clause 8b can only ever see what this sample
+    // contains and a sample of well-formed calls left two shipped divergence
+    // classes undetectable (measured — re-splitting either extractor loaded
+    // clean). Keeping the old blanket assertion would have meant either
+    // deleting the coverage or letting the test name lie.
+    //
+    // So the property pinned here is the SPLIT: the captured choices stay
+    // byte-equal to the responses held independently at the top of this file,
+    // and the adversarial ones stay exactly the values that arm 8b. Both halves
+    // are pinned so neither can drift silently.
     for (const variant of CHAT_COMPLETION_MODELS) {
-      const sample = chatCompletionStep.canonicalOutputFor(variant) as typeof REAL_COMPLETED_STEP & {
+      const sample = chatCompletionStep.canonicalOutputFor(
+        variant
+      ) as typeof REAL_COMPLETED_STEP & {
         output: { choices: unknown[] };
       };
-      expect(sample.output.choices).toHaveLength(2);
+      expect(sample.output.choices).toHaveLength(4);
+
+      // ── CAPTURED — must remain verbatim. ───────────────────────────────────
       expect(sample.output.choices[0]).toEqual(REAL_COMPLETED_STEP.output.choices[0]);
       expect(sample.output.choices[1]).toEqual({
         ...REAL_TOOL_CALL_STEP.output.choices[0],
@@ -575,9 +598,34 @@ describe('chat-completion — extractText, against the REAL response', () => {
         // own `index` is 0; only the position in this composed envelope differs.
         index: 1,
       });
+
+      // ── ADVERSARIAL — declared, and pinned so they keep arming clause 8b. ──
+      // Choice 2 arms 8b against an `extractText` that re-applies a
+      // `trim().length > 0` filter to raw arguments; choice 3 against an
+      // `extractToolCalls` re-split and widened on the id axis. 🔴 Choice 3's
+      // `arguments` must stay DISTINCT from every other choice's — a colliding
+      // string is found in the scanned set and 8b goes silent, which is
+      // mechanically how the previous sample failed to arm it.
+      const adversarial = sample.output.choices.slice(2) as Array<{
+        message: { tool_calls: Array<{ id: string; function: { arguments: string } }> };
+      }>;
+      expect(adversarial[0].message.tool_calls[0].function.arguments).toBe('');
+      expect(adversarial[1].message.tool_calls[0].id).toBe('call.with.dots');
+      expect(adversarial[1].message.tool_calls[0].function.arguments).toBe('{"modelId":4384}');
+
+      const allArgs = (
+        sample.output.choices as Array<{
+          message?: { tool_calls?: Array<{ function: { arguments: string } }> };
+        }>
+      ).flatMap((c) => (c.message?.tool_calls ?? []).map((t) => t.function.arguments));
+      expect(new Set(allArgs).size).toBe(allArgs.length);
+
+      // Choice 2's empty arguments are normalised to `'{}'` and scanned;
+      // choice 3 is dropped entirely, so it contributes no text.
       expect(chatCompletionStep.extractText(sample)).toEqual([
         'OK',
         '{"query":"DreamShaper checkpoint","limit":1}',
+        '{}',
       ]);
     }
   });
@@ -722,7 +770,10 @@ describe('chat-completion — tools / toolChoice param surface', () => {
       tools: [
         {
           ...VALID_TOOL,
-          function: { ...VALID_TOOL.function, parameters: { type: 'object', pad: 'x'.repeat(5_000) } },
+          function: {
+            ...VALID_TOOL.function,
+            parameters: { type: 'object', pad: 'x'.repeat(5_000) },
+          },
         },
       ],
     });
@@ -904,11 +955,7 @@ describe('chat-completion — the tool ROUND bound', () => {
     // 🔴 THE CASE THAT SEPARATES THIS GUARD FROM A MEMBERSHIP CHECK. The id IS
     // declared in the payload, just later. Collecting every id first and then
     // testing membership would accept this, and the provider would not.
-    const messages = [
-      { role: 'user' as const, content: 'hello' },
-      toolMessage(0),
-      askMessage(0),
-    ];
+    const messages = [{ role: 'user' as const, content: 'hello' }, toolMessage(0), askMessage(0)];
     const result = parse({ ...VALID_PARAMS, messages });
     expect(result.success).toBe(false);
     expect(JSON.stringify(result.error?.issues)).toContain('no PRECEDING assistant message');
@@ -1001,7 +1048,11 @@ describe('chat-completion — the tool/assistant message members', () => {
           {
             role: 'assistant',
             tool_calls: [
-              { id: 'call:with:colons', type: 'function', function: { name: 'f', arguments: '{}' } },
+              {
+                id: 'call:with:colons',
+                type: 'function',
+                function: { name: 'f', arguments: '{}' },
+              },
             ],
           },
         ],
@@ -1143,7 +1194,9 @@ describe('chat-completion — extractToolCalls', () => {
     expect(chatCompletionStep.extractToolCalls({ output: { choices: 'nope' } })).toEqual([]);
     expect(chatCompletionStep.extractToolCalls({ output: { choices: [null] } })).toEqual([]);
     expect(
-      chatCompletionStep.extractToolCalls({ output: { choices: [{ message: { tool_calls: 'x' } }] } })
+      chatCompletionStep.extractToolCalls({
+        output: { choices: [{ message: { tool_calls: 'x' } }] },
+      })
     ).toEqual([]);
   });
 
@@ -1247,7 +1300,9 @@ describe('chat-completion — extractToolCalls', () => {
         choices: [
           {
             message: {
-              tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'f', arguments: args } }],
+              tool_calls: [
+                { id: 'call_1', type: 'function', function: { name: 'f', arguments: args } },
+              ],
             },
           },
         ],

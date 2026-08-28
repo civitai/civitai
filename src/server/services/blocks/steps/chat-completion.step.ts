@@ -636,10 +636,22 @@ const chatMessageSchema = z.discriminatedUnion('role', [
                * 🔴 SAME CHARSET AS THE OUTPUT EXTRACTOR PUBLISHES, deliberately.
                * The file used to hold two disagreeing definitions of a valid id:
                * `call:with:colons` PARSED here while `extractToolCalls` refused
-               * it on the way out. Reconciled toward the stricter one, and that
-               * cannot reject a legitimate payload: the ONLY id a block can
-               * legitimately replay is one WE published, and we publish only
-               * charset-conforming ids. See `publishableToolCalls`.
+               * it on the way out. Reconciled toward the stricter one.
+               *
+               * 🔴 BE EXACT ABOUT WHAT THAT DOES NOT REJECT, BECAUSE AN EARLIER
+               * REVISION OVERCLAIMED IT. It said this "cannot reject a
+               * legitimate payload". The true guarantee is narrower: it cannot
+               * reject a payload DERIVED FROM OUR OWN OUTPUT, because we publish
+               * only charset-conforming ids (see `publishableToolCalls`).
+               *
+               * It CAN reject a hand-authored one. A block author writing
+               * few-shot tool-call history — an ordinary thing to do — may
+               * invent any id; `call.1` and `call:1` parsed before this
+               * tightening and are now `BAD_REQUEST`. That is accepted
+               * deliberately: the cost is one bounced request with a zod message
+               * naming the field, against a charset that must stay aligned with
+               * what the extractor will publish, or the two definitions diverge
+               * again. An author hitting it renames the id and moves on.
                */
               id: z.string().min(1).max(MAX_TOOL_NAME_CHARS).regex(TOOL_NAME_PATTERN),
               type: z.literal('function'),
@@ -669,20 +681,28 @@ const chatMessageSchema = z.discriminatedUnion('role', [
        * own generated type, and a tool result with nothing to correlate it to is
        * a result the model cannot attach to the call it made.
        *
-       * Charset-bounded for the same reason as the assistant-side `id` above —
-       * this value is correlated against those ids, so accepting a shape they
-       * can never hold would only ever fail the correlation guard later.
+       * 🔴 LENGTH-BOUNDED BUT DELIBERATELY **NOT** CHARSET-BOUNDED, AND THE
+       * CHARSET REGEX THAT USED TO BE HERE WAS REMOVED RATHER THAN DOCUMENTED.
        *
-       * 🔴 THIS REGEX IS DEFENCE-IN-DEPTH AND IS **NOT** INDEPENDENTLY TESTED —
-       * stated because "mutation-verified" would be false of it. Measured:
-       * removing it alone leaves the suite GREEN, because every payload that
-       * could violate it is already rejected by something earlier. A bad
-       * `tool_call_id` either matches a declared assistant `id` (which is itself
-       * charset-bounded, so that regex fires first) or matches none (so the
-       * correlation guard rejects it). Removing BOTH regexes together IS caught.
-       * It is kept as a redundant clause, not because a test proves it fires.
+       * It changed NO accept/reject outcome. `declaredCallIds` is populated only
+       * from assistant `tool_calls[].id`, which IS charset-bounded above, so a
+       * charset-violating `tool_call_id` can never be a member of that set and
+       * the correlation guard rejects it either way. Measured twice: removing
+       * this regex alone left the suite green, and no input was found for which
+       * it was the sole rejector.
+       *
+       * Its one observable effect was making the diagnostic WORSE — the caller
+       * got a zod regex issue on a field instead of the correlation guard's
+       * message naming the id and saying no preceding assistant message
+       * declared it, which is the sentence that actually tells an app author
+       * what to change. A redundant clause that degrades the error is a net
+       * negative, so it is gone.
+       *
+       * The LENGTH bound stays: it is not redundant in the same way. It bounds
+       * the payload before correlation runs, rather than admitting an
+       * arbitrarily long string that correlation would then reject.
        */
-      tool_call_id: z.string().min(1).max(MAX_TOOL_NAME_CHARS).regex(TOOL_NAME_PATTERN),
+      tool_call_id: z.string().min(1).max(MAX_TOOL_NAME_CHARS),
     })
     .strict(),
 ]);
@@ -1055,15 +1075,35 @@ const EMPTY_TOOL_ARGUMENTS = '{}';
  * CONSTRUCTION: `extractText` publishes exactly the `arguments` of the calls
  * this returns, so no divergence is expressible without editing this function.
  *
- * 🔴 WHAT THAT DOES TO CLAUSE 8b, STATED PLAINLY RATHER THAN QUIETLY. 8b
- * compares the two extractors' outputs, and they now agree by construction, so
- * it can no longer fail for a DIVERGENCE reason — it is a refactor tripwire,
- * not a divergence detector. That is a real reduction in what it detects and it
- * is the deliberate trade: a structural guarantee beats a checked one. It is
- * NOT the vacuous shape a previous audit round found (a loop body that never
- * ran over an empty set) — the loop still executes over real calls, and it
- * still fires the moment anyone re-splits these predicates, which is exactly
- * the regression it now exists to catch. That claim is mutation-tested.
+ * 🔴 WHAT THAT DOES TO CLAUSE 8b, STATED PLAINLY RATHER THAN QUIETLY. While
+ * BOTH extractors go through this function, they agree by construction, so 8b
+ * cannot fail for a divergence reason FOR THIS ENTRY — it is a re-split
+ * tripwire here, not a live divergence detector. That is a real reduction and
+ * it is the deliberate trade: a structural guarantee beats a checked one.
+ *
+ * 🔴 SCOPE THAT CLAIM TO THIS ENTRY. 8b remains a working divergence detector
+ * for any entry that open-codes two predicates — the `makeToolCallStep`
+ * fixtures in `__tests__/step-text-output-moderation.test.ts` are exactly that
+ * shape and 8b is live for them. The sentence is about `chat-completion`, not
+ * about the clause.
+ *
+ * 🔴 AND BE EXACT ABOUT WHAT THE TRIPWIRE IS TESTED AGAINST, BECAUSE AN EARLIER
+ * REVISION OF THIS PARAGRAPH WAS NOT. It claimed 8b "fires the moment anyone
+ * re-splits these predicates" and that the claim was "mutation-tested". The
+ * mutation actually run was the DELETION of `extractText`'s tool-arguments loop
+ * — and audit then executed two genuine re-splits that 8b did NOT catch:
+ * restoring `extractText`'s pre-consolidation `trim().length > 0` predicate,
+ * and re-splitting `extractToolCalls` widened on the id axis. Both loaded
+ * clean, because the canonical sample contained only well-formed calls. The
+ * description was wider than the implementation — the same defect class as the
+ * vacuous-loop finding before it, one level up.
+ *
+ * What is true NOW, and is what was mutation-tested: `canonicalOutputFor`
+ * carries a choice for each divergence class this file has shipped (empty
+ * `arguments`; an out-of-charset `id`), so all three mutants — the deletion and
+ * both re-splits — fire 8b at registry load with its own error. A re-split on
+ * an axis the sample does NOT cover would still pass; see that function's
+ * docstring for the rule about adding a choice when you add a drop reason.
  */
 function publishableToolCalls(
   message: { tool_calls?: readonly (ChatCompletionToolCallOutputLike | null)[] | null } | null
@@ -1263,34 +1303,67 @@ export const chatCompletionStep = {
    * A canonical COMPLETED step, for the load-time extraction probes (clauses 8a
    * and 8b).
    *
-   * 🔴 EVERY CHOICE HERE IS COPIED VERBATIM FROM A REAL ORCHESTRATOR RESPONSE,
-   * not invented to match the extractors. A sample written from the extractor
-   * would make the probe assert only that the code agrees with itself — the
-   * both-wrong-blind shape clause 8a's own docstring names as the thing it
-   * cannot catch. Note what the first real response does NOT contain:
-   * `message` carries **only `content`** — no `role`, despite the generated
-   * `AssistantMessage` declaring it required. That absence is the reason
-   * `extractText` does not key off it.
+   * 🔴 THE SAMPLE IS TWO CAPTURED CHOICES PLUS TWO ADVERSARIAL ONES, AND THE
+   * SPLIT IS STATED BECAUSE AN EARLIER REVISION CLAIMED ALL OF THEM WERE
+   * CAPTURED. That was true when there were two; it became false the moment
+   * choices 2 and 3 were added to arm clause 8b, and a stale "verbatim" banner
+   * over invented data is worse than no banner — it tells the next reader the
+   * probe has a property it does not have.
    *
-   * 🔴 THE SECOND CHOICE IS WHY THIS SAMPLE HAS TWO, AND IT IS LOAD-BEARING
-   * RATHER THAN DECORATIVE. Clause 8b asserts that every `arguments` string
-   * `extractToolCalls` publishes is also returned by `extractText` — but it can
-   * only assert it over THIS sample, so a sample with no `tool_calls` makes the
-   * clause iterate an EMPTY set and pass vacuously. That was the state when
-   * tool calling first landed: the containment property three separate
-   * docstrings name as the mechanism protecting the tool-call surface was
-   * asserted over nothing, and a real containment break in the shipped
-   * extractor (`arguments: args + 'SMUGGLED'`) loaded CLEAN. A guard that
-   * passes because its loop body never runs reads as coverage while providing
-   * none — the exact failure this registry's clause design exists to refuse.
+   *   - Choices 0 and 1 are COPIED VERBATIM from real orchestrator responses.
+   *     They are what keeps the both-wrong-blind hazard closed: a sample
+   *     written FROM the extractor would make the probe assert only that the
+   *     code agrees with itself, which clause 8a's own docstring names as the
+   *     thing it cannot catch. Note what the first real response does NOT
+   *     contain: `message` carries **only `content`** — no `role`, despite the
+   *     generated `AssistantMessage` declaring it required. That absence is the
+   *     reason `extractText` does not key off it.
+   *   - Choices 2 and 3 are ADVERSARIAL VARIANTS: the message and tool-call
+   *     SHAPE is the captured one, but the VALUES (`arguments: ''`, an `id`
+   *     outside `TOOL_NAME_PATTERN`) were chosen to make clause 8b non-vacuous
+   *     on the two divergence classes this file has actually shipped. They are
+   *     NOT a claim that the orchestrator emits these values. Reachability is
+   *     documented per choice; FREQUENCY is unmeasured, and no claim about it
+   *     is made here.
    *
-   * 🔴 THE TWO-CHOICE ENVELOPE IS A COMPOSITION, AND THAT IS SAID PLAINLY. Each
-   * choice object is verbatim from a captured response; no single captured
-   * response carried both, because `n` defaults to 1. The composition is
-   * legitimate for what these clauses actually test — that the extractor PAIR
-   * agrees with itself on a real message shape — and it is what keeps BOTH the
-   * content path and the tool-call path covered at load instead of trading one
-   * for the other. It is NOT a claim that the orchestrator emits two choices.
+   * That distinction is what keeps the both-wrong-blind argument intact: the
+   * hazard it names is an extractor and a sample agreeing on the wrong response
+   * SHAPE, and every shape here is still a captured one. Varying VALUES inside
+   * a captured shape does not reintroduce it. Do not add a choice with an
+   * invented shape.
+   *
+   * 🔴 WHY THE SAMPLE KEEPS GROWING: EACH CHOICE ARMS CLAUSE 8b AGAINST ONE
+   * DIVERGENCE CLASS, AND 8b CAN ONLY EVER SEE WHAT THIS SAMPLE CONTAINS.
+   * Clause 8b asserts that every `arguments` string `extractToolCalls`
+   * publishes is also returned by `extractText` — over THIS sample and nothing
+   * else. The failure mode is therefore always the same: a class the sample
+   * cannot express is a class 8b cannot detect, while still reading as
+   * coverage. It has now been hit TWICE, which is why this list is explicit:
+   *
+   *   1. NO `tool_calls` AT ALL (the state when tool calling first landed) —
+   *      the loop iterated an EMPTY set and passed vacuously. A real
+   *      containment break in the shipped extractor (`arguments: args +
+   *      'SMUGGLED'`) loaded CLEAN. Closed by choice 1.
+   *   2. ONLY WELL-FORMED CALLS (the state after that fix) — the loop ran, but
+   *      every value in it was conforming, so neither shipped divergence class
+   *      was expressible. Measured: re-splitting `extractText` back to its
+   *      pre-consolidation `trim().length > 0` predicate, and re-splitting
+   *      `extractToolCalls` widened on the id axis, BOTH loaded clean. Closed
+   *      by choices 2 and 3.
+   *
+   * 🔴 SO THE RULE FOR ANYONE EDITING `publishableToolCalls`: if you add a
+   * reason a call may be dropped or rewritten, add a choice that exercises it,
+   * and give it an `arguments` string DISTINCT from every other choice's. A
+   * colliding string is found in the scanned set and 8b stays silent — that
+   * collision is not hypothetical, it is mechanically how case 2 above hid.
+   *
+   * 🔴 THE MULTI-CHOICE ENVELOPE IS A COMPOSITION, AND THAT IS SAID PLAINLY. No
+   * single captured response carried more than one choice, because `n` defaults
+   * to 1. The composition is legitimate for what these clauses actually test —
+   * that the extractor PAIR agrees with itself on real message shapes — and it
+   * is what keeps the content path and every tool-call path covered at load
+   * instead of trading one for another. It is NOT a claim that the orchestrator
+   * emits four choices.
    */
   canonicalOutputFor: (): unknown => ({
     $type: 'chatCompletion',
@@ -1316,6 +1389,48 @@ export const chatCompletionStep = {
                   name: 'search_models',
                   arguments: '{"query":"DreamShaper checkpoint","limit":1}',
                 },
+              },
+            ],
+          },
+        },
+        // ADVERSARIAL 1 — empty `arguments`. Published (normalised to `'{}'`) by
+        // BOTH extractors on unmutated code, so containment still holds. Arms 8b
+        // against an `extractText` that re-applies a `trim().length > 0` filter:
+        // it would then drop this string while `extractToolCalls` still
+        // publishes the normalised `'{}'`, which is the divergence 8b exists for.
+        {
+          index: 2,
+          finishReason: 'tool_calls',
+          message: {
+            role: 'assistant',
+            tool_calls: [
+              {
+                id: 'call_zeroargs00000000000000',
+                type: 'function',
+                function: { name: 'list_categories', arguments: '' },
+              },
+            ],
+          },
+        },
+        // ADVERSARIAL 2 — an `id` outside `TOOL_NAME_PATTERN` (dots), with
+        // arguments DISTINCT from every other string in this sample. Dropped by
+        // BOTH extractors on unmutated code, so containment still holds. Arms 8b
+        // against an `extractToolCalls` re-split and widened on the id axis: it
+        // would publish these arguments while `extractText` does not return
+        // them. 🔴 The distinctness is load-bearing — an arguments string that
+        // collided with another choice's would be found in the scanned set and
+        // 8b would stay silent, which is precisely how the pre-existing sample
+        // failed to arm it.
+        {
+          index: 3,
+          finishReason: 'tool_calls',
+          message: {
+            role: 'assistant',
+            tool_calls: [
+              {
+                id: 'call.with.dots',
+                type: 'function',
+                function: { name: 'get_model', arguments: '{"modelId":4384}' },
               },
             ],
           },

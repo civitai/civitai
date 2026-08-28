@@ -6,12 +6,17 @@ import {
   getStepByOrchestratorType,
   isModerationPostureImplemented,
   posturePhaseRequirements,
+  postureRequiresTextExtraction,
   STEP_MODERATION_POSTURES,
   type AnyBlockStep,
   type BlockStepToolCall,
   type StepModerationPosture,
 } from './index';
-import { screenGeneratedText, TEXT_OUTPUT_WITHHELD_MESSAGE } from './text-output-moderation';
+import {
+  screenGeneratedText,
+  TEXT_OUTPUT_UNPUBLISHABLE_MESSAGE,
+  TEXT_OUTPUT_WITHHELD_MESSAGE,
+} from './text-output-moderation';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MODERATION DISPATCH for the App Blocks step-type registry (`kind: 'step'`).
@@ -318,11 +323,13 @@ const moderationPostureHandlers: Record<StepModerationPosture, StepModerationPha
         });
 
         // 🔴 TOOL CALLS ARE ATTACHED ONLY ONTO A RELEASED VERDICT, AND ONLY
-        // HERE. The scan above ran over `extractText`'s strings, which registry
-        // clause 8b asserts already CONTAIN every arguments string
-        // `extractToolCalls` can return. So attaching them after a release
-        // publishes nothing the scan did not read, and a withheld verdict
-        // returns early below with no tool calls at all.
+        // HERE. The scan above ran over `extractText`'s strings, which already
+        // CONTAIN every arguments string `extractToolCalls` can return — held
+        // structurally by a shared predicate for `chat-completion`, and by
+        // registry clause 8b for any entry that open-codes the two extractors
+        // separately. So attaching them after a release publishes nothing the
+        // scan did not read, and a withheld verdict returns early below with no
+        // tool calls at all.
         //
         // 🔴 THE EARLY RETURN IS THE CONTROL, NOT AN OPTIMISATION. Writing this
         // as `{ ...verdict, toolCalls }` would attach the field to a WITHHELD
@@ -548,13 +555,22 @@ export type ModeratedTextOutputFields = {
  *
  * 🔴 THE SAME IS TRUE OF `toolCalls`, AND IT IS HELD BY A DIFFERENT MECHANISM
  * WORTH NAMING SEPARATELY. Tool calls are not scanned as structured objects —
- * the scan reads STRINGS. What makes publishing them safe is that registry
- * clause 8b asserts every `arguments` string `extractToolCalls` can return is
- * ALSO returned by `extractText`, so the released verdict was computed over
- * that text; and the posture handler attaches them only onto an already-released
- * verdict, never onto a withheld one. Take either half away and this becomes a
- * channel that publishes model-written prose on the strength of a scan that
- * never read it.
+ * the scan reads STRINGS. Publishing them is safe because of two things: every
+ * `arguments` string `extractToolCalls` can return is ALSO returned by
+ * `extractText`, so the released verdict was computed over that text; and the
+ * posture handler attaches them only onto an already-released verdict, never
+ * onto a withheld one. Take either half away and this becomes a channel that
+ * publishes model-written prose on the strength of a scan that never read it.
+ *
+ * 🔴 NAME THE RIGHT MECHANISM FOR THE FIRST HALF — an earlier revision credited
+ * registry clause 8b, and for `chat-completion` that is now stale. That entry
+ * derives BOTH extractors from one shared predicate, so containment holds
+ * STRUCTURALLY: no divergence is expressible without editing that function. 8b
+ * is what catches someone re-splitting it, and it remains the live check for any
+ * OTHER entry that open-codes two predicates. The safety conclusion is
+ * unchanged — if anything better supported, since a structural guarantee does
+ * not depend on a sample being rich enough to expose the divergence. Only the
+ * mechanism name was wrong.
  *
  * The incoming snapshot's own text fields are STRIPPED before merging, so a
  * caller that somehow arrived carrying text cannot smuggle it past the scan by
@@ -607,6 +623,45 @@ export async function attachModeratedStepTextOutputs<T extends ModeratedTextOutp
     if (verdict.released) {
       released.push(...verdict.texts);
       if (verdict.toolCalls) releasedToolCalls.push(...verdict.toolCalls);
+
+      // ── 🔴 THE NO-SILENT-SUCCESS INVARIANT. ────────────────────────────────
+      //
+      // A text-posture step that SUCCEEDED and RELEASED, but contributed
+      // neither text nor a tool call, would leave the snapshot carrying none of
+      // `textOutputs` / `toolCalls` / `textOutputWithheld`. The step is CHARGED,
+      // reports `succeeded`, and publishes literally nothing the app author can
+      // act on — no output, and no reason for its absence.
+      //
+      // 🔴 THIS IS A STRUCTURAL INVARIANT, NOT A THIRD POINT-FIX, AND THE
+      // HISTORY IS WHY. The same silent-success class has now been reached
+      // three times by three different routes, each closed individually and
+      // each closure opening the next:
+      //   1. `extractText` required non-empty `arguments` while
+      //      `extractToolCalls` did not — fixed by aligning them;
+      //   2. aligning them by DROPPING empty-argument calls made a no-argument
+      //      tool call vanish — fixed by normalising `''` to `'{}'`;
+      //   3. the shared predicate then dropped calls on the `id`/`name` charset
+      //      axes on BOTH sides at once, which is unrepairable by normalisation
+      //      (an unusable id cannot be invented).
+      // Enumerating drop reasons has failed three times, so this does not
+      // enumerate them: it asserts the OUTCOME the entry owes a block,
+      // whatever the entry's extractors do now or later.
+      //
+      // 🔴 SCOPED TO TEXT POSTURES DELIBERATELY. A `'none'`/media entry legitimately
+      // contributes no text here — `runStepOutputModeration` returns an empty
+      // released verdict for it — so applying this to every registered entry
+      // would fire on `convert-image` in any mixed workflow and report an
+      // absence that is correct.
+      //
+      // The reason is DISTINCT from the policy message on purpose: nothing was
+      // moderated here. See `TEXT_OUTPUT_UNPUBLISHABLE_MESSAGE`.
+      if (
+        postureRequiresTextExtraction(entry.moderationPosture) &&
+        verdict.texts.length === 0 &&
+        (verdict.toolCalls === undefined || verdict.toolCalls.length === 0)
+      ) {
+        withheldReason ??= TEXT_OUTPUT_UNPUBLISHABLE_MESSAGE;
+      }
     } else withheldReason ??= verdict.reason;
   }
 
