@@ -737,7 +737,10 @@ export type BlockWorkflowSnapshot = {
    * user-facing sentence saying why. TWO distinct causes land here:
    *
    *   1. WITHHELD — text WAS produced and is being kept back: a content-policy
-   *      hit, or a scanner error/timeout (the scan fails CLOSED).
+   *      hit, or any other fail-CLOSED scan outcome (scanner error or timeout,
+   *      no verdict at all, an over-cap payload, or requested labels that came
+   *      back missing or errored). Every one of those paths returns the SAME
+   *      message, so this cause is one string with several origins.
    *   2. UNPUBLISHABLE — the step SUCCEEDED and the scan RELEASED, but the
    *      entry's extractors could publish none of what came back (e.g. a
    *      provider tool-call `id` outside the published charset). Nothing was
@@ -759,9 +762,27 @@ export type BlockWorkflowSnapshot = {
    * which is NOT a contract. A consumer needing to branch on the difference is
    * the trigger to add a discriminated reason code — not before.
    *
-   * 🔴 CAUSE 2 IS GATED ON THE STEP'S OWN `succeeded` STATUS, so an in-flight or
-   * cancelled generation does NOT set this field. A block polling a healthy
-   * running workflow sees it absent, as it did before cause 2 existed.
+   * 🔴 ONLY CAUSE 2 IS STATUS-GATED, AND THE GATE READS THE STEP'S OWN
+   * `succeeded` STATUS — never the workflow's. CAUSE 1 IS NOT GATED AT ALL: in
+   * `steps/moderation.ts` the `succeeded` test guards the unpublishable branch
+   * only, and the withheld branch is the plain `else` beside it.
+   *
+   * So a CANCELLED generation CAN still set this field. The orchestrator returns
+   * whatever text it had already produced, that text is still scanned, and a hit
+   * still withholds it — `blocks.router.textOutputModeration.test.ts` pins
+   * exactly that, cancelling a workflow whose step succeeded and asserting the
+   * field IS set. A consumer that skips rendering `reason` on cancel would
+   * suppress a real content-policy explanation.
+   *
+   * A block polling a healthy in-flight generation does still see the field
+   * absent — but for a reason worth stating correctly rather than by status: a
+   * step that has produced no text YET can reach neither cause, because
+   * `screenGeneratedText` short-circuits to RELEASED on an empty text set, and
+   * cause 2 additionally needs `succeeded`.
+   *
+   * 🔴 THIS CLAUSE HAS NOW BEEN WRONG TWICE, both times by describing the FIELD
+   * when the code only ever gated ONE OF ITS TWO CAUSES. Before editing it
+   * again, check each cause against `steps/moderation.ts` separately.
    *
    * Independent of `textOutputs` rather than mutually exclusive: a workflow with
    * two text steps can release one and withhold the other, and both fields then
