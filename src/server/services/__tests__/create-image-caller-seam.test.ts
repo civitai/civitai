@@ -235,10 +235,14 @@ describe('repo-wide ledger — every file that writes an Image row outside `crea
    *
    * 🔴 STILL NOT A PROOF OF COMPLETENESS, and the names above say only what is checked.
    * Out of reach by construction: a dynamic member access (`db['image']['create']`), a
-   * table alias, an `INSERT` assembled from fragments, and anything outside `src/`
-   * (`packages/`, `apps/`, `prisma/`). This is a LEDGER OVER TWO NAMED SHAPES, not an
-   * exhaustive census, and it is worth having because those two shapes are the ones the
-   * repo actually uses.
+   * destructured handle (`const { image } = dbWrite; image.create(...)` — the receiver is
+   * then a bare identifier, not `<expr>.image`), a table alias, an `INSERT` assembled from
+   * fragments, and anything outside `src/` (`packages/`, `apps/`, `prisma/`). The
+   * destructured case was measured rather than assumed: widening the matcher to accept a
+   * bare `image` identifier as the receiver returns the SAME four Prisma files today, so
+   * it buys nothing and only widens the false-positive surface. This is a LEDGER OVER TWO
+   * NAMED SHAPES, not an exhaustive census, and it is worth having because those two
+   * shapes are the ones the repo actually uses.
    *
    * WHEN THIS GOES RED: a file was added to or removed from the set. Do not widen the
    * ledger to make it pass — decide whether the new writer should route through
