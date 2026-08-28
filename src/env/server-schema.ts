@@ -371,6 +371,21 @@ export const serverSchema = z
     // Base URL of the standalone moderator app (apps/moderator). Migrated /moderator/* routes redirect
     // here via the moderator catchall page during the transition.
     MODERATOR_APP_URL: z.url().default('https://moderator.civitai.com'),
+    // Server-to-server base for the moderator app, for callers that never hand the URL to a browser.
+    // SEPARATE from MODERATOR_APP_URL on purpose: that one also feeds the /moderator/* redirect's
+    // Location header, so it must stay publicly resolvable. Optional — unset, moderator-app.service.ts
+    // falls back to MODERATOR_APP_URL and nothing changes.
+    // '' is accepted as well as absent, and that is not sloppiness. This whole change is built so
+    // the app and the config that supplies this key can deploy in either order; a bare key added to
+    // a ConfigMap arrives as an EMPTY STRING, and a plain `z.url().optional()` rejects '' — which
+    // fails the WHOLE schema parse and the process refuses to boot. Turning a typo into an outage
+    // is the opposite of what the fallback is for. '' is falsy, so it takes the fallback branch.
+    MODERATOR_APP_INTERNAL_URL: z.union([z.url(), z.literal('')]).optional(),
+    // The narrow, inbound-only credential the moderator app accepts, and the one this app should
+    // present when calling it. OPTIONAL on purpose — see moderator-app.service.ts for why the
+    // fallback to WEBHOOK_TOKEN has to stay. (Named for the value, not for the direction of any one
+    // caller: it is one secret, and the sibling jobs that call in already use this name.)
+    MOD_INBOUND_TOKEN: z.string().optional(),
     UNAUTHENTICATED_DOWNLOAD: zc.booleanString,
     UNAUTHENTICATED_LIST_NSFW: zc.booleanString,
     LOGGING: commaDelimitedStringArray(),
