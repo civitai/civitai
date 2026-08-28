@@ -33,6 +33,7 @@ export type TourState = {
   activeTour?: TourKey | null;
   steps?: StepWithData[];
   returnUrl?: string;
+  stepBlocked: boolean;
 };
 
 type TourContextState = TourState & {
@@ -45,6 +46,7 @@ type TourContextState = TourState & {
   pauseTour: () => void;
   closeTour: (opts: { reason: TourEndReason }) => void;
   setSteps: (steps: StepWithData[]) => void;
+  setStepBlocked: (blocked: boolean) => void;
   completed?: boolean;
   run?: boolean;
   helpers?: StoreHelpers | null;
@@ -56,10 +58,12 @@ const TourContext = createContext<TourContextState>({
   paused: false,
   trigger: 'auto',
   currentStep: 0,
+  stepBlocked: false,
   runTour: () => null,
   pauseTour: () => null,
   closeTour: () => null,
   setSteps: () => null,
+  setStepBlocked: () => null,
   steps: [],
 });
 
@@ -92,6 +96,7 @@ export function ToursProvider({ children }: { children: React.ReactNode }) {
     activeTour: tourKey,
     currentStep: 0,
     steps: tourKey ? tourSteps[tourKey] ?? [] : [],
+    stepBlocked: false,
   }));
   const helpers = useRef<StoreHelpers | null>(null);
 
@@ -192,6 +197,10 @@ export function ToursProvider({ children }: { children: React.ReactNode }) {
     setState((old) => ({ ...old, steps }));
   };
 
+  const setStepBlocked = useCallback((blocked: boolean) => {
+    setState((old) => (old.stepBlocked === blocked ? old : { ...old, stepBlocked: blocked }));
+  }, []);
+
   useEffect(() => {
     if (isInitialLoading) return;
 
@@ -224,6 +233,7 @@ export function ToursProvider({ children }: { children: React.ReactNode }) {
         pauseTour,
         closeTour,
         setSteps,
+        setStepBlocked,
         helpers: helpers.current,
       }}
     >

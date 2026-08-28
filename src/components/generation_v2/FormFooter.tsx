@@ -661,7 +661,7 @@ interface SubmitButtonProps {
 }
 
 function SubmitButton({ isLoading: isSubmitting, onSubmit }: SubmitButtonProps) {
-  const { running, helpers } = useTourContext();
+  const { running, helpers, setStepBlocked } = useTourContext();
   const { selectedType } = useSelectedBuzzType();
   const { color } = useBuzzCurrencyConfig(selectedType);
 
@@ -677,6 +677,17 @@ function SubmitButton({ isLoading: isSubmitting, onSubmit }: SubmitButtonProps) 
   const balance = accounts.find((a) => a.type === selectedType)?.balance ?? 0;
   const insufficientBuzz = !isBuzzLoading && totalCost > 0 && balance < totalCost;
 
+  const submitBlocked =
+    isWhatIfLoading || isBuzzLoading || isError || !canEstimateCost || insufficientBuzz;
+
+  // A `hideFooter` step whose only way forward is clicking this button leaves the user
+  // stranded when the button is legitimately disabled. Reporting it gives the step its
+  // Next back, so the guards below do not have to be dropped.
+  useEffect(() => {
+    setStepBlocked(running && submitBlocked);
+    return () => setStepBlocked(false);
+  }, [running, submitBlocked, setStepBlocked]);
+
   const handleClick = () => {
     if (running) helpers?.next();
     onSubmit?.();
@@ -689,10 +700,7 @@ function SubmitButton({ isLoading: isSubmitting, onSubmit }: SubmitButtonProps) 
       className="h-full flex-1 px-2"
       color={color}
       loading={isSubmitting}
-      disabled={
-        !running &&
-        (isWhatIfLoading || isBuzzLoading || isError || !canEstimateCost || insufficientBuzz)
-      }
+      disabled={submitBlocked}
       onClick={handleClick}
     />
   );
