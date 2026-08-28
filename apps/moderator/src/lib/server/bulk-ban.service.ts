@@ -2,6 +2,7 @@ import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
 import { getClickhouse } from './clickhouse';
 import { clickhouseDate } from './clickhouse-date';
+import { usersByIds } from './users.service';
 
 // Retool's Bulk Ban. Two halves: a preflight + ban loop, and the ban-evasion queries that build the
 // list in the first place (registration IPs, email-domain clustering, accounts sharing an IP).
@@ -86,12 +87,17 @@ export async function getEmailDomains(userIds: number[]): Promise<DomainCluster[
 
 export type DomainAccount = { id: number; username: string | null; email: string | null };
 
+/** As on `IpAccounts`: the count the panel shows must be the domains' own, not the page size. */
+export type DomainAccounts = { accounts: DomainAccount[]; total: number };
+
 /**
  * Retool's `query15` — the domain twin of `getAccountsOnIps`, and the reason `getEmailDomains` is not
  * enough on its own: that one is scoped to the ids already pasted, so it can only ever COUNT a ring,
  * never grow one. This takes a domain and returns accounts not yet on the list.
  *
  * Already-banned accounts are excluded, matching Retool — the output is a candidate list, not a census.
+ * That is the deliberate difference from `getAccountsOnIps`, which marks them instead: this one grows a
+ * list to act on, that one is also read to see whether a ring has been actioned before.
  *
  * The domain expression and both null checks are matched character-for-character by
  * `User_email_domain_idx`; reword any of the three and this seq-scans `User` again.
@@ -99,18 +105,30 @@ export type DomainAccount = { id: number; username: string | null; email: string
 export async function getAccountsOnDomains(
   domains: string[],
   limit = 500
-): Promise<DomainAccount[]> {
+): Promise<DomainAccounts> {
   const cleaned = domains.map((d) => d.trim().replace(/^@/, '').toLowerCase()).filter(Boolean);
-  if (!cleaned.length) return [];
-  return dbRead
+  if (!cleaned.length) return { accounts: [], total: 0 };
+
+  // Both queries must carry the same three predicates verbatim, or the count describes a different
+  // set from the list — and the index stops covering whichever one drifted.
+  const scoped = dbRead
     .selectFrom('User')
-    .select(['id', 'username', 'email'])
     .where(sql<string>`lower(substring(email from '@(.+)$'))`, 'in', cleaned)
     .where('bannedAt', 'is', null)
-    .where('deletedAt', 'is', null)
-    .orderBy('id')
-    .limit(limit)
-    .execute();
+    .where('deletedAt', 'is', null);
+
+  const [accounts, totals] = await Promise.all([
+    scoped
+      .select(['id', 'username', 'email'])
+      // Newest first, for the reason spelled out on `getAccountsOnIps`: ids ascend with age, so
+      // `orderBy('id')` spent the cap on the oldest accounts a disposable domain ever registered.
+      .orderBy('id', 'desc')
+      .limit(limit)
+      .execute(),
+    scoped.select(({ fn }) => fn.countAll<string>().as('total')).executeTakeFirst(),
+  ]);
+
+  return { accounts, total: Number(totals?.total ?? 0) };
 }
 
 export type Tipper = { userId: number; tips: number; total: number };
@@ -160,27 +178,86 @@ export async function getTippersTo(
   }));
 }
 
-export type IpAccount = { userId: number; registeredAt: string | null };
+export type IpAccount = {
+  userId: number;
+  registeredAt: string | null;
+  username: string | null;
+  /** `gone` is an id ClickHouse still holds a registration for and Postgres has no account for.
+   *  Only `active` can be banned, and the panel adds only those to the list. */
+  status: 'active' | 'banned' | 'deleted' | 'gone';
+};
+
+/** `total` is what the IPs actually carry, which `accounts.length` cannot say once the cap bites;
+ *  `offset` is where this page starts, so the panel can walk past it. */
+export type IpAccounts = { accounts: IpAccount[]; total: number; offset: number; limit: number };
 
 /**
  * Retool's `UsersByIp` — the step that grows a list from one account to a ring. Capped: an IP behind a
  * carrier NAT can carry thousands of unrelated registrations, and a moderator must not be handed that
  * as a ban list.
+ *
+ * 🔴 **Newest first, and the cap is reported rather than hidden.** This ordered by `targetUserId`,
+ * which ascends with age — so the cap kept the OLDEST registrations and dropped everything newer, on
+ * a list whose entire purpose is a ring that is still registering accounts. On one reported IP that
+ * meant 500 of 908 shown, the visible half ending sixteen months before the newest registration.
+ * `total` exists so the panel can say "500 of 908" instead of deriving a count from `.length` and
+ * stating the cap as the answer.
+ *
+ * Already-banned accounts are MARKED, not filtered. Filtering would make the list drain as it is
+ * worked — but it would also hide that a ring has been actioned before, which is what a moderator
+ * reads it for.
+ *
+ * 🔴 **Marking is why this PAGES.** Filtering is what would otherwise make the cap survivable: ban
+ * the visible rows, re-run, get the next ones. Marking removes that, so without an offset the same
+ * 500 rows come back forever and the rest of the ring is unreachable by any sequence of actions —
+ * the reported bug, merely relocated. The two decisions are a pair; do not keep the marking and
+ * drop the paging.
+ *
+ * `targetUserId` is the ORDER's tiebreaker, not decoration: bot registrations share a timestamp to
+ * the second, and an unstable sort silently repeats and skips rows across pages.
  */
-export async function getAccountsOnIps(ips: string[], limit = 500): Promise<IpAccount[]> {
-  if (!ips.length) return [];
+export async function getAccountsOnIps(
+  ips: string[],
+  { limit = 500, offset = 0 }: { limit?: number; offset?: number } = {}
+): Promise<IpAccounts> {
+  if (!ips.length) return { accounts: [], total: 0, offset: 0, limit };
   const escaped = ips.map((ip) => `'${ip.replace(/'/g, "''")}'`).join(',');
-  const rows = await getClickhouse().$query<{ targetUserId: string; time: string }>(`
-    SELECT targetUserId, min(time) AS time
-    FROM default.userActivities
-    WHERE ip IN (${escaped})
-      AND type = 'Registration'
-    GROUP BY targetUserId
-    ORDER BY targetUserId
-    LIMIT ${limit}
-  `);
-  return rows.map((r) => ({
-    userId: Number(r.targetUserId),
-    registeredAt: r.time ? clickhouseDate(r.time) : null,
-  }));
+  const where = `WHERE ip IN (${escaped}) AND type = 'Registration'`;
+
+  const [rows, totals] = await Promise.all([
+    getClickhouse().$query<{ targetUserId: string; time: string }>(`
+      SELECT targetUserId, min(time) AS time
+      FROM default.userActivities
+      ${where}
+      GROUP BY targetUserId
+      ORDER BY time DESC, targetUserId DESC
+      LIMIT ${limit} OFFSET ${offset}
+    `),
+    getClickhouse().$query<{ total: string }>(`
+      SELECT uniqExact(targetUserId) AS total FROM default.userActivities ${where}
+    `),
+  ]);
+
+  const byId = await usersByIds(rows.map((r) => Number(r.targetUserId)));
+  return {
+    accounts: rows.map((r) => {
+      const userId = Number(r.targetUserId);
+      const user = byId.get(userId);
+      return {
+        userId,
+        registeredAt: r.time ? clickhouseDate(r.time) : null,
+        username: user?.username ?? null,
+        status: !user
+          ? ('gone' as const)
+          : user.bannedAt
+          ? ('banned' as const)
+          : user.deletedAt
+          ? ('deleted' as const)
+          : ('active' as const),
+      };
+    }),
+    total: Number(totals[0]?.total ?? 0),
+    offset,
+    limit,
+  };
 }
