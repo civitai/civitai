@@ -1,11 +1,20 @@
 import { readFileSync, readdirSync } from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
+import { GENERATION_TAB_KEYS } from '~/components/ImageGeneration/GenerationTabs';
 import { tourScrollBlock } from '~/components/Tours/tour-scroll';
 import { tourSteps } from '~/components/Tours/tours';
 
 const SRC = path.resolve(__dirname, '../../..');
 const TOUR_DEFINITIONS = path.join(SRC, 'components', 'Tours', 'tours');
+
+// `gen:reset` and `gen:results` are rendered but targeted by no step. `${target}` and
+// `${tourTarget}` are the naive regex matching its own capture group against a template
+// literal selector (GenerationForm.tsx, RemixMenu.tsx) rather than a literal attribute, and
+// `([^` is the same regex matching its own source text in joyride-callback.ts. None of these
+// is this guard's business to fix — but listing them means the NEXT orphaned attribute fails
+// here instead of quietly joining them.
+const UNTARGETED_ATTRIBUTES = ['gen:reset', 'gen:results', '${target}', '${tourTarget}', '([^'];
 
 function sourceFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -40,19 +49,65 @@ describe('tour steps point at something', () => {
    */
   it('names a data-tour key that some component still renders', () => {
     const rendered = sourceFiles(SRC).map((file) => readFileSync(file, 'utf-8'));
-    // `data-tour={`gen:${key}`}` in GenerationTabs builds its keys from the
-    // panel's tab names, so no file holds the whole string. Anything under such
-    // a prefix is out of this guard's reach — today that is the `gen:` half of
-    // the generation panel, and `model:`/`post:`/`auction:` stay fully covered.
-    const computedPrefixes = rendered.flatMap((source) =>
-      [...source.matchAll(/data-tour=\{`([^`$]+)\$\{/g)].map((m) => m[1])
-    );
+    // `gen:queue`/`gen:feed`/`gen:generate` are template-literal-built (see the `gen:
+    // namespace` block below), so no source file holds them as a literal string — this
+    // is a narrow, enumerated exemption for exactly those three, not the old blanket
+    // "anything starting with gen:" one this guard used to carry.
     const orphans = [...new Set(tourTargetKeys.map((t) => t.key))].filter(
       (key) =>
         !rendered.some((source) => source.includes(`'${key}'`) || source.includes(`"${key}"`)) &&
-        !computedPrefixes.some((prefix) => key?.startsWith(prefix))
+        !GENERATION_TAB_KEYS.some((tab) => key === `gen:${tab}`)
     );
     expect(orphans).toEqual([]);
+  });
+});
+
+describe('the gen: namespace', () => {
+  /**
+   * `GenerationTabs` builds `data-tour={`gen:${key}`}` from the tab map, so no source
+   * file holds the literal string and the orphan check above cannot see these at all.
+   */
+  it('names a tab that GenerationTabs actually renders', () => {
+    const genTabTargets = tourTargetKeys
+      .map((t) => t.key)
+      .filter((key): key is string => !!key && key.startsWith('gen:'))
+      .filter(
+        (key) =>
+          ![
+            'gen:start',
+            'gen:terms',
+            'gen:prompt',
+            'gen:remix',
+            'gen:remix-menu',
+            'gen:submit',
+            'gen:buzz',
+            'gen:select',
+            'gen:post',
+          ].includes(key)
+      );
+
+    const unknown = genTabTargets.filter(
+      (key) => !GENERATION_TAB_KEYS.some((tab) => key === `gen:${tab}`)
+    );
+
+    expect(unknown).toEqual([]);
+  });
+
+  it('renders a tab for every gen: tab target a tour names', () => {
+    expect([...GENERATION_TAB_KEYS]).toEqual(expect.arrayContaining(['queue', 'feed']));
+  });
+});
+
+describe('data-tour attributes nothing targets', () => {
+  it('has not grown since it was last looked at', () => {
+    const rendered = sourceFiles(SRC).map((file) => readFileSync(file, 'utf-8'));
+    const declared = new Set(
+      rendered.flatMap((source) => [...source.matchAll(/data-tour="([^"]+)"/g)].map((m) => m[1]))
+    );
+    const targeted = new Set(tourTargetKeys.map((t) => t.key));
+    const untargeted = [...declared].filter((key) => !targeted.has(key)).sort();
+
+    expect(untargeted).toEqual([...UNTARGETED_ATTRIBUTES].sort());
   });
 });
 
