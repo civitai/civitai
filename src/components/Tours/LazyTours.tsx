@@ -11,20 +11,23 @@ import Joyride, {
 import { IsClient } from '~/components/IsClient/IsClient';
 import { TourPopover } from '~/components/Tour/TourPopover';
 import { useTourContext } from '~/components/Tours/ToursProvider';
+import { endReasonFor, nextEvents, tourTargetKey } from '~/components/Tours/joyride-callback';
 import type { StepData } from '~/types/tour';
 import { tourScrollBlock } from '~/components/Tours/tour-scroll';
 import { tourOverlayZIndex } from '~/shared/constants/app-layout.constants';
+import { emitTourEnd, emitTourStart, emitTourStep } from '~/utils/faro/tour';
 
 const completeStatus: string[] = [STATUS.SKIPPED, STATUS.FINISHED];
-const nextEvents: string[] = [EVENTS.STEP_AFTER, EVENTS.TARGET_NOT_FOUND];
 
 export default function LazyTours({ getHelpers }: Pick<JoyrideProps, 'getHelpers'>) {
   const colorScheme = useComputedColorScheme('dark');
-  const { closeTour, pauseTour, runTour, activeTour, steps, currentStep, run } = useTourContext();
+  const { closeTour, pauseTour, runTour, activeTour, steps, currentStep, run, trigger } =
+    useTourContext();
 
   const handleJoyrideCallback = useCallback<Callback>(
     async (data) => {
       const { status, type, action, index, step, lifecycle } = data;
+      const key = activeTour;
 
       if (action === ACTIONS.UPDATE && lifecycle === LIFECYCLE.TOOLTIP) {
         const target = document.querySelector(step?.target as string);
@@ -36,39 +39,63 @@ export default function LazyTours({ getHelpers }: Pick<JoyrideProps, 'getHelpers
         window.dispatchEvent(new Event('resize'));
       }
 
-      if (type === EVENTS.TOUR_END && completeStatus.includes(status)) {
-        closeTour({ reason: status === STATUS.SKIPPED ? 'skipped' : 'finished' });
+      if ((type === EVENTS.TOUR_END && completeStatus.includes(status)) || action === ACTIONS.CLOSE) {
+        const reason = endReasonFor(status, action);
+        if (key) emitTourEnd({ key, index, reason });
+        closeTour({ reason });
         return;
       }
 
-      if (action === ACTIONS.CLOSE) {
-        closeTour({ reason: 'closed' });
+      // A target Joyride could not find. Advance past it as before, but record it —
+      // the run of `resolved: false` events is the only way a step that renders for
+      // nobody becomes visible.
+      if (type === EVENTS.TARGET_NOT_FOUND) {
+        if (key) emitTourStep({ key, index, target: tourTargetKey(step?.target), resolved: false });
+        runTour({ step: index + 1 });
         return;
       }
 
       if (nextEvents.includes(type)) {
         const isPrevAction = action === ACTIONS.PREV;
         const nextStepIndex = index + (isPrevAction ? -1 : 1);
+        const stepData = step.data as StepData | undefined;
+        const hook = isPrevAction ? stepData?.onPrev : stepData?.onNext;
+        let resolved = true;
+        const startedAt = Date.now();
 
-        try {
-          if (isPrevAction && step.data?.onPrev) {
-            pauseTour();
-            await (step.data as StepData)?.onPrev?.();
-          } else if (!isPrevAction && step.data?.onNext) {
-            pauseTour();
-            await (step.data as StepData)?.onNext?.();
+        if (hook) {
+          pauseTour();
+          try {
+            await hook();
+          } catch {
+            // A hook that rejected used to END the tour and persist it as completed,
+            // so a slow load cost the user the tour with no error and no second
+            // chance. Advancing leaves the tour walkable on whatever did render.
+            resolved = false;
           }
-        } catch {
-          closeTour({ reason: 'failed' });
-          return;
         }
+
+        if (key)
+          emitTourStep({
+            key,
+            index,
+            target: tourTargetKey(step?.target),
+            resolved,
+            ...(hook ? { waitMs: Date.now() - startedAt } : {}),
+          });
 
         runTour({ step: nextStepIndex });
       } else if (type === EVENTS.STEP_BEFORE || type === EVENTS.TOUR_START) {
+        // Emitted here rather than from `runTour` so `stepCount` is the count AFTER
+        // `setSteps` filtering — a conditionally-cut tour is otherwise not comparable
+        // with a full one.
+        if (type === EVENTS.TOUR_START && key)
+          emitTourStart({ key, trigger, stepCount: steps?.length ?? 0 });
+
         await step.data?.onBeforeStart?.();
       }
     },
-    [closeTour, pauseTour, runTour]
+    [closeTour, pauseTour, runTour, activeTour, steps, trigger]
   );
 
   return (
