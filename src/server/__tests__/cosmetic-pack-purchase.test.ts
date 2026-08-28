@@ -180,10 +180,38 @@ describe('computePackPayouts', () => {
     expect(total).toBeLessThanOrEqual(Math.floor(PACK_PRICE * 0.7));
   });
 
-  it('splits a foreign members pool with its own reseller rather than the pack creator', () => {
+  it('pays the pack creator a seller share out of a foreign member they resell', () => {
     const { components } = computePackPayouts({
       packPrice: PACK_PRICE,
       packCreatorId: PACK_CREATOR,
+      members: [foreign()],
+      // The pack creator resells cosmetic 62 at a snapshotted 20%.
+      resaleShareByCosmeticId: new Map([[62, 20]]),
+    });
+    const seller = components.find((c) => c.userId === PACK_CREATOR);
+    const creator = components.find((c) => c.userId === FOREIGN_CREATOR);
+    expect(seller?.amount).toBe(Math.floor(2100 * 0.2));
+    expect(creator?.amount).toBe(Math.floor(2100 * 0.7) - Math.floor(2100 * 0.2));
+  });
+
+  it('reads the seller share from the resale snapshot, not the members current listing', () => {
+    const { components } = computePackPayouts({
+      packPrice: PACK_PRICE,
+      packCreatorId: PACK_CREATOR,
+      // Current listing offers 50%; the pack creator listed it for resale at 20%.
+      members: [foreign({ listingMeta: { purchases: 0, acceptsBlueBuzz: true, sellerShare: 50 } })],
+      resaleShareByCosmeticId: new Map([[62, 20]]),
+    });
+    const seller = components.find((c) => c.userId === PACK_CREATOR);
+    expect(seller?.amount).toBe(Math.floor(2100 * 0.2));
+  });
+
+  it('pays the foreign creator the whole pool when the pack creator does not resell it', () => {
+    const { components } = computePackPayouts({
+      packPrice: PACK_PRICE,
+      packCreatorId: PACK_CREATOR,
+      // A listing added by someone other than its creator is NOT a reseller —
+      // resale is by reference, so only a resale row grants a share.
       members: [
         foreign({
           addedById: RESELLER,
@@ -191,10 +219,8 @@ describe('computePackPayouts', () => {
         }),
       ],
     });
-    const seller = components.find((c) => c.userId === RESELLER);
-    const creator = components.find((c) => c.userId === FOREIGN_CREATOR);
-    expect(seller?.amount).toBe(Math.floor(2100 * 0.2));
-    expect(creator?.amount).toBe(Math.floor(2100 * 0.7) - Math.floor(2100 * 0.2));
+    expect(components.map((c) => c.userId)).toEqual([FOREIGN_CREATOR]);
+    expect(components[0]?.amount).toBe(Math.floor(2100 * 0.7));
   });
 
   it('does not pay the pack creator twice for their own members', () => {
