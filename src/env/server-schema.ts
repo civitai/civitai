@@ -909,7 +909,7 @@ export const serverSchema = z
     // the callback falls back to NEXTAUTH_URL (the public origin) so the feature
     // keeps working before infra sets the in-cluster value ahead of un-dark.
     AGENT_REVIEW_CALLBACK_BASE_URL: z.string().optional(),
-    // Base URL of the verify-runner screenshot service (warm Playwright Chromium)
+    // Base URL of the screenshot-runner service (warm Playwright Chromium)
     // used to autogenerate a marketplace screenshot for an approved App Block that
     // shipped no publisher screenshots. In-cluster service, e.g.
     // http://<service>.<namespace>.svc.cluster.local:8080. OPTIONAL — when
@@ -917,8 +917,8 @@ export const serverSchema = z
     BLOCK_SCREENSHOT_RUNNER_URL: z.string().url().optional(),
 
     // App Blocks W1 (publish-request flow). S3-compatible storage for
-    // dev-uploaded ZIP bundles. Production points at ssd-minio-backups
-    // MinIO with credentials scoped to the app-block-bundles bucket only.
+    // dev-uploaded ZIP bundles. Production points at an in-cluster MinIO
+    // tenant with credentials scoped to the app-block-bundles bucket only.
     // All optional so envs without the publish-request feature still boot.
     //
     // BUNDLE_S3_ENDPOINT             e.g. http://<minio-service>.<namespace>.svc.cluster.local

@@ -2765,7 +2765,7 @@ model AppOwnershipTransfer {
 /// W1 v0 publish request — every version of every app goes through the
 /// moderator review queue. The dev uploads a ZIP via /apps/submit (first
 /// version) or /apps/<slug>/submit-version (subsequent). civitai-web
-/// stores the bundle on ssd-minio-backups MinIO, extracts + validates the
+/// stores the bundle on the in-cluster MinIO tenant, extracts + validates the
 /// manifest, computes diff summaries, and inserts a row here in
 /// status='pending'. A mod approves or rejects via /apps/review.
 ///
