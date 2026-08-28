@@ -601,7 +601,31 @@ export async function attachModeratedStepTextOutputs<T extends ModeratedTextOutp
 
   const released: string[] = [];
   const releasedToolCalls: BlockStepToolCall[] = [];
-  let withheldReason: string | undefined;
+
+  // ── 🔴 TWO REASON CHANNELS, NOT ONE, AND THE MERGE BELOW GIVES POLICY
+  //    PRECEDENCE. These are SEMANTICALLY OPPOSED values — one says the content
+  //    failed Civitai's policy, the other says explicitly that it did NOT — and
+  //    a single first-wins slot decided between them by STEP ORDER.
+  //
+  //    Measured on the pre-fix code, same content, scanner tripping `Young`:
+  //      [unpublishable, policy-hit] → "No content policy issue was found"  ← WRONG
+  //      [policy-hit, unpublishable] → "did not pass Civitai's content policy"
+  //    Opposite verdicts for the same workflow, chosen by which step came first.
+  //
+  //    🔴 BE EXACT ABOUT THE SEVERITY: the offending text was WITHHELD in both
+  //    orderings. This is a REASON-REPORTING defect, not a content leak — the
+  //    scan's release/withhold decision is per-step and was never in question.
+  //    What was wrong is the sentence the app author reads, and it was wrong in
+  //    the direction that matters: it told them nothing was moderated when
+  //    something was.
+  //
+  //    This was harmless until the round that introduced
+  //    `TEXT_OUTPUT_UNPUBLISHABLE_MESSAGE`, because until then every candidate
+  //    value was the single constant `TEXT_OUTPUT_WITHHELD_MESSAGE` and
+  //    first-wins could not pick a wrong one. Adding a second, opposed value to
+  //    an existing first-wins slot is what created the defect.
+  let policyWithheldReason: string | undefined;
+  let unpublishableReason: string | undefined;
 
   for (const step of workflow.steps ?? []) {
     // Only REGISTERED step types have a declared posture. Everything else —
@@ -655,15 +679,48 @@ export async function attachModeratedStepTextOutputs<T extends ModeratedTextOutp
       //
       // The reason is DISTINCT from the policy message on purpose: nothing was
       // moderated here. See `TEXT_OUTPUT_UNPUBLISHABLE_MESSAGE`.
+      //
+      // 🔴 GATED ON THE STEP'S OWN TERMINAL STATUS, AND THAT GATE IS THE WHOLE
+      // DIFFERENCE BETWEEN A DIAGNOSTIC AND A LIE. This function runs on EVERY
+      // `pollWorkflow` and on `cancelWorkflow` — see this module's header — and
+      // the loop above iterates `workflow.steps` with no status filter of its
+      // own. A queued/processing chat step has no `output`, so `extractText`
+      // returns `[]` and the verdict releases empty, which is EXACTLY the shape
+      // this invariant fires on. Without the gate, a block polling a perfectly
+      // healthy in-flight generation was told, for the entire duration of that
+      // generation, that the response had "completed" with nothing to show —
+      // and a user-cancelled workflow got the same. Measured before this gate:
+      // a `processing` workflow and a `canceled` workflow both returned the
+      // message.
+      //
+      // `'succeeded'` and nothing else. The other terminal states —
+      // `failed` / `expired` / `canceled` — legitimately produce no output, and
+      // their absence is already explained by the workflow's own status; firing
+      // here would replace a correct explanation with a wrong one. The absent
+      // field is the right answer for every non-succeeded state, and it is what
+      // this path did before the invariant existed.
+      //
+      // Reading a `status` the orchestrator did not send yields `undefined`,
+      // which fails this test and therefore falls back to the pre-invariant
+      // behaviour (no field). That is the safe direction: silence, not a
+      // fabricated claim about a step whose state we could not read.
       if (
+        step.status === 'succeeded' &&
         postureRequiresTextExtraction(entry.moderationPosture) &&
         verdict.texts.length === 0 &&
         (verdict.toolCalls === undefined || verdict.toolCalls.length === 0)
       ) {
-        withheldReason ??= TEXT_OUTPUT_UNPUBLISHABLE_MESSAGE;
+        unpublishableReason ??= TEXT_OUTPUT_UNPUBLISHABLE_MESSAGE;
       }
-    } else withheldReason ??= verdict.reason;
+    } else policyWithheldReason ??= verdict.reason;
   }
+
+  // 🔴 POLICY WINS. A real content-policy withhold must never be masked by a
+  // sibling step's extraction failure: the two need different fixes, and only
+  // one of them is the app author's to make. Within each kind the merge stays
+  // first-wins, which is the pre-existing per-kind semantics — the change is
+  // that the two kinds no longer compete for one slot.
+  const withheldReason = policyWithheldReason ?? unpublishableReason;
 
   return {
     ...(rest as T),

@@ -534,10 +534,23 @@ export const TEXT_OUTPUT_WITHHELD_MESSAGE =
  * withhold without matching on the string, which is not a contract. If a
  * consumer ever needs to branch on the difference, that is the point to add a
  * discriminated reason code — not before.
+ *
+ * 🔴 IT SAYS "A STEP IN THIS RESPONSE", NOT "THIS RESPONSE", AND THAT IS NOT
+ * PEDANTRY. The condition is per-STEP; the field it lands in is per-SNAPSHOT.
+ * A workflow with two text steps can publish one and fail to publish the
+ * other, so the snapshot legitimately carries `textOutputs` AND this reason at
+ * once (`workflow.schema` documents that pairing). The earlier wording — "This
+ * response completed but contained nothing this app could display" — was then
+ * flatly contradicted by the `textOutputs` sitting beside it in the same
+ * object. Measured: a snapshot carrying `textOutputs: ["hello world"]` and a
+ * sentence asserting the response contained nothing.
+ *
+ * Any future reason written into a per-snapshot field must describe a
+ * per-snapshot fact, or scope itself the way this one now does.
  */
 export const TEXT_OUTPUT_UNPUBLISHABLE_MESSAGE =
-  'This response completed but contained nothing this app could display. No content policy ' +
-  'issue was found; the model’s output did not include a usable text or tool-call result.';
+  'A step in this response completed but produced nothing this app could display. No content ' +
+  'policy issue was found; the model’s output did not include a usable text or tool-call result.';
 
 /**
  * How long to wait for the scan before giving up and FAILING CLOSED.

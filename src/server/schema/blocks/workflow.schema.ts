@@ -733,17 +733,40 @@ export type BlockWorkflowSnapshot = {
    */
   textOutputs?: string[];
   /**
-   * Set when generated text WAS produced but is being withheld — a content-policy
-   * hit, or a scanner error/timeout (the scan fails CLOSED).
+   * Set when a text-posture step produced nothing the block can be given, with a
+   * user-facing sentence saying why. TWO distinct causes land here:
    *
-   * `reason` is a user-facing message, deliberately generic: it does not name the
-   * labels that triggered. The triggering labels + scores go to the per-app
-   * trigger log instead, which is where the actionable signal lives (an app whose
-   * outputs trigger constantly is telling you about its system prompt).
+   *   1. WITHHELD — text WAS produced and is being kept back: a content-policy
+   *      hit, or a scanner error/timeout (the scan fails CLOSED).
+   *   2. UNPUBLISHABLE — the step SUCCEEDED and the scan RELEASED, but the
+   *      entry's extractors could publish none of what came back (e.g. a
+   *      provider tool-call `id` outside the published charset). Nothing was
+   *      moderated in this case, and the message says so explicitly.
+   *
+   * 🔴 AN EARLIER VERSION OF THIS DOC DESCRIBED ONLY CAUSE 1 — "generated text
+   * WAS produced but is being withheld" — and both halves of that sentence are
+   * FALSE on cause 2: no text was produced, and no policy or scanner event
+   * occurred. This is the doc the `@civitai/app-sdk` mirror-writer and block
+   * authors read, so a consumer branching on it was being told the wrong thing.
+   * If a third cause is ever added, correct this list in the same change.
+   *
+   * `reason` is deliberately generic: it does not name the labels that
+   * triggered. The triggering labels + scores go to the per-app trigger log
+   * instead, which is where the actionable signal lives (an app whose outputs
+   * trigger constantly is telling you about its system prompt).
+   *
+   * 🔴 THE TWO CAUSES ARE NOT MACHINE-SEPARABLE without matching on the string,
+   * which is NOT a contract. A consumer needing to branch on the difference is
+   * the trigger to add a discriminated reason code — not before.
+   *
+   * 🔴 CAUSE 2 IS GATED ON THE STEP'S OWN `succeeded` STATUS, so an in-flight or
+   * cancelled generation does NOT set this field. A block polling a healthy
+   * running workflow sees it absent, as it did before cause 2 existed.
    *
    * Independent of `textOutputs` rather than mutually exclusive: a workflow with
    * two text steps can release one and withhold the other, and both fields then
-   * appear.
+   * appear. Because of that pairing the `reason` is scoped to "a step in this
+   * response", never to the response as a whole.
    */
   textOutputWithheld?: { reason: string };
   /**
@@ -759,8 +782,19 @@ export type BlockWorkflowSnapshot = {
    * 🔴 WHY PUBLISHING THESE IS NOT A HOLE IN THE SCAN, since the objects
    * themselves are never handed to a scanner: the entry's `extractText` returns
    * every `arguments` string that appears here, so the released verdict was
-   * computed over exactly that prose, and registry clause 8b fails the build if
-   * an entry ever breaks that containment. The tool NAME is not scanned and does
+   * computed over exactly that prose.
+   *
+   * 🔴 WHAT ENFORCES THAT, STATED AT ITS REAL STRENGTH. For `chat-completion`
+   * the guarantee is STRUCTURAL — both extractors derive from one shared
+   * predicate, so they cannot disagree. Registry clause 8b is a load-time
+   * BACKSTOP against an entry re-splitting them, and it is only as wide as the
+   * shapes its `canonicalOutputFor` sample exercises: a re-split on an axis the
+   * sample does not cover would still pass. An earlier version of this line said
+   * clause 8b "fails the build if an entry ever breaks that containment", which
+   * is wider than the implementation — the same unscoped overclaim corrected in
+   * `steps/moderation.ts` and `steps/chat-completion.step.ts`. Do not restate it.
+   *
+   * The tool NAME is not scanned and does
    * not need to be — it is pattern-bounded to `[A-Za-z0-9_-]` at both the param
    * schema and the extractor, so it cannot carry prose. Widening that charset
    * would make the name a free-text surface and is a moderation change, not a

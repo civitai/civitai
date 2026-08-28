@@ -118,12 +118,33 @@ const CHAT_TYPE = 'fixtureChat';
 type FixtureParams = { value: number };
 const fixtureParamSchema = z.object({ value: z.number().int().min(1).max(10) }).strict();
 
-/** An orchestrator-shaped COMPLETED chat step, as it arrives on a workflow. */
+/**
+ * An orchestrator-shaped COMPLETED chat step, as it arrives on a workflow.
+ *
+ * 🔴 `status` IS PART OF THE SHAPE AND WAS MISSING, which is exactly how the
+ * no-silent-success invariant shipped without a status gate. `WorkflowStep.status`
+ * is REQUIRED (non-optional) on the generated `@civitai/client` type, so a
+ * fixture omitting it is not orchestrator-shaped at all — and every test built on
+ * it was blind to the difference between a step that SUCCEEDED with no output and
+ * one that had simply not run yet. Keep it on every step fixture, and use
+ * `runningChatStep` below when a non-terminal step is what the case is about.
+ */
 function chatStep(content = GENERATED_TEXT) {
   return {
     $type: CHAT_TYPE,
+    status: 'succeeded',
     output: { choices: [{ message: { content } }] },
   };
+}
+
+/**
+ * A chat step that has NOT produced output yet — queued or mid-flight.
+ *
+ * This is the shape `pollWorkflow` sees for most of a generation's life, and the
+ * shape `cancelWorkflow` sees for a user-cancelled one.
+ */
+function runningChatStep(status: 'processing' | 'canceled' | 'failed' = 'processing') {
+  return { $type: CHAT_TYPE, status };
 }
 
 /** The model-written argument string used by the tool-call cases below. */
@@ -133,6 +154,7 @@ const TOOL_ARGUMENTS = '{"query":"the model chose this query","limit":1}';
 function toolCallStep(args = TOOL_ARGUMENTS) {
   return {
     $type: CHAT_TYPE,
+    status: 'succeeded',
     output: {
       choices: [
         {
@@ -1893,6 +1915,7 @@ describe('no-silent-success invariant', () => {
   function realChatToolCall(call: Record<string, unknown>) {
     return {
       $type: REAL_CHAT,
+      status: 'succeeded',
       output: { choices: [{ finishReason: 'tool_calls', message: { tool_calls: [call] } }] },
     };
   }
@@ -1920,7 +1943,11 @@ describe('no-silent-success invariant', () => {
     },
     {
       label: 'a succeeded response carrying no publishable field at all',
-      step: { $type: REAL_CHAT, output: { choices: [{ finishReason: 'stop', message: {} }] } },
+      step: {
+        $type: REAL_CHAT,
+        status: 'succeeded',
+        output: { choices: [{ finishReason: 'stop', message: {} }] },
+      },
     },
   ];
 
@@ -1979,6 +2006,125 @@ describe('no-silent-success invariant', () => {
     expect(snapshot.textOutputWithheld).toEqual({ reason: TEXT_OUTPUT_WITHHELD_MESSAGE });
   });
 
+  // ───────────────────────────────────────────────────────────────────────────
+  // 🔴 F1 — the invariant must not fire on a step that has not finished.
+  //
+  // `attachModeratedStepTextOutputs` runs on EVERY `pollWorkflow` and on
+  // `cancelWorkflow`. A queued/processing step has no `output`, so `extractText`
+  // returns `[]` and the verdict releases empty — the exact shape the invariant
+  // fires on. Before the status gate, a block polling a healthy in-flight
+  // generation was told for its whole duration that the response had
+  // "completed" with nothing to show, and a cancelled one got the same.
+  //
+  // Every case here is paired with the succeeded-and-unpublishable cases above,
+  // which are the positive control: if the gate were widened to fire on any
+  // status, those still pass, so these are what pin the difference.
+  // ───────────────────────────────────────────────────────────────────────────
+  for (const status of ['processing', 'canceled', 'failed'] as const) {
+    it(`🔴 NO reason on a step that is not succeeded — ${status}`, async () => {
+      scannerReturns(scanOutput([]));
+
+      const snapshot = await attachModeratedStepTextOutputs(
+        { workflowId: 'wf-1', status: status as 'processing' },
+        workflowWith(runningChatStep(status)),
+        CTX
+      );
+
+      // The pre-invariant behaviour, and the correct one: an absent field.
+      // A non-succeeded step's missing output is already explained by its own
+      // status; claiming it "completed" with nothing is a fabrication.
+      expect(snapshot.textOutputWithheld).toBeUndefined();
+      expect(snapshot.textOutputs).toBeUndefined();
+      expect(snapshot.toolCalls).toBeUndefined();
+    });
+  }
+
+  it('🔴 a step with NO status at all gets no reason — unreadable state fails to silence', async () => {
+    scannerReturns(scanOutput([]));
+
+    const snapshot = await attachModeratedStepTextOutputs(
+      { workflowId: 'wf-1', status: 'succeeded' as const },
+      // No `status` key — the shape every fixture in this file used to have.
+      workflowWith({ $type: REAL_CHAT }),
+      CTX
+    );
+
+    expect(snapshot.textOutputWithheld).toBeUndefined();
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // 🔴 F2 — a policy withhold must never be masked by a sibling's extraction
+  // failure, IN EITHER STEP ORDER.
+  //
+  // The reason slot was first-wins, and this round put two semantically OPPOSED
+  // values into it. Measured on the pre-fix code, same content, same scanner
+  // verdict, differing only in step order:
+  //   [unpublishable, policy-hit] → "No content policy issue was found"  ← WRONG
+  //   [policy-hit, unpublishable] → "did not pass Civitai's content policy"
+  //
+  // 🔴 BOTH ORDERINGS ARE REQUIRED. `A POLICY WITHHOLD KEEPS ITS OWN REASON`
+  // above uses ONE step and therefore cannot see this defect at all — with a
+  // single step there is no second candidate to win the slot. A test that
+  // cannot distinguish the fixed code from the broken code is not coverage.
+  //
+  // NOTE ON SEVERITY, so nobody reads this as a moderation bypass: the flagged
+  // text is WITHHELD in both orderings. Only the sentence explaining it was
+  // wrong. That is a diagnosability defect, and it pointed the app author away
+  // from the real cause.
+  // ───────────────────────────────────────────────────────────────────────────
+  for (const [label, steps] of [
+    ['unpublishable FIRST', ['unpublishable', 'policy'] as const],
+    ['policy-hit FIRST', ['policy', 'unpublishable'] as const],
+  ] as const) {
+    it(`🔴 a POLICY withhold wins the reason slot — ${label}`, async () => {
+      // The scanner trips on any scanned text. The unpublishable step
+      // contributes none, so only the policy step's text is ever scanned.
+      scannerReturns(scanOutput(['Young']));
+
+      const workflow = workflowWith(
+        ...steps.map((kind) =>
+          kind === 'policy'
+            ? realChatToolCall(GOOD_CALL)
+            : realChatToolCall({ ...GOOD_CALL, id: 'call.with.dots' })
+        )
+      );
+
+      const snapshot = await attachModeratedStepTextOutputs(
+        { workflowId: 'wf-1', status: 'succeeded' as const },
+        workflow,
+        CTX
+      );
+
+      // Order must not decide which of two opposed sentences the author reads.
+      expect(snapshot.textOutputWithheld).toEqual({ reason: TEXT_OUTPUT_WITHHELD_MESSAGE });
+      expect(snapshot.textOutputWithheld?.reason).not.toBe(TEXT_OUTPUT_UNPUBLISHABLE_MESSAGE);
+      // And the flagged content is withheld either way — this was never a leak.
+      expect(snapshot.textOutputs).toBeUndefined();
+      expect(snapshot.toolCalls).toBeUndefined();
+    });
+  }
+
+  it('🔴 F3 — the reason is scoped to A STEP, so a sibling’s published text does not contradict it', async () => {
+    scannerReturns(scanOutput([]));
+
+    const snapshot = await attachModeratedStepTextOutputs(
+      { workflowId: 'wf-1', status: 'succeeded' as const },
+      workflowWith(
+        realChatToolCall(GOOD_CALL),
+        realChatToolCall({ ...GOOD_CALL, id: 'call.with.dots' })
+      ),
+      CTX
+    );
+
+    // Both fields legitimately co-exist (workflow.schema documents the pairing).
+    expect(snapshot.textOutputs).toContain('{"query":"x"}');
+    expect(snapshot.textOutputWithheld).toEqual({ reason: TEXT_OUTPUT_UNPUBLISHABLE_MESSAGE });
+    // So the sentence must not make a claim about the whole response, which the
+    // `textOutputs` beside it would flatly contradict.
+    expect(TEXT_OUTPUT_UNPUBLISHABLE_MESSAGE).not.toContain('This response completed');
+    expect(TEXT_OUTPUT_UNPUBLISHABLE_MESSAGE.startsWith('A step in this response')).toBe(true);
+  });
+
   it('🔴 SCOPING CONTROL — a MEDIA-posture entry publishes no text and is NOT a violation', async () => {
     scannerReturns(scanOutput([]));
 
@@ -1988,7 +2134,11 @@ describe('no-silent-success invariant', () => {
     // absence as a fault, on any workflow mixing a media step with a chat step.
     const snapshot = await attachModeratedStepTextOutputs(
       { workflowId: 'wf-1', status: 'succeeded' as const },
-      workflowWith({ $type: 'convertImage', output: { blob: { url: 'https://x/y.png' } } }),
+      workflowWith({
+        $type: 'convertImage',
+        status: 'succeeded',
+        output: { blob: { url: 'https://x/y.png' } },
+      }),
       CTX
     );
 
