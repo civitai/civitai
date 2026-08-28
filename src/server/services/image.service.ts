@@ -2,9 +2,9 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import {
   assertMediaPresentForPublish,
-  isProbeableMediaKey,
   MediaPresence,
   type MediaPresence as MediaPresenceType,
+  summarizeProbeError,
 } from '@civitai/shared';
 import { randomUUID } from 'crypto';
 import type { ManipulateType } from 'dayjs';
@@ -8076,12 +8076,11 @@ const imageUploadsBucket = () => env.S3_IMAGE_B2_BUCKET ?? 'civitai-media-upload
  * because `getB2ImageS3Client()` throws when credentials are absent and that must land on `unknown`,
  * not on a failed publish.
  */
-async function probeImageMediaPresence(url: string): Promise<MediaPresenceType> {
-  // 🔴 Not every `Image.url` is a bucket key — see `isProbeableMediaKey`. A non-key url handed to
-  // the bucket 404s, which is indistinguishable from a real miss, so without this the guard would
-  // permanently refuse images that render fine (external-CDN avatars, legacy `blob:` rows).
-  if (!isProbeableMediaKey(url)) return MediaPresence.Unknown;
-  const head = await headObject(imageUploadsBucket(), url, getB2ImageS3Client(), {
+async function probeImageMediaPresence(key: string): Promise<MediaPresenceType> {
+  // 🔴 No key check here, deliberately. `assertMediaPresentForPublish` classifies the url and only
+  // calls this with a value that already passed the SHARED `isProbeableMediaKey` — a copy of that
+  // test in each probe is exactly how the two runtimes came to disagree about the same row.
+  const head = await headObject(imageUploadsBucket(), key, getB2ImageS3Client(), {
     abortSignal: AbortSignal.timeout(RESOLVE_INGESTION_MEDIA_PROBE_TIMEOUT_MS),
   });
   if (head.status === 'present') return MediaPresence.Present;
@@ -8123,31 +8122,39 @@ export async function resolveIngestionError({
    * it put a permanent 404 on the site. Measured over ~92,000 image creations in 24h: 10 such
    * images, all 10 confirmed absent from the store, 8 of them published by the queue that day.
    *
-   * The verdict is three-valued and only `absent` refuses; see `@civitai/shared/missing-media` for
-   * why an unconsultable store must fail OPEN. The same rule runs in the moderator spoke, from the
-   * same module, so the two cannot drift.
+   * The verdict is five-valued and only `absent`/`unrenderable` refuse; see
+   * `@civitai/shared/missing-media` for why an unconsultable store must fail OPEN, and
+   * `@civitai/shared/media-key` for which urls are even askable. The same rule runs in the
+   * moderator spoke, from the same module, so the two cannot drift.
    */
   await assertMediaPresentForPublish({
-    probe: () => probeImageMediaPresence(image.url),
+    url: image.url,
+    probe: (key) => probeImageMediaPresence(key),
     raise: (message) => throwBadRequestError(message),
     // The mirror of onUnknown: a wrong bucket name 404s for EVERY key, so a fail-CLOSED
     // misconfiguration would refuse every publish and look exactly like a real run of misses.
-    onRefused: () =>
+    // `presence` distinguishes that case from the url-shape refusal, which no bucket can cause.
+    onRefused: (presence) =>
       logToAxiom({
         type: 'warning',
         name: 'resolveIngestionError:media-absent-refused',
-        message: 'Refused to publish an image whose media object the bucket reports absent',
+        message: 'Refused to publish an image whose media cannot be served',
         imageId: id,
+        presence,
       }).catch(() => undefined),
     // Silent fail-open is how a guard lies for months: with credentials rotated, every publish
     // would take the `unknown` branch and this would be indistinguishable from a clean run.
-    onUnknown: (error) =>
+    // 🔴 `reason` is what makes the count readable: `headObject` RESOLVES `{ status: 'unknown' }`
+    // rather than throwing, so without it a store that answers 403 for every key and a client that
+    // cannot be built at all emit the same line with an empty `error`.
+    onUnknown: ({ reason, error }) =>
       logToAxiom({
         type: 'warning',
         name: 'resolveIngestionError:media-probe-unknown',
         message: 'Could not consult the uploads bucket; allowing the publish',
         imageId: id,
-        error: error instanceof Error ? error.message : String(error ?? ''),
+        reason,
+        error: summarizeProbeError(error),
       }).catch(() => undefined),
   });
 

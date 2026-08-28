@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { MISSING_MEDIA_PUBLISH_MESSAGE } from '@civitai/shared';
+import {
+  MISSING_MEDIA_PUBLISH_MESSAGE,
+  UNRENDERABLE_MEDIA_PUBLISH_MESSAGE,
+} from '@civitai/shared';
 
 /**
  * The write-side guard in the spoke's `resolveIngestionError` — the call site that caused the
@@ -94,7 +97,11 @@ const published = () =>
 const resolve = () => resolveIngestionError({ id: 4242, nsfwLevel: 1, userId: 7 });
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  // 🔴 reset, not clear. `clearAllMocks` clears CALLS but leaves IMPLEMENTATIONS installed, so a
+  // `mockResolvedValue`/`mockRejectedValue` from an earlier case leaks into every later one — and a
+  // case that then forgets to arm the store passes for the wrong reason, or a broken short-circuit
+  // is hidden by a leaked `{ exists: true }`.
+  vi.resetAllMocks();
   updates.length = 0;
   // postId is null so the post-level recompute (raw SQL against the real client) stays out of the
   // way; it is not what these cases are about.
@@ -191,7 +198,8 @@ describe('spoke resolveIngestionError — a non-key Image.url is never a missing
    */
   it.each([
     ['an external avatar CDN url', 'https://cdn.discordapp.com/avatars/123/abc.png'],
-    ['a legacy blob: handle', 'blob:https://civitai.com/9f8e-1234'],
+    ['a bare filename the comics router can write', 'some-file.png'],
+    ['a prefixed key shape no upload endpoint issues', 'foo/0f8fad5b-d9cb-469f-a165-70867728950e'],
   ])('publishes without consulting the store for %s', async (_label, url) => {
     imageRow = { postId: null, metadata: {}, url };
     headObject.mockResolvedValue({ exists: false });
@@ -200,6 +208,26 @@ describe('spoke resolveIngestionError — a non-key Image.url is never a missing
 
     expect(headObject).not.toHaveBeenCalled();
     expect(updates).toHaveLength(1);
+  });
+
+  it('REFUSES a legacy blob: handle, without consulting the store', async () => {
+    /**
+     * 🔴 This case used to assert the opposite, on the stated grounds that a `blob:` row "renders
+     * perfectly well". It does not. `getEdgeUrl` here and in the main app both return the value
+     * VERBATIM for a `blob` prefix, so publishing one emits `<img src="blob:...">` into a browser
+     * that never created the handle — a permanently broken image, which is the harm this guard
+     * exists to prevent.
+     *
+     * The store is armed PRESENT, so the refusal demonstrably comes from the url, not the bucket.
+     */
+    imageRow = { postId: null, metadata: {}, url: 'blob:https://civitai.com/9f8e-1234' };
+    headObject.mockResolvedValue({ exists: true });
+
+    await expect(resolve()).rejects.toThrow(UNRENDERABLE_MEDIA_PUBLISH_MESSAGE);
+
+    expect(headObject).not.toHaveBeenCalled();
+    expect(updates).toHaveLength(0);
+    expect(recordModActivity).not.toHaveBeenCalled();
   });
 });
 
@@ -233,6 +261,31 @@ describe('spoke resolveIngestionError — which collaborators the guard reaches'
 
       expect(warn).toHaveBeenCalledTimes(1);
       expect(warn.mock.calls[0][0]).toContain('refused publish');
+      // Carries WHICH refusal. A bucket can produce `absent` and can never produce `unrenderable`,
+      // so a fail-CLOSED misconfiguration is only legible if the two are counted apart.
+      expect(warn.mock.calls[0]).toContain('absent');
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('bounds the probe error it logs, so a remote response body cannot flood the log', async () => {
+    /**
+     * A `StorageClientError` embeds the remote response BODY in its message verbatim — unbounded
+     * third-party text (an HTML error page, an XML fault) written to stdout and therefore Loki once
+     * per inconclusive probe. The guard logs a bounded summary instead of the error.
+     */
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      headObject.mockRejectedValue(new Error(`storage request failed (503) ${'x'.repeat(10_000)}`));
+
+      await resolve();
+
+      expect(warn).toHaveBeenCalledTimes(1);
+      const logged = warn.mock.calls[0].map(String).join(' ');
+      expect(logged.length).toBeLessThan(500);
+      expect(logged).toContain('storage request failed (503)');
+      expect(logged).toContain('[truncated]');
     } finally {
       warn.mockRestore();
     }

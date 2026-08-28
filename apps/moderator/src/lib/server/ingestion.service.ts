@@ -3,8 +3,8 @@ import { REDIS_KEYS } from '@civitai/redis';
 import {
   assertMediaPresentForPublish,
   IMAGE_SCAN_FAILURE_CLASS_PERMANENT,
-  isProbeableMediaKey,
   MediaPresence,
+  summarizeProbeError,
 } from '@civitai/shared';
 import { dbRead, dbWrite } from './db';
 import { bustCachedObject } from './cache';
@@ -286,13 +286,14 @@ export async function countMissingMediaImages(): Promise<number> {
  * Every image lives in the `b2Image` backend — the same assumption the image-deletion path makes,
  * where `Image.url` is passed straight through as the object key.
  */
-async function probeImageMediaPresence(url: string) {
-  // 🔴 Not every `Image.url` is a bucket key — see `isProbeableMediaKey`. This is also what keeps
+async function probeImageMediaPresence(key: string) {
+  // 🔴 No key check here, deliberately. `assertMediaPresentForPublish` classifies the url and only
+  // calls this with a value that already passed the SHARED `isProbeableMediaKey`. That is what keeps
   // the two runtimes agreeing: their storage clients fail DIFFERENTLY on a non-key url (the main
-  // app's 404s to `absent`; this one throws on an empty parsed bucket to `unknown`), so deciding it
-  // here rather than in each probe is the difference between one rule and two.
-  if (!isProbeableMediaKey(url)) return MediaPresence.Unknown;
-  const { exists } = await getMediaProbeStorage().headObject({ backend: 'b2Image', key: url });
+  // app's 404s to `absent`; this one throws on an empty parsed bucket to `unknown`), so a copy of
+  // the test in each probe is the difference between one rule and two — which is how they came to
+  // return opposite verdicts for the same row.
+  const { exists } = await getMediaProbeStorage().headObject({ backend: 'b2Image', key });
   return exists ? MediaPresence.Present : MediaPresence.Absent;
 }
 
@@ -322,16 +323,28 @@ export async function resolveIngestionError({
    * the queue; this is the write-side guard, and it is the authority: the queue predicate is a
    * trigger, an existence check against the store is the verdict.
    *
-   * Three-valued and only `absent` refuses — an unconsultable store must not block moderation. The
-   * thrown message reaches the moderator verbatim through the action's `fail(400, { error })`.
+   * Only `absent` and `unrenderable` refuse — an unconsultable store must not block moderation, and
+   * a url that is not a key this store issues is not asked about at all. The thrown message reaches
+   * the moderator verbatim through the action's `fail(400, { error })`.
    */
   await assertMediaPresentForPublish({
-    probe: () => probeImageMediaPresence(image.url),
-    onUnknown: (error) =>
-      console.warn('[ingestion] media probe inconclusive; allowing publish', id, error),
+    url: image.url,
+    probe: (key) => probeImageMediaPresence(key),
+    // 🔴 `summarizeProbeError`, never the raw error. A `StorageClientError` embeds the remote
+    // response BODY in its message — unbounded third-party text (an HTML error page, an XML fault)
+    // straight into stdout and therefore Loki, once per inconclusive probe.
+    onUnknown: ({ reason, error }) =>
+      console.warn(
+        '[ingestion] media probe inconclusive; allowing publish',
+        id,
+        reason,
+        summarizeProbeError(error)
+      ),
     // The mirror of onUnknown: a wrong bucket name 404s for EVERY key, so a fail-CLOSED
     // misconfiguration would refuse every publish and look exactly like a real run of misses.
-    onRefused: () => console.warn('[ingestion] refused publish; media object reported absent', id),
+    // `presence` separates that from the url-shape refusal, which no bucket state can cause.
+    onRefused: (presence) =>
+      console.warn('[ingestion] refused publish; media cannot be served', id, presence),
   });
 
   const metadata = {

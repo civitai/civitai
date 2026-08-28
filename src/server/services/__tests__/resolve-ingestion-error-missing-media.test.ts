@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { MISSING_MEDIA_PUBLISH_MESSAGE } from '@civitai/shared';
+import {
+  MISSING_MEDIA_PUBLISH_MESSAGE,
+  UNRENDERABLE_MEDIA_PUBLISH_MESSAGE,
+} from '@civitai/shared';
 import type * as S3Utils from '~/utils/s3-utils';
 import type * as Shared from '@civitai/shared';
 
@@ -171,7 +174,8 @@ describe('a non-key Image.url is never treated as a missing object', () => {
    */
   it.each([
     ['an external avatar CDN url', 'https://cdn.discordapp.com/avatars/123/abc.png'],
-    ['a legacy blob: handle', 'blob:https://civitai.com/9f8e-1234'],
+    ['a bare filename the comics router can write', 'some-file.png'],
+    ['a prefixed key shape no upload endpoint issues', 'foo/0f8fad5b-d9cb-469f-a165-70867728950e'],
   ])('publishes without probing the bucket for %s', async (_label, url) => {
     dbMock.dbRead.image.findUnique.mockResolvedValue({
       ingestion: 'Error',
@@ -188,6 +192,28 @@ describe('a non-key Image.url is never treated as a missing object', () => {
     expect(headObject).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.image.update).toHaveBeenCalledTimes(1);
   });
+
+  it('REFUSES a legacy blob: handle, without probing the bucket', async () => {
+    /**
+     * 🔴 This case used to assert the opposite. `getEdgeUrl` returns a `blob:` src VERBATIM
+     * (`src/client-utils/cf-images-utils.ts`), so publishing one emits `<img src="blob:...">` into a
+     * browser that never created the handle — a permanently broken image. The bucket is armed
+     * PRESENT here, so the refusal demonstrably comes from the url and not from the store.
+     */
+    dbMock.dbRead.image.findUnique.mockResolvedValue({
+      ingestion: 'Error',
+      postId: null,
+      userId: 99,
+      metadata: {},
+      url: 'blob:https://civitai.com/9f8e-1234',
+    } as never);
+    headObject.mockResolvedValue({ status: 'present', size: 1 });
+
+    await expect(resolve()).rejects.toThrow(UNRENDERABLE_MEDIA_PUBLISH_MESSAGE);
+
+    expect(headObject).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.image.update).not.toHaveBeenCalled();
+  });
 });
 
 describe('the guard reports what it did, in both directions', () => {
@@ -202,22 +228,97 @@ describe('the guard reports what it did, in both directions', () => {
       (c: unknown[]) => (c[0] as { name?: string } | undefined)?.name === name
     );
 
-  it('logs a refusal when the bucket answered absent', async () => {
+  it('logs a refusal when the bucket answered absent, naming WHICH refusal', async () => {
     headObject.mockResolvedValue({ status: 'absent' });
 
     await expect(resolve()).rejects.toThrow();
 
     const events = eventsNamed('resolveIngestionError:media-absent-refused');
     expect(events).toHaveLength(1);
-    expect(events[0][0]).toMatchObject({ type: 'warning', imageId: 4242 });
+    // `presence` is what separates a fail-CLOSED bucket misconfiguration (which can only ever
+    // produce `absent`) from the url-shape refusal (which no bucket state can produce).
+    expect(events[0][0]).toMatchObject({ type: 'warning', imageId: 4242, presence: 'absent' });
   });
 
-  it('logs an inconclusive probe when the bucket could not be consulted', async () => {
+  it('logs the url-shape refusal under its own presence value', async () => {
+    dbMock.dbRead.image.findUnique.mockResolvedValue({
+      ingestion: 'Error',
+      postId: null,
+      userId: 99,
+      metadata: {},
+      url: 'blob:https://civitai.com/9f8e-1234',
+    } as never);
+
+    await expect(resolve()).rejects.toThrow();
+
+    const events = eventsNamed('resolveIngestionError:media-absent-refused');
+    expect(events).toHaveLength(1);
+    expect(events[0][0]).toMatchObject({ presence: 'unrenderable' });
+  });
+
+  it('logs an inconclusive probe with the reason the store could not answer', async () => {
+    // 🔴 `headObject` RESOLVES `{ status: 'unknown' }` rather than throwing, so without a reason
+    // this line is byte-identical to the one a client that cannot be BUILT produces — and the
+    // `error` field is empty in both. That is the indistinguishability the log exists to remove.
     headObject.mockResolvedValue({ status: 'unknown' });
 
     await resolve();
 
-    expect(eventsNamed('resolveIngestionError:media-probe-unknown')).toHaveLength(1);
+    const events = eventsNamed('resolveIngestionError:media-probe-unknown');
+    expect(events).toHaveLength(1);
+    expect(events[0][0]).toMatchObject({ reason: 'store-inconclusive', error: '' });
+  });
+
+  it('distinguishes a probe that THREW from a store that declined to answer', async () => {
+    getB2ImageS3Client.mockImplementation(() => {
+      throw new Error('B2 image upload credentials not configured');
+    });
+
+    await resolve();
+
+    const events = eventsNamed('resolveIngestionError:media-probe-unknown');
+    expect(events).toHaveLength(1);
+    expect(events[0][0]).toMatchObject({
+      reason: 'probe-threw',
+      error: 'B2 image upload credentials not configured',
+    });
+  });
+
+  it('bounds the probe error it logs, so a remote response body cannot flood the pipeline', async () => {
+    getB2ImageS3Client.mockImplementation(() => {
+      throw new Error(`storage request failed (503) ${'x'.repeat(10_000)}`);
+    });
+
+    await resolve();
+
+    const payload = eventsNamed('resolveIngestionError:media-probe-unknown')[0][0] as {
+      error: string;
+    };
+    expect(payload.error.length).toBeLessThan(300);
+    expect(payload.error.endsWith('…[truncated]')).toBe(true);
+  });
+
+  it('does NOT log an inconclusive probe for a url that was never a key', async () => {
+    /**
+     * 🔴 The finding this fixes. The not-a-key short-circuit used to return `unknown`, so every
+     * profile-picture url in the queue emitted the same "could not consult the bucket" warning as a
+     * genuine store outage — with an identical empty `error`. The one number this channel exists to
+     * produce could not answer its own question.
+     */
+    dbMock.dbRead.image.findUnique.mockResolvedValue({
+      ingestion: 'Error',
+      postId: null,
+      userId: 99,
+      metadata: {},
+      url: 'https://cdn.discordapp.com/avatars/123/abc.png',
+    } as never);
+    headObject.mockResolvedValue({ status: 'absent' });
+
+    await resolve();
+
+    expect(dbMock.dbWrite.image.update).toHaveBeenCalledTimes(1);
+    expect(eventsNamed('resolveIngestionError:media-probe-unknown')).toHaveLength(0);
+    expect(eventsNamed('resolveIngestionError:media-absent-refused')).toHaveLength(0);
   });
 
   it('logs neither when the media is present', async () => {
