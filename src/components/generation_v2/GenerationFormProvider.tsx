@@ -484,9 +484,9 @@ function InnerProvider({
         // The 3D ecosystem to land on — preserve the model (Meshy/Tripo/
         // Hunyuan3D) the source was generated with. Falls back to PolyGen
         // (Meshy) for legacy items whose metadata predates the model selector.
-        const model3dEcosystem: 'PolyGen' | 'Tripo' | 'Hunyuan3D' =
+        const model3dEcosystem: 'PolyGen' | 'Tripo' | 'Hunyuan3D' | 'Pixal3D' | 'Trellis2' =
           remixEcosystemKey && MODEL3D_ECOSYSTEM_KEYS.has(remixEcosystemKey)
-            ? (remixEcosystemKey as 'PolyGen' | 'Tripo' | 'Hunyuan3D')
+            ? (remixEcosystemKey as 'PolyGen' | 'Tripo' | 'Hunyuan3D' | 'Pixal3D' | 'Trellis2')
             : 'PolyGen';
 
         let resolvedWorkflow: string;

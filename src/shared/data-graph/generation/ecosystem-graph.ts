@@ -81,6 +81,8 @@ import { aceAudioGraph } from './ace-audio-graph';
 import { polyGenGraph } from './polygen-graph';
 import { tripoGraph } from './tripo-graph';
 import { hunyuan3dGraph } from './hunyuan3d-graph';
+import { pixal3dGraph } from './pixal3d-graph';
+import { trellis2Graph } from './trellis2-graph';
 
 // =============================================================================
 // Helper Functions
@@ -143,6 +145,8 @@ type EcosystemGateExt = Pick<
 const FEATURE_FLAG_GATED_ECOSYSTEMS: Array<{ key: string; flag: keyof FeatureAccess }> = [
   { key: 'Tripo', flag: 'tripoGenerator' },
   { key: 'Hunyuan3D', flag: 'hunyuan3dGenerator' },
+  { key: 'Pixal3D', flag: 'pixal3dGenerator' },
+  { key: 'Trellis2', flag: 'trellis2Generator' },
 ];
 
 /**
@@ -437,6 +441,8 @@ export const ecosystemGraph = new DataGraph<
     // the active ecosystem isn't the matching one (same pattern as PolyGen).
     { values: ['Tripo'] as const, graph: tripoGraph },
     { values: ['Hunyuan3D'] as const, graph: hunyuan3dGraph },
+    { values: ['Pixal3D'] as const, graph: pixal3dGraph },
+    { values: ['Trellis2'] as const, graph: trellis2Graph },
   ])
   // Enhanced compatibility mode - txt2img only, supported ecosystems, hidden for Flux Ultra
   .node(

@@ -211,6 +211,8 @@ export const ECO = {
   PolyGen: 73,
   Tripo: 75,
   Hunyuan3D: 76,
+  Pixal3D: 83,
+  Trellis2: 84,
 
   // Utility ecosystems
   Upscaler: 66,
@@ -854,6 +856,18 @@ export const ecosystems: EcosystemRecord[] = [
     displayName: 'Hunyuan3D',
     sortOrder: 303,
   },
+  {
+    id: ECO.Pixal3D,
+    key: 'Pixal3D',
+    displayName: 'Pixal3D',
+    sortOrder: 304,
+  },
+  {
+    id: ECO.Trellis2,
+    key: 'Trellis2',
+    displayName: 'Trellis.2',
+    sortOrder: 305,
+  },
 ];
 
 export const ecosystemById = new Map(ecosystems.map((e) => [e.id, e]));
@@ -866,7 +880,13 @@ export const ecosystemByKey = new Map(ecosystems.map((e) => [e.key, e]));
  * (their `BaseModelRecord`s register as `type: 'image'`). Single source of
  * truth for the 3D ecosystem picker filter in `getEcosystemDisplayItems`.
  */
-export const MODEL3D_ECOSYSTEM_IDS = new Set<number>([ECO.PolyGen, ECO.Tripo, ECO.Hunyuan3D]);
+export const MODEL3D_ECOSYSTEM_IDS = new Set<number>([
+  ECO.PolyGen,
+  ECO.Tripo,
+  ECO.Hunyuan3D,
+  ECO.Pixal3D,
+  ECO.Trellis2,
+]);
 
 /** Ecosystem keys for the 3D-model ecosystems (`model3d` output). */
 export const MODEL3D_ECOSYSTEM_KEYS = new Set<string>(
@@ -928,6 +948,9 @@ export const SELF_HOSTED_ECOSYSTEM_KEYS = [
   'Ace',
   // Hunyuan3dComfyPolyGenInput (3D; Meshy/Tripo are FAL and stay external)
   'Hunyuan3D',
+  // Trellis2ImageTo3dComfyPolyGenInput (3D; Pixal3D + Trellis.2 are modelVersions of trellis2)
+  'Pixal3D',
+  'Trellis2',
 ] as const;
 
 const selfHostedEcosystemKeySet = new Set<string>(SELF_HOSTED_ECOSYSTEM_KEYS);
@@ -1188,6 +1211,8 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // route the img2model3d workflow to these ecosystems.
   { ecosystemId: ECO.Tripo, supportType: 'generation', modelTypes: [] },
   { ecosystemId: ECO.Hunyuan3D, supportType: 'generation', modelTypes: [] },
+  { ecosystemId: ECO.Pixal3D, supportType: 'generation', modelTypes: [] },
+  { ecosystemId: ECO.Trellis2, supportType: 'generation', modelTypes: [] },
 
   // Upscaler - upscaler models only
   { ecosystemId: ECO.Upscaler, supportType: 'generation', modelTypes: [ModelType.Upscaler] },
@@ -2143,6 +2168,8 @@ export const BM = {
   Reve: 96,
   MageFlow: 97,
   Flux3Video: 98,
+  Pixal3D: 102,
+  Trellis2: 103,
 } as const;
 
 // Guard against duplicate ids — `baseModelById` is keyed by id, so collisions
@@ -3524,6 +3551,22 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: 'Hunyuan3D image-to-3D generation (via Comfy)',
     type: 'image',
     ecosystemId: ECO.Hunyuan3D,
+    hidden: true,
+  },
+  {
+    id: BM.Pixal3D,
+    name: 'Pixal3D',
+    description: 'Pixal3D image-to-3D generation (via Comfy)',
+    type: 'image',
+    ecosystemId: ECO.Pixal3D,
+    hidden: true,
+  },
+  {
+    id: BM.Trellis2,
+    name: 'Trellis.2',
+    description: 'Trellis.2 image-to-3D generation (via Comfy)',
+    type: 'image',
+    ecosystemId: ECO.Trellis2,
     hidden: true,
   },
 ];
