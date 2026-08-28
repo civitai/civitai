@@ -54,7 +54,13 @@ export type AppBlockEndpoint =
   | 'collection_follow'
   | 'shared_storage_top'
   | 'shared_storage_increment'
-  | 'generation_resources';
+  | 'generation_resources'
+  // The read-only chat-tool surface (#398 AC5): GET returns the tool
+  // declarations, POST executes one. It is a model-shaped view of the SAME
+  // clamped catalog path 'models' serves, and it shares that endpoint's
+  // per-token rate-limit budget deliberately — so it gets its own label for
+  // attribution, not its own allowance.
+  | 'tools';
 // NOTE: buzz self-reads (balance/transactions/accounts/daily-compensation) are
 // NOT here — they are host-mediated tRPC MUTATIONS (blocks.getMyBuzz*), not
 // withBlockScope REST routes, so they are not metered via this per-endpoint

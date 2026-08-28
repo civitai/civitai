@@ -988,6 +988,7 @@ export const KNOWN_STATIC_ENDPOINT_SEGMENTS = new Set([
   'shared-storage',
   'tip',
   'tip-allowance',
+  'tools',
   'top',
 ]);
 
