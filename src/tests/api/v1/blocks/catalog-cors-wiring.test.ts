@@ -54,26 +54,30 @@ describe('block catalog endpoints — opaque-origin CORS wiring (PR #2681)', () 
   // The two `await import(...)` cold-transform a Next API page graph (~10s on a
   // loaded box) — right at the 10s global default, so worker-pool contention pushed
   // it over and flaked. Give this import-bound test a generous explicit budget.
-  it('all of /api/v1/blocks/{models,images,tools} opt into allowOpaqueOrigin', { timeout: 60000 }, async () => {
-    // Import order: models, images, tools → captured in that order.
-    await import('~/pages/api/v1/blocks/models');
-    await import('~/pages/api/v1/blocks/images');
-    // The tool surface (#398 AC5) is called DIRECTLY from the sandboxed iframe
-    // during a tool-calling loop, so it needs the same opaque-origin opt-in —
-    // and, like the other two, it would fail only in prod (405 on the CORS
-    // preflight) with every test still green.
-    await import('~/pages/api/v1/blocks/tools');
+  it(
+    'all of /api/v1/blocks/{models,images,tools} opt into allowOpaqueOrigin',
+    { timeout: 60000 },
+    async () => {
+      // Import order: models, images, tools → captured in that order.
+      await import('~/pages/api/v1/blocks/models');
+      await import('~/pages/api/v1/blocks/images');
+      // The tool surface (#398 AC5) is called DIRECTLY from the sandboxed iframe
+      // during a tool-calling loop, so it needs the same opaque-origin opt-in —
+      // and, like the other two, it would fail only in prod (405 on the CORS
+      // preflight) with every test still green.
+      await import('~/pages/api/v1/blocks/tools');
 
-    expect(captured).toHaveLength(3);
-    // Every catalog endpoint must opt in — else an unverified (opaque-origin)
-    // block's direct catalog fetch 405s on the CORS preflight again.
-    for (const opts of captured) {
-      expect(opts.allowOpaqueOrigin).toBe(true);
+      expect(captured).toHaveLength(3);
+      // Every catalog endpoint must opt in — else an unverified (opaque-origin)
+      // block's direct catalog fetch 405s on the CORS preflight again.
+      for (const opts of captured) {
+        expect(opts.allowOpaqueOrigin).toBe(true);
+      }
+      // And neither catalog endpoint declares a requiredScope ("any valid block
+      // token" mode) — the maturity clamp is the whole authority surface.
+      for (const opts of captured) {
+        expect(opts.requiredScope).toBeUndefined();
+      }
     }
-    // And neither catalog endpoint declares a requiredScope ("any valid block
-    // token" mode) — the maturity clamp is the whole authority surface.
-    for (const opts of captured) {
-      expect(opts.requiredScope).toBeUndefined();
-    }
-  });
+  );
 });
