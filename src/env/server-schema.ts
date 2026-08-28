@@ -371,6 +371,11 @@ export const serverSchema = z
     // Base URL of the standalone moderator app (apps/moderator). Migrated /moderator/* routes redirect
     // here via the moderator catchall page during the transition.
     MODERATOR_APP_URL: z.url().default('https://moderator.civitai.com'),
+    // The narrow, inbound-only credential the moderator app accepts, and the one this app should
+    // present when calling it. OPTIONAL on purpose — see moderator-app.service.ts for why the
+    // fallback to WEBHOOK_TOKEN has to stay. (Named for the value, not for the direction of any one
+    // caller: it is one secret, and the sibling jobs that call in already use this name.)
+    MOD_INBOUND_TOKEN: z.string().optional(),
     UNAUTHENTICATED_DOWNLOAD: zc.booleanString,
     UNAUTHENTICATED_LIST_NSFW: zc.booleanString,
     LOGGING: commaDelimitedStringArray(),
