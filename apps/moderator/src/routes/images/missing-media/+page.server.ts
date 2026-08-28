@@ -1,6 +1,10 @@
 import { fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-import { getMissingMediaImages, isMissingMediaImage } from '$lib/server/ingestion.service';
+import {
+  getMissingMediaImages,
+  imageRowExists,
+  isMissingMediaImage,
+} from '$lib/server/ingestion.service';
 import { deleteImagesByIds } from '$lib/server/image-deletion';
 import { recordModActivity } from '$lib/server/mod-activity';
 
@@ -39,14 +43,32 @@ export const actions: Actions = {
     if (!(await isMissingMediaImage(id)))
       return fail(400, { error: 'That image is not in the missing-media queue.' });
 
+    // Kept for a genuine throw, but note it is nearly dead: see below.
     try {
       await deleteImagesByIds([id]);
     } catch (e) {
       return fail(400, { error: e instanceof Error ? e.message : 'Failed to delete.' });
     }
 
-    // Every other mutating moderator action is attributed; a permanent destructive one especially
-    // should not land anonymously. After the delete, so a failed delete records nothing.
+    /**
+     * 🔴 A RESOLVED `deleteImagesByIds` IS NOT EVIDENCE THE IMAGE IS GONE.
+     *
+     * It wraps every per-image body in a `try/catch` that logs and continues, and its only statement
+     * outside a try is a `void`-ed async call — so it effectively never rejects. A failed DB or
+     * storage step returns normally, which previously produced `{ success: true }`, a card rendering
+     * "Deleted", and a `deleteMissingMedia` audit row attesting a delete that never happened, all
+     * for an image still on the site.
+     *
+     * So confirm by reading the row back. Cheap, and it is the difference between an audit log that
+     * records outcomes and one that records intentions.
+     */
+    if (await imageRowExists(id))
+      return fail(400, {
+        error: 'The delete did not complete — the image is still present. Nothing was recorded.',
+      });
+
+    // Attributed only once the delete is CONFIRMED. Every other mutating moderator action is
+    // attributed; a permanent destructive one especially should not land anonymously.
     await recordModActivity({
       userId: locals.user.id,
       entityType: 'image',

@@ -45,6 +45,10 @@ vi.mock('@civitai/shared', async (importOriginal) => {
 });
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
+// The CANONICAL logging mock, registered globally in setup.ts. A local `vi.mock` of that module
+// would shadow it — and is flagged by the `no-direct-shared-module-mock` lint rule for a reason:
+// under `isolate: false` a per-file spy accumulates calls across every file sharing the worker.
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { resolveIngestionError } from '~/server/services/image.service';
 
 const IMAGE_KEY = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
@@ -183,5 +187,45 @@ describe('a non-key Image.url is never treated as a missing object', () => {
 
     expect(headObject).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.image.update).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('the guard reports what it did, in both directions', () => {
+  /**
+   * Both hooks survived a revert until these existed. They are the only signal distinguishing a
+   * healthy run from two silent failure modes that look identical to it:
+   *   - fail-OPEN: credentials rotate, every probe is `unknown`, every publish is allowed;
+   *   - fail-CLOSED: a wrong bucket name 404s for every key, every publish is refused.
+   */
+  const eventsNamed = (name: string) =>
+    loggingMock.logToAxiom.mock.calls.filter(
+      (c: unknown[]) => (c[0] as { name?: string } | undefined)?.name === name
+    );
+
+  it('logs a refusal when the bucket answered absent', async () => {
+    headObject.mockResolvedValue({ status: 'absent' });
+
+    await expect(resolve()).rejects.toThrow();
+
+    const events = eventsNamed('resolveIngestionError:media-absent-refused');
+    expect(events).toHaveLength(1);
+    expect(events[0][0]).toMatchObject({ type: 'warning', imageId: 4242 });
+  });
+
+  it('logs an inconclusive probe when the bucket could not be consulted', async () => {
+    headObject.mockResolvedValue({ status: 'unknown' });
+
+    await resolve();
+
+    expect(eventsNamed('resolveIngestionError:media-probe-unknown')).toHaveLength(1);
+  });
+
+  it('logs neither when the media is present', async () => {
+    headObject.mockResolvedValue({ status: 'present', size: 1 });
+
+    await resolve();
+
+    expect(eventsNamed('resolveIngestionError:media-absent-refused')).toHaveLength(0);
+    expect(eventsNamed('resolveIngestionError:media-probe-unknown')).toHaveLength(0);
   });
 });

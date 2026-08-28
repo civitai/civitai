@@ -15,6 +15,7 @@ const getIngestionErrorImages = vi.fn(async () => ({ items: [] }));
 const getMissingMediaImages = vi.fn(async () => ({ items: [] }));
 const deleteImagesByIds = vi.fn();
 const isMissingMediaImage = vi.fn(async () => true);
+const imageRowExists = vi.fn(async () => false);
 const recordModActivity = vi.fn();
 
 vi.mock('$lib/server/ingestion.service', () => ({
@@ -22,6 +23,7 @@ vi.mock('$lib/server/ingestion.service', () => ({
   getIngestionErrorImages,
   getMissingMediaImages,
   isMissingMediaImage,
+  imageRowExists,
 }));
 vi.mock('$lib/server/image-deletion', () => ({ deleteImagesByIds }));
 vi.mock('$lib/server/mod-activity', () => ({ recordModActivity }));
@@ -42,9 +44,14 @@ const locals = { user: { id: 7 } } as never;
 
 beforeEach(() => {
   vi.clearAllMocks();
-  // `clearAllMocks` clears calls, not implementations — but re-stating it keeps each case's
-  // starting point explicit rather than inherited from whichever test ran last.
+  // 🔴 `clearAllMocks` clears CALLS, not IMPLEMENTATIONS. Every mock whose implementation any test
+  // changes must be restored here or it leaks into whatever runs next — the defect class that
+  // already made one suite in this PR pass for the wrong reason. Listing all three, not just the
+  // one that bit us: `deleteImagesByIds` carries both a resolve and a reject below, and was benign
+  // only by accident of test order.
   isMissingMediaImage.mockResolvedValue(true);
+  imageRowExists.mockResolvedValue(false);
+  deleteImagesByIds.mockResolvedValue(undefined);
 });
 
 describe('ingestion-errors resolve action', () => {
@@ -131,13 +138,41 @@ describe('missing-media delete action — scoping', () => {
     });
   });
 
-  it('records nothing when the delete itself failed', async () => {
-    deleteImagesByIds.mockRejectedValue(new Error('storage exploded'));
+  it('records nothing when the delete SILENTLY failed and the row survived', async () => {
+    /**
+     * 🔴 The reachable shape, and the one that shipped broken. `deleteImagesByIds` wraps every
+     * per-image body in a try/catch that logs and continues, so a failed DB or storage step
+     * RESOLVES. An earlier revision of this test used `mockRejectedValue` — a state the real
+     * function cannot reach — so it read as coverage while providing none, and the action happily
+     * reported success and wrote an audit row for an image still on the site.
+     */
+    deleteImagesByIds.mockResolvedValue(undefined); // resolves, exactly as the real one does
+    imageRowExists.mockResolvedValue(true); // ...but the row is still there
+
     const result = (await missingActions.delete({
       request: request({ id: '4242' }),
       locals,
-    } as never)) as { status: number };
+    } as never)) as { status: number; data: { error: string } };
+
     expect(result.status).toBe(400);
+    expect(result.data.error).toBe(
+      'The delete did not complete — the image is still present. Nothing was recorded.'
+    );
+    // The whole point: no audit row attesting a delete that did not happen.
     expect(recordModActivity).not.toHaveBeenCalled();
+  });
+
+  it('confirms the row is gone before attributing, not merely that the call resolved', async () => {
+    deleteImagesByIds.mockResolvedValue(undefined);
+    imageRowExists.mockResolvedValue(false);
+
+    const result = await missingActions.delete({
+      request: request({ id: '4242' }),
+      locals,
+    } as never);
+
+    expect(imageRowExists).toHaveBeenCalledWith(4242);
+    expect(result).toEqual({ success: true, id: 4242 });
+    expect(recordModActivity).toHaveBeenCalledTimes(1);
   });
 });

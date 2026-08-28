@@ -120,6 +120,26 @@ const missingMediaWhere = sql`
   AND ${permanentScanFailure}
 `;
 
+/**
+ * "Is this image a missing-media image?" — WITHOUT the 2-day display window.
+ *
+ * 🔴 The window is a QUEUE-DISPLAY concern, not a safety one, and conflating the two made the delete
+ * gate a race. The page orders `createdAt DESC`, so the rows nearest the window's edge sit at the
+ * bottom — exactly where a moderator draining the queue works. A row that aged out between page load
+ * and click was refused with "not in the missing-media queue" for an image visibly on screen, and
+ * was then permanently uncleanable: it had left the only view offering a delete while still sitting
+ * at `ingestion = 'Error'`.
+ *
+ * What actually makes a delete safe is the image's STATE — an unpublished ingestion error whose scan
+ * failed permanently — and that does not expire. So the gate asserts the state and the queue applies
+ * the window on top.
+ */
+const missingMediaScope = sql`
+  i.ingestion = 'Error'::"ImageIngestionStatus"
+  AND i."nsfwLevel" = 0
+  AND ${permanentScanFailure}
+`;
+
 export type IngestionErrorImage = {
   id: number;
   url: string;
@@ -198,15 +218,30 @@ export async function getMissingMediaImages({
  * The page's delete action takes an id off a form, and deleting an image is permanent and
  * cascading (row + stored object + de-index). Re-selecting through the SAME shared predicate is
  * what keeps the action scoped to what the page shows, instead of turning a moderator route into an
- * arbitrary delete-by-id. Uses `missingMediaWhere`, so it cannot drift from the queue or its badge.
+ * arbitrary delete-by-id. Uses `missingMediaScope` — the queue's predicates minus the display window; see that const.
  */
 export async function isMissingMediaImage(id: number): Promise<boolean> {
   const result = await sql<{ id: number }>`
     SELECT i.id
     FROM "Image" i
-    WHERE ${missingMediaWhere}
+    WHERE ${missingMediaScope}
       AND i.id = ${id}
     LIMIT 1
+  `.execute(dbRead);
+  return result.rows.length > 0;
+}
+
+/**
+ * Does this image row still exist?
+ *
+ * 🔴 Needed because `deleteImagesByIds` RESOLVES on failure. It wraps every per-image body in a
+ * `try/catch` that logs and continues, and its only un-caught statement is a `void`-ed async call —
+ * so a resolved promise is not evidence that anything was deleted. Without this the action reports
+ * success and the mod-activity record attests a delete that never happened.
+ */
+export async function imageRowExists(id: number): Promise<boolean> {
+  const result = await sql<{ id: number }>`
+    SELECT i.id FROM "Image" i WHERE i.id = ${id} LIMIT 1
   `.execute(dbRead);
   return result.rows.length > 0;
 }

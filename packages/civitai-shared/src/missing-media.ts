@@ -73,11 +73,16 @@ export const IMAGE_SCAN_FAILURE_CLASS_PERMANENT = 'permanent';
  * miss — so without this check the guard would REFUSE, permanently and with no override, an image
  * that renders perfectly well. That is strictly worse than the bug the guard exists to fix.
  *
- * The main app's delete path makes exactly this exclusion for exactly this reason ("Legacy avatar
- * rows hold a full external URL where every other row holds a bucket key"), and it is why the
- * predicate lives HERE: the two runtimes reach the store through different clients that fail
- * differently on a non-key url (one 404s to `absent`, the other throws to `unknown`), so leaving it
- * to them produced opposite verdicts for the same row.
+ * The main app's delete path excludes non-keys for the same REASON ("Legacy avatar rows hold a full
+ * external URL where every other row holds a bucket key") but with a different TEST — it checks
+ * `url.startsWith('http')`. The two disagree in both directions: `startsWith('http')` would exclude
+ * a key literally named `httpfoo` and would NOT exclude `blob:` or `data:`; this one does the
+ * opposite. They are not yet consolidated, so do not read this as one rule in two places — it is
+ * two spellings of one idea, and the delete path's is the older.
+ *
+ * The predicate lives HERE because the two PUBLISH runtimes reach the store through different
+ * clients that fail differently on a non-key url (one 404s to `absent`, the other throws to
+ * `unknown`), so leaving it to them produced opposite verdicts for the same row.
  *
  * Conservative in the safe direction: anything carrying a URI scheme is treated as not-a-key, which
  * yields `unknown` and therefore ALLOWS. A false negative here costs nothing; a false positive is

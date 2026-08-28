@@ -37,6 +37,7 @@ const {
   countIngestionErrorImages,
   getMissingMediaImages,
   countMissingMediaImages,
+  isMissingMediaImage,
 } = await import('../ingestion.service');
 
 const norm = (s: string) => s.replace(/\s+/g, ' ').trim();
@@ -146,5 +147,57 @@ describe('ingestion-error queue predicates', () => {
     const { sql, parameters } = await run(() => getMissingMediaImages({ limit: 25, cursor: 999 }));
     expect(sql).toContain('AND (i.id < $2)');
     expect(parameters).toEqual(['permanent', 999, 26]);
+  });
+});
+
+describe("the delete gate's own predicate", () => {
+  /**
+   * 🔴 This query gates a PERMANENT, CASCADING delete, and it was the one query in this module the
+   * harness did not compile. A mutation sweep found `WHERE ${missingMediaScope}` could be replaced
+   * with `WHERE TRUE` — restoring the arbitrary delete-any-image-by-id endpoint the guard exists to
+   * prevent — with the whole suite still green, because its only test mocked the function wholesale
+   * and therefore pinned the call site rather than the predicate.
+   */
+  it('scopes the delete to a permanently-failed, unpublished ingestion error', async () => {
+    const { sql, parameters } = await run(() => isMissingMediaImage(4242));
+
+    expect(sql).toBe(
+      'SELECT i.id FROM "Image" i WHERE i.ingestion = \'Error\'::"ImageIngestionStatus" ' +
+        'AND i."nsfwLevel" = 0 ' +
+        "AND i.\"scanJobs\"->'error'->>'failureClass' IS NOT DISTINCT FROM $1 " +
+        'AND i.id = $2 LIMIT 1'
+    );
+    expect(parameters).toEqual(['permanent', 4242]);
+  });
+
+  it('is always bound to the requested id — never an unscoped match', async () => {
+    // The specific mutant: dropping the state predicates, or the id, makes this a delete-anything
+    // endpoint. Asserted separately from the pin above so it stays reachable if the pin is edited.
+    const { sql } = await run(() => isMissingMediaImage(4242));
+    expect(sql).toContain('AND i.id = $2');
+    expect(sql).not.toMatch(/WHERE\s+TRUE/i);
+  });
+
+  it('deliberately omits the 2-day display window the queue applies', async () => {
+    /**
+     * Safety is about the image's STATE, which does not expire; the window is a display concern.
+     * Conflating them made the gate a race: a row ageing out between page load and click was
+     * refused for an image visibly on screen, and was then permanently uncleanable — it had left
+     * the only view offering a delete while still sitting at `ingestion = 'Error'`.
+     */
+    const gate = (await run(() => isMissingMediaImage(4242))).sql;
+    expect(gate).not.toContain('createdAt');
+
+    // ...while the queue itself still applies it, or the page would grow without bound.
+    const queue = (await run(() => countMissingMediaImages())).sql;
+    expect(queue).toContain('i."createdAt" > now() - INTERVAL \'2 days\'');
+  });
+
+  it('shares the failure-class predicate with the queue, so the two cannot disagree', async () => {
+    const gate = (await run(() => isMissingMediaImage(4242))).sql;
+    const queue = (await run(() => countMissingMediaImages())).sql;
+    const clause = "i.\"scanJobs\"->'error'->>'failureClass' IS NOT DISTINCT FROM $1";
+    expect(gate).toContain(clause);
+    expect(queue).toContain(clause);
   });
 });

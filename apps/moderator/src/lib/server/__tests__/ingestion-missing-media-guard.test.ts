@@ -65,10 +65,20 @@ vi.mock('../db', () => ({
   },
 }));
 
-// Both factories: the probe deliberately uses a SEPARATE, tightly-bounded client, and mocking only
-// `getStorage` would leave the real one in place and fail at import.
+/**
+ * 🔴 The two factories return DISTINCT spies on purpose.
+ *
+ * Returning the same `headObject` for both made them indistinguishable by construction: swapping
+ * the probe back to the unbounded `getStorage()` client — reverting the whole 5 s / no-retry budget
+ * — passed every test. A mock that cannot tell two collaborators apart cannot pin which one is
+ * used, so the assertion below is the only thing holding the bound in place.
+ *
+ * (Mocking only `getStorage` would not fail at import — vitest replaces the module wholesale, so a
+ * missing export surfaces when the binding is ACCESSED, i.e. inside the probe.)
+ */
+const unboundedHeadObject = vi.fn();
 vi.mock('../storage', () => ({
-  getStorage: () => ({ headObject }),
+  getStorage: () => ({ headObject: unboundedHeadObject }),
   getMediaProbeStorage: () => ({ headObject }),
 }));
 vi.mock('../mod-activity', () => ({ recordModActivity }));
@@ -187,5 +197,34 @@ describe('spoke resolveIngestionError — a non-key Image.url is never a missing
 
     expect(headObject).not.toHaveBeenCalled();
     expect(updates).toHaveLength(1);
+  });
+});
+
+describe('spoke resolveIngestionError — which collaborators the guard reaches', () => {
+  it('probes through the BOUNDED client, never the general-purpose one', async () => {
+    /**
+     * The default client is 10 s x 3 attempts plus backoff — ~31 s on a moderator's click, for an
+     * answer that allows either way when it cannot be had. The probe therefore uses a separate 5 s
+     * / no-retry client, and this is what stops that from being silently reverted.
+     */
+    headObject.mockResolvedValue({ exists: true });
+
+    await resolve();
+
+    expect(headObject).toHaveBeenCalledTimes(1);
+    expect(unboundedHeadObject).not.toHaveBeenCalled();
+  });
+
+  it('reports a refusal, so a fail-CLOSED misconfiguration cannot look like a clean run', async () => {
+    // A wrong bucket name 404s for EVERY key, which reads as `absent` for every image. Without this
+    // wiring the guard would refuse every publish and emit nothing to say so.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    headObject.mockResolvedValue({ exists: false });
+
+    await expect(resolve()).rejects.toThrow(MISSING_MEDIA_PUBLISH_MESSAGE);
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain('refused publish');
+    warn.mockRestore();
   });
 });
