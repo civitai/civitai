@@ -4,6 +4,10 @@ import { describe, expect, it } from 'vitest';
 import { GENERATION_TAB_KEYS } from '~/components/ImageGeneration/GenerationTabs';
 import { tourScrollBlock } from '~/components/Tours/tour-scroll';
 import { tourSteps } from '~/components/Tours/tours';
+import {
+  contentGenerationTour,
+  remixContentGenerationTour,
+} from '~/components/Tours/tours/content-gen.tour';
 
 const SRC = path.resolve(__dirname, '../../..');
 const TOUR_DEFINITIONS = path.join(SRC, 'components', 'Tours', 'tours');
@@ -199,5 +203,30 @@ describe('tourScrollBlock', () => {
   it('still centres a target that fits', () => {
     expect(tourScrollBlock(40, 806)).toBe('center');
     expect(tourScrollBlock(806, 806)).toBe('center');
+  });
+});
+
+describe('the shared generator steps', () => {
+  /**
+   * The two generator tours were hand-maintained copies; editing one and not the
+   * other was the next drift. `gen:select` is deliberately NOT in this list — its
+   * closing sentence differs per tour, and asserting identity there would license
+   * an extraction that silently rewrites one tour's copy.
+   */
+  it.each(['gen:terms', 'gen:buzz', 'gen:queue', 'gen:feed', 'gen:post'])(
+    'gives both tours the same %s step object',
+    (target) => {
+      const find = (steps: typeof contentGenerationTour) =>
+        steps.find((step) => step.target === `[data-tour="${target}"]`);
+
+      expect(find(contentGenerationTour)).toBe(find(remixContentGenerationTour));
+    }
+  );
+
+  it('keeps the two gen:select steps distinct', () => {
+    const find = (steps: typeof contentGenerationTour) =>
+      steps.find((step) => step.target === '[data-tour="gen:select"]');
+
+    expect(find(contentGenerationTour)).not.toBe(find(remixContentGenerationTour));
   });
 });

@@ -47,6 +47,7 @@ import { useServerDomains } from '~/providers/AppProvider';
 import { syncAccount } from '~/utils/sync-account';
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
+import { GEN_SUBMIT_KEY, GEN_SUBMIT_TARGET } from '~/components/Tours/tour-targets';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -686,7 +687,7 @@ function SubmitButton({ isLoading: isSubmitting, onSubmit }: SubmitButtonProps) 
   // un-hiding a different step's footer — this effect stays mounted for the whole tour
   // (GenerationLayout keeps the footer slot in the DOM, just visually hidden).
   useEffect(() => {
-    setBlockedTarget(running && submitBlocked ? '[data-tour="gen:submit"]' : null);
+    setBlockedTarget(running && submitBlocked ? GEN_SUBMIT_TARGET : null);
     return () => setBlockedTarget(null);
   }, [running, submitBlocked, setBlockedTarget]);
 
@@ -698,7 +699,7 @@ function SubmitButton({ isLoading: isSubmitting, onSubmit }: SubmitButtonProps) 
   return (
     <GenerateButton
       type="button"
-      data-tour="gen:submit"
+      data-tour={GEN_SUBMIT_KEY}
       className="h-full flex-1 px-2"
       color={color}
       loading={isSubmitting}
