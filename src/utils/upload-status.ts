@@ -15,11 +15,20 @@ export type TrackedFileStatus =
 /**
  * 🔴 "STILL UPLOADING" IS A STATUS, NEVER A PROGRESS NUMBER.
  *
- * Three consumers open-coded this as `imageFile && imageFile.progress < 100`, and every
- * one of them was wrong in the same direction — which is what a predicate open-coded at
- * N sites does. `progress` is written by exactly one place, the `xhr.upload` progress
- * listener in `src/hooks/useCFImageUpload.tsx`; neither the success branch nor either
- * failure branch touches it. So:
+ * 🔴 FIVE consumers open-coded this, every one of them derived from `progress`:
+ * `ProfileImageUpload`, `CosmeticShopItemUpsertForm`, `moderator/cosmetic-store/badges`
+ * and `useSubmitCreatorShopForm` as `progress < 100`, and `ImageUpload` as
+ * `(match && progress < 100) || image.file`. That is what a predicate open-coded at N
+ * sites does — three of the five latched outright, the fourth only worked because its
+ * `catch` called `resetFiles()` to clear the stuck tracked file, and the fifth needed a
+ * second term to compensate.
+ *
+ * (The other `progress < 100` hits in the repo are progress-BAR colour — "is the bar
+ * full" is a legitimate question about `progress`. This one is not.)
+ *
+ * `progress` is written by exactly one place, the `xhr.upload` progress listener in
+ * `src/hooks/useCFImageUpload.tsx`; neither the success branch nor either failure branch
+ * touches it. So:
  *
  *   - a PUT refused before any progress event fires (an expired presign answers on the
  *     request headers) leaves `progress` at its initial `0` forever. `progress < 100` is
