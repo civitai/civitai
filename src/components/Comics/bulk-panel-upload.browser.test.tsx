@@ -26,7 +26,7 @@ import {
 /** A real, decodable 2x2 PNG, so `readDimensions` resolves rather than falling back. */
 const PNG_2X2 = Uint8Array.from(
   atob(
-    'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAACddGYaAAAAFUlEQVR4nGP8z8DAwMDAxMDAwMAAAA8AAf8Ct4gAAAAASUVORK5CYII='
+    'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGP4z8AARAwQCgAf7gP9i18U1AAAAABJRU5ErkJggg=='
   ),
   (c) => c.charCodeAt(0)
 );
