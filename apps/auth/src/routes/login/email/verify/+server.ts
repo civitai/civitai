@@ -4,6 +4,7 @@ import { SYNC_PARAM } from '@civitai/auth';
 import type { RequestHandler } from './$types';
 import { consumeVerificationToken } from '$lib/server/auth/email-tokens';
 import { findOrCreateUserByEmail } from '$lib/server/auth/users';
+import { normalizeEmailAddress } from '$lib/server/auth/blocklist';
 import { establishSession } from '$lib/server/auth/session';
 import { buildPostLoginRedirect } from '$lib/server/auth/redirect';
 import { buildPostLoginOriginCheck } from '$lib/server/oauth/first-party';
@@ -12,7 +13,8 @@ import { loginsTotal } from '$lib/server/metrics';
 // Magic-link landing: validate + consume the token, establish the session, honor returnUrl/sync.
 export const GET: RequestHandler = async ({ url, cookies }) => {
   const token = url.searchParams.get('token');
-  const email = url.searchParams.get('email')?.toLowerCase();
+  const rawEmail = url.searchParams.get('email');
+  const email = rawEmail ? normalizeEmailAddress(rawEmail) : null;
   const returnUrl = url.searchParams.get('returnUrl') ?? '/';
   const sync = url.searchParams.get(SYNC_PARAM);
 
