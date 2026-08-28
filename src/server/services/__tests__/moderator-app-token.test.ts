@@ -2,6 +2,7 @@ import { readFile } from 'fs/promises';
 import path from 'path';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { setEnv } from '~/__tests__/mocks';
+import { serverSchema } from '~/env/server-schema';
 
 /**
  * `moderator-app.service` builds the ONE client the main app uses to call the moderator spoke
@@ -110,6 +111,25 @@ describe('moderatorApp client endpoint', () => {
     setEnv({ MODERATOR_APP_INTERNAL_URL: undefined });
     const config = await loadClientConfig();
     expect(config.endpoint).toBe(PUBLIC_URL);
+  });
+
+  it('falls back to MODERATOR_APP_URL when MODERATOR_APP_INTERNAL_URL is present but empty', async () => {
+    setEnv({ MODERATOR_APP_INTERNAL_URL: '' });
+    const config = await loadClientConfig();
+    expect(config.endpoint).toBe(PUBLIC_URL);
+  });
+
+  it('accepts an empty MODERATOR_APP_INTERNAL_URL through the env SCHEMA, not just the client', async () => {
+    // The client-level fallback above is only reachable if the schema lets '' through at all.
+    // A bare `z.url().optional()` rejects '', which fails the whole parse and the process refuses
+    // to boot — so a key added to a ConfigMap with no value would be an outage, not a no-op.
+    // Asserted against the real schema field, so it cannot drift from what the app parses.
+    const field = serverSchema.shape.MODERATOR_APP_INTERNAL_URL;
+    expect(field.safeParse('').success).toBe(true);
+    expect(field.safeParse(undefined).success).toBe(true);
+    expect(field.safeParse(INTERNAL_URL).success).toBe(true);
+    // Still a URL check, not `z.string()`: a non-empty non-URL is rejected.
+    expect(field.safeParse('not a url').success).toBe(false);
   });
 
   it('leaves the browser-facing redirect base on the PUBLIC url', async () => {
