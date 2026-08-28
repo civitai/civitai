@@ -8,13 +8,10 @@ import { tourSteps } from '~/components/Tours/tours';
 const SRC = path.resolve(__dirname, '../../..');
 const TOUR_DEFINITIONS = path.join(SRC, 'components', 'Tours', 'tours');
 
-// `gen:reset` and `gen:results` are rendered but targeted by no step. `${target}` and
-// `${tourTarget}` are the naive regex matching its own capture group against a template
-// literal selector (GenerationForm.tsx, RemixMenu.tsx) rather than a literal attribute, and
-// `([^` is the same regex matching its own source text in joyride-callback.ts. None of these
-// is this guard's business to fix — but listing them means the NEXT orphaned attribute fails
-// here instead of quietly joining them.
-const UNTARGETED_ATTRIBUTES = ['gen:reset', 'gen:results', '${target}', '${tourTarget}', '([^'];
+// `gen:reset` and `gen:results` are rendered but targeted by no step. Harmless, and
+// removing them is not this guard's business — but listing them means the NEXT
+// orphaned attribute fails here instead of quietly joining them.
+const UNTARGETED_ATTRIBUTES = ['gen:reset', 'gen:results'];
 
 function sourceFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -36,6 +33,9 @@ const tourTargetKeys = Object.entries(tourSteps).flatMap(([tour, steps]) =>
   })
 );
 
+const isGenTabKey = (key: string | undefined): boolean =>
+  GENERATION_TAB_KEYS.some((tab) => key === `gen:${tab}`);
+
 describe('tour steps point at something', () => {
   it('targets a data-tour attribute, so the key below is checkable', () => {
     expect(tourTargetKeys.filter((t) => !t.key).map((t) => `${t.tour}: ${t.target}`)).toEqual([]);
@@ -49,14 +49,12 @@ describe('tour steps point at something', () => {
    */
   it('names a data-tour key that some component still renders', () => {
     const rendered = sourceFiles(SRC).map((file) => readFileSync(file, 'utf-8'));
-    // `gen:queue`/`gen:feed`/`gen:generate` are template-literal-built (see the `gen:
-    // namespace` block below), so no source file holds them as a literal string — this
-    // is a narrow, enumerated exemption for exactly those three, not the old blanket
-    // "anything starting with gen:" one this guard used to carry.
+    // The `gen:<tab>` keys are exempted here, not because they're unchecked, but because
+    // the `gen: namespace` block below checks them a different way — see its JSDoc.
     const orphans = [...new Set(tourTargetKeys.map((t) => t.key))].filter(
       (key) =>
         !rendered.some((source) => source.includes(`'${key}'`) || source.includes(`"${key}"`)) &&
-        !GENERATION_TAB_KEYS.some((tab) => key === `gen:${tab}`)
+        !isGenTabKey(key)
     );
     expect(orphans).toEqual([]);
   });
@@ -86,9 +84,7 @@ describe('the gen: namespace', () => {
           ].includes(key)
       );
 
-    const unknown = genTabTargets.filter(
-      (key) => !GENERATION_TAB_KEYS.some((tab) => key === `gen:${tab}`)
-    );
+    const unknown = genTabTargets.filter((key) => !isGenTabKey(key));
 
     expect(unknown).toEqual([]);
   });
@@ -96,13 +92,31 @@ describe('the gen: namespace', () => {
   it('renders a tab for every gen: tab target a tour names', () => {
     expect([...GENERATION_TAB_KEYS]).toEqual(expect.arrayContaining(['queue', 'feed']));
   });
+
+  /**
+   * The two checks above only compare the TYPE layer (`GENERATION_TAB_KEYS`) against tour
+   * definitions — neither reads GenerationTabs.tsx, so deleting the `data-tour` JSX itself
+   * would leave both green while the tour points at nothing, same as `model:download`.
+   */
+  it('still renders a gen: data-tour attribute for each tab', () => {
+    const source = readFileSync(
+      path.join(SRC, 'components', 'ImageGeneration', 'GenerationTabs.tsx'),
+      'utf-8'
+    );
+
+    expect(source).toMatch(/data-tour=\{`gen:\$\{/);
+  });
 });
 
 describe('data-tour attributes nothing targets', () => {
   it('has not grown since it was last looked at', () => {
     const rendered = sourceFiles(SRC).map((file) => readFileSync(file, 'utf-8'));
+    // A `[`-preceded match is a selector string (a template-literal lookup, or this
+    // guard's own regex source in joyride-callback.ts) rather than a declared attribute.
     const declared = new Set(
-      rendered.flatMap((source) => [...source.matchAll(/data-tour="([^"]+)"/g)].map((m) => m[1]))
+      rendered.flatMap((source) =>
+        [...source.matchAll(/(?<!\[)data-tour="([^"]+)"/g)].map((m) => m[1])
+      )
     );
     const targeted = new Set(tourTargetKeys.map((t) => t.key));
     const untargeted = [...declared].filter((key) => !targeted.has(key)).sort();
