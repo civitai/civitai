@@ -230,7 +230,12 @@ import { fetchBlob } from '~/utils/file-utils';
 import { getMetadata } from '~/utils/metadata';
 import { removeEmpty } from '~/utils/object-helpers';
 import { DeleteObjectCommand } from '@aws-sdk/client-s3';
-import { serverUploadImage, getB2ImageS3Client, headObject } from '~/utils/s3-utils';
+import {
+  serverUploadImage,
+  getB2ImageS3Client,
+  getImageUploadBackend,
+  headObject,
+} from '~/utils/s3-utils';
 import { resolveMediaLocation } from '~/server/services/storage-resolver';
 import { isDefined, isNumber } from '~/utils/type-guards';
 import { FLIPT_FEATURE_FLAGS, getFliptBoolean, getFliptVariant, isFlipt } from '../flipt/client';
@@ -8066,21 +8071,29 @@ export async function updateImageNsfwLevel({
  */
 const RESOLVE_INGESTION_MEDIA_PROBE_TIMEOUT_MS = 5_000;
 
-/** Every image object lives in the b2Image uploads bucket, and `Image.url` IS its key. */
-const imageUploadsBucket = () => env.S3_IMAGE_B2_BUCKET ?? 'civitai-media-uploads';
-
 /**
  * Ask the uploads bucket whether an image's object is actually there, as a three-valued answer.
  *
- * Building the client is deliberately INSIDE the caller's try (see `assertMediaPresentForPublish`),
- * because `getB2ImageS3Client()` throws when credentials are absent and that must land on `unknown`,
+ * 🔴 THE BACKEND COMES FROM `getImageUploadBackend()`, NOT AN INLINE CLIENT + BUCKET LITERAL.
+ * `Image.url` is the key the UPLOAD path minted, so the only store that can answer about it is the
+ * one that path writes to. An open-coded `getB2ImageS3Client()` + `env.S3_IMAGE_B2_BUCKET ??
+ * 'civitai-media-uploads'` pair agrees with that resolver only by coincidence today: change where
+ * uploads land and the probe keeps asking the old bucket, which answers 404 for every key — and on
+ * this path an `absent` is a PERMANENT publish refusal, so the whole queue would fail closed while
+ * looking exactly like a real run of misses. Resolving through the same function the uploader uses
+ * makes that class impossible rather than merely unlikely. (The sibling probe at
+ * `src/server/utils/stored-image-probe.ts` already resolves this way.)
+ *
+ * Calling it is deliberately INSIDE the caller's try (see `assertMediaPresentForPublish`), because
+ * it builds the S3 client, which throws when credentials are absent — that must land on `unknown`,
  * not on a failed publish.
  */
 async function probeImageMediaPresence(key: string): Promise<MediaProbeAnswer> {
   // 🔴 No key check here, deliberately. `assertMediaPresentForPublish` classifies the url and only
   // calls this with a value that already passed the SHARED `isProbeableMediaKey` — a copy of that
   // test in each probe is exactly how the two runtimes came to disagree about the same row.
-  const head = await headObject(imageUploadsBucket(), key, getB2ImageS3Client(), {
+  const { s3, bucket } = await getImageUploadBackend();
+  const head = await headObject(bucket, key, s3, {
     abortSignal: AbortSignal.timeout(RESOLVE_INGESTION_MEDIA_PROBE_TIMEOUT_MS),
   });
   if (head.status === 'present') return MediaPresence.Present;

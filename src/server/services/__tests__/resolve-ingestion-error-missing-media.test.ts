@@ -12,9 +12,10 @@ import type * as Shared from '@civitai/shared';
  * runtime, and that it runs THROUGH the shared module rather than a second local copy of it.
  */
 
-const { headObject, getB2ImageS3Client, assertSpy } = vi.hoisted(() => ({
+const { headObject, getB2ImageS3Client, getImageUploadBackend, assertSpy } = vi.hoisted(() => ({
   headObject: vi.fn(),
   getB2ImageS3Client: vi.fn(() => ({} as never)),
+  getImageUploadBackend: vi.fn(),
   assertSpy: vi.fn(),
 }));
 
@@ -24,6 +25,7 @@ vi.mock('~/utils/s3-utils', async (importOriginal) => ({
   ...(await importOriginal<typeof S3Utils>()),
   headObject,
   getB2ImageS3Client,
+  getImageUploadBackend,
 }));
 
 /**
@@ -53,13 +55,27 @@ import { resolveIngestionError } from '~/server/services/image.service';
 
 const IMAGE_KEY = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
 
+/**
+ * 🔴 The upload backend the probe MUST resolve through, and both values are deliberately chosen so
+ * that no inline fallback can equal them.
+ *
+ * The bucket is NOT `'civitai-media-uploads'` — the literal an open-coded
+ * `env.S3_IMAGE_B2_BUCKET ?? 'civitai-media-uploads'` would produce in a test env with no
+ * `S3_IMAGE_B2_BUCKET` set — and the client is an identity-comparable sentinel, not the `{}` the
+ * `getB2ImageS3Client` mock returns. A mutant that reverts the probe to the open-coded pair
+ * therefore FAILS on the assertion rather than passing by coincidence, which is precisely what the
+ * previous fixture (`'civitai-media-uploads'`, an anonymous object) could not do.
+ */
+const PROBE_BUCKET = 'resolved-upload-backend-bucket';
+const PROBE_S3_CLIENT = { __sentinel: 'resolved-upload-backend-client' } as never;
+
 const resolve = () => resolveIngestionError({ id: 4242, nsfwLevel: 1, userId: 7 });
 
 /**
  * Every mock this FILE owns. Reset as a set rather than one at a time, so adding a collaborator
  * cannot silently opt it out of the reset — which is the shape of the defect below.
  */
-const ownMocks = [headObject, getB2ImageS3Client, assertSpy];
+const ownMocks = [headObject, getB2ImageS3Client, getImageUploadBackend, assertSpy];
 
 beforeEach(() => {
   /**
@@ -74,12 +90,17 @@ beforeEach(() => {
    * `setup.ts`, which registers canonical hybrid mocks (`dbMock`, `loggingMock`) whose DEFAULT
    * implementations are installed once per file. `resetAllMocks` strips those too, so
    * `logToAxiom(...)` returns `undefined` and the production `.catch(() => undefined)` on it throws
-   * `Cannot read properties of undefined` — measured, 17 of 30 cases here. So: clear globally
-   * (call history, which is what the assertions read), and RESET this file's own mocks.
+   * `Cannot read properties of undefined` — measured, 17 of the 23 cases in this file. So: clear
+   * globally (call history, which is what the assertions read), and RESET this file's own mocks.
    */
   vi.clearAllMocks();
   for (const mock of ownMocks) mock.mockReset();
   getB2ImageS3Client.mockImplementation(() => ({} as never));
+  getImageUploadBackend.mockResolvedValue({
+    s3: PROBE_S3_CLIENT,
+    bucket: PROBE_BUCKET,
+    backend: 'backblaze',
+  } as never);
   // postId null keeps the post-level recompute out of the way; it is not what these cases pin.
   dbMock.dbRead.image.findUnique.mockResolvedValue({
     ingestion: 'Error',
@@ -112,10 +133,32 @@ describe('main-app resolveIngestionError — missing-media guard', () => {
 
     expect(headObject).toHaveBeenCalledTimes(1);
     const [bucket, key, , options] = headObject.mock.calls[0];
-    expect(bucket).toBe('civitai-media-uploads');
+    expect(bucket).toBe(PROBE_BUCKET);
     expect(key).toBe(IMAGE_KEY);
     // An unbounded probe against a degraded backend turns a moderator's click into a hung request.
     expect(options?.abortSignal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('asks the SAME backend resolver the upload path used to mint the key', async () => {
+    /**
+     * 🔴 A SEAM, not a component. `Image.url` is the key `getImageUploadBackend()` handed the
+     * uploader, so that resolver is the only thing that knows which store can answer about it. An
+     * open-coded `getB2ImageS3Client()` + `env.S3_IMAGE_B2_BUCKET ?? 'civitai-media-uploads'` pair
+     * agrees with it only by coincidence — and the day it stops agreeing, every probe 404s, which
+     * this module reads as `absent`, which is a PERMANENT refusal. Fail-closed across the whole
+     * queue, indistinguishable from a real run of misses.
+     *
+     * Asserted on BOTH halves and against values the open-coded pair cannot produce (see
+     * `PROBE_BUCKET` / `PROBE_S3_CLIENT`), so reverting either half fails here.
+     */
+    headObject.mockResolvedValue({ status: 'present', size: 1 });
+
+    await resolve();
+
+    expect(getImageUploadBackend).toHaveBeenCalledTimes(1);
+    const [bucket, , client] = headObject.mock.calls[0];
+    expect(bucket).toBe(PROBE_BUCKET);
+    expect(client).toBe(PROBE_S3_CLIENT);
   });
 
   it('publishes exactly as before when the bucket confirms the object is present', async () => {
@@ -146,12 +189,11 @@ describe('main-app resolveIngestionError — missing-media guard', () => {
   });
 
   it('publishes when the storage CLIENT cannot even be built', async () => {
-    // `getB2ImageS3Client()` throws when credentials are absent. That must land on "could not
-    // consult", not on a failed publish — a guard that can fail the path by its own absence is
-    // worse than no guard. The client is resolved inside the probe for exactly this reason.
-    getB2ImageS3Client.mockImplementation(() => {
-      throw new Error('B2 image upload credentials not configured');
-    });
+    // Resolving the backend builds the S3 client, which throws when credentials are absent. That
+    // must land on "could not consult", not on a failed publish — a guard that can fail the path by
+    // its own absence is worse than no guard. The backend is resolved inside the probe, which runs
+    // inside `assertMediaPresentForPublish`'s own try, for exactly this reason.
+    getImageUploadBackend.mockRejectedValue(new Error('B2 image upload credentials not configured'));
 
     await resolve();
 
@@ -285,9 +327,7 @@ describe('the guard reports what it did, in both directions', () => {
   });
 
   it('distinguishes a probe that THREW from a store that declined to answer', async () => {
-    getB2ImageS3Client.mockImplementation(() => {
-      throw new Error('B2 image upload credentials not configured');
-    });
+    getImageUploadBackend.mockRejectedValue(new Error('B2 image upload credentials not configured'));
 
     await resolve();
 
@@ -300,9 +340,9 @@ describe('the guard reports what it did, in both directions', () => {
   });
 
   it('bounds the probe error it logs, so a remote response body cannot flood the pipeline', async () => {
-    getB2ImageS3Client.mockImplementation(() => {
-      throw new Error(`storage request failed (503) ${'x'.repeat(10_000)}`);
-    });
+    getImageUploadBackend.mockRejectedValue(
+      new Error(`storage request failed (503) ${'x'.repeat(10_000)}`)
+    );
 
     await resolve();
 
