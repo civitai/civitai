@@ -109,7 +109,10 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
 
   const handleDropImages = async (droppedFiles: File[]) => {
     for (const file of droppedFiles) {
-      uploadToCF(file);
+      // See BountyUpsertForm: fire-and-forget, and `uploadToCF` now rejects on a
+      // refused PUT, so the promise has to be attached or every 403 is an unhandled
+      // rejection. The hook marks the tracked file `error`, which is what renders.
+      uploadToCF(file).catch(() => undefined);
     }
   };
 

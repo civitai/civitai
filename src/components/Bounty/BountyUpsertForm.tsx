@@ -148,7 +148,12 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
 
   const handleDropImages = async (droppedFiles: File[]) => {
     for (const file of droppedFiles) {
-      uploadToCF(file);
+      // Fire-and-forget by design — the UI reads progress/state off `imageFiles`, not
+      // off this promise. `uploadToCF` now REJECTS on a refused PUT (403/400/503)
+      // instead of resolving as if it had worked, so an unattached promise would be an
+      // unhandled rejection on every such failure. The tracked file is already marked
+      // `error` by the hook, which is what this component renders.
+      uploadToCF(file).catch(() => undefined);
     }
   };
 

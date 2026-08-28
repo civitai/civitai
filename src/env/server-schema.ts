@@ -650,6 +650,16 @@ export const serverSchema = z
     // an env var rather than a Flipt flag: this endpoint family removed Flipt
     // precisely because init failure caused a silent fallback.
     UPLOAD_COMPLETE_VERIFY_ENFORCE: zc.booleanString.optional().default(false),
+    // Enforce the media-existence check in `createImage` (every Image row, whatever
+    // the entry point). Same family, same stance as the flag above.
+    // 🔴 Defaults to FALSE = observe-only: the probe still runs and its verdict is
+    // logged on every call, but an `absent` verdict does NOT reject the creation. The
+    // measurement has to come first — the observed defect rate is ~10 rows in ~22,800
+    // creations, so a false-reject rate anywhere near that would cost more than the
+    // bug, and it can only be read from the log this emits. Flip it only once the
+    // logged `absent` rate has been compared against the total and matches the known
+    // defect rate.
+    CREATE_IMAGE_VERIFY_MEDIA_ENFORCE: zc.booleanString.optional().default(false),
     POST_INTENT_DETAILS_HOSTS: z.preprocess(stringToArray, z.array(z.url()).optional()),
     CHOPPED_TOKEN: z.string().optional(),
     TIER_METADATA_KEY: z.string().default('tier'),

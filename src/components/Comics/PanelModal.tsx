@@ -377,6 +377,11 @@ export function PanelModal({
         width: dims.width,
         height: dims.height,
       });
+    } catch (err) {
+      // `uploadToCF` now REJECTS on a refused PUT (403/400/503) rather than resolving
+      // as if it had worked. Without this catch the rejection escapes this async
+      // dropzone handler unhandled and the user is told nothing at all.
+      showErrorNotification({ error: err as Error, title: 'Failed to upload image' });
     } finally {
       setEnhanceUploading(false);
     }
@@ -518,6 +523,11 @@ export function PanelModal({
         });
       }
       setBulkItems((prev) => [...prev, ...newItems].slice(0, 20));
+    } catch (err) {
+      // Same as the enhance drop above: a refused PUT now rejects, and this handler
+      // had no catch — the whole batch was discarded silently and the rejection
+      // escaped. Keep the partial batch behaviour, but say something.
+      showErrorNotification({ error: err as Error, title: 'Failed to upload image' });
     } finally {
       setBulkUploading(false);
     }

@@ -225,6 +225,7 @@ import { getMetadata } from '~/utils/metadata';
 import { removeEmpty } from '~/utils/object-helpers';
 import { DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { serverUploadImage, getB2ImageS3Client } from '~/utils/s3-utils';
+import { probeCreatedImageMedia } from '~/server/utils/created-image-media-probe';
 import { resolveMediaLocation } from '~/server/services/storage-resolver';
 import { isDefined, isNumber } from '~/utils/type-guards';
 import { FLIPT_FEATURE_FLAGS, getFliptBoolean, getFliptVariant, isFlipt } from '../flipt/client';
@@ -7362,10 +7363,56 @@ export async function createImage({
    */
   verifiedSourceImageIds?: number[] | null;
 }) {
+  /**
+   * 🔴 THE ROW MUST NOT OUTLIVE ITS MEDIA — so ask the store before writing it.
+   *
+   * Every `Image` row goes through here: `addPostImage`, `createPostWithImagesHandler`,
+   * the model-version and collection paths, comics, cover images, thumbnails. The
+   * check belongs at this one funnel and nowhere else — not per-router (four copies of
+   * a predicate is a predicate that is wrong at three of them) and not in the zod
+   * schema (it needs IO).
+   *
+   * 🔴 OBSERVE-ONLY BY DEFAULT. The probe always runs and always logs; whether an
+   * `absent` verdict actually REJECTS is gated by `CREATE_IMAGE_VERIFY_MEDIA_ENFORCE`,
+   * which ships off. Rejecting here is a new failure mode on the image-creation happy
+   * path, and the only way to size it is to let the `absent` rate accumulate against
+   * the total first. Flipping it back off is a config change, not a revert.
+   *
+   * Compared against `true` explicitly: the gate guards a REJECTION, so anything other
+   * than an unambiguous opt-in — unset, malformed, a stray string — must land on
+   * observe-only rather than on failing image creation.
+   */
+  const mediaVerdict = await probeCreatedImageMedia(image.url);
+  const enforcingMediaVerify = env.CREATE_IMAGE_VERIFY_MEDIA_ENFORCE === true;
+  const rejectingMedia = mediaVerdict === 'absent' && enforcingMediaVerify;
+
+  // Logged on EVERY call, whatever the verdict, so the `absent` rate can be read
+  // against the total. A log emitted only on the bad verdict has no denominator, and
+  // the denominator is the entire point of the observe-only phase.
+  //
+  // NOT awaited, and contained. On 2026-08-23 an awaited, uncontained `logToAxiom`
+  // turned ~5,300 successful uploads into 500s when the ingest host went unreachable
+  // for 44 minutes. Telemetry must never be able to change this call's outcome, and
+  // must not sit on a user-facing mutation's latency budget either.
+  void logToAxiom({
+    type: rejectingMedia ? 'warning' : 'info',
+    name: 'create-image-media-verify',
+    message: 'createImage media existence probe',
+    verdict: mediaVerdict,
+    enforcing: enforcingMediaVerify,
+    rejected: rejectingMedia,
+    userId: image.userId,
+    postId: image.postId ?? null,
+  }).catch(() => undefined);
+
+  if (rejectingMedia)
+    throw throwBadRequestError('One of the files did not upload properly, please try again');
+
   const meta = sanitizeProvenance(
     image.meta as Record<string, unknown> | null | undefined,
     verifiedSourceImageIds
   );
+
   const result = await dbWrite.image.create({
     data: {
       ...image,

@@ -569,7 +569,11 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
             <Stack gap="md" py="md">
               <MediaDropzone
                 onDrop={(args) => {
-                  args.forEach(({ file }) => uploadToCF(file));
+                  // Attached: `uploadToCF` now rejects on a refused PUT (403/400/503)
+                  // instead of resolving as if it had worked, and this is
+                  // fire-and-forget. The hook marks the tracked file `error`, which is
+                  // what `uploadedFiles` below renders.
+                  args.forEach(({ file }) => uploadToCF(file).catch(() => undefined));
                 }}
                 accept={[...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE]}
                 disabled={remainingEntries === 0}

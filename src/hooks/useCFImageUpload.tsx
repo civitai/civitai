@@ -110,8 +110,15 @@ export const useCFImageUpload: UseCFImageUpload = () => {
       );
     }
 
-    await new Promise((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       let uploadStart = Date.now();
+      /**
+       * `error` / `abort` are each followed by a `loadend`, so without this the
+       * settled outcome would be re-decided by the handler below — harmless for the
+       * promise (already settled) but it would overwrite the tracked file's
+       * `aborted` status with `error`. Set by whichever terminal handler runs first.
+       */
+      let terminated = false;
       xhr.upload.addEventListener('loadstart', () => {
         uploadStart = Date.now();
       });
@@ -136,18 +143,42 @@ export const useCFImageUpload: UseCFImageUpload = () => {
         }
       });
       xhr.addEventListener('loadend', () => {
+        if (terminated) return;
         const success = xhr.readyState === 4 && xhr.status === 200;
         if (success) {
           updateFile({ status: 'success' });
           // URL.revokeObjectURL(imageData.objectUrl);
+          resolve();
+          return;
         }
-        resolve(success);
+        /**
+         * 🔴 A FAILED PUT MUST REJECT. This used to `resolve(success)` on every
+         * outcome and the caller discarded the value, so `uploadToCF` returned its
+         * `{ url, id, ... }` unconditionally and consumers persisted a media key
+         * with nothing behind it.
+         *
+         * XHR's `error` event fires only on a NETWORK failure. A PUT that reaches
+         * the store and is refused — an expired presign (403), a malformed request
+         * (400), a store that is briefly unavailable (503) — completes normally and
+         * lands HERE, on `load` → `loadend`. That is the whole gap: measured over
+         * ~22,800 image creations, 10 rows referenced media that was never stored,
+         * and 7 of those had a real upload attempted seconds earlier that failed
+         * silently down this path.
+         *
+         * The status is in the message deliberately: the consumers that surface
+         * `error.message` then say which failure it was, and the ones that swallow
+         * it at least stop persisting the key.
+         */
+        updateFile({ status: 'error' });
+        reject(new Error(`Upload failed (status ${xhr.status})`));
       });
       xhr.addEventListener('error', () => {
+        terminated = true;
         updateFile({ status: 'error' });
         reject(new Error(`Upload failed (status ${xhr.status})`));
       });
       xhr.addEventListener('abort', () => {
+        terminated = true;
         updateFile({ status: 'aborted' });
         reject(new Error('Upload canceled'));
       });

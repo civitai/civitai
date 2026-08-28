@@ -115,16 +115,28 @@ export function ImageUpload({
     ]);
     await Promise.all(
       toUpload.map(async (image) => {
-        const { id } = await uploadToCF(image.file);
-        filesHandler.setState(
-          produce((current) => {
-            const index = current.findIndex((x) => x.file === image.file);
-            if (index === -1) return;
-            current[index].url = id;
-            current[index].file = undefined;
-          })
-        );
-        URL.revokeObjectURL(image.url);
+        try {
+          const { id } = await uploadToCF(image.file);
+          filesHandler.setState(
+            produce((current) => {
+              const index = current.findIndex((x) => x.file === image.file);
+              if (index === -1) return;
+              current[index].url = id;
+              current[index].file = undefined;
+            })
+          );
+          URL.revokeObjectURL(image.url);
+        } catch (e) {
+          // `uploadToCF` now REJECTS when the presigned PUT is refused (403/400/503)
+          // rather than resolving as if it had worked. Without this the tile's
+          // placeholder entry survives with `file` still set, and `showLoading`
+          // (`(match && progress < 100) || image.file`) latches on forever — and the
+          // rejection escapes `Promise.all` into the dropzone handler unhandled.
+          // Drop the placeholder so the tile disappears and the user can retry.
+          filesHandler.setState((current) => current.filter((x) => x.file !== image.file));
+          URL.revokeObjectURL(image.url);
+          setError(e instanceof Error ? e.message : 'Failed to upload image, please try again');
+        }
       })
     );
   };
