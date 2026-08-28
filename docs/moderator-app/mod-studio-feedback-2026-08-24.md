@@ -1,11 +1,11 @@
-# Mod Studio feedback — rounds 2026-08-24, 2026-08-25 and 2026-08-27
+# Mod Studio feedback — rounds 2026-08-24 through 2026-08-28
 
 The moderation team reviews the app in a feedback channel and reports as they go. This file is the single
 place to see what these rounds asked for and whether it is done.
 
 **Scope:** the comment-spam round raised on 2026-08-24, the follow-up round raised on 2026-08-25 after
-that push and its changelog, the strike-visibility round raised on 2026-08-27, PLUS everything still
-open from earlier rounds — in that order.
+that push and its changelog, the strike-visibility round raised on 2026-08-27, the Bulk Ban round
+raised on 2026-08-28, PLUS everything still open from earlier rounds — in that order.
 
 **This is the live list.** A round gets its own dated section so it is clear when something was first
 asked for, and unfinished items move forward rather than being ticked across several files — so this is
@@ -651,6 +651,206 @@ there is still exactly one list with open boxes; each item carries the date it w
       first ` by `, unbounded. Nothing updates `internalNotes` after creation, so the tail is always
       the name — but if anything ever appends to an imported row's notes, that text becomes the
       client-visible "by …" string.
+
+# Round 2026-08-28
+
+## Reported defects
+
+- [x] **Bulk Ban's IP search shows the 500 OLDEST accounts, and calls that number the total.**
+      *(08-28)* Reported as "only pulls the 500 oldest accounts registered", which is exactly right,
+      and the cause is one line: `getAccountsOnIps` ends `ORDER BY targetUserId LIMIT 500`. Account
+      ids ascend with age, so the cap keeps the oldest registrations and drops everything newer.
+
+      Measured against ClickHouse on 2026-08-28, on the IP the reporter checked: **908** accounts
+      registered on it, **500** shown, **408** hidden. The visible list stops at a registration from
+      **2025-04-26** and the hidden ones run from **2025-04-27 to today** — the most recent is hours
+      old. So sixteen months of a still-active ring are invisible, and it is the *active* half that
+      is invisible.
+
+      Three separate defects behind one symptom, worth separating because they need different fixes:
+
+      **1. The cap is real and should stay.** The service comment gives the reason: an IP behind a
+      carrier NAT can carry thousands of unrelated registrations, and a moderator must not be handed
+      that as a ban list. Nothing below argues for removing it.
+
+      **2. The order is backwards for the job.** Oldest-first is what a cap should never keep on a
+      list whose purpose is stopping a ring that is still registering accounts. Newest-first costs
+      nothing and inverts which half survives the cap.
+
+      **3. The truncation is not merely silent — the UI states it as a fact.** The panel header
+      renders `Accounts on those IPs ({data.ipAccounts.length})`, so a capped result reads
+      **"Accounts on those IPs (500)"**: a definite count that is really the cap. This is the exact
+      trap already flagged on `getLiveStrikes` ("`limit` truncates silently, and `SuspectPanel`
+      renders a count from `.length` — at 50 rows that count would read as the cap"), in a second
+      panel. The "Add 500 to the list" button below it inherits the same wrong number.
+
+      **And the cap is unreachable by working it.** `getAccountsOnIps` does not exclude accounts that
+      are already banned, so banning the visible 500 and re-running returns *the same 500*, now all
+      banned. There is no sequence of actions in the UI that reaches the other 408. Its sibling
+      `getAccountsOnDomains` does filter `bannedAt IS NULL AND deletedAt IS NULL`, so the domain
+      search drains as you work it — the two queries are otherwise the same shape, and that one
+      difference is what makes this one a dead end rather than a page size.
+
+      ⚠️ **`getAccountsOnDomains` has the same ordering defect** — `orderBy('id')` with the same 500
+      cap, and the same `.length`-derived header. It self-drains, so it is a slower dead end rather
+      than a permanent one, but a domain with more than 500 live accounts shows the oldest of them
+      first for the same reason.
+
+      **Fixed 2026-08-28, and the decision on the judgement call was MARK, not hide.** Banned accounts
+      stay in the IP list wearing a badge. Filtering them would make the list drain as it is worked,
+      which is the cheaper fix — but it would also hide that a ring has been actioned before, and that
+      is a thing the panel is read for.
+
+      🔴 **Marking is exactly why the panel had to gain PAGING, and the first version of this fix did
+      not.** Filtering is what makes a cap survivable: ban the visible rows, re-run, get the next ones.
+      Marking removes that, so ordering newest-first only changed WHICH 408 accounts were invisible —
+      ban the 500, re-run, and the identical 500 come back badged with "Add 0 to the list", and the rest
+      of the ring is unreachable by any sequence of actions in the UI. The panel also told the operator
+      to "narrow the IPs to see the rest", which cannot be done when the search is one IP, which is the
+      reported case. That was the original bug relocated, not fixed; the correctness review caught it and
+      an earlier draft of this entry asserted the opposite. The two decisions are a pair — keeping the
+      marking without the paging is the state that reads as fixed and is not.
+
+      Three changes to `getAccountsOnIps`:
+
+      - **`ORDER BY time DESC`**, on `min(time)` rather than on the id. Verified against production:
+        the same IP now returns registrations from today first, where the old order stopped at
+        2025-04-26.
+      - **A second `uniqExact(targetUserId)` query** carrying the same predicates, so the panel renders
+        "500 of 908" from the real total instead of restating the cap. Both queries are built from one
+        `where` string; a count over a different set would overstate the ring on every search.
+      - **Ban state per row**, hydrated through `usersByIds` — the existing helper for exactly this
+        (ClickHouse rows carrying ids and no names). Four states, because they are not one thing:
+        `active`, `banned`, `deleted`, and `gone` for an id ClickHouse has a registration for and
+        Postgres has no account for. Only `active` is added to the list, and the panel says how many it
+        left behind rather than quietly shrinking the number on the button.
+      - **An `ipOffset` in the URL**, with Previous/Next and a header reading "501–908 of 908" — rows,
+        not pages, because the question is whether the whole ring has been seen. It rides the URL like
+        every other input on this page, so a search stays shareable. The ORDER carries `targetUserId` as
+        a tiebreaker: bot registrations share a timestamp to the second, and without it rows either side
+        of an offset are free to swap between the two requests, silently repeating and skipping.
+
+      `getAccountsOnDomains` got the ordering fix and the same real total. It keeps EXCLUDING banned
+      accounts rather than marking them, and the difference is now written down at both call sites: that
+      one only ever grows a list to act on, this one is also read as a history.
+
+      Nine tests, all mutation-checked against the emitted SQL — reverting either ordering, dropping the
+      offset or the tiebreaker, deriving the total from `.length`, or dropping the status mapping each
+      fail. The order is exactly the kind of defect a rendered page cannot show you: every row looks
+      right, there are just the wrong 500.
+      *Closes when:* a moderator runs the IP search on a ring with more than 500 registrations and
+      confirms the newest accounts are the ones they can now see and act on.
+
+## Found while in there *(08-28)*
+
+- [x] **User Reports: the queue is one scroll area that does not fit the viewport.** *(08-28)*
+      Reported as "the reports against user section has a scrollbar section that doesn't fit within the
+      viewport". The left column was `xl:max-h-[calc(100vh-2rem)] xl:overflow-y-auto` around the WHOLE
+      panel, so its heading, its filter bar, its fifty rows and its pager were all inside one scroll
+      area: paging meant scrolling past every row to reach the control, and the filters left the screen
+      while working the list. At the top of the page the `sticky` has not engaged yet either, so the
+      bottom of that area sits below the fold until you scroll.
+
+      🔴 **The first attempt did not fix it, and only measuring in a browser showed that.** Making the
+      column `h-[calc(100vh-2rem)]` got the height right and ignored the OFFSET: measured at 1920×1080,
+      the column started at y=136 (below the app header and the page header) and so ended at 1184 —
+      104px past the fold, taking the pager (1143–1163) with it, and forcing the page itself to 1843px.
+      CSS cannot read its own distance from the top of the viewport, so no calc on that element can be
+      correct while a header sits above it.
+
+      **Fixed by moving the header out of the way, which is the root cause rather than a workaround.**
+      The page header now lives in the RIGHT pane, so the two-pane row is the page root and the queue
+      starts at the top of the content region — its height is simply the row, with no offset to account
+      for. Measured after: the queue column runs y=92→1056 against a 1080 viewport, where it used to run
+      136→1184. It also buys the queue ~90px of rows back, permanently.
+
+      Both pages moved from `wide` to the `fullBleed` mode the layout already has, so nothing above the
+      row consumes height. Only the row list scrolls; heading, filters and pager stay put. `min-h-0` is
+      load-bearing at every level — a flex child refuses to shrink below its content, and one missing
+      instance brings the overflow straight back.
+
+      ⚠️ **One magic number survives and is not this bug: `h-[calc(100svh-3rem)]`.** The `3rem` is the
+      layout header, and every `fullBleed` page re-derives it because `SidebarProvider` is `min-h-svh`
+      — "at least a viewport, grow with content" — so nothing below it is bounded and `h-full` cannot
+      work. Binding it (`h-svh`) would delete the calc from every such page, but it moves scrolling off
+      the document, and SvelteKit restores WINDOW scroll on back/forward: every list page would lose its
+      position. That trade is unmade, deliberately.
+
+      **That removed the page scroll, so "Recently resolved" had nowhere to live.** Decided with the
+      reporter: it becomes a second TAB on the queue column (Open / Resolved), rather than moving into
+      the account pane or being dropped. It needed the same internal-scroll treatment — as a plain
+      section it overflowed the pane by 39px on its own.
+
+      **Next, not done here:** make the queue column an actual `Sidebar` — collapsible, with a real
+      mobile drawer instead of the current stacking. The layout is already shaped for it now that the
+      header is out of the way. Two things it has to handle: one `SidebarProvider` publishes one open
+      state through context, so a second `<Sidebar>` inside the existing provider would share the nav’s
+      collapsed state and needs its own nested provider; and nav (16rem) plus queue (24rem) is 640px of
+      chrome, which at 1280 leaves 640px for an image grid — which is the argument FOR collapsible
+      rather than against the idea.
+
+      **Also fixed, same report: the filter bar was ragged.** `ReportQueueFilterBar` is a wrapping flex
+      row built for a wide bar; in the 24rem column each label+field pair wraps to its own line, and
+      "Reporter" / "From" / "To" are different widths, so the three fields started at x=351, 332 and
+      317. It is a two-column grid now and they share one label track.
+
+      **`/retool/post-reports` had byte-identical markup** and got every part of this; the two queues
+      are hand-copied siblings rather than a shared layout, which is why each fix was two fixes.
+
+      Verified in a browser rather than by typecheck, which is what this whole item is about: all four
+      views (both pages × both tabs) measure `scrollHeight == innerHeight` at 1280×800, 1500×720,
+      1920×1080 and 2560×1440, and the three filter fields share one x. **Done.**
+
+      **Swept the rest of the app for the same shape; not a work item.** Eight pages measured in a
+      browser: only `/admin` repeats it — the grants matrix is `max-h-[calc(100vh-14rem)]` where the
+      real offset is 378px, so 154px of it hangs below the fold. **Deliberately left alone** (called on
+      2026-08-28); it is recorded here so the next person does not re-derive it, not as work anybody
+      owes. Everything else is clean. Two near-misses: `user-lookup/[section]`’s Buzz form is
+      `xl:sticky` with no height cap — harmless only while it stays shorter than the viewport — and
+      `/admin` has a second `max-h-[60vh]` panel whose content never reaches the cap.
+
+      ⚠️ Grepping for `overflow` alone over-reports: setting one axis to `auto` computes the other to
+      `auto` too, so every `overflow-x-auto` table wrapper looks like a vertical scroll container. With
+      no height constraint they just grow and the page scrolls, which is not the bug.
+
+
+- [x] **Account History states three caps as facts, and one of them bites 13,626 accounts.** *(08-28)*
+      Found by sweeping for the shape behind the Bulk Ban report above, and it is the same defect on a
+      more expensive screen — `AccountHistory.svelte` is rendered by both `PostPanel` and `SuspectPanel`,
+      which is where the next strike is decided. Every count comes off `.length` over a capped query:
+
+      - `Moderation activity ({activityRows.length + retoolActivity.length})` — `getModActivity` is
+        capped at 100 and `getRetoolActivity` at 100. **This one truncates today.** Measured on
+        production 2026-08-28: **13,626** accounts have more than 100 `ModActivity` rows reachable
+        through their images alone. Those all render a number that is the cap.
+      - `Strikes ({strikes.length})` — `getLiveStrikes` defaults to 50. **Does not truncate today**: no
+        account has more than 50 strike rows. Worth fixing with the others rather than on its own.
+      - `Account reports ({reportsOnUser.length}, human-filed)` — capped at 20, unmeasured.
+
+      **Worse than a wrong number, and this is the part that decided the fix.** The activity list has a
+      "Show all (N more)" control, and `activityHidden` is computed from the already-truncated arrays.
+      So on an account with 341 enforcement actions the header said 200, the control offered 150 more,
+      and clicking it flipped to "Show fewer" with nothing hidden. The panel did not merely under-report
+      — it confirmed completeness, on the screen where a moderator decides whether this account has been
+      enforced against before.
+
+      **Fixed 2026-08-28.** Every source is asked for ONE ROW MORE than the panel shows, and
+      `account-history.ts` drops the extra and returns a `truncated` flag per list. Counts render as
+      "200+" when cut and plainly when not, the expand control says "150+ more", and an expanded but
+      truncated list carries "Older activity beyond this is not shown." One flag covers the merged
+      activity list, since the panel counts its three sources as one number and a cap on any of them
+      makes that number wrong.
+
+      **A `count()` per source was considered and rejected.** It would give "200 of 341" instead of
+      "200+", at four more queries — one of them the `ReToolActions` seq scan — on a panel that
+      re-renders on every queue row click, to sharpen a number nobody acts on past "there is more".
+      `truncated` is also the spelling `BulkBatch` already uses, so this follows an existing convention
+      rather than adding a sixth.
+
+      Four tests, mutation-checked: dropping the `+ 1`, leaking the extra row, and the `>=` boundary that
+      would report an account with exactly 50 strikes as "50+" each fail.
+      *Closes when:* a moderator opens an account with a long enforcement history and the panel says how
+      much it is not showing — confirmed on the queue, since none of this is visible from the code.
 
 # Carried forward from earlier rounds
 

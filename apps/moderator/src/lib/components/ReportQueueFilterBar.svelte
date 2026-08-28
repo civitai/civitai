@@ -72,49 +72,52 @@
     );
 </script>
 
-<div class="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs">
+<!-- A grid, not a wrapping flex row. In the 24rem queue column every label+field pair wraps onto its
+     own line, and "Reporter" / "From" / "To" are different widths — so the fields started at three
+     different x positions and the column read as ragged. The label track is what lines them up. -->
+<div class="mb-3 grid grid-cols-[auto_1fr] items-center gap-x-2 gap-y-2 text-xs">
   <ToggleGroup
     type="multiple"
     bind:value={() => picked, (v) => setStatuses(v as string[])}
     size="sm"
+    class="col-span-2 flex-wrap"
   >
     {#each reportStatuses as s (s)}
       <ToggleGroupItem value={s} aria-label={s}>{s}</ToggleGroupItem>
     {/each}
   </ToggleGroup>
 
-  <label class="flex items-center gap-1 text-dark-2">
-    Reporter
-    <Input
-      bind:value={() => reporter, (v) => (draftReporter = v)}
-      placeholder="username"
-      class="h-7 w-32"
-      onchange={() => setParam('reportedBy', reporter.trim())}
-    />
-  </label>
+  <label class="text-dark-2" for="queue-filter-reporter">Reporter</label>
+  <Input
+    id="queue-filter-reporter"
+    bind:value={() => reporter, (v) => (draftReporter = v)}
+    placeholder="username"
+    class="h-7 w-full"
+    onchange={() => setParam('reportedBy', reporter.trim())}
+  />
 
-  <label class="flex items-center gap-1 text-dark-2">
-    From
-    <!-- Function binding, not a one-way prop: `Input.value` is `$bindable()` and the primitive writes
-         to it, so a change whose resulting prop value is unchanged (clearing an already-absent param)
-         latches the child's copy and the field keeps showing a value the query has dropped. -->
-    <Input
-      type="date"
-      bind:value={() => reportedFrom, (v) => setParam('reportedFrom', v)}
-      class="h-7 w-36"
-    />
-  </label>
+  <label class="text-dark-2" for="queue-filter-from">From</label>
+  <!-- Function binding, not a one-way prop: `Input.value` is `$bindable()` and the primitive writes to
+       it, so a change whose resulting prop value is unchanged (clearing an already-absent param)
+       latches the child's copy and the field keeps showing a value the query has dropped. -->
+  <Input
+    id="queue-filter-from"
+    type="date"
+    bind:value={() => reportedFrom, (v) => setParam('reportedFrom', v)}
+    class="h-7 w-full"
+  />
 
-  <label class="flex items-center gap-1 text-dark-2">
-    To
-    <Input
-      type="date"
-      bind:value={() => reportedTo, (v) => setParam('reportedTo', v)}
-      class="h-7 w-36"
-    />
-  </label>
+  <label class="text-dark-2" for="queue-filter-to">To</label>
+  <Input
+    id="queue-filter-to"
+    type="date"
+    bind:value={() => reportedTo, (v) => setParam('reportedTo', v)}
+    class="h-7 w-full"
+  />
 
   {#if active}
-    <Button size="xs" variant="outline" onclick={clearAll}>Clear</Button>
+    <Button size="xs" variant="outline" class="col-span-2 justify-self-start" onclick={clearAll}>
+      Clear
+    </Button>
   {/if}
 </div>
