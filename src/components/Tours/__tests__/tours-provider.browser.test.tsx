@@ -41,7 +41,7 @@ function Probe() {
       <span data-testid="step">{currentStep}</span>
       <button onClick={() => runTour({ key: 'auction', step: 0, forceRun: true })}>start</button>
       <button onClick={() => pauseTour()}>pause</button>
-      <button onClick={() => closeTour({ reason: 'failed' })}>fail</button>
+      <button onClick={() => closeTour({ reason: 'closed' })}>close</button>
     </div>
   );
 }
@@ -87,25 +87,25 @@ describe('closeTour', () => {
   beforeEach(() => mocks.setSettings.mockReset());
 
   /**
-   * A failed tour is still persisted as completed — every reachable tour has a
-   * re-entry button, and withholding completion would re-fire a broken tour on
-   * every page load forever. The reason is what makes the failure findable.
+   * A closed tour is still persisted as completed — every reachable tour has a
+   * re-entry button, and withholding completion would re-fire it on every page
+   * load forever. The reason is what makes an early exit findable.
    */
-  test('marks completed and records the reason for a failure', async () => {
+  test('marks completed and records the reason for closing', async () => {
     await renderProbe();
     await page.getByText('start').click();
     mocks.setSettings.mockClear();
-    await page.getByText('fail').click();
+    await page.getByText('close').click();
 
     expect(mocks.setSettings).toHaveBeenCalledWith({
-      tourSettings: { auction: expect.objectContaining({ completed: true, reason: 'failed' }) },
+      tourSettings: { auction: expect.objectContaining({ completed: true, reason: 'closed' }) },
     });
   });
 
   test('resets the step so a re-entry starts clean', async () => {
     await renderProbe();
     await page.getByText('start').click();
-    await page.getByText('fail').click();
+    await page.getByText('close').click();
 
     await expect.element(page.getByTestId('step')).toHaveTextContent('0');
   });

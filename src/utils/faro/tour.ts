@@ -4,11 +4,9 @@ import type { TourKey } from '~/components/Tours/tours';
 /**
  * Telemetry for the guided tours (`src/components/Tours`).
  *
- * WHY EVENTS AND NOT SPANS: Faro's two sampling layers are decoupled and set very
- * differently — session sampling (NEXT_PUBLIC_FARO_SESSION_SAMPLE_RATE, 1.0) gates events,
- * while browser-trace sampling (NEXT_PUBLIC_FARO_TRACES_SAMPLE_RATE, 0.1) gates the OTel
- * fetch/xhr spans. A tour funnel is a counting problem, and one measured at a tenth of its
- * population cannot answer it. Where a span would have given duration, `waitMs` carries it.
+ * WHY EVENTS AND NOT SPANS: browser-trace sampling only covers ~10% of sessions (see
+ * FaroProvider's SAMPLING doc); a tour funnel is a counting problem a 10%-sampled span
+ * can't answer. Where a span would have given duration, `waitMs` carries it.
  *
  * WHY NO PER-EMIT SAMPLING, unlike `feedDrop`: these fire per tour START, not per feed
  * render, and a tour starts at most once per user per key. `sampleRate: '1'` rides along
@@ -35,7 +33,7 @@ import type { TourKey } from '~/components/Tours/tours';
  * design. Any completion-rate panel built on `tour_end` alone reports those as successes.
  */
 
-export type TourEndReason = 'finished' | 'skipped' | 'closed' | 'failed';
+export type TourEndReason = 'finished' | 'skipped' | 'closed';
 export type TourTrigger = 'auto' | 'url' | 'help';
 
 export const TOUR_START_EVENT = 'tour_start';
@@ -56,7 +54,7 @@ export interface TourStepSignal {
   target: string;
   /** False when the target was absent or the step's hook rejected. */
   resolved: boolean;
-  /** Present only when the step awaited an element. */
+  /** Present only when the step's hook ran (onNext/onPrev), not scoped to element waits. */
   waitMs?: number;
 }
 

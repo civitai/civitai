@@ -80,15 +80,14 @@ describe('every emitter', () => {
   });
 
   /**
-   * A tour must survive its own telemetry. Without the try/catch a transport
-   * that throws would propagate into the Joyride callback and end the tour —
-   * the exact failure this change exists to remove.
+   * A tour must survive its own telemetry: without the try/catch, a throwing
+   * transport would propagate into the Joyride callback and end the tour.
    */
   it('swallows a throwing transport', () => {
     const pushEvent = vi.fn(() => {
       throw new Error('transport down');
     });
 
-    expect(() => emitTourEnd({ key: 'auction', index: 1, reason: 'failed' }, { pushEvent })).not.toThrow();
+    expect(() => emitTourEnd({ key: 'auction', index: 1, reason: 'closed' }, { pushEvent })).not.toThrow();
   });
 });

@@ -42,6 +42,7 @@ import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
+import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
 import { useMembershipUpsell } from '~/components/ImageGeneration/MembershipUpsell';
 import { useServerDomains } from '~/providers/AppProvider';
 import { syncAccount } from '~/utils/sync-account';
@@ -677,15 +678,19 @@ function SubmitButton({ isLoading: isSubmitting, onSubmit }: SubmitButtonProps) 
   } = useQueryBuzz([selectedType]);
   const balance = accounts.find((a) => a.type === selectedType)?.balance ?? 0;
   const insufficientBuzz = !isBuzzLoading && totalCost > 0 && balance < totalCost;
+  const canGenerate = useGenerationContext((state) => state.canGenerate);
 
   const submitBlocked =
-    isWhatIfLoading || isBuzzLoading || isError || !canEstimateCost || insufficientBuzz;
+    !canGenerate ||
+    isWhatIfLoading ||
+    isBuzzLoading ||
+    isError ||
+    !canEstimateCost ||
+    insufficientBuzz;
 
-  // A `hideFooter` step whose only way forward is clicking this button leaves the user
-  // stranded when the button is legitimately disabled. Reporting our own step's target
-  // (this button already carries it below) gives that step its Next back without also
-  // un-hiding a different step's footer — this effect stays mounted for the whole tour
-  // (GenerationLayout keeps the footer slot in the DOM, just visually hidden).
+  // This hideFooter step's only way forward is this button, so it needs Next back when
+  // the button is legitimately disabled — scoped to this step's own target so an unrelated
+  // hideFooter step doesn't inherit the block. See ToursProvider's blockedTarget doc.
   useEffect(() => {
     setBlockedTarget(running && submitBlocked ? GEN_SUBMIT_TARGET : null);
     return () => setBlockedTarget(null);

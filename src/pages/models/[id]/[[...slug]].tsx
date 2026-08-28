@@ -1050,7 +1050,7 @@ export default function ModelDetailsV2({
                         iconProps={{ size: 30, stroke: 1.5 }}
                         onClick={() =>
                           runTour({
-                            key: activeTour ?? 'model-page',
+                            key: activeTour === 'welcome' ? 'welcome' : 'model-page',
                             step: 0,
                             forceRun: true,
                             trigger: 'help',

@@ -46,10 +46,9 @@ describe('tour steps point at something', () => {
   });
 
   /**
-   * A step whose target is absent is not an error anyone sees: Joyride treats
-   * `TARGET_NOT_FOUND` as "next", so the step silently vanishes and the numbering
-   * jumps. `model:download` sat dead this way from #1964 until 2026-08-27,
-   * because the attribute went with the download UI rewrite and nothing failed.
+   * A missing target fails silently at runtime — Joyride just advances past it, so
+   * nothing errors. This is the static check that would have caught `model:download`
+   * (dead from #1964 to 2026-08-27) before it shipped; see joyride-callback.ts.
    */
   it('names a data-tour key that some component still renders', () => {
     const rendered = sourceFiles(SRC).map((file) => readFileSync(file, 'utf-8'));
@@ -208,9 +207,9 @@ describe('tourScrollBlock', () => {
 
 describe('the model page help button', () => {
   /**
-   * It hardcoded `'model-page'`, so a user who arrived on `?tour=welcome` and lost
-   * the tour restarted a different one — leaving `welcome` the only key with no way
-   * back, which is exactly the assumption behind persisting a failed tour as completed.
+   * `welcome` has no help-button icon of its own — the model page's help button is its
+   * only re-entry path. Since a failed tour still persists as completed, hardcoding
+   * this key would permanently strand anyone who started `welcome` from the URL.
    */
   it('restarts the tour the user actually arrived on', () => {
     const source = readFileSync(
@@ -218,16 +217,17 @@ describe('the model page help button', () => {
       'utf-8'
     );
 
-    expect(source).toMatch(/runTour\(\{\s*key:\s*activeTour\s*\?\?\s*'model-page'/);
+    expect(source).toMatch(
+      /runTour\(\{\s*key:\s*activeTour\s*===\s*'welcome'\s*\?\s*'welcome'\s*:\s*'model-page'/
+    );
   });
 });
 
 describe('the shared generator steps', () => {
   /**
-   * The two generator tours were hand-maintained copies; editing one and not the
-   * other was the next drift. `gen:select` is deliberately NOT in this list — its
-   * closing sentence differs per tour, and asserting identity there would license
-   * an extraction that silently rewrites one tour's copy.
+   * `gen:select` is deliberately excluded — its closing sentence differs per tour
+   * (see `selectStep`'s `closing` param) — so asserting identity here would license
+   * an extraction that silently overwrites one tour's copy.
    */
   it.each(['gen:terms', 'gen:buzz', 'gen:queue', 'gen:feed', 'gen:post'])(
     'gives both tours the same %s step object',

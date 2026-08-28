@@ -165,18 +165,11 @@ export const contentGenerationTour: StepWithData[] = [
     disableCloseOnEsc: true,
     disableOverlayClose: true,
     spotlightPadding: 10,
-    styles: {
-      spotlight: {
-        animation: 'shadowGlow 2s infinite',
-        willChange: 'box-shadow',
-      },
-    },
+    styles: glowingSpotlight,
   },
   remixMenuStep('gen:remix-menu', {
     onNext: async () => {
-      await waitForElement({ selector: '[data-tour="gen:submit"]', interval: 1000 }).catch(
-        () => null
-      );
+      await waitForElement({ selector: GEN_SUBMIT_TARGET, interval: 1000 }).catch(() => null);
     },
   }),
   {
@@ -194,12 +187,7 @@ export const contentGenerationTour: StepWithData[] = [
         await waitForElement({ selector: '[data-tour="gen:remix"]' }).catch(() => null);
       },
     },
-    styles: {
-      spotlight: {
-        animation: 'shadowGlow 2s infinite',
-        willChange: 'box-shadow',
-      },
-    },
+    styles: glowingSpotlight,
   },
   buzzStep,
   queueStep,
@@ -243,12 +231,7 @@ export const remixContentGenerationTour: StepWithData[] = [
     hideFooter: true,
     disableBeacon: true,
     spotlightClicks: true,
-    styles: {
-      spotlight: {
-        animation: 'shadowGlow 2s infinite',
-        willChange: 'box-shadow',
-      },
-    },
+    styles: glowingSpotlight,
   },
   buzzStep,
   queueStep,

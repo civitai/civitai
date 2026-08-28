@@ -36,12 +36,6 @@ describe('endReasonFor', () => {
 });
 
 describe('the events that advance a step', () => {
-  /**
-   * TARGET_NOT_FOUND sat in `nextEvents` beside STEP_AFTER, so a step whose target
-   * was absent was indistinguishable from the user clicking Next: the step vanished,
-   * the progress counter jumped, and nothing was recorded. `model:download` sat dead
-   * that way from #1964 until 2026-08-27.
-   */
   it('no longer treats a missing target as a click on Next', () => {
     expect(nextEvents).toContain(EVENTS.STEP_AFTER);
     expect(nextEvents).not.toContain(EVENTS.TARGET_NOT_FOUND);
@@ -123,7 +117,9 @@ describe('createTourCallback', () => {
 
   it('advances past a missing target without running the step hook', async () => {
     const onNext = vi.fn();
-    const { deps, runTour, emit } = makeDeps();
+    const { deps, runTour, emit } = makeDeps({
+      steps: new Array(6).fill({}) as unknown as TourCallbackDeps['steps'],
+    });
     const callback = createTourCallback(deps);
 
     await callback(
@@ -139,6 +135,37 @@ describe('createTourCallback', () => {
     expect(runTour).toHaveBeenCalledWith({ step: 5 });
     expect(emit.step).toHaveBeenCalledWith(
       expect.objectContaining({ index: 4, target: 'model:download', resolved: false })
+    );
+  });
+
+  /**
+   * Revert check: removing the `isLastStep` clamp makes this fail at the
+   * `runTour` assertion below — Joyride is controlled here, so advancing past
+   * the last index leaves it rendering `steps[5]` (undefined) and never fires
+   * TOUR_END, which is how a tour on `gen:post` could go unpersisted forever.
+   */
+  it('closes the tour instead of advancing when the last step\'s target is missing', async () => {
+    const { deps, closeTour, runTour, emit } = makeDeps({
+      steps: new Array(5).fill({}) as unknown as TourCallbackDeps['steps'],
+    });
+    const callback = createTourCallback(deps);
+
+    await callback(
+      callbackData({
+        type: EVENTS.TARGET_NOT_FOUND,
+        action: ACTIONS.NEXT,
+        index: 4,
+        step: { target: '[data-tour="gen:post"]' } as CallBackProps['step'],
+      })
+    );
+
+    expect(closeTour).toHaveBeenCalledWith({ reason: 'finished' });
+    expect(runTour).not.toHaveBeenCalled();
+    expect(emit.step).toHaveBeenCalledWith(
+      expect.objectContaining({ index: 4, target: 'gen:post', resolved: false })
+    );
+    expect(emit.end).toHaveBeenCalledWith(
+      expect.objectContaining({ key: 'content-generation', index: 4, reason: 'finished' })
     );
   });
 

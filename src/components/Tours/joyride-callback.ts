@@ -9,8 +9,8 @@ const completeStatus: string[] = [STATUS.SKIPPED, STATUS.FINISHED];
 
 /**
  * TARGET_NOT_FOUND is deliberately absent: folded in here it was identical to a
- * click on Next, which is how a dead `data-tour` attribute stayed invisible for
- * over a year. It gets its own branch in the callback.
+ * click on Next, which is how `model:download` (#1964 → 2026-08-27) sat dead
+ * unnoticed. It gets its own branch in the callback.
  */
 export const nextEvents: string[] = [EVENTS.STEP_AFTER];
 
@@ -57,14 +57,21 @@ export function createTourCallback(deps: TourCallbackDeps): Callback {
       return;
     }
 
-    // Deliberately skip the step's own hook here: it's usually a waitForElement
-    // with its own ~30s timeout, and this step's target is already known absent,
-    // so attempting it would turn a fast degrade into a per-step stall — a run of
-    // missing targets would then cost minutes, not milliseconds. Any side effect
-    // the hook performed (e.g. closing the mobile generation panel) is lost.
+    // Deliberately skip the step's own hook: the target is already known absent, and a hook
+    // that awaits it (some `waitForElement` calls here run up to 30s) would turn a fast
+    // degrade into a stall — a run of missing targets would then cost real time, not
+    // milliseconds. Any side effect the hook performed (e.g. closing the mobile generation
+    // panel) is lost.
     if (type === EVENTS.TARGET_NOT_FOUND) {
       if (key) emit.step({ key, index, target: tourTargetKey(step?.target), resolved: false });
-      deps.runTour({ step: index + 1 });
+
+      const isLastStep = index + 1 >= (deps.steps?.length ?? 0);
+      if (isLastStep) {
+        if (key) emit.end({ key, index, reason: 'finished' });
+        deps.closeTour({ reason: 'finished' });
+      } else {
+        deps.runTour({ step: index + 1 });
+      }
       return;
     }
 
