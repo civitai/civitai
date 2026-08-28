@@ -292,8 +292,6 @@ export const upsertCosmeticShopItem = async ({
           select: cosmeticShopItemSelect,
         });
 
-    // In the same transaction as the write: a throw here must not leave a shop item whose
-    // reference rows were never recorded.
     if (expansion.evaluated)
       await reconcileBlurbReferences({
         entityType: 'CosmeticShopItem',

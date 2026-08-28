@@ -2479,8 +2479,6 @@ export const upsertModel = async (
         },
       });
 
-      // In the same transaction as the create. A throw here used to leave a committed model
-      // row behind a failed save, which creators retried into duplicates.
       if (descriptionSupplied && expansion.evaluated)
         await reconcileBlurbReferences({
           entityType: 'Model',
@@ -2595,7 +2593,6 @@ export const upsertModel = async (
         },
       });
 
-      // In the same transaction as the update, for the reason the create branch above states.
       if (descriptionSupplied && expansion.evaluated)
         await reconcileBlurbReferences({
           entityType: 'Model',

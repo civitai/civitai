@@ -239,9 +239,8 @@ describe('upsertArticle — blurb reconciliation', () => {
     const [submit] = submitTextModeration.mock.invocationCallOrder;
     const [reconcile] = reconcileBlurbReferences.mock.invocationCallOrder;
 
-    // Reconcile is now INSIDE the write transaction, so it lands after the write and before the
-    // post-commit moderation submit. That ordering is the point: a reconcile failure has to be
-    // able to roll the article back, which it cannot do once the txn has committed.
+    // A reconcile failure has to roll the article back, so it must land before the post-commit
+    // moderation submit.
     expect(reconcile).toBeGreaterThan(write);
     expect(submit).toBeGreaterThan(reconcile);
   });

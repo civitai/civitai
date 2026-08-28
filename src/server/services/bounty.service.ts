@@ -191,10 +191,8 @@ export const createBounty = async ({
   /** Locks added by the server itself (the profanity filter), not by the caller. */
   addLockedProperties?: string[];
   /**
-   * The blurb uses to reconcile inside this function's own transaction. `undefined` means the
-   * feature was not evaluated for the owner, which must NOT reconcile — see `BlurbExpansion`.
-   * Passed down rather than reconciled by the caller so a failure rolls the bounty write back
-   * instead of leaving it committed with no reference rows.
+   * `undefined` means the feature was not evaluated for the owner and must NOT reconcile — an
+   * empty array would delete every reference row. See `BlurbExpansion`.
    */
   blurbUses?: BlurbUse[];
 }) => {
@@ -358,10 +356,8 @@ export const updateBountyById = async ({
   /** Locks added by the server itself (the profanity filter), not by the caller. */
   addLockedProperties?: string[];
   /**
-   * The blurb uses to reconcile inside this function's own transaction. `undefined` means the
-   * feature was not evaluated for the owner, which must NOT reconcile — see `BlurbExpansion`.
-   * Passed down rather than reconciled by the caller so a failure rolls the bounty write back
-   * instead of leaving it committed with no reference rows.
+   * `undefined` means the feature was not evaluated for the owner and must NOT reconcile — an
+   * empty array would delete every reference row. See `BlurbExpansion`.
    */
   blurbUses?: BlurbUse[];
 }) => {

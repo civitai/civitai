@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { dbRead, dbWrite } from '~/server/db/client';
+import { dbRead } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { findBlurbSpans, replaceBlurbSpans, unwrapBlurbSpans } from '~/server/utils/blurb-html';
 
@@ -124,18 +124,12 @@ export async function reconcileBlurbReferences({
   entityType: string;
   entityId: number;
   uses: BlurbUse[];
-  /**
-   * The entity write's transaction client. Without one, a throw in here leaves the entity
-   * committed and its reference rows unwritten — on a create that is an orphan row the creator
-   * cannot see or reuse, so they retry and make another (562 of them on 2026-08-27).
-   */
-  tx?: Prisma.TransactionClient;
+  /** Required: reconciling outside the entity's own write leaves the two able to disagree. */
+  tx: Prisma.TransactionClient;
 }) {
-  // Reads go to the same client as the writes, never the replica: this is a read-then-write, and
-  // a lagging replica hides reference rows that then survive the delete below.
-  const client = tx ?? dbWrite;
-
-  const current = await client.blurbReference.findMany({
+  // Never the replica: this is a read-then-write, and a lagging replica hides reference rows
+  // that then survive the delete below.
+  const current = await tx.blurbReference.findMany({
     where: { entityType, entityId },
     select: { blurbId: true },
   });
@@ -144,20 +138,16 @@ export async function reconcileBlurbReferences({
   const remove = current.map((r) => r.blurbId).filter((id) => !keep.has(id));
 
   if (remove.length)
-    await client.blurbReference.deleteMany({
+    await tx.blurbReference.deleteMany({
       where: { entityType, entityId, blurbId: { in: remove } },
     });
 
   if (!uses.length) return;
 
-  // One statement rather than an upsert per use. The per-use loop this replaced cost a round trip
-  // each, up to the 20-blurb per-creator cap, and now runs inside the caller's transaction holding
-  // the entity row.
-  //
   // `pendingSince: NULL` because this row was just materialized BY this save. Leave it set and the
   // fan-out re-does work the save already did.
   const now = new Date();
-  await client.$executeRaw`
+  await tx.$executeRaw`
     INSERT INTO "BlurbReference" ("blurbId", "entityType", "entityId", "materializedHash", "materializedAt", "pendingSince")
     SELECT u.id, ${entityType}, ${entityId}::int, u.hash, ${now}, NULL
     FROM unnest(${uses.map((u) => u.blurbId)}::int[], ${uses.map(

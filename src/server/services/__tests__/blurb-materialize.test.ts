@@ -25,9 +25,7 @@ const { expandBlurbs, reconcileBlurbReferences } = await import(
 beforeEach(() => {
   vi.clearAllMocks();
   isFlipt.mockResolvedValue(true);
-  dbRead.blurbReference.findMany.mockResolvedValue([]);
-  // reconcileBlurbReferences reads through the SAME client it writes with (the caller's txn, or
-  // dbWrite when it has none) — never the replica, since it is a read-then-write.
+  // Reconcile reads through the write client, not the replica.
   dbWrite.blurbReference.findMany.mockResolvedValue([]);
 });
 
@@ -256,6 +254,7 @@ describe('reconcileBlurbReferences', () => {
       entityType: 'Article',
       entityId: 1,
       uses: [{ blurbId: 7, contentHash: 'h7' }],
+      tx: dbWrite,
     });
     expect(dbWrite.blurbReference.deleteMany).toHaveBeenCalledWith({
       where: { entityType: 'Article', entityId: 1, blurbId: { in: [5] } },
@@ -263,12 +262,8 @@ describe('reconcileBlurbReferences', () => {
   });
 
   it('writes every use in ONE statement, with the bind order the SQL expects', async () => {
-    // One INSERT ... ON CONFLICT rather than an upsert per use: the loop this replaced cost a
-    // round trip each, and now runs inside the caller's transaction holding the entity row.
-    //
-    // The positions are the assertion. The values are bound by ORDER into the template, so a
-    // reordered interpolation still type-checks, still runs, and silently writes an entityId into
-    // the hash column — the arrays especially, which nothing downstream would reject.
+    // `$executeRaw` binds by POSITION, so a reordered interpolation still type-checks, still runs,
+    // and silently writes the entityId into the hash column.
     await reconcileBlurbReferences({
       entityType: 'Article',
       entityId: 1,
@@ -276,6 +271,7 @@ describe('reconcileBlurbReferences', () => {
         { blurbId: 7, contentHash: 'h7' },
         { blurbId: 9, contentHash: 'h9' },
       ],
+      tx: dbWrite,
     });
 
     expect(dbWrite.blurbReference.upsert).not.toHaveBeenCalled();
@@ -296,7 +292,7 @@ describe('reconcileBlurbReferences', () => {
     // an empty `uses` and MUST drop the rows. The flag-off case is handled at the call site,
     // which does not call this function at all.
     dbWrite.blurbReference.findMany.mockResolvedValue([{ blurbId: 5 }, { blurbId: 7 }]);
-    await reconcileBlurbReferences({ entityType: 'Article', entityId: 1, uses: [] });
+    await reconcileBlurbReferences({ entityType: 'Article', entityId: 1, uses: [], tx: dbWrite });
 
     expect(dbWrite.blurbReference.deleteMany).toHaveBeenCalledWith({
       where: { entityType: 'Article', entityId: 1, blurbId: { in: [5, 7] } },
@@ -305,11 +301,12 @@ describe('reconcileBlurbReferences', () => {
   });
 
   it('skips the delete entirely when nothing needs removing', async () => {
-    dbRead.blurbReference.findMany.mockResolvedValue([{ blurbId: 7 }]);
+    dbWrite.blurbReference.findMany.mockResolvedValue([{ blurbId: 7 }]);
     await reconcileBlurbReferences({
       entityType: 'Article',
       entityId: 1,
       uses: [{ blurbId: 7, contentHash: 'h7' }],
+      tx: dbWrite,
     });
     expect(dbWrite.blurbReference.deleteMany).not.toHaveBeenCalled();
   });

@@ -757,8 +757,6 @@ export const upsertModelVersion = async ({
       for (const [index, { id: existingId }] of existingVersions.entries())
         await tx.modelVersion.update({ where: { id: existingId }, data: { index: index + 1 } });
 
-      // Inside the txn with the create: a throw here must not leave a committed version whose
-      // reference rows were never written.
       if (descriptionSupplied && expansion.evaluated)
         await reconcileBlurbReferences({
           entityType: 'ModelVersion',
@@ -942,7 +940,6 @@ export const upsertModelVersion = async ({
         },
       });
 
-      // Inside the txn with the update, for the reason the create branch above states.
       if (descriptionSupplied && expansion.evaluated)
         await reconcileBlurbReferences({
           entityType: 'ModelVersion',

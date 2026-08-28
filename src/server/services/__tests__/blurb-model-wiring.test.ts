@@ -250,14 +250,9 @@ describe('upsertModel — blurb reconciliation', () => {
     expect(dbMock.dbWrite.model.update).toHaveBeenCalled();
   });
 
-  it('🔴 a reconcile failure aborts the write TRANSACTION, so no model row survives it', async () => {
-    // The bug this pins: reconcile used to run after the write had already committed, so a throw
-    // here returned a 500 to a creator whose model row existed anyway. They retried, and each
-    // retry made another — 562 orphaned drafts on 2026-08-27.
-    //
-    // A mock cannot roll back, so the observable is the callback boundary: the rejection has to
-    // escape from INSIDE `$transaction`, which is what makes Postgres discard the write. Move the
-    // reconcile back below the transaction and `rejectedInsideTxn` stays false.
+  it('🔴 a reconcile failure rejects from INSIDE the write transaction', async () => {
+    // A mock cannot roll back, so the observable is the callback boundary: the rejection must
+    // escape from INSIDE `$transaction`. Move the reconcile back below it and this stays false.
     let rejectedInsideTxn = false;
     dbMock.dbWrite.$transaction.mockImplementation(async (cb: (tx: unknown) => unknown) => {
       try {

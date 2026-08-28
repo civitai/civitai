@@ -939,8 +939,6 @@ export const upsertArticle = async ({
           });
         }
 
-        // Inside the txn with the create: a throw here must not leave a committed article whose
-        // reference rows were never written.
         if (expansion.evaluated)
           await reconcileBlurbReferences({
             entityType: 'Article',
@@ -1192,8 +1190,6 @@ export const upsertArticle = async ({
         });
       }
 
-      // Inside the txn with the update, so a throw here rolls the edit back rather than leaving
-      // the content and its reference rows disagreeing.
       if (expansion.evaluated)
         await reconcileBlurbReferences({
           entityType: 'Article',

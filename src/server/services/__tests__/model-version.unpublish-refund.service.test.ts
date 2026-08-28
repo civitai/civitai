@@ -232,15 +232,13 @@ describe('upsertModelVersion — cannot take a published version down through th
         /Use the unpublish action/
       );
 
-      expect(dbMock.dbWrite.modelVersion.update).not.toHaveBeenCalled();
+      expect(mockTx.modelVersion.update).not.toHaveBeenCalled();
     }
   );
 
   // Negative control. Without it a guard broadened to refuse every save of a published version —
   // which kills the resource editor outright — passes every assertion above.
   it('lets an ordinary edit of a published version through', async () => {
-    // On the tx client, not dbWrite: the version update runs inside upsertModelVersion's
-    // transaction so a blurb-reference failure can roll it back.
     mockTx.modelVersion.update.mockResolvedValue({ id: VERSION_ID, modelId: MODEL_ID });
 
     await upsertModelVersion({ id: VERSION_ID, name: 'renamed' } as never);

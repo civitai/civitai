@@ -147,7 +147,7 @@ function`:
 | `count` | `0` |
 | `$queryRaw`, `$queryRawUnsafe` | `[]` |
 | `$executeRaw`, `$executeRawUnsafe` | `0` |
-| `$transaction` | runs the callback with `dbWrite`, or `Promise.all` for an array |
+| `$transaction` | runs the callback with the client it was reached through (`dbRead.$transaction` → `dbRead`), or `Promise.all` for an array |
 | everything else | `undefined` |
 
 Defaults are deliberately conservative. A test that cares about a return value must say
