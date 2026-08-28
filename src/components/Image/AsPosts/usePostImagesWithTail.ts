@@ -50,7 +50,9 @@ export function usePostImagesWithTail<T extends { id: number }>({
 }: {
   seed: T[];
   enabled: boolean;
-} & Omit<PostTailDescriptor, 'postId' | 'imageCount'> & { postId?: number | null }) {
+} & Omit<PostTailDescriptor, 'postId' | 'imageCount'> & {
+    postId?: number | null;
+  }) {
   // The tail = the WHOLE post (≤ POST_IMAGE_LIMIT), same version/browsing-level
   // filters the gallery used, so the returned set matches `imageCount`. postId
   // forces the DB path server-side (covered index, ~2ms).
@@ -84,7 +86,10 @@ export function usePostImagesWithTail<T extends { id: number }>({
   const images = useMemo(
     () =>
       fetched
-        ? (mergePostImages(seed as { id: number }[], (filteredTail ?? []) as { id: number }[]) as T[])
+        ? (mergePostImages(
+            seed as { id: number }[],
+            (filteredTail ?? []) as { id: number }[]
+          ) as T[])
         : seed,
     [fetched, seed, filteredTail]
   );
