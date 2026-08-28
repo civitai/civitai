@@ -44,8 +44,9 @@ directory existed, and those commits are pushed**, so they are disclosed; the re
 widening rather than undoing it. Neither is a credential, so there is nothing to rotate.
 
 **Personal data is redacted on the same rule, and it is the easiest kind to miss** — it looks like
-ordinary content rather than like a secret, so a shape-based sanitiser walks straight past it. Two
-classes were found here on 2026-08-28 and are now stripped:
+ordinary content rather than like a secret, so a shape-based sanitiser walks straight past it. Three
+classes were found here on 2026-08-28 and are now stripped. **Sanitise a fresh export against all
+three** — this list is the checklist, so a class missing from it comes back on the next re-download:
 
 - **Staff real names.** `user-lookup-v2.json` gates features on `current_user.fullName === '<a real
   person>'`, so the authorization model itself was written in names. Those are now stable
@@ -56,6 +57,10 @@ classes were found here on 2026-08-28 and are now stripped:
 - **End-user IP addresses.** `bulk-ban.json` and its rendered `bulk-ban.md` carried four real banned
   users' IPs inside a `WHERE ip IN (…)` clause. They are now RFC5737 `203.0.113.x` documentation
   addresses.
+- **End-user account ids.** The same two files carried five real `toAccountId` values hardcoded into
+  a tip-farming investigation query. They are now `<accountId>`. This class is easy to miss precisely
+  because a bare integer has no shape to match on — the only way to catch it is to read what the
+  query is *for*, and a ban or abuse investigation names real people by id.
 
 Both were already committed and pushed, so — as with the CIDR above — the redaction stops the leak
 widening rather than undoing it. Neither is a credential, so there is nothing to rotate; but a name
