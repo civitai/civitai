@@ -1139,14 +1139,16 @@ export const purchaseCosmeticShopItem = async ({
         // the kickback would be a self-discount.
         // Every purchase declares its shop context: CIVITAI_SHOP_ATTRIBUTION
         // (-1) = the official Civitai shop (platform acts as the reseller and
-        // keeps the seller share), a user id = that user's storefront. Positive
-        // attributions are verified against the shop owner's settings; anything
-        // unverified, missing, or spoofed falls back to the official-shop split
-        // so bad attribution can never dodge the platform's share.
+        // keeps the seller share), a user id = that user's storefront. A positive
+        // attribution to another creator only diverts a share when a resale
+        // listing backs it; anything unverified, missing, or spoofed falls back to
+        // the official-shop split so bad attribution can never dodge the platform's
+        // share.
         //
-        // Verified attributions that keep the creator on the full pool: their
-        // own open shop, and a buyer purchasing through their OWN resell
-        // listing (no kickback — the seller share would be a self-discount).
+        // Attributions that keep the creator on the full pool: their own
+        // storefront (their own item, no reseller to pay), and a buyer purchasing
+        // through their OWN resell listing (no kickback — the seller share would
+        // be a self-discount).
         let resellerId: number | undefined;
         let creatorKeepsPool = false;
         // A reseller is paid the share recorded on their listing, not the item's
@@ -1157,13 +1159,11 @@ export const purchaseCosmeticShopItem = async ({
         let payoutShare = meta?.sellerShare ?? 0;
         if (creatorId && viaShopUserId && viaShopUserId > 0) {
           if (viaShopUserId === creatorId) {
-            const viaUser = await dbRead.user.findUnique({
-              where: { id: viaShopUserId },
-              select: { settings: true },
-            });
-            const viaShop = (viaUser?.settings as { creatorShop?: { enabled?: boolean } } | null)
-              ?.creatorShop;
-            creatorKeepsPool = viaShop?.enabled === true;
+            // A creator selling their own item on their own storefront keeps the
+            // full 70% pool by default — there is no other creator reselling, so
+            // no seller share is diverted (the shop's `enabled` flag is a
+            // visibility setting, not a payout term).
+            creatorKeepsPool = true;
           } else if (resaleListing) {
             payoutShare = resaleListing.sellerShare;
             if (viaShopUserId === userId) creatorKeepsPool = true;
