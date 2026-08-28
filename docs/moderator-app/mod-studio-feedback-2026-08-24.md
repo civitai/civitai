@@ -1,10 +1,11 @@
-# Mod Studio feedback — rounds 2026-08-24 and 2026-08-25
+# Mod Studio feedback — rounds 2026-08-24, 2026-08-25 and 2026-08-27
 
 The moderation team reviews the app in a feedback channel and reports as they go. This file is the single
 place to see what these rounds asked for and whether it is done.
 
 **Scope:** the comment-spam round raised on 2026-08-24, the follow-up round raised on 2026-08-25 after
-that push and its changelog, PLUS everything still open from earlier rounds — in that order.
+that push and its changelog, the strike-visibility round raised on 2026-08-27, PLUS everything still
+open from earlier rounds — in that order.
 
 **This is the live list.** A round gets its own dated section so it is clear when something was first
 asked for, and unfinished items move forward rather than being ticked across several files — so this is
@@ -533,6 +534,123 @@ there is still exactly one list with open boxes; each item carries the date it w
       reachable each fail loudly.
       *Closes when:* a moderator confirms it against a real re-upload — the shape has never been run
       against the account that prompted the report.
+
+# Round 2026-08-27
+
+## Reported defects
+
+- [x] **Strikes are barely visible, and a recent one reads as expired.** *(08-27)* One report, three
+      independent causes — none of them the strike badge the reporter was looking at. All three are
+      fixed; the two that were decisions were ruled on the same day, and what was decided is recorded
+      under each.
+
+      **1. No strike has ever appeared in moderator activity, and none can.** `createStrike`
+      (`src/server/services/strike.service.ts:608`) writes a `UserStrike` row, evaluates escalation,
+      notifies and emails — and writes **no `ModActivity` row at any point**. `getModActivity` reads
+      `ModActivity` and nothing else, so the panel is not failing to show the strike; the strike was
+      never in the table it reads. Retool-era strikes can surface in the *other* panel,
+      `getRetoolActivity`, because `ReToolActions.ActionType` happens to contain free text like
+      `Strike 2 on user <id>` — a different table, a different era, and matched by regex rather than
+      recorded. So which strikes a moderator can attribute depends on when they were issued, and the
+      strike list itself is a third place again. This is the
+      [`ReToolActions` vs `ModActivity`](#p2--decisions) P2 item arriving as a symptom.
+
+      **2. The list fetches who issued it and throws it away.** `getLiveStrikes` selects `issuedBy`;
+      `StrikeList.svelte` renders reason, description, points and dates and drops it. For imported rows
+      it is worse than a display gap: `migrate-legacy-strikes.ts` sets `issuedBy` **only on an exact
+      username match**, deliberately, since a fuzzy match would credit the wrong moderator — the legacy
+      `createdBy` display name survives instead inside `internalNotes`
+      (`retool:UserStrikes:<id> by <name>`), which no panel shows. Measured against production on
+      2026-08-27: **8,901 of 12,902** imported rows have `issuedBy = NULL` (69%), against **0 of 63**
+      native ones. So "I'll assume it was me" is the only reading available for two thirds of the
+      history, and the name that would answer it is already stored.
+
+      **3. "Expired" on a week-old strike is the import boundary, not a bad badge.** The 08-21 import
+      lands every legacy row `status = 'Expired'`, `points = 0`, `expiresAt = createdAt`, and that is
+      the correct call for the bulk of them: importing ~12.9k historical strikes as Active would have
+      handed out mutes at `REVIEW_MUTE_POINTS` off evidence up to four years old, each with its own
+      notification. It is the wrong call for the last fortnight of Retool. The newest imported row is
+      dated **2026-08-18**, three days before the import ran; on production **438** imported strikes
+      carry a `createdAt` inside the last 60 days and **all 438** read Expired with 0 points, **75** of
+      them within 14 days. A strike issued days before the cutover therefore presents as spent history
+      *and* counts nothing toward the next escalation — which is the more expensive half, because it is
+      invisible on the screen where the next action is decided.
+
+      Native strikes are unaffected: `expiresInDays` defaults to 365 (`strike.schema.ts:37`) and no
+      native row is Expired.
+
+      **Cause 2 is fixed.** `getLiveStrikes` left-joins `User` on `issuedBy` and falls back to the
+      legacy display name, parsed out of the import marker by `legacyStrikeIssuerName` in the shared
+      `legacy-strike-import.ts` — the protocol file both sides already import, so the writer and this
+      reader cannot drift. `StrikeList` renders "by <name>", or **"issuer not recorded"** where neither
+      exists: an absent issuer now says so instead of looking like a formatting gap. `internalNotes` is
+      read for the name and dropped in the service; the rest of that field is a moderator's free text and
+      no panel shows it. Three tests, mutation-checked — a naive split on the separator truncates a name
+      containing " by " and fails.
+
+      The first-pass marker (`Imported from Retool strike #<id>. Issued by: …`) is deliberately **not**
+      parsed for a name: no production row carries it, so guessing its shape risks crediting the wrong
+      moderator.
+
+      **Cause 1 — decided: strikes are logged.** `createStrike` now calls `trackModActivity` with
+      `entityType: 'user'`, `activity: 'strike'`, `entityId` the struck account and `userId` the issuer
+      — the `-1` sentinel for an auto-strike, matching `entity-moderation.ts`, so a cron is never
+      recorded as an account. It is outside `RATING_ACTIVITIES`, so it lands in the enforcement bucket
+      `getModActivity` already renders; no spoke change was needed.
+
+      **The write is deliberately non-fatal.** The strike row is committed before it runs, so throwing
+      would report a failure for a strike that landed — and the moderator's retry issues a *second*
+      one, because `ManualModAction` skips the rate limit. It logs `strike-mod-activity-failed` to
+      Axiom instead, the same shape as the email block above it. Three tests, mutation-checked:
+      attribution, the sentinel, and that a failed write does not fail the strike.
+
+      Only issuance is logged. **Voiding a strike still records nothing** — the same argument applies to
+      it and it was not part of the call, so it is named here rather than assumed.
+
+      ⚠️ **One environment-shaped hazard, inert where it matters.** `trackModActivity`'s
+      `ON CONFLICT DO NOTHING` carries no target, so anywhere `20260805120000_mod_activity_append_only`
+      has not been applied by hand, the unique index on (activity, entityType, entityId) silently
+      discards the second and every later strike against the same account — the panel would show only
+      the first. The index is confirmed gone on production and dev, so nothing is losing rows today.
+      It is worth knowing because migrations here are applied per environment by a human, and `strike`
+      is the first genuinely repeatable-per-entity activity in this union; the neighbouring
+      `reactionAbuseExclude`/`Unexclude` pair are toggles, which is why nobody has hit it.
+
+      **Cause 3 — decided: re-label, and label every imported row, not just the recent ones.** Nothing
+      is re-dated: that would run escalation retroactively on accounts nobody re-reviewed, which is the
+      outcome the import was shaped to avoid. `LiveStrike` now carries `imported`, and the badge reads
+      **imported** ahead of the lapsed check — every imported row *is* lapsed, since the import sets
+      `expiresAt = createdAt`, and "expired" claims the strike ran its course. Nothing is lost by the
+      substitution: all 12,902 imported rows carry `reason = 'ManualModAction'`, which is what the badge
+      would otherwise have shown.
+
+      It covers all 12,902 rather than the 438 recent ones, because "expired" was never the right word
+      for a 2022 row either — and a cutoff would need a date nobody could defend. Where any row is
+      imported the list says once, above it, that imported strikes are Retool-era history carrying no
+      points — in the text rather than a tooltip, for the same reason the timezone answer above is:
+      this team reports by screenshot.
+
+      ⚠️ **The flag is `legacyStrikeId`, deliberately not `importedLegacyStrikeId`.** The union of both
+      markers is right for the dedupe callers and wrong for this badge: only the 08-21 pass lands a row
+      inert, while a **first-pass** row is `Active` with a point and counts on the escalation ladder. A
+      first-pass row badged "imported" would hide its real reason under a note saying it carries none,
+      while `getActiveStrikes` went on counting the point — under-reporting live points on the screen
+      where the next strike is decided. No production row carries that marker today, so this was
+      structural rather than live, but the two predicates mean different things and the wrong one was
+      reachable by a documented rollback.
+
+      Caught by the correctness review, along with one inert negative test: `legacyStrikeIssuerName`'s
+      only defence against parsing a moderator's own note is the marker check, and all three original
+      negatives passed without it — none of them contained the separator. `Removed 3 images by hand`
+      does, and now fails when the guard is dropped. The mapper is a named export (`toLiveStrike`) with
+      four tests, because the property that matters most has no other check: `internalNotes` is read
+      for the legacy name and must not leave the server, and nothing in the type system notices it
+      being put back.
+
+      One known property, left alone rather than hardened: the parser returns everything after the
+      first ` by `, unbounded. Nothing updates `internalNotes` after creation, so the tail is always
+      the name — but if anything ever appends to an imported row's notes, that text becomes the
+      client-visible "by …" string.
 
 # Carried forward from earlier rounds
 

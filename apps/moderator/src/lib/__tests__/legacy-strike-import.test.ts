@@ -6,6 +6,7 @@ import {
   importedLegacyStrikeId,
   LEGACY_STRIKE_MARKER,
   legacyStrikeId,
+  legacyStrikeIssuerName,
   legacyStrikeNotes,
 } from '$lib/legacy-strike-import';
 
@@ -116,5 +117,35 @@ describe('importedLegacyStrikeId', () => {
     for (const prefix of IMPORT_MARKER_PREFIXES) {
       expect(importedLegacyStrikeId(`${prefix}77 by mod`)).toBe(77);
     }
+  });
+});
+
+/**
+ * For most imported strikes this name is the ONLY attribution that exists — 8,901 of 12,902 rows have
+ * no `issuedBy` (production, 2026-08-27), because the import resolves an account only on an exact
+ * username match. Losing the parse puts the strike list back to crediting nobody.
+ */
+describe('legacy strike issuer name', () => {
+  it('round-trips what the migration writes', () => {
+    expect(legacyStrikeIssuerName(legacyStrikeNotes(2449, 'Cameron'))).toBe('Cameron');
+  });
+
+  it('keeps a name that contains the separator', () => {
+    // Retool display names are free text, and a truncated name credits a moderator who does not exist.
+    expect(legacyStrikeIssuerName(legacyStrikeNotes(7, 'stood by me'))).toBe('stood by me');
+  });
+
+  it('credits nobody rather than guessing', () => {
+    expect(legacyStrikeIssuerName(null)).toBeNull();
+    expect(legacyStrikeIssuerName('Escalated after appeal')).toBeNull();
+    // The marker check is the ONLY thing standing between a moderator's free text and the strike list.
+    // A note that happens to contain the separator must not be read as attribution — and must not put
+    // internal note text on the client, which the service promises it never does.
+    expect(legacyStrikeIssuerName('Removed 3 images by hand')).toBeNull();
+    expect(legacyStrikeIssuerName(legacyStrikeNotes(7, ''))).toBeNull();
+    // The first-pass marker carries a name in a shape no production row has, so it is not parsed.
+    expect(
+      legacyStrikeIssuerName(`${FIRST_PASS_STRIKE_PREFIX}123. Issued by: Sebastian`)
+    ).toBeNull();
   });
 });

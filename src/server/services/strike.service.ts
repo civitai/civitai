@@ -7,6 +7,7 @@ import { invalidateSession, refreshSession } from '~/server/auth/session-invalid
 import { createNotification } from '~/server/services/notification.service';
 import { updateUserById } from '~/server/services/user.service';
 import { clearedMuteFields } from '~/server/services/mute-provenance';
+import { trackModActivity } from '~/server/services/moderator.service';
 import { strikeIssuedEmail } from '~/server/email/templates';
 import type {
   CreateStrikeInput,
@@ -661,6 +662,27 @@ export async function createStrike(input: CreateStrikeInput & { issuedBy?: numbe
       issuedBy,
     },
   });
+
+  // Deliberately not fatal: the strike row is already committed, so throwing here would report a
+  // failure for a strike that landed — and a moderator retrying a manual strike issues a second one,
+  // since `ManualModAction` skips the rate limit.
+  try {
+    await trackModActivity(issuedBy ?? -1, {
+      entityType: 'user',
+      entityId: userId,
+      activity: 'strike',
+    });
+  } catch (error) {
+    const err = error as Error;
+    logToAxiom({
+      type: 'error',
+      name: 'strike-mod-activity-failed',
+      message: err.message,
+      stack: err.stack,
+      userId,
+      strikeId: strike.id,
+    });
+  }
 
   await evaluateStrikeEscalation(userId, { allowMute: true });
 

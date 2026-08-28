@@ -50,3 +50,18 @@ export const IMPORT_MARKER_PREFIXES = [LEGACY_STRIKE_MARKER, FIRST_PASS_STRIKE_P
  */
 export const importedLegacyStrikeId = (internalNotes: string | null): number | null =>
   legacyStrikeId(internalNotes) ?? firstPassStrikeId(internalNotes);
+
+/**
+ * The moderator a legacy row credits, as a DISPLAY NAME — `issuedBy` is set only on an exact username
+ * match, so for most imported rows this string is the only attribution that exists.
+ *
+ * Only the marker above is parsed. `FIRST_PASS_STRIKE_PREFIX` documents a name after `. Issued by: `,
+ * but no production row carries that marker (checked 2026-08-27), so guessing at its shape risks
+ * crediting the wrong moderator, which is worse than crediting nobody.
+ */
+export function legacyStrikeIssuerName(internalNotes: string | null): string | null {
+  if (!internalNotes || legacyStrikeId(internalNotes) == null) return null;
+  const at = internalNotes.indexOf(' by ');
+  if (at < 0) return null;
+  return internalNotes.slice(at + 4).trim() || null;
+}

@@ -2,6 +2,7 @@ import { sql } from '@civitai/db/kysely';
 import { dbRead, dbWrite } from './db';
 import { OWNED_REPORT_ENTITIES, chatReportSubject } from './report-entities';
 import { strikeCountsByUserIds } from './moderation-memory.service';
+import { legacyStrikeId, legacyStrikeIssuerName } from '$lib/legacy-strike-import';
 import { getModeratorContact, type ModeratorContact } from './user-signals.service';
 
 // The PAGE LOAD half of User Lookup — identity, profile, score, counts, stats, reports, subscription.
@@ -201,7 +202,36 @@ export type LiveStrike = {
   expiresAt: Date;
   voidedAt: Date | null;
   issuedBy: number | null;
+  /** Who issued it, for display: the account behind `issuedBy`, else the legacy display name the
+   *  import preserved in `internalNotes`, else null for a row that credits nobody. */
+  issuedByName: string | null;
+  /** Copied from Retool by the 08-21 import, which lands every row `Expired` with 0 points on purpose.
+   *  Such a row is history and nothing else, so it must not read as a strike that ran its course. */
+  imported: boolean;
 };
+
+type StrikeRow = Omit<LiveStrike, 'issuedByName' | 'imported'> & {
+  issuerUsername: string | null;
+  internalNotes: string | null;
+};
+
+/**
+ * Exported for the test that pins it. `internalNotes` is read for the legacy issuer name and must be
+ * dropped here — the rest of that field is a moderator's free text and no panel renders it — and
+ * nothing in the type system notices it being put back.
+ *
+ * `imported` is `legacyStrikeId`, NOT `importedLegacyStrikeId`. Only the 08-21 import lands a row
+ * inert (`Expired`, 0 points), which is what the list says beside the badge; a first-pass row is
+ * `Active` with a point and counts on the escalation ladder, so calling it "imported" would suppress
+ * its real reason under a note saying it carries none.
+ */
+export function toLiveStrike({ issuerUsername, internalNotes, ...s }: StrikeRow): LiveStrike {
+  return {
+    ...s,
+    issuedByName: issuerUsername ?? legacyStrikeIssuerName(internalNotes),
+    imported: legacyStrikeId(internalNotes) != null,
+  };
+}
 
 /**
  * The strike ROWS, where `getActiveStrikes` answers the header chip's "how much rope is left". Voided
@@ -219,23 +249,29 @@ export async function getLiveStrikes(
   userId: number,
   { limit = 50, readYourWrite = false }: { limit?: number; readYourWrite?: boolean } = {}
 ): Promise<LiveStrike[]> {
-  return (readYourWrite ? dbWrite : dbRead)
-    .selectFrom('UserStrike')
+  const rows = await (readYourWrite ? dbWrite : dbRead)
+    .selectFrom('UserStrike as s')
+    // Primary key, so it cannot fan a strike out into two rows.
+    .leftJoin('User as issuer', 'issuer.id', 's.issuedBy')
     .select([
-      'id',
-      'reason',
-      'description',
-      'points',
-      'status',
-      'createdAt',
-      'expiresAt',
-      'voidedAt',
-      'issuedBy',
+      's.id',
+      's.reason',
+      's.description',
+      's.points',
+      's.status',
+      's.createdAt',
+      's.expiresAt',
+      's.voidedAt',
+      's.issuedBy',
+      'issuer.username as issuerUsername',
+      's.internalNotes',
     ])
-    .where('userId', '=', userId)
-    .orderBy('createdAt', 'desc')
+    .where('s.userId', '=', userId)
+    .orderBy('s.createdAt', 'desc')
     .limit(limit)
     .execute();
+
+  return rows.map(toLiveStrike);
 }
 
 export async function getUserLookup(userId: number): Promise<UserLookupResult | null> {

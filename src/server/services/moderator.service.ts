@@ -60,7 +60,10 @@ type UserModActivity = {
     // into the name would record it as a cron's. The WHY is not here — ModActivity has no free-text
     // column — it stays in ClickHouse `metricExcludedUsers.reason`, keyed by the same userId.
     | 'reactionAbuseExclude'
-    | 'reactionAbuseUnexclude';
+    | 'reactionAbuseUnexclude'
+    // `UserStrike` is the record of the strike; this is the record that a moderator issued one, which
+    // is the question the account-history panel answers. `userId` is the issuer, -1 for an auto-strike.
+    | 'strike';
 };
 
 type ComicProjectModActivity = {

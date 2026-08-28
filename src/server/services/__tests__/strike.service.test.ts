@@ -11,6 +11,7 @@ const {
   mockStrikeIssuedEmailSend,
   mockSetUserSetting,
   mockGetStaticContent,
+  mockTrackModActivity,
 } = vi.hoisted(() => ({
   mockCreateNotification: vi.fn().mockResolvedValue(undefined),
   mockUpdateUserById: vi.fn().mockResolvedValue(undefined),
@@ -19,6 +20,7 @@ const {
   mockStrikeIssuedEmailSend: vi.fn().mockResolvedValue(undefined),
   mockSetUserSetting: vi.fn().mockResolvedValue(undefined),
   mockGetStaticContent: vi.fn(),
+  mockTrackModActivity: vi.fn().mockResolvedValue(undefined),
 }));
 
 // The db and logging clients come from the canonical shared mocks. Property
@@ -41,6 +43,10 @@ mockDbWrite.$transaction.mockResolvedValue(undefined);
 
 vi.mock('~/server/services/notification.service', () => ({
   createNotification: mockCreateNotification,
+}));
+
+vi.mock('~/server/services/moderator.service', () => ({
+  trackModActivity: mockTrackModActivity,
 }));
 
 vi.mock('~/server/services/user.service', () => ({
@@ -946,6 +952,43 @@ describe('strike.service', () => {
       const result = await createStrike(baseInput);
 
       expect(result).toEqual(mockCreatedStrike);
+    });
+
+    // Without this row the strike exists only in `UserStrike`, and the account-history panel — the
+    // screen where the next action is decided — cannot say a strike was ever issued, or by whom.
+    it('records the strike in mod activity, attributed to the issuer', async () => {
+      await createStrike(baseInput);
+
+      expect(mockTrackModActivity).toHaveBeenCalledWith(1, {
+        entityType: 'user',
+        entityId: 100,
+        activity: 'strike',
+      });
+    });
+
+    it('attributes an auto-strike to the system sentinel rather than to user 0', async () => {
+      // `issuedBy` is absent on an automated strike, and 0 is a falsy id that would read as an account.
+      const { issuedBy: _issuedBy, ...autoInput } = baseInput;
+
+      await createStrike(autoInput);
+
+      expect(mockTrackModActivity).toHaveBeenCalledWith(
+        -1,
+        expect.objectContaining({ entityId: 100 })
+      );
+    });
+
+    it('does not fail the strike when the mod-activity write fails', async () => {
+      // The strike row is already committed here. Reporting a failure makes a moderator retry, and a
+      // manual strike skips the rate limit — so the retry issues a second strike.
+      mockTrackModActivity.mockRejectedValueOnce(new Error('insert failed'));
+
+      const result = await createStrike(baseInput);
+
+      expect(result).toEqual(mockCreatedStrike);
+      expect(mockLogToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'error', name: 'strike-mod-activity-failed', userId: 100 })
+      );
     });
   });
 
