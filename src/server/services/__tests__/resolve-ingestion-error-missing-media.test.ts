@@ -405,3 +405,24 @@ describe('the guard reports what it did, in both directions', () => {
     expect(eventsNamed('resolveIngestionError:media-probe-unknown')).toHaveLength(0);
   });
 });
+
+describe('the harness itself', () => {
+  /**
+   * 🔴 This suite's per-case reset, pinned — because the defect it fixes is LATENT and therefore has
+   * no behavioural test that could fail. `vi.clearAllMocks()` clears CALLS and leaves
+   * IMPLEMENTATIONS installed, so `headObject`'s `mockResolvedValue` from an earlier case survives
+   * into every later one. Nothing here currently depends on that, which is exactly why it needs a
+   * structural guard rather than a behavioural one: the first case that forgets to arm the store
+   * will pass for the wrong reason, and pass silently.
+   *
+   * Reachable by construction: it is the LAST block in the file, so a dozen earlier cases have
+   * armed `headObject` before it runs. Under `clearAllMocks` alone this reads back the leaked
+   * implementation and fails; under the reset it reads `undefined`.
+   */
+  it('hands each case a storage probe with NO implementation left over from the last one', () => {
+    expect(headObject.getMockImplementation()).toBeUndefined();
+    // ...while the one thing `beforeEach` deliberately re-arms IS armed, so this is not passing by
+    // the whole file's mocks having been torn down.
+    expect(getB2ImageS3Client.getMockImplementation()).toBeTypeOf('function');
+  });
+});
