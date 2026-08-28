@@ -45,6 +45,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { IMAGE_MIME_TYPE } from '~/shared/constants/mime-types';
 import { formatBytes } from '~/utils/number-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { isUploadInFlight } from '~/utils/upload-status';
 import { trpc } from '~/utils/trpc';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { constants } from '~/server/common/constants';
@@ -289,10 +290,17 @@ function BadgeForm({
       return;
     }
 
-    const result = await uploadToCF(file);
-    setUploadedUrl(result.id);
-    setPreviewUrl(result.objectUrl ?? result.id);
-    setSourceDimensions(dimensions);
+    // 🔴 A refused PUT now REJECTS (see `useCFImageUpload`). Without this catch the
+    // rejection escapes into Mantine's `onDrop`, which discards the promise: the user is
+    // told nothing at all and the console gets an unhandled rejection.
+    try {
+      const result = await uploadToCF(file);
+      setUploadedUrl(result.id);
+      setPreviewUrl(result.objectUrl ?? result.id);
+      setSourceDimensions(dimensions);
+    } catch (error) {
+      showErrorNotification({ title: 'Upload failed', error: error as Error });
+    }
   };
 
   const handleRemoveImage = () => {
@@ -340,7 +348,10 @@ function BadgeForm({
   };
 
   const imageFile = imageFiles[0];
-  const showLoading = imageFile && imageFile.progress < 100;
+  // 🔴 Derived from `status`, NOT from `progress` — see `isUploadInFlight`. The render
+  // below is `showLoading ? overlay : previewUrl ? preview : <Dropzone/>`, so a latched
+  // spinner unmounts the Dropzone and there is no retry without a page reload.
+  const showLoading = isUploadInFlight(imageFile);
 
   return (
     <Stack gap="md">

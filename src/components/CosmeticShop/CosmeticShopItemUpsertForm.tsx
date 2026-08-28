@@ -59,6 +59,7 @@ import type { CosmeticGetById, CosmeticShopItemGetById } from '~/types/router';
 import { formatBytes } from '~/utils/number-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { isDefined } from '~/utils/type-guards';
+import { isUploadInFlight } from '~/utils/upload-status';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const formSchema = upsertCosmeticShopItemInput;
@@ -167,9 +168,16 @@ const NewCosmeticInlineCreator = ({ onCreated }: { onCreated: (cosmeticId: numbe
       }
     }
 
-    const result = await uploadToCF(file);
-    setImageId(result.id);
-    setPreviewUrl(result.objectUrl ?? result.id);
+    // 🔴 A refused PUT now REJECTS (see `useCFImageUpload`). Without this catch the
+    // rejection escapes into Mantine's `onDrop`, which discards the promise: the user is
+    // told nothing at all and the console gets an unhandled rejection.
+    try {
+      const result = await uploadToCF(file);
+      setImageId(result.id);
+      setPreviewUrl(result.objectUrl ?? result.id);
+    } catch (error) {
+      showErrorNotification({ title: 'Upload failed', error: error as Error });
+    }
   };
 
   const handleRemoveImage = () => {
@@ -236,7 +244,10 @@ const NewCosmeticInlineCreator = ({ onCreated }: { onCreated: (cosmeticId: numbe
   };
 
   const imageFile = imageFiles[0];
-  const showLoading = imageFile && imageFile.progress < 100;
+  // 🔴 Derived from `status`, NOT from `progress` — see `isUploadInFlight`. The render
+  // below is `showLoading ? overlay : previewUrl ? preview : <Dropzone/>`, so a latched
+  // spinner unmounts the Dropzone and there is no retry without a page reload.
+  const showLoading = isUploadInFlight(imageFile);
 
   return (
     <Paper withBorder p="md" radius="md">

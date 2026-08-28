@@ -26,6 +26,7 @@ import type { ComicGenre } from '~/shared/utils/prisma/enums';
 import { getImageDimensions } from '~/utils/image-utils';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { openGeneratorImagePicker } from '~/utils/comic-image-picker';
+import { showErrorNotification } from '~/utils/notifications';
 import styles from '~/pages/comics/project/[id]/ProjectWorkspace.module.scss';
 
 const ImageSelectModal = dynamic(() => import('~/components/Training/Form/ImageSelectModal'), {
@@ -120,10 +121,22 @@ export function ProjectSettingsModal({
         onConfirm: async (output: { src: string; cropped?: Blob }[]) => {
           const blob = output[0]?.cropped;
           const uploadFile = blob ? new File([blob], 'cover.jpg', { type: blob.type }) : file;
-          const result = await uploadToCF(uploadFile);
-          setEditCoverUrl(result.id);
-          setEditCoverImageId(null);
-          URL.revokeObjectURL(url);
+          /**
+           * 🔴 `finally`, because `uploadToCF` now REJECTS on a refused PUT. `onConfirm`
+           * is typed `() => void` and the modal discards the promise, so a rejection
+           * skipped the revoke and `onCancel` can no longer run — the blob was retained
+           * for the page's lifetime. The catch also surfaces the failure, which the
+           * dropped promise otherwise swallowed entirely.
+           */
+          try {
+            const result = await uploadToCF(uploadFile);
+            setEditCoverUrl(result.id);
+            setEditCoverImageId(null);
+          } catch (error) {
+            showErrorNotification({ title: 'Upload failed', error: error as Error });
+          } finally {
+            URL.revokeObjectURL(url);
+          }
         },
         onCancel: () => URL.revokeObjectURL(url),
       },
@@ -132,9 +145,13 @@ export function ProjectSettingsModal({
 
   const handleHeroDrop = async (files: File[]) => {
     if (files.length === 0) return;
-    const result = await uploadHeroToCF(files[0]);
-    setEditHeroUrl(result.id);
-    setEditHeroImageId(null);
+    try {
+      const result = await uploadHeroToCF(files[0]);
+      setEditHeroUrl(result.id);
+      setEditHeroImageId(null);
+    } catch (error) {
+      showErrorNotification({ title: 'Upload failed', error: error as Error });
+    }
   };
 
   const handlePickCoverFromGenerator = () =>

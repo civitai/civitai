@@ -39,6 +39,7 @@ import {
 import { CosmeticShopItemStatus, CosmeticSource, CosmeticType } from '~/shared/utils/prisma/enums';
 import { isAnimatedImage } from '~/utils/media-preprocessors/image.preprocessor';
 import { showErrorNotification } from '~/utils/notifications';
+import { isUploadInFlight } from '~/utils/upload-status';
 import { trpc } from '~/utils/trpc';
 
 // Owns the submit/edit form: local field state, the derived readiness/affordability
@@ -232,7 +233,11 @@ export function useSubmitCreatorShopForm({
     isEdit || (submissionFee !== undefined && feeAccountBalance >= submissionFee);
 
   const maxSize = constants.mediaUpload.maxImageFileSize;
-  const uploading = !!files[0] && files[0].progress < 100;
+  // Status-derived, not `progress`-derived — see `isUploadInFlight`. The `resetFiles()`
+  // in `handleDrop`'s catch below was compensating for the old `progress < 100` spelling
+  // latching on after a refused PUT; it is kept because it also lets the creator re-drop,
+  // but this predicate no longer depends on it.
+  const uploading = isUploadInFlight(files[0]);
   const allChecksPassed = checks.length > 0 && checks.every((c) => c.passed);
   // Existing art (edit, not replaced) is trusted; new art must pass its checks.
   const artOk = !!imageId && (isEdit && !artReplaced ? true : allChecksPassed);

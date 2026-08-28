@@ -11,6 +11,7 @@ import { IMAGE_MIME_TYPE } from '~/shared/constants/mime-types';
 import { formatBytes } from '~/utils/number-helpers';
 import { IconUser } from '@tabler/icons-react';
 import { isValidURL } from '~/utils/type-guards';
+import { isUploadInFlight } from '~/utils/upload-status';
 import { isAndroidDevice } from '~/utils/device-helpers';
 
 type SimpleImageUploadProps = Omit<InputWrapperProps, 'children' | 'onChange'> & {
@@ -46,7 +47,15 @@ export function ProfileImageUpload({
     resetFiles();
     const [file] = droppedFiles;
 
-    await uploadToCF(file);
+    // 🔴 A refused PUT now REJECTS (see `useCFImageUpload`). Without this catch the
+    // rejection escapes into Mantine's `onDrop`, which discards the promise: the user is
+    // told nothing at all and the console gets an unhandled rejection. This wrapper has
+    // its own `error` slot, so the message goes there rather than into a notification.
+    try {
+      await uploadToCF(file);
+    } catch (e) {
+      setError((e as Error).message);
+    }
   };
 
   useDidUpdate(() => {
@@ -68,7 +77,10 @@ export function ProfileImageUpload({
   }, [value]);
 
   const hasError = !!props.error || !!error;
-  const showLoading = imageFile && imageFile.progress < 100;
+  // 🔴 Derived from `status`, NOT from `progress` — see `isUploadInFlight`. A PUT refused
+  // before its first progress event leaves `progress` at 0, which `progress < 100` reads
+  // as "still uploading" forever.
+  const showLoading = isUploadInFlight(imageFile);
 
   return (
     <Input.Wrapper {...props} error={props.error ?? error}>

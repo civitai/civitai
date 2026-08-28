@@ -7,8 +7,8 @@ import { showErrorNotification } from '~/utils/notifications';
 import { isDefined } from '~/utils/type-guards';
 import { v4 as uuidv4 } from 'uuid';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import type { TrackedFileStatus } from '~/utils/upload-status';
 
-type TrackedFileStatus = 'pending' | 'error' | 'success' | 'uploading' | 'aborted' | 'blocked';
 type TrackedFile = AsyncReturnType<typeof getDataFromFile> & {
   progress: number;
   uploaded: number;

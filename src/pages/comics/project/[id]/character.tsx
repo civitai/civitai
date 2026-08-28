@@ -46,6 +46,7 @@ import { Meta } from '~/components/Meta/Meta';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
+import { showErrorNotification } from '~/utils/notifications';
 import { fetchAndUploadGeneratorImage } from '~/utils/comic-image-picker';
 import { fetchBlob } from '~/utils/file-utils';
 
@@ -350,7 +351,27 @@ function ReferenceUpload() {
 
   const handleRefImageDrop = async (files: File[]) => {
     for (const file of files) {
-      const result = await uploadToCF(file);
+      /**
+       * 🔴 PER-FILE, so one refused PUT cannot end the batch.
+       *
+       * `uploadToCF` now rejects on a refused PUT instead of resolving as if it had
+       * worked. Un-caught, that throw leaves the `for` loop: files 2..N are never
+       * attempted, nothing is shown, and the rejection escapes into Mantine's `onDrop`
+       * (and `onDropCapture`), both of which discard the promise. Before the hook change
+       * a 403 resolved and the loop continued — with a dead key — so the loop's
+       * continue-on-failure behaviour is pre-existing and is what is restored here; only
+       * the dead key and the silence are removed.
+       */
+      let result: Awaited<ReturnType<typeof uploadToCF>>;
+      try {
+        result = await uploadToCF(file);
+      } catch (error) {
+        showErrorNotification({
+          title: `Failed to upload ${file.name}`,
+          error: error as Error,
+        });
+        continue;
+      }
       const img = new window.Image();
       img.src = result.objectUrl;
       await new Promise<void>((resolve) => {

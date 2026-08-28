@@ -478,8 +478,16 @@ export function PanelModal({
   const handleBulkImageDrop = async (files: File[]) => {
     if (files.length === 0) return;
     setBulkUploading(true);
+    /**
+     * 🔴 DECLARED OUTSIDE THE `try`, and committed in the `finally`.
+     *
+     * The commit used to sit at the end of the `try`, after the loop, so one refused PUT
+     * threw past it and discarded the WHOLE batch — including the panels that had already
+     * uploaded fine. The comment claiming "keep the partial batch behaviour" described
+     * the opposite of what the code did.
+     */
+    const newItems: BulkPanelItem[] = [];
     try {
-      const newItems: BulkPanelItem[] = [];
       for (const file of files) {
         const img = new window.Image();
         const objectUrl = URL.createObjectURL(file);
@@ -522,13 +530,15 @@ export function PanelModal({
           meta: extractedMeta,
         });
       }
-      setBulkItems((prev) => [...prev, ...newItems].slice(0, 20));
+      // Nothing after the loop — the commit is in `finally` so it runs on both paths.
     } catch (err) {
       // Same as the enhance drop above: a refused PUT now rejects, and this handler
-      // had no catch — the whole batch was discarded silently and the rejection
-      // escaped. Keep the partial batch behaviour, but say something.
+      // had no catch — the rejection escaped and the user was told nothing.
       showErrorNotification({ error: err as Error, title: 'Failed to upload image' });
     } finally {
+      // 🔴 The panels that DID upload are kept. `newItems` is empty when the first file
+      // fails, so this is a no-op in that case rather than a spurious state write.
+      if (newItems.length > 0) setBulkItems((prev) => [...prev, ...newItems].slice(0, 20));
       setBulkUploading(false);
     }
   };

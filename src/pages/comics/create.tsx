@@ -40,6 +40,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatGenreLabel } from '~/utils/comic-helpers';
 import { openGeneratorImagePicker } from '~/utils/comic-image-picker';
 import { ComicGenre } from '~/shared/utils/prisma/enums';
+import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import styles from './CreateComic.module.scss';
 
@@ -105,9 +106,21 @@ function CreateComicPage() {
         onConfirm: async (output: { src: string; cropped?: Blob }[]) => {
           const blob = output[0]?.cropped;
           const uploadFile = blob ? new File([blob], 'cover.jpg', { type: blob.type }) : file;
-          const result = await uploadCoverToCF(uploadFile);
-          setCoverUrl(result.id);
-          URL.revokeObjectURL(url);
+          /**
+           * 🔴 `finally`, because `uploadToCF` now REJECTS on a refused PUT. `onConfirm`
+           * is typed `() => void` and the modal discards the promise, so a rejection
+           * skipped the revoke and `onCancel` can no longer run — the blob was retained
+           * for the page's lifetime. The catch also surfaces the failure, which the
+           * dropped promise otherwise swallowed entirely.
+           */
+          try {
+            const result = await uploadCoverToCF(uploadFile);
+            setCoverUrl(result.id);
+          } catch (error) {
+            showErrorNotification({ title: 'Upload failed', error: error as Error });
+          } finally {
+            URL.revokeObjectURL(url);
+          }
         },
         onCancel: () => URL.revokeObjectURL(url),
       },
@@ -116,8 +129,12 @@ function CreateComicPage() {
 
   const handleHeroDrop = async (files: File[]) => {
     if (files.length === 0) return;
-    const result = await uploadHeroToCF(files[0]);
-    setHeroUrl(result.id);
+    try {
+      const result = await uploadHeroToCF(files[0]);
+      setHeroUrl(result.id);
+    } catch (error) {
+      showErrorNotification({ title: 'Upload failed', error: error as Error });
+    }
   };
 
   const handlePickCoverFromGenerator = () =>
