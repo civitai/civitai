@@ -78,7 +78,9 @@ describe('decideMediaPublish', () => {
 describe('assertMediaPresentForPublish', () => {
   it('throws MissingMediaError when the store answered ABSENT', async () => {
     const probe = vi.fn(async () => MediaPresence.Absent);
-    await expect(assertMediaPresentForPublish({ url: KEY, probe })).rejects.toThrow(MissingMediaError);
+    await expect(assertMediaPresentForPublish({ url: KEY, probe })).rejects.toThrow(
+      MissingMediaError
+    );
     await expect(assertMediaPresentForPublish({ url: KEY, probe })).rejects.toThrow(
       MISSING_MEDIA_PUBLISH_MESSAGE
     );

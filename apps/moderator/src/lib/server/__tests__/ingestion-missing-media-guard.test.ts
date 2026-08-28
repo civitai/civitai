@@ -1,8 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  MISSING_MEDIA_PUBLISH_MESSAGE,
-  UNRENDERABLE_MEDIA_PUBLISH_MESSAGE,
-} from '@civitai/shared';
+import { MISSING_MEDIA_PUBLISH_MESSAGE, UNRENDERABLE_MEDIA_PUBLISH_MESSAGE } from '@civitai/shared';
 
 /**
  * The write-side guard in the spoke's `resolveIngestionError` — the call site that caused the

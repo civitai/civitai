@@ -261,8 +261,7 @@ export async function assertMediaPresentForPublish({
     }
   }
 
-  if (presence === MediaPresence.Unknown)
-    onUnknown?.({ reason: unknownReason, error: probeError });
+  if (presence === MediaPresence.Unknown) onUnknown?.({ reason: unknownReason, error: probeError });
 
   const decision = decideMediaPublish(presence);
   if (!decision.allow) {

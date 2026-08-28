@@ -23,7 +23,7 @@ type ProbeConfig = {
 // Returns a FRESH object per call, so identity distinguishes the two clients without any test
 // having to install an implementation (one installed here would leak to every later case).
 const createStorageClient = vi.hoisted(() =>
-  vi.fn((_config: ProbeConfig) => ({ tag: 'client' }) as Record<string, unknown>)
+  vi.fn((_config: ProbeConfig) => ({ tag: 'client' } as Record<string, unknown>))
 );
 vi.mock('@civitai/storage', () => ({ createStorageClient }));
 

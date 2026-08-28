@@ -45,9 +45,9 @@ describe('isProbeableMediaKey', () => {
   it('rejects a `blob:` handle, whose embedded uuid is a browser handle and not a key', () => {
     // 🔴 The reason a bare-uuid EXTRACTION would be wrong where a whole-string MATCH is right: this
     // value contains something uuid-shaped and is not remotely a bucket key.
-    expect(isProbeableMediaKey('blob:https://civitai.com/0f8fad5b-d9cb-469f-a165-70867728950e')).toBe(
-      false
-    );
+    expect(
+      isProbeableMediaKey('blob:https://civitai.com/0f8fad5b-d9cb-469f-a165-70867728950e')
+    ).toBe(false);
     expect(isProbeableMediaKey('data:image/png;base64,AAAA')).toBe(false);
   });
 

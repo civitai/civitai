@@ -1,8 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  MISSING_MEDIA_PUBLISH_MESSAGE,
-  UNRENDERABLE_MEDIA_PUBLISH_MESSAGE,
-} from '@civitai/shared';
+import { MISSING_MEDIA_PUBLISH_MESSAGE, UNRENDERABLE_MEDIA_PUBLISH_MESSAGE } from '@civitai/shared';
 import type * as S3Utils from '~/utils/s3-utils';
 import type * as Shared from '@civitai/shared';
 
