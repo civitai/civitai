@@ -35,6 +35,8 @@ describe('cosmetic-shop-item-sold recipient resolution', () => {
   it('keys the notification per recipient so one transaction fanning out to several owners does not collapse', () => {
     // send-notifications merges additions by `key` alone and shares one details
     // blob; without ownerId in the key, every seller but one loses their sale.
-    expect(query).toMatch(/CONCAT\('cosmetic-shop-item-sold:',\s*"buzzTransactionId",\s*':',\s*"ownerId"\)/);
+    expect(query).toMatch(
+      /CONCAT\('cosmetic-shop-item-sold:',\s*"buzzTransactionId",\s*':',\s*"ownerId"\)/
+    );
   });
 });
