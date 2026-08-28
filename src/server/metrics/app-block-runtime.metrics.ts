@@ -501,25 +501,61 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   // holds today. It was unverified before, and it is not guaranteed for a future
   // step type.)
   //
-  // So the `outcome` label carries the non-divergent case too:
-  //   exact  — realized cost ≤ the reservation. The healthy state, and PROOF the
-  //            detector is live.
-  //   over   — realized cost EXCEEDED the reservation. A registry bug: the entry
-  //            needs a higher price, or a different billing mode, because
-  //            "deterministic cost knowable before execution" was false for it.
-  //   absent — no numeric cost on the snapshot, so nothing could be compared.
-  //            The state that used to be indistinguishable from `exact`.
+  // 🔴 `over` USED TO MEAN "billed above the RESERVATION", AND ITS DESCRIPTION
+  // SAID "the declared price is wrong". Those are different claims, and the gap
+  // between them made this counter blind to exactly what it advertised.
+  // `reserveBuzz` is `max(declaredBuzz, quotedBuzz)` — it has already absorbed
+  // the orchestrator's live quote — so a step declared at 1 and quoted+billed at
+  // 4 computed `4 - 4 = 0` and was recorded `exact`. Measured on the live
+  // platform: two consecutive real `chat-completion` sends, declared 1, billed
+  // 4, `exact` both times.
   //
-  // Alert on `outcome="over"`; read `outcome="exact"` to confirm the check runs
-  // at all; investigate a rising `outcome="absent"`.
+  // The two questions are now separate values rather than one conflated one:
+  //
+  //   exact         — billed ≤ the declared price AND ≤ the reservation. Healthy,
+  //                   and PROOF the detector is live.
+  //   over          — billed above the DECLARED price, but within the
+  //                   reservation, because the submit's own `whatif` quote had
+  //                   already raised the reserve. Costs no money and loosens no
+  //                   cap: the registry's asserted price is simply not the real
+  //                   one.
+  //   over_reserved — billed above the RESERVATION. This is the expensive one:
+  //                   all three cap counters were short by the difference until
+  //                   the correction ran, so the per-app abuse ceiling was that
+  //                   much looser. Rare by construction, because the reserve is
+  //                   quote-backed.
+  //   absent        — no numeric cost on the submit snapshot, so nothing could
+  //                   be compared. The state that used to be indistinguishable
+  //                   from `exact`.
+  //
+  // …plus the ESTIMATE phase, which is a price check too — it is where the block
+  // learns what a call will cost:
+  //
+  //   estimate_quoted — the estimate got a live orchestrator quote.
+  //   estimate_absent — it could not, and fell back to the declared price. The
+  //                     block was shown a number nothing re-measured.
+  //
+  // 🔴 THE PAIR IS THE POINT. `estimate_absent` alone is unreadable: a flat zero
+  // is indistinguishable from an estimate path that never executes. Read the
+  // RATIO against `estimate_quoted`, never the bare count.
+  //
+  // 🔴 ALERT ON `over_reserved`, NOT ON `over`. `over` is expected to sit at ~100%
+  // for any entry whose real price is usage-based — `chat-completion` is one
+  // (its live price moves with the model and the token budget, while its declared
+  // constant is the floor the orchestrator will not go below), so alerting on
+  // `over` there would be a permanently-red gate and would train everyone to
+  // ignore it. `over` is a REPORT that a declared constant does not describe
+  // reality; `over_reserved` is the thing that costs money. Read
+  // `outcome="exact"` to confirm the check runs at all; investigate a rising
+  // `absent` or a falling `estimate_quoted`/`estimate_absent` ratio.
   //
   // Cardinality: `step` is drawn from the code-owned registry keys (never client
   // input — the wire enum derives from those same keys, so an unregistered id
-  // cannot reach here); `outcome` is a closed 3-value set. Bounded and small.
+  // cannot reach here); `outcome` is a closed 6-value set. Bounded and small.
   const stepPriceCheckTotal = getOrCreateCounter(
     reg,
     'civitai_app_block_step_price_check_total',
-    "App Block `kind:'step'` prepaidFixed price checks at submit, by step id and outcome (exact = realized cost within the reservation; over = the orchestrator billed MORE than reserved, i.e. the declared price is wrong; absent = the snapshot carried no numeric cost, so no comparison was possible)",
+    "App Block `kind:'step'` price checks, by step id and outcome. Only the post-billing submit outcomes are prepaidFixed-gated; the fail-closed absent and the estimate-phase outcomes fire for any kind:'step' request. Submit phase: exact = billed within both the declared price and the reservation; over = billed above the DECLARED price but within the quote-backed reservation (the declared constant is wrong; no money or cap impact — expected to be ~100% for a usage-priced step, do NOT alert on it); over_reserved = billed above the RESERVATION, so every cap counter was short until corrected (ALERT ON THIS); absent = EITHER the submit was refused because the orchestrator returned no price quote (no spend, no generation - triage as availability) OR a billed submit carried no numeric cost. Estimate phase: estimate_quoted = the block was shown a live orchestrator quote; estimate_absent = the quote failed and it was shown the declared price instead (read as a ratio against estimate_quoted, never alone)",
     ['step', 'outcome']
   );
 
@@ -652,18 +688,62 @@ export function observeAppBlockLaunch(
  * it a union (rather than a bare string) is what bounds the label cardinality at
  * the type level — a caller cannot invent a fourth value.
  */
-export type StepPriceCheckOutcome = 'exact' | 'over' | 'absent';
+export type StepPriceCheckOutcome =
+  | 'exact'
+  | 'over'
+  | 'over_reserved'
+  | 'absent'
+  | 'estimate_quoted'
+  | 'estimate_absent';
 
 /**
- * Fail-soft emit of ONE `prepaidFixed` step price check. Called from the step
- * submit path on EVERY submit, after the money has already moved.
+ * Fail-soft emit of ONE step price check.
  *
- * 🔴 Emitted unconditionally — including `outcome: 'exact'` — so a flat
- * divergence line can be told apart from a detector that never ran. See the
- * counter's definition above for why that distinction is load-bearing.
+ * 🔴 TWO CALL PHASES, AND THEY DIFFER IN EVERY WAY THAT MATTERS. This docstring
+ * used to say "called from the step submit path on EVERY submit, after the money
+ * has already moved" — that is now only half true, and the missing half is the
+ * dangerous one to assume:
  *
- * 🔴 TOTAL, like every emitter in this module. It reports on an already-billed
- * submit; a metrics error must never turn a successful generation into a 500.
+ *   - SUBMIT, POST-BILLING (`exact` / `over` / `over_reserved`) — one emit per
+ *     billed submit, AFTER the money has moved, gated on
+ *     `plan.correctReservationOverage` and therefore on `prepaidFixed`.
+ *   - SUBMIT, EITHER SIDE OF BILLING (`absent`) — 🔴 TWO DIFFERENT SITES SHARE
+ *     THIS VALUE, AND THEY HAVE OPPOSITE POLARITY. One is post-billing (the submit
+ *     succeeded but its snapshot carried no numeric cost, so no comparison was
+ *     possible). The other is the FAIL-CLOSED no-quote path: the orchestrator
+ *     returned no price, so the submit is REFUSED, nothing is reserved, no
+ *     generation happens, and this fires before any money exists and outside the
+ *     `correctReservationOverage` gate. A spike in `absent` is therefore far
+ *     more likely to mean SUBMITS ARE BEING REFUSED than a bookkeeping gap —
+ *     triage it as an availability signal first. (Splitting the two is the
+ *     obvious improvement and is deliberately not done here: it would change a
+ *     label's meaning in the same change that already widened the set.)
+ *     🔴 The fail-closed site is NOT mode-gated either — it sits above the
+ *     `correctReservationOverage` block — so the same caveat as the estimate
+ *     bullet applies: it is `prepaidFixed`-only today because registry load
+ *     rejects every other mode, not because this site checks.
+ *   - ESTIMATE (`estimate_quoted` / `estimate_absent`) — one emit per estimate,
+ *     BEFORE any spend exists, and NOT gated on billing mode: it fires for any
+ *     `kind:'step'` estimate. Unreachable for a non-`prepaidFixed` entry today
+ *     (registry load rejects every other mode), so the counter's
+ *     "prepaidFixed" framing still holds in practice — but the first
+ *     `timeBounded` entry would emit an estimate half with no submit-side
+ *     counterpart, and the `estimate_quoted : estimate_absent` ratio would then
+ *     blend a mode the submit half never reports on. Gate it here, or widen the
+ *     label, when that day comes.
+ *
+ * 🔴 DO NOT ADD A POST-BILLING SIDE EFFECT BESIDE THIS CALL. Only the three
+ * outcomes in the first bullet are reached with money behind them; the estimate
+ * phase and the fail-closed `absent` both run with no spend at all.
+ *
+ * 🔴 Emitted unconditionally within each phase — including `outcome: 'exact'` —
+ * so a flat divergence line can be told apart from a detector that never ran.
+ * See the counter's definition above for why that distinction is load-bearing.
+ *
+ * 🔴 TOTAL, like every emitter in this module. On the submit path it reports on
+ * an already-billed submit, so a metrics error must never turn a successful
+ * generation into a 500; on the estimate path it must never turn a working quote
+ * into an error.
  */
 export function recordStepPriceCheck(step: string, outcome: StepPriceCheckOutcome): void {
   try {

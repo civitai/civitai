@@ -261,6 +261,26 @@ const { AUDITED_STEP_ID } = vi.hoisted(() => ({ AUDITED_STEP_ID: 'fixture-audite
 const { DIVERGENT_STEP_ID } = vi.hoisted(() => ({
   DIVERGENT_STEP_ID: 'fixture-divergent-step',
 }));
+// 🔴 A FIXTURE WHOSE TWO DECLARED FLOORS LEGITIMATELY DISAGREE. The registry's
+// load-time invariant ties `estimateBuzz(canonicalParamsFor(v))` to
+// `priceForVariant(v)` — at CANONICAL params only — and nothing re-checks it at
+// request time. `estimateBuzz` takes PARAMS, so an entry can satisfy the
+// invariant and still answer differently for a request. That is registrable, it
+// is asserted below, and it is exactly the shape that makes the estimate's floor
+// and the submit's floor two different numbers.
+const { SPLIT_FLOOR_STEP_ID } = vi.hoisted(() => ({
+  SPLIT_FLOOR_STEP_ID: 'fixture-split-floor-step',
+}));
+// 🔴 THE MIRROR OF THE SPLIT-FLOOR FIXTURE, and it exists because the FIRST
+// attempt at that fix reasoned wrongly. The claim was that `estimateBuzz` can
+// only differ UPWARD from `priceForVariant`; the split-floor entry disproves it
+// downward, and this one disproves it upward — the direction is simply not
+// fixed. This one makes the no-quote FALLBACK observable: canonical params take
+// the cheap branch so the load-time invariant holds, while a `{pricey: true}`
+// request answers `estimateBuzz` 9 against `priceForVariant` 5.
+const { HIGH_ESTIMATE_STEP_ID } = vi.hoisted(() => ({
+  HIGH_ESTIMATE_STEP_ID: 'fixture-high-estimate-step',
+}));
 vi.mock('~/server/services/blocks/steps', async (importOriginal) => {
   const actual = await importOriginal<typeof BlockStepsModule>();
   const z = await import('zod');
@@ -321,20 +341,70 @@ vi.mock('~/server/services/blocks/steps', async (importOriginal) => {
     canonicalOutputFor: () => ({}),
   };
   actual.assertStepInvariants(AUDITED_STEP_ID, auditedFixtureStep as never);
+  const splitFloorFixtureStep = {
+    id: SPLIT_FLOOR_STEP_ID,
+    orchestratorType: 'fixtureSplitFloorType',
+    billingMode: 'prepaidFixed' as const,
+    moderationPosture: 'none' as const,
+    resourcePolicy: { kind: 'none' as const },
+    paramSchema: z.object({ cheap: z.boolean() }).strict(),
+    variants: ['default'],
+    resolveVariant: () => 'default',
+    // Canonical params take the EXPENSIVE branch, so the load-time invariant
+    // (estimateBuzz(canonical) === priceForVariant) holds and this registers.
+    canonicalParamsFor: () => ({ cheap: false }),
+    priceForVariant: () => 5,
+    estimateBuzz: (p: { cheap: boolean }) => (p.cheap ? 1 : 5),
+    buildStep: (p: { cheap: boolean }) => ({
+      $type: 'fixtureSplitFloorType',
+      input: { cheap: p.cheap },
+    }),
+    extractOutput: () => [
+      { url: 'https://blobs.example/s.webp', width: null, height: null, nsfwLevel: null },
+    ],
+    canonicalOutputFor: () => ({}),
+  };
   // 🔴 THIS ASSERTION IS THE EXPLOIT, WRITTEN DOWN. It passes — a
   // params-dependent builder is registrable — which is precisely why the
   // load-time gate alone is not sufficient.
   actual.assertStepInvariants(DIVERGENT_STEP_ID, divergentFixtureStep as never);
+  // 🔴 IT REGISTERS CLEANLY — the second half of the exploit written down. Only a
+  // request supplying `cheap: true` splits the two floors apart.
+  actual.assertStepInvariants(SPLIT_FLOOR_STEP_ID, splitFloorFixtureStep as never);
+  const highEstimateFixtureStep = {
+    ...splitFloorFixtureStep,
+    id: HIGH_ESTIMATE_STEP_ID,
+    orchestratorType: 'fixtureHighEstimateType',
+    paramSchema: z.object({ pricey: z.boolean() }).strict(),
+    canonicalParamsFor: () => ({ pricey: false }),
+    priceForVariant: () => 5,
+    estimateBuzz: (p: { pricey: boolean }) => (p.pricey ? 9 : 5),
+    buildStep: (p: { pricey: boolean }) => ({
+      $type: 'fixtureHighEstimateType',
+      input: { pricey: p.pricey },
+    }),
+  };
+  actual.assertStepInvariants(HIGH_ESTIMATE_STEP_ID, highEstimateFixtureStep as never);
   return {
     ...actual,
     // The wire `step` enum is DERIVED from this, so widening it is what lets the
     // fixture id past `blockStepBodySchema` and into the handler.
-    REGISTERED_STEP_IDS: [...actual.REGISTERED_STEP_IDS, AUDITED_STEP_ID, DIVERGENT_STEP_ID],
+    REGISTERED_STEP_IDS: [
+      ...actual.REGISTERED_STEP_IDS,
+      AUDITED_STEP_ID,
+      DIVERGENT_STEP_ID,
+      SPLIT_FLOOR_STEP_ID,
+      HIGH_ESTIMATE_STEP_ID,
+    ],
     getStep: (id: string) =>
       id === AUDITED_STEP_ID
         ? (auditedFixtureStep as never)
         : id === DIVERGENT_STEP_ID
         ? (divergentFixtureStep as never)
+        : id === SPLIT_FLOOR_STEP_ID
+        ? (splitFloorFixtureStep as never)
+        : id === HIGH_ESTIMATE_STEP_ID
+        ? (highEstimateFixtureStep as never)
         : actual.getStep(id),
   };
 });
@@ -7328,24 +7398,192 @@ describe("step-type registry bridge (kind: 'step')", () => {
   const caller = () => blocksRouter.createCaller(fakeCtx() as never);
 
   describe('estimateWorkflow', () => {
-    it('returns the registry DISPLAY estimate with NO orchestrator round-trip', async () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // 🔴 THE ESTIMATE NOW QUOTES THE ORCHESTRATOR.
+    //
+    // The first test here used to be "returns the registry DISPLAY estimate with
+    // NO orchestrator round-trip", asserting `mockSubmitWorkflow` was never
+    // called. That was the bug, pinned: `kind: 'step'` was the ONLY branch of
+    // `estimateWorkflow` that did not whatif, so a block was shown a number the
+    // platform had merely asserted while the submit billed whatever the
+    // orchestrator said. Measured on `chat-completion`: declared 1, charged 4,
+    // twice, with a published listing quoting the 1 to users.
+    // ─────────────────────────────────────────────────────────────────────────
+    it('returns the ORCHESTRATOR QUOTE, not the declared constant', async () => {
       mockVerifyBlockToken.mockResolvedValue(stepClaims());
       happyUser();
+      stepSubmitQuoting(4, 4);
       const result = await caller().estimateWorkflow({ blockToken: 'tok', body: stepBody() });
       expect(result.snapshot).toMatchObject({
         workflowId: 'wf_estimate',
         status: 'pending',
-        cost: { total: STEP_PRICE },
+        cost: { total: 4 },
       });
-      // 🔴 "Deterministic cost knowable BEFORE execution" — no whatIf, no submit.
+      // 🔴 THE CONTROL. `STEP_PRICE` is 1, so a quote of 4 is a value the
+      // declared constant CANNOT produce — the assertion cannot be satisfied by
+      // the old code path.
+      expect(result.snapshot.cost.total).not.toBe(STEP_PRICE);
+    });
+
+    it('quotes with whatif ONLY — an estimate never makes a real submit', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      stepSubmitQuoting(4, 4);
+      await caller().estimateWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
+      expect(mockSubmitWorkflow.mock.calls[0][0]).toMatchObject({ query: { whatif: true } });
+      expect(realSubmitCalls()).toHaveLength(0);
+    });
+
+    it('falls back to the DECLARED estimate when the quote throws', async () => {
+      // 🔴 DEGRADE, NEVER ERROR. An unquotable step is exactly the pre-change
+      // behaviour, so this path can only be more accurate than what it replaced
+      // — it must not turn a working estimate into a failure the block cannot
+      // act on. (The SUBMIT still fails closed on a missing quote; that is the
+      // path where the number bounds real money.)
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      mockSubmitWorkflow.mockRejectedValue(new Error('orchestrator down'));
+      const result = await caller().estimateWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(result.snapshot.cost.total).toBe(STEP_PRICE);
+    });
+
+    it('falls back to the DECLARED estimate when the quote carries no numeric cost', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      stepSubmitQuoting(null, 1);
+      const result = await caller().estimateWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(result.snapshot.cost.total).toBe(STEP_PRICE);
+    });
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 🔴 A SILENT FALLBACK IS THE SAME DEFECT THIS CHANGE EXISTS TO REMOVE.
+    // Without a counter on both arms, "the block saw a live quote" and "the
+    // orchestrator was down and the block saw the declared floor again" are
+    // indistinguishable in production — an unmeasured assertion, exactly like
+    // the declared price was. The PAIR is asserted, not just the failure arm:
+    // a bare `estimate_absent` of zero cannot be told apart from an estimate
+    // path that never runs.
+    // ─────────────────────────────────────────────────────────────────────────
+    it('counts a successful quote as estimate_quoted', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      stepSubmitQuoting(4, 4);
+      await caller().estimateWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(mockRecordStepPriceCheck).toHaveBeenCalledWith(STEP_ID, 'estimate_quoted');
+      expect(mockRecordStepPriceCheck).not.toHaveBeenCalledWith(STEP_ID, 'estimate_absent');
+    });
+
+    it('counts a DEGRADED estimate as estimate_absent — on a throw and on a missing cost', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      mockSubmitWorkflow.mockRejectedValue(new Error('orchestrator down'));
+      await caller().estimateWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(mockRecordStepPriceCheck).toHaveBeenCalledWith(STEP_ID, 'estimate_absent');
+
+      mockRecordStepPriceCheck.mockClear();
+      stepSubmitQuoting(null, 1);
+      await caller().estimateWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(mockRecordStepPriceCheck).toHaveBeenCalledWith(STEP_ID, 'estimate_absent');
+      expect(mockRecordStepPriceCheck).not.toHaveBeenCalledWith(STEP_ID, 'estimate_quoted');
+    });
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 🔴 A DETERMINISTIC REFUSAL MUST PROPAGATE, NOT DEGRADE INTO A PRICE.
+    //
+    // `buildStepOrchestratorStep` throws FORBIDDEN on a `$type` divergence and
+    // on an AIR reference in the built input. While the build sat inside the
+    // quote's `catch`, both became "no quote" and the estimate answered HTTP 200
+    // with the declared price for a body the submit refuses outright — the exact
+    // estimate/submit drift this surface exists to prevent, resolving to the
+    // very number the change exists to stop showing.
+    // ─────────────────────────────────────────────────────────────────────────
+    it('REJECTS an AIR reference in the built input, as submit does', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      stepSubmitQuoting(4, 4);
+      await expect(
+        caller().estimateWorkflow({
+          blockToken: 'tok',
+          body: stepBody({
+            params: {
+              image: 'https://image.civitai.com/urn:air:sd1/checkpoint.png',
+              output: { format: 'webp' },
+            },
+          }),
+        })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      // …and it refused BEFORE the orchestrator was called at all.
       expect(mockSubmitWorkflow).not.toHaveBeenCalled();
     });
 
-    it('the estimate EQUALS what submit reserves and charges', async () => {
+    it('floors on the SUBMIT’s declared value too, not only the estimate’s', async () => {
+      // 🔴 THE TWO FLOORS ARE DIFFERENT DERIVATIONS. `estimateStepBuzz` is
+      // params-driven and un-ceiled (`step.estimateBuzz(params)`); the submit's
+      // is variant-driven and ceiled (`Math.ceil(priceForVariant(variant))`).
+      // Registry load ties them only at CANONICAL params and nothing re-checks
+      // at request time — so flooring on the estimate alone would reintroduce
+      // the under-display hazard through the other operand.
+      //
+      // `fixture-split-floor-step` registers cleanly and answers `estimateBuzz`
+      // 1 for `{cheap: true}` while `priceForVariant` stays 5. With a quote of 2
+      // below both, the estimate must still show the 5 the submit reserves.
       mockVerifyBlockToken.mockResolvedValue(stepClaims());
       happyUser();
+      stepSubmitQuoting(2, 2);
+      const body = { kind: 'step' as const, step: SPLIT_FLOOR_STEP_ID, params: { cheap: true } };
+      const estimate = await caller().estimateWorkflow({ blockToken: 'tok', body });
+      expect(estimate.snapshot.cost.total).toBe(5);
+      await caller().submitWorkflow({ blockToken: 'tok', body });
+      expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', 5);
+    });
+
+    it('falls back to the entry’s DECLARED estimate, not to the floor, when no quote is had', async () => {
+      // 🔴 THE OPERAND NO MUTATION COULD KILL — until this fixture existed.
+      // `quotedBuzz ?? declaredBuzz` → `?? 0` (or `?? submitFloorBuzz`) survived
+      // the whole suite, and that was written up as "unreachable, and in the safe
+      // direction". BOTH claims were wrong. `fixture-high-estimate-step` answers
+      // `estimateBuzz` 9 against a `priceForVariant` of 5 for `{pricey: true}`,
+      // and it registers cleanly — so with the quote unavailable the fallback is
+      // 9 and the mutants show 5: a 44% UNDER-display, on the degraded path,
+      // which is exactly the direction this whole area exists to prevent.
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      mockSubmitWorkflow.mockRejectedValue(new Error('orchestrator down'));
+      const estimate = await caller().estimateWorkflow({
+        blockToken: 'tok',
+        body: { kind: 'step' as const, step: HIGH_ESTIMATE_STEP_ID, params: { pricey: true } },
+      });
+      expect(estimate.snapshot.cost.total).toBe(9);
+    });
+
+    it('mirrors the submit’s max(floor, quoted) — a quote BELOW the floor never under-displays', async () => {
+      // 🔴 THE UNDER-DISPLAY DIRECTION, which a block cannot defend against: the
+      // submit gates and reserves `max(Math.ceil(plan.reserveBuzz), quoted)`, so
+      // an estimate that simply preferred the quote would show less than the
+      // submit reserves.
+      // Latent today; reachable the moment an entry is declared above its real
+      // orchestrator price.
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      stepSubmitQuoting(0, 0);
       const estimate = await caller().estimateWorkflow({ blockToken: 'tok', body: stepBody() });
-      happyStepSubmit();
+      expect(estimate.snapshot.cost.total).toBe(STEP_PRICE);
+      await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', STEP_PRICE);
+    });
+
+    it('the estimate equals what submit reserves — on a DIVERGENT quote, not a matching one', async () => {
+      // 🔴 THIS USED TO BE VACUOUS. With `happyStepSubmit()` the quote and the
+      // declared price were both 1, so it passed even with the estimate ignoring
+      // the quote entirely — it could not fail. Quoting 4 against a declared 1
+      // makes the two answers distinguishable, so the assertion has something to
+      // say.
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      stepSubmitQuoting(4, 4);
+      const estimate = await caller().estimateWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(estimate.snapshot.cost.total).toBe(4);
       await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
       expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', estimate.snapshot.cost.total);
     });
@@ -7925,13 +8163,99 @@ describe("step-type registry bridge (kind: 'step')", () => {
       expect(mockRecordStepPriceCheck).toHaveBeenCalledWith(STEP_ID, 'exact');
     });
 
-    it("records outcome 'over' when the orchestrator bills above the reservation", async () => {
+    it("records 'over_reserved' when the orchestrator bills above the reservation", async () => {
       mockVerifyBlockToken.mockResolvedValue(stepClaims());
       happyUser();
       stepSubmitQuoting(1, 9);
       await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      // The expensive case: every cap counter was short until the correction ran.
+      expect(mockRecordStepPriceCheck).toHaveBeenCalledWith(STEP_ID, 'over_reserved');
+      expect(mockRecordStepPriceCheck).not.toHaveBeenCalledWith(STEP_ID, 'exact');
+      expect(mockRecordStepPriceCheck).not.toHaveBeenCalledWith(STEP_ID, 'over');
+    });
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 🔴 THE CORRECTION AMOUNTS, ON A FIXTURE WHERE THE TWO CANDIDATES DIFFER.
+    //
+    // The obvious fixture — declared 1 / quoted 1 / billed 9 — puts
+    // `capOverage` and `priceOverage` BOTH at 8, so an assertion on `8` cannot
+    // tell them apart and every correction site is free to use the wrong one.
+    // Measured: with that fixture, swapping the per-user, per-app OR dev-session
+    // correction to `priceOverage` SURVIVES the whole suite. That is a fixture
+    // landing exactly on its own boundary, in the money arithmetic.
+    //
+    // declared 1 · quoted 4 · billed 9 → reserve 4 → capOverage 5, priceOverage 8.
+    // Every assertion below is on 5, and 8 is the value the wrong variable
+    // produces — so each one kills its own mutant.
+    // ─────────────────────────────────────────────────────────────────────────
+    it('corrects ALL THREE cap counters by the RESERVATION gap, not the declared gap', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      mockGetActiveDevTunnel.mockResolvedValue({ sessionId: 'devsess_1', spendCapBuzz: 500 });
+      mockReserveDevSessionBuzz.mockResolvedValue({ allowed: true, total: 1 });
+      stepSubmitQuoting(4, 9);
+      await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+
+      const capOverage = 5; // billed 9 − reserve max(1,4)=4
+      const declaredGap = 8; // billed 9 − declared 1  ← what the wrong variable gives
+
+      // per-user cap (sysRedis INCRBY on the buzz-cap key)
+      const userCorrections = mockSysRedis.incrBy.mock.calls
+        .filter((c: unknown[]) => String(c[0]).startsWith('system:blocks:buzz-cap:'))
+        .map((c: unknown[]) => c[1]);
+      expect(userCorrections).toContain(capOverage);
+      expect(userCorrections).not.toContain(declaredGap);
+
+      // per-app cap
+      expect(mockChargeAppSpendOverage).toHaveBeenCalledWith(expect.anything(), capOverage);
+      expect(mockChargeAppSpendOverage).not.toHaveBeenCalledWith(expect.anything(), declaredGap);
+
+      // dev-session cap
+      expect(mockChargeDevSessionOverage).toHaveBeenCalledWith('devsess_1', capOverage);
+      expect(mockChargeDevSessionOverage).not.toHaveBeenCalledWith('devsess_1', declaredGap);
+    });
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 🔴 THE CASE THE OLD COMPARISON WAS STRUCTURALLY BLIND TO.
+    //
+    // `reserveBuzz` is `max(declaredBuzz, quotedBuzz)`, so it has ALREADY
+    // absorbed the orchestrator's live quote. A step declared at 1 and quoted +
+    // billed at 4 therefore computed `4 - 4 = 0` and was recorded `exact` —
+    // while `app-block-runtime.metrics.ts` documents `over` as meaning "the
+    // declared price is wrong". The metric's description was wider than its
+    // implementation, which is worse than no metric: it read as coverage.
+    //
+    // Measured 2026-08-27 on the live platform: `chat-completion` billed several
+    // times its declared price on consecutive real sends, and this counter said
+    // `exact` every time.
+    //
+    // 🔴 THIS TEST FAILS AGAINST THE `reserveBuzz` COMPARISON. Verified by
+    // reverting the comparison at the pre-fix commit: it records `exact`, so
+    // both assertions below flip. It is a regression test, not an invariant
+    // guard.
+    // ─────────────────────────────────────────────────────────────────────────
+    it("records 'over' when the DECLARED price is wrong but the quote absorbed it", async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      // declared STEP_PRICE (1) · quoted 4 · billed 4 → reserve = max(1,4) = 4.
+      stepSubmitQuoting(4, 4);
+      await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
       expect(mockRecordStepPriceCheck).toHaveBeenCalledWith(STEP_ID, 'over');
       expect(mockRecordStepPriceCheck).not.toHaveBeenCalledWith(STEP_ID, 'exact');
+    });
+
+    it('…and does NOT invent a cap correction for a reservation that was already right', async () => {
+      // 🔴 THE OTHER HALF, AND THE ONE A CARELESS FIX BREAKS. Switching the cap
+      // correction to `declaredBuzz` as well would top the counters up by 3 for
+      // money nobody spent — the caps were reserved at 4 and billed 4. The
+      // signal moved; the money did not.
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      stepSubmitQuoting(4, 4);
+      await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(mockReserveAppSpend).toHaveBeenCalledTimes(1);
+      expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', 4);
+      expect(mockChargeAppSpendOverage).not.toHaveBeenCalled();
     });
 
     it("records outcome 'absent' when the submit snapshot carries NO numeric cost", async () => {
@@ -7964,7 +8288,14 @@ describe("step-type registry bridge (kind: 'step')", () => {
       // Two submits, one emit each.
       expect(mockRecordStepPriceCheck).toHaveBeenCalledTimes(2);
       for (const call of mockRecordStepPriceCheck.mock.calls) {
-        expect(['exact', 'over', 'absent']).toContain(call[1]);
+        expect([
+          'exact',
+          'over',
+          'over_reserved',
+          'absent',
+          'estimate_quoted',
+          'estimate_absent',
+        ]).toContain(call[1]);
         expect(call[0]).toBe(STEP_ID);
       }
     });
