@@ -223,13 +223,14 @@ describe('upsertModelVersion — a non-owner creating a row', () => {
 });
 
 describe('upsertModelVersion — blurb reconciliation', () => {
-  it('reconciles after the write, against the version id', async () => {
+  it('reconciles in the same transaction as the write, against the version id', async () => {
     await upsert();
 
     expect(reconcileBlurbReferences).toHaveBeenCalledWith({
       entityType: 'ModelVersion',
       entityId: VERSION_ID,
       uses: USES,
+      tx: expect.anything(),
     });
 
     const [write] = dbMock.dbWrite.modelVersion.update.mock.invocationCallOrder;

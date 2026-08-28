@@ -126,13 +126,14 @@ describe('upsertCosmeticShopItem — blurb expansion', () => {
 });
 
 describe('upsertCosmeticShopItem — blurb reconciliation', () => {
-  it('reconciles after the write, against the item id', async () => {
+  it('reconciles in the same transaction as the write, against the item id', async () => {
     await upsert();
 
     expect(reconcileBlurbReferences).toHaveBeenCalledWith({
       entityType: 'CosmeticShopItem',
       entityId: ITEM_ID,
       uses: USES,
+      tx: expect.anything(),
     });
 
     const [write] = dbMock.dbWrite.cosmeticShopItem.update.mock.invocationCallOrder;
