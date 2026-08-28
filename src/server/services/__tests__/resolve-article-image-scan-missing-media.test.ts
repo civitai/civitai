@@ -15,10 +15,23 @@ import type * as SearchIndex from '~/server/search-index';
 
 const { headObject } = vi.hoisted(() => ({ headObject: vi.fn() }));
 
+/**
+ * 🔴 `getImageUploadBackend` is mocked, not just `getB2ImageS3Client`, and the distinction is the
+ * whole reason this file went red once. The probe resolves its bucket + client through
+ * `getImageUploadBackend()` (so it cannot drift from the store the upload path wrote to); the REAL
+ * one — which `importOriginal` hands back — calls s3-utils' own internal client factory, not the
+ * mocked export, and that factory throws with no credentials. The probe then landed on `unknown`,
+ * the publish was ALLOWED, and the refusal case failed with "promise resolved undefined".
+ */
 vi.mock('~/utils/s3-utils', async (importOriginal) => ({
   ...(await importOriginal<typeof S3Utils>()),
   headObject,
   getB2ImageS3Client: () => ({} as never),
+  getImageUploadBackend: async () => ({
+    s3: {} as never,
+    bucket: 'civitai-media-uploads',
+    backend: 'backblaze' as const,
+  }),
 }));
 
 const { queueUpdate } = vi.hoisted(() => ({ queueUpdate: vi.fn() }));
