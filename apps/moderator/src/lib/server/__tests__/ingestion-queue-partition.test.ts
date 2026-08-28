@@ -11,25 +11,38 @@ import { describe, expect, it, vi } from 'vitest';
  * A hand-rolled fake cannot see any of that — only the emitted SQL can. So `dbRead` here is real
  * Kysely on a driver that never connects, and every assertion reads the statement it produced.
  */
-const captured = vi.hoisted(() => [] as { sql: string; parameters: readonly unknown[] }[]);
+const captured = vi.hoisted(
+  () => [] as { sql: string; parameters: readonly unknown[]; client: 'read' | 'write' }[]
+);
 
 // Built inside the factory, not in `vi.hoisted`: hoisted blocks run before this file's own imports,
 // so constructing Kysely there reads it before initialisation.
+/**
+ * 🔴 `dbRead` and `dbWrite` are DISTINCT instances that tag what they compiled.
+ *
+ * Aliasing them to one object — which this harness used to do — makes them indistinguishable by
+ * construction, so nothing can pin WHICH client a query runs on. That matters because
+ * `imageRowExists` is a read-your-write: on the replica, lag past the delete's own round trip makes
+ * a successful delete read as "still present", producing a false failure and no audit row for a
+ * delete that did happen. A single shared instance cannot see that regression.
+ */
 vi.mock('$lib/server/db', async () => {
   const { DummyDriver, Kysely, PostgresAdapter, PostgresIntrospector, PostgresQueryCompiler } =
     await import('kysely');
-  const db = new Kysely<never>({
-    dialect: {
-      createAdapter: () => new PostgresAdapter(),
-      createDriver: () => new DummyDriver(),
-      createIntrospector: (i) => new PostgresIntrospector(i),
-      createQueryCompiler: () => new PostgresQueryCompiler(),
-    },
-    log: (e) => {
-      if (e.level === 'query') captured.push({ sql: e.query.sql, parameters: e.query.parameters });
-    },
-  });
-  return { dbRead: db, dbWrite: db };
+  const make = (client: 'read' | 'write') =>
+    new Kysely<never>({
+      dialect: {
+        createAdapter: () => new PostgresAdapter(),
+        createDriver: () => new DummyDriver(),
+        createIntrospector: (i) => new PostgresIntrospector(i),
+        createQueryCompiler: () => new PostgresQueryCompiler(),
+      },
+      log: (e) => {
+        if (e.level === 'query')
+          captured.push({ sql: e.query.sql, parameters: e.query.parameters, client });
+      },
+    });
+  return { dbRead: make('read'), dbWrite: make('write') };
 });
 
 const {
@@ -38,6 +51,7 @@ const {
   getMissingMediaImages,
   countMissingMediaImages,
   isMissingMediaImage,
+  imageRowExists,
 } = await import('../ingestion.service');
 
 const norm = (s: string) => s.replace(/\s+/g, ' ').trim();
@@ -48,7 +62,11 @@ async function run(fn: () => Promise<unknown>) {
   // A positive control on the harness itself: a query that never compiled would leave this empty,
   // and every assertion below would then be reading a stale or absent statement.
   expect(captured.length, 'the query under test must have compiled').toBe(1);
-  return { sql: norm(captured[0].sql), parameters: captured[0].parameters };
+  return {
+    sql: norm(captured[0].sql),
+    parameters: captured[0].parameters,
+    client: captured[0].client,
+  };
 }
 
 /** The predicate only: everything between WHERE and ORDER BY (or the end, for the count queries). */
@@ -193,11 +211,56 @@ describe("the delete gate's own predicate", () => {
     expect(queue).toContain('i."createdAt" > now() - INTERVAL \'2 days\'');
   });
 
-  it('shares the failure-class predicate with the queue, so the two cannot disagree', async () => {
+  it('shares EVERY state predicate with the queue, so the two cannot disagree', async () => {
+    /**
+     * 🔴 Asserted over the whole clause SET, not one clause of three. The earlier version named the
+     * relationship in its title and checked only `failureClass`: changing the queue's
+     * `nsfwLevel = 0` bound left the gate behind and the test stayed green — the gate would then
+     * refuse images the queue renders, and those become permanently uncleanable. That is the same
+     * bug the display-window split fixed, on the state axis instead of the time axis.
+     */
     const gate = (await run(() => isMissingMediaImage(4242))).sql;
     const queue = (await run(() => countMissingMediaImages())).sql;
-    const clause = "i.\"scanJobs\"->'error'->>'failureClass' IS NOT DISTINCT FROM $1";
-    expect(gate).toContain(clause);
-    expect(queue).toContain(clause);
+
+    const clauses = (statement: string) =>
+      statement
+        .slice(statement.indexOf(' WHERE ') + ' WHERE '.length)
+        .split(/\bAND\b/)
+        .map((c) =>
+          c
+            .trim()
+            .replace(/^\(+|\)+$/g, '')
+            .trim()
+        )
+        .filter(Boolean);
+
+    // Everything the gate asserts, minus its own id binding, must appear in the queue verbatim.
+    const gateState = clauses(gate).filter((c) => !c.startsWith('i.id ='));
+    expect(gateState.length).toBeGreaterThanOrEqual(3);
+    for (const clause of gateState) expect(clauses(queue), clause).toContain(clause);
+  });
+});
+
+describe('read-your-write: the delete confirmation must not read a replica', () => {
+  /**
+   * 🔴 `imageRowExists` runs milliseconds after a delete on the primary, to decide whether that
+   * delete happened. On `dbRead` — a separate pool on the replica connection string — any lag past
+   * that round trip makes a SUCCESSFUL delete read as "still present": a false failure, and no audit
+   * row for a delete that did happen. The exact mirror of the bug the read-back prevents.
+   *
+   * Nothing pinned this before, so a one-word revert to `dbRead` would have been invisible.
+   */
+  it('confirms the delete against the PRIMARY, not the replica', async () => {
+    const { client, sql, parameters } = await run(() => imageRowExists(4242));
+    expect(client).toBe('write');
+    expect(sql).toBe('SELECT i.id FROM "Image" i WHERE i.id = $1 LIMIT 1');
+    expect(parameters).toEqual([4242]);
+  });
+
+  it('still reads the replica for the queues and badges, which are not read-your-write', async () => {
+    // The flip side: these are ordinary list reads and must NOT be moved onto the primary.
+    expect((await run(() => countMissingMediaImages())).client).toBe('read');
+    expect((await run(() => getMissingMediaImages({ limit: 10 }))).client).toBe('read');
+    expect((await run(() => countIngestionErrorImages())).client).toBe('read');
   });
 });

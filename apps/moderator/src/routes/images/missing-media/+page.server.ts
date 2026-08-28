@@ -43,7 +43,10 @@ export const actions: Actions = {
     if (!(await isMissingMediaImage(id)))
       return fail(400, { error: 'That image is not in the missing-media queue.' });
 
-    // Kept for a genuine throw, but note it is nearly dead: see below.
+    // Kept as insurance if the collaborator ever starts throwing, but it is UNREACHABLE today —
+    // `deleteImagesByIds` catches per image and its one un-caught statement is a `void`-ed async
+    // call. Deliberately untested: there is no reachable input that enters this branch, and a test
+    // that forced one would be pinning a state the real function cannot produce.
     try {
       await deleteImagesByIds([id]);
     } catch (e) {
@@ -54,13 +57,17 @@ export const actions: Actions = {
      * 🔴 A RESOLVED `deleteImagesByIds` IS NOT EVIDENCE THE IMAGE IS GONE.
      *
      * It wraps every per-image body in a `try/catch` that logs and continues, and its only statement
-     * outside a try is a `void`-ed async call — so it effectively never rejects. A failed DB or
-     * storage step returns normally, which previously produced `{ success: true }`, a card rendering
-     * "Deleted", and a `deleteMissingMedia` audit row attesting a delete that never happened, all
-     * for an image still on the site.
+     * outside a try is a `void`-ed async call — so it effectively never rejects. A failed DB step
+     * returns normally, which previously produced `{ success: true }`, a card rendering "Deleted",
+     * and a `deleteMissingMedia` audit row attesting a delete that never happened, all for an image
+     * still on the site.
      *
      * So confirm by reading the row back. Cheap, and it is the difference between an audit log that
      * records outcomes and one that records intentions.
+     *
+     * Scope, precisely: this confirms the ROW is gone, which is the authoritative moderation
+     * outcome. It does NOT confirm the stored object was removed — that delete is best-effort and
+     * swallowed inside `deleteImagesByIds` — so a success here can still leave an orphaned object.
      */
     if (await imageRowExists(id))
       return fail(400, {

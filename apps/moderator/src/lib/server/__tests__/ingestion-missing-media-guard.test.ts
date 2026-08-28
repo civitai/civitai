@@ -155,14 +155,17 @@ describe('spoke resolveIngestionError — missing-media guard', () => {
     // throw from the storage client; rejecting on any of them would let a verification step block
     // legitimate moderation on the queue whose job is unblocking content.
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    headObject.mockRejectedValue(new Error('storage request failed (503)'));
+    try {
+      headObject.mockRejectedValue(new Error('storage request failed (503)'));
 
-    await resolve();
+      await resolve();
 
-    expect(updates).toHaveLength(1);
-    expect(published()).toMatchObject({ ingestion: 'Scanned', nsfwLevelLocked: true });
-    expect(warn).toHaveBeenCalledTimes(1);
-    warn.mockRestore();
+      expect(updates).toHaveLength(1);
+      expect(published()).toMatchObject({ ingestion: 'Scanned', nsfwLevelLocked: true });
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('still refuses before the probe when there is no such image', async () => {
@@ -211,20 +214,27 @@ describe('spoke resolveIngestionError — which collaborators the guard reaches'
 
     await resolve();
 
-    expect(headObject).toHaveBeenCalledTimes(1);
+    // The distinguishing assertion FIRST: three other tests already assert `headObject` was called,
+    // so leading with that made this one die to a shared assertion and name the wrong regression.
     expect(unboundedHeadObject).not.toHaveBeenCalled();
+    expect(headObject).toHaveBeenCalledTimes(1);
   });
 
   it('reports a refusal, so a fail-CLOSED misconfiguration cannot look like a clean run', async () => {
     // A wrong bucket name 404s for EVERY key, which reads as `absent` for every image. Without this
     // wiring the guard would refuse every publish and emit nothing to say so.
+    // try/finally: this config sets no `restoreMocks`, so a failing assertion would otherwise leave
+    // `console.warn` stubbed for the rest of the worker.
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    headObject.mockResolvedValue({ exists: false });
+    try {
+      headObject.mockResolvedValue({ exists: false });
 
-    await expect(resolve()).rejects.toThrow(MISSING_MEDIA_PUBLISH_MESSAGE);
+      await expect(resolve()).rejects.toThrow(MISSING_MEDIA_PUBLISH_MESSAGE);
 
-    expect(warn).toHaveBeenCalledTimes(1);
-    expect(warn.mock.calls[0][0]).toContain('refused publish');
-    warn.mockRestore();
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0][0]).toContain('refused publish');
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

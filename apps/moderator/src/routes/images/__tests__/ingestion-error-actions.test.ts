@@ -47,8 +47,9 @@ beforeEach(() => {
   // 🔴 `clearAllMocks` clears CALLS, not IMPLEMENTATIONS. Every mock whose implementation any test
   // changes must be restored here or it leaks into whatever runs next — the defect class that
   // already made one suite in this PR pass for the wrong reason. Listing all three, not just the
-  // one that bit us: `deleteImagesByIds` carries both a resolve and a reject below, and was benign
-  // only by accident of test order.
+  // one that bit us. `deleteImagesByIds` no longer carries a reject (that test pinned a state the
+  // real function cannot reach and was replaced), but it IS reassigned per case, so it is reset
+  // here rather than relying on the order the cases happen to run in.
   isMissingMediaImage.mockResolvedValue(true);
   imageRowExists.mockResolvedValue(false);
   deleteImagesByIds.mockResolvedValue(undefined);

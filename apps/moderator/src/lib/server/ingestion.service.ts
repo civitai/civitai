@@ -65,11 +65,15 @@ export async function countImagesPendingIngestion(): Promise<number> {
  * below can differ in exactly ONE predicate — whether the scan failed permanently — and cannot
  * drift in the window, the ingestion state, or the level bound.
  */
+const ingestionErrorState = sql`
+  i.ingestion = 'Error'::"ImageIngestionStatus"
+  AND i."nsfwLevel" = 0
+`;
+
 const ingestionErrorBaseWhere = sql`
   i."createdAt" > now() - INTERVAL '2 days'
   AND i."createdAt" < now() - INTERVAL '1 hour'
-  AND i.ingestion = 'Error'::"ImageIngestionStatus"
-  AND i."nsfwLevel" = 0
+  AND ${ingestionErrorState}
 `;
 
 /**
@@ -131,12 +135,18 @@ const missingMediaWhere = sql`
  * at `ingestion = 'Error'`.
  *
  * What actually makes a delete safe is the image's STATE — an unpublished ingestion error whose scan
- * failed permanently — and that does not expire. So the gate asserts the state and the queue applies
- * the window on top.
+ * failed permanently — and that does not expire. So the gate asserts the state, composed from the
+ * SAME `ingestionErrorState` the queue uses so the two cannot drift on it, and the queue applies the
+ * window on top.
+ *
+ * Note this drops BOTH window bounds, the 1-hour lower one included, so a very new row the page does
+ * not yet render is deletable by a hand-crafted POST. Checked, and safe: `permanent` is a terminal
+ * class — `IMAGE_SCAN_PERMANENT_RETRY_LIMIT` is 1 and `markImageScanError` has already spent it — so
+ * such a row is never re-driven into a different state by the ingest cron, and rows predating the
+ * classification carry a NULL `failureClass`, which `IS NOT DISTINCT FROM` excludes.
  */
 const missingMediaScope = sql`
-  i.ingestion = 'Error'::"ImageIngestionStatus"
-  AND i."nsfwLevel" = 0
+  ${ingestionErrorState}
   AND ${permanentScanFailure}
 `;
 
@@ -238,11 +248,20 @@ export async function isMissingMediaImage(id: number): Promise<boolean> {
  * `try/catch` that logs and continues, and its only un-caught statement is a `void`-ed async call —
  * so a resolved promise is not evidence that anything was deleted. Without this the action reports
  * success and the mod-activity record attests a delete that never happened.
+ *
+ * 🔴 READS THE PRIMARY, and must keep doing so. This is a read-your-write: the delete happened on
+ * `dbWrite` milliseconds earlier, and `dbRead` is a SEPARATE pool on the replica connection string
+ * (`./db.ts`). Any replica lag past that round trip makes a SUCCESSFUL delete read as "still
+ * present" — producing a false failure and, worse, NO audit row for a delete that did happen. That
+ * is the precise mirror of the bug this function exists to prevent, on the same artefact.
+ *
+ * `getLiveStrikes({ readYourWrite })` in `./user-lookup.service.ts` is the same call shape with the
+ * same reasoning already written out; this follows it.
  */
 export async function imageRowExists(id: number): Promise<boolean> {
   const result = await sql<{ id: number }>`
     SELECT i.id FROM "Image" i WHERE i.id = ${id} LIMIT 1
-  `.execute(dbRead);
+  `.execute(dbWrite);
   return result.rows.length > 0;
 }
 
