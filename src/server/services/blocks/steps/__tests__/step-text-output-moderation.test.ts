@@ -126,6 +126,68 @@ function chatStep(content = GENERATED_TEXT) {
   };
 }
 
+/** The model-written argument string used by the tool-call cases below. */
+const TOOL_ARGUMENTS = '{"query":"the model chose this query","limit":1}';
+
+/** A COMPLETED chat step whose reply is a TOOL CALL rather than prose. */
+function toolCallStep(args = TOOL_ARGUMENTS) {
+  return {
+    $type: CHAT_TYPE,
+    output: {
+      choices: [
+        {
+          finishReason: 'tool_calls',
+          message: {
+            tool_calls: [
+              { id: 'call_1', type: 'function', function: { name: 'search_models', arguments: args } },
+            ],
+          },
+        },
+      ],
+    },
+  };
+}
+
+/**
+ * A `'textOutput'` entry that ALSO publishes structured tool calls — the shape
+ * `chat-completion` has once tools are exposed.
+ *
+ * 🔴 `extractText` RETURNS THE ARGUMENTS TOO, and that is not fixture padding:
+ * it is the containment property registry clause 8b enforces, and the reason
+ * publishing the structured form is defensible at all. A fixture that omitted it
+ * would be a fixture the registry REJECTS — asserted below.
+ */
+function makeToolCallStep(overrides: Partial<AnyBlockStep> = {}): AnyBlockStep {
+  type Choices = Array<{
+    message?: {
+      content?: string;
+      tool_calls?: Array<{ id: string; type: string; function: { name: string; arguments: string } }>;
+    };
+  }>;
+  const readChoices = (step: unknown): Choices =>
+    (step as { output?: { choices?: Choices } })?.output?.choices ?? [];
+  return makeTextStep({
+    extractText: (step: unknown) => {
+      const texts: string[] = [];
+      for (const c of readChoices(step)) {
+        if (c.message?.content) texts.push(c.message.content);
+        for (const call of c.message?.tool_calls ?? []) texts.push(call.function.arguments);
+      }
+      return texts;
+    },
+    extractToolCalls: (step: unknown) =>
+      readChoices(step).flatMap((c) =>
+        (c.message?.tool_calls ?? []).map((call) => ({
+          id: call.id,
+          type: 'function' as const,
+          function: { name: call.function.name, arguments: call.function.arguments },
+        }))
+      ),
+    canonicalOutputFor: (): unknown => toolCallStep(),
+    ...overrides,
+  });
+}
+
 /**
  * A registry entry declaring `'textOutput'`. Shaped so the REAL
  * `assertStepInvariants` accepts it (asserted below) — a fixture the registry
@@ -1573,5 +1635,181 @@ describe('textOutput — an ERRORED label FAILS CLOSED', () => {
     const recovered = await screenGeneratedText({ ...opts, texts: [GENERATED_TEXT] });
     expect(recovered).toEqual({ released: true, texts: [GENERATED_TEXT] });
     expect(mockCreateXGuardModerationRequest).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🔴 STRUCTURED TOOL CALLS — published ONLY on a released verdict.
+//
+// This block is the AC4 control for tool calling. The tool-call objects are
+// never handed to a scanner as objects; what makes publishing them safe is that
+// (a) every `arguments` string is ALSO returned by `extractText` and therefore
+// scanned, enforced at load by clause 8b, and (b) they are attached only onto an
+// already-released verdict. Each of those halves has a case below, and each case
+// has its positive control — a bare "toolCalls is undefined" is indistinguishable
+// from a field nothing ever populates.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('textOutput — structured tool calls are verdict-gated', () => {
+  beforeEach(() => {
+    registryOverride.set(CHAT_TYPE, makeToolCallStep());
+  });
+
+  it('the tool-call fixture is a REGISTRABLE entry', () => {
+    // Same control as the suite's own opening case: if the registry would reject
+    // this shape, every assertion below would describe an entry that cannot ship.
+    expect(() => assertStepInvariants('fixture-chat', makeToolCallStep())).not.toThrow();
+  });
+
+  it('🔴 A WITHHELD VERDICT PUBLISHES NO TOOL CALLS — the single most important case', async () => {
+    scannerReturns(scanOutput(['Young']));
+
+    const snapshot = await attachModeratedStepTextOutputs(
+      { workflowId: 'wf-1', status: 'succeeded' as const },
+      workflowWith(toolCallStep()),
+      CTX
+    );
+
+    expect(snapshot.toolCalls).toBeUndefined();
+    expect(snapshot.textOutputs).toBeUndefined();
+    // Not just the field: the model's argument string must not appear ANYWHERE
+    // in the object the block receives.
+    expect(JSON.stringify(snapshot)).not.toContain(TOOL_ARGUMENTS);
+    expect(snapshot.textOutputWithheld).toEqual({ reason: TEXT_OUTPUT_WITHHELD_MESSAGE });
+  });
+
+  it('🔴 POSITIVE CONTROL — the SAME path publishes the tool call on a clean scan', async () => {
+    scannerReturns(scanOutput([]));
+
+    const snapshot = await attachModeratedStepTextOutputs(
+      { workflowId: 'wf-1', status: 'succeeded' as const },
+      workflowWith(toolCallStep()),
+      CTX
+    );
+
+    expect(snapshot.toolCalls).toEqual([
+      {
+        id: 'call_1',
+        type: 'function',
+        function: { name: 'search_models', arguments: TOOL_ARGUMENTS },
+      },
+    ]);
+    // …and the arguments were scanned, which is what licenses publishing them.
+    expect(snapshot.textOutputs).toContain(TOOL_ARGUMENTS);
+  });
+
+  it('🔴 the model-written ARGUMENTS are what the scanner was actually given', async () => {
+    // The containment property, observed at the scanner boundary rather than
+    // inferred from the extractor. If `extractText` stopped returning arguments,
+    // the structured surface would still publish them — on the strength of a
+    // scan that never read them. This is the case that goes red for that.
+    scannerReturns(scanOutput([]));
+
+    await attachModeratedStepTextOutputs(
+      { workflowId: 'wf-1', status: 'succeeded' as const },
+      workflowWith(toolCallStep()),
+      CTX
+    );
+
+    // Read the `content` field directly rather than stringifying the whole
+    // request: `JSON.stringify` escapes the quotes inside the arguments JSON, so
+    // a `toContain` against the raw string would fail even when the scanner DID
+    // receive it — a test that goes red for a reason that is not the property.
+    const arg = mockCreateXGuardModerationRequest.mock.calls[0][0] as { content: string };
+    expect(arg.content).toContain(TOOL_ARGUMENTS);
+  });
+
+  it('🔴 an INCOMING toolCalls on the snapshot is STRIPPED and cannot survive', async () => {
+    // The smuggle path. A caller that arrived carrying tool calls must not be
+    // able to publish them by pre-populating the field — the same property
+    // `textOutputs` and `textOutputWithheld` already have.
+    scannerReturns(scanOutput(['Young']));
+
+    const snapshot = await attachModeratedStepTextOutputs(
+      {
+        workflowId: 'wf-1',
+        status: 'succeeded' as const,
+        toolCalls: [
+          {
+            id: 'smuggled',
+            type: 'function' as const,
+            function: { name: 'evil_tool', arguments: '{"smuggled":true}' },
+          },
+        ],
+      },
+      workflowWith(toolCallStep()),
+      CTX
+    );
+
+    expect(snapshot.toolCalls).toBeUndefined();
+    expect(JSON.stringify(snapshot)).not.toContain('smuggled');
+  });
+
+  it('🔴 an incoming toolCalls is stripped even when the scan RELEASES', async () => {
+    // The nastier half: on a withhold the field is absent anyway, so the case
+    // above passes for a "nothing was written" reason as well as the right one.
+    // On a RELEASE the field IS written, so this pins that what gets written is
+    // the scanned value and not the caller's.
+    scannerReturns(scanOutput([]));
+
+    const snapshot = await attachModeratedStepTextOutputs(
+      {
+        workflowId: 'wf-1',
+        status: 'succeeded' as const,
+        toolCalls: [
+          {
+            id: 'smuggled',
+            type: 'function' as const,
+            function: { name: 'evil_tool', arguments: '{"smuggled":true}' },
+          },
+        ],
+      },
+      workflowWith(toolCallStep()),
+      CTX
+    );
+
+    expect(snapshot.toolCalls).toEqual([
+      {
+        id: 'call_1',
+        type: 'function',
+        function: { name: 'search_models', arguments: TOOL_ARGUMENTS },
+      },
+    ]);
+    expect(JSON.stringify(snapshot)).not.toContain('smuggled');
+  });
+
+  it('omits the field entirely for a text-only reply, so existing snapshots are byte-identical', async () => {
+    scannerReturns(scanOutput([]));
+
+    const snapshot = await attachModeratedStepTextOutputs(
+      { workflowId: 'wf-1', status: 'succeeded' as const },
+      workflowWith(chatStep()),
+      CTX
+    );
+
+    expect(snapshot.textOutputs).toEqual([GENERATED_TEXT]);
+    expect('toolCalls' in snapshot).toBe(false);
+  });
+
+  it('WITHHOLDS rather than publishing when the tool-call extractor returns a malformed call', async () => {
+    // Clause 8b probes the CANONICAL sample; a real response can still produce a
+    // shape it never saw, so the request-time guard fails closed the same way
+    // the `extractText` guard beside it does.
+    scannerReturns(scanOutput([]));
+    registryOverride.set(
+      CHAT_TYPE,
+      makeToolCallStep({
+        extractToolCalls: () => [{ id: 'x' }] as never,
+      })
+    );
+
+    const snapshot = await attachModeratedStepTextOutputs(
+      { workflowId: 'wf-1', status: 'succeeded' as const },
+      workflowWith(toolCallStep()),
+      CTX
+    );
+
+    expect(snapshot.toolCalls).toBeUndefined();
+    expect(snapshot.textOutputs).toBeUndefined();
+    expect(snapshot.textOutputWithheld).toEqual({ reason: TEXT_OUTPUT_WITHHELD_MESSAGE });
   });
 });

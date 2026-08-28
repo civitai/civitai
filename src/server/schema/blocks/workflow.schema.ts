@@ -3,6 +3,7 @@ import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { REGISTERED_RECIPE_IDS } from '~/server/services/blocks/recipes';
 import { REGISTERED_STEP_IDS } from '~/server/services/blocks/steps';
+import type { BlockStepToolCall } from '~/server/services/blocks/steps';
 import {
   civitaiHostedImageUrlSchema,
   SOURCE_IMAGE_URL_MAX,
@@ -745,4 +746,37 @@ export type BlockWorkflowSnapshot = {
    * appear.
    */
   textOutputWithheld?: { reason: string };
+  /**
+   * Structured tool calls the model requested on a registered `'textOutput'`
+   * step — and which have PASSED the same output moderation scan `textOutputs`
+   * passes.
+   *
+   * 🔴 SAME SINGLE PRODUCER, SAME STRIPPING, SAME RULE.
+   * `attachModeratedStepTextOutputs` is the only writer; it strips any incoming
+   * value of this field before merging its own, and it attaches tool calls ONLY
+   * onto a released verdict. Do NOT set it anywhere else.
+   *
+   * 🔴 WHY PUBLISHING THESE IS NOT A HOLE IN THE SCAN, since the objects
+   * themselves are never handed to a scanner: the entry's `extractText` returns
+   * every `arguments` string that appears here, so the released verdict was
+   * computed over exactly that prose, and registry clause 8b fails the build if
+   * an entry ever breaks that containment. The tool NAME is not scanned and does
+   * not need to be — it is pattern-bounded to `[A-Za-z0-9_-]` at both the param
+   * schema and the extractor, so it cannot carry prose. Widening that charset
+   * would make the name a free-text surface and is a moderation change, not a
+   * validation one.
+   *
+   * WHERE IT APPEARS: `blocks.pollWorkflow` and `blocks.cancelWorkflow` — the
+   * same two wrapped procedures as `textOutputs`, for the same reason.
+   *
+   * OMITTED entirely when there are none, so every existing snapshot stays
+   * byte-identical.
+   *
+   * 🔴 WIRE CONTRACT: additive on the type `@civitai/app-sdk`'s `blocks/types.ts`
+   * mirrors, exactly like `textOutputs` and `modelSubstitutions` above. The SDK's
+   * inbound validator does not know it yet, so a block reads it only once that
+   * type is widened in the SDK repo — tracked separately; nothing here edits
+   * another repo.
+   */
+  toolCalls?: BlockStepToolCall[];
 };

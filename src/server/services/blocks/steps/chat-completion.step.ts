@@ -64,6 +64,20 @@ import type { BlockStep, OrchestratorStepTemplate } from './index';
 // violation counter. Closing it needs a registry-level decision about
 // multi-surface postures, not a workaround here.
 //
+// 🔴 TOOL CALLING ENLARGED THAT GAP WITHOUT CHANGING ITS KIND, AND THAT IS
+// STATED HERE RATHER THAN LEFT TO BE DISCOVERED. The unaudited input channel now
+// also carries `role: 'tool'` messages — content a THIRD PARTY produced and the
+// block pasted back in — plus tool descriptions and JSON Schemas the app author
+// wrote. More volume and more provenance on a channel that was already
+// unaudited; no new channel. It is bounded rather than audited: `MAX_TOOL_ROUNDS`
+// caps how many tool results one submit can carry, `MAX_MESSAGE_CHARS` caps each,
+// and the OUTPUT scan still stands in front of everything the model says ABOUT a
+// tool result before a block can publish it.
+//
+// 🔴 DO NOT "CLOSE" THIS BY SWITCHING TO `'promptAudit'`. The map's own inclusion
+// criterion forbids exactly that trade: declaring it would audit the input and
+// ship the OUTPUT unscanned, which is strictly worse than the status quo.
+//
 // 🔴 WHAT ACTUALLY WITHHOLDS — AN ENUMERATION, BECAUSE THE UNIVERSAL WAS FALSE.
 // This header and the `moderationPosture` field both used to say the reply is
 // withheld "on any scanner failure". That is NOT true of the shipped code, and
@@ -116,17 +130,38 @@ import type { BlockStep, OrchestratorStepTemplate } from './index';
 // `containsAirReference` is a case-insensitive SUBSTRING test for `urn:air:`
 // across every string, array element, object value and object KEY.
 //
-// `buildStep` emits exactly `{ model, messages, maxTokens, temperature? }`
-// (pinned by the exact-key-set test in `__tests__/chat-completion.step.test.ts`).
-// `model` is `z.enum`-bounded to `CHAT_COMPLETION_MODELS`, `maxTokens` and
-// `temperature` are numbers, every key is a fixed literal, and `role` is a
-// three-value enum. So **`messages[].content` is the only string in the built
-// input that an untrusted iframe can put arbitrary text into** — and it is
-// human prose, forwarded from whatever an end user typed into a chat block.
-// This entry is the FIRST whose scanned strings are prose; every earlier one
-// (`convert-image`) scanned urls the APP constructs. For this entry the guard
-// therefore reduces exactly to: reject any chat message containing the literal
-// `urn:air:`. A user asking "what does urn:air: mean?" gets a hard FORBIDDEN.
+// `buildStep` emits exactly `{ model, messages, maxTokens, temperature?, tools?,
+// tool_choice? }` (pinned by the exact-key-set test in
+// `__tests__/chat-completion.step.test.ts`). `model` is `z.enum`-bounded to
+// `CHAT_COMPLETION_MODELS`, `maxTokens` and `temperature` are numbers, and
+// `role` is a four-value literal set.
+//
+// 🔴 THE CALLER-CONTROLLED STRING SET GREW WHEN TOOLS SHIPPED, AND AN EARLIER
+// REVISION OF THIS PARAGRAPH NAMED ONLY ONE OF THEM. It said "**`messages[].content`
+// is the only string in the built input that an untrusted iframe can put
+// arbitrary text into**". That is now FALSE. The full set is:
+//   * `messages[].content` — human prose, as before;
+//   * `messages[].tool_calls[].function.arguments` and `.id` on a replayed
+//     assistant turn, and `messages[].tool_call_id` on a tool result;
+//   * `tools[].function.description` — free text the app author writes;
+//   * `tools[].function.parameters` — an arbitrary JSON Schema, every string
+//     and KEY inside it included.
+// Names are pattern-bounded (`TOOL_NAME_PATTERN`) and so cannot carry the
+// literal, but everything else above can. For this entry the guard therefore
+// reduces to: reject any of those carrying the literal `urn:air:`. A user asking
+// "what does urn:air: mean?" still gets a hard FORBIDDEN, and so now does a tool
+// whose description mentions AIRs — which is a REAL cost for a catalog toolset,
+// because catalog data is exactly where AIRs live. The fail-closed direction is
+// unchanged and deliberate; the fix belongs in what the caller puts in the
+// payload, not in narrowing the scan (see the paragraph below on why).
+//
+// 🔴 AND `parameters` IS WHY THE JSON ROUND-TRIP IN `toolParametersSchema` IS
+// LOAD-BEARING RATHER THAN TIDY. `containsAirReference` documents its own
+// totality limit at `toJSON`-bearing class instances, and names "the first time
+// an entry declares a `z.unknown()` / `z.any()` / `z.custom()` param" as the
+// point that becomes reachable. This entry is that entry. The normalisation
+// there is what keeps the value the scan walks identical to the value that
+// reaches the wire.
 //
 // WHAT THE ORCHESTRATOR ACTUALLY DOES WITH THAT PROSE — read from
 // `civitai/civitai-orchestration` at `origin/main` e9ce862cb, not assumed:
@@ -280,7 +315,242 @@ const TEMPERATURE_MIN = 0;
 const TEMPERATURE_MAX = 2;
 
 /**
- * One conversation turn.
+ * The maximum number of `role: 'tool'` messages one submit may carry — i.e. the
+ * bound on how many tool ROUNDS a conversation can accumulate.
+ *
+ * 🔴 THIS IS THE BILLING BOUND, AND IT IS WHY THE ENTRY CAN STAY `prepaidFixed`.
+ * Tool calling makes a conversation a LOOP, and a loop is N charges rather than
+ * one. `prepaidFixed` means "cost knowable before execution", which the submit
+ * path enforces by quoting the orchestrator (`whatif:true`) for the step it is
+ * about to submit and reserving `max(declared, quoted)`. That holds PER SUBMIT
+ * and cannot bound a round that does not exist yet: round k+1's input depends on
+ * what the model emitted and what the tool returned, neither of which exists
+ * when round k is quoted.
+ *
+ * The resolution is that each round IS its own submit — this entry does NOT
+ * loop server-side, and the block drives the loop by appending the tool result
+ * and submitting again. Every round therefore gets its own live quote, its own
+ * per-call `buzzBudget` gate and its own reservation against every cap. What
+ * this constant adds is the bound on how far that can run.
+ *
+ * 🔴 ENFORCED AT PARSE, NOT IN THE BLOCK, AND THAT PLACEMENT IS THE POINT. A
+ * block is untrusted sandboxed code; a round cap it applies to itself is not a
+ * cap. `parseStepParams` runs this schema on BOTH the estimate and the submit
+ * path, so the two cannot disagree and a caller cannot loop past it by declining
+ * to count. It rejects as BAD_REQUEST before the orchestrator quote and before
+ * every reservation, so a rejection costs no round-trip and has nothing to
+ * refund.
+ *
+ * WHY THREE. Two rounds cover the shape this exists for — call a catalog tool,
+ * read the result, answer — and the third leaves room for one refinement when
+ * the first query comes back empty, which is the whole argument for real tool
+ * calling over a one-shot heuristic. Raising it is additive and cheap; lowering
+ * it is breaking. It is deliberately far below the incidental ceiling
+ * `MAX_MESSAGES` already imposes (32 messages ≈ 15 rounds at 2 messages each),
+ * because that ceiling is neither stated nor intentional.
+ */
+export const MAX_TOOL_ROUNDS = 3;
+
+/**
+ * Bounds on the TOOL DEFINITIONS a caller may attach.
+ *
+ * 🔴 THESE ARE COMPUTE/LATENCY BOUNDS, NOT PRICE BOUNDS, AND THE DIFFERENCE
+ * MATTERS. Tool definitions inflate PROMPT tokens — the orchestrator estimates
+ * them explicitly — but the submit path quotes the orchestrator for the exact
+ * step it submits, and `tools` is inside that step, so the inflation is PRICED
+ * before the per-call budget gate rather than escaping it. What these bounds
+ * protect is the thing the quote does not: prefill compute and request size
+ * driven by an untrusted iframe.
+ *
+ * `MAX_TOOLS` is 8 because the read-only catalog toolset this capability exists
+ * to serve is seven tools; eight leaves one slot without inviting a caller to
+ * ship a toolbox as a prompt.
+ *
+ * `MAX_TOOL_PARAMETERS_DEPTH` is the one bound with a second, sharper reason.
+ * The built step is deep-scanned by `containsAirReference` (registry clause 7
+ * at load, and again request-time in `blocks.router.ts`), which recurses with a
+ * fail-CLOSED cap at `AIR_SCAN_MAX_DEPTH`: past that depth it returns TRUE. A
+ * caller-supplied JSON schema is now part of that scanned input, so without a
+ * parse-time depth cap an over-nested `parameters` object would be rejected as
+ * "contains an AIR reference" — a confidently wrong diagnostic for a payload
+ * with no AIR in it. Capping here, far below the scan's own cap, makes the
+ * error say what is actually wrong.
+ */
+const MAX_TOOLS = 8;
+const MAX_TOOL_NAME_CHARS = 64;
+const MAX_TOOL_DESCRIPTION_CHARS = 1_024;
+const MAX_TOOL_PARAMETERS_CHARS = 4_096;
+const MAX_TOOL_PARAMETERS_DEPTH = 8;
+
+/**
+ * The characters a tool NAME may contain.
+ *
+ * 🔴 A PATTERN, NOT MERELY A LENGTH, AND THAT IS LOAD-BEARING DOWNSTREAM. The
+ * name comes back on the model's `tool_calls[]` and `extractToolCalls` publishes
+ * it to the block WITHOUT it having been through the text scan — which is only
+ * defensible because a name matching this pattern cannot carry prose. If this is
+ * ever widened to admit spaces or punctuation, the name becomes a free-text
+ * surface and has to join the scanned set. The character class also matches the
+ * one OpenAI documents for function names, so a bounded name is not a
+ * civitai-specific restriction a caller has to discover.
+ */
+const TOOL_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
+
+/**
+ * A tool's JSON-Schema `parameters` object — bounded, and NORMALISED THROUGH
+ * JSON.
+ *
+ * 🔴 THE ROUND-TRIP IS THE WHOLE POINT, NOT A TIDY-UP. `./index`'s
+ * `containsAirReference` documents an exact limit on its own totality: its
+ * "scan every string anywhere" guarantee holds because `Object.entries`
+ * visibility matches `JSON.stringify` visibility — EXCEPT for `toJSON`-bearing
+ * class instances, where it does not. The measured example in that docstring is
+ * `new URL('https://x/urn:air:…')`, for which `containsAirReference` returns
+ * FALSE while `JSON.stringify` of it CONTAINS the AIR. That note names the
+ * precondition for the hazard becoming reachable: "the first time an entry
+ * declares a `z.unknown()` / `z.any()` / `z.custom()` param", because superjson
+ * reconstructs a `URL` across the tRPC boundary.
+ *
+ * THIS IS THAT ENTRY. A tool's `parameters` is an arbitrary JSON Schema, so it
+ * cannot be given a field-by-field shape — and a naive structural walk does NOT
+ * close the hole, because `Object.keys(new URL(…))` is `[]`: the instance reads
+ * as a harmless empty object and then serialises to its full href on the wire.
+ *
+ * So this validates the SERIALISED form and returns the PARSED-BACK value. After
+ * it, `parameters` is pure JSON data by construction, which makes what the AIR
+ * scan walks byte-identical to what reaches the orchestrator. That is exactly
+ * the "pre-scan `JSON.parse(JSON.stringify(input))` normalisation" the registry
+ * note prescribes, paid here where the unbounded value enters rather than left
+ * for the scan to be wrong about.
+ *
+ * `JSON.stringify` also throws on a circular structure and returns `undefined`
+ * for a bare function/symbol; both are caught and rejected rather than allowed
+ * to surface as a 500 from inside the resolver.
+ */
+const toolParametersSchema = z.unknown().transform((value, ctx) => {
+  let serialized: string | undefined;
+  try {
+    serialized = JSON.stringify(value);
+  } catch {
+    ctx.addIssue({
+      code: 'custom',
+      message: 'tool parameters must be JSON-serializable (a circular structure was rejected)',
+    });
+    return z.NEVER;
+  }
+  if (typeof serialized !== 'string') {
+    ctx.addIssue({
+      code: 'custom',
+      message: 'tool parameters must be a JSON value, not a function or symbol',
+    });
+    return z.NEVER;
+  }
+  if (serialized.length > MAX_TOOL_PARAMETERS_CHARS) {
+    ctx.addIssue({
+      code: 'custom',
+      message: `tool parameters exceed ${MAX_TOOL_PARAMETERS_CHARS} serialized characters`,
+    });
+    return z.NEVER;
+  }
+  const normalized: unknown = JSON.parse(serialized);
+  if (normalized === null || typeof normalized !== 'object' || Array.isArray(normalized)) {
+    ctx.addIssue({
+      code: 'custom',
+      message: 'tool parameters must be a JSON Schema object',
+    });
+    return z.NEVER;
+  }
+  if (jsonDepth(normalized) > MAX_TOOL_PARAMETERS_DEPTH) {
+    ctx.addIssue({
+      code: 'custom',
+      message: `tool parameters nest deeper than ${MAX_TOOL_PARAMETERS_DEPTH} levels`,
+    });
+    return z.NEVER;
+  }
+  return normalized as Record<string, unknown>;
+});
+
+/**
+ * Nesting depth of an already-JSON-normalised value.
+ *
+ * Total by construction rather than by a depth cap: it only ever runs on the
+ * output of `JSON.parse`, which cannot be circular, and the serialized-size cap
+ * above bounds how much there is to walk before this is reached.
+ */
+function jsonDepth(value: unknown): number {
+  if (Array.isArray(value)) {
+    return 1 + value.reduce<number>((max, v) => Math.max(max, jsonDepth(v)), 0);
+  }
+  if (value !== null && typeof value === 'object') {
+    return (
+      1 +
+      Object.values(value as Record<string, unknown>).reduce<number>(
+        (max, v) => Math.max(max, jsonDepth(v)),
+        0
+      )
+    );
+  }
+  return 0;
+}
+
+/**
+ * One tool the model may call.
+ *
+ * Anchored to the generated `ChatCompletionTool` / `ChatCompletionFunction` by
+ * NAME only — see `ChatCompletionInputWithTools` for why the generated TYPES
+ * cannot be used directly here.
+ *
+ * The tool-level `parameters` field the generated `ChatCompletionTool` also
+ * carries ("Server-tool parameters for providers such as OpenRouter") is
+ * deliberately NOT exposed: the JSON Schema belongs on `function.parameters`,
+ * and a second unbounded object with a different meaning is a surface this entry
+ * has no use for. `.strict()` rejects it.
+ */
+const chatToolSchema = z
+  .object({
+    type: z.literal('function'),
+    function: z
+      .object({
+        name: z.string().min(1).max(MAX_TOOL_NAME_CHARS).regex(TOOL_NAME_PATTERN),
+        description: z.string().min(1).max(MAX_TOOL_DESCRIPTION_CHARS).optional(),
+        parameters: toolParametersSchema.optional(),
+      })
+      .strict(),
+  })
+  .strict();
+
+/**
+ * Which tool the model must call, if any.
+ *
+ * Bounded to the three documented string modes plus the "call this specific
+ * function" object form. The named form is cross-checked against the declared
+ * `tools` in the params-level refinement below — naming a function that was
+ * never declared is a caller mistake that would otherwise reach the provider and
+ * fail there, after the step had been quoted and charged.
+ */
+const chatToolChoiceSchema = z.union([
+  z.enum(['auto', 'none', 'required']),
+  z
+    .object({
+      type: z.literal('function'),
+      function: z
+        .object({ name: z.string().min(1).max(MAX_TOOL_NAME_CHARS).regex(TOOL_NAME_PATTERN) })
+        .strict(),
+    })
+    .strict(),
+]);
+
+/**
+ * One conversation turn — a DISCRIMINATED UNION on `role`, every member
+ * `.strict()`.
+ *
+ * 🔴 IT USED TO BE A SINGLE FLAT OBJECT WITH A THREE-VALUE `role` ENUM, and the
+ * old docstring ended "`.strict()`, so `name`, `tool_calls` and `images` are
+ * rejected rather than forwarded". That sentence is now true of only two of
+ * those three: `tool_calls` is ACCEPTED on an assistant turn, because a tool
+ * result cannot be fed back without replaying the assistant turn that requested
+ * it. `name` and `images` are still rejected, and `images` deliberately so — see
+ * the `modalities` note below.
  *
  * 🔴 `content` IS A PLAIN STRING, and that is measured rather than read off the
  * generated type. `UserMessage.content` is typed `Array<ChatCompletionContentPart>`
@@ -294,15 +564,69 @@ const TEMPERATURE_MAX = 2;
  * `civitaiHostedImageUrlSchema`. Not exposing the part array avoids the question
  * entirely.
  *
- * `.strict()`, so `name`, `tool_calls` and `images` are rejected rather than
- * forwarded.
+ * 🔴 THE ASSISTANT MEMBER IS THE ONE WITH A REFINEMENT, AND IT IS NOT
+ * COSMETIC. Both its fields are optional individually — a replayed assistant
+ * turn that requested a tool carries `tool_calls` and NO content (the measured
+ * shape: a real reply with `finishReason: 'tool_calls'` has no `content` key at
+ * all), while an ordinary turn carries content and no tool calls. But a member
+ * with both omitted is an empty message: it costs prompt tokens, means nothing
+ * to the model, and is the shape a buggy block sends when its history-building
+ * drops a field. Requiring at least one is what stops "I sent the history" and
+ * "I sent 32 empty objects" from being the same request.
  */
-const chatMessageSchema = z
-  .object({
-    role: z.enum(['system', 'user', 'assistant']),
-    content: z.string().min(1).max(MAX_MESSAGE_CHARS),
-  })
-  .strict();
+const chatMessageSchema = z.discriminatedUnion('role', [
+  z
+    .object({
+      role: z.literal('system'),
+      content: z.string().min(1).max(MAX_MESSAGE_CHARS),
+    })
+    .strict(),
+  z
+    .object({
+      role: z.literal('user'),
+      content: z.string().min(1).max(MAX_MESSAGE_CHARS),
+    })
+    .strict(),
+  z
+    .object({
+      role: z.literal('assistant'),
+      content: z.string().min(1).max(MAX_MESSAGE_CHARS).optional(),
+      tool_calls: z
+        .array(
+          z
+            .object({
+              id: z.string().min(1).max(MAX_TOOL_NAME_CHARS),
+              type: z.literal('function'),
+              function: z
+                .object({
+                  name: z.string().min(1).max(MAX_TOOL_NAME_CHARS).regex(TOOL_NAME_PATTERN),
+                  arguments: z.string().max(MAX_MESSAGE_CHARS),
+                })
+                .strict(),
+            })
+            .strict()
+        )
+        .min(1)
+        .max(MAX_TOOLS)
+        .optional(),
+    })
+    .strict()
+    .refine((m) => m.content !== undefined || m.tool_calls !== undefined, {
+      message: 'an assistant message must carry content, tool_calls, or both',
+    }),
+  z
+    .object({
+      role: z.literal('tool'),
+      content: z.string().min(1).max(MAX_MESSAGE_CHARS),
+      /**
+       * REQUIRED. `ToolMessage.tool_call_id` is required on the orchestrator's
+       * own generated type, and a tool result with nothing to correlate it to is
+       * a result the model cannot attach to the call it made.
+       */
+      tool_call_id: z.string().min(1).max(MAX_TOOL_NAME_CHARS),
+    })
+    .strict(),
+]);
 
 const chatCompletionParamsSchema = z
   .object({
@@ -314,6 +638,10 @@ const chatCompletionParamsSchema = z
      */
     model: z.enum(CHAT_COMPLETION_MODELS),
     messages: z.array(chatMessageSchema).min(1).max(MAX_MESSAGES),
+    /** Tool definitions the model may call. See `MAX_TOOLS` for the bounds' reasoning. */
+    tools: z.array(chatToolSchema).min(1).max(MAX_TOOLS).optional(),
+    /** Which tool the model must call, if any. Requires `tools`. */
+    toolChoice: chatToolChoiceSchema.optional(),
     /**
      * 🔴 REQUIRED, NEVER `.optional()`, AND THAT IS THE POINT OF THE FIELD.
      * `.strict()` rejects params it does not know about; it does NOT bound a
@@ -337,7 +665,53 @@ const chatCompletionParamsSchema = z
      */
     temperature: z.number().min(TEMPERATURE_MIN).max(TEMPERATURE_MAX).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((params, ctx) => {
+    // ── THE ROUND BOUND. See `MAX_TOOL_ROUNDS` for why it exists and why it is
+    // enforced here rather than in the block. Counting `role: 'tool'` messages
+    // counts completed rounds: a round is "the model asked for a tool, the tool
+    // answered", and the answer is the `tool` message.
+    const toolRounds = params.messages.filter((m) => m.role === 'tool').length;
+    if (toolRounds > MAX_TOOL_ROUNDS) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['messages'],
+        message:
+          `too many tool rounds: ${toolRounds} tool messages exceeds the maximum of ` +
+          `${MAX_TOOL_ROUNDS}. Each round is a separate billed submit, so the loop is bounded ` +
+          'here rather than by the caller',
+      });
+    }
+
+    // ── `toolChoice` WITHOUT `tools` IS A NO-OP THE CALLER WILL MISREAD.
+    // "required" with nothing to require is not a stricter request, it is a
+    // request the provider cannot satisfy — rejected here so it fails before the
+    // step is quoted rather than at execution after it has been charged.
+    if (params.toolChoice !== undefined && params.tools === undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['toolChoice'],
+        message: 'toolChoice requires tools to be declared',
+      });
+    }
+
+    // ── A NAMED FUNCTION MUST BE ONE THAT WAS DECLARED. Same reasoning as the
+    // model allowlist: there is no orchestrator-side validation to catch it, so
+    // an undeclared name is quoted, charged, and then fails at the provider.
+    const namedFunction =
+      typeof params.toolChoice === 'object' ? params.toolChoice.function.name : undefined;
+    if (
+      namedFunction !== undefined &&
+      params.tools !== undefined &&
+      !params.tools.some((t) => t.function.name === namedFunction)
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['toolChoice', 'function', 'name'],
+        message: 'toolChoice names a function that is not in tools',
+      });
+    }
+  });
 
 export type ChatCompletionStepParams = z.infer<typeof chatCompletionParamsSchema>;
 
@@ -368,8 +742,60 @@ export type ChatCompletionStepParams = z.infer<typeof chatCompletionParamsSchema
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
+ * `ChatCompletionInput` with its two TOOL fields corrected.
+ *
+ * 🔴 THE GENERATED TYPES CANNOT EXPRESS A TOOL CALL, AND THAT IS A GENERATOR
+ * ARTIFACT RATHER THAN A CONTRACT. Read off `@civitai/client`'s `types.gen.d.ts`
+ * at the version this repo pins:
+ *
+ *     ChatCompletionInput.tool_choice?: null;
+ *     ChatCompletionTool.parameters?:   null;
+ *     ChatCompletionFunction.parameters?: null;
+ *
+ * All three are `null` — not `unknown`, not a schema type. The C# side holds
+ * them as free-form JSON, and the OpenAPI generator emits an untyped
+ * schema-less field as `null`. Their own doc comments contradict the types they
+ * carry: `tool_choice`'s says it "Can be \"auto\", \"none\", \"required\", or an
+ * object specifying a particular function", and `ChatCompletionTool.parameters`
+ * is documented as "Server-tool parameters for providers such as OpenRouter".
+ *
+ * So the generated type says a tool call is impossible while the generated DOC
+ * says how to make one, and the wire accepts it — a real submit carrying a
+ * `tools` array and a tool choice was accepted, echoed back in the
+ * orchestrator's normalised input, and priced (its tool-definition token
+ * estimator is a first-class part of its cost path).
+ *
+ * 🔴 WHY A NARROW INTERSECTION AND NOT A CAST. `buildChatCompletionInput`'s
+ * declared return type is the anchor that makes every field NAME load-bearing —
+ * a rename on the orchestrator's input contract is a build failure here rather
+ * than a request the orchestrator silently ignores. An `as ChatCompletionInput`
+ * would throw that away for the whole object to fix two fields. `Omit`-ing
+ * exactly the two lossy fields and re-declaring them keeps `model`, `messages`,
+ * `maxTokens` and `temperature` anchored, and records IN THE TYPE which two
+ * fields this repo is not able to check against the generator.
+ *
+ * 🔴 IF THE GENERATOR IS EVER FIXED, DELETE THIS. Once `tool_choice` and
+ * `parameters` carry real types upstream, the `Omit` starts hiding a contract
+ * this file could otherwise be checked against — at which point it is no longer
+ * a workaround, it is the thing it was written to avoid.
+ */
+type ChatCompletionToolChoiceWire =
+  | 'auto'
+  | 'none'
+  | 'required'
+  | { type: 'function'; function: { name: string } };
+
+type ChatCompletionInputWithTools = Omit<ChatCompletionInput, 'tools' | 'tool_choice'> & {
+  tools?: Array<{
+    type: 'function';
+    function: { name: string; description?: string; parameters?: Record<string, unknown> };
+  }>;
+  tool_choice?: ChatCompletionToolChoiceWire;
+};
+
+/**
  * The bounded input this entry submits, ANCHORED to the generated
- * `ChatCompletionInput`.
+ * `ChatCompletionInput` (with the two documented exceptions above).
  *
  * Declaring the return type is what makes the field NAMES load-bearing: a
  * renamed or retyped field on the orchestrator's own input contract is a build
@@ -378,13 +804,24 @@ export type ChatCompletionStepParams = z.infer<typeof chatCompletionParamsSchema
  * `{ role: string }` base) rather than to `UserMessage`, because that alias's
  * `content: Array<ChatCompletionContentPart>` contradicts the measured wire
  * behaviour — see `chatMessageSchema`.
+ *
+ * 🔴 THE WIRE NAME IS `tool_choice`, SNAKE-CASED, WHILE THE PARAM IS
+ * `toolChoice`. That asymmetry is deliberate and is read off the generated type,
+ * not chosen: this input mixes conventions — `maxTokens` is camelCase while
+ * every tool-related field (`tool_choice`, `tool_calls`, `tool_call_id`) is
+ * snake-cased for OpenAI wire compatibility. The PARAM surface stays camelCase
+ * because that is what every other param on this entry is, and the mapping
+ * happens here, once. Getting this backwards does not error — an unknown field
+ * is simply ignored — so it is pinned by the exact-key-set test.
  */
-function buildChatCompletionInput(params: ChatCompletionStepParams): ChatCompletionInput {
+function buildChatCompletionInput(params: ChatCompletionStepParams): ChatCompletionInputWithTools {
   return {
     model: params.model,
     messages: params.messages,
     maxTokens: params.maxTokens,
     ...(params.temperature !== undefined ? { temperature: params.temperature } : {}),
+    ...(params.tools !== undefined ? { tools: params.tools } : {}),
+    ...(params.toolChoice !== undefined ? { tool_choice: params.toolChoice } : {}),
   };
 }
 
@@ -407,6 +844,33 @@ function buildChatCompletionInput(params: ChatCompletionStepParams): ChatComplet
 export type ChatCompletionMessageOutputLike = {
   content?: string | null;
   refusal?: string | null;
+  /**
+   * Tool calls the model requested. Present when `finishReason` is
+   * `'tool_calls'`, in which case `content` is typically absent entirely — the
+   * measured shape of a real tool-calling reply.
+   */
+  tool_calls?: readonly (ChatCompletionToolCallOutputLike | null)[] | null;
+};
+
+/** One tool call on an assistant message, as this entry reads it. */
+export type ChatCompletionToolCallOutputLike = {
+  id?: string | null;
+  type?: string | null;
+  function?: { name?: string | null; arguments?: string | null } | null;
+};
+
+/**
+ * A tool call as PUBLISHED to a block, once the scan has released it.
+ *
+ * Deliberately a narrow, fully-populated shape rather than the orchestrator's
+ * optional-everything read shape: a block should not have to defend against a
+ * half-formed tool call, and `extractToolCalls` drops anything that does not
+ * fill it.
+ */
+export type BlockToolCall = {
+  id: string;
+  type: 'function';
+  function: { name: string; arguments: string };
 };
 
 /** One completion choice, as this entry reads it. */
@@ -473,11 +937,33 @@ export const chatCompletionStep = {
    * So anything this does not return is never scanned AND never published; the
    * two move together by construction.
    *
-   * 🔴 IT DOES NOT READ `message.images[]` OR `message.tool_calls[]`, and both
-   * omissions are safe in the same direction. Neither can appear — this entry
-   * never sets `modalities` and never exposes `tools` — and if one somehow did,
-   * it would be DROPPED rather than published, because a `'textOutput'` entry has
-   * no `extractOutput` to carry it. The fail-closed direction.
+   * 🔴 IT NOW READS `message.tool_calls[]`, AND THE OLD REASON FOR SKIPPING THEM
+   * IS GONE. This docstring used to say `images[]` and `tool_calls[]` were "safe
+   * in the same direction" because "this entry never sets `modalities` and never
+   * exposes `tools`", with the fallback that either "would be DROPPED rather
+   * than published". Exposing `tools` falsified the precondition, and DROPPING
+   * is precisely what a tool-calling capability cannot do — a dropped tool call
+   * is a step that charges, succeeds, and publishes nothing, which is the exact
+   * inert-capability failure clause 8a exists to catch.
+   *
+   * So the model-generated ARGUMENT STRINGS are returned here, which puts them
+   * through the same scan as any other generated text. That is not incidental:
+   * an argument string is free text the model wrote, on its way both to a tool
+   * and to the block's own UI, and it is the surface the posture would otherwise
+   * not cover.
+   *
+   * 🔴 AND RETURNING THEM HERE MEANS THEY ARE ALSO PUBLISHED, WHICH IS
+   * DELIBERATE. This field's contract is that whatever it returns is what the
+   * scan sees AND what a release publishes — "the two move together by
+   * construction". Scanning the arguments while withholding them from
+   * `textOutputs` would break that in the direction that reads as coverage, so
+   * they appear in both. The structured `extractToolCalls` surface below is the
+   * ergonomic form; this is the scanned-and-published form, and they are gated
+   * on the same verdict.
+   *
+   * `images[]` is still not read, and is still safe for the original reason:
+   * this entry never sets `modalities`, so it cannot appear, and a
+   * `'textOutput'` entry has no `extractOutput` to carry it if it somehow did.
    */
   extractText: (step: unknown): string[] => {
     const choices = (step as ChatCompletionOutputStepLike | null | undefined)?.output?.choices;
@@ -494,8 +980,57 @@ export const chatCompletionStep = {
         // to publish.
         if (typeof value === 'string' && value.trim().length > 0) texts.push(value);
       }
+      // Model-generated tool ARGUMENTS. The tool NAME is not included: it is
+      // pattern-bounded (`TOOL_NAME_PATTERN`) and echoed from what the caller
+      // itself declared, so it cannot carry prose — see that constant.
+      const toolCalls = message.tool_calls;
+      if (!Array.isArray(toolCalls)) continue;
+      for (const call of toolCalls) {
+        const args = call?.function?.arguments;
+        if (typeof args === 'string' && args.trim().length > 0) texts.push(args);
+      }
     }
     return texts;
+  },
+  /**
+   * The STRUCTURED tool calls, published to the block only when the scan
+   * RELEASES.
+   *
+   * 🔴 THIS IS NOT A SECOND CHANNEL AROUND THE SCAN, AND THE DISTINCTION IS THE
+   * whole reason the field is shaped this way. `attachModeratedStepTextOutputs`
+   * is the sole producer of `snapshot.toolCalls` exactly as it is of
+   * `snapshot.textOutputs`: it calls this only after `extractText`'s strings —
+   * which INCLUDE every `arguments` value this returns — have been through
+   * `screenGeneratedText` and released. A withheld verdict publishes neither.
+   * A `toolCalls` field populated anywhere else would be the
+   * `StepOutputMedia.url` smuggle in a new field name.
+   *
+   * 🔴 IT DROPS, RATHER THAN PUBLISHES, A MALFORMED CALL — including one whose
+   * NAME does not match `TOOL_NAME_PATTERN`. The name is the one string here
+   * that does not go through the scan, and the argument for that is precisely
+   * that the pattern makes it incapable of carrying prose. A provider that
+   * echoed back an unbounded name would break that argument, so the extractor
+   * enforces the pattern on the way out rather than trusting the round trip.
+   */
+  extractToolCalls: (step: unknown): BlockToolCall[] => {
+    const choices = (step as ChatCompletionOutputStepLike | null | undefined)?.output?.choices;
+    if (!Array.isArray(choices)) return [];
+    const calls: BlockToolCall[] = [];
+    for (const choice of choices) {
+      const toolCalls = choice?.message?.tool_calls;
+      if (!Array.isArray(toolCalls)) continue;
+      for (const call of toolCalls) {
+        const id = call?.id;
+        const name = call?.function?.name;
+        const args = call?.function?.arguments;
+        if (typeof id !== 'string' || id.length === 0) continue;
+        if (typeof name !== 'string' || !TOOL_NAME_PATTERN.test(name)) continue;
+        if (name.length > MAX_TOOL_NAME_CHARS) continue;
+        if (typeof args !== 'string') continue;
+        calls.push({ id, type: 'function', function: { name, arguments: args } });
+      }
+    }
+    return calls;
   },
   /**
    * A canonical COMPLETED step, for the load-time extraction probe (clause 8a).

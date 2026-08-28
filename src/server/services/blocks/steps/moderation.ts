@@ -8,6 +8,7 @@ import {
   posturePhaseRequirements,
   STEP_MODERATION_POSTURES,
   type AnyBlockStep,
+  type BlockStepToolCall,
   type StepModerationPosture,
 } from './index';
 import { screenGeneratedText, TEXT_OUTPUT_WITHHELD_MESSAGE } from './text-output-moderation';
@@ -160,7 +161,7 @@ export type StepOutputModerationRequest = {
  * that did not come back through here cannot reach a block.
  */
 export type StepOutputModerationResult =
-  | { released: true; texts: string[] }
+  | { released: true; texts: string[]; toolCalls?: BlockStepToolCall[] }
   | { released: false; reason: string };
 
 type StepOutputModerationHandler = (
@@ -306,7 +307,7 @@ const moderationPostureHandlers: Record<StepModerationPosture, StepModerationPha
           return { released: false, reason: TEXT_OUTPUT_WITHHELD_MESSAGE };
         }
 
-        return await screenGeneratedText({
+        const verdict = await screenGeneratedText({
           texts,
           userId,
           isGreen,
@@ -315,6 +316,45 @@ const moderationPostureHandlers: Record<StepModerationPosture, StepModerationPha
           stepId: step.id,
           model: step.orchestratorType,
         });
+
+        // 🔴 TOOL CALLS ARE ATTACHED ONLY ONTO A RELEASED VERDICT, AND ONLY
+        // HERE. The scan above ran over `extractText`'s strings, which registry
+        // clause 8b asserts already CONTAIN every arguments string
+        // `extractToolCalls` can return. So attaching them after a release
+        // publishes nothing the scan did not read, and a withheld verdict
+        // returns early below with no tool calls at all.
+        //
+        // 🔴 THE EARLY RETURN IS THE CONTROL, NOT AN OPTIMISATION. Writing this
+        // as `{ ...verdict, toolCalls }` would attach the field to a WITHHELD
+        // verdict too — where `attachModeratedStepTextOutputs` would ignore it
+        // today, and would publish it the moment anyone refactored that merge.
+        // The withhold path must not carry the value at all.
+        if (!verdict.released) return verdict;
+
+        const toolCalls = step.extractToolCalls?.(orchestratorStep);
+        // Same fail-closed posture as the extractor guard above: a malformed
+        // tool-call surface withholds rather than publishing a coerced value.
+        // Clause 8b probes the canonical sample; a REAL response can still
+        // produce a shape it never saw.
+        if (toolCalls !== undefined) {
+          if (
+            !Array.isArray(toolCalls) ||
+            toolCalls.some(
+              (c) =>
+                c === null ||
+                typeof c !== 'object' ||
+                typeof c.id !== 'string' ||
+                typeof c.function?.name !== 'string' ||
+                typeof c.function?.arguments !== 'string'
+            )
+          ) {
+            return { released: false, reason: TEXT_OUTPUT_WITHHELD_MESSAGE };
+          }
+        }
+
+        return toolCalls !== undefined && toolCalls.length > 0
+          ? { ...verdict, toolCalls }
+          : verdict;
       },
     },
   } satisfies Record<StepModerationPosture, StepModerationPhases>);
@@ -461,6 +501,14 @@ export async function runStepOutputModeration(
 export type ModeratedTextOutputFields = {
   textOutputs?: string[];
   textOutputWithheld?: { reason: string };
+  /**
+   * Structured tool calls the model requested, on a RELEASED verdict only.
+   *
+   * Same producer, same stripping and the same single-writer rule as
+   * `textOutputs` — see `attachModeratedStepTextOutputs`. Setting it anywhere
+   * else publishes model output the scan never released.
+   */
+  toolCalls?: BlockStepToolCall[];
 };
 
 /**
@@ -493,6 +541,16 @@ export type ModeratedTextOutputFields = {
  * `textOutputs` runs through the scan below, and the withhold branch simply
  * never writes the field.
  *
+ * 🔴 THE SAME IS TRUE OF `toolCalls`, AND IT IS HELD BY A DIFFERENT MECHANISM
+ * WORTH NAMING SEPARATELY. Tool calls are not scanned as structured objects —
+ * the scan reads STRINGS. What makes publishing them safe is that registry
+ * clause 8b asserts every `arguments` string `extractToolCalls` can return is
+ * ALSO returned by `extractText`, so the released verdict was computed over
+ * that text; and the posture handler attaches them only onto an already-released
+ * verdict, never onto a withheld one. Take either half away and this becomes a
+ * channel that publishes model-written prose on the strength of a scan that
+ * never read it.
+ *
  * The incoming snapshot's own text fields are STRIPPED before merging, so a
  * caller that somehow arrived carrying text cannot smuggle it past the scan by
  * pre-populating them. That is cheap, and it is what turns "nothing else sets
@@ -512,10 +570,16 @@ export async function attachModeratedStepTextOutputs<T extends ModeratedTextOutp
   const {
     textOutputs: _ignoredIncomingTexts,
     textOutputWithheld: _ignoredIncomingWithheld,
+    // 🔴 STRIPPED FOR THE SAME REASON AS THE TWO ABOVE. A caller that arrived
+    // carrying tool calls must not be able to smuggle them past the scan by
+    // pre-populating the field — that is what turns "nothing else sets this
+    // field today" into "nothing else CAN".
+    toolCalls: _ignoredIncomingToolCalls,
     ...rest
   } = snapshot;
 
   const released: string[] = [];
+  const releasedToolCalls: BlockStepToolCall[] = [];
   let withheldReason: string | undefined;
 
   for (const step of workflow.steps ?? []) {
@@ -535,13 +599,16 @@ export async function attachModeratedStepTextOutputs<T extends ModeratedTextOutp
       appId: ctx.appId,
       appBlockId: ctx.appBlockId,
     });
-    if (verdict.released) released.push(...verdict.texts);
-    else withheldReason ??= verdict.reason;
+    if (verdict.released) {
+      released.push(...verdict.texts);
+      if (verdict.toolCalls) releasedToolCalls.push(...verdict.toolCalls);
+    } else withheldReason ??= verdict.reason;
   }
 
   return {
     ...(rest as T),
     ...(released.length > 0 ? { textOutputs: released } : {}),
+    ...(releasedToolCalls.length > 0 ? { toolCalls: releasedToolCalls } : {}),
     ...(withheldReason ? { textOutputWithheld: { reason: withheldReason } } : {}),
   };
 }

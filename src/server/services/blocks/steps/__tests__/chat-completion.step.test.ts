@@ -5,6 +5,7 @@ import {
   CHAT_COMPLETION_MODELS,
   CHAT_COMPLETION_PRICE_BUZZ,
   chatCompletionStep,
+  MAX_TOOL_ROUNDS,
   type ChatCompletionStepParams,
 } from '~/server/services/blocks/steps/chat-completion.step';
 import {
@@ -505,7 +506,17 @@ describe('chat-completion — extractText, against the REAL response', () => {
     expect(chatCompletionStep.extractText(withImages)).toEqual(['here you go']);
   });
 
-  it('does NOT read `tool_calls[].function.arguments`', () => {
+  it('🔴 DOES read `tool_calls[].function.arguments` — model-written text must be scanned', () => {
+    // 🔴 THIS ASSERTION IS INVERTED FROM WHAT IT USED TO BE, DELIBERATELY. It
+    // previously pinned `extractText` NOT reading tool calls, which was correct
+    // while the entry could not expose `tools` at all: the only safe thing to do
+    // with a field that could never legitimately appear was drop it.
+    //
+    // Exposing `tools` falsified that premise. An `arguments` string is free
+    // text the MODEL wrote, on its way to a tool and to the block's UI, so
+    // dropping it would mean either publishing it unscanned through the
+    // structured surface, or shipping a capability that charges and returns
+    // nothing. Both are worse than scanning it.
     const withTools = {
       output: {
         choices: [
@@ -518,7 +529,7 @@ describe('chat-completion — extractText, against the REAL response', () => {
         ],
       },
     };
-    expect(chatCompletionStep.extractText(withTools)).toEqual(['calling']);
+    expect(chatCompletionStep.extractText(withTools)).toEqual(['calling', '{}']);
   });
 
   it('is total over absent, null and malformed input', () => {
@@ -549,5 +560,430 @@ describe('chat-completion — extractText, against the REAL response', () => {
         chatCompletionStep.extractText(chatCompletionStep.canonicalOutputFor(variant))
       ).toEqual(['OK']);
     }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TOOL CALLING — the `tools` / `toolChoice` param surface, the round bound, and
+// the tool-call read path.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A REAL tool-calling response, captured verbatim from a live orchestrator
+ * submit (`deepseek/deepseek-chat`, one `search_models` function,
+ * `toolChoice: "required"`, status `succeeded`).
+ *
+ * 🔴 CAPTURED, NOT INVENTED, for exactly the reason the entry's own
+ * `canonicalOutputFor` docstring gives: a fixture written FROM the extractor
+ * asserts only that the code agrees with itself. Note the two things a
+ * hand-written sample would almost certainly have got wrong — `message` carries
+ * NO `content` key at all (not `content: null`), and `finishReason` is
+ * `'tool_calls'` rather than `'stop'`.
+ */
+const REAL_TOOL_CALL_STEP = {
+  $type: 'chatCompletion',
+  name: 'block-step',
+  status: 'succeeded',
+  output: {
+    choices: [
+      {
+        index: 0,
+        finishReason: 'tool_calls',
+        message: {
+          role: 'assistant',
+          tool_calls: [
+            {
+              id: 'call_d41b5525e73e4551ab588457',
+              type: 'function',
+              function: {
+                name: 'search_models',
+                arguments: '{"query":"DreamShaper checkpoint","limit":1}',
+              },
+            },
+          ],
+        },
+      },
+    ],
+    usage: { promptTokens: 407, completionTokens: 27, totalTokens: 434 },
+  },
+};
+
+/** A minimal well-formed tool definition. */
+const VALID_TOOL = {
+  type: 'function' as const,
+  function: {
+    name: 'search_models',
+    description: 'Search the model catalog',
+    parameters: {
+      type: 'object',
+      properties: { query: { type: 'string' } },
+      required: ['query'],
+    },
+  },
+};
+
+describe('chat-completion — tools / toolChoice param surface', () => {
+  it('accepts a well-formed tools payload', () => {
+    const result = parse({ ...VALID_PARAMS, tools: [VALID_TOOL] });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts each documented toolChoice string mode', () => {
+    for (const toolChoice of ['auto', 'none', 'required'] as const) {
+      expect(parse({ ...VALID_PARAMS, tools: [VALID_TOOL], toolChoice }).success).toBe(true);
+    }
+  });
+
+  it('accepts a toolChoice naming a DECLARED function', () => {
+    const result = parse({
+      ...VALID_PARAMS,
+      tools: [VALID_TOOL],
+      toolChoice: { type: 'function', function: { name: 'search_models' } },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('REJECTS a toolChoice naming a function that is not in tools', () => {
+    const result = parse({
+      ...VALID_PARAMS,
+      tools: [VALID_TOOL],
+      toolChoice: { type: 'function', function: { name: 'not_declared' } },
+    });
+    expect(result.success).toBe(false);
+    expect(JSON.stringify(result.error?.issues)).toContain('not in tools');
+  });
+
+  it('REJECTS toolChoice with no tools — a no-op the caller would misread', () => {
+    const result = parse({ ...VALID_PARAMS, toolChoice: 'required' });
+    expect(result.success).toBe(false);
+    expect(JSON.stringify(result.error?.issues)).toContain('requires tools');
+  });
+
+  it('REJECTS a bad toolChoice value', () => {
+    expect(parse({ ...VALID_PARAMS, tools: [VALID_TOOL], toolChoice: 'maybe' }).success).toBe(
+      false
+    );
+  });
+
+  it('REJECTS more than the maximum tool count', () => {
+    const tools = Array.from({ length: 9 }, (_, i) => ({
+      ...VALID_TOOL,
+      function: { ...VALID_TOOL.function, name: `tool_${i}` },
+    }));
+    expect(parse({ ...VALID_PARAMS, tools }).success).toBe(false);
+    // …and the boundary below it is accepted, so the rejection is the COUNT and
+    // not something else about the fixture.
+    expect(parse({ ...VALID_PARAMS, tools: tools.slice(0, 8) }).success).toBe(true);
+  });
+
+  it('REJECTS a tool name outside the safe character class', () => {
+    for (const name of ['has space', 'has.dot', 'has/slash', '']) {
+      const result = parse({
+        ...VALID_PARAMS,
+        tools: [{ ...VALID_TOOL, function: { ...VALID_TOOL.function, name } }],
+      });
+      expect(result.success, `name ${JSON.stringify(name)} must be rejected`).toBe(false);
+    }
+  });
+
+  it('REJECTS an over-long tool description', () => {
+    const result = parse({
+      ...VALID_PARAMS,
+      tools: [
+        { ...VALID_TOOL, function: { ...VALID_TOOL.function, description: 'x'.repeat(1_025) } },
+      ],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('REJECTS an over-large serialized parameters object', () => {
+    const result = parse({
+      ...VALID_PARAMS,
+      tools: [
+        {
+          ...VALID_TOOL,
+          function: { ...VALID_TOOL.function, parameters: { type: 'object', pad: 'x'.repeat(5_000) } },
+        },
+      ],
+    });
+    expect(result.success).toBe(false);
+    expect(JSON.stringify(result.error?.issues)).toContain('serialized characters');
+  });
+
+  it('REJECTS a parameters object nested deeper than the cap', () => {
+    // 🔴 THE DEPTH CAP EXISTS SO THIS FAILS HERE RATHER THAN IN THE AIR SCAN.
+    // `containsAirReference` recurses fail-CLOSED past its own cap, so without
+    // this an over-nested schema would be rejected as "contains an AIR
+    // reference" — a confidently wrong diagnostic. Asserting the MESSAGE is what
+    // pins that; a bare `success === false` would pass either way.
+    let deep: Record<string, unknown> = { type: 'string' };
+    for (let i = 0; i < 12; i++) deep = { type: 'object', properties: { nested: deep } };
+    const result = parse({
+      ...VALID_PARAMS,
+      tools: [{ ...VALID_TOOL, function: { ...VALID_TOOL.function, parameters: deep } }],
+    });
+    expect(result.success).toBe(false);
+    expect(JSON.stringify(result.error?.issues)).toContain('nest deeper');
+  });
+
+  it('REJECTS a non-object parameters value', () => {
+    for (const parameters of ['a string', 42, ['an', 'array'], null]) {
+      const result = parse({
+        ...VALID_PARAMS,
+        tools: [{ ...VALID_TOOL, function: { ...VALID_TOOL.function, parameters } }],
+      });
+      expect(result.success, `parameters ${JSON.stringify(parameters)} must be rejected`).toBe(
+        false
+      );
+    }
+  });
+
+  it('REJECTS unknown properties on a tool (.strict)', () => {
+    expect(parse({ ...VALID_PARAMS, tools: [{ ...VALID_TOOL, extra: 1 }] }).success).toBe(false);
+    expect(
+      parse({
+        ...VALID_PARAMS,
+        tools: [{ ...VALID_TOOL, function: { ...VALID_TOOL.function, strict: true } }],
+      }).success
+    ).toBe(false);
+  });
+
+  it('🔴 NORMALISES parameters through JSON — a toJSON-bearing instance cannot hide from the AIR scan', () => {
+    // 🔴 THE MEASURED HAZARD `containsAirReference` DOCUMENTS. `Object.keys(new
+    // URL(…))` is `[]`, so a structural walk sees a harmless empty object while
+    // `JSON.stringify` emits the full href. superjson reconstructs a `URL`
+    // across the tRPC boundary, so this is reachable input, not a hypothetical.
+    //
+    // Both halves are asserted, and the FIRST is the control: without it a
+    // passing second half could just mean the value was dropped.
+    const smuggled = new URL('https://example.test/urn:air:sd1:checkpoint:civitai:4384@128713');
+    expect(containsAirReference({ parameters: smuggled })).toBe(false); // the hazard, unnormalised
+    const result = parse({
+      ...VALID_PARAMS,
+      tools: [
+        {
+          ...VALID_TOOL,
+          function: { ...VALID_TOOL.function, parameters: { type: 'object', href: smuggled } },
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+    // After normalisation the URL is a plain string, so the scan CAN see it —
+    // and the built step is therefore refused by the entitlement re-assert
+    // rather than sailing through it.
+    const built = chatCompletionStep.buildStep(result.data!);
+    expect(containsAirReference(built.input)).toBe(true);
+  });
+});
+
+describe('chat-completion — the tool ROUND bound', () => {
+  const toolMessage = (i: number) => ({
+    role: 'tool' as const,
+    content: `result ${i}`,
+    tool_call_id: `call_${i}`,
+  });
+
+  it('accepts exactly MAX_TOOL_ROUNDS tool messages', () => {
+    const messages = [
+      { role: 'user' as const, content: 'hello' },
+      ...Array.from({ length: MAX_TOOL_ROUNDS }, (_, i) => toolMessage(i)),
+    ];
+    expect(parse({ ...VALID_PARAMS, messages }).success).toBe(true);
+  });
+
+  it('🔴 REJECTS MAX_TOOL_ROUNDS + 1 tool messages', () => {
+    const messages = [
+      { role: 'user' as const, content: 'hello' },
+      ...Array.from({ length: MAX_TOOL_ROUNDS + 1 }, (_, i) => toolMessage(i)),
+    ];
+    const result = parse({ ...VALID_PARAMS, messages });
+    expect(result.success).toBe(false);
+    expect(JSON.stringify(result.error?.issues)).toContain('too many tool rounds');
+  });
+
+  it('🔴 the bound is enforced on the ESTIMATE path too, not only on submit', () => {
+    // The AC3 property: the cap must hold wherever params are parsed. Both the
+    // estimate and the submit go through `parseStepParams`, which runs THIS
+    // schema — so a caller cannot probe or spend past it on either surface.
+    // Asserted through the registry's own accessor rather than the imported
+    // const, so it reads the entry the router would resolve.
+    const entry = getStep(STEP_ID) as AnyBlockStep;
+    const messages = [
+      { role: 'user' as const, content: 'hello' },
+      ...Array.from({ length: MAX_TOOL_ROUNDS + 1 }, (_, i) => toolMessage(i)),
+    ];
+    expect(entry.paramSchema.safeParse({ ...VALID_PARAMS, messages }).success).toBe(false);
+  });
+
+  it('does not count assistant tool_calls turns toward the round bound', () => {
+    // A round is a RESULT coming back. The assistant turn that requested it is
+    // replayed history and is bounded by `MAX_MESSAGES`, not by this cap.
+    const messages = [
+      { role: 'user' as const, content: 'hello' },
+      ...Array.from({ length: 6 }, () => ({
+        role: 'assistant' as const,
+        tool_calls: [
+          { id: 'c', type: 'function' as const, function: { name: 'f', arguments: '{}' } },
+        ],
+      })),
+      ...Array.from({ length: MAX_TOOL_ROUNDS }, (_, i) => toolMessage(i)),
+    ];
+    expect(parse({ ...VALID_PARAMS, messages }).success).toBe(true);
+  });
+});
+
+describe('chat-completion — the tool/assistant message members', () => {
+  it('accepts an assistant turn carrying tool_calls and no content', () => {
+    const result = parse({
+      ...VALID_PARAMS,
+      messages: [
+        { role: 'user', content: 'hello' },
+        {
+          role: 'assistant',
+          tool_calls: [
+            { id: 'call_1', type: 'function', function: { name: 'f', arguments: '{"a":1}' } },
+          ],
+        },
+        { role: 'tool', content: 'result', tool_call_id: 'call_1' },
+      ],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('REJECTS an assistant turn with neither content nor tool_calls', () => {
+    const result = parse({ ...VALID_PARAMS, messages: [{ role: 'assistant' }] });
+    expect(result.success).toBe(false);
+    expect(JSON.stringify(result.error?.issues)).toContain('content, tool_calls, or both');
+  });
+
+  it('REJECTS a tool message with no tool_call_id', () => {
+    const result = parse({
+      ...VALID_PARAMS,
+      messages: [{ role: 'tool', content: 'result' }],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('REJECTS an unknown role and unknown message properties', () => {
+    expect(parse({ ...VALID_PARAMS, messages: [{ role: 'wizard', content: 'x' }] }).success).toBe(
+      false
+    );
+    expect(
+      parse({ ...VALID_PARAMS, messages: [{ role: 'user', content: 'x', name: 'n' }] }).success
+    ).toBe(false);
+  });
+
+  it('still rejects `images` on a message — the modalities surface stays shut', () => {
+    expect(
+      parse({
+        ...VALID_PARAMS,
+        messages: [{ role: 'assistant', content: 'x', images: [{ type: 'image_url' }] }],
+      }).success
+    ).toBe(false);
+  });
+});
+
+describe('chat-completion — buildStep emits the tool fields on the WIRE names', () => {
+  it('omits both fields entirely when no tools are declared', () => {
+    const built = chatCompletionStep.buildStep(VALID_PARAMS);
+    expect(Object.keys(built.input).sort()).toEqual(['maxTokens', 'messages', 'model']);
+  });
+
+  it('🔴 emits `tool_choice`, snake-cased, NOT the camelCase param name', () => {
+    // Getting this backwards does not error — an unknown field is ignored — so
+    // the feature would be silently inert. That is why it is pinned by key set.
+    const params = parse({ ...VALID_PARAMS, tools: [VALID_TOOL], toolChoice: 'required' });
+    expect(params.success).toBe(true);
+    const built = chatCompletionStep.buildStep(params.data!);
+    expect(Object.keys(built.input).sort()).toEqual([
+      'maxTokens',
+      'messages',
+      'model',
+      'tool_choice',
+      'tools',
+    ]);
+    expect((built.input as Record<string, unknown>).tool_choice).toBe('required');
+    expect((built.input as Record<string, unknown>).toolChoice).toBeUndefined();
+  });
+});
+
+describe('chat-completion — extractToolCalls', () => {
+  it('🔴 returns the structured call from the REAL captured response', () => {
+    expect(chatCompletionStep.extractToolCalls(REAL_TOOL_CALL_STEP)).toEqual([
+      {
+        id: 'call_d41b5525e73e4551ab588457',
+        type: 'function',
+        function: {
+          name: 'search_models',
+          arguments: '{"query":"DreamShaper checkpoint","limit":1}',
+        },
+      },
+    ]);
+  });
+
+  it('🔴 every arguments string it returns is ALSO returned by extractText', () => {
+    // The containment property clause 8b asserts at load. Without it the
+    // structured surface would publish prose the scan never read.
+    const calls = chatCompletionStep.extractToolCalls(REAL_TOOL_CALL_STEP);
+    const texts = chatCompletionStep.extractText(REAL_TOOL_CALL_STEP);
+    for (const call of calls) expect(texts).toContain(call.function.arguments);
+  });
+
+  it('DROPS a call whose name escapes the safe character class', () => {
+    // The name is the one published string the scan does not read; the pattern
+    // is the entire reason that is defensible, so it is enforced on the way OUT
+    // and not merely on the way in.
+    const evil = {
+      output: {
+        choices: [
+          {
+            message: {
+              tool_calls: [
+                { id: '1', type: 'function', function: { name: 'a b c', arguments: '{}' } },
+                { id: '2', type: 'function', function: { name: 'ok_name', arguments: '{}' } },
+              ],
+            },
+          },
+        ],
+      },
+    };
+    expect(chatCompletionStep.extractToolCalls(evil).map((c) => c.function.name)).toEqual([
+      'ok_name',
+    ]);
+  });
+
+  it('DROPS partial calls rather than publishing a half-formed one', () => {
+    const partial = {
+      output: {
+        choices: [
+          {
+            message: {
+              tool_calls: [
+                { type: 'function', function: { name: 'f', arguments: '{}' } }, // no id
+                { id: '2', type: 'function', function: { name: 'f' } }, // no arguments
+                { id: '3', type: 'function' }, // no function
+                null,
+              ],
+            },
+          },
+        ],
+      },
+    };
+    expect(chatCompletionStep.extractToolCalls(partial)).toEqual([]);
+  });
+
+  it('is total over absent, null and malformed input', () => {
+    expect(chatCompletionStep.extractToolCalls(undefined)).toEqual([]);
+    expect(chatCompletionStep.extractToolCalls(null)).toEqual([]);
+    expect(chatCompletionStep.extractToolCalls({})).toEqual([]);
+    expect(chatCompletionStep.extractToolCalls({ output: { choices: 'nope' } })).toEqual([]);
+    expect(chatCompletionStep.extractToolCalls({ output: { choices: [null] } })).toEqual([]);
+    expect(
+      chatCompletionStep.extractToolCalls({ output: { choices: [{ message: { tool_calls: 'x' } }] } })
+    ).toEqual([]);
+  });
+
+  it('returns nothing for an ordinary reply that called no tool', () => {
+    expect(chatCompletionStep.extractToolCalls(REAL_COMPLETED_STEP)).toEqual([]);
   });
 });
