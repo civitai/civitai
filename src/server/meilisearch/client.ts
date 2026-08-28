@@ -208,7 +208,7 @@ export const TRANSIENT_STATUSTEXT_TO_STATUS: Readonly<Record<string, number>> = 
 };
 
 /**
- * Classify an error caught from a Meilisearch SDK call (or the civitai-feeds
+ * Classify an error caught from a Meilisearch SDK call (or the feeds
  * proxy in front of it) as a genuinely-transient upstream failure that should
  * surface to the client as a retryable 503, NOT a hard 500.
  *
@@ -588,7 +588,7 @@ export class MeiliCallTimeoutError extends Error {
 
 /**
  * Backends are limited independently because they fail independently:
- *   - 'search'        → SEARCH_HOST    (civitai-feeds / searchClient / feed inline client)
+ *   - 'search'        → SEARCH_HOST    (feeds proxy / searchClient / feed inline client)
  *   - 'metricsSearch' → METRICS_SEARCH_HOST (search-meilisearch / metricsSearchClient)
  *
  * A single shared limiter would let one bad backend exhaust the budget for

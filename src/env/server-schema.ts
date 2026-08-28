@@ -912,7 +912,7 @@ export const serverSchema = z
     // Base URL of the verify-runner screenshot service (warm Playwright Chromium)
     // used to autogenerate a marketplace screenshot for an approved App Block that
     // shipped no publisher screenshots. In-cluster service, e.g.
-    // http://<verify-runner-service>.<namespace>.svc.cluster.local:8080. OPTIONAL — when
+    // http://<service>.<namespace>.svc.cluster.local:8080. OPTIONAL — when
     // unset, autogeneration is silently skipped (best-effort; never blocks deploy).
     BLOCK_SCREENSHOT_RUNNER_URL: z.string().url().optional(),
 

@@ -62,8 +62,8 @@ three** — this list is the checklist, so a class missing from it comes back on
   because a bare integer has no shape to match on — the only way to catch it is to read what the
   query is *for*, and a ban or abuse investigation names real people by id.
 
-Both were already committed and pushed, so — as with the CIDR above — the redaction stops the leak
-widening rather than undoing it. Neither is a credential, so there is nothing to rotate; but a name
+All three were already committed and pushed, so — as with the CIDR above — the redaction stops the
+leak widening rather than undoing it. None is a credential, so there is nothing to rotate; but a name
 tying a **pseudonymous moderator account to a real identity** is the one class here where the harm is
 to a person rather than to the system, so treat it as the highest bar when sanitising a fresh export.
 
