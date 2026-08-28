@@ -247,6 +247,9 @@ const tourSettingsSchema = z.record(
   z.object({
     completed: z.boolean().optional(),
     currentStep: z.number().optional(),
+    // How the tour ended. Lets the retrospective query over User.settings separate a
+    // finish from a crash without waiting for the Faro stream to fill.
+    reason: z.enum(['finished', 'skipped', 'closed', 'failed']).optional(),
   })
 );
 

@@ -13,6 +13,7 @@ import { useStorage } from '~/hooks/useStorage';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { TourSettingsSchema } from '~/server/schema/user.schema';
 import type { StepWithData } from '~/types/tour';
+import type { TourEndReason, TourTrigger } from '~/utils/faro/tour';
 import type { TourKey } from '~/components/Tours/tours';
 import { tourSteps } from '~/components/Tours/tours';
 import { trpc } from '~/utils/trpc';
@@ -26,6 +27,8 @@ const LazyTours = dynamic(() => import('~/components/Tours/LazyTours'));
 export type TourState = {
   running: boolean;
   forceRun: boolean;
+  paused: boolean;
+  trigger: TourTrigger;
   currentStep: number;
   activeTour?: TourKey | null;
   steps?: StepWithData[];
@@ -33,8 +36,14 @@ export type TourState = {
 };
 
 type TourContextState = TourState & {
-  runTour: (opts?: { key?: TourKey; step?: number; forceRun?: boolean }) => void;
-  closeTour: (opts?: { reset?: boolean }) => void;
+  runTour: (opts?: {
+    key?: TourKey;
+    step?: number;
+    forceRun?: boolean;
+    trigger?: TourTrigger;
+  }) => void;
+  pauseTour: () => void;
+  closeTour: (opts: { reason: TourEndReason }) => void;
   setSteps: (steps: StepWithData[]) => void;
   completed?: boolean;
   run?: boolean;
@@ -44,8 +53,11 @@ type TourContextState = TourState & {
 const TourContext = createContext<TourContextState>({
   running: false,
   forceRun: false,
+  paused: false,
+  trigger: 'auto',
   currentStep: 0,
   runTour: () => null,
+  pauseTour: () => null,
   closeTour: () => null,
   setSteps: () => null,
   steps: [],
@@ -75,6 +87,8 @@ export function ToursProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<TourState>(() => ({
     running: false,
     forceRun: false,
+    paused: false,
+    trigger: tourKey ? 'url' : 'auto',
     activeTour: tourKey,
     currentStep: 0,
     steps: tourKey ? tourSteps[tourKey] ?? [] : [],
@@ -109,9 +123,11 @@ export function ToursProvider({ children }: { children: React.ReactNode }) {
       setState((old) => ({
         ...old,
         running: true,
+        paused: false,
         activeTour,
         steps: opts?.key ? tourSteps[opts.key] ?? [] : old.steps,
         forceRun: opts?.forceRun ?? old.forceRun,
+        trigger: opts?.trigger ?? old.trigger,
         currentStep: opts?.step ?? old.currentStep,
       }));
 
@@ -131,27 +147,36 @@ export function ToursProvider({ children }: { children: React.ReactNode }) {
     ]
   );
 
-  const closeTour = useCallback<TourContextState['closeTour']>(
-    (opts) => {
-      if (state.activeTour) {
-        const currentTourData = getCurrentTourData(state.activeTour);
-        const alreadyCompleted = currentTourData?.completed ?? false;
+  const pauseTour = useCallback<TourContextState['pauseTour']>(() => {
+    if (state.activeTour && !getCurrentTourData(state.activeTour)?.completed) {
+      const tourSettings = {
+        [state.activeTour]: { completed: false, currentStep: state.currentStep },
+      };
+      if (currentUser) updateUserSettingsMutation.mutate({ tourSettings });
+      setLocalTour((old) => ({ ...old, ...tourSettings }));
+    }
 
-        if (!alreadyCompleted) {
-          const tourSettings = {
-            [state.activeTour]: { completed: opts?.reset ?? false, currentStep: state.currentStep },
-          };
-          if (currentUser) updateUserSettingsMutation.mutate({ tourSettings });
-          setLocalTour((old) => ({ ...old, ...tourSettings }));
-        }
+    setState((old) => ({ ...old, running: false, paused: true }));
+  }, [
+    state.activeTour,
+    state.currentStep,
+    getCurrentTourData,
+    currentUser,
+    updateUserSettingsMutation,
+    setLocalTour,
+  ]);
+
+  const closeTour = useCallback<TourContextState['closeTour']>(
+    ({ reason }) => {
+      if (state.activeTour && !getCurrentTourData(state.activeTour)?.completed) {
+        const tourSettings = {
+          [state.activeTour]: { completed: true, currentStep: state.currentStep, reason },
+        };
+        if (currentUser) updateUserSettingsMutation.mutate({ tourSettings });
+        setLocalTour((old) => ({ ...old, ...tourSettings }));
       }
 
-      setState((old) => ({
-        ...old,
-        running: false,
-        currentStep: opts?.reset ? 0 : old.currentStep,
-        forceRun: opts?.reset ? false : old.forceRun,
-      }));
+      setState((old) => ({ ...old, running: false, paused: false, currentStep: 0, forceRun: false }));
     },
     [
       state.activeTour,
@@ -186,11 +211,21 @@ export function ToursProvider({ children }: { children: React.ReactNode }) {
   }, [isInitialLoading, tourKey]);
 
   const completed = currentTourData?.completed;
-  const run = (state.running && !completed && !isInitialLoading) || state.forceRun;
+  const run =
+    !state.paused && ((state.running && !completed) || state.forceRun) && !isInitialLoading;
 
   return (
     <TourContext.Provider
-      value={{ ...state, completed, run, runTour, closeTour, setSteps, helpers: helpers.current }}
+      value={{
+        ...state,
+        completed,
+        run,
+        runTour,
+        pauseTour,
+        closeTour,
+        setSteps,
+        helpers: helpers.current,
+      }}
     >
       {children}
       {features.appTour && state.activeTour && (

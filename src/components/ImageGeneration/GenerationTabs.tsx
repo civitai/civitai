@@ -152,6 +152,7 @@ function GenerationTabsContent({ fullScreen }: { fullScreen?: boolean }) {
                     key: remixOfId ? 'remix-content-generation' : 'content-generation',
                     step: 0,
                     forceRun: true,
+                    trigger: 'help',
                   });
                 }}
               />

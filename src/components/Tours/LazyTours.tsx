@@ -20,7 +20,7 @@ const nextEvents: string[] = [EVENTS.STEP_AFTER, EVENTS.TARGET_NOT_FOUND];
 
 export default function LazyTours({ getHelpers }: Pick<JoyrideProps, 'getHelpers'>) {
   const colorScheme = useComputedColorScheme('dark');
-  const { closeTour, runTour, activeTour, steps, currentStep, run } = useTourContext();
+  const { closeTour, pauseTour, runTour, activeTour, steps, currentStep, run } = useTourContext();
 
   const handleJoyrideCallback = useCallback<Callback>(
     async (data) => {
@@ -36,11 +36,13 @@ export default function LazyTours({ getHelpers }: Pick<JoyrideProps, 'getHelpers
         window.dispatchEvent(new Event('resize'));
       }
 
-      if (
-        (type === EVENTS.TOUR_END && completeStatus.includes(status)) ||
-        action === ACTIONS.CLOSE
-      ) {
-        closeTour({ reset: true });
+      if (type === EVENTS.TOUR_END && completeStatus.includes(status)) {
+        closeTour({ reason: status === STATUS.SKIPPED ? 'skipped' : 'finished' });
+        return;
+      }
+
+      if (action === ACTIONS.CLOSE) {
+        closeTour({ reason: 'closed' });
         return;
       }
 
@@ -50,14 +52,14 @@ export default function LazyTours({ getHelpers }: Pick<JoyrideProps, 'getHelpers
 
         try {
           if (isPrevAction && step.data?.onPrev) {
-            closeTour();
+            pauseTour();
             await (step.data as StepData)?.onPrev?.();
           } else if (!isPrevAction && step.data?.onNext) {
-            closeTour();
+            pauseTour();
             await (step.data as StepData)?.onNext?.();
           }
         } catch {
-          closeTour({ reset: true });
+          closeTour({ reason: 'failed' });
           return;
         }
 
@@ -66,7 +68,7 @@ export default function LazyTours({ getHelpers }: Pick<JoyrideProps, 'getHelpers
         await step.data?.onBeforeStart?.();
       }
     },
-    [closeTour, runTour]
+    [closeTour, pauseTour, runTour]
   );
 
   return (
