@@ -10,8 +10,13 @@ import { getImageUploadBackend, headObject } from '~/utils/s3-utils';
  * none of them is checked against storage, so any key a caller invents produces a
  * complete, healthy-looking row whose media 404s forever.
  *
- * Measured in production over ~22,800 image creations, 10 rows referenced media
- * that was never stored, in two distinct populations:
+ * Measured in production: over a ~24 h window, 10 rows referenced media that was
+ * never stored. 🔴 ~22,800 was the SAMPLE SIZE that query examined, not a rate —
+ * the denominator is the key-mint rate, ~101k–105k/day (`POST /api/v1/image-upload/
+ * multipart/index` + `.../index`, spanmetrics x10, measured 2026-08-28), so the
+ * defect rate is ~0.010%, not the ~0.04% an earlier draft derived.
+ *
+ * The 10 split into two distinct populations:
  *   - 7 had a key that WAS issued by an upload endpoint 2.0–23.3s before the row
  *     was written, but no object ever landed — a real upload that failed silently;
  *   - 3 had a key no endpoint ever issued at all.
@@ -68,6 +73,28 @@ export type CreatedImageMediaProbeDeps = {
   headObject: typeof headObject;
 };
 
+/**
+ * 🔴 THE BUCKET IS RESOLVED THROUGH `getImageUploadBackend()`, NOT OPEN-CODED.
+ *
+ * The media-key PREDICATE was consolidated into `@civitai/shared/media-key` because two
+ * existence checks open-coded it by opposite construction and disagreed on real rows.
+ * The BUCKET is the second half of the same question — "does this key exist in the store
+ * we own?" — and it has to be consolidated for the same reason. `getImageUploadBackend()`
+ * is the one place that answers it, and every key-minting site already goes through it
+ * (`/api/v1/image-upload/index`, `.../multipart/index`, `uploadImageBufferToStore`), so
+ * this probe asks about the bucket the key was actually minted into by construction
+ * rather than by two constants happening to agree.
+ *
+ * ⚠️ CROSS-PR NOTE. The moderator publish guard being added in civitai#4475 currently
+ * open-codes this as `getB2ImageS3Client()` + `env.S3_IMAGE_B2_BUCKET ?? 'civitai-media-uploads'`,
+ * which is a literal inlining of `getImageUploadBackend`'s body. The two agree TODAY only
+ * because those constants return the same values. Change the backend — a second image
+ * store, a bucket rename, a per-tenant bucket — and the two guards return different
+ * verdicts about the same row, and on that side an `absent` is a PERMANENT refusal to
+ * publish. That is exactly the drift the shared predicate exists to prevent, one layer
+ * down. The fix on that side is one line (call `getImageUploadBackend()`); it is not made
+ * here because it is another PR's branch.
+ */
 const defaultDeps: CreatedImageMediaProbeDeps = {
   getBackend: async () => {
     const { s3, bucket } = await getImageUploadBackend();

@@ -8,7 +8,7 @@ import '~/__tests__/setup';
  *
  * An `Image` row is written from client-supplied JSON: `url` (the media key), `width`,
  * `height`, `name`, `mimeType` and `sizeKB` all arrive over the wire and none of them
- * was checked against storage. Measured over ~22,800 image creations, 10 rows
+ * was checked against storage. Measured over a ~24 h window (~22,800 rows sampled), 10 rows
  * referenced media that was never stored — 7 where an upload had been attempted
  * seconds earlier and silently failed, 3 where no upload was ever attempted at all.
  * Both populations produce a complete, healthy-looking row whose media 404s forever.

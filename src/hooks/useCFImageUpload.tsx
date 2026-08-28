@@ -144,6 +144,17 @@ export const useCFImageUpload: UseCFImageUpload = () => {
       });
       xhr.addEventListener('loadend', () => {
         if (terminated) return;
+        /**
+         * KNOWN COUPLING, recorded rather than changed: success is `status === 200`
+         * EXACTLY, and that predicate now decides whether the promise rejects rather
+         * than only what the tracked file's status says. A store that answered a
+         * single-shot PUT with `201`, `204` or a `3xx` would be turned into a hard
+         * failure and the row would not be written. That is the correct direction to
+         * err (it refuses to persist a key it is not sure about), and B2's S3 API
+         * answers 200 to this PUT today — but it is a behavioural dependency on the
+         * store's exact status code, so widening it is a deliberate decision and not
+         * a tidy-up.
+         */
         const success = xhr.readyState === 4 && xhr.status === 200;
         if (success) {
           updateFile({ status: 'success' });
@@ -160,10 +171,11 @@ export const useCFImageUpload: UseCFImageUpload = () => {
          * XHR's `error` event fires only on a NETWORK failure. A PUT that reaches
          * the store and is refused — an expired presign (403), a malformed request
          * (400), a store that is briefly unavailable (503) — completes normally and
-         * lands HERE, on `load` → `loadend`. That is the whole gap: measured over
-         * ~22,800 image creations, 10 rows referenced media that was never stored,
-         * and 7 of those had a real upload attempted seconds earlier that failed
-         * silently down this path.
+         * lands HERE, on `load` → `loadend`. That is the whole gap: over a ~24 h
+         * window 10 rows referenced media that was never stored, and 7 of those had
+         * a real upload attempted seconds earlier that failed silently down this
+         * path. (~22,800 was the sample size that query examined, not a rate — see
+         * `created-image-media-probe.ts` for the corrected denominator.)
          *
          * The status is in the message deliberately: the consumers that surface
          * `error.message` then say which failure it was, and the ones that swallow
