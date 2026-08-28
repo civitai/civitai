@@ -99,7 +99,7 @@ export const FETCH_DOCUMENTS_TIMEOUT_MESSAGE = 'meili-fetch-timeout';
  *  - `local-timeout`     — the local 5s deadline fired before the upstream
  *                          responded (PR #2370 — the original behaviour;
  *                          preserved for backward-compat dashboards)
- *  - `upstream-overload` — upstream returned HTTP 503 (civitai-feeds-proxy
+ *  - `upstream-overload` — upstream returned HTTP 503 (the feeds proxy
  *                          shed because MEILI_MAX_CONCURRENT was hit)
  *  - `upstream-timeout`  — upstream returned HTTP 408 (Meilisearch backend
  *                          page-cache thrashing past its own timeout)
@@ -425,7 +425,7 @@ export const meiliFetchFailfastTotal = registerCounterWithLabels({
 
 /**
  * Typed error thrown by fetchDocumentsAbortable() when the upstream Meili
- * backend (or the civitai-feeds-proxy in front of it) returns a non-ok HTTP
+ * backend (or the feeds proxy in front of it) returns a non-ok HTTP
  * status code. Carries the status + response body verbatim so callers can
  * pattern-match on `instanceof MeilisearchFetchError` + `.status` instead of
  * string-matching the message.

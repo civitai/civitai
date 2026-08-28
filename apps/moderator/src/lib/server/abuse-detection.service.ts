@@ -14,7 +14,7 @@ const abuseDb = () => getModeratorDb().withTables<AbuseDetectionTables>();
  * there is only one name: the Retool cutover landed 2026-08-18 (deployment repo `ee835acaf`),
  * repointing `RETOOL_DATABASE_URL` at the same `internal_tools` database and retiring it, and
  * `moderator-db.ts` now reads `MODERATOR_DATABASE_URL` alone. Verified against the running pod:
- * both keys resolve to `<internal-tools-db-rw>.<namespace>.svc.cluster.local:5432/internal_tools`,
+ * both keys resolve to `<service>.<namespace>.svc.cluster.local:5432/internal_tools`,
  * whose `public` schema holds the live tables while the pre-cutover snapshot sits in a `cutover`
  * schema. One database, therefore one pool.
  */
