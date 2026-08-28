@@ -14,13 +14,17 @@ const resolveIngestionError = vi.fn();
 const getIngestionErrorImages = vi.fn(async () => ({ items: [] }));
 const getMissingMediaImages = vi.fn(async () => ({ items: [] }));
 const deleteImagesByIds = vi.fn();
+const isMissingMediaImage = vi.fn(async () => true);
+const recordModActivity = vi.fn();
 
 vi.mock('$lib/server/ingestion.service', () => ({
   resolveIngestionError,
   getIngestionErrorImages,
   getMissingMediaImages,
+  isMissingMediaImage,
 }));
 vi.mock('$lib/server/image-deletion', () => ({ deleteImagesByIds }));
+vi.mock('$lib/server/mod-activity', () => ({ recordModActivity }));
 
 const { actions: errorActions } = await import('../ingestion-errors/+page.server');
 const { actions: missingActions } = await import('../missing-media/+page.server');
@@ -36,7 +40,12 @@ const request = (fields: Record<string, string>) =>
 
 const locals = { user: { id: 7 } } as never;
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  // `clearAllMocks` clears calls, not implementations — but re-stating it keeps each case's
+  // starting point explicit rather than inherited from whichever test ran last.
+  isMissingMediaImage.mockResolvedValue(true);
+});
 
 describe('ingestion-errors resolve action', () => {
   it('renders the missing-media refusal to the moderator as a 400 carrying the message', async () => {
@@ -91,5 +100,44 @@ describe('missing-media delete action', () => {
     expect(result.status).toBe(400);
     expect(result.data.error).toBe('Missing image id');
     expect(deleteImagesByIds).not.toHaveBeenCalled();
+  });
+});
+
+describe('missing-media delete action — scoping', () => {
+  it('refuses an id that is not in the missing-media queue, and deletes nothing', async () => {
+    // The action takes an id off a form and `deleteImagesByIds` is permanent and cascading. Without
+    // this re-selection the page is an arbitrary delete-any-image-by-id endpoint.
+    isMissingMediaImage.mockResolvedValue(false);
+
+    const result = (await missingActions.delete({
+      request: request({ id: '4242' }),
+      locals,
+    } as never)) as { status: number; data: { error: string } };
+
+    expect(result.status).toBe(400);
+    expect(result.data.error).toBe('That image is not in the missing-media queue.');
+    expect(deleteImagesByIds).not.toHaveBeenCalled();
+    expect(recordModActivity).not.toHaveBeenCalled();
+  });
+
+  it('attributes the delete to the moderator who performed it', async () => {
+    deleteImagesByIds.mockResolvedValue(undefined);
+    await missingActions.delete({ request: request({ id: '4242' }), locals } as never);
+    expect(recordModActivity).toHaveBeenCalledWith({
+      userId: 7,
+      entityType: 'image',
+      entityId: 4242,
+      activity: 'deleteMissingMedia',
+    });
+  });
+
+  it('records nothing when the delete itself failed', async () => {
+    deleteImagesByIds.mockRejectedValue(new Error('storage exploded'));
+    const result = (await missingActions.delete({
+      request: request({ id: '4242' }),
+      locals,
+    } as never)) as { status: number };
+    expect(result.status).toBe(400);
+    expect(recordModActivity).not.toHaveBeenCalled();
   });
 });

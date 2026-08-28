@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   assertMediaPresentForPublish,
+  isProbeableMediaKey,
   decideMediaPublish,
   IMAGE_SCAN_FAILURE_CLASS_PERMANENT,
   MediaPresence,
@@ -143,5 +144,70 @@ describe('assertMediaPresentForPublish', () => {
       ).resolves.toMatchObject({ allow: true });
     }
     expect(raise).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The regression this predicate exists for. `Image.url` is a bucket key for MOST rows, not all:
+ * profile pictures may store a whitelisted external avatar CDN url verbatim, and those rows are
+ * created and ingested like any other, so they carry a current timestamp and reach the review
+ * queue. A legacy bug also persisted `blob:` handles.
+ *
+ * Handing one of those to the bucket as a Key 404s, which the store reports as `absent` — so
+ * without this the guard REFUSES, permanently and with no override, an image that renders fine.
+ * That is worse than the bug the guard fixes, so these cases are pinned literally.
+ */
+describe('isProbeableMediaKey', () => {
+  it('accepts the bare object keys that are the overwhelming majority', () => {
+    expect(isProbeableMediaKey('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee')).toBe(true);
+    // Keys with a path, and a colon appearing LATER, are still keys — a scheme cannot contain `/`.
+    expect(isProbeableMediaKey('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/width=450')).toBe(true);
+    expect(isProbeableMediaKey('some/path:with-a-colon')).toBe(true);
+  });
+
+  it('rejects every external-avatar CDN url the profile-picture path whitelists', () => {
+    // These four prefixes are the ones `verifyAvatar` accepts, written out rather than generated,
+    // so a change to that whitelist has to be reflected here deliberately.
+    for (const url of [
+      'https://cdn.discordapp.com/avatars/123/abc.png',
+      'https://cdn.discordapp.com/embed/avatars/1.png',
+      'https://avatars.githubusercontent.com/u/12345',
+      'https://lh3.googleusercontent.com/a/AAcHTtd',
+    ]) {
+      expect(isProbeableMediaKey(url), url).toBe(false);
+    }
+  });
+
+  it('rejects the legacy blob: population, which is what made the two runtimes disagree', () => {
+    expect(isProbeableMediaKey('blob:https://civitai.com/9f8e-1234')).toBe(false);
+  });
+
+  it('rejects http, data: and an empty or absent url', () => {
+    expect(isProbeableMediaKey('http://example.com/x.png')).toBe(false);
+    expect(isProbeableMediaKey('data:image/png;base64,AAAA')).toBe(false);
+    expect(isProbeableMediaKey('')).toBe(false);
+    expect(isProbeableMediaKey(null)).toBe(false);
+    expect(isProbeableMediaKey(undefined)).toBe(false);
+  });
+});
+
+describe('assertMediaPresentForPublish — refusal is observable', () => {
+  it('reports every refusal, so a fail-CLOSED misconfiguration cannot hide', () => {
+    // The mirror of the unknown-logging case: a wrong bucket name 404s for every key, which reads
+    // as `absent` for every image. Without this hook that is indistinguishable from a clean run.
+    const onRefused = vi.fn();
+    return expect(
+      assertMediaPresentForPublish({ probe: async () => MediaPresence.Absent, onRefused })
+    )
+      .rejects.toThrow(MissingMediaError)
+      .then(() => expect(onRefused).toHaveBeenCalledTimes(1));
+  });
+
+  it('never reports a refusal on a verdict that allows', async () => {
+    const onRefused = vi.fn();
+    for (const presence of [MediaPresence.Present, MediaPresence.Unknown]) {
+      await assertMediaPresentForPublish({ probe: async () => presence, onRefused });
+    }
+    expect(onRefused).not.toHaveBeenCalled();
   });
 });

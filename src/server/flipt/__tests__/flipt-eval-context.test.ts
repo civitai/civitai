@@ -152,14 +152,14 @@ const ENTITY_WITHOUT_CONTEXT_LEDGER: Record<string, string> = {
   'server/services/article-rating-review.helpers.ts:482':
     'article-rating-dispute has no segment rollouts; background path with no SessionUser',
   // flag `feed-fetch-filter-in-post`: enabled=true, 0 rules, 0 rollouts.
-  'server/services/image.service.ts:4132':
+  'server/services/image.service.ts:4133':
     'feed-fetch-filter-in-post has no segment rollouts; hot feed path',
   // flag `feed-image-existence`: enabled=true, 0 rules, 0 rollouts. Three sites.
-  'server/services/image.service.ts:4273':
+  'server/services/image.service.ts:4274':
     'feed-image-existence has no segment rollouts; hot feed path',
-  'server/services/image.service.ts:5011':
+  'server/services/image.service.ts:5012':
     'feed-image-existence has no segment rollouts; hot feed path',
-  'server/services/image.service.ts:6145':
+  'server/services/image.service.ts:6146':
     'feed-image-existence has no segment rollouts; hot feed path',
   // flags `model-text-moderation-xguard` / `-apply`: both enabled=true, 0 rules,
   // 0 rollouts (checked against flipt-state and against the evaluation API on
@@ -219,7 +219,7 @@ describe('flipt evaluation context — source gate', () => {
     // these and fail the second, and vice versa.
     const bySite = new Map(calls.map((c) => [c.site, c]));
     expect(bySite.get('server/services/feedback.service.ts:43')?.argc).toBe(3);
-    expect(bySite.get('server/services/image.service.ts:4273')?.argc).toBe(2);
+    expect(bySite.get('server/services/image.service.ts:4274')?.argc).toBe(2);
   });
 
   it('adds no Flipt evaluation that names an entity but passes no context', () => {

@@ -65,7 +65,12 @@ vi.mock('../db', () => ({
   },
 }));
 
-vi.mock('../storage', () => ({ getStorage: () => ({ headObject }) }));
+// Both factories: the probe deliberately uses a SEPARATE, tightly-bounded client, and mocking only
+// `getStorage` would leave the real one in place and fail at import.
+vi.mock('../storage', () => ({
+  getStorage: () => ({ headObject }),
+  getMediaProbeStorage: () => ({ headObject }),
+}));
 vi.mock('../mod-activity', () => ({ recordModActivity }));
 vi.mock('../search-index', () => ({ syncSearchIndex }));
 vi.mock('../cache', () => ({ bustCachedObject }));

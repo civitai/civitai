@@ -41,9 +41,9 @@
 <header class="page-header">
   <h1>Missing Media</h1>
   <p class="mt-1 text-xs text-muted-foreground">
-    The file behind these images could not be fetched, so they can never be scanned and must not be
-    published — publishing one puts a permanently broken image on the site. Delete them, or ask the
-    uploader to upload again.
+    The media behind these images could not be fetched or decoded, so they can never be scanned and
+    there is nothing to rate. Where the file is genuinely gone, publishing one would put a
+    permanently broken image on the site. Delete them, or ask the uploader to upload again.
   </p>
   <div class="mt-1 flex items-center gap-1">
     <span class="text-xs text-muted-foreground">Per page:</span>

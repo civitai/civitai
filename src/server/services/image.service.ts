@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import {
   assertMediaPresentForPublish,
+  isProbeableMediaKey,
   MediaPresence,
   type MediaPresence as MediaPresenceType,
 } from '@civitai/shared';
@@ -8075,8 +8076,12 @@ const imageUploadsBucket = () => env.S3_IMAGE_B2_BUCKET ?? 'civitai-media-upload
  * because `getB2ImageS3Client()` throws when credentials are absent and that must land on `unknown`,
  * not on a failed publish.
  */
-async function probeImageMediaPresence(key: string): Promise<MediaPresenceType> {
-  const head = await headObject(imageUploadsBucket(), key, getB2ImageS3Client(), {
+async function probeImageMediaPresence(url: string): Promise<MediaPresenceType> {
+  // 🔴 Not every `Image.url` is a bucket key — see `isProbeableMediaKey`. A non-key url handed to
+  // the bucket 404s, which is indistinguishable from a real miss, so without this the guard would
+  // permanently refuse images that render fine (external-CDN avatars, legacy `blob:` rows).
+  if (!isProbeableMediaKey(url)) return MediaPresence.Unknown;
+  const head = await headObject(imageUploadsBucket(), url, getB2ImageS3Client(), {
     abortSignal: AbortSignal.timeout(RESOLVE_INGESTION_MEDIA_PROBE_TIMEOUT_MS),
   });
   if (head.status === 'present') return MediaPresence.Present;
@@ -8125,6 +8130,15 @@ export async function resolveIngestionError({
   await assertMediaPresentForPublish({
     probe: () => probeImageMediaPresence(image.url),
     raise: (message) => throwBadRequestError(message),
+    // The mirror of onUnknown: a wrong bucket name 404s for EVERY key, so a fail-CLOSED
+    // misconfiguration would refuse every publish and look exactly like a real run of misses.
+    onRefused: () =>
+      logToAxiom({
+        type: 'warning',
+        name: 'resolveIngestionError:media-absent-refused',
+        message: 'Refused to publish an image whose media object the bucket reports absent',
+        imageId: id,
+      }).catch(() => undefined),
     // Silent fail-open is how a guard lies for months: with credentials rotated, every publish
     // would take the `unknown` branch and this would be indistinguishable from a clean run.
     onUnknown: (error) =>

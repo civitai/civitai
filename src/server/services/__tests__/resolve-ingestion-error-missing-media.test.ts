@@ -53,6 +53,11 @@ const resolve = () => resolveIngestionError({ id: 4242, nsfwLevel: 1, userId: 7 
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // 🔴 `clearAllMocks` clears CALLS, not IMPLEMENTATIONS. Without this line the throwing client
+  // installed by the "cannot even be built" case below leaks into every later test in the file, so
+  // the probe fails open and the bucket is never consulted — which silently made the non-key cases
+  // at the bottom pass for the wrong reason (they assert the bucket is NOT consulted).
+  getB2ImageS3Client.mockImplementation(() => ({} as never));
   // postId null keeps the post-level recompute out of the way; it is not what these cases pin.
   dbMock.dbRead.image.findUnique.mockResolvedValue({
     ingestion: 'Error',
@@ -146,5 +151,37 @@ describe('main-app resolveIngestionError — missing-media guard', () => {
 
     await expect(resolve()).rejects.toThrow('Image not found');
     expect(headObject).not.toHaveBeenCalled();
+  });
+});
+
+describe('a non-key Image.url is never treated as a missing object', () => {
+  /**
+   * The regression an earlier revision of this guard shipped: it assumed every `Image.url` is a
+   * bucket key. Profile pictures may hold a whitelisted external avatar CDN url verbatim, and that
+   * row is created and ingested like any other, so it reaches the review queue with a current
+   * timestamp. Handing it to the bucket as a Key 404s → `absent` → the moderator could never
+   * publish an image that renders perfectly well, with no override.
+   *
+   * The bucket must not even be CONSULTED for these, which is what `headObject` not being called
+   * pins — asserting only "it published" would still pass if the probe ran and got lucky.
+   */
+  it.each([
+    ['an external avatar CDN url', 'https://cdn.discordapp.com/avatars/123/abc.png'],
+    ['a legacy blob: handle', 'blob:https://civitai.com/9f8e-1234'],
+  ])('publishes without probing the bucket for %s', async (_label, url) => {
+    dbMock.dbRead.image.findUnique.mockResolvedValue({
+      ingestion: 'Error',
+      postId: null,
+      userId: 99,
+      metadata: {},
+      url,
+    } as never);
+    // Armed to answer `absent` — so if the probe DID run, the publish would be refused.
+    headObject.mockResolvedValue({ status: 'absent' });
+
+    await resolve();
+
+    expect(headObject).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.image.update).toHaveBeenCalledTimes(1);
   });
 });

@@ -3,13 +3,14 @@ import { REDIS_KEYS } from '@civitai/redis';
 import {
   assertMediaPresentForPublish,
   IMAGE_SCAN_FAILURE_CLASS_PERMANENT,
+  isProbeableMediaKey,
   MediaPresence,
 } from '@civitai/shared';
 import { dbRead, dbWrite } from './db';
 import { bustCachedObject } from './cache';
 import { syncSearchIndex } from './search-index';
 import { recordModActivity } from './mod-activity';
-import { getStorage } from './storage';
+import { getMediaProbeStorage } from './storage';
 import type { MediaType } from '$lib/media/edge-url';
 
 export type PendingIngestionImage = {
@@ -74,9 +75,15 @@ const ingestionErrorBaseWhere = sql`
 /**
  * The scan pipeline's own stored classification of an unfetchable/undecodable input.
  *
- * 🔴 Deliberately NOT a match on the scanner's reason text. A `reason ILIKE '%download%'` predicate
- * is a spelled guard: one scanner reword and every permanently-broken image walks back into the
- * review queue. `failureClass` is written at scan time from a fixed set, so it survives a reword.
+ * 🔴 Deliberately NOT a match on the scanner's reason text HERE. A `reason ILIKE '%download%'`
+ * predicate in this query would be a spelled guard: one scanner reword and every permanently-broken
+ * image walks back into the review queue, silently, at query time.
+ *
+ * Being honest about what that does and does not buy: the stored CLASS is a fixed enum, but the
+ * classification that produces it is itself a substring match on the scanner's prose, one layer up
+ * in `image-scan-failure.ts`. So a reword still moves images between these two queues — it just
+ * does so at SCAN time, on new rows, where it is visible in that module's own tests, rather than
+ * silently re-partitioning every historical row the next time this query runs.
  *
  * `IS [NOT] DISTINCT FROM` rather than `= / <>`: the JSON path yields NULL for an image with no
  * stored scan error at all, and `NULL <> 'permanent'` is NULL — which a WHERE treats as false, so a
@@ -185,6 +192,25 @@ export async function getMissingMediaImages({
   return { items, nextCursor };
 }
 
+/**
+ * Is this image actually in the missing-media set right now?
+ *
+ * The page's delete action takes an id off a form, and deleting an image is permanent and
+ * cascading (row + stored object + de-index). Re-selecting through the SAME shared predicate is
+ * what keeps the action scoped to what the page shows, instead of turning a moderator route into an
+ * arbitrary delete-by-id. Uses `missingMediaWhere`, so it cannot drift from the queue or its badge.
+ */
+export async function isMissingMediaImage(id: number): Promise<boolean> {
+  const result = await sql<{ id: number }>`
+    SELECT i.id
+    FROM "Image" i
+    WHERE ${missingMediaWhere}
+      AND i.id = ${id}
+    LIMIT 1
+  `.execute(dbRead);
+  return result.rows.length > 0;
+}
+
 /** The badge for `/images/missing-media` — same shared const as its queue, for the same reason. */
 export async function countMissingMediaImages(): Promise<number> {
   const result = await sql<{ count: string }>`
@@ -206,8 +232,13 @@ export async function countMissingMediaImages(): Promise<number> {
  * Every image lives in the `b2Image` backend — the same assumption the image-deletion path makes,
  * where `Image.url` is passed straight through as the object key.
  */
-async function probeImageMediaPresence(key: string) {
-  const { exists } = await getStorage().headObject({ backend: 'b2Image', key });
+async function probeImageMediaPresence(url: string) {
+  // 🔴 Not every `Image.url` is a bucket key — see `isProbeableMediaKey`. This is also what keeps
+  // the two runtimes agreeing: their storage clients fail DIFFERENTLY on a non-key url (the main
+  // app's 404s to `absent`; this one throws on an empty parsed bucket to `unknown`), so deciding it
+  // here rather than in each probe is the difference between one rule and two.
+  if (!isProbeableMediaKey(url)) return MediaPresence.Unknown;
+  const { exists } = await getMediaProbeStorage().headObject({ backend: 'b2Image', key: url });
   return exists ? MediaPresence.Present : MediaPresence.Absent;
 }
 
@@ -244,6 +275,9 @@ export async function resolveIngestionError({
     probe: () => probeImageMediaPresence(image.url),
     onUnknown: (error) =>
       console.warn('[ingestion] media probe inconclusive; allowing publish', id, error),
+    // The mirror of onUnknown: a wrong bucket name 404s for EVERY key, so a fail-CLOSED
+    // misconfiguration would refuse every publish and look exactly like a real run of misses.
+    onRefused: () => console.warn('[ingestion] refused publish; media object reported absent', id),
   });
 
   const metadata = {
