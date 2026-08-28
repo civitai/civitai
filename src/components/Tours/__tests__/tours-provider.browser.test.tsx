@@ -9,7 +9,9 @@ import type * as TrpcModule from '~/utils/trpc';
 const mocks = vi.hoisted(() => ({ setSettings: vi.fn() }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 1 }) }));
-vi.mock('~/providers/FeatureFlagsProvider', () => ({ useFeatureFlags: () => ({ appTour: false }) }));
+vi.mock('~/providers/FeatureFlagsProvider', () => ({
+  useFeatureFlags: () => ({ appTour: false }),
+}));
 vi.mock('~/components/UserSettings/hooks', () => ({
   useMutateUserSettings: () => ({ mutate: mocks.setSettings }),
 }));

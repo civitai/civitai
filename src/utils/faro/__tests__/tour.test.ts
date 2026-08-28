@@ -42,7 +42,10 @@ describe('emitTourStep', () => {
 
   it('omits waitMs entirely when the step awaited nothing', () => {
     const pushEvent = vi.fn();
-    emitTourStep({ key: 'auction', index: 0, target: 'auction:nav', resolved: true }, { pushEvent });
+    emitTourStep(
+      { key: 'auction', index: 0, target: 'auction:nav', resolved: true },
+      { pushEvent }
+    );
 
     expect(pushEvent.mock.calls[0][1]).not.toHaveProperty('waitMs');
   });
@@ -88,6 +91,8 @@ describe('every emitter', () => {
       throw new Error('transport down');
     });
 
-    expect(() => emitTourEnd({ key: 'auction', index: 1, reason: 'closed' }, { pushEvent })).not.toThrow();
+    expect(() =>
+      emitTourEnd({ key: 'auction', index: 1, reason: 'closed' }, { pushEvent })
+    ).not.toThrow();
   });
 });

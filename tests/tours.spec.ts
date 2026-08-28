@@ -94,34 +94,35 @@ test.describe('guided tours', () => {
   // this mocked insufficient-Buzz case, and a full generation queue
   // (`canGenerate: false`) — neither has unit coverage, since mounting
   // FormFooter's context graph for it is disproportionate.
-  test.fixme('an unaffordable generation leaves the button disabled and the tour walkable', async ({
-    page,
-  }) => {
-    await page.route(/\/api\/trpc\/orchestrator\.whatIfFromGraph(\?|$)/, async (route) => {
-      await route.fulfill({
-        status: 400,
-        json: {
-          error: {
-            json: {
-              message: 'insufficient funds',
-              code: -32600,
-              data: {
-                code: 'BAD_REQUEST',
-                httpStatus: 400,
-                path: 'orchestrator.whatIfFromGraph',
+  test.fixme(
+    'an unaffordable generation leaves the button disabled and the tour walkable',
+    async ({ page }) => {
+      await page.route(/\/api\/trpc\/orchestrator\.whatIfFromGraph(\?|$)/, async (route) => {
+        await route.fulfill({
+          status: 400,
+          json: {
+            error: {
+              json: {
+                message: 'insufficient funds',
+                code: -32600,
+                data: {
+                  code: 'BAD_REQUEST',
+                  httpStatus: 400,
+                  path: 'orchestrator.whatIfFromGraph',
+                },
               },
             },
           },
-        },
+        });
       });
-    });
-    await page.goto('/generate');
-    await expect(tourTooltip(page)).toBeVisible();
+      await page.goto('/generate');
+      await expect(tourTooltip(page)).toBeVisible();
 
-    const generate = page.locator(GEN_SUBMIT_TARGET);
-    await expect(generate).toBeDisabled();
-    await expect(tourTooltip(page).getByRole('button', { name: 'Next' })).toBeVisible();
-  });
+      const generate = page.locator(GEN_SUBMIT_TARGET);
+      await expect(generate).toBeDisabled();
+      await expect(tourTooltip(page).getByRole('button', { name: 'Next' })).toBeVisible();
+    }
+  );
 
   /**
    * The welcome tour is reachable only from `?tour=welcome`, which nothing in this

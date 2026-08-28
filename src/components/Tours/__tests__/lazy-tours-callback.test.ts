@@ -144,7 +144,7 @@ describe('createTourCallback', () => {
    * the last index leaves it rendering `steps[5]` (undefined) and never fires
    * TOUR_END, which is how a tour on `gen:post` could go unpersisted forever.
    */
-  it('closes the tour instead of advancing when the last step\'s target is missing', async () => {
+  it("closes the tour instead of advancing when the last step's target is missing", async () => {
     const { deps, closeTour, runTour, emit } = makeDeps({
       steps: new Array(5).fill({}) as unknown as TourCallbackDeps['steps'],
     });
@@ -197,7 +197,9 @@ describe('createTourCallback', () => {
   });
 
   it('emits tour_start with the stepCount taken from the injected steps array', async () => {
-    const { deps, emit } = makeDeps({ steps: [{}, {}, {}] as unknown as TourCallbackDeps['steps'] });
+    const { deps, emit } = makeDeps({
+      steps: [{}, {}, {}] as unknown as TourCallbackDeps['steps'],
+    });
     const callback = createTourCallback(deps);
 
     await callback(
