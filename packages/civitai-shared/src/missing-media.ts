@@ -66,9 +66,15 @@ export const MISSING_MEDIA_PUBLISH_MESSAGE =
  * The other refusal, and it needs its own words: nothing is missing from the store, because the row
  * never referred to the store at all. Telling a moderator to check storage for a `blob:` handle
  * would send them looking for something that was never there.
+ *
+ * 🔴 IT SAYS "DELETE IT", NOT "DELETE IT FROM THE MISSING MEDIA QUEUE", AND THE DIFFERENCE IS LOAD-
+ * BEARING. The spoke's delete ACTION is unwindowed (`missingMediaScope`), but the queue that renders
+ * it is bounded to the last 2 days (`ingestionErrorBaseWhere`) — and `blob:` urls come from a legacy
+ * upload bug, so the population is plausibly mostly older than that. Naming the queue would promise
+ * a listing that may not contain the row; naming the action promises only what is true.
  */
 export const UNRENDERABLE_MEDIA_PUBLISH_MESSAGE =
-  'This image points at a browser-session handle (a blob: url) rather than an uploaded file, so it can never load for anyone else and cannot be published. Delete it from the Missing Media queue, or remove it from the article that uses it, and ask the uploader to upload the file again.';
+  'This image points at a browser-session handle (a blob: url) rather than an uploaded file, so it can never load for anyone else and cannot be published. Delete it — recent ones are listed in the Missing Media queue — or remove it from the article that uses it and ask the uploader to upload the file again.';
 
 /** Thrown when the publish is refused. Never thrown for a verdict that allows. */
 export class MissingMediaError extends Error {
@@ -140,9 +146,11 @@ export const UNRENDERABLE_MEDIA_URL_PREFIX = 'blob:';
  * these on the stated grounds that they "render perfectly well", which was simply wrong.
  *
  * 🔴 A refusal must leave a reachable action, or it is a dead end rather than a guard. That is what
- * `UNRENDERABLE_MEDIA_PUBLISH_MESSAGE` names, and it is only true because the spoke routes these
- * rows into its delete-only Missing Media queue (`missingMediaWhere` in the moderator app's
- * `ingestion.service.ts`) and the article surface stops offering an override that can only 400.
+ * `UNRENDERABLE_MEDIA_PUBLISH_MESSAGE` names, and it is true because the spoke's delete gate
+ * (`missingMediaScope` in the moderator app's `ingestion.service.ts`) selects on THIS predicate —
+ * literally this constant, not a second spelling of it — and the article surface stops offering an
+ * override that can only 400. The spoke's delete-only Missing Media QUEUE renders the recent ones;
+ * the action itself is unwindowed, which is why the message names the action rather than the queue.
  *
  * Deliberately NOT extended to `data:` or `http(s):`. `http(s)` really does render — both renderers
  * pass it through and it is the documented legacy-avatar population. `data:` is a different case

@@ -38,9 +38,27 @@ export type ArticleImageActions = {
  * Shown verbatim in place of the Override/Retry controls. It has to name a remedy the reader can
  * actually carry out, which is the whole point of this module — "contact support" or a bare
  * "cannot be published" would reproduce the dead end in prose.
+ *
+ * 🔴 EVERY CLAUSE IS CHECKED AGAINST WHAT THE CODE ACTUALLY DOES, because a remedy that stops one
+ * step short is the same dead end with extra steps:
+ *
+ *   - "remove or replace it in the article editor" is the self-service exit and has no
+ *     preconditions. It is named FIRST for that reason.
+ *   - "a moderator can delete it" — deliberately NOT "delete it from the Missing Media queue". That
+ *     queue is bounded to images created in the last 2 days (`ingestionErrorBaseWhere` in the
+ *     moderator spoke), and `blob:` urls come from a legacy upload bug, so the population is
+ *     plausibly mostly older than that. The delete ACTION has no such bound, so a moderator can
+ *     still act; promising the queue would list the row is what would be false.
+ *   - "the article has to be rescanned" is not padding. The spoke's delete removes the row and
+ *     cascades `ImageConnection`/`Article.coverId`, but it cannot call `recomputeArticleIngestion`
+ *     (main-app only), and the `article-ingestion-reconcile` cron only picks up articles at
+ *     `ingestion IN (Pending, Rescan)` or `(Processing, Scanned)` — an article blocked by one of
+ *     these images sits at `Error` and is never a candidate. Without a rescan it stays blocked
+ *     after the remedy is applied. Rescan Article is on this same alert, and in
+ *     `ArticleContextMenu` once the image is gone and this alert no longer renders.
  */
 export const UNRENDERABLE_ARTICLE_IMAGE_NOTE =
-  'This image was saved as a browser-session link rather than an uploaded file, so it can never load for anyone else. Overriding or rescanning it cannot fix that — remove or replace it in the article editor, or ask a moderator to delete it.';
+  'This image was saved as a browser-session link rather than an uploaded file, so it can never load for anyone else. Overriding or rescanning the image cannot fix that — remove or replace it in the article editor, or ask a moderator to delete it. Once it is gone, rescan the article to unblock it.';
 
 export function articleImageActions(url: string | null | undefined): ArticleImageActions {
   if (isUnrenderableMediaUrl(url))

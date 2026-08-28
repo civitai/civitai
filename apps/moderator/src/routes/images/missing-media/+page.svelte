@@ -40,10 +40,17 @@
 
 <header class="page-header">
   <h1>Missing Media</h1>
+  <!-- Two populations, and the header names both because the second joined this queue after the
+    first: images whose media could not be fetched or decoded, and images whose url is a
+    browser-session `blob:` handle that can never render for anyone. Neither can be scanned, so
+    there is nothing to rate; the only useful action is removing the row. Membership is
+    `missingMediaWhere` in `$lib/server/ingestion.service` — keep this wording in step with it. -->
   <p class="mt-1 text-xs text-muted-foreground">
-    The media behind these images could not be fetched or decoded, so they can never be scanned and
-    there is nothing to rate. Where the file is genuinely gone, publishing one would put a
-    permanently broken image on the site. Delete them, or ask the uploader to upload again.
+    These images can never be scanned, so there is nothing to rate: either the media behind them
+    could not be fetched or decoded, or the url is a browser-session <code>blob:</code> handle that
+    can never load for anyone else. Publishing one would put a permanently broken image on the site.
+    Delete them, or ask the uploader to upload again. Only images created in the last 2 days are
+    listed here.
   </p>
   <div class="mt-1 flex items-center gap-1">
     <span class="text-xs text-muted-foreground">Per page:</span>

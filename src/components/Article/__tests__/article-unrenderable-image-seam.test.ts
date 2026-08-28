@@ -74,8 +74,40 @@ describe('the article surface and the publish guard cannot disagree about blob: 
     // Withdrawing the buttons without saying why would replace a dead-end click with a blank card,
     // which is a worse dead end: the reader is not told the image has to be removed or replaced.
     expect(source).toMatch(/remedy\.blockingNote/);
-    // Once per section — the blocked list renders it beside the block reason, the error list
-    // replaces the scan-failure cause with it.
+    // 🔴 THREE MENTIONS ACROSS TWO SECTIONS, NOT "once per section" — the previous comment said the
+    // latter while asserting the former, so the number and the sentence disagreed and only the
+    // number was true. The blocked list spends TWO (`{remedy.blockingNote && (` to decide whether
+    // to render, then the value itself); the error list spends ONE, because it substitutes the note
+    // for the scan-failure cause with `??` and needs no separate guard.
     expect(source.match(/remedy\.blockingNote/g)).toHaveLength(3);
+  });
+
+  it('keeps the Overridden STATUS reachable when it withdraws the override ACTION', () => {
+    /**
+     * 🔴 The status and the action used to be one component, so gating that component on
+     * `remedy.offerOverride` withdrew the badge too. The state it reports is reachable for exactly
+     * these images — `updateImageNsfwLevel` sets `nsfwLevelLocked` without touching `ingestion` —
+     * so the reader could see a card whose override had already been applied with nothing saying so.
+     *
+     * Pinned in BOTH directions: the badge must render, and it must not be gated on the flag that
+     * withdraws the action. `enclosingGate` is deliberately not used here — the badge is rendered
+     * inline, and what matters is the gating expression ON ITS OWN LINE.
+     */
+    const badgeSites = lines
+      .map((line, i) => ({ line, i }))
+      .filter(({ line }) => line.includes('<ImageOverriddenBadge'));
+
+    // Positive control: a zero here makes everything below vacuous. Two sections render it.
+    expect(badgeSites, 'render sites for <ImageOverriddenBadge>').toHaveLength(2);
+
+    for (const { line, i } of badgeSites) {
+      expect(line, `<ImageOverriddenBadge> at line ${i + 1} must gate on the LOCK`).toContain(
+        'image.nsfwLevelLocked'
+      );
+      expect(
+        line,
+        `<ImageOverriddenBadge> at line ${i + 1} must NOT be gated on remedy.offerOverride`
+      ).not.toContain('remedy.offerOverride');
+    }
   });
 });

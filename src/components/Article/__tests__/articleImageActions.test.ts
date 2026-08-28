@@ -67,11 +67,22 @@ describe('articleImageActions', () => {
      * 🔴 Pinned WHOLE, not by keyword — a guard on words is walkable by rewording, and the thing
      * being guarded here IS the wording. The finding this closes was that the server's refusal told
      * a moderator to "delete it" on a surface with no delete: the note has to point at an action
-     * that exists, and the two that do are removing the image in the editor and a moderator deleting
-     * the row from the spoke's Missing Media queue.
+     * that exists.
+     *
+     * 🔴 The final clause is the second round's finding and is NOT decoration. The spoke's delete
+     * removes the row and cascades `ImageConnection`/`Article.coverId`, but cannot call
+     * `recomputeArticleIngestion` (main-app only), and `article-ingestion-reconcile` selects only
+     * `ingestion IN (Pending, Rescan)` or `(Processing, Scanned)` — an article blocked by one of
+     * these images sits at `Error` and is never a candidate. Without the rescan the advertised
+     * remedy leaves the article exactly as blocked as it was.
+     *
+     * 🔴 And it says "ask a moderator to delete it", never "delete it from the Missing Media queue":
+     * that queue carries a 2-day window the delete ACTION does not, and this population is mostly
+     * older than that. See `UNRENDERABLE_ARTICLE_IMAGE_NOTE`'s own comment for the per-clause
+     * derivation.
      */
     expect(UNRENDERABLE_ARTICLE_IMAGE_NOTE).toBe(
-      'This image was saved as a browser-session link rather than an uploaded file, so it can never load for anyone else. Overriding or rescanning it cannot fix that — remove or replace it in the article editor, or ask a moderator to delete it.'
+      'This image was saved as a browser-session link rather than an uploaded file, so it can never load for anyone else. Overriding or rescanning the image cannot fix that — remove or replace it in the article editor, or ask a moderator to delete it. Once it is gone, rescan the article to unblock it.'
     );
     // And it must not be the SERVER's message, which names a delete this surface does not have.
     expect(UNRENDERABLE_ARTICLE_IMAGE_NOTE).not.toBe(UNRENDERABLE_MEDIA_PUBLISH_MESSAGE);

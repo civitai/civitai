@@ -17,9 +17,19 @@ const LIMIT_OPTIONS = [10, 25, 50, 100];
  * `ingestion='Scanned'` and published a permanent 404. There is no rating affordance here, because
  * these can never be scanned — the only useful action is removing the row.
  *
- * 🔴 This page is the REACHABLE ACTION behind both refusals `assertMediaPresentForPublish` throws.
- * The rating queue now 400s on these rows, so if `missingMediaWhere` ever stopped selecting one of
- * them the moderator would have no action left at all. That is why the two predicates are one const.
+ * 🔴 This page is the reachable action behind the `unrenderable` refusal `assertMediaPresentForPublish`
+ * throws, and behind those `absent` refusals whose row also carries a permanent scan class. The
+ * rating queue 400s on these rows, so if `missingMediaWhere` ever stopped selecting one of them the
+ * moderator would have no action left at all — which is why the queue predicate and the delete gate
+ * are built from one const.
+ *
+ * 🔴 It is NOT the reachable action behind EVERY refusal, and the exceptions are named rather than
+ * implied. `absent` is a probe verdict and cannot be selected on in SQL, so a row with a transient
+ * or unclassified failure whose object is genuinely gone is refused on the rating queue and not
+ * listed here; and both queues carry a 2-day window this page inherits, so an older row is deletable
+ * by this action but rendered by no page. Both gaps, why widening the predicate is the wrong fix for
+ * the first, and the query that would settle the second, are written out on `unpublishableMedia` and
+ * `ingestionErrorBaseWhere` in `$lib/server/ingestion.service`.
  */
 export const load: PageServerLoad = async ({ url }) => {
   const limitParam = Number(url.searchParams.get('limit'));

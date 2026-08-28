@@ -74,15 +74,25 @@ function errorImageCause(image: ErrorImage): string {
   }
 }
 
-function ImageOverrideControl({
-  articleId,
-  imageId,
-  locked,
-}: {
-  articleId: number;
-  imageId: number;
-  locked: boolean;
-}) {
+/**
+ * The "an override was already applied" STATUS, split out of `ImageOverrideControl`.
+ *
+ * 🔴 A STATUS IS NOT AN ACTION, AND WITHDRAWING THE ACTION MUST NOT WITHDRAW THE STATUS. While the
+ * two lived in one component, gating that component on `remedy.offerOverride` hid the badge as well
+ * — and the state it reports is reachable for exactly these images: `updateImageNsfwLevel` sets
+ * `nsfwLevelLocked` without touching `ingestion`, so an image can be locked and still sit in this
+ * list. The reader would then see a card whose override had already been applied, with nothing
+ * saying so.
+ */
+function ImageOverriddenBadge() {
+  return (
+    <Badge color="green" variant="light" leftSection={<IconShieldCheck size={12} />}>
+      Overridden
+    </Badge>
+  );
+}
+
+function ImageOverrideControl({ articleId, imageId }: { articleId: number; imageId: number }) {
   const queryUtils = trpc.useUtils();
   const [level, setLevel] = useState<string | null>(null);
 
@@ -99,13 +109,6 @@ function ImageOverrideControl({
       });
     },
   });
-
-  if (locked)
-    return (
-      <Badge color="green" variant="light" leftSection={<IconShieldCheck size={12} />}>
-        Overridden
-      </Badge>
-    );
 
   return (
     <Group gap="xs" wrap="nowrap">
@@ -294,13 +297,14 @@ export function ArticleProblematicImages({
                           )}
                         </Stack>
                       </div>
-                      {canOverride && remedy.offerOverride && (
+                      {canOverride && (remedy.offerOverride || image.nsfwLevelLocked) && (
                         <div className="flex shrink-0 flex-wrap gap-2 sm:justify-end">
-                          <ImageOverrideControl
-                            articleId={articleId}
-                            imageId={image.id}
-                            locked={image.nsfwLevelLocked}
-                          />
+                          {canOverride && remedy.offerOverride && !image.nsfwLevelLocked && (
+                            <ImageOverrideControl articleId={articleId} imageId={image.id} />
+                          )}
+                          {/* The STATUS survives the withdrawal of the action — see
+                            ImageOverriddenBadge. */}
+                          {canOverride && image.nsfwLevelLocked && <ImageOverriddenBadge />}
                         </div>
                       )}
                     </div>
@@ -346,22 +350,21 @@ export function ArticleProblematicImages({
                           )}
                         </Stack>
                       </div>
-                      {/* Both controls are dead ends for an unrenderable url: Override calls the
+                      {/* Both ACTIONS are dead ends for an unrenderable url: Override calls the
                         mutation that refuses it, and Retry re-fetches a handle nothing outside the
-                        originating document can read. The note above names the remedy instead. */}
-                      {((canRetry && remedy.offerRetry) ||
-                        (canOverride && remedy.offerOverride)) && (
+                        originating document can read. The note above names the remedy instead. The
+                        Overridden BADGE is not an action and is not withdrawn with them. */}
+                      {((canRetry && remedy.offerRetry && !image.nsfwLevelLocked) ||
+                        (canOverride && remedy.offerOverride && !image.nsfwLevelLocked) ||
+                        (canOverride && image.nsfwLevelLocked)) && (
                         <div className="flex shrink-0 flex-wrap gap-2 sm:justify-end">
                           {canRetry && remedy.offerRetry && !image.nsfwLevelLocked && (
                             <ImageRetryButton articleId={articleId} imageId={image.id} />
                           )}
-                          {canOverride && remedy.offerOverride && (
-                            <ImageOverrideControl
-                              articleId={articleId}
-                              imageId={image.id}
-                              locked={image.nsfwLevelLocked}
-                            />
+                          {canOverride && remedy.offerOverride && !image.nsfwLevelLocked && (
+                            <ImageOverrideControl articleId={articleId} imageId={image.id} />
                           )}
+                          {canOverride && image.nsfwLevelLocked && <ImageOverriddenBadge />}
                         </div>
                       )}
                     </div>
@@ -372,6 +375,12 @@ export function ArticleProblematicImages({
           </Stack>
         )}
 
+        {/* 🔴 This rescans the ARTICLE, which is a different thing from rescanning the image the
+          note above says a rescan cannot fix — and after the image is removed, replaced or deleted
+          it is the step that actually unblocks the article. `article-ingestion-reconcile` will NOT
+          do it for you: that cron selects only `ingestion IN (Pending, Rescan)` or
+          `(Processing, Scanned)`, and an article blocked by an unrenderable image sits at `Error`.
+          The note names the rescan for that reason; keep the two wordings in step. */}
         {canRescan && (
           <Group justify="flex-end">
             <Button

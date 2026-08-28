@@ -71,6 +71,32 @@ const ingestionErrorState = sql`
   AND i."nsfwLevel" = 0
 `;
 
+/**
+ * 🔴 THE 2-DAY LOWER BOUND IS A REAL LIMIT ON REACH, AND BOTH QUEUES INHERIT IT.
+ *
+ * It is right for the RATING queue: a moderator rates recent scan errors, and an unbounded backlog
+ * of old ones is not work anybody is going to do. It is less obviously right for the missing-media
+ * queue, whose rows are terminal — they only leave it by being deleted — and whose motivating
+ * population, `blob:` urls from a legacy upload bug (`src/utils/type-guards.ts`), is plausibly
+ * mostly OLDER than two days. That is inference from where the bug came from, not a production
+ * count; nobody has measured it.
+ *
+ * So the state of play, said rather than glossed: an unpublishable row older than two days is
+ * deletable by the POST action (`missingMediaScope` deliberately drops the window — see that const)
+ * but is rendered by NO page here. The copy in `@civitai/shared/missing-media` and on the article
+ * surface is written so it does not promise a queue that will list such a row.
+ *
+ * Widening it was considered and NOT taken, for a reason that is worth writing down because it is
+ * not the obvious one: both queues order `createdAt DESC`, so dropping the bound would put the old
+ * `blob:` rows at the BACK of an unbounded list behind every historical permanent scan failure —
+ * burying the motivating population rather than surfacing it, at an unmeasured queue size. The one
+ * query that would settle whether widening is worth it, and what shape it should take:
+ *
+ *     SELECT count(*) FROM "Image"
+ *      WHERE ingestion = 'Error' AND "nsfwLevel" = 0
+ *        AND "createdAt" < now() - INTERVAL '2 days'
+ *        AND url LIKE 'blob:%';
+ */
 const ingestionErrorBaseWhere = sql`
   i."createdAt" > now() - INTERVAL '2 days'
   AND i."createdAt" < now() - INTERVAL '1 hour'
@@ -109,28 +135,59 @@ const permanentScanFailure = sql`
  * misses is refused by the moderator's only remaining action too, i.e. permanently stuck. The shared
  * predicate is case-SENSITIVE, and so is SQL `LIKE`, so the two agree by construction.
  *
- * `COALESCE(i.url, '')` rather than a bare `LIKE`, and it is load-bearing: `NULL LIKE 'blob:%'` is
- * NULL, so on a NULL url `permanent OR NULL` is NULL when the class is not permanent — which a
- * WHERE treats as false on BOTH sides of the split, dropping the row out of the review queue and out
- * of the missing-media queue at the same time. That is a gap in what is supposed to be a partition,
- * and it is exactly the `IS NOT DISTINCT FROM` trap one predicate up, in the other operator.
+ * `COALESCE(i.url, '')` rather than a bare `LIKE`, and 🔴 BE PRECISE ABOUT WHAT IT BUYS, because an
+ * earlier version of this comment overstated it and the overstatement was doing the work of the
+ * argument. It is NOT load-bearing today and removing it changes no result: `Image.url` is NOT NULL
+ * (`packages/civitai-db-schema/prisma/schema.full.prisma`, and the generated Kysely type is
+ * `url: string`, not `string | null`), so the row this defends against cannot exist. What actually
+ * keeps the split a partition on the url half is that column constraint, and nothing else.
+ *
+ * It stays as defence-in-depth against exactly one future change — the column being made nullable —
+ * because THAT is where the failure is silent: `NULL LIKE 'blob:%'` is NULL, so on a NULL url
+ * `permanent OR NULL` is NULL whenever the class is not permanent, which a WHERE treats as false on
+ * BOTH sides of the split, dropping the row out of the review queue and the missing-media queue at
+ * once. Same shape as the `IS NOT DISTINCT FROM` trap one predicate up, in the other operator. The
+ * NOT NULL constraint itself is pinned by this module's test, so if it ever goes away that is a
+ * visible failure rather than a silent re-partition.
  */
 const unrenderableMediaUrl = sql`
   COALESCE(i.url, '') LIKE ${`${UNRENDERABLE_MEDIA_URL_PREFIX}%`}
 `;
 
 /**
- * "This image cannot be published, whatever a moderator rates it."
+ * "This image probably cannot be published, whatever a moderator rates it."
  *
- * 🔴 The two disjuncts are the two verdicts `assertMediaPresentForPublish` REFUSES on, and that is
- * the property to preserve when editing either: this predicate decides which rows reach the queue
- * that can delete them, so a refusal the write guard makes and this query does not see is a row with
- * no reachable action at all — refused on the rating queue, absent from the delete queue. That was
- * the state `blob:` rows were left in when the refusal was added without this disjunct.
+ * This predicate decides which rows reach the queue that can delete them. A row the write guard
+ * refuses and this query does not see has no reachable action at all — refused on the rating queue,
+ * absent from the delete queue — so what the two cover, and where they DIVERGE, is the property to
+ * hold in mind when editing either.
  *
- *   - `permanentScanFailure` is the trigger for "the store probably does not have it"; the write
- *     guard's `absent` verdict is the actual verdict, from an existence check.
- *   - `unrenderableMediaUrl` needs no probe: the url can never render for anyone.
+ * 🔴 THE TWO DISJUNCTS ARE NOT THE WRITE GUARD'S TWO REFUSALS. Only one of them is:
+ *
+ *   - `unrenderableMediaUrl` IS `assertMediaPresentForPublish`'s `unrenderable` refusal, exactly:
+ *     same shared prefix constant, same case-sensitive prefix test, decided without a probe on both
+ *     sides. For this half the reachable-action property holds outright, and it is why the disjunct
+ *     was added — `blob:` rows were refused on the rating queue and absent from the delete queue.
+ *
+ *   - `permanentScanFailure` is a TRIGGER, not a verdict. The write guard's other refusal is
+ *     `absent`, which comes from an existence check against the media store — a probe result, so it
+ *     is not expressible in SQL at all and this query cannot select on it. The stored class is the
+ *     best SQL-side correlate we have, not the same set.
+ *
+ * 🔴 THE RESIDUAL GAP THAT FOLLOWS, STATED PLAINLY RATHER THAN GLOSSED. A row whose `failureClass`
+ * is `transient`, `unknown` or NULL but whose object really is gone routes to the RATING queue
+ * (NULL `IS NOT DISTINCT FROM 'permanent'` is false). A moderator rates it, the probe answers
+ * `absent`, the publish is refused — and `isMissingMediaImage` does not admit it, so the delete this
+ * app offers refuses it too. That row is stuck. It is a smaller population than the one this change
+ * fixes and it is NOT made worse by anything here, but it is not closed either.
+ *
+ * Widening this predicate is NOT the fix, and the tempting version is actively worse: "accept
+ * anything the write guard could refuse" means accepting every row with a probeable key, i.e. every
+ * unpublished ingestion error — which turns a scoped, permanent, cascading delete into an
+ * unscoped one while adding no affordance to any page, since neither queue renders those rows.
+ * Closing it properly needs the `absent` verdict to be persisted at the moment the probe produces
+ * it, and that is a separate change with its own hazard (a misconfigured bucket answers 404 for
+ * every key, so a naive write-back would permanently reclassify every row a moderator touched).
  */
 const unpublishableMedia = sql`
   ( ${permanentScanFailure} OR ${unrenderableMediaUrl} )
@@ -237,9 +294,11 @@ export async function countIngestionErrorImages(): Promise<number> {
 
 /**
  * The missing-media view: same window, opposite side of the publishability split. These images are
- * NOT rateable — their file can never be fetched, or their url can never render — so the only useful
- * affordance is deleting them. That affordance is why the split has to be the same predicate the
- * write guard refuses on: a refusal with no reachable action is a dead end, not a guard.
+ * NOT rateable — their file probably can never be fetched, or their url can never render — so the
+ * only useful affordance is deleting them. That affordance is why the url half of the split is
+ * literally the write guard's own predicate: a refusal with no reachable action is a dead end, not a
+ * guard. See `unpublishableMedia` for the half where the two are correlated rather than identical,
+ * and for what that leaves uncovered.
  */
 export async function getMissingMediaImages({
   limit,
