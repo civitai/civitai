@@ -422,7 +422,9 @@ function ReferenceUpload() {
             <Card withBorder p="xl">
               <Stack align="center" gap="lg">
                 <IconAlertTriangle size={40} className="text-yellow-500" />
-                <Text size="sm" c="dimmed">This reference could not be found.</Text>
+                <Text size="sm" c="dimmed">
+                  This reference could not be found.
+                </Text>
                 <Button component={Link} href={`/comics/project/${projectId}`}>
                   Back to Project
                 </Button>
@@ -530,12 +532,19 @@ function ReferenceUpload() {
                       </>
                     )}
                     {(existingReference as any).type && (
-                      <Badge size="sm" variant="light" color={
-                        (existingReference as any).type === 'Location' ? 'teal'
-                        : (existingReference as any).type === 'Style' ? 'orange'
-                        : (existingReference as any).type === 'Item' ? 'grape'
-                        : 'blue'
-                      }>
+                      <Badge
+                        size="sm"
+                        variant="light"
+                        color={
+                          (existingReference as any).type === 'Location'
+                            ? 'teal'
+                            : (existingReference as any).type === 'Style'
+                            ? 'orange'
+                            : (existingReference as any).type === 'Item'
+                            ? 'grape'
+                            : 'blue'
+                        }
+                      >
                         {(existingReference as any).type}
                       </Badge>
                     )}
@@ -627,7 +636,8 @@ function ReferenceUpload() {
                                     e.stopPropagation();
                                     openConfirmModal({
                                       title: 'Delete Reference Image',
-                                      children: 'Are you sure you want to delete this reference image?',
+                                      children:
+                                        'Are you sure you want to delete this reference image?',
                                       labels: { confirm: 'Delete', cancel: 'Cancel' },
                                       confirmProps: { color: 'red' },
                                       onConfirm: () => {
@@ -739,8 +749,7 @@ function ReferenceUpload() {
                                       'ref_add',
                                       uploadToCF
                                     );
-                                    const previewUrl =
-                                      getEdgeUrl(cfId, { width: 200 }) ?? img.url;
+                                    const previewUrl = getEdgeUrl(cfId, { width: 200 }) ?? img.url;
                                     setUploadedImages((prev) => [
                                       ...prev,
                                       { url: cfId, previewUrl, width, height },
@@ -835,7 +844,9 @@ function ReferenceUpload() {
               <Card withBorder>
                 <Stack gap="md">
                   <div>
-                    <Text size="sm" fw={500}>Upload Reference Images</Text>
+                    <Text size="sm" fw={500}>
+                      Upload Reference Images
+                    </Text>
                     <Text size="sm" c="dimmed">
                       Upload 1-10 images. These will be used as reference for panel generation.
                     </Text>
@@ -896,20 +907,17 @@ function ReferenceUpload() {
                                   'ref_create',
                                   uploadImageToCF
                                 );
-                                const previewUrl =
-                                  getEdgeUrl(cfId, { width: 200 }) ?? img.url;
+                                const previewUrl = getEdgeUrl(cfId, { width: 200 }) ?? img.url;
                                 // Create a synthetic File-like blob for state consistency
-                                const blob = await fetch(previewUrl).then((r) =>
-                                  r.blob()
-                                );
+                                const blob = await fetch(previewUrl).then((r) => r.blob());
                                 const file = new File([blob], 'generator-image.jpg', {
                                   type: 'image/jpeg',
                                 });
                                 setImages((prev) =>
-                                  [
-                                    ...prev,
-                                    { file, preview: previewUrl, width, height },
-                                  ].slice(0, 10)
+                                  [...prev, { file, preview: previewUrl, width, height }].slice(
+                                    0,
+                                    10
+                                  )
                                 );
                               } catch (err) {
                                 console.error('Failed to pick generator image:', err);
@@ -958,7 +966,9 @@ function ReferenceUpload() {
 
               <Card withBorder>
                 <Stack gap="md">
-                  <Text size="sm" fw={500}>Tips for Good References</Text>
+                  <Text size="sm" fw={500}>
+                    Tips for Good References
+                  </Text>
                   <ul className="text-sm text-gray-400 list-disc ml-4 space-y-1">
                     <li>Clear, front-facing view of the subject</li>
                     <li>Same subject in all images</li>

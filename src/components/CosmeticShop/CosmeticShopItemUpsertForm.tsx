@@ -576,15 +576,7 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
             description="This description will be shown in the shop"
             label="Content"
             editorSize="xl"
-            includeControls={[
-              'heading',
-              'formatting',
-              'list',
-              'link',
-              'media',
-              'colors',
-              'blurb',
-            ]}
+            includeControls={['heading', 'formatting', 'list', 'link', 'media', 'colors', 'blurb']}
             withAsterisk
             stickyToolbar
           />
