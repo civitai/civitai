@@ -8156,6 +8156,22 @@ export async function resolveIngestionError({
         reason,
         error: summarizeProbeError(error),
       }).catch(() => undefined),
+    /**
+     * 🔴 The short-circuit needs a counter too, and for a sharper reason than the other two.
+     * `isProbeableMediaKey` is a deliberate UNDER-approximation — it matches only the bare-uuid
+     * shape our upload endpoints mint, and several write paths accept a caller-supplied string —
+     * so it is KNOWN to decline real keys. Without this line that under-approximation is
+     * unmeasurable: a run in which the predicate declines every row emits nothing at all and is
+     * byte-identical to a run where the guard did its job. Silent fail-open is how a guard lies for
+     * months, and this is the branch on which it would lie hardest.
+     */
+    onSkipped: () =>
+      logToAxiom({
+        type: 'warning',
+        name: 'resolveIngestionError:media-probe-skipped',
+        message: 'Image.url is not a probeable media key; no existence check ran',
+        imageId: id,
+      }).catch(() => undefined),
   });
 
   const metadata = (image.metadata as ImageMetadata) ?? {};

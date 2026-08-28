@@ -23,6 +23,7 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { browsingLevels, browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import type { EntityModerationStatus } from '~/shared/utils/prisma/enums';
+import { articleImageActions } from './articleImageActions';
 
 export type TextModerationIssue = {
   // Terminal-state reason the text pipeline produced an article-blocking result.
@@ -261,41 +262,51 @@ export function ArticleProblematicImages({
               </Text>
             </Group>
             <Stack gap="sm">
-              {blockedImages.map((image) => (
-                <Paper key={image.id} p="xs" withBorder className="border-l-2 border-l-red-6">
-                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
-                    <div className="flex min-w-0 flex-1 items-start gap-3">
-                      <div className="relative size-16 shrink-0 overflow-hidden rounded border border-red-6">
-                        <EdgeMedia
-                          src={image.url}
-                          width={64}
-                          className="size-full object-cover"
-                          alt="Blocked image (removed for policy violation)"
-                        />
-                      </div>
-                      <Stack gap={4} className="min-w-0 flex-1">
-                        <Text size="xs" fw={500} c="red.7">
-                          Blocked: {image.blockedFor || 'Policy violation'}
-                        </Text>
-                        {canOverride && (
-                          <Text size="xs" c="dimmed">
-                            ID: {image.id}
+              {blockedImages.map((image) => {
+                const remedy = articleImageActions(image.url);
+                return (
+                  <Paper key={image.id} p="xs" withBorder className="border-l-2 border-l-red-6">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+                      <div className="flex min-w-0 flex-1 items-start gap-3">
+                        <div className="relative size-16 shrink-0 overflow-hidden rounded border border-red-6">
+                          <EdgeMedia
+                            src={image.url}
+                            width={64}
+                            className="size-full object-cover"
+                            alt="Blocked image (removed for policy violation)"
+                          />
+                        </div>
+                        <Stack gap={4} className="min-w-0 flex-1">
+                          <Text size="xs" fw={500} c="red.7">
+                            Blocked: {image.blockedFor || 'Policy violation'}
                           </Text>
-                        )}
-                      </Stack>
-                    </div>
-                    {canOverride && (
-                      <div className="flex shrink-0 flex-wrap gap-2 sm:justify-end">
-                        <ImageOverrideControl
-                          articleId={articleId}
-                          imageId={image.id}
-                          locked={image.nsfwLevelLocked}
-                        />
+                          {canOverride && (
+                            <Text size="xs" c="dimmed">
+                              ID: {image.id}
+                            </Text>
+                          )}
+                          {/* The server refuses to publish this url whatever it is rated, so the note
+                            replaces the control rather than sitting beside it. */}
+                          {remedy.blockingNote && (
+                            <Text size="xs" c="dimmed">
+                              {remedy.blockingNote}
+                            </Text>
+                          )}
+                        </Stack>
                       </div>
-                    )}
-                  </div>
-                </Paper>
-              ))}
+                      {canOverride && remedy.offerOverride && (
+                        <div className="flex shrink-0 flex-wrap gap-2 sm:justify-end">
+                          <ImageOverrideControl
+                            articleId={articleId}
+                            imageId={image.id}
+                            locked={image.nsfwLevelLocked}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </Paper>
+                );
+              })}
             </Stack>
           </Stack>
         )}
@@ -310,46 +321,53 @@ export function ArticleProblematicImages({
               </Text>
             </Group>
             <Stack gap="sm">
-              {errorImages.map((image) => (
-                <Paper key={image.id} p="xs" withBorder className="border-l-2 border-l-yellow-6">
-                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
-                    <div className="flex min-w-0 flex-1 items-start gap-3">
-                      <div className="relative size-16 shrink-0 overflow-hidden rounded border border-yellow-6 bg-gray-1 dark:bg-gray-8">
-                        <EdgeMedia
-                          src={image.url}
-                          width={64}
-                          className="size-full object-cover"
-                          alt="Error image (may be broken)"
-                        />
-                      </div>
-                      <Stack gap={4} className="min-w-0 flex-1">
-                        <Text size="xs" fw={500} c="yellow.7">
-                          {errorImageCause(image)}
-                        </Text>
-                        {canOverride && (
-                          <Text size="xs" c="dimmed">
-                            ID: {image.id}
-                          </Text>
-                        )}
-                      </Stack>
-                    </div>
-                    {(canRetry || canOverride) && (
-                      <div className="flex shrink-0 flex-wrap gap-2 sm:justify-end">
-                        {canRetry && !image.nsfwLevelLocked && (
-                          <ImageRetryButton articleId={articleId} imageId={image.id} />
-                        )}
-                        {canOverride && (
-                          <ImageOverrideControl
-                            articleId={articleId}
-                            imageId={image.id}
-                            locked={image.nsfwLevelLocked}
+              {errorImages.map((image) => {
+                const remedy = articleImageActions(image.url);
+                return (
+                  <Paper key={image.id} p="xs" withBorder className="border-l-2 border-l-yellow-6">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+                      <div className="flex min-w-0 flex-1 items-start gap-3">
+                        <div className="relative size-16 shrink-0 overflow-hidden rounded border border-yellow-6 bg-gray-1 dark:bg-gray-8">
+                          <EdgeMedia
+                            src={image.url}
+                            width={64}
+                            className="size-full object-cover"
+                            alt="Error image (may be broken)"
                           />
-                        )}
+                        </div>
+                        <Stack gap={4} className="min-w-0 flex-1">
+                          <Text size="xs" fw={500} c="yellow.7">
+                            {remedy.blockingNote ?? errorImageCause(image)}
+                          </Text>
+                          {canOverride && (
+                            <Text size="xs" c="dimmed">
+                              ID: {image.id}
+                            </Text>
+                          )}
+                        </Stack>
                       </div>
-                    )}
-                  </div>
-                </Paper>
-              ))}
+                      {/* Both controls are dead ends for an unrenderable url: Override calls the
+                        mutation that refuses it, and Retry re-fetches a handle nothing outside the
+                        originating document can read. The note above names the remedy instead. */}
+                      {((canRetry && remedy.offerRetry) ||
+                        (canOverride && remedy.offerOverride)) && (
+                        <div className="flex shrink-0 flex-wrap gap-2 sm:justify-end">
+                          {canRetry && remedy.offerRetry && !image.nsfwLevelLocked && (
+                            <ImageRetryButton articleId={articleId} imageId={image.id} />
+                          )}
+                          {canOverride && remedy.offerOverride && (
+                            <ImageOverrideControl
+                              articleId={articleId}
+                              imageId={image.id}
+                              locked={image.nsfwLevelLocked}
+                            />
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </Paper>
+                );
+              })}
             </Stack>
           </Stack>
         )}

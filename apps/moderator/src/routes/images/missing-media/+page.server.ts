@@ -11,10 +11,15 @@ import { recordModActivity } from '$lib/server/mod-activity';
 const LIMIT_OPTIONS = [10, 25, 50, 100];
 
 /**
- * Images whose scan failed permanently because the media itself could not be fetched or decoded.
+ * Images that can never be published: the media itself could not be fetched or decoded (a permanent
+ * scan failure), or the url is a browser-session `blob:` handle that can never render for anyone.
  * They are carved out of `/images/ingestion-errors` deliberately: rating one there set
  * `ingestion='Scanned'` and published a permanent 404. There is no rating affordance here, because
  * these can never be scanned — the only useful action is removing the row.
+ *
+ * 🔴 This page is the REACHABLE ACTION behind both refusals `assertMediaPresentForPublish` throws.
+ * The rating queue now 400s on these rows, so if `missingMediaWhere` ever stopped selecting one of
+ * them the moderator would have no action left at all. That is why the two predicates are one const.
  */
 export const load: PageServerLoad = async ({ url }) => {
   const limitParam = Number(url.searchParams.get('limit'));

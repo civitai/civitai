@@ -55,12 +55,30 @@ const IMAGE_KEY = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
 
 const resolve = () => resolveIngestionError({ id: 4242, nsfwLevel: 1, userId: 7 });
 
+/**
+ * Every mock this FILE owns. Reset as a set rather than one at a time, so adding a collaborator
+ * cannot silently opt it out of the reset — which is the shape of the defect below.
+ */
+const ownMocks = [headObject, getB2ImageS3Client, assertSpy];
+
 beforeEach(() => {
+  /**
+   * 🔴 `clearAllMocks` clears CALLS, not IMPLEMENTATIONS — so a `mockResolvedValue` from an earlier
+   * case leaks into every later one, and a case that forgets to arm the store then passes for the
+   * wrong reason. The previous version cleared and re-armed only `getB2ImageS3Client` by hand,
+   * leaving `headObject`'s implementation leaking. Latent today, because no case currently depends
+   * on it — and latent is exactly how this class ships.
+   *
+   * 🔴 The spoke's copy of this suite says `vi.resetAllMocks()` and that is correct THERE, where
+   * every mock in the file is the file's own. It is wrong here: this suite runs under the global
+   * `setup.ts`, which registers canonical hybrid mocks (`dbMock`, `loggingMock`) whose DEFAULT
+   * implementations are installed once per file. `resetAllMocks` strips those too, so
+   * `logToAxiom(...)` returns `undefined` and the production `.catch(() => undefined)` on it throws
+   * `Cannot read properties of undefined` — measured, 17 of 30 cases here. So: clear globally
+   * (call history, which is what the assertions read), and RESET this file's own mocks.
+   */
   vi.clearAllMocks();
-  // 🔴 `clearAllMocks` clears CALLS, not IMPLEMENTATIONS. Without this line the throwing client
-  // installed by the "cannot even be built" case below leaks into every later test in the file, so
-  // the probe fails open and the bucket is never consulted — which silently made the non-key cases
-  // at the bottom pass for the wrong reason (they assert the bucket is NOT consulted).
+  for (const mock of ownMocks) mock.mockReset();
   getB2ImageS3Client.mockImplementation(() => ({} as never));
   // postId null keeps the post-level recompute out of the way; it is not what these cases pin.
   dbMock.dbRead.image.findUnique.mockResolvedValue({
@@ -293,6 +311,66 @@ describe('the guard reports what it did, in both directions', () => {
     };
     expect(payload.error.length).toBeLessThan(300);
     expect(payload.error.endsWith('…[truncated]')).toBe(true);
+  });
+
+  it('COUNTS the short-circuit at this call site, rather than passing silently', async () => {
+    /**
+     * 🔴 The shared module declares `onSkipped` and its own docstring says "silent fail-open is how
+     * a guard lies for months, so the caller is expected to log here" — and neither production call
+     * site passed one, so the branch had coverage in the module's suite and no caller anywhere.
+     *
+     * It matters most on THIS branch. `isProbeableMediaKey` is an acknowledged UNDER-approximation
+     * (it matches only the bare-uuid shape our upload endpoints mint, while several write paths
+     * accept a caller-supplied string), so it is KNOWN to decline real keys. Without this line, a
+     * deployment in which it declines EVERY row emits nothing at all and is byte-identical to one
+     * where the guard did its job.
+     *
+     * Pinned at the CALL SITE, not in the module: the module's own suite already covered the hook,
+     * and the defect was precisely that coverage and use had come apart.
+     */
+    dbMock.dbRead.image.findUnique.mockResolvedValue({
+      ingestion: 'Error',
+      postId: null,
+      userId: 99,
+      metadata: {},
+      url: 'https://cdn.discordapp.com/avatars/123/abc.png',
+    } as never);
+    headObject.mockResolvedValue({ status: 'absent' });
+
+    await resolve();
+
+    const events = eventsNamed('resolveIngestionError:media-probe-skipped');
+    expect(events).toHaveLength(1);
+    expect(events[0][0]).toMatchObject({ type: 'warning', imageId: 4242 });
+    // Its own event name, distinct from the two above. Folding it into `media-probe-unknown` is
+    // exactly the indistinguishability the `not-applicable` verdict was introduced to remove.
+    expect(eventsNamed('resolveIngestionError:media-probe-unknown')).toHaveLength(0);
+  });
+
+  it('does NOT count a probe that actually ran as a skip', async () => {
+    // The discriminating half: an `onSkipped` wired to fire unconditionally would make the count
+    // include every ordinary publish and answer nothing.
+    headObject.mockResolvedValue({ status: 'present', size: 1 });
+    await resolve();
+    expect(headObject).toHaveBeenCalledTimes(1);
+    expect(eventsNamed('resolveIngestionError:media-probe-skipped')).toHaveLength(0);
+  });
+
+  it('does NOT count a REFUSAL as a skip', async () => {
+    // Nor the other refusing verdict: a `blob:` url short-circuits the probe too, but it refuses,
+    // and counting it here would inflate the fail-open tally with fail-CLOSED events.
+    dbMock.dbRead.image.findUnique.mockResolvedValue({
+      ingestion: 'Error',
+      postId: null,
+      userId: 99,
+      metadata: {},
+      url: 'blob:https://civitai.com/9f8e-1234',
+    } as never);
+
+    await expect(resolve()).rejects.toThrow();
+
+    expect(eventsNamed('resolveIngestionError:media-probe-skipped')).toHaveLength(0);
+    expect(eventsNamed('resolveIngestionError:media-absent-refused')).toHaveLength(1);
   });
 
   it('does NOT log an inconclusive probe for a url that was never a key', async () => {

@@ -207,6 +207,54 @@ describe('spoke resolveIngestionError — a non-key Image.url is never a missing
     expect(updates).toHaveLength(1);
   });
 
+  it('COUNTS the short-circuit at this call site, rather than passing silently', async () => {
+    /**
+     * 🔴 The shared module declares `onSkipped` and its own docstring says "silent fail-open is how
+     * a guard lies for months, so the caller is expected to log here" — and neither production call
+     * site passed one. That is worse than the hook not existing, because the module reads as though
+     * the branch is observable.
+     *
+     * It matters most on THIS branch. `isProbeableMediaKey` is an acknowledged UNDER-approximation
+     * (it matches only the bare-uuid shape our upload endpoints mint, while several write paths
+     * accept a caller-supplied string), so it is KNOWN to decline real keys. Without a line here, a
+     * deployment in which it declines EVERY row emits nothing at all and is byte-identical to one
+     * where the guard did its job — there is no counter anywhere that could show it.
+     *
+     * Pinned at the CALL SITE, not in the module: the module's own suite already covered the hook,
+     * and the defect was precisely that coverage and use had come apart.
+     */
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      imageRow = { postId: null, metadata: {}, url: 'https://cdn.discordapp.com/avatars/1/a.png' };
+      headObject.mockResolvedValue({ exists: false });
+
+      await resolve();
+
+      expect(updates).toHaveLength(1);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0][0]).toContain('not probeable');
+      // The image id, so the count is attributable rather than an anonymous tally.
+      expect(warn.mock.calls[0]).toContain(4242);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('does NOT count a probe that actually ran as a skip', async () => {
+    // The discriminating half: if `onSkipped` were wired to fire unconditionally, or `onUnknown`
+    // and `onSkipped` were folded back together, the number this channel exists to produce would
+    // include every ordinary publish and answer nothing.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      headObject.mockResolvedValue({ exists: true });
+      await resolve();
+      expect(headObject).toHaveBeenCalledTimes(1);
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it('REFUSES a legacy blob: handle, without consulting the store', async () => {
     /**
      * 🔴 This case used to assert the opposite, on the stated grounds that a `blob:` row "renders

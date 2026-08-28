@@ -79,7 +79,7 @@ function whereClause(sql: string) {
 }
 
 describe('ingestion-error queue predicates', () => {
-  it('splits the window on the stored failure class, not on the scanner reason text', async () => {
+  it('splits the window on publishability, not on the scanner reason text', async () => {
     const errors = await run(() => countIngestionErrorImages());
     const missing = await run(() => countMissingMediaImages());
 
@@ -89,18 +89,38 @@ describe('ingestion-error queue predicates', () => {
       'SELECT count(*) AS count FROM "Image" i WHERE i."createdAt" > now() - INTERVAL \'2 days\' ' +
         'AND i."createdAt" < now() - INTERVAL \'1 hour\' ' +
         'AND i.ingestion = \'Error\'::"ImageIngestionStatus" AND i."nsfwLevel" = 0 ' +
-        "AND NOT ( i.\"scanJobs\"->'error'->>'failureClass' IS NOT DISTINCT FROM $1 )"
+        "AND NOT ( i.\"scanJobs\"->'error'->>'failureClass' IS NOT DISTINCT FROM $1 " +
+        "OR COALESCE(i.url, '') LIKE $2 )"
     );
     expect(missing.sql).toBe(
       'SELECT count(*) AS count FROM "Image" i WHERE i."createdAt" > now() - INTERVAL \'2 days\' ' +
         'AND i."createdAt" < now() - INTERVAL \'1 hour\' ' +
         'AND i.ingestion = \'Error\'::"ImageIngestionStatus" AND i."nsfwLevel" = 0 ' +
-        "AND i.\"scanJobs\"->'error'->>'failureClass' IS NOT DISTINCT FROM $1"
+        "AND ( i.\"scanJobs\"->'error'->>'failureClass' IS NOT DISTINCT FROM $1 " +
+        "OR COALESCE(i.url, '') LIKE $2 )"
     );
 
-    // The class is a BOUND PARAMETER carrying the exact stored value.
-    expect(errors.parameters).toEqual(['permanent']);
-    expect(missing.parameters).toEqual(['permanent']);
+    // Both halves are BOUND PARAMETERS carrying the exact stored values, and the second is built
+    // from `@civitai/shared`'s `UNRENDERABLE_MEDIA_URL_PREFIX` — the SAME constant the write-side
+    // refusal is built from — so the queue cannot select a different set from the one the guard
+    // refuses. Divergence there has no symptom on this page and a severe one for the moderator: a
+    // row refused on the rating queue and missing from the delete queue has no action left at all.
+    expect(errors.parameters).toEqual(['permanent', 'blob:%']);
+    expect(missing.parameters).toEqual(['permanent', 'blob:%']);
+  });
+
+  it('is NULL-safe on the url half too, so the split stays a partition', async () => {
+    /**
+     * 🔴 The `IS NOT DISTINCT FROM` trap one operator over. `NULL LIKE 'blob:%'` is NULL, so on a
+     * row with a NULL url and a non-permanent class the disjunction is NULL — which a WHERE treats
+     * as false on BOTH sides, dropping the row out of the review queue and the missing-media queue
+     * simultaneously. That is a hole in something the suite above asserts is an exact partition, and
+     * it is invisible in the emitted SQL unless you look for the COALESCE.
+     */
+    const errors = await run(() => countIngestionErrorImages());
+    expect(errors.sql).toContain("COALESCE(i.url, '') LIKE");
+    // The bare form, which is what a "simplification" would produce.
+    expect(errors.sql).not.toMatch(/\bi\.url LIKE/);
   });
 
   it('never keys the split off the scanner reason TEXT', async () => {
@@ -112,8 +132,18 @@ describe('ingestion-error queue predicates', () => {
     const errors = await run(() => countIngestionErrorImages());
     const missing = await run(() => countMissingMediaImages());
     for (const s of [errors.sql, missing.sql]) {
-      expect(s).not.toMatch(/like/i);
       expect(s).not.toMatch(/reason/i);
+      // 🔴 There IS a `LIKE` in these statements now — the url-shape disjunct — so a blanket
+      // `not.toMatch(/like/i)` is no longer available and would have to be deleted. Deleting it is
+      // the wrong move: what it was protecting is that no pattern match is ever aimed at the
+      // scanner's PROSE. So the assertion narrows rather than disappears — every `LIKE` in the
+      // statement must be the url one, against a bound parameter, and `ILIKE` (the spelling a
+      // case-insensitive prose match reaches for) must not appear at all.
+      expect(s).not.toMatch(/ILIKE/i);
+      // Exactly one, and it is the url one against a bound parameter. A second `LIKE` appearing —
+      // which is what a prose match would be — fails on the count before anything else.
+      expect([...s.matchAll(/\bLIKE\b/gi)]).toHaveLength(1);
+      expect(s).toContain("COALESCE(i.url, '') LIKE $2");
     }
   });
 
@@ -134,13 +164,19 @@ describe('ingestion-error queue predicates', () => {
 
     // Structural, not textual: the missing-media predicate is the error predicate with the negation
     // removed. Widening the window, changing the ingestion state, or moving the nsfwLevel bound on
-    // one side only breaks this, whichever side is edited.
-    const base = missing.slice(0, missing.indexOf('AND i."scanJobs"'));
+    // one side only breaks this, whichever side is edited. Derived from `errors` — where the split
+    // predicate is unambiguously delimited by ` AND NOT ` — so adding a disjunct to the split cannot
+    // silently move where this test thinks the shared base ends.
+    const marker = ' AND NOT ';
+    const at = errors.indexOf(marker);
+    expect(at, 'the review queue negates the split predicate').toBeGreaterThan(-1);
+    const base = errors.slice(0, at);
+    const splitPredicate = errors.slice(at + marker.length);
     expect(base.length).toBeGreaterThan(0);
-    expect(errors.startsWith(base)).toBe(true);
-    // `missing` adds `AND <class predicate>`; `errors` must add exactly its negation.
-    const classPredicate = missing.slice(base.length).replace(/^AND /, '');
-    expect(errors.slice(base.length)).toBe(`AND NOT ( ${classPredicate} )`);
+    expect(splitPredicate.length).toBeGreaterThan(0);
+    // Exhaustive and exclusive in one line: `missing` must be the same base plus exactly the
+    // predicate `errors` negates — no extra clause on either side, no clause missing from either.
+    expect(missing).toBe(`${base} AND ${splitPredicate}`);
   });
 
   it('gives the ingestion-error badge the same predicate as its queue', async () => {
@@ -163,8 +199,8 @@ describe('ingestion-error queue predicates', () => {
 
   it('pages the missing-media view by cursor, like the queue it was split from', async () => {
     const { sql, parameters } = await run(() => getMissingMediaImages({ limit: 25, cursor: 999 }));
-    expect(sql).toContain('AND (i.id < $2)');
-    expect(parameters).toEqual(['permanent', 999, 26]);
+    expect(sql).toContain('AND (i.id < $3)');
+    expect(parameters).toEqual(['permanent', 'blob:%', 999, 26]);
   });
 });
 
@@ -176,24 +212,45 @@ describe("the delete gate's own predicate", () => {
    * prevent — with the whole suite still green, because its only test mocked the function wholesale
    * and therefore pinned the call site rather than the predicate.
    */
-  it('scopes the delete to a permanently-failed, unpublished ingestion error', async () => {
+  it('scopes the delete to an unpublishable, unpublished ingestion error', async () => {
     const { sql, parameters } = await run(() => isMissingMediaImage(4242));
 
     expect(sql).toBe(
       'SELECT i.id FROM "Image" i WHERE i.ingestion = \'Error\'::"ImageIngestionStatus" ' +
         'AND i."nsfwLevel" = 0 ' +
-        "AND i.\"scanJobs\"->'error'->>'failureClass' IS NOT DISTINCT FROM $1 " +
-        'AND i.id = $2 LIMIT 1'
+        "AND ( i.\"scanJobs\"->'error'->>'failureClass' IS NOT DISTINCT FROM $1 " +
+        "OR COALESCE(i.url, '') LIKE $2 ) " +
+        'AND i.id = $3 LIMIT 1'
     );
-    expect(parameters).toEqual(['permanent', 4242]);
+    expect(parameters).toEqual(['permanent', 'blob:%', 4242]);
   });
 
   it('is always bound to the requested id — never an unscoped match', async () => {
     // The specific mutant: dropping the state predicates, or the id, makes this a delete-anything
     // endpoint. Asserted separately from the pin above so it stays reachable if the pin is edited.
     const { sql } = await run(() => isMissingMediaImage(4242));
-    expect(sql).toContain('AND i.id = $2');
+    expect(sql).toContain('AND i.id = $3');
     expect(sql).not.toMatch(/WHERE\s+TRUE/i);
+  });
+
+  it('accepts a row refused for its URL SHAPE, not only one with a permanent scan failure', async () => {
+    /**
+     * 🔴 THE FINDING THIS CLOSES. The publish guard refuses two verdicts — `absent` and
+     * `unrenderable` — and this gate used to admit only the first. A `blob:` row whose scan failure
+     * was transient, or unclassified (a NULL `failureClass`, which `ingestionErrorWhere`
+     * deliberately routes to the rateable queue), was therefore refused on the rating queue AND
+     * refused by the only delete this app offers: a refusal with no reachable action, i.e. a
+     * permanently stuck row. The message the guard shows says "Delete it"; this clause is what makes
+     * that sentence true.
+     *
+     * Asserted on the DISJUNCTION rather than by re-pinning the statement, so it stays reachable
+     * when the whole-statement pin above is edited.
+     */
+    const { sql } = await run(() => isMissingMediaImage(4242));
+    expect(sql).toContain("COALESCE(i.url, '') LIKE $2");
+    // ...and as a disjunct, never an extra requirement — an `AND` here would refuse every row that
+    // is missing from storage but has an ordinary key, which is the bulk of this queue.
+    expect(sql).toMatch(/IS NOT DISTINCT FROM \$1 OR COALESCE/);
   });
 
   it('deliberately omits the 2-day display window the queue applies', async () => {
@@ -213,11 +270,18 @@ describe("the delete gate's own predicate", () => {
 
   it('shares EVERY state predicate with the queue, so the two cannot disagree', async () => {
     /**
-     * 🔴 Asserted over the whole clause SET, not one clause of three. The earlier version named the
-     * relationship in its title and checked only `failureClass`: changing the queue's
-     * `nsfwLevel = 0` bound left the gate behind and the test stayed green — the gate would then
-     * refuse images the queue renders, and those become permanently uncleanable. That is the same
-     * bug the display-window split fixed, on the state axis instead of the time axis.
+     * 🔴 Asserted over the whole clause SET, not one clause of three, and in BOTH directions.
+     *
+     * The first version named the relationship in its title and checked only `failureClass`:
+     * changing the queue's `nsfwLevel = 0` bound left the gate behind and the test stayed green.
+     * The second widened that to every gate clause — but only as `gate ⊆ queue`, which is blind in
+     * the direction that actually widens a permanent cascading delete: the QUEUE gaining a clause
+     * the gate lacks. (Measured: adding a clause to `missingMediaWhere` alone was killed by the
+     * queue's own whole-statement pins, not by this test — so the title was not true of the code.)
+     *
+     * Equality of the two sets is what the title claims, so equality is what is asserted. The two
+     * differences that are DELIBERATE are subtracted by name: the gate's id binding, and the queue's
+     * display window (see the case above for why the gate must not carry it).
      */
     const gate = (await run(() => isMissingMediaImage(4242))).sql;
     const queue = (await run(() => countMissingMediaImages())).sql;
@@ -225,6 +289,7 @@ describe("the delete gate's own predicate", () => {
     const clauses = (statement: string) =>
       statement
         .slice(statement.indexOf(' WHERE ') + ' WHERE '.length)
+        .replace(/ LIMIT \d+$/, '')
         .split(/\bAND\b/)
         .map((c) =>
           c
@@ -234,10 +299,18 @@ describe("the delete gate's own predicate", () => {
         )
         .filter(Boolean);
 
-    // Everything the gate asserts, minus its own id binding, must appear in the queue verbatim.
     const gateState = clauses(gate).filter((c) => !c.startsWith('i.id ='));
+    const queueState = clauses(queue).filter((c) => !c.startsWith('i."createdAt"'));
+
+    // Positive control on the splitter: if it stopped decomposing, both sides would be one opaque
+    // string and the equality below would pass vacuously.
     expect(gateState.length).toBeGreaterThanOrEqual(3);
-    for (const clause of gateState) expect(clauses(queue), clause).toContain(clause);
+    expect(queueState.length).toBeGreaterThanOrEqual(3);
+    // ...and the window really was the only thing subtracted from the queue side.
+    expect(clauses(queue).length - queueState.length).toBe(2);
+
+    // 🔴 Bidirectional. `toEqual` on sorted arrays fails when either side gains OR loses a clause.
+    expect([...gateState].sort()).toEqual([...queueState].sort());
   });
 });
 

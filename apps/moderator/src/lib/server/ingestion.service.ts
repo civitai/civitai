@@ -5,6 +5,7 @@ import {
   IMAGE_SCAN_FAILURE_CLASS_PERMANENT,
   MediaPresence,
   summarizeProbeError,
+  UNRENDERABLE_MEDIA_URL_PREFIX,
 } from '@civitai/shared';
 import { dbRead, dbWrite } from './db';
 import { bustCachedObject } from './cache';
@@ -62,8 +63,8 @@ export async function countImagesPendingIngestion(): Promise<number> {
 
 /**
  * The window + state every ingestion-error queue on this page shares. Split out so the two views
- * below can differ in exactly ONE predicate — whether the scan failed permanently — and cannot
- * drift in the window, the ingestion state, or the level bound.
+ * below can differ in exactly ONE predicate — whether the image can be published at all — and
+ * cannot drift in the window, the ingestion state, or the level bound.
  */
 const ingestionErrorState = sql`
   i.ingestion = 'Error'::"ImageIngestionStatus"
@@ -99,29 +100,66 @@ const permanentScanFailure = sql`
 `;
 
 /**
+ * The url-shape half of "cannot be published", and the reason this const exists at all.
+ *
+ * 🔴 THE PATTERN IS BUILT FROM THE SHARED PREFIX, NEVER SPELLED HERE. `isUnrenderableMediaUrl` in
+ * `@civitai/shared/missing-media` is what REFUSES these rows at write time; this is what routes them
+ * to the one view that offers a delete. Spelling `'blob:%'` locally would let the two drift, and the
+ * drift is invisible in the direction that matters: a row the write guard refuses but this query
+ * misses is refused by the moderator's only remaining action too, i.e. permanently stuck. The shared
+ * predicate is case-SENSITIVE, and so is SQL `LIKE`, so the two agree by construction.
+ *
+ * `COALESCE(i.url, '')` rather than a bare `LIKE`, and it is load-bearing: `NULL LIKE 'blob:%'` is
+ * NULL, so on a NULL url `permanent OR NULL` is NULL when the class is not permanent — which a
+ * WHERE treats as false on BOTH sides of the split, dropping the row out of the review queue and out
+ * of the missing-media queue at the same time. That is a gap in what is supposed to be a partition,
+ * and it is exactly the `IS NOT DISTINCT FROM` trap one predicate up, in the other operator.
+ */
+const unrenderableMediaUrl = sql`
+  COALESCE(i.url, '') LIKE ${`${UNRENDERABLE_MEDIA_URL_PREFIX}%`}
+`;
+
+/**
+ * "This image cannot be published, whatever a moderator rates it."
+ *
+ * 🔴 The two disjuncts are the two verdicts `assertMediaPresentForPublish` REFUSES on, and that is
+ * the property to preserve when editing either: this predicate decides which rows reach the queue
+ * that can delete them, so a refusal the write guard makes and this query does not see is a row with
+ * no reachable action at all — refused on the rating queue, absent from the delete queue. That was
+ * the state `blob:` rows were left in when the refusal was added without this disjunct.
+ *
+ *   - `permanentScanFailure` is the trigger for "the store probably does not have it"; the write
+ *     guard's `absent` verdict is the actual verdict, from an existence check.
+ *   - `unrenderableMediaUrl` needs no probe: the url can never render for anyone.
+ */
+const unpublishableMedia = sql`
+  ( ${permanentScanFailure} OR ${unrenderableMediaUrl} )
+`;
+
+/**
  * The human review queue: ingestion errors a moderator can still usefully rate — i.e. everything
- * whose scan failure was NOT permanent (timeouts, container churn, unclassified failures). Images
- * whose media can never be fetched are routed to the missing-media view instead, because rating one
- * publishes a permanent 404.
+ * that is not unpublishable (timeouts, container churn, unclassified failures). Images whose media
+ * can never be fetched, or whose url can never render, are routed to the missing-media view instead,
+ * because rating one publishes a permanent 404.
  *
  * Shared by the queue and its badge: a divergence here is a count that never reaches zero.
  */
 const ingestionErrorWhere = sql`
   ${ingestionErrorBaseWhere}
-  AND NOT (${permanentScanFailure})
+  AND NOT ${unpublishableMedia}
 `;
 
 /**
- * The complement, over the same window: ingestion errors whose media the scanner could never fetch
- * or decode. Same shared-const discipline — `getMissingMediaImages` and `countMissingMediaImages`
- * both read this one value, so the page and its badge cannot disagree.
+ * The complement, over the same window: ingestion errors that can never be published. Same
+ * shared-const discipline — `getMissingMediaImages` and `countMissingMediaImages` both read this one
+ * value, so the page and its badge cannot disagree.
  *
  * Together with `ingestionErrorWhere` this is an exact partition of `ingestionErrorBaseWhere`: no
  * image in the window is in both views, and none is in neither.
  */
 const missingMediaWhere = sql`
   ${ingestionErrorBaseWhere}
-  AND ${permanentScanFailure}
+  AND ${unpublishableMedia}
 `;
 
 /**
@@ -134,20 +172,22 @@ const missingMediaWhere = sql`
  * was then permanently uncleanable: it had left the only view offering a delete while still sitting
  * at `ingestion = 'Error'`.
  *
- * What actually makes a delete safe is the image's STATE — an unpublished ingestion error whose scan
- * failed permanently — and that does not expire. So the gate asserts the state, composed from the
- * SAME `ingestionErrorState` the queue uses so the two cannot drift on it, and the queue applies the
- * window on top.
+ * What actually makes a delete safe is the image's STATE — an unpublished ingestion error that
+ * cannot be published — and that does not expire. So the gate asserts the state, composed from the
+ * SAME `ingestionErrorState` and `unpublishableMedia` the queue uses so the two cannot drift on
+ * either, and the queue applies the window on top.
  *
  * Note this drops BOTH window bounds, the 1-hour lower one included, so a very new row the page does
- * not yet render is deletable by a hand-crafted POST. Checked, and safe: `permanent` is a terminal
- * class — `IMAGE_SCAN_PERMANENT_RETRY_LIMIT` is 1 and `markImageScanError` has already spent it — so
- * such a row is never re-driven into a different state by the ingest cron, and rows predating the
- * classification carry a NULL `failureClass`, which `IS NOT DISTINCT FROM` excludes.
+ * not yet render is deletable by a hand-crafted POST. Checked, and safe on both disjuncts:
+ * `permanent` is a terminal class — `IMAGE_SCAN_PERMANENT_RETRY_LIMIT` is 1 and `markImageScanError`
+ * has already spent it — so such a row is never re-driven into a different state by the ingest cron,
+ * and rows predating the classification carry a NULL `failureClass`, which `IS NOT DISTINCT FROM`
+ * excludes. A `blob:` url is terminal for a stronger reason still: no rescan, credential, or bucket
+ * state can ever make it fetchable.
  */
 const missingMediaScope = sql`
   ${ingestionErrorState}
-  AND ${permanentScanFailure}
+  AND ${unpublishableMedia}
 `;
 
 export type IngestionErrorImage = {
@@ -196,8 +236,10 @@ export async function countIngestionErrorImages(): Promise<number> {
 }
 
 /**
- * The missing-media view: same window, opposite side of the `failureClass` split. These images are
- * NOT rateable — their file can never be fetched, so the only useful affordance is deleting them.
+ * The missing-media view: same window, opposite side of the publishability split. These images are
+ * NOT rateable — their file can never be fetched, or their url can never render — so the only useful
+ * affordance is deleting them. That affordance is why the split has to be the same predicate the
+ * write guard refuses on: a refusal with no reachable action is a dead end, not a guard.
  */
 export async function getMissingMediaImages({
   limit,
@@ -345,6 +387,13 @@ export async function resolveIngestionError({
     // `presence` separates that from the url-shape refusal, which no bucket state can cause.
     onRefused: (presence) =>
       console.warn('[ingestion] refused publish; media cannot be served', id, presence),
+    /**
+     * 🔴 The short-circuit needs a counter too. `isProbeableMediaKey` is a deliberate
+     * UNDER-approximation — it matches only the bare-uuid shape our upload endpoints mint — so it is
+     * KNOWN to decline real keys. Without this line a run in which it declines EVERY row emits
+     * nothing and is indistinguishable from a run where the guard actually ran.
+     */
+    onSkipped: () => console.warn('[ingestion] media not probeable; no existence check ran', id),
   });
 
   const metadata = {

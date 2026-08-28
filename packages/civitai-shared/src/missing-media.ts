@@ -68,7 +68,7 @@ export const MISSING_MEDIA_PUBLISH_MESSAGE =
  * would send them looking for something that was never there.
  */
 export const UNRENDERABLE_MEDIA_PUBLISH_MESSAGE =
-  'This image points at a browser-session handle (a blob: url) rather than an uploaded file, so it can never load for anyone else and cannot be published. Delete it, or ask the uploader to upload it again.';
+  'This image points at a browser-session handle (a blob: url) rather than an uploaded file, so it can never load for anyone else and cannot be published. Delete it from the Missing Media queue, or remove it from the article that uses it, and ask the uploader to upload the file again.';
 
 /** Thrown when the publish is refused. Never thrown for a verdict that allows. */
 export class MissingMediaError extends Error {
@@ -99,21 +99,50 @@ export const IMAGE_SCAN_FAILURE_CLASS_PERMANENT = 'permanent';
 export { isProbeableMediaKey };
 
 /**
+ * The one url prefix `isUnrenderableMediaUrl` refuses, exported so the SQL that routes these rows to
+ * a queue offering a delete cannot spell it differently from the predicate that refuses them.
+ *
+ * 🔴 It is matched CASE-SENSITIVELY, and that is the whole warrant — see `isUnrenderableMediaUrl`.
+ * It also has to stay free of `%` and `_`, because the spoke interpolates it into a SQL `LIKE`
+ * pattern; `no LIKE metacharacters` is pinned by this module's own test.
+ */
+export const UNRENDERABLE_MEDIA_URL_PREFIX = 'blob:';
+
+/**
  * Is this url broken for every viewer regardless of what any store holds?
  *
  * One shape qualifies today: a `blob:` handle. `URL.createObjectURL` mints a url scoped to the
  * document that created it, and a legacy upload bug persisted some into `Image.url` (see
  * `src/utils/type-guards.ts`, which records that the embedded uuid is a browser handle and "can't
- * be salvaged"). Both renderers pass it through VERBATIM rather than rewriting it to the image CDN
- * — `src/client-utils/cf-images-utils.ts` and `apps/moderator/src/lib/media/edge-url.ts` both do
- * `if (!src || src.startsWith('http') || src.startsWith('blob')) return src;` — so publishing one
- * emits `<img src="blob:…">` into someone else's browser, which resolves to nothing. Forever.
+ * be salvaged").
+ *
+ * 🔴 THE WARRANT IS THE RENDERERS' OWN TEST, SO THIS ONE IS SPELLED THE SAME WAY THEY SPELL IT.
+ * `src/client-utils/cf-images-utils.ts` and `apps/moderator/src/lib/media/edge-url.ts` both do
+ * `if (!src || src.startsWith('http') || src.startsWith('blob')) return src;` — a CASE-SENSITIVE,
+ * colon-less prefix test. Everything that clears that test is emitted VERBATIM into someone else's
+ * browser, so `<img src="blob:…">` resolves to nothing. Forever.
+ *
+ * That fixes the shape of this predicate in both directions:
+ *
+ *   - It is case-SENSITIVE. A `/^blob:/i` spelling refused `BLOB:https://…`, which the renderers do
+ *     NOT pass through — they rewrite it into a CDN path. That row is probably broken too, but by a
+ *     different mechanism and by inference, and inference does not license a permanent refusal. It
+ *     is left fail-open, exactly like `data:` below.
+ *   - It keeps the colon, so it is a strict SUBSET of the renderers' passthrough set rather than
+ *     equal to it. `blobfish.png` clears `startsWith('blob')` and really is passed through verbatim
+ *     — but it is a relative path, not a url scheme, it is not a population anyone has measured,
+ *     and refusing it would be enforcing on a shape this guard has no evidence about.
  *
  * 🔴 This is a REFUSAL decided WITHOUT a probe, so it is held to the same bar as `absent` and it is
  * the one case that clears it: the harm is definitional rather than inferred. There is no store
  * state, credential, or bucket name under which a `blob:` row renders, so the false-positive risk
  * that makes every other permanent refusal dangerous does not exist here. The previous rule allowed
  * these on the stated grounds that they "render perfectly well", which was simply wrong.
+ *
+ * 🔴 A refusal must leave a reachable action, or it is a dead end rather than a guard. That is what
+ * `UNRENDERABLE_MEDIA_PUBLISH_MESSAGE` names, and it is only true because the spoke routes these
+ * rows into its delete-only Missing Media queue (`missingMediaWhere` in the moderator app's
+ * `ingestion.service.ts`) and the article surface stops offering an override that can only 400.
  *
  * Deliberately NOT extended to `data:` or `http(s):`. `http(s)` really does render — both renderers
  * pass it through and it is the documented legacy-avatar population. `data:` is a different case
@@ -122,8 +151,17 @@ export { isProbeableMediaKey };
  * not enough to justify a permanent refusal. It stays fail-open until someone measures it.
  */
 export function isUnrenderableMediaUrl(url: unknown): url is string {
-  return typeof url === 'string' && /^blob:/i.test(url);
+  return typeof url === 'string' && url.startsWith(UNRENDERABLE_MEDIA_URL_PREFIX);
 }
+
+/**
+ * The three answers a media STORE can give. See `AssertMediaPresentOptions.probe` for why the probe
+ * is typed on this rather than on the full five-valued `MediaPresence`.
+ */
+export type MediaProbeAnswer =
+  | typeof MediaPresence.Present
+  | typeof MediaPresence.Absent
+  | typeof MediaPresence.Unknown;
 
 export type MediaPublishDecision =
   | {
@@ -200,8 +238,15 @@ export type AssertMediaPresentOptions = {
    * Ask the runtime's own storage client about a key. 🔴 Called ONLY with a value that already
    * passed `isProbeableMediaKey`, so it never has to re-check, and never can re-check differently.
    * May throw — a throw is an `unknown` answer, not a miss.
+   *
+   * 🔴 Its return type is NARROWER than `MediaPresence`, deliberately. The other two members are
+   * decisions this module makes ABOUT the url, before any store is consulted, and a probe that
+   * could return them would defeat both: a store-sourced `not-applicable` skips `onSkipped`, whose
+   * whole job is counting the short-circuit, and a store-sourced `unrenderable` produces a refusal
+   * whose `onRefused` comment asserts no bucket state can cause it. A bucket answers one of three
+   * things — it is there, it is not, or it would not say.
    */
-  probe: (key: string) => Promise<MediaPresence>;
+  probe: (key: string) => Promise<MediaProbeAnswer>;
   /**
    * Called for every `unknown`, with why. Silent fail-open is how a guard lies for months, so the
    * caller is expected to log here. Must not throw.

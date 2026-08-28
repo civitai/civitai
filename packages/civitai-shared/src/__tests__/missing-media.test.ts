@@ -10,6 +10,7 @@ import {
   MissingMediaError,
   summarizeProbeError,
   UNRENDERABLE_MEDIA_PUBLISH_MESSAGE,
+  UNRENDERABLE_MEDIA_URL_PREFIX,
 } from '../missing-media';
 
 /** A url that reaches the probe. Every case that must NOT be short-circuited uses this one. */
@@ -71,6 +72,24 @@ describe('decideMediaPublish', () => {
     // a moderator sees, so the test owns it and a copy change has to come here.
     expect(MISSING_MEDIA_PUBLISH_MESSAGE).toBe(
       'The media file for this image is missing from storage, so it cannot be published — publishing it would put a permanently broken image on the site. Delete it, or ask the uploader to upload it again.'
+    );
+  });
+
+  it('gives the url-shape refusal a message that names a REACHABLE action', () => {
+    /**
+     * 🔴 Same doctrine as its sibling above, and it was missing: replacing this constant with
+     * `'Nope.'` left the whole package green. A guard on words is walkable by rewording, so the
+     * whole normalised string is pinned and a copy change has to come here.
+     *
+     * What the string has to say is not arbitrary. The earlier wording told a moderator to "delete
+     * it" on two surfaces that offered no delete for exactly the rows this refusal creates — the
+     * spoke listed them only on the rating queue, and the article card offered only Override and
+     * Retry. Both exits now exist (the spoke routes these rows into its delete-only Missing Media
+     * queue; the article card withdraws the two dead-end controls and points at the editor), and
+     * this message is where a moderator is told so.
+     */
+    expect(UNRENDERABLE_MEDIA_PUBLISH_MESSAGE).toBe(
+      'This image points at a browser-session handle (a blob: url) rather than an uploaded file, so it can never load for anyone else and cannot be published. Delete it from the Missing Media queue, or remove it from the article that uses it, and ask the uploader to upload the file again.'
     );
   });
 });
@@ -231,6 +250,40 @@ describe('assertMediaPresentForPublish — the url decides whether a probe happe
     expect(onSkipped).toHaveBeenCalledTimes(1);
   });
 
+  it('will not let a STORE answer with a verdict only the url can produce', async () => {
+    /**
+     * 🔴 A TYPE-LEVEL guard, and it is the only kind that can hold this one — there is no runtime
+     * behaviour to assert, because the point is that the call never compiles.
+     *
+     * `probe` is typed `MediaProbeAnswer` (present | absent | unknown), not the full five-valued
+     * `MediaPresence`. Widening it back would let a store return the two verdicts this module
+     * decides ABOUT the url before any store is consulted, and each defeats a hook: a store-sourced
+     * `not-applicable` skips `onSkipped`, whose whole job is counting the short-circuit, and a
+     * store-sourced `unrenderable` produces a refusal that `onRefused`'s own comment says no bucket
+     * state can cause — which is what separates a fail-CLOSED misconfiguration from a url-shape
+     * refusal in the logs.
+     *
+     * This file sits under a workspace package's `src`, which tsconfig INCLUDES — the exclusion for
+     * `__tests__` is scoped to the ROOT `src` tree only — so `pnpm typecheck` reads these lines. If
+     * the type widened, the suppression would be unused and TS2578 fails the run. The assertion IS
+     * the `@ts-expect-error`.
+     */
+    await assertMediaPresentForPublish({
+      url: KEY,
+      // @ts-expect-error a probe must not be able to answer `not-applicable`
+      probe: async () => MediaPresence.NotApplicable,
+    });
+    await expect(
+      assertMediaPresentForPublish({
+        url: KEY,
+        // @ts-expect-error a probe must not be able to answer `unrenderable`
+        probe: async () => MediaPresence.Unrenderable,
+      })
+      // Runtime behaviour is unchanged and deliberately unpinned as a contract: the guard is the
+      // compile error. This only keeps the call from throwing an unhandled rejection.
+    ).rejects.toThrow();
+  });
+
   it('hands the probe the key itself, so the runtime cannot re-derive it', async () => {
     const probe = vi.fn(async () => MediaPresence.Present);
     await assertMediaPresentForPublish({ url: KEY, probe });
@@ -290,14 +343,41 @@ describe('assertMediaPresentForPublish — the url decides whether a probe happe
 });
 
 describe('isUnrenderableMediaUrl', () => {
-  it('matches a blob: handle, case-insensitively', () => {
+  it('matches a blob: handle', () => {
     expect(isUnrenderableMediaUrl('blob:https://civitai.com/abc')).toBe(true);
-    expect(isUnrenderableMediaUrl('BLOB:https://civitai.com/abc')).toBe(true);
   });
 
-  it('is anchored, so a key that merely CONTAINS the word is not swept in', () => {
+  it('is CASE-SENSITIVE, because the renderers whose behaviour licenses the refusal are', () => {
+    /**
+     * 🔴 This case asserted the opposite (`/^blob:/i`), and the assertion was wider than the
+     * evidence. The warrant for refusing without a probe is that both renderers emit the value
+     * VERBATIM — `src.startsWith('blob')`, case-SENSITIVE, in `src/client-utils/cf-images-utils.ts`
+     * and `apps/moderator/src/lib/media/edge-url.ts`. `BLOB:https://…` does not clear that test:
+     * the renderers REWRITE it into a CDN path. That row is probably broken too, but by a different
+     * mechanism and by inference — and inference is not enough for a permanent refusal, which is the
+     * bar this module sets for itself and applies to `data:` for the same reason.
+     */
+    expect(isUnrenderableMediaUrl('BLOB:https://civitai.com/abc')).toBe(false);
+    expect(isUnrenderableMediaUrl('Blob:https://civitai.com/abc')).toBe(false);
+  });
+
+  it('is anchored AND keeps the colon, so it stays a strict subset of the passthrough set', () => {
     expect(isUnrenderableMediaUrl('my-blob:thing')).toBe(false);
+    // `blobfish.png` DOES clear the renderers' `startsWith('blob')` and is passed through verbatim,
+    // so it is genuinely broken as a relative path. It is still not refused: it is not a url scheme,
+    // it is not a population anyone has measured, and the refusal is permanent. Deliberately
+    // narrower than the warrant rather than wider than it.
     expect(isUnrenderableMediaUrl('blobfish.png')).toBe(false);
+  });
+
+  it('exposes the prefix the routing SQL builds its LIKE pattern from', () => {
+    // The spoke interpolates this into `COALESCE(i.url,'') LIKE '<prefix>%'` to route these rows to
+    // the one queue that offers a delete. Two properties have to hold for that to be the same rule:
+    expect(UNRENDERABLE_MEDIA_URL_PREFIX).toBe('blob:');
+    // ...and it must carry no LIKE metacharacter, or the SQL silently matches a different set.
+    expect(UNRENDERABLE_MEDIA_URL_PREFIX).not.toMatch(/[%_\\]/);
+    // The predicate is built FROM the prefix, so a change to one cannot leave the other behind.
+    expect(isUnrenderableMediaUrl(`${UNRENDERABLE_MEDIA_URL_PREFIX}anything`)).toBe(true);
   });
 
   it('does not claim anything else is unrenderable', () => {
