@@ -1049,7 +1049,12 @@ export default function ModelDetailsV2({
                         tooltip="Need help? Start the tour!"
                         iconProps={{ size: 30, stroke: 1.5 }}
                         onClick={() =>
-                          runTour({ key: 'model-page', step: 0, forceRun: true, trigger: 'help' })
+                          runTour({
+                            key: activeTour ?? 'model-page',
+                            step: 0,
+                            forceRun: true,
+                            trigger: 'help',
+                          })
                         }
                       />
                     )}

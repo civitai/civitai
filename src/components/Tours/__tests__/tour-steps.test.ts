@@ -206,6 +206,22 @@ describe('tourScrollBlock', () => {
   });
 });
 
+describe('the model page help button', () => {
+  /**
+   * It hardcoded `'model-page'`, so a user who arrived on `?tour=welcome` and lost
+   * the tour restarted a different one — leaving `welcome` the only key with no way
+   * back, which is exactly the assumption behind persisting a failed tour as completed.
+   */
+  it('restarts the tour the user actually arrived on', () => {
+    const source = readFileSync(
+      path.join(SRC, 'pages', 'models', '[id]', '[[...slug]].tsx'),
+      'utf-8'
+    );
+
+    expect(source).toMatch(/runTour\(\{\s*key:\s*activeTour\s*\?\?\s*'model-page'/);
+  });
+});
+
 describe('the shared generator steps', () => {
   /**
    * The two generator tours were hand-maintained copies; editing one and not the
