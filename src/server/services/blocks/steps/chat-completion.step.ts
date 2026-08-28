@@ -632,7 +632,16 @@ const chatMessageSchema = z.discriminatedUnion('role', [
         .array(
           z
             .object({
-              id: z.string().min(1).max(MAX_TOOL_NAME_CHARS),
+              /**
+               * 🔴 SAME CHARSET AS THE OUTPUT EXTRACTOR PUBLISHES, deliberately.
+               * The file used to hold two disagreeing definitions of a valid id:
+               * `call:with:colons` PARSED here while `extractToolCalls` refused
+               * it on the way out. Reconciled toward the stricter one, and that
+               * cannot reject a legitimate payload: the ONLY id a block can
+               * legitimately replay is one WE published, and we publish only
+               * charset-conforming ids. See `publishableToolCalls`.
+               */
+              id: z.string().min(1).max(MAX_TOOL_NAME_CHARS).regex(TOOL_NAME_PATTERN),
               type: z.literal('function'),
               function: z
                 .object({
@@ -659,8 +668,21 @@ const chatMessageSchema = z.discriminatedUnion('role', [
        * REQUIRED. `ToolMessage.tool_call_id` is required on the orchestrator's
        * own generated type, and a tool result with nothing to correlate it to is
        * a result the model cannot attach to the call it made.
+       *
+       * Charset-bounded for the same reason as the assistant-side `id` above —
+       * this value is correlated against those ids, so accepting a shape they
+       * can never hold would only ever fail the correlation guard later.
+       *
+       * 🔴 THIS REGEX IS DEFENCE-IN-DEPTH AND IS **NOT** INDEPENDENTLY TESTED —
+       * stated because "mutation-verified" would be false of it. Measured:
+       * removing it alone leaves the suite GREEN, because every payload that
+       * could violate it is already rejected by something earlier. A bad
+       * `tool_call_id` either matches a declared assistant `id` (which is itself
+       * charset-bounded, so that regex fires first) or matches none (so the
+       * correlation guard rejects it). Removing BOTH regexes together IS caught.
+       * It is kept as a redundant clause, not because a test proves it fires.
        */
-      tool_call_id: z.string().min(1).max(MAX_TOOL_NAME_CHARS),
+      tool_call_id: z.string().min(1).max(MAX_TOOL_NAME_CHARS).regex(TOOL_NAME_PATTERN),
     })
     .strict(),
 ]);
@@ -736,6 +758,31 @@ const chatCompletionParamsSchema = z
     // AND NOT MERELY A MEMBERSHIP ONE. Collecting every id first and then
     // testing membership would accept a `tool` message that PRECEDES the
     // assistant turn declaring it — a payload the provider still rejects.
+    //
+    // 🔴 THIS GUARD COVERS ONE DIRECTION ONLY, AND THE OTHER IS A KNOWN,
+    // UNVALIDATED GAP. It constrains ANSWERS to declared ASKS. It does not
+    // constrain asks to be answered, and it does not deduplicate. **This schema
+    // therefore ACCEPTS all three of the following** — stated as what the schema
+    // does, not as a claim that they are legal at the provider:
+    //
+    //   1. `[user, assistant(tool_calls:[a])]`             — an ask never answered
+    //   2. `[user, assistant(tool_calls:[a]), user, tool(a)]` — answer split from its ask
+    //   3. `[user, assistant(tool_calls:[a]), tool(a), tool(a)]` — one ask answered twice
+    //
+    // 🔴 AN EARLIER REVISION CALLED (1) "legal, since the correlation guard
+    // constrains answers to declared asks and not the reverse". That sentence
+    // was a true statement about THIS SCHEMA'S ACCEPTANCE worded as a claim
+    // about the PROVIDER, which is not ours to make.
+    //
+    // No guard is added for these deliberately. The premise that providers
+    // reject them comes from the OpenAI-compatible contract, NOT from a probe
+    // against this orchestrator — and the wire spelling of the tool fields is
+    // itself still unconfirmed against a live request. A guard built on an
+    // unverified premise risks being TOO STRICT and rejecting payloads that
+    // actually work, which is the worse failure here: the cost of the gap is a
+    // charged submit plus a provider error, while the cost of a wrong guard is a
+    // working feature refused at parse. Close this once the live probe settles
+    // what the orchestrator accepts.
     const declaredCallIds = new Set<string>();
     for (const message of params.messages) {
       if (message.role === 'assistant') {
@@ -970,6 +1017,77 @@ export type ChatCompletionOutputStepLike = {
   } | null;
 };
 
+/**
+ * The canonical encoding of "this tool call takes no arguments".
+ *
+ * A provider that emits `''` (or whitespace) for a zero-parameter function is
+ * emitting something no consumer can use: `JSON.parse('')` THROWS, while
+ * `JSON.parse('{}')` is the empty argument object the call actually means.
+ * Normalising here is a repair, not a distortion of the provider's value.
+ */
+const EMPTY_TOOL_ARGUMENTS = '{}';
+
+/**
+ * THE ONE PREDICATE that decides which tool calls this entry publishes, and
+ * with what `arguments` — used by BOTH `extractText` and `extractToolCalls`.
+ *
+ * 🔴 IT IS SHARED BECAUSE TWO COPIES DRIFTED, TWICE, AND EACH DRIFT WAS A BUG.
+ * The extractors used to apply their own predicates, and audit found both
+ * failure directions this produces:
+ *
+ *   - `extractText` required `args.trim().length > 0` while `extractToolCalls`
+ *     accepted any string, so a call with `arguments: ''` was PUBLISHED but
+ *     never SCANNED — the containment property clause 8b and three docstrings
+ *     assert was literally false on shipped code.
+ *   - Aligning them by making `extractToolCalls` drop the call instead made a
+ *     no-argument tool call VANISH: measured end to end, a response whose only
+ *     choice was a tool call with `arguments: ''` produced a snapshot carrying
+ *     neither `textOutputs` nor `toolCalls` nor `textOutputWithheld`. The step
+ *     was charged, reported `succeeded`, and published nothing the app author
+ *     could diagnose.
+ *   - The same shape on the ID axis: a provider id outside `TOOL_NAME_PATTERN`
+ *     made `extractToolCalls` drop the whole call while `extractText` still
+ *     published its arguments, so a block received argument JSON in
+ *     `textOutputs`, an empty `toolCalls`, and no id to answer with.
+ *
+ * All three are the same defect — a rule open-coded at two sites is wrong at
+ * one of them — so the rule now has one home. Containment holds BY
+ * CONSTRUCTION: `extractText` publishes exactly the `arguments` of the calls
+ * this returns, so no divergence is expressible without editing this function.
+ *
+ * 🔴 WHAT THAT DOES TO CLAUSE 8b, STATED PLAINLY RATHER THAN QUIETLY. 8b
+ * compares the two extractors' outputs, and they now agree by construction, so
+ * it can no longer fail for a DIVERGENCE reason — it is a refactor tripwire,
+ * not a divergence detector. That is a real reduction in what it detects and it
+ * is the deliberate trade: a structural guarantee beats a checked one. It is
+ * NOT the vacuous shape a previous audit round found (a loop body that never
+ * ran over an empty set) — the loop still executes over real calls, and it
+ * still fires the moment anyone re-splits these predicates, which is exactly
+ * the regression it now exists to catch. That claim is mutation-tested.
+ */
+function publishableToolCalls(
+  message: { tool_calls?: readonly (ChatCompletionToolCallOutputLike | null)[] | null } | null
+): BlockToolCall[] {
+  const toolCalls = message?.tool_calls;
+  if (!Array.isArray(toolCalls)) return [];
+  const calls: BlockToolCall[] = [];
+  for (const call of toolCalls) {
+    const id = call?.id;
+    const name = call?.function?.name;
+    const args = call?.function?.arguments;
+    // 🔴 A REJECTED CALL CONTRIBUTES NOTHING ON EITHER SIDE — no published
+    // call AND no orphan argument string. That pairing is the point.
+    if (typeof id !== 'string' || !TOOL_NAME_PATTERN.test(id)) continue;
+    if (id.length > MAX_TOOL_NAME_CHARS) continue;
+    if (typeof name !== 'string' || !TOOL_NAME_PATTERN.test(name)) continue;
+    if (name.length > MAX_TOOL_NAME_CHARS) continue;
+    if (typeof args !== 'string') continue;
+    const normalised = args.trim().length === 0 ? EMPTY_TOOL_ARGUMENTS : args;
+    calls.push({ id, type: 'function', function: { name, arguments: normalised } });
+  }
+  return calls;
+}
+
 export const chatCompletionStep = {
   id: 'chat-completion',
   orchestratorType: 'chatCompletion',
@@ -1052,15 +1170,12 @@ export const chatCompletionStep = {
         // to publish.
         if (typeof value === 'string' && value.trim().length > 0) texts.push(value);
       }
-      // Model-generated tool ARGUMENTS. The tool NAME is not included: it is
-      // pattern-bounded (`TOOL_NAME_PATTERN`) and echoed from what the caller
-      // itself declared, so it cannot carry prose — see that constant.
-      const toolCalls = message.tool_calls;
-      if (!Array.isArray(toolCalls)) continue;
-      for (const call of toolCalls) {
-        const args = call?.function?.arguments;
-        if (typeof args === 'string' && args.trim().length > 0) texts.push(args);
-      }
+      // Model-generated tool ARGUMENTS, for exactly the calls this entry will
+      // publish — see `publishableToolCalls`, which both extractors share so a
+      // dropped call cannot leave its arguments behind and a published call
+      // cannot escape the scan. The tool NAME is not included; see the
+      // unscanned-set note on `extractToolCalls`.
+      for (const call of publishableToolCalls(message)) texts.push(call.function.arguments);
     }
     return texts;
   },
@@ -1079,10 +1194,26 @@ export const chatCompletionStep = {
    *
    * 🔴 IT DROPS, RATHER THAN PUBLISHES, A MALFORMED CALL — including one whose
    * NAME or ID does not match `TOOL_NAME_PATTERN`. Those two are the strings
-   * here that do NOT go through the scan, and the argument for both is the
-   * same: the pattern makes them incapable of carrying prose. A provider that
-   * echoed back an unbounded value would break that argument, so the extractor
-   * enforces the pattern on the way out rather than trusting the round trip.
+   * here that do NOT go through the scan.
+   *
+   * 🔴 THE ARGUMENT FOR LEAVING THEM UNSCANNED IS **NOT** THE SAME FOR BOTH,
+   * and an earlier revision of this docstring claimed it was. State the real
+   * asymmetry, because the weaker of the two is the one worth watching:
+   *
+   *   - `name` rests on TWO legs. It is echoed back from what the CALLER ITSELF
+   *     declared in `tools[]`, and the input schema enforces
+   *     `TOOL_NAME_PATTERN` on that declaration — so a name is both
+   *     caller-authored and charset-bounded before it is ever echoed.
+   *   - `id` rests on ONE leg. It is PROVIDER-generated: nothing on this side
+   *     authored it, and the only thing bounding it is the pattern test below.
+   *
+   * 🔴 AND THAT SURVIVING LEG IS WEAKER THAN "cannot carry prose" — do not
+   * re-assert that. `[a-zA-Z0-9_-]{1,64}` carries perfectly readable prose in
+   * snake_case; measured, a 63-char underscore-joined sentence passes this
+   * filter and is published verbatim. What the pattern actually buys is a hard
+   * BOUND on length and alphabet — no markup, no urls, no AIR literals, no
+   * whitespace, and 64 chars — which is what makes the residue small enough to
+   * accept, not an inability to say anything.
    *
    * 🔴 THE ID BOUND IS NOT SYMMETRY-FOR-ITS-OWN-SAKE — IT CLOSES A ZERO-SCAN
    * PUBLISH PATH. Until it existed, `id` was accepted on `typeof id === 'string'
@@ -1101,39 +1232,30 @@ export const chatCompletionStep = {
    * either. The unscanned published set is exactly `{ name, id }`, and it is
    * enumerated here so the next person widening this surface has to count.
    *
-   * 🔴 EMPTY / WHITESPACE-ONLY `arguments` ARE DROPPED, AND THAT IS WHAT MAKES
-   * THE CONTAINMENT INVARIANT TRUE AS WRITTEN. `extractText` pushes an
-   * arguments string only when `trim().length > 0`; accepting any string here
-   * meant a call with `arguments: ''` or `'   '` was published while
-   * `extractText` returned nothing for it — so the property clause 8b and three
-   * docstrings state ("every arguments string this can publish is also returned
-   * by extractText") was literally false on unmutated code. Aligning the two
-   * predicates is the fix, in the fail-closed direction the rest of this
-   * extractor already takes. The ordinary no-argument encoding is `'{}'`, which
-   * is neither empty nor whitespace and is unaffected; a provider that instead
-   * emits `''` for a no-arg call has that call DROPPED, and the fix for that
-   * would be to normalise it to `'{}'` at the point of capture — never to
-   * loosen the containment.
+   * 🔴 EMPTY / WHITESPACE-ONLY `arguments` ARE NORMALISED TO `'{}'`, NOT
+   * DROPPED — and the intermediate revision that dropped them was a REGRESSION
+   * this file shipped and audit caught. Measured end to end: a response whose
+   * only choice was a tool call with `arguments: ''` produced a snapshot with
+   * neither `textOutputs` nor `toolCalls` nor `textOutputWithheld`, i.e. a step
+   * that was CHARGED, reported `succeeded`, and published literally nothing the
+   * app author could diagnose. A no-argument call (`list_categories`) is an
+   * ordinary case, not a malformed one.
+   *
+   * Normalising loosens NOTHING, and that is the point clause 8b turns on: it
+   * compares published `arguments` against the SCANNED set, and a whitespace-
+   * only string carries nothing a scanner could read. `'{}'` is also the only
+   * value a consumer can use — `JSON.parse('')` throws. The ordinary encoding
+   * `'{}'` is unaffected either way.
    */
   extractToolCalls: (step: unknown): BlockToolCall[] => {
     const choices = (step as ChatCompletionOutputStepLike | null | undefined)?.output?.choices;
     if (!Array.isArray(choices)) return [];
     const calls: BlockToolCall[] = [];
     for (const choice of choices) {
-      const toolCalls = choice?.message?.tool_calls;
-      if (!Array.isArray(toolCalls)) continue;
-      for (const call of toolCalls) {
-        const id = call?.id;
-        const name = call?.function?.name;
-        const args = call?.function?.arguments;
-        if (typeof id !== 'string' || !TOOL_NAME_PATTERN.test(id)) continue;
-        if (id.length > MAX_TOOL_NAME_CHARS) continue;
-        if (typeof name !== 'string' || !TOOL_NAME_PATTERN.test(name)) continue;
-        if (name.length > MAX_TOOL_NAME_CHARS) continue;
-        // Same predicate `extractText` applies — see the containment note above.
-        if (typeof args !== 'string' || args.trim().length === 0) continue;
-        calls.push({ id, type: 'function', function: { name, arguments: args } });
-      }
+      // The SHARED predicate — see `publishableToolCalls`. `extractText`
+      // publishes exactly these calls' `arguments`, so containment holds by
+      // construction rather than by two predicates staying in step.
+      calls.push(...publishableToolCalls(choice?.message ?? null));
     }
     return calls;
   },

@@ -917,8 +917,11 @@ describe('chat-completion — the tool ROUND bound', () => {
   it('does not count assistant tool_calls turns toward the round bound', () => {
     // A round is a RESULT coming back. The assistant turn that requested it is
     // replayed history and is bounded by `MAX_MESSAGES`, not by this cap. Here
-    // six extra asks are declared and left UNANSWERED — legal, since the
-    // correlation guard constrains answers to declared asks and not the reverse.
+    // six extra asks are declared and left UNANSWERED — which THIS SCHEMA
+    // ACCEPTS, because the correlation guard constrains answers to declared asks
+    // and not the reverse. That is a statement about what we accept, NOT a claim
+    // that an unanswered ask is legal at the provider: see the known-gap note on
+    // the correlation guard in `chat-completion.step.ts`.
     const messages = [
       { role: 'user' as const, content: 'hello' },
       ...Array.from({ length: 6 }, (_, i) => askMessage(100 + i)),
@@ -958,6 +961,71 @@ describe('chat-completion — the tool/assistant message members', () => {
       messages: [{ role: 'tool', content: 'result' }],
     });
     expect(result.success).toBe(false);
+  });
+
+  it('🔴 INPUT and OUTPUT agree on what a valid tool-call id is', () => {
+    // 🔴 THE FILE USED TO HOLD TWO DISAGREEING DEFINITIONS, which audit found:
+    // `call:with:colons` PARSED on input while `extractToolCalls` REFUSED it on
+    // the way out. Reconciled toward the stricter one. This cannot reject a
+    // legitimate payload, and that is the load-bearing half of the argument: the
+    // only id a block can legitimately replay is one WE published, and we
+    // publish only charset-conforming ids.
+    const withIds = (id: string) => ({
+      ...VALID_PARAMS,
+      messages: [
+        { role: 'user', content: 'hello' },
+        {
+          role: 'assistant',
+          tool_calls: [{ id, type: 'function', function: { name: 'f', arguments: '{}' } }],
+        },
+        { role: 'tool', content: 'result', tool_call_id: id },
+      ],
+    });
+    // Refused on input, exactly as the extractor refuses it on output.
+    expect(parse(withIds('call:with:colons')).success).toBe(false);
+    expect(parse(withIds('call has spaces')).success).toBe(false);
+
+    // 🔴 THE CASE ABOVE DOES NOT ATTRIBUTE, AND SAYING SO IS THE POINT. It
+    // carries BOTH an assistant `id` and a matching `tool_call_id`, which are
+    // separately charset-bounded — so removing either regex alone leaves the
+    // other (or the correlation guard) to reject the payload, and a mutation of
+    // one is masked by the other. Measured: dropping the assistant-side regex
+    // on its own left this whole suite GREEN. The assistant-only payload below
+    // has no tool message at all, so nothing else can do the rejecting and the
+    // assistant `id` regex is the only thing that can fail it.
+    expect(
+      parse({
+        ...VALID_PARAMS,
+        messages: [
+          { role: 'user', content: 'hello' },
+          {
+            role: 'assistant',
+            tool_calls: [
+              { id: 'call:with:colons', type: 'function', function: { name: 'f', arguments: '{}' } },
+            ],
+          },
+        ],
+      }).success
+    ).toBe(false);
+    // …and the real provider id shape still round-trips, so this is a bound and
+    // not a ban. Same literal the output-side test uses.
+    const good = 'call_d41b5525e73e4551ab588457';
+    expect(parse(withIds(good)).success).toBe(true);
+    expect(
+      chatCompletionStep.extractToolCalls({
+        output: {
+          choices: [
+            {
+              message: {
+                tool_calls: [
+                  { id: good, type: 'function', function: { name: 'f', arguments: '{}' } },
+                ],
+              },
+            },
+          ],
+        },
+      })
+    ).toHaveLength(1);
   });
 
   it('REJECTS an unknown role and unknown message properties', () => {
@@ -1083,6 +1151,19 @@ describe('chat-completion — extractToolCalls', () => {
     expect(chatCompletionStep.extractToolCalls(REAL_COMPLETED_STEP)).toEqual([]);
   });
 
+  // 🔴 THE THREE ID FIXTURES ARE PAIRWISE DISTINCT ON PURPOSE, so each one
+  // isolates ONE guard. The original single fixture was 4,900+ chars AND
+  // contained spaces and colons, so the pattern mutant and the length mutant
+  // each died to it individually — the test named after the audit finding could
+  // not tell you which guard was load-bearing. Re-derived: mutate either guard
+  // alone and exactly one of these goes red.
+  //
+  //   CHARSET-only violation, comfortably UNDER the length cap (43 chars).
+  const AIR_ID = 'urn:air:sd1:checkpoint:civitai:4384@128713';
+  //   LENGTH-only violation, fully charset-CONFORMING (cap is 64).
+  const LONG_ID = 'a'.repeat(65);
+  //   BOTH, i.e. the shape the audit actually demonstrated. Kept as the
+  //   end-to-end regression, but it is explicitly NOT the attributing case.
   const PROSE_ID = `not a real id ${'x'.repeat(4900)} urn:air:sd1:checkpoint:civitai:4384@128713`;
   const withToolCall = (id: string, args: string) => ({
     output: {
@@ -1096,26 +1177,38 @@ describe('chat-completion — extractToolCalls', () => {
     },
   });
 
+  it('🔴 DROPS an id on CHARSET alone — isolates the pattern guard', () => {
+    // 43 chars, so the length cap cannot be what rejects it. Mutate away the
+    // pattern test and this is the case that goes red.
+    expect(AIR_ID.length).toBeLessThan(64);
+    expect(chatCompletionStep.extractToolCalls(withToolCall(AIR_ID, '{}'))).toEqual([]);
+  });
+
+  it('🔴 DROPS an id on LENGTH alone — isolates the length guard', () => {
+    // Charset-conforming, so the pattern test cannot be what rejects it.
+    expect(/^[a-zA-Z0-9_-]+$/.test(LONG_ID)).toBe(true);
+    expect(chatCompletionStep.extractToolCalls(withToolCall(LONG_ID, '{}'))).toEqual([]);
+  });
+
   it('🔴 DROPS an unbounded prose `id` carrying an AIR literal', () => {
-    // 🔴 THE CASE THE AUDIT DEMONSTRATED, kept as the regression. `id` was
-    // accepted on `typeof id === 'string' && length > 0` alone, so a 5,000-char
-    // id carrying prose AND a literal AIR was published to the block verbatim.
-    // Neither clause 8b (which compares `arguments` only) nor the runtime shape
-    // guard in ./moderation (types, not bounds) sees it — the output-side
-    // pattern + length check is the whole control.
+    // 🔴 THE CASE THE AUDIT DEMONSTRATED, kept as the end-to-end regression. It
+    // violates BOTH bounds, so it does NOT attribute — the two cases above are
+    // what tell you which guard is load-bearing. Pre-fix, `id` was accepted on
+    // `typeof id === 'string' && length > 0` alone and a 5,000-char id carrying
+    // prose AND a literal AIR reached the block verbatim.
     expect(chatCompletionStep.extractToolCalls(withToolCall(PROSE_ID, '{}'))).toEqual([]);
   });
 
-  it('🔴 the ZERO-SCAN combination: a prose id with EMPTY arguments', () => {
-    // 🔴 THE SHARPER HALF, AND IT NEEDS BOTH FIXES. With empty `arguments`,
-    // `extractText` returns NOTHING for this response — so `screenGeneratedText`
-    // short-circuits on the empty text set and RELEASES WITHOUT EVER CALLING THE
-    // SCANNER. Pre-fix, the prose id was therefore published on a path where no
-    // scan ran at all. Note the assertion that `extractText` is empty is what
-    // makes this case distinct from the one above, where '{}' IS scanned.
-    const evil = withToolCall(PROSE_ID, '');
-    expect(chatCompletionStep.extractText(evil)).toEqual([]);
-    expect(chatCompletionStep.extractToolCalls(evil)).toEqual([]);
+  it('🔴 a REJECTED call leaves NO orphan arguments in extractText', () => {
+    // 🔴 THE PAIRING IS THE POINT, and its absence was an audit finding: the
+    // extractors used to decide independently, so a call dropped for a bad id
+    // still had its arguments published — the block got argument JSON in
+    // `textOutputs`, an empty `toolCalls`, and no id to answer with. Both sides
+    // now derive from `publishableToolCalls`, so a rejected call contributes
+    // nothing anywhere.
+    const rejected = withToolCall(AIR_ID, '{"query":"real arguments"}');
+    expect(chatCompletionStep.extractToolCalls(rejected)).toEqual([]);
+    expect(chatCompletionStep.extractText(rejected)).toEqual([]);
   });
 
   it('DROPS an id that escapes the safe character class, or exceeds the length cap', () => {
@@ -1139,13 +1232,16 @@ describe('chat-completion — extractToolCalls', () => {
     ).toHaveLength(1);
   });
 
-  it('🔴 DROPS empty / whitespace-only arguments, which is what makes containment TRUE', () => {
-    // Before this, `extractToolCalls` accepted any string while `extractText`
-    // required `trim().length > 0` — so a call with `arguments: ''` was
-    // published while the scan was handed nothing for it, and the containment
-    // property clause 8b and three docstrings state was literally false on
-    // UNMUTATED code. The ordinary no-argument encoding is '{}' and is
-    // unaffected.
+  it('🔴 NORMALISES empty / whitespace-only arguments to "{}" — it does not drop the call', () => {
+    // 🔴 THIS PINS A REGRESSION THIS PR SHIPPED AND AUDIT CAUGHT. Two wrong
+    // behaviours preceded it: first `extractToolCalls` accepted any string while
+    // `extractText` required `trim().length > 0`, so an empty-argument call was
+    // PUBLISHED but never SCANNED; then aligning them by DROPPING the call made
+    // a no-argument tool call vanish entirely — the step was charged, reported
+    // `succeeded`, and published nothing at all. Normalising to '{}' keeps the
+    // call reaching the block AND keeps containment true, because '{}' is what
+    // `extractText` then scans. `JSON.parse('')` throws; `JSON.parse('{}')` is
+    // the empty argument object the call actually means.
     const build = (args: string) => ({
       output: {
         choices: [
@@ -1157,8 +1253,15 @@ describe('chat-completion — extractToolCalls', () => {
         ],
       },
     });
-    expect(chatCompletionStep.extractToolCalls(build(''))).toEqual([]);
-    expect(chatCompletionStep.extractToolCalls(build('   \n\t '))).toEqual([]);
+    for (const empty of ['', '   \n\t ']) {
+      // The call SURVIVES, with usable arguments…
+      expect(chatCompletionStep.extractToolCalls(build(empty))).toEqual([
+        { id: 'call_1', type: 'function', function: { name: 'f', arguments: '{}' } },
+      ]);
+      // …and containment holds: what is published is what was scanned.
+      expect(chatCompletionStep.extractText(build(empty))).toEqual(['{}']);
+    }
+    // The ordinary encoding is unaffected.
     expect(chatCompletionStep.extractToolCalls(build('{}'))).toHaveLength(1);
 
     // The property itself, asserted over every shape above rather than only the
