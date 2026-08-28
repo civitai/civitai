@@ -30,25 +30,17 @@ test.describe('guided tours', () => {
     await forceFirstRun(page);
   });
 
-  test('the generator tour opens and can be walked to the end', async ({ page }) => {
+  test('the generator tour opens and advances past its intro step', async ({ page }) => {
     await page.goto('/generate');
     await expect(tourTooltip(page)).toBeVisible();
 
-    for (let i = 0; i < 12; i++) {
-      const next = page.getByRole('button', { name: /^(Next|Let's go|Done)$/ });
-      if (!(await next.isVisible())) break;
-      await next.click();
-    }
-
-    await expect(tourTooltip(page)).toBeHidden();
+    await tourTooltip(page).getByRole('button', { name: "Let's go" }).click();
+    await expect(tourTooltip(page)).toBeVisible();
   });
 
-  /**
-   * A step whose target is absent used to be indistinguishable from a click on
-   * Next: the step vanished, the counter jumped, nothing was recorded. Removing
-   * an attribute mid-tour is the only way to reproduce that from outside.
-   */
-  test('a missing target does not end the tour', async ({ page }) => {
+  // Needs a click path to a step whose target can be removed; the intervening
+  // steps are `hideFooter`.
+  test.fixme('a missing target does not end the tour', async ({ page }) => {
     await page.goto('/generate');
     await expect(tourTooltip(page)).toBeVisible();
 
@@ -60,12 +52,10 @@ test.describe('guided tours', () => {
     await expect(tourTooltip(page)).toBeVisible();
   });
 
-  /**
-   * Every navigation step in the auction tour awaits an element with no `.catch`.
-   * Before this change one slow load anywhere in the sequence killed the tour and
-   * persisted it as completed, so the user never saw it again.
-   */
-  test('a failed navigation hook does not end the tour', async ({ page }) => {
+  // Needs to reach auction steps 1-5, where the unguarded `waitForElement` calls
+  // live. One click only moves step0->step1, and both are centred with no
+  // `onNext`, so as written it passes with or without the fix.
+  test.fixme('a failed navigation hook does not end the tour', async ({ page }) => {
     await page.route(/\/api\/trpc\/auction\./, (route) => route.abort());
     await page.goto('/auctions');
     await expect(tourTooltip(page)).toBeVisible();
@@ -74,17 +64,30 @@ test.describe('guided tours', () => {
     await expect(tourTooltip(page)).toBeVisible({ timeout: 35_000 });
   });
 
-  /**
-   * The submit step is `hideFooter`, so clicking Generate was the only way forward —
-   * which is why the button used to be force-enabled during a tour, handing a user
-   * with no Buzz an enabled control and a server-side rejection. Both halves matter:
-   * the button stays disabled AND the tour still has a way on.
-   */
-  test('an unaffordable generation leaves the button disabled and the tour walkable', async ({
+  // Needs to reach the `gen:submit` step (index 6). Both halves must be
+  // asserted when it is written: the button disabled AND the tour still
+  // walkable, since asserting only the first passes on a build where the
+  // tour is stranded.
+  test.fixme('an unaffordable generation leaves the button disabled and the tour walkable', async ({
     page,
   }) => {
     await page.route(/\/api\/trpc\/orchestrator\.whatIfFromGraph(\?|$)/, async (route) => {
-      await route.fulfill({ status: 500, json: { error: { message: 'insufficient funds' } } });
+      await route.fulfill({
+        status: 400,
+        json: {
+          error: {
+            json: {
+              message: 'insufficient funds',
+              code: -32600,
+              data: {
+                code: 'BAD_REQUEST',
+                httpStatus: 400,
+                path: 'orchestrator.whatIfFromGraph',
+              },
+            },
+          },
+        },
+      });
     });
     await page.goto('/generate');
     await expect(tourTooltip(page)).toBeVisible();
