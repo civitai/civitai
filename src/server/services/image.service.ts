@@ -8071,11 +8071,11 @@ const imageUploadsBucket = () => env.S3_IMAGE_B2_BUCKET ?? 'civitai-media-upload
 /**
  * Ask the uploads bucket whether an image's object is actually there, as a three-valued answer.
  *
- * Exported for the wiring test only — building the client is deliberately INSIDE the caller's try
- * (see `assertMediaPresentForPublish`), because `getB2ImageS3Client()` throws when credentials are
- * absent and that must land on `unknown`, not on a failed publish.
+ * Building the client is deliberately INSIDE the caller's try (see `assertMediaPresentForPublish`),
+ * because `getB2ImageS3Client()` throws when credentials are absent and that must land on `unknown`,
+ * not on a failed publish.
  */
-export async function probeImageMediaPresence(key: string): Promise<MediaPresenceType> {
+async function probeImageMediaPresence(key: string): Promise<MediaPresenceType> {
   const head = await headObject(imageUploadsBucket(), key, getB2ImageS3Client(), {
     abortSignal: AbortSignal.timeout(RESOLVE_INGESTION_MEDIA_PROBE_TIMEOUT_MS),
   });
