@@ -6,8 +6,9 @@ import { GEN_SUBMIT_TARGET } from '~/components/Tours/tour-targets';
 /**
  * Re-firing a tour means defeating BOTH persistence stores: completion lives in
  * localStorage `tours` AND in `User.settings.tourSettings`, with the server winning.
- * Route-mocking `getSettings` keeps the test off the shared test user's real row,
- * which would otherwise leak between specs and between runs.
+ * Route-mocking `getSettings` only fakes the read, so a previous run's completion
+ * can't carry forward — it does nothing about the write: `user.setSettings` still
+ * persists `completed`/`reason` to the shared `authDegen` account on every run.
  */
 const forceFirstRun = async (page: Page) => {
   await page.addInitScript(() => window.localStorage.removeItem('tours'));
@@ -18,9 +19,9 @@ const forceFirstRun = async (page: Page) => {
 
 const tourTooltip = (page: Page) => page.getByRole('alertdialog');
 
-// The welcome tour's second and third steps target the carousel's remix button, which
-// only renders for an image the generator can remix. A model without one silently
-// reduces the tour to its intro step.
+// The welcome tour's steps 2-3 depend on the carousel's remix button (and the menu it
+// opens), which only renders for an image the generator can remix. A model without one
+// silently reduces the tour to its intro step.
 const MODEL_ID = process.env.E2E_TOUR_MODEL_ID ?? '1';
 
 test.describe('guided tours', () => {
@@ -67,7 +68,10 @@ test.describe('guided tours', () => {
   // Needs to reach the `gen:submit` step (index 6). Both halves must be
   // asserted when it is written: the button disabled AND the tour still
   // walkable, since asserting only the first passes on a build where the
-  // tour is stranded.
+  // tour is stranded. Cover both ways `submitBlocked` disables the button —
+  // this mocked insufficient-Buzz case, and a full generation queue
+  // (`canGenerate: false`) — neither has unit coverage, since mounting
+  // FormFooter's context graph for it is disproportionate.
   test.fixme('an unaffordable generation leaves the button disabled and the tour walkable', async ({
     page,
   }) => {

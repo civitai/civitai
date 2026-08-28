@@ -44,8 +44,7 @@ type GenerationPanelView = 'queue' | 'generate' | 'feed';
 // source file holds the whole string for the orphan guard to grep.
 export const GENERATION_TAB_KEYS = ['generate', 'queue', 'feed'] as const;
 
-// A new GenerationPanelView must be added above too — the tour orphan guard in
-// tour-steps.test.ts checks every `gen:*` step target against this list.
+// Keep in sync with GENERATION_TAB_KEYS above, or this fails to compile.
 type _EveryViewListed = Exclude<
   GenerationPanelView,
   (typeof GENERATION_TAB_KEYS)[number]

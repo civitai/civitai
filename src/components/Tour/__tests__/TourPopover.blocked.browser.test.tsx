@@ -9,12 +9,7 @@ import type * as ToursProvider from '~/components/Tours/ToursProvider';
 // state, which only a running app can produce (e2e scenario 4); mocking the hook reaches
 // the same branch without one.
 //
-// `FormFooter`'s reporting effect stays mounted for the whole tour (GenerationLayout keeps
-// its footer slot in the DOM, only visually hidden), so `blockedTarget` names ONE step's
-// target rather than a bare boolean — otherwise a step that hides its footer for an
-// unrelated reason (e.g. the terms gate, which has no submit-cost guard of its own) would
-// inherit `gen:submit`'s blocked state and expose Joyride's generic Next, letting the user
-// skip past it without running the step's own action.
+// See ToursProvider's `blockedTarget` doc for why it's scoped by target, not a boolean.
 vi.mock('~/components/Tours/ToursProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof ToursProvider>()),
   useTourContext: () => ({ blockedTarget: '[data-tour="gen:submit"]' }),
