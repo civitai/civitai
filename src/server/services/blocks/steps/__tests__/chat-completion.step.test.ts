@@ -783,6 +783,22 @@ describe('chat-completion — the tool ROUND bound', () => {
     tool_call_id: `call_${i}`,
   });
 
+  it('🔴 MAX_TOOL_ROUNDS is a real exported number — the cases below degenerate without it', () => {
+    // 🔴 THIS GUARD EXISTS BECAUSE THE DEGENERATION WAS OBSERVED, not imagined.
+    // Measured while taking the red-at-base matrix for this change: against
+    // pre-change source the named import resolves to `undefined` (esbuild's CJS
+    // transform makes a missing named export undefined rather than a link
+    // error), so `Array.from({ length: MAX_TOOL_ROUNDS })` yields `[]`, the
+    // fixture collapses to a single user message, and
+    // "accepts exactly MAX_TOOL_ROUNDS tool messages" PASSED for a reason that
+    // had nothing to do with the round bound.
+    //
+    // Pinning the literal also pins the number the entry's header and the
+    // rejection message both state, so the three cannot drift apart silently.
+    expect(typeof MAX_TOOL_ROUNDS).toBe('number');
+    expect(MAX_TOOL_ROUNDS).toBe(3);
+  });
+
   it('accepts exactly MAX_TOOL_ROUNDS tool messages', () => {
     const messages = [
       { role: 'user' as const, content: 'hello' },
