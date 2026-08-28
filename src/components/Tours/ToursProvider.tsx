@@ -33,7 +33,12 @@ export type TourState = {
   activeTour?: TourKey | null;
   steps?: StepWithData[];
   returnUrl?: string;
-  stepBlocked: boolean;
+  // The target selector of the step whose real control is currently disabled — not a bare
+  // boolean, so a step whose footer is hidden for an unrelated reason (e.g. the terms gate)
+  // never inherits another step's blocked state. `FormFooter`'s reporting effect stays mounted
+  // (see GenerationLayout's hidden footer slot) for the whole tour, so scoping by target is
+  // load-bearing, not cosmetic.
+  blockedTarget: string | null;
 };
 
 type TourContextState = TourState & {
@@ -46,7 +51,7 @@ type TourContextState = TourState & {
   pauseTour: () => void;
   closeTour: (opts: { reason: TourEndReason }) => void;
   setSteps: (steps: StepWithData[]) => void;
-  setStepBlocked: (blocked: boolean) => void;
+  setBlockedTarget: (target: string | null) => void;
   completed?: boolean;
   run?: boolean;
   helpers?: StoreHelpers | null;
@@ -58,12 +63,12 @@ const TourContext = createContext<TourContextState>({
   paused: false,
   trigger: 'auto',
   currentStep: 0,
-  stepBlocked: false,
+  blockedTarget: null,
   runTour: () => null,
   pauseTour: () => null,
   closeTour: () => null,
   setSteps: () => null,
-  setStepBlocked: () => null,
+  setBlockedTarget: () => null,
   steps: [],
 });
 
@@ -96,7 +101,7 @@ export function ToursProvider({ children }: { children: React.ReactNode }) {
     activeTour: tourKey,
     currentStep: 0,
     steps: tourKey ? tourSteps[tourKey] ?? [] : [],
-    stepBlocked: false,
+    blockedTarget: null,
   }));
   const helpers = useRef<StoreHelpers | null>(null);
 
@@ -197,8 +202,8 @@ export function ToursProvider({ children }: { children: React.ReactNode }) {
     setState((old) => ({ ...old, steps }));
   };
 
-  const setStepBlocked = useCallback((blocked: boolean) => {
-    setState((old) => (old.stepBlocked === blocked ? old : { ...old, stepBlocked: blocked }));
+  const setBlockedTarget = useCallback((target: string | null) => {
+    setState((old) => (old.blockedTarget === target ? old : { ...old, blockedTarget: target }));
   }, []);
 
   useEffect(() => {
@@ -233,7 +238,7 @@ export function ToursProvider({ children }: { children: React.ReactNode }) {
         pauseTour,
         closeTour,
         setSteps,
-        setStepBlocked,
+        setBlockedTarget,
         helpers: helpers.current,
       }}
     >

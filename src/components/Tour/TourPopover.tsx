@@ -18,7 +18,7 @@ export function TourPopover(props: TooltipRenderProps) {
     skipProps,
     tooltipProps,
   } = props;
-  const { stepBlocked } = useTourContext();
+  const { blockedTarget } = useTourContext();
 
   const centered = step.placement === 'center';
 
@@ -53,7 +53,7 @@ export function TourPopover(props: TooltipRenderProps) {
         )}
         {typeof step.content === 'string' ? <Text>{step.content}</Text> : step.content}
       </div>
-      {(!step.hideFooter || stepBlocked) && (
+      {(!step.hideFooter || blockedTarget === step.target) && (
         <Group justify="space-between" wrap="nowrap">
           {step.showSkipButton !== false && (
             <Button {...skipProps} variant="subtle" size="xs" color="gray">

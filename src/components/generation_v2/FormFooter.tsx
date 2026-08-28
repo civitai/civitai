@@ -661,7 +661,7 @@ interface SubmitButtonProps {
 }
 
 function SubmitButton({ isLoading: isSubmitting, onSubmit }: SubmitButtonProps) {
-  const { running, helpers, setStepBlocked } = useTourContext();
+  const { running, helpers, setBlockedTarget } = useTourContext();
   const { selectedType } = useSelectedBuzzType();
   const { color } = useBuzzCurrencyConfig(selectedType);
 
@@ -681,12 +681,14 @@ function SubmitButton({ isLoading: isSubmitting, onSubmit }: SubmitButtonProps) 
     isWhatIfLoading || isBuzzLoading || isError || !canEstimateCost || insufficientBuzz;
 
   // A `hideFooter` step whose only way forward is clicking this button leaves the user
-  // stranded when the button is legitimately disabled. Reporting it gives the step its
-  // Next back, so the guards below do not have to be dropped.
+  // stranded when the button is legitimately disabled. Reporting our own step's target
+  // (this button already carries it below) gives that step its Next back without also
+  // un-hiding a different step's footer — this effect stays mounted for the whole tour
+  // (GenerationLayout keeps the footer slot in the DOM, just visually hidden).
   useEffect(() => {
-    setStepBlocked(running && submitBlocked);
-    return () => setStepBlocked(false);
-  }, [running, submitBlocked, setStepBlocked]);
+    setBlockedTarget(running && submitBlocked ? '[data-tour="gen:submit"]' : null);
+    return () => setBlockedTarget(null);
+  }, [running, submitBlocked, setBlockedTarget]);
 
   const handleClick = () => {
     if (running) helpers?.next();

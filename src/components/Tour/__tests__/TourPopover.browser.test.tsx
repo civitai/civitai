@@ -4,7 +4,7 @@ import { renderWithProviders } from '../../../../test/component-setup';
 import { TourPopover } from '~/components/Tour/TourPopover';
 
 // No `ToursProvider` wrapper: `useTourContext` falls back to the context default, where
-// `stepBlocked` is false. Mounting the real provider would drag in trpc, the current-user
+// `blockedTarget` is null. Mounting the real provider would drag in trpc, the current-user
 // hook and the feature flags, none of which this assertion is about.
 const baseProps = {
   index: 0,
