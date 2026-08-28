@@ -43,6 +43,23 @@ one sentence from being an evasion guide. **Both were already in the committed i
 directory existed, and those commits are pushed**, so they are disclosed; the redaction stops the leak
 widening rather than undoing it. Neither is a credential, so there is nothing to rotate.
 
+**Personal data is redacted on the same rule, and it is the easiest kind to miss** — it looks like
+ordinary content rather than like a secret, so a shape-based sanitiser walks straight past it. Two
+classes were found here on 2026-08-28 and are now stripped:
+
+- **Staff real names.** `user-lookup-v2.json` gates features on `current_user.fullName === '<a real
+  person>'`, so the authorization model itself was written in names. Those are now stable
+  `MODERATOR_A`…`MODERATOR_F` placeholders — a distinct token per person, so the export still reads as
+  logic. The name↔placeholder key lives with the id mapping in the private repo.
+- **End-user IP addresses.** `bulk-ban.json` and its rendered `bulk-ban.md` carried four real banned
+  users' IPs inside a `WHERE ip IN (…)` clause. They are now RFC5737 `203.0.113.x` documentation
+  addresses.
+
+Both were already committed and pushed, so — as with the CIDR above — the redaction stops the leak
+widening rather than undoing it. Neither is a credential, so there is nothing to rotate; but a name
+tying a **pseudonymous moderator account to a real identity** is the one class here where the harm is
+to a person rather than to the system, so treat it as the highest bar when sanitising a fresh export.
+
 The inventories are generated FROM these files, so regenerate rather than hand-editing —
 `extract.mjs raw/<app>.json > <app>.md` — or a redacted export will quietly grow an unredacted
 inventory beside it.

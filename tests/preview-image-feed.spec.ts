@@ -13,7 +13,7 @@ import { retryFlaky } from './preview-retry';
  *    getAllImagesIndex — the MEILISEARCH index path (image.controller.ts:300-320),
  *    not the DB. The index `metrics_images_v1` (~114M docs) lives on the in-cluster
  *    feeds-meilisearch (civitai-feeds-proxy), and previews reach it via
- *    METRICS_SEARCH_HOST=http://civitai-feeds-proxy.civitai-feeds.svc.cluster.local
+ *    METRICS_SEARCH_HOST=http://feeds-proxy.internal.svc.cluster.local
  *    (same host prod uses; verified both feeds backends populated 2026-06-11). So
  *    the broad feed IS available to previews and this asserts the real /images
  *    surface end to end (meili query + DB hydration).
