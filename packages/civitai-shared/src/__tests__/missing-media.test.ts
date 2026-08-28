@@ -84,12 +84,19 @@ describe('decideMediaPublish', () => {
      * What the string has to say is not arbitrary. The earlier wording told a moderator to "delete
      * it" on two surfaces that offered no delete for exactly the rows this refusal creates — the
      * spoke listed them only on the rating queue, and the article card offered only Override and
-     * Retry. Both exits now exist (the spoke routes these rows into its delete-only Missing Media
-     * queue; the article card withdraws the two dead-end controls and points at the editor), and
-     * this message is where a moderator is told so.
+     * Retry. Both exits now exist (the spoke's delete gate selects on THIS predicate; the article
+     * card withdraws the two dead-end controls and points at the editor), and this message is where
+     * a moderator is told so.
+     *
+     * 🔴 IT NAMES THE ACTION, NOT THE QUEUE, and the parenthetical is what makes that honest. The
+     * delete ACTION is unwindowed (`missingMediaScope`); the QUEUE that renders it is bounded to the
+     * last 2 days (`ingestionErrorBaseWhere`), and `blob:` urls come from a legacy upload bug, so
+     * the population is plausibly mostly older than that. An unqualified "Delete it from the Missing
+     * Media queue" would promise a listing that may not contain the row — the same class of defect
+     * as the original wording, one level down.
      */
     expect(UNRENDERABLE_MEDIA_PUBLISH_MESSAGE).toBe(
-      'This image points at a browser-session handle (a blob: url) rather than an uploaded file, so it can never load for anyone else and cannot be published. Delete it from the Missing Media queue, or remove it from the article that uses it, and ask the uploader to upload the file again.'
+      'This image points at a browser-session handle (a blob: url) rather than an uploaded file, so it can never load for anyone else and cannot be published. Delete it — recent ones are listed in the Missing Media queue — or remove it from the article that uses it and ask the uploader to upload the file again.'
     );
   });
 });
