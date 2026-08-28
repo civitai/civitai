@@ -1,4 +1,23 @@
 import { describe, expect, it, vi } from 'vitest';
+import { existsSync, readFileSync } from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+/**
+ * The monorepo root, found by walking up for the workspace manifest rather than counting `../`
+ * segments. A fixed depth silently changes meaning the moment this file moves, and the failure
+ * would be an unreadable ENOENT rather than "the guard moved".
+ */
+const repoRoot = (() => {
+  let dir = path.dirname(fileURLToPath(import.meta.url));
+  for (let i = 0; i < 12; i++) {
+    if (existsSync(path.join(dir, 'pnpm-workspace.yaml'))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  throw new Error('ingestion-queue-partition.test: could not locate the workspace root');
+})();
 
 /**
  * The ingestion-error page's SQL, compiled for real.
@@ -109,13 +128,54 @@ describe('ingestion-error queue predicates', () => {
     expect(missing.parameters).toEqual(['permanent', 'blob:%']);
   });
 
-  it('is NULL-safe on the url half too, so the split stays a partition', async () => {
+  it('keeps Image.url NOT NULL, which is what actually makes the url half a partition', () => {
     /**
-     * 🔴 The `IS NOT DISTINCT FROM` trap one operator over. `NULL LIKE 'blob:%'` is NULL, so on a
-     * row with a NULL url and a non-permanent class the disjunction is NULL — which a WHERE treats
-     * as false on BOTH sides, dropping the row out of the review queue and the missing-media queue
-     * simultaneously. That is a hole in something the suite above asserts is an exact partition, and
-     * it is invisible in the emitted SQL unless you look for the COALESCE.
+     * 🔴 THE REAL INVARIANT, PINNED AT ITS SOURCE — and it is NOT the COALESCE below.
+     *
+     * The story this suite used to tell was that `COALESCE(i.url, '')` was load-bearing against a
+     * NULL url. It is not: `Image.url` is NOT NULL, so the row it defends against cannot exist and
+     * removing the COALESCE changes no result. What keeps the url half of the split a partition is
+     * the column constraint, so the constraint is what gets a guard.
+     *
+     * Read from BOTH the defining schema and the generated Kysely types, which fail differently: a
+     * hand-edit to one without regenerating the other is caught, and so is a regeneration that
+     * drops the guard's own subject. `url String?` in Prisma / `url: string | null` in Kysely are
+     * the two spellings that would make this queue silently non-exhaustive.
+     */
+    const prisma = readFileSync(
+      path.join(repoRoot, 'packages/civitai-db-schema/prisma/schema.full.prisma'),
+      'utf8'
+    );
+    const imageModel = /\nmodel Image \{\n([\s\S]*?)\n\}/.exec(prisma)?.[1];
+    // Positive control on the extraction: a regex that stopped matching would make every assertion
+    // below vacuous, and `?.[1]` would hand `undefined` to a `toMatch` that never runs.
+    expect(imageModel, 'the Image model must be locatable in schema.full.prisma').toBeTruthy();
+    expect(imageModel).toMatch(/^\s{2}url\s+String\s*$/m);
+    expect(imageModel, 'Image.url must not become nullable').not.toMatch(/^\s{2}url\s+String\?/m);
+
+    const kysely = readFileSync(
+      path.join(repoRoot, 'packages/civitai-db-schema/src/kysely/types.ts'),
+      'utf8'
+    );
+    const imageType = /\nexport type Image = \{\n([\s\S]*?)\n\};/.exec(kysely)?.[1];
+    expect(
+      imageType,
+      'the Image table type must be locatable in the generated kysely types'
+    ).toBeTruthy();
+    expect(imageType).toMatch(/^\s{2}url: string;$/m);
+  });
+
+  it('still COALESCEs the url, as defence in depth if that constraint ever goes', async () => {
+    /**
+     * 🔴 AN INVARIANT GUARD, NOT A REGRESSION TEST — labelled as one because the previous version
+     * of this case was presented as the reason the split stays a partition, and it is not (see the
+     * case above). The bug it describes has never been reachable.
+     *
+     * What it pins is a spelling, deliberately: were `Image.url` ever made nullable, `NULL LIKE
+     * 'blob:%'` is NULL, so on a row with a non-permanent class the disjunction is NULL — which a
+     * WHERE treats as false on BOTH sides, dropping the row out of the review queue and the
+     * missing-media queue simultaneously. Silent, and invisible in the emitted SQL unless you look
+     * for the COALESCE. Cheap to keep; do not re-promote it to load-bearing.
      */
     const errors = await run(() => countIngestionErrorImages());
     expect(errors.sql).toContain("COALESCE(i.url, '') LIKE");
@@ -177,6 +237,50 @@ describe('ingestion-error queue predicates', () => {
     // Exhaustive and exclusive in one line: `missing` must be the same base plus exactly the
     // predicate `errors` negates — no extra clause on either side, no clause missing from either.
     expect(missing).toBe(`${base} AND ${splitPredicate}`);
+
+    /**
+     * 🔴 THE SPLIT PREDICATE MUST BE PARENTHESISED, AND THIS IS THE ONLY PLACE THAT SAYS SO.
+     *
+     * Dropping the parens around `unpublishableMedia` is a one-character edit whose effect is
+     * enormous: `NOT (a OR b)` becomes `(NOT a) OR b`, i.e. the review queue would take EVERY
+     * `blob:` row — at any age within the window and whatever its scan class — instead of routing
+     * it to the delete-only view, which is exactly the harm this branch exists to remove.
+     *
+     * Measured before this assertion existed: that mutant SURVIVED a run narrowed to this test and
+     * died only on the whole-statement pins above — the same pins whose own comments invite an
+     * author to rewrite them on a deliberate predicate change. A structural test that cannot see a
+     * precedence bug is not covering the structure.
+     *
+     * `AND` binds tighter than `OR` in SQL, so the requirement is precise: the negated predicate
+     * must be a single parenthesised group, and the disjunction must live INSIDE it. Asserted on
+     * shape rather than on the exact statement so it survives an edit to the disjuncts themselves.
+     */
+    expect(
+      splitPredicate.startsWith('('),
+      `split predicate must open a group: ${splitPredicate}`
+    ).toBe(true);
+    expect(
+      splitPredicate.endsWith(')'),
+      `split predicate must close a group: ${splitPredicate}`
+    ).toBe(true);
+    // ...and the group is the WHOLE predicate, not the first of several. Walking the depth rather
+    // than trusting the two ends catches `(a OR b) OR c`, where both ends are still parens.
+    let depth = 0;
+    let closedEarly = false;
+    for (let i = 0; i < splitPredicate.length; i++) {
+      if (splitPredicate[i] === '(') depth++;
+      else if (splitPredicate[i] === ')') {
+        depth--;
+        if (depth === 0 && i < splitPredicate.length - 1) closedEarly = true;
+      }
+    }
+    expect(depth, 'parentheses in the split predicate must balance').toBe(0);
+    expect(closedEarly, `the negated group must span the WHOLE predicate: ${splitPredicate}`).toBe(
+      false
+    );
+    // The OR is inside that group. Without the parens it would sit at the top level of the WHERE,
+    // which is the mutant.
+    expect(splitPredicate).toMatch(/\bOR\b/);
   });
 
   it('gives the ingestion-error badge the same predicate as its queue', async () => {
@@ -306,8 +410,17 @@ describe("the delete gate's own predicate", () => {
     // string and the equality below would pass vacuously.
     expect(gateState.length).toBeGreaterThanOrEqual(3);
     expect(queueState.length).toBeGreaterThanOrEqual(3);
-    // ...and the window really was the only thing subtracted from the queue side.
-    expect(clauses(queue).length - queueState.length).toBe(2);
+    // 🔴 BOTH subtractions are counted, not just the queue's. Checking only one side leaves the
+    // other filter free to drop an arbitrary number of clauses and still reach equality — e.g. a
+    // gate clause that happened to start `i.id =` would vanish silently. The two deliberate
+    // differences are exactly: two window bounds on the queue side, one id binding on the gate side.
+    expect(
+      clauses(queue).length - queueState.length,
+      'the queue drops exactly its two window bounds'
+    ).toBe(2);
+    expect(clauses(gate).length - gateState.length, 'the gate drops exactly its id binding').toBe(
+      1
+    );
 
     // 🔴 Bidirectional. `toEqual` on sorted arrays fails when either side gains OR loses a clause.
     expect([...gateState].sort()).toEqual([...queueState].sort());

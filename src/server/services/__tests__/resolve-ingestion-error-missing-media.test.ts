@@ -193,7 +193,9 @@ describe('main-app resolveIngestionError — missing-media guard', () => {
     // must land on "could not consult", not on a failed publish — a guard that can fail the path by
     // its own absence is worse than no guard. The backend is resolved inside the probe, which runs
     // inside `assertMediaPresentForPublish`'s own try, for exactly this reason.
-    getImageUploadBackend.mockRejectedValue(new Error('B2 image upload credentials not configured'));
+    getImageUploadBackend.mockRejectedValue(
+      new Error('B2 image upload credentials not configured')
+    );
 
     await resolve();
 
@@ -327,7 +329,9 @@ describe('the guard reports what it did, in both directions', () => {
   });
 
   it('distinguishes a probe that THREW from a store that declined to answer', async () => {
-    getImageUploadBackend.mockRejectedValue(new Error('B2 image upload credentials not configured'));
+    getImageUploadBackend.mockRejectedValue(
+      new Error('B2 image upload credentials not configured')
+    );
 
     await resolve();
 
