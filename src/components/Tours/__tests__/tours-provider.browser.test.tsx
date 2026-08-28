@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../../test/component-setup';
+// Type-only: gives the `importOriginal` spread below the real module's type
+// without an `import()` type annotation (banned by consistent-type-imports).
+import type * as TrpcModule from '~/utils/trpc';
 
 const mocks = vi.hoisted(() => ({ setSettings: vi.fn() }));
 
@@ -14,13 +17,17 @@ vi.mock('next/navigation', () => ({
   usePathname: () => '/auctions',
   useSearchParams: () => new URLSearchParams(''),
 }));
-vi.mock('~/utils/trpc', () => ({
-  trpc: {
-    user: {
-      getSettings: { useQuery: () => ({ data: { tourSettings: {} }, isInitialLoading: false }) },
+vi.mock('~/utils/trpc', async (importOriginal) => {
+  const actual = await importOriginal<typeof TrpcModule>();
+  return {
+    ...actual,
+    trpc: {
+      user: {
+        getSettings: { useQuery: () => ({ data: { tourSettings: {} }, isInitialLoading: false }) },
+      },
     },
-  },
-}));
+  };
+});
 
 import { ToursProvider, useTourContext } from '~/components/Tours/ToursProvider';
 
