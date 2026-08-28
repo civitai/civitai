@@ -60,7 +60,6 @@ import { batchUploadFailureNotification } from '~/utils/upload-batch';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { fetchAndUploadGeneratorImage } from '~/utils/comic-image-picker';
-import { getMetadata } from '~/utils/metadata';
 import { trpc } from '~/utils/trpc';
 import { useComicsQueueStatus } from '~/components/Comics/hooks/useComicsQueueStatus';
 import styles from '~/pages/comics/project/[id]/ProjectWorkspace.module.scss';
