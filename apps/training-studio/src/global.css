@@ -1,0 +1,26 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import '@civitai/ui/theme.css';
+
+/* Tailwind v4 skips node_modules — point it at the shared component package so its classes aren't purged. */
+@source '../../../packages/civitai-ui/src/lib';
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  html,
+  body {
+    height: 100%;
+    margin: 0;
+  }
+
+  body {
+    @apply bg-background font-sans text-foreground antialiased;
+  }
+}
